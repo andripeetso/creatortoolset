@@ -16,6 +16,7 @@ import { hfApp } from "./hfproxy";
 import { instagramApp } from "./instagram";
 import { workshopApp, workshopShareApp } from "./workshop";
 import { reviewApp } from "./review";
+import { libraryApp } from "./library/routes";
 import { presetsApp } from "./presets";
 import { projectsApp } from "./projects";
 import { storiesApp } from "./stories";
@@ -257,6 +258,7 @@ app.route("/api/instagram", instagramApp);
 app.route("/api/workshop", workshopApp);
 app.route("/api/workshop-share", workshopShareApp);
 app.route("/api/review", reviewApp);
+app.route("/api/library", libraryApp);
 app.route("/api/stories", storiesApp);
 app.all("/api/*", (c) => c.json({ error: "Not Found" }, 404));
 

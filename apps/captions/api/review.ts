@@ -19,7 +19,7 @@ import {
   startUpload,
   writeBody,
   type UploadState,
-} from "./lib/chunked-upload";
+} from "./lib/uploads";
 import { env } from "./lib/env";
 import { clipReadyToEdit, createProjectFromFile, linkOrCopy } from "./projects";
 import { DEMO_USER, findUser, isDemoName, USERNAME_RE, type SessionUser } from "./users";

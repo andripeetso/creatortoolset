@@ -1,7 +1,7 @@
 import type { Context } from "hono";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, stat, statfs, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { requestBodyStream } from "./incoming";
@@ -164,4 +164,26 @@ export async function assembleParts(
     }
   }
   await rm(dir, { recursive: true, force: true }).catch(() => {});
+}
+
+/**
+ * Offset uploads (the Media Library, api/library/routes.ts): the client sends `Upload-Offset` and the body
+ * from there, and the file on disk is the truth for where that is. Review and Video Notes above use parts.
+ */
+
+/** Appends the request body to `file` (created if missing). */
+export async function appendBody(c: Context, file: string): Promise<void> {
+  await pipeline(requestBodyStream(c), createWriteStream(file, { flags: "a", highWaterMark: 1024 * 1024 }));
+}
+
+export async function sha256File(file: string): Promise<string> {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(file)) hash.update(chunk);
+  return hash.digest("hex");
+}
+
+/** Bytes a non-root user can still write to the disk holding `dir`. */
+export async function freeBytes(dir: string): Promise<number> {
+  const s = await statfs(dir);
+  return Number(s.bavail) * Number(s.bsize);
 }

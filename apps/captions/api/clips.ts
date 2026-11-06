@@ -14,7 +14,7 @@ import {
   receivePart,
   startUpload,
   writeBody,
-} from "./lib/chunked-upload";
+} from "./lib/uploads";
 import {
   AiProviderError,
   anyAiConfigured,
