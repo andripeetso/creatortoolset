@@ -1,0 +1,17 @@
+# gitleaks settings for this repository (used by scripts/check-public.sh and .githooks/pre-commit).
+# The default rules stay on. The paths below are build output, installed packages and caches: they are
+# generated or git-ignored, so a match there is not source. Everything else is scanned.
+title = "Creator Toolset public repository"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "generated, installed and cached files (git-ignored)"
+paths = [
+  '''(^|/)node_modules/''',
+  '''(^|/)dist/''',
+  '''(^|/)\.turbo/''',
+  '''(^|/)\.git/''',
+  '''(^|/)\.wrangler/''',
+]

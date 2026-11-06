@@ -1,0 +1,8 @@
+# Generic patterns that are safe to publish. The literal private names, hosts, addresses and ids
+# live in the owner's local lists (outside the repo, read by scripts/check-public.sh):
+#   ~/.config/creator-toolset/public-deny.local.txt        (CT_PUBLIC_DENY_LOCAL overrides the path)
+#   ~/.config/creator-toolset/public-deny-files.local.txt  (CT_PUBLIC_DENY_FILES_LOCAL overrides the path)
+192\.168\.[0-9]+\.[0-9]+
+# Adobe Podcast (browser automation of a third-party site) is never in the public app; the XMP metadata standard is fine
+[Aa]dobe ?(Podcast|Enhance)|"adobe"|engine=adobe|Figma/Adobe
+podcast\.adobe

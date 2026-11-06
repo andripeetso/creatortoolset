@@ -1,0 +1,886 @@
+import { Hono, type Context } from "hono";
+import { spawn, type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { createReadStream, createWriteStream, existsSync } from "node:fs";
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { Readable, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import type { AuthVars } from "./auth";
+import { isOutOfCredits, outOfCreditsMessage } from "./credits";
+import { GUEST_CLIP_S, logGuestRun, takeGuest } from "./guest";
+import { env } from "./lib/env";
+import { NvidiaRefused, readWav, SR as NV_SR, studioVoice, wav16 } from "./lib/nvidia-voice";
+import { type SessionUser, bumpUsage, isGuestName } from "./users";
+
+/**
+ * Standalone audio enhancement — its own tool, fully separate from
+ * caption projects. Upload any audio/video file and it is enhanced
+ * immediately in the same go; the /enhance page then A/Bs original vs.
+ * result and offers downloads (clean audio, or the video remuxed with
+ * it).
+ *
+ * ENGINES, picked per run, every result levelled to the same -15 LUFS so
+ * switching never jumps in volume:
+ * - nvidia (the default): NVIDIA Studio Voice on NVIDIA's hosted API
+ *   (NVIDIA_API_KEY; lib/nvidia-voice.ts), in this process.
+ * - elevenlabs: ElevenLabs Voice Isolator (ELEVENLABS_API_KEY), admins only.
+ * Admins can add a second pass (`?then=`): `meta.chain`, `meta.step`; a
+ * pass's output feeds the next as pass-<step>.wav.
+ * Strength: the page blends the original and the result live; `meta.mix`
+ * keeps the pick and a download at a strength under 100 % is that blend
+ * (blend-<pct>.m4a, made once), with the original levelled like the result
+ * (source.m4a) so only the sound moves.
+ * Guests: NVIDIA only, files up to GUEST_CLIP_S long and GUEST_MAX_BYTES,
+ * today's guest budget (guest.ts), and every guest session is deleted
+ * GUEST_KEEP_MS after it finishes (`sweepGuests`).
+ *
+ * Layout: $DATA_DIR/enhance/<id>/
+ *   meta.json        session state (job status lives here too)
+ *   original         the uploaded file, kept for re-runs and video mux
+ *   source.m4a       original audio at the result's loudness, for A/B and blends
+ *   enhanced.m4a     the result
+ *   enhanced-video.* original video + clean track, stream-copied
+ *   pass-<n>.wav     a pass's output, the next pass's input
+ *   blend-<pct>.m4a  a download at that strength (+ blend-<pct>-video.*)
+ *
+ * One job per session, queued like exports. A server-side job killed by a
+ * restart resurfaces as an error on the next read.
+ */
+export const enhanceApp = new Hono<{ Variables: AuthVars }>();
+
+const ENHANCE_DIR = path.join(env.dataDir, "enhance");
+const MAX_CONCURRENT = Math.max(1, Number(process.env.ENHANCE_CONCURRENCY || 2));
+/** 0 = keep sessions until the user deletes them. */
+const KEEP_DAYS = Number(process.env.ENHANCE_KEEP_DAYS || 0);
+/** The engines, the default first. */
+export const ENGINES = ["nvidia", "elevenlabs"] as const;
+export type Engine = (typeof ENGINES)[number];
+const isEngine = (v: unknown): v is Engine => ENGINES.includes(v as Engine);
+/** A guest's upload at most. */
+export const GUEST_MAX_BYTES = 300 * 1024 ** 2;
+/** A guest's session goes this long after it finishes (enough to listen and download). */
+export const GUEST_KEEP_MS = 60 * 60_000;
+
+const okId = (id: string) => /^[a-z0-9-]{6,40}$/.test(id);
+const sesDir = (id: string) => path.join(ENHANCE_DIR, id);
+const originalPath = (id: string) => path.join(sesDir(id), "original");
+const sourceAudio = (id: string) => path.join(sesDir(id), "source.m4a");
+const enhancedAudio = (id: string) => path.join(sesDir(id), "enhanced.m4a");
+const enhancedVideo = (id: string, ext: string) =>
+  path.join(sesDir(id), `enhanced-video.${ext}`);
+const passOut = (id: string, step: number) => path.join(sesDir(id), `pass-${step}.wav`);
+const blendAudio = (id: string, pct: number) => path.join(sesDir(id), `blend-${pct}.m4a`);
+const blendVideo = (id: string, pct: number, ext: string) => path.join(sesDir(id), `blend-${pct}-video.${ext}`);
+/** Every result, and the original it's compared and blended with, at one loudness. */
+const LOUDNESS = "loudnorm=I=-15:TP=-1.5:LRA=9";
+
+type Status = "ready" | "queued" | "running" | "done" | "error";
+
+interface Meta {
+  id: string;
+  name: string;
+  owner?: string;
+  hasVideo: boolean;
+  duration: number;
+  bytes: number;
+  status: Status;
+  /** What processes (processed) the run: an Engine; older sessions may
+   *  carry legacy names, display-only. */
+  engine?: string;
+  /** The passes, in order (admins: up to two); `engine` = the first. */
+  chain?: Engine[];
+  /** The pass running (or next). */
+  step?: number;
+  /** The strength picked on the page: the result's share against the original (0..1). */
+  mix?: number;
+  progress: number; // 0..1
+  error?: string;
+  /** Container of enhanced-video.* when one was produced. */
+  videoOutExt?: "mp4" | "mkv";
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Sessions with a live server-side job; anything on disk claiming to run
+ *  but absent here (and not waiting on the Mac) was killed by a restart. */
+const active = new Map<string, Meta>();
+const children = new Map<string, ChildProcess>();
+/** In-flight engine requests (ElevenLabs, NVIDIA), so cancel() can abort them. */
+const apiCalls = new Map<string, AbortController>();
+const queue: string[] = [];
+let running = 0;
+
+void mkdir(ENHANCE_DIR, { recursive: true }).catch(() => {});
+
+async function persist(meta: Meta): Promise<void> {
+  meta.updatedAt = Date.now();
+  try {
+    await writeFile(path.join(sesDir(meta.id), "meta.json"), JSON.stringify(meta));
+  } catch {
+    /* session may have been deleted mid-job */
+  }
+}
+
+async function readMeta(id: string): Promise<Meta | null> {
+  const mem = active.get(id);
+  if (mem) return mem;
+  try {
+    const meta: Meta = JSON.parse(
+      await readFile(path.join(sesDir(id), "meta.json"), "utf-8")
+    );
+    // a job still queued or running with no server process behind it was cut off by a restart
+    if (meta.status === "queued" || meta.status === "running") {
+      meta.status = "error";
+      meta.error = "Interrupted by a server restart — try again.";
+      await persist(meta);
+    }
+    return meta;
+  } catch {
+    return null;
+  }
+}
+
+const canSee = (meta: Meta, user: SessionUser) =>
+  user.role === "admin" || meta.owner === user.username;
+
+async function ownedMeta(id: string, user: SessionUser): Promise<Meta | null> {
+  if (!okId(id)) return null;
+  const meta = await readMeta(id);
+  return meta && canSee(meta, user) ? meta : null;
+}
+
+/** Everything the client needs beyond meta: does a result exist? */
+const publicMeta = (m: Meta) => ({
+  ...m,
+  hasEnhanced: existsSync(enhancedAudio(m.id)),
+});
+
+const sessionIds = async () =>
+  (await readdir(ENHANCE_DIR, { withFileTypes: true }).catch(() => []))
+    .filter((d) => d.isDirectory())
+    .map((d) => d.name)
+    .filter(okId);
+
+/* ---- retention (opt-in, mirrors exports) ---- */
+
+async function sweep(): Promise<void> {
+  if (!KEEP_DAYS) return;
+  const cutoff = Date.now() - KEEP_DAYS * 24 * 3600 * 1000;
+  for (const id of await sessionIds()) {
+    if (active.has(id)) continue;
+    const meta = await readMeta(id);
+    if (meta && meta.updatedAt < cutoff) {
+      await rm(sesDir(id), { recursive: true, force: true }).catch(() => {});
+    }
+  }
+}
+if (KEEP_DAYS > 0) {
+  void sweep();
+  setInterval(() => void sweep(), 6 * 3600 * 1000).unref();
+}
+
+/** Guests' sessions go GUEST_KEEP_MS after they finish (a stuck one after 3 h). */
+export async function sweepGuests(now = Date.now()): Promise<void> {
+  for (const id of await sessionIds()) {
+    if (active.has(id)) continue;
+    const meta = await readMeta(id);
+    if (!meta?.owner || !isGuestName(meta.owner)) continue;
+    const busy = meta.status === "queued" || meta.status === "running";
+    if (now - meta.updatedAt > (busy ? 3 * 3600_000 : GUEST_KEEP_MS)) {
+      await rm(sesDir(id), { recursive: true, force: true }).catch(() => {});
+    }
+  }
+}
+void sweepGuests();
+setInterval(() => void sweepGuests(), 10 * 60_000).unref();
+
+/* ---- probes & process helpers ---- */
+
+function probe(file: string, args: string[]): Promise<string> {
+  return new Promise((resolve) => {
+    const p = spawn("ffprobe", ["-v", "error", ...args, file]);
+    let out = "";
+    p.stdout.on("data", (d) => (out += d.toString()));
+    p.on("close", () => resolve(out.trim()));
+    p.on("error", () => resolve(""));
+  });
+}
+
+const probeDuration = async (f: string) =>
+  Number(await probe(f, ["-show_entries", "format=duration", "-of", "csv=p=0"])) || 0;
+const probeHasAudio = async (f: string) =>
+  (await probe(f, ["-select_streams", "a:0", "-show_entries", "stream=codec_name", "-of", "csv=p=0"])).length > 0;
+const probeHasVideo = async (f: string) => {
+  // attached cover art is a video stream too — require a real codec
+  const codec = await probe(f, ["-select_streams", "v:0", "-show_entries", "stream=codec_name", "-of", "csv=p=0"]);
+  return codec.length > 0 && !["mjpeg", "png", "bmp"].includes(codec.toLowerCase());
+};
+
+/** Spawn a command for session `id` (tracked so cancel can kill it),
+ *  mapping ffmpeg -progress output onto the [lo, hi] progress slice. */
+function runStep(
+  id: string,
+  meta: Meta,
+  cmd: string,
+  args: string[],
+  progress?: { duration: number; lo: number; hi: number }
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const fullArgs =
+      cmd === "ffmpeg"
+        ? ["-hide_banner", "-loglevel", "error", "-nostats", "-y", ...args, "-progress", "pipe:1"]
+        : args;
+    const p = spawn(cmd, fullArgs, { stdio: ["ignore", "pipe", "pipe"] });
+    children.set(id, p);
+    let err = "";
+    let buf = "";
+    let lastWrite = 0;
+    p.stderr!.on("data", (d) => {
+      err += d.toString();
+      if (err.length > 4000) err = err.slice(-4000);
+    });
+    p.stdout!.on("data", (d) => {
+      if (!progress) return;
+      buf += d.toString();
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+      for (const line of lines) {
+        const m = /^out_time_(?:us|ms)=(\d+)/.exec(line.trim());
+        if (!m) continue;
+        const sec = Number(m[1]) / 1e6; // both variants are microseconds
+        const frac = Math.min(sec / Math.max(progress.duration, 0.1), 1);
+        meta.progress = Math.min(progress.lo + frac * (progress.hi - progress.lo), progress.hi);
+        if (Date.now() - lastWrite > 500) {
+          lastWrite = Date.now();
+          void persist(meta);
+        }
+      }
+    });
+    p.on("close", (code) => {
+      children.delete(id);
+      if (code === 0) resolve();
+      else reject(new Error(`${path.basename(cmd)} exited ${code}: ${err}`));
+    });
+    p.on("error", (e) => {
+      children.delete(id);
+      reject(e);
+    });
+  });
+}
+
+/* ---- engines ---- */
+
+const elevenLabsKey = () => process.env.ELEVENLABS_API_KEY || "";
+const nvidiaKey = () => process.env.NVIDIA_API_KEY || "";
+/** The default engine: NVIDIA for everyone. */
+const defaultEngine = (): Engine => "nvidia";
+
+/** Why `user` can't run `engine`, or null. */
+function refusal(engine: Engine, user: SessionUser): string | null {
+  if (engine === "elevenlabs" && user.role !== "admin") return "ElevenLabs isn't available on this account.";
+  if (engine === "nvidia" && !nvidiaKey()) return "NVIDIA isn't set up on the server (NVIDIA_API_KEY).";
+  if (engine === "elevenlabs" && !elevenLabsKey())
+    return "ElevenLabs isn't set up on the server (ELEVENLABS_API_KEY).";
+  return null;
+}
+
+/** NVIDIA Studio Voice on the extracted 48 kHz WAV -> enhance-nv.wav, lined up with it. */
+async function runNvidia(id: string, meta: Meta, wavPath: string, outDir: string, [lo, hi]: [number, number]): Promise<string> {
+  const controller = new AbortController();
+  apiCalls.set(id, controller);
+  try {
+    const { x } = readWav(await readFile(wavPath));
+    const y = await studioVoice(nvidiaKey(), x, controller.signal, (done, total) => {
+      meta.progress = Math.max(meta.progress, lo + (done / total) * (hi - lo));
+      void persist(meta);
+    });
+    const out = path.join(outDir, "enhance-nv.wav");
+    await writeFile(out, wav16(y));
+    return out;
+  } catch (e) {
+    if (controller.signal.aborted) throw new Error("Cancelled");
+    if (e instanceof NvidiaRefused) console.warn(`[nvidia] ${e.message}`);
+    throw e;
+  } finally {
+    apiCalls.delete(id);
+  }
+}
+
+/* ElevenLabs Voice Isolator */
+
+const EL_EXT: Record<string, string> = {
+  "audio/mpeg": "mp3",
+  "audio/mp3": "mp3",
+  "audio/wav": "wav",
+  "audio/x-wav": "wav",
+  "audio/wave": "wav",
+  "audio/mp4": "m4a",
+  "audio/aac": "aac",
+  "audio/ogg": "ogg",
+  "audio/flac": "flac",
+};
+
+/**
+ * One call to the Voice Isolator: send the extracted WAV, receive the
+ * cleaned audio. The API reports no progress, so the caller wraps this
+ * in a crawl. Registered in `apiCalls` so cancel() aborts the fetch
+ * exactly like killing an ffmpeg step.
+ */
+async function runElevenLabs(id: string, wavPath: string, outDir: string): Promise<string> {
+  const key = elevenLabsKey();
+  if (!key) {
+    throw new Error("ELEVENLABS_API_KEY is not set on the server — add it to .env and restart.");
+  }
+  const audio = await readFile(wavPath);
+  const form = new FormData();
+  form.append("audio", new Blob([audio], { type: "audio/wav" }), "audio.wav");
+
+  const controller = new AbortController();
+  apiCalls.set(id, controller);
+  let res: Response;
+  try {
+    res = await fetch("https://api.elevenlabs.io/v1/audio-isolation", {
+      method: "POST",
+      headers: { "xi-api-key": key },
+      body: form,
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10 * 60 * 1000)]),
+    });
+  } catch (e) {
+    apiCalls.delete(id);
+    if (active.get(id) !== undefined && controller.signal.aborted) {
+      throw new Error("Cancelled");
+    }
+    throw e instanceof Error ? e : new Error(String(e));
+  }
+  apiCalls.delete(id);
+
+  if (!res.ok) {
+    const detail = (await res.text().catch(() => "")).slice(0, 300);
+    if (isOutOfCredits(res.status, detail)) {
+      console.warn(`[elevenlabs] out of credits (${res.status}): ${detail}`);
+      throw new Error(outOfCreditsMessage("Audio enhancement"));
+    }
+    if (res.status === 401) {
+      throw new Error("ElevenLabs rejected the API key — check ELEVENLABS_API_KEY.");
+    }
+    if (res.status === 429) {
+      throw new Error("Audio enhancement is rate limited — try again in a minute.");
+    }
+    throw new Error(`ElevenLabs error ${res.status}: ${detail || "no details"}`);
+  }
+  const ext = EL_EXT[(res.headers.get("content-type") || "").split(";")[0].trim()] || "mp3";
+  const out = path.join(outDir, `enhance-el.${ext}`);
+  await writeFile(out, Buffer.from(await res.arrayBuffer()));
+  return out;
+}
+
+/* ---- pipeline ---- */
+
+function enqueue(meta: Meta): void {
+  meta.status = "queued";
+  meta.progress = 0;
+  meta.error = undefined;
+  meta.chain = meta.chain?.length ? meta.chain : [isEngine(meta.engine) ? meta.engine : "nvidia"];
+  meta.step = 0;
+  active.set(meta.id, meta);
+  queue.push(meta.id);
+  pump();
+}
+
+/** What the current pass works on: the upload, or the pass before's output. */
+const stepInput = (meta: Meta) => (meta.step ? passOut(meta.id, meta.step - 1) : originalPath(meta.id));
+
+/** The progress range of pass `step` of `n` (the last 16 % are loudness and the remux). */
+const band = (step: number, n: number): [number, number] => [0.08 + (step * 0.74) / n, 0.08 + ((step + 1) * 0.74) / n];
+
+/**
+ * The last steps, whatever the engine: loudness to -15 LUFS and AAC (every
+ * engine's voice at one level), then the video remux. `alive` = the run
+ * wasn't cancelled meanwhile.
+ */
+async function finish(id: string, meta: Meta, clean: string, duration: number, alive: () => boolean): Promise<void> {
+  const outAudio = enhancedAudio(id) + ".part";
+  try {
+    await runStep(id, meta, "ffmpeg", [
+      "-i", clean,
+      "-af", LOUDNESS, "-ar", "48000",
+      "-c:a", "aac", "-b:a", "192k",
+      "-movflags", "+faststart",
+      "-f", "mp4", // .part suffix hides the extension from ffmpeg
+      outAudio,
+    ], { duration, lo: 0.84, hi: 0.88 });
+    if (!alive()) return;
+    await rename(outAudio, enhancedAudio(id));
+
+    // video inputs: remux the untouched video stream with the clean
+    // track — stream copy, so it's fast and full quality. mp4 first;
+    // mkv as fallback (it holds any codec). Failure here doesn't fail
+    // the job — the enhanced audio is the primary result.
+    if (meta.hasVideo) {
+      meta.progress = 0.92;
+      await persist(meta);
+      const mux = (ext: "mp4" | "mkv") =>
+        runStep(id, meta, "ffmpeg", [
+          "-i", originalPath(id),
+          "-i", enhancedAudio(id),
+          "-map", "0:v:0", "-map", "1:a:0",
+          "-c", "copy", "-shortest",
+          ...(ext === "mp4" ? ["-movflags", "+faststart"] : []),
+          "-f", ext === "mp4" ? "mp4" : "matroska",
+          enhancedVideo(id, ext) + ".part",
+        ], { duration, lo: 0.92, hi: 0.99 });
+      try {
+        await mux("mp4");
+        await rename(enhancedVideo(id, "mp4") + ".part", enhancedVideo(id, "mp4"));
+        meta.videoOutExt = "mp4";
+      } catch {
+        try {
+          await mux("mkv");
+          await rename(enhancedVideo(id, "mkv") + ".part", enhancedVideo(id, "mkv"));
+          meta.videoOutExt = "mkv";
+        } catch {
+          meta.videoOutExt = undefined;
+        }
+      }
+    }
+    if (!alive()) return;
+    meta.status = "done";
+    meta.progress = 1;
+    await persist(meta);
+  } finally {
+    await Promise.all([
+      rm(outAudio, { force: true }),
+      rm(enhancedVideo(id, "mp4") + ".part", { force: true }),
+      rm(enhancedVideo(id, "mkv") + ".part", { force: true }),
+    ]).catch(() => {});
+  }
+}
+
+async function runJob(id: string): Promise<void> {
+  const meta = active.get(id);
+  if (!meta) return; // cancelled while queued
+  meta.status = "running";
+  await persist(meta);
+
+  const dir = sesDir(id);
+  const wav = path.join(dir, "enhance-tmp.wav");
+  const chain = meta.chain?.length ? meta.chain : (["elevenlabs"] as Engine[]);
+  let clean: string | null = null;
+  let crawl: ReturnType<typeof setInterval> | null = null;
+
+  try {
+    const duration = meta.duration || (await probeDuration(originalPath(id)));
+    for (let step = meta.step ?? 0; step < chain.length; step++) {
+      meta.step = step;
+      const engine = chain[step];
+      const [lo, hi] = band(step, chain.length);
+      // 1) mono PCM WAV for the engine: 48 kHz for NVIDIA, 44.1 kHz for ElevenLabs
+      await runStep(id, meta, "ffmpeg", [
+        "-i", stepInput(meta),
+        "-vn", "-ac", "1", "-ar", engine === "nvidia" ? String(NV_SR) : "44100",
+        "-c:a", "pcm_s16le",
+        wav,
+      ], step === 0 ? { duration, lo: 0, hi: 0.08 } : undefined);
+
+      // 2) the engine. NVIDIA moves the bar per 5-min piece; ElevenLabs
+      // reports nothing, so crawl across its band on a curve (it answers in seconds)
+      if (engine === "nvidia") {
+        clean = await runNvidia(id, meta, wav, dir, [lo, hi]);
+      } else {
+        const started = Date.now();
+        const tau = Math.max(6, duration / 3) * 1000;
+        crawl = setInterval(() => {
+          const frac = 1 - Math.exp(-(Date.now() - started) / tau);
+          meta.progress = Math.max(meta.progress, lo + frac * (hi - lo));
+          void persist(meta);
+        }, 1000);
+        clean = await runElevenLabs(id, wav, dir);
+        clearInterval(crawl);
+        crawl = null;
+      }
+      if (active.get(id) !== meta) return; // cancelled mid-run
+      if (step + 1 < chain.length) {       // the next pass starts from this one
+        await runStep(id, meta, "ffmpeg", ["-i", clean, "-ac", "1", "-ar", String(NV_SR), "-c:a", "pcm_s16le", "-f", "wav", passOut(id, step)]);
+        await rm(clean, { force: true });
+        clean = null;
+      }
+    }
+
+    // 3) loudness, AAC, the video remux
+    await finish(id, meta, clean!, duration, () => active.get(id) === meta);
+  } catch (e) {
+    if (active.get(id) !== meta) return; // cancelled — don't resurrect
+    meta.status = "error";
+    meta.error = e instanceof Error ? e.message : String(e);
+    await persist(meta);
+  } finally {
+    if (crawl) clearInterval(crawl);
+    active.delete(id);
+    await Promise.all([
+      rm(wav, { force: true }),
+      clean ? rm(clean, { force: true }) : Promise.resolve(),
+      ...chain.map((_, k) => rm(passOut(id, k), { force: true })),
+    ]).catch(() => {});
+  }
+}
+
+function pump(): void {
+  while (running < MAX_CONCURRENT && queue.length > 0) {
+    const id = queue.shift()!;
+    if (!active.has(id)) continue;
+    running++;
+    void runJob(id)
+      .catch(() => {})
+      .finally(() => {
+        running--;
+        pump();
+      });
+  }
+}
+
+/** Kill a queued/running job, the Mac's included (files stay). */
+function cancel(id: string): void {
+  active.delete(id); // runJob checks this before writing results
+  const qi = queue.indexOf(id);
+  if (qi >= 0) queue.splice(qi, 1);
+  children.get(id)?.kill("SIGKILL");
+  children.delete(id);
+  apiCalls.get(id)?.abort();
+  apiCalls.delete(id);
+}
+
+/* ---- streaming helper (same buffered-slice pattern as the project
+   video route — Chrome's media stack stalls on piped web streams) ---- */
+
+async function streamFile(
+  c: { req: { header: (h: string) => string | undefined } },
+  p: string,
+  type: string
+): Promise<Response> {
+  const st = await stat(p);
+  const size = st.size;
+  const range = c.req.header("range");
+  const base = {
+    "Content-Type": type,
+    "Accept-Ranges": "bytes",
+    "Cache-Control": "private, max-age=3600",
+    "Last-Modified": new Date(st.mtimeMs).toUTCString(),
+    ETag: `"${size}-${Math.floor(st.mtimeMs)}"`,
+  };
+  const slice = (start: number, end: number): Promise<Buffer> =>
+    new Promise((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      createReadStream(p, { start, end })
+        .on("data", (d) => chunks.push(d as Buffer))
+        .on("end", () => resolve(Buffer.concat(chunks)))
+        .on("error", reject);
+    });
+  if (range) {
+    const m = /bytes=(\d*)-(\d*)/.exec(range);
+    const start = m?.[1] ? parseInt(m[1], 10) : 0;
+    const end = Math.min(m?.[2] ? parseInt(m[2], 10) : size - 1, size - 1);
+    if (start >= size || start > end) {
+      return new Response(null, {
+        status: 416,
+        headers: { "Content-Range": `bytes */${size}` },
+      });
+    }
+    const body = await slice(start, end);
+    return new Response(new Uint8Array(body), {
+      status: 206,
+      headers: {
+        ...base,
+        "Content-Range": `bytes ${start}-${end}/${size}`,
+        "Content-Length": String(end - start + 1),
+      },
+    });
+  }
+  const body = await slice(0, size - 1);
+  return new Response(new Uint8Array(body), {
+    headers: { ...base, "Content-Length": String(size) },
+  });
+}
+
+/* ---- routes (mounted at /api/enhance) ---- */
+
+/* engine availability — registered before /:id so "availability" never
+   matches as an id */
+enhanceApp.get("/availability", async (c) => {
+  const user = c.get("user");
+  const guest = user.role === "guest";
+  return c.json({
+    nvidia: !!nvidiaKey(),
+    elevenlabs: !!elevenLabsKey() && user.role === "admin",
+    default: defaultEngine(),
+    admin: user.role === "admin", // a second pass
+    guest: guest ? { maxSeconds: GUEST_CLIP_S, maxBytes: GUEST_MAX_BYTES, keepMinutes: GUEST_KEEP_MS / 60_000 } : null,
+  });
+});
+
+/* own sessions, newest first (admins also keep ownerless legacy ones) */
+enhanceApp.get("/", async (c) => {
+  const user = c.get("user");
+  const metas = (await Promise.all((await sessionIds()).map(readMeta))).filter(
+    (m): m is Meta =>
+      !!m && (m.owner === user.username || (user.role === "admin" && !m.owner))
+  );
+  metas.sort((a, b) => b.createdAt - a.createdAt);
+  return c.json(metas.map(publicMeta));
+});
+
+/** The run's passes (?engine=, default per user; admins ?then= a second) or why not. */
+function pickChain(c: Context<{ Variables: AuthVars }>): Engine[] | { error: string } {
+  const user = c.get("user");
+  const [q, then] = [c.req.query("engine"), c.req.query("then") || undefined];
+  for (const e of [q, then]) if (e !== undefined && !isEngine(e)) return { error: `Engine is one of ${ENGINES.join(", ")}` };
+  const chain = [(q as Engine | undefined) ?? defaultEngine(), ...(then ? [then as Engine] : [])];
+  if (then && user.role !== "admin") return { error: "A second pass is for admins." };
+  if (then && then === chain[0]) return { error: "The second pass needs another engine." };
+  for (const e of chain) if (refusal(e, user)) return { error: refusal(e, user)! };
+  return chain;
+}
+
+/** Guests: their own id (the bare pre-id cookie is shared) and today's budget. */
+function guestCharge(user: SessionUser, seconds: number): string | null {
+  if (user.role !== "guest") return null;
+  if (!/^guest-/.test(user.username)) return "Reload the page to start a fresh guest session.";
+  if (seconds > GUEST_CLIP_S) return `Guest mode takes files up to ${GUEST_CLIP_S / 60} minutes — sign in for longer ones.`;
+  return takeGuest(user, "enhance", Math.ceil(seconds));
+}
+
+/* upload: raw audio/video body → session, enhanced immediately */
+enhanceApp.post("/", async (c) => {
+  const user = c.get("user");
+  const chain = pickChain(c);
+  if (!Array.isArray(chain)) return c.json(chain, 400);
+  if (user.role === "guest" && !/^guest-/.test(user.username)) {
+    return c.json({ error: "Reload the page to start a fresh guest session." }, 403);
+  }
+  const body = c.req.raw.body;
+  if (!body) return c.json({ error: "No file body" }, 400);
+  const name = (c.req.query("name") || "untitled").slice(0, 120);
+  const id = randomUUID();
+  const dir = sesDir(id);
+  // guests: stop reading past their cap instead of storing a huge upload
+  const cap = user.role === "guest" ? GUEST_MAX_BYTES : Infinity;
+  let bytes = 0;
+  const counter = new Transform({
+    transform(chunk: Buffer, _enc, done) {
+      bytes += chunk.length;
+      done(bytes > cap ? new Error(`Guest uploads are up to ${cap / 1024 ** 2} MB — sign in for bigger files.`) : null, chunk);
+    },
+  });
+  try {
+    await mkdir(dir, { recursive: true });
+    await pipeline(Readable.fromWeb(body as never), counter, createWriteStream(originalPath(id)));
+    if (!(await probeHasAudio(originalPath(id)))) {
+      throw new Error("This file has no audio track");
+    }
+    const [duration, hasVideo, st] = await Promise.all([
+      probeDuration(originalPath(id)),
+      probeHasVideo(originalPath(id)),
+      stat(originalPath(id)),
+    ]);
+    const refused = guestCharge(user, duration);
+    if (refused) throw new Error(refused);
+    // A/B source at the result's loudness: the comparison and the strength slider move the sound, not the volume
+    const audioArgs = ["-af", LOUDNESS, "-ar", "48000", "-c:a", "aac", "-b:a", "160k"];
+    const meta: Meta = {
+      id,
+      name,
+      owner: user.username,
+      hasVideo,
+      duration,
+      bytes: st.size,
+      status: "ready",
+      engine: chain[0],
+      chain,
+      progress: 0,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    active.set(id, meta); // guards against a concurrent sweep mid-extract
+    await runStep(id, meta, "ffmpeg", [
+      "-i", originalPath(id),
+      "-vn", ...audioArgs,
+      "-movflags", "+faststart",
+      "-f", "mp4",
+      sourceAudio(id),
+    ]);
+    active.delete(id);
+    // enhanced in the same go — no separate "run" click
+    enqueue(meta);
+    await persist(meta);
+    bumpUsage(user.username, { enhanceRuns: 1 });
+    if (user.role === "guest") {
+      void logGuestRun({ at: Date.now(), guest: user.username, file: name, seconds: Math.round(duration), text: `Audio Enhancer (${chain.join(" → ")})` });
+    }
+    return c.json(publicMeta(meta));
+  } catch (e) {
+    active.delete(id);
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+    return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+  }
+});
+
+enhanceApp.get("/:id", async (c) => {
+  const meta = await ownedMeta(c.req.param("id"), c.get("user"));
+  if (!meta) return c.json({ error: "Not found" }, 404);
+  return c.json(publicMeta(meta));
+});
+
+/* re-run (after an error or a cancel), with ?engine= another engine */
+enhanceApp.post("/:id/run", async (c) => {
+  const id = c.req.param("id");
+  const user = c.get("user");
+  const meta = await ownedMeta(id, user);
+  if (!meta) return c.json({ error: "Not found" }, 404);
+  if (meta.status === "queued" || meta.status === "running") {
+    return c.json({ error: "Enhancement already in progress" }, 409);
+  }
+  const chain = pickChain(c);
+  if (!Array.isArray(chain)) return c.json(chain, 400);
+  const refused = guestCharge(user, meta.duration);
+  if (refused) return c.json({ error: refused }, 400);
+  meta.engine = chain[0];
+  meta.chain = chain;
+  enqueue(meta);
+  await persist(meta);
+  bumpUsage(user.username, { enhanceRuns: 1 });
+  return c.json(publicMeta(meta));
+});
+
+/* A/B playback: original or enhanced audio, range-aware */
+enhanceApp.get("/:id/play", async (c) => {
+  const id = c.req.param("id");
+  const meta = await ownedMeta(id, c.get("user"));
+  if (!meta) return c.json({ error: "Not found" }, 404);
+  const p = c.req.query("which") === "enhanced" ? enhancedAudio(id) : sourceAudio(id);
+  if (!existsSync(p)) return c.json({ error: "Not ready" }, 409);
+  return streamFile(c, p, "audio/mp4");
+});
+
+/* the strength picked on the page (the result's share against the original) */
+enhanceApp.put("/:id/mix", async (c) => {
+  const meta = await ownedMeta(c.req.param("id"), c.get("user"));
+  if (!meta) return c.json({ error: "Not found" }, 404);
+  const mix = Number(((await c.req.json().catch(() => null)) as { mix?: unknown } | null)?.mix);
+  if (!(mix >= 0 && mix <= 1)) return c.json({ error: "mix is 0..1" }, 400);
+  meta.mix = Math.round(mix * 20) / 20;
+  await persist(meta);
+  return c.json(publicMeta(meta));
+});
+
+/** The original and the result blended at `pct` % result, levelled (made once per result). */
+async function blend(id: string, meta: Meta, pct: number): Promise<string> {
+  const out = blendAudio(id, pct);
+  const made = await stat(out).catch(() => null);
+  if (made && made.mtimeMs >= (await stat(enhancedAudio(id))).mtimeMs) return out;
+  await runStep(id, meta, "ffmpeg", [
+    "-i", sourceAudio(id), "-i", enhancedAudio(id),
+    "-filter_complex", `[0:a]volume=${(100 - pct) / 100}[o];[1:a]volume=${pct / 100}[e];[o][e]amix=inputs=2:normalize=0:duration=longest,${LOUDNESS}`,
+    "-ar", "48000", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-f", "mp4", out + ".part",
+  ]);
+  await rename(out + ".part", out);
+  return out;
+}
+
+/* download the result, at the strength picked (?mix=, else the kept one) */
+enhanceApp.get("/:id/download", async (c) => {
+  const id = c.req.param("id");
+  const meta = await ownedMeta(id, c.get("user"));
+  if (!meta) return c.json({ error: "Not found" }, 404);
+  const base = meta.name.replace(/\.[^.]+$/, "").replace(/[^\w.\- ]+/g, "").trim() || "enhanced";
+  const wantVideo = c.req.query("kind") === "video";
+  const q = c.req.query("mix");
+  const mix = q === undefined ? (meta.mix ?? 1) : Number(q);
+  if (!(mix >= 0 && mix <= 1)) return c.json({ error: "mix is 0..1" }, 400);
+  const pct = Math.round(mix * 20) * 5;
+  if (pct < 100) {
+    if (meta.status !== "done" || !existsSync(enhancedAudio(id))) return c.json({ error: "Not ready" }, 409);
+    let p = await blend(id, meta, pct);
+    let type = "audio/mp4";
+    let ext = "m4a";
+    if (wantVideo) {
+      if (!meta.hasVideo) return c.json({ error: "No video in this session" }, 409);
+      ext = meta.videoOutExt ?? "mp4";
+      const v = blendVideo(id, pct, ext);
+      const made = await stat(v).catch(() => null);
+      if (!made || made.mtimeMs < (await stat(p)).mtimeMs) {
+        await runStep(id, meta, "ffmpeg", [
+          "-i", originalPath(id), "-i", p, "-map", "0:v:0", "-map", "1:a:0", "-c", "copy", "-shortest",
+          ...(ext === "mp4" ? ["-movflags", "+faststart"] : []), "-f", ext === "mp4" ? "mp4" : "matroska", v + ".part",
+        ]);
+        await rename(v + ".part", v);
+      }
+      p = v;
+      type = ext === "mp4" ? "video/mp4" : "video/x-matroska";
+    }
+    const st = await stat(p);
+    return new Response(Readable.toWeb(createReadStream(p)) as unknown as ReadableStream, {
+      headers: {
+        "Content-Type": type,
+        "Content-Length": String(st.size),
+        "Content-Disposition": `attachment; filename="${base}-enhanced-${pct}.${ext}"`,
+      },
+    });
+  }
+  if (wantVideo) {
+    if (!meta.videoOutExt || !existsSync(enhancedVideo(id, meta.videoOutExt))) {
+      return c.json({ error: "No enhanced video for this session" }, 409);
+    }
+    const p = enhancedVideo(id, meta.videoOutExt);
+    const st = await stat(p);
+    return new Response(
+      Readable.toWeb(createReadStream(p)) as unknown as ReadableStream,
+      {
+        headers: {
+          "Content-Type": meta.videoOutExt === "mp4" ? "video/mp4" : "video/x-matroska",
+          "Content-Length": String(st.size),
+          "Content-Disposition": `attachment; filename="${base}-enhanced.${meta.videoOutExt}"`,
+        },
+      }
+    );
+  }
+  const p = enhancedAudio(id);
+  if (!existsSync(p)) return c.json({ error: "Not ready" }, 409);
+  const st = await stat(p);
+  return new Response(
+    Readable.toWeb(createReadStream(p)) as unknown as ReadableStream,
+    {
+      headers: {
+        "Content-Type": "audio/mp4",
+        "Content-Length": String(st.size),
+        "Content-Disposition": `attachment; filename="${base}-enhanced.m4a"`,
+      },
+    }
+  );
+});
+
+/* stop a queued/running job but keep the session (and any previous
+   result — .part outputs never touched the real files); a job the Mac
+   holds is let go, its late answer refused */
+enhanceApp.post("/:id/cancel", async (c) => {
+  const id = c.req.param("id");
+  const meta = await ownedMeta(id, c.get("user"));
+  if (!meta) return c.json({ error: "Not found" }, 404);
+  if (meta.status === "queued" || meta.status === "running") {
+    cancel(id);
+    meta.status = existsSync(enhancedAudio(id)) ? "done" : "ready";
+    meta.progress = 0;
+    meta.error = undefined;
+    await persist(meta);
+  }
+  return c.json(publicMeta(meta));
+});
+
+/* cancel a running job / delete the whole session */
+enhanceApp.delete("/:id", async (c) => {
+  const id = c.req.param("id");
+  const meta = await ownedMeta(id, c.get("user"));
+  if (!meta) return c.json({ error: "Not found" }, 404);
+  cancel(id);
+  await rm(sesDir(id), { recursive: true, force: true });
+  return c.json({ ok: true });
+});

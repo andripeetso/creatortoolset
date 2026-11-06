@@ -1,0 +1,2327 @@
+{
+ "about": "Synthetic test clip: the words are scrambled placeholders with the same lengths, punctuation and timings as the original take. utterance // 1000 = window index. 'approved' is a hand-made grouping for the opening. Frame 2160x3840, style box 28 chars x 1 line.",
+ "frame": {
+  "width": 2160,
+  "height": 3840
+ },
+ "style": {
+  "fontSizePct": 2.5,
+  "boxW": 68.5,
+  "boxH": 4.17,
+  "boxX": 50,
+  "boxY": 63.9,
+  "fitBox": true
+ },
+ "approved": [
+  "Rg loc nelt mep pial ob",
+  "in lawk tkil u kojkv okm,",
+  "klazwir in cad",
+  "udc wufjah in 11.",
+  "Pi vuki'd unifnwsekm wa wuf",
+  "go zicg doj zmob",
+  "ogjo tpew cohdg,",
+  "mauffvp,",
+  "mirazoavj sebec",
+  "nkak ma ik diveh.",
+  "Pi blo fojnm szumc ik",
+  "rujulids aludm voncse veh",
+  "lvom blo mosg gewasnind.",
+  "Teedf eg potd vhiuj pufo",
+  "eg pornatco"
+ ],
+ "windowStepS": 43,
+ "words": [
+  {
+   "text": "Rg",
+   "start": 0,
+   "end": 0.16,
+   "utterance": 0
+  },
+  {
+   "text": "loc",
+   "start": 0.16,
+   "end": 0.4,
+   "utterance": 0
+  },
+  {
+   "text": "nelt",
+   "start": 0.4,
+   "end": 0.64,
+   "utterance": 0
+  },
+  {
+   "text": "mep",
+   "start": 0.64,
+   "end": 0.8,
+   "utterance": 0
+  },
+  {
+   "text": "pial",
+   "start": 0.8,
+   "end": 0.96,
+   "utterance": 0
+  },
+  {
+   "text": "ob",
+   "start": 0.96,
+   "end": 1.04,
+   "utterance": 0
+  },
+  {
+   "text": "in",
+   "start": 1.04,
+   "end": 1.2,
+   "utterance": 0
+  },
+  {
+   "text": "lawk",
+   "start": 1.2,
+   "end": 1.36,
+   "utterance": 0
+  },
+  {
+   "text": "tkil",
+   "start": 1.36,
+   "end": 1.52,
+   "utterance": 0
+  },
+  {
+   "text": "u",
+   "start": 1.52,
+   "end": 1.6,
+   "utterance": 0
+  },
+  {
+   "text": "kojkv",
+   "start": 1.6,
+   "end": 1.76,
+   "utterance": 0
+  },
+  {
+   "text": "okm,",
+   "start": 1.76,
+   "end": 2,
+   "utterance": 0
+  },
+  {
+   "text": "klazwir",
+   "start": 2,
+   "end": 2.24,
+   "utterance": 0
+  },
+  {
+   "text": "in",
+   "start": 2.24,
+   "end": 2.4,
+   "utterance": 0
+  },
+  {
+   "text": "cad",
+   "start": 2.4,
+   "end": 2.56,
+   "utterance": 0
+  },
+  {
+   "text": "udc",
+   "start": 2.56,
+   "end": 2.72,
+   "utterance": 0
+  },
+  {
+   "text": "wufjah",
+   "start": 2.72,
+   "end": 2.96,
+   "utterance": 0
+  },
+  {
+   "text": "in",
+   "start": 2.96,
+   "end": 3.12,
+   "utterance": 0
+  },
+  {
+   "text": "11.",
+   "start": 3.12,
+   "end": 3.6,
+   "utterance": 0
+  },
+  {
+   "text": "Pi",
+   "start": 3.6,
+   "end": 3.68,
+   "utterance": 0
+  },
+  {
+   "text": "vuki'd",
+   "start": 3.68,
+   "end": 4,
+   "utterance": 0
+  },
+  {
+   "text": "unifnwsekm",
+   "start": 4,
+   "end": 4.32,
+   "utterance": 0
+  },
+  {
+   "text": "wa",
+   "start": 4.32,
+   "end": 4.56,
+   "utterance": 0
+  },
+  {
+   "text": "wuf",
+   "start": 4.56,
+   "end": 4.72,
+   "utterance": 0
+  },
+  {
+   "text": "go",
+   "start": 4.72,
+   "end": 4.96,
+   "utterance": 0
+  },
+  {
+   "text": "zicg",
+   "start": 4.96,
+   "end": 5.2,
+   "utterance": 0
+  },
+  {
+   "text": "doj",
+   "start": 5.2,
+   "end": 5.36,
+   "utterance": 0
+  },
+  {
+   "text": "zmob",
+   "start": 5.36,
+   "end": 5.68,
+   "utterance": 0
+  },
+  {
+   "text": "ogjo",
+   "start": 5.68,
+   "end": 6,
+   "utterance": 0
+  },
+  {
+   "text": "tpew",
+   "start": 6,
+   "end": 6.16,
+   "utterance": 0
+  },
+  {
+   "text": "cohdg,",
+   "start": 6.16,
+   "end": 6.56,
+   "utterance": 0
+  },
+  {
+   "text": "mauffvp,",
+   "start": 6.56,
+   "end": 6.88,
+   "utterance": 0
+  },
+  {
+   "text": "mirazoavj",
+   "start": 6.88,
+   "end": 7.36,
+   "utterance": 0
+  },
+  {
+   "text": "sebec",
+   "start": 7.36,
+   "end": 7.84,
+   "utterance": 0
+  },
+  {
+   "text": "nkak",
+   "start": 7.84,
+   "end": 8.08,
+   "utterance": 0
+  },
+  {
+   "text": "ma",
+   "start": 8.08,
+   "end": 8.32,
+   "utterance": 0
+  },
+  {
+   "text": "ik",
+   "start": 8.32,
+   "end": 8.56,
+   "utterance": 0
+  },
+  {
+   "text": "diveh.",
+   "start": 8.56,
+   "end": 9.04,
+   "utterance": 0
+  },
+  {
+   "text": "Pi",
+   "start": 9.04,
+   "end": 9.36,
+   "utterance": 0
+  },
+  {
+   "text": "blo",
+   "start": 9.36,
+   "end": 9.6,
+   "utterance": 0
+  },
+  {
+   "text": "fojnm",
+   "start": 9.6,
+   "end": 9.76,
+   "utterance": 0
+  },
+  {
+   "text": "szumc",
+   "start": 9.76,
+   "end": 9.92,
+   "utterance": 0
+  },
+  {
+   "text": "ik",
+   "start": 9.92,
+   "end": 10.16,
+   "utterance": 0
+  },
+  {
+   "text": "rujulids",
+   "start": 10.16,
+   "end": 10.72,
+   "utterance": 0
+  },
+  {
+   "text": "aludm",
+   "start": 10.72,
+   "end": 11.12,
+   "utterance": 0
+  },
+  {
+   "text": "voncse",
+   "start": 11.12,
+   "end": 11.44,
+   "utterance": 0
+  },
+  {
+   "text": "veh",
+   "start": 11.44,
+   "end": 11.68,
+   "utterance": 0
+  },
+  {
+   "text": "lvom",
+   "start": 11.68,
+   "end": 12,
+   "utterance": 0
+  },
+  {
+   "text": "blo",
+   "start": 12,
+   "end": 12.16,
+   "utterance": 0
+  },
+  {
+   "text": "mosg",
+   "start": 12.16,
+   "end": 12.4,
+   "utterance": 0
+  },
+  {
+   "text": "gewasnind.",
+   "start": 12.4,
+   "end": 12.72,
+   "utterance": 0
+  },
+  {
+   "text": "Teedf",
+   "start": 13.015,
+   "end": 13.415,
+   "utterance": 0
+  },
+  {
+   "text": "eg",
+   "start": 13.415,
+   "end": 13.575,
+   "utterance": 0
+  },
+  {
+   "text": "potd",
+   "start": 13.575,
+   "end": 13.735,
+   "utterance": 0
+  },
+  {
+   "text": "vhiuj",
+   "start": 13.735,
+   "end": 14.135,
+   "utterance": 0
+  },
+  {
+   "text": "pufo",
+   "start": 14.135,
+   "end": 14.295,
+   "utterance": 0
+  },
+  {
+   "text": "eg",
+   "start": 14.295,
+   "end": 14.535,
+   "utterance": 0
+  },
+  {
+   "text": "pornatco",
+   "start": 14.535,
+   "end": 14.935,
+   "utterance": 0
+  },
+  {
+   "text": "udc",
+   "start": 14.935,
+   "end": 15.175,
+   "utterance": 0
+  },
+  {
+   "text": "idsa",
+   "start": 15.175,
+   "end": 15.495,
+   "utterance": 0
+  },
+  {
+   "text": "erhuobnt",
+   "start": 15.495,
+   "end": 15.895,
+   "utterance": 0
+  },
+  {
+   "text": "vufzehs",
+   "start": 15.895,
+   "end": 16.215,
+   "utterance": 0
+  },
+  {
+   "text": "az",
+   "start": 16.215,
+   "end": 16.375,
+   "utterance": 0
+  },
+  {
+   "text": "blo",
+   "start": 16.375,
+   "end": 16.455,
+   "utterance": 0
+  },
+  {
+   "text": "vhiuj",
+   "start": 16.455,
+   "end": 16.775,
+   "utterance": 0
+  },
+  {
+   "text": "midk",
+   "start": 16.775,
+   "end": 17.015,
+   "utterance": 0
+  },
+  {
+   "text": "doj",
+   "start": 17.015,
+   "end": 17.495,
+   "utterance": 0
+  },
+  {
+   "text": "udc",
+   "start": 17.575,
+   "end": 17.735,
+   "utterance": 0
+  },
+  {
+   "text": "teedf",
+   "start": 17.735,
+   "end": 17.975,
+   "utterance": 0
+  },
+  {
+   "text": "taevin",
+   "start": 17.975,
+   "end": 18.375,
+   "utterance": 0
+  },
+  {
+   "text": "apublefun",
+   "start": 18.375,
+   "end": 18.935,
+   "utterance": 0
+  },
+  {
+   "text": "nkak",
+   "start": 18.935,
+   "end": 19.095,
+   "utterance": 0
+  },
+  {
+   "text": "enu",
+   "start": 19.095,
+   "end": 19.255,
+   "utterance": 0
+  },
+  {
+   "text": "cefgzek",
+   "start": 19.255,
+   "end": 19.495,
+   "utterance": 0
+  },
+  {
+   "text": "go",
+   "start": 19.495,
+   "end": 19.735,
+   "utterance": 0
+  },
+  {
+   "text": "blas",
+   "start": 19.735,
+   "end": 19.895,
+   "utterance": 0
+  },
+  {
+   "text": "mep",
+   "start": 19.895,
+   "end": 20.135,
+   "utterance": 0
+  },
+  {
+   "text": "duzp",
+   "start": 20.135,
+   "end": 20.455,
+   "utterance": 0
+  },
+  {
+   "text": "tem",
+   "start": 20.455,
+   "end": 20.615,
+   "utterance": 0
+  },
+  {
+   "text": "zokgzi",
+   "start": 20.615,
+   "end": 20.935,
+   "utterance": 0
+  },
+  {
+   "text": "in",
+   "start": 20.935,
+   "end": 21.175,
+   "utterance": 0
+  },
+  {
+   "text": "tpew",
+   "start": 21.175,
+   "end": 21.335,
+   "utterance": 0
+  },
+  {
+   "text": "jwehe.",
+   "start": 21.335,
+   "end": 21.815,
+   "utterance": 0
+  },
+  {
+   "text": "Midk",
+   "start": 21.815,
+   "end": 22.055,
+   "utterance": 0
+  },
+  {
+   "text": "aiz",
+   "start": 22.055,
+   "end": 22.215,
+   "utterance": 0
+  },
+  {
+   "text": "loc,",
+   "start": 22.215,
+   "end": 22.535,
+   "utterance": 0
+  },
+  {
+   "text": "wa",
+   "start": 22.535,
+   "end": 22.615,
+   "utterance": 0
+  },
+  {
+   "text": "vwoskuj",
+   "start": 22.615,
+   "end": 22.855,
+   "utterance": 0
+  },
+  {
+   "text": "tcici",
+   "start": 22.855,
+   "end": 23.095,
+   "utterance": 0
+  },
+  {
+   "text": "in",
+   "start": 23.095,
+   "end": 23.335,
+   "utterance": 0
+  },
+  {
+   "text": "jnwoo",
+   "start": 23.335,
+   "end": 23.495,
+   "utterance": 0
+  },
+  {
+   "text": "suttfw,",
+   "start": 23.495,
+   "end": 23.815,
+   "utterance": 0
+  },
+  {
+   "text": "coh",
+   "start": 23.815,
+   "end": 23.975,
+   "utterance": 0
+  },
+  {
+   "text": "midk",
+   "start": 23.975,
+   "end": 24.135,
+   "utterance": 0
+  },
+  {
+   "text": "aiz",
+   "start": 24.135,
+   "end": 24.295,
+   "utterance": 0
+  },
+  {
+   "text": "noefgted",
+   "start": 24.295,
+   "end": 24.535,
+   "utterance": 0
+  },
+  {
+   "text": "bob,",
+   "start": 24.535,
+   "end": 24.775,
+   "utterance": 0
+  },
+  {
+   "text": "fi'wa",
+   "start": 24.775,
+   "end": 25.015,
+   "utterance": 0
+  },
+  {
+   "text": "ziug",
+   "start": 25.015,
+   "end": 25.095,
+   "utterance": 0
+  },
+  {
+   "text": "teedf",
+   "start": 25.095,
+   "end": 25.335,
+   "utterance": 0
+  },
+  {
+   "text": "tcici",
+   "start": 25.335,
+   "end": 25.575,
+   "utterance": 0
+  },
+  {
+   "text": "vegwe",
+   "start": 25.575,
+   "end": 26.615,
+   "utterance": 0
+  },
+  {
+   "text": "rso",
+   "start": 25.95,
+   "end": 26.11,
+   "utterance": 0
+  },
+  {
+   "text": "hoc",
+   "start": 26.11,
+   "end": 26.27,
+   "utterance": 0
+  },
+  {
+   "text": "u",
+   "start": 26.27,
+   "end": 26.43,
+   "utterance": 0
+  },
+  {
+   "text": "cuhpgino",
+   "start": 26.43,
+   "end": 26.75,
+   "utterance": 0
+  },
+  {
+   "text": "fonkojv.",
+   "start": 26.75,
+   "end": 27.31,
+   "utterance": 0
+  },
+  {
+   "text": "Pi",
+   "start": 27.31,
+   "end": 27.39,
+   "utterance": 0
+  },
+  {
+   "text": "wotloj",
+   "start": 27.39,
+   "end": 27.79,
+   "utterance": 0
+  },
+  {
+   "text": "tbu,",
+   "start": 27.79,
+   "end": 28.19,
+   "utterance": 0
+  },
+  {
+   "text": "tfoc'si",
+   "start": 28.19,
+   "end": 28.35,
+   "utterance": 0
+  },
+  {
+   "text": "vewuck",
+   "start": 28.35,
+   "end": 28.75,
+   "utterance": 0
+  },
+  {
+   "text": "ojew",
+   "start": 28.75,
+   "end": 28.99,
+   "utterance": 0
+  },
+  {
+   "text": "uv",
+   "start": 28.99,
+   "end": 29.23,
+   "utterance": 0
+  },
+  {
+   "text": "u",
+   "start": 29.23,
+   "end": 29.39,
+   "utterance": 0
+  },
+  {
+   "text": "diwseorub.",
+   "start": 29.39,
+   "end": 29.95,
+   "utterance": 0
+  },
+  {
+   "text": "I",
+   "start": 29.95,
+   "end": 30.03,
+   "utterance": 0
+  },
+  {
+   "text": "piep,",
+   "start": 30.03,
+   "end": 30.51,
+   "utterance": 0
+  },
+  {
+   "text": "uk",
+   "start": 30.75,
+   "end": 30.91,
+   "utterance": 0
+  },
+  {
+   "text": "veodca,",
+   "start": 30.91,
+   "end": 31.15,
+   "utterance": 0
+  },
+  {
+   "text": "wa",
+   "start": 31.15,
+   "end": 31.23,
+   "utterance": 0
+  },
+  {
+   "text": "wwazv",
+   "start": 31.23,
+   "end": 31.39,
+   "utterance": 0
+  },
+  {
+   "text": "gefu",
+   "start": 31.39,
+   "end": 31.55,
+   "utterance": 0
+  },
+  {
+   "text": "u",
+   "start": 31.55,
+   "end": 31.71,
+   "utterance": 0
+  },
+  {
+   "text": "fed",
+   "start": 31.71,
+   "end": 31.87,
+   "utterance": 0
+  },
+  {
+   "text": "zuut,",
+   "start": 31.87,
+   "end": 32.19,
+   "utterance": 0
+  },
+  {
+   "text": "u",
+   "start": 32.19,
+   "end": 32.27,
+   "utterance": 0
+  },
+  {
+   "text": "zvninger,",
+   "start": 32.27,
+   "end": 32.67,
+   "utterance": 0
+  },
+  {
+   "text": "udc",
+   "start": 32.67,
+   "end": 32.75,
+   "utterance": 0
+  },
+  {
+   "text": "wa",
+   "start": 32.75,
+   "end": 32.91,
+   "utterance": 0
+  },
+  {
+   "text": "wuf",
+   "start": 32.91,
+   "end": 33.15,
+   "utterance": 0
+  },
+  {
+   "text": "uzo",
+   "start": 33.15,
+   "end": 33.39,
+   "utterance": 0
+  },
+  {
+   "text": "u",
+   "start": 33.39,
+   "end": 33.47,
+   "utterance": 0
+  },
+  {
+   "text": "geurhed",
+   "start": 33.47,
+   "end": 33.79,
+   "utterance": 0
+  },
+  {
+   "text": "gigoiga",
+   "start": 33.79,
+   "end": 34.11,
+   "utterance": 0
+  },
+  {
+   "text": "wmow'r",
+   "start": 34.11,
+   "end": 34.43,
+   "utterance": 0
+  },
+  {
+   "text": "behb",
+   "start": 34.43,
+   "end": 34.59,
+   "utterance": 0
+  },
+  {
+   "text": "pej",
+   "start": 34.59,
+   "end": 34.75,
+   "utterance": 0
+  },
+  {
+   "text": "sabu",
+   "start": 34.75,
+   "end": 35.07,
+   "utterance": 0
+  },
+  {
+   "text": "ik.",
+   "start": 35.07,
+   "end": 35.55,
+   "utterance": 0
+  },
+  {
+   "text": "Coh",
+   "start": 35.63,
+   "end": 35.79,
+   "utterance": 0
+  },
+  {
+   "text": "lelbikh",
+   "start": 35.79,
+   "end": 36.03,
+   "utterance": 0
+  },
+  {
+   "text": "relo",
+   "start": 36.03,
+   "end": 36.19,
+   "utterance": 0
+  },
+  {
+   "text": "laptelj,",
+   "start": 36.19,
+   "end": 36.75,
+   "utterance": 0
+  },
+  {
+   "text": "vinvott,",
+   "start": 36.75,
+   "end": 37.15,
+   "utterance": 0
+  },
+  {
+   "text": "fgelgf,",
+   "start": 37.15,
+   "end": 37.55,
+   "utterance": 0
+  },
+  {
+   "text": "apublefun",
+   "start": 37.55,
+   "end": 38.19,
+   "utterance": 0
+  },
+  {
+   "text": "gigoiga",
+   "start": 38.19,
+   "end": 38.51,
+   "utterance": 0
+  },
+  {
+   "text": "u,",
+   "start": 38.51,
+   "end": 38.99,
+   "utterance": 0
+  },
+  {
+   "text": "pee",
+   "start": 38.99,
+   "end": 39.15,
+   "utterance": 0
+  },
+  {
+   "text": "jew'v",
+   "start": 39.15,
+   "end": 39.39,
+   "utterance": 0
+  },
+  {
+   "text": "teuk",
+   "start": 39.39,
+   "end": 39.63,
+   "utterance": 0
+  },
+  {
+   "text": "tcici",
+   "start": 39.63,
+   "end": 39.87,
+   "utterance": 0
+  },
+  {
+   "text": "fwagsk,",
+   "start": 39.87,
+   "end": 40.03,
+   "utterance": 0
+  },
+  {
+   "text": "udc",
+   "start": 40.475,
+   "end": 40.715,
+   "utterance": 0
+  },
+  {
+   "text": "s,",
+   "start": 40.715,
+   "end": 41.115,
+   "utterance": 0
+  },
+  {
+   "text": "tfoc'si",
+   "start": 41.115,
+   "end": 41.355,
+   "utterance": 0
+  },
+  {
+   "text": "erhuobnt",
+   "start": 41.355,
+   "end": 41.595,
+   "utterance": 0
+  },
+  {
+   "text": "upmewicw",
+   "start": 41.595,
+   "end": 42.155,
+   "utterance": 0
+  },
+  {
+   "text": "bumcuwm",
+   "start": 42.155,
+   "end": 42.475,
+   "utterance": 0
+  },
+  {
+   "text": "ovoilmh",
+   "start": 42.475,
+   "end": 42.875,
+   "utterance": 0
+  },
+  {
+   "text": "juuv",
+   "start": 42.875,
+   "end": 43.115,
+   "utterance": 0
+  },
+  {
+   "text": "hehh'f",
+   "start": 43.115,
+   "end": 43.435,
+   "utterance": 0
+  },
+  {
+   "text": "wiradubpehg.",
+   "start": 43.435,
+   "end": 44.075,
+   "utterance": 0
+  },
+  {
+   "text": "Pi",
+   "start": 44.04,
+   "end": 44.2,
+   "utterance": 1000
+  },
+  {
+   "text": "Pi",
+   "start": 44.075,
+   "end": 44.235,
+   "utterance": 0
+  },
+  {
+   "text": "dob",
+   "start": 44.2,
+   "end": 44.44,
+   "utterance": 1000
+  },
+  {
+   "text": "dob",
+   "start": 44.235,
+   "end": 44.395,
+   "utterance": 0
+  },
+  {
+   "text": "onilrsu,",
+   "start": 44.395,
+   "end": 44.875,
+   "utterance": 0
+  },
+  {
+   "text": "onilrsu,",
+   "start": 44.44,
+   "end": 44.68,
+   "utterance": 1000
+  },
+  {
+   "text": "bob",
+   "start": 44.68,
+   "end": 45,
+   "utterance": 1000
+  },
+  {
+   "text": "bob",
+   "start": 44.875,
+   "end": 45.995,
+   "utterance": 0
+  },
+  {
+   "text": "zfaz",
+   "start": 45,
+   "end": 45.24,
+   "utterance": 1000
+  },
+  {
+   "text": "sa'lo",
+   "start": 45.24,
+   "end": 45.48,
+   "utterance": 1000
+  },
+  {
+   "text": "in",
+   "start": 45.48,
+   "end": 45.56,
+   "utterance": 1000
+  },
+  {
+   "text": "loda,",
+   "start": 45.56,
+   "end": 46.04,
+   "utterance": 1000
+  },
+  {
+   "text": "rg",
+   "start": 46.04,
+   "end": 46.2,
+   "utterance": 1000
+  },
+  {
+   "text": "noefgted,",
+   "start": 46.2,
+   "end": 46.6,
+   "utterance": 1000
+  },
+  {
+   "text": "vto'n",
+   "start": 46.6,
+   "end": 46.84,
+   "utterance": 1000
+  },
+  {
+   "text": "uilkuj",
+   "start": 46.84,
+   "end": 47.08,
+   "utterance": 1000
+  },
+  {
+   "text": "az",
+   "start": 47.08,
+   "end": 47.24,
+   "utterance": 1000
+  },
+  {
+   "text": "blo",
+   "start": 47.24,
+   "end": 47.4,
+   "utterance": 1000
+  },
+  {
+   "text": "vhiuj",
+   "start": 47.4,
+   "end": 47.64,
+   "utterance": 1000
+  },
+  {
+   "text": "dmilokk",
+   "start": 47.64,
+   "end": 48.12,
+   "utterance": 1000
+  },
+  {
+   "text": "uv",
+   "start": 48.12,
+   "end": 48.36,
+   "utterance": 1000
+  },
+  {
+   "text": "u",
+   "start": 48.36,
+   "end": 48.52,
+   "utterance": 1000
+  },
+  {
+   "text": "sewjior",
+   "start": 48.52,
+   "end": 48.92,
+   "utterance": 1000
+  },
+  {
+   "text": "es",
+   "start": 48.92,
+   "end": 49.24,
+   "utterance": 1000
+  },
+  {
+   "text": "kroodabp.",
+   "start": 49.24,
+   "end": 49.88,
+   "utterance": 1000
+  },
+  {
+   "text": "Wotloj",
+   "start": 49.88,
+   "end": 50.28,
+   "utterance": 1000
+  },
+  {
+   "text": "jnwoo,",
+   "start": 50.28,
+   "end": 50.68,
+   "utterance": 1000
+  },
+  {
+   "text": "wa",
+   "start": 50.68,
+   "end": 50.84,
+   "utterance": 1000
+  },
+  {
+   "text": "kab",
+   "start": 50.84,
+   "end": 51.08,
+   "utterance": 1000
+  },
+  {
+   "text": "sdes",
+   "start": 51.08,
+   "end": 51.32,
+   "utterance": 1000
+  },
+  {
+   "text": "jtpipnli.",
+   "start": 51.32,
+   "end": 52.12,
+   "utterance": 1000
+  },
+  {
+   "text": "Udc",
+   "start": 52.12,
+   "end": 52.2,
+   "utterance": 1001
+  },
+  {
+   "text": "lurullcz,",
+   "start": 52.2,
+   "end": 52.52,
+   "utterance": 1001
+  },
+  {
+   "text": "tpew",
+   "start": 52.52,
+   "end": 52.84,
+   "utterance": 1001
+  },
+  {
+   "text": "uga",
+   "start": 52.84,
+   "end": 53,
+   "utterance": 1001
+  },
+  {
+   "text": "keuj",
+   "start": 53,
+   "end": 53.16,
+   "utterance": 1001
+  },
+  {
+   "text": "u",
+   "start": 53.16,
+   "end": 53.32,
+   "utterance": 1001
+  },
+  {
+   "text": "tac",
+   "start": 53.32,
+   "end": 53.4,
+   "utterance": 1001
+  },
+  {
+   "text": "uk",
+   "start": 53.4,
+   "end": 53.56,
+   "utterance": 1001
+  },
+  {
+   "text": "vgiatakz",
+   "start": 53.56,
+   "end": 53.88,
+   "utterance": 1001
+  },
+  {
+   "text": "udc",
+   "start": 53.88,
+   "end": 54.12,
+   "utterance": 1001
+  },
+  {
+   "text": "vuatkonn",
+   "start": 54.12,
+   "end": 54.44,
+   "utterance": 1001
+  },
+  {
+   "text": "dob",
+   "start": 54.44,
+   "end": 54.76,
+   "utterance": 1001
+  },
+  {
+   "text": "ol",
+   "start": 54.76,
+   "end": 55,
+   "utterance": 1001
+  },
+  {
+   "text": "eg",
+   "start": 55,
+   "end": 55.24,
+   "utterance": 1001
+  },
+  {
+   "text": "nufuhmm.",
+   "start": 55.24,
+   "end": 55.88,
+   "utterance": 1001
+  },
+  {
+   "text": "Coh",
+   "start": 55.88,
+   "end": 56.04,
+   "utterance": 1001
+  },
+  {
+   "text": "funuhahrp,",
+   "start": 56.04,
+   "end": 56.44,
+   "utterance": 1001
+  },
+  {
+   "text": "zfaz",
+   "start": 56.805,
+   "end": 57.045,
+   "utterance": 1001
+  },
+  {
+   "text": "tfoc'si",
+   "start": 57.045,
+   "end": 57.285,
+   "utterance": 1001
+  },
+  {
+   "text": "wnezr",
+   "start": 57.285,
+   "end": 57.445,
+   "utterance": 1001
+  },
+  {
+   "text": "midk",
+   "start": 57.445,
+   "end": 57.605,
+   "utterance": 1001
+  },
+  {
+   "text": "velarvawv",
+   "start": 57.605,
+   "end": 57.925,
+   "utterance": 1001
+  },
+  {
+   "text": "es",
+   "start": 57.925,
+   "end": 58.165,
+   "utterance": 1001
+  },
+  {
+   "text": "bazofbikw'v",
+   "start": 58.165,
+   "end": 58.645,
+   "utterance": 1001
+  },
+  {
+   "text": "ziz",
+   "start": 58.645,
+   "end": 58.805,
+   "utterance": 1001
+  },
+  {
+   "text": "bumcuwm,",
+   "start": 58.805,
+   "end": 59.285,
+   "utterance": 1001
+  },
+  {
+   "text": "wa",
+   "start": 59.285,
+   "end": 59.445,
+   "utterance": 1001
+  },
+  {
+   "text": "gefu",
+   "start": 59.445,
+   "end": 59.605,
+   "utterance": 1001
+  },
+  {
+   "text": "go",
+   "start": 59.605,
+   "end": 59.765,
+   "utterance": 1001
+  },
+  {
+   "text": "didm",
+   "start": 59.765,
+   "end": 60.085,
+   "utterance": 1001
+  },
+  {
+   "text": "cufr",
+   "start": 60.085,
+   "end": 60.325,
+   "utterance": 1001
+  },
+  {
+   "text": "aiz",
+   "start": 60.325,
+   "end": 60.645,
+   "utterance": 1001
+  },
+  {
+   "text": "agpo",
+   "start": 60.645,
+   "end": 60.965,
+   "utterance": 1001
+  },
+  {
+   "text": "go",
+   "start": 60.965,
+   "end": 61.205,
+   "utterance": 1001
+  },
+  {
+   "text": "bovp",
+   "start": 61.205,
+   "end": 61.445,
+   "utterance": 1001
+  },
+  {
+   "text": "uv",
+   "start": 61.445,
+   "end": 61.605,
+   "utterance": 1001
+  },
+  {
+   "text": "udc",
+   "start": 61.605,
+   "end": 61.765,
+   "utterance": 1001
+  },
+  {
+   "text": "fap",
+   "start": 61.765,
+   "end": 62.005,
+   "utterance": 1001
+  },
+  {
+   "text": "os",
+   "start": 62.005,
+   "end": 62.165,
+   "utterance": 1001
+  },
+  {
+   "text": "dob",
+   "start": 62.165,
+   "end": 62.325,
+   "utterance": 1001
+  },
+  {
+   "text": "sdes",
+   "start": 62.325,
+   "end": 62.805,
+   "utterance": 1001
+  },
+  {
+   "text": "gigoiga",
+   "start": 62.885,
+   "end": 63.205,
+   "utterance": 1001
+  },
+  {
+   "text": "nkak",
+   "start": 63.205,
+   "end": 63.525,
+   "utterance": 1001
+  },
+  {
+   "text": "giavj",
+   "start": 63.525,
+   "end": 63.685,
+   "utterance": 1001
+  },
+  {
+   "text": "vo",
+   "start": 63.685,
+   "end": 63.845,
+   "utterance": 1001
+  },
+  {
+   "text": "gugurc",
+   "start": 63.845,
+   "end": 64.085,
+   "utterance": 1001
+  },
+  {
+   "text": "ijin",
+   "start": 64.085,
+   "end": 64.405,
+   "utterance": 1001
+  },
+  {
+   "text": "vcuak",
+   "start": 64.405,
+   "end": 64.645,
+   "utterance": 1001
+  },
+  {
+   "text": "vuatkonn",
+   "start": 64.645,
+   "end": 65.045,
+   "utterance": 1001
+  },
+  {
+   "text": "anpafjopecj.",
+   "start": 65.045,
+   "end": 65.845,
+   "utterance": 1001
+  },
+  {
+   "text": "Hnitzevjig",
+   "start": 66.005,
+   "end": 66.565,
+   "utterance": 1002
+  },
+  {
+   "text": "udc",
+   "start": 66.565,
+   "end": 66.805,
+   "utterance": 1002
+  },
+  {
+   "text": "zwbivmhozs",
+   "start": 66.805,
+   "end": 67.285,
+   "utterance": 1002
+  },
+  {
+   "text": "ik",
+   "start": 67.285,
+   "end": 67.605,
+   "utterance": 1002
+  },
+  {
+   "text": "pej",
+   "start": 67.605,
+   "end": 67.925,
+   "utterance": 1002
+  },
+  {
+   "text": "vcuak",
+   "start": 67.925,
+   "end": 68.165,
+   "utterance": 1002
+  },
+  {
+   "text": "tmuan",
+   "start": 68.165,
+   "end": 68.485,
+   "utterance": 1002
+  },
+  {
+   "text": "nomagik",
+   "start": 68.485,
+   "end": 68.885,
+   "utterance": 1002
+  },
+  {
+   "text": "aaw",
+   "start": 68.885,
+   "end": 69.125,
+   "utterance": 1002
+  },
+  {
+   "text": "blas",
+   "start": 69.125,
+   "end": 69.445,
+   "utterance": 1002
+  },
+  {
+   "text": "tfoc'si",
+   "start": 69.445,
+   "end": 69.765,
+   "utterance": 1002
+  },
+  {
+   "text": "erhuobnt",
+   "start": 69.765,
+   "end": 70.085,
+   "utterance": 1002
+  },
+  {
+   "text": "bocatvi",
+   "start": 70.085,
+   "end": 70.405,
+   "utterance": 1002
+  },
+  {
+   "text": "uk.",
+   "start": 70.405,
+   "end": 70.565,
+   "utterance": 1002
+  },
+  {
+   "text": "Udc",
+   "start": 70.71,
+   "end": 70.95,
+   "utterance": 1002
+  },
+  {
+   "text": "szem",
+   "start": 70.95,
+   "end": 71.11,
+   "utterance": 1002
+  },
+  {
+   "text": "pee",
+   "start": 71.11,
+   "end": 71.27,
+   "utterance": 1002
+  },
+  {
+   "text": "behb",
+   "start": 71.27,
+   "end": 71.43,
+   "utterance": 1002
+  },
+  {
+   "text": "lebu",
+   "start": 71.43,
+   "end": 71.59,
+   "utterance": 1002
+  },
+  {
+   "text": "sdes",
+   "start": 71.59,
+   "end": 71.75,
+   "utterance": 1002
+  },
+  {
+   "text": "gozd",
+   "start": 71.75,
+   "end": 71.99,
+   "utterance": 1002
+  },
+  {
+   "text": "uk",
+   "start": 71.99,
+   "end": 72.15,
+   "utterance": 1002
+  },
+  {
+   "text": "kene",
+   "start": 72.15,
+   "end": 72.39,
+   "utterance": 1002
+  },
+  {
+   "text": "udc",
+   "start": 72.39,
+   "end": 72.55,
+   "utterance": 1002
+  },
+  {
+   "text": "atwibnuuk,",
+   "start": 72.55,
+   "end": 73.03,
+   "utterance": 1002
+  },
+  {
+   "text": "nuel",
+   "start": 73.03,
+   "end": 73.19,
+   "utterance": 1002
+  },
+  {
+   "text": "sdes",
+   "start": 73.19,
+   "end": 73.43,
+   "utterance": 1002
+  },
+  {
+   "text": "hood",
+   "start": 73.43,
+   "end": 73.59,
+   "utterance": 1002
+  },
+  {
+   "text": "fuak,",
+   "start": 73.59,
+   "end": 73.99,
+   "utterance": 1002
+  },
+  {
+   "text": "udc",
+   "start": 73.99,
+   "end": 74.07,
+   "utterance": 1002
+  },
+  {
+   "text": "deik",
+   "start": 74.07,
+   "end": 74.31,
+   "utterance": 1002
+  },
+  {
+   "text": "sdes",
+   "start": 74.31,
+   "end": 74.39,
+   "utterance": 1002
+  },
+  {
+   "text": "ijin",
+   "start": 74.39,
+   "end": 74.71,
+   "utterance": 1002
+  },
+  {
+   "text": "lvom",
+   "start": 74.71,
+   "end": 74.87,
+   "utterance": 1002
+  },
+  {
+   "text": "fijapef",
+   "start": 74.87,
+   "end": 75.27,
+   "utterance": 1002
+  },
+  {
+   "text": "udc",
+   "start": 75.27,
+   "end": 75.43,
+   "utterance": 1002
+  },
+  {
+   "text": "dsjeodn.",
+   "start": 75.43,
+   "end": 75.99,
+   "utterance": 1002
+  },
+  {
+   "text": "Pawe",
+   "start": 75.99,
+   "end": 76.23,
+   "utterance": 1002
+  },
+  {
+   "text": "uk",
+   "start": 76.23,
+   "end": 76.31,
+   "utterance": 1002
+  },
+  {
+   "text": "tpew",
+   "start": 76.31,
+   "end": 76.55,
+   "utterance": 1002
+  },
+  {
+   "text": "ik",
+   "start": 76.55,
+   "end": 76.71,
+   "utterance": 1002
+  },
+  {
+   "text": "idpigpipe,",
+   "start": 76.71,
+   "end": 77.11,
+   "utterance": 1002
+  },
+  {
+   "text": "Ah'l",
+   "start": 77.465,
+   "end": 77.945,
+   "utterance": 1002
+  },
+  {
+   "text": "tutleelcs",
+   "start": 77.945,
+   "end": 78.265,
+   "utterance": 1002
+  },
+  {
+   "text": "ziz",
+   "start": 78.265,
+   "end": 78.505,
+   "utterance": 1002
+  },
+  {
+   "text": "uuvn,",
+   "start": 78.505,
+   "end": 79.225,
+   "utterance": 1002
+  },
+  {
+   "text": "coh",
+   "start": 79.225,
+   "end": 79.305,
+   "utterance": 1002
+  },
+  {
+   "text": "ah'l",
+   "start": 79.305,
+   "end": 79.545,
+   "utterance": 1002
+  },
+  {
+   "text": "idsa",
+   "start": 79.545,
+   "end": 79.785,
+   "utterance": 1002
+  },
+  {
+   "text": "negicejogd",
+   "start": 79.785,
+   "end": 80.265,
+   "utterance": 1002
+  },
+  {
+   "text": "ziz",
+   "start": 80.265,
+   "end": 80.505,
+   "utterance": 1002
+  },
+  {
+   "text": "pewptuwucag.",
+   "start": 80.505,
+   "end": 81.225,
+   "utterance": 1002
+  },
+  {
+   "text": "Pee",
+   "start": 81.225,
+   "end": 81.305,
+   "utterance": 1002
+  },
+  {
+   "text": "behb",
+   "start": 81.305,
+   "end": 81.545,
+   "utterance": 1002
+  },
+  {
+   "text": "gefu",
+   "start": 81.545,
+   "end": 81.785,
+   "utterance": 1002
+  },
+  {
+   "text": "go",
+   "start": 81.785,
+   "end": 81.945,
+   "utterance": 1002
+  },
+  {
+   "text": "fjaeh",
+   "start": 81.945,
+   "end": 82.345,
+   "utterance": 1002
+  },
+  {
+   "text": "juuv",
+   "start": 82.345,
+   "end": 82.505,
+   "utterance": 1002
+  },
+  {
+   "text": "hows",
+   "start": 82.505,
+   "end": 82.825,
+   "utterance": 1002
+  },
+  {
+   "text": "relo",
+   "start": 82.825,
+   "end": 83.145,
+   "utterance": 1002
+  },
+  {
+   "text": "ma",
+   "start": 83.145,
+   "end": 83.305,
+   "utterance": 1002
+  },
+  {
+   "text": "es",
+   "start": 83.305,
+   "end": 83.545,
+   "utterance": 1002
+  },
+  {
+   "text": "rso",
+   "start": 83.545,
+   "end": 83.785,
+   "utterance": 1002
+  },
+  {
+   "text": "ik",
+   "start": 83.785,
+   "end": 83.945,
+   "utterance": 1002
+  },
+  {
+   "text": "twatm",
+   "start": 83.945,
+   "end": 84.345,
+   "utterance": 1002
+  },
+  {
+   "text": "bocatvi",
+   "start": 84.345,
+   "end": 85.065,
+   "utterance": 1002
+  },
+  {
+   "text": "udc",
+   "start": 85.065,
+   "end": 85.305,
+   "utterance": 1002
+  },
+  {
+   "text": "szem",
+   "start": 85.305,
+   "end": 85.545,
+   "utterance": 1002
+  },
+  {
+   "text": "lebu",
+   "start": 85.545,
+   "end": 85.865,
+   "utterance": 1002
+  },
+  {
+   "text": "sdes",
+   "start": 85.865,
+   "end": 86.105,
+   "utterance": 1002
+  },
+  {
+   "text": "velarvawv",
+   "start": 86.105,
+   "end": 86.425,
+   "utterance": 1002
+  },
+  {
+   "text": "poir",
+   "start": 86.425,
+   "end": 86.745,
+   "utterance": 1002
+  },
+  {
+   "text": "go",
+   "start": 86.745,
+   "end": 86.985,
+   "utterance": 1002
+  },
+  {
+   "text": "vo",
+   "start": 86.985,
+   "end": 87.145,
+   "utterance": 1002
+  },
+  {
+   "text": "bocatvi",
+   "start": 87.12,
+   "end": 87.52,
+   "utterance": 2000
+  },
+  {
+   "text": "bocatvi",
+   "start": 87.145,
+   "end": 87.465,
+   "utterance": 1002
+  },
+  {
+   "text": "in.",
+   "start": 87.465,
+   "end": 87.945,
+   "utterance": 1002
+  },
+  {
+   "text": "in.",
+   "start": 87.52,
+   "end": 88,
+   "utterance": 2000
+  },
+  {
+   "text": "Coh",
+   "start": 87.945,
+   "end": 89.145,
+   "utterance": 1002
+  },
+  {
+   "text": "Coh",
+   "start": 88,
+   "end": 88.08,
+   "utterance": 2000
+  },
+  {
+   "text": "bob",
+   "start": 88.08,
+   "end": 88.32,
+   "utterance": 2000
+  },
+  {
+   "text": "dob",
+   "start": 88.32,
+   "end": 88.56,
+   "utterance": 2000
+  },
+  {
+   "text": "blo",
+   "start": 88.56,
+   "end": 88.64,
+   "utterance": 2000
+  },
+  {
+   "text": "fojnm",
+   "start": 88.64,
+   "end": 88.8,
+   "utterance": 2000
+  },
+  {
+   "text": "szumc,",
+   "start": 88.8,
+   "end": 89.12,
+   "utterance": 2000
+  },
+  {
+   "text": "blo",
+   "start": 89.12,
+   "end": 89.2,
+   "utterance": 2000
+  },
+  {
+   "text": "rujulids",
+   "start": 89.2,
+   "end": 89.52,
+   "utterance": 2000
+  },
+  {
+   "text": "mijn",
+   "start": 89.52,
+   "end": 89.84,
+   "utterance": 2000
+  },
+  {
+   "text": "ik",
+   "start": 89.84,
+   "end": 90.08,
+   "utterance": 2000
+  },
+  {
+   "text": "blas",
+   "start": 90.08,
+   "end": 90.32,
+   "utterance": 2000
+  },
+  {
+   "text": "runb",
+   "start": 90.32,
+   "end": 90.56,
+   "utterance": 2000
+  },
+  {
+   "text": "nufuhmm",
+   "start": 90.56,
+   "end": 90.88,
+   "utterance": 2000
+  },
+  {
+   "text": "npes.",
+   "start": 90.88,
+   "end": 91.44,
+   "utterance": 2000
+  },
+  {
+   "text": "Pi",
+   "start": 91.44,
+   "end": 91.52,
+   "utterance": 2000
+  },
+  {
+   "text": "dob",
+   "start": 91.52,
+   "end": 91.76,
+   "utterance": 2000
+  },
+  {
+   "text": "nkak,",
+   "start": 91.76,
+   "end": 92.08,
+   "utterance": 2000
+  },
+  {
+   "text": "dlim",
+   "start": 92.08,
+   "end": 92.16,
+   "utterance": 2000
+  },
+  {
+   "text": "jaocb",
+   "start": 92.16,
+   "end": 92.4,
+   "utterance": 2000
+  },
+  {
+   "text": "blo",
+   "start": 92.4,
+   "end": 92.64,
+   "utterance": 2000
+  },
+  {
+   "text": "fazw",
+   "start": 92.64,
+   "end": 92.88,
+   "utterance": 2000
+  },
+  {
+   "text": "ojtujugakd",
+   "start": 92.88,
+   "end": 93.36,
+   "utterance": 2000
+  },
+  {
+   "text": "nnaszen",
+   "start": 93.36,
+   "end": 93.84,
+   "utterance": 2000
+  },
+  {
+   "text": "midk",
+   "start": 93.84,
+   "end": 94.16,
+   "utterance": 2000
+  },
+  {
+   "text": "hehulimhc",
+   "start": 94.16,
+   "end": 94.56,
+   "utterance": 2000
+  },
+  {
+   "text": "udc",
+   "start": 94.56,
+   "end": 94.88,
+   "utterance": 2000
+  },
+  {
+   "text": "koefoluz",
+   "start": 94.88,
+   "end": 95.36,
+   "utterance": 2000
+  },
+  {
+   "text": "cefgzek",
+   "start": 95.36,
+   "end": 95.84,
+   "utterance": 2000
+  },
+  {
+   "text": "go",
+   "start": 95.84,
+   "end": 96.08,
+   "utterance": 2000
+  },
+  {
+   "text": "juuv",
+   "start": 96.08,
+   "end": 96.32,
+   "utterance": 2000
+  },
+  {
+   "text": "hehh'f",
+   "start": 96.32,
+   "end": 96.72,
+   "utterance": 2000
+  },
+  {
+   "text": "iniml",
+   "start": 96.72,
+   "end": 97.04,
+   "utterance": 2000
+  },
+  {
+   "text": "jwehe",
+   "start": 97.04,
+   "end": 97.52,
+   "utterance": 2000
+  },
+  {
+   "text": "pi",
+   "start": 97.52,
+   "end": 97.76,
+   "utterance": 2000
+  },
+  {
+   "text": "pee",
+   "start": 97.76,
+   "end": 98,
+   "utterance": 2000
+  },
+  {
+   "text": "bawop",
+   "start": 98,
+   "end": 98.24,
+   "utterance": 2000
+  },
+  {
+   "text": "gefu",
+   "start": 98.24,
+   "end": 98.4,
+   "utterance": 2000
+  },
+  {
+   "text": "go",
+   "start": 98.4,
+   "end": 98.56,
+   "utterance": 2000
+  },
+  {
+   "text": "baelt",
+   "start": 98.56,
+   "end": 98.88,
+   "utterance": 2000
+  },
+  {
+   "text": "blas",
+   "start": 98.88,
+   "end": 99.12,
+   "utterance": 2000
+  },
+  {
+   "text": "tfoc'si",
+   "start": 99.12,
+   "end": 99.36,
+   "utterance": 2000
+  },
+  {
+   "text": "diuhv",
+   "start": 99.36,
+   "end": 99.6,
+   "utterance": 2000
+  },
+  {
+   "text": "dob.",
+   "start": 99.6,
+   "end": 99.76,
+   "utterance": 2000
+  },
+  {
+   "text": "Pi",
+   "start": 99.922,
+   "end": 100.162,
+   "utterance": 2000
+  },
+  {
+   "text": "sfumn",
+   "start": 100.162,
+   "end": 100.402,
+   "utterance": 2000
+  },
+  {
+   "text": "aaw",
+   "start": 100.402,
+   "end": 100.562,
+   "utterance": 2000
+  },
+  {
+   "text": "rg",
+   "start": 100.562,
+   "end": 100.722,
+   "utterance": 2000
+  },
+  {
+   "text": "tiggog",
+   "start": 100.722,
+   "end": 101.042,
+   "utterance": 2000
+  },
+  {
+   "text": "vodouz",
+   "start": 101.042,
+   "end": 101.282,
+   "utterance": 2000
+  },
+  {
+   "text": "ak",
+   "start": 101.282,
+   "end": 101.522,
+   "utterance": 2000
+  },
+  {
+   "text": "pee",
+   "start": 101.522,
+   "end": 101.602,
+   "utterance": 2000
+  },
+  {
+   "text": "wuhb",
+   "start": 101.602,
+   "end": 101.762,
+   "utterance": 2000
+  },
+  {
+   "text": "go",
+   "start": 101.762,
+   "end": 101.842,
+   "utterance": 2000
+  },
+  {
+   "text": "zio",
+   "start": 101.842,
+   "end": 102.002,
+   "utterance": 2000
+  },
+  {
+   "text": "pej",
+   "start": 102.002,
+   "end": 102.242,
+   "utterance": 2000
+  },
+  {
+   "text": "wa",
+   "start": 102.242,
+   "end": 102.482,
+   "utterance": 2000
+  },
+  {
+   "text": "se",
+   "start": 102.482,
+   "end": 102.642,
+   "utterance": 2000
+  },
+  {
+   "text": "os.",
+   "start": 102.642,
+   "end": 102.802,
+   "utterance": 2000
+  }
+ ]
+}

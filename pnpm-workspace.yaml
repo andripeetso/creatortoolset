@@ -1,0 +1,17 @@
+packages:
+  - apps/*
+
+# The same install scripts npm ran for captions-app: native binaries
+# (esbuild, sharp, onnxruntime-node, fsevents, protobufjs) and the
+# Chromium that export rendering drives.
+onlyBuiltDependencies:
+  - esbuild
+  - fsevents
+  - onnxruntime-node
+  - playwright-chromium
+  - protobufjs
+  - sharp
+
+# Lets `pnpm deploy` build a production node_modules from pnpm-lock.yaml
+# (without it, deploy re-resolves and pulls newer versions).
+injectWorkspacePackages: true

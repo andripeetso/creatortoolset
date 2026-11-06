@@ -1,0 +1,9 @@
+node_modules/
+.turbo/
+.DS_Store
+
+# Never commit a live SQLite database or its WAL/SHM sidecars.
+*.db
+*.db-wal
+*.db-shm
+.claude/worktrees/

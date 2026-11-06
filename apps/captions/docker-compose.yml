@@ -1,0 +1,63 @@
+# Creator Toolset on one server: the app plus Caddy, which serves DOMAIN over HTTPS.
+# Run it from this folder, with a .env next to this file (copy .env.example; SELF_HOSTING.md has the steps):
+#   docker compose up -d --build
+#   docker compose exec app node scripts/doctor.mjs
+# Secrets stay in .env, which compose reads for the ${...} values below. Nothing secret is in this file.
+name: creator-toolset
+
+services:
+  app:
+    build:
+      # the pnpm workspace root: the Dockerfile installs and builds from its lockfile
+      context: ../..
+      dockerfile: apps/captions/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # pinned here, so a .env can't move the data volume or change the mode
+      NODE_ENV: production
+      PORT: "3000"
+      DATA_DIR: /data
+      # the app refuses to start without this: it is the sign-in secret and the first admin's password
+      APP_SECRET: ${APP_SECRET:?set APP_SECRET in .env (see .env.example)}
+    volumes:
+      - caption-data:/data
+      # disk-backed (not tmpfs): exports write multi-GB intermediates to /tmp
+      - caption-tmp:/tmp
+    expose:
+      - "3000"
+    # the export renderer (Chromium) shares memory through /dev/shm, which Docker sizes at 64 MB by default
+    shm_size: 1gb
+    # nothing can drop a binary onto the root fs, escalate, or fork-bomb
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 512
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # the Caddyfile reads this as {$DOMAIN}: the hostname it serves and certifies
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env (the hostname whose DNS points at this server)}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - app
+
+volumes:
+  caption-data:
+  caption-tmp:
+  caddy-data:
+  caddy-config:

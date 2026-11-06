@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.env
+.env.local
+*.log
+.DS_Store
+
+# Tools downloaded at setup (ffmpeg, fingerprint and SSCD builds): never source
+runtime/
+
+# Platform-specific visual fingerprint tools
+runtime/fingerprints/
+runtime/sscd/

@@ -1,0 +1,91 @@
+# Creator Toolset
+
+Open-source tools for people who make video and content for a living. Caption a video, clean up and compare
+cuts, get client review on a link, split a long recording into stories, record walkthroughs, write guides,
+study which Instagram posts work and draft new content from them. One web app, one sign-in, and it runs on
+your own machine or your own server.
+
+Licensed under the [MIT License](LICENSE).
+
+## The tools
+
+| Tool | Route | What it does |
+|---|---|---|
+| **Caption Studio** | `/captions` | Transcribe a video, style the captions, and export transparent caption overlays (ProRes 4444, VP9 WebM or PNG sequence) plus SRT, WebVTT and ASS files. |
+| **Audio Enhancer** | `/enhance` | Clean up the sound of an audio or video recording, with a before and after player. |
+| **Review** | `/review` | Frame-accurate review of video cuts. Share one link; reviewers comment on exact frames, approve or ask for changes, with no account needed. Versions stack per video. |
+| **Video Cleaner** | `/clean` | Edit and compare videos, measure visual similarity (PDQ, TMK, SSCD), inspect and remove metadata, and export in batches. |
+| **Story Splitter** | `/stories` | Cut a video into stories of about 20 seconds and download them as one zip. |
+| **Video Notes** | `/video-notes` | A library of screen and camera recordings, or uploads. With cloud transcription on, each one gets a transcript and a title. |
+| **Guide Builder** | `/guides` | Put recordings and caption projects in order, have AI draft an editable page, and publish it as an unlisted link. |
+| **Content Analyzer** | `/analyzer` | A private library of Instagram accounts and posts, with captions, transcripts, comments and stats, and search across all of it. |
+| **Content Workshop** | `/workshop` | Turn the analyzer's library into new content: reel scripts, carousels and ad copy, written with AI in your voice and checked for accuracy against the web. |
+
+Around the tools:
+
+- **Team**: accounts, invite links, roles (owner, admin, member) and per-tool access. Settings → Team.
+- **AI providers**: which AI each account uses. Settings → AI providers.
+- **Mac app**: a native window around the same web app, with the local AI runner in the menu bar.
+  See [apps/mac/README.md](apps/mac/README.md).
+- **Phone app**: an iPhone app that signs in to a server of this kind exists separately; it is not in this repository.
+
+## Your own AI
+
+Several tools use AI: the caption timing pass, the script check, Instagram frame reading, the Workshop's
+writing, and the accuracy check. Creator Toolset never comes with an AI account of its own. You bring one, in
+one of two ways:
+
+1. **Your own Claude or ChatGPT subscription, through the Mac app.** Install the Mac app on the Mac you work
+   on and turn on "Use this Mac for my AI". The Mac runs the official Claude Code or Codex command-line tool,
+   signed in with your own login, and the server hands it jobs. Settings → AI providers walks you through the
+   install and the sign-in.
+2. **An API key.** Put an Anthropic key in the server's `.env` (`ANTHROPIC_API_KEY`). It serves the workspace's
+   API budget, which members without their own AI draw on.
+
+Without any AI, everything else still works. Captions transcribe on the device in the browser, and Review,
+Video Cleaner and the rest need no AI at all.
+
+## Run it on your machine
+
+You need Node.js 22 or newer, [pnpm](https://pnpm.io) 10 (`corepack enable` gives you the right version), and
+`ffmpeg` and `zip` on your PATH (`brew install ffmpeg zip`, or `apt install ffmpeg zip`).
+
+```sh
+git clone <this repository> creator-toolset
+cd creator-toolset
+pnpm install
+pnpm --filter @creator-toolset/captions dev
+```
+
+Open http://localhost:43127. With no `.env` file, sign-in is off and you are the local admin. Your projects
+are kept in `~/.caption-studio` (change it with `DATA_DIR`).
+
+To run the test suites and the checks: `pnpm test` and `pnpm check`. [AGENTS.md](AGENTS.md) lists every command.
+
+## Host it for other people
+
+[SELF_HOSTING.md](SELF_HOSTING.md) is written for you and for an AI agent to follow: pick a server and a
+domain, set the environment, start the Docker kit (the app plus Caddy for HTTPS), create the first admin
+account, connect the Mac app, back up and update. `pnpm run doctor` checks a running install and tells you
+what is missing.
+
+Every setting the server reads is listed, with an explanation, in
+[apps/captions/.env.example](apps/captions/.env.example).
+
+## Repository
+
+| Path | What |
+|---|---|
+| `apps/captions/` | The web app and its server (React, Vite, Hono, tRPC, TypeScript). See [its README](apps/captions/README.md). |
+| `apps/mac/` | The Mac app (SwiftUI). See [its README](apps/mac/README.md). |
+| `SELF_HOSTING.md` | Running a server for other people. |
+| `AGENTS.md` | Rules and commands for contributors and their coding agents. |
+
+## Contributing
+
+Read [AGENTS.md](AGENTS.md) first. Enable the repository hooks once per clone with
+`git config core.hooksPath .githooks`: they block a commit that contains a secret or a private name.
+
+## License
+
+[MIT](LICENSE). Copyright (c) 2026 Andri Peetso. The fonts bundled in `apps/captions/public/fonts/` are Google Fonts under the SIL Open Font License 1.1 (see `OFL.txt` there).

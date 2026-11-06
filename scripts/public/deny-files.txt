@@ -1,0 +1,4 @@
+# Generic file-name patterns. Private names live in the local list (see deny.txt).
+SF-Pro
+\.otf$
+\.p12$|\.p8$|\.pem$|\.key$

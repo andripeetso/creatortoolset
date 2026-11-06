@@ -1,0 +1,17 @@
+{
+  "name": "creator-toolset",
+  "private": true,
+  "packageManager": "pnpm@10.32.1",
+  "scripts": {
+    "test": "turbo run test",
+    "check": "turbo run check",
+    "build": "turbo run build",
+    "test:ios": "pnpm --filter @creator-toolset/ios ios:test",
+    "build:ios": "pnpm --filter @creator-toolset/ios ios:build",
+    "test:mac": "pnpm --filter @creator-toolset/mac mac:test",
+    "build:mac": "pnpm --filter @creator-toolset/mac mac:build"
+  },
+  "devDependencies": {
+    "turbo": "2.11.4"
+  }
+}

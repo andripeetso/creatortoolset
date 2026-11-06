@@ -1,0 +1,228 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.9%;
+    --primary: 240 5.9% 10%;
+    --primary-foreground: 0 0% 98%;
+    --secondary: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 10%;
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+    --accent: 240 4.8% 95.9%;
+    --accent-foreground: 240 5.9% 10%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+    --ring: 240 5.9% 10%;
+    --radius: 0.625rem;
+    --sidebar-background: 0 0% 98%;
+    --sidebar-foreground: 240 5.3% 26.1%;
+    --sidebar-primary: 240 5.9% 10%;
+    --sidebar-primary-foreground: 0 0% 98%;
+    --sidebar-accent: 240 4.8% 95.9%;
+    --sidebar-accent-foreground: 240 5.9% 10%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+    --desk-page: #e4e4e7;
+    --desk-writing: #ffffff;
+    --desk-cowork: #f4f4f5;
+    --desk-content: #f4f4f5;
+    --desk-border: #d4d4d8;
+    --desk-dock: #e4e4e7;
+  }
+
+  .dark {
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+    --card: 240 10% 3.9%;
+    --card-foreground: 0 0% 98%;
+    --popover: 240 10% 3.9%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 0 0% 98%;
+    --primary-foreground: 240 5.9% 10%;
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
+    --accent: 240 3.7% 15.9%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --ring: 240 4.9% 83.9%;
+    --sidebar-background: 240 5.9% 10%;
+    --sidebar-foreground: 240 4.8% 95.9%;
+    --sidebar-primary: 224.3 76.3% 48%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 3.7% 15.9%;
+    --sidebar-accent-foreground: 240 4.8% 95.9%;
+    --sidebar-border: 240 3.7% 15.9%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+    --desk-page: #09090b;
+    --desk-writing: #2c2c33;
+    --desk-cowork: #141416;
+    --desk-content: #141416;
+    --desk-border: #27272a;
+    --desk-dock: #1f1f27;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+/* ---- Caption Studio fonts (same files the server uses for libass) ----
+   font-display: block — never paint captions in a fallback face and swap
+   when the file arrives (reads as "flashing between two fonts"); hold
+   the text briefly instead so what you see is always the real font. */
+@font-face { font-family: "Anton"; src: url("/fonts/Anton-Regular.ttf"); font-weight: 400; font-display: block; }
+@font-face { font-family: "Archivo Black"; src: url("/fonts/ArchivoBlack-Regular.ttf"); font-weight: 400; font-display: block; }
+@font-face { font-family: "Bebas Neue"; src: url("/fonts/BebasNeue-Regular.ttf"); font-weight: 400; font-display: block; }
+@font-face { font-family: "Inter"; src: url("/fonts/Inter-Bold.ttf"); font-weight: 700; font-display: block; }
+@font-face { font-family: "Inter ExtraBold"; src: url("/fonts/Inter-ExtraBold.ttf"); font-weight: 800; font-display: block; }
+@font-face { font-family: "Montserrat"; src: url("/fonts/Montserrat-Bold.ttf"); font-weight: 700; font-display: block; }
+@font-face { font-family: "Montserrat SemiBold"; src: url("/fonts/Montserrat-SemiBold.ttf"); font-weight: 600; font-display: block; }
+@font-face { font-family: "Montserrat ExtraBold"; src: url("/fonts/Montserrat-ExtraBold.ttf"); font-weight: 800; font-display: block; }
+@font-face { font-family: "Oswald SemiBold"; src: url("/fonts/Oswald-SemiBold.ttf"); font-weight: 600; font-display: block; }
+@font-face { font-family: "Oswald"; src: url("/fonts/Oswald-Bold.ttf"); font-weight: 700; font-display: block; }
+@font-face { font-family: "Poppins"; src: url("/fonts/Poppins-Bold.ttf"); font-weight: 700; font-display: block; }
+
+@keyframes cap-pop {
+  0% { transform: scale(0.55); }
+  55% { transform: scale(1.12); }
+  100% { transform: scale(1); }
+}
+@keyframes cap-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes processing-progress-shimmer {
+  from { transform: translateX(-120%); }
+  to { transform: translateX(420%); }
+}
+.processing-progress-shimmer {
+  animation: processing-progress-shimmer 1.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .processing-progress-shimmer {
+    animation: none;
+    left: 33.333%;
+  }
+}
+
+html { color-scheme: dark; }
+html:not(.dark) { color-scheme: light; }
+html, body, #root { height: 100%; }
+body { background: #0b0b10; }
+html:not(.dark) body { background: #fafafa; }
+
+/* The Mac app (apps/mac) has no title bar: its window buttons sit at the left of the page's top bar. */
+html.mac-app:not(.mac-full) [data-titlebar] { padding-left: 104px; }
+
+/* A role-preview banner consumes part of the viewport. Route pages normally
+   size themselves to the whole viewport, so make their direct roots use the
+   remaining area instead. */
+.view-as-viewport > .h-screen,
+.view-as-viewport > .h-dvh {
+  height: 100%;
+}
+.view-as-viewport > .min-h-screen {
+  min-height: 100%;
+}
+
+/* mobile PWA: no rubber-band scroll past the app, no flash on taps */
+body { overscroll-behavior-y: none; }
+* { -webkit-tap-highlight-color: transparent; }
+
+/* iPhone notch / home-indicator safe areas */
+.pt-safe { padding-top: env(safe-area-inset-top); }
+.pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+.pl-safe { padding-left: env(safe-area-inset-left); }
+.pr-safe { padding-right: env(safe-area-inset-right); }
+
+/* slim scrollbars for dark UI */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+html:not(.dark) ::-webkit-scrollbar-thumb { background: #d4d4d8; }
+
+/* Transcript document editor (TranscriptPanel) */
+.cue-line {
+  padding: 2px 6px;
+  border-radius: 6px;
+  transition: background-color 120ms ease;
+}
+.cue-line-active {
+  background: rgba(139, 92, 246, 0.09);
+}
+.cue-word {
+  border-radius: 4px;
+  cursor: pointer;
+}
+.cue-word:hover {
+  background: rgba(139, 92, 246, 0.22);
+}
+.cue-word.word-active {
+  background: rgba(139, 92, 246, 0.45);
+  color: #fff;
+}
+
+/* Word-cursor mode: a real text caret that snaps to word boundaries.
+   Each caption is its own block. Wrapped lines inside a caption stay
+   tight; the gap between blocks is the caption boundary. */
+.transcript-words {
+  cursor: text;
+  caret-color: #a78bfa;
+  line-height: 1.35;
+}
+.transcript-words .cue-line {
+  margin-bottom: 12px;
+}
+.transcript-words .cue-line:last-child {
+  margin-bottom: 0;
+}
+/* a caption's own line breaks, as on screen */
+.transcript-words .cue-word.line-end::after {
+  content: "\A";
+  white-space: pre;
+}
+.transcript-words ::selection {
+  background: rgba(139, 92, 246, 0.35);
+}
+/* fixed by the script check; the title says what was heard */
+.cue-word.script-fixed {
+  text-decoration: underline solid rgba(52, 211, 153, 0.75);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
+}
+.cue-word.word-selected {
+  text-decoration: underline dotted rgba(167, 139, 250, 0.6);
+  text-underline-offset: 3px;
+}
+
+/* The home page's project colour (ToolsetHome): registered as colours so a project switch fades instead of jumping. */
+@property --tint {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgb(124 58 237);
+}
+@property --tint-text {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgb(167 139 250);
+}

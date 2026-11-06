@@ -1,0 +1,9 @@
+{
+  "name": "@creator-toolset/mac",
+  "private": true,
+  "scripts": {
+    "mac:build": "scripts/build-app.sh",
+    "mac:test": "swift test",
+    "mac:open": "open 'build/Creator Toolset.app'"
+  }
+}

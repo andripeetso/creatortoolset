@@ -1,0 +1,16 @@
+# Build context = the repository root (see apps/captions/docker-compose.yml).
+# Keep local state, secrets, build output and the native Mac app out of the image.
+**/node_modules
+**/dist
+**/.turbo
+**/.git
+**/.claude
+**/.env
+**/.env.*
+!**/.env.example
+**/*.db
+**/*.db-wal
+**/*.db-shm
+apps/captions/runtime
+apps/mac/build
+apps/mac/.build
