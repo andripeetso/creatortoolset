@@ -6,8 +6,12 @@ import type { AuthVars } from "../auth";
 import { env } from "../lib/env";
 import { appendBody, freeBytes, sha256File } from "../lib/uploads";
 import { libraryRole } from "./access";
-import { libraryDb } from "./db";
-import { localBlobs } from "./storage/local";
+import { blobs, libraryDb } from "./db";
+import { canManage, memberIn, workspaceOf } from "../lib/workspaces";
+import { sendFile } from "../lib/send-file";
+import type { LibrarySummary } from "../../contracts/library";
+import { enqueueJob } from "./jobs";
+import { buildAssetQuery, indexAsset, pageOf, parseSearch, type CardRow } from "./query";
 
 /**
  * Media Library routes (tasks/media-library-plan.md, sections 4 and 7). Mounted at /api/library.
@@ -21,7 +25,6 @@ export const libraryApp = new Hono<{ Variables: AuthVars }>();
 const CHUNK_BYTES = 32 * 1024 * 1024;
 const STAGE_DAYS = 7;
 const GiB = 1024 ** 3;
-const blobs = localBlobs(path.join(env.dataDir, "library", "blobs"));
 const stagingDir = () => path.join(env.dataDir, "library", "staging");
 // ponytail: one writer per upload, in-process only; a second server process would need a DB lock
 const busy = new Set<string>();
@@ -39,6 +42,24 @@ const KIND_OF: [RegExp, "video" | "image" | "audio"][] = [
   [/\.(jpe?g|png|heic|webp|gif|tiff?)$/i, "image"],
 ];
 const kindOf = (filename: string) => KIND_OF.find(([re]) => re.test(filename))?.[1] ?? "doc";
+
+const MIME: [RegExp, string][] = [
+  [/\.(mp4|m4v)$/i, "video/mp4"],
+  [/\.mov$/i, "video/quicktime"],
+  [/\.webm$/i, "video/webm"],
+  [/\.mkv$/i, "video/x-matroska"],
+  [/\.avi$/i, "video/x-msvideo"],
+  [/\.(m4a|aac)$/i, "audio/mp4"],
+  [/\.mp3$/i, "audio/mpeg"],
+  [/\.wav$/i, "audio/wav"],
+  [/\.(ogg|opus)$/i, "audio/ogg"],
+  [/\.flac$/i, "audio/flac"],
+  [/\.(jpe?g)$/i, "image/jpeg"],
+  [/\.png$/i, "image/png"],
+  [/\.webp$/i, "image/webp"],
+  [/\.gif$/i, "image/gif"],
+];
+const mimeOf = (filename: string) => MIME.find(([re]) => re.test(filename))?.[1] ?? "application/octet-stream";
 
 interface UploadRow {
   id: string;
@@ -198,21 +219,93 @@ libraryApp.post("/uploads/:uploadId/finish", async (c) => {
       const { n } = d.prepare("SELECT COALESCE(MAX(n), 0) + 1 AS n FROM asset_versions WHERE asset_id = ?").get(assetId) as { n: number };
       d.prepare(
         `INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, mime, state, created_by, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, NULL, 'processing', ?, ?)`,
-      ).run(versionId, assetId, n, sourceKey, row.size, sha256, row.created_by, now);
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'processing', ?, ?)`,
+      ).run(versionId, assetId, n, sourceKey, row.size, sha256, mimeOf(row.filename), row.created_by, now);
       d.prepare("UPDATE assets SET current_version_id = ? WHERE id = ?").run(versionId, assetId);
       d.prepare("UPDATE uploads SET state = 'done', received = size WHERE id = ?").run(row.id);
+      indexAsset(d, assetId);
+      enqueueJob(d, row.library_id, versionId, "probe", row.created_by);
       d.exec("COMMIT");
     } catch (e) {
       d.exec("ROLLBACK");
       throw e;
     }
-    // ponytail: the probe and derivative jobs are enqueued by jobs.ts (next slice)
     return c.json({ assetId, versionId });
   } catch (e) {
     db().prepare("UPDATE uploads SET state = 'failed' WHERE id = ?").run(row.id);
     return c.json({ error: e instanceof Error ? e.message : String(e), code: "conflict" }, 500);
   } finally {
     busy.delete(row.id);
+  }
+});
+
+// GET /api/library → the libraries in the caller's workspace (none without one)
+libraryApp.get("/", (c) => {
+  const user = c.get("user");
+  const w = workspaceOf(user.username);
+  if (!w) return c.json({ libraries: [] as LibrarySummary[] });
+  const manage = canManage(memberIn(w, user.username)?.role);
+  const rows = db()
+    .prepare("SELECT id, name, storage_kind FROM libraries WHERE workspace_id = ? ORDER BY created_at, id")
+    .all(w.id) as { id: string; name: string; storage_kind: LibrarySummary["storage"] }[];
+  const libraries: LibrarySummary[] = rows.map((r) => ({ id: r.id, name: r.name, storage: r.storage_kind, canManage: manage }));
+  return c.json({ libraries });
+});
+
+// POST /api/library { name } → a local library in the caller's workspace; the owner only
+libraryApp.post("/", async (c) => {
+  const user = c.get("user");
+  const w = workspaceOf(user.username);
+  if (!w) return c.json({ error: "There is no workspace to put a library in", code: "conflict" }, 409);
+  if (!canManage(memberIn(w, user.username)?.role)) return c.json({ error: "Only the owner creates a library", code: "forbidden" }, 403);
+  const body = (await c.req.json().catch(() => null)) as { name?: unknown } | null;
+  const name = (typeof body?.name === "string" ? body.name.trim().slice(0, 80) : "") || "Library";
+  const id = `lib_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+  db().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES (?, ?, ?, 'local', ?)").run(id, w.id, name, Date.now());
+  const created: LibrarySummary = { id, name, storage: "local", canManage: true };
+  return c.json(created, 201);
+});
+
+// GET /api/library/:id/assets?q&kind&tag&from&to&cursor&limit → one page of AssetCards (query.ts)
+libraryApp.get("/:id/assets", (c) => {
+  const user = c.get("user");
+  const libraryId = c.req.param("id");
+  if (!libraryRole(user.username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
+  const { sql, params, limit } = buildAssetQuery(libraryId, parseSearch(c.req.query()));
+  return c.json(pageOf(db().prepare(sql).all(...params) as unknown as CardRow[], limit));
+});
+
+// GET /api/library/media/:versionId/:kind: thumb | play (the proxy when there is one, else the source) | source
+libraryApp.get("/media/:versionId/:kind", async (c) => {
+  const user = c.get("user");
+  const versionId = c.req.param("versionId");
+  const v = db()
+    .prepare("SELECT v.source_key, v.mime, a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?")
+    .get(versionId) as { source_key: string; mime: string | null; library_id: string } | undefined;
+  if (!v || !libraryRole(user.username, v.library_id)) return c.json({ error: "Not found", code: "not_found" }, 404);
+  const derived = (kind: string) =>
+    (db().prepare("SELECT storage_key FROM derivatives WHERE version_id = ? AND kind = ?").get(versionId, kind) as
+      | { storage_key: string }
+      | undefined)?.storage_key;
+  const kind = c.req.param("kind");
+  let key: string | undefined;
+  let type = v.mime ?? "application/octet-stream";
+  if (kind === "thumb") {
+    key = derived("thumb");
+    type = "image/jpeg";
+  } else if (kind === "play") {
+    const proxy = derived("proxy");
+    key = proxy ?? v.source_key;
+    if (proxy) type = "video/mp4";
+  } else if (kind === "source") {
+    key = v.source_key;
+  } else {
+    return c.json({ error: "Not found", code: "not_found" }, 404);
+  }
+  if (!key) return c.json({ error: "Not ready", code: "conflict" }, 409);
+  try {
+    return await sendFile(c, await blobs.localCopy(key), type);
+  } catch {
+    return c.json({ error: "Not ready", code: "conflict" }, 409);
   }
 });

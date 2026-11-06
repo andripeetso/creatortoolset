@@ -57,3 +57,16 @@ export interface ShareInput {
   expiresInDays: number; // default 7, max 90
   password?: string;
 }
+
+/** A library the caller can see, with whether they manage it (the workspace owner). */
+export interface LibrarySummary {
+  id: string;
+  name: string;
+  storage: "local" | "s3" | "bunny";
+  canManage: boolean;
+}
+
+export interface AssetPage {
+  items: AssetCard[];
+  next?: string; // cursor for the next page
+}

@@ -12,7 +12,7 @@ const legacy = (username: string, extra: object) => ({
 });
 writeFileSync(
   path.join(process.env.DATA_DIR, "users.json"),
-  JSON.stringify({ users: [legacy("old", { off: ["media", "finals", "clean", "bogus"] }), legacy("plain", {})] }),
+  JSON.stringify({ users: [legacy("old", { off: ["library", "finals", "clean", "bogus"] }), legacy("plain", {})] }),
 );
 
 const { createUser, findUser } = await import("./users");
@@ -50,7 +50,7 @@ describe("app switches", () => {
     expect(await status("/api/review", h)).toBe(200);
     expect(await status("/api/instagram/availability", h)).toBe(200);
     expect(await status("/api/enhance", h)).toBe(200);
-    expect(await status("/api/library", h)).toBe(404); // no Finals any more
+    expect(await status("/api/library", h)).toBe(200); // the Media Library is on for every account (no workspace yet: an empty list)
   });
 
   it("lets an admin switch apps off and back on", async () => {

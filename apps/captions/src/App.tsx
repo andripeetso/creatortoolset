@@ -18,6 +18,7 @@ import ReviewAssetPage from "./pages/ReviewAssetPage";
 import ReviewSharedProjectPage from "./pages/ReviewSharedProjectPage";
 import WorkshopSharePage from "./pages/WorkshopSharePage";
 import StorySplitterPage from "./pages/StorySplitterPage";
+import LibraryPage from "./pages/LibraryPage";
 import type { Tool } from "@contracts/tools";
 import { isPublicReviewPath, isPublicSharePath } from "@/components/AuthGate";
 import { analyzerHome } from "@/lib/instagram";
@@ -281,6 +282,7 @@ export default function App() {
           <Route path="/privacy" element={<LegalPage page="/privacy" />} />
           <Route path="/terms" element={<LegalPage page="/terms" />} />
           <Route path="/data-deletion" element={<LegalPage page="/data-deletion" />} />
+          <Route path="/library" element={<AppRoute tool="media"><LibraryPage /></AppRoute>} />
           <Route path="/stories" element={<AppRoute tool="stories"><StorySplitterPage /></AppRoute>} />
           <Route path="/rp/:ptoken/:assetId" element={<ReviewAssetPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />

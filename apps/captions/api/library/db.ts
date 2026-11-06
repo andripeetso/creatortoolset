@@ -3,6 +3,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { env } from "../lib/env";
 import { MIGRATIONS } from "./schema";
+import { localBlobs } from "./storage/local";
 
 /**
  * The library database uses Node's built-in `node:sqlite`: no native dependency. It needs Node 22.13+ (the
@@ -33,3 +34,6 @@ let shared: DatabaseSync | null = null;
 
 /** The server's library database, $DATA_DIR/library/library.db, opened on first use. */
 export const libraryDb = (): DatabaseSync => (shared ??= openLibraryDb(path.join(env.dataDir, "library", "library.db")));
+
+/** The library's files, $DATA_DIR/library/blobs, by key (storage/local.ts). Shared by the routes and the worker. */
+export const blobs = localBlobs(path.join(env.dataDir, "library", "blobs"));

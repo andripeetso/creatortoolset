@@ -17,6 +17,7 @@ import { instagramApp } from "./instagram";
 import { workshopApp, workshopShareApp } from "./workshop";
 import { reviewApp } from "./review";
 import { libraryApp } from "./library/routes";
+import { startLibraryWorker } from "./library/worker";
 import { presetsApp } from "./presets";
 import { projectsApp } from "./projects";
 import { storiesApp } from "./stories";
@@ -56,6 +57,7 @@ app.use(async (c, next) => {
     c.req.path.startsWith("/api/clean") ||
     c.req.path.startsWith("/api/clips") ||
     c.req.path.startsWith("/api/review/uploads") ||
+    c.req.path.startsWith("/api/library/uploads/") ||
     (c.req.method === "POST" && /^\/api\/workshop-share\/[^/]+\/deliveries$/.test(c.req.path))
   ) {
     return next();
@@ -86,6 +88,7 @@ const GUEST_BLOCKED = [
   "/api/workshop",
   "/api/connectors",
   "/api/stories",
+  "/api/library",
 ];
 
 const PUBLIC_UUID =
@@ -128,6 +131,7 @@ const keyRoute = (routes: [string, RegExp][], method: string, p: string) =>
 export const TOOL_GATES: [string, Tool[]][] = [
   ["/api/enhance", ["enhance"]],
   ["/api/clean", ["clean"]],
+  ["/api/library", ["media"]],
   // the Analyzer and the Workshop read each other's APIs
   ["/api/instagram", ["instagram", "workshop"]],
   ["/api/workshop", ["instagram", "workshop"]],
@@ -259,6 +263,8 @@ app.route("/api/workshop", workshopApp);
 app.route("/api/workshop-share", workshopShareApp);
 app.route("/api/review", reviewApp);
 app.route("/api/library", libraryApp);
+// the library's worker: probes, thumbs and proxies queued uploads (not under tests, which start it themselves)
+if (process.env.NODE_ENV !== "test") startLibraryWorker();
 app.route("/api/stories", storiesApp);
 app.all("/api/*", (c) => c.json({ error: "Not Found" }, 404));
 
