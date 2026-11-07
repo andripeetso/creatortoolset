@@ -179,6 +179,8 @@ new account gets a free workspace of its own and a short setup: a first project,
 Instagram login and Apify key, and their own API keys. Your server's keys never serve these accounts.
 Sign-ups are limited to 5 per address an hour. Behind your own proxy (not the Docker kit, which sets it), set
 `TRUST_PROXY=1` so the limit counts the caller's address rather than the proxy's.
+Your proxy must also send `X-Forwarded-Proto` (most do): the sign-in cookie is marked Secure only when the
+request came in over HTTPS.
 
 ## 8. Connect AI
 
