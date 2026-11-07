@@ -35,7 +35,8 @@ async function resolve(id: string): Promise<Resolved | null> {
   return { listed: (await r.json()) as CatalogDetail };
 }
 
-const cantSave = (u: AuthVars["user"]) => u.role === "guest" || !!u.demo;
+// a share-link visitor reads what was shared with them and keeps nothing
+const cantSave = (u: AuthVars["user"]) => u.role === "visitor";
 const projectIdOf = (b: unknown) => {
   const id = (b as { projectId?: unknown } | null)?.projectId;
   return typeof id === "string" && /^[a-z0-9-]{1,64}$/i.test(id) ? id : undefined;

@@ -69,7 +69,7 @@ export async function listInstalled(username: string): Promise<InstalledPack[]> 
   return (await readState(username)).packs;
 }
 
-/** Install the default packs this account hasn't been given yet. Real accounts only (not guests or demo visitors). */
+/** Install the default packs this account hasn't been given yet. Real accounts only (not share-link visitors). */
 export async function ensureDefaults(username: string, ids = DEFAULT_PACKS): Promise<void> {
   const seen = new Set((await readState(username)).defaultsSeen ?? []);
   if (ids.every((id) => seen.has(id))) return;

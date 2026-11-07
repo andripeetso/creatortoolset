@@ -16,7 +16,7 @@ export const packsApp = new Hono<{ Variables: AuthVars }>();
 
 const cantSave = (c: { get: (k: "user") => AuthVars["user"] }) => {
   const u = c.get("user");
-  return u.role === "guest" || !!u.demo;
+  return u.role === "visitor"; // a share-link visitor keeps nothing
 };
 
 packsApp.get("/", async (c) => c.json(await listInstalled(c.get("user").username)));

@@ -76,11 +76,11 @@ describe("community catalog", () => {
     expect((await call("POST", "/api/pack-catalog/punchy-hooks/install")).status).toBe(410);
   });
 
-  it("publishing answers with the catalog's address; guests can't install or publish", async () => {
+  it("publishing answers with the catalog's address; share-link visitors can't install or publish", async () => {
     const res = await call("POST", "/api/pack-catalog/submit", { pack: pack("2.0.0"), rights: true });
     expect(res.status).toBe(409);
     expect(((await res.json()) as { publishAt: string }).publishAt).toBe("https://catalog.example");
-    me = { username: "guest", role: "guest", cloud: true, off: [] };
+    me = { username: "visitor", role: "visitor", cloud: true, off: [] };
     expect((await call("POST", "/api/pack-catalog/punchy-hooks/install")).status).toBe(403);
     expect((await call("POST", "/api/pack-catalog/submit", { pack: pack("2.0.0") })).status).toBe(403);
   });

@@ -105,9 +105,9 @@ describe("install, update, remove", () => {
     expect(await (await call("GET", "/api/packs")).json()).toEqual([]);
   });
 
-  it("refuses guests and failed checks", async () => {
+  it("refuses share-link visitors and failed checks", async () => {
     expect((await call("POST", "/api/packs/install", { pack: { ...pack("1.0.0"), license: "" } })).status).toBe(400);
-    me = { username: "guest", role: "guest", cloud: true, off: [] };
+    me = { username: "visitor", role: "visitor", cloud: true, off: [] };
     expect((await call("POST", "/api/packs/install", { pack: pack("1.0.0") })).status).toBe(403);
     me = { username: "tinyacrobatics", role: "user", cloud: true, off: [] };
   });
