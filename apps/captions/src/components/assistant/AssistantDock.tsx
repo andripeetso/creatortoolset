@@ -143,9 +143,10 @@ export function AssistantDock() {
 
         {view?.provider === "none" && (
           <div className="space-y-3">
-            <p className="font-medium">Connect your AI first</p>
-            <p className="text-muted-foreground">The assistant runs on your own AI, never anyone else&apos;s. Once it&apos;s connected, I can help set up the rest.</p>
-            <Button size="sm" onClick={() => navigate("/?setup=ai")}>Connect your AI</Button>
+            <p className="font-medium">Install Claude Code first</p>
+            <p className="text-muted-foreground">The assistant runs on your own Claude, on this Mac and your own plan. Install it and sign in, then come back:</p>
+            <pre className="select-all rounded bg-muted px-2 py-1.5 text-xs">npm install -g @anthropic-ai/claude-code{"\n"}claude</pre>
+            <Button size="sm" variant="outline" onClick={() => navigate("/?setup=ai")}>Check again</Button>
           </div>
         )}
 

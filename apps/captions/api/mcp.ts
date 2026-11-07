@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { MY_KEYS } from "../contracts/service-keys";
+import { TOOLS as APP_TOOLS, TOOL_NAMES, readiness, type SetupView } from "../contracts/tools";
 import { routeFor } from "./lib/providers";
 import { deviceName } from "./lib/devices";
 import { readConnectors } from "./lib/connectors/store";
@@ -24,8 +25,17 @@ type Content = { type: "text"; text: string } | { type: "image"; mimeType: strin
 
 class ToolError extends Error {}
 
+/** The setup answers and, per tool (the picked ones, else all), what it still needs and what would add to it. */
+function setupView(v: SetupView) {
+  const tools = (v.tools ?? [...APP_TOOLS]).map((t) => {
+    const r = readiness(t, v.have);
+    return { id: t, name: TOOL_NAMES[t], ready: r.ready, missing: r.missing.map((n) => n.what), extra: r.extra.map((n) => n.what) };
+  });
+  return { picked: v.tools, plan: v.plan ?? v.detected, setupDone: v.done, tools };
+}
+
 /** The tools only the assistant's job token may call (the dock, assistant.ts). */
-const ASSISTANT_TOOLS = new Set(["setup_status", "ask_secret", "navigate"]);
+const ASSISTANT_TOOLS = new Set(["setup_status", "save_setup", "ask_secret", "navigate"]);
 const isJob = (auth: Headers) => /^Bearer ctj_/.test(auth.get("authorization") ?? "");
 
 /** MCP clients give up on a tool call after about a minute: a reply still thinking hands back its id to wait on. */
@@ -109,7 +119,12 @@ export const TOOLS = [
 
 /** The assistant's tools (the dock, assistant.ts): listed and callable for its job token only, so a Full key's list stays TOOLS. */
 const ASSISTANT_DEFS = [
-  { name: "setup_status", description: "What is set up: the AI provider, connected logins, which API keys the user has saved (never their values), and the project count.", inputSchema: { type: "object", properties: {} } },
+  { name: "setup_status", description: "What is set up: the AI provider, connected logins, which API keys the user has saved (never their values), the project count, the tools the user picked and their plan, and for each tool what it still needs (missing) and what would add to it (extra).", inputSchema: { type: "object", properties: {} } },
+  {
+    name: "save_setup",
+    description: "Save the user's answers: the tools they want to use (ids from setup_status), their AI plan, or that setup is done.",
+    inputSchema: { type: "object", properties: { tools: { type: "array", items: { type: "string", enum: [...APP_TOOLS] } }, plan: { type: "string" }, done: { type: "boolean" } } },
+  },
   {
     name: "ask_secret",
     description: "Ask the user for one API key. It opens a secure box in the chat; the key goes straight to the server, never to you. Pass only the key's name and why it's needed.",
@@ -294,8 +309,10 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
         logins: readConnectors(user.username).accounts.map((a) => ({ platform: a.platform, handle: a.handle, via: a.via })),
         keys: MY_KEYS.map((k) => ({ env: k.env, name: k.name, what: k.what, saved: !!keys[k.env] })),
         projects: projects.length,
+        ...setupView(await json<SetupView>("/api/setup")),
       };
     },
+    save_setup: async (a) => setupView(await json<SetupView>("/api/setup", "PUT", pick(a, ["tools", "plan", "done"]))),
     ask_secret: async (a) => {
       const env = MY_KEYS.find((k) => k.env === a.env);
       if (!env) throw new ToolError(`${String(a.env)} is not a key the app takes.`);
