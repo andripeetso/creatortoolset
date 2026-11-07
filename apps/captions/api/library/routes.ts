@@ -8,7 +8,7 @@ import { appendBody, freeBytes, sha256File } from "../lib/uploads";
 import { libraryRole } from "./access";
 import { expandCollection } from "./collections";
 import { blobs, libraryDb } from "./db";
-import { canManage, memberIn, workspaceOf } from "../lib/workspaces";
+import { canManage, ensureWorkspace, memberIn, workspaceOf } from "../lib/workspaces";
 import { sendFile } from "../lib/send-file";
 import type { LibrarySummary } from "../../contracts/library";
 import { enqueueJob } from "./jobs";
@@ -118,8 +118,10 @@ libraryApp.post("/:id/uploads", async (c) => {
     if (!canManage(role) && target.created_by !== user.username) return c.json({ error: "Only the uploader or the owner can replace it", code: "forbidden" }, 403);
   }
   const collection = typeof body?.collectionId === "string" ? body.collectionId : null;
-  if (collection && !db().prepare("SELECT 1 FROM collections WHERE id = ? AND library_id = ?").get(collection, libraryId)) {
-    return c.json({ error: "Not found", code: "not_found" }, 404);
+  if (collection) {
+    const col = db().prepare("SELECT kind FROM collections WHERE id = ? AND library_id = ?").get(collection, libraryId) as { kind: string } | undefined;
+    if (!col) return c.json({ error: "Not found", code: "not_found" }, 404);
+    if (col.kind !== "manual") return c.json({ error: "A smart collection takes its items from its query", code: "conflict" }, 409);
   }
   await sweepStale();
   await mkdir(stagingDir(), { recursive: true });
@@ -232,6 +234,13 @@ libraryApp.post("/uploads/:uploadId/finish", async (c) => {
       ).run(versionId, assetId, n, sourceKey, row.size, sha256, mimeOf(row.filename), row.created_by, now);
       d.prepare("UPDATE assets SET current_version_id = ? WHERE id = ?").run(versionId, assetId);
       d.prepare("UPDATE uploads SET state = 'done', received = size WHERE id = ?").run(row.id);
+      // into the folder it was dropped in, while that is still a manual collection here (any member may add items)
+      if (row.collection_id && d.prepare("SELECT 1 FROM collections WHERE id = ? AND library_id = ? AND kind = 'manual'").get(row.collection_id, row.library_id)) {
+        d.prepare(
+          `INSERT OR IGNORE INTO collection_items (collection_id, asset_id, position, added_by)
+           SELECT ?, ?, COALESCE(MAX(position), 0) + 1, ? FROM collection_items WHERE collection_id = ?`,
+        ).run(row.collection_id, assetId, row.created_by, row.collection_id);
+      }
       indexAsset(d, assetId);
       enqueueJob(d, row.library_id, versionId, "probe", row.created_by);
       d.exec("COMMIT");
@@ -264,7 +273,8 @@ libraryApp.get("/", (c) => {
 // POST /api/library { name } → a local library in the caller's workspace; the owner only
 libraryApp.post("/", async (c) => {
   const user = c.get("user");
-  const w = workspaceOf(user.username);
+  // an account in no workspace gets one of its own here (guests and demo visitors never reach a POST: boot.ts)
+  const w = ensureWorkspace(user.username);
   if (!w) return c.json({ error: "There is no workspace to put a library in", code: "conflict" }, 409);
   if (!canManage(memberIn(w, user.username)?.role)) return c.json({ error: "Only the owner creates a library", code: "forbidden" }, 403);
   const body = (await c.req.json().catch(() => null)) as { name?: unknown } | null;

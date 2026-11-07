@@ -60,12 +60,13 @@ const pause = (ms: number) => new Promise((done) => setTimeout(done, ms));
 /**
  * One file into the library: create the upload, then PATCH chunks from the offset the server reports. A 409 gives the
  * offset to resume from; a dropped request asks HEAD where the server stopped. Five failures in a row give up.
+ * With `collectionId` (a manual folder) the server puts the new asset in that folder when it finishes.
  */
-export async function uploadFile(libraryId: string, file: File, onProgress: (sent: number) => void): Promise<UploadResult> {
+export async function uploadFile(libraryId: string, file: File, onProgress: (sent: number) => void, collectionId?: string): Promise<UploadResult> {
   const init = await fetch(`/api/library/${libraryId}/uploads`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ filename: file.name, size: file.size }),
+    body: JSON.stringify({ filename: file.name, size: file.size, collectionId }),
   }).then((r) => json<{ id: string; offset: number; chunkSize: number }>(r));
   const url = `/api/library/uploads/${init.id}`;
   let offset = init.offset;

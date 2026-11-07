@@ -10,7 +10,7 @@ import type { Tool } from "./tools";
  * their own provider on their own Mac (`own`), or a monthly budget on the workspace's API key (`budget`).
  *
  * Contract (Settings → Workspace; api/workspace.ts mounted at /api/workspace):
- *   GET    /api/workspace                      → WorkspaceView | null (no workspace)
+ *   GET    /api/workspace                      → WorkspaceView (one of its own made on first need, api/lib/workspaces.ts ensureWorkspace)
  *   PATCH  /api/workspace                      { name } (owner) → WorkspaceView
  *   POST   /api/workspace/invites              InviteInput (owner) → { invite: Invite; token } (token shown once)
  *   DELETE /api/workspace/invites/:id          (owner)

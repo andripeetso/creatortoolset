@@ -43,6 +43,8 @@ interface Upload {
   key: number;
   file: File;
   sent: number;
+  /** the manual folder open when the file was dropped: it goes in there */
+  folderId?: string;
   status: "uploading" | "added" | "duplicate" | "failed";
   error?: string;
 }
@@ -139,9 +141,10 @@ export default function LibraryPage() {
     if (!libId) return;
     patch(u.key, { status: "uploading", sent: 0, error: undefined });
     try {
-      const r = await uploadFile(libId, u.file, (sent) => patch(u.key, { sent }));
+      const r = await uploadFile(libId, u.file, (sent) => patch(u.key, { sent }), u.folderId);
       patch(u.key, r.duplicateOf ? { status: "duplicate", sent: u.file.size } : { status: "added", sent: u.file.size });
       setRefresh((n) => n + 1);
+      if (u.folderId) setFolders((n) => n + 1); // the folder's count
     } catch (e) {
       patch(u.key, { status: "failed", error: message(e) });
     }
@@ -150,7 +153,8 @@ export default function LibraryPage() {
   // one file after another: the server's disk and the phone's data are both easier on that
   const addFiles = (files: FileList | null) => {
     if (!files?.length) return;
-    const added = Array.from(files).map((file) => ({ key: ++keys.current, file, sent: 0, status: "uploading" as const }));
+    const folderId = collections.find((c) => c.id === scope && c.kind === "manual")?.id;
+    const added = Array.from(files).map((file) => ({ key: ++keys.current, file, sent: 0, folderId, status: "uploading" as const }));
     setUploads((prev) => [...prev, ...added]);
     void (async () => {
       for (const u of added) await send(u);

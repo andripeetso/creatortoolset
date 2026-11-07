@@ -10,6 +10,8 @@ const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "libra
 process.env.DATA_DIR = dir;
 const { libraryDb } = await import("./db");
 const { libraryApp } = await import("./routes");
+const { workspaceApp } = await import("../workspace");
+const { acceptInvite, createInvite, workspaceById, workspaceOf } = await import("../lib/workspaces");
 
 afterAll(() => {
   delete process.env.LIBRARY_DISK_RESERVE_GB;
@@ -23,6 +25,7 @@ app.use(async (c, next) => {
   return next();
 });
 app.route("/api/library", libraryApp);
+app.route("/api/workspace", workspaceApp);
 
 const who = (user: string) => ({ "x-user": user });
 const read = async (r: Response | Promise<Response>): Promise<any> => (await r).json();
@@ -160,5 +163,59 @@ describe("library uploads", () => {
     expect((await replace("mem-a", "ast_owner")).status).toBe(403);
     expect((await replace("mem-a", "ast_mine")).status).toBe(201);
     expect((await replace("owner-a", "ast_mine")).status).toBe(201);
+  });
+});
+
+describe("library: an account in no workspace", () => {
+  it("gets a free workspace of its own on its first library (the local account too), shown on the Team page", async () => {
+    // "local" is the account every request runs as when sign-in is off; a fresh install's first account is the same case
+    const res = await app.request("/api/library", { method: "POST", headers: { ...who("local"), "content-type": "application/json" }, body: "{}" });
+    expect(res.status).toBe(201);
+    expect(await read(app.request("/api/library", { headers: who("local") }))).toMatchObject({ libraries: [{ canManage: true }] });
+    const team = await read(app.request("/api/workspace", { headers: who("local") }));
+    expect(team).toMatchObject({ me: "owner", workspace: { plan: "free" }, seats: 0 });
+    expect(team.members.map((m: { username: string }) => m.username)).toEqual(["local"]);
+    expect(workspaceOf("owner-a")!.id).toBe("ws_a"); // the existing team is as it was
+  });
+
+  it("works in the team once it joins one, not in its own free workspace", async () => {
+    await read(app.request("/api/workspace", { headers: who("solo") }));
+    expect(workspaceOf("solo")!.plan).toBe("free");
+    const { token } = createInvite(workspaceById("ws_a")!, { username: "owner-a", role: "owner" }, {});
+    acceptInvite(token, "solo");
+    expect(workspaceOf("solo")!.id).toBe("ws_a");
+  });
+});
+
+describe("library: uploading into a folder", () => {
+  const upload = async (collectionId: string, salt: number) => {
+    const data = clip(800, salt);
+    const init = await read(create("mem-a", data.length, { collectionId }));
+    expect((await patch("mem-a", init.id, 0, data, data.length)).status).toBe(204);
+    return read(finish("mem-a", init.id));
+  };
+  const items = (cid: string) =>
+    (libraryDb().prepare("SELECT asset_id, added_by FROM collection_items WHERE collection_id = ?").all(cid) as { asset_id: string; added_by: string }[]);
+
+  beforeAll(() => {
+    const add = libraryDb().prepare("INSERT INTO collections (id, library_id, name, kind, query, created_at, created_by) VALUES (?, 'lib_a', ?, ?, ?, 0, 'owner-a')");
+    add.run("col_folder", "Folder", "manual", null);
+    add.run("col_gone", "Gone", "manual", null);
+    add.run("col_smart", "Smart", "smart", "{}");
+  });
+
+  it("puts the finished asset in the folder the upload was started in", async () => {
+    const { assetId } = await upload("col_folder", 11);
+    expect(items("col_folder")).toEqual([{ asset_id: assetId, added_by: "mem-a" }]);
+  });
+
+  it("finishes without the folder when it was deleted meanwhile, and refuses a smart folder up front", async () => {
+    const data = clip(800, 12);
+    const init = await read(create("mem-a", data.length, { collectionId: "col_gone" }));
+    libraryDb().prepare("DELETE FROM collections WHERE id = 'col_gone'").run();
+    expect((await patch("mem-a", init.id, 0, data, data.length)).status).toBe(204);
+    expect(await read(finish("mem-a", init.id))).toMatchObject({ assetId: expect.any(String) });
+    expect(items("col_gone")).toEqual([]);
+    expect((await create("mem-a", 800, { collectionId: "col_smart" })).status).toBe(409);
   });
 });

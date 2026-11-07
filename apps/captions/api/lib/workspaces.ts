@@ -93,10 +93,38 @@ export const resetWorkspacesForTest = () => {
   cache = null;
 };
 
-/** The workspace an account works in: the one it owns, else the first it joined. */
+/**
+ * The workspace an account works in: a team before a free one (an account that had its own and then joined a team
+ * works in the team), and among those the one it owns, else the first it joined.
+ */
 export function workspaceOf(username: string): Workspace | null {
   const mine = store().workspaces.filter((w) => w.members.some((m) => m.username === username));
-  return mine.find((w) => w.members.some((m) => m.username === username && m.role === "owner")) ?? mine[0] ?? null;
+  const owns = (w: Workspace) => w.members.some((m) => m.username === username && m.role === "owner");
+  // ponytail: a free workspace's libraries drop out of the list once its owner joins a team (still reachable by id);
+  // a workspace switcher when people need both
+  const team = (w: Workspace) => w.plan === "team";
+  return mine.find((w) => team(w) && owns(w)) ?? mine.find(team) ?? mine.find(owns) ?? mine[0] ?? null;
+}
+
+/**
+ * The account's workspace, made on first need when it has none: a free workspace of its own, the account its owner
+ * (a fresh install's first account, the local account when sign-in is off). Never for the demo account.
+ */
+export function ensureWorkspace(username: string): Workspace | null {
+  const found = workspaceOf(username);
+  if (found || username === "demo") return found;
+  const now = Date.now();
+  const w: Workspace = {
+    id: randomUUID(),
+    name: "Workspace",
+    plan: "free",
+    comped: false,
+    createdAt: now,
+    members: [{ username, role: "owner", ai: "own", budgetUsd: 0, joinedAt: now }],
+  };
+  store().workspaces.push(w);
+  persist();
+  return w;
 }
 
 export const memberIn = (w: Workspace, username: string): Member | null => w.members.find((m) => m.username === username) ?? null;

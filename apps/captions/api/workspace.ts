@@ -13,7 +13,7 @@ import {
   revokeInvite,
   spentThisMonth,
   updateMember,
-  workspaceOf,
+  ensureWorkspace,
 } from "./lib/workspaces";
 import { findUser, setOff, type SessionUser } from "./users";
 
@@ -31,7 +31,7 @@ workspaceApp.use("*", async (c, next) => {
 });
 
 function viewFor(u: SessionUser): WorkspaceView | null {
-  const w = workspaceOf(u.username);
+  const w = ensureWorkspace(u.username);
   const me = w && memberIn(w, u.username);
   if (!w || !me) return null;
   const manager = canManage(me.role);
@@ -55,7 +55,7 @@ function viewFor(u: SessionUser): WorkspaceView | null {
 /** The asker's workspace and role, when they may manage it; else the error response. */
 function managed(c: Context<{ Variables: AuthVars }>) {
   const u = c.get("user");
-  const w = workspaceOf(u.username);
+  const w = ensureWorkspace(u.username);
   const me = w && memberIn(w, u.username);
   if (!w || !me) return { error: c.json({ error: "No workspace" }, 404) };
   if (!canManage(me.role)) return { error: c.json({ error: "Only the owner manages the team" }, 403) };

@@ -20,6 +20,7 @@ import { libraryApp } from "./library/routes";
 import { collectionApp } from "./library/collections";
 import { publicShareApp, shareApp } from "./library/shares";
 import { startLibraryWorker } from "./library/worker";
+import { startTrashPurge } from "./library/trash";
 import { presetsApp } from "./presets";
 import { projectsApp } from "./projects";
 import { storiesApp } from "./stories";
@@ -273,8 +274,11 @@ app.route("/api/library", publicShareApp);
 app.route("/api/library", libraryApp);
 app.route("/api/library", shareApp);
 app.route("/api/library", collectionApp);
-// the library's worker: probes, thumbs and proxies queued uploads (not under tests, which start it themselves)
-if (process.env.NODE_ENV !== "test") startLibraryWorker();
+// the library's worker: probes, thumbs and proxies queued uploads; and the trash purge (not under tests, which call them)
+if (process.env.NODE_ENV !== "test") {
+  startLibraryWorker();
+  startTrashPurge();
+}
 app.route("/api/stories", storiesApp);
 app.all("/api/*", (c) => c.json({ error: "Not Found" }, 404));
 
