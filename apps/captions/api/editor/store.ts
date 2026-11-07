@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
-import { MAX_VERSIONS, type Edit, type Timeline, type EditBrief, type EditJob, type EditSummary, type Line, type Sentence, type VersionPlan } from "../../contracts/editor";
+import { MAX_VERSIONS, type Edit, type Timeline, type EditBrief, type EditJob, type EditSummary, type Line, type ReviewPreview, type Sentence, type VersionPlan } from "../../contracts/editor";
 import { env } from "../lib/env";
 import { memberIn, workspaceById } from "../lib/workspaces";
 import { libraryRole } from "../library/access";
@@ -49,6 +49,8 @@ export const saveEdit = (e: EditMeta) => writeJsonAtomic(fileOf(e.id), { ...e, u
 export interface StepFiles {
   analysis: { sentences: Sentence[]; notes: string[] };
   plan: { lines: Line[]; plans: VersionPlan[]; notes: string[] };
+  /** each version's preview in Review (preview.ts) */
+  review: Record<string, ReviewPreview>;
 }
 
 export function readStep<K extends keyof StepFiles>(id: string, name: K): StepFiles[K] | null {
@@ -233,6 +235,7 @@ export function viewOf(e: EditMeta, username: string): Edit {
     lines: p?.lines ?? [],
     plans: p?.plans ?? [],
     notes: [...(a?.notes ?? []), ...(p?.notes ?? [])],
+    previews: readStep(e.id, "review") ?? {},
   };
 }
 

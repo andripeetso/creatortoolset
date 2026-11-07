@@ -12,6 +12,9 @@
  *   PUT    /api/editor/:id/eyeline/:versionId  { y: 0..1 } (the creator) → Edit
  *   GET    /api/editor/:id/drafts/:name    → Draft
  *   GET    /api/editor/:id/drafts/:name/export?format=otio|fcpxml|zip   the draft for the user's own editor (a download)
+ *   POST   /api/editor/:id/drafts/:name/review   renders the draft's preview again and files it in Review (the creator) → Edit
+ *   GET    /api/editor/:id/sentences       → Sentence[] (what analyze found, for playing a take)
+ *   PUT    /api/editor/:id/lines           PlansPatch (the creator): takes swapped or lines reordered → Edit; redrafts what changed
  *   DELETE /api/editor/:id                 to the trash (kept LIBRARY_TRASH_DAYS)
  * Every step runs as the edit's creator, on their own keys and AI: a workspace owner sees, stops and deletes, never runs.
  */
@@ -115,6 +118,19 @@ export interface Edit extends EditSummary, EditBrief {
   plans: VersionPlan[];
   /** what a step skipped or could not do (a source with no sound, a take out of range…) */
   notes: string[];
+  /** each draft's preview as filed in Review: /review/<assetId>?v=<n> */
+  previews: Record<string, ReviewPreview>;
+}
+
+/** A preview video in Review: its asset and version number. */
+export interface ReviewPreview {
+  assetId: string;
+  n: number;
+}
+
+/** PUT lines: the versions that change, each with its whole line order and the take each line uses (by first/last). */
+export interface PlansPatch {
+  plans: { name: string; lines: { line: string; take: Pick<Take, "first" | "last"> }[] }[];
 }
 
 /** The eye line when the user has not set one: a little above the middle, where a speaker's eyes usually are. */

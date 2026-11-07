@@ -31,6 +31,7 @@ const { libraryDb } = await import("../library/db");
 const { enqueueJob } = await import("../library/jobs");
 const { NeedsKey } = await import("../library/transcribe");
 const { STEPS, tick } = await import("./worker");
+const { readStep, saveDraft, saveStep } = await import("./store");
 
 const cookies: Record<string, string> = {};
 async function login(username: string) {
@@ -117,6 +118,43 @@ describe("AI Editor: edits and who sees them", () => {
     expect((await call("mem-a", "PUT", `/api/editor/${id}/eyeline/ver_a2`, { y: 0.4 })).status).toBe(404);
     expect((await call("mem-a", "PUT", `/api/editor/${id}/eyeline/ver_a1`, { y: 1.5 })).status).toBe(400);
     expect((await call("mem-a", "GET", `/api/editor/${id}/drafts/v1`)).status).toBe(404);
+  });
+
+  it("PUT lines changes a version's takes and order and redrafts only it, with no AI; a take the line lacks is 400", async () => {
+    const { id } = await json<{ id: string }>(create("mem-a", ["ver_a1"]));
+    const t = (first: number, score: number) => ({ first, last: first, score });
+    const lines = [
+      { id: "L1", text: "we roll", takes: [t(1, 1), t(3, 0.8)] },
+      { id: "L2", text: "join us", takes: [t(2, 1), t(4, 0.7)] },
+    ];
+    const plans = [
+      { name: "v1", title: "A", lines: [{ line: "L1", take: t(1, 1) }, { line: "L2", take: t(2, 1) }] },
+      { name: "v2", title: "B", lines: [{ line: "L1", take: t(3, 0.8) }, { line: "L2", take: t(4, 0.7) }] },
+    ];
+    await saveStep(id, "plan", { lines, plans, notes: [] });
+    await saveStep(id, "analysis", { sentences: [{ n: 1, src: "ver_a1", text: "we roll", s: 0.5, e: 1, w0: 0, w1: 1 }], notes: [] });
+    expect(await json(call("mem-a", "GET", `/api/editor/${id}/sentences`))).toMatchObject([{ n: 1, s: 0.5 }]);
+
+    const body = { plans: [{ name: "v2", lines: [{ line: "L2", take: { first: 2, last: 2 } }, { line: "L1", take: { first: 3, last: 3 } }] }] };
+    expect((await call("owner-a", "PUT", `/api/editor/${id}/lines`, body)).status).toBe(403);
+    expect((await call("mem-a", "PUT", `/api/editor/${id}/lines`, { plans: [{ name: "v2", lines: [{ line: "L1", take: { first: 2, last: 2 } }] }] })).status).toBe(400);
+    expect((await call("mem-a", "PUT", `/api/editor/${id}/lines`, { plans: [{ name: "v9", lines: body.plans[0]!.lines }] })).status).toBe(400);
+    const e = await json<Edit>(call("mem-a", "PUT", `/api/editor/${id}/lines`, body));
+    expect(e.plans[0]).toEqual(plans[0]);
+    expect(e.plans[1]!.lines).toEqual([{ line: "L2", take: t(2, 1) }, { line: "L1", take: t(3, 0.8) }]);
+    expect(e.jobs.map((j) => [j.kind, j.variant, j.state])).toEqual([["draft", "v2", "queued"]]);
+    expect(readStep(id, "plan")!.plans[1]!.title).toBe("B");
+  });
+
+  it("POST drafts/:name/review queues the version's preview for the creator only; no draft is 404", async () => {
+    const { id } = await json<{ id: string }>(create("mem-a", ["ver_a1"]));
+    expect((await call("mem-a", "POST", `/api/editor/${id}/drafts/v1/review`)).status).toBe(404);
+    await saveDraft(id, "v1", { timeline: {} as never, notes: [] });
+    expect((await call("owner-a", "POST", `/api/editor/${id}/drafts/v1/review`)).status).toBe(403);
+    const e = await json<Edit>(call("mem-a", "POST", `/api/editor/${id}/drafts/v1/review`));
+    expect(e.jobs.map((j) => [j.kind, j.variant, j.state])).toEqual([["preview", "v1", "queued"]]);
+    expect(e.previews).toEqual({});
+    await call("mem-a", "POST", `/api/editor/${id}/stop`);
   });
 
   it("is 403 for an account with the AI Editor switched off", async () => {

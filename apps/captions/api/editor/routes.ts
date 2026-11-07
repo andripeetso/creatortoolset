@@ -1,5 +1,5 @@
 import { Hono, type Context } from "hono";
-import { EDIT_STEPS, type EditStep } from "../../contracts/editor";
+import { EDIT_STEPS, type EditStep, type VersionPlan } from "../../contracts/editor";
 import type { AuthVars } from "../auth";
 import { libraryDb } from "../library/db";
 import { enqueueJob } from "../library/jobs";
@@ -9,7 +9,7 @@ import { toFcpxml } from "./fcpxml";
 import { LINK_TTL_S, mediaPaths } from "./media";
 import { toOtio } from "./otio";
 import { qaOf } from "./qa";
-import { allEdits, cleanBrief, createEdit, draftNames, editRole, NoCollection, readDraft, readEdit, saveEdit, summaryOf, viewOf, type EditMeta } from "./store";
+import { allEdits, cleanBrief, createEdit, draftNames, editRole, NoCollection, readDraft, readEdit, readStep, saveEdit, saveStep, summaryOf, viewOf, type EditMeta } from "./store";
 import { stopEdit } from "./worker";
 
 /**
@@ -119,6 +119,53 @@ editorApp.put("/:id/eyeline/:versionId", async (c) => {
   if (typeof y !== "number" || !Number.isFinite(y) || y < 0 || y > 1) return c.json({ error: "y is a fraction of the picture's height, 0 to 1", code: "invalid" }, 400);
   await saveEdit({ ...r.e, eyeline: { ...r.e.eyeline, [v]: y } });
   return c.json(viewOf(readEdit(r.e.id)!, r.e.createdBy));
+});
+
+/** What analyze found, so the page can play a take from its seconds. */
+editorApp.get("/:id/sentences", (c) => {
+  const r = load(c);
+  return r ? c.json(readStep(r.e.id, "analysis")?.sentences ?? []) : notFound(c);
+});
+
+/**
+ * The script table's changes (PlansPatch): each version named gets the line order and takes sent, every take one the
+ * line has. Only those versions are drafted again, with no AI.
+ */
+editorApp.put("/:id/lines", async (c) => {
+  const r = load(c);
+  if (!r) return notFound(c);
+  if (r.role !== "creator") return c.json({ error: "Only the edit's creator can change it", code: "forbidden" }, 403);
+  const plan = readStep(r.e.id, "plan");
+  if (!plan) return c.json({ error: "There is no script yet", code: "conflict" }, 409);
+  const sent = (await body(c)).plans;
+  const bad = (why: string) => c.json({ error: why, code: "invalid" }, 400);
+  if (!Array.isArray(sent) || !sent.length) return bad("plans is a list of versions");
+  const next = new Map(plan.plans.map((p) => [p.name, p]));
+  for (const p of sent as { name?: unknown; lines?: unknown }[]) {
+    const old = next.get(String(p?.name));
+    if (!old || !Array.isArray(p.lines) || !p.lines.length) return bad(`No version ${String(p?.name)} in the script`);
+    const lines: VersionPlan["lines"] = [];
+    for (const l of p.lines as { line?: unknown; take?: { first?: unknown; last?: unknown } }[]) {
+      const take = plan.lines.find((x) => x.id === l?.line)?.takes.find((t) => t.first === l.take?.first && t.last === l.take?.last);
+      if (!take) return bad(`Line ${String(l?.line)} has no such take`);
+      lines.push({ line: String(l.line), take });
+    }
+    next.set(old.name, { ...old, lines });
+  }
+  await saveStep(r.e.id, "plan", { ...plan, plans: plan.plans.map((p) => next.get(p.name)!) });
+  const names = new Set((sent as { name: string }[]).map((p) => p.name));
+  for (const n of names) enqueueJob(libraryDb(), r.e.workspaceId, `${r.e.id}:${n}`, "draft", r.e.createdBy, true, "edit_jobs");
+  return c.json(viewOf(r.e, r.e.createdBy));
+});
+
+/** Renders the draft's preview again and files it in Review as the next version (the chain does this after a draft). */
+editorApp.post("/:id/drafts/:name/review", (c) => {
+  const r = load(c);
+  const name = c.req.param("name");
+  if (!r || !readDraft(r.e.id, name)) return notFound(c);
+  if (r.role !== "creator") return c.json({ error: "Only the edit's creator can run it: it runs on their own AI and keys", code: "forbidden" }, 403);
+  enqueueJob(libraryDb(), r.e.workspaceId, `${r.e.id}:${name}`, "preview", r.e.createdBy, true, "edit_jobs");
+  return c.json(viewOf(r.e, r.e.createdBy));
 });
 
 /** A version's draft with its checks, run against the edit's other drafts as they are now. */

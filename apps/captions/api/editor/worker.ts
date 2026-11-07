@@ -4,6 +4,7 @@ import { claimJob, defer, enqueueJob, extendLease, finishJob, parkJob, requeueEx
 import { NeedsKey } from "../library/transcribe";
 import { trashDays } from "../library/trash";
 import { analyzeStep, Waiting } from "./analyze";
+import { fileStep, previewStep } from "./preview";
 import { scriptStep } from "./script";
 import { draftStep } from "./timeline";
 import { purgeEdits, readEdit, sourcesWorkspace, type EditMeta } from "./store";
@@ -29,10 +30,10 @@ export interface StepContext {
 }
 
 /** The steps by kind; B-roll comes with its slice. */
-export const STEPS: Record<string, (ctx: StepContext) => Promise<void>> = { analyze: analyzeStep, script: scriptStep, draft: draftStep };
+export const STEPS: Record<string, (ctx: StepContext) => Promise<void>> = { analyze: analyzeStep, script: scriptStep, draft: draftStep, preview: previewStep, file: fileStep };
 
 /** What a finished step queues next, for the same edit and variant (a whole-edit draft queues one per version itself). */
-export const NEXT: Record<string, string[]> = { analyze: ["script"], script: ["draft"] };
+export const NEXT: Record<string, string[]> = { analyze: ["script"], script: ["draft"], draft: ["preview"], preview: ["file"] };
 
 const running = new Map<number, { edit: string; ctl: AbortController }>();
 
@@ -73,7 +74,8 @@ export async function tick(now = Date.now()): Promise<boolean> {
     await step({ edit, job, variant, signal: ctl.signal });
     if (ctl.signal.aborted) return true; // stopped: stopEdit already marked it
     finishJob(db, job.id, true, undefined, Date.now(), T);
-    for (const kind of NEXT[job.kind] ?? []) enqueueJob(db, edit.workspaceId, vid, kind, job.actor, true, T);
+    // a whole-edit draft has queued one per version: each of those queues its own preview
+    if (variant || job.kind !== "draft") for (const kind of NEXT[job.kind] ?? []) enqueueJob(db, edit.workspaceId, vid, kind, job.actor, true, T);
   } catch (e) {
     if (ctl.signal.aborted) return true;
     if (e instanceof Waiting) defer(db, job.id, e.seconds, now, T);

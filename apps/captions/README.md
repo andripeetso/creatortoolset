@@ -14,6 +14,7 @@ server, so every tool shares a sign-in and a data folder. Each tool has its own 
 | `/guides` | Guide Builder | `api/documents.ts` |
 | `/analyzer` | Content Analyzer | `api/instagram.ts` |
 | `/workshop` | Content Workshop | `api/workshop.ts` |
+| `/editor` | AI Editor | `api/editor/` |
 | Settings → Team, → AI providers | Team and AI providers | `api/workspace.ts`, `api/providers.ts`, `api/devices.ts` |
 
 `api/boot.ts` mounts the routes, applies the sign-in gate and the per-account tool switches, and serves the

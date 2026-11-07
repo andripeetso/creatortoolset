@@ -20,6 +20,8 @@ import WorkshopSharePage from "./pages/WorkshopSharePage";
 import StorySplitterPage from "./pages/StorySplitterPage";
 import LibraryPage from "./pages/LibraryPage";
 import LibrarySharePage from "./pages/LibrarySharePage";
+import EditorPage from "./pages/EditorPage";
+import EditorEditPage from "./pages/EditorEditPage";
 import type { Tool } from "@contracts/tools";
 import { isPublicLibraryPath, isPublicReviewPath, isPublicSharePath } from "@/components/AuthGate";
 import { analyzerHome } from "@/lib/instagram";
@@ -286,6 +288,8 @@ export default function App() {
           <Route path="/data-deletion" element={<LegalPage page="/data-deletion" />} />
           <Route path="/library" element={<AppRoute tool="media"><LibraryPage /></AppRoute>} />
           <Route path="/stories" element={<AppRoute tool="stories"><StorySplitterPage /></AppRoute>} />
+          <Route path="/editor" element={<AppRoute tool="editor"><EditorPage /></AppRoute>} />
+          <Route path="/editor/:id" element={<AppRoute tool="editor"><EditorEditPage /></AppRoute>} />
           <Route path="/rp/:ptoken/:assetId" element={<ReviewAssetPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

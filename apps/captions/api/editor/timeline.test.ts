@@ -116,11 +116,14 @@ describe("AI Editor timeline", () => {
     await saveDraft(e.id, "v3", { timeline: {} as never, notes: [] });
     enqueueJob(libraryDb(), "ws_a", `${e.id}:`, "draft", "mem-a", true, "edit_jobs");
     while (await tick());
-    const jobs = viewOf(readEdit(e.id)!, "mem-a").jobs.map((j) => [j.kind, j.variant, j.state]);
+    const jobs = viewOf(readEdit(e.id)!, "mem-a").jobs.map((j) => [j.kind, j.variant, j.kind === "draft" ? j.state : ""]);
+    // each version's draft queues its preview (it fails here: the fixture has no footage); the whole-edit one none
     expect(jobs).toEqual([
       ["draft", "", "done"],
       ["draft", "v1", "done"],
       ["draft", "v2", "done"],
+      ["preview", "v1", ""],
+      ["preview", "v2", ""],
     ]);
     expect(viewOf(readEdit(e.id)!, "mem-a").drafts).toEqual(["v1", "v2"]);
     const v2 = readDraft(e.id, "v2")!.timeline;
