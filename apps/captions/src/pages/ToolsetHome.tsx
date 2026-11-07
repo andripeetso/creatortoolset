@@ -242,7 +242,7 @@ export default function ToolsetHome() {
           {!t.can(me) && (
             <Lock className="absolute -bottom-1 -right-1 h-4 w-4 rounded-full bg-zinc-900 p-0.5 text-zinc-300" />
           )}
-          {t.can(me) && <Badge n={waiting[t.to] ?? 0} />}
+          {t.can(me) && (t.to === "/workshop" ? showCounts && <WorkshopBadge /> : <Badge n={waiting[t.to] ?? 0} />)}
         </span>
         <span className={`text-xs leading-tight group-hover:text-white ${quiet ? "text-zinc-400" : "text-zinc-300"}`}>
           {t.name}
@@ -350,7 +350,6 @@ export default function ToolsetHome() {
  * Needs review. Read once for the page, again every 30 s while it is in front.
  */
 function useWaiting(on: boolean, me: Me | null): Record<string, number> {
-  const rows = useSessionSummaries();
   const editor = on && canUse(me, "editor");
   const review = on && canUse(me, "review");
   const [counts, setCounts] = useState<{ editor: number; review: number }>({ editor: 0, review: 0 });
@@ -371,10 +370,14 @@ function useWaiting(on: boolean, me: Me | null): Record<string, number> {
   }, [editor, review]);
   if (!on) return {};
   return {
-    "/workshop": canUse(me, "workshop") ? (rows ?? []).filter((r) => r.ready).length : 0,
     "/editor": counts.editor,
     "/review": counts.review,
   };
+}
+
+/** Its own component, so only an account that can read the Workshop polls its sessions. */
+function WorkshopBadge() {
+  return <Badge n={(useSessionSummaries() ?? []).filter((r) => r.ready).length} />;
 }
 
 function Badge({ n }: { n: number }) {
