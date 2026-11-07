@@ -1,7 +1,7 @@
 # Self-hosting Creator Toolset
 
-This guide sets up one Creator Toolset server for you and your team: the app in Docker, HTTPS on your own
-domain, your admin account, optional storage in an S3-compatible bucket, and the Mac app on your Mac for AI.
+This guide sets up Creator Toolset on a server of your own, for you: the app in Docker, HTTPS on your own
+domain, your account, optional storage in an S3-compatible bucket, and the Mac app on your Mac for AI.
 It is written to be followed top to bottom, by you or by an AI agent working for you. Each step ends with a
 check. If a check fails, fix that before going on.
 
@@ -11,20 +11,19 @@ Ground rules for whoever runs it:
   ticket or a screenshot. Generate `APP_SECRET` on the server. Ask the person to paste their own provider keys
   into `.env` themselves.
 - Commands run on the server unless a step says "on your Mac".
-- Ask before deleting anything. Deleting a Docker volume deletes the projects, the accounts and the videos in it.
+- Ask before deleting anything. Deleting a Docker volume deletes the projects, the account and the videos in it.
 
 ## 0. What you get
 
 - The web app and its server, in one container, behind Caddy, which obtains and renews the HTTPS certificate
   for your domain.
-- Your accounts: one admin (you) and as many members as you invite.
+- One account: yours. There is no sign-up, no invites and no user management.
 - Your data on the server's disk, or in a private S3-compatible bucket you own.
 - AI from your own subscription: you install Claude Code (or Codex) on your own Mac and sign in with your own
-  subscription; the Mac app relays only your own requests to it. Each member does the same on their own Mac, or
-  adds their own Anthropic key in Settings → My API keys.
-- Every paid service on the key of the person who uses it (Settings → My API keys). Your server's keys serve
-  only you (not for AI), the members you give an API budget, and guests and the demo when you switch that on.
-  See "Whose keys pay" in step 8.
+  subscription; the Mac app relays only your own requests to it. Or add your own Anthropic key in
+  Settings → My API keys.
+- Every paid service on your own keys (Settings → My API keys, or the server's `.env`). The server's Anthropic
+  key is never used for AI. See "Whose keys pay" in step 8.
 - The web app works on phones: open it in the phone's browser and add it to the home screen.
 
 This repository does not include an iPhone app.
@@ -77,7 +76,7 @@ chmod 600 .env
 Set these in `.env` (edit the file, or use `sed`):
 
 - `DOMAIN`: the name from step 1, e.g. `tools.example.com`. No `https://`.
-- `APP_SECRET`: a long random value, generated on the server. It is the sign-in secret, and the first admin's
+- `APP_SECRET`: a long random value, generated on the server. It is the sign-in secret, and your account's first
   password. Changing it signs everyone out. Generate and write it without printing it:
 
   ```sh
@@ -88,13 +87,11 @@ Set these in `.env` (edit the file, or use `sed`):
 
 Optional, now or later (see step 4 and `.env.example` for every variable):
 
-- `ANTHROPIC_API_KEY`: pays for the API budgets you give members, and guests' and the demo's AI when on (step 8).
-  It is never your own AI: add your own key in Settings → My API keys for that.
-- `DEEPGRAM_API_KEY`: cloud transcription, for you and budget members.
+- `DEEPGRAM_API_KEY`: cloud transcription.
 - `ELEVENLABS_API_KEY`, `NVIDIA_API_KEY`: the Audio Enhancer's engines, for you.
 - `PERPLEXITY_API_KEY`: the Content Workshop's accuracy check, for you.
 
-These are the server's keys. Every other account adds its own in Settings → My API keys (step 8).
+These are the server's keys, for you. For AI, add your own Anthropic key in Settings → My API keys (step 8).
 - `OBJECT_STORAGE_*`: a private bucket for uploads (step 5).
 - `COOKIE_DOMAIN`: only if several subdomains of one server share the sign-in, e.g. `.example.com`. Empty = the exact host.
 
@@ -161,34 +158,24 @@ cannot run from the server (AI on a Mac is checked in the app).
 
 Run it again after each change to `.env`: `docker compose up -d` applies the change.
 
-## 7. Create your admin account
+## 7. Sign in to your account
 
 1. Open `https://tools.example.com` in a browser.
 2. Sign in as `admin` (or your `ADMIN_USERNAME`), with `APP_SECRET` as the password. The account was created on
    first start.
-3. Open **Users** in the header and set a new password for this account. The password is then no longer the
-   secret that signs the sign-in cookies.
+3. In **Settings → Account**, set a new password. The password is then no longer the secret that signs the
+   sign-in cookies.
 4. Keep `APP_SECRET` in a password manager. You need it to run the server.
 
-Invite members from **Settings → Team**. An invite link makes a new account, or joins the account that is
-signed in there. Give each member the tools they need in the Users panel: switch off the ones they should not
-use.
-
-To let anyone create an account from the sign-in screen, set `ALLOW_SIGNUP=1` in `.env` (off by default). Each
-new account gets a free workspace of its own and a short setup: a first project, then their own AI, their own
-Instagram login and Apify key, and their own API keys. Your server's keys never serve these accounts.
-Sign-ups are limited to 5 per address an hour. Behind your own proxy (not the Docker kit, which sets it), set
-`TRUST_PROXY=1` so the limit counts the caller's address rather than the proxy's.
-Your proxy must also send `X-Forwarded-Proto` (most do): the sign-in cookie is marked Secure only when the
+Behind your own proxy (not the Docker kit's Caddy), the proxy must send `X-Forwarded-Proto` (most do): the sign-in cookie is marked Secure only when the
 request came in over HTTPS.
 
 ## 8. Connect AI
 
 Creator Toolset never sends AI work to an account it does not belong to. There are two kinds of AI:
 
-**Your own subscription, on your own Mac (recommended).** Each person installs Claude Code (or Codex) on their
-own Mac and signs in with their own Claude (or ChatGPT) subscription. The Mac app relays only that person's own
-requests to it; nothing routes one person's subscription for another person.
+**Your own subscription, on your own Mac (recommended).** You install Claude Code (or Codex) on your Mac and sign
+in with your own Claude (or ChatGPT) subscription. The Mac app relays only your own requests to it.
 
 On your Mac:
 
@@ -202,42 +189,30 @@ On your Mac:
 5. In the site: **Settings → AI providers → Set up your AI** shows the install and sign-in commands for Claude
    Code and Codex. Run them once in Terminal on that Mac, then press **check**.
 
-**An API key of your own.** Anyone, you included, can add their own Anthropic key in **Settings → My API keys**:
-it answers only their account, and Anthropic bills them. There is no fallback: with no provider and no key of
-their own, a tool that needs AI says so. The Content Workshop always needs a person's own Claude Code or Codex.
-
-**A budget you choose to give (on the server's key).** Set `ANTHROPIC_API_KEY` in `.env` and run
-`docker compose up -d`. Members of your own workspace who have no AI of their own can then use a monthly budget:
-in **Settings → Team** you set each member's AI route (their own Mac, or the budget) and the budget in dollars.
-A budget only works when the key is set, and only in the platform admin's workspace (another owner's Team page
-does not offer it). The server's key never answers your own AI.
+**An API key of your own.** Add your own Anthropic key in **Settings → My API keys**: it answers only your
+account, and Anthropic bills you. There is no fallback: with no provider and no key, a tool that needs AI says so.
+The Content Workshop always needs your own Claude Code or Codex.
 
 ### Whose keys pay
 
 One resolver, `keyFor` in `apps/captions/api/my-keys.ts`, picks the key every paid call runs on: the person's own
-key from **Settings → My API keys** first. Else the server's key (`.env` or **Settings → API keys**), only for:
-
-- you, the platform admin (or the one local account when `APP_SECRET` is unset), for every service except AI;
-- members of your workspace on an API budget, for AI and transcripts, billed to their month;
-- guests and the demo account, when you switch them on in **Settings → AI providers**.
-
-Everyone else, including every account made with `ALLOW_SIGNUP=1`, uses their own keys; a tool without one says
-which key to add. Instagram: the official Meta login reads a person's own posts and their numbers; other
+key from **Settings → My API keys** first. Else the server's key (`.env` or **Settings → API keys**), only for you,
+the admin (or the one local account when `APP_SECRET` is unset), for every service except AI. A tool without a key
+says which one to add. Instagram: the official Meta login reads a person's own posts and their numbers; other
 creators' posts are read only with that person's own Apify key (**Settings → Connectors**).
 
-Check: **Settings → AI providers** shows your Mac as online with a tool installed, and a test call passes. The
-doctor's `Anthropic` line is `ok` when the key is accepted.
+Check: **Settings → AI providers** shows your Mac as online with a tool installed, and a test call passes.
 
 Rules to keep:
 
-- A person's Mac and login serve that person. Do not share one Mac or one subscription with another person.
-- Do not put a subscription login in a shared place. Members bring their own AI or key, or you give them a budget.
+- Your Mac and login serve you. Do not share one Mac or one subscription with another person.
+- Do not put a subscription login in a shared place.
 
 ## 9. Backups
 
 Two things need backing up: the server's data volume, and (if you use one) your bucket.
 
-The data volume holds the account file, the team settings, the projects, the exports and, with option A in
+The data volume holds the account file, the settings, the projects, the exports and, with option A in
 step 4, the videos. Back it up while the app is stopped, so the files are consistent:
 
 ```sh
@@ -300,5 +275,5 @@ Back up first (step 9). To go back, check out the previous commit and run the sa
 - The Docker image is for x86_64 Linux only.
 - The native video fingerprint tools (Video Cleaner's PDQ, TMK and SSCD) are not built into the image.
   See `docs/video-fingerprints.md` in `apps/captions`.
-- There is no database server to run. Accounts and team settings are files under the data volume.
+- There is no database server to run. The account and settings are files under the data volume.
 - Keep the server patched (`apt upgrade`, Docker updates), and keep SSH on keys only.

@@ -20,8 +20,6 @@ services:
       NODE_ENV: production
       PORT: "3000"
       DATA_DIR: /data
-      # Caddy below is the only way in: the address it puts last in X-Forwarded-For is the caller's (sign-up limits)
-      TRUST_PROXY: "1"
       # the app refuses to start without this: it is the sign-in secret and the first admin's password
       APP_SECRET: ${APP_SECRET:?set APP_SECRET in .env (see .env.example)}
     volumes:

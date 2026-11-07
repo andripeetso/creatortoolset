@@ -6,9 +6,10 @@ stops being true, fix the rule in the same change.
 ## What this is
 
 Creator Toolset: open-source tools for content creators (captions, audio enhancement, client review, video
-cleaning, story splitting, video notes, guides, an Instagram content analyzer, a writing workspace, teams and
-AI providers). It runs as one web app on the user's machine or on their own server, plus a Mac app that
-relays AI requests to the Claude Code or Codex tool its owner installed and signed in to with their own subscription.
+cleaning, story splitting, video notes, guides, an Instagram content analyzer, a writing workspace and AI providers).
+It is one person's app: no sign-up, no invites, no user management. It runs as one web app on the user's machine or
+on their own server, plus a Mac app that relays AI requests to the Claude Code or Codex tool its owner installed
+and signed in to with their own subscription.
 
 | Folder | What | Stack |
 |---|---|---|
@@ -41,17 +42,15 @@ Enable the hooks once per clone: `git config core.hooksPath .githooks`.
 
 **AI providers.** A server's AI providers are a person's own Claude Code or Codex, installed on their own Mac and
 signed in with their own subscription, paired through the Mac app. They answer only the requests and background work
-of the account that owns them. Members use their own providers, or a
-monthly API budget that the workspace owner sets. Never add a path that runs one person's subscription for
-another person, and never let a request from one account reach another account's provider.
+of the account that owns them. Never add a path that runs one person's subscription for another person, and never
+let a request from one account reach another account's provider.
 
 **Whose keys pay.** Every paid service call (AI on an API key, transcription, audio engines, research, Apify)
 gets its key from `keyFor` in `apps/captions/api/my-keys.ts`; never read a service key from `process.env` in a
 feature. Each user adds their own keys in Settings → My API keys (Apify in Settings → Connectors) and pays their
-provider. The server's keys serve only the platform admin's own work (never their AI: an admin's AI is their own
-provider or own key), members of the admin's workspace on an API budget, and guests and the demo when an admin
-switches that on. Accounts from open sign-up (`ALLOW_SIGNUP=1`) never use them. AI with no provider and no own key
-fails with a message saying what to add; the Workshop has no API-key path at all.
+provider. The server's keys serve only the admin's own work, never their AI (an admin's AI is their own provider or
+own key). AI with no provider and no own key fails with a message saying what to add; the Workshop has no
+API-key path at all.
 
 **No scraping.** Social platforms come only from the official logins and the user's own Apify key, never from
 their web pages, logged in or not; no browser automation of other services. The one page fetch is Knowledge → Add a
@@ -59,9 +58,9 @@ link (`webPageText` in `api/lib/workshop/source-files.ts`): the single public pa
 crawling, inside addresses and social platforms refused.
 
 **Accounts and access.** With `APP_SECRET` unset the server is open and every request runs as a local admin.
-That is for one person's own machine only. Production refuses to start without `APP_SECRET`. Guests and the demo
-account have their own limits (see `api/boot.ts`, `api/users.ts`); keep those checks where the routes are mounted,
-not inside each handler.
+That is for one person's own machine only. Production refuses to start without `APP_SECRET`; the owner account is
+made from it on first start (`api/users.ts`). Someone with no session on a share link is `VISITOR` (every app off);
+keep access checks where the routes are mounted (`api/boot.ts`), not inside each handler.
 
 **No secrets in code, docs or fixtures.** Keys, tokens, cookies and passwords come from environment variables or
 per-user files written with mode 0600. Read them with `process.env` at the point of use (paid service keys only

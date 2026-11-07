@@ -8,7 +8,7 @@ notes as Mac notifications, and a Dock badge.
 
 The app is a thin native shell around the same web UI, plus the local runner
 it supervises: the web stays the one UI. A fix on the site reaches
-the Mac app on the next load, and freelancers, guests and the demo keep using the website.
+the Mac app on the next load, and a reviewer on a share link keeps using the website.
 Nothing here re-builds a screen. The native parts only do what a web page can't: run this
 Mac's AI jobs, post notifications, and set the Dock badge.
 

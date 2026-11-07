@@ -23,8 +23,7 @@ Licensed under the [MIT License](LICENSE).
 
 Around the tools:
 
-- **Team**: accounts, invite links, roles (owner, admin, member) and per-tool access. Settings → Team.
-- **AI providers**: which AI each account uses. Settings → AI providers.
+- **AI providers**: which AI answers each job. Settings → AI providers.
 - **Mac app**: a native window around the same web app, with the local AI runner in the menu bar.
   See [apps/mac/README.md](apps/mac/README.md).
 - **Phone app**: an iPhone app that signs in to a server of this kind exists separately; it is not in this repository.
@@ -38,8 +37,7 @@ one of two ways:
 1. **Your own subscription, on your own Mac.** You install Claude Code (or Codex) on your own Mac and sign in
    to it with your own Claude (or ChatGPT) subscription. Then you install the Mac app: with the server on your Mac it is your AI
    device from the start; for a server elsewhere, turn on "Use this Mac for my AI". The Mac app relays only your own requests, from your own account, to that tool. Nothing routes
-   one person's subscription for anyone else: everyone else on the server brings their own Mac and their own
-   sign-in. Settings → AI providers walks you through the install and the sign-in.
+   one person's subscription for anyone else. Settings → AI providers walks you through the install and the sign-in.
 2. **Your own API key.** Add your Anthropic key in Settings → My API keys. Anthropic bills you for what you use,
    and the key answers only your own account.
 
@@ -48,17 +46,10 @@ always needs your own Claude Code or Codex, and when that Mac is off or a run fa
 
 ## Whose keys pay
 
-Every paid service (AI, cloud transcription, audio engines, research, Apify) runs on the key of the person who
-uses it: each account adds its own in **Settings → My API keys** (Apify in **Settings → Connectors**), and that
-provider bills them directly. One resolver, `keyFor` in `apps/captions/api/my-keys.ts`, decides which key a call
-runs on. The server's own keys (in `.env` or Settings → API keys) serve only:
-
-- the platform admin's own work, except AI: the server's Anthropic key is never the admin's AI;
-- members whose workspace the platform admin owns and who were given a monthly API budget (AI and transcripts,
-  billed to that budget);
-- guests and the demo account, only when an admin switches that on.
-
-Accounts made with open sign-up (`ALLOW_SIGNUP=1`) get their own workspace and never use the server's keys.
+Every paid service (AI, cloud transcription, audio engines, research, Apify) runs on your own key: you add it in
+**Settings → My API keys** (Apify in **Settings → Connectors**), and that provider bills you directly. One resolver,
+`keyFor` in `apps/captions/api/my-keys.ts`, decides which key a call runs on: yours first, else the server's own
+keys (in `.env` or Settings → API keys), which serve only the admin and never for AI.
 Instagram is read only through the official logins (your own posts and their numbers) and, for other creators,
 your own Apify key: the app never reads Instagram's web pages.
 
@@ -101,11 +92,11 @@ are kept in `~/.caption-studio` (change it with `DATA_DIR`).
 
 To run the test suites and the checks: `pnpm test` and `pnpm check`. [AGENTS.md](AGENTS.md) lists every command.
 
-## Host it for other people
+## Run it on your own server
 
 [SELF_HOSTING.md](SELF_HOSTING.md) is written for you and for an AI agent to follow: pick a server and a
-domain, set the environment, start the Docker kit (the app plus Caddy for HTTPS), create the first admin
-account, connect the Mac app, back up and update. `pnpm run doctor` checks a running install and tells you
+domain, set the environment, start the Docker kit (the app plus Caddy for HTTPS), sign in to your account,
+connect the Mac app, back up and update. It is still one person's app, reachable from anywhere. `pnpm run doctor` checks a running install and tells you
 what is missing.
 
 Every setting the server reads is listed, with an explanation, in
@@ -117,7 +108,7 @@ Every setting the server reads is listed, with an explanation, in
 |---|---|
 | `apps/captions/` | The web app and its server (React, Vite, Hono, tRPC, TypeScript). See [its README](apps/captions/README.md). |
 | `apps/mac/` | The Mac app (SwiftUI). See [its README](apps/mac/README.md). |
-| `SELF_HOSTING.md` | Running a server for other people. |
+| `SELF_HOSTING.md` | Running it on your own server. |
 | `AGENTS.md` | Rules and commands for contributors and their coding agents. |
 
 ## Contributing

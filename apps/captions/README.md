@@ -15,7 +15,7 @@ server, so every tool shares a sign-in and a data folder. Each tool has its own 
 | `/analyzer` | Content Analyzer | `api/instagram.ts` |
 | `/workshop` | Content Workshop | `api/workshop.ts` |
 | `/editor` | AI Editor | `api/editor/` |
-| Settings → Team, → AI providers | Team and AI providers | `api/workspace.ts`, `api/providers.ts`, `api/devices.ts` |
+| Settings → AI providers | AI providers | `api/providers.ts`, `api/devices.ts` |
 
 `api/boot.ts` mounts the routes, applies the sign-in gate and the per-account tool switches, and serves the
 built app. Feature notes are in `docs/features/`; the design notes for each tool are in `docs/`.
@@ -52,10 +52,9 @@ Outside Docker, the same check is `pnpm run doctor -- --url https://your.site` f
 
 ## Accounts
 
-Set `APP_SECRET` and the server asks for a sign-in. The first admin is created on first start, with
-`APP_SECRET` as its password. The admin then creates accounts from the Users panel or with invite links
-(Settings → Team), and decides which tools each account can use. Each account has its own projects and its
-own AI. Production refuses to start without `APP_SECRET`.
+Set `APP_SECRET` and the server asks for a sign-in. The owner account (`admin`, or `ADMIN_USERNAME`) is created
+on first start, with `APP_SECRET` as its password; change it in Settings → Account. It is one person's server:
+there is no sign-up, no invites and no user management. Production refuses to start without `APP_SECRET`.
 
 Accounts are kept in `users.json` under `DATA_DIR`. There is no database to run.
 
