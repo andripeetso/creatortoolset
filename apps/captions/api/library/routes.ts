@@ -102,14 +102,20 @@ async function sweepStale(): Promise<void> {
 libraryApp.post("/:id/uploads", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
-  if (!libraryRole(user.username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
+  const role = libraryRole(user.username, libraryId);
+  if (!role) return c.json({ error: "Not found", code: "not_found" }, 404);
   const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   const size = Number(body?.size);
   if (!Number.isSafeInteger(size) || size <= 0) return c.json({ error: "Invalid size", code: "invalid" }, 400);
   if (size > gbSetting("LIBRARY_MAX_UPLOAD_GB", 8) * GiB) return c.json({ error: "Too large", code: "too_large" }, 413);
   const replaces = typeof body?.replacesAssetId === "string" ? body.replacesAssetId : null;
-  if (replaces && !db().prepare("SELECT 1 FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL").get(replaces, libraryId)) {
-    return c.json({ error: "Not found", code: "not_found" }, 404);
+  if (replaces) {
+    const target = db().prepare("SELECT created_by FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL").get(replaces, libraryId) as
+      | { created_by: string }
+      | undefined;
+    if (!target) return c.json({ error: "Not found", code: "not_found" }, 404);
+    // a member replaces only their own assets (plan section 9); the owner any
+    if (!canManage(role) && target.created_by !== user.username) return c.json({ error: "Only the uploader or the owner can replace it", code: "forbidden" }, 403);
   }
   const collection = typeof body?.collectionId === "string" ? body.collectionId : null;
   if (collection && !db().prepare("SELECT 1 FROM collections WHERE id = ? AND library_id = ?").get(collection, libraryId)) {
@@ -117,7 +123,9 @@ libraryApp.post("/:id/uploads", async (c) => {
   }
   await sweepStale();
   await mkdir(stagingDir(), { recursive: true });
-  if ((await freeBytes(stagingDir())) - size < gbSetting("LIBRARY_DISK_RESERVE_GB", 20) * GiB) {
+  // bytes the open uploads may still write count too, or several large uploads would each pass alone
+  const pending = (db().prepare("SELECT COALESCE(SUM(size - received), 0) AS n FROM uploads WHERE state = 'open'").get() as { n: number }).n;
+  if ((await freeBytes(stagingDir())) - pending - size < gbSetting("LIBRARY_DISK_RESERVE_GB", 20) * GiB) {
     return c.json({ error: "Not enough free disk space for this upload", code: "disk_reserve" }, 507);
   }
   const id = randomUUID();

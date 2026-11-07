@@ -4,6 +4,7 @@ import path from "node:path";
 import { Hono } from "hono";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { AuthVars } from "../auth";
+import { freeBytes } from "../lib/uploads";
 
 const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "library-uploads-"));
 process.env.DATA_DIR = dir;
@@ -134,5 +135,30 @@ describe("library uploads", () => {
     } finally {
       delete process.env.LIBRARY_DISK_RESERVE_GB;
     }
+  });
+
+  it("counts the bytes open uploads may still write against the disk reserve", async () => {
+    const GB = 1024 ** 3;
+    const free = (await freeBytes(dir)) / GB;
+    // the reserve leaves room for one 1 GB upload, not two
+    process.env.LIBRARY_DISK_RESERVE_GB = String(free - 1.5);
+    try {
+      expect((await create("owner-a", GB)).status).toBe(201);
+      expect((await create("owner-a", GB)).status).toBe(507);
+    } finally {
+      delete process.env.LIBRARY_DISK_RESERVE_GB;
+    }
+  });
+
+  it("lets a member replace only their own asset; the owner replaces any", async () => {
+    const d = libraryDb();
+    const at = Date.now();
+    d.prepare("INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES ('ast_owner', 'lib_a', 'video', 'O', 'owner-a', ?)").run(at);
+    d.prepare("INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES ('ast_mine', 'lib_a', 'video', 'M', 'mem-a', ?)").run(at);
+    const replace = (user: string, assetId: string) => create(user, 1024, { replacesAssetId: assetId });
+
+    expect((await replace("mem-a", "ast_owner")).status).toBe(403);
+    expect((await replace("mem-a", "ast_mine")).status).toBe(201);
+    expect((await replace("owner-a", "ast_mine")).status).toBe(201);
   });
 });

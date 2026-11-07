@@ -133,6 +133,15 @@ describe("library share links", () => {
     expect(await media.text()).toBe("fake-video-bytes");
   });
 
+  it("stops guessing a link's password after 10 wrong tries, right or wrong, until the window ends", async () => {
+    seed("a4", "Delta", "owner-a");
+    const made = await data(call("owner-a", "POST", "/api/library/lib_a/shares", { target: { kind: "asset", id: "a4" }, scope: "view", password: "open-sesame-2" }));
+    for (let i = 0; i < 10; i++) {
+      expect((await call("", "POST", `/api/library/s/${made.token}/unlock`, { password: `guess-${i}` })).status).toBe(403);
+    }
+    expect((await call("", "POST", `/api/library/s/${made.token}/unlock`, { password: "open-sesame-2" })).status).toBe(429);
+  });
+
   it("a share never lists another asset: one asset, one version, or only a collection's members", async () => {
     const va = seed("b1", "Alpha two", "owner-a");
     seed("b2", "Beta two", "owner-a");

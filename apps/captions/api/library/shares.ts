@@ -216,16 +216,31 @@ publicShareApp.get("/s/:token", (c) => {
   return c.json(view);
 });
 
-// POST /api/library/s/:token/unlock { password } → 204 and the unlock cookie; 403 for a wrong password
-// ponytail: no attempt limit; add one (per link and per IP) before the server takes public links
+// POST /api/library/s/:token/unlock { password } → 204 and the unlock cookie; 403 for a wrong password; 429 after
+// too many wrong ones on the link (MAX_WRONG in WINDOW_MS, counted in this process: ponytail, a shared store
+// when there is more than one server process)
+const MAX_WRONG = 10;
+const WINDOW_MS = 15 * 60_000;
+const wrong = new Map<string, { n: number; resetAt: number }>();
+
 publicShareApp.post("/s/:token/unlock", async (c) => {
   const token = c.req.param("token");
   const s = liveShare(token);
   if (!s) return notFound(c);
   if (!s.password_hash) return c.body(null, 204);
+  const tries = wrong.get(s.token_hash);
+  if (tries && tries.resetAt > Date.now() && tries.n >= MAX_WRONG) {
+    return c.json({ error: "Too many wrong passwords; try again later", code: "rate_limited" }, 429);
+  }
   const body = (await c.req.json().catch(() => null)) as { password?: unknown } | null;
   const pw = typeof body?.password === "string" ? body.password : "";
-  if (!pw || !(await checkPassword(pw, s.password_hash))) return c.json({ error: "Wrong password", code: "forbidden" }, 403);
+  if (!pw || !(await checkPassword(pw, s.password_hash))) {
+    const live = tries && tries.resetAt > Date.now() ? tries : { n: 0, resetAt: Date.now() + WINDOW_MS };
+    live.n += 1;
+    wrong.set(s.token_hash, live);
+    return c.json({ error: "Wrong password", code: "forbidden" }, 403);
+  }
+  wrong.delete(s.token_hash);
   setCookie(c, unlockName(s.token_hash), unlockValue(s), {
     httpOnly: true,
     sameSite: "Lax",

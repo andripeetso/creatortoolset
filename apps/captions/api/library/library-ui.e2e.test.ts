@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 // The one browser smoke test for /library. It starts the app's own Vite server in this process and runs one headless
 // Chrome (the installed Google Chrome: Playwright's bundled Chromium has no H.264). It runs alone:
-//   LIBRARY_E2E=1 CT_SCRATCH_DIR=/Volumes/WinningFriends/GitHub/ct-scratch/s4-browser-ui \
+//   LIBRARY_E2E=1 CT_SCRATCH_DIR=<a scratch folder on a big disk> \
 //     pnpm -s exec vitest run api/library/library-ui.e2e.test.ts
 // Everything it writes (data, fixture) lives under CT_SCRATCH_DIR and is removed at the end.
 // Not part of the server typecheck (tsconfig.server.json excludes it): the browser types are not in this workspace.
