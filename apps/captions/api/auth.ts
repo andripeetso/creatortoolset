@@ -212,7 +212,7 @@ const remoteRefused = (c: Context, user: UserRecord) => localOnly(c) && !!env.ap
 const NO_PASSWORD_YET = "Set a password on the Mac first: Mac settings → Access from other devices";
 
 /**
- * One-time sign-in links: the Mac app's "Open in browser" (and phone pairing later). POST mints one for the account
+ * One-time sign-in links, for pairing a phone later (no UI uses them yet). POST mints one for the account
  * signed in here; GET /api/auth/link/<code> signs that browser in and goes home. A code works once, within 60 s, and
  * dies with a password change. Kept in memory only and never logged.
  */
@@ -237,7 +237,7 @@ authApp.get("/link/:code", (c) => {
   c.header("Cache-Control", "no-store");
   c.header("Referrer-Policy", "no-referrer");
   const user = link && link.expiresAt > Date.now() ? findUser(link.username) : null;
-  if (!user || user.hash !== link!.hash) return c.text("This sign-in link has expired or was used. Open a new one from the Mac app.", 410);
+  if (!user || user.hash !== link!.hash) return c.text("This sign-in link has expired or was used. Ask for a new one.", 410);
   if (remoteRefused(c, user)) return c.text(NO_PASSWORD_YET, 403);
   bumpUsage(user.username, { logins: 1 });
   setLoginCookie(c, user);

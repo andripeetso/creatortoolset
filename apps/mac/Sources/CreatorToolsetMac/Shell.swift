@@ -49,7 +49,6 @@ final class Shell: NSObject, ObservableObject {
         webView.uiDelegate = self
         webView.allowsBackForwardNavigationGestures = true
         webView.isInspectable = true
-        view.onOpenInBrowser = { [weak self] in self?.openInBrowser() }
         view.onBlank = { [weak self] in
             guard let self, Date().timeIntervalSince(self.lastBlankReload) > 60 else { return }
             self.lastBlankReload = Date()
@@ -121,23 +120,6 @@ final class Shell: NSObject, ObservableObject {
             return
         }
         AppLog.write("the window could not sign in as this Mac's owner: the sign-in page shows")
-    }
-
-    /// Open in browser: a one-time sign-in link (POST /api/auth/link: works once, for 60 s) in the default browser.
-    /// A remote site opens as it is; the browser has its own sign-in there.
-    func openInBrowser() {
-        guard runsHere else {
-            NSWorkspace.shared.open(base)
-            return
-        }
-        Task {
-            do {
-                let link = try JSONDecoder().decode(SignInLink.self, from: try await client().postData("/api/auth/link", [:]))
-                if let url = URL(string: link.path, relativeTo: base)?.absoluteURL { NSWorkspace.shared.open(url) }
-            } catch {
-                notice = "Could not open the browser: \(error.localizedDescription)"
-            }
-        }
     }
 
     /// Access from other devices: on needs the owner's own password first (the server refuses another device's sign-in
@@ -622,11 +604,6 @@ struct Site {
 /// GET /api/auth/check: whether the window's cookie signs it in.
 struct AuthCheck: Decodable {
     let authed: Bool
-}
-
-/// POST /api/auth/link's answer: the one-time sign-in path.
-struct SignInLink: Decodable {
-    let path: String
 }
 
 enum SiteError: LocalizedError {

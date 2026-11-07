@@ -93,12 +93,9 @@ on this Mac…" and opens `http://127.0.0.1:43128` once `/api/health` answers (p
 
 A creatortoolset.com account is not part of this: the server on your Mac works without one.
 
-### Open in browser
-
-**Open in Browser** (Go menu ⇧⌘O, the menu bar, Mac settings, and the setup's last step) asks the server for a
-one-time sign-in link (`POST /api/auth/link`) and opens it in the default browser. The link works once, within
-60 s, and stops working when the password changes; it is kept in the server's memory only and never logged.
-`GET /api/auth/link/<code>` sets the browser's cookie and goes to Home.
+The app's window is the way in: it has no "open in browser". The server keeps one-time sign-in links
+(`POST /api/auth/link`, `GET /api/auth/link/<code>`: one use, 60 s, memory only, never logged) for pairing a phone
+later; nothing in the app uses them yet.
 
 ### Access from other devices
 
@@ -159,9 +156,9 @@ one at most once a minute). A crash of the app itself is macOS's report in
 - With the server on this Mac the window signs in by itself ("First run"). For a remote site, log in once: the
   login lives in WebKit's own persistent store, so it survives relaunches.
 - **Go** menu: ⌘1 Home, ⌘2 Workshop, ⌘3 Analyzer; ⌘[ and ⌘] go
-  back and forward; ⌘R reloads; ⇧⌘O opens it in the default browser, signed in. The routes are the ones in `apps/captions/src/App.tsx`.
+  back and forward; ⌘R reloads. The routes are the ones in `apps/captions/src/App.tsx`.
 - **Settings** (⌘,) opens the site's Settings page in the window. **Mac settings…** (the menu bar)
-  is this app's own: **Use this Mac for my AI**, the server (on or off, port, log, Open in Browser, Data location,
+  is this app's own: **Use this Mac for my AI**, the server (on or off, port, log, Data location,
   Access from other devices), and with the server off the site address (default `https://creatortoolset.com`;
   use `http://localhost:3000` for the dev server).
 - File inputs open the Mac's own open panel. Downloads land in `~/Downloads` (a name taken
@@ -180,7 +177,7 @@ job. The menu shows:
 - "Server on this Mac: starting / running on port 43128 / …" when the app runs the server;
 - the toggle **Use this Mac for my AI**;
 - "Only N GB free on the data disk" under 10 GB;
-- **Open Creator Toolset**, **Open in Browser**, **Open Workshop**, **Open app log**, **Open server log** (with the server), Settings,
+- **Open Creator Toolset**, **Open Workshop**, **Open app log**, **Open server log** (with the server), Settings,
   Mac settings, Check for Updates, Quit.
 
 ## Runs your AI
@@ -265,7 +262,7 @@ between launches; Sign out on the site clears it. The one secret the app keeps i
 
 ## Not checked yet
 
-The first run, Open in Browser, Access from other devices and Data location (Local server 4–6) are unit-tested
+The first run, Access from other devices and Data location (Local server 4–6) are unit-tested
 (the server's sign-in rules in `apps/captions/api/local-server.test.ts`, the Mac's checks in `ServerTests.swift`)
 but not yet launched: the window's cookie landing in WebKit's store before the page loads, the setup inside the
 window, auto-pairing on a fresh data folder, the Keychain prompt for `owner-password` on a signed build, a real

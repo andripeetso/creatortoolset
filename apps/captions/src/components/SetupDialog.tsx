@@ -25,9 +25,8 @@ type Step = (typeof STEPS)[number]["id"];
 /** The steps open before the first project exists. */
 const BEFORE_PROJECT: readonly Step[] = ["welcome", "project"];
 
-/** The Mac app's "Open in browser" (AppWebView's message handler): a one-time sign-in link in the default browser. */
-const macOpenInBrowser = () =>
-  (window as unknown as { webkit?: { messageHandlers?: { openInBrowser?: { postMessage: (v: string) => void } } } }).webkit?.messageHandlers?.openInBrowser;
+/** In the Mac app's window (it sets `mac-app` on <html>), which signed in by itself. */
+const inMacApp = () => document.documentElement.classList.contains("mac-app");
 
 const seenKey = (u: string) => `ct-setup-done:${u}`;
 
@@ -105,7 +104,7 @@ export function SetupDialog() {
           {step === "welcome" && (
             <div className="max-w-xl space-y-3 text-sm text-muted-foreground">
               <p className="text-foreground">
-                Your account is ready.{macOpenInBrowser() && " The app signed you in on this Mac: no password needed here. You choose one only when you open it from your phone or another computer."}
+                Your account is ready.{inMacApp() && " The app signed you in on this Mac: no password needed here. You choose one only when you open it from your phone or another computer."}
               </p>
               <p>Next: your first project, then your AI (Claude Code or Codex, signed in with your own subscription), and if you like, Instagram and the keys for other services. Each provider bills you directly.</p>
               <p>An online account is optional: you don't need one to use everything here.</p>
@@ -114,14 +113,6 @@ export function SetupDialog() {
           {step === "done" && (
             <div className="max-w-xl space-y-3 text-sm text-muted-foreground">
               <p className="text-foreground">Creator Toolset is ready.</p>
-              {macOpenInBrowser() && (
-                <>
-                  <p>Prefer a browser tab? Open it there, signed in already. The link works once, for a minute.</p>
-                  <Button size="sm" variant="outline" onClick={() => macOpenInBrowser()?.postMessage("/")}>
-                    Open in browser
-                  </Button>
-                </>
-              )}
             </div>
           )}
           {step === "project" &&

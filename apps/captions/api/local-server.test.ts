@@ -23,7 +23,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("one-time sign-in links (Open in browser)", () => {
+describe("one-time sign-in links", () => {
   it("signs a browser in once, then never again", async () => {
     const cookie = cookieOf(await login("127.0.0.1", "local-sign-in-test-secret"));
     const minted = await post("127.0.0.1", "/api/auth/link", {}, cookie);

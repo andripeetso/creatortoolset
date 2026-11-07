@@ -36,8 +36,6 @@ struct CreatorToolsetMacApp: App {
                 Button("Back") { shell.webView.goBack() }.keyboardShortcut("[", modifiers: .command)
                 Button("Forward") { shell.webView.goForward() }.keyboardShortcut("]", modifiers: .command)
                 Button("Reload") { shell.webView.reload() }.keyboardShortcut("r", modifiers: .command)
-                Divider()
-                Button("Open in Browser") { shell.openInBrowser() }.keyboardShortcut("o", modifiers: [.command, .shift])
             }
         }
 
@@ -103,7 +101,6 @@ struct MenuBarMenu: View {
         }
         Divider()
         Button("Open Creator Toolset") { shell.showWindow() }
-        Button("Open in Browser") { shell.openInBrowser() }
         Button("Open Workshop") { shell.showWindow(href: "/workshop") }
         Button("Open app log") { shell.openAppLog() }
         if shell.runsHere {
@@ -161,8 +158,7 @@ struct SettingsView: View {
                             Button("Change port") { savePort() }
                             Button("Open server log") { shell.openServerLog() }
                         }
-                        Button("Open in Browser") { shell.openInBrowser() }
-                        Text("Opens your default browser signed in already, with a link that works once, for a minute.")
+                                        Text("Opens your default browser signed in already, with a link that works once, for a minute.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }

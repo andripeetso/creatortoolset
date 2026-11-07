@@ -76,9 +76,7 @@ your Mac with nothing else to install.
    looks for Claude Code or Codex on your Mac, shows the official install and sign-in commands if it finds
    neither, and checks that one answers. This Mac is your AI device from the start, so there is no switch to
    find. Then, if you like, the Instagram login and your own keys for other services. Each provider bills you.
-3. **In a browser.** **Open in Browser** (the Go menu, the menu bar, the last setup step) opens your default
-   browser at `http://127.0.0.1:43128`, signed in, with a link that works once, for a minute.
-4. **Other devices.** Only this Mac reaches the server until you turn on **Mac settings → Access from other
+3. **Other devices.** Only this Mac reaches the server until you turn on **Mac settings → Access from other
    devices**. That is the one time you choose a password: phones and other computers sign in with it.
 
 Your data is in `~/Library/Application Support/Creator Toolset/data`. **Mac settings → Data location** moves it
