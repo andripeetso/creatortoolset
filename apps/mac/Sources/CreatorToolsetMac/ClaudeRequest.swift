@@ -293,9 +293,13 @@ func round4(_ x: Double) -> Double {
 
 // MARK: the Workshop folder and sessions
 
-/// the Mac relay BLOBS: big files (a book in Knowledge) kept on this Mac by their hash.
-func blobCache() -> URL {
-    FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cache/creator-toolset/blobs")
+/// The runner's own folder: `workshop/` (a Workshop session's folder while its Claude session is kept) and `blobs/`
+/// (big files, a book in Knowledge, kept by their hash). Under the data folder for the server on this Mac, so it moves
+/// with it; under Application Support per site for a remote one.
+func relayFolder(for site: URL, localData: URL?) -> URL {
+    if let localData { return localData.appendingPathComponent("relay") }
+    let name = (site.host ?? "site") + (site.port.map { "-\($0)" } ?? "")
+    return appSupport.appendingPathComponent("relay").appendingPathComponent(name)
 }
 
 func sha256Hex(_ text: String) -> String {
@@ -382,7 +386,3 @@ func pruneSessions(root: URL, days: Double = 14, now: Date = Date()) {
     }
 }
 
-/// The Workshop folder on this Mac (the Mac relay WORKSHOP).
-func workshopRoot(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
-    home.appendingPathComponent(".cache/creator-toolset/workshop")
-}

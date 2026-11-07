@@ -13,13 +13,21 @@ import { useWorkspace } from "@/lib/workspace";
 import { cn } from "@/lib/utils";
 
 const STEPS = [
+  { id: "welcome", title: "Welcome", hint: "A few steps and you're in: only the first project is needed, the rest can wait." },
   { id: "project", title: "Your first project", hint: "One project per brand: its name, your Instagram handle, and who you make it for (in Instructions). This step is the only one you need." },
   { id: "ai", title: "Your AI", hint: "The AI runs on your own account, never anyone else's. Pair your Mac to use the Claude Code or Codex you are signed in to, on your own subscription. Or add your own Anthropic API key: Anthropic bills you for what you use." },
   { id: "connectors", title: "Instagram", hint: "Log in with Meta, the official way: your own posts and their numbers, free. That is all the official login gives. To read other creators' posts too, add your own Apify key: Apify bills you for each read." },
   { id: "keys", title: "Other keys", hint: "Optional. Each key turns on one thing, and that provider bills you for it directly. Skip any you don't need: a tool that needs one says so." },
+  { id: "done", title: "Done", hint: "You're set. Settings has every step again, and Settings → General reopens this guide." },
 ] as const;
 const OTHER_KEYS = ["DEEPGRAM_API_KEY", "ELEVENLABS_API_KEY", "NVIDIA_API_KEY", "PERPLEXITY_API_KEY", "TYPESAFE_API_KEY", "OPENAI_API_KEY"] as const;
 type Step = (typeof STEPS)[number]["id"];
+/** The steps open before the first project exists. */
+const BEFORE_PROJECT: readonly Step[] = ["welcome", "project"];
+
+/** The Mac app's "Open in browser" (AppWebView's message handler): a one-time sign-in link in the default browser. */
+const macOpenInBrowser = () =>
+  (window as unknown as { webkit?: { messageHandlers?: { openInBrowser?: { postMessage: (v: string) => void } } } }).webkit?.messageHandlers?.openInBrowser;
 
 const seenKey = (u: string) => `ct-setup-done:${u}`;
 
@@ -53,14 +61,14 @@ export function SetupDialog() {
     }
   }, [firstLogin, loaded, projects.length, me]);
 
-  const asked_: Step | null = asked && STEPS.some((s) => s.id === asked) ? asked : auto ? "project" : null;
+  const asked_: Step | null = asked && STEPS.some((s) => s.id === asked) ? asked : auto ? "welcome" : null;
   // no project yet: that step first, and nothing else until it's made
   const required = loaded && canUse(me, "workshop") && !projects.length;
-  const step: Step | null = asked_ && required ? "project" : asked_;
+  const step: Step | null = asked_ && required && !BEFORE_PROJECT.includes(asked_) ? "project" : asked_;
   if (!real || !step) return null;
   const at = STEPS.findIndex((s) => s.id === step);
   const go = (next: Step | null) => {
-    if (required && next !== "project") return;
+    if (required && !(next && BEFORE_PROJECT.includes(next))) return;
     if (next) return setParams((p) => (p.set("setup", next), p), { replace: true });
     try {
       localStorage.setItem(seenKey(me.username), "1");
@@ -84,7 +92,7 @@ export function SetupDialog() {
                 <button
                   type="button"
                   onClick={() => go(s.id)}
-                  disabled={required && s.id !== "project"}
+                  disabled={required && !BEFORE_PROJECT.includes(s.id)}
                   className={cn("flex items-center gap-1 rounded-full border px-2.5 py-1 disabled:opacity-50", s.id === step ? "border-violet-500 bg-violet-500/10 text-foreground" : "border-border text-muted-foreground hover:text-foreground")}
                 >
                   {i < at ? <Check className="h-3 w-3" /> : <span>{i + 1}</span>} {s.title}
@@ -94,6 +102,28 @@ export function SetupDialog() {
           </ol>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
+          {step === "welcome" && (
+            <div className="max-w-xl space-y-3 text-sm text-muted-foreground">
+              <p className="text-foreground">
+                Your account is ready.{macOpenInBrowser() && " The app signed you in on this Mac: no password needed here. You choose one only when you open it from your phone or another computer."}
+              </p>
+              <p>Next: your first project, then your AI (Claude Code or Codex, signed in with your own subscription), and if you like, Instagram and the keys for other services. Each provider bills you directly.</p>
+              <p>An online account is optional: you don't need one to use everything here.</p>
+            </div>
+          )}
+          {step === "done" && (
+            <div className="max-w-xl space-y-3 text-sm text-muted-foreground">
+              <p className="text-foreground">Creator Toolset is ready.</p>
+              {macOpenInBrowser() && (
+                <>
+                  <p>Prefer a browser tab? Open it there, signed in already. The link works once, for a minute.</p>
+                  <Button size="sm" variant="outline" onClick={() => macOpenInBrowser()?.postMessage("/")}>
+                    Open in browser
+                  </Button>
+                </>
+              )}
+            </div>
+          )}
           {step === "project" &&
             (projects.length ? (
               <p className="text-sm text-muted-foreground">
@@ -128,7 +158,7 @@ export function SetupDialog() {
               </Button>
             )}
             {nextStep ? (
-              <Button size="sm" onClick={() => go(nextStep)} disabled={required}>
+              <Button size="sm" onClick={() => go(nextStep)} disabled={required && !BEFORE_PROJECT.includes(nextStep)}>
                 Next
               </Button>
             ) : (

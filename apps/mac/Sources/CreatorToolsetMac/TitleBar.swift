@@ -34,6 +34,7 @@ final class AppWebView: WKWebView, WKScriptMessageHandler {
         configuration.userContentController.add(self, name: "window")
         configuration.userContentController.add(self, name: "appLog")
         configuration.userContentController.add(self, name: "badge")
+        configuration.userContentController.add(self, name: "openInBrowser")
         setFullScreen(false)
     }
 
@@ -53,6 +54,8 @@ final class AppWebView: WKWebView, WKScriptMessageHandler {
 
     /// A page still blank 10 s after loading (pageLogScript); reloaded at most once a minute.
     var onBlank: (() -> Void)?
+    /// The setup's "Open in browser" (SetupDialog): Shell.openInBrowser.
+    var onOpenInBrowser: (() -> Void)?
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         if message.name == "appLog", let line = message.body as? String {
@@ -61,6 +64,10 @@ final class AppWebView: WKWebView, WKScriptMessageHandler {
             return
         }
         // The Workshop's replies waiting for you (WorkshopSidebar): the count on the Dock icon, "" clears it
+        if message.name == "openInBrowser", message.frameInfo.isMainFrame {
+            onOpenInBrowser?()
+            return
+        }
         if message.name == "badge", let count = message.body as? String {
             NSApp.dockTile.badgeLabel = count.isEmpty ? nil : count
             return

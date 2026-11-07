@@ -308,7 +308,7 @@ final class RelayTests: XCTestCase {
         let cli = binary("claude", home: home) ?? "claude"
         var streamed: [String] = []
         let started = Date()
-        let answer = try claudeAnswer(req, opts, cli: cli, send: { streamed.append($0); return true }, step: { _ in })
+        let answer = try claudeAnswer(req, opts, cli: cli, work: temp(), send: { streamed.append($0); return true }, step: { _ in })
         let seconds = Date().timeIntervalSince(started)
         print("REAL RUN: text=\(answer.text) usage=\(answer.usage) seconds=\(String(format: "%.1f", seconds)) cli=\(cli)")
         XCTAssertFalse(answer.text.isEmpty)

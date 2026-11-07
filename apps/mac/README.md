@@ -59,10 +59,10 @@ its `PATH` (ffprobe), and `NODE_ENV=production`, `PORT`, `HOST=127.0.0.1`, `DATA
 `PLAYWRIGHT_BROWSERS_PATH`, `CT_LOCAL=1` and `CT_EXIT_WITH_PARENT=1`. The window shows "Starting the server
 on this Mac…" and opens `http://127.0.0.1:43128` once `/api/health` answers (polled every 200 ms, up to 30 s).
 
-- **Data:** `~/Library/Application Support/Creator Toolset/data`; Chromium goes to `…/Creator Toolset/runtime/chromium`.
+- **Data:** `~/Library/Application Support/Creator Toolset/data` by default (see "Data location"); Chromium goes
+  to `…/Creator Toolset/runtime/chromium`.
 - **APP_SECRET:** made once (32 random bytes) and kept in the Keychain (service `com.creatortoolset.mac.server`).
-  The server makes the `admin` account with it. Signing the window in by itself comes in a later change: until
-  then the window shows the sign-in page.
+  The server makes the owner account, `admin`, with it as the password; see "First run".
 - **Port:** 43128, changed in Mac settings (Change port). If something answers there, the app asks it for its
   `environment`: the same id as the data folder's `environment.json` and a pid in `DATA_DIR/server.pid` that is
   this app's `node` means a server left from an earlier run, which is stopped; anything else shows "Port 43128 is
@@ -73,6 +73,55 @@ on this Mac…" and opens `http://127.0.0.1:43128` once `/api/health` answers (p
   dies, the closed stdin stops the server (`CT_EXIT_WITH_PARENT`).
 - **Log:** `~/Library/Logs/Creator Toolset Server.log` (the server's output plus the app's notes about it), `.1`
   past 10 MB; **Open server log** in the menu bar and Mac settings.
+
+### First run
+
+1. The app starts its server and the server makes the owner account (`admin`, password = `APP_SECRET`). Nothing
+   is asked: the password stays in the Keychain.
+2. Once `/api/health` answers, the app signs the window in by itself: `GET /api/auth/check` with the window's
+   cookies, and if that isn't signed in, `POST /api/auth/login` as the owner. The cookie it gets goes into the
+   window's WebKit store before the page loads, so the sign-in page never shows.
+3. This Mac pairs as the owner's AI device (`POST /api/devices`, see "Runs your AI") with no toggle. On a server
+   with `CT_LOCAL=1` the server puts the default Claude provider on the owner's first paired Mac, so the AI answers
+   once `claude` is installed and signed in.
+4. The page opens the first-run setup (`SetupDialog` in `apps/captions`) inside the window: welcome, the first
+   project (required), your AI (the Mac's report shows whether `claude` or `codex` is on its PATH or in
+   `~/.local/bin`, `/opt/homebrew/bin` or `/usr/local/bin`, the official install and sign-in commands, and a
+   check that runs one line through it), then Instagram and your own keys (both optional), then done. The AI
+   step looks again every 5 s, and the app reports its tools again whenever it comes to the front, so a tool
+   installed in Terminal shows up without a reload. These are the same screens as Settings.
+
+A creatortoolset.com account is not part of this: the server on your Mac works without one.
+
+### Open in browser
+
+**Open in Browser** (Go menu ⇧⌘O, the menu bar, Mac settings, and the setup's last step) asks the server for a
+one-time sign-in link (`POST /api/auth/link`) and opens it in the default browser. The link works once, within
+60 s, and stops working when the password changes; it is kept in the server's memory only and never logged.
+`GET /api/auth/link/<code>` sets the browser's cookie and goes to Home.
+
+### Access from other devices
+
+Off by default: the server listens on `127.0.0.1` only. **Mac settings → Access from other devices** asks for a
+password of your own first (twice, 6 characters or more): the app changes the owner's password with
+`POST /api/auth/password` (the window gets its new cookie in the same answer), keeps it in the Keychain
+(`owner-password`), and restarts the server on every interface (`HOST=0.0.0.0`). Phones and other computers
+then sign in as `admin` with that password. The server refuses a sign-in or a sign-in link from any address
+but loopback while the owner's password is still `APP_SECRET` (`CT_LOCAL=1`, `api/auth.ts`), so turning the
+listener on by hand can't open the account. The pairing QR for phones comes in a later change.
+
+### Data location
+
+**Mac settings → Data location** shows the folder, how much it holds and the free space on its disk, with
+**Show in Finder** and **Move…**. Move… takes an empty folder on a disk with room for the data plus 10 %, stops
+the server, and moves the folder: a rename on the same disk, else a copy with `ditto` (file modes kept) checked
+by file count and size. The app then starts the server there. A copy keeps the old folder until **Remove old
+copy**, which puts it in the Trash.
+
+If the data folder is on a disk that isn't connected, the server doesn't start and the window says "Your data is
+on *disk*, which isn't connected". It never starts on a new empty folder instead, which would look like lost
+data. Connect the disk and reopen the app, or **Choose another folder…** (no copy). Under 10 GB free on the data
+disk, the menu bar and Mac settings say so.
 
 Notifications need the `.app` bundle (`UNUserNotificationCenter`), so `swift run` won't do.
 The bundle id is `com.creatortoolset.mac`; the icon is `AppIcon.png` (1024 px), converted to `.icns` by the
@@ -107,12 +156,14 @@ one at most once a minute). A crash of the app itself is macOS's report in
   System Settings says for a title bar). The page leaves room for the buttons on its
   `[data-titlebar]` rows when `<html>` has `mac-app` (`apps/captions/src/index.css`); a new
   top bar that doesn't use `AppBar` needs the attribute. `TitleBar.swift`.
-- Log in once. The login lives in WebKit's own persistent store, so it survives relaunches.
+- With the server on this Mac the window signs in by itself ("First run"). For a remote site, log in once: the
+  login lives in WebKit's own persistent store, so it survives relaunches.
 - **Go** menu: ⌘1 Home, ⌘2 Workshop, ⌘3 Analyzer; ⌘[ and ⌘] go
-  back and forward; ⌘R reloads. The routes are the ones in `apps/captions/src/App.tsx`.
+  back and forward; ⌘R reloads; ⇧⌘O opens it in the default browser, signed in. The routes are the ones in `apps/captions/src/App.tsx`.
 - **Settings** (⌘,) opens the site's Settings page in the window. **Mac settings…** (the menu bar)
-  is this app's own: the site address (default `https://creatortoolset.com`; use
-  `http://localhost:3000` for the dev server) and **Use this Mac for my AI**.
+  is this app's own: **Use this Mac for my AI**, the server (on or off, port, log, Open in Browser, Data location,
+  Access from other devices), and with the server off the site address (default `https://creatortoolset.com`;
+  use `http://localhost:3000` for the dev server).
 - File inputs open the Mac's own open panel. Downloads land in `~/Downloads` (a name taken
   gets ` (2)`). `target=_blank`, `window.open` and links to other sites open in the default
   browser.
@@ -128,13 +179,14 @@ job. The menu shows:
 - "AI on this Mac: off / on / running N" and the last AI error (see "Runs your AI");
 - "Server on this Mac: starting / running on port 43128 / …" when the app runs the server;
 - the toggle **Use this Mac for my AI**;
-- **Open Creator Toolset**, **Open Workshop**, **Open app log**, **Open server log** (with the server), Settings,
+- "Only N GB free on the data disk" under 10 GB;
+- **Open Creator Toolset**, **Open in Browser**, **Open Workshop**, **Open app log**, **Open server log** (with the server), Settings,
   Mac settings, Check for Updates, Quit.
 
 ## Runs your AI
 
-Any signed-in account can use this Mac for its AI. Turn
-**Use this Mac for my AI** on (menu bar or Mac settings; off by default). The first time, the app
+Any signed-in account can use this Mac for its AI. With the server on this Mac it is on by itself (see "First
+run"); for a remote site, turn **Use this Mac for my AI** on (menu bar or Mac settings). The first time, the app
 pairs this Mac with the account: `POST /api/devices` with the window's cookies, body `{name, version}`.
 The site returns a device token once. The token goes to the Keychain (service
 `com.creatortoolset.mac.device`, account = the site's host); the device id goes to
@@ -174,8 +226,12 @@ reply finishing or an AI edit failing, so those notifications need a server chan
   make the request and does not keep them.
 - `UserDefaults`: the site address, whether the server runs here and its port, the AI-on flag, this Mac's device
   id per site, and the ids of notes already shown (random ids, no content).
-- With the server: its data folder and log (see "The server on this Mac"), and its `APP_SECRET` in the Keychain.
-- `~/.cache/creator-toolset/workshop/`: a Workshop session's folder while its Claude session is kept (14 days).
+- With the server: its data folder and log (see "The server on this Mac"), its `APP_SECRET` and, once you set one,
+  the owner's password in the Keychain; the data folder's path, the old copy after a move, and whether other
+  devices may connect, in `UserDefaults`.
+- The runner's folder: `relay/` in the data folder for the server on this Mac (so it moves with the data), else
+  `~/Library/Application Support/Creator Toolset/relay/<site>`. In it, `workshop/` holds a Workshop session's
+  folder while its Claude session is kept (14 days) and `blobs/` big files by their hash (30 days).
 
 The site's login cookie lives in WebKit's own store for the app (like Safari's), so the login lasts
 between launches; Sign out on the site clears it. The one secret the app keeps is the device token of
@@ -195,17 +251,25 @@ between launches; Sign out on the site clears it. The one secret the app keeps i
   environment, the stream reading, usage, folder sync (plain functions).
 - `Sources/CreatorToolsetMac/ClaudeRun.swift`: one Claude run (the process, streaming, the answer).
 - `Sources/CreatorToolsetMac/MacReport.swift`: the CLIs and config folders the Mac reports.
-- `Sources/CreatorToolsetMac/Server.swift`: the server on this Mac (start, health wait, port, crashes, log, stop).
+- `Sources/CreatorToolsetMac/Server.swift`: the server on this Mac (start, health wait, port, crashes, log, stop,
+  the owner's password, data location).
 - `Sources/CreatorToolsetMac/Logic.swift`: the pure helpers the tests cover.
 - `Tests/CreatorToolsetMacTests/LogicTests.swift`: the pure helpers (site address, cookies, downloads, notes).
 - `Tests/CreatorToolsetMacTests/RelayTests.swift`: the relay offline (request checks, command line,
   env, stream, usage, folder, sessions, report). `CT_REAL_CLAUDE=1 swift test --filter RealRun`
   makes one real `claude` call through `~/.claude-work` (a fraction of a cent).
-- `Tests/CreatorToolsetMacTests/ServerTests.swift`: the restart backoff, the log rotation, the pid check.
+- `Tests/CreatorToolsetMacTests/ServerTests.swift`: the restart backoff, the log rotation, the pid check, the
+  missing disk, a move's checks, folder sizes and the runner's folder.
 - `scripts/build-app.sh`: builds the `.app` with its server (the environment variables above);
   `scripts/node.entitlements`: the JIT entitlement for the bundled `node`.
 
 ## Not checked yet
+
+The first run, Open in Browser, Access from other devices and Data location (Local server 4–6) are unit-tested
+(the server's sign-in rules in `apps/captions/api/local-server.test.ts`, the Mac's checks in `ServerTests.swift`)
+but not yet launched: the window's cookie landing in WebKit's store before the page loads, the setup inside the
+window, auto-pairing on a fresh data folder, the Keychain prompt for `owner-password` on a signed build, a real
+`ditto` move to an external disk and back, and the unplugged-disk message still need a run on a Mac.
 
 The app has not been launched on a Mac in this build (so far it has been built and unit-tested).
 Drag-and-drop, the notification banners and the menu bar item still need

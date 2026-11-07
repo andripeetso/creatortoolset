@@ -53,7 +53,7 @@ let aliveEverySeconds: TimeInterval = 20
 
 /// the Mac relay answer(): one Claude run for a request. `send(text)` returns false when the site no longer waits (the run stops);
 /// `step(label)` hears each tool call. A Workshop turn with a folder or a session runs in that folder.
-func claudeAnswer(_ req: RelayRequest, _ opts: RelayOptions, cli: String,
+func claudeAnswer(_ req: RelayRequest, _ opts: RelayOptions, cli: String, work: URL,
                   send: @escaping (String) -> Bool, step: @escaping (String) -> Void) throws -> ClaudeAnswer {
     let fm = FileManager.default
     let folder = !req.files.isEmpty || !req.session.isEmpty
@@ -64,7 +64,7 @@ func claudeAnswer(_ req: RelayRequest, _ opts: RelayOptions, cli: String,
 
     let cwd: URL
     if !req.session.isEmpty {
-        let root = workshopRoot()
+        let root = work.appendingPathComponent("workshop")
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
         pruneSessions(root: root)
         cwd = sessionFolder(req.session, root: root)

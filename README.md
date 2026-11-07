@@ -36,8 +36,8 @@ writing, and the accuracy check. Creator Toolset never comes with an AI account 
 one of two ways:
 
 1. **Your own subscription, on your own Mac.** You install Claude Code (or Codex) on your own Mac and sign in
-   to it with your own Claude (or ChatGPT) subscription. Then you install the Mac app and turn on "Use this Mac
-   for my AI". The Mac app relays only your own requests, from your own account, to that tool. Nothing routes
+   to it with your own Claude (or ChatGPT) subscription. Then you install the Mac app: with the server on your Mac it is your AI
+   device from the start; for a server elsewhere, turn on "Use this Mac for my AI". The Mac app relays only your own requests, from your own account, to that tool. Nothing routes
    one person's subscription for anyone else: everyone else on the server brings their own Mac and their own
    sign-in. Settings → AI providers walks you through the install and the sign-in.
 2. **Your own API key.** Add your Anthropic key in Settings → My API keys. Anthropic bills you for what you use,
@@ -65,7 +65,28 @@ your own Apify key: the app never reads Instagram's web pages.
 Without any AI, everything else still works. Captions transcribe on the device in the browser, and Review,
 Video Cleaner and the rest need no AI at all.
 
-## Run it on your machine
+## Run it on your Mac
+
+The Mac app (Apple silicon, macOS 14 or newer) carries the whole server: download it, open it, and it runs on
+your Mac with nothing else to install.
+
+1. **First launch.** The app starts its server and makes your account on this Mac. No password is asked: the
+   account's secret is kept in your Keychain and the window signs in by itself.
+2. **Setup, in the window.** A short guide: your first project (the one required step), then your AI. The app
+   looks for Claude Code or Codex on your Mac, shows the official install and sign-in commands if it finds
+   neither, and checks that one answers. This Mac is your AI device from the start, so there is no switch to
+   find. Then, if you like, the Instagram login and your own keys for other services. Each provider bills you.
+3. **In a browser.** **Open in Browser** (the Go menu, the menu bar, the last setup step) opens your default
+   browser at `http://127.0.0.1:43128`, signed in, with a link that works once, for a minute.
+4. **Other devices.** Only this Mac reaches the server until you turn on **Mac settings → Access from other
+   devices**. That is the one time you choose a password: phones and other computers sign in with it.
+
+Your data is in `~/Library/Application Support/Creator Toolset/data`. **Mac settings → Data location** moves it
+to another folder or an external disk, warns when that disk runs low on space, and if the disk isn't connected
+the app waits for it instead of starting empty. A creatortoolset.com account is optional and not part of this.
+Details are in [apps/mac/README.md](apps/mac/README.md).
+
+## Run it from source
 
 You need Node.js 22 or newer, [pnpm](https://pnpm.io) 10 (`corepack enable` gives you the right version), and
 `ffmpeg` and `zip` on your PATH (`brew install ffmpeg zip`, or `apt install ffmpeg zip`).

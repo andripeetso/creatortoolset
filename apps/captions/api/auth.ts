@@ -22,6 +22,7 @@ import {
   apiKeysOf,
   dropApiKey,
   newApiKey,
+  setPassword,
   userForApiKey,
   verifyPassword,
 } from "./users";
@@ -158,6 +159,7 @@ authApp.post("/login", async (c) => {
   }
   username = username.trim().toLowerCase();
   const user = username ? findUser(username) : null;
+  if (user && remoteRefused(c, user)) return c.json({ error: NO_PASSWORD_YET }, 403);
   if (!user || !password || !verifyPassword(user, password)) {
     const fails = (failures.get(username) ?? 0) + 1;
     failures.set(username, fails);
@@ -189,6 +191,76 @@ const setLoginCookie = (c: Context, user: UserRecord) => {
     `${COOKIE}=${cookieValue(user.username, user.hash)}; HttpOnly; Path=/; Max-Age=${MAX_AGE}; SameSite=Lax${secure}${domainAttr()}`,
   );
 };
+
+/**
+ * A server on this Mac (CT_LOCAL=1) signs in from another device (a phone, the LAN) only once its owner chose a
+ * password: until then the account's password is APP_SECRET, which only the Mac app knows, and that account signs in
+ * from this Mac alone. The socket's address decides, never a header (a LAN client writes those itself).
+ */
+const isLoopback = (c: Context) => {
+  let a = "";
+  try {
+    a = getConnInfo(c).remote.address ?? "";
+  } catch {
+    /* no socket (tests): not loopback */
+  }
+  return a === "::1" || /^(::ffff:)?127\./.test(a);
+};
+const remoteRefused = (c: Context, user: UserRecord) =>
+  process.env.CT_LOCAL === "1" && !isLoopback(c) && !!env.appSecret && verifyPassword(user, env.appSecret);
+const NO_PASSWORD_YET = "Set a password on the Mac first: Mac settings → Access from other devices";
+
+/**
+ * One-time sign-in links: the Mac app's "Open in browser" (and phone pairing later). POST mints one for the account
+ * signed in here; GET /api/auth/link/<code> signs that browser in and goes home. A code works once, within 60 s, and
+ * dies with a password change. Kept in memory only and never logged.
+ */
+const LINK_TTL = 60_000;
+const links = new Map<string, { username: string; hash: string; expiresAt: number }>();
+
+authApp.post("/link", (c) => {
+  const me = signedInAccount(c.req.header("cookie"));
+  const user = me && findUser(me.username);
+  if (!user) return c.json({ error: "Sign in with an account first" }, 401);
+  const now = Date.now();
+  for (const [k, v] of links) if (v.expiresAt <= now) links.delete(k);
+  const code = randomBytes(32).toString("base64url");
+  links.set(code, { username: user.username, hash: user.hash, expiresAt: now + LINK_TTL });
+  return c.json({ path: `/api/auth/link/${code}`, expiresAt: now + LINK_TTL });
+});
+
+authApp.get("/link/:code", (c) => {
+  const code = c.req.param("code");
+  const link = links.get(code);
+  links.delete(code); // single use, whatever happens next
+  c.header("Cache-Control", "no-store");
+  c.header("Referrer-Policy", "no-referrer");
+  const user = link && link.expiresAt > Date.now() ? findUser(link.username) : null;
+  if (!user || user.hash !== link!.hash) return c.text("This sign-in link has expired or was used. Open a new one from the Mac app.", 410);
+  if (remoteRefused(c, user)) return c.text(NO_PASSWORD_YET, 403);
+  bumpUsage(user.username, { logins: 1 });
+  setLoginCookie(c, user);
+  return c.redirect("/", 302);
+});
+
+/**
+ * A new password for the account signed in here ({ current, password }). The cookie is signed over the password
+ * hash, so this session gets a fresh cookie at once; every other session is signed out.
+ */
+authApp.post("/password", async (c) => {
+  const me = signedInAccount(c.req.header("cookie"));
+  const user = me && findUser(me.username);
+  if (!user) return c.json({ error: "Sign in with an account first" }, 401);
+  const b = await c.req.json<{ current?: unknown; password?: unknown }>().catch(() => ({}) as { current?: unknown; password?: unknown });
+  if (typeof b.current !== "string" || !verifyPassword(user, b.current)) return c.json({ error: "The current password is wrong" }, 403);
+  try {
+    setPassword(user, typeof b.password === "string" ? b.password : "");
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+  }
+  setLoginCookie(c, user);
+  return c.json({ ok: true });
+});
 
 /** The account signed in on this browser, if it is a real one (not a guest or a demo visitor). */
 const signedInAccount = (cookie: string | undefined) => {

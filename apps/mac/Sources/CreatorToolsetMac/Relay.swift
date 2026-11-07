@@ -153,6 +153,8 @@ final class RelayRunner {
     static let slotCount = 4
     private let api: DeviceAPI
     private let home: URL
+    /// relayFolder(for:localData:): Workshop session folders and the blob cache
+    private let work: URL
     private let slots = DispatchSemaphore(value: RelayRunner.slotCount)
     private let lock = NSLock()
     private var stopped = false
@@ -160,10 +162,11 @@ final class RelayRunner {
     private let onStatus: (AIStatus) -> Void
     private let onRevoked: () -> Void
 
-    init(base: URL, token: String, home: URL = FileManager.default.homeDirectoryForCurrentUser,
+    init(base: URL, token: String, work: URL, home: URL = FileManager.default.homeDirectoryForCurrentUser,
          onStatus: @escaping (AIStatus) -> Void, onRevoked: @escaping () -> Void) {
         api = DeviceAPI(base: base, token: token)
         self.home = home
+        self.work = work
         self.onStatus = onStatus
         self.onRevoked = onRevoked
         api.onRevoked = { [weak self] in
@@ -185,6 +188,13 @@ final class RelayRunner {
         lock.lock()
         stopped = true
         lock.unlock()
+    }
+
+    /// A report now (the app came to the front): a coding tool installed a minute ago shows in Settings at once.
+    func reportNow() {
+        DispatchQueue.global(qos: .utility).async { [self] in
+            if !isStopped { _ = try? api.call("POST", "/api/devices/relay/report", macReport(home: home), tries: 1) }
+        }
     }
 
     private func publish(_ change: (inout AIStatus) -> Void) {
@@ -233,14 +243,14 @@ final class RelayRunner {
         var req = request
         let base = "/api/devices/relay/\(req.id)"
         do {
-            req.files = try resolveBlobs(req.files, cache: blobCache()) { [self] sha in
+            req.files = try resolveBlobs(req.files, cache: work.appendingPathComponent("blobs")) { [self] sha in
                 let reply = try api.call("POST", "/api/devices/relay/blob/\(sha)", tries: 2)
                 guard reply.status == 200, let obj = (try? JSONSerialization.jsonObject(with: reply.data)) as? [String: Any] else { return nil }
                 return obj["text"] as? String
             }
             let opts = try requestOptions(req, root: home)
             let cli = binary("claude", home: home) ?? "claude"
-            let answer = try claudeAnswer(req, opts, cli: cli, send: { [self] text in
+            let answer = try claudeAnswer(req, opts, cli: cli, work: work, send: { [self] text in
                 // a blip is not a stop: the next post carries the whole text anyway
                 guard let reply = try? api.call("POST", "\(base)/text", ["text": text]) else { return true }
                 return reply.status != 404

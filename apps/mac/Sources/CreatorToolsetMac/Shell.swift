@@ -21,6 +21,8 @@ final class Shell: NSObject, ObservableObject {
     let server: LocalServer? = LocalServer.folder == nil ? nil : LocalServer()
     @Published private(set) var runsHere = false
     @Published private(set) var serverLine: String?
+    /// "Only N GB free on the data disk", when under 10 GB (checked with the notes, every 30 s).
+    @Published private(set) var spaceLine: String?
     private var serverWatch: AnyCancellable?
     private let runsHereKey = "runServerHere"
 
@@ -47,6 +49,7 @@ final class Shell: NSObject, ObservableObject {
         webView.uiDelegate = self
         webView.allowsBackForwardNavigationGestures = true
         webView.isInspectable = true
+        view.onOpenInBrowser = { [weak self] in self?.openInBrowser() }
         view.onBlank = { [weak self] in
             guard let self, Date().timeIntervalSince(self.lastBlankReload) > 60 else { return }
             self.lastBlankReload = Date()
@@ -69,6 +72,10 @@ final class Shell: NSObject, ObservableObject {
             open("/")
             if aiOn { startAI() }
         }
+        // back at the app (maybe after installing claude in Terminal): this Mac reports its coding tools again
+        NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.runner?.reportNow() }
+        }
         timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             Task { @MainActor in await self?.refresh() }
         }
@@ -86,10 +93,96 @@ final class Shell: NSObject, ObservableObject {
         server?.start()
     }
 
-    /// The server answers: the window leaves the starting (or stopped) page; the AI runner starts once.
+    /// The server answers: the window signs in as the owner by itself, leaves the starting (or stopped) page, and this
+    /// Mac pairs as the owner's AI device with no toggle (the server puts the default provider on it, api/devices.ts).
     private func serverReady() {
-        if !(webView.url.map { isSite($0, base) } ?? false) { open("/") }
-        if aiOn && runner == nil { startAI() }
+        Task {
+            await signIn()
+            if !(webView.url.map { isSite($0, base) } ?? false) { open("/") }
+            // ponytail: aiOn is one flag for every site; per environment when the Mac app keeps several (slice 8)
+            if DeviceVault.token(for: base.host ?? "") == nil {
+                setAI(true)
+            } else if aiOn && runner == nil {
+                startAI()
+            }
+        }
+    }
+
+    /// The owner's sign-in, from the Keychain into the window's WebKit store (POST /api/auth/login). Already signed in:
+    /// nothing. It fails only when the data folder's owner has another password: the sign-in page shows then.
+    private func signIn() async {
+        guard let server else { return }
+        if let check: AuthCheck = try? await client().get("/api/auth/check"), check.authed { return }
+        let store = webView.configuration.websiteDataStore.httpCookieStore
+        for password in server.ownerPasswords() {
+            guard let cookies = try? await Site(base: base, cookies: []).postForCookies("/api/auth/login", ["username": LocalServer.ownerName, "password": password]),
+                  !cookies.isEmpty else { continue }
+            for cookie in cookies { await store.setCookie(cookie) }
+            return
+        }
+        AppLog.write("the window could not sign in as this Mac's owner: the sign-in page shows")
+    }
+
+    /// Open in browser: a one-time sign-in link (POST /api/auth/link: works once, for 60 s) in the default browser.
+    /// A remote site opens as it is; the browser has its own sign-in there.
+    func openInBrowser() {
+        guard runsHere else {
+            NSWorkspace.shared.open(base)
+            return
+        }
+        Task {
+            do {
+                let link = try JSONDecoder().decode(SignInLink.self, from: try await client().postData("/api/auth/link", [:]))
+                if let url = URL(string: link.path, relativeTo: base)?.absoluteURL { NSWorkspace.shared.open(url) }
+            } catch {
+                notice = "Could not open the browser: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    /// Access from other devices: on needs the owner's own password first (the server refuses another device's sign-in
+    /// while it is still APP_SECRET); the window keeps its session through the change. The server restarts on the new
+    /// interface. Returns what went wrong, or nil.
+    func setOtherDevices(_ on: Bool, password: String? = nil) async -> String? {
+        guard let server else { return nil }
+        if on && !server.hasOwnerPassword {
+            guard let password, password.count >= 6 else { return "Use at least 6 characters." }
+            guard let current = server.ownerPasswords().last else { return "The Keychain did not give the server's secret." }
+            // the Keychain first: a password the server took but the app lost would lock the window out
+            guard server.saveOwnerPassword(password) else { return "The Keychain did not keep the password." }
+            do {
+                let cookies = try await client().postForCookies("/api/auth/password", ["current": current, "password": password])
+                for cookie in cookies { await webView.configuration.websiteDataStore.httpCookieStore.setCookie(cookie) }
+            } catch {
+                server.forgetOwnerPassword()
+                return "Could not set the password: \(error.localizedDescription)"
+            }
+        }
+        server.otherDevices = on
+        server.stop()
+        startServer()
+        return nil
+    }
+
+    // MARK: data location (Mac settings)
+
+    /// Move… : the window shows a message while the server is stopped; the runner restarts on the new folder.
+    func moveData(to dest: URL) async -> String? {
+        guard let server else { return nil }
+        stopRunner()
+        webView.loadHTMLString(messagePage("Moving your data…"), baseURL: nil)
+        let problem = await server.move(to: dest)
+        if problem != nil, server.state == .running { open("/") }
+        return problem
+    }
+
+    func useDataFolder(_ url: URL) {
+        stopRunner()
+        // this Mac's device token belongs to the old folder's server: pair afresh once the new one answers
+        let host = base.host ?? ""
+        DeviceVault.remove(for: host)
+        DeviceVault.setDeviceID(nil, for: host)
+        server?.useFolder(url)
     }
 
     private func serverChanged(_ state: LocalServer.State) {
@@ -97,7 +190,7 @@ final class Shell: NSObject, ObservableObject {
         switch state {
         case .off: serverLine = "Server on this Mac: off"
         case .starting: serverLine = "Server on this Mac: starting"
-        case .running: serverLine = "Server on this Mac: running on port \(server.port)"
+        case .running: serverLine = "Server on this Mac: running on port \(server.port)" + (server.otherDevices ? ", open to other devices" : "")
         case .failed(let why):
             serverLine = "Server on this Mac: \(why)"
             if runsHere { webView.loadHTMLString(messagePage(why), baseURL: nil) }
@@ -243,7 +336,8 @@ final class Shell: NSObject, ObservableObject {
         let host = base.host ?? ""
         guard runner == nil, let token = DeviceVault.token(for: host) else { return }
         let id = UUID()
-        let relay = RelayRunner(base: base, token: token,
+        let work = relayFolder(for: base, localData: runsHere ? server?.dataDir : nil)
+        let relay = RelayRunner(base: base, token: token, work: work,
             onStatus: { [weak self] status in
                 Task { @MainActor in
                     guard let self, self.runnerID == id else { return }
@@ -304,6 +398,11 @@ final class Shell: NSObject, ObservableObject {
 
     /// The Dock badge and the Review notes; called every 30 s and when the menu opens.
     func refresh() async {
+        if runsHere, let server, let free = freeBytes(server.dataDir) {
+            spaceLine = free < lowSpaceBytes ? "Only \(bytesText(free)) free on the data disk" : nil
+        } else {
+            spaceLine = nil
+        }
         let client = await client()
         do {
             let notes: NotesResponse = try await client.get("/api/review/notifications")
@@ -493,6 +592,13 @@ struct Site {
         try await send("POST", path, body: body).0
     }
 
+    /// A POST whose answer sets the session cookie (sign-in, a new password): the cookies it set.
+    func postForCookies(_ path: String, _ body: [String: Any]) async throws -> [HTTPCookie] {
+        let (_, response) = try await send("POST", path, body: body)
+        let headers = ((response as? HTTPURLResponse)?.allHeaderFields as? [String: String]) ?? [:]
+        return HTTPCookie.cookies(withResponseHeaderFields: headers, for: base)
+    }
+
     func delete(_ path: String) async throws {
         _ = try await send("DELETE", path, body: nil)
     }
@@ -511,6 +617,16 @@ struct Site {
         guard (200..<300).contains(code) else { throw SiteError.status(code) }
         return (data, response)
     }
+}
+
+/// GET /api/auth/check: whether the window's cookie signs it in.
+struct AuthCheck: Decodable {
+    let authed: Bool
+}
+
+/// POST /api/auth/link's answer: the one-time sign-in path.
+struct SignInLink: Decodable {
+    let path: String
 }
 
 enum SiteError: LocalizedError {

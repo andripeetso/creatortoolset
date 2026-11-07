@@ -56,6 +56,15 @@ export function ProvidersSection({ sub }: { sub?: string }) {
   useEffect(() => {
     getProviders().then(setView).catch((e) => setLoadError(msg(e)));
   }, []);
+  // until a Mac reports a coding tool, look again every 5 s: installing one shows up without a reload
+  const waiting = !!view && !view.devices.some((d) => d.online && d.report?.drivers.some((x) => x.installed));
+  useEffect(() => {
+    if (!waiting) return;
+    const t = window.setInterval(() => {
+      getProviders().then((v) => setView((prev) => (prev ? { ...prev, devices: v.devices } : v))).catch(() => {});
+    }, 5000);
+    return () => window.clearInterval(t);
+  }, [waiting]);
 
   if (loadError) return <Notice tone="error">Could not load AI providers: {loadError}</Notice>;
   if (!view || !me) return <Loading />;

@@ -36,6 +36,8 @@ struct CreatorToolsetMacApp: App {
                 Button("Back") { shell.webView.goBack() }.keyboardShortcut("[", modifiers: .command)
                 Button("Forward") { shell.webView.goForward() }.keyboardShortcut("]", modifiers: .command)
                 Button("Reload") { shell.webView.reload() }.keyboardShortcut("r", modifiers: .command)
+                Divider()
+                Button("Open in Browser") { shell.openInBrowser() }.keyboardShortcut("o", modifiers: [.command, .shift])
             }
         }
 
@@ -96,8 +98,12 @@ struct MenuBarMenu: View {
         if shell.runsHere, let line = shell.serverLine {
             Text(line)
         }
+        if let line = shell.spaceLine {
+            Text(line)
+        }
         Divider()
         Button("Open Creator Toolset") { shell.showWindow() }
+        Button("Open in Browser") { shell.openInBrowser() }
         Button("Open Workshop") { shell.showWindow(href: "/workshop") }
         Button("Open app log") { shell.openAppLog() }
         if shell.runsHere {
@@ -120,6 +126,13 @@ struct SettingsView: View {
     @State private var address = ""
     @State private var invalid = false
     @State private var port = ""
+    @State private var password = ""
+    @State private var again = ""
+    @State private var askPassword = false
+    @State private var dataMessage: String?
+    @State private var accessMessage: String?
+    @State private var busy = false
+    @State private var dataSize: String?
 
     var body: some View {
         Form {
@@ -148,7 +161,14 @@ struct SettingsView: View {
                             Button("Change port") { savePort() }
                             Button("Open server log") { shell.openServerLog() }
                         }
+                        Button("Open in Browser") { shell.openInBrowser() }
+                        Text("Opens your default browser signed in already, with a link that works once, for a minute.")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
+                }
+                if shell.runsHere, let server = shell.server {
+                    dataSection(server)
+                    accessSection(server)
                 }
             }
             if !shell.runsHere {
@@ -173,6 +193,95 @@ struct SettingsView: View {
             address = shell.runsHere ? productionSite.absoluteString : shell.base.absoluteString
             port = shell.server.map { String($0.port) } ?? ""
         }
+    }
+
+    /// Data location: the folder, its size and the disk's free space, Show in Finder, Move…, Remove old copy.
+    @ViewBuilder private func dataSection(_ server: LocalServer) -> some View {
+        Section("Data location") {
+            Text(server.dataDir.path).textSelection(.enabled)
+            Text([dataSize.map { "Uses \($0)" }, freeBytes(server.dataDir).map { "\(bytesText($0)) free on its disk" }].compactMap { $0 }.joined(separator: " · "))
+                .font(.caption).foregroundStyle(.secondary)
+            if let line = shell.spaceLine {
+                Text(line).foregroundStyle(.orange)
+            }
+            HStack {
+                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([server.dataDir]) }
+                Button("Move…") { pickFolder { url in
+                    busy = true
+                    dataMessage = "Moving… the server is stopped until it's done."
+                    Task {
+                        dataMessage = await shell.moveData(to: url)
+                        busy = false
+                        measure(server)
+                    }
+                } }
+                if server.dataProblem() != nil {
+                    Button("Choose another folder…") { pickFolder { shell.useDataFolder($0) } }
+                }
+            }
+            .disabled(busy)
+            if let old = server.oldDataDir {
+                HStack {
+                    Text("The old copy is still in \(old.path).").font(.caption)
+                    Button("Remove old copy") { server.removeOldCopy(); dataMessage = nil }
+                }
+            }
+            if let dataMessage {
+                Text(dataMessage).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .onAppear { measure(server) }
+    }
+
+    /// Access from other devices: a password of the owner's own first, then the server listens beyond this Mac.
+    @ViewBuilder private func accessSection(_ server: LocalServer) -> some View {
+        Section("Access from other devices") {
+            Toggle("Let phones and other computers sign in", isOn: Binding(get: { server.otherDevices }, set: { on in
+                if on && !server.hasOwnerPassword {
+                    askPassword = true
+                } else {
+                    Task { accessMessage = await shell.setOtherDevices(on) }
+                }
+            }))
+            Text("Off: only this Mac reaches the server. On: devices on your network sign in at http://\(ProcessInfo.processInfo.hostName):\(server.port) as \(LocalServer.ownerName) with your password.")
+                .font(.caption).foregroundStyle(.secondary)
+            if askPassword {
+                SecureField("Choose a password (6 characters or more)", text: $password)
+                SecureField("Again", text: $again)
+                HStack {
+                    Button("Cancel") { askPassword = false; password = ""; again = "" }
+                    Button("Set password and turn on") {
+                        guard password == again else { accessMessage = "The two passwords differ."; return }
+                        Task {
+                            accessMessage = await shell.setOtherDevices(true, password: password)
+                            if accessMessage == nil { askPassword = false; password = ""; again = "" }
+                        }
+                    }
+                    .disabled(password.count < 6)
+                }
+            }
+            if let accessMessage {
+                Text(accessMessage).font(.caption).foregroundStyle(.red)
+            }
+        }
+    }
+
+    private func measure(_ server: LocalServer) {
+        let dir = server.dataDir
+        Task {
+            let stats = await Task.detached { folderStats(dir) }.value
+            dataSize = bytesText(stats.bytes)
+        }
+    }
+
+    private func pickFolder(_ done: @escaping (URL) -> Void) {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.prompt = "Choose"
+        panel.message = "An empty folder, on this Mac or an external disk"
+        if panel.runModal() == .OK, let url = panel.url { done(url) }
     }
 
     private func savePort() {

@@ -4,6 +4,7 @@ import type { AuthVars } from "./auth";
 import { relayRoutes } from "./lib/mac-claude";
 import { deviceOf, deviceForToken, isOnline, listDevices, pairDevice, renameDevice, revokeDevice } from "./lib/devices";
 import { findUser } from "./users";
+import { providerSettings, saveSettings } from "./lib/providers";
 
 /**
  * The Macs that run AI jobs (lib/devices.ts). Routes (boot.ts mounts them at /api/devices):
@@ -37,6 +38,12 @@ devicesApp.post("/", async (c) => {
   if (!name) return c.json({ error: "Name the Mac" }, 400);
   const version = typeof b?.version === "string" ? b.version.slice(0, 40) : undefined;
   const { device, token } = pairDevice(u.username, name, version);
+  // a server on this Mac (CT_LOCAL=1): the owner's Mac app pairs by itself, and the default providers run on it, so
+  // the AI answers with no setting touched. Only while no provider has a Mac yet; never another account's.
+  const s = providerSettings();
+  if (process.env.CT_LOCAL === "1" && u.role === "admin" && s.instances.every((i) => !i.device)) {
+    await saveSettings({ ...s, instances: s.instances.map((i) => ({ ...i, device: device.id })) });
+  }
   return c.json({ device, token });
 });
 

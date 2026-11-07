@@ -9,6 +9,65 @@ import Security
 
 let defaultServerPort = 43128
 
+/// ~/Library/Application Support/Creator Toolset: the default data folder, Chromium, the remote sites' relay folders.
+let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    .appendingPathComponent("Creator Toolset")
+
+/// The disk a data folder lives on that isn't connected: "X" for /Volumes/X/… while no volume is mounted there.
+func missingDisk(_ path: String, mounted: [String]) -> String? {
+    let parts = URL(fileURLWithPath: path).standardized.pathComponents   // ["/", "Volumes", "X", …]
+    guard parts.count > 2, parts[1] == "Volumes" else { return nil }
+    return mounted.contains("/Volumes/" + parts[2]) ? nil : parts[2]
+}
+
+func mountedVolumes() -> [String] {
+    (FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: nil, options: []) ?? []).map { $0.standardized.path }
+}
+
+/// Free bytes on the disk holding `url` (its nearest existing folder), as macOS counts them for important files.
+func freeBytes(_ url: URL) -> Int64? {
+    var at = url
+    while !FileManager.default.fileExists(atPath: at.path) && at.pathComponents.count > 1 { at.deleteLastPathComponent() }
+    return (try? at.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?.volumeAvailableCapacityForImportantUsage
+}
+
+/// Under 10 GB free on the data disk: the menu and Mac settings say so (video fills disks).
+let lowSpaceBytes: Int64 = 10_000_000_000
+
+/// Files and bytes under a folder (what a move must carry over, checked after the copy).
+struct FolderStats: Equatable {
+    var files = 0
+    var bytes: Int64 = 0
+}
+
+func folderStats(_ url: URL) -> FolderStats {
+    var stats = FolderStats()
+    let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey]
+    guard let walk = FileManager.default.enumerator(at: url, includingPropertiesForKeys: keys) else { return stats }
+    for case let file as URL in walk {
+        // Finder's .DS_Store may sit in the empty folder a move goes to: never counted
+        guard file.lastPathComponent != ".DS_Store", let values = try? file.resourceValues(forKeys: Set(keys)), values.isRegularFile == true else { continue }
+        stats.files += 1
+        stats.bytes += Int64(values.fileSize ?? 0)
+    }
+    return stats
+}
+
+/// Why `dest` can't take the data folder, or nil: it must be another folder, empty (Finder's .DS_Store aside),
+/// on a connected disk with room for the data plus 10 %.
+func moveProblem(from: URL, to dest: URL, entries: [String], size: Int64, free: Int64?) -> String? {
+    let a = from.standardized.path, b = dest.standardized.path
+    if a == b || b.hasPrefix(a + "/") || a.hasPrefix(b + "/") { return "Pick a folder outside the current data folder." }
+    if !entries.filter({ $0 != ".DS_Store" }).isEmpty { return "Pick an empty folder." }
+    if let disk = missingDisk(b, mounted: mountedVolumes()) { return "\(disk) isn't connected." }
+    if let free, free < size + size / 10 { return "Not enough room there: it needs \(bytesText(size + size / 10))." }
+    return nil
+}
+
+func bytesText(_ n: Int64) -> String {
+    ByteCountFormatter.string(fromByteCount: n, countStyle: .file)
+}
+
 /// Seconds to wait before restarting after these crashes, or nil after five in five minutes (stop trying).
 func restartDelay(crashes: [Date], now: Date) -> TimeInterval? {
     let recent = crashes.filter { now.timeIntervalSince($0) < 300 }
@@ -63,9 +122,9 @@ final class LocalServer: ObservableObject {
     /// Resources/server inside the app, when this build has one.
     static let folder: URL? = Bundle.main.resourceURL.map { $0.appendingPathComponent("server") }
         .flatMap { FileManager.default.isExecutableFile(atPath: $0.appendingPathComponent("bin/node").path) ? $0 : nil }
-    static let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("Creator Toolset")
     private static let vault = "com.creatortoolset.mac.server"
+    /// The owner account the server makes on its first start (api/users.ts bootstrap, ADMIN_USERNAME unset).
+    static let ownerName = "admin"
 
     private let portKey = "serverPort"
     private var process: Process?
@@ -90,10 +149,51 @@ final class LocalServer: ObservableObject {
 
     var url: URL { URL(string: "http://127.0.0.1:\(port)")! }
 
-    /// The data folder (DATA_DIR). Moving it is a later Mac setting; the default is in Application Support.
+    static let defaultDataDir = appSupport.appendingPathComponent("data")
+
+    /// The data folder (DATA_DIR): Application Support by default, anywhere after Move… (Mac settings → Data location).
     var dataDir: URL {
-        UserDefaults.standard.string(forKey: "dataFolder").map { URL(fileURLWithPath: $0) }
-            ?? Self.support.appendingPathComponent("data")
+        UserDefaults.standard.string(forKey: "dataFolder").map { URL(fileURLWithPath: $0) } ?? Self.defaultDataDir
+    }
+
+    /// The copy a move to another disk left behind, until Remove old copy.
+    var oldDataDir: URL? {
+        UserDefaults.standard.string(forKey: "oldDataFolder").map { URL(fileURLWithPath: $0) }
+    }
+
+    /// Why the server can't start on its data folder, or nil. Never a fresh empty folder in its place: that would look
+    /// like lost data (and on a missing disk it would land on the Mac's own disk under /Volumes).
+    func dataProblem() -> String? {
+        if let disk = missingDisk(dataDir.path, mounted: mountedVolumes()) {
+            return "Your data is on \(disk), which isn't connected. Connect it, or choose another folder in Mac settings → Data location."
+        }
+        if dataDir != Self.defaultDataDir && !FileManager.default.fileExists(atPath: dataDir.path) {
+            return "Your data folder \(dataDir.path) is gone. Choose another folder in Mac settings → Data location."
+        }
+        return nil
+    }
+
+    /// "Access from other devices" (Mac settings): on = the server listens on every interface (phones, the LAN);
+    /// off = this Mac only. The server lets another device sign in only once the owner has a password of their own.
+    var otherDevices: Bool {
+        get { UserDefaults.standard.bool(forKey: "serverOtherDevices") }
+        set { UserDefaults.standard.set(newValue, forKey: "serverOtherDevices") }
+    }
+
+    /// The owner's password, when they chose one (to turn on other devices). Until then it is APP_SECRET.
+    var hasOwnerPassword: Bool { DeviceVault.token(for: "owner-password", service: Self.vault) != nil }
+
+    /// The passwords to sign the window in with, newest first. Nothing here is ever shown or logged.
+    func ownerPasswords() -> [String] {
+        [DeviceVault.token(for: "owner-password", service: Self.vault), appSecret()].compactMap { $0 }
+    }
+
+    func saveOwnerPassword(_ password: String) -> Bool {
+        DeviceVault.save(password, for: "owner-password", service: Self.vault)
+    }
+
+    func forgetOwnerPassword() {
+        DeviceVault.remove(for: "owner-password", service: Self.vault)
     }
 
     private var pidFile: URL { dataDir.appendingPathComponent("server.pid") }
@@ -101,6 +201,11 @@ final class LocalServer: ObservableObject {
     func start() {
         guard process == nil, let folder = Self.folder else { return }
         stopping = false
+        if let problem = dataProblem() {
+            ServerLog.note(problem)
+            state = .failed(problem)
+            return
+        }
         state = .starting
         Task {
             if let problem = await clearPort() {
@@ -185,10 +290,10 @@ final class LocalServer: ObservableObject {
         env["PATH"] = folder.appendingPathComponent("runtime").path + ":/usr/bin:/bin:/usr/sbin:/sbin"
         env["NODE_ENV"] = "production"
         env["PORT"] = String(port)
-        env["HOST"] = "127.0.0.1"
+        env["HOST"] = otherDevices ? "0.0.0.0" : "127.0.0.1"
         env["DATA_DIR"] = dataDir.path
         env["APP_SECRET"] = secret
-        env["PLAYWRIGHT_BROWSERS_PATH"] = Self.support.appendingPathComponent("runtime/chromium").path
+        env["PLAYWRIGHT_BROWSERS_PATH"] = appSupport.appendingPathComponent("runtime/chromium").path
         env["CT_LOCAL"] = "1"
         env["CT_EXIT_WITH_PARENT"] = "1"
         p.environment = env
@@ -252,6 +357,70 @@ final class LocalServer: ObservableObject {
             try? await Task.sleep(for: .seconds(delay))
             if !stopping { start() }
         }
+    }
+
+    // MARK: data location
+
+    /// A folder for the data without copying anything (the old one is on a disk that's gone): the server starts there.
+    func useFolder(_ url: URL) {
+        stop()
+        UserDefaults.standard.set(url.path, forKey: "dataFolder")
+        start()
+    }
+
+    /// Move… : stop the server, move the data folder into `dest` (a rename on the same disk; else a copy with ditto,
+    /// which keeps the files' modes, checked by file count and size), point the app at it and start again. A copy keeps
+    /// the old folder until Remove old copy. Returns what went wrong, or nil.
+    // ponytail: copies caches too (library/cache, scratch); skip them if moves of big libraries get slow
+    func move(to dest: URL) async -> String? {
+        let from = dataDir
+        let fm = FileManager.default
+        let entries = (try? fm.contentsOfDirectory(atPath: dest.path)) ?? []
+        if let problem = moveProblem(from: from, to: dest, entries: entries, size: 0, free: nil) { return problem }
+        // stopped before counting: a running server writes (its pid file, users.json) and the copy would never match
+        stop()
+        state = .starting
+        let before = await Task.detached { folderStats(from) }.value
+        if let problem = moveProblem(from: from, to: dest, entries: entries, size: before.bytes, free: freeBytes(dest)) {
+            start()
+            return problem
+        }
+        let volume = { (u: URL) in (try? u.resourceValues(forKeys: [.volumeIdentifierKey]))?.volumeIdentifier as? NSObject }
+        var copied = false
+        if let a = volume(from), let b = volume(dest), a.isEqual(b) {
+            do {
+                try fm.removeItem(at: dest)
+                try fm.moveItem(at: from, to: dest)
+            } catch {
+                start()
+                return "Could not move it: \(error.localizedDescription)"
+            }
+        } else {
+            let ok = await Task.detached { () -> Bool in
+                let ditto = Process()
+                ditto.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+                ditto.arguments = [from.path, dest.path]
+                guard (try? ditto.run()) != nil else { return false }
+                ditto.waitUntilExit()
+                return ditto.terminationStatus == 0 && folderStats(dest) == before
+            }.value
+            guard ok else {
+                start()
+                return "The copy didn't match the data folder. Nothing changed; the copy in \(dest.path) can go."
+            }
+            copied = true
+        }
+        UserDefaults.standard.set(dest.path, forKey: "dataFolder")
+        UserDefaults.standard.set(copied ? from.path : nil, forKey: "oldDataFolder")
+        ServerLog.note("data folder moved")
+        start()
+        return nil
+    }
+
+    /// Remove old copy: the folder a move copied from goes to the Trash.
+    func removeOldCopy() {
+        if let old = oldDataDir { try? FileManager.default.trashItem(at: old, resultingItemURL: nil) }
+        UserDefaults.standard.set(nil, forKey: "oldDataFolder")
     }
 
     /// APP_SECRET: made once (32 random bytes) and kept in the Keychain. The server makes the owner account with it.
