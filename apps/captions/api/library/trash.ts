@@ -13,7 +13,7 @@ const DAY = 86_400_000;
 const HOUR = 3_600_000;
 
 /** Read per call (AGENTS: process.env at the point of use). */
-function trashDays(): number {
+export function trashDays(): number {
   const raw = process.env.LIBRARY_TRASH_DAYS;
   const v = raw === undefined || raw.trim() === "" ? NaN : Number(raw);
   return Number.isFinite(v) && v >= 0 ? v : 14;

@@ -5,7 +5,7 @@
  */
 export const TOOLS = [
   "instagram", "workshop",
-  "enhance", "captions", "review", "media",
+  "enhance", "captions", "review", "media", "editor",
   "clean", "stories",
   "notes", "guides",
 ] as const;
@@ -19,6 +19,7 @@ export const TOOL_NAMES: Record<Tool, string> = {
   captions: "Caption Studio",
   review: "Review",
   media: "Media Library",
+  editor: "AI Editor",
   clean: "Video Cleaner",
   stories: "Story Splitter",
   notes: "Video Notes",
@@ -33,6 +34,7 @@ export const TOOL_GROUPS: Record<Tool, string> = {
   captions: "Make",
   review: "Make",
   media: "Make",
+  editor: "Make",
   clean: "Distribute",
   stories: "Distribute",
   notes: "Other tools",

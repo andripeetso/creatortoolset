@@ -51,6 +51,7 @@ export const JOBS = [
   { id: "captions", label: "Caption Studio", hint: "caption lines, polish, script check" },
   { id: "analyzer", label: "Content Analyzer", hint: "reading posts and slides, tags, the Idea board" },
   { id: "notes", label: "Video Notes and guides", hint: "summaries, chapters, Guide Builder, Documents" },
+  { id: "editor", label: "AI Editor", hint: "lines and takes, B-roll picks, revisions" },
 ] as const;
 export type JobId = (typeof JOBS)[number]["id"];
 

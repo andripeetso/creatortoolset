@@ -71,7 +71,7 @@ describe("app switches", () => {
 
   it("refuses unknown apps and non-admins", async () => {
     const admin = await login("boss2", "admin");
-    expect((await setOff(admin, "u1", ["editor"])).status).toBe(400);
+    expect((await setOff(admin, "u1", ["bogus"])).status).toBe(400);
     const h = await login("u3");
     expect((await setOff(h, "u3", [])).status).toBe(403);
     expect(findUser("u3")?.off).toEqual([]);

@@ -24,6 +24,8 @@ import { startLibraryWorker } from "./library/worker";
 import { startTrashPurge } from "./library/trash";
 import { startWatchFolders, watchApp } from "./library/watch";
 import { storageApp } from "./library/usage";
+import { editorApp } from "./editor/routes";
+import { startEditorWorker } from "./editor/worker";
 import { presetsApp } from "./presets";
 import { projectsApp } from "./projects";
 import { storiesApp } from "./stories";
@@ -121,6 +123,7 @@ const GUEST_BLOCKED = [
   "/api/connectors",
   "/api/stories",
   "/api/library",
+  "/api/editor",
 ];
 
 const PUBLIC_UUID =
@@ -167,6 +170,7 @@ export const TOOL_GATES: [string, Tool[]][] = [
   ["/api/enhance", ["enhance"]],
   ["/api/clean", ["clean"]],
   ["/api/library", ["media"]],
+  ["/api/editor", ["editor"]],
   // the Analyzer and the Workshop read each other's APIs
   ["/api/instagram", ["instagram", "workshop"]],
   ["/api/workshop", ["instagram", "workshop"]],
@@ -329,9 +333,11 @@ app.route("/api/library", collectionApp);
 app.route("/api/library", searchApp);
 app.route("/api/library", watchApp);
 app.route("/api/library", storageApp);
+app.route("/api/editor", editorApp);
 // the library's worker: probes, thumbs and proxies queued uploads; and the trash purge (not under tests, which call them)
 if (process.env.NODE_ENV !== "test") {
   startLibraryWorker();
+  startEditorWorker();
   startTrashPurge();
   startWatchFolders();
 }
