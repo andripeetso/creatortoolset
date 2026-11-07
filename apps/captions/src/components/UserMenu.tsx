@@ -4,6 +4,7 @@ import {
   BarChart3,
   Download,
   LogOut,
+  Package,
   Settings,
   UserRound,
 } from "lucide-react";
@@ -30,7 +31,7 @@ export function useAccountInCorner(): boolean {
   );
 }
 
-/** The account menu, top right beside the project switcher: Settings, Usage, the Mac app, sign out. */
+/** The account menu, top right beside the project switcher: Settings, Community packs, Usage, the Mac app, sign out. */
 export function UserMenu() {
   const required = useAuth((s) => s.required);
   const me = useAuth((s) => s.me);
@@ -63,6 +64,9 @@ export function UserMenu() {
           <DropdownMenuItem onSelect={() => navigate("/settings")} className="text-xs">
             <Settings /> Settings
             <DropdownMenuShortcut>⌘,</DropdownMenuShortcut>
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => navigate("/settings/packs/browse")} className="text-xs">
+            <Package /> Community packs
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => navigate("/settings/usage")} className="text-xs">
             <BarChart3 /> Usage
