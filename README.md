@@ -96,11 +96,15 @@ The Mac app (Apple silicon, macOS 14 or newer) has the whole server inside it, s
    In the app, you pick your tools, make your first project and connect your AI. The app finds Claude Code or
    Codex, or shows the official commands to install one. In your own AI, one click adds Creator Toolset to
    Claude Code. Sign-in, the Instagram login and other keys are optional.
-3. **Use it from other devices (optional).** Turn on **Mac settings → Access from other devices** and choose a
-   password. Phones and other computers sign in with it.
+3. **Use it from other devices (optional).** Turn on **This Mac → Access from other devices** (Settings → This Mac,
+   inside the app) and choose a password. Phones and other computers sign in with it.
 
 Your data lives in `~/Library/Application Support/Creator Toolset/data`. You can move it to an external disk
-in **Mac settings → Data location**. More in [apps/mac/README.md](apps/mac/README.md).
+in **This Mac → Data location**.
+
+The **Servers** menu, or the picker right of the window buttons, switches the window between this Mac's server and
+any server of yours added by address (⌥⌘1…⌥⌘9). **Servers → Run your own server…** walks you through one.
+More in [apps/mac/README.md](apps/mac/README.md).
 
 ## Run it from source
 
@@ -121,7 +125,8 @@ With no `.env`, sign-in is off and you are the local admin. Projects are kept in
 
 [SELF_HOSTING.md](SELF_HOSTING.md) is written so that you, or an AI agent, can follow it step by step. It covers
 choosing a server and a domain, starting the Docker kit (the app plus Caddy for HTTPS), connecting the Mac app,
-backups and updates. `pnpm run doctor` checks a running install and lists what's missing.
+backups and updates. On the server, `apps/captions/scripts/setup-server.sh <your domain>` writes `.env` with a random
+`APP_SECRET` and starts the kit in one go. `pnpm run doctor` checks a running install and lists what's missing.
 
 ## Repository
 

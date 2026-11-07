@@ -25,17 +25,19 @@ Ground rules for whoever runs it:
 - Every paid service on your own keys (Settings → My API keys, or the server's `.env`). The server's Anthropic
   key is never used for AI. See "Whose keys pay" in step 8.
 - The web app works on phones: open it in the phone's browser and add it to the home screen.
+- Nothing from anyone else: no outside account, no outside service. The Mac app's first run offers an optional
+  Apple or Google sign-in at an account server; your server doesn't need it (step 8).
 
 This repository does not include an iPhone app.
 
 ## 1. Choose the server and the domain
 
-Requirements:
+Any small VPS works, or a machine at home that stays on (forward ports 80 and 443 to it on your router). Requirements:
 
 - **Linux on x86_64 (amd64).** The Docker image installs a pinned x86_64 FFmpeg build and refuses to build
   elsewhere. Check with `uname -m`, which must print `x86_64`.
 - **Resources.** Exports, enhancement and transcoding are CPU and memory heavy. Start with 4 vCPU and 8 GB of
-  RAM, and add disk for your videos (or use a bucket, step 5).
+  RAM, and add disk for your videos (or use a bucket, step 4).
 - **Public address and open ports.** Ports 80 and 443 must reach the server. Port 80 is needed for the
   certificate.
 - **A domain you control.** Use a name such as `tools.example.com`.
@@ -65,6 +67,16 @@ cd /opt/creator-toolset/apps/captions
 
 Check: both version commands print, and the last command leaves you in `apps/captions`. Every later step runs
 from that folder.
+
+**The short way.** One command does step 3 and step 5:
+
+```sh
+scripts/setup-server.sh tools.example.com
+```
+
+It copies `.env.example` to `.env` (mode 600) if there is none, sets `DOMAIN`, writes a random `APP_SECRET` unless one
+is set (it never prints it), and runs `docker compose up -d --build`. Run it again after a change; it keeps `.env`.
+Then go on with step 4 (optional) and step 5's checks. The steps below do the same by hand.
 
 ## 3. Write `.env`
 
@@ -182,12 +194,17 @@ On your Mac:
 1. Build or install the Mac app. From a checkout of this repository: `pnpm build:mac`, then open
    `apps/mac/build/Creator Toolset.app`. A build you make yourself runs only on your Mac. For other Macs,
    see `apps/mac/README.md` on signing and notarizing.
-2. Point it at your server: **Mac settings…** in the menu bar, then the site address `https://tools.example.com`.
-   Or, in Terminal: `defaults write com.creatortoolset.mac siteAddress https://tools.example.com`, then reopen the app.
-3. Sign in to the site in the app's window.
+2. Add your server: **Servers → Add server…** in the app's menu bar (or the server picker right of the window
+   buttons, or **Settings → This Mac → Servers**), with `https://tools.example.com`. Each server keeps its own
+   sign-in; ⌥⌘1…⌥⌘9 switch between them. **Servers → Run your own server…** has the short form of this guide,
+   with a check for HTTPS, the health call and the sign-in.
+3. Sign in to your server in the app's window.
 4. Turn on **Use this Mac for my AI**. This pairs the Mac with your account once.
 5. In the site: **Settings → AI providers → Set up your AI** shows the install and sign-in commands for Claude
    Code and Codex. Run them once in Terminal on that Mac, then press **check**.
+
+The first run in the Mac app offers an Apple or Google sign-in at an account server. It is optional and your server
+works without it: set **This Mac → Account → Account server** to empty to skip that step.
 
 **An API key of your own.** Add your own Anthropic key in **Settings → My API keys**: it answers only your
 account, and Anthropic bills you. There is no fallback: with no provider and no key, a tool that needs AI says so.
@@ -265,8 +282,8 @@ Back up first (step 9). To go back, check out the previous commit and run the sa
   one: check the disk's free space.
 - **Exports fail.** Read `docker compose logs app` around the failure. Exports need memory and `/dev/shm`
   (the compose file sets 1 GB) and the FFmpeg the image installs.
-- **The Mac says it cannot reach the site.** Check the address in the Mac settings, and that the site opens in a
-  browser on that Mac. The Mac app's own log is in `~/Library/Logs/Creator Toolset.log` (menu bar: Open app log).
+- **The Mac says it cannot reach the site.** Check the address in **This Mac → Servers**, and that the site opens in a
+  browser on that Mac. **Servers → Run your own server…** runs the HTTPS and health checks and says which one fails. The Mac app's own log is in `~/Library/Logs/Creator Toolset.log` (menu bar: Open app log).
 - **Something else.** Run the doctor and send its output with `docker compose logs --tail=200 app` to whoever
   maintains the server. Remove secrets from the output first.
 
