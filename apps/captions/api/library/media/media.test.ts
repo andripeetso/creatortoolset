@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ffmpegCommand } from "../../ffmpeg-runtime";
 import { makeThumb } from "./thumb";
 import { browserPlayable, probe, parseProbe } from "./probe";
+import { ffmpeg } from "./run";
 import { makeProxy, needsProxy } from "./proxy";
 import { makeWave } from "./wave";
 
@@ -61,6 +62,31 @@ describe("probe", () => {
     expect(parseProbe(video({ side_data_list: [{ rotation: 90 }] })).rotation).toBe(270);
     expect(parseProbe(video({ tags: { rotate: "270" } })).rotation).toBe(270);
     expect(parseProbe(video({})).rotation).toBe(0);
+  });
+});
+
+describe("start timecode", () => {
+  it("keeps a timecode-shaped tag from the video stream or a timecode track, and nothing else", () => {
+    const tc = (streams: object[], format: object = {}) => parseProbe({ format: { format_name: "mov", ...format }, streams: streams as never[] }).timecode;
+    expect(tc([{ codec_type: "video", tags: { timecode: "01:00:00:00" } }])).toBe("01:00:00:00");
+    expect(tc([{ codec_type: "video" }, { codec_type: "data", tags: { timecode: "10:20:30;15" } }])).toBe("10:20:30;15");
+    expect(tc([{ codec_type: "video", tags: { timecode: "soon" } }], { tags: { timecode: "1:2" } })).toBeUndefined();
+  });
+
+  it("reads the timecode ffmpeg wrote", async () => {
+    const out = path.join(dir, "tc.mov");
+    ff(["-f", "lavfi", "-i", "testsrc=duration=0.2:size=64x64:rate=25", "-timecode", "01:02:03:04", "-c:v", "libx264", "-pix_fmt", "yuv420p", out]);
+    expect((await probe(out)).timecode).toBe("01:02:03:04");
+  });
+});
+
+describe("ffmpeg", () => {
+  it("runs one at a time: two calls together take as long as both in a row", async () => {
+    const half = ["-f", "lavfi", "-i", "anullsrc=r=8000:cl=mono", "-t", "0.5", "-af", "arealtime", "-f", "null", "-"]; // arealtime: 0.5 s of wall time
+    delete process.env.FFMPEG_CONCURRENCY; // the default, 1
+    const t = Date.now();
+    await Promise.all([ffmpeg(half), ffmpeg(half)]);
+    expect(Date.now() - t).toBeGreaterThanOrEqual(900);
   });
 });
 

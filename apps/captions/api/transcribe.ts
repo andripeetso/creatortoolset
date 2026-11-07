@@ -123,13 +123,15 @@ function wavWrap(pcm: Uint8Array, sampleRate: number): Uint8Array {
 const DG_URL =
   "https://api.deepgram.com/v1/listen?model=nova-3&punctuate=true&utterances=true&language=en";
 
-/** `optOut`: Deepgram keeps nothing past the request (guests; costs ~2× the listed rate). */
+/** `optOut`: Deepgram keeps nothing past the request (guests; costs ~2× the listed rate). `fillers`: keep "um", "uh". */
 async function deepgramWords(
   key: string,
   audio: Uint8Array | ArrayBuffer,
   optOut = false,
+  fillers = false,
 ): Promise<{ words: Word[] } | { error: string; status: number }> {
-  const resp = await fetch(optOut ? `${DG_URL}&mip_opt_out=true` : DG_URL, {
+  const url = DG_URL + (optOut ? "&mip_opt_out=true" : "") + (fillers ? "&filler_words=true" : "");
+  const resp = await fetch(url, {
     method: "POST",
     headers: {
       Authorization: `Token ${key}`,
@@ -260,9 +262,11 @@ export function mergeOverlappingWindows(
   return out.sort((a, b) => a.start - b.start);
 }
 
+/** `fillers`: keep filler words (the Media Library, for the AI Editor's cuts); Caption Studio leaves them out. */
 export async function transcribeWav(
   audio: Uint8Array | ArrayBuffer,
   user: SessionUser,
+  { fillers = false }: { fillers?: boolean } = {},
 ): Promise<TranscriptionResult> {
   const route = keyFor(user, "DEEPGRAM_API_KEY");
   if (route.missing) return { error: route.missing, status: 402 };
@@ -286,7 +290,7 @@ export async function transcribeWav(
       });
     }
     const results = await Promise.all(
-      chunks.map((ch) => deepgramWords(route.key, wavWrap(ch.pcm, wav.sampleRate), optOut)),
+      chunks.map((ch) => deepgramWords(route.key, wavWrap(ch.pcm, wav.sampleRate), optOut, fillers)),
     );
     for (const r of results) {
       if ("error" in r) return { error: r.error, status: 502 };
@@ -298,7 +302,7 @@ export async function transcribeWav(
       })),
     );
   } else {
-    const r = await deepgramWords(route.key, audio, optOut);
+    const r = await deepgramWords(route.key, audio, optOut, fillers);
     if ("error" in r) return { error: r.error, status: 502 };
     words = r.words;
   }

@@ -23,6 +23,14 @@ export interface Segment {
   text: string;
 }
 
+/** One spoken word, fillers and false starts kept: text, start and end in seconds, confidence 0-1 when the provider gives it. */
+export interface TimedWord {
+  w: string;
+  s: number;
+  e: number;
+  c?: number;
+}
+
 /** The job can't run for this actor yet: the worker parks it as needs_key with this message. */
 export class NeedsKey extends Error {}
 
@@ -54,17 +62,18 @@ export function wordsToSegments(words: { text: string; start: number; end: numbe
   return out.map(({ start, end, text }) => ({ start, end, text }));
 }
 
-/** Stores a version's transcript and rewrites its search rows (FTS5 has no upsert), in one transaction. */
-export function saveTranscript(db: DatabaseSync, versionId: string, provider: string, language: string | null, segments: Segment[]): void {
+/** Stores a version's transcript (and its words, when given) and rewrites its search rows (FTS5 has no upsert), in one transaction. */
+export function saveTranscript(db: DatabaseSync, versionId: string, provider: string, language: string | null, segments: Segment[], words?: TimedWord[]): void {
   db.exec("BEGIN");
   try {
-    db.prepare("INSERT OR REPLACE INTO transcripts (version_id, provider, language, text, segments, created_at) VALUES (?, ?, ?, ?, ?, ?)").run(
+    db.prepare("INSERT OR REPLACE INTO transcripts (version_id, provider, language, text, segments, created_at, words) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
       versionId,
       provider,
       language,
       segments.map((s) => s.text).join(" "),
       JSON.stringify(segments),
       Date.now(),
+      words ? JSON.stringify(words) : null,
     );
     db.prepare("DELETE FROM search_segments WHERE version_id = ?").run(versionId);
     const add = db.prepare("INSERT INTO search_segments (version_id, seg, text) VALUES (?, ?, ?)");
@@ -82,19 +91,31 @@ export function segmentsOf(db: DatabaseSync, versionId: string): Segment[] {
   return row ? (JSON.parse(row.segments) as Segment[]) : [];
 }
 
-async function deepgram(file: string, actor: string): Promise<{ segments: Segment[]; language: string | null }> {
+/** A version's words, or null when its transcript has none (none yet, or made before words were kept). */
+export function wordsOf(db: DatabaseSync, versionId: string): TimedWord[] | null {
+  const row = db.prepare("SELECT words FROM transcripts WHERE version_id = ?").get(versionId) as { words: string | null } | undefined;
+  return row?.words ? (JSON.parse(row.words) as TimedWord[]) : null;
+}
+
+type Transcribed = { segments: Segment[]; words: TimedWord[]; language: string | null };
+
+async function deepgram(file: string, actor: string): Promise<Transcribed> {
   const role = isAdminActor(actor) ? "admin" : (findUser(actor)?.role ?? "user");
-  const r = await transcribeWav(await readFile(file), { username: actor, role, cloud: true, off: [] });
+  const r = await transcribeWav(await readFile(file), { username: actor, role, cloud: true, off: [] }, { fillers: true });
   if ("error" in r) throw new Error(r.error);
-  return { segments: wordsToSegments(r.words), language: "en" };
+  const words = r.words.map((w) => ({ w: w.text, s: w.start, e: w.end, ...(w.confidence !== undefined ? { c: w.confidence } : {}) }));
+  return { segments: wordsToSegments(r.words), words, language: "en" };
 }
 
 // ponytail: OpenAI's endpoint takes 25 MB, about 100 minutes of the 32 kbps audio sent here; longer files need chunks
-async function openai(file: string, key: string): Promise<{ segments: Segment[]; language: string | null }> {
+async function openai(file: string, key: string): Promise<Transcribed> {
   const form = new FormData();
   form.set("file", new Blob([await readFile(file)], { type: "audio/mp4" }), "audio.m4a");
   form.set("model", process.env.OPENAI_TRANSCRIBE_MODEL || "whisper-1");
   form.set("response_format", "verbose_json");
+  // both, or the answer has words and no segments; this model drops most false starts
+  form.append("timestamp_granularities[]", "segment");
+  form.append("timestamp_granularities[]", "word");
   const base = (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "");
   const r = await fetch(`${base}/audio/transcriptions`, {
     method: "POST",
@@ -102,9 +123,14 @@ async function openai(file: string, key: string): Promise<{ segments: Segment[];
     body: form,
   });
   if (!r.ok) throw new Error(`Transcription ${r.status}: ${(await r.text().catch(() => "")).slice(0, 200)}`);
-  const data = (await r.json()) as { language?: string; text?: string; segments?: { start: number; end: number; text: string }[] };
+  const data = (await r.json()) as {
+    language?: string;
+    segments?: { start: number; end: number; text: string }[];
+    words?: { word: string; start: number; end: number }[];
+  };
   const segments = (data.segments ?? []).map((s) => ({ start: s.start, end: s.end, text: s.text.trim() })).filter((s) => s.text);
-  return { segments, language: data.language ?? null };
+  const words = (data.words ?? []).map((w) => ({ w: w.word.trim(), s: w.start, e: w.end })).filter((w) => w.w);
+  return { segments, words, language: data.language ?? null };
 }
 
 /** Transcribes one version's audio as its job's actor: the route first (no audio is cut without one), then the provider. */
@@ -114,8 +140,8 @@ export async function transcribeVersion(db: DatabaseSync, versionId: string, src
   try {
     const codec = route.provider === "deepgram" ? ["-c:a", "pcm_s16le"] : ["-c:a", "aac", "-b:a", "32k"];
     await ffmpegTo(out, ["-i", src, "-vn", "-ac", "1", "-ar", "16000", ...codec]);
-    const { segments, language } = route.provider === "deepgram" ? await deepgram(out, actor ?? "") : await openai(out, route.key);
-    saveTranscript(db, versionId, route.provider, language, segments);
+    const { segments, words, language } = route.provider === "deepgram" ? await deepgram(out, actor ?? "") : await openai(out, route.key);
+    saveTranscript(db, versionId, route.provider, language, segments, words);
     // the Deepgram path bills its own minutes (transcribeWav)
     if (route.bill && route.provider === "openai") addSpend(route.bill, (durationS / 60) * transcribeUsdPerMinute());
   } finally {

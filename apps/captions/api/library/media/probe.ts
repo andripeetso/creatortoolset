@@ -16,7 +16,10 @@ export interface ProbeSummary {
   pixFmt: string;
   acodec: string;
   capturedAt?: number; // ms, from the container's creation_time
+  timecode?: string; // start timecode "HH:MM:SS:FF" (";" before FF for drop frame), when the file carries one
 }
+
+const TIMECODE = /^\d\d:\d\d:\d\d[:;]\d\d$/;
 
 type Json = Record<string, any>;
 
@@ -34,6 +37,10 @@ export function parseProbe(json: { format?: Json; streams?: Json[] }): ProbeSumm
   const matrix = v?.side_data_list?.find((d: Json) => d.rotation !== undefined)?.rotation;
   const turn = matrix !== undefined ? -Number(matrix) : Number(v?.tags?.rotate ?? 0);
   const capturedAt = Date.parse(json.format?.tags?.creation_time ?? "");
+  // only a string in the strict timecode shape is kept, never the tag object
+  const timecode = [v?.tags?.timecode, json.format?.tags?.timecode, ...(json.streams ?? []).map((s) => s.tags?.timecode)].find(
+    (t) => typeof t === "string" && TIMECODE.test(t),
+  ) as string | undefined;
   return {
     duration: Number(json.format?.duration) || 0,
     width: Number(v?.width) || 0,
@@ -45,6 +52,7 @@ export function parseProbe(json: { format?: Json; streams?: Json[] }): ProbeSumm
     pixFmt: String(v?.pix_fmt ?? ""),
     acodec: String(a?.codec_name ?? ""),
     ...(Number.isFinite(capturedAt) ? { capturedAt } : {}),
+    ...(timecode ? { timecode } : {}),
   };
 }
 

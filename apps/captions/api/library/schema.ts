@@ -197,4 +197,25 @@ export const MIGRATIONS: string[] = [
   DROP TABLE libraries;
   ALTER TABLE libraries_new RENAME TO libraries;
   `,
+  // 4: the AI Editor. Word timings with fillers ([{w, s, e, c}], seconds) beside the segments; and its own job table with the
+  // shape of `jobs`, so jobs.ts runs on both. version_id is "<editId>:<variant>" ("<editId>:" for a whole-edit step), never
+  // NULL (UNIQUE treats NULLs as distinct); edit_id is derived from it; library_id holds the edit's workspace id.
+  `
+  ALTER TABLE transcripts ADD COLUMN words TEXT;
+  CREATE TABLE edit_jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    library_id TEXT NOT NULL,
+    version_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('queued','running','done','failed','needs_key')),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    run_after INTEGER NOT NULL DEFAULT 0,
+    lease_until INTEGER,
+    actor TEXT,
+    error TEXT,
+    edit_id TEXT GENERATED ALWAYS AS (substr(version_id, 1, instr(version_id, ':') - 1)) VIRTUAL,
+    UNIQUE (version_id, kind)
+  );
+  CREATE INDEX edit_jobs_edit ON edit_jobs(edit_id);
+  `,
 ];
