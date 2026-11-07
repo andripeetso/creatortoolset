@@ -67,6 +67,15 @@ describe("boot", () => {
       expect(await status("http://localhost:43128/api/health")).toBe(200);
       expect(await status("http://[::1]:43128/api/health")).toBe(200);
       expect(await status("https://mac.tinyacrobatics.example/api/health")).toBe(200);
+      // a form or text/plain POST from another local web server carries the cookie (same site): refused by its Origin
+      const post = async (origin?: string, extra: Record<string, string> = {}) =>
+        (await app.request("http://127.0.0.1:43128/api/auth/logout", { method: "POST", headers: { ...(origin ? { origin } : {}), ...extra } })).status;
+      expect(await post("http://127.0.0.1:3000")).toBe(403);
+      expect(await post("null")).toBe(403);
+      expect(await post("http://127.0.0.1:43128")).toBe(200);
+      expect(await post("https://mac.tinyacrobatics.example")).toBe(200);
+      expect(await post()).toBe(200);
+      expect(await post("http://127.0.0.1:3000", { authorization: "Bearer ctk_x" })).not.toBe(403);
     } finally {
       delete process.env.CT_LOCAL;
       delete process.env.PUBLIC_ORIGIN;

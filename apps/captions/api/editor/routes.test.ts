@@ -157,6 +157,18 @@ describe("AI Editor: edits and who sees them", () => {
     await call("mem-a", "POST", `/api/editor/${id}/stop`);
   });
 
+  it("export reads the footage again: a source trashed since is 404, no links or download URLs made", async () => {
+    const { id } = await json<{ id: string }>(create("mem-a", ["ver_a2"]));
+    await saveDraft(id, "v1", { timeline: { sources: { ver_a2: {} } } as never, notes: [] });
+    libraryDb().prepare("UPDATE assets SET trashed_at = 1 WHERE id = 'ast_a2'").run();
+    try {
+      expect((await call("mem-a", "GET", `/api/editor/${id}/drafts/v1/export?format=otio`)).status).toBe(404);
+      expect((await call("owner-a", "GET", `/api/editor/${id}/drafts/v1/export`)).status).toBe(404);
+    } finally {
+      libraryDb().prepare("UPDATE assets SET trashed_at = NULL WHERE id = 'ast_a2'").run();
+    }
+  });
+
   it("is 403 for an account with the AI Editor switched off", async () => {
     setOff(findUser("mem-b")!, ["editor"]);
     const res = await call("mem-b", "GET", "/api/editor");

@@ -74,10 +74,28 @@ export function localHostAllowed(host: string): boolean {
   } catch { /* not a URL: nothing more allowed */ }
   return allowed.has(h);
 }
-app.use(async (c, next) =>
-  process.env.CT_LOCAL === "1" && !localHostAllowed(new URL(c.req.url).hostname)
-    ? c.json({ error: "Unknown host" }, 400)
-    : next());
+/**
+ * A change sent by a page from another origin (CT_LOCAL=1). Every port of 127.0.0.1 is one "site" to a browser, so
+ * the SameSite=Lax cookie rides along on a form or text/plain POST from any other local web server; the Origin header
+ * says where it came from. Requests with an Authorization header (API keys, the Mac's token) are no browser's.
+ */
+export function crossOriginWrite(method: string, url: string, origin: string | undefined, authorization: string | undefined): boolean {
+  if (["GET", "HEAD", "OPTIONS"].includes(method) || origin === undefined || authorization) return false;
+  if (origin === process.env.PUBLIC_ORIGIN?.replace(/\/$/, "")) return false;
+  try {
+    return new URL(origin).host !== new URL(url).host;
+  } catch {
+    return true; // "null" (a sandboxed frame, a file) or garbage
+  }
+}
+app.use(async (c, next) => {
+  if (process.env.CT_LOCAL !== "1") return next();
+  if (!localHostAllowed(new URL(c.req.url).hostname)) return c.json({ error: "Unknown host" }, 400);
+  if (crossOriginWrite(c.req.method, c.req.url, c.req.header("origin"), c.req.header("authorization"))) {
+    return c.json({ error: "Sent from another site" }, 403);
+  }
+  return next();
+});
 
 // 50 MB body cap, except video uploads and transcription audio
 const limit = bodyLimit({ maxSize: 50 * 1024 * 1024 });

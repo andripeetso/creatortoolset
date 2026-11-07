@@ -111,6 +111,11 @@ describe("AI Editor export", () => {
       a: "Take A.mp4",
       b: "take a 2.mp4",
     });
+    // a title that would name the folder itself or its parent, with no known extension, is never "." or ".."
+    expect(namesOf([{ id: "a", title: " ..", source_path: null, mime: "video/x-unknown" }, { id: "b", title: ". .", source_path: null, mime: null }])).toEqual({
+      a: "Untitled",
+      b: "Untitled 2",
+    });
     const e = (await createEdit("mem-a", { sources: ["ver_1", "ver_2", "ver_3"] }))!;
     const m = await mediaPaths(e, ["ver_1", "ver_2", "ver_3"]);
     const media = path.join(editDir(e.id), "media");

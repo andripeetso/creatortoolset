@@ -9,7 +9,7 @@ import { toFcpxml } from "./fcpxml";
 import { LINK_TTL_S, mediaPaths } from "./media";
 import { toOtio } from "./otio";
 import { qaOf } from "./qa";
-import { allEdits, cleanBrief, createEdit, draftNames, editRole, NoCollection, readDraft, readEdit, readStep, saveEdit, saveStep, summaryOf, viewOf, type EditMeta } from "./store";
+import { allEdits, cleanBrief, createEdit, draftNames, editRole, NoCollection, readDraft, readEdit, readStep, saveEdit, saveStep, sourcesWorkspace, summaryOf, viewOf, type EditMeta } from "./store";
 import { stopEdit } from "./worker";
 
 /**
@@ -194,6 +194,8 @@ editorApp.get("/:id/drafts/:name/export", async (c) => {
   const format = c.req.query("format") ?? "zip";
   if (!["otio", "fcpxml", "zip"].includes(format)) return c.json({ error: "format is otio, fcpxml or zip", code: "invalid" }, 400);
   const tl = d.timeline;
+  // read again, as the worker does: footage trashed or a library left since means no new links or download URLs
+  if (sourcesWorkspace(c.get("user").username, Object.keys(tl.sources)) !== r.e.workspaceId) return notFound(c);
   const m = await mediaPaths(r.e, Object.keys(tl.sources));
   const base = `${r.e.name} ${name}`.replace(/[^\w .-]+/g, "_").trim() || name;
   const otio = () => JSON.stringify(toOtio(tl, m.files), null, 2);

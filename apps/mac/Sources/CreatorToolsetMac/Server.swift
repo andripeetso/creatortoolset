@@ -64,6 +64,12 @@ func moveProblem(from: URL, to dest: URL, entries: [String], size: Int64, free: 
     return nil
 }
 
+/// Whether the old copy of a move may go to the Trash: never the live data folder, nor one inside or around it.
+func oldCopyRemovable(_ old: URL, live: URL) -> Bool {
+    let a = old.standardized.path, b = live.standardized.path
+    return a != b && !a.hasPrefix(b + "/") && !b.hasPrefix(a + "/")
+}
+
 func bytesText(_ n: Int64) -> String {
     ByteCountFormatter.string(fromByteCount: n, countStyle: .file)
 }
@@ -417,9 +423,10 @@ final class LocalServer: ObservableObject {
         return nil
     }
 
-    /// Remove old copy: the folder a move copied from goes to the Trash.
+    /// Remove old copy: the folder a move copied from goes to the Trash, unless the server uses it again (Choose
+    /// another folder… picked it when the new disk was gone).
     func removeOldCopy() {
-        if let old = oldDataDir { try? FileManager.default.trashItem(at: old, resultingItemURL: nil) }
+        if let old = oldDataDir, oldCopyRemovable(old, live: dataDir) { try? FileManager.default.trashItem(at: old, resultingItemURL: nil) }
         UserDefaults.standard.set(nil, forKey: "oldDataFolder")
     }
 

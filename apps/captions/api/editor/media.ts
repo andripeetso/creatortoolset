@@ -38,7 +38,7 @@ interface Row {
 }
 
 /** A title as a file name: no path separators or control characters, no leading dot. */
-const safe = (t: string) => t.replace(/[/\\:\p{Cc}]+/gu, " ").replace(/^\.+/, "").trim().slice(0, 120) || "Untitled";
+const safe = (t: string) => t.replace(/[/\\:\p{Cc}]+/gu, " ").replace(/^[\s.]+/, "").trim().slice(0, 120) || "Untitled";
 
 /** File names for the edit's sources, in the order they were picked, made unique ("Take A.mov", "Take A 2.mov"). */
 export function namesOf(rows: Pick<Row, "id" | "title" | "source_path" | "mime">[]): Record<string, string> {

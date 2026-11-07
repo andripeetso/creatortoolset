@@ -59,6 +59,15 @@ final class ServerTests: XCTestCase {
         XCTAssertNotNil(moveProblem(from: from, to: URL(fileURLWithPath: "/Volumes/Not Connected Disk/data"), entries: [], size: 1, free: nil))
     }
 
+    func testRemoveOldCopyNeverTrashesTheLiveDataFolder() {
+        let u = { (p: String) in URL(fileURLWithPath: p) }
+        XCTAssertTrue(oldCopyRemovable(u("/Users/tiny/Old data"), live: u("/Volumes/Studio/data")))
+        // "Choose another folder…" picked the old copy while the new disk was gone: it is the live folder again
+        XCTAssertFalse(oldCopyRemovable(u("/Users/tiny/data"), live: u("/Users/tiny/data/")))
+        XCTAssertFalse(oldCopyRemovable(u("/Users/tiny/data"), live: u("/Users/tiny/data/inner")))
+        XCTAssertFalse(oldCopyRemovable(u("/Users/tiny/data/inner"), live: u("/Users/tiny/data")))
+    }
+
     func testFolderStatsCountFilesAndBytes() throws {
         let folder = try scratch()
         defer { try? FileManager.default.removeItem(at: folder) }

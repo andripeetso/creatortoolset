@@ -159,7 +159,6 @@ authApp.post("/login", async (c) => {
   }
   username = username.trim().toLowerCase();
   const user = username ? findUser(username) : null;
-  if (user && remoteRefused(c, user)) return c.json({ error: NO_PASSWORD_YET }, 403);
   if (!user || !password || !verifyPassword(user, password)) {
     const fails = (failures.get(username) ?? 0) + 1;
     failures.set(username, fails);
@@ -167,6 +166,8 @@ authApp.post("/login", async (c) => {
     return c.json({ error: "Wrong username or password" }, 401);
   }
   failures.delete(username);
+  // after the password: a wrong guess from the LAN costs its delay and says nothing about the account
+  if (password === env.appSecret && localOnly(c)) return c.json({ error: NO_PASSWORD_YET }, 403);
   bumpUsage(user.username, { logins: 1 });
   setLoginCookie(c, user);
   return c.json({
@@ -206,8 +207,8 @@ const isLoopback = (c: Context) => {
   }
   return a === "::1" || /^(::ffff:)?127\./.test(a);
 };
-const remoteRefused = (c: Context, user: UserRecord) =>
-  process.env.CT_LOCAL === "1" && !isLoopback(c) && !!env.appSecret && verifyPassword(user, env.appSecret);
+const localOnly = (c: Context) => process.env.CT_LOCAL === "1" && !isLoopback(c);
+const remoteRefused = (c: Context, user: UserRecord) => localOnly(c) && !!env.appSecret && verifyPassword(user, env.appSecret);
 const NO_PASSWORD_YET = "Set a password on the Mac first: Mac settings → Access from other devices";
 
 /**

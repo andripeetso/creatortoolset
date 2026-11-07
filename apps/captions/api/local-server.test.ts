@@ -56,6 +56,8 @@ describe("a server on this Mac signs in from other devices only once a password 
   it("refuses another address while the password is still APP_SECRET, and lets it in after one is chosen", async () => {
     vi.stubEnv("CT_LOCAL", "1");
     expect((await login(LAN, "local-sign-in-test-secret")).status).toBe(403);
+    // a wrong guess from the LAN is an ordinary failure: it never learns the account is still on APP_SECRET
+    expect((await login(LAN, "a-wrong-guess")).status).toBe(401);
     expect((await login("::ffff:127.0.0.1", "local-sign-in-test-secret")).status).toBe(200);
     const cookie = cookieOf(await login("127.0.0.1", "local-sign-in-test-secret"));
 
