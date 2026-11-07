@@ -2,11 +2,11 @@ import { useState } from "react";
 import { Download, X } from "lucide-react";
 import { useMacRelease } from "@/components/MacAppDownload";
 import { UpdateButton } from "@/components/NewVersionPill";
-import { UserMenu, useAccountInCorner } from "@/components/UserMenu";
+import { useAccountInCorner } from "@/components/UserMenu";
 
 /**
- * Bottom left on every page, like a sidebar's foot: the account menu (Settings, Usage,
- * Admin, the Mac app, Sign out), and Update after a deploy. On a Mac browser, a one-time card offers the Mac app above it.
+ * Bottom left on every page: Update after a deploy, and on a Mac browser a one-time card offering the Mac app. The
+ * account menu is top right, beside the project switcher.
  */
 export function CornerNav() {
   const shown = useAccountInCorner();
@@ -20,7 +20,6 @@ export function CornerNav() {
         aria-label="Your settings"
         className="fixed bottom-2 left-2 z-40 flex items-center gap-2"
       >
-        <UserMenu corner />
         <UpdateButton />
       </nav>
     </>

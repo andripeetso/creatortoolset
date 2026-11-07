@@ -7,7 +7,6 @@ import {
   Download,
   LogOut,
   Settings,
-  ShieldCheck,
   UserRound,
 } from "lucide-react";
 import { isGuest, logout, useAuth } from "@/lib/auth";
@@ -25,14 +24,7 @@ import {
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 
-/**
- * Account menu for the current identity. Admin management, role preview,
- * and sign-out live together here instead of competing header buttons.
- */
-/**
- * Where CornerNav shows (signed in, not a guest, not a phone or a public page), the account menu sits there, bottom
- * left, the one button there; elsewhere it stays top right.
- */
+/** Where CornerNav shows (signed in, not a guest, not a phone or a public page). */
 export function useAccountInCorner(): boolean {
   const me = useAuth((s) => s.me);
   const { pathname } = useLocation();
@@ -42,20 +34,17 @@ export function useAccountInCorner(): boolean {
   );
 }
 
-/** The bell and (unless it sits in the corner) the account menu; `corner` = the menu alone, opening upward. */
-export function UserMenu({ corner = false }: { corner?: boolean } = {}) {
+/** The account menu, top right beside the project switcher: Settings, Usage, the Mac app, sign out. */
+export function UserMenu() {
   const required = useAuth((s) => s.required);
   const me = useAuth((s) => s.me);
   const viewAs = useAuth((s) => s.viewAs);
   const navigate = useNavigate();
-  const inCorner = useAccountInCorner();
   const release = useMacRelease();
   // the team role, read when the menu opens: "Owner · Workspace" (never the server-operator role)
   const [team, setTeam] = useState<string | null>(null);
 
   if (!me) return null;
-  // no bell: the inbox stays on the server for the Mac app's notifications
-  if (!corner && inCorner) return null;
 
   return (
     <span className="flex items-center gap-0.5">
@@ -69,15 +58,9 @@ export function UserMenu({ corner = false }: { corner?: boolean } = {}) {
                 : "border-border text-foreground"
             }`}
           >
-            <span
-              className={`flex h-5 w-5 items-center justify-center rounded ${
-                me.role === "admin" ? "bg-violet-600/25" : "bg-muted"
-              }`}
-            >
+            <span className="flex h-5 w-5 items-center justify-center rounded bg-muted">
               {viewAs ? (
                 <Eye className="h-3.5 w-3.5 text-fuchsia-600 dark:text-fuchsia-300" />
-              ) : me.role === "admin" ? (
-                <ShieldCheck className="h-3.5 w-3.5 text-violet-600 dark:text-violet-300" />
               ) : (
                 <UserRound className="h-3.5 w-3.5 text-muted-foreground" />
               )}
@@ -86,7 +69,7 @@ export function UserMenu({ corner = false }: { corner?: boolean } = {}) {
             <ChevronDown className="h-3 w-3 text-muted-foreground" />
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent side={corner ? "top" : "bottom"} align={corner ? "start" : "end"} className="w-64">
+        <DropdownMenuContent align="end" className="w-64">
           <DropdownMenuLabel className="px-2 py-2 font-normal">
             <span className="block truncate text-xs font-medium text-foreground">
               {me.username}
@@ -96,8 +79,8 @@ export function UserMenu({ corner = false }: { corner?: boolean } = {}) {
             </span>
           </DropdownMenuLabel>
 
-          {/* one account button: your own Settings and Usage,
-              the platform's Admin for its admins (Team sits in Settings), the Mac app, sign out */}
+          {/* your Settings (Team in it, and the server's admin pages for whoever runs the server), Usage, the Mac
+              app, sign out; the team role under the name, never the server-operator role */}
           {!me.demo && me.role !== "guest" && (
             <>
               <DropdownMenuSeparator />

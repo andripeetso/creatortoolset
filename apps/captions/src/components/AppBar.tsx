@@ -7,8 +7,8 @@ import { cn } from "@/lib/utils";
 
 /**
  * The bar on top of every tool: the logo home, the tool (a link back to its start when
- * `to` is set), where you are in it, the page's actions, then the account menu
- * (bell, theme, account). Colours come from the page: some tools are always
+ * `to` is set), where you are in it, the page's actions, then the account menu.
+ * Colours come from the page: some tools are always
  * dark, others follow the theme, so text inherits and greys are translucent.
  */
 export function AppBar({

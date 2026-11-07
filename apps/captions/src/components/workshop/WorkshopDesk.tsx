@@ -280,7 +280,7 @@ export function WorkshopDesk({
   );
 }
 
-/** The panels stop above a strip at the bottom, where Settings and Usage sit (CornerNav), so nothing covers a panel. */
+/** The panels stop above a strip at the bottom, where Update sits (CornerNav), so nothing covers a panel. */
 const DESK = "h-full min-h-0 px-2 pt-2 pb-10";
 
 function Split({
