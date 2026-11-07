@@ -1,6 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { SearchHit } from "../../contracts/library";
-import { addSpend } from "../lib/workspaces";
 import { libraryDb, librarySetting } from "./db";
 import { CARD, toCard, type CardRow } from "./query";
 import { keyFor } from "../my-keys";
@@ -9,8 +8,8 @@ import { needKey, segmentsOf, type Segment } from "./transcribe";
 /**
  * Optional semantic search (tasks/media-library-plan.md, section 6): the library's owner switches it on
  * (settings.embed); the `embed` job turns a version's title and shown description (chunk 0) and its transcript in
- * about 30 s windows (chunks 1…) into vectors with an OpenAI-compatible /embeddings endpoint, as its actor (the server's
- * key for a platform admin, else the member's API budget; otherwise needs_key). A search embeds the query the same way
+ * about 30 s windows (chunks 1…) into vectors with an OpenAI-compatible /embeddings endpoint, as its actor (their own
+ * key, or the server's for a platform admin; otherwise needs_key). A search embeds the query the same way
  * for the searcher, takes the 50 closest chunks by cosine and merges them with the full-text hits by reciprocal rank
  * fusion (k = 60). No key or no vectors: the full-text hits alone.
  */
@@ -19,8 +18,6 @@ const WINDOW_S = 30;
 const TOP = 50;
 export const RRF_K = 60;
 export const embedModel = () => process.env.OPENAI_EMBED_MODEL || "text-embedding-3-small";
-// ponytail: one flat price per million tokens; set the env value from your provider's price sheet
-const usdPerMTok = () => Number(process.env.LIBRARY_EMBED_USD_PER_MTOK) || 0.02;
 
 /** Chunk 0: title and description (the whole clip, no second). Then the transcript in windows of about 30 s. */
 export function embedChunks(title: string, description: string | null, segments: Segment[]): { start: number; text: string }[] {
@@ -33,8 +30,8 @@ export function embedChunks(title: string, description: string | null, segments:
   return out;
 }
 
-/** Vectors for `texts`, in order, on the OpenAI-compatible key from keyFor, billed to `bill` when set. */
-export async function embedTexts(texts: string[], { key, bill }: { key: string; bill?: string }): Promise<Float32Array[]> {
+/** Vectors for `texts`, in order, on the OpenAI-compatible key from keyFor. */
+export async function embedTexts(texts: string[], { key }: { key: string }): Promise<Float32Array[]> {
   const base = (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "");
   const r = await fetch(`${base}/embeddings`, {
     method: "POST",
@@ -43,10 +40,9 @@ export async function embedTexts(texts: string[], { key, bill }: { key: string; 
     signal: AbortSignal.timeout(60_000),
   });
   if (!r.ok) throw new Error(`Embeddings ${r.status}: ${(await r.text().catch(() => "")).slice(0, 200)}`);
-  const data = (await r.json()) as { data?: { index: number; embedding: number[] }[]; usage?: { total_tokens?: number } };
+  const data = (await r.json()) as { data?: { index: number; embedding: number[] }[] };
   const rows = (data.data ?? []).sort((a, b) => a.index - b.index);
   if (rows.length !== texts.length) throw new Error("Embeddings: the answer has the wrong number of vectors");
-  if (bill) addSpend(bill, ((data.usage?.total_tokens ?? 0) / 1e6) * usdPerMTok());
   return rows.map((x) => Float32Array.from(x.embedding));
 }
 

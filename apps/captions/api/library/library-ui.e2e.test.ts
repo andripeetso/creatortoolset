@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -36,20 +36,9 @@ beforeAll(async () => {
   dir = mkdtempSync(path.join(scratch, "library-ui-"));
   process.env.DATA_DIR = path.join(dir, "data");
   mkdirSync(process.env.DATA_DIR, { recursive: true });
-  // one workspace whose owner is the local account (APP_SECRET unset: every request is `local`, an admin)
-  writeFileSync(
-    path.join(process.env.DATA_DIR, "workspaces.json"),
-    JSON.stringify({
-      workspaces: [
-        { id: "ws_ui", name: "Tiny Acrobatics", plan: "team", comped: false, createdAt: 0, members: [{ username: "local", role: "owner", ai: "own", budgetUsd: 0, joinedAt: 0 }] },
-      ],
-      invites: [],
-      spend: {},
-    }),
-  );
   const { libraryDb } = await import("./db");
   libraryDb()
-    .prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_ui', 'ws_ui', 'Tiny Acrobatics library', 'local', 0)")
+    .prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_ui', 'local', 'Tiny Acrobatics library', 'local', 0)")
     .run();
 
   // a three-second clip, 320x240 H.264 with AAC: a browser plays it as it is, so no proxy is made

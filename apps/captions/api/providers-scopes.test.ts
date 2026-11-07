@@ -39,7 +39,6 @@ const workspace = (over: Partial<ProviderSettings> = {}): ProviderSettings => ({
   instances: [{ ...hub, device: alex.device.id }], // an admin's Mac
   default: { instance: "claude_work", model: "claude-opus-5-5", effort: "xhigh" },
   jobs: {},
-  api: { guests: false, demo: false, model: "claude-opus-5-5", effort: "low" },
   ...over,
 });
 
@@ -69,7 +68,6 @@ describe("routing: whose providers answer an account's job", () => {
         instances: [{ id: "codex_jordan", driver: "codex", name: "Codex (Jordan)", enabled: true, device: jordan.device.id }],
         default: { instance: "codex_jordan", model: "gpt-5-codex", effort: "high" },
         jobs: {},
-        api: { guests: false, demo: false, model: "claude-opus-5-5", effort: "low" },
       },
       "jordan",
     );
@@ -102,8 +100,8 @@ describe("routing: whose providers answer an account's job", () => {
     expect(aiFor({ username: "jordan", role: "team" }, "captions", "Caption Studio").off).toMatch(/No AI provider/);
   });
 
-  it("guests and the demo never reach a provider", () => {
-    expect(aiFor({ username: "guest-0123456789ab", role: "guest" }, "captions", "Caption Studio")).toMatchObject({ only: [], off: "AI is off for guests" });
+  it("a share-link visitor never reaches a provider", () => {
+    expect(aiFor({ username: "visitor", role: "visitor" }, "captions", "Caption Studio")).toMatchObject({ only: [] });
   });
 });
 
@@ -123,8 +121,8 @@ describe("devices", () => {
     expect(deviceForToken(`Bearer ${token}`)).toBeNull();
   });
 
-  it("guests can't pair; a device of another account is not listed to a team member and can't be removed by it", async () => {
-    as({ username: "guest-0123456789ab", role: "guest" });
+  it("a visitor can't pair; a device of another account is not listed to a team member and can't be removed by it", async () => {
+    as({ username: "visitor", role: "visitor" });
     expect((await app.request("/api/devices", json({ name: "x" }))).status).toBe(403);
     as({ username: "casey", role: "team" });
     const list = (await (await app.request("/api/devices")).json()) as Array<{ id: string }>;
@@ -216,10 +214,8 @@ describe("usage per scope", () => {
     expect((await usageOf({ username: "alex", role: "admin", cloud: true, off: [] })).map((x) => x.scope)).toEqual(["workspace"]);
   });
 
-  it("the usage page and settings are not for guests or the demo", async () => {
-    as({ username: "guest-0123456789ab", role: "guest", demo: undefined });
-    expect((await app.request("/api/providers")).status).toBe(403);
-    as({ username: "demo-0123456789ab", role: "user", demo: "demo" });
+  it("the usage page and settings are not for a share-link visitor", async () => {
+    as({ username: "visitor", role: "visitor" });
     expect((await app.request("/api/providers")).status).toBe(403);
   });
 });
@@ -227,7 +223,7 @@ describe("usage per scope", () => {
 describe("saving settings: the device must exist and belong to the scope", () => {
   it("PUT /own refuses a device of another account", async () => {
     as({ username: "casey", role: "team" });
-    const body = { instances: [{ id: "codex_casey", driver: "codex", name: "Codex", enabled: true, device: jordan.device.id }], default: { instance: "codex_casey", model: "gpt-5", effort: "low" }, jobs: {}, api: {} };
+    const body = { instances: [{ id: "codex_casey", driver: "codex", name: "Codex", enabled: true, device: jordan.device.id }], default: { instance: "codex_casey", model: "gpt-5", effort: "low" }, jobs: {} };
     const r = await app.request("/api/providers/own", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     expect(r.status).toBe(400);
     expect(((await r.json()) as { error: string }).error).toMatch(/your own Macs/);

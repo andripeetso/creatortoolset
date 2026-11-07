@@ -3,9 +3,8 @@ import { Link } from "react-router";
 import { Captions, ChevronLeft, CloudOff } from "lucide-react";
 import { useStudio } from "@/lib/store";
 import { flushPendingSave } from "@/lib/persist";
-import { canUseCloud, isGuest, useViewedMe } from "@/lib/auth";
+import { canUseCloud, useMe } from "@/lib/auth";
 import { CLOUD_MODEL_ID } from "@/lib/transcribe";
-import { MobileGuestGate } from "@/components/mobile/MobileGuestGate";
 import { MobileImport } from "@/components/mobile/MobileImport";
 import { MobileTranscribe } from "@/components/mobile/MobileTranscribe";
 import { MobileEditor } from "@/components/mobile/MobileEditor";
@@ -50,7 +49,7 @@ function CloudLocked() {
  * with a single clip and hides everything else.
  */
 export default function MobileCaptionPage() {
-  const me = useViewedMe();
+  const me = useMe();
   const [step, setStep] = useState<Step>("import");
   const fileName = useStudio((s) => s.fileName);
   const hasCurrent = useStudio((s) => s.clips.length > 0);
@@ -70,7 +69,6 @@ export default function MobileCaptionPage() {
   }, []);
 
   if (me === null) return <div className="h-dvh bg-[#0b0b10]" />;
-  if (isGuest(me)) return <MobileGuestGate />;
   if (!canUseCloud(me)) return <CloudLocked />;
 
   const back =

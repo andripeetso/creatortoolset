@@ -12,7 +12,6 @@ import {
   type ClipInfo,
   type ClipSnapshot,
 } from "./store";
-import { isDemo, isGuest, useAuth } from "./auth";
 import { storedAutoCadence } from "./cadence-preference";
 import { bumpCueIdCounter, type CadenceFit } from "./captions";
 import {
@@ -104,13 +103,11 @@ interface ProjectData {
 export async function listSessions(): Promise<SessionMeta[]> {
   const local = await listLocalRecoveryProjects().catch(() => []);
   let remote: SessionMeta[] = [];
-  if (!isGuest(useAuth.getState().me)) {
-    try {
-      const res = await fetch("/api/projects");
-      if (res.ok) remote = await res.json();
-    } catch {
-      // Offline is a normal state: the local project list still works.
-    }
+  try {
+    const res = await fetch("/api/projects");
+    if (res.ok) remote = await res.json();
+  } catch {
+    // Offline is a normal state: the local project list still works.
   }
   const merged = new Map(remote.map((project) => [project.id, project]));
   for (const project of local) {
@@ -144,7 +141,6 @@ export async function deleteSession(id: string): Promise<void> {
 }
 
 export async function listDeletedSessions(): Promise<DeletedSessionMeta[]> {
-  if (isGuest(useAuth.getState().me)) return [];
   try {
     const res = await fetch("/api/projects/trash");
     return res.ok ? res.json() : [];
@@ -373,24 +369,6 @@ export async function loadSession(
   return true;
 }
 
-/** Duplicate a project on the server into the signed-in user's library. */
-export async function copySessionToLibrary(
-  id: string,
-): Promise<{ id: string; name: string } | null> {
-  try {
-    const res = await fetch(`/api/projects/${id}/copy`, { method: "POST" });
-    if (!res.ok) return null;
-    const body = (await res.json()) as { id?: unknown; name?: unknown };
-    if (typeof body.id !== "string" || !body.id) return null;
-    return {
-      id: body.id,
-      name: typeof body.name === "string" ? body.name : "copy",
-    };
-  } catch {
-    return null;
-  }
-}
-
 type StudioSnapshot = ReturnType<typeof useStudio.getState>;
 
 function buildPayload(s: StudioSnapshot): string {
@@ -504,9 +482,6 @@ async function syncData(id: string, payload: string): Promise<void> {
 }
 
 async function putData(id: string, payload: string): Promise<void> {
-  // the demo opens its project and moves things around; nothing is saved
-  // (the server refuses it, boot.ts), whichever path asked
-  if (isDemo(useAuth.getState().me)) return;
   patchActiveProject(id, { saveState: "saving" });
   const previous = syncTails.get(id) ?? Promise.resolve();
   const current = previous.catch(() => {}).then(() => syncData(id, payload));
@@ -1398,10 +1373,6 @@ export function initPersistence(): void {
   });
 
   useStudio.subscribe((s) => {
-    // guest sessions never touch the server: no project upload, no saves;
-    // nor does the demo (the server refuses its writes, boot.ts)
-    const me = useAuth.getState().me;
-    if (isGuest(me) || isDemo(me)) return;
     // The durable project shell is tiny and must exist before media upload.
     // Transcript autosave no longer depends on the source transfer.
     if (s.projectId && !s.serverProjectReady && s.clips.length > 0) {

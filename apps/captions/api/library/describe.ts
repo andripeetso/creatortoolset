@@ -14,7 +14,7 @@ import { isAdminActor } from "../my-keys";
 
 /**
  * The library's `describe` job (tasks/media-library-plan.md, sections 5 and 11): four frames, the title and a
- * transcript excerpt go to the actor's own AI (aiFor: their provider, or their workspace API budget, billed to them).
+ * transcript excerpt go to the actor's own AI (aiFor: their provider, or their own Anthropic key).
  * No route parks the job as needs_key, never failed and never on someone else's AI. The answer is JSON: a description
  * and tags, stored as the AI's. A human's description stays the one shown (query.ts); human tags keep their source.
  * Off unless the library's owner switched it on (settings.describe), since it spends AI on every upload.

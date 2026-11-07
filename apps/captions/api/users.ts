@@ -11,7 +11,7 @@ export { isTool, type Tool };
  * File-based user accounts, matching the app's file-based project
  * storage: $DATA_DIR/users.json. Scrypt-hashed passwords, a role that
  * decides every permission (see applyRole), and lightweight usage
- * counters so the admin can see who uses the app.
+ * counters.
  *
  * Bootstrapping: when APP_SECRET is set and no admin exists, an
  * "admin" account (ADMIN_USERNAME to override) is created with
@@ -36,7 +36,7 @@ export interface UserRecord {
   hash: string;
   role: Role;
   cloud: boolean; // cloud transcription and AI in Caption Studio (every account)
-  /** Apps an admin switched off for this account (Admin → Users). */
+  /** Apps switched off for this account (none unless users.json says so). */
   off: Tool[];
   /** sha256 of the Review key: a script or AI reads Review and resolves comments as this user. */
   apiKeyHash?: string;
@@ -49,9 +49,7 @@ export interface UserRecord {
 }
 
 /**
- * Apps: every one is on for an account unless an admin switched it off
- * (contracts/tools.ts). The role only says who is an admin (team vs user matters for retention). Guests (no account): Caption
- * Studio with cloud transcription and the AI pass, capped (guest.ts).
+ * Apps: every one is on for an account unless switched off (contracts/tools.ts). The role only says who is an admin.
  */
 
 export type Role = "admin" | "team" | "user";
@@ -67,12 +65,9 @@ export function applyRole(user: UserRecord, role: Role): UserRecord {
 /** What request handlers see — never includes credentials. */
 export interface SessionUser {
   username: string;
-  role: Role | "guest";
+  role: Role | "visitor";
   cloud: boolean;
   off: Tool[];
-  /** "See the demo": the visitor (demo-<id>), who reads the demo account and
-   *  works in their own copy of its Review (boot.ts, review.ts cloneDemoReview). */
-  demo?: string;
 }
 
 export const mayUse = (user: SessionUser, tool: Tool): boolean =>
@@ -87,31 +82,15 @@ export const LOCAL_USER: SessionUser = {
 };
 
 /**
- * Try-out identity ("Try as guest" on the login screen). Not backed by a
- * UserRecord: guests keep no projects or exports on the server (boot.ts);
- * each one is named guest-<id> so caps and Admin → Guests tell them apart.
+ * Someone with no session on a public share link (Review, Workshop, Media Library, Video Notes): not an account,
+ * every app off, so the share routes are all it reaches (boot.ts).
  */
-export const GUEST_USER: SessionUser = {
-  username: "guest",
-  role: "guest",
+export const VISITOR: SessionUser = {
+  username: "visitor",
+  role: "visitor",
   cloud: false,
-  // Review too: uploads capped in guest.ts, kept 7 days (retention.ts)
-  // and the Audio Enhancer: NVIDIA only, their files gone an hour after (enhance.ts)
-  off: TOOLS.filter((t) => t !== "captions" && t !== "stories" && t !== "review" && t !== "enhance"),
+  off: [...TOOLS],
 };
-
-/** "guest" is the pre-id cookie of the same identity (7-day cookies). */
-export const isGuestName = (name: string) =>
-  name === GUEST_USER.username || /^guest-[a-f0-9]{12}$/.test(name);
-
-/**
- * The account behind "See the demo" on the login screen: an admin creates it in Admin → Access and fills it (sign in
- * as it, or Review's "Copy to demo"). Visitors get demo-<id> sessions that
- * read it and change nothing, so every visitor finds it as it was left; their
- * Review is their own copy of the demo's, gone after a day (retention.ts).
- */
-export const DEMO_USER = "demo";
-export const isDemoName = (name: string) => /^demo-[a-f0-9]{12}$/.test(name);
 
 export const USERNAME_RE = /^[a-z0-9][a-z0-9_-]{1,23}$/;
 
@@ -178,13 +157,12 @@ export function verifyPassword(user: UserRecord, password: string): boolean {
 export function createUser(
   username: string,
   password: string,
-  opts: { role?: Role; bootstrap?: boolean; byAdmin?: boolean } = {},
+  opts: { role?: Role; bootstrap?: boolean } = {},
 ): UserRecord {
   const name = username.toLowerCase();
   if (!USERNAME_RE.test(name)) throw new Error("Invalid username");
-  // "workspace" names the shared AI providers and their devices (contracts/providers.ts); "demo" is the demo account
-  // visitors read through, which only an admin makes (Admin → Users): a sign-up or invite taking it would be shown as the demo
-  if (isGuestName(name) || isDemoName(name) || name === "workspace" || (name === DEMO_USER && !opts.byAdmin)) throw new Error(`"${name}" is reserved`);
+  // "workspace" names the admins' AI providers and their devices (contracts/providers.ts); "visitor" the share-link visitor
+  if (name === "workspace" || name === VISITOR.username) throw new Error(`"${name}" is reserved`);
   if (findUser(name)) throw new Error("Username already taken");
   // bootstrap must never lock the deployment out over a short APP_SECRET
   if (!opts.bootstrap && password.length < 6) {
@@ -209,32 +187,11 @@ export function createUser(
   return user;
 }
 
-export function deleteUser(username: string): boolean {
-  const i = users.findIndex((u) => u.username === username.toLowerCase());
-  if (i === -1) return false;
-  users.splice(i, 1);
-  persist();
-  return true;
-}
-
 export function setPassword(user: UserRecord, password: string): void {
   if (password.length < 6)
     throw new Error("Password must be at least 6 characters");
   user.salt = randomBytes(16).toString("hex");
   user.hash = hashPassword(password, user.salt); // also rotates auth cookies
-  persist();
-}
-
-export function setRole(user: UserRecord, role: Role): void {
-  if (user.role === "admin" && role !== "admin" && adminCount() <= 1) {
-    throw new Error("Can't demote the last admin");
-  }
-  applyRole(user, role);
-  persist();
-}
-
-export function setOff(user: UserRecord, off: Tool[]): void {
-  user.off = TOOLS.filter((t) => off.includes(t));
   persist();
 }
 

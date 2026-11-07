@@ -1,7 +1,6 @@
 import { Hono, type Context } from "hono";
 import type { AuthVars } from "../auth";
 import type { AssetDetail, SearchHit } from "../../contracts/library";
-import { canManage } from "../lib/workspaces";
 import { libraryRole, versionSource } from "./access";
 import { libraryDb } from "./db";
 import { hitKey, rrf, semanticHits } from "./embed";
@@ -104,7 +103,7 @@ searchApp.get("/:id/assets/:assetId", (c) => {
 
 const RERUN = new Set(["transcribe", "describe", "fingerprint", "embed"]);
 
-// POST /api/library/:id/assets/:assetId/jobs { kinds } → queued again, with the caller as the actor (their key or budget)
+// POST /api/library/:id/assets/:assetId/jobs { kinds } → queued again, with the caller as the actor (their key)
 searchApp.post("/:id/assets/:assetId/jobs", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
@@ -115,7 +114,6 @@ searchApp.post("/:id/assets/:assetId/jobs", async (c) => {
         | undefined)
     : undefined;
   if (!a?.current_version_id) return notFound(c);
-  if (!canManage(role ?? undefined) && a.created_by !== user.username) return c.json({ error: "Only the uploader or the owner can do that", code: "forbidden" }, 403);
   const body = (await c.req.json().catch(() => null)) as { kinds?: unknown } | null;
   const kinds = Array.isArray(body?.kinds) ? body.kinds.filter((k): k is string => typeof k === "string" && RERUN.has(k)) : [];
   if (!kinds.length) return c.json({ error: `Nothing to run: kinds may be ${[...RERUN].join(", ")}`, code: "invalid" }, 400);
@@ -139,7 +137,6 @@ searchApp.patch("/:id/assets/:assetId", async (c) => {
         | undefined)
     : undefined;
   if (!a?.current_version_id) return notFound(c);
-  if (!canManage(role ?? undefined) && a.created_by !== user.username) return c.json({ error: "Only the uploader or the owner can do that", code: "forbidden" }, 403);
   const b = (await c.req.json().catch(() => null)) as { title?: unknown; tags?: unknown; description?: unknown } | null;
   const title = typeof b?.title === "string" ? b.title.trim().slice(0, 160) : undefined;
   const tags = Array.isArray(b?.tags)

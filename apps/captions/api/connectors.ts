@@ -3,7 +3,7 @@ import type { Context } from "hono";
 import { sessionOf, type AuthVars } from "./auth";
 import { LOGINS, PLATFORMS, type ConnectorsView, type LoginKind, type SocialPlatform } from "../contracts/connectors";
 import { appFor, finishLogin, freshToken, loginUrl, pullAccount } from "./lib/connectors/platforms";
-import { findAccount, newState, patchAccount, publicAccount, readApps, readConnectors, removeAccount, saveAccounts, writeApps, type StoredAccount } from "./lib/connectors/store";
+import { findAccount, newState, patchAccount, publicAccount, readConnectors, removeAccount, saveAccounts, type StoredAccount } from "./lib/connectors/store";
 import { publicApifyStatus, readApify } from "./lib/instagram/apify";
 import { addLoginAccount } from "./instagram";
 import { findUser, listUsers, LOCAL_USER, type SessionUser } from "./users";
@@ -19,11 +19,11 @@ const KINDS: LoginKind[] = ["meta", "google", "tiktok"];
 const STATE_MS = 15 * 60_000;
 const states = new Map<string, { user: string; kind: LoginKind; projectId?: string; verifier?: string; at: number; back: string }>();
 
-const nobody = (u: SessionUser) => u.role === "guest" || !!u.demo;
+const nobody = (u: SessionUser) => u.role === "visitor";
 
 /** Where a login sends people back: PUBLIC_ORIGIN in production (the apps register this exact URL), else this host. */
 function redirectFor(c: Context, kind: LoginKind): string {
-  // nginx passes Host and X-Forwarded-Proto (not X-Forwarded-Host): https://creatortoolset.com in production
+  // a proxy in front passes Host and X-Forwarded-Proto (not X-Forwarded-Host)
   const url = new URL(c.req.url);
   const proto = c.req.header("x-forwarded-proto") ?? url.protocol.replace(":", "");
   const origin = process.env.PUBLIC_ORIGIN?.replace(/\/$/, "") || `${proto}://${url.host}`;
@@ -42,52 +42,6 @@ async function view(c: Context<{ Variables: AuthVars }>): Promise<ConnectorsView
 }
 
 connectorsApp.get("/", async (c) => c.json(await view(c)));
-
-/** Settings → Admin → Connector apps: which apps are set (never their secrets), and the URLs to register. */
-connectorsApp.get("/apps", (c) => {
-  if (c.get("user").role !== "admin") return c.json({ error: "Admins only" }, 403);
-  const a = readApps();
-  const shown = (k: LoginKind) => {
-    const app = appFor(k);
-    return { set: !!app, id: app?.id ?? "", fromEnv: !!app && !a[k], ...(k === "meta" ? { configId: a.meta?.configId ?? "" } : {}) };
-  };
-  return c.json({
-    meta: shown("meta"),
-    google: shown("google"),
-    tiktok: shown("tiktok"),
-    tiktokVerify: a.tiktokVerify?.name ?? "",
-    redirects: Object.fromEntries(KINDS.map((k) => [k, redirectFor(c, k)])),
-  });
-});
-
-/** Save one app's keys ({kind, id, secret, configId?}) or TikTok's site check file ({kind: "tiktokVerify", name, content}). An empty id removes it. */
-connectorsApp.put("/apps", async (c) => {
-  if (c.get("user").role !== "admin") return c.json({ error: "Admins only" }, 403);
-  const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
-  const s = (k: string, max = 500) => (typeof b?.[k] === "string" ? (b[k] as string).trim().slice(0, max) : "");
-  const next = { ...readApps() };
-  if (b?.kind === "tiktokVerify") {
-    const name = s("name", 120);
-    if (name && !/^tiktok[\w-]*\.txt$/i.test(name)) return c.json({ error: "TikTok's file is named tiktok….txt" }, 400);
-    if (name) next.tiktokVerify = { name, content: s("content", 2000) };
-    else delete next.tiktokVerify;
-  } else if (KINDS.includes(b?.kind as LoginKind)) {
-    const kind = b!.kind as LoginKind;
-    const id = s("id");
-    const secret = s("secret") || (next[kind]?.id === id ? next[kind]!.secret : "");
-    if (!id) delete next[kind];
-    else if (!secret) return c.json({ error: "Paste the secret too" }, 400);
-    else next[kind] = kind === "meta" ? { id, secret, ...(s("configId") ? { configId: s("configId") } : {}) } : { id, secret };
-  } else return c.json({ error: "Unknown app" }, 400);
-  writeApps(next);
-  return c.json({ ok: true });
-});
-
-/** TikTok's "verify URL ownership" file, at the site's root (boot.ts mounts this before the app). */
-export function tiktokVerifyFile(name: string): string | null {
-  const v = readApps().tiktokVerify;
-  return v && v.name === name ? v.content : null;
-}
 
 /** Start a login: the page to open (the browser goes there and comes back to /callback). */
 connectorsApp.get("/login/:kind", (c) => {

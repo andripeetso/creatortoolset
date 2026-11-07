@@ -55,7 +55,6 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { isGuest, useViewedMe } from "@/lib/auth";
 import { timeAgo } from "@/lib/exports";
 import {
   APPROVAL,
@@ -1040,8 +1039,6 @@ function Header({
 }) {
   const [error, setError] = useState("");
   const { asset, manage } = view;
-  // guests keep no Caption Studio projects on the server (api/review.ts refuses them)
-  const guestMode = isGuest(useViewedMe());
   const { ptoken } = useParams();
   const navigate = useNavigate();
   const [renaming, setRenaming] = useState(false);
@@ -1205,7 +1202,7 @@ function Header({
         {manage && version.status !== "error" && !version.removed &&
           (version.captioned ? (
             <CaptionedPair asset={asset} n={n} />
-          ) : guestMode ? null : (
+          ) : (
             <CaptionStudioButton asset={asset} n={n} next={asset.approval.status === "approved"} />
           ))}
         {manage && (

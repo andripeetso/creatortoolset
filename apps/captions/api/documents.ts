@@ -631,7 +631,7 @@ documentsApp.get("/:id/assets/:file", async (c) => {
   const user = c.get("user");
   const allowed =
     meta.published ||
-    (user && user.role !== "guest" && canSee(meta, user));
+    (user && user.role !== "visitor" && canSee(meta, user));
   if (!allowed) return c.json({ error: "Not found" }, 404);
   const dir = path.resolve(assetsDir(id));
   const full = path.resolve(dir, file);
@@ -660,7 +660,7 @@ documentsApp.get("/:id", async (c) => {
   const user = c.get("user");
   const allowed =
     meta.published ||
-    (user && user.role !== "guest" && canSee(meta, user));
+    (user && user.role !== "visitor" && canSee(meta, user));
   if (!allowed) return c.json({ error: "Not found" }, 404);
   const body = await readBody(id);
   if (meta.name === "Untitled document" || meta.name === "Untitled guide") {

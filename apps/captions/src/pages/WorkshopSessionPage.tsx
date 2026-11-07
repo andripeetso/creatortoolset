@@ -18,7 +18,7 @@ import { SourceReader } from "@/components/workshop/SourceReader";
 import { SourceResultCard } from "@/components/workshop/SourceResultCard";
 import { SourceSearch, type BrowseOrder } from "@/components/workshop/SourceSearch";
 import { workshopUsesByPost } from "@/components/instagram/PostCard";
-import { canUse, useViewedMe } from "@/lib/auth";
+import { canUse, useMe } from "@/lib/auth";
 import { accountPathFor, addAccount, analyzerHome, findPosts, getPost, ingestPosts, recipeFromPreset, isOwnPost, listAccounts, listPosts, mediaUrl, mineAccount, patchPostResearch, type FindHit, type FindResult, type InstagramAccount, type InstagramPost, type PostKind, type SavedFor } from "@/lib/instagram";
 import {
   MAX_SESSION_SOURCES,
@@ -102,7 +102,7 @@ const pickActive = (docs: WorkshopDocument[], cur: string | null) =>
 
 export default function WorkshopSessionPage() {
   const { sessionId = "" } = useParams();
-  const me = useViewedMe();
+  const me = useMe();
   const allowed = canUse(me, "workshop");
   const selectProject = useWorkspace((s) => s.select);
 

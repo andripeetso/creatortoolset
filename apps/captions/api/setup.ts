@@ -9,10 +9,10 @@ import { readConnectors } from "./lib/connectors/store";
 import { publicApifyStatus, readApify } from "./lib/instagram/apify";
 import { routeFor } from "./lib/providers";
 import { ownedProjects } from "./lib/workshop/workspace";
-import { workspaceOf } from "./lib/workspaces";
+import { homeOf } from "./library/access";
 import { libraryDb } from "./library/db";
 import { keyFor } from "./my-keys";
-import { DEMO_USER, isDemoName, isGuestName, USERNAME_RE, type SessionUser } from "./users";
+import { USERNAME_RE, type SessionUser } from "./users";
 import { MY_KEYS } from "../contracts/service-keys";
 import { isTool, TOOLS, type Have, type SetupView, type Tool } from "../contracts/tools";
 import { isPlan, planFromCli, type PlanId } from "../contracts/plans";
@@ -20,7 +20,7 @@ import { isPlan, planFromCli, type PlanId } from "../contracts/plans";
 /**
  * First-run setup and Settings → Setup: the tools a person uses (their own list, apart from Admin → Access), the plan
  * their AI runs on, whether they finished setup, and what they have set up (contracts/tools.ts Have) for the
- * readiness rows. $DATA_DIR/setup/<username>.json; accounts only (a guest or a demo visitor has no setup).
+ * readiness rows. $DATA_DIR/setup/<username>.json; accounts only (a share-link visitor has no setup).
  *
  *   GET /api/setup  → SetupView
  *   PUT /api/setup  { tools?: Tool[], plan?: PlanId | null, done?: boolean } → SetupView
@@ -32,7 +32,7 @@ interface Saved {
   done?: boolean;
 }
 
-const fileOf = (u: string) => (USERNAME_RE.test(u) && !isGuestName(u) && !isDemoName(u) && u !== DEMO_USER ? path.join(env.dataDir, "setup", `${u}.json`) : null);
+const fileOf = (u: string) => (USERNAME_RE.test(u) ? path.join(env.dataDir, "setup", `${u}.json`) : null);
 
 function read(u: string): Saved | null {
   const f = fileOf(u);
@@ -60,8 +60,7 @@ export async function haveFor(user: SessionUser): Promise<Have[]> {
   if ((await ownedProjects(u)).length) have.push("project");
   if (readConnectors(u).accounts.some((a) => a.platform === "instagram" && a.via === "login")) have.push("instagram");
   if (publicApifyStatus(await readApify(u)).configured) have.push("apify");
-  const w = workspaceOf(u);
-  if (w && libraryDb().prepare("SELECT 1 FROM libraries WHERE workspace_id = ? LIMIT 1").get(w.id)) have.push("library");
+  if (libraryDb().prepare("SELECT 1 FROM libraries WHERE workspace_id = ? LIMIT 1").get(homeOf(u))) have.push("library");
   return have;
 }
 
@@ -76,7 +75,7 @@ async function view(user: SessionUser): Promise<SetupView> {
 
 export const setupApp = new Hono<{ Variables: AuthVars }>();
 
-setupApp.use("*", async (c, next) => (fileOf(c.get("user").username) && !c.get("user").demo ? next() : c.json({ error: "Sign in with an account to set up" }, 403)));
+setupApp.use("*", async (c, next) => (fileOf(c.get("user").username) && c.get("user").role !== "visitor" ? next() : c.json({ error: "Sign in with an account to set up" }, 403)));
 
 setupApp.get("/", async (c) => c.json(await view(c.get("user"))));
 

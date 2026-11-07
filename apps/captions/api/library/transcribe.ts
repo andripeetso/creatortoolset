@@ -2,18 +2,17 @@ import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
-import { transcribeUsdPerMinute, transcribeWav } from "../transcribe";
+import { transcribeWav } from "../transcribe";
 import { isAdminActor, keyFor } from "../my-keys";
-import { addSpend } from "../lib/workspaces";
 import { findUser } from "../users";
 import { ffmpegTo } from "./media/run";
 
 /**
  * The library's `transcribe` job (tasks/media-library-plan.md, sections 5, 6 and 11). It runs as the job's actor, on the
- * key that serves them (my-keys.ts keyFor): their own Deepgram or OpenAI key, else the server's for a platform admin
- * or a member on an API budget, billed to them. Without one the job parks as `needs_key` with the key to add: never
+ * key that serves them (my-keys.ts keyFor): their own Deepgram or OpenAI key, else the server's for a platform admin.
+ * Without one the job parks as `needs_key` with the key to add: never
  * failed, and never on another person's account.
- * Deepgram first (the request Caption Studio sends, api/transcribe.ts, which bills its own minutes), else an
+ * Deepgram first (the request Caption Studio sends, api/transcribe.ts), else an
  * OpenAI-compatible /audio/transcriptions endpoint.
  */
 
@@ -35,19 +34,19 @@ export interface TimedWord {
 export class NeedsKey extends Error {}
 
 /** The key for `actor`, or NeedsKey with what to add. */
-export function needKey(actor: string | null, name: Parameters<typeof keyFor>[1]): { key: string; bill?: string } {
+export function needKey(actor: string | null, name: Parameters<typeof keyFor>[1]): { key: string } {
   const r = keyFor(actor, name);
   if (r.missing) throw new NeedsKey(r.missing);
   return r;
 }
 
-/** Which key transcribes for `actor`, and whose budget pays. Throws NeedsKey when there is none. */
-export function transcribeRoute(actor: string | null): { provider: "deepgram" | "openai"; key: string; bill?: string } {
+/** Which key transcribes for `actor`. Throws NeedsKey when there is none. */
+export function transcribeRoute(actor: string | null): { provider: "deepgram" | "openai"; key: string } {
   const dg = keyFor(actor, "DEEPGRAM_API_KEY");
   if (!dg.missing) return { provider: "deepgram", ...dg };
   const oa = keyFor(actor, "OPENAI_API_KEY");
   if (!oa.missing) return { provider: "openai", ...oa };
-  throw new NeedsKey(/budget/.test(dg.missing) ? dg.missing : "Add your Deepgram (or OpenAI) key in Settings → My API keys");
+  throw new NeedsKey("Add your Deepgram (or OpenAI) key in Settings → My API keys");
 }
 
 /** Words into segments: one per utterance when Deepgram marks them, else a new one after a pause or 30 words. */
@@ -134,7 +133,7 @@ async function openai(file: string, key: string): Promise<Transcribed> {
 }
 
 /** Transcribes one version's audio as its job's actor: the route first (no audio is cut without one), then the provider. */
-export async function transcribeVersion(db: DatabaseSync, versionId: string, src: string, durationS: number, actor: string | null, scratch: string): Promise<void> {
+export async function transcribeVersion(db: DatabaseSync, versionId: string, src: string, actor: string | null, scratch: string): Promise<void> {
   const route = transcribeRoute(actor);
   const out = path.join(scratch, `transcribe-${randomUUID()}.${route.provider === "deepgram" ? "wav" : "m4a"}`);
   try {
@@ -142,8 +141,6 @@ export async function transcribeVersion(db: DatabaseSync, versionId: string, src
     await ffmpegTo(out, ["-i", src, "-vn", "-ac", "1", "-ar", "16000", ...codec]);
     const { segments, words, language } = route.provider === "deepgram" ? await deepgram(out, actor ?? "") : await openai(out, route.key);
     saveTranscript(db, versionId, route.provider, language, segments, words);
-    // the Deepgram path bills its own minutes (transcribeWav)
-    if (route.bill && route.provider === "openai") addSpend(route.bill, (durationS / 60) * transcribeUsdPerMinute());
   } finally {
     await rm(out, { force: true });
   }

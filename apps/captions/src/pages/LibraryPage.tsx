@@ -395,16 +395,12 @@ export default function LibraryPage() {
               )}
             </div>
 
-            {library.canManage && <LibraryWatchFolders libraryId={library.id} folders={collections.filter((c) => c.kind === "manual")} />}
-            {library.canManage && (
-              <LibraryStorageSettings
-                libraryId={library.id}
-                onSaved={(storage) => setLibraries((all) => all?.map((x) => (x.id === library.id ? { ...x, storage } : x)) ?? all)}
-              />
-            )}
-            {library.canManage && (
-              <AiSwitches library={library} onChange={(l) => setLibraries((all) => all?.map((x) => (x.id === l.id ? l : x)) ?? all)} onError={setError} />
-            )}
+            <LibraryWatchFolders libraryId={library.id} folders={collections.filter((c) => c.kind === "manual")} />
+            <LibraryStorageSettings
+              libraryId={library.id}
+              onSaved={(storage) => setLibraries((all) => all?.map((x) => (x.id === library.id ? { ...x, storage } : x)) ?? all)}
+            />
+            <AiSwitches library={library} onChange={(l) => setLibraries((all) => all?.map((x) => (x.id === l.id ? l : x)) ?? all)} onError={setError} />
 
             {uploads.length > 0 && (
               <section aria-label="Uploads" className="flex flex-col gap-2 rounded-xl border border-zinc-500/20 p-3">

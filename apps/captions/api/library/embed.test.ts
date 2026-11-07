@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
@@ -16,7 +16,6 @@ const { searchApp } = await import("./search");
 const { indexAsset } = await import("./query");
 const { saveTranscript } = await import("./transcribe");
 const { cosineTop, embedChunks, embedModel, embedVersion, rrf } = await import("./embed");
-const { spentThisMonth } = await import("../lib/workspaces");
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 afterEach(() => {
@@ -26,7 +25,7 @@ afterEach(() => {
 
 const app = new Hono<{ Variables: AuthVars }>();
 app.use(async (c, next) => {
-  c.set("user", { username: c.req.header("x-user") ?? "", role: "member" } as never);
+  c.set("user", { username: c.req.header("x-user") ?? "", role: "user" } as never);
   return next();
 });
 app.route("/api/library", searchApp);
@@ -36,7 +35,6 @@ const search = async (user: string, q: string) =>
     seconds?: number;
   }[];
 
-const member = (username: string, role: string, ai: string, budgetUsd = 0) => ({ username, role, ai, budgetUsd, joinedAt: 0 });
 const vec = (...xs: number[]) => Float32Array.from(xs);
 
 function seed(id: string, title: string) {
@@ -57,25 +55,11 @@ const putVec = (id: string, chunk: number, start: number, v: Float32Array) =>
 const answer = (q: number[]) =>
   vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
     const { input } = JSON.parse(String(init.body)) as { input: string[] };
-    return Response.json({ data: input.map((_, index) => ({ index, embedding: q })), usage: { total_tokens: 1_000_000 } });
+    return Response.json({ data: input.map((_, index) => ({ index, embedding: q })) });
   });
 
 beforeAll(() => {
-  writeFileSync(
-    path.join(dir, "workspaces.json"),
-    JSON.stringify({
-      workspaces: [
-        { id: "ws_a", name: "Tiny Acrobatics", plan: "team", comped: false, createdAt: 0, members: [
-          member("local", "owner", "own"),
-          member("own-a", "member", "own"),
-          member("budget-a", "member", "budget", 5),
-        ] },
-      ],
-      invites: [],
-      spend: {},
-    }),
-  );
-  libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_a', 'ws_a', 'A', 'local', 0)").run();
+  libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_a', 'local', 'A', 'local', 0)").run();
   seed("ast-roll", "Forward roll");
   seed("ast-beam", "Balance beam");
   seed("ast-swing", "Rope swing");
@@ -123,9 +107,8 @@ describe("semantic search", () => {
   });
 
   it("a searcher with no key route gets the full-text hits, never an error", async () => {
-    process.env.OPENAI_API_KEY = "test-key";
     answer([0, 1, 0]);
-    expect((await search("own-a", "beam")).map((h) => h.asset.id)).toEqual(["ast-beam"]);
+    expect((await search("local", "beam")).map((h) => h.asset.id)).toEqual(["ast-beam"]);
   });
 });
 
@@ -139,18 +122,17 @@ describe("embed job", () => {
     ]);
   });
 
-  it("stores one row per chunk with the answer's dims and bills a budget member", async () => {
+  it("stores one row per chunk with the answer's dims, and needs a key", async () => {
     seed("ast-new", "Handstand");
     saveTranscript(libraryDb(), "ver-ast-new", "deepgram", "en", [{ start: 0, end: 2, text: "Hold it." }]);
-    await expect(embedVersion(libraryDb(), "ver-ast-new", "own-a")).rejects.toThrow("Add your OpenAI key in Settings → My API keys");
+    await expect(embedVersion(libraryDb(), "ver-ast-new", "local")).rejects.toThrow("Add your OpenAI key in Settings → My API keys");
     process.env.OPENAI_API_KEY = "test-key";
     answer([0.1, 0.2, 0.3, 0.4]);
-    await embedVersion(libraryDb(), "ver-ast-new", "budget-a");
+    await embedVersion(libraryDb(), "ver-ast-new", "local");
     const rows = libraryDb().prepare("SELECT chunk, start_s, dims FROM embeddings WHERE version_id = 'ver-ast-new' ORDER BY chunk").all();
     expect(rows).toEqual([
       { chunk: 0, start_s: 0, dims: 4 },
       { chunk: 1, start_s: 0, dims: 4 },
     ]);
-    expect(spentThisMonth("budget-a")).toBeCloseTo(0.02); // a million tokens at the default rate
   });
 });

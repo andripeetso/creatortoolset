@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -10,14 +10,6 @@ mkdirSync(scratch, { recursive: true });
 const dir = mkdtempSync(path.join(scratch, "editor-analyze-"));
 process.env.DATA_DIR = dir;
 process.env.APP_SECRET = "editor-analyze-test-secret";
-writeFileSync(
-  path.join(dir, "workspaces.json"),
-  JSON.stringify({
-    workspaces: [{ id: "ws_a", name: "Tiny Acrobatics", plan: "team", comped: false, createdAt: 0, members: [{ username: "mem-a", role: "owner", ai: "own", budgetUsd: 0, joinedAt: 0 }] }],
-    invites: [],
-    spend: {},
-  }),
-);
 
 const { blobs, libraryDb } = await import("../library/db");
 const { enqueueJob } = await import("../library/jobs");
@@ -50,7 +42,7 @@ async function seed(id: string, title: string, probe: object | null) {
 /** Queues analyze for a new edit of `sources` and runs one step at `now`; returns the edit id and its analyze job. */
 async function analyze(sources: string[], now: number) {
   const e = (await createEdit("mem-a", { sources }))!;
-  enqueueJob(libraryDb(), "ws_a", `${e.id}:`, "analyze", "mem-a", true, "edit_jobs");
+  enqueueJob(libraryDb(), "mem-a", `${e.id}:`, "analyze", "mem-a", true, "edit_jobs");
   await tick(now);
   return { id: e.id, job: () => libraryDb().prepare("SELECT state, error, attempts, run_after FROM edit_jobs WHERE edit_id = ? AND kind = 'analyze'").get(e.id) as Record<string, unknown> };
 }
@@ -59,7 +51,7 @@ const transcribeJob = (v: string) => libraryDb().prepare("SELECT state, actor FR
 beforeAll(async () => {
   // tone 0-1 s, silence 1-2 s, tone 2-3 s: "speech" with one pause; a .wav so no encoder delay moves the edges
   execFileSync(ffmpegCommand(), ["-v", "error", "-f", "lavfi", "-i", "aevalsrc=if(between(t\\,1\\,2)\\,0\\,0.5*sin(2*PI*440*t)):s=8000:d=3", "-y", wav]);
-  libraryDb().exec("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_a', 'ws_a', 'A', 'local', 0)");
+  libraryDb().exec("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_a', 'mem-a', 'A', 'local', 0)");
   const p = { duration: 3, width: 0, height: 0, fps: 30, rotation: 0, format: "wav", vcodec: "", pixFmt: "", acodec: "pcm_s16le" };
   await seed("ver_late", "Take B", { ...p, capturedAt: 2000 });
   await seed("ver_early", "Take A", { ...p, capturedAt: 1000 });

@@ -35,7 +35,6 @@ export function CleanEditorPreview({
   onTimeChange,
   editAction,
   suspended = false,
-  readOnly = false,
 }: {
   url: string;
   sourceId?: string;
@@ -47,8 +46,6 @@ export function CleanEditorPreview({
   onTimeChange?: (seconds: number) => void;
   editAction?: ReactNode;
   suspended?: boolean;
-  /** No server-rendered frames (the demo). */
-  readOnly?: boolean;
 }) {
   const video = useRef<HTMLVideoElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -208,7 +205,7 @@ export function CleanEditorPreview({
     v.muted = !listenOriginal && a.mute;
   }, [a.speed, a.volume, a.mute, listenOriginal]);
   useEffect(() => {
-    if (readOnly || !verifyFrame || !sourceId || playing || busy || !end)
+    if (!verifyFrame || !sourceId || playing || busy || !end)
       return;
     const controller = new AbortController();
     const request = JSON.parse(frameKey) as {
@@ -238,7 +235,7 @@ export function CleanEditorPreview({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [readOnly, verifyFrame, sourceId, frameKey, playing, busy, end]);
+  }, [verifyFrame, sourceId, frameKey, playing, busy, end]);
   useEffect(
     () => () => {
       if (frameUrl.current) URL.revokeObjectURL(frameUrl.current);
@@ -343,8 +340,7 @@ export function CleanEditorPreview({
             <span className="flex items-center gap-1 text-zinc-500">
               {exact ? (
                 "Rendered frame"
-              ) : readOnly ||
-                !verifyFrame ||
+              ) : !verifyFrame ||
                 playing ||
                 !sourceId ||
                 frameError ||
@@ -426,18 +422,16 @@ export function CleanEditorPreview({
           Adjustments preview immediately on your device. Full measurements and
           downloads use the encoded output.
         </p>
-        {!readOnly && (
-          <label className="mt-3 flex items-center gap-2 text-[11px] text-zinc-400">
-            <input
-              type="checkbox"
-              checked={verifyFrame}
-              onChange={(event) => setVerifyFrame(event.target.checked)}
-              className="accent-violet-500"
-            />
-            Verify paused frames with export filters
-          </label>
-        )}
-        {verifyFrame && !readOnly && (
+        <label className="mt-3 flex items-center gap-2 text-[11px] text-zinc-400">
+          <input
+            type="checkbox"
+            checked={verifyFrame}
+            onChange={(event) => setVerifyFrame(event.target.checked)}
+            className="accent-violet-500"
+          />
+          Verify paused frames with export filters
+        </label>
+        {verifyFrame && (
           <p className="mt-1 text-[11px] text-zinc-500">
             Optional server render. New adjustments replace older requests; the
             instant preview stays responsive.

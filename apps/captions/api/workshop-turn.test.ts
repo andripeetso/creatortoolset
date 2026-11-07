@@ -36,7 +36,6 @@ await saveSettings({
   instances: [{ id: "claude", driver: "claude", name: "Claude", enabled: true, device: mac.id }],
   default: { instance: "claude", model: "claude-opus-5-5", effort: "xhigh" },
   jobs: {},
-  api: { guests: false, demo: false, model: "claude-opus-5-5", effort: "low" },
 });
 
 type Msg = { id: string; role: string; text: string; status?: string; error?: string; notes?: string[]; edits?: { blockIds: string[]; versionBefore?: string; versionAfter?: string; created?: boolean }; audit?: { applied?: string[] } };

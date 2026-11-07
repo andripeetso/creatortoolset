@@ -1,8 +1,7 @@
 /**
  * The server's own API keys for the outside services, asked for in Settings → API keys. One set per install, pasted by its
  * admin. A key saved there wins over the same name in the server's .env, which keeps working as before when nothing is saved.
- * They serve only the platform admin, members on a workspace API budget, and guests and the demo when switched on
- * (api/my-keys.ts keyFor); every other account uses its own (MY_KEYS below).
+ * They serve only the platform admin (api/my-keys.ts keyFor); every other account uses its own (MY_KEYS below).
  *
  *   GET /api/service-keys            → ServiceKeyView[]   (never a key, only its last 4)
  *   PUT /api/service-keys/:env       { value: string | null }  (null = forget it, the .env's own applies again)
@@ -13,9 +12,8 @@
 export const SERVICE_KEYS = [
   { env: "NVIDIA_API_KEY", name: "NVIDIA", what: "Studio Voice, the Audio Enhancer's second voice engine.", where: "https://build.nvidia.com" },
   { env: "ELEVENLABS_API_KEY", name: "ElevenLabs", what: "Voice isolator in the Audio Enhancer.", where: "https://elevenlabs.io/app/settings/api-keys" },
-  { env: "DEEPGRAM_API_KEY", name: "Deepgram", what: "Cloud transcription (nova-3) for you, budget members and guests when on. Without it, transcription runs on the device.", where: "https://console.deepgram.com" },
-  { env: "OPENAI_API_KEY", name: "OpenAI", what: "Media Library transcripts without a Deepgram key and its search by meaning, for you and budget members (any OpenAI-compatible service: OPENAI_BASE_URL in the .env).", where: "https://platform.openai.com/api-keys" },
-  { env: "ANTHROPIC_API_KEY", name: "Anthropic API", what: "The workspace's API budget for members without their own AI, and guests' and the demo's AI when switched on.", where: "https://console.anthropic.com/settings/keys" },
+  { env: "DEEPGRAM_API_KEY", name: "Deepgram", what: "Cloud transcription (nova-3) for you. Without it, transcription runs on the device.", where: "https://console.deepgram.com" },
+  { env: "OPENAI_API_KEY", name: "OpenAI", what: "Media Library transcripts without a Deepgram key and its search by meaning (any OpenAI-compatible service: OPENAI_BASE_URL in the .env).", where: "https://platform.openai.com/api-keys" },
   { env: "PERPLEXITY_API_KEY", name: "Perplexity", what: "The Content Workshop's accuracy check and deep research.", where: "https://www.perplexity.ai/account/api" },
   { env: "LIBRARY_S3_ACCESS_KEY", name: "Media Library bucket: Access key", what: "The server's S3-compatible bucket that libraries can keep their files in (bucket and endpoint: LIBRARY_S3_* in the .env)." },
   { env: "LIBRARY_S3_SECRET_KEY", name: "Media Library bucket: Secret key", what: "Goes with the access key above." },
@@ -36,9 +34,8 @@ export interface ServiceKeyView {
 
 /**
  * Settings → My API keys: each account's own keys, billed by the provider to that person, never to the server.
- * A tool that needs one and finds none says which key to add here. The server's keys above serve the platform admin,
- * members a workspace owner gave an API budget (AI and transcription only), and guests and the demo when an admin
- * switched them on. Apify (other creators' posts) is in Settings → Connectors.
+ * A tool that needs one and finds none says which key to add here. The server's keys above serve the platform admin
+ * only. Apify (other creators' posts) is in Settings → Connectors.
  *
  *   GET /api/my-keys          → MyKeyView[]   (never a key, only its last 4)
  *   PUT /api/my-keys/:env     { value: string | null }  (null = forget it)
@@ -62,6 +59,6 @@ export interface MyKeyView {
   where?: string;
   set: boolean;
   last4?: string;
-  /** Without a key of your own: who pays when the server's key serves you instead ("admin", "budget"), else absent. */
-  server?: "admin" | "budget";
+  /** Without a key of your own: "admin" when the server's key serves you instead, else absent. */
+  server?: "admin";
 }

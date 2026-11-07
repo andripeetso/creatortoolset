@@ -2,10 +2,10 @@ import { useState } from "react";
 import { Eraser } from "lucide-react";
 import { useStudio, isEditorBusy } from "@/lib/store";
 import { flushPendingSave } from "@/lib/persist";
-import { canUse, useViewedMe } from "@/lib/auth";
+import { canUse, useMe } from "@/lib/auth";
 
 export function SendToCleanerButton() {
-  const me = useViewedMe();
+  const me = useMe();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const ready = useStudio(

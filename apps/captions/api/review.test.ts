@@ -28,7 +28,7 @@ app.use("*", async (c, next) => {
   c.set(
     "user",
     /^\/[sp]\//.test(c.req.path)
-      ? { username: "guest", role: "guest", cloud: false, off: [] }
+      ? { username: "visitor", role: "visitor", cloud: false, off: [] }
       : as
         ? { username: as, role: "admin", cloud: false, off: [] }
         : { username: "owner", role: "user", cloud: false, off: [] },

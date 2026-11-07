@@ -1,26 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  copyProjectName,
   mediaOwnerProjectId,
   originalProjectIds,
   sharedOriginalObjectKey,
 } from "./project-copy";
-
-describe("copyProjectName", () => {
-  it("appends (copy) and keeps untitled for a blank name", () => {
-    expect(copyProjectName("HowWeRaiseChildren_d2")).toBe(
-      "HowWeRaiseChildren_d2 (copy)",
-    );
-    expect(copyProjectName("  ")).toBe("untitled (copy)");
-  });
-
-  it("stays within the project name limit", () => {
-    const name = "n".repeat(120);
-    const copied = copyProjectName(name);
-    expect(copied.length).toBe(120);
-    expect(copied.endsWith(" (copy)")).toBe(true);
-  });
-});
 
 describe("mediaOwnerProjectId", () => {
   it("keeps pointing at the original media owner across copies", () => {

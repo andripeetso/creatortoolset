@@ -8,8 +8,7 @@ import type { SessionUser } from "./users";
 
 /**
  * Story Splitter's saved splits: the cuts, never the video. One file per split,
- * $DATA_DIR/stories/<id>.json. Guests are kept out in boot.ts; a demo
- * visitor reads the demo account's (boot.ts refuses their changes).
+ * $DATA_DIR/stories/<id>.json. Accounts only (boot.ts).
  */
 
 export const storiesApp = new Hono<{ Variables: AuthVars }>();

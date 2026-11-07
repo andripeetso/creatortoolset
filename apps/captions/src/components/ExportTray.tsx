@@ -22,7 +22,7 @@ import {
   watchExports,
   type ExportJob,
 } from "@/lib/exports";
-import { canUse, isGuest, useViewedMe } from "@/lib/auth";
+import { canUse, useMe } from "@/lib/auth";
 
 function JobCard({ job, library }: { job: ExportJob; library: boolean }) {
   const active = job.status === "queued" || job.status === "running";
@@ -128,7 +128,7 @@ const MAX_CARDS = 5;
 export function ExportTray() {
   const jobs = useExports((s) => s.jobs);
   const dismissed = useExports((s) => s.dismissed);
-  const me = useViewedMe();
+  const me = useMe();
   const [collapsed, setCollapsed] = useState(() => {
     try {
       return localStorage.getItem("exportTrayCollapsed") === "1";
@@ -147,11 +147,10 @@ export function ExportTray() {
     });
 
   useEffect(() => {
-    if (!isGuest(me)) watchExports(); // guests have no server-side jobs
+    watchExports();
   }, [me]);
 
   const visible = jobs.filter((j) => !dismissed.includes(j.id));
-  if (isGuest(me)) return null;
   if (visible.length === 0) return null;
 
   const active = visible.filter((j) => j.status === "queued" || j.status === "running");

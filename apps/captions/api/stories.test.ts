@@ -67,20 +67,8 @@ describe("Story Splitter's saved splits", () => {
     expect((await app.request(`/api/stories/${split.id}`, { headers: alex })).status).toBe(404);
   });
 
-  it("keeps nothing for guests, and shows a demo visitor the demo's splits without changing them", async () => {
-    const guest = { cookie: cookieOf(await app.request("/api/auth/guest", { method: "POST" })) };
-    expect((await app.request("/api/stories", { headers: guest })).status).toBe(403);
-    expect((await app.request("/api/stories", json(guest, { name: "x", cuts: [], target: 20, duration: 9 }))).status).toBe(403);
-
-    createUser("demo", "demopass1", { byAdmin: true });
-    const demo = await login("demo", "demopass1");
-    const split = (await (await app.request("/api/stories", json(demo, { name: "Sample A.mp4", cuts: [22], target: 20, duration: 89 }))).json()) as Split;
-    const visitor = { cookie: cookieOf(await app.request("/api/auth/demo", { method: "POST" })) };
-    const seen = (await (await app.request("/api/stories", { headers: visitor })).json()) as Split[];
-    expect(seen.map((s) => s.id)).toEqual([split.id]);
-    expect((await app.request(`/api/stories/${split.id}`, { headers: visitor })).status).toBe(200);
-    const refused = await app.request(`/api/stories/${split.id}`, { method: "DELETE", headers: visitor });
-    expect(refused.status).toBe(403);
-    expect(refused.headers.get("x-demo")).toBe("read-only");
+  it("keeps nothing without an account", async () => {
+    expect((await app.request("/api/stories")).status).toBe(401);
+    expect((await app.request("/api/stories", json({}, { name: "x", cuts: [], target: 20, duration: 9 }))).status).toBe(401);
   });
 });

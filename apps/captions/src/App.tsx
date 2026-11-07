@@ -27,20 +27,12 @@ import { isPublicDownloadPath, isPublicLibraryPath, isPublicReviewPath, isPublic
 import { analyzerHome } from "@/lib/instagram";
 import { isPhoneHub } from "@/lib/mobile";
 import { ExportTray } from "@/components/ExportTray";
-import { GuestWelcomeDialog } from "@/components/GuestWelcomeDialog";
 import { SetupDialog } from "@/components/SetupDialog";
 import { FirstOpen } from "@/components/setup/FirstOpen";
 import { AssistantDock } from "@/components/assistant/AssistantDock";
 import LegalPage from "@/pages/LegalPage";
-import { DemoBanner, ViewAsBanner } from "@/components/ViewAsBanner";
 import { AppDialogs } from "@/components/AppDialogs";
-import {
-  canUse,
-  isDemo,
-  isGuest,
-  useAuth,
-  useViewedMe,
-} from "@/lib/auth";
+import { canUse, useAuth, useMe } from "@/lib/auth";
 import { initTabGuard } from "@/lib/tabs";
 import { useStudio } from "@/lib/store";
 import { getProjectPersistenceStatus } from "@/lib/persistence-status";
@@ -69,28 +61,28 @@ function PhoneTool({ children }: { children: ReactNode }) {
   );
 }
 
-/** An app an admin can switch off for an account (Admin → Users). */
+/** An app that can be switched off for an account (users.json `off`). */
 function AppRoute({ tool, children }: { tool: Tool; children: ReactNode }) {
-  const me = useViewedMe();
+  const me = useMe();
   return canUse(me, tool) ? children : <Navigate to="/" replace />;
 }
 
 function ClipsRoute() {
   const { clipId } = useParams();
-  const me = useViewedMe();
+  const me = useMe();
   if (clipId) return <ClipsPage />;
   return canUse(me, "notes") ? <ClipsPage /> : <Navigate to="/" replace />;
 }
 
 function DocumentsRoute() {
   const { docId } = useParams();
-  const me = useViewedMe();
+  const me = useMe();
   if (docId && docId !== "new") return <DocumentsPage />;
   return canUse(me, "guides") ? <DocumentsPage /> : <Navigate to="/" replace />;
 }
 
 function InstagramRoute() {
-  const me = useViewedMe();
+  const me = useMe();
   if (!canUse(me, "instagram")) return <Navigate to="/" replace />;
   return isPhoneHub() ? (
     <PhoneTool>
@@ -102,14 +94,14 @@ function InstagramRoute() {
 }
 
 function InstagramAccountRoute() {
-  const me = useViewedMe();
+  const me = useMe();
   if (!canUse(me, "instagram")) return <Navigate to="/" replace />;
   if (isPhoneHub()) return <Navigate to={analyzerHome()} replace />;
   return <InstagramAccountPage />;
 }
 
 function WorkshopRoute() {
-  const me = useViewedMe();
+  const me = useMe();
   if (!canUse(me, "workshop")) return <Navigate to="/" replace />;
   return isPhoneHub() ? (
     <PhoneTool>
@@ -121,7 +113,7 @@ function WorkshopRoute() {
 }
 
 function WorkshopSessionRoute() {
-  const me = useViewedMe();
+  const me = useMe();
   const { sessionId } = useParams();
   if (!canUse(me, "workshop")) return <Navigate to="/" replace />;
   return isPhoneHub() ? (
@@ -135,17 +127,17 @@ function WorkshopSessionRoute() {
 }
 
 function ProjectsRoute({ onClose }: { onClose: () => void }) {
-  const me = useViewedMe();
-  if (isGuest(me) || (!canUse(me, "instagram") && !canUse(me, "workshop"))) {
+  const me = useMe();
+  if ((!canUse(me, "instagram") && !canUse(me, "workshop"))) {
     return <Navigate to="/" replace />;
   }
   return <ProjectsPage onClose={onClose} />;
 }
 
-/** Settings, a modal over the page behind it: every signed-in account except guests and the demo visitors. */
+/** Settings, a modal over the page behind it: every signed-in account. */
 function SettingsModal({ onClose }: { onClose: () => void }) {
-  const me = useViewedMe();
-  if (!me || isGuest(me) || isDemo(me)) return <Navigate to="/" replace />;
+  const me = useMe();
+  if (!me) return <Navigate to="/" replace />;
   return (
     <Suspense fallback={null}>
       <SettingsPage onClose={onClose} />
@@ -156,11 +148,11 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
 /** ⌘, opens Settings (the account menu shows it). */
 function SettingsShortcut() {
   const navigate = useNavigate();
-  const me = useViewedMe();
+  const me = useMe();
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.key !== ",") return;
-      if (!me || isGuest(me) || isDemo(me)) return;
+      if (!me) return;
       e.preventDefault();
       navigate("/settings");
     };
@@ -175,7 +167,7 @@ function WorkspaceSync() {
   const load = useWorkspace((s) => s.load);
   const reset = useWorkspace((s) => s.reset);
   useEffect(() => {
-    if (!me || me.role === "guest") {
+    if (!me) {
       reset();
       return;
     }
@@ -185,7 +177,7 @@ function WorkspaceSync() {
 }
 
 function InstagramAnalyzeRoute() {
-  const me = useViewedMe();
+  const me = useMe();
   if (!canUse(me, "instagram")) return <Navigate to="/" replace />;
   if (isPhoneHub()) return <Navigate to={analyzerHome()} replace />;
   return <InstagramAnalysisPage />;
@@ -205,11 +197,6 @@ export default function App() {
   const publicPage =
     isPublicSharePath(location.pathname) || isPublicReviewPath(location.pathname) || isPublicLibraryPath(location.pathname) ||
     isPublicDownloadPath(location.pathname);
-  // a role preview: a banner on top, the page scrolls below it; the demo: a
-  // frame round it, the page inside
-  const viewAs = useAuth((state) => !!state.viewAs);
-  const demo = useAuth((state) => isDemo(state.me));
-  const framed = viewAs || demo;
 
   useEffect(() => {
     initTabGuard(() => useStudio.getState().setTabConflict(true));
@@ -224,7 +211,6 @@ export default function App() {
         saveState: state.saveState,
         localSaveState: state.localSaveState,
         clips: state.clips,
-        guest: isGuest(useAuth.getState().me),
       });
       if (status.workSafe) return;
       event.preventDefault();
@@ -235,17 +221,11 @@ export default function App() {
   }, []);
 
   return (
-    <div className={framed ? `flex h-dvh flex-col${demo ? " p-1.5" : ""}` : "contents"}>
+    <>
       <WorkspaceSync />
       <SettingsShortcut />
-      <ViewAsBanner />
-      <DemoBanner />
       <AppDialogs />
-      <main
-        className={
-          framed ? "view-as-viewport min-h-0 flex-1 overflow-auto" : "contents"
-        }
-      >
+      <main className="contents">
         <Routes location={page}>
           <Route path="/" element={<ToolsetHome />} />
           <Route path="/captions" element={<AppRoute tool="captions"><Home /></AppRoute>} />
@@ -302,13 +282,12 @@ export default function App() {
       {/* phones have their own export screens; the tray's memory of dismissed
           cards is per browser, so a new one (the iPhone app) got every old export */}
       {!onMobile && !publicPage && !isPhoneHub() && <ExportTray />}
-      {!onMobile && !publicPage && <GuestWelcomeDialog />}
       {!publicPage && !inSettings && <SetupDialog />}
       {!publicPage && !inSettings && <FirstOpen />}
       {!onMobile && !publicPage && <AssistantDock />}
       {!onMobile && !publicPage && <CornerNav />}
       {inSettings && <SettingsModal onClose={closeSettings} />}
       {inProjects && <ProjectsRoute onClose={closeSettings} />}
-    </div>
+    </>
   );
 }

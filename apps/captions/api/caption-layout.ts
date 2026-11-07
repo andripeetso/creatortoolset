@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { aiFailJson, guestRefusal, mayUse, providerFor } from "./ai";
+import { aiFailJson, mayUse, providerFor } from "./ai";
 import { anyAiConfigured } from "./ai-complete";
 import type { AuthVars } from "./auth";
 import { splitPoints, thoughtMarks } from "./lib/cadence-lines";
@@ -122,9 +122,7 @@ captionLayoutApp.post("/auto", async (c) => {
     c.json({ words, cues: layout(words, inp), fixes, cadenceApplied: false, cadenceFit: null, aiError });
 
   if (!anyAiConfigured(user)) return plain(null);
-  if (!mayUse(user)) return plain("The AI caption pass is locked for your account — ask the admin");
-  const refusal = guestRefusal(user, words.length);
-  if (refusal) return plain(refusal);
+  if (!mayUse(user)) return plain("The AI caption pass is locked for your account");
 
   const opts = { signal: c.req.raw.signal, provider: providerFor(user) };
   try {
@@ -152,7 +150,7 @@ captionLayoutApp.post("/auto", async (c) => {
   } catch (e) {
     if (c.req.raw.signal.aborted) return c.json({ error: "Stopped" }, 408);
     words = words.map((w) => ({ ...w, cut: undefined }));
-    return plain(aiFailJson(e, "AI caption pass failed", user).error);
+    return plain(aiFailJson(e, "AI caption pass failed").error);
   }
   return c.json({
     words,

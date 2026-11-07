@@ -4,7 +4,6 @@ import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { MAX_VERSIONS, type Edit, type Timeline, type EditBrief, type EditJob, type EditSummary, type Line, type ReviewPreview, type Sentence, type VersionPlan } from "../../contracts/editor";
 import { env } from "../lib/env";
-import { memberIn, workspaceById } from "../lib/workspaces";
 import { libraryRole } from "../library/access";
 import { libraryDb } from "../library/db";
 import { writeJsonAtomic } from "../library/media/run";
@@ -108,13 +107,8 @@ export function allEdits(): EditMeta[] {
   return ids.map(readEdit).filter((e): e is EditMeta => !!e);
 }
 
-/** What `username` may do with an edit: "creator" (everything), "owner" of its workspace (look, stop, delete), or null. */
-export function editRole(username: string, e: EditMeta | null): "creator" | "owner" | null {
-  if (!e || e.trashedAt) return null;
-  if (e.createdBy === username) return "creator";
-  const w = workspaceById(e.workspaceId);
-  return w && memberIn(w, username)?.role === "owner" ? "owner" : null;
-}
+/** Whether the edit is `username`'s own (out of the trash): nobody else sees or changes it. */
+export const editRole = (username: string, e: EditMeta | null): boolean => !!e && !e.trashedAt && e.createdBy === username;
 
 /**
  * The workspace the versions' libraries are in, when `username` may read every one of them (out of the trash, in one
@@ -220,7 +214,7 @@ export function summaryOf(e: EditMeta): EditSummary {
   return { id: e.id, name: e.name, createdBy: e.createdBy, createdAt: e.createdAt, updatedAt: e.updatedAt, sources: e.sources, last: last ? { ...last } : null };
 }
 
-export function viewOf(e: EditMeta, username: string): Edit {
+export function viewOf(e: EditMeta): Edit {
   const { trashedAt: _, ...meta } = e;
   const a = readStep(e.id, "analysis");
   const p = readStep(e.id, "plan");
@@ -228,7 +222,6 @@ export function viewOf(e: EditMeta, username: string): Edit {
     ...meta,
     ...summaryOf(e),
     jobs: jobsOf(e.id),
-    mine: e.createdBy === username,
     eyeline: e.eyeline ?? {},
     drafts: draftNames(e.id),
     sentences: a?.sentences.length ?? 0,

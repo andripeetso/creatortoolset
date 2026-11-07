@@ -171,7 +171,7 @@ async function runTurn(username: string, replyId: string, route: Route, url: str
 
 assistantApp.use("*", async (c, next) => {
   const u = c.get("user");
-  return u.role === "guest" || u.demo ? c.json({ error: "Sign in with an account to use the assistant" }, 403) : next();
+  return u.role === "visitor" ? c.json({ error: "Sign in with an account to use the assistant" }, 403) : next();
 });
 
 assistantApp.get("/", (c) => {

@@ -86,7 +86,7 @@ import {
  * (carousel layouts) runs on the default.
  */
 const workshopAi = (user: SessionUser, own?: Selection): ProviderOpts => route(user, "workshop", "Workshop", own);
-// the Workshop's own route: a member on an API budget has AI elsewhere, but not here (aiFor onApiKey)
+// the Workshop's own route: an account on an Anthropic key has AI elsewhere, but not here (aiFor onApiKey)
 const aiOn = (user: SessionUser) => !workshopAi(user).off;
 /** Which provider and model answer this session: a resumed Mac session belongs to exactly one. */
 const providerKey = (user: SessionUser, own?: Selection) => {
@@ -1825,7 +1825,7 @@ workshopApp.delete("/projects/:id", async (c) => {
   return c.json({ ok: true });
 });
 
-const noKnowledge = (user: SessionUser) => user.role === "guest" || !!user.demo;
+const noKnowledge = (user: SessionUser) => user.role === "visitor";
 
 workshopApp.get("/sources", async (c) => c.json(await listSources(c.get("user"))));
 

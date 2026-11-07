@@ -71,7 +71,6 @@ export default function EditorEditPage() {
     );
   }
 
-  const mine = edit.mine;
   const remove = async () => {
     if (!window.confirm(`Move “${edit.name}” to the trash?`)) return;
     try {
@@ -91,7 +90,7 @@ export default function EditorEditPage() {
             Stop
           </Button>
         )}
-        {mine && !busy && (
+        {!busy && (
           <Button size="sm" variant="outline" onClick={() => void confirmHeavy("editor").then((go) => { if (go) void act(runEdit(id)); })}>
             <RotateCcw className="h-3.5 w-3.5" />
             Run again
@@ -128,7 +127,7 @@ export default function EditorEditPage() {
                     )}
                   </span>
                 )}
-                {mine && (j.state === "failed" || j.state === "needs_key") && (
+                {(j.state === "failed" || j.state === "needs_key") && (
                   <Button size="sm" variant="outline" className="ml-auto" onClick={() => void act(retryJob(id, j.id))}>
                     Retry
                   </Button>
@@ -149,7 +148,7 @@ export default function EditorEditPage() {
           <h2 className="text-sm font-semibold">Eye line</h2>
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-xs text-zinc-500">Drag the line onto the speaker's eyes in each clip. Punch-ins keep the eyes at that height. Change it, then draft again (no AI).</p>
-            {mine && !busy && edit.plans.length > 0 && (
+            {!busy && edit.plans.length > 0 && (
               <Button size="sm" variant="outline" onClick={() => void act(runEdit(id, "draft"))}>
                 Draft again
               </Button>
@@ -157,7 +156,7 @@ export default function EditorEditPage() {
           </div>
           <div className="flex flex-wrap gap-3">
             {edit.sources.map((v) => (
-              <EyeLine key={v} versionId={v} y={edit.eyeline[v] ?? DEFAULT_EYELINE} editable={mine} onSet={(y) => void act(setEyeline(id, v, y))} />
+              <EyeLine key={v} versionId={v} y={edit.eyeline[v] ?? DEFAULT_EYELINE} onSet={(y) => void act(setEyeline(id, v, y))} />
             ))}
           </div>
         </section>
@@ -206,7 +205,7 @@ export default function EditorEditPage() {
                                 )}
                                 <select
                                   aria-label={`Take for ${line.id} in ${p.title || p.name}`}
-                                  disabled={!mine || busy || line.takes.length < 2}
+                                  disabled={busy || line.takes.length < 2}
                                   value={`${take.first}-${take.last}`}
                                   onChange={(e) => {
                                     const t = line.takes.find((x) => `${x.first}-${x.last}` === e.target.value);
@@ -278,11 +277,9 @@ export default function EditorEditPage() {
                           </Link>
                         </Button>
                       )}
-                      {mine && (
-                        <Button size="sm" variant="ghost" disabled={busy} onClick={() => void act(reviewDraft(id, n))}>
-                          Render preview again
-                        </Button>
-                      )}
+                      <Button size="sm" variant="ghost" disabled={busy} onClick={() => void act(reviewDraft(id, n))}>
+                        Render preview again
+                      </Button>
                     </div>
                   </article>
                 );
@@ -296,7 +293,7 @@ export default function EditorEditPage() {
 }
 
 /** A clip's frame with its eye line: drag (or click) to move it; it is saved when let go. */
-function EyeLine({ versionId, y, editable, onSet }: { versionId: string; y: number; editable: boolean; onSet: (y: number) => void }) {
+function EyeLine({ versionId, y, onSet }: { versionId: string; y: number; onSet: (y: number) => void }) {
   const box = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<number | null>(null);
   const at = (e: React.PointerEvent) => {
@@ -307,19 +304,18 @@ function EyeLine({ versionId, y, editable, onSet }: { versionId: string; y: numb
   return (
     <div
       ref={box}
-      role={editable ? "slider" : undefined}
+      role="slider"
       aria-label="Eye line"
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={Math.round(shown * 100)}
-      tabIndex={editable ? 0 : undefined}
+      tabIndex={0}
       onKeyDown={(e) => {
-        if (!editable || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+        if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
         e.preventDefault();
         onSet(Math.min(1, Math.max(0, y + (e.key === "ArrowUp" ? -0.01 : 0.01))));
       }}
       onPointerDown={(e) => {
-        if (!editable) return;
         e.currentTarget.setPointerCapture(e.pointerId);
         setDrag(at(e));
       }}
@@ -329,7 +325,7 @@ function EyeLine({ versionId, y, editable, onSet }: { versionId: string; y: numb
         onSet(at(e));
         setDrag(null);
       }}
-      className={`relative w-40 touch-none select-none overflow-hidden rounded-lg bg-zinc-800 ${editable ? "cursor-ns-resize" : ""}`}
+      className="relative w-40 cursor-ns-resize touch-none select-none overflow-hidden rounded-lg bg-zinc-800"
     >
       <img src={thumb(versionId)} alt="" draggable={false} className="block min-h-16 w-full" />
       <div className="pointer-events-none absolute inset-x-0 border-t-2 border-violet-400 shadow-[0_0_0_1px_rgba(0,0,0,0.4)]" style={{ top: `${shown * 100}%` }} />

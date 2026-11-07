@@ -5,7 +5,7 @@ import { MY_KEYS } from "@contracts/service-keys";
 import { readiness, toolsUsing, TOOL_NAMES, TOOLS, type Have, type Tool } from "@contracts/tools";
 import { Button } from "@/components/ui/button";
 import { PlanQuestion, ToolNeeds, ToolsPicker } from "@/components/setup/ToolNeeds";
-import { canUse, useViewedMe } from "@/lib/auth";
+import { canUse, useMe } from "@/lib/auth";
 import { useSetup, useSetupLive } from "@/lib/setup";
 import { Card, Group, Loading, Row } from "./ui";
 
@@ -23,7 +23,7 @@ const HAVE_NAMES: Array<[Have, string]> = [
  * By key: every key and login with the tools it turns on. Plus my tools, my plan, and setup again.
  */
 export function SetupSection() {
-  const me = useViewedMe();
+  const me = useMe();
   const view = useSetup((s) => s.view);
   const save = useSetup((s) => s.save);
   const [open, setOpen] = useState<Tool | null>(null);

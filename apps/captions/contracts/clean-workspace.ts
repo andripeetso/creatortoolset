@@ -1,6 +1,5 @@
 import type { MetadataInspection } from "./clean-inspection";
-import type { FingerprintReport, QuickScore } from "./clean-fingerprints";
-import type { EditMeasurement, EditOptions } from "./clean-edit";
+import type { FingerprintReport } from "./clean-fingerprints";
 
 export interface MetadataItem {
   where: string;
@@ -35,20 +34,7 @@ export interface CleanSource {
   expiresAt: number;
   versions: CleanVersion[];
   captionOrigin?: { projectId: string; clipId: string; revision: number };
-  /** "See the demo": the run's stored results (showcase.json beside it). */
-  showcase?: CleanShowcase;
 }
-/** A finished run, one entry per preset: its settings and what each measure answered. */
-export interface CleanShowcase {
-  runs: {
-    preset: string;
-    options: EditOptions;
-    score: QuickScore;
-    sscd: QuickScore;
-    measurement: EditMeasurement;
-  }[];
-}
-
 export interface UploadedComparison {
   beforeId: string;
   afterId: string;

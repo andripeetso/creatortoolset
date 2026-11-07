@@ -10,14 +10,6 @@ mkdirSync(scratch, { recursive: true });
 const dir = mkdtempSync(path.join(scratch, "editor-timeline-"));
 process.env.DATA_DIR = dir;
 process.env.APP_SECRET = "editor-timeline-test-secret";
-writeFileSync(
-  path.join(dir, "workspaces.json"),
-  JSON.stringify({
-    workspaces: [{ id: "ws_a", name: "Tiny Acrobatics", plan: "team", comped: false, createdAt: 0, members: [{ username: "mem-a", role: "owner", ai: "own", budgetUsd: 0, joinedAt: 0 }] }],
-    invites: [],
-    spend: {},
-  }),
-);
 
 const { libraryDb } = await import("../library/db");
 const { enqueueJob } = await import("../library/jobs");
@@ -55,7 +47,7 @@ const probe = { duration: 4, width: 1920, height: 1080, fps: 25, rotation: 90, f
 beforeAll(() => {
   const d = libraryDb();
   d.exec(`
-    INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_a', 'ws_a', 'A', 'local', 0);
+    INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_a', 'mem-a', 'A', 'local', 0);
     INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES ('ast_a', 'lib_a', 'video', 'Take A', 'mem-a', 0), ('ast_b', 'lib_a', 'video', 'Take B', 'mem-a', 0);
   `);
   for (const [v, a, fps] of [["ver_a", "ast_a", 25], ["ver_b", "ast_b", 50]] as const) {
@@ -114,9 +106,9 @@ describe("AI Editor timeline", () => {
     await saveStep(e.id, "analysis", { sentences, notes: [] });
     await saveStep(e.id, "plan", { lines, plans, notes: [] });
     await saveDraft(e.id, "v3", { timeline: {} as never, notes: [] });
-    enqueueJob(libraryDb(), "ws_a", `${e.id}:`, "draft", "mem-a", true, "edit_jobs");
+    enqueueJob(libraryDb(), "mem-a", `${e.id}:`, "draft", "mem-a", true, "edit_jobs");
     while (await tick());
-    const jobs = viewOf(readEdit(e.id)!, "mem-a").jobs.map((j) => [j.kind, j.variant, j.kind === "draft" ? j.state : ""]);
+    const jobs = viewOf(readEdit(e.id)!).jobs.map((j) => [j.kind, j.variant, j.kind === "draft" ? j.state : ""]);
     // each version's draft queues its preview (it fails here: the fixture has no footage); the whole-edit one none
     expect(jobs).toEqual([
       ["draft", "", "done"],
@@ -125,7 +117,7 @@ describe("AI Editor timeline", () => {
       ["preview", "v1", ""],
       ["preview", "v2", ""],
     ]);
-    expect(viewOf(readEdit(e.id)!, "mem-a").drafts).toEqual(["v1", "v2"]);
+    expect(viewOf(readEdit(e.id)!).drafts).toEqual(["v1", "v2"]);
     const v2 = readDraft(e.id, "v2")!.timeline;
     expect(v2.tracks.V1.items.map((i) => i.src)).toEqual(["ver_a", "ver_b"]);
     expect(Object.keys(v2.sources).sort()).toEqual(["ver_a", "ver_b"]);

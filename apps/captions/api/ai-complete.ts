@@ -4,17 +4,15 @@ import {
 } from "./credits";
 import type { JobId, Selection } from "../contracts/providers";
 import { MAC_MISS, MacClaudeError, recordUsage, streamMacClaude, type MacOpts, type MacUsage } from "./lib/mac-claude";
-import { instanceIn, limitFallbacks, providerSettings, routeFor } from "./lib/providers";
+import { instanceIn, limitFallbacks, routeFor } from "./lib/providers";
 import { completeLocal } from "./lib/local-claude";
-import { addSpend } from "./lib/workspaces";
 import { keyFor } from "./my-keys";
-import { DEMO_USER, findUser, isDemoName, isGuestName, type SessionUser } from "./users";
+import { findUser, type SessionUser } from "./users";
 
 /**
  * Every AI call in the app. It goes to a provider (contracts/providers.ts: a coding-agent CLI on a Mac,
  * through a paired Mac, signed in as that person). An Anthropic API key answers
- * an account with no provider that saved its own (Settings → My API keys); the server's answers only members on an API
- * budget, and guests and the demo account when an admin switches it on for them (my-keys.ts keyFor).
+ * an account with no provider that saved its own (Settings → My API keys); never the server's (my-keys.ts keyFor).
  */
 
 export const OUT_OF_TOKENS_CODE = "OUT_OF_TOKENS";
@@ -59,36 +57,27 @@ export type ProviderOpts = {
   /** Anthropic API only: its output_config.effort and model (the providers page's API settings). */
   effort?: Effort;
   model?: string;
-  /** A workspace member on an API budget (contracts/workspaces.ts): the API answer's cost goes on their month. */
-  bill?: string;
   /** The Anthropic API key this call runs on (keyFor's: the caller's own, or the server's where it serves them). */
   apiKey?: string;
-  /** Why there is no provider for this caller (a guest with the API key off): the call fails with it. */
+  /** Why there is no provider for this caller: the call fails with it. */
   off?: string;
   /** Pictures before the text (Anthropic only; pass `only: ["anthropic"]`, the others would never see them). */
   images?: Array<{ type: string; data: string }>;
 };
 
 /** Who is asking: a session, or a username (background work names its owner). Nobody = no AI. */
-type Who = Pick<SessionUser, "username" | "role" | "demo"> | string | undefined;
+type Who = Pick<SessionUser, "username" | "role"> | string | undefined;
 
 /**
  * Where one AI call goes. Accounts: the job's provider (the session's own pick first), with the label for the
  * usage tally. Its scope (lib/providers.ts routeFor): the account's own providers when it has a runnable one on its
- * own Macs, else the workspace's (a platform admin). Nobody named: no AI. Guests and the demo
- * account: the API key, only when switched on in AI providers.
+ * own Macs, else the workspace's (a platform admin). Nobody named: no AI.
  */
 export function aiFor(who: Who, job: JobId, label: string, own?: Selection): ProviderOpts {
   const name = typeof who === "string" ? who : who?.username;
-  const role = typeof who === "string" ? (isGuestName(who) ? "guest" : findUser(who)?.role) : who?.role;
-  const api = providerSettings().api;
-  if (role === "guest" || (name && (name === DEMO_USER || isDemoName(name))) || (typeof who === "object" && who?.demo)) {
-    const k = keyFor(typeof who === "object" ? who : name, "ANTHROPIC_API_KEY");
-    if (!k.key) return { only: [], off: `AI is off for ${role === "guest" ? "guests" : "the demo"}` };
-    return { only: ["anthropic"], retries: 1, effort: api.effort, model: api.model, apiKey: k.key, mac: { label } };
-  }
+  const role = typeof who === "string" ? findUser(who)?.role : who?.role;
   // nobody named: never the server's providers (background work names whose work it is)
-  if (!name) return { only: [], off: "This AI call names no account" };
+  if (!name || role === "visitor") return { only: [], off: "This AI call names no account" };
   const r = routeFor(name, role === "admin", job, own);
   if (!r) return (name && onApiKey(name, job, label)) || { only: [], off: "No AI provider for your account: add one in Settings → AI providers, or your Anthropic key in Settings → My API keys" };
   const { selection, instance } = r;
@@ -99,18 +88,15 @@ export function aiFor(who: Who, job: JobId, label: string, own?: Selection): Pro
 }
 
 /**
- * An account with no provider: the Anthropic key keyFor gives it (its own from Settings → My API keys; the server's only
- * for a member whose workspace gives them a monthly API budget, billed to them, never the platform admin), at the API's
- * model and effort (Admin → AI access). Never the Workshop: a Workshop
- * turn is Claude Code reading the session's folder, which a plain API call can't (it needs their own AI).
+ * An account with no provider: its own Anthropic key from Settings → My API keys (keyFor), at anthropicParams' model
+ * and effort. Never the Workshop: a Workshop turn is Claude Code reading the session's folder, which a plain API call
+ * can't (it needs their own AI).
  */
 function onApiKey(name: string, job: JobId, label: string): ProviderOpts | null {
   const k = keyFor(name, "ANTHROPIC_API_KEY");
-  if (k.missing && !/budget/.test(k.missing)) return null;
+  if (!k.key) return null;
   if (job === "workshop") return { only: [], off: "Content Workshop runs on your own AI (it reads the whole project folder): connect yours in Settings → AI providers" };
-  if (!k.key) return { only: [], off: k.missing ?? "No Anthropic key" };
-  const s = providerSettings();
-  return { only: ["anthropic"], retries: 1, model: s.api.model, effort: s.api.effort, apiKey: k.key, ...(k.bill ? { bill: k.bill } : {}), mac: { label } };
+  return { only: ["anthropic"], retries: 1, apiKey: k.key, mac: { label } };
 }
 
 /** Order the configured providers: exactly `only`, in its order. */
@@ -137,9 +123,7 @@ interface Provider {
   ) => Promise<string>;
 }
 
-export const anthropicKey = () => process.env.ANTHROPIC_API_KEY || "";
-
-/** Some AI can answer this caller: a provider is on, or for a guest or the demo the API key is switched on. */
+/** Some AI can answer this caller: a provider of theirs, or their own Anthropic key. */
 export const anyAiConfigured = (who: Who) => !aiFor(who, "notes", "check").off;
 
 /**
@@ -172,9 +156,8 @@ export function apiUsage(u: AnthropicUsage, model: string): MacUsage {
 }
 
 /** An API answer's usage: the same hourly tally as the Mac's, under "<label> (API)" so the two stay apart. */
-function reportApi(label: string | undefined, usage: MacUsage, onUsage?: (u: MacUsage) => void, bill?: string) {
+function reportApi(label: string | undefined, usage: MacUsage, onUsage?: (u: MacUsage) => void) {
   void recordUsage(`${label ?? "other"} (API)`, usage);
-  if (bill) addSpend(bill, usage.costUsd);
   onUsage?.(usage);
 }
 
@@ -322,7 +305,7 @@ async function completeAnthropic(
   }
   const body = await readBody(resp);
   if (!resp.ok) throw classifyHttpError(resp.status, body, "Anthropic");
-  return contentFromAnthropic(body, (u) => reportApi(opts.mac?.label, apiUsage(u, params.model), opts.onUsage, opts.bill));
+  return contentFromAnthropic(body, (u) => reportApi(opts.mac?.label, apiUsage(u, params.model), opts.onUsage));
 }
 
 export function contentFromAnthropic(body: string, onUsage?: (u: AnthropicUsage) => void): string {
@@ -520,7 +503,7 @@ async function streamAnthropic(system: string, user: string, cancelSignal: Abort
   } catch (e: unknown) {
     wrapFetchError(e, cancelSignal);
   } finally {
-    if (Object.keys(usage).length) reportApi(opts.mac?.label, apiUsage(usage, params.model), onUsage, opts.bill);
+    if (Object.keys(usage).length) reportApi(opts.mac?.label, apiUsage(usage, params.model), onUsage);
   }
   if (!text.trim()) throw new AiProviderError("The model returned an empty answer", "FAILED", true);
   return text;

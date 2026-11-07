@@ -34,8 +34,6 @@ import { fmtAgo, msg, selectCls } from "./helpers";
 
 type Device = ProvidersView["devices"][number];
 
-const DEFAULT_API = { guests: false, demo: false, model: "claude-opus-5-5", effort: "low" as const };
-
 /**
  * Settings → AI providers: the Macs the account has (admins also the workspace's) as tabs,
  * the providers on the selected Mac, who does which job, and for admins whether the team shares them.
@@ -126,7 +124,6 @@ export function ProvidersSection({ sub }: { sub?: string }) {
       instances: [],
       default: { instance: "", model: "", effort: "xhigh" },
       jobs: {},
-      api: view.workspace?.settings.api ?? DEFAULT_API,
     };
     const first = modelsOf(view, withDevice)[0] ?? "";
     void save({

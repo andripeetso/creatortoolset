@@ -12,12 +12,11 @@ import {
   wrapFetchError,
 } from "./ai-complete";
 import { recordUsage } from "./lib/mac-claude";
-import { addSpend } from "./lib/workspaces";
 
 /**
  * Reading pictures (the Analyzer's slides and video frames) on the Analyzer's AI provider: the pictures go to
  * the Mac as files in the run's folder, which the provider reads in order. Without a provider they go to the Anthropic API
- * key aiFor picked (the account's own, a budget member's server key, or a guest's or the demo's when switched on).
+ * key aiFor picked (the account's own).
  */
 
 export interface VisionImage {
@@ -52,7 +51,7 @@ export async function completeVisionWithFallback<T>(
     );
     return { value, provider: route.mac?.provider?.instance ?? "mac" };
   }
-  return { value: parse(await completeAnthropic(system, userText, images, cancelSignal, route.apiKey ?? "", route.model, route.effort, route.bill)), provider: "anthropic" };
+  return { value: parse(await completeAnthropic(system, userText, images, cancelSignal, route.apiKey ?? "", route.model, route.effort)), provider: "anthropic" };
 }
 
 async function completeAnthropic(
@@ -63,7 +62,6 @@ async function completeAnthropic(
   apiKey: string,
   model: string | undefined,
   effort: Parameters<typeof anthropicParams>[0],
-  bill?: string,
 ): Promise<string> {
   const base = (process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com").replace(/\/$/, "");
   const params = anthropicParams(effort, model);
@@ -95,9 +93,5 @@ async function completeAnthropic(
   const body = await readBody(resp);
   if (!resp.ok) throw classifyHttpError(resp.status, body, "Anthropic");
   // tallied like the other API answers: tokens and API-equivalent cost, under its own label
-  return contentFromAnthropic(body, (u) => {
-    const usage = apiUsage(u, params.model);
-    void recordUsage("Image reading (API)", usage);
-    if (bill) addSpend(bill, usage.costUsd);
-  });
+  return contentFromAnthropic(body, (u) => void recordUsage("Image reading (API)", apiUsage(u, params.model)));
 }

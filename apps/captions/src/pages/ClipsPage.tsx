@@ -18,11 +18,6 @@ import {
   Wand2,
 } from "lucide-react";
 import { canUse, useAuth } from "@/lib/auth";
-import { isAdminForeignView } from "@/lib/admin-view";
-import {
-  AdminViewBanner,
-  AdminViewBorder,
-} from "@/components/AdminViewBanner";
 import { fmtBytes, timeAgo } from "@/lib/exports";
 import { toolsetHomePath } from "@/lib/mobile";
 import { useClipsRecorder } from "@/hooks/use-clips-recorder";
@@ -717,7 +712,6 @@ export default function ClipsPage() {
 
   return (
     <div className="relative flex min-h-screen flex-col items-center bg-background pb-10 text-foreground">
-      {isAdminForeignView(me, current?.owner) && <AdminViewBorder />}
       <AppBar tool="Video Notes" to={clipId ? "/clips" : undefined} trail={current?.name} account={!!me} className="mb-6">
         {isPublicSharePath(location.pathname) ? <ShareThemeSwitch /> : null}
         {!me && required ? (
@@ -776,9 +770,6 @@ export default function ClipsPage() {
           </div>
         ) : current ? (
           <>
-            {isAdminForeignView(me, current.owner) && (
-              <AdminViewBanner owner={current.owner} noun="clip" />
-            )}
             <ClipView
               session={current}
               owns={

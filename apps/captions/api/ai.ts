@@ -7,7 +7,6 @@ import {
   OUT_OF_TOKENS_CODE,
   type ProviderOpts,
 } from "./ai-complete";
-import { GUEST_MAX_WORDS, GUEST_OUT_OF_CREDITS, takeGuest } from "./guest";
 import { splitPoints, thoughtMarks } from "./lib/cadence-lines";
 import { MAX_SCRIPT_CHARS, scriptCheckOpts, scriptEdits } from "./lib/script-check";
 import { bumpUsage } from "./users";
@@ -17,9 +16,7 @@ import { bumpUsage } from "./users";
  * AI providers) — the client groups captions into spoken thoughts
  * automatically after transcription (and on demand via the transcript
  * panel). Gated per account like cloud transcription: admins always may;
- * other users only when the admin has unlocked cloud for them. Guests get it
- * only on the API key, when an admin switched that on, within their caps
- * (guest.ts).
+ * other users only when the admin has unlocked cloud for them.
  *
  * The endpoint takes the flat word list and returns one thought mark per
  * word (see api/lib/cadence-lines.ts). The marks don't depend on the
@@ -30,19 +27,10 @@ import { bumpUsage } from "./users";
 export const aiApp = new Hono<{ Variables: AuthVars }>();
 
 export const mayUse = (u: AuthVars["user"]) =>
-  (u.role === "admin" || u.cloud || u.role === "guest") && anyAiConfigured(u);
+  (u.role === "admin" || u.cloud) && anyAiConfigured(u);
 
-/** Caption Studio's provider for this caller (a guest: the API key when switched on). */
+/** Caption Studio's provider for this caller. */
 export const providerFor = (u: AuthVars["user"]): ProviderOpts => aiFor(u, "captions", "Caption Studio");
-
-/** Why a guest's AI request is refused (too big, or over today's caps), else null. */
-export function guestRefusal(u: AuthVars["user"], words: number): string | null {
-  if (u.role !== "guest") return null;
-  if (words > GUEST_MAX_WORDS) {
-    return "Guest mode handles videos up to 3 minutes — sign in with an account for longer ones";
-  }
-  return takeGuest(u, "ai", 1);
-}
 
 aiApp.get("/available", (c) =>
   c.json({ available: anyAiConfigured(c.get("user")), allowed: mayUse(c.get("user")) })
@@ -60,13 +48,10 @@ const activeCadenceRequests = new Map<string, AbortController>();
 const validRequestId = (value: unknown): value is string =>
   typeof value === "string" && /^[a-zA-Z0-9-]{6,80}$/.test(value);
 
-export function aiFailJson(e: unknown, fallback: string, user: AuthVars["user"]) {
+export function aiFailJson(e: unknown, fallback: string) {
   const err = e instanceof AiProviderError ? e : null;
   return {
-    error:
-      user.role === "guest" && err?.code === OUT_OF_TOKENS_CODE
-        ? GUEST_OUT_OF_CREDITS
-        : e instanceof Error ? e.message : fallback,
+    error: e instanceof Error ? e.message : fallback,
     ...(err?.code === OUT_OF_TOKENS_CODE ? { code: OUT_OF_TOKENS_CODE } : {}),
   };
 }
@@ -84,12 +69,9 @@ aiApp.post("/segment", async (c) => {
     return c.json({ error: "AI caption pass not configured" }, 501);
   }
   if (!mayUse(c.get("user"))) {
-    const guest = c.get("user").role === "guest";
     return c.json(
       {
-        error: guest
-          ? "The AI caption pass is not available in guest mode — sign in with an account"
-          : "The AI caption pass is locked for your account — ask the admin",
+        error: "The AI caption pass is locked for your account",
         code: "CLOUD_LOCKED",
       },
       403
@@ -115,8 +97,6 @@ aiApp.post("/segment", async (c) => {
   ) {
     return c.json({ error: "Malformed words" }, 400);
   }
-  const refusal = guestRefusal(c.get("user"), words.length);
-  if (refusal) return c.json({ error: refusal, code: "GUEST_LIMIT" }, 429);
   const requestId = validRequestId(body?.requestId) ? body.requestId : null;
   const requestKey = requestId
     ? `${c.get("user").username}:${requestId}`
@@ -138,7 +118,7 @@ aiApp.post("/segment", async (c) => {
     if (controller.signal.aborted) {
       return c.json({ error: "Cadence matching was stopped" }, 408);
     }
-    return c.json(aiFailJson(e, "AI caption pass failed", c.get("user")), 502);
+    return c.json(aiFailJson(e, "AI caption pass failed"), 502);
   } finally {
     if (requestKey && activeCadenceRequests.get(requestKey) === controller) {
       activeCadenceRequests.delete(requestKey);
@@ -177,8 +157,6 @@ aiApp.post("/split", async (c) => {
   ) {
     return c.json({ error: "Malformed lines" }, 400);
   }
-  const refusal = guestRefusal(c.get("user"), (lines as string[][]).flat().length);
-  if (refusal) return c.json({ error: refusal, code: "GUEST_LIMIT" }, 429);
   try {
     const splits = await splitPoints(lines as string[][], Math.floor(maxChars), {
       signal: c.req.raw.signal,
@@ -186,7 +164,7 @@ aiApp.post("/split", async (c) => {
     });
     return c.json({ splits });
   } catch (e) {
-    return c.json(aiFailJson(e, "AI caption pass failed", c.get("user")), 502);
+    return c.json(aiFailJson(e, "AI caption pass failed"), 502);
   }
 });
 
@@ -228,8 +206,6 @@ aiApp.post("/script-check", async (c) => {
   ) {
     return c.json({ error: "Malformed words" }, 400);
   }
-  const refusal = guestRefusal(c.get("user"), words.length);
-  if (refusal) return c.json({ error: refusal, code: "GUEST_LIMIT" }, 429);
   try {
     const edits = await scriptEdits(
       script,
@@ -242,7 +218,7 @@ aiApp.post("/script-check", async (c) => {
     if (c.req.raw.signal.aborted) {
       return c.json({ error: "The script check was stopped" }, 408);
     }
-    return c.json(aiFailJson(e, "Script check failed", c.get("user")), 502);
+    return c.json(aiFailJson(e, "Script check failed"), 502);
   }
 });
 

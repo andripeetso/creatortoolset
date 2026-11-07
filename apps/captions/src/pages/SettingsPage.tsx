@@ -1,9 +1,7 @@
-import { Fragment } from "react";
 import { Link, Navigate, useLocation } from "react-router";
-import { Cable, Cpu, FileDown, Gauge, KeyRound, ListChecks, Monitor, Palette, ShieldCheck, SlidersHorizontal, UserRound, Users, type LucideIcon } from "lucide-react";
+import { Cable, Cpu, FileDown, Gauge, KeyRound, ListChecks, Monitor, Palette, SlidersHorizontal, UserRound, type LucideIcon } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { AccountSection } from "@/components/settings/AccountSection";
-import { AdminSection } from "@/components/settings/AdminSection";
 import { AppearanceSection } from "@/components/settings/AppearanceSection";
 import { DevicesSection } from "@/components/settings/DevicesSection";
 import { ExportsSection } from "@/components/settings/ExportsSection";
@@ -14,29 +12,22 @@ import { ServiceKeysSection } from "@/components/settings/ServiceKeysSection";
 import { MyKeysSection } from "@/components/settings/MyKeysSection";
 import { SetupSection } from "@/components/settings/SetupSection";
 import { UsageSection } from "@/components/settings/UsageSection";
-import { WorkspaceSection } from "@/components/settings/WorkspaceSection";
-import { useViewedMe } from "@/lib/auth";
+import { useMe } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
-/**
- * The sections, in the order the sidebar shows them: the account's own (My API keys: accounts only, not guests or the
- * demo), then the Workspace group pinned at the bottom:
- * Team (the workspace: members, invites, their AI; any account), then API keys and Server (the platform operator, admins only).
- */
-const SETTINGS_SECTIONS: ReadonlyArray<{ id: string; title: string; icon: LucideIcon; adminOnly?: boolean; workspace?: boolean; account?: boolean }> = [
+/** The sections, in the order the sidebar shows them; API keys (the server's own keys) last, admins only. */
+const SETTINGS_SECTIONS: ReadonlyArray<{ id: string; title: string; icon: LucideIcon; adminOnly?: boolean }> = [
   { id: "general", title: "General", icon: SlidersHorizontal },
-  { id: "setup", title: "Setup", icon: ListChecks, account: true },
+  { id: "setup", title: "Setup", icon: ListChecks },
   { id: "appearance", title: "Appearance", icon: Palette },
   { id: "providers", title: "AI providers", icon: Cpu },
   { id: "connectors", title: "Connectors", icon: Cable },
-  { id: "my-keys", title: "My API keys", icon: KeyRound, account: true },
+  { id: "my-keys", title: "My API keys", icon: KeyRound },
   { id: "usage", title: "Usage", icon: Gauge },
   { id: "devices", title: "Devices", icon: Monitor },
-  { id: "exports", title: "Exports", icon: FileDown, account: true },
+  { id: "exports", title: "Exports", icon: FileDown },
   { id: "account", title: "Account", icon: UserRound },
-  { id: "team", title: "Team", icon: Users, workspace: true, account: true },
-  { id: "keys", title: "API keys", icon: KeyRound, adminOnly: true, workspace: true },
-  { id: "admin", title: "Server", icon: ShieldCheck, adminOnly: true, workspace: true },
+  { id: "keys", title: "API keys", icon: KeyRound, adminOnly: true },
 ];
 
 /**
@@ -46,9 +37,8 @@ const SETTINGS_SECTIONS: ReadonlyArray<{ id: string; title: string; icon: Lucide
  */
 export default function SettingsPage({ onClose }: { onClose: () => void }) {
   const [, , section = "general", sub] = useLocation().pathname.split("/");
-  const me = useViewedMe();
-  const account = !!me && me.role !== "guest" && !me.demo;
-  const visible = SETTINGS_SECTIONS.filter((s) => (!s.adminOnly || me?.role === "admin") && (!s.account || account));
+  const me = useMe();
+  const visible = SETTINGS_SECTIONS.filter((s) => !s.adminOnly || me?.role === "admin");
   const current = visible.find((s) => s.id === section);
   if (!current) return <Navigate to="/settings/general" replace />;
 
@@ -63,9 +53,7 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
     devices: <DevicesSection />,
     exports: <ExportsSection />,
     account: <AccountSection />,
-    team: <WorkspaceSection />,
     keys: <ServiceKeysSection />,
-    admin: <AdminSection sub={sub} />,
   }[current.id];
 
   return (
@@ -78,21 +66,19 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
             const Icon = s.icon;
             const on = s.id === current.id;
             return (
-              <Fragment key={s.id}>
-                {s.workspace && s === visible.find((x) => x.workspace) && <span className="hidden px-2.5 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground md:mt-auto md:block">Workspace</span>}
-                <Link
-                  to={`/settings/${s.id}`}
-                  replace
-                  aria-current={on ? "page" : undefined}
-                  className={cn(
-                    "flex shrink-0 items-center gap-2 rounded-md px-2.5 py-1.5 text-sm transition-colors",
-                    on ? "bg-accent font-medium text-foreground" : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
-                  )}
-                >
-                  <Icon className="h-4 w-4" />
-                  {s.title}
-                </Link>
-              </Fragment>
+              <Link
+                key={s.id}
+                to={`/settings/${s.id}`}
+                replace
+                aria-current={on ? "page" : undefined}
+                className={cn(
+                  "flex shrink-0 items-center gap-2 rounded-md px-2.5 py-1.5 text-sm transition-colors",
+                  on ? "bg-accent font-medium text-foreground" : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+                )}
+              >
+                <Icon className="h-4 w-4" />
+                {s.title}
+              </Link>
             );
           })}
         </nav>

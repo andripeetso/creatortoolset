@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -25,15 +25,7 @@ beforeAll(async () => {
   dir = mkdtempSync(path.join(scratch, "editor-ui-"));
   process.env.DATA_DIR = path.join(dir, "data");
   mkdirSync(process.env.DATA_DIR, { recursive: true });
-  // APP_SECRET unset: every request is `local`, an admin, the owner of this workspace
-  writeFileSync(
-    path.join(process.env.DATA_DIR, "workspaces.json"),
-    JSON.stringify({
-      workspaces: [{ id: "ws_ui", name: "Tiny Acrobatics", plan: "team", comped: false, createdAt: 0, members: [{ username: "local", role: "owner", ai: "own", budgetUsd: 0, joinedAt: 0 }] }],
-      invites: [],
-      spend: {},
-    }),
-  );
+  // APP_SECRET unset: every request is `local`, an admin, the owner of this library
 
   // a four-second vertical clip with sound, already transcribed: two sentences
   const { ffmpegCommand } = await import("../ffmpeg-runtime");
@@ -53,7 +45,7 @@ beforeAll(async () => {
   copyFileSync(fixture, path.join(dir, "put.mp4"));
   await blobs.put(key, path.join(dir, "put.mp4"));
   d.exec(`
-    INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_ui', 'ws_ui', 'Tiny Acrobatics library', 'local', 0);
+    INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_ui', 'local', 'Tiny Acrobatics library', 'local', 0);
     INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at) VALUES ('ast_ui', 'lib_ui', 'video', 'Tiny Acrobatics take', 'ver_ui', 'local', 0);
   `);
   d.prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, mime, probe, state, created_by, created_at) VALUES ('ver_ui', 'ast_ui', 1, ?, 1, 'sha-ui', 'video/mp4', ?, 'ready', 'local', 0)").run(key, JSON.stringify(p));

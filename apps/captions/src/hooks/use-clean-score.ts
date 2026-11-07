@@ -8,8 +8,6 @@ export function useCleanScore(
   key: string,
   busy: boolean,
   action: "score" | "sscd",
-  /** A finished run's stored answer (the demo): shown, never fetched. */
-  stored?: QuickScore,
 ) {
   const cache = useRef(new Map<string, QuickScore>());
   const [result, setResult] = useState<{
@@ -18,7 +16,7 @@ export function useCleanScore(
     error?: string;
   }>();
   useEffect(() => {
-    if (!sourceId || busy || stored) return;
+    if (!sourceId || busy) return;
     const controller = new AbortController();
     const timer = setTimeout(
       () => {
@@ -57,6 +55,6 @@ export function useCleanScore(
       clearTimeout(timer);
       controller.abort();
     };
-  }, [sourceId, key, busy, action, stored]);
-  return stored ? { key, score: stored } : result;
+  }, [sourceId, key, busy, action]);
+  return result;
 }

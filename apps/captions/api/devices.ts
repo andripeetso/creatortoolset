@@ -21,8 +21,8 @@ export const devicesApp = new Hono<{ Variables: AuthVars }>();
 
 devicesApp.route("/relay", relayRoutes((c) => deviceForToken(c.req.header("authorization"))?.id ?? null));
 
-/** Accounts only: not guests, not the demo's visitors. */
-const signedIn = (u: AuthVars["user"]) => u.role !== "guest" && !u.demo;
+/** Accounts only: not a share-link visitor. */
+const signedIn = (u: AuthVars["user"]) => u.role !== "visitor";
 /** Names the workspace's scope uses (usage keys, the workspace's Mac owner): no account may take them. */
 const RESERVED = new Set(["workspace"]);
 const online = (d: Device) => ({ ...d, online: isOnline(d.id) });

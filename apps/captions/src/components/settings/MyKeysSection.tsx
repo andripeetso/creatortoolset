@@ -13,7 +13,7 @@ const getKeys = () => fetch("/api/my-keys").then((r) => json<MyKeyView[]>(r));
 const putKey = (name: MyKeyEnv, value: string | null) =>
   fetch(`/api/my-keys/${name}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value }) }).then((r) => json(r));
 
-const SERVER = { admin: "The server's key serves you (platform admin)", budget: "The server's key serves you, billed to your workspace budget" } as const;
+const SERVER = { admin: "The server's key serves you (platform admin)" } as const;
 
 /**
  * Settings → My API keys: this account's own keys for the paid services. Each one is billed by its provider to the

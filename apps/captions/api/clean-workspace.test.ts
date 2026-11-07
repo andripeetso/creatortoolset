@@ -210,39 +210,6 @@ describe.skipIf(!hasFfmpeg)("upload-once cleaner workspace", () => {
     expect((await app.request(`/sources/${other.id}/media`)).status).toBe(404);
   });
 
-  it("keeps the demo's finished run and serves its showcase", async () => {
-    username = "demo";
-    try {
-      expect((await app.request("/sources/showcase")).status).toBe(404);
-      const source = await upload();
-      const dir = path.join(dataDir, "clean", "sources", source.id);
-      const manifestPath = path.join(dir, "session.json");
-      const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-      manifest.expiresAt = Date.now() - 1;
-      await writeFile(manifestPath, JSON.stringify(manifest));
-      const showcase = { runs: [{ preset: "Reframe" }] };
-      await writeFile(
-        path.join(dir, "showcase.json"),
-        JSON.stringify(showcase),
-      );
-      await upload(); // an upload sweeps expired sessions
-      const shown = await app.request(`/sources/${source.id}`);
-      expect(shown.status).toBe(200);
-      expect(((await shown.json()) as CleanSource).showcase).toEqual(showcase);
-      expect(await (await app.request("/sources/showcase")).json()).toEqual({
-        id: source.id,
-      });
-      username = "owner"; // only the owner's own finished run
-      expect((await app.request("/sources/showcase")).status).toBe(404);
-    } finally {
-      username = "owner";
-    }
-    const plain = await upload();
-    expect(
-      await (await app.request(`/sources/${plain.id}`)).json(),
-    ).not.toHaveProperty("showcase");
-  });
-
   it.skipIf(!existsSync(path.resolve("runtime/fingerprints/tmk-hash-video")))(
     "measures a chosen version later without changing its bytes or losing the baseline",
     async () => {

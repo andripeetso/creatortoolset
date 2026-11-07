@@ -82,7 +82,6 @@ describe("aiFor: who asks, for what job → which provider", () => {
       instances: [hub, codex, { id: "off", driver: "claude", name: "Off", enabled: false }],
       default: { instance: "claude_work", model: "claude-opus-5-5", effort: "xhigh" },
       jobs: { captions: { instance: "codex", model: "gpt-5-codex", effort: "high" }, analyzer: { instance: "off", model: "claude-opus-5-5", effort: "low" } },
-      api: { guests: false, demo: true, model: "claude-opus-5-5", effort: "low" },
     });
   });
   afterEach(() => vi.unstubAllEnvs());
@@ -108,15 +107,12 @@ describe("aiFor: who asks, for what job → which provider", () => {
     fetchSpy.mockRestore();
   });
 
-  it("answers guests and the demo on the API key only when switched on, never anyone else", () => {
-    expect(aiFor({ username: "guest-0123456789ab", role: "guest" }, "captions", "Caption Studio")).toMatchObject({ only: [], off: "AI is off for guests" });
-    expect(aiFor({ username: "demo-0123456789ab", role: "user", demo: "demo" }, "workshop", "Workshop")).toMatchObject({ only: ["anthropic"], model: "claude-opus-5-5", effort: "low" });
-    vi.stubEnv("ANTHROPIC_API_KEY", "");
-    expect(aiFor({ username: "demo-0123456789ab", role: "user", demo: "demo" }, "workshop", "Workshop").off).toBe("AI is off for the demo");
+  it("never answers a share-link visitor, not even on the server's key", () => {
+    expect(aiFor({ username: "visitor", role: "visitor" }, "captions", "Caption Studio")).toEqual({ only: [], off: "This AI call names no account" });
   });
 
   it("a call with no provider on says why instead of running anywhere", async () => {
-    await expect(completeWithFallback("sys", "user", undefined, (t) => t, { only: [], off: "AI is off for guests" })).rejects.toMatchObject({ message: "AI is off for guests" });
+    await expect(completeWithFallback("sys", "user", undefined, (t) => t, { only: [], off: "No AI for this call" })).rejects.toMatchObject({ message: "No AI for this call" });
   });
 
   it("hands the Mac the provider's CLI, identity folder, model and effort", async () => {

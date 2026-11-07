@@ -99,37 +99,3 @@ export function publicAccount(a: StoredAccount): ConnectedAccount {
 
 export const newState = () => randomUUID();
 export type { SocialPlatform };
-
-/**
- * The apps the logins use (Meta, Google, TikTok): set by an admin in Settings → Admin → Connector apps, so whoever
- * registers them (an agent in the owner's browser) pastes the keys there instead of into the server's .env. The env
- * names (META_APP_ID…) still work and lose to these. TikTok's site check file is served from here too.
- */
-export interface ConnectorApps {
-  meta?: { id: string; secret: string; configId?: string };
-  google?: { id: string; secret: string };
-  tiktok?: { id: string; secret: string };
-  /** TikTok "verify URL ownership": the file it asks to find at https://creatortoolset.com/<name>. */
-  tiktokVerify?: { name: string; content: string };
-}
-
-const APPS = () => path.join(env.dataDir, "connector-apps.json");
-let apps: ConnectorApps | null = null;
-
-export function readApps(): ConnectorApps {
-  if (apps) return apps;
-  try {
-    apps = JSON.parse(readFileSync(APPS(), "utf-8")) as ConnectorApps;
-  } catch {
-    apps = {};
-  }
-  return apps;
-}
-
-export function writeApps(next: ConnectorApps): void {
-  mkdirSync(env.dataDir, { recursive: true });
-  const tmp = `${APPS()}.tmp-${process.pid}`;
-  writeFileSync(tmp, JSON.stringify(next), { mode: 0o600 });
-  renameSync(tmp, APPS());
-  apps = next;
-}

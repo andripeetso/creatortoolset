@@ -69,28 +69,17 @@ describe("connectors", () => {
     expect(channelFiles("ana", "proj-2")).toEqual({});
   });
 
-  it("an admin's pasted app keys win over the env, Meta can log in by configuration, TikTok's check file is served", async () => {
-    const admin = new Hono<{ Variables: { user: unknown } }>();
-    admin.use("*", async (c, next) => {
-      c.set("user", { username: "boss", role: "admin", cloud: true, off: [] });
-      await next();
-    });
-    admin.route("/api/connectors", connectorsApp as never);
-    const put = (body: unknown, a = admin) => a.request("/api/connectors/apps", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    expect((await put({ kind: "meta", id: "123" }, app as never)).status).toBe(403);
-    expect((await put({ kind: "meta", id: "999", secret: "s3", configId: "cfg7" })).status).toBe(200);
-    const login = new URL((await admin.request("/api/connectors/login/meta")).headers.get("location")!);
-    expect(login.searchParams.get("client_id")).toBe("999");
-    expect(login.searchParams.get("config_id")).toBe("cfg7");
-    expect(login.searchParams.get("scope")).toBeNull();
-    const shown = await (await admin.request("/api/connectors/apps")).text();
-    expect(shown).toContain("999");
-    expect(shown).not.toContain("s3");
-    expect((await put({ kind: "tiktokVerify", name: "../etc.txt", content: "x" })).status).toBe(400);
-    expect((await put({ kind: "tiktokVerify", name: "tiktokAbC.txt", content: "tiktok-developers-site-verification=abc" })).status).toBe(200);
-    const { tiktokVerifyFile } = await import("./connectors");
-    expect(tiktokVerifyFile("tiktokAbC.txt")).toBe("tiktok-developers-site-verification=abc");
-    expect(tiktokVerifyFile("tiktokOther.txt")).toBeNull();
+  it("the apps come from the env only; a Business Meta app logs in by its configuration", async () => {
+    expect((await app.request("/api/connectors/apps")).status).toBe(404);
+    vi.stubEnv("META_CONFIG_ID", "cfg7");
+    try {
+      const login = new URL((await app.request("/api/connectors/login/meta")).headers.get("location")!);
+      expect(login.searchParams.get("client_id")).toBe("app");
+      expect(login.searchParams.get("config_id")).toBe("cfg7");
+      expect(login.searchParams.get("scope")).toBeNull();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 

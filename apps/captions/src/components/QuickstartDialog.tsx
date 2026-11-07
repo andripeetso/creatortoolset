@@ -8,7 +8,7 @@ import {
   Sparkles,
   Type,
 } from "lucide-react";
-import { isGuest, useViewedMe } from "@/lib/auth";
+import { useMe } from "@/lib/auth";
 
 /**
  * First-login quickstart for new accounts (server reports logins <= 1).
@@ -16,8 +16,8 @@ import { isGuest, useViewedMe } from "@/lib/auth";
  * remembered per username in localStorage.
  */
 export function QuickstartDialog() {
-  const me = useViewedMe();
-  const isNewUser = !!me && !isGuest(me) && (me.logins ?? Infinity) <= 1;
+  const me = useMe();
+  const isNewUser = !!me && (me.logins ?? Infinity) <= 1;
   const key = `cap-quickstart-seen:${me?.username ?? ""}`;
   const [open, setOpen] = useState(() => {
     try {

@@ -31,7 +31,6 @@ await saveSettings({
   instances: [{ id: "claude", driver: "claude", name: "Claude", enabled: true, device: mac.id }],
   default: { instance: "claude", model: "claude-opus-5-5", effort: "xhigh" },
   jobs: {},
-  api: { guests: false, demo: false, model: "claude-opus-5-5", effort: "low" },
 });
 
 type Opts = { mac?: { session?: { key: string; resume?: string }; onSession?: (s: { id: string; state: "new" | "resumed" | "lost" }) => void } };

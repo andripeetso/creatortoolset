@@ -3,7 +3,7 @@ import { Download, Eraser, Loader2, Play, Upload, WandSparkles, X } from "lucide
 import { AppBar } from "@/components/AppBar";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import { isDemo, isGuest, useViewedMe } from "@/lib/auth";
+import { useMe } from "@/lib/auth";
 import { downloadBlob } from "@/lib/download";
 import {
   analyse,
@@ -21,7 +21,7 @@ import {
  * Story Splitter (/stories): a video in, stories of about 20 s out, as one
  * ZIP. The cuts land on the edit's own cuts, pauses and beats; the owner can
  * drop, add ("about here", snapped) and re-plan around the ones the author added.
- * A download keeps the split (api/stories.ts, not for guests or the demo); a
+ * A download keeps the split (api/stories.ts); a
  * saved one is listed, and its video is dropped again to open it.
  */
 
@@ -40,9 +40,8 @@ const plan = (a: Analysis, target: number, cuts: Cut[]) => {
 };
 
 export default function StorySplitterPage() {
-  const me = useViewedMe();
-  const lists = !!me && !isGuest(me); // the demo shows its own splits...
-  const keeps = lists && !isDemo(me); // ...and keeps none
+  const me = useMe();
+  const lists = !!me; // an account keeps its splits
   const [splits, setSplits] = useState<Split[]>([]);
   const [saved, setSaved] = useState<Split | null>(null); // the open video's split
   const [waiting, setWaiting] = useState<Split | null>(null); // a local file's split, until it's dropped again
@@ -197,7 +196,7 @@ export default function StorySplitterPage() {
       const zip = await renderStories(source.blob, ts, analysis.duration, base, (story, p) => setExporting({ story, p }));
       downloadBlob(`${base}-stories.zip`, zip);
       // kept on download: a new split, or the open one's new cuts
-      if (keeps) {
+      if (lists) {
         const res = await fetch(saved ? `/api/stories/${saved.id}` : "/api/stories", {
           method: saved ? "PUT" : "POST",
           headers: { "Content-Type": "application/json" },
@@ -311,7 +310,7 @@ export default function StorySplitterPage() {
                             {new Date(s.updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
                           </span>
                         </button>
-                        {keeps && (
+                        {lists && (
                           <button
                             type="button"
                             onClick={() => void remove(s)}

@@ -110,8 +110,6 @@ export interface Edit extends EditSummary, EditBrief {
   /** the versions with a draft timeline, by name */
   drafts: string[];
   jobs: EditJob[];
-  /** the caller may change and run it (the creator) */
-  mine: boolean;
   /** how many sentences analyze found */
   sentences: number;
   lines: Line[];

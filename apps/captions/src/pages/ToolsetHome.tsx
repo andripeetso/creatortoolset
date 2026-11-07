@@ -16,13 +16,7 @@ import {
   NotebookPen,
   Video,
 } from "lucide-react";
-import {
-  canUse,
-  isGuest,
-  useViewedMe,
-  type Me,
-} from "@/lib/auth";
-import { returnToOwnCaptionView, useAdminView } from "@/lib/admin-view";
+import { canUse, useMe, type Me } from "@/lib/auth";
 import { isPhoneHub } from "@/lib/mobile";
 import { useStudio } from "@/lib/store";
 import { UserMenu } from "@/components/UserMenu";
@@ -156,12 +150,10 @@ export default function ToolsetHome() {
   const location = useLocation();
   const navigate = useNavigate();
   const openProjectLibrary = useStudio((s) => s.openProjectLibrary);
-  const me = useViewedMe();
-  const guest = isGuest(me);
-  const adminCaptionView = useAdminView((s) => s.caption);
+  const me = useMe();
   const phone = isPhoneHub();
-  const showCounts = !guest && !me?.demo && canUse(me, "workshop");
-  const waiting = useWaiting(!guest && !me?.demo, me);
+  const showCounts = canUse(me, "workshop");
+  const waiting = useWaiting(me);
   const project = useWorkspace(currentProject);
   const { projectTint, homeGlow } = useAppearance();
 
@@ -182,7 +174,6 @@ export default function ToolsetHome() {
       return;
     }
     e.preventDefault();
-    if (adminCaptionView) await returnToOwnCaptionView();
     // Entering from the tool hub always opens Caption Studio's project view.
     // Keep the active project intact in memory so this navigation cannot lose
     // work; selecting a project or importing media opens the editor again.
@@ -200,7 +191,7 @@ export default function ToolsetHome() {
         <div
           key={t.to}
           aria-disabled="true"
-          title={guest ? "Disabled for guest users" : me?.demo ? undefined : "Access not enabled — ask an admin"}
+          title="Switched off for this account"
           className={`${className} cursor-not-allowed opacity-40`}
         >
           {body}
@@ -265,7 +256,7 @@ export default function ToolsetHome() {
         />
       )}
       <div className="absolute right-3 top-[max(0.75rem,env(safe-area-inset-top))] flex items-center gap-2">
-        {!guest && (canUse(me, "instagram") || canUse(me, "workshop")) ? <ProjectSwitcher /> : null}
+        {canUse(me, "instagram") || canUse(me, "workshop") ? <ProjectSwitcher /> : null}
         <UserMenu />
       </div>
 
@@ -276,7 +267,7 @@ export default function ToolsetHome() {
             Creator Toolset
           </h1>
           {/* which project everything works in, right under the name */}
-          {!guest && (canUse(me, "instagram") || canUse(me, "workshop")) ? (
+          {canUse(me, "instagram") || canUse(me, "workshop") ? (
             // no width of its own: a longer project name grows to the right, the logo and the name stay put
             <div className="w-0">
               <div className="w-max">
@@ -285,11 +276,6 @@ export default function ToolsetHome() {
             </div>
           ) : (
             <p className="text-sm text-zinc-500">Everything your content needs before it ships</p>
-          )}
-          {guest && (
-            <p className="mt-0.5 text-xs text-amber-400/80">
-              Guest mode — Caption Studio, Review and the Audio Enhancer for files up to 3 minutes, other tools need an account
-            </p>
           )}
         </div>
       </div>
@@ -349,9 +335,9 @@ export default function ToolsetHome() {
  * Workshop: replies you haven't read. AI Editor: edits whose last step failed or needs a key. Review: videos marked
  * Needs review. Read once for the page, again every 30 s while it is in front.
  */
-function useWaiting(on: boolean, me: Me | null): Record<string, number> {
-  const editor = on && canUse(me, "editor");
-  const review = on && canUse(me, "review");
+function useWaiting(me: Me | null): Record<string, number> {
+  const editor = canUse(me, "editor");
+  const review = canUse(me, "review");
   const [counts, setCounts] = useState<{ editor: number; review: number }>({ editor: 0, review: 0 });
   useEffect(() => {
     if (!editor && !review) return;
@@ -368,7 +354,6 @@ function useWaiting(on: boolean, me: Me | null): Record<string, number> {
       window.clearInterval(t);
     };
   }, [editor, review]);
-  if (!on) return {};
   return {
     "/editor": counts.editor,
     "/review": counts.review,

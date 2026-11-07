@@ -12,7 +12,6 @@ import {
   Link2,
   Loader2,
   MessageSquare,
-  Sparkles,
   Trash2,
   TriangleAlert,
   Undo2,
@@ -21,7 +20,7 @@ import {
 } from "lucide-react";
 import { AppBar } from "@/components/AppBar";
 import { ReviewShareButton } from "@/components/ReviewShareButton";
-import { alertDialog, confirmDialog, promptDialog } from "@/lib/dialogs";
+import { confirmDialog, promptDialog } from "@/lib/dialogs";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import {
@@ -44,7 +43,6 @@ import { timeAgo } from "@/lib/exports";
 import {
   APPROVAL,
   createReviewProject,
-  copyReviewAssetToDemo,
   deleteForever,
   deleteReviewAsset,
   deleteReviewProject,
@@ -72,7 +70,6 @@ import {
 } from "@/lib/review";
 import { ReviewUploadDialog, type UploadItem } from "@/components/ReviewUploadDialog";
 import { cn } from "@/lib/utils";
-import { isDemo, isGuest, useViewedMe } from "@/lib/auth";
 
 type Upload = { key: string; name: string; timeline?: string; pct: number; waiting?: boolean; assetId?: string; error?: string };
 /** Run a change, then reload; `now` shows its result right away (reverted by the reload if it failed). */
@@ -104,9 +101,6 @@ const media = (list: FileList | null | undefined) =>
 export default function ReviewPage() {
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
-  // guests: no Caption Studio projects on the server, videos kept 7 days (api/retention.ts)
-  const guestMode = isGuest(useViewedMe());
-  const demoMode = isDemo(useViewedMe()); // the demo's copy: comments, no uploads
   const [assets, setAssets] = useState<ReviewAsset[] | null>(null);
   const [projects, setProjects] = useState<ReviewProject[]>([]);
   const [uploads, setUploads] = useState<Upload[]>([]);
@@ -272,7 +266,7 @@ export default function ReviewPage() {
         e.preventDefault();
         setDragging(false);
         const files = media(e.dataTransfer.files);
-        if (files.length && !demoMode) setAdding({ files });
+        if (files.length) setAdding({ files });
       }}
     >
       <AppBar tool="Review" to={project || trash ? "/review" : undefined} trail={project?.name ?? (trash ? "Trash" : undefined)}>
@@ -286,9 +280,9 @@ export default function ReviewPage() {
               >
                 <Trash2 className="h-4 w-4" />
               </Link>
-              {!demoMode && <Button size="sm" variant="outline" onClick={() => setAdding({ newProject: true })} className="border-zinc-800 bg-transparent">
+              <Button size="sm" variant="outline" onClick={() => setAdding({ newProject: true })} className="border-zinc-800 bg-transparent">
                 <FolderPlus /> <span className="hidden sm:inline">New project</span>
-              </Button>}
+              </Button>
             </>
           )}
           {project && (
@@ -303,7 +297,7 @@ export default function ReviewPage() {
               className="h-8 text-sm"
             />
           )}
-          {!trash && !demoMode && (
+          {!trash && (
             <Button size="sm" onClick={() => setAdding({})} className="bg-violet-600 text-white hover:bg-violet-500">
               <UploadCloud /> <span className="hidden sm:inline">Upload</span>
             </Button>
@@ -311,12 +305,6 @@ export default function ReviewPage() {
       </AppBar>
 
       <main className="mx-auto max-w-6xl px-4 py-6">
-        {guestMode && (
-          <p className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
-            Guest mode: everything here (videos, comments, share links) is deleted automatically 7 days after it was
-            last changed. Up to 2 GB of uploads a day.
-          </p>
-        )}
         {error && <p className="mb-4 text-sm text-rose-400">{error}</p>}
         {note && (
           <p className="mb-4 flex items-center gap-2 text-sm text-zinc-400">
@@ -427,7 +415,7 @@ export default function ReviewPage() {
                 onMove={(projectId) => moveMany(carried(a.id), projectId)}
                 act={act}
                 onDropVersion={(files) => dropped(files, { assetId: a.id })}
-                onCaption={guestMode ? undefined : () => caption(a)}
+                onCaption={() => caption(a)}
                 onEditStack={() => setStackOf(a.id)}
               />
             ))}
@@ -477,7 +465,7 @@ export default function ReviewPage() {
           </p>
         </div>
       )}
-      {adding && !demoMode && (
+      {adding && (
         <ReviewUploadDialog
           title={adding.newProject ? "New project" : `Upload to ${project?.name ?? "Review"}`}
           files={adding.files}
@@ -720,7 +708,6 @@ function AssetCard({
 }) {
   const v = a.versions.at(-1);
   const [over, setOver] = useState(false);
-  const admin = useViewedMe()?.role === "admin";
   const to = `/review/${a.id}`;
   const setStatus = (s: Approval) => {
     act(reviewApi(`/api/review/assets/${a.id}`).approve(s), (l) =>
@@ -917,16 +904,6 @@ function AssetCard({
         {a.versions.length > 1 && (
           <ContextMenuItem onClick={onEditStack}>
             <Layers /> Edit stack…
-          </ContextMenuItem>
-        )}
-        {admin && v?.status === "ready" && (
-          <ContextMenuItem
-            title="Visitors see a copy (comments and all) from the login screen's “See the demo”"
-            onClick={() =>
-              act(copyReviewAssetToDemo(a.id).then(() => alertDialog({ title: "Copied to the demo", body: `“${a.name}” is in the demo now.` })))
-            }
-          >
-            <Sparkles /> Copy to demo
           </ContextMenuItem>
         )}
         <ContextMenuSeparator />

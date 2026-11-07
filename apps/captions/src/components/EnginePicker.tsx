@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useStudio } from "@/lib/store";
-import { canUseCloud, isGuest, useViewedMe } from "@/lib/auth";
+import { canUseCloud, useMe } from "@/lib/auth";
 import {
   CLOUD_MODEL,
   CLOUD_MODEL_ID,
@@ -16,7 +16,7 @@ import {
 export function EnginePicker({ className }: { className?: string }) {
   const model = useStudio((s) => s.model);
   const setModel = useStudio((s) => s.setModel);
-  const me = useViewedMe();
+  const me = useMe();
   const allowedByView = canUseCloud(me);
   const [cloud, setCloud] = useState<{ available: boolean; allowed: boolean; why?: string }>({ available: false, allowed: false });
 
@@ -37,7 +37,7 @@ export function EnginePicker({ className }: { className?: string }) {
     });
   }, [allowedByView]);
 
-  const lockedNote = isGuest(me) ? "sign in to use" : "locked, ask the admin";
+  const lockedNote = "locked for this account";
 
   return (
     <select

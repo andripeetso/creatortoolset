@@ -4,7 +4,7 @@ import { KeyRound, MessageCircle, Send, X } from "lucide-react";
 import type { AssistantView } from "@contracts/assistant";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { isDemo, isGuest, useViewedMe } from "@/lib/auth";
+import { useMe } from "@/lib/auth";
 import {
   cancelSecret,
   getAssistant,
@@ -25,10 +25,10 @@ import { cn } from "@/lib/utils";
  * collapses it to a small button. A key it asks for is typed into a password box that saves straight to My API keys.
  */
 export function AssistantDock() {
-  const me = useViewedMe();
+  const me = useMe();
   const navigate = useNavigate();
   const { collapsed, setupAsked, set } = useAssistant();
-  const real = !!me && !isGuest(me) && !isDemo(me);
+  const real = !!me;
   const user = me?.username ?? "";
   const [view, setView] = useState<AssistantView | null>(null);
   const [choice, setChoice] = useState<string | null>(null);

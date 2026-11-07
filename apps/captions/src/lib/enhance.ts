@@ -50,8 +50,6 @@ export interface EnhanceAvailability {
   default: Engine;
   /** may add a second pass */
   admin: boolean;
-  /** guest mode's limits, null for accounts */
-  guest: { maxSeconds: number; maxBytes: number; keepMinutes: number } | null;
 }
 
 export const isEnhancing = (s: EnhanceSession | null | undefined) =>

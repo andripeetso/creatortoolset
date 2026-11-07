@@ -12,7 +12,6 @@ describe("getProjectPersistenceStatus", () => {
       projectId: null,
       saveState: "idle",
       clips: [clip("local")],
-      guest: false,
     });
 
     expect(status.fullySaved).toBe(false);
@@ -24,7 +23,6 @@ describe("getProjectPersistenceStatus", () => {
       projectId: null,
       saveState: "idle",
       clips: [clip("uploading", 63)],
-      guest: false,
     });
 
     expect(status.badge).toBe("NOT SAVED — UPLOADING 63%");
@@ -37,7 +35,6 @@ describe("getProjectPersistenceStatus", () => {
       saveState: "idle",
       localSaveState: "saved",
       clips: [clip("local")],
-      guest: false,
     });
 
     expect(status).toMatchObject({
@@ -54,7 +51,6 @@ describe("getProjectPersistenceStatus", () => {
       saveState: "idle",
       localSaveState: "error",
       clips: [clip("local")],
-      guest: false,
     });
 
     expect(status).toMatchObject({
@@ -69,7 +65,6 @@ describe("getProjectPersistenceStatus", () => {
       projectId: "project-1",
       saveState: "saved",
       clips: [clip("done"), clip("processing")],
-      guest: false,
     });
 
     expect(status.fullySaved).toBe(false);
@@ -81,25 +76,9 @@ describe("getProjectPersistenceStatus", () => {
       projectId: "project-1",
       saveState: "idle",
       clips: [clip("done")],
-      guest: false,
     });
 
     expect(status).toMatchObject({ fullySaved: true, badge: "SAVED" });
-  });
-
-  it("always marks guest work as not saved", () => {
-    const status = getProjectPersistenceStatus({
-      projectId: "ignored",
-      saveState: "saved",
-      clips: [clip("done")],
-      guest: true,
-    });
-
-    expect(status).toMatchObject({
-      fullySaved: false,
-      tone: "danger",
-      badge: "NOT SAVED — GUEST SESSION",
-    });
   });
 
   it("says edits are recoverable while a source upload is still running", () => {
@@ -108,7 +87,6 @@ describe("getProjectPersistenceStatus", () => {
       saveState: "saving",
       localSaveState: "saved",
       clips: [clip("uploading", 35)],
-      guest: false,
     });
 
     expect(status).toMatchObject({
@@ -126,7 +104,6 @@ describe("getProjectPersistenceStatus", () => {
       saveState: "saved",
       localSaveState: "saved",
       clips: [clip("error", 35)],
-      guest: false,
     });
 
     expect(status).toMatchObject({
@@ -143,7 +120,6 @@ describe("getProjectPersistenceStatus", () => {
       saveState: "error",
       localSaveState: "error",
       clips: [clip("local")],
-      guest: false,
     });
 
     expect(status).toMatchObject({
@@ -160,7 +136,6 @@ describe("getProjectPersistenceStatus", () => {
       saveState: "saved",
       localSaveState: "error",
       clips: [clip("error", 35)],
-      guest: false,
     });
 
     expect(status).toMatchObject({

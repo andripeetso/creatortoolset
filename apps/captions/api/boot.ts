@@ -34,18 +34,16 @@ import { authApp, getApiKeyUser, getSessionUser, innerCall, jobTokenUser, type A
 import { assistantApp } from "./assistant";
 import { providersApp } from "./providers";
 import { mcpApp } from "./mcp";
-import { workspaceApp } from "./workspace";
-import { connectorsApp, startConnectorPulls, tiktokVerifyFile } from "./connectors";
+import { connectorsApp, startConnectorPulls } from "./connectors";
 import { macAppPublic, macAppRelease } from "./mac-app";
 import { ownerProfileApp } from "./owner-profile";
 import { devicesApp } from "./devices";
 import { deviceForToken } from "./lib/devices";
-import { adminApp } from "./admin";
 import { serviceKeysApp } from "./service-keys";
 import { myKeysApp } from "./my-keys";
 import { setupApp } from "./setup";
 import { captionLayoutApp } from "./caption-layout";
-import { GUEST_USER, mayUse, touchActive, type Tool } from "./users";
+import { VISITOR, mayUse, touchActive, type Tool } from "./users";
 import { env } from "./lib/env";
 import { disableRequestTimeouts } from "./lib/incoming";
 import { randomUUID } from "node:crypto";
@@ -120,7 +118,7 @@ app.use(async (c, next) => {
   // Without a Content-Length, hono's bodyLimit re-wraps the request via
   // `new Request(...)`, which the node adapters choke on. Browser JSON
   // fetches always declare a length; refuse chunked bodies and let
-  // body-less POSTs (logout, guest login) through untouched.
+  // body-less POSTs (logout) through untouched.
   if (!c.req.raw.headers.has("content-length")) {
     return c.req.raw.headers.has("transfer-encoding")
       ? c.json({ error: "Length Required" }, 411)
@@ -128,24 +126,6 @@ app.use(async (c, next) => {
   }
   return limit(c, next);
 });
-
-// guests are ephemeral: block everything that would persist on the
-// server (project storage, background exports, sync renders). Review and the
-// Audio Enhancer take guests under their own caps and short keeps.
-const GUEST_BLOCKED = [
-  "/api/projects",
-  "/api/exports",
-  "/api/export",
-  "/api/clean",
-  "/api/clips",
-  "/api/documents",
-  "/api/instagram",
-  "/api/workshop",
-  "/api/connectors",
-  "/api/stories",
-  "/api/library",
-  "/api/editor",
-];
 
 const PUBLIC_UUID =
   "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
@@ -169,10 +149,6 @@ const PUBLIC_REVIEW = new RegExp(`^/api/review/[sp]/${PUBLIC_UUID}(?:/|$)`, "i")
 const PUBLIC_LIBRARY_SHARE = /^\/api\/library\/s\/[A-Za-z0-9_-]{22}(?:\/|$)/;
 const PUBLIC_LIBRARY_SHARE_WRITE = /^\/api\/library\/s\/[A-Za-z0-9_-]{22}\/unlock$/;
 const REVIEW = /^\/api\/review(?:\/|$)/;
-// what a demo visitor can't do in their copy of Review: add videos or references (a
-// timeline file is fine), start a Caption Studio project
-const DEMO_REVIEW_OFF = new RegExp(
-  `^/api/review/uploads(?:/|$)|^/api/review/assets/${PUBLIC_UUID}/v/\\d+/(?:captions|refs)$`, "i");
 const REVIEW_COMMENT = new RegExp(`^/api/review/assets/${PUBLIC_UUID}/comments/[^/]+$`, "i");
 const REVIEW_UPLOAD = new RegExp(`^/api/review/uploads(?:/${PUBLIC_UUID}/(?:parts/\\d+|complete))?$`, "i");
 // what an AI access key may call, route by route: Review reads, resolving a comment and uploading a
@@ -180,11 +156,11 @@ const REVIEW_UPLOAD = new RegExp(`^/api/review/uploads(?:/${PUBLIC_UUID}/(?:part
 // release (PUT /api/mac-app/release).
 const KEY_ROUTES: [string, RegExp][] = [["GET", REVIEW], ["PATCH", REVIEW_COMMENT], ["POST", REVIEW_UPLOAD]];
 const ADMIN_KEY_ROUTES: [string, RegExp][] = [["PUT", /^\/api\/mac-app\/release$/]];
-const FULL_KEY_NEVER = /^\/api\/(?:admin|providers|devices|workspace|service-keys|my-keys)(?:\/|$)/;
+const FULL_KEY_NEVER = /^\/api\/(?:providers|devices|service-keys|my-keys)(?:\/|$)/;
 const keyRoute = (routes: [string, RegExp][], method: string, p: string) =>
   routes.some(([m, r]) => m === method && r.test(p));
 
-// Apps an admin switches off per account (users.ts TOOLS). The others are
+// Apps switched off per account (users.ts `off`). The others are
 // only hidden in the app: what they hold is the user's own either way, and
 // their APIs serve each other (Review and Guides play Video Notes).
 export const TOOL_GATES: [string, Tool[]][] = [
@@ -235,9 +211,9 @@ app.use("/api/*", async (c, next) => {
     return next();
   }
   // a Full AI key is the account itself, gates and all,
-  // except Admin, AI settings and paired Macs; /api/auth reads only cookies, so a key never makes keys
+  // except AI settings, paired Macs and keys; /api/auth reads only cookies, so a key never makes keys
   // The assistant's job token (auth.ts) opens /api/mcp only; the tools' own calls run as its account (innerCall), and
-  // FULL_KEY_NEVER still refuses them the admin, provider, device, Mac-key and service-key routes.
+  // FULL_KEY_NEVER still refuses them the provider, device and key routes.
   const user = getSessionUser(c.req.header("cookie")) ??
     (FULL_KEY_NEVER.test(c.req.path)
       ? null
@@ -252,17 +228,16 @@ app.use("/api/*", async (c, next) => {
       PUBLIC_DOC_GET.test(c.req.path) ||
       PUBLIC_WORKSHOP.test(c.req.path))
   ) {
-    c.set("user", user ?? GUEST_USER);
-    if (user && user.role !== "guest") touchActive(user.username);
+    c.set("user", user ?? VISITOR);
+    if (user) touchActive(user.username);
     return next();
   }
   if (c.req.method === "POST" && (PUBLIC_WORKSHOP_WRITE.test(c.req.path) || PUBLIC_LIBRARY_SHARE_WRITE.test(c.req.path))) {
-    c.set("user", user ?? GUEST_USER);
+    c.set("user", user ?? VISITOR);
     return next();
   }
   if (PUBLIC_REVIEW.test(c.req.path)) {
-    // a demo visitor comments on a share link as anyone would, never as the demo account
-    c.set("user", user && !user.demo ? user : GUEST_USER);
+    c.set("user", user ?? VISITOR);
     return next();
   }
   if (!user) {
@@ -276,40 +251,15 @@ app.use("/api/*", async (c, next) => {
     c.set("user", keyUser);
     return next();
   }
-  if (
-    user.role === "guest" &&
-    GUEST_BLOCKED.some((p) => c.req.path.startsWith(p))
-  ) {
-    return c.json(
-      {
-        error: "Not available in guest mode — sign in with an account",
-        code: "GUEST",
-      },
-      403,
-    );
-  }
-  // "See the demo": Review is the visitor's own copy of the demo's (review.ts
-  // cloneDemoReview), theirs to comment, draw and approve in, but no uploads;
-  // everything else only looks, so every visitor finds the demo as it was left
-  const reading = c.req.method === "GET" || c.req.method === "HEAD";
-  if (user.demo && REVIEW.test(c.req.path) && (reading || !DEMO_REVIEW_OFF.test(c.req.path))) {
-    c.set("user", { ...user, username: user.demo });
-    return next();
-  }
-  if (user.demo && !reading) {
-    c.header("X-Demo", "read-only");
-    return c.json({ error: "", code: "DEMO" }, 403);
-  }
   const gate = TOOL_GATES.find(([p]) => c.req.path === p || c.req.path.startsWith(p + "/"));
   if (gate && !gate[1].some((t) => mayUse(user, t))) {
-    return c.json({ error: "This app isn't switched on for your account — ask an admin", code: "TOOL_ACCESS" }, 403);
+    return c.json({ error: "This app isn't switched on for your account", code: "TOOL_ACCESS" }, 403);
   }
   c.set("user", user);
   touchActive(user.username);
   return next();
 });
 app.route("/api/auth", authApp);
-app.route("/api/admin", adminApp);
 // Settings → API keys: the outside services' keys (platform admins; never an AI key)
 app.route("/api/service-keys", serviceKeysApp);
 // Settings → My API keys: each account's own keys for the paid services (never through an AI key)
@@ -320,13 +270,7 @@ app.route("/api/providers", providersApp);
 // Creator Toolset as a remote MCP server (Full key only: not on the key routes): its tools call these same routes
 app.route("/api/mcp", mcpApp((path, init) => Promise.resolve(app.request(path, init))));
 app.route("/api/assistant", assistantApp);
-app.route("/api/workspace", workspaceApp);
 app.route("/api/connectors", connectorsApp);
-// TikTok's site check (Settings → Admin → Connector apps): a public file at the root while the app is registered
-app.get("/:file{tiktok[\\w-]*\\.txt}", (c) => {
-  const text = tiktokVerifyFile(c.req.param("file"));
-  return text === null ? c.notFound() : c.text(text);
-});
 startConnectorPulls();
 app.route("/api/devices", devicesApp);
 app.route("/api/mac-app", macAppRelease);

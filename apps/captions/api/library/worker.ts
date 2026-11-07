@@ -119,7 +119,7 @@ async function run(job: JobRow): Promise<void> {
     await makeProxy(src, file);
     await keep("proxy", file, `${base}/proxy.mp4`);
   } else if (job.kind === "transcribe" || job.kind === "describe") {
-    if (job.kind === "transcribe") await transcribeVersion(db, v.id, src, p.duration, job.actor, dir);
+    if (job.kind === "transcribe") await transcribeVersion(db, v.id, src, job.actor, dir);
     else await describeVersion(db, v.id, src, p.duration, job.actor, dir);
     // new words to search by meaning: embed (again) when the library has semantic search on
     if (librarySetting(v.library_id, "embed")) enqueueJob(db, v.library_id, v.id, "embed", job.actor, true);

@@ -13,7 +13,6 @@ export interface ProjectPersistenceInput {
   saveState: ProjectSaveState;
   localSaveState?: ProjectSaveState;
   clips: PersistenceClip[];
-  guest: boolean;
 }
 
 export interface ProjectPersistenceStatus {
@@ -37,7 +36,6 @@ export function getProjectPersistenceStatus({
   saveState,
   localSaveState = "idle",
   clips,
-  guest,
 }: ProjectPersistenceInput): ProjectPersistenceStatus {
   if (clips.length === 0) {
     return {
@@ -64,27 +62,6 @@ export function getProjectPersistenceStatus({
       badge: "NOT SAVED — LOCAL BACKUP FAILED",
       message:
         "Browser recovery storage failed. Keep this page open until the project reaches the server.",
-    };
-  }
-
-  if (guest) {
-    if (locallySaved) {
-      return {
-        workSafe: true,
-        fullySaved: false,
-        tone: "warning",
-        badge: "SAVED LOCALLY — GUEST SESSION",
-        message:
-          "Your work is recoverable on this device, but it is not synced to an account or another browser.",
-      };
-    }
-    return {
-      workSafe: false,
-      fullySaved: false,
-      tone: "danger",
-      badge: "NOT SAVED — GUEST SESSION",
-      message:
-        "This project exists only in this browser tab. Sign in before leaving, refreshing, or deploying.",
     };
   }
 

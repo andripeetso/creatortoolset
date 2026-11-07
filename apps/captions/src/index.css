@@ -134,17 +134,6 @@ html:not(.dark) body { background: #fafafa; }
 /* The Mac app (apps/mac) has no title bar: its window buttons sit at the left of the page's top bar. */
 html.mac-app:not(.mac-full) [data-titlebar] { padding-left: 104px; }
 
-/* A role-preview banner consumes part of the viewport. Route pages normally
-   size themselves to the whole viewport, so make their direct roots use the
-   remaining area instead. */
-.view-as-viewport > .h-screen,
-.view-as-viewport > .h-dvh {
-  height: 100%;
-}
-.view-as-viewport > .min-h-screen {
-  min-height: 100%;
-}
-
 /* mobile PWA: no rubber-band scroll past the app, no flash on taps */
 body { overscroll-behavior-y: none; }
 * { -webkit-tap-highlight-color: transparent; }

@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { LoginKind, SocialPlatform, SocialPost, SocialStats } from "../../../contracts/connectors";
 import { apifyRun } from "../instagram/apify";
-import { readApps, type StoredAccount } from "./store";
+import type { StoredAccount } from "./store";
 
 /**
  * The logins and the pulls.
@@ -27,11 +27,12 @@ const time = (v: unknown): number => {
 };
 
 export function appFor(kind: LoginKind): { id: string; secret: string; configId?: string } | null {
-  const saved = readApps()[kind];
-  if (saved?.id && saved.secret) return saved;
   const [id, secret] =
     kind === "meta" ? [process.env.META_APP_ID, process.env.META_APP_SECRET] : kind === "google" ? [process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET] : [process.env.TIKTOK_CLIENT_KEY, process.env.TIKTOK_CLIENT_SECRET];
-  return id?.trim() && secret?.trim() ? { id: id.trim(), secret: secret.trim() } : null;
+  if (!id?.trim() || !secret?.trim()) return null;
+  // a Business-type Meta app names its permissions in a configuration (META_CONFIG_ID) instead of scopes
+  const configId = kind === "meta" ? process.env.META_CONFIG_ID?.trim() : "";
+  return { id: id.trim(), secret: secret.trim(), ...(configId ? { configId } : {}) };
 }
 
 async function getJson(url: string | URL, init?: RequestInit): Promise<Rec> {

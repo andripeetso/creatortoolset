@@ -70,13 +70,11 @@ presetsApp.get("/", (c) => {
 /**
  * Create (or overwrite by name) a preset. Admin-created presets are
  * global — they apply to everyone and shadow same-named built-ins;
- * everyone else's are account-private. Guests can't persist anything.
+ * everyone else's are account-private.
  */
 presetsApp.post("/", async (c) => {
   const user = c.get("user")!;
-  if (user.role === "guest") {
-    return c.json({ error: "Guests can't save presets" }, 403);
-  }
+  if (user.role === "visitor") return c.json({ error: "Sign in to save presets" }, 403);
   const body = await c.req.json().catch(() => null);
   const name = String(body?.name ?? "").trim().slice(0, 40);
   const kind = body?.kind === "text" ? "text" : "caption";

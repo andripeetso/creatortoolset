@@ -149,18 +149,10 @@ export function parseSettings(raw: unknown, scope: Scope = "workspace"): Provide
   const jobsRaw = b.jobs && typeof b.jobs === "object" ? (b.jobs as Record<string, unknown>) : {};
   const jobs: ProviderSettings["jobs"] = {};
   for (const j of JOBS) if (jobsRaw[j.id]) jobs[j.id] = parseSelection(jobsRaw[j.id], instances, j.label);
-  const a = b.api && typeof b.api === "object" ? (b.api as Record<string, unknown>) : {};
-  const api = {
-    guests: a.guests === true,
-    demo: a.demo === true,
-    model: typeof a.model === "string" && /^claude-[a-z0-9-]+$/.test(a.model) ? a.model : DEFAULT_SETTINGS.api.model,
-    effort: isEffort(a.effort) ? a.effort : DEFAULT_SETTINGS.api.effort,
-  };
   return {
     instances,
     default: def,
     jobs,
-    api,
   };
 }
 
@@ -193,7 +185,7 @@ function pick(scope: Scope, s: ProviderSettings, job: JobId, own?: Selection): R
 /**
  * Who answers an account's job (aiFor): its own providers when it has a runnable one on its own Macs; else the
  * workspace's when it is an admin (aiFor never asks for nobody). Never another person's: the workspace's
- * are the owner's own Claude / ChatGPT logins, which serve only them (Anthropic's terms). A member without their own runs on a workspace API budget (aiFor) or not at all.
+ * are the owner's own Claude / ChatGPT logins, which serve only them (Anthropic's terms). Anyone else without their own runs on their own API key (aiFor) or not at all.
  * Null = no provider for this account.
  */
 export function routeFor(name: string | undefined, admin: boolean, job: JobId, own?: Selection): Route | null {

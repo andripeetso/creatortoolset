@@ -16,7 +16,7 @@ import { KIND_DOT } from "@/components/workshop/DocumentTabs";
 import { useWorkshopTitle } from "@/components/workshop/WorkshopSidebar";
 import { MAKING, patchSummary, useSessionSummaries } from "@/lib/workshop-summary";
 import { KindTile } from "@/components/workshop/KindTile";
-import { canUse, useAuth, useViewedMe } from "@/lib/auth";
+import { canUse, useAuth, useMe } from "@/lib/auth";
 import { timeAgo } from "@/lib/exports";
 import { toolsetHomePath } from "@/lib/mobile";
 import {
@@ -59,7 +59,7 @@ export default function WorkshopPage() {
   const home = toolsetHomePath();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const me = useViewedMe();
+  const me = useMe();
   const required = useAuth((s) => s.required);
   const allowed = canUse(me, "workshop");
   const currentProjectId = useWorkspace((s) => s.currentProjectId);
@@ -391,7 +391,7 @@ export default function WorkshopPage() {
                 </span>
               )}
               {/* hidden while rows are picked, so Share / Export take its place and nothing wraps */}
-              {!me?.demo && !picked.size && <button type="button" disabled={busy !== null} onClick={() => void newSession()} className={`${primary} h-8 py-0`}>
+              {!picked.size && <button type="button" disabled={busy !== null} onClick={() => void newSession()} className={`${primary} h-8 py-0`}>
                 {busy === "session" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
                 New session
               </button>}
@@ -553,7 +553,7 @@ export default function WorkshopPage() {
           </section>
         )}
 
-        {tab === "knowledge" && <KnowledgePanel readOnly={!!me?.demo} />}
+        {tab === "knowledge" && <KnowledgePanel />}
 
         {tab === "frameworks" && (
           <section>

@@ -1,7 +1,6 @@
 import type { SimilarMatch } from "../../contracts/library";
-import { workspaceOf } from "../lib/workspaces";
 import { findUser, mayUse } from "../users";
-import { libraryRole } from "./access";
+import { homeOf, libraryRole } from "./access";
 import { libraryDb } from "./db";
 import type { Fingerprint } from "./fingerprint";
 import { enqueueJob } from "./jobs";
@@ -32,12 +31,11 @@ export interface SimilarResult {
   pending: number; // versions still without a fingerprint (queued now)
 }
 
-/** `phashes` (one per second) against every fingerprinted current version in the caller's workspace's libraries. */
+/** `phashes` (one per second) against every fingerprinted current version in the caller's libraries. */
 export function similarTo(username: string, phashes: string[], exclude?: string): SimilarResult {
-  const w = workspaceOf(username);
   const account = findUser(username);
   // as libraryRole: the Media Library switched off for the account means nothing of it, here too
-  if (!w || !phashes.length || (account && !mayUse(account, "media"))) return { matches: [], checked: 0, pending: 0 };
+  if (!phashes.length || (account && !mayUse(account, "media"))) return { matches: [], checked: 0, pending: 0 };
   const d = libraryDb();
   const rows = d
     .prepare(
@@ -46,7 +44,7 @@ export function similarTo(username: string, phashes: string[], exclude?: string)
        LEFT JOIN derivatives f ON f.version_id = v.id AND f.kind = 'fingerprint'
        WHERE l.workspace_id = ? AND a.trashed_at IS NULL AND a.kind = 'video' AND v.state = 'ready'`,
     )
-    .all(w.id) as { asset_id: string; library_id: string; title: string; version_id: string; inline: string | null }[];
+    .all(homeOf(username)) as { asset_id: string; library_id: string; title: string; version_id: string; inline: string | null }[];
   const query = phashes.map(halves);
   const matches: SimilarMatch[] = [];
   let pending = 0;

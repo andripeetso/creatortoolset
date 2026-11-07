@@ -1,24 +1,39 @@
-import { memberIn, workspaceById } from "../lib/workspaces";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { env } from "../lib/env";
 import { findUser, mayUse } from "../users";
-import type { WorkspaceRole } from "../../contracts/workspaces";
 import { blobs, libraryDb } from "./db";
 
+let before: Record<string, string> | null = null;
 /**
- * What an account may do in a library: its role in the library's workspace (contracts/workspaces.ts), or null.
- * A library in another workspace, or one that does not exist, is null too: callers answer 404, never 403.
- * Owner manages libraries, storage, keys and shares; member uploads and edits their own assets. An account with the
- * Media Library switched off (Admin → Users, or the workspace owner) is null too: the Workshop, the Video Cleaner and
- * exports read the library through here, outside the /api/library tool gate (boot.ts).
+ * The id an account's libraries (libraries.workspace_id) and AI Editor edits (workspaceId) carry: its username. An
+ * install from before keeps the id it already had: the one in $DATA_DIR/workspaces.json it owned (read once).
  */
-export function libraryRole(username: string, libraryId: string): WorkspaceRole | null {
+export function homeOf(username: string): string {
+  if (!before) {
+    before = {};
+    try {
+      const s = JSON.parse(readFileSync(path.join(env.dataDir, "workspaces.json"), "utf-8")) as { workspaces?: { id: string; members: { username: string; role: string }[] }[] };
+      for (const w of s.workspaces ?? []) for (const m of w.members) if (m.role === "owner") before[m.username] ??= w.id;
+    } catch {
+      /* a fresh install */
+    }
+  }
+  return before[username] ?? username;
+}
+
+/**
+ * "owner" when the library is the account's own (homeOf), else null: a library of another account, or one that does
+ * not exist, so callers answer 404, never 403. An account with the Media Library switched off is null too: the
+ * Workshop, the Video Cleaner and exports read the library through here, outside the /api/library tool gate (boot.ts).
+ */
+export function libraryRole(username: string, libraryId: string): "owner" | null {
   const account = findUser(username);
   if (account && !mayUse(account, "media")) return null;
   const row = libraryDb().prepare("SELECT workspace_id FROM libraries WHERE id = ?").get(libraryId) as
     | { workspace_id: string }
     | undefined;
-  if (!row) return null;
-  const w = workspaceById(row.workspace_id);
-  return (w && memberIn(w, username)?.role) || null;
+  return row && row.workspace_id === homeOf(username) ? "owner" : null;
 }
 
 /**

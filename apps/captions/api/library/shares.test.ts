@@ -60,27 +60,7 @@ async function putSource(versionId: string, library = "lib_a") {
 }
 
 beforeAll(async () => {
-  writeFileSync(
-    path.join(dir, "workspaces.json"),
-    JSON.stringify({
-      workspaces: [
-        {
-          id: "ws_a", name: "a", plan: "team", comped: false, createdAt: 0,
-          members: [
-            { username: "owner-a", role: "owner", ai: "own", budgetUsd: 0, joinedAt: 0 },
-            { username: "mem-a", role: "member", ai: "own", budgetUsd: 0, joinedAt: 0 },
-          ],
-        },
-        {
-          id: "ws_b", name: "b", plan: "team", comped: false, createdAt: 0,
-          members: [{ username: "owner-b", role: "owner", ai: "own", budgetUsd: 0, joinedAt: 0 }],
-        },
-      ],
-      invites: [],
-      spend: {},
-    }),
-  );
-  libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_a', 'ws_a', 'A', 'local', 0), ('lib_b', 'ws_b', 'B', 'local', 0)").run();
+  libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_a', 'owner-a', 'A', 'local', 0), ('lib_b', 'owner-b', 'B', 'local', 0)").run();
 });
 
 describe("library share links", () => {
@@ -104,8 +84,8 @@ describe("library share links", () => {
     expect((await call("", "GET", `/api/library/s/${live.token}`)).status).toBe(404);
 
     const revoked = await data(call("owner-a", "POST", "/api/library/lib_a/shares", { target: { kind: "asset", id: "a2" }, scope: "view" }));
-    // a member who did not make the link may not revoke it
-    expect((await call("mem-a", "DELETE", `/api/library/shares/${revoked.id}`)).status).toBe(403);
+    // another account may not revoke it
+    expect((await call("stranger", "DELETE", `/api/library/shares/${revoked.id}`)).status).toBe(404);
     expect((await call("owner-a", "DELETE", `/api/library/shares/${revoked.id}`)).status).toBe(200);
     expect((await call("", "GET", `/api/library/s/${revoked.token}`)).status).toBe(404);
     expect((await call("", "GET", `/api/library/s/${revoked.token}/media/${v}/play`)).status).toBe(404);
@@ -145,8 +125,8 @@ describe("library share links", () => {
   it("a share never lists another asset: one asset, one version, or only a collection's members", async () => {
     const va = seed("b1", "Alpha two", "owner-a");
     seed("b2", "Beta two", "owner-a");
-    const col = await data(call("mem-a", "POST", "/api/library/lib_a/collections", { name: "Picks" }));
-    await call("mem-a", "POST", `/api/library/lib_a/collections/${col.id}/items`, { assetIds: ["b2"] });
+    const col = await data(call("owner-a", "POST", "/api/library/lib_a/collections", { name: "Picks" }));
+    await call("owner-a", "POST", `/api/library/lib_a/collections/${col.id}/items`, { assetIds: ["b2"] });
 
     const asset = await data(call("owner-a", "POST", "/api/library/lib_a/shares", { target: { kind: "asset", id: "b1" }, scope: "view" }));
     expect((await data(call("", "GET", `/api/library/s/${asset.token}`))).items.map((i: any) => i.id)).toEqual(["b1"]);

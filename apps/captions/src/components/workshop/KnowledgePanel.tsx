@@ -88,7 +88,7 @@ async function toSource(file: File, say: (s: string) => void): Promise<SourceBod
  * references, brand docs. Claude reads each once and files it; the filing shows here to check and change, and
  * which projects read each one is switched here or in a project's form.
  */
-export function KnowledgePanel({ readOnly }: { readOnly?: boolean }) {
+export function KnowledgePanel() {
   const projects = useWorkspace((s) => s.projects);
   const [sources, setSources] = useState<KnowledgeSource[]>([]);
   const [open, setOpen] = useState<string | null>(null);
@@ -113,7 +113,7 @@ export function KnowledgePanel({ readOnly }: { readOnly?: boolean }) {
   const act = (p: Promise<unknown>) => p.catch((e) => setError(e instanceof Error ? e.message : String(e)));
 
   const add = async (files: FileList | File[] | null) => {
-    if (!files?.length || readOnly) return;
+    if (!files?.length) return;
     setError(null);
     for (const file of Array.from(files)) {
       try {
@@ -140,7 +140,7 @@ export function KnowledgePanel({ readOnly }: { readOnly?: boolean }) {
       <div
         onDragOver={(e) => {
           e.preventDefault();
-          if (!readOnly) setOver(true);
+          setOver(true);
         }}
         onDragLeave={() => setOver(false)}
         onDrop={(e) => {
@@ -155,32 +155,28 @@ export function KnowledgePanel({ readOnly }: { readOnly?: boolean }) {
           PDF (scans too), Word, EPUB, videos, Markdown or text, or a link. Claude reads each one once and files it: what it is,
           what it answers, where its parts are. Every project uses it unless you switch it off.
         </p>
-        {!readOnly && (
-          <div className="mt-3 flex justify-center gap-2">
-            <button type="button" onClick={() => inputRef.current?.click()} disabled={!!adding} className={small}>
-              <Upload className="h-3 w-3" /> Choose files
-            </button>
-            <button type="button" onClick={() => setPaste(paste ? null : { name: "", text: "" })} disabled={!!adding} className={small}>
-              Paste text
-            </button>
-          </div>
-        )}
-        {!readOnly && (
-          <form
-            className="mx-auto mt-2 flex max-w-md gap-1.5"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!link.trim()) return;
-              setAdding(`Reading ${link.trim()}…`);
-              void act(addSourceLink(link.trim()).then((s) => (put(s), setLink("")))).finally(() => setAdding(null));
-            }}
-          >
-            <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="Or a link: an article, a YouTube video" className={field} />
-            <button type="submit" disabled={!link.trim() || !!adding} className={small}>
-              Add
-            </button>
-          </form>
-        )}
+        <div className="mt-3 flex justify-center gap-2">
+          <button type="button" onClick={() => inputRef.current?.click()} disabled={!!adding} className={small}>
+            <Upload className="h-3 w-3" /> Choose files
+          </button>
+          <button type="button" onClick={() => setPaste(paste ? null : { name: "", text: "" })} disabled={!!adding} className={small}>
+            Paste text
+          </button>
+        </div>
+        <form
+          className="mx-auto mt-2 flex max-w-md gap-1.5"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!link.trim()) return;
+            setAdding(`Reading ${link.trim()}…`);
+            void act(addSourceLink(link.trim()).then((s) => (put(s), setLink("")))).finally(() => setAdding(null));
+          }}
+        >
+          <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="Or a link: an article, a YouTube video" className={field} />
+          <button type="submit" disabled={!link.trim() || !!adding} className={small}>
+            Add
+          </button>
+        </form>
         <input ref={inputRef} type="file" multiple accept={ACCEPT} className="hidden" onChange={(e) => void add(e.target.files).then(() => (e.target.value = ""))} />
         {adding && (
           <p className="mt-2 flex items-center justify-center gap-1.5 text-[11px] text-zinc-400">
@@ -215,7 +211,6 @@ export function KnowledgePanel({ readOnly }: { readOnly?: boolean }) {
               key={s.id}
               s={s}
               open={open === s.id}
-              readOnly={readOnly}
               projects={projects}
               onToggle={() => setOpen(open === s.id ? null : s.id)}
               onSave={(fields) => act(patchSource(s.id, fields).then(put))}
@@ -233,7 +228,6 @@ export function KnowledgePanel({ readOnly }: { readOnly?: boolean }) {
 function SourceRow({
   s,
   open,
-  readOnly,
   projects,
   onToggle,
   onSave,
@@ -243,7 +237,6 @@ function SourceRow({
 }: {
   s: KnowledgeSource;
   open: boolean;
-  readOnly?: boolean;
   projects: ReturnType<typeof useWorkspace.getState>["projects"];
   onToggle: () => void;
   onSave: (fields: Parameters<typeof patchSource>[1]) => Promise<unknown>;
@@ -271,7 +264,6 @@ function SourceRow({
             </button>
             <select
               value={s.kind ?? ""}
-              disabled={readOnly}
               onChange={(e) => void onSave({ kind: e.target.value as SourceKind })}
               className="rounded bg-zinc-800 px-1 py-0.5 text-[10px] text-zinc-300 outline-none"
               aria-label="What it is"
@@ -297,7 +289,6 @@ function SourceRow({
           <div className="mt-1 flex flex-wrap items-center gap-1">
             <select
               value={s.projectId ?? ""}
-              disabled={readOnly}
               onChange={(e) => void onSave({ projectId: e.target.value || null })}
               className="rounded bg-transparent py-px text-[10px] text-zinc-500 outline-none hover:text-zinc-300"
               aria-label="Which projects use it"
@@ -317,7 +308,6 @@ function SourceRow({
                   <button
                     key={p.id}
                     type="button"
-                    disabled={readOnly}
                     aria-pressed={on}
                     onClick={() => onProject(p.id)}
                     title={on ? `${p.name} uses it: click to switch off` : `${p.name} doesn't use it: click to switch on`}
@@ -330,20 +320,18 @@ function SourceRow({
             )}
           </div>
         </div>
-        {!readOnly && (
-          <div className="flex shrink-0 items-center gap-1">
-            <button type="button" onClick={onRead} disabled={s.status === "reading"} className={small} title="Claude reads it again and files it fresh">
-              <RotateCw className="h-3 w-3" /> {s.status === "new" ? "Read" : "Read again"}
-            </button>
-            <ConfirmButton
-              label="Delete"
-              confirmLabel="Click again"
-              onConfirm={() => void onDelete()}
-              className="rounded-md px-2 py-1 text-[11px] text-zinc-500 hover:bg-zinc-800 hover:text-red-300"
-              armedClassName="!bg-red-500/10 !text-red-200"
-            />
-          </div>
-        )}
+        <div className="flex shrink-0 items-center gap-1">
+          <button type="button" onClick={onRead} disabled={s.status === "reading"} className={small} title="Claude reads it again and files it fresh">
+            <RotateCw className="h-3 w-3" /> {s.status === "new" ? "Read" : "Read again"}
+          </button>
+          <ConfirmButton
+            label="Delete"
+            confirmLabel="Click again"
+            onConfirm={() => void onDelete()}
+            className="rounded-md px-2 py-1 text-[11px] text-zinc-500 hover:bg-zinc-800 hover:text-red-300"
+            armedClassName="!bg-red-500/10 !text-red-200"
+          />
+        </div>
       </div>
       {open && (
         <form
@@ -367,27 +355,25 @@ function SourceRow({
           </p>
           <label>
             Title
-            <input value={draft.title} disabled={readOnly} onChange={(e) => setDraft({ ...draft, title: e.target.value })} className={`${field} mt-0.5`} />
+            <input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} className={`${field} mt-0.5`} />
           </label>
           <label>
             What it is
-            <textarea value={draft.about} disabled={readOnly} onChange={(e) => setDraft({ ...draft, about: e.target.value })} className={`${field} mt-0.5 min-h-16 [field-sizing:content]`} />
+            <textarea value={draft.about} onChange={(e) => setDraft({ ...draft, about: e.target.value })} className={`${field} mt-0.5 min-h-16 [field-sizing:content]`} />
           </label>
           <label>
             What it answers (one per line)
-            <textarea value={draft.uses} disabled={readOnly} onChange={(e) => setDraft({ ...draft, uses: e.target.value })} className={`${field} mt-0.5 min-h-16 [field-sizing:content]`} />
+            <textarea value={draft.uses} onChange={(e) => setDraft({ ...draft, uses: e.target.value })} className={`${field} mt-0.5 min-h-16 [field-sizing:content]`} />
           </label>
           <label>
             Its parts (L first-L last Title — what's in it)
-            <textarea value={draft.sections} disabled={readOnly} onChange={(e) => setDraft({ ...draft, sections: e.target.value })} className={`${field} mt-0.5 min-h-16 font-mono text-[11px] [field-sizing:content]`} />
+            <textarea value={draft.sections} onChange={(e) => setDraft({ ...draft, sections: e.target.value })} className={`${field} mt-0.5 min-h-16 font-mono text-[11px] [field-sizing:content]`} />
           </label>
-          {!readOnly && (
-            <div className="flex justify-end">
-              <button type="submit" className={small}>
-                Save
-              </button>
-            </div>
-          )}
+          <div className="flex justify-end">
+            <button type="submit" className={small}>
+              Save
+            </button>
+          </div>
         </form>
       )}
     </div>

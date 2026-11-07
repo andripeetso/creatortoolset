@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -7,25 +7,8 @@ import type { Edit, EditSummary } from "../../contracts/editor";
 const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "editor-routes-"));
 process.env.DATA_DIR = dir;
 process.env.APP_SECRET = "editor-routes-test-secret";
-writeFileSync(
-  path.join(dir, "workspaces.json"),
-  JSON.stringify({
-    workspaces: [
-      { id: "ws_a", name: "Tiny Acrobatics", plan: "team", comped: false, createdAt: 0, members: [
-        { username: "owner-a", role: "owner", ai: "own", budgetUsd: 0, joinedAt: 0 },
-        { username: "mem-a", role: "member", ai: "own", budgetUsd: 0, joinedAt: 0 },
-        { username: "mem-b", role: "member", ai: "own", budgetUsd: 0, joinedAt: 0 },
-      ] },
-      { id: "ws_b", name: "b", plan: "team", comped: false, createdAt: 0, members: [
-        { username: "owner-b", role: "owner", ai: "own", budgetUsd: 0, joinedAt: 0 },
-      ] },
-    ],
-    invites: [],
-    spend: {},
-  }),
-);
 
-const { createUser, findUser, setOff } = await import("../users");
+const { createUser, findUser } = await import("../users");
 const app = (await import("../boot")).default;
 const { libraryDb } = await import("../library/db");
 const { enqueueJob } = await import("../library/jobs");
@@ -58,70 +41,66 @@ const drain = async () => {
 };
 
 beforeAll(async () => {
-  for (const u of ["owner-a", "mem-a", "mem-b", "owner-b"]) await login(u);
+  for (const u of ["maker", "other"]) await login(u);
   libraryDb().exec(`
-    INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_a', 'ws_a', 'A', 'local', 0), ('lib_b', 'ws_b', 'B', 'local', 0);
+    INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_a', 'maker', 'A', 'local', 0), ('lib_b', 'other', 'B', 'local', 0);
     INSERT INTO assets (id, library_id, kind, title, created_by, created_at, trashed_at) VALUES
-      ('ast_a1', 'lib_a', 'video', 'Take 1', 'mem-a', 0, NULL), ('ast_a2', 'lib_a', 'video', 'Take 2', 'mem-a', 0, NULL),
-      ('ast_t', 'lib_a', 'video', 'Old', 'mem-a', 0, 1), ('ast_b', 'lib_b', 'video', 'Theirs', 'owner-b', 0, NULL);
+      ('ast_a1', 'lib_a', 'video', 'Take 1', 'maker', 0, NULL), ('ast_a2', 'lib_a', 'video', 'Take 2', 'maker', 0, NULL),
+      ('ast_t', 'lib_a', 'video', 'Old', 'maker', 0, 1), ('ast_b', 'lib_b', 'video', 'Theirs', 'other', 0, NULL);
     INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at) VALUES
-      ('ver_a1', 'ast_a1', 1, 'k1', 1, 'x1', 'ready', 'mem-a', 0), ('ver_a2', 'ast_a2', 1, 'k2', 1, 'x2', 'ready', 'mem-a', 0),
-      ('ver_t', 'ast_t', 1, 'k3', 1, 'x3', 'ready', 'mem-a', 0), ('ver_b', 'ast_b', 1, 'k4', 1, 'x4', 'ready', 'owner-b', 0);
+      ('ver_a1', 'ast_a1', 1, 'k1', 1, 'x1', 'ready', 'maker', 0), ('ver_a2', 'ast_a2', 1, 'k2', 1, 'x2', 'ready', 'maker', 0),
+      ('ver_t', 'ast_t', 1, 'k3', 1, 'x3', 'ready', 'maker', 0), ('ver_b', 'ast_b', 1, 'k4', 1, 'x4', 'ready', 'other', 0);
     INSERT INTO collections (id, library_id, name, kind, created_at) VALUES ('col_b', 'lib_b', 'B-roll', 'manual', 0);
   `);
 });
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 describe("AI Editor: edits and who sees them", () => {
-  it("refuses footage the creator can't read, from another workspace, or across two: 404 like a missing one", async () => {
-    expect((await create("mem-a", ["ver_t"])).status).toBe(404); // in the trash
-    expect((await create("mem-a", ["ver_b"])).status).toBe(404); // another workspace's library
-    expect((await create("mem-a", ["ver_a1", "ver_b"])).status).toBe(404);
-    expect((await create("mem-a", ["ver_nope"])).status).toBe(404);
-    expect((await create("mem-a", ["ver_a1"], { brollCollectionId: "col_b" })).status).toBe(404);
-    expect((await create("mem-a", [])).status).toBe(404);
+  it("refuses footage the creator can't read, from another account, or across two: 404 like a missing one", async () => {
+    expect((await create("maker", ["ver_t"])).status).toBe(404); // in the trash
+    expect((await create("maker", ["ver_b"])).status).toBe(404); // another account's library
+    expect((await create("maker", ["ver_a1", "ver_b"])).status).toBe(404);
+    expect((await create("maker", ["ver_nope"])).status).toBe(404);
+    expect((await create("maker", ["ver_a1"], { brollCollectionId: "col_b" })).status).toBe(404);
+    expect((await create("maker", [])).status).toBe(404);
   });
 
-  it("makes an edit with clamped settings, and lists mine; the workspace owner sees every member's", async () => {
-    const { id } = await json<{ id: string }>(create("mem-a", ["ver_a1", "ver_a2"], { versions: 9, targetS: -5 }));
-    await create("mem-b", ["ver_a2"]);
-    const e = await json<Edit>(call("mem-a", "GET", `/api/editor/${id}`));
-    expect(e).toMatchObject({ name: "Hook test", sources: ["ver_a1", "ver_a2"], versions: 5, targetS: 0, workspaceId: "ws_a", mine: true, jobs: [] });
+  it("makes an edit with clamped settings and lists it for its creator only", async () => {
+    const { id } = await json<{ id: string }>(create("maker", ["ver_a1", "ver_a2"], { versions: 9, targetS: -5 }));
+    const e = await json<Edit>(call("maker", "GET", `/api/editor/${id}`));
+    expect(e).toMatchObject({ name: "Hook test", sources: ["ver_a1", "ver_a2"], versions: 5, targetS: 0, workspaceId: "maker", jobs: [] });
 
     const names = async (user: string) => (await json<EditSummary[]>(call(user, "GET", "/api/editor"))).map((s) => s.createdBy).sort();
-    expect(await names("mem-a")).toEqual(["mem-a"]);
-    expect(await names("mem-b")).toEqual(["mem-b"]);
-    expect(await names("owner-a")).toEqual(["mem-a", "mem-b"]);
-    expect(await names("owner-b")).toEqual([]);
-    expect((await call("mem-b", "GET", `/api/editor/${id}`)).status).toBe(404);
-    expect((await call("owner-b", "GET", `/api/editor/${id}`)).status).toBe(404);
+    expect(await names("maker")).toEqual(["maker"]);
+    expect(await names("other")).toEqual([]);
+    expect((await call("other", "GET", `/api/editor/${id}`)).status).toBe(404);
   });
 
-  it("the owner sees and stops a member's edit but never runs or changes it (it runs on the member's AI)", async () => {
-    const { id } = await json<{ id: string }>(create("mem-a", ["ver_a1"]));
-    expect((await json<Edit>(call("owner-a", "GET", `/api/editor/${id}`))).mine).toBe(false);
-    expect((await call("owner-a", "POST", `/api/editor/${id}/run`, {})).status).toBe(403);
-    expect((await call("owner-a", "PATCH", `/api/editor/${id}`, { name: "x" })).status).toBe(403);
-    const ran = await json<Edit>(call("mem-a", "POST", `/api/editor/${id}/run`, {}));
+  it("the creator runs, stops and deletes an edit; nobody else reaches it", async () => {
+    const { id } = await json<{ id: string }>(create("maker", ["ver_a1"]));
+    expect((await call("other", "POST", `/api/editor/${id}/run`, {})).status).toBe(404);
+    expect((await call("other", "PATCH", `/api/editor/${id}`, { name: "x" })).status).toBe(404);
+    const ran = await json<Edit>(call("maker", "POST", `/api/editor/${id}/run`, {}));
     expect(ran.jobs).toMatchObject([{ kind: "analyze", variant: "", state: "queued" }]);
-    const stopped = await json<Edit>(call("owner-a", "POST", `/api/editor/${id}/stop`));
+    expect((await call("other", "POST", `/api/editor/${id}/stop`)).status).toBe(404);
+    const stopped = await json<Edit>(call("maker", "POST", `/api/editor/${id}/stop`));
     expect(stopped.jobs).toMatchObject([{ state: "failed", error: "Stopped" }]);
-    expect((await call("mem-a", "DELETE", `/api/editor/${id}`)).status).toBe(200);
-    expect((await call("mem-a", "GET", `/api/editor/${id}`)).status).toBe(404);
+    expect((await call("maker", "DELETE", `/api/editor/${id}`)).status).toBe(200);
+    expect((await call("maker", "GET", `/api/editor/${id}`)).status).toBe(404);
   });
 
-  it("the creator sets a source's eye line; the owner can't, a source not in the edit is 404, a y off the picture 400", async () => {
-    const { id } = await json<{ id: string }>(create("mem-a", ["ver_a1"]));
-    expect((await json<Edit>(call("mem-a", "GET", `/api/editor/${id}`))).eyeline).toEqual({});
-    expect((await json<Edit>(call("mem-a", "PUT", `/api/editor/${id}/eyeline/ver_a1`, { y: 0.3 }))).eyeline).toEqual({ ver_a1: 0.3 });
-    expect((await call("owner-a", "PUT", `/api/editor/${id}/eyeline/ver_a1`, { y: 0.4 })).status).toBe(403);
-    expect((await call("mem-a", "PUT", `/api/editor/${id}/eyeline/ver_a2`, { y: 0.4 })).status).toBe(404);
-    expect((await call("mem-a", "PUT", `/api/editor/${id}/eyeline/ver_a1`, { y: 1.5 })).status).toBe(400);
-    expect((await call("mem-a", "GET", `/api/editor/${id}/drafts/v1`)).status).toBe(404);
+  it("the creator sets a source's eye line; nobody else can, a source not in the edit is 404, a y off the picture 400", async () => {
+    const { id } = await json<{ id: string }>(create("maker", ["ver_a1"]));
+    expect((await json<Edit>(call("maker", "GET", `/api/editor/${id}`))).eyeline).toEqual({});
+    expect((await json<Edit>(call("maker", "PUT", `/api/editor/${id}/eyeline/ver_a1`, { y: 0.3 }))).eyeline).toEqual({ ver_a1: 0.3 });
+    expect((await call("other", "PUT", `/api/editor/${id}/eyeline/ver_a1`, { y: 0.4 })).status).toBe(404);
+    expect((await call("maker", "PUT", `/api/editor/${id}/eyeline/ver_a2`, { y: 0.4 })).status).toBe(404);
+    expect((await call("maker", "PUT", `/api/editor/${id}/eyeline/ver_a1`, { y: 1.5 })).status).toBe(400);
+    expect((await call("maker", "GET", `/api/editor/${id}/drafts/v1`)).status).toBe(404);
   });
 
   it("PUT lines changes a version's takes and order and redrafts only it, with no AI; a take the line lacks is 400", async () => {
-    const { id } = await json<{ id: string }>(create("mem-a", ["ver_a1"]));
+    const { id } = await json<{ id: string }>(create("maker", ["ver_a1"]));
     const t = (first: number, score: number) => ({ first, last: first, score });
     const lines = [
       { id: "L1", text: "we roll", takes: [t(1, 1), t(3, 0.8)] },
@@ -133,13 +112,13 @@ describe("AI Editor: edits and who sees them", () => {
     ];
     await saveStep(id, "plan", { lines, plans, notes: [] });
     await saveStep(id, "analysis", { sentences: [{ n: 1, src: "ver_a1", text: "we roll", s: 0.5, e: 1, w0: 0, w1: 1 }], notes: [] });
-    expect(await json(call("mem-a", "GET", `/api/editor/${id}/sentences`))).toMatchObject([{ n: 1, s: 0.5 }]);
+    expect(await json(call("maker", "GET", `/api/editor/${id}/sentences`))).toMatchObject([{ n: 1, s: 0.5 }]);
 
     const body = { plans: [{ name: "v2", lines: [{ line: "L2", take: { first: 2, last: 2 } }, { line: "L1", take: { first: 3, last: 3 } }] }] };
-    expect((await call("owner-a", "PUT", `/api/editor/${id}/lines`, body)).status).toBe(403);
-    expect((await call("mem-a", "PUT", `/api/editor/${id}/lines`, { plans: [{ name: "v2", lines: [{ line: "L1", take: { first: 2, last: 2 } }] }] })).status).toBe(400);
-    expect((await call("mem-a", "PUT", `/api/editor/${id}/lines`, { plans: [{ name: "v9", lines: body.plans[0]!.lines }] })).status).toBe(400);
-    const e = await json<Edit>(call("mem-a", "PUT", `/api/editor/${id}/lines`, body));
+    expect((await call("other", "PUT", `/api/editor/${id}/lines`, body)).status).toBe(404);
+    expect((await call("maker", "PUT", `/api/editor/${id}/lines`, { plans: [{ name: "v2", lines: [{ line: "L1", take: { first: 2, last: 2 } }] }] })).status).toBe(400);
+    expect((await call("maker", "PUT", `/api/editor/${id}/lines`, { plans: [{ name: "v9", lines: body.plans[0]!.lines }] })).status).toBe(400);
+    const e = await json<Edit>(call("maker", "PUT", `/api/editor/${id}/lines`, body));
     expect(e.plans[0]).toEqual(plans[0]);
     expect(e.plans[1]!.lines).toEqual([{ line: "L2", take: t(2, 1) }, { line: "L1", take: t(3, 0.8) }]);
     expect(e.jobs.map((j) => [j.kind, j.variant, j.state])).toEqual([["draft", "v2", "queued"]]);
@@ -147,46 +126,46 @@ describe("AI Editor: edits and who sees them", () => {
   });
 
   it("POST drafts/:name/review queues the version's preview for the creator only; no draft is 404", async () => {
-    const { id } = await json<{ id: string }>(create("mem-a", ["ver_a1"]));
-    expect((await call("mem-a", "POST", `/api/editor/${id}/drafts/v1/review`)).status).toBe(404);
+    const { id } = await json<{ id: string }>(create("maker", ["ver_a1"]));
+    expect((await call("maker", "POST", `/api/editor/${id}/drafts/v1/review`)).status).toBe(404);
     await saveDraft(id, "v1", { timeline: {} as never, notes: [] });
-    expect((await call("owner-a", "POST", `/api/editor/${id}/drafts/v1/review`)).status).toBe(403);
-    const e = await json<Edit>(call("mem-a", "POST", `/api/editor/${id}/drafts/v1/review`));
+    expect((await call("other", "POST", `/api/editor/${id}/drafts/v1/review`)).status).toBe(404);
+    const e = await json<Edit>(call("maker", "POST", `/api/editor/${id}/drafts/v1/review`));
     expect(e.jobs.map((j) => [j.kind, j.variant, j.state])).toEqual([["preview", "v1", "queued"]]);
     expect(e.previews).toEqual({});
-    await call("mem-a", "POST", `/api/editor/${id}/stop`);
+    await call("maker", "POST", `/api/editor/${id}/stop`);
   });
 
   it("export reads the footage again: a source trashed since is 404, no links or download URLs made", async () => {
-    const { id } = await json<{ id: string }>(create("mem-a", ["ver_a2"]));
+    const { id } = await json<{ id: string }>(create("maker", ["ver_a2"]));
     await saveDraft(id, "v1", { timeline: { sources: { ver_a2: {} } } as never, notes: [] });
     libraryDb().prepare("UPDATE assets SET trashed_at = 1 WHERE id = 'ast_a2'").run();
     try {
-      expect((await call("mem-a", "GET", `/api/editor/${id}/drafts/v1/export?format=otio`)).status).toBe(404);
-      expect((await call("owner-a", "GET", `/api/editor/${id}/drafts/v1/export`)).status).toBe(404);
+      expect((await call("maker", "GET", `/api/editor/${id}/drafts/v1/export?format=otio`)).status).toBe(404);
+      expect((await call("other", "GET", `/api/editor/${id}/drafts/v1/export`)).status).toBe(404);
     } finally {
       libraryDb().prepare("UPDATE assets SET trashed_at = NULL WHERE id = 'ast_a2'").run();
     }
   });
 
   it("is 403 for an account with the AI Editor switched off", async () => {
-    setOff(findUser("mem-b")!, ["editor"]);
-    const res = await call("mem-b", "GET", "/api/editor");
+    findUser("other")!.off = ["editor"];
+    const res = await call("other", "GET", "/api/editor");
     expect(res.status).toBe(403);
     expect(await json(res)).toMatchObject({ code: "TOOL_ACCESS" });
-    setOff(findUser("mem-b")!, []);
+    findUser("other")!.off = [];
   });
 });
 
 describe("AI Editor: the worker", () => {
   it("parks a step that names no account, and fails a step that isn't built yet", async () => {
-    const { id } = await json<{ id: string }>(create("mem-a", ["ver_a1"]));
-    enqueueJob(libraryDb(), "ws_a", `${id}:`, "broll", null, false, "edit_jobs");
+    const { id } = await json<{ id: string }>(create("maker", ["ver_a1"]));
+    enqueueJob(libraryDb(), "maker", `${id}:`, "broll", null, false, "edit_jobs");
     await drain();
-    const [job] = (await json<Edit>(call("mem-a", "GET", `/api/editor/${id}`))).jobs;
+    const [job] = (await json<Edit>(call("maker", "GET", `/api/editor/${id}`))).jobs;
     expect(job).toMatchObject({ state: "needs_key", error: expect.stringMatching(/names no account/) });
 
-    await call("mem-a", "POST", `/api/editor/${id}/run`, { from: "broll" }); // as the creator now
+    await call("maker", "POST", `/api/editor/${id}/run`, { from: "broll" }); // as the creator now
     await drain();
     expect(jobState(job!.id)).toEqual({ state: "failed", error: "No broll step yet" });
   });
@@ -199,15 +178,15 @@ describe("AI Editor: the worker", () => {
       throw new NeedsKey("Add your Anthropic key in Settings → My API keys");
     };
     try {
-      const { id } = await json<{ id: string }>(create("mem-a", ["ver_a1"]));
-      await call("mem-a", "POST", `/api/editor/${id}/run`, { from: "analyze" });
+      const { id } = await json<{ id: string }>(create("maker", ["ver_a1"]));
+      await call("maker", "POST", `/api/editor/${id}/run`, { from: "analyze" });
       await drain();
-      const jobs = (await json<Edit>(call("mem-a", "GET", `/api/editor/${id}`))).jobs;
-      expect(seen).toEqual(["analyze:mem-a"]);
+      const jobs = (await json<Edit>(call("maker", "GET", `/api/editor/${id}`))).jobs;
+      expect(seen).toEqual(["analyze:maker"]);
       expect(jobs.map((j) => [j.kind, j.state])).toEqual([["analyze", "done"], ["script", "needs_key"]]);
       expect(jobs[1]!.error).toMatch(/Anthropic key/);
 
-      const retried = await json<Edit>(call("mem-a", "POST", `/api/editor/${id}/jobs/${jobs[1]!.id}/retry`));
+      const retried = await json<Edit>(call("maker", "POST", `/api/editor/${id}/jobs/${jobs[1]!.id}/retry`));
       expect(retried.jobs[1]!.state).toBe("queued");
     } finally {
       Object.assign(STEPS, real);
@@ -219,11 +198,11 @@ describe("AI Editor: the worker", () => {
     const real = STEPS.analyze;
     STEPS.analyze = async () => {};
     try {
-      const { id } = await json<{ id: string }>(create("mem-a", ["ver_a2"]));
+      const { id } = await json<{ id: string }>(create("maker", ["ver_a2"]));
       libraryDb().prepare("UPDATE assets SET trashed_at = 1 WHERE id = 'ast_a2'").run();
-      await call("mem-a", "POST", `/api/editor/${id}/run`, {});
+      await call("maker", "POST", `/api/editor/${id}/run`, {});
       await drain();
-      expect((await json<Edit>(call("mem-a", "GET", `/api/editor/${id}`))).jobs[0]).toMatchObject({ state: "failed", error: expect.stringMatching(/no longer yours/) });
+      expect((await json<Edit>(call("maker", "GET", `/api/editor/${id}`))).jobs[0]).toMatchObject({ state: "failed", error: expect.stringMatching(/no longer yours/) });
     } finally {
       STEPS.analyze = real!;
       libraryDb().prepare("UPDATE assets SET trashed_at = NULL WHERE id = 'ast_a2'").run();

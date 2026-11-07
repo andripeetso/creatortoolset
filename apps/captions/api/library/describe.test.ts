@@ -33,14 +33,13 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 const app = new Hono<{ Variables: AuthVars }>();
 app.use(async (c, next) => {
-  c.set("user", { username: c.req.header("x-user") ?? "", role: "member" } as never);
+  c.set("user", { username: c.req.header("x-user") ?? "", role: "user" } as never);
   return next();
 });
 app.route("/api/library", searchApp);
 const call = (user: string, url: string, method = "GET", body?: unknown) =>
   app.request(url, { method, headers: { "x-user": user, "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
 
-const member = (username: string, role: string, ai: string, budgetUsd = 0) => ({ username, role, ai, budgetUsd, joinedAt: 0 });
 const clip = path.join(dir, "fixture.mp4");
 
 /** An asset with one ready video version; its source is the fixture clip unless `bytes` is given. */
@@ -72,39 +71,17 @@ beforeAll(() => {
   // two seconds, made here: nothing large is committed
   execFileSync(ffmpegCommand(), ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc=duration=2:size=160x120:rate=10",
     "-c:v", "libx264", "-pix_fmt", "yuv420p", clip]);
-  writeFileSync(
-    path.join(dir, "workspaces.json"),
-    JSON.stringify({
-      workspaces: [
-        { id: "ws_a", name: "Tiny Acrobatics", plan: "team", comped: false, createdAt: 0, members: [
-          member("local", "owner", "own"),
-          member("own-a", "member", "own"),
-          member("broke-a", "member", "budget", 0),
-        ] },
-      ],
-      invites: [],
-      spend: {},
-    }),
-  );
-  libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_a', 'ws_a', 'A', 'local', 0)").run();
+  libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_a', 'local', 'A', 'local', 0)").run();
 });
 
 describe("describe job", () => {
-  it("a member on their own AI with none connected → skipped as needs_key, never failed, nothing written", async () => {
-    const v = await seed("ast-own-001", "own-a", "not a video");
-    enqueueJob(libraryDb(), "lib_a", v, "describe", "own-a");
+  it("an account with no AI connected → skipped as needs_key, never failed, nothing written", async () => {
+    const v = await seed("ast-own-001", "local", "not a video");
+    enqueueJob(libraryDb(), "lib_a", v, "describe", "local");
     expect(await tick()).toBe(true);
     expect(job(v, "describe")).toEqual({ state: "needs_key", error: expect.stringMatching(/AI provider/) });
     expect(libraryDb().prepare("SELECT COUNT(*) AS n FROM descriptions WHERE version_id = ?").get(v)).toEqual({ n: 0 });
     expect((libraryDb().prepare("SELECT state FROM asset_versions WHERE id = ?").get(v) as { state: string }).state).toBe("ready");
-    expect(completeVisionWithFallback).not.toHaveBeenCalled();
-  });
-
-  it("a member on an API budget with nothing left → skipped as needs_key", async () => {
-    const v = await seed("ast-broke-01", "broke-a", "not a video");
-    enqueueJob(libraryDb(), "lib_a", v, "describe", "broke-a");
-    await tick();
-    expect(job(v, "describe")).toEqual({ state: "needs_key", error: expect.stringMatching(/used up/) });
     expect(completeVisionWithFallback).not.toHaveBeenCalled();
   });
 
@@ -142,7 +119,7 @@ describe("describe job", () => {
     const c = card("ast-ai-0001");
     expect(c.description).toEqual({ source: "ai", text: "A person rolls across a blue mat." });
     expect(c.aiTags).toEqual(["roll"]); // a human's tag keeps its source
-    const hits = (await (await call("own-a", "/api/library/lib_a/search?q=blue")).json()) as { asset: { id: string } }[];
+    const hits = (await (await call("local", "/api/library/lib_a/search?q=blue")).json()) as { asset: { id: string } }[];
     expect(hits.map((h) => h.asset.id)).toEqual(["ast-ai-0001"]);
   });
 
@@ -171,25 +148,24 @@ describe("describe job", () => {
 
 describe("a human description", () => {
   it("wins on the card and in search, whatever the AI writes after it", async () => {
-    const v = await seed("ast-human-01", "own-a", "x");
+    const v = await seed("ast-human-01", "local", "x");
     expect((await call("local", "/api/library/lib_a/assets/ast-human-01", "PATCH", { description: "Our best cartwheel take" })).status).toBe(200);
     saveDescribed(libraryDb(), v, { description: "A person turns sideways.", tags: ["cartwheel"] }, "test");
     expect(card("ast-human-01").description).toEqual({ source: "user", text: "Our best cartwheel take" });
     const row = libraryDb().prepare("SELECT description FROM search_assets WHERE asset_id = 'ast-human-01'").get() as { description: string };
     expect(row.description).toBe("Our best cartwheel take");
     // removed: the AI's shows again
-    await call("own-a", "/api/library/lib_a/assets/ast-human-01", "PATCH", { description: "" });
+    await call("local", "/api/library/lib_a/assets/ast-human-01", "PATCH", { description: "" });
     expect(card("ast-human-01").description).toEqual({ source: "ai", text: "A person turns sideways." });
   });
 
   it("tags are the whole list: one left out goes, a new one is the person's", async () => {
-    const r = await call("own-a", "/api/library/lib_a/assets/ast-human-01", "PATCH", { tags: ["best take"] });
+    const r = await call("local", "/api/library/lib_a/assets/ast-human-01", "PATCH", { tags: ["best take"] });
     expect((await r.json()) as { tags: string[]; aiTags: string[] }).toMatchObject({ tags: ["best take"], aiTags: [] });
   });
 
-  it("only the uploader or the owner edits; outsiders get 404", async () => {
+  it("only the owner edits; outsiders get 404", async () => {
     await seed("ast-local-01", "local", "x");
-    expect((await call("own-a", "/api/library/lib_a/assets/ast-local-01", "PATCH", { description: "mine now" })).status).toBe(403);
     expect((await call("stranger", "/api/library/lib_a/assets/ast-local-01", "PATCH", { description: "x" })).status).toBe(404);
   });
 });

@@ -4,7 +4,6 @@ import { createHash, createHmac, randomBytes, scrypt, timingSafeEqual } from "no
 import { promisify } from "node:util";
 import type { AuthVars } from "../auth";
 import { env } from "../lib/env";
-import { canManage } from "../lib/workspaces";
 import type { AssetCard, ShareCreated, ShareInput, ShareRow, SharedItem, SharedView } from "../../contracts/library";
 import { libraryRole } from "./access";
 import { libraryDb } from "./db";
@@ -170,8 +169,8 @@ shareApp.get("/:id/shares", (c) => {
   const role = libraryRole(user.username, libraryId);
   if (!role) return notFound(c);
   const rows = db()
-    .prepare("SELECT * FROM shares WHERE library_id = ? AND expires_at > ? AND (? = 1 OR created_by = ?) ORDER BY expires_at DESC")
-    .all(libraryId, Date.now(), canManage(role) ? 1 : 0, user.username) as unknown as ShareDb[];
+    .prepare("SELECT * FROM shares WHERE library_id = ? AND expires_at > ? ORDER BY expires_at DESC")
+    .all(libraryId, Date.now()) as unknown as ShareDb[];
   const shares: ShareRow[] = rows.map((r) => ({
     id: r.token_hash,
     target: { kind: r.target_kind, id: r.target_id },
@@ -192,7 +191,6 @@ shareApp.delete("/shares/:tokenHash", (c) => {
     | undefined;
   const role = s ? libraryRole(user.username, s.library_id) : null;
   if (!s || !role) return notFound(c);
-  if (!canManage(role) && s.created_by !== user.username) return c.json({ error: "Only the creator or the owner can revoke it", code: "forbidden" }, 403);
   db().prepare("DELETE FROM shares WHERE token_hash = ?").run(c.req.param("tokenHash"));
   return c.json({ ok: true });
 });

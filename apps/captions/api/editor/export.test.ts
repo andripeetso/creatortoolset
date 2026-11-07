@@ -9,14 +9,6 @@ mkdirSync(scratch, { recursive: true });
 const dir = mkdtempSync(path.join(scratch, "editor-export-"));
 process.env.DATA_DIR = dir;
 process.env.APP_SECRET = "editor-export-test-secret";
-writeFileSync(
-  path.join(dir, "workspaces.json"),
-  JSON.stringify({
-    workspaces: [{ id: "ws_a", name: "Tiny Acrobatics", plan: "team", comped: false, createdAt: 0, members: [{ username: "mem-a", role: "owner", ai: "own", budgetUsd: 0, joinedAt: 0 }] }],
-    invites: [],
-    spend: {},
-  }),
-);
 
 const { createUser } = await import("../users");
 const app = (await import("../boot")).default;
@@ -65,8 +57,8 @@ beforeAll(() => {
   createUser("mem-a", "password1", { role: "user" });
   libraryDb().exec(`
     INSERT INTO libraries (id, workspace_id, name, storage_kind, storage_config, created_at) VALUES
-      ('lib_a', 'ws_a', 'A', 'local', NULL, 0),
-      ('lib_s3', 'ws_a', 'Bucket', 's3', '{"mode":"own","endpoint":"http://127.0.0.1:9","region":"us-east-1","bucket":"tiny","pathStyle":true,"accessKey":"test","secretKey":"test"}', 0);
+      ('lib_a', 'mem-a', 'A', 'local', NULL, 0),
+      ('lib_s3', 'mem-a', 'Bucket', 's3', '{"mode":"own","endpoint":"http://127.0.0.1:9","region":"us-east-1","bucket":"tiny","pathStyle":true,"accessKey":"test","secretKey":"test"}', 0);
     INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES
       ('ast_1', 'lib_a', 'video', 'Take A', 'mem-a', 0), ('ast_2', 'lib_a', 'video', 'Take A', 'mem-a', 0),
       ('ast_3', 'lib_a', 'video', 'Watched', 'mem-a', 0), ('ast_4', 'lib_s3', 'video', 'Take A', 'mem-a', 0);

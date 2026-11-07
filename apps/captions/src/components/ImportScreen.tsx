@@ -24,7 +24,6 @@ import {
   type SessionMeta,
 } from "@/lib/persist";
 import { fmtClock } from "@/lib/ass";
-import { isGuest, useViewedMe } from "@/lib/auth";
 import { confirmDiscardUnsavedProject } from "@/lib/persistence-guard";
 import { PersistenceBadge } from "./PersistenceStatus";
 import { AppBar } from "./AppBar";
@@ -296,8 +295,6 @@ function SessionsBlock({
 export function ImportScreen() {
   const importFiles = useStudio((s) => s.importFiles);
   const hasCurrentProject = useStudio((s) => s.clips.length > 0);
-  const me = useViewedMe();
-  const guest = isGuest(me);
   const [drag, setDrag] = useState(false);
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
   const [deletedSessions, setDeletedSessions] = useState<DeletedSessionMeta[]>(
@@ -326,11 +323,6 @@ export function ImportScreen() {
   };
 
   useEffect(() => {
-    if (guest) {
-      setSessions([]);
-      setDeletedSessions([]);
-      return;
-    }
     let cancelled = false;
     void Promise.all([listSessions(), listDeletedSessions()]).then(
       ([projects, deleted]) => {
@@ -342,7 +334,7 @@ export function ImportScreen() {
     return () => {
       cancelled = true;
     };
-  }, [guest]);
+  }, []);
 
   const open = async (id: string) => {
     if (!confirmDiscardUnsavedProject("Open another project")) return;
@@ -467,12 +459,6 @@ export function ImportScreen() {
           <p className="text-sm text-zinc-500">
             Transcribe · caption · export with alpha
           </p>
-          {me?.role === "guest" && (
-            <p className="mt-0.5 text-xs text-amber-400/80">
-              Guest mode — work is recoverable on this device, but is not synced
-              to an account
-            </p>
-          )}
         </div>
       </div>
 

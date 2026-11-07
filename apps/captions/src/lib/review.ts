@@ -190,11 +190,6 @@ export const patchReviewAsset = (
   },
 ) => call<ReviewAsset>(`/api/review/assets/${id}`, send("PATCH", patch));
 
-/** Admins: a copy on the demo account, for "See the demo" on the login screen. */
-export const copyReviewAssetToDemo = (id: string) =>
-  call<{ id: string }>(`/api/review/assets/${id}/demo`, send("POST"));
-
-/** `from`'s versions go on top of `onto`'s stack; `from` is gone after. */
 export const stackReviewAssets = (onto: string, from: string) =>
   call<ReviewAsset>(`/api/review/assets/${onto}/stack`, send("POST", { from }));
 

@@ -25,7 +25,7 @@ export function ServiceKeysSection() {
   const run = (p: Promise<unknown>) => p.then(load).catch((e) => setError(String(e.message ?? e)));
   if (!keys) return error ? <Notice tone="error">{error}</Notice> : <Loading />;
   return (
-    <Group title="API keys" hint="The server's own keys: they serve you (the platform admin), members a workspace owner gave an API budget (AI and transcripts, billed to that budget), and guests and the demo when switched on in Server. Everyone else uses their own keys from Settings → My API keys.">
+    <Group title="API keys" hint="The server's own keys: they serve you (the platform admin), never your AI. Any other account uses its own keys from Settings → My API keys.">
       <Card>
         {keys.map((k) => (
           <KeyRow

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -15,14 +15,6 @@ const dir = mkdtempSync(path.join(scratch, "editor-script-"));
 process.env.DATA_DIR = dir;
 process.env.APP_SECRET = "editor-script-test-secret";
 delete process.env.ANTHROPIC_API_KEY;
-writeFileSync(
-  path.join(dir, "workspaces.json"),
-  JSON.stringify({
-    workspaces: [{ id: "ws_a", name: "Tiny Acrobatics", plan: "team", comped: false, createdAt: 0, members: [{ username: "mem-a", role: "owner", ai: "own", budgetUsd: 0, joinedAt: 0 }] }],
-    invites: [],
-    spend: {},
-  }),
-);
 
 const { aiFor, completeWithFallback } = await import("../ai-complete");
 const { libraryDb } = await import("../library/db");
@@ -50,14 +42,14 @@ const answer = {
 let editId = "";
 const scriptJob = () => libraryDb().prepare("SELECT state, error FROM edit_jobs WHERE edit_id = ? AND kind = 'script'").get(editId) as { state: string; error: string | null };
 async function runScript() {
-  enqueueJob(libraryDb(), "ws_a", `${editId}:`, "script", "mem-a", true, "edit_jobs");
+  enqueueJob(libraryDb(), "mem-a", `${editId}:`, "script", "mem-a", true, "edit_jobs");
   await tick();
   return scriptJob();
 }
 
 beforeAll(async () => {
   libraryDb().exec(`
-    INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_a', 'ws_a', 'A', 'local', 0);
+    INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_a', 'mem-a', 'A', 'local', 0);
     INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES ('ast_a', 'lib_a', 'video', 'Take A', 'mem-a', 0), ('ast_b', 'lib_a', 'video', 'Take B', 'mem-a', 0);
     INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at) VALUES
       ('ver_a', 'ast_a', 1, 'k1', 1, 'x1', 'ready', 'mem-a', 0), ('ver_b', 'ast_b', 1, 'k2', 1, 'x2', 'ready', 'mem-a', 0);
@@ -123,7 +115,7 @@ describe("AI Editor script: the step", () => {
     });
     expect(await runScript()).toEqual({ state: "done", error: null });
     expect(vi.mocked(aiFor)).toHaveBeenLastCalledWith(expect.objectContaining({ username: "mem-a" }), "editor", "AI Editor script");
-    const view = viewOf(readEdit(editId)!, "mem-a");
+    const view = viewOf(readEdit(editId)!);
     expect(view.lines.map((l) => l.id)).toEqual(["L1", "L2"]);
     expect(view.plans.map((p) => p.name)).toEqual(["v1", "v2"]);
     expect(view.notes).toContain("Line L3 has no take in the footage: left out");

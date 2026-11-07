@@ -6,7 +6,6 @@ import type { AuthVars } from "../auth";
 import type { WatchFolder, WatchStatus } from "../../contracts/library";
 import { env } from "../lib/env";
 import { freeBytes, sha256File } from "../lib/uploads";
-import { canManage } from "../lib/workspaces";
 import { libraryRole } from "./access";
 import { blobs, libraryDb } from "./db";
 import { enqueueJob } from "./jobs";
@@ -100,7 +99,6 @@ const withFound = async (s: WatchStatus): Promise<WatchStatus> => ({
 watchApp.get("/:id/watch", async (c) => {
   const role = libraryRole(c.get("user").username, c.req.param("id"));
   if (!role) return c.json({ error: "Not found", code: "not_found" }, 404);
-  if (!canManage(role)) return c.json({ error: "Only the owner sets watch folders", code: "forbidden" }, 403);
   return c.json(await withFound(status(c.req.param("id"))));
 });
 
@@ -110,7 +108,6 @@ watchApp.put("/:id/watch", async (c) => {
   const libraryId = c.req.param("id");
   const role = libraryRole(user.username, libraryId);
   if (!role) return c.json({ error: "Not found", code: "not_found" }, 404);
-  if (!canManage(role)) return c.json({ error: "Only the owner sets watch folders", code: "forbidden" }, 403);
   if (!watchAllowed()) {
     return c.json({ error: "This server is not on your computer, so it cannot watch your folders. Upload the files instead.", code: "forbidden" }, 403);
   }
@@ -206,8 +203,8 @@ async function ingest(libraryId: string, f: WatchFolder, file: string, size: num
 async function scanLibrary(libraryId: string, now: number): Promise<number> {
   let took = 0;
   for (const f of foldersOf(libraryId)) {
-    // files come in as the owner who added the folder, while they still own the workspace; never as anyone else
-    if (!canManage(libraryRole(f.addedBy, libraryId) ?? undefined)) continue;
+    // files come in as the owner who added the folder, while the library is still theirs; never as anyone else
+    if (!libraryRole(f.addedBy, libraryId)) continue;
     let files: string[];
     try {
       files = await filesIn(f.path);

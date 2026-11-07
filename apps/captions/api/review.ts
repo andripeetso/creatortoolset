@@ -1,13 +1,12 @@
 import { Hono, type Context } from "hono";
 import { spawn, type ChildProcess } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { createWriteStream, existsSync } from "node:fs";
-import { copyFile, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import type { AuthVars } from "./auth";
 import { sendFile } from "./lib/send-file";
-import type { Expired } from "./retention";
 
 import { ffmpegCommand } from "./ffmpeg-runtime";
 import {
@@ -24,14 +23,13 @@ import {
 } from "./lib/uploads";
 import { env } from "./lib/env";
 import { clipReadyToEdit, createProjectFromFile, linkOrCopy } from "./projects";
-import { DEMO_USER, findUser, isDemoName, USERNAME_RE, type SessionUser } from "./users";
-import { takeGuest } from "./guest";
+import { findUser, USERNAME_RE, type SessionUser } from "./users";
+import { homeOf } from "./library/access";
 import { blobs, libraryDb } from "./library/db";
 import { enqueueJob } from "./library/jobs";
 import { probe as probeSummary } from "./library/media/probe";
 import { indexAsset } from "./library/query";
 import { deleteAssets } from "./library/trash";
-import { ensureWorkspace } from "./lib/workspaces";
 
 export { sendFile };
 
@@ -475,20 +473,18 @@ async function resumePending(): Promise<void> {
  * (`versionId` in the meta). Review stays the source of truth: toLibrary(id) makes the library's rows match the meta
  * and the files on disk, whatever just changed. The library's files are hard links to Review's, so Review's renames
  * (order, stack, unstack, trash) never break them. Comments, drawings, approvals and share links stay in Review,
- * keyed by version. Demo and guest videos stay out of the library. No AI runs on the way in: transcribe and describe
+ * keyed by version. No AI runs on the way in: transcribe and describe
  * wait until someone asks for them in the library (they spend that person's key).
  */
-const notInLibrary = (owner: string) => /^guest(-|$)/.test(owner) || owner === DEMO_USER || isDemoName(owner);
 
-/** The library a Review owner's videos go in: their workspace's first, made when there is none. */
+/** The library a Review owner's videos go in: their first, made when there is none. */
 function libraryFor(owner: string): string | null {
-  const w = ensureWorkspace(owner);
-  if (!w) return null;
+  const home = homeOf(owner);
   const d = libraryDb();
-  const found = d.prepare("SELECT id FROM libraries WHERE workspace_id = ? ORDER BY created_at, id LIMIT 1").get(w.id) as { id: string } | undefined;
+  const found = d.prepare("SELECT id FROM libraries WHERE workspace_id = ? ORDER BY created_at, id LIMIT 1").get(home) as { id: string } | undefined;
   if (found) return found.id;
   const id = `lib_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
-  d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES (?, ?, 'Library', 'local', ?)").run(id, w.id, Date.now());
+  d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES (?, ?, 'Library', 'local', ?)").run(id, home, Date.now());
   return id;
 }
 
@@ -534,7 +530,7 @@ export async function toLibrary(id: string): Promise<void> {
     if (row) await deleteAssets([id]);
     return;
   }
-  if (notInLibrary(m.owner) || m.versions.some((x) => !x.versionId)) return;
+  if (m.versions.some((x) => !x.versionId)) return;
   const libraryId = row?.library_id ?? libraryFor(m.owner);
   if (!libraryId) return;
   const dir = live ? assetDir(id) : trashDir(id);
@@ -735,7 +731,7 @@ interface Viewer {
 }
 
 const realUser = (u: SessionUser | undefined) =>
-  u && u.role !== "guest" ? u.username : undefined;
+  u && u.role !== "visitor" ? u.username : undefined;
 
 async function viewer(c: Context<{ Variables: AuthVars }>): Promise<Viewer | null> {
   const user = c.get("user");
@@ -754,9 +750,7 @@ async function viewer(c: Context<{ Variables: AuthVars }>): Promise<Viewer | nul
     if (!meta?.share?.enabled || meta.share.token !== token) return null;
     return { meta, ...reviewer, download: meta.share.download };
   }
-  let meta = await readMeta(c.req.param("id") ?? "");
-  // a demo visitor opening one of the demo's own videos gets their copy
-  if (meta?.owner === DEMO_USER && isDemoName(user.username)) meta = await readMeta(demoCopyId(user.username, meta.id));
+  const meta = await readMeta(c.req.param("id") ?? "");
   if (!meta || (meta.owner !== user.username && user.role !== "admin")) return null;
   return { meta, manage: true, download: true, user: user.username, guestKey };
 }
@@ -785,8 +779,6 @@ function patchShare(cur: Share | undefined, patch: { enabled?: unknown; download
   return { share, oldToken };
 }
 
-/** The name a comment or approval shows: a demo visitor is "You" in their own copy. */
-const nameOf = (v: Viewer) => (v.user && isDemoName(v.user) ? "You" : v.user);
 
 const isAuthor = (v: Viewer, cm: Comment) =>
   (!!v.user && cm.user === v.user) || (!!v.guestKey && cm.guestKey === v.guestKey);
@@ -870,9 +862,6 @@ async function uploadInit(c: Context<{ Variables: AuthVars }>): Promise<Response
   if (projectId && !(await ownsProject(user.username, projectId))) {
     return c.json({ error: "That project is gone" }, 404);
   }
-  // guests upload under a daily cap (guest.ts), charged when an upload starts
-  const capped = user.role === "guest" ? takeGuest(user, "bytes", size) : null;
-  if (capped) return c.json({ error: capped }, 429);
   return {
     total: size,
     partSize: PART_SIZE,
@@ -1029,8 +1018,6 @@ reviewApp.post("/assets/:id/v/:n/captions", async (c) => {
   const version = v?.meta.versions.find((x) => x.n === n);
   if (!v || !version) return c.json({ error: "Not found" }, 404);
   const user = c.get("user");
-  // a Caption Studio project stays on the server: guests keep theirs in the browser
-  if (user.role === "guest") return c.json({ error: "Opening Review videos in Caption Studio needs an account" }, 403);
   const id = v.meta.id;
   if (version.removed) return c.json(REMOVED, 410);
   if (!existsSync(sourcePath(id, n))) return c.json({ error: "This version is still uploading" }, 409);
@@ -1111,91 +1098,6 @@ async function trashAsset(id: string): Promise<void> {
   await syncLibrary(id);
 }
 
-// ---------- the demo ("See the demo" on the login screen, auth.ts) ----------
-
-/** Video files hard-linked (only ever replaced by rename), the JSON copied: neither copy changes the other. */
-const COPIED = /\.json$/;
-async function cloneDir(from: string, to: string): Promise<void> {
-  await mkdir(to, { recursive: true });
-  for (const e of await readdir(from, { withFileTypes: true })) {
-    const [a, b] = [path.join(from, e.name), path.join(to, e.name)];
-    if (e.isDirectory()) await cloneDir(a, b);
-    else if (e.name.includes(".tmp-")) continue;
-    else if (COPIED.test(e.name)) await copyFile(a, b);
-    else await linkOrCopy(a, b);
-  }
-}
-
-/** `id` as `to`, owned by `owner`: every version and comment, no share link, and no
- *  commenter accounts (nobody gets told about a demo visitor's replies). */
-async function copyAsset(id: string, to: string, owner: string, patch: (m: Meta) => void): Promise<string | null> {
-  return withLock(id, async () => {
-    const meta = await readMeta(id);
-    if (!meta) return "Not found";
-    if (processing(meta)) return "Wait until it's done processing";
-    try {
-      await cloneDir(assetDir(id), assetDir(to));
-      const copy: Meta = { ...meta, id: to, owner, updatedAt: Date.now() };
-      copy.versions = copy.versions.map((x) => ({ ...x, versionId: undefined })); // a copy is never the same library version
-      delete copy.share;
-      patch(copy);
-      await writeJson(metaPath(to), copy);
-      const comments = await readComments(to);
-      for (const cm of comments) {
-        delete cm.user;
-        delete cm.guestKey;
-      }
-      await writeJson(commentsPath(to), comments);
-      return null;
-    } catch (e) {
-      await rm(assetDir(to), { recursive: true, force: true });
-      throw e;
-    }
-  });
-}
-
-/** Admins: this video on the demo account, every version and comment, but not
- *  its folder or Caption Studio links (the demo can't open those). */
-reviewApp.post("/assets/:id/demo", async (c) => {
-  const v = await viewer(c);
-  if (!v || c.get("user").role !== "admin") return c.json({ error: "Not found" }, 404);
-  if (!findUser(DEMO_USER)) {
-    return c.json({ error: `Make an account called "${DEMO_USER}" first (Admin → Access)` }, 409);
-  }
-  const id = randomUUID();
-  const error = await copyAsset(v.meta.id, id, DEMO_USER, (m) => {
-    m.createdAt = m.updatedAt;
-    delete m.projectId;
-    m.versions = m.versions.map((x) => ({ ...x, captions: undefined }));
-  });
-  return error ? c.json({ error }, error === "Not found" ? 404 : 409) : c.json({ ok: true, id });
-});
-
-/** A demo visitor's copy of one of the demo's videos or folders: derived, so the
- *  demo's own links open theirs (viewer). */
-export function demoCopyId(visitor: string, id: string): string {
-  const h = createHash("sha256").update(`${visitor}:${id}`).digest("hex");
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`;
-}
-
-/** A demo visitor's own Review (auth.ts, when they come in): the demo's videos
- *  and folders, theirs to comment, draw on, approve and rearrange; retention
- *  takes it after a day. */
-export async function cloneDemoReview(visitor: string): Promise<void> {
-  const folders = (await readProjects()).filter((p) => p.owner === DEMO_USER);
-  if (folders.length) {
-    await updateProjects((list) => {
-      for (const p of folders) list.push({ id: demoCopyId(visitor, p.id), name: p.name, owner: visitor, createdAt: p.createdAt });
-    });
-  }
-  for (const m of await allMetas()) {
-    if (m.owner !== DEMO_USER) continue;
-    await copyAsset(m.id, demoCopyId(visitor, m.id), visitor, (copy) => {
-      if (copy.projectId) copy.projectId = demoCopyId(visitor, copy.projectId);
-    }).catch((e) => console.warn(`[demo] copy ${m.id} for ${visitor}: ${e}`));
-  }
-}
-
 // ---------- trash ----------
 
 async function readTrashed(id: string): Promise<Meta | null> {
@@ -1274,37 +1176,6 @@ async function purgeTrash(): Promise<void> {
 }
 void purgeTrash().catch(() => {});
 setInterval(() => void purgeTrash().catch(() => {}), 6 * 3600_000).unref();
-
-/** Retention (api/retention.ts): delete the videos it picks (a comment counts
- *  as a change), trash included, then their owners' folders left empty. */
-export async function purgeExpiredReview(expired: Expired): Promise<void> {
-  for (const m of await allMetas()) {
-    const commented = (await stat(commentsPath(m.id)).catch(() => null))?.mtimeMs ?? 0;
-    if (!expired(m.owner, Math.max(m.updatedAt, commented))) continue;
-    for (const [key, child] of children) if (key.startsWith(`${m.id}/`)) child.kill("SIGKILL");
-    await withLock(m.id, async () => {
-      if (m.share) await rm(linkPath(m.share.token), { force: true });
-      await rm(assetDir(m.id), { recursive: true, force: true });
-    });
-    await syncLibrary(m.id);
-  }
-  for (const id of await readdir(path.join(ROOT, "trash")).catch(() => [] as string[])) {
-    const m = await readTrashed(id);
-    if (m && expired(m.owner, m.deletedAt ?? m.updatedAt)) {
-      await withLock(id, () => rm(trashDir(id), { recursive: true, force: true }));
-      await syncLibrary(id);
-    }
-  }
-  const filed = new Set((await allMetas()).map((m) => m.projectId));
-  const gone = (p: Project) => !filed.has(p.id) && expired(p.owner, p.createdAt);
-  if (!(await readProjects()).some(gone)) return;
-  const removed = await updateProjects((list) => {
-    const out = list.filter(gone);
-    list.splice(0, list.length, ...list.filter((p) => !gone(p)));
-    return out;
-  });
-  for (const p of removed) if (p.share) await rm(linkPath(p.share.token), { force: true });
-}
 
 // ---------- stacks: drop a video on another, or break one apart ----------
 
@@ -1843,7 +1714,7 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
     if (!version) return c.json({ error: "Unknown version" }, 400);
     const refs = parentId ? [] : await cleanRefs(v.meta.id, version.n, body?.refs);
     if (!text && !drawing && !refs.length) return c.json({ error: "Write a comment first" }, 400);
-    const author = nameOf(v) ?? cleanText(body?.author, 60);
+    const author = v.user ?? cleanText(body?.author, 60);
     if (!author) return c.json({ error: "Add your name first" }, 400);
     if (!v.user && (!v.guestKey || v.guestKey.length < 16)) {
       return c.json({ error: "Missing reviewer key" }, 400);
@@ -1942,7 +1813,7 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
     if (!v) return c.json({ error: "Not found" }, 404);
     const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
     const status = APPROVALS.find((a) => a === body?.status);
-    const by = nameOf(v) ?? cleanText(body?.author, 60);
+    const by = v.user ?? cleanText(body?.author, 60);
     if (!status || (!v.manage && !REVIEWER_APPROVALS.includes(status)) || !by) {
       return c.json({ error: "Invalid status" }, 400);
     }

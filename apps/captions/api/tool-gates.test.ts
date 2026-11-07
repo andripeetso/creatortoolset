@@ -85,9 +85,9 @@ describe("boot", () => {
   it("marks the sign-in cookie Secure only when the request came in over HTTPS", async () => {
     const cookie = async (url: string, headers: Record<string, string> = {}) =>
       (await app.request(url, { method: "POST", headers })).headers.get("set-cookie")!;
-    expect(await cookie("http://10.0.0.20:43128/api/auth/guest")).not.toMatch(/Secure/);
-    expect(await cookie("https://tools.example.com/api/auth/guest")).toMatch(/; Secure/);
-    expect(await cookie("http://app:3000/api/auth/guest", { "x-forwarded-proto": "https" })).toMatch(/; Secure/);
+    expect(await cookie("http://10.0.0.20:43128/api/auth/logout")).not.toMatch(/Secure/);
+    expect(await cookie("https://tools.example.com/api/auth/logout")).toMatch(/; Secure/);
+    expect(await cookie("http://app:3000/api/auth/logout", { "x-forwarded-proto": "https" })).toMatch(/; Secure/);
     expect(await cookie("http://app:3000/api/auth/logout", { "x-forwarded-proto": "http" })).not.toMatch(/Secure/);
   });
 

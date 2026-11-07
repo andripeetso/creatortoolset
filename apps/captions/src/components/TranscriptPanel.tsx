@@ -10,7 +10,6 @@ import {
   X,
 } from "lucide-react";
 import { isEditorBusy, narrowerThanMatched, playerRef, useStudio } from "@/lib/store";
-import { useViewedMe } from "@/lib/auth";
 import { aiStatus, type AiStatus } from "@/lib/refine";
 import { MODELS, CLOUD_MODEL, CLOUD_MODEL_ID } from "@/lib/transcribe";
 import { tokenize } from "@/lib/align";
@@ -338,7 +337,6 @@ export function TranscriptPanel() {
   const narrower = useStudio(narrowerThanMatched);
   const fitSplits = useStudio((s) => s.fitSplits);
   const fittingSplits = useStudio((s) => s.fittingSplits);
-  const isGuest = useViewedMe()?.role === "guest";
   const [ai, setAi] = useState<AiStatus | null>(null);
   useEffect(() => {
     aiStatus().then(setAi);
@@ -915,19 +913,17 @@ export function TranscriptPanel() {
               // matched thoughts stay
               cadenceApplied && !dirty && narrower ? fitSplits() : refineCues()
             }
-            disabled={empty || editorBusy || isGuest || !ai.allowed || fittingSplits}
+            disabled={empty || editorBusy || !ai.allowed || fittingSplits}
             title={
-              isGuest
-                ? "Not available in guest mode — sign in with an account"
-                : !ai.allowed
-                  ? "The AI caption pass is locked for your account — ask the admin"
-                  : dirty
-                    ? "The transcript changed since the cadence pass — re-group the captions to the speech rhythm"
-                    : cadenceApplied && narrower
-                      ? "Some lines no longer fit where the cadence match planned its breaks — match again for this box width"
-                      : cadenceApplied
-                      ? "Cadence is matched — resizing the box re-lays out the same thoughts. Click to match again."
-                      : "AI: group captions into the thoughts as they're spoken"
+              !ai.allowed
+                ? "The AI caption pass is locked for your account"
+                : dirty
+                  ? "The transcript changed since the cadence pass — re-group the captions to the speech rhythm"
+                  : cadenceApplied && narrower
+                    ? "Some lines no longer fit where the cadence match planned its breaks — match again for this box width"
+                    : cadenceApplied
+                    ? "Cadence is matched — resizing the box re-lays out the same thoughts. Click to match again."
+                    : "AI: group captions into the thoughts as they're spoken"
             }
             className={
               cadenceApplied && !dirty && !narrower && !editorBusy
@@ -970,7 +966,7 @@ export function TranscriptPanel() {
                 onClick={() => setMenuOpen(false)}
               />
               <div className="absolute right-0 top-full z-40 mt-1 w-44 overflow-hidden rounded-md border border-zinc-700 bg-[#16161c] shadow-xl">
-                {ai?.available && ai.allowed && !isGuest && (
+                {ai?.available && ai.allowed && (
                   <>
                     <button
                       onClick={() => {

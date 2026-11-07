@@ -1,4 +1,3 @@
-import { isGuest, useAuth } from "./auth";
 import { getProjectPersistenceStatus } from "./persistence-status";
 import { useStudio } from "./store";
 
@@ -10,7 +9,6 @@ export function currentProjectPersistenceStatus() {
     saveState: state.saveState,
     localSaveState: state.localSaveState,
     clips: state.clips,
-    guest: isGuest(useAuth.getState().me),
   });
 }
 

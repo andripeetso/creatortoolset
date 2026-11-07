@@ -21,11 +21,6 @@ export async function cleanRequest(
 }
 export const loadCleanSource = (id: string, signal?: AbortSignal) =>
   cleanRequest(`${base}/${encodeURIComponent(id)}`, { signal });
-/** "See the demo": the demo's finished run, opened on /clean. */
-export async function loadShowcaseSource(signal?: AbortSignal) {
-  const { id } = await cleanRequest(`${base}/showcase`, { signal });
-  return loadCleanSource(id, signal);
-}
 export const createCleanVersion = (id: string, options: CleanOptions) =>
   cleanRequest(`${base}/${id}/versions`, {
     method: "POST",

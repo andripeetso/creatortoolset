@@ -51,7 +51,7 @@ describe("the assistant's job token", () => {
     expect((await app.request("/api/mcp", { method: "POST", ...json({ jsonrpc: "2.0", id: 1, method: "tools/list" }, { authorization: job }) })).status).toBe(200);
     // not a Full key, so never a key that could rotate: and nothing outside /api/mcp
     expect((await app.request("/api/workshop/projects", { headers: { authorization: job } })).status).toBe(401);
-    expect((await app.request("/api/admin/users", { headers: { authorization: job } })).status).toBe(401);
+    expect((await app.request("/api/service-keys", { headers: { authorization: job } })).status).toBe(401);
     expect((await app.request("/api/providers", { headers: { authorization: job } })).status).toBe(401);
     expect((await app.request("/api/devices", { headers: { authorization: job } })).status).toBe(401);
     expect((await app.request("/api/my-keys/DEEPGRAM_API_KEY", { method: "PUT", ...json({ value: "x" }, { authorization: job }) })).status).toBe(401);

@@ -14,12 +14,7 @@ import {
   Trash2,
   TriangleAlert,
 } from "lucide-react";
-import { canUse, useViewedMe } from "@/lib/auth";
-import { isAdminForeignView } from "@/lib/admin-view";
-import {
-  AdminViewBanner,
-  AdminViewBorder,
-} from "@/components/AdminViewBanner";
+import { canUse, useMe } from "@/lib/auth";
 import { timeAgo } from "@/lib/exports";
 import {
   analyzerHome,
@@ -92,7 +87,7 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
   const embedded = !!fixedId;
   const navigate = useNavigate();
   const base = analyzerHome();
-  const me = useViewedMe();
+  const me = useMe();
   const allowed = canUse(me, "instagram");
   const [account, setAccount] = useState<InstagramAccount | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -305,7 +300,6 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
 
   return (
     <div className={`relative flex flex-col items-center text-zinc-200 ${embedded ? "pb-6" : "min-h-dvh bg-[#0b0b10] pb-[max(2.5rem,env(safe-area-inset-bottom))]"}`}>
-      {!embedded && isAdminForeignView(me, account?.owner) && <AdminViewBorder />}
       {!embedded && <AppBar tool="Content Analyzer" to={base} trail={account ? `@${account.username}` : undefined} account={!!me}>
         {me ? (
           <>
@@ -334,9 +328,6 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
           </p>
         ) : (
           <>
-            {isAdminForeignView(me, account.owner) && (
-              <AdminViewBanner owner={account.owner} noun="account" />
-            )}
             <div className="flex flex-wrap items-start gap-4">
               <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-full bg-zinc-800">
                 {account.avatarUrl && !brokenAvatar ? (

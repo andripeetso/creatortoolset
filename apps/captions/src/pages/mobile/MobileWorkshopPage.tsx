@@ -8,7 +8,7 @@ import { ProjectList } from "@/components/workspace/ProjectList";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
 import { DesktopHint } from "@/components/mobile/DesktopHint";
 import { MarkdownBody } from "@/components/MarkdownBody";
-import { canUse, useAuth, useViewedMe } from "@/lib/auth";
+import { canUse, useAuth, useMe } from "@/lib/auth";
 import { timeAgo } from "@/lib/exports";
 import { toolsetHomePath } from "@/lib/mobile";
 import { useWorkspace } from "@/lib/workspace";
@@ -44,7 +44,7 @@ function MobileChrome({
   backTo: string;
   backLabel: string;
 }) {
-  const me = useViewedMe();
+  const me = useMe();
   const required = useAuth((s) => s.required);
   return (
     <>
@@ -69,7 +69,7 @@ function MobileChrome({
 
 export default function MobileWorkshopPage() {
   const home = toolsetHomePath();
-  const me = useViewedMe();
+  const me = useMe();
   const allowed = canUse(me, "workshop");
   const currentProjectId = useWorkspace((s) => s.currentProjectId);
   const [sessions, setSessions] = useState<SessionRow[]>([]);
@@ -145,7 +145,7 @@ export function MobileWorkshopSessionPage() {
   const { sessionId = "" } = useParams();
   const navigate = useNavigate();
   const home = toolsetHomePath();
-  const me = useViewedMe();
+  const me = useMe();
   const allowed = canUse(me, "workshop");
   const currentProjectId = useWorkspace((s) => s.currentProjectId);
   const selectProject = useWorkspace((s) => s.select);

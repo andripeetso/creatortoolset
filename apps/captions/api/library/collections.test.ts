@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
@@ -49,27 +49,10 @@ function seed(id: string, title: string, by: string) {
 const ids = (listing: any) => listing.items.map((i: any) => i.id).sort();
 
 beforeAll(() => {
-  writeFileSync(
-    path.join(dir, "workspaces.json"),
-    JSON.stringify({
-      workspaces: [
-        {
-          id: "ws_a", name: "a", plan: "team", comped: false, createdAt: 0,
-          members: [
-            { username: "owner-a", role: "owner", ai: "own", budgetUsd: 0, joinedAt: 0 },
-            { username: "mem-a", role: "member", ai: "own", budgetUsd: 0, joinedAt: 0 },
-            { username: "mem-c", role: "member", ai: "own", budgetUsd: 0, joinedAt: 0 },
-          ],
-        },
-      ],
-      invites: [],
-      spend: {},
-    }),
-  );
-  libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_a', 'ws_a', 'A', 'local', 0)").run();
+  libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_a', 'owner-a', 'A', 'local', 0)").run();
   seed("e1", "Alpha reel", "owner-a");
-  seed("e2", "Beta reel", "mem-a");
-  seed("e3", "Alpha cut", "mem-c");
+  seed("e2", "Beta reel", "owner-a");
+  seed("e3", "Alpha cut", "owner-a");
 });
 
 describe("folders and collections", () => {
@@ -108,18 +91,17 @@ describe("folders and collections", () => {
     expect((await call("owner-a", "POST", `/api/library/lib_a/collections/${smart.id}/items`, { assetIds: ["e2"] })).status).toBe(409);
   });
 
-  it("a member edits their own collection; the owner edits any; every member may add items", async () => {
-    const mine = await data(call("mem-c", "POST", "/api/library/lib_a/collections", { name: "Mine" }));
-    expect((await call("mem-a", "PATCH", `/api/library/lib_a/collections/${mine.id}`, { name: "Taken" })).status).toBe(403);
-    expect((await call("owner-a", "PATCH", `/api/library/lib_a/collections/${mine.id}`, { name: "Owner's" })).status).toBe(200);
-    expect((await call("mem-c", "PATCH", `/api/library/lib_a/collections/${mine.id}`, { name: "Mine again" })).status).toBe(200);
-    expect(await data(call("mem-a", "POST", `/api/library/lib_a/collections/${mine.id}/items`, { assetIds: ["e2"] }))).toEqual({ added: 1 });
+  it("the owner renames a collection and adds items; another account gets 404", async () => {
+    const mine = await data(call("owner-a", "POST", "/api/library/lib_a/collections", { name: "Mine" }));
+    expect((await call("stranger", "PATCH", `/api/library/lib_a/collections/${mine.id}`, { name: "Taken" })).status).toBe(404);
+    expect((await call("owner-a", "PATCH", `/api/library/lib_a/collections/${mine.id}`, { name: "Mine again" })).status).toBe(200);
+    expect(await data(call("owner-a", "POST", `/api/library/lib_a/collections/${mine.id}/items`, { assetIds: ["e2"] }))).toEqual({ added: 1 });
   });
 });
 
 describe("trash", () => {
   it("a trashed asset leaves the library, shows in the trash, and comes back on restore", async () => {
-    seed("t1", "Trash me", "mem-a");
+    seed("t1", "Trash me", "owner-a");
     expect((await call("owner-a", "DELETE", "/api/library/lib_a/assets/t1")).status).toBe(200);
 
     expect(ids(await data(call("owner-a", "GET", "/api/library/lib_a/assets")))).not.toContain("t1");
@@ -130,11 +112,11 @@ describe("trash", () => {
     expect(ids(await data(call("owner-a", "GET", "/api/library/lib_a/assets")))).toContain("t1");
   });
 
-  it("only the uploader or the owner moves an asset to or from the trash", async () => {
-    seed("t2", "Keep me", "mem-a");
-    expect((await call("mem-c", "DELETE", "/api/library/lib_a/assets/t2")).status).toBe(403);
-    expect((await call("mem-a", "DELETE", "/api/library/lib_a/assets/t2")).status).toBe(200);
-    expect((await call("mem-c", "POST", "/api/library/lib_a/assets/t2/restore")).status).toBe(403);
+  it("only the owner moves an asset to or from the trash", async () => {
+    seed("t2", "Keep me", "owner-a");
+    expect((await call("stranger", "DELETE", "/api/library/lib_a/assets/t2")).status).toBe(404);
+    expect((await call("owner-a", "DELETE", "/api/library/lib_a/assets/t2")).status).toBe(200);
+    expect((await call("stranger", "POST", "/api/library/lib_a/assets/t2/restore")).status).toBe(404);
     expect((await call("owner-a", "POST", "/api/library/lib_a/assets/t2/restore")).status).toBe(200);
   });
 });

@@ -8,7 +8,7 @@ import {
   X,
 } from "lucide-react";
 import { useStudio } from "@/lib/store";
-import { useViewedMe } from "@/lib/auth";
+import { useMe } from "@/lib/auth";
 import { posSegmentAt } from "@/lib/captions";
 import {
   usePresets,
@@ -266,7 +266,7 @@ function PresetRow({
   const refresh = usePresets((s) => s.refresh);
   const save = usePresets((s) => s.save);
   const remove = usePresets((s) => s.remove);
-  const me = useViewedMe();
+  const me = useMe();
   const [naming, setNaming] = useState(false);
   const [name, setName] = useState("");
 
@@ -285,7 +285,6 @@ function PresetRow({
   );
   const canDelete = (p: ServerPreset) =>
     me?.role === "admin" || p.owner === me?.username;
-  const canSave = me?.role !== "guest";
 
   const activeCls =
     accent === "violet"
@@ -347,43 +346,42 @@ function PresetRow({
             )}
           </span>
         ))}
-        {canSave &&
-          (naming ? (
-            <span className="flex items-center gap-1">
-              <input
-                autoFocus
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") void doSave();
-                  if (e.key === "Escape") {
-                    setNaming(false);
-                    setName("");
-                  }
-                }}
-                placeholder="Preset name"
-                className="w-24 rounded-full border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-[11px] text-zinc-200 outline-none"
-              />
-              <button
-                onClick={() => void doSave()}
-                className="rounded-full border border-zinc-600 px-2 py-1 text-[11px] text-zinc-200 hover:bg-zinc-800"
-              >
-                Save
-              </button>
-            </span>
-          ) : (
+        {naming ? (
+          <span className="flex items-center gap-1">
+            <input
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void doSave();
+                if (e.key === "Escape") {
+                  setNaming(false);
+                  setName("");
+                }
+              }}
+              placeholder="Preset name"
+              className="w-24 rounded-full border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-[11px] text-zinc-200 outline-none"
+            />
             <button
-              onClick={() => setNaming(true)}
-              title={
-                me?.role === "admin"
-                  ? "Save the current style as a preset for everyone (same name overrides an existing one)"
-                  : "Save the current style as a preset on your account"
-              }
-              className="rounded-full border border-dashed border-zinc-600 px-2.5 py-1 text-[11px] text-zinc-500 hover:border-zinc-400 hover:text-zinc-300"
+              onClick={() => void doSave()}
+              className="rounded-full border border-zinc-600 px-2 py-1 text-[11px] text-zinc-200 hover:bg-zinc-800"
             >
-              + Save
+              Save
             </button>
-          ))}
+          </span>
+        ) : (
+          <button
+            onClick={() => setNaming(true)}
+            title={
+              me?.role === "admin"
+                ? "Save the current style as a preset for everyone (same name overrides an existing one)"
+                : "Save the current style as a preset on your account"
+            }
+            className="rounded-full border border-dashed border-zinc-600 px-2.5 py-1 text-[11px] text-zinc-500 hover:border-zinc-400 hover:text-zinc-300"
+          >
+            + Save
+          </button>
+        )}
       </div>
     </Row>
   );

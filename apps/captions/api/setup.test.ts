@@ -42,9 +42,8 @@ describe("setup: my tools, my plan, what is set up", () => {
   });
 
   it("is for accounts only", async () => {
-    who = { username: "guest-0123456789ab", role: "guest", cloud: false, off: [] };
+    who = { username: "visitor", role: "visitor", cloud: false, off: [] };
     expect((await app.request("/api/setup")).status).toBe(403);
-    who = { username: "demo-0123456789ab", role: "user", cloud: true, off: [], demo: "demo" };
     expect((await put({ done: true })).status).toBe(403);
   });
 });

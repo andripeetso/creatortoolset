@@ -50,7 +50,7 @@ describe("library transcripts with words", () => {
   });
 
   it("the library's transcribe asks for fillers and keeps every word with its timing", async () => {
-    await transcribeVersion(db, "ver_1", wav, 1, "local", dir);
+    await transcribeVersion(db, "ver_1", wav, "local", dir);
     expect(urls[0]).toMatch(/&filler_words=true/);
     expect(wordsOf(db, "ver_1")).toEqual([
       { w: "So", s: 0.1, e: 0.3, c: 0.9 },

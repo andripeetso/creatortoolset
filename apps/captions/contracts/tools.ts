@@ -2,9 +2,8 @@ import type { PlanId } from "./plans";
 import type { MyKeyEnv } from "./service-keys";
 
 /**
- * The apps an admin switches on or off per account (Admin → Access). Every app
- * is on unless switched off; admins always have all of them. Listed in the
- * home page's order.
+ * The apps, in the home page's order. Every app is on unless the account's
+ * `off` list (users.json) switches it off; admins always have all of them.
  */
 export const TOOLS = [
   "instagram", "workshop",

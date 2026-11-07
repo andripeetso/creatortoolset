@@ -3,7 +3,7 @@ import { useLocation, useSearchParams } from "react-router";
 import { readiness, TOOL_NAMES, type Tool } from "@contracts/tools";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { isDemo, isGuest, useViewedMe } from "@/lib/auth";
+import { useMe } from "@/lib/auth";
 import { toolForPath, useSetup, useSetupLive } from "@/lib/setup";
 import { ToolNeeds } from "./ToolNeeds";
 
@@ -14,8 +14,8 @@ const seen = (user: string, tool: Tool) => `ct-first-open:${user}:${tool}`;
  * over it, once per tool on this device. A tool's own "Set up" link opens it again any time (openToolSetup).
  */
 export function FirstOpen() {
-  const me = useViewedMe();
-  const real = !!me && !isGuest(me) && !isDemo(me);
+  const me = useMe();
+  const real = !!me;
   const { pathname } = useLocation();
   const [params] = useSearchParams();
   const view = useSetup((s) => s.view);

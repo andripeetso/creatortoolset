@@ -18,7 +18,7 @@ export const providersApp = new Hono<{ Variables: AuthVars }>();
 const DAY = 86_400_000;
 /** The usage page's window. */
 const USAGE_DAYS = 90;
-const signedIn = (u: SessionUser) => u.role !== "guest" && !u.demo;
+const signedIn = (u: SessionUser) => u.role !== "visitor";
 
 providersApp.use("*", async (c, next) => {
   if (!signedIn(c.get("user"))) return c.json({ error: "Not for guests" }, 403);

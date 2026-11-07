@@ -6,10 +6,9 @@ import type { DatabaseSync } from "node:sqlite";
 import type { AuthVars } from "../auth";
 import { env } from "../lib/env";
 import { appendBody, freeBytes, sha256File } from "../lib/uploads";
-import { libraryRole } from "./access";
+import { homeOf, libraryRole } from "./access";
 import { expandCollection } from "./collections";
 import { blobs, libraryDb } from "./db";
-import { canManage, ensureWorkspace, memberIn, workspaceOf } from "../lib/workspaces";
 import { sendFile } from "../lib/send-file";
 import type { LibrarySettings, LibrarySummary } from "../../contracts/library";
 import { enqueueJob } from "./jobs";
@@ -126,10 +125,9 @@ export async function saveToLibrary(
   sources: string[],
   libraryId?: string,
 ): Promise<{ assetId: string; versionId: string } | { duplicateOf: string } | { error: string; code: "disk_reserve" } | null> {
-  const w = workspaceOf(username);
   const lib =
     libraryId ??
-    (w && (db().prepare("SELECT id FROM libraries WHERE workspace_id = ? ORDER BY created_at, id LIMIT 1").get(w.id) as { id: string } | undefined)?.id);
+    (db().prepare("SELECT id FROM libraries WHERE workspace_id = ? ORDER BY created_at, id LIMIT 1").get(homeOf(username)) as { id: string } | undefined)?.id;
   if (!lib || !libraryRole(username, lib)) return null;
   const { size } = await stat(file);
   await mkdir(stagingDir(), { recursive: true });
@@ -226,8 +224,6 @@ libraryApp.post("/:id/uploads", async (c) => {
       | { created_by: string }
       | undefined;
     if (!target) return c.json({ error: "Not found", code: "not_found" }, 404);
-    // a member replaces only their own assets (plan section 9); the owner any
-    if (!canManage(role) && target.created_by !== user.username) return c.json({ error: "Only the uploader or the owner can replace it", code: "forbidden" }, 403);
     if (inReview(replaces)) return c.json(IN_REVIEW, 409);
   }
   const collection = typeof body?.collectionId === "string" ? body.collectionId : null;
@@ -360,16 +356,13 @@ libraryApp.post("/uploads/:uploadId/finish", async (c) => {
   }
 });
 
-// GET /api/library → the libraries in the caller's workspace (none without one)
+// GET /api/library → the caller's libraries
 libraryApp.get("/", (c) => {
   const user = c.get("user");
-  const w = workspaceOf(user.username);
-  if (!w) return c.json({ libraries: [] as LibrarySummary[] });
-  const manage = canManage(memberIn(w, user.username)?.role);
   const rows = db()
     .prepare("SELECT id, name, storage_kind, settings FROM libraries WHERE workspace_id = ? ORDER BY created_at, id")
-    .all(w.id) as { id: string; name: string; storage_kind: LibrarySummary["storage"]; settings: string }[];
-  const libraries: LibrarySummary[] = rows.map((r) => ({ id: r.id, name: r.name, storage: r.storage_kind, canManage: manage, settings: settingsOf(r.settings) }));
+    .all(homeOf(user.username)) as { id: string; name: string; storage_kind: LibrarySummary["storage"]; settings: string }[];
+  const libraries: LibrarySummary[] = rows.map((r) => ({ id: r.id, name: r.name, storage: r.storage_kind, settings: settingsOf(r.settings) }));
   return c.json({ libraries });
 });
 
@@ -384,7 +377,6 @@ libraryApp.patch("/:id", async (c) => {
   const libraryId = c.req.param("id");
   const role = libraryRole(user.username, libraryId);
   if (!role) return c.json({ error: "Not found", code: "not_found" }, 404);
-  if (!canManage(role)) return c.json({ error: "Only the owner changes the library", code: "forbidden" }, 403);
   const b = (await c.req.json().catch(() => null)) as { name?: unknown; settings?: Record<string, unknown> } | null;
   const name = typeof b?.name === "string" ? b.name.trim().slice(0, 80) : "";
   if (name) db().prepare("UPDATE libraries SET name = ? WHERE id = ?").run(name, libraryId);
@@ -398,22 +390,19 @@ libraryApp.patch("/:id", async (c) => {
     storage_kind: LibrarySummary["storage"];
     settings: string;
   };
-  const updated: LibrarySummary = { id: libraryId, name: r.name, storage: r.storage_kind, canManage: true, settings: settingsOf(r.settings) };
+  const updated: LibrarySummary = { id: libraryId, name: r.name, storage: r.storage_kind, settings: settingsOf(r.settings) };
   return c.json(updated);
 });
 
-// POST /api/library { name } → a local library in the caller's workspace; the owner only
+// POST /api/library { name } → a local library of the caller's own
 libraryApp.post("/", async (c) => {
   const user = c.get("user");
-  // an account in no workspace gets one of its own here (guests and demo visitors never reach a POST: boot.ts)
-  const w = ensureWorkspace(user.username);
-  if (!w) return c.json({ error: "There is no workspace to put a library in", code: "conflict" }, 409);
-  if (!canManage(memberIn(w, user.username)?.role)) return c.json({ error: "Only the owner creates a library", code: "forbidden" }, 403);
+  if (user.role === "visitor") return c.json({ error: "Sign in to make a library", code: "forbidden" }, 403);
   const body = (await c.req.json().catch(() => null)) as { name?: unknown } | null;
   const name = (typeof body?.name === "string" ? body.name.trim().slice(0, 80) : "") || "Library";
   const id = `lib_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
-  db().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES (?, ?, ?, 'local', ?)").run(id, w.id, name, Date.now());
-  const created: LibrarySummary = { id, name, storage: "local", canManage: true, settings: { describe: false, embed: false } };
+  db().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES (?, ?, ?, 'local', ?)").run(id, homeOf(user.username), name, Date.now());
+  const created: LibrarySummary = { id, name, storage: "local", settings: { describe: false, embed: false } };
   return c.json(created, 201);
 });
 
@@ -490,7 +479,6 @@ function setTrashed(c: Context<{ Variables: AuthVars }>, trash: boolean) {
         | undefined)
     : undefined;
   if (!a || (trash ? a.trashed_at !== null : a.trashed_at === null)) return c.json({ error: "Not found", code: "not_found" }, 404);
-  if (!canManage(role ?? undefined) && a.created_by !== user.username) return c.json({ error: "Only the uploader or the owner can do that", code: "forbidden" }, 403);
   if (inReview(assetId)) return c.json(IN_REVIEW, 409);
   db().prepare("UPDATE assets SET trashed_at = ? WHERE id = ?").run(trash ? Date.now() : null, assetId);
   return c.json({ ok: true });

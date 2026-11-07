@@ -3,7 +3,6 @@ import { Loader2, Settings2, Trash2, TriangleAlert, Upload, X } from "lucide-rea
 import { useStudio } from "@/lib/store";
 import { deleteSession } from "@/lib/persist";
 import { fmtClock } from "@/lib/ass";
-import { isGuest, useViewedMe } from "@/lib/auth";
 import { EnginePicker } from "./EnginePicker";
 import { FpsSelect } from "./FpsSelect";
 
@@ -20,7 +19,6 @@ export function ProjectSettingsDialog({ onClose }: { onClose: () => void }) {
   const sourceWidth = useStudio((s) => s.sourceWidth || s.videoWidth);
   const sourceHeight = useStudio((s) => s.sourceHeight || s.videoHeight);
   const status = useStudio((s) => s.status);
-  const guest = isGuest(useViewedMe());
 
   const [name, setName] = useState(fileName);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -32,7 +30,7 @@ export function ProjectSettingsDialog({ onClose }: { onClose: () => void }) {
   // is the source file still on the server? (drives the storage section)
   const activeClipId = useStudio((s) => s.activeClipId);
   useEffect(() => {
-    if (!projectId || guest || !activeClipId) return;
+    if (!projectId || !activeClipId) return;
     fetch(`/api/projects/${projectId}`)
       .then((r) => r.json())
       .then((p) => {
@@ -43,7 +41,7 @@ export function ProjectSettingsDialog({ onClose }: { onClose: () => void }) {
         setOriginal({ has: !!cm?.hasOriginal, bytes: cm?.originalBytes ?? 0 });
       })
       .catch(() => {});
-  }, [projectId, guest, activeClipId]);
+  }, [projectId, activeClipId]);
 
   const close = () => {
     useStudio.getState().setFileName(name);
@@ -173,7 +171,7 @@ export function ProjectSettingsDialog({ onClose }: { onClose: () => void }) {
           <p className="mb-3 mt-1 text-[11px] text-red-400">{status.message}</p>
         )}
 
-        {projectId && !guest && (
+        {projectId && (
           <>
             <label className={`${label} mt-4`}>Source file on server</label>
             <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2.5 text-xs">

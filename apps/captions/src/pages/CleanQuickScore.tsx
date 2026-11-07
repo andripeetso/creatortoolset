@@ -9,7 +9,6 @@ import { editTimeline, timelineDuration } from "@contracts/clean-timeline";
 import { ScoreCard, ScoreHelp } from "./CleanScoreCard";
 import { CleanExtendedScoreCards } from "./CleanExtendedScoreCards";
 import { useCleanScore } from "@/hooks/use-clean-score";
-import type { QuickScore } from "@contracts/clean-fingerprints";
 
 export function CleanQuickScore({
   sourceId,
@@ -19,7 +18,6 @@ export function CleanQuickScore({
   measurement,
   measuring,
   onMeasure,
-  stored,
   compact = false,
 }: {
   sourceId?: string;
@@ -28,10 +26,7 @@ export function CleanQuickScore({
   busy: boolean;
   measurement?: EditMeasurement;
   measuring: boolean;
-  /** Unset = no measuring here (the demo). */
-  onMeasure?: () => void;
-  /** A finished run's stored fast scores (the demo): shown, never fetched. */
-  stored?: { score: QuickScore; sscd: QuickScore };
+  onMeasure: () => void;
   compact?: boolean;
 }) {
   const normalized = {
@@ -42,8 +37,8 @@ export function CleanQuickScore({
     adjustments: { ...options.adjustments, mute: false, volume: 1 },
   };
   const key = JSON.stringify([sourceId, normalized]);
-  const result = useCleanScore(sourceId, key, busy, "score", stored?.score);
-  const semantic = useCleanScore(sourceId, key, busy, "sscd", stored?.sscd);
+  const result = useCleanScore(sourceId, key, busy, "score");
+  const semantic = useCleanScore(sourceId, key, busy, "sscd");
   const current = result?.key === key;
   const pdq = result?.score?.pdq;
   const tmk = measurement?.fingerprints.tmk;
@@ -138,17 +133,15 @@ export function CleanQuickScore({
             {tmkStatus}
           </span>
         </ScoreHelp>
-        {onMeasure && (
-          <button
-            type="button"
-            onClick={onMeasure}
-            disabled={!sourceId || busy}
-            className="flex items-center gap-1 rounded-lg border border-violet-500/30 px-3 py-2 text-xs text-violet-200 disabled:opacity-40"
-          >
-            {measuring && <Loader2 className="h-3 w-3 animate-spin" />}
-            {measuring ? "Measuring…" : "Measure full scores"}
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={onMeasure}
+          disabled={!sourceId || busy}
+          className="flex items-center gap-1 rounded-lg border border-violet-500/30 px-3 py-2 text-xs text-violet-200 disabled:opacity-40"
+        >
+          {measuring && <Loader2 className="h-3 w-3 animate-spin" />}
+          {measuring ? "Measuring…" : "Measure full scores"}
+        </button>
       </section>
     );
   }
@@ -161,17 +154,15 @@ export function CleanQuickScore({
         <h2 className="flex items-center gap-2 text-sm font-semibold">
           <Fingerprint className="h-4 w-4 text-violet-400" /> Comparison scores
         </h2>
-        {onMeasure && (
-          <button
-            type="button"
-            disabled={!sourceId || busy}
-            onClick={onMeasure}
-            className="flex items-center gap-2 rounded-lg border border-violet-500/30 px-3 py-2 text-xs font-medium text-violet-200 hover:bg-violet-500/10 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {measuring && <Loader2 className="h-3 w-3 animate-spin" />}
-            {measuring ? "Measuring full scores…" : "Measure full scores"}
-          </button>
-        )}
+        <button
+          type="button"
+          disabled={!sourceId || busy}
+          onClick={onMeasure}
+          className="flex items-center gap-2 rounded-lg border border-violet-500/30 px-3 py-2 text-xs font-medium text-violet-200 hover:bg-violet-500/10 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {measuring && <Loader2 className="h-3 w-3 animate-spin" />}
+          {measuring ? "Measuring full scores…" : "Measure full scores"}
+        </button>
       </div>
       <CleanReferenceAssessment
         scores={{

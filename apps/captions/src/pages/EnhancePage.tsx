@@ -16,12 +16,6 @@ import {
   TriangleAlert,
   UploadCloud,
 } from "lucide-react";
-import { useAuth } from "@/lib/auth";
-import { isAdminForeignView } from "@/lib/admin-view";
-import {
-  AdminViewBanner,
-  AdminViewBorder,
-} from "@/components/AdminViewBanner";
 import { fmtClock } from "@/lib/ass";
 import { fmtBytes, timeAgo } from "@/lib/exports";
 import {
@@ -473,7 +467,6 @@ function SessionView({
 export default function EnhancePage() {
   const navigate = useNavigate();
   const { sessionId } = useParams<{ sessionId?: string }>();
-  const me = useAuth((s) => s.me);
   const [drag, setDrag] = useState(false);
   const [uploadPct, setUploadPct] = useState<number | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -566,7 +559,6 @@ export default function EnhancePage() {
 
   return (
     <div className="relative flex min-h-screen flex-col items-center bg-[#0b0b10] pb-10 text-zinc-200">
-      {isAdminForeignView(me, current?.owner) && <AdminViewBorder />}
       <AppBar tool="Audio Enhancer" to={current ? "/enhance" : undefined} trail={current?.name} />
 
       <div className="mb-8 mt-10 flex items-center gap-3">
@@ -590,14 +582,6 @@ export default function EnhancePage() {
           </div>
         ) : current ? (
           <>
-            {isAdminForeignView(me, current.owner) && (
-              <AdminViewBanner
-                owner={current.owner}
-                noun="audio project"
-                onBack={() => navigate("/enhance")}
-                backLabel="Back to my audio files"
-              />
-            )}
             <SessionView
               session={current}
               avail={avail}
@@ -621,8 +605,6 @@ export default function EnhancePage() {
           </>
         ) : (
           <>
-            {/* "See the demo" shows the finished file below, never a new run */}
-            {!me?.demo && <>
             <div className="mb-3">
               <EnginePicker avail={avail} value={engine} onChange={setEngine} then={then} onThen={setThen} />
             </div>
@@ -672,27 +654,16 @@ export default function EnhancePage() {
                 }}
               />
             </label>
-            </>}
             {uploadError && (
               <p className="mt-2 text-xs text-red-400">{uploadError}</p>
             )}
             {avail && offered(avail).length === 0 && (
               <p className="mt-2 flex items-center gap-1.5 text-[11px] text-amber-400/80">
                 <TriangleAlert className="h-3 w-3 shrink-0" />
-                Enhancement is off: {avail.guest ? "not available in guest mode right now." : (
-                  <>
-                    it needs an ElevenLabs or NVIDIA key, billed to you by that provider.{" "}
-                    <button type="button" className="underline" onClick={() => openToolSetup("enhance")}>
-                      Set up
-                    </button>
-                  </>
-                )}
-              </p>
-            )}
-            {avail?.guest && (
-              <p className="mt-2 text-[11px] text-zinc-500">
-                Guest mode: files up to {avail.guest.maxSeconds / 60} minutes, deleted{" "}
-                {avail.guest.keepMinutes} minutes after they're done — download what you want to keep.
+                Enhancement is off: it needs an ElevenLabs or NVIDIA key, billed to you by that provider.{" "}
+                <button type="button" className="underline" onClick={() => openToolSetup("enhance")}>
+                  Set up
+                </button>
               </p>
             )}
 

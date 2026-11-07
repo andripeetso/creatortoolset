@@ -12,7 +12,7 @@ import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
 import { DesktopHint } from "@/components/mobile/DesktopHint";
 import { MobileAnalyzerLibrary } from "@/components/mobile/MobileAnalyzerLibrary";
 import { AccountStatsCard } from "@/components/instagram/AccountStats";
-import { canUse, useAuth, useViewedMe } from "@/lib/auth";
+import { canUse, useAuth, useMe } from "@/lib/auth";
 import { toolsetHomePath } from "@/lib/mobile";
 import { useWorkspace } from "@/lib/workspace";
 import { KNOWHOW_CHIP } from "@/components/instagram/IdeaMark";
@@ -45,7 +45,7 @@ const ingestedShares = new Set<string>();
 export default function MobileInstagramPage() {
   const home = toolsetHomePath();
   const base = analyzerHome();
-  const me = useViewedMe();
+  const me = useMe();
   const required = useAuth((s) => s.required);
   const allowed = canUse(me, "instagram");
   const currentProjectId = useWorkspace((s) => s.currentProjectId);

@@ -23,7 +23,7 @@ import {
   cloudStatus,
   storedEngine,
 } from "@/lib/transcribe";
-import { canUseCloud, useViewedMe } from "@/lib/auth";
+import { canUseCloud, useMe } from "@/lib/auth";
 import { EnginePicker } from "./EnginePicker";
 import type { TextOverlay } from "@/lib/types";
 import { textOverlayFrameStyle } from "@/lib/caption-css";
@@ -514,7 +514,7 @@ function TextOverlays({ rect }: { rect: { w: number; h: number } }) {
 }
 
 export function Player() {
-  const me = useViewedMe();
+  const me = useMe();
   const allowedByView = canUseCloud(me);
   const videoUrl = useStudio((s) => s.videoUrl);
   const videoWidth = useStudio((s) => s.videoWidth);
@@ -684,8 +684,8 @@ export function Player() {
     if (!v) return;
     if (typeof v.requestVideoFrameCallback === "function") {
       let handle = 0;
-      // frame-rate estimate for clips the server never probes (guest mode /
-      // before the upload lands): median frame duration over ~24 frames
+      // frame-rate estimate for clips the server has not probed yet
+      // (before the upload lands): median frame duration over ~24 frames
       let prev: VideoFrameCallbackMetadata | null = null;
       const deltas: number[] = [];
       const tick = (_now: number, meta: VideoFrameCallbackMetadata) => {

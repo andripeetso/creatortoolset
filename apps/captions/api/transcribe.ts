@@ -4,13 +4,10 @@ import type { SessionUser } from "./users";
 import { bumpUsage } from "./users";
 import { isOutOfCredits, outOfCreditsMessage } from "./credits";
 import { keyFor } from "./my-keys";
-import { addSpend } from "./lib/workspaces";
-import { GUEST_CLIP_S, GUEST_OUT_OF_CREDITS, logGuestRun, takeGuest } from "./guest";
 
 /**
  * Optional cloud transcription via Deepgram nova-3, on the key that serves the caller (my-keys.ts keyFor: their own
- * key from Settings → My API keys; the server's for the platform admin, a member on an API budget, billed to them,
- * or guests when an admin switched that on). The client then offers a "Cloud" engine in the model picker (better
+ * key from Settings → My API keys, or the server's for the platform admin). The client then offers a "Cloud" engine in the model picker (better
  * accuracy + native word timestamps, no model download); without a key it says which one to add. On-device Whisper
  * remains available either way.
  */
@@ -19,20 +16,11 @@ export const transcribeApp = new Hono<{ Variables: AuthVars }>();
 export const userMayCloudTranscribe = (u: AuthVars["user"]) =>
   u.role === "admin" || u.cloud;
 
-const mayUseCloud = (u: AuthVars["user"]) =>
-  userMayCloudTranscribe(u) || u.role === "guest";
-
-// ponytail: one flat, rounded-up rate per minute of audio for a budget member's transcripts (Deepgram here, the
-// OpenAI-compatible path in library/transcribe.ts); set it from your provider's price sheet
-export const transcribeUsdPerMinute = () => Number(process.env.LIBRARY_TRANSCRIBE_USD_PER_MIN) || 0.01;
+const mayUseCloud = userMayCloudTranscribe;
 
 /** Why `user` can't transcribe in the cloud right now (locked, or no key serves them), or null. */
 export function cloudTranscribeBlock(user: AuthVars["user"]): string | null {
-  if (!mayUseCloud(user)) {
-    return user.role === "guest"
-      ? "Cloud transcription is not available in guest mode — sign in with an account"
-      : "Cloud transcription is locked for your account — ask the admin";
-  }
+  if (!mayUseCloud(user)) return "Cloud transcription is locked for your account";
   return keyFor(user, "DEEPGRAM_API_KEY").missing ?? null;
 }
 
@@ -123,14 +111,13 @@ function wavWrap(pcm: Uint8Array, sampleRate: number): Uint8Array {
 const DG_URL =
   "https://api.deepgram.com/v1/listen?model=nova-3&punctuate=true&utterances=true&language=en";
 
-/** `optOut`: Deepgram keeps nothing past the request (guests; costs ~2× the listed rate). `fillers`: keep "um", "uh". */
+/** `fillers`: keep "um", "uh". */
 async function deepgramWords(
   key: string,
   audio: Uint8Array | ArrayBuffer,
-  optOut = false,
   fillers = false,
 ): Promise<{ words: Word[] } | { error: string; status: number }> {
-  const url = DG_URL + (optOut ? "&mip_opt_out=true" : "") + (fillers ? "&filler_words=true" : "");
+  const url = DG_URL + (fillers ? "&filler_words=true" : "");
   const resp = await fetch(url, {
     method: "POST",
     headers: {
@@ -270,8 +257,6 @@ export async function transcribeWav(
 ): Promise<TranscriptionResult> {
   const route = keyFor(user, "DEEPGRAM_API_KEY");
   if (route.missing) return { error: route.missing, status: 402 };
-  // guests' audio is strangers' audio: out of Deepgram's model training
-  const optOut = user.role === "guest";
   const wav = parseWav(new Uint8Array(audio));
   const bytesPerSec = wav ? wav.sampleRate * 2 : 32000;
   const durationS = wav ? wav.pcm.length / bytesPerSec : 0;
@@ -290,7 +275,7 @@ export async function transcribeWav(
       });
     }
     const results = await Promise.all(
-      chunks.map((ch) => deepgramWords(route.key, wavWrap(ch.pcm, wav.sampleRate), optOut, fillers)),
+      chunks.map((ch) => deepgramWords(route.key, wavWrap(ch.pcm, wav.sampleRate), fillers)),
     );
     for (const r of results) {
       if ("error" in r) return { error: r.error, status: 502 };
@@ -302,7 +287,7 @@ export async function transcribeWav(
       })),
     );
   } else {
-    const r = await deepgramWords(route.key, audio, optOut, fillers);
+    const r = await deepgramWords(route.key, audio, fillers);
     if ("error" in r) return { error: r.error, status: 502 };
     words = r.words;
   }
@@ -315,28 +300,7 @@ export async function transcribeWav(
       : Math.max(0, audio.byteLength - 44) / 32000,
   );
   bumpUsage(user.username, { cloudRuns: 1, cloudSeconds: seconds });
-  // billed by the audio's length, as the provider bills it
-  if (route.bill) addSpend(route.bill, ((durationS || seconds) / 60) * transcribeUsdPerMinute());
   return { words };
-}
-
-/** The request body, or null once it passes `max` bytes (the rest is never read). */
-async function bodyUpTo(req: Request, max: number): Promise<Uint8Array | null> {
-  if (Number(req.headers.get("content-length")) > max) return null;
-  const reader = req.body?.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  for (;;) {
-    const { done, value } = (await reader?.read()) ?? { done: true, value: undefined };
-    if (done) break;
-    size += value.byteLength;
-    if (size > max) {
-      void reader!.cancel();
-      return null;
-    }
-    chunks.push(value);
-  }
-  return Buffer.concat(chunks);
 }
 
 transcribeApp.post("/", async (c) => {
@@ -346,46 +310,9 @@ transcribeApp.post("/", async (c) => {
     const locked = !mayUseCloud(user);
     return c.json({ error: accessError, code: locked ? "CLOUD_LOCKED" : "NEEDS_KEY" }, locked ? 403 : 402);
   }
-  const guest = user.role === "guest";
-  // guests: the client sends 16 kHz mono 16-bit, so bytes cap the clip —
-  // read no further than that (this route has no body limit, see boot.ts)
-  const audio = guest
-    ? await bodyUpTo(c.req.raw, GUEST_CLIP_S * 32000 + 1024)
-    : await c.req.arrayBuffer();
-  if (!audio) {
-    return c.json(
-      { error: "Guest mode transcribes videos up to 3 minutes — sign in with an account for longer ones", code: "GUEST_LIMIT" },
-      413,
-    );
-  }
+  const audio = await c.req.arrayBuffer();
   if (!audio.byteLength) return c.json({ error: "No audio" }, 400);
-  const wav = parseWav(new Uint8Array(audio));
-  const seconds = wav
-    ? wav.pcm.length / (wav.sampleRate * 2)
-    : Math.max(0, audio.byteLength - 44) / 32000;
-  if (guest) {
-    const refusal = takeGuest(user, "seconds", Math.ceil(seconds));
-    if (refusal) return c.json({ error: refusal, code: "GUEST_LIMIT" }, 429);
-  }
   const result = await transcribeWav(audio, user);
-  if ("error" in result) {
-    const empty = guest && result.error === outOfCreditsMessage("Cloud transcription");
-    return c.json({ error: empty ? GUEST_OUT_OF_CREDITS : result.error }, result.status);
-  }
-  if (guest) {
-    let file = "";
-    try {
-      file = decodeURIComponent(c.req.header("x-file-name") ?? "").slice(0, 200);
-    } catch {
-      /* a malformed name stays blank */
-    }
-    void logGuestRun({
-      at: Date.now(),
-      guest: user.username,
-      file,
-      seconds: Math.round(seconds),
-      text: result.words.map((w) => w.text).join(" "),
-    });
-  }
+  if ("error" in result) return c.json({ error: result.error }, result.status);
   return c.json(result);
 });

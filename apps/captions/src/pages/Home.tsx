@@ -5,7 +5,6 @@ import {
   Check,
   ChevronDown,
   CircleHelp,
-  Copy,
   Download,
   FilePlus2,
   Film,
@@ -16,15 +15,12 @@ import {
 } from "lucide-react";
 import { isEditorBusy, useStudio, playerRef } from "@/lib/store";
 import {
-  copySessionToLibrary,
   flushPendingSave,
   listSessions,
   loadSession,
   type SessionMeta,
 } from "@/lib/persist";
-import { returnToOwnCaptionView, useAdminView } from "@/lib/admin-view";
 import { fmtClock } from "@/lib/ass";
-import { AdminViewBanner, AdminViewBorder } from "@/components/AdminViewBanner";
 import { FONT_OPTIONS, fontWeightFor } from "@/lib/types";
 import { ImportScreen } from "@/components/ImportScreen";
 import { Player } from "@/components/Player";
@@ -45,7 +41,6 @@ function ProjectSwitcher() {
   const fileName = useStudio((s) => s.fileName);
   const projectId = useStudio((s) => s.projectId);
   const reset = useStudio((s) => s.reset);
-  const clearAdminView = useAdminView((s) => s.clearCaptionView);
   const [open, setOpen] = useState(false);
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
   const [busy, setBusy] = useState(false);
@@ -64,8 +59,7 @@ function ProjectSwitcher() {
     if (!confirmDiscardUnsavedProject("Switch projects")) return;
     setBusy(true);
     await flushPendingSave();
-    const ok = await loadSession(id);
-    if (ok) clearAdminView();
+    await loadSession(id);
     setBusy(false);
   };
 
@@ -74,7 +68,6 @@ function ProjectSwitcher() {
     if (!confirmDiscardUnsavedProject("Leave this project")) return;
     await flushPendingSave();
     reset();
-    clearAdminView();
   };
 
   return (
@@ -220,7 +213,6 @@ export default function Home() {
         if (cleanerClipRequested)
           useStudio.getState().switchClip(cleanerClipRequested);
         useStudio.setState({ projectLibraryOpen: false });
-        useAdminView.getState().clearCaptionView();
       }
     })();
   }, [navigate, projectRequested, cleanerClipRequested]);
@@ -249,11 +241,6 @@ export default function Home() {
   const importFiles = useStudio((s) => s.importFiles);
   const setupPending = useStudio((s) => s.setupPending);
   const editorBusy = useStudio(isEditorBusy);
-  const adminView = useAdminView((s) => s.caption);
-  const clearAdminView = useAdminView((s) => s.clearCaptionView);
-  const [returningFromAdminView, setReturningFromAdminView] = useState(false);
-  const [copyingToLibrary, setCopyingToLibrary] = useState(false);
-  const [copyError, setCopyError] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -264,53 +251,8 @@ export default function Home() {
       : MIN_TRANSCRIPT_W;
   });
 
-  const returnToOwnView = async () => {
-    if (returningFromAdminView || copyingToLibrary) return;
-    setReturningFromAdminView(true);
-    await returnToOwnCaptionView();
-    setReturningFromAdminView(false);
-  };
-
-  const copyToMyLibrary = async () => {
-    if (!adminView || copyingToLibrary || returningFromAdminView) return;
-    if (
-      !window.confirm(
-        `Copy this project into your projects? ${adminView.owner}’s original stays unchanged, and the video stays shared on the server. You’ll open your copy.`,
-      )
-    )
-      return;
-    setCopyError(null);
-    setCopyingToLibrary(true);
-    try {
-      await flushPendingSave();
-      const id = useStudio.getState().projectId;
-      if (!id) throw new Error("missing project");
-      const copied = await copySessionToLibrary(id);
-      if (!copied) throw new Error("copy failed");
-      const ok = await loadSession(copied.id);
-      if (!ok) {
-        setCopyError(
-          "Copied, but it could not be opened. Check your project list.",
-        );
-        return;
-      }
-      useAdminView.getState().clearCaptionView();
-    } catch {
-      setCopyError("Could not copy this project.");
-    } finally {
-      setCopyingToLibrary(false);
-    }
-  };
-
-  const backToToolset = async (e: React.MouseEvent<HTMLAnchorElement>) => {
-    if (!confirmDiscardUnsavedProject("Leave this project")) {
-      e.preventDefault();
-      return;
-    }
-    if (!adminView) return;
-    e.preventDefault();
-    await returnToOwnView();
-    navigate("/");
+  const backToToolset = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    if (!confirmDiscardUnsavedProject("Leave this project")) e.preventDefault();
   };
 
   const startResize = (e: React.PointerEvent) => {
@@ -402,7 +344,7 @@ export default function Home() {
       {/* top bar */}
       <AppBar
         tool="Caption Studio"
-        onHome={(e) => void backToToolset(e)}
+        onHome={backToToolset}
         trail={
           <span className="flex min-w-0 items-center gap-3 font-normal">
             <ProjectName />
@@ -426,17 +368,6 @@ export default function Home() {
           >
             <CircleHelp className="h-4 w-4" />
           </button>
-          {adminView && (
-            <button
-              type="button"
-              onClick={() => void copyToMyLibrary()}
-              disabled={copyingToLibrary || returningFromAdminView}
-              className="flex items-center gap-1.5 rounded-md bg-amber-400 px-3.5 py-1.5 text-xs font-semibold text-amber-950 hover:bg-amber-300 disabled:opacity-50"
-            >
-              <Copy className="h-3.5 w-3.5" />
-              {copyingToLibrary ? "Copying…" : "Copy to my projects"}
-            </button>
-          )}
           <label className="flex cursor-pointer items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800">
             <FilePlus2 className="h-3.5 w-3.5" /> New project
             <input
@@ -451,14 +382,8 @@ export default function Home() {
                     e.target.value = "";
                     return;
                   }
-                  void (async () => {
-                    if (adminView) {
-                      await flushPendingSave();
-                      clearAdminView();
-                    }
-                    reset();
-                    importFiles(files);
-                  })();
+                  reset();
+                  importFiles(files);
                 }
                 e.target.value = "";
               }}
@@ -473,30 +398,6 @@ export default function Home() {
             <Download className="h-3.5 w-3.5" /> Export
           </button>
       </AppBar>
-
-      {adminView && (
-        <>
-          <AdminViewBorder />
-          <AdminViewBanner
-            owner={adminView.owner}
-            noun="project"
-            editsTheirAccount
-            layout="page"
-            onCopy={() => void copyToMyLibrary()}
-            copying={copyingToLibrary}
-            copyError={copyError}
-            onBack={() => void returnToOwnView()}
-            backLabel={
-              returningFromAdminView
-                ? "Returning…"
-                : adminView.returnProjectId
-                  ? "Back to my project"
-                  : "Back to my projects"
-            }
-            busy={returningFromAdminView}
-          />
-        </>
-      )}
 
       {/* main area */}
       <div className="flex min-h-0 flex-1">

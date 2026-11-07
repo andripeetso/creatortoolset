@@ -147,9 +147,6 @@ async function checkStorage(dataDir) {
 /** Keys that have a free check call. Others are only listed. */
 async function checkKeys() {
   const probes = [
-    { name: "Anthropic (API budget, Instagram vision, cadence)", key: env.ANTHROPIC_API_KEY,
-      url: `${(env.ANTHROPIC_BASE_URL || "https://api.anthropic.com").replace(/\/$/, "")}/v1/models`,
-      headers: (k) => ({ "x-api-key": k, "anthropic-version": "2023-06-01" }) },
     { name: "Deepgram (cloud transcription)", key: env.DEEPGRAM_API_KEY,
       url: "https://api.deepgram.com/v1/projects", headers: (k) => ({ Authorization: `Token ${k}` }) },
     { name: "ElevenLabs (Audio Enhancer)", key: env.ELEVENLABS_API_KEY,

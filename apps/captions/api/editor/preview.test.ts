@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -11,14 +11,6 @@ mkdirSync(scratch, { recursive: true });
 const dir = mkdtempSync(path.join(scratch, "editor-preview-"));
 process.env.DATA_DIR = dir;
 process.env.APP_SECRET = "editor-preview-test-secret";
-writeFileSync(
-  path.join(dir, "workspaces.json"),
-  JSON.stringify({
-    workspaces: [{ id: "ws_a", name: "Tiny Acrobatics", plan: "team", comped: false, createdAt: 0, members: [{ username: "mem-a", role: "owner", ai: "own", budgetUsd: 0, joinedAt: 0 }] }],
-    invites: [],
-    spend: {},
-  }),
-);
 
 const { blobs, libraryDb } = await import("../library/db");
 const { enqueueJob } = await import("../library/jobs");
@@ -63,7 +55,7 @@ beforeAll(async () => {
   ]);
   const d = libraryDb();
   d.exec(`
-    INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_a', 'ws_a', 'A', 'local', 0);
+    INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_a', 'mem-a', 'A', 'local', 0);
     INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES ('ast_a', 'lib_a', 'video', 'Take', 'mem-a', 0);
     INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at)
       VALUES ('ver_a', 'ast_a', 1, 'libraries/lib_a/v/ver_a/source', 1, 'sha-a', 'ready', 'mem-a', 0);
@@ -97,7 +89,7 @@ describe("AI Editor preview", () => {
     const d = libraryDb();
     let clock = 10 ** 13;
     const run = async () => {
-      enqueueJob(d, "ws_a", `${e.id}:v1`, "preview", "mem-a", true, "edit_jobs");
+      enqueueJob(d, "mem-a", `${e.id}:v1`, "preview", "mem-a", true, "edit_jobs");
       // the file step waits for Review to read the new version: the clock moves on past each deferral
       for (let i = 0; i < 400; i++) {
         const left = d.prepare("SELECT 1 FROM edit_jobs WHERE edit_id = ? AND state IN ('queued', 'running')").get(e.id);

@@ -69,12 +69,11 @@ export interface LibrarySettings {
   embed: boolean; // semantic search: search by meaning as well as by words
 }
 
-/** A library the caller can see, with whether they manage it (the workspace owner). */
+/** One of the caller's libraries. */
 export interface LibrarySummary {
   id: string;
   name: string;
   storage: "local" | "s3";
-  canManage: boolean;
   settings: LibrarySettings;
 }
 

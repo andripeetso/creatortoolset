@@ -76,7 +76,7 @@ export function CleanMetadataAudit({
   busy: boolean;
   checking: boolean;
   /** Unset = no Check cleanup (the demo). */
-  onCheck?: () => void;
+  onCheck: () => void;
 }) {
   const embedded = inspection?.embedded;
   return (
@@ -85,15 +85,13 @@ export function CleanMetadataAudit({
         <h2 className="text-sm font-semibold">
           Privacy inspection & cleanup audit
         </h2>
-        {onCheck && (
-          <button
-            disabled={busy}
-            onClick={onCheck}
-            className="rounded-lg border border-violet-500/40 px-3 py-2 text-xs text-violet-200 disabled:opacity-40"
-          >
-            {checking ? "Checking export…" : "Check cleanup"}
-          </button>
-        )}
+        <button
+          disabled={busy}
+          onClick={onCheck}
+          className="rounded-lg border border-violet-500/40 px-3 py-2 text-xs text-violet-200 disabled:opacity-40"
+        >
+          {checking ? "Checking export…" : "Check cleanup"}
+        </button>
       </div>
       <p className="mt-2 text-xs leading-relaxed text-zinc-400">
         The original is inspected on upload. Check cleanup renders your current

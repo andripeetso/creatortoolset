@@ -1,5 +1,4 @@
 import { Check, Loader2, TriangleAlert } from "lucide-react";
-import { isGuest, useViewedMe } from "@/lib/auth";
 import { getProjectPersistenceStatus } from "@/lib/persistence-status";
 import { useStudio } from "@/lib/store";
 
@@ -9,14 +8,12 @@ function useProjectPersistenceStatus() {
   const saveState = useStudio((s) => s.saveState);
   const localSaveState = useStudio((s) => s.localSaveState);
   const clips = useStudio((s) => s.clips);
-  const me = useViewedMe();
   return getProjectPersistenceStatus({
     projectId,
     serverProjectReady,
     saveState,
     localSaveState,
     clips,
-    guest: isGuest(me),
   });
 }
 

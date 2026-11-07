@@ -9,7 +9,7 @@ import { MyKeysSection } from "@/components/settings/MyKeysSection";
 import { ProjectForm } from "@/components/workshop/ProjectForm";
 import { AccountStep, hasAccountBridge } from "@/components/setup/AccountStep";
 import { PlanQuestion, ToolNeeds, ToolsPicker } from "@/components/setup/ToolNeeds";
-import { canUse, isDemo, isGuest, useViewedMe } from "@/lib/auth";
+import { canUse, useMe } from "@/lib/auth";
 import { setupSteps, useSetup, useSetupLive, type SetupStep } from "@/lib/setup";
 import { createProject } from "@/lib/workshop";
 import { useWorkspace } from "@/lib/workspace";
@@ -33,8 +33,8 @@ const assistant = Object.values(import.meta.glob<{ openAssistant: (topic: string
  * at the first step. Closing it is "Finish later" (done). On a phone it is a full-screen sheet.
  */
 export function SetupDialog() {
-  const me = useViewedMe();
-  const real = !!me && !isGuest(me) && !isDemo(me);
+  const me = useMe();
+  const real = !!me;
   const view = useSetup((s) => s.view);
   const load = useSetup((s) => s.load);
   const save = useSetup((s) => s.save);

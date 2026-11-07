@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
@@ -33,18 +33,7 @@ function add(id: string, title: string, phash?: string[]) {
 }
 
 beforeAll(async () => {
-  writeFileSync(
-    path.join(dir, "workspaces.json"),
-    JSON.stringify({
-      workspaces: [
-        { id: "ws_a", name: "a", plan: "team", comped: false, createdAt: 0, members: [{ username: "owner-a", role: "owner", ai: "own", budgetUsd: 0, joinedAt: 0 }] },
-        { id: "ws_b", name: "b", plan: "team", comped: false, createdAt: 0, members: [{ username: "owner-b", role: "owner", ai: "own", budgetUsd: 0, joinedAt: 0 }] },
-      ],
-      invites: [],
-      spend: {},
-    }),
-  );
-  libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_a', 'ws_a', 'A', 'local', 0)").run();
+  libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_a', 'owner-a', 'A', 'local', 0)").run();
   // three seconds each, made here: nothing large is committed
   ff(["-f", "lavfi", "-i", "testsrc=duration=3:size=320x240:rate=10", "-c:v", "libx264", "-pix_fmt", "yuv420p", clip]);
   ff(["-i", clip, "-vf", "scale=160:120", "-c:v", "libx264", "-crf", "38", "-pix_fmt", "yuv420p", copy]); // re-encoded, smaller

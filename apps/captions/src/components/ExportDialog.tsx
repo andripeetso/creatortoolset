@@ -15,7 +15,6 @@ import {
   X,
 } from "lucide-react";
 import { useStudio, clipRenderData, getClipSnapshot, retainClipSourceFile } from "@/lib/store";
-import { isGuest, useViewedMe } from "@/lib/auth";
 import { buildAss, buildSrt, buildVtt } from "@/lib/ass";
 import {
   FORMAT_LABELS,
@@ -225,19 +224,14 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
     : null;
   const projectId = useStudio((s) => s.projectId);
   const serverProjectReady = useStudio((s) => s.serverProjectReady);
-  // guests never put their video on the server: the captioned MP4 renders
-  // in their browser from the file they opened, else subtitle files
-  const guest = isGuest(useViewedMe());
-  const guestNoFile = guest && !activeLocalFile;
-
-  const [tab, setTab] = useState<Tab>(guestNoFile ? "captions" : "video");
-  const [format, setFormat] = useState<ExportFormat>(guestNoFile ? "srt" : "mp4");
+  const [tab, setTab] = useState<Tab>("video");
+  const [format, setFormat] = useState<ExportFormat>("mp4");
   const jobs = useExports((s) => s.jobs);
 
   // opening the Recent tab re-syncs with the server
   useEffect(() => {
-    if (tab === "recent" && !guest) watchExports();
-  }, [tab, guest]);
+    if (tab === "recent") watchExports();
+  }, [tab]);
   const fps = useStudio((s) => s.fps);
   const [busy, setBusy] = useState(false);
   const [localProgress, setLocalProgress] = useState(0);
@@ -636,19 +630,14 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
         <div className={tab === "recent" ? "hidden" : undefined}>
           {(() => {
             const card = (f: (typeof FORMATS)[number]) => {
-              const off =
-                guest && f.server && !(f.burn && !!activeLocalFile && !batch);
               return (
                 <button
                   key={f.id}
-                  disabled={off}
                   onClick={() => setFormat(f.id)}
                   className={`rounded-lg border px-3 py-2.5 text-left transition-colors ${
-                    off
-                      ? "cursor-not-allowed border-zinc-800 opacity-40"
-                      : format === f.id
-                        ? "border-violet-500 bg-violet-500/15"
-                        : "border-zinc-700 hover:border-zinc-500"
+                    format === f.id
+                      ? "border-violet-500 bg-violet-500/15"
+                      : "border-zinc-700 hover:border-zinc-500"
                   }`}
                 >
                   <span className="flex items-center gap-1.5 text-sm font-medium">
@@ -657,11 +646,6 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
                     {f.alpha && (
                       <span className="rounded bg-emerald-500/15 px-1 py-px text-[9px] font-semibold uppercase text-emerald-400">
                         alpha
-                      </span>
-                    )}
-                    {off && (
-                      <span className="rounded bg-zinc-700/60 px-1 py-px text-[9px] font-semibold uppercase text-zinc-400">
-                        sign in
                       </span>
                     )}
                   </span>
@@ -731,7 +715,6 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
                 </button>
                 <button
                   type="button"
-                  disabled={guest}
                   onClick={() => {
                     renderLocationManual.current = true;
                     setRenderLocation("cloud");
@@ -757,13 +740,7 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
 
           {selected.burn && !batch && renderLocation === "cloud" && (
             <div className="mb-4 rounded-md border border-zinc-800 bg-zinc-900/60 px-3 py-2.5 text-xs">
-              {guest ? (
-                <span className="text-zinc-500">
-                  Burned-in video renders on the server — sign in with an
-                  account to use it. Subtitle files export right here in the
-                  browser.
-                </span>
-              ) : burnReady ? (
+              {burnReady ? (
                 <span className="flex items-center justify-between gap-2">
                   <span
                     className="min-w-0 truncate whitespace-nowrap text-zinc-400"
@@ -891,7 +868,7 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
             </p>
           )}
 
-          {selected.server && !guest && !useLocalRender && (
+          {selected.server && !useLocalRender && (
             <div className="mb-4">
               <div className="grid grid-cols-2 gap-1 rounded-lg bg-zinc-900 p-1">
                 {(
@@ -1008,7 +985,6 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
               (batch
                 ? !batchClips.some((c) => clipExportable(c.id))
                 : !hasContent({ cues, texts })) ||
-              (guest && selected.server && !useLocalRender) ||
               (selected.burn &&
                 !useLocalRender &&
                 !batch &&
@@ -1030,7 +1006,7 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
                 Export {batchClips.filter((c) => clipExportable(c.id)).length}{" "}
                 clips · {selected.name}
               </>
-            ) : selected.burn && !burnReady && !guest ? (
+            ) : selected.burn && !burnReady ? (
               <>{burnBlockerLabel}</>
             ) : useLocalRender ? (
               <>Export {format === "hevc" ? "H.265" : "H.264"} on this device</>
@@ -1039,7 +1015,7 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
             )}
           </button>
 
-          {selected.server && !guest && !useLocalRender && (
+          {selected.server && !useLocalRender && (
             <p className="mt-2.5 text-center text-[11px] leading-4 text-zinc-500">
               Renders in the background — keep editing while progress shows in
               the corner. The file downloads automatically and stays available
@@ -1051,12 +1027,6 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
               Renders directly from the original file on this device. Keep this
               tab open until the MP4 is finished; cloud upload progress does not
               affect it.
-            </p>
-          )}
-          {selected.server && guest && !useLocalRender && (
-            <p className="mt-2.5 text-center text-[11px] leading-4 text-zinc-500">
-              Server rendering is disabled in guest mode. SRT · VTT · ASS export
-              works without an account.
             </p>
           )}
         </div>

@@ -30,7 +30,6 @@ import {
   compareCleanSources,
   deleteCleanSource,
   loadCleanSource,
-  loadShowcaseSource,
   uploadCleanSource,
 } from "@/lib/clean-workspace";
 import { auditEdit, downloadEdit, measureEdit } from "@/lib/clean-edit";
@@ -48,7 +47,6 @@ import {
 import type { CleanPreviewHandle } from "./CleanEditorPreview";
 import { editTimeline, timelineDuration } from "@contracts/clean-timeline";
 import { CleanUploadedComparison } from "./CleanUploadedComparison";
-import { isDemo, useAuth } from "@/lib/auth";
 
 import { CleanMetadataAudit } from "./CleanMetadataAudit";
 import { CleanBatchPanel } from "./CleanBatchPanel";
@@ -83,19 +81,15 @@ const message = (error: unknown) =>
 
 export default function CleanPage() {
   const [query, setQuery] = useSearchParams();
-  // "See the demo": the demo's finished run, "just for
-  // visuals": its stored results, nothing that uploads, renders or deletes.
-  const demo = useAuth((s) => isDemo(s.me));
   const restoreId = useRef(query.get("session"));
-  const openShowcase = useRef(demo && !restoreId.current);
   const restoreComparisonId = useRef(query.get("compare"));
   const [compareUploads, setCompareUploads] = useState(
-    !demo && Boolean(restoreComparisonId.current),
+    Boolean(restoreComparisonId.current),
   );
   const [comparisonKey, setComparisonKey] = useState<string>();
   const comparisonInput = useRef<HTMLInputElement>(null);
   const [restoring, setRestoring] = useState(
-    Boolean(restoreId.current) || openShowcase.current,
+    Boolean(restoreId.current),
   );
   const [pageError, setPageError] = useState<string>();
   const [notice, setNotice] = useState<string>();
@@ -125,9 +119,6 @@ export default function CleanPage() {
   const input = useRef<HTMLInputElement>(null);
   const row = rows.find((item) => item.key === activeKey);
   const source = row?.source;
-  const [shownRun, setShownRun] = useState(0);
-  const showcase = demo ? source?.showcase : undefined;
-  const shown = showcase?.runs[shownRun];
   const comparison =
     rows.find((item) => item.key === comparisonKey && item.key !== activeKey) ??
     rows.find((item) => item.key !== activeKey);
@@ -155,9 +146,9 @@ export default function CleanPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [compareUploads, row?.source, comparison?.source]);
   const options = cleanExportOptions(
-    shown?.options ?? row?.options ?? initialOptions,
+    row?.options ?? initialOptions,
   );
-  const measured = shown?.measurement ?? row?.measurement;
+  const measured = row?.measurement;
   const auditResult =
     row?.audit &&
     (!measured?.audit || row.audit.audit.checkedAt > measured.audit.checkedAt)
@@ -189,14 +180,12 @@ export default function CleanPage() {
   }, []);
   useEffect(() => {
     const id = restoreId.current;
-    if (!id && !openShowcase.current) return;
+    if (!id) return;
     const controller = new AbortController();
     const secondId = restoreComparisonId.current;
     void Promise.allSettled([
-      id
-        ? loadCleanSource(id, controller.signal)
-        : loadShowcaseSource(controller.signal),
-      ...(id && secondId && secondId !== id
+      loadCleanSource(id, controller.signal),
+      ...(secondId && secondId !== id
         ? [loadCleanSource(secondId, controller.signal)]
         : []),
     ])
@@ -551,18 +540,16 @@ export default function CleanPage() {
   return (
     <div className="min-h-screen bg-[#0b0b10] text-zinc-200">
       <AppBar tool="Video Cleaner" className="sticky top-0 z-20 bg-[#0b0b10]/95 backdrop-blur">
-          {!demo && (
-            <button
-              type="button"
-              disabled={restoring}
-              onClick={() => input.current?.click()}
-              className={buttonClass + " border border-zinc-700 text-zinc-300"}
-            >
-              <Plus className="h-4 w-4" />
-              <span className="hidden sm:inline">Add videos</span>
-            </button>
-          )}
-          {!compareUploads && !demo && (
+          <button
+            type="button"
+            disabled={restoring}
+            onClick={() => input.current?.click()}
+            className={buttonClass + " border border-zinc-700 text-zinc-300"}
+          >
+            <Plus className="h-4 w-4" />
+            <span className="hidden sm:inline">Add videos</span>
+          </button>
+          {!compareUploads && (
             <>
               <button
                 type="button"
@@ -664,50 +651,24 @@ export default function CleanPage() {
             ))}
           </nav>
         )}
-        {!demo && (
-          <CleanBatchPanel
-            videos={rows.flatMap((item) =>
-              item.source
-                ? [
-                    {
-                      id: item.source.id,
-                      name: item.name,
-                      options: item.options,
-                    },
-                  ]
-                : [],
-            )}
-            busy={rows.some((item) => Boolean(item.operation))}
-            clearAfterDownload={clearAfterDownload}
-            onBusyChange={setBatchBusy}
-            onDownloaded={clearBatchOriginals}
-          />
-        )}
-        {showcase && showcase.runs.length > 1 && (
-          <div
-            role="group"
-            aria-label="Finished example"
-            className="mb-5 flex flex-wrap gap-2"
-          >
-            {showcase.runs.map((run, index) => (
-              <button
-                key={run.preset}
-                type="button"
-                aria-pressed={index === shownRun}
-                onClick={() => setShownRun(index)}
-                className={
-                  buttonClass +
-                  (index === shownRun
-                    ? " bg-violet-600 text-white"
-                    : " border border-zinc-700 text-zinc-400")
-                }
-              >
-                {run.preset}
-              </button>
-            ))}
-          </div>
-        )}
-        {row && !demo && (
+        <CleanBatchPanel
+          videos={rows.flatMap((item) =>
+            item.source
+              ? [
+                  {
+                    id: item.source.id,
+                    name: item.name,
+                    options: item.options,
+                  },
+                ]
+              : [],
+          )}
+          busy={rows.some((item) => Boolean(item.operation))}
+          clearAfterDownload={clearAfterDownload}
+          onBusyChange={setBatchBusy}
+          onDownloaded={clearBatchOriginals}
+        />
+        {row && (
           <div
             role="group"
             aria-label="Comparison mode"
@@ -760,7 +721,6 @@ export default function CleanPage() {
           <div className="grid items-start gap-5 lg:grid-cols-[290px_minmax(0,1fr)]">
             <fieldset
               disabled={
-                demo ||
                 batchBusy ||
                 row?.operation === "exporting" ||
                 row?.operation === "removing"
@@ -780,35 +740,33 @@ export default function CleanPage() {
                   upload…
                 </div>
               ) : !row ? (
-                !demo && (
-                  <button
-                    type="button"
-                    onClick={() => input.current?.click()}
-                    onDragOver={(e) => {
-                      e.preventDefault();
-                      setDrag(true);
-                    }}
-                    onDragLeave={() => setDrag(false)}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      setDrag(false);
-                      addVideos([...e.dataTransfer.files]);
-                    }}
-                    className={`flex min-h-[390px] w-full flex-col items-center justify-center rounded-2xl border-2 border-dashed px-8 text-center ${drag ? "border-violet-500 bg-violet-500/10" : "border-zinc-800 bg-zinc-900/20 hover:border-zinc-600"}`}
-                  >
-                    <UploadCloud className="mb-5 h-10 w-10 text-violet-400" />
-                    <span className="text-lg font-medium">
-                      Drop your videos here
-                    </span>
-                    <span className="mt-2 text-sm text-zinc-400">
-                      or click to browse · MP4, MOV, M4V, MKV, WebM
-                    </span>
-                    <span className="mt-5 max-w-md text-xs leading-relaxed text-zinc-500">
-                      Choose adjustments before or during upload. Presets save
-                      settings, never your video.
-                    </span>
-                  </button>
-                )
+                <button
+                  type="button"
+                  onClick={() => input.current?.click()}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setDrag(true);
+                  }}
+                  onDragLeave={() => setDrag(false)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setDrag(false);
+                    addVideos([...e.dataTransfer.files]);
+                  }}
+                  className={`flex min-h-[390px] w-full flex-col items-center justify-center rounded-2xl border-2 border-dashed px-8 text-center ${drag ? "border-violet-500 bg-violet-500/10" : "border-zinc-800 bg-zinc-900/20 hover:border-zinc-600"}`}
+                >
+                  <UploadCloud className="mb-5 h-10 w-10 text-violet-400" />
+                  <span className="text-lg font-medium">
+                    Drop your videos here
+                  </span>
+                  <span className="mt-2 text-sm text-zinc-400">
+                    or click to browse · MP4, MOV, M4V, MKV, WebM
+                  </span>
+                  <span className="mt-5 max-w-md text-xs leading-relaxed text-zinc-500">
+                    Choose adjustments before or during upload. Presets save
+                    settings, never your video.
+                  </span>
+                </button>
               ) : (
                 <>
                   <div className="mb-3 flex items-center justify-between gap-3">
@@ -826,20 +784,18 @@ export default function CleanPage() {
                               : `Uploading in background · ${row.percent}%`}
                       </p>
                     </div>
-                    {!demo && (
-                      <button
-                        type="button"
-                        disabled={batchBusy || Boolean(row.operation)}
-                        onClick={() => void removeVideo(row)}
-                        aria-label="Delete server session"
-                        className={
-                          buttonClass + " text-zinc-400 hover:text-white"
-                        }
-                      >
-                        <Trash2 className="h-4 w-4" />
-                        <span className="hidden sm:inline">Done & delete</span>
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      disabled={batchBusy || Boolean(row.operation)}
+                      onClick={() => void removeVideo(row)}
+                      aria-label="Delete server session"
+                      className={
+                        buttonClass + " text-zinc-400 hover:text-white"
+                      }
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      <span className="hidden sm:inline">Done & delete</span>
+                    </button>
                   </div>
                   {row.upload === "uploading" && (
                     <div
@@ -881,10 +837,9 @@ export default function CleanPage() {
                     busy={editorOpen || batchBusy || Boolean(row.operation)}
                     measurement={measured}
                     measuring={row.operation === "measuring"}
-                    onMeasure={demo ? undefined : () => void measure(row)}
-                    stored={shown}
+                    onMeasure={() => void measure(row)}
                   />
-                  {!demo && <CleanDuplicateCheck sourceId={source?.id} />}
+                  <CleanDuplicateCheck sourceId={source?.id} />
                   {(row.preview || source) && (
                     <CleanEditorPreview
                       key={row.key}
@@ -894,25 +849,22 @@ export default function CleanPage() {
                       sourceDuration={duration}
                       transportRef={previewTransport}
                       suspended={editorOpen}
-                      readOnly={demo}
                       editAction={
-                        !demo && (
-                          <CleanClipEditorDialog
-                            url={row.preview || cleanMediaUrl(source!.id)}
-                            name={row.name}
-                            file={row.file}
-                            sourceId={source?.id}
-                            options={options}
-                            duration={duration}
-                            measurement={measured}
-                            disabled={batchBusy || Boolean(row.operation)}
-                            onOpenChange={setEditorOpen}
-                            onApply={(next, measurement) => {
-                              updateOptions(next);
-                              if (measurement) patch(row.key, { measurement });
-                            }}
-                          />
-                        )
+                        <CleanClipEditorDialog
+                          url={row.preview || cleanMediaUrl(source!.id)}
+                          name={row.name}
+                          file={row.file}
+                          sourceId={source?.id}
+                          options={options}
+                          duration={duration}
+                          measurement={measured}
+                          disabled={batchBusy || Boolean(row.operation)}
+                          onOpenChange={setEditorOpen}
+                          onApply={(next, measurement) => {
+                            updateOptions(next);
+                            if (measurement) patch(row.key, { measurement });
+                          }}
+                        />
                       }
                       busy={editorOpen || batchBusy || Boolean(row.operation)}
                       onDuration={(previewDuration) =>
@@ -929,7 +881,7 @@ export default function CleanPage() {
                       )}
                       busy={batchBusy || Boolean(row.operation)}
                       checking={row.operation === "auditing"}
-                      onCheck={demo ? undefined : () => void checkCleanup(row)}
+                      onCheck={() => void checkCleanup(row)}
                     />
                   )}
                   <CleanEditMap
@@ -960,29 +912,27 @@ export default function CleanPage() {
                       )}
                       MP4
                     </div>
-                    {!demo && (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          patch(row.key, {
-                            snapshots: [
-                              ...(row.snapshots ?? []),
-                              {
-                                name: `Snapshot ${(row.snapshots?.length ?? 0) + 1}`,
-                                options,
-                              },
-                            ],
-                          })
-                        }
-                        disabled={(row.snapshots?.length ?? 0) >= 20}
-                        className={
-                          buttonClass +
-                          " text-xs text-zinc-400 hover:bg-zinc-900"
-                        }
-                      >
-                        <Save className="h-3.5 w-3.5" /> Save settings snapshot
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        patch(row.key, {
+                          snapshots: [
+                            ...(row.snapshots ?? []),
+                            {
+                              name: `Snapshot ${(row.snapshots?.length ?? 0) + 1}`,
+                              options,
+                            },
+                          ],
+                        })
+                      }
+                      disabled={(row.snapshots?.length ?? 0) >= 20}
+                      className={
+                        buttonClass +
+                        " text-xs text-zinc-400 hover:bg-zinc-900"
+                      }
+                    >
+                      <Save className="h-3.5 w-3.5" /> Save settings snapshot
+                    </button>
                   </div>
                   {!!row.snapshots?.length && (
                     <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
@@ -1001,36 +951,34 @@ export default function CleanPage() {
                       ))}
                     </div>
                   )}
-                  {!demo && (
-                    <section className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-zinc-800 p-4">
-                      <div>
-                        <h2 className="text-sm font-semibold">
-                          Continue in Caption Studio
-                        </h2>
-                        <p className="mt-1 max-w-lg text-xs text-zinc-400">
-                          {source?.captionOrigin
-                            ? "Add the edited clip to your project with words and overlays remapped to these cuts and speed. The previous clip stays available."
-                            : "Save this edit as a Caption Studio project, then transcribe and add captions."}
-                        </p>
-                      </div>
-                      <button
-                        className={
-                          buttonClass +
-                          " bg-violet-600 text-white hover:bg-violet-500"
-                        }
-                        disabled={
-                          batchBusy || !source || Boolean(row.operation)
-                        }
-                        onClick={() => void sendToCaptions(row)}
-                      >
-                        {row.operation === "transferring"
-                          ? "Sending…"
-                          : source?.captionOrigin
-                            ? "Return to Caption Studio"
-                            : "Send to Caption Studio"}
-                      </button>
-                    </section>
-                  )}
+                  <section className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-zinc-800 p-4">
+                    <div>
+                      <h2 className="text-sm font-semibold">
+                        Continue in Caption Studio
+                      </h2>
+                      <p className="mt-1 max-w-lg text-xs text-zinc-400">
+                        {source?.captionOrigin
+                          ? "Add the edited clip to your project with words and overlays remapped to these cuts and speed. The previous clip stays available."
+                          : "Save this edit as a Caption Studio project, then transcribe and add captions."}
+                      </p>
+                    </div>
+                    <button
+                      className={
+                        buttonClass +
+                        " bg-violet-600 text-white hover:bg-violet-500"
+                      }
+                      disabled={
+                        batchBusy || !source || Boolean(row.operation)
+                      }
+                      onClick={() => void sendToCaptions(row)}
+                    >
+                      {row.operation === "transferring"
+                        ? "Sending…"
+                        : source?.captionOrigin
+                          ? "Return to Caption Studio"
+                          : "Send to Caption Studio"}
+                    </button>
+                  </section>
                   <section className="mt-5 rounded-2xl border border-zinc-800 bg-zinc-900/30 p-4">
                     <h2 className="mb-2 text-sm font-semibold">
                       Full-file verification
@@ -1040,16 +988,14 @@ export default function CleanPage() {
                       encoded video is deleted after analysis. No saved version
                       is needed.
                     </p>
-                    {!demo && (
-                      <Toggle
-                        label="Automatically verify the full file after adjustments settle"
-                        checked={autoMeasure}
-                        onChange={(value) => {
-                          autoAttempt.current = "";
-                          setAutoMeasure(value);
-                        }}
-                      />
-                    )}
+                    <Toggle
+                      label="Automatically verify the full file after adjustments settle"
+                      checked={autoMeasure}
+                      onChange={(value) => {
+                        autoAttempt.current = "";
+                        setAutoMeasure(value);
+                      }}
+                    />
                     {row.operation === "measuring" && (
                       <p
                         role="status"
@@ -1154,25 +1100,23 @@ export default function CleanPage() {
                   )}
                 </>
               )}
-              {!demo && (
-                <div className="mt-5 rounded-xl border border-zinc-800/70 p-4">
-                  <Toggle
-                    label="Delete server session after download"
-                    disabled={
-                      batchBusy ||
-                      rows.some((item) => item.operation === "exporting")
-                    }
-                    checked={clearAfterDownload}
-                    onChange={setClearAfterDownload}
-                  />
-                  <p className="text-[11px] leading-relaxed text-zinc-500">
-                    Preview frames, measurement renders and export copies are
-                    temporary. Downloading clears the uploaded original by
-                    default. You can also use Done & delete; abandoned sessions
-                    expire after one hour. Your local file stays unchanged.
-                  </p>
-                </div>
-              )}
+              <div className="mt-5 rounded-xl border border-zinc-800/70 p-4">
+                <Toggle
+                  label="Delete server session after download"
+                  disabled={
+                    batchBusy ||
+                    rows.some((item) => item.operation === "exporting")
+                  }
+                  checked={clearAfterDownload}
+                  onChange={setClearAfterDownload}
+                />
+                <p className="text-[11px] leading-relaxed text-zinc-500">
+                  Preview frames, measurement renders and export copies are
+                  temporary. Downloading clears the uploaded original by
+                  default. You can also use Done & delete; abandoned sessions
+                  expire after one hour. Your local file stays unchanged.
+                </p>
+              </div>
             </main>
           </div>
         )}

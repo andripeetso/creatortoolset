@@ -86,7 +86,7 @@ describe("AI access key", () => {
     expect((await app.request("/api/review", { headers: full })).status).toBe(200);
     expect((await app.request("/api/projects", { headers: full })).status).toBe(200);
 
-    for (const p of ["/api/admin/users", "/api/providers", "/api/devices"]) {
+    for (const p of ["/api/service-keys", "/api/providers", "/api/devices"]) {
       expect((await app.request(p, { headers: full })).status).toBe(401);
     }
     // a new Full key turns the old Full key off

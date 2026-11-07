@@ -43,18 +43,14 @@ import { remapCaptionData } from "./lib/clean-caption-map";
 import { createCleanBatchApp } from "./clean-batch";
 import { cleanupAudit, inspectMetadata } from "./lib/clean-inspection";
 import { timelineDuration } from "../contracts/clean-timeline";
-import { DEMO_USER } from "./users";
 import { phashPerSecond } from "./library/fingerprint";
 import { similarTo } from "./library/similar";
 
 export const cleanWorkspaceApp = new Hono<{ Variables: AuthVars }>();
 const ROOT = path.join(env.dataDir, "clean", "sources");
 const KEEP_MS = 60 * 60_000;
-// "See the demo": the demo account's finished run stays;
-// everyone else's session goes an hour after its last operation.
-const expired = (source: StoredSource) =>
-  source.owner !== DEMO_USER && source.expiresAt <= Date.now();
-const SHOWCASE = "showcase.json";
+// a session goes an hour after its last operation
+const expired = (source: StoredSource) => source.expiresAt <= Date.now();
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const busy = new Set<string>();
@@ -359,32 +355,11 @@ cleanWorkspaceApp.route(
     touch: (source) => saveSource(source as StoredSource, true),
   }),
 );
-// A finished run to show (the demo's, seeded with its results in showcase.json):
-// the newest one this account owns. Before /:id.
-cleanWorkspaceApp.get("/showcase", async (c) => {
-  let newest: { id: string; at: number } | undefined;
-  for (const id of await readdir(ROOT).catch(() => [])) {
-    const source = await readSource(id);
-    if (source?.owner !== c.get("user").username || expired(source)) continue;
-    const at = (await stat(path.join(folder(id), SHOWCASE)).catch(() => null))
-      ?.mtimeMs;
-    if (at && at > (newest?.at ?? 0)) newest = { id, at };
-  }
-  return newest
-    ? c.json({ id: newest.id })
-    : c.json({ error: "There's no finished example to show yet." }, 404);
-});
 cleanWorkspaceApp.get("/:id", async (c) => {
   const source = await ownedSource(c);
   if (!source.inspection)
     source.inspection = await inspectMetadata(originalPath(source));
-  const showcase = await readFile(
-    path.join(folder(source.id), SHOWCASE),
-    "utf8",
-  )
-    .then(JSON.parse)
-    .catch(() => undefined);
-  return c.json({ ...publicSource(source), ...(showcase ? { showcase } : {}) });
+  return c.json(publicSource(source));
 });
 
 // Read the two immutable uploads directly. No render or retained comparison copy.

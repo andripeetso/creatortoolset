@@ -10,7 +10,6 @@ import {
 } from "lucide-react";
 import { useStudio, getClipSnapshot } from "@/lib/store";
 import { fmtClock } from "@/lib/ass";
-import { isGuest, useViewedMe } from "@/lib/auth";
 import {
   persistAutoCadence,
   storedAutoCadence,
@@ -41,16 +40,6 @@ const stripExt = (n: string) => n.replace(/\.[a-z0-9]{2,5}$/i, "");
 
 function UploadStatus() {
   const clips = useStudio((s) => s.clips);
-  const me = useViewedMe();
-
-  if (isGuest(me)) {
-    return (
-      <p className="flex items-center gap-1.5 text-[11px] text-amber-400/80">
-        <TriangleAlert className="h-3 w-3 shrink-0" /> Guest mode — this project
-        stays in your browser and is gone when the tab closes.
-      </p>
-    );
-  }
   const uploading = clips.filter((c) => c.uploadState === "uploading");
   const processing = clips.filter((c) => c.uploadState === "processing");
   const failed = clips.filter((c) => c.uploadState === "error");

@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { ArrowLeft, Loader2, ScanSearch } from "lucide-react";
-import { canUse, useAuth, useViewedMe } from "@/lib/auth";
+import { canUse, useAuth, useMe } from "@/lib/auth";
 import { toolsetHomePath } from "@/lib/mobile";
 import { useWorkspace } from "@/lib/workspace";
 import {
@@ -22,7 +22,7 @@ const label =
 export default function InstagramAnalysisPage() {
   const home = toolsetHomePath();
   const base = analyzerHome();
-  const me = useViewedMe();
+  const me = useMe();
   const required = useAuth((s) => s.required);
   const allowed = canUse(me, "instagram");
   const currentProjectId = useWorkspace((s) => s.currentProjectId);

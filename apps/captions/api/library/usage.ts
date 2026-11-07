@@ -5,7 +5,6 @@ import { BlockList, isIP } from "node:net";
 import path from "node:path";
 import type { AuthVars } from "../auth";
 import { env } from "../lib/env";
-import { canManage } from "../lib/workspaces";
 import type { LibraryStorage, LibraryStorageInput } from "../../contracts/library";
 import { libraryRole } from "./access";
 import { libraryDb, placeOf, serverBucket, type StorageConfig } from "./db";
@@ -129,7 +128,6 @@ storageApp.get("/:id/usage", (c) => {
   const libraryId = c.req.param("id");
   const role = libraryRole(c.get("user").username, libraryId);
   if (!role) return c.json({ error: "Not found", code: "not_found" }, 404);
-  if (!canManage(role)) return c.json({ error: "Only the owner sees the library's storage", code: "forbidden" }, 403);
   return c.json(view(libraryId));
 });
 
@@ -139,7 +137,6 @@ storageApp.put("/:id/storage", async (c) => {
   const libraryId = c.req.param("id");
   const role = libraryRole(user.username, libraryId);
   if (!role) return c.json({ error: "Not found", code: "not_found" }, 404);
-  if (!canManage(role)) return c.json({ error: "Only the owner changes the library's storage", code: "forbidden" }, 403);
   const r = rowOf(libraryId)!;
   const current = configOf(r);
   const body = (await c.req.json().catch(() => null)) as (Partial<LibraryStorageInput> & Record<string, unknown>) | null;

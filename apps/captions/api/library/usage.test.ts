@@ -48,28 +48,13 @@ const own = { kind: "s3", mode: "own", endpoint: "https://s3.example.com", regio
 
 beforeAll(() => {
   mkdirSync(process.env.DATA_DIR!, { recursive: true });
-  writeFileSync(
-    path.join(process.env.DATA_DIR!, "workspaces.json"),
-    JSON.stringify({
-      workspaces: [
-        { id: "ws_a", name: "a", plan: "team", comped: false, createdAt: 0, members: [
-          { username: "owner-a", role: "owner", ai: "own", budgetUsd: 0, joinedAt: 0 },
-          { username: "mem-a", role: "member", ai: "own", budgetUsd: 0, joinedAt: 0 },
-        ] },
-      ],
-      invites: [],
-      spend: {},
-    }),
-  );
   libraryDb()
-    .prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_a', 'ws_a', 'A', 'local', 0), ('lib_b', 'ws_a', 'B', 'local', 1), ('lib_m', 'ws_a', 'M', 'local', 2)")
+    .prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_a', 'owner-a', 'A', 'local', 0), ('lib_b', 'owner-a', 'B', 'local', 1), ('lib_m', 'owner-a', 'M', 'local', 2)")
     .run();
 });
 
 describe("library storage choice", () => {
-  it("is the owner's: a member gets 403, an outsider 404", async () => {
-    expect((await call("mem-a", "GET", "/api/library/lib_a/usage")).status).toBe(403);
-    expect((await call("mem-a", "PUT", "/api/library/lib_a/storage", own)).status).toBe(403);
+  it("is the owner's: another account gets 404", async () => {
     expect((await call("stranger", "GET", "/api/library/lib_a/usage")).status).toBe(404);
     expect((await call("stranger", "PUT", "/api/library/lib_a/storage", own)).status).toBe(404);
     expect(await (await call("owner-a", "GET", "/api/library/lib_a/usage")).json()).toMatchObject({ kind: "local", keysSet: false, locked: false });

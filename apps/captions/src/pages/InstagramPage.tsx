@@ -22,12 +22,7 @@ import {
   TriangleAlert,
   X,
 } from "lucide-react";
-import { canUse, useAuth, useViewedMe } from "@/lib/auth";
-import { isAdminForeignView } from "@/lib/admin-view";
-import {
-  AdminViewBanner,
-  AdminViewBorder,
-} from "@/components/AdminViewBanner";
+import { canUse, useAuth, useMe } from "@/lib/auth";
 import { fmtBytes, timeAgo } from "@/lib/exports";
 import { toolsetHomePath } from "@/lib/mobile";
 import {
@@ -990,7 +985,7 @@ export default function InstagramPage() {
   const browse = (location.state as { browse?: string[] } | null)?.browse;
   const home = toolsetHomePath();
   const base = analyzerHome();
-  const me = useViewedMe();
+  const me = useMe();
   const required = useAuth((s) => s.required);
   const allowed = canUse(me, "instagram");
   const currentProjectId = useWorkspace((s) => s.currentProjectId);
@@ -1256,8 +1251,7 @@ export default function InstagramPage() {
   }, []);
 
   useEffect(() => {
-    // "See the demo" reads what's already distilled, never asks the AI
-    if (!allowed || !avail?.ai || me?.demo) return;
+    if (!allowed || !avail?.ai) return;
     const inFlight = [...distillQueued.current].filter((id) => {
       const p = posts.find((x) => x.id === id);
       return Boolean(p && !p.idea);
@@ -1274,7 +1268,7 @@ export default function InstagramPage() {
           distillQueued.current.delete(p.id);
         });
     }
-  }, [allowed, avail?.ai, me?.demo, posts, applyPost]);
+  }, [allowed, avail?.ai, posts, applyPost]);
 
   const refreshBoard = useCallback(() => {
     getIdeaBoard()
@@ -1553,7 +1547,6 @@ export default function InstagramPage() {
 
   return (
     <div className="relative flex min-h-dvh flex-col items-center bg-[#0b0b10] pb-[max(2.5rem,env(safe-area-inset-bottom))] text-zinc-200">
-      {isAdminForeignView(me, viewing?.owner) && <AdminViewBorder />}
       <AppBar tool="Content Analyzer" to={postId ? base : undefined} trail={viewing ? `@${viewing.creator.username}` : undefined} account={!!me}>
         {me ? (
           <>
@@ -1606,9 +1599,6 @@ export default function InstagramPage() {
           </div>
         ) : viewing ? (
           <>
-            {isAdminForeignView(me, viewing.owner) && (
-              <AdminViewBanner owner={viewing.owner} noun="post" />
-            )}
             <PostView
               post={viewing}
               owns={ownsCurrent}
@@ -1636,21 +1626,20 @@ export default function InstagramPage() {
           </>
         ) : (
           <>
-            {/* "See the demo" shows what's already read in, never the scraping */}
-            {!me?.demo && <IngestBox
+            <IngestBox
               defaultValue={sharePrefill}
               nowDisabledReason={sessionReason}
               onConnect={() => navigate("/settings/connectors")}
               onIngest={onIngest}
-            />}
-            {avail && !me?.demo && !avail.available && (
+            />
+            {avail && !avail.available && (
               <p className="mt-2 text-[11px] text-zinc-400">
                 With only your Instagram login (Settings → Connectors) you get your own posts and their numbers. Other
                 creators' posts and full comment threads need an Apify key of your own, added in Settings → Connectors:
                 Apify bills you for each read.
               </p>
             )}
-            {avail && !me?.demo && (!avail.cloud || !avail.ai) && (
+            {avail && (!avail.cloud || !avail.ai) && (
               <p className="mt-2 flex items-center gap-1.5 text-[11px] text-amber-400/80">
                 <TriangleAlert className="h-3 w-3 shrink-0" />
                 {!avail.cloud && !avail.ai
@@ -1707,7 +1696,7 @@ export default function InstagramPage() {
                     className={`h-4 w-4 shrink-0 text-zinc-500 transition-transform ${showAllAccounts ? "rotate-180" : ""}`}
                   />
                 </button>
-                {unpulledAccounts.length && !me?.demo ? (
+                {unpulledAccounts.length ? (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <button

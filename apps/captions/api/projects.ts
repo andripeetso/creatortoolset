@@ -38,10 +38,9 @@ import {
   presignSourcePart,
   sourceObjectKey,
 } from "./media-store";
-import { copyProjectName, mediaOwnerProjectId } from "./lib/project-copy";
+import { mediaOwnerProjectId } from "./lib/project-copy";
 import { MAX_SCRIPT_CHARS } from "../src/lib/script-check";
 import type { AuthVars } from "./auth";
-import type { Expired } from "./retention";
 import { type SessionUser, bumpUsage } from "./users";
 
 /**
@@ -63,10 +62,8 @@ import { type SessionUser, bumpUsage } from "./users";
  * clips/<id>/ lazily on first access (and in a sweep at boot).
  *
  * Projects belong to the account that created them. The list endpoint
- * is personal — everyone (admins included) sees only their own there;
- * admins browse everyone's through /api/admin/projects instead. By-id
- * routes still let admins in, which is what allows the admin panel to
- * open or delete any project. Projects saved before accounts existed
+ * is personal — everyone (admins included) sees only their own there.
+ * By-id routes also let admins in. Projects saved before accounts existed
  * have no owner; those stay in the admin's personal list so legacy
  * saves (and local no-auth use) keep working.
  */
@@ -593,12 +590,6 @@ function clipOriginalInfo(
     // ponytail: assumed still in the library; the render's own lookup (ensureProjectOriginal) answers NO_ORIGINAL if not
     return { hasOriginal: !!clip?.libraryVersionId, originalBytes: 0 };
   }
-}
-
-async function copyIfExists(from: string, to: string): Promise<void> {
-  if (!existsSync(from)) return;
-  await mkdir(path.dirname(to), { recursive: true });
-  await copyFile(from, to);
 }
 
 /**
@@ -1403,63 +1394,6 @@ projectsApp.get("/:id", async (c) => {
     script: projData.script ?? "",
     clips,
   });
-});
-
-/* Duplicate editor state into the admin's library; video stays on the source. */
-projectsApp.post("/:id/copy", async (c) => {
-  const id = c.req.param("id");
-  const user = c.get("user");
-  if (user.role !== "admin") return c.json({ error: "Forbidden" }, 403);
-  const meta = await ownedMeta(id, user);
-  if (!meta) return c.json({ error: "Not found" }, 404);
-
-  const newId = randomUUID();
-  const now = Date.now();
-  const name = copyProjectName(meta.name);
-  try {
-    await withProjectWrite(id, async () => {
-      const current = await readMeta(id);
-      if (!current || current.deletedAt) throw new Error("Not found");
-      await mkdir(path.join(projDir(newId), "clips"), { recursive: true });
-      await copyIfExists(
-        path.join(projDir(id), "data.json"),
-        path.join(projDir(newId), "data.json"),
-      );
-      const clips: ClipMeta[] = [];
-      for (const clip of current.clips) {
-        await mkdir(clipDir(newId, clip.id), { recursive: true });
-        await copyIfExists(
-          clipDataPath(id, clip.id),
-          clipDataPath(newId, clip.id),
-        );
-        const { objectUpload: _ignored, ...rest } = clip;
-        clips.push({
-          ...rest,
-          mediaProjectId: mediaOwnerProjectId(id, clip),
-        });
-      }
-      await writeMeta({
-        ...current,
-        id: newId,
-        name,
-        owner: user.username,
-        createdAt: now,
-        updatedAt: now,
-        revision: 0,
-        lastMutationId: undefined,
-        deletedAt: undefined,
-        incompleteRecovery: undefined,
-        clips,
-      });
-    });
-    bumpUsage(user.username, { projectsCreated: 1 });
-    return c.json({ id: newId, name });
-  } catch (error) {
-    await rm(projDir(newId), { recursive: true, force: true }).catch(() => {});
-    const message = error instanceof Error ? error.message : String(error);
-    if (message === "Not found") return c.json({ error: "Not found" }, 404);
-    return c.json({ error: message }, 500);
-  }
 });
 
 /* Register an added clip immediately, independently of its source upload. */
@@ -2406,16 +2340,6 @@ async function purgeDeletedProject(id: string, meta: Meta): Promise<void> {
   );
   await rm(projDir(id), { recursive: true, force: true });
   await deleteExportsForProject(id);
-}
-
-/** Retention (api/retention.ts): delete every project it picks, trash included. */
-export async function purgeExpiredProjects(expired: Expired): Promise<void> {
-  for (const id of await projectIds()) {
-    const meta = await readMeta(id).catch(() => null);
-    if (meta && expired(meta.owner, meta.updatedAt)) {
-      await purgeDeletedProject(id, meta);
-    }
-  }
 }
 
 async function sweepDeletedProjects(): Promise<void> {

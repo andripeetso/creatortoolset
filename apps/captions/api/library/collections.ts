@@ -2,7 +2,6 @@ import { Hono, type Context } from "hono";
 import { randomUUID } from "node:crypto";
 import type { AuthVars } from "../auth";
 import type { AssetKind, Collection, SearchQuery } from "../../contracts/library";
-import { canManage } from "../lib/workspaces";
 import { libraryRole } from "./access";
 import { libraryDb } from "./db";
 import { KINDS } from "./query";
@@ -30,7 +29,6 @@ const db = () => libraryDb();
 const notFound = (c: Ctx) => c.json({ error: "Not found", code: "not_found" }, 404);
 const rowIn = (libraryId: string, cid: string) =>
   db().prepare("SELECT * FROM collections WHERE id = ? AND library_id = ?").get(cid, libraryId) as Row | undefined;
-const canEdit = (username: string, role: Parameters<typeof canManage>[0], row: Row) => canManage(role) || row.created_by === username;
 const nameOf = (v: unknown) => (typeof v === "string" ? v.trim().slice(0, 80) : "");
 
 /** A smart collection's saved query: the search fields only, so no paging, trash or collection inside it. */
@@ -120,7 +118,6 @@ collectionApp.patch("/:id/collections/:cid", async (c) => {
   const role = libraryRole(user.username, libraryId);
   const row = role ? rowIn(libraryId, c.req.param("cid")) : undefined;
   if (!role || !row) return notFound(c);
-  if (!canEdit(user.username, role, row)) return c.json({ error: "Only the creator or the owner can change it", code: "forbidden" }, 403);
   const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   const name = body?.name === undefined ? row.name : nameOf(body.name);
   if (!name) return c.json({ error: "A name is needed", code: "invalid" }, 400);
@@ -141,7 +138,6 @@ collectionApp.delete("/:id/collections/:cid", (c) => {
   const role = libraryRole(user.username, libraryId);
   const row = role ? rowIn(libraryId, c.req.param("cid")) : undefined;
   if (!role || !row) return notFound(c);
-  if (!canEdit(user.username, role, row)) return c.json({ error: "Only the creator or the owner can delete it", code: "forbidden" }, 403);
   const d = db();
   d.exec("BEGIN");
   try {

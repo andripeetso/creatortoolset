@@ -5,8 +5,7 @@
  * A provider instance is one coding-agent CLI (its driver) signed in as one identity (its home folder, e.g.
  * ~/.claude-work, which sends Claude through the signed-in Claude account), run by a paired Mac (the Mac relay).
  * Every job picks an instance, a model and an effort. An Anthropic API key is not a provider: it answers an account
- * with no provider (its own key from Settings → My API keys; the server's for the platform admin or a member on an API
- * budget), and guests and the demo account only when an admin turns it on for them (api/my-keys.ts keyFor).
+ * with no provider: its own key from Settings → My API keys (api/my-keys.ts keyFor).
  */
 
 export type Driver = "claude" | "codex" | "cursor" | "grok" | "opencode" | "antigravity" | "muse" | "pi";
@@ -58,15 +57,12 @@ export type JobId = (typeof JOBS)[number]["id"];
 /**
  * One set of providers. The workspace's (the admins', $DATA_DIR/ai-providers.json) answers admins and background
  * work, never anyone else; anyone may keep their own ($DATA_DIR/ai-providers/<user>.json), which answers them first.
- * Members without their own: a workspace API budget (contracts/workspaces.ts).
  */
 export interface ProviderSettings {
   instances: ProviderInstance[];
   /** every job without its own pick */
   default: Selection;
   jobs: Partial<Record<JobId, Selection>>;
-  /** the server's keys (Anthropic, and Deepgram and NVIDIA for guests): serve guests and the demo account (its visitors too) only when switched on here */
-  api: { guests: boolean; demo: boolean; model: string; effort: Effort };
 }
 
 /**
@@ -115,14 +111,13 @@ export const DEFAULT_SETTINGS: ProviderSettings = {
   instances: [{ id: "claude", driver: "claude", name: "Claude", enabled: true }],
   default: { instance: "claude", model: "claude-opus-5-5", effort: "xhigh" },
   jobs: {},
-  api: { guests: false, demo: false, model: "claude-opus-5-5", effort: "low" },
 };
 
 /** Whose providers a set is: the workspace's, or one account's own. Instance ids are unique within a scope. */
 export type Scope = "workspace" | string;
 
 /**
- * GET /api/providers (any account; guests and the demo get 403): everything the Settings page shows.
+ * GET /api/providers (any account): everything the Settings page shows.
  *   PUT /api/providers/workspace   (admins) body ProviderSettings → ProviderSettings
  *   PUT /api/providers/own         body ProviderSettings | null (null = drop my own, use the workspace's) → ProvidersView
  *   POST /api/providers/:scope/:id/check → ProviderCheck (a one-line prompt on the instance's device; admins any scope, others their own)

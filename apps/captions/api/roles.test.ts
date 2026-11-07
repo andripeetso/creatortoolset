@@ -29,12 +29,8 @@ async function login(username: string, role: "user" | "team" | "admin" = "user")
 }
 const status = async (url: string, headers: { cookie: string }) =>
   (await app.request(url, { headers })).status;
-const setOff = (admin: { cookie: string }, username: string, off: unknown) =>
-  app.request(`/api/admin/users/${username}`, {
-    method: "PATCH",
-    headers: { ...admin, "content-type": "application/json" },
-    body: JSON.stringify({ off }),
-  });
+// users.json's `off` list; nothing in the app writes it any more
+const setOff = (username: string, off: string[]) => void (findUser(username)!.off = off as never);
 
 describe("app switches", () => {
   it("keeps only the switches that still exist, and drops the rest of old accounts", () => {
@@ -50,30 +46,21 @@ describe("app switches", () => {
     expect(await status("/api/review", h)).toBe(200);
     expect(await status("/api/instagram/availability", h)).toBe(200);
     expect(await status("/api/enhance", h)).toBe(200);
-    expect(await status("/api/library", h)).toBe(200); // the Media Library is on for every account (no workspace yet: an empty list)
+    expect(await status("/api/library", h)).toBe(200); // the Media Library is on for every account (no library yet: an empty list)
   });
 
-  it("lets an admin switch apps off and back on", async () => {
-    const admin = await login("boss", "admin");
+  it("keeps an app switched off in users.json closed", async () => {
     const h = await login("u2");
-    expect((await setOff(admin, "u2", ["enhance", "clean", "instagram"])).status).toBe(200);
+    setOff("u2", ["enhance", "clean", "instagram"]);
     expect(await status("/api/enhance", h)).toBe(403);
     const clean = await app.request("/api/clean/sources/from-captions", { method: "POST", headers: h });
     expect(clean.status).toBe(403);
     // the Workshop reads the Analyzer's API, so one of the two keeps both open
     expect(await status("/api/instagram/availability", h)).toBe(200);
-    await setOff(admin, "u2", ["instagram", "workshop"]);
+    setOff("u2", ["instagram", "workshop"]);
     expect(await status("/api/instagram/availability", h)).toBe(403);
     expect(await status("/api/workshop/sessions", h)).toBe(403);
-    await setOff(admin, "u2", []);
+    setOff("u2", []);
     expect(await status("/api/enhance", h)).toBe(200);
-  });
-
-  it("refuses unknown apps and non-admins", async () => {
-    const admin = await login("boss2", "admin");
-    expect((await setOff(admin, "u1", ["bogus"])).status).toBe(400);
-    const h = await login("u3");
-    expect((await setOff(h, "u3", [])).status).toBe(403);
-    expect(findUser("u3")?.off).toEqual([]);
   });
 });

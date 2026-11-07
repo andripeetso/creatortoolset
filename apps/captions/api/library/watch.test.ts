@@ -45,25 +45,11 @@ beforeAll(() => {
   mkdirSync(process.env.DATA_DIR!, { recursive: true });
   mkdirSync(path.join(watched, ".hidden"), { recursive: true });
   mkdirSync(copied, { recursive: true });
-  writeFileSync(
-    path.join(process.env.DATA_DIR!, "workspaces.json"),
-    JSON.stringify({
-      workspaces: [
-        { id: "ws_w", name: "w", plan: "team", comped: false, createdAt: 0, members: [
-          { username: "owner-w", role: "owner", ai: "own", budgetUsd: 0, joinedAt: 0 },
-          { username: "mem-w", role: "member", ai: "own", budgetUsd: 0, joinedAt: 0 },
-        ] },
-      ],
-      invites: [],
-      spend: {},
-    }),
-  );
-  libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_w', 'ws_w', 'W', 'local', 0)").run();
+  libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_w', 'owner-w', 'W', 'local', 0)").run();
 });
 
 describe("watch folder settings", () => {
   it("only the owner sets them, outsiders get 404, and a hosted server refuses", async () => {
-    expect((await put("mem-w", [{ path: watched }])).status).toBe(403);
     expect((await put("stranger", [{ path: watched }])).status).toBe(404);
     process.env.LIBRARY_WATCH_FOLDERS = "0";
     const hosted = await put("owner-w", [{ path: watched }]);

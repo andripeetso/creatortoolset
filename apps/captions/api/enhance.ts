@@ -4,15 +4,14 @@ import { randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream, existsSync } from "node:fs";
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { Readable, Transform } from "node:stream";
+import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { AuthVars } from "./auth";
 import { isOutOfCredits, outOfCreditsMessage } from "./credits";
-import { GUEST_CLIP_S, logGuestRun, takeGuest } from "./guest";
 import { env } from "./lib/env";
 import { keyFor, type Actor } from "./my-keys";
 import { NvidiaRefused, readWav, SR as NV_SR, studioVoice, wav16 } from "./lib/nvidia-voice";
-import { type SessionUser, bumpUsage, isGuestName } from "./users";
+import { type SessionUser, bumpUsage } from "./users";
 
 /**
  * Standalone audio enhancement — its own tool, fully separate from
@@ -25,18 +24,15 @@ import { type SessionUser, bumpUsage, isGuestName } from "./users";
  * switching never jumps in volume:
  * - nvidia (the default): NVIDIA Studio Voice on NVIDIA's hosted API
  *   (lib/nvidia-voice.ts), in this process.
- * - elevenlabs: ElevenLabs Voice Isolator, not for guests.
+ * - elevenlabs: ElevenLabs Voice Isolator.
  * Each runs on the session owner's key (my-keys.ts keyFor: their own from Settings → My API keys; the server's only
- * for the platform admin, or guests when an admin switched that on).
+ * for the platform admin).
  * Admins can add a second pass (`?then=`): `meta.chain`, `meta.step`; a
  * pass's output feeds the next as pass-<step>.wav.
  * Strength: the page blends the original and the result live; `meta.mix`
  * keeps the pick and a download at a strength under 100 % is that blend
  * (blend-<pct>.m4a, made once), with the original levelled like the result
  * (source.m4a) so only the sound moves.
- * Guests: NVIDIA only, files up to GUEST_CLIP_S long and GUEST_MAX_BYTES,
- * today's guest budget (guest.ts), and every guest session is deleted
- * GUEST_KEEP_MS after it finishes (`sweepGuests`).
  *
  * Layout: $DATA_DIR/enhance/<id>/
  *   meta.json        session state (job status lives here too)
@@ -60,10 +56,6 @@ const KEEP_DAYS = Number(process.env.ENHANCE_KEEP_DAYS || 0);
 export const ENGINES = ["nvidia", "elevenlabs"] as const;
 export type Engine = (typeof ENGINES)[number];
 const isEngine = (v: unknown): v is Engine => ENGINES.includes(v as Engine);
-/** A guest's upload at most. */
-export const GUEST_MAX_BYTES = 300 * 1024 ** 2;
-/** A guest's session goes this long after it finishes (enough to listen and download). */
-export const GUEST_KEEP_MS = 60 * 60_000;
 
 const okId = (id: string) => /^[a-z0-9-]{6,40}$/.test(id);
 const sesDir = (id: string) => path.join(ENHANCE_DIR, id);
@@ -183,20 +175,6 @@ if (KEEP_DAYS > 0) {
   setInterval(() => void sweep(), 6 * 3600 * 1000).unref();
 }
 
-/** Guests' sessions go GUEST_KEEP_MS after they finish (a stuck one after 3 h). */
-export async function sweepGuests(now = Date.now()): Promise<void> {
-  for (const id of await sessionIds()) {
-    if (active.has(id)) continue;
-    const meta = await readMeta(id);
-    if (!meta?.owner || !isGuestName(meta.owner)) continue;
-    const busy = meta.status === "queued" || meta.status === "running";
-    if (now - meta.updatedAt > (busy ? 3 * 3600_000 : GUEST_KEEP_MS)) {
-      await rm(sesDir(id), { recursive: true, force: true }).catch(() => {});
-    }
-  }
-}
-void sweepGuests();
-setInterval(() => void sweepGuests(), 10 * 60_000).unref();
 
 /* ---- probes & process helpers ---- */
 
@@ -286,7 +264,6 @@ const defaultEngine = (): Engine => "nvidia";
 
 /** Why `user` can't run `engine`, or null. */
 function refusal(engine: Engine, user: SessionUser): string | null {
-  if (engine === "elevenlabs" && user.role === "guest") return "ElevenLabs isn't available in guest mode.";
   return keyFor(user, KEY[engine]).missing ?? null;
 }
 
@@ -610,14 +587,12 @@ async function streamFile(
    matches as an id */
 enhanceApp.get("/availability", async (c) => {
   const user = c.get("user");
-  const guest = user.role === "guest";
   return c.json({
     nvidia: !refusal("nvidia", user),
     elevenlabs: !refusal("elevenlabs", user),
     why: { nvidia: refusal("nvidia", user) ?? undefined, elevenlabs: refusal("elevenlabs", user) ?? undefined },
     default: defaultEngine(),
     admin: user.role === "admin", // a second pass
-    guest: guest ? { maxSeconds: GUEST_CLIP_S, maxBytes: GUEST_MAX_BYTES, keepMinutes: GUEST_KEEP_MS / 60_000 } : null,
   });
 });
 
@@ -644,39 +619,19 @@ function pickChain(c: Context<{ Variables: AuthVars }>): Engine[] | { error: str
   return chain;
 }
 
-/** Guests: their own id (the bare pre-id cookie is shared) and today's budget. */
-function guestCharge(user: SessionUser, seconds: number): string | null {
-  if (user.role !== "guest") return null;
-  if (!/^guest-/.test(user.username)) return "Reload the page to start a fresh guest session.";
-  if (seconds > GUEST_CLIP_S) return `Guest mode takes files up to ${GUEST_CLIP_S / 60} minutes — sign in for longer ones.`;
-  return takeGuest(user, "enhance", Math.ceil(seconds));
-}
-
 /* upload: raw audio/video body → session, enhanced immediately */
 enhanceApp.post("/", async (c) => {
   const user = c.get("user");
   const chain = pickChain(c);
   if (!Array.isArray(chain)) return c.json(chain, 400);
-  if (user.role === "guest" && !/^guest-/.test(user.username)) {
-    return c.json({ error: "Reload the page to start a fresh guest session." }, 403);
-  }
   const body = c.req.raw.body;
   if (!body) return c.json({ error: "No file body" }, 400);
   const name = (c.req.query("name") || "untitled").slice(0, 120);
   const id = randomUUID();
   const dir = sesDir(id);
-  // guests: stop reading past their cap instead of storing a huge upload
-  const cap = user.role === "guest" ? GUEST_MAX_BYTES : Infinity;
-  let bytes = 0;
-  const counter = new Transform({
-    transform(chunk: Buffer, _enc, done) {
-      bytes += chunk.length;
-      done(bytes > cap ? new Error(`Guest uploads are up to ${cap / 1024 ** 2} MB — sign in for bigger files.`) : null, chunk);
-    },
-  });
   try {
     await mkdir(dir, { recursive: true });
-    await pipeline(Readable.fromWeb(body as never), counter, createWriteStream(originalPath(id)));
+    await pipeline(Readable.fromWeb(body as never), createWriteStream(originalPath(id)));
     if (!(await probeHasAudio(originalPath(id)))) {
       throw new Error("This file has no audio track");
     }
@@ -685,8 +640,6 @@ enhanceApp.post("/", async (c) => {
       probeHasVideo(originalPath(id)),
       stat(originalPath(id)),
     ]);
-    const refused = guestCharge(user, duration);
-    if (refused) throw new Error(refused);
     // A/B source at the result's loudness: the comparison and the strength slider move the sound, not the volume
     const audioArgs = ["-af", LOUDNESS, "-ar", "48000", "-c:a", "aac", "-b:a", "160k"];
     const meta: Meta = {
@@ -716,9 +669,6 @@ enhanceApp.post("/", async (c) => {
     enqueue(meta);
     await persist(meta);
     bumpUsage(user.username, { enhanceRuns: 1 });
-    if (user.role === "guest") {
-      void logGuestRun({ at: Date.now(), guest: user.username, file: name, seconds: Math.round(duration), text: `Audio Enhancer (${chain.join(" → ")})` });
-    }
     return c.json(publicMeta(meta));
   } catch (e) {
     active.delete(id);
@@ -744,8 +694,6 @@ enhanceApp.post("/:id/run", async (c) => {
   }
   const chain = pickChain(c);
   if (!Array.isArray(chain)) return c.json(chain, 400);
-  const refused = guestCharge(user, meta.duration);
-  if (refused) return c.json({ error: refused }, 400);
   meta.engine = chain[0];
   meta.chain = chain;
   enqueue(meta);
