@@ -67,13 +67,13 @@ export type ProviderOpts = {
   images?: Array<{ type: string; data: string }>;
 };
 
-/** Who is asking: a session, a username (background work names its owner), or nobody (the server's own work). */
+/** Who is asking: a session, or a username (background work names its owner). Nobody = no AI. */
 type Who = Pick<SessionUser, "username" | "role" | "demo"> | string | undefined;
 
 /**
  * Where one AI call goes. Accounts: the job's provider (the session's own pick first), with the label for the
  * usage tally. Its scope (lib/providers.ts routeFor): the account's own providers when it has a runnable one on its
- * own Macs, else the workspace's (an admin, background work, or an account an admin shares them with). Guests and the demo
+ * own Macs, else the workspace's (a platform admin). Nobody named: no AI. Guests and the demo
  * account: the API key, only when switched on in AI providers.
  */
 export function aiFor(who: Who, job: JobId, label: string, own?: Selection): ProviderOpts {
@@ -85,6 +85,8 @@ export function aiFor(who: Who, job: JobId, label: string, own?: Selection): Pro
     if (!k.key) return { only: [], off: `AI is off for ${role === "guest" ? "guests" : "the demo"}` };
     return { only: ["anthropic"], retries: 1, effort: api.effort, model: api.model, apiKey: k.key, mac: { label } };
   }
+  // nobody named: never the server's providers (background work names whose work it is)
+  if (!name) return { only: [], off: "This AI call names no account" };
   const r = routeFor(name, role === "admin", job, own);
   if (!r) return (name && onApiKey(name, job, label)) || { only: [], off: "No AI provider for your account: add one in Settings → AI providers, or your Anthropic key in Settings → My API keys" };
   const { selection, instance } = r;
@@ -114,11 +116,9 @@ export function providerChain(configured: readonly ProviderId[], opts: ProviderO
   return (opts.only ?? []).filter((id) => configured.includes(id));
 }
 
-/** A call that names no route is the server's own work: the default provider, its label kept. */
+/** A call that names no route runs nowhere: every call says whose AI it is (aiFor). */
 function routed(opts: ProviderOpts): ProviderOpts {
-  if (opts.only) return opts;
-  const r = aiFor(undefined, "notes", opts.mac?.label ?? "other");
-  return { ...opts, ...r, mac: { ...r.mac, ...opts.mac } };
+  return opts.only ? opts : { ...opts, only: [], off: opts.off ?? "This AI call names no account" };
 }
 
 const tries = (opts: ProviderOpts) => 1 + Math.max(0, Math.min(2, opts.retries ?? 0));
@@ -138,7 +138,7 @@ interface Provider {
 export const anthropicKey = () => process.env.ANTHROPIC_API_KEY || "";
 
 /** Some AI can answer this caller: a provider is on, or for a guest or the demo the API key is switched on. */
-export const anyAiConfigured = (who?: Who) => !aiFor(who, "notes", "check").off;
+export const anyAiConfigured = (who: Who) => !aiFor(who, "notes", "check").off;
 
 /**
  * API-equivalent prices in $ per million tokens, for the models this app

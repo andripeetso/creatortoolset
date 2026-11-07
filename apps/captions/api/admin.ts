@@ -210,6 +210,7 @@ adminApp.post("/users", async (c) => {
   try {
     createUser(username, body.password ?? "", {
       role: isRole(body.role) ? body.role : "user",
+      byAdmin: true,
     });
     // an account made here joins the admin's workspace as a member on their own AI (Settings → Workspace)
     const w = workspaceOf(c.get("user").username);

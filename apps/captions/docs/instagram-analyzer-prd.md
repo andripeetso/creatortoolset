@@ -6,6 +6,10 @@ Owner: Creator Toolset (`/instagram` today)
 Live product name today: Instagram ingest
 Target product name: **Instagram Analyzer**
 
+> Since 2026-11: the burner/session-cookie path described below is gone. Other creators' posts are read only on each
+> user's own Apify key, your own account through the official Meta login; the app never reads Instagram's web pages
+> with cookies.
+
 This document turns the nine requests below into one product: objects, jobs, UI, data, and a build order. Nothing here is implemented yet except what is called out under Current state.
 
 ---
@@ -80,7 +84,7 @@ This is not a posting tool, not Meta Graph, not a social inbox.
 2. **Records ≠ jobs.** Saving an account or post must not imply a full scrape. Jobs are explicit, queued, and re-runnable.
 3. **Account is the hub.** If a post has no account yet, resolving it creates one. UI never shows a post as an orphan if we know the creator.
 4. **Snapshots are append-only.** Refresh never silently overwrites history.
-5. **Credentials are per Toolset user.** Shared env fallback is local-dev only (`APIFY_TOKEN` / `INSTAGRAM_COOKIE`), never production multi-user.
+5. **Credentials are per Toolset user.** Shared env fallback is local-dev only (`APIFY_TOKEN`), never production multi-user.
 6. **Analysis tools come later**, but the schema must not block them: tags, snapshots, transcripts, and account ids are the join keys.
 7. **JSON files stay** until something actually needs a DB (vector index is the likely first reason). Do not introduce Drizzle for this.
 

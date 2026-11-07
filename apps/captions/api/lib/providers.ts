@@ -192,7 +192,7 @@ function pick(scope: Scope, s: ProviderSettings, job: JobId, own?: Selection): R
 
 /**
  * Who answers an account's job (aiFor): its own providers when it has a runnable one on its own Macs; else the
- * workspace's when it is an admin or nobody is named (background work). Never another person's: the workspace's
+ * workspace's when it is an admin (aiFor never asks for nobody). Never another person's: the workspace's
  * are the owner's own Claude / ChatGPT logins, which serve only them (Anthropic's terms). A member without their own runs on a workspace API budget (aiFor) or not at all.
  * Null = no provider for this account.
  */

@@ -35,7 +35,7 @@ const invite = async (body: unknown) => (await send("POST", "/api/workspace/invi
 beforeAll(() => {
   createUser("robin", "password1", { role: "team" });
   createUser("lee", "password1", { role: "user" });
-  createUser("demo", "password1", { role: "user" });
+  createUser("demo", "password1", { role: "user", byAdmin: true });
 });
 
 afterEach(() => {

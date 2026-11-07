@@ -32,7 +32,7 @@ describe("completeVisionWithFallback", () => {
 
   it("sends the pictures to the Analyzer's provider as files it reads in order", async () => {
     const wait = macClaudeApp.request("/wait", { method: "POST" });
-    const answer = completeVisionWithFallback("sys", "Read the slide.", images, undefined, parse);
+    const answer = completeVisionWithFallback("sys", "Read the slide.", images, undefined, parse, { username: "alex", role: "admin" });
     const req = (await (await wait).json()) as { id: string; user: string; files: Record<string, string>; model: string; instance: string };
     expect(req.files).toEqual({ "attached/1.jpg": "base64:AAAA", "attached/2.jpg": "base64:BBBB" });
     expect(req.user).toContain("attached/1.jpg, attached/2.jpg");
@@ -59,6 +59,6 @@ describe("completeVisionWithFallback", () => {
   });
 
   it("refuses no pictures", async () => {
-    await expect(completeVisionWithFallback("sys", "look", [], undefined, parse)).rejects.toMatchObject({ message: "No image to analyze" });
+    await expect(completeVisionWithFallback("sys", "look", [], undefined, parse, "alex")).rejects.toMatchObject({ message: "No image to analyze" });
   });
 });

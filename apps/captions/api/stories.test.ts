@@ -72,7 +72,7 @@ describe("Story Splitter's saved splits", () => {
     expect((await app.request("/api/stories", { headers: guest })).status).toBe(403);
     expect((await app.request("/api/stories", json(guest, { name: "x", cuts: [], target: 20, duration: 9 }))).status).toBe(403);
 
-    createUser("demo", "demopass1");
+    createUser("demo", "demopass1", { byAdmin: true });
     const demo = await login("demo", "demopass1");
     const split = (await (await app.request("/api/stories", json(demo, { name: "Sample A.mp4", cuts: [22], target: 20, duration: 89 }))).json()) as Split;
     const visitor = { cookie: cookieOf(await app.request("/api/auth/demo", { method: "POST" })) };

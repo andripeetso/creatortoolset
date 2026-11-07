@@ -23,7 +23,7 @@ const json = (headers: Record<string, string>, body: unknown, method = "POST") =
 describe('"See the demo"', () => {
   it("copies an admin's video into the demo, and each visitor gets their own copy of it", async () => {
     expect((await app.request("/api/auth/demo", { method: "POST" })).status).toBe(404);
-    createUser("demo", "demopass1");
+    createUser("demo", "demopass1", { byAdmin: true });
     createUser("boss", "bosspass1", { role: "admin" });
     const admin = { cookie: await login("boss", "bosspass1") };
 

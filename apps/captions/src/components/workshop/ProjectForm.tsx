@@ -171,7 +171,8 @@ export function ProjectForm({
         setPulling(true);
         const raw = handle.trim();
         const skipPull = Boolean(linked && raw && sameHandle(raw, linked.username));
-        void (skipPull ? Promise.resolve(linked!.id) : connect(true))
+        // no handle: a project without Instagram (a creator on other platforms is not stuck in setup)
+        void (!raw ? Promise.resolve(null) : skipPull ? Promise.resolve(linked!.id) : connect(true))
           .then((accountId) => Promise.resolve(onSave({ ...f, accountId, audience: "", voice: "", cta: "" })))
           .catch((err) => setError(err instanceof Error ? err.message : String(err)))
           .finally(() => setPulling(false));

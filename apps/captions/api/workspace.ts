@@ -14,6 +14,7 @@ import {
   spentThisMonth,
   updateMember,
   ensureWorkspace,
+  serverPays,
 } from "./lib/workspaces";
 import { findUser, setOff, type SessionUser } from "./users";
 
@@ -47,7 +48,7 @@ function viewFor(u: SessionUser): WorkspaceView | null {
     me: me.role,
     members,
     invites: manager ? invitesOf(w) : [],
-    apiKey: !!anthropicKey(),
+    apiKey: serverPays(w) && !!anthropicKey(),
     seats: w.members.filter((m) => m.role !== "owner").length,
   };
 }

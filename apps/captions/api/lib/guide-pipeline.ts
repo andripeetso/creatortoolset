@@ -87,11 +87,14 @@ export async function generateGuideFromClip({
   note,
   clipId,
   assetsDir,
+  owner,
 }: {
   prompt: string;
   note?: string;
   clipId: string;
   assetsDir: string;
+  /** whose AI writes it: the document's owner, not whoever made the clip */
+  owner: string;
 }): Promise<{ title: string; guide: GuideDoc; markdown: string }> {
   const clip = await loadClip(clipId);
   if (clip.status && clip.status !== "ready") {
@@ -131,7 +134,7 @@ Rules:
     user,
     undefined,
     (text) => parseGuidePlan(text, clip.duration),
-    aiFor(clip.owner, "notes", "Guide Builder"),
+    aiFor(owner, "notes", "Guide Builder"),
   );
 
   await mkdir(assetsDir, { recursive: true });

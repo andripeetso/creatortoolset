@@ -13,19 +13,23 @@ const member = (username: string, ai: "own" | "budget", budgetUsd = 0) => ({ use
 writeFileSync(
   path.join(dir, "workspaces.json"),
   JSON.stringify({
-    workspaces: [{ id: "w1", name: "Tiny Acrobatics", plan: "team", comped: false, createdAt: 1, members: [{ ...member("admin", "own"), role: "owner" }, member("mia", "budget", 5), member("lee", "own")] }],
+    workspaces: [{ id: "w1", name: "Tiny Acrobatics", plan: "team", comped: false, createdAt: 1, members: [{ ...member("admin", "own"), role: "owner" }, member("mia", "budget", 5), member("lee", "own")] },
+      // a signed-up account's own team: its owner is no platform admin, so a budget here has nothing to pay with
+      { id: "w2", name: "Tiny Fans", plan: "team", comped: false, createdAt: 1, members: [{ ...member("nina", "own"), role: "owner" }, member("omar", "budget", 50)] }],
     invites: [],
     spend: {},
   }),
 );
 const { createUser } = await import("./users");
 const { keyFor, myKeysApp, saveMyKey } = await import("./my-keys");
-const { addSpend } = await import("./lib/workspaces");
+const { addSpend, createInvite, updateMember, workspaceById } = await import("./lib/workspaces");
 const { saveSettings } = await import("./lib/providers");
 const { DEFAULT_SETTINGS } = await import("../contracts/providers");
 const { transcribeApp, cloudTranscribeBlock } = await import("./transcribe");
 createUser("mia", "password1");
 createUser("lee", "password1");
+createUser("nina", "password1");
+createUser("omar", "password1");
 
 describe("keyFor: whose key pays", () => {
   it("own key wins; the server's key only for the admin, a budget member (billed) or a guest switched on", async () => {
@@ -53,6 +57,22 @@ describe("keyFor: whose key pays", () => {
     await saveSettings({ ...DEFAULT_SETTINGS, api: { ...DEFAULT_SETTINGS.api, guests: true } });
     expect(keyFor(guest, "DEEPGRAM_API_KEY")).toEqual({ key: "server-dg" });
     expect(keyFor("demo-0123456789ab", "DEEPGRAM_API_KEY").key).toBe("");
+  });
+
+  it("an API budget spends the server's keys only in the platform admin's workspace", () => {
+    vi.stubEnv("DEEPGRAM_API_KEY", "server-dg");
+    vi.stubEnv("ANTHROPIC_API_KEY", "server-ai");
+    // a budget set in someone else's workspace (before this check, or by hand): never the server's key
+    expect(keyFor("omar", "DEEPGRAM_API_KEY")).toEqual({ key: "", missing: "Add your Deepgram key in Settings → My API keys" });
+    expect(keyFor("omar", "ANTHROPIC_API_KEY").key).toBe("");
+    // and its owner can't give one, to a member, to themselves, or in an invite
+    const w2 = workspaceById("w2")!;
+    expect(() => updateMember(w2, "omar", "owner", { ai: "budget", budgetUsd: 10_000 })).toThrow(/only the server admin's workspace/);
+    expect(() => updateMember(w2, "nina", "owner", { ai: "budget" })).toThrow(/only the server admin's workspace/);
+    expect(() => createInvite(w2, { username: "nina", role: "owner" }, { ai: "budget", budgetUsd: 10_000 })).toThrow(/only the server admin's workspace/);
+    expect(keyFor("nina", "DEEPGRAM_API_KEY").key).toBe("");
+    // the admin's workspace still can
+    expect(() => updateMember(workspaceById("w1")!, "lee", "owner", { ai: "own" })).not.toThrow();
   });
 
   it("Settings → My API keys never sends a key back, and is not for guests", async () => {

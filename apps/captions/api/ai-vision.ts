@@ -27,7 +27,7 @@ export interface VisionImage {
 
 type Who = Parameters<typeof aiFor>[0];
 
-export const anyVisionConfigured = (who?: Who) => anyAiConfigured(who);
+export const anyVisionConfigured = (who: Who) => anyAiConfigured(who);
 
 /** One answer about these pictures; `provider` names who read them (the provider instance, or "anthropic"). */
 export async function completeVisionWithFallback<T>(
@@ -36,7 +36,7 @@ export async function completeVisionWithFallback<T>(
   images: VisionImage[],
   cancelSignal: AbortSignal | undefined,
   parse: (text: string) => T,
-  who?: Who,
+  who: Who,
 ): Promise<{ value: T; provider: string }> {
   if (!images.length) throw new AiProviderError("No image to analyze", "FAILED", false);
   const route = aiFor(who, "analyzer", "Image reading");

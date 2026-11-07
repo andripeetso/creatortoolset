@@ -41,7 +41,7 @@ import {
   type StoredApify,
   updateApify,
 } from "./lib/instagram/apify";
-import { applyMineVisibility, fetchMineAccountStats, fetchMineCatalog, fetchMineCatalogAll, fetchMineComments, fetchMineDailyInsights, fetchMineInsights, fetchMineProfile, fetchMineSharedToFeed, fetchPublicGridKeys, graphConfigured, graphCredsFor, mineUsesGraph, MINE_CATALOG_CAP, withGraphCreds, publicGridFromCatalog, type MineAccountStats, type PublicGridKeys } from "./lib/instagram/graph";
+import { applyMineVisibility, fetchMineAccountStats, fetchMineCatalog, fetchMineCatalogAll, fetchMineComments, fetchMineDailyInsights, fetchMineInsights, fetchMineProfile, fetchMineSharedToFeed, graphConfigured, graphCredsFor, mineUsesGraph, MINE_CATALOG_CAP, withGraphCreds, type MineAccountStats } from "./lib/instagram/graph";
 import { mergeAccountStats, nextGraphDaily, type GraphDaily, type InsightDay } from "./lib/instagram/account-insights";
 import { annotateComments, QUESTION_MIN } from "./lib/instagram/comment-judge";
 import {
@@ -1693,6 +1693,7 @@ async function visionSlide(
       images,
       signal,
       parseVisionPayload,
+      user,
     );
     slide.vision = {
       status: "done",
@@ -1902,44 +1903,6 @@ async function accountPullMode(user: string, acc: { mine?: boolean; owner?: stri
   return gate.mode;
 }
 
-type PublicGridScrape = PublicGridKeys & { items: CatalogItem[] };
-
-function packPublicGrid(
-  items: CatalogItem[],
-  more: boolean,
-  expected?: number,
-): PublicGridScrape {
-  return { ...publicGridFromCatalog(items, { more, expected }), items };
-}
-
-async function scrapeMinePublicGrid(
-  acc: AccountMeta,
-  user: string,
-  signal?: AbortSignal,
-): Promise<PublicGridScrape> {
-  // free logged-out crawl first; the paid Apify scrape only when it came back short
-  const free = await fetchPublicGridKeys(acc.username, { signal });
-  if (free.ok && free.complete) return { ...free, items: [] };
-  const expected = free.expected;
-  const cap = MINE_CATALOG_CAP;
-  const url = canonicalProfileUrl(acc.username);
-  const apify = await readApify(user);
-  if (apify && apify.valid !== false) {
-    try {
-      const page = await fetchCatalogViaApify(url, { username: user, cap, signal, reels: false });
-      const grid = packPublicGrid(page.items, page.more, expected);
-      if (grid.ok) {
-        for (const code of free.shortcodes) grid.shortcodes.add(code);
-        if (expected !== undefined) grid.complete = grid.shortcodes.size >= expected;
-        return grid;
-      }
-    } catch {
-      /* the partial free grid below — never own cookies, they can see trial reels */
-    }
-  }
-  return { ...free, items: [] };
-}
-
 async function enrichMineCatalog(
   items: CatalogItem[],
   acc: AccountMeta,
@@ -1952,12 +1915,9 @@ async function enrichMineCatalog(
   const needShared = items
     .filter((row) => row.graphId && typeof row.isSharedToFeed !== "boolean")
     .map((row) => row.graphId!);
-  const [shared, publicGrid] = await Promise.all([
-    fetchMineSharedToFeed(needShared, { signal }),
-    scrapeMinePublicGrid(acc, user, signal),
-  ]);
-  const combined = mergeCatalog(publicGrid.items, items);
-  let classified = applyMineVisibility(combined, shared, publicGrid);
+  // trial or public from the official login's is_shared_to_feed only: no crawl of Instagram's web pages, no paid scrape
+  const shared = await fetchMineSharedToFeed(needShared, { signal });
+  let classified = applyMineVisibility(items, shared);
   // returned by this fetch without insights read in it (nested insights can fail) — else they freeze
   const insightIds = classified
     .filter((row) => row.graphId && row.graph && row.graph.seenAt > (row.graph.insightsAt ?? 0))

@@ -6,9 +6,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 // a fresh server: only the booted admin, no workspaces.json yet
 process.env.DATA_DIR = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "signup-"));
 process.env.APP_SECRET = "signup-test-secret";
+process.env.TRUST_PROXY = "1"; // the tests vary the address through the proxy's header
 
 const app = (await import("./boot")).default;
-const { workspaceOf } = await import("./lib/workspaces");
+const { createInvite, workspaceOf } = await import("./lib/workspaces");
 
 const signup = (body: unknown, ip: string) =>
   app.request("/api/auth/signup", {
@@ -55,6 +56,8 @@ describe("Create account (ALLOW_SIGNUP)", () => {
     for (const body of [
       { username: "tinyacrobatics", password: "password1" },
       { username: "guest-0123456789ab", password: "password1" },
+      // the demo account visitors read through (and that the server's keys serve when the demo is switched on)
+      { username: "demo", password: "password1" },
       { username: "a b", password: "password1" },
       { username: "tinyfan", password: "short" },
     ]) {
@@ -67,5 +70,27 @@ describe("Create account (ALLOW_SIGNUP)", () => {
     for (let i = 0; i < 5; i++) expect((await signup({ username: "x", password: "" }, "203.0.113.4")).status).toBe(400);
     expect((await signup({ username: "tinyfan", password: "password1" }, "203.0.113.4")).status).toBe(429);
     expect((await signup({ username: "tinyfan", password: "password1" }, "203.0.113.5")).status).toBe(200);
+  });
+
+  it("without TRUST_PROXY, a forged X-Forwarded-For doesn't reset the limit", async () => {
+    vi.stubEnv("ALLOW_SIGNUP", "1");
+    vi.stubEnv("TRUST_PROXY", "");
+    const codes: number[] = [];
+    for (let i = 0; i < 6; i++) codes.push((await signup({ username: "x", password: "" }, `198.51.100.${i}`)).status);
+    expect(codes).toEqual([400, 400, 400, 400, 400, 429]);
+  });
+
+  it("an invite link makes new accounts under the same limit (any account can mint links for its own workspace)", async () => {
+    const w = workspaceOf("tinyacrobatics")!;
+    const { token } = createInvite(w, { username: "tinyacrobatics", role: "owner" }, { ai: "own" });
+    const join = (username: string) =>
+      app.request(`/api/auth/invite/${token}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-forwarded-for": "203.0.113.9" },
+        body: JSON.stringify({ username, password: "" }),
+      });
+    const codes: number[] = [];
+    for (let i = 0; i < 6; i++) codes.push((await join(`fan${i}`)).status);
+    expect(codes).toEqual([400, 400, 400, 400, 400, 429]);
   });
 });

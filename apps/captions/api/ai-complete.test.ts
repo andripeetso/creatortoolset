@@ -97,8 +97,15 @@ describe("aiFor: who asks, for what job → which provider", () => {
     // a provider that is off is skipped: the default answers
     expect(aiFor(admin, "analyzer", "Idea board").mac?.provider?.instance).toBe("claude_work");
     expect(aiFor(admin, "workshop", "Workshop", { instance: "codex", model: "gpt-5", effort: "low" }).mac?.provider).toMatchObject({ instance: "codex", model: "gpt-5" });
-    // nobody named: the server's own work, on the default
-    expect(aiFor(undefined, "notes", "Video Notes").only).toEqual(["mac"]);
+    // nobody named: no AI at all, never the server's own providers
+    expect(aiFor(undefined, "notes", "Video Notes")).toEqual({ only: [], off: "This AI call names no account" });
+  });
+
+  it("a call that names no route never reaches a provider", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    await expect(completeWithFallback("sys", "user", undefined, (t) => t, { mac: { label: "Unnamed" } })).rejects.toThrow("This AI call names no account");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
   });
 
   it("answers guests and the demo on the API key only when switched on, never anyone else", () => {

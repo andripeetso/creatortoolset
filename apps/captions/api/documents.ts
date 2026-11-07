@@ -163,6 +163,7 @@ function assertGuideSources(sources: DocSource[]): void {
 async function runGuideGenerate(
   meta: Meta,
   resolved: (DocSource & { pack: string })[],
+  owner: string,
 ): Promise<{ title: string; markdown: string }> {
   assertGuideSources(resolved);
   const clip = resolved[0];
@@ -176,6 +177,7 @@ async function runGuideGenerate(
       note: clip.note,
       clipId: clip.id,
       assetsDir: tmp,
+      owner,
     });
     if (existsSync(dest)) {
       await rename(dest, prev);
@@ -442,7 +444,7 @@ async function captionHasText(id: string, clips: { id: string }[]): Promise<bool
 }
 
 documentsApp.get("/availability", (c) =>
-  c.json({ ai: anyAiConfigured() }),
+  c.json({ ai: anyAiConfigured(c.get("user")) }),
 );
 
 documentsApp.get("/media", async (c) => {
@@ -560,7 +562,7 @@ documentsApp.get("/", async (c) => {
 
 documentsApp.post("/", async (c) => {
   const user = c.get("user");
-  if (!anyAiConfigured()) {
+  if (!anyAiConfigured(user)) {
     return c.json({ error: "AI is not configured" }, 400);
   }
   const body = (await c.req.json().catch(() => null)) as {
@@ -605,8 +607,8 @@ documentsApp.post("/", async (c) => {
   try {
     const md =
       kind === "guide"
-        ? (await runGuideGenerate(meta, resolved)).markdown
-        : await generateBody(prompt, resolved, meta.owner);
+        ? (await runGuideGenerate(meta, resolved, user.username)).markdown
+        : await generateBody(prompt, resolved, user.username);
     meta.name = titleFromBody(md, meta.name);
     await persist(meta);
     if (kind !== "guide") await writeBody(id, md);
@@ -730,7 +732,7 @@ documentsApp.post("/:id/generate", async (c) => {
   const user = c.get("user");
   const meta = await ownedMeta(c.req.param("id"), user);
   if (!meta) return c.json({ error: "Not found" }, 404);
-  if (!anyAiConfigured()) {
+  if (!anyAiConfigured(user)) {
     return c.json({ error: "AI is not configured" }, 400);
   }
   const kind = parseDocKind(meta.kind);
@@ -746,8 +748,8 @@ documentsApp.post("/:id/generate", async (c) => {
   try {
     const md =
       kind === "guide"
-        ? (await runGuideGenerate(meta, resolved)).markdown
-        : await generateBody(meta.prompt, resolved, meta.owner);
+        ? (await runGuideGenerate(meta, resolved, user.username)).markdown
+        : await generateBody(meta.prompt, resolved, user.username);
     meta.name = titleFromBody(md, meta.name);
     meta.status = "ready";
     meta.error = undefined;

@@ -84,7 +84,7 @@ import {
  * API-key fallback for accounts: a Mac that is off or a run that fails says so. A request with no user
  * (carousel layouts) runs on the default.
  */
-const workshopAi = (user?: SessionUser, own?: Selection): ProviderOpts => route(user, "workshop", "Workshop", own);
+const workshopAi = (user: SessionUser, own?: Selection): ProviderOpts => route(user, "workshop", "Workshop", own);
 // the Workshop's own route: a member on an API budget has AI elsewhere, but not here (aiFor onBudget)
 const aiOn = (user: SessionUser) => !workshopAi(user).off;
 /** Which provider and model answer this session: a resumed Mac session belongs to exactly one. */
@@ -2578,7 +2578,7 @@ workshopApp.post("/sessions/:id/docs/:docId/layouts", async (c) => {
         userMsg,
         undefined,
         (t) => parseOneCompose(t, fallback[slide - 1] ?? { layout: "teaching", well: "none" }, type.id, n, slide - 1),
-        { ...workshopAi(), onUsage: (u) => (usage = sumUsage(usage, u)) },
+        { ...workshopAi(user, meta.ai), onUsage: (u) => (usage = sumUsage(usage, u)) },
       );
       const variants = cached.variants.map((row) => coerceCompose(row, n, fallback, type.id));
       const pick = Math.min(cached.pick, variants.length - 1);
@@ -2597,7 +2597,7 @@ workshopApp.post("/sessions/:id/docs/:docId/layouts", async (c) => {
         userMsg,
         undefined,
         (t) => parseLayoutVariants(t, n, fallback, type.id),
-        { ...workshopAi(), onUsage: (u) => (usage = sumUsage(usage, u)) },
+        { ...workshopAi(user, meta.ai), onUsage: (u) => (usage = sumUsage(usage, u)) },
       );
       next = { hash, pick: 0, variants, usage };
     }

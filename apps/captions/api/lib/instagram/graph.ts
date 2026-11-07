@@ -34,15 +34,6 @@ const MEDIA_FIELDS =
 const PLAIN_MEDIA_FIELDS = MEDIA_FIELDS.split(",insights")[0]!;
 const COMMENT_FIELDS =
   "id,text,username,like_count,timestamp,replies.limit(25){id,text,username,like_count,timestamp}";
-const WEB_PROFILE_HEADERS = {
-  "User-Agent":
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-  Accept: "application/json",
-  "X-IG-App-ID": "936619743392459",
-  "X-Requested-With": "XMLHttpRequest",
-  Referer: "https://www.instagram.com/",
-};
-
 export const GRAPH_MISSING_MSG =
   "Meta Graph is not configured — set META_ACCESS_TOKEN and INSTAGRAM_USER_ID";
 export const MINE_CATALOG_CAP = Math.max(1, Math.floor(Number(process.env.INSTAGRAM_MINE_CATALOG_CAP) || 500));
@@ -226,23 +217,6 @@ export function classifyVisibility(
   return classifyVisibilityWithBasis(item, publicGrid).visibility;
 }
 
-/** Visitor grid only. Graph media_count / Apify reels include trial — do not treat those as public. */
-export function publicGridFromCatalog(
-  items: CatalogItem[],
-  opts: { more?: boolean; expected?: number } = {},
-): PublicGridKeys {
-  const shortcodes = new Set<string>();
-  const ids = new Set<string>();
-  for (const row of items) {
-    if (row.shortcode) shortcodes.add(row.shortcode);
-    if (row.graphId) ids.add(row.graphId);
-  }
-  if (!shortcodes.size) return { ok: false, complete: false, shortcodes, ids, expected: opts.expected };
-  const complete =
-    opts.expected !== undefined ? shortcodes.size >= opts.expected : opts.more !== true;
-  return { ok: true, complete, shortcodes, ids, expected: opts.expected };
-}
-
 export function applyMineVisibility(
   items: CatalogItem[],
   shared: Map<string, boolean>,
@@ -363,162 +337,6 @@ export async function fetchMineCatalogAll(
   if (!missing.length) return page;
   const items = [...page.items, ...missing].sort((a, b) => b.takenAt - a.takenAt);
   return { ...page, items };
-}
-
-const GRID_RETRY_DELAYS_S = [15, 30, 60, 120, 180, 300, 300];
-const GRID_PAGE_GAP_MS = 2000;
-const GRID_MAX_PAGES = 50;
-
-type Sleep = (ms: number, signal?: AbortSignal) => Promise<void>;
-
-/** Resolves early (never rejects) when the signal aborts. */
-const abortableSleep: Sleep = (ms, signal) =>
-  new Promise((resolve) => {
-    if (signal?.aborted) return resolve();
-    const done = () => {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", done);
-      resolve();
-    };
-    const timer = setTimeout(done, ms);
-    signal?.addEventListener("abort", done, { once: true });
-  });
-
-interface WebSession {
-  cookie: string;
-  csrf: string;
-}
-
-/** Anonymous cookies (csrftoken, mid…) from the home page, as a logged-out browser gets them. */
-async function publicWebSession(fetchImpl: typeof fetch, signal?: AbortSignal): Promise<WebSession> {
-  try {
-    const res = await fetchImpl("https://www.instagram.com/", {
-      headers: {
-        "User-Agent": WEB_PROFILE_HEADERS["User-Agent"],
-        Accept: "text/html",
-        Referer: "https://www.instagram.com/",
-      },
-      signal: requestSignal(signal),
-    });
-    const headers = res.headers as Headers | undefined;
-    const lines = headers?.getSetCookie?.() ?? [];
-    await res.body?.cancel().catch(() => {});
-    const jar = new Map<string, string>();
-    for (const line of lines) {
-      const pair = line.split(";")[0] ?? "";
-      const eq = pair.indexOf("=");
-      const name = eq > 0 ? pair.slice(0, eq).trim() : "";
-      const value = eq > 0 ? pair.slice(eq + 1).trim() : "";
-      if (name && value && value !== '""') jar.set(name, value);
-    }
-    return {
-      cookie: [...jar].map(([k, v]) => `${k}=${v}`).join("; "),
-      csrf: jar.get("csrftoken") ?? "",
-    };
-  } catch {
-    return { cookie: "", csrf: "" };
-  }
-}
-
-function gridHeaders(session: WebSession): Record<string, string> {
-  return {
-    ...WEB_PROFILE_HEADERS,
-    ...(session.csrf ? { "X-CSRFToken": session.csrf } : {}),
-    ...(session.cookie ? { Cookie: session.cookie } : {}),
-  };
-}
-
-/** status 0 = network error or unreadable JSON. */
-async function gridJson(
-  url: string,
-  session: WebSession,
-  fetchImpl: typeof fetch,
-  signal?: AbortSignal,
-): Promise<{ status: number; body?: Rec }> {
-  try {
-    const res = await fetchImpl(url, { headers: gridHeaders(session), signal: requestSignal(signal) });
-    if (!res.ok) return { status: res.status };
-    const json = (await res.json()) as unknown;
-    return { status: res.status, body: isRec(json) ? json : {} };
-  } catch {
-    return { status: 0 };
-  }
-}
-
-/**
- * Public web grid (what visitors see), logged out: web_profile_info gives
- * the grid count and the first 12, then /feed/user pages 12 at a time with
- * a pause between pages and a long backoff on 401/429. Complete only when
- * every post the profile counts was collected. Incomplete lists must not
- * mark the rest as trial.
- */
-export async function fetchPublicGridKeys(
-  username: string,
-  opts: { signal?: AbortSignal; fetchImpl?: typeof fetch; sleep?: Sleep; maxPages?: number } = {},
-): Promise<PublicGridKeys> {
-  const handle = username.replace(/^@/, "").trim();
-  if (!handle) return { ok: false, complete: false, shortcodes: new Set(), ids: new Set() };
-  const fetchImpl = opts.fetchImpl ?? fetch;
-  const sleep = opts.sleep ?? abortableSleep;
-  const { signal } = opts;
-  let session = await publicWebSession(fetchImpl, signal);
-  const profile = await gridJson(
-    `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(handle)}`,
-    session,
-    fetchImpl,
-    signal,
-  );
-  const data = profile.body && isRec(profile.body.data) ? profile.body.data : null;
-  const user = data && isRec(data.user) ? data.user : null;
-  if (!user) return { ok: false, complete: false, shortcodes: new Set(), ids: new Set() };
-  const grid = isRec(user.edge_owner_to_timeline_media) ? user.edge_owner_to_timeline_media : null;
-  const expected = grid ? optCount(grid.count) : undefined;
-  const shortcodes = new Set<string>();
-  const ids = new Set<string>();
-  const edges = grid && Array.isArray(grid.edges) ? grid.edges : [];
-  for (const edge of edges) {
-    const node = isRec(edge) && isRec(edge.node) ? edge.node : null;
-    const code = node ? str(node.shortcode) : "";
-    const id = node ? str(node.id) : "";
-    if (code) shortcodes.add(code);
-    if (id) ids.add(id);
-  }
-  const userId = str(user.id) || str(user.pk);
-  if (expected !== undefined && shortcodes.size < expected && userId) {
-    const maxPages = opts.maxPages ?? GRID_MAX_PAGES;
-    let maxId = "";
-    let pages = 0;
-    let retry = 0;
-    while (pages < maxPages && !signal?.aborted) {
-      const url =
-        `https://www.instagram.com/api/v1/feed/user/${encodeURIComponent(userId)}/?count=12` +
-        (maxId ? `&max_id=${encodeURIComponent(maxId)}` : "");
-      const page = await gridJson(url, session, fetchImpl, signal);
-      if (!page.body) {
-        const blocked = page.status === 401 || page.status === 429;
-        if ((!blocked && page.status !== 0) || retry >= GRID_RETRY_DELAYS_S.length) break;
-        await sleep(GRID_RETRY_DELAYS_S[retry]! * 1000, signal);
-        retry++;
-        if (blocked && !signal?.aborted) session = await publicWebSession(fetchImpl, signal);
-        continue;
-      }
-      retry = 0;
-      const items = Array.isArray(page.body.items) ? page.body.items : [];
-      if (!items.length) break;
-      for (const item of items) {
-        const code = isRec(item) ? str(item.code) || str(item.shortcode) : "";
-        if (code) shortcodes.add(code);
-      }
-      pages++;
-      const next = page.body.next_max_id;
-      maxId = typeof next === "number" ? String(next) : str(next);
-      if (shortcodes.size >= expected || page.body.more_available !== true || !maxId) break;
-      await sleep(GRID_PAGE_GAP_MS, signal);
-    }
-  }
-  if (!shortcodes.size) return { ok: false, complete: false, shortcodes, ids, expected };
-  const complete = expected !== undefined && shortcodes.size >= expected;
-  return { ok: true, complete, shortcodes, ids, expected };
 }
 
 export async function fetchMineSharedToFeed(

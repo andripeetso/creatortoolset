@@ -178,12 +178,13 @@ export function verifyPassword(user: UserRecord, password: string): boolean {
 export function createUser(
   username: string,
   password: string,
-  opts: { role?: Role; bootstrap?: boolean } = {},
+  opts: { role?: Role; bootstrap?: boolean; byAdmin?: boolean } = {},
 ): UserRecord {
   const name = username.toLowerCase();
   if (!USERNAME_RE.test(name)) throw new Error("Invalid username");
-  // "workspace" names the shared AI providers and their devices (contracts/providers.ts)
-  if (isGuestName(name) || isDemoName(name) || name === "workspace") throw new Error(`"${name}" is reserved`);
+  // "workspace" names the shared AI providers and their devices (contracts/providers.ts); "demo" is the demo account
+  // visitors read through, which only an admin makes (Admin → Users): a sign-up or invite taking it would be shown as the demo
+  if (isGuestName(name) || isDemoName(name) || name === "workspace" || (name === DEMO_USER && !opts.byAdmin)) throw new Error(`"${name}" is reserved`);
   if (findUser(name)) throw new Error("Username already taken");
   // bootstrap must never lock the deployment out over a short APP_SECRET
   if (!opts.bootstrap && password.length < 6) {

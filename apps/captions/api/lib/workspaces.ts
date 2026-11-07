@@ -4,7 +4,7 @@ import { mkdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { env } from "./env";
 import { INVITE_DAYS, type AiRoute, type Invite, type InviteInput, type Member, type Workspace, type WorkspaceRole } from "../../contracts/workspaces";
-import { listUsers } from "../users";
+import { findUser, listUsers, LOCAL_USER } from "../users";
 
 /**
  * Workspaces, members, invites and each member's API spend (contracts/workspaces.ts):
@@ -139,6 +139,21 @@ export function renameWorkspace(w: Workspace, name: string): void {
 }
 
 const isAi = (x: unknown): x is AiRoute => x === "own" || x === "budget";
+
+/**
+ * An API budget spends the server's keys, so only the platform admin can give one: a workspace whose owner is a
+ * platform admin (the solo install's own account when sign-in is off). Anyone else's workspace has nothing to pay with.
+ */
+export function serverPays(w: Workspace): boolean {
+  const owner = w.members.find((m) => m.role === "owner")?.username ?? "";
+  return findUser(owner)?.role === "admin" || (!env.appSecret && owner === LOCAL_USER.username);
+}
+const NO_BUDGET = "An API budget runs on this server's keys: only the server admin's workspace can give one. Members add their own AI or keys";
+const checkAi = (w: Workspace, ai: unknown): AiRoute => {
+  if (!isAi(ai)) throw new Error("AI is own or budget");
+  if (ai === "budget" && !serverPays(w)) throw new Error(NO_BUDGET);
+  return ai;
+};
 const budget = (x: unknown): number => {
   const n = typeof x === "number" && Number.isFinite(x) ? x : 0;
   if (n < 0 || n > 10_000) throw new Error("A budget is between $0 and $10,000 a month");
@@ -150,10 +165,7 @@ export function updateMember(w: Workspace, username: string, by: WorkspaceRole, 
   const m = memberIn(w, username);
   if (!m) throw new Error("Not a member");
   if (by !== "owner") throw new Error("Only the owner changes the team");
-  if (patch.ai !== undefined) {
-    if (!isAi(patch.ai)) throw new Error("AI is own or budget");
-    m.ai = patch.ai;
-  }
+  if (patch.ai !== undefined) m.ai = checkAi(w, patch.ai);
   if (patch.budgetUsd !== undefined) m.budgetUsd = budget(patch.budgetUsd);
   persist();
   return m;
@@ -188,8 +200,7 @@ export function forgetAccount(username: string): void {
 /** A new invite link, always for a member: the token is returned once and kept hashed. */
 export function createInvite(w: Workspace, by: { username: string; role: WorkspaceRole }, input: Partial<InviteInput>): { invite: Invite; token: string } {
   if (by.role !== "owner") throw new Error("Only the owner invites people");
-  const ai = input.ai ?? "own";
-  if (!isAi(ai)) throw new Error("AI is own or budget");
+  const ai = checkAi(w, input.ai ?? "own");
   const token = randomBytes(20).toString("hex");
   const now = Date.now();
   const invite: StoredInvite = {
@@ -275,7 +286,8 @@ export function addSpend(username: string, usd: number): void {
 export function budgetLeft(username: string): number | null {
   const w = workspaceOf(username);
   const m = w && memberIn(w, username);
-  if (!m || m.ai !== "budget") return null;
+  // a budget set before this check, in a workspace the server doesn't pay for: no budget
+  if (!m || m.ai !== "budget" || !serverPays(w)) return null;
   // ponytail: checked when a call starts, so one long call can go a little over; a hold per call if that matters
   return m.budgetUsd - spentThisMonth(username);
 }

@@ -100,7 +100,7 @@ function AiAccessSection() {
             on={api.guests}
             onChange={(on) => setApi({ guests: on })}
           />
-          <Toggle label="Demo account" hint="Visitors who read through the demo account: their AI runs on the server's Anthropic key." on={api.demo} onChange={(on) => setApi({ demo: on })} />
+          <Toggle label="Demo account" hint="Visitors who read through the demo account: their AI and anything else they reach run on the server's keys." on={api.demo} onChange={(on) => setApi({ demo: on })} />
           <div className="flex flex-wrap items-center gap-2 py-3">
             <span className="mr-auto text-xs text-zinc-400">Model and effort for these calls</span>
             <ModelSelect value={api.model} options={API_MODELS} onChange={(m) => setApi({ model: m })} />
