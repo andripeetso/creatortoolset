@@ -121,3 +121,18 @@ export interface SharedView {
   scope?: ShareInput["scope"];
   items: SharedItem[];
 }
+
+/** A watch folder (api/library/watch.ts): a folder on the server's own disk whose new files join the library. */
+export interface WatchFolder {
+  path: string; // absolute, on the server's disk
+  mode: "reference" | "copy"; // reference: the file stays where it is; copy: stored in the library like an upload
+  collectionId?: string; // a manual folder the files go into
+  addedBy: string; // the owner who added it; imports are theirs
+}
+
+/** GET /api/library/:id/watch. `allowed` is false on a hosted server: it cannot see the folders on your computer. */
+export interface WatchStatus {
+  allowed: boolean;
+  folders: (WatchFolder & { found: boolean; imported: number })[];
+  missing: number; // versions whose original is gone from its folder
+}

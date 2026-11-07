@@ -42,7 +42,7 @@ const KIND_OF: [RegExp, "video" | "image" | "audio"][] = [
   [/\.(mp3|m4a|wav|aac|ogg|opus|flac)$/i, "audio"],
   [/\.(jpe?g|png|heic|webp|gif|tiff?)$/i, "image"],
 ];
-const kindOf = (filename: string) => KIND_OF.find(([re]) => re.test(filename))?.[1] ?? "doc";
+export const kindOf = (filename: string) => KIND_OF.find(([re]) => re.test(filename))?.[1] ?? "doc";
 
 const MIME: [RegExp, string][] = [
   [/\.(mp4|m4v)$/i, "video/mp4"],
@@ -60,7 +60,7 @@ const MIME: [RegExp, string][] = [
   [/\.webp$/i, "image/webp"],
   [/\.gif$/i, "image/gif"],
 ];
-const mimeOf = (filename: string) => MIME.find(([re]) => re.test(filename))?.[1] ?? "application/octet-stream";
+export const mimeOf = (filename: string) => MIME.find(([re]) => re.test(filename))?.[1] ?? "application/octet-stream";
 
 interface UploadRow {
   id: string;

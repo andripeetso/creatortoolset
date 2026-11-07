@@ -18,6 +18,7 @@ import {
   uploadFile,
 } from "@/lib/library";
 import { cn } from "@/lib/utils";
+import { LibraryWatchFolders } from "./LibraryWatchFolders";
 
 /**
  * Media Library (/library): one library's footage as a grid of 16:9 cards. Search runs over titles and tags
@@ -339,6 +340,8 @@ export default function LibraryPage() {
               )}
             </div>
 
+            {library.canManage && <LibraryWatchFolders libraryId={library.id} folders={collections.filter((c) => c.kind === "manual")} />}
+
             {uploads.length > 0 && (
               <section aria-label="Uploads" className="flex flex-col gap-2 rounded-xl border border-zinc-500/20 p-3">
                 <div className="flex items-center justify-between text-sm">
@@ -439,6 +442,12 @@ export default function LibraryPage() {
                   </select>
                 )}
               </div>
+              {preview.state === "missing" && (
+                <p className="text-sm text-zinc-400">
+                  The original is gone from its watch folder: moved, renamed, or the drive is unplugged. Nothing was deleted; it comes back
+                  when the file does.
+                </p>
+              )}
               {libId && scope !== "trash" && <ShareBox libraryId={libId} assetId={preview.id} />}
               {preview.kind === "video" && (
                 <video
