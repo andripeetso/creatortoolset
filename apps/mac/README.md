@@ -29,14 +29,50 @@ Build settings are environment variables, read by `scripts/build-app.sh` at buil
 | `SPARKLE_PUBLIC_KEY` | none | EdDSA public key of your Sparkle signing key (`generate_keys` from Sparkle) |
 | `FEED_URL` | none | Appcast URL the app reads for updates. Set it together with `SPARKLE_PUBLIC_KEY`, or neither |
 | `BUILD_NUMBER` | commit count | Build number, e.g. to test an update locally |
+| `NOTARY_PROFILE` | none | A `notarytool store-credentials` keychain profile. With `SIGN_IDENTITY`, the script notarizes and staples the app |
+| `SSCD_CACHE` | none | A verified SSCD model folder (`apps/captions/scripts/install-sscd-runtime.mjs`). Unset: the app ships without it and the Video Cleaner's duplicate check skips that score |
+| `CT_BUILD_CACHE` | `build/cache` | Where the Node, FFmpeg and fingerprint source downloads are kept between builds |
 
 With no signing identity the app is ad-hoc signed: it runs on the Mac that built it, but other Macs
 refuse it. With no `SPARKLE_PUBLIC_KEY` and `FEED_URL` the app has no updater; Check for Updates does nothing.
-Notarize a Developer ID build yourself with `xcrun notarytool submit … --wait` and `xcrun stapler staple`
-before you hand it out.
+A Developer ID build needs notarization before you hand it out: set `NOTARY_PROFILE`, or run
+`xcrun notarytool submit … --wait` and `xcrun stapler staple` yourself.
 
-The Mac app's site address is a setting, not a build setting: the default is `https://creatortoolset.com`,
-and **Mac settings…** changes it (or `defaults write com.creatortoolset.mac siteAddress https://your.site`).
+The build also makes the server the app runs (`Contents/Resources/server`, about 320 MB, Apple silicon only):
+Node 22 (pinned version and SHA-256 in the script), `pnpm build`'s `dist/`, the two packages the server bundle
+leaves outside (`onnxruntime-node`, darwin-arm64 only, and `playwright-chromium` without its browser), FFmpeg
+and ffprobe (`apps/captions/scripts/install-ffmpeg-runtime-mac.sh`, pinned and checksummed) and the fingerprint
+tools (`install-fingerprint-runtime.sh`, which needs `brew install libomp` on the build Mac). Every program in
+it is signed before the app; with `SIGN_IDENTITY` they get the hardened runtime, and `node` also gets the JIT
+entitlement (`scripts/node.entitlements`). Chromium for caption exports is downloaded on the first export.
+
+A build with the server opens the server on this Mac (next section). **Mac settings… → Run the server on this
+Mac** off opens a site instead: the default is `https://creatortoolset.com`, and the Site field changes it (or
+`defaults write com.creatortoolset.mac siteAddress https://your.site`). A build without the server (`swift run`)
+always opens the site.
+
+## The server on this Mac
+
+`Server.swift` starts `Resources/server/bin/node dist/boot.js` with the working directory `Resources/server`
+(so `runtime/ffmpeg`, the fingerprint tools and `dist/public` are found with no setting), `runtime/` first on
+its `PATH` (ffprobe), and `NODE_ENV=production`, `PORT`, `HOST=127.0.0.1`, `DATA_DIR`, `APP_SECRET`,
+`PLAYWRIGHT_BROWSERS_PATH`, `CT_LOCAL=1` and `CT_EXIT_WITH_PARENT=1`. The window shows "Starting the server
+on this Mac…" and opens `http://127.0.0.1:43128` once `/api/health` answers (polled every 200 ms, up to 30 s).
+
+- **Data:** `~/Library/Application Support/Creator Toolset/data`; Chromium goes to `…/Creator Toolset/runtime/chromium`.
+- **APP_SECRET:** made once (32 random bytes) and kept in the Keychain (service `com.creatortoolset.mac.server`).
+  The server makes the `admin` account with it. Signing the window in by itself comes in a later change: until
+  then the window shows the sign-in page.
+- **Port:** 43128, changed in Mac settings (Change port). If something answers there, the app asks it for its
+  `environment`: the same id as the data folder's `environment.json` and a pid in `DATA_DIR/server.pid` that is
+  this app's `node` means a server left from an earlier run, which is stopped; anything else shows "Port 43128 is
+  in use by another program". The app never picks another port by itself, because saved addresses carry it.
+- **Crashes:** restarted after 1, 2, 4, 8 s; the fifth crash in five minutes stops trying and the window and
+  the menu say "The server stopped. Open server log".
+- **Quit:** the app closes the server's stdin, sends SIGTERM, waits up to 10 s, then SIGKILL. If the app itself
+  dies, the closed stdin stops the server (`CT_EXIT_WITH_PARENT`).
+- **Log:** `~/Library/Logs/Creator Toolset Server.log` (the server's output plus the app's notes about it), `.1`
+  past 10 MB; **Open server log** in the menu bar and Mac settings.
 
 Notifications need the `.app` bundle (`UNUserNotificationCenter`), so `swift run` won't do.
 The bundle id is `com.creatortoolset.mac`; the icon is `AppIcon.png` (1024 px), converted to `.icns` by the
@@ -90,8 +126,10 @@ The icon shows whether this Mac answers AI jobs: moon = off, wand = on, wand wit
 job. The menu shows:
 
 - "AI on this Mac: off / on / running N" and the last AI error (see "Runs your AI");
+- "Server on this Mac: starting / running on port 43128 / …" when the app runs the server;
 - the toggle **Use this Mac for my AI**;
-- **Open Creator Toolset**, **Open Workshop**, **Open app log**, Settings, Mac settings, Check for Updates, Quit.
+- **Open Creator Toolset**, **Open Workshop**, **Open app log**, **Open server log** (with the server), Settings,
+  Mac settings, Check for Updates, Quit.
 
 ## Runs your AI
 
@@ -134,8 +172,9 @@ reply finishing or an AI edit failing, so those notifications need a server chan
 
 - The site's API, with the window's own cookies from WebKit's store. The app reads them to
   make the request and does not keep them.
-- `UserDefaults`: the site address, the AI-on flag, this Mac's device id per site, and the ids of notes
-  already shown (random ids, no content).
+- `UserDefaults`: the site address, whether the server runs here and its port, the AI-on flag, this Mac's device
+  id per site, and the ids of notes already shown (random ids, no content).
+- With the server: its data folder and log (see "The server on this Mac"), and its `APP_SECRET` in the Keychain.
 - `~/.cache/creator-toolset/workshop/`: a Workshop session's folder while its Claude session is kept (14 days).
 
 The site's login cookie lives in WebKit's own store for the app (like Safari's), so the login lasts
@@ -156,12 +195,15 @@ between launches; Sign out on the site clears it. The one secret the app keeps i
   environment, the stream reading, usage, folder sync (plain functions).
 - `Sources/CreatorToolsetMac/ClaudeRun.swift`: one Claude run (the process, streaming, the answer).
 - `Sources/CreatorToolsetMac/MacReport.swift`: the CLIs and config folders the Mac reports.
+- `Sources/CreatorToolsetMac/Server.swift`: the server on this Mac (start, health wait, port, crashes, log, stop).
 - `Sources/CreatorToolsetMac/Logic.swift`: the pure helpers the tests cover.
 - `Tests/CreatorToolsetMacTests/LogicTests.swift`: the pure helpers (site address, cookies, downloads, notes).
 - `Tests/CreatorToolsetMacTests/RelayTests.swift`: the relay offline (request checks, command line,
   env, stream, usage, folder, sessions, report). `CT_REAL_CLAUDE=1 swift test --filter RealRun`
   makes one real `claude` call through `~/.claude-work` (a fraction of a cent).
-- `scripts/build-app.sh`: builds the `.app` (the environment variables above).
+- `Tests/CreatorToolsetMacTests/ServerTests.swift`: the restart backoff, the log rotation, the pid check.
+- `scripts/build-app.sh`: builds the `.app` with its server (the environment variables above);
+  `scripts/node.entitlements`: the JIT entitlement for the bundled `node`.
 
 ## Not checked yet
 

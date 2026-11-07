@@ -103,12 +103,13 @@ struct PairReply: Decodable {
 enum DeviceVault {
     static let service = "com.creatortoolset.mac.device"
 
-    private static func query(_ host: String) -> [String: Any] {
+    private static func query(_ host: String, _ service: String) -> [String: Any] {
         [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: host]
     }
 
-    static func token(for host: String) -> String? {
-        var q = query(host)
+    /// `service`: the device tokens by default; Server.swift keeps the local server's APP_SECRET under its own.
+    static func token(for host: String, service: String = DeviceVault.service) -> String? {
+        var q = query(host, service)
         q[kSecReturnData as String] = true
         q[kSecMatchLimit as String] = kSecMatchLimitOne
         var item: CFTypeRef?
@@ -117,16 +118,16 @@ enum DeviceVault {
     }
 
     @discardableResult
-    static func save(_ token: String, for host: String) -> Bool {
-        remove(for: host)
-        var item = query(host)
+    static func save(_ token: String, for host: String, service: String = DeviceVault.service) -> Bool {
+        remove(for: host, service: service)
+        var item = query(host, service)
         item[kSecValueData as String] = Data(token.utf8)
         item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
         return SecItemAdd(item as CFDictionary, nil) == errSecSuccess
     }
 
-    static func remove(for host: String) {
-        SecItemDelete(query(host) as CFDictionary)
+    static func remove(for host: String, service: String = DeviceVault.service) {
+        SecItemDelete(query(host, service) as CFDictionary)
     }
 
     static func deviceID(for host: String) -> String? {

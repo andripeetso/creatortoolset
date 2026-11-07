@@ -17,6 +17,12 @@ final class Shell: NSObject, ObservableObject {
     @Published private(set) var ai = AIStatus()
     /// Opens the main window; the window sets it so a notification click can bring a closed window back.
     var openWindow: (() -> Void)?
+    /// The server on this Mac (Server.swift), when this build has one; runsHere = the window uses it, not a site.
+    let server: LocalServer? = LocalServer.folder == nil ? nil : LocalServer()
+    @Published private(set) var runsHere = false
+    @Published private(set) var serverLine: String?
+    private var serverWatch: AnyCancellable?
+    private let runsHereKey = "runServerHere"
 
     private let noteCenter = NoteCenter()
     private var timer: Timer?
@@ -33,7 +39,9 @@ final class Shell: NSObject, ObservableObject {
         AppLog.write("launched \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev")")
         let view = AppWebView()
         webView = view
-        base = UserDefaults.standard.string(forKey: "siteAddress").flatMap(siteURL(from:)) ?? productionSite
+        let here = server != nil && UserDefaults.standard.object(forKey: "runServerHere") as? Bool != false
+        runsHere = here
+        base = here ? server!.url : Self.savedSite
         super.init()
         webView.navigationDelegate = self
         webView.uiDelegate = self
@@ -50,13 +58,78 @@ final class Shell: NSObject, ObservableObject {
         }
         UNUserNotificationCenter.current().delegate = noteCenter
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
-        open("/")
+        serverWatch = server?.$state.sink { [weak self] state in
+            MainActor.assumeIsolated { self?.serverChanged(state) }
+        }
+        server?.onReady = { [weak self] in self?.serverReady() }
+        aiOn = UserDefaults.standard.bool(forKey: aiKey)
+        if runsHere {
+            startServer()   // the page and the AI runner wait for it
+        } else {
+            open("/")
+            if aiOn { startAI() }
+        }
         timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             Task { @MainActor in await self?.refresh() }
         }
         Task { await refresh() }
-        aiOn = UserDefaults.standard.bool(forKey: aiKey)
-        if aiOn { startAI() }
+    }
+
+    private static var savedSite: URL {
+        UserDefaults.standard.string(forKey: "siteAddress").flatMap(siteURL(from:)) ?? productionSite
+    }
+
+    // MARK: the server on this Mac (Server.swift)
+
+    private func startServer() {
+        webView.loadHTMLString(messagePage("Starting the server on this Mac…"), baseURL: nil)
+        server?.start()
+    }
+
+    /// The server answers: the window leaves the starting (or stopped) page; the AI runner starts once.
+    private func serverReady() {
+        if !(webView.url.map { isSite($0, base) } ?? false) { open("/") }
+        if aiOn && runner == nil { startAI() }
+    }
+
+    private func serverChanged(_ state: LocalServer.State) {
+        guard let server else { return }
+        switch state {
+        case .off: serverLine = "Server on this Mac: off"
+        case .starting: serverLine = "Server on this Mac: starting"
+        case .running: serverLine = "Server on this Mac: running on port \(server.port)"
+        case .failed(let why):
+            serverLine = "Server on this Mac: \(why)"
+            if runsHere { webView.loadHTMLString(messagePage(why), baseURL: nil) }
+        }
+    }
+
+    /// "Run the server on this Mac" (Mac settings): on = the window opens it; off = the saved site address.
+    func setRunsHere(_ on: Bool) {
+        guard let server else { return }
+        runsHere = on
+        UserDefaults.standard.set(on, forKey: runsHereKey)
+        if on {
+            switchTo(server.url)
+            startServer()
+        } else {
+            server.stop()
+            switchTo(Self.savedSite)
+            open("/")
+        }
+    }
+
+    func setServerPort(_ port: Int) {
+        guard let server, port != server.port else { return }
+        server.stop()
+        server.port = port
+        switchTo(server.url)
+        startServer()
+    }
+
+    func openServerLog() {
+        if !FileManager.default.fileExists(atPath: ServerLog.path) { AppLog.append(Data(), to: ServerLog.path) }
+        NSWorkspace.shared.open(URL(fileURLWithPath: ServerLog.path))
     }
 
     // MARK: menu bar state
@@ -92,13 +165,25 @@ final class Shell: NSObject, ObservableObject {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    /// A site address from Mac settings: the window uses that site, and the server on this Mac stops.
     func setSite(_ url: URL) {
-        base = url
         UserDefaults.standard.set(url.absoluteString, forKey: siteKey)
+        if runsHere {
+            runsHere = false
+            UserDefaults.standard.set(false, forKey: runsHereKey)
+            server?.stop()
+        }
+        switchTo(url)
         open("/")
+    }
+
+    /// The notes and the AI runner follow the window's address.
+    private func switchTo(_ url: URL) {
+        base = url
         Task { await refresh() }
         stopRunner()
-        if aiOn { startAI() }   // a token is per site: pair again if this one has none
+        // a token is per site: pair again if this one has none (the server on this Mac: once it answers, serverReady)
+        if aiOn && !runsHere { startAI() }
     }
 
     func openAppLog() {
