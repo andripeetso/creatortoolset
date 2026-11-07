@@ -10,8 +10,7 @@ import { canManage } from "../lib/workspaces";
 import { libraryRole } from "./access";
 import { blobs, libraryDb } from "./db";
 import { enqueueJob } from "./jobs";
-import { indexAsset } from "./query";
-import { kindOf, mimeOf } from "./routes";
+import { kindOf, recordVersion } from "./routes";
 
 /**
  * Watch folders (tasks/media-library-plan.md, section 4): folders on the server's own disk whose new files join a
@@ -172,35 +171,21 @@ async function ingest(libraryId: string, f: WatchFolder, file: string, size: num
     // store (S3) can't hold a link, and hosted servers don't watch folders
     if (f.mode === "reference") await symlink(file, staged);
     await blobs.put(sourceKey, staged); // a rename: same disk as the blobs
-    const now = Date.now();
-    const assetId = prior?.id ?? randomUUID();
     const d = db();
     d.exec("BEGIN");
     try {
-      if (!prior) {
-        d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at) VALUES (?, ?, ?, ?, NULL, ?, ?)").run(
-          assetId,
-          libraryId,
-          kindOf(file),
-          path.parse(file).name.slice(0, 160) || "Untitled",
-          f.addedBy,
-          now,
-        );
-      }
-      const { n } = d.prepare("SELECT COALESCE(MAX(n), 0) + 1 AS n FROM asset_versions WHERE asset_id = ?").get(assetId) as { n: number };
-      d.prepare(
-        `INSERT INTO asset_versions (id, asset_id, n, source_key, source_path, bytes, sha256, mime, state, created_by, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'processing', ?, ?)`,
-      ).run(versionId, assetId, n, sourceKey, f.mode === "reference" ? file : null, size, sha256, mimeOf(file), f.addedBy, now);
-      d.prepare("UPDATE assets SET current_version_id = ? WHERE id = ?").run(versionId, assetId);
-      if (f.collectionId && !prior && d.prepare("SELECT 1 FROM collections WHERE id = ? AND library_id = ? AND kind = 'manual'").get(f.collectionId, libraryId)) {
-        d.prepare(
-          `INSERT OR IGNORE INTO collection_items (collection_id, asset_id, position, added_by)
-           SELECT ?, ?, COALESCE(MAX(position), 0) + 1, ? FROM collection_items WHERE collection_id = ?`,
-        ).run(f.collectionId, assetId, f.addedBy, f.collectionId);
-      }
-      indexAsset(d, assetId);
-      enqueueJob(d, libraryId, versionId, "probe", f.addedBy);
+      recordVersion(d, {
+        libraryId,
+        assetId: prior?.id,
+        versionId,
+        sourceKey,
+        sourcePath: f.mode === "reference" ? file : null,
+        filename: file,
+        size,
+        sha256,
+        by: f.addedBy,
+        collectionId: prior ? null : f.collectionId, // a new version stays where the asset is
+      });
       d.exec("COMMIT");
     } catch (e) {
       d.exec("ROLLBACK");

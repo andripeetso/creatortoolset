@@ -31,7 +31,14 @@ export async function purgeTrash(now = Date.now()): Promise<number> {
       )
       .all(now - trashDays() * DAY) as { id: string }[]
   ).map((a) => a.id);
-  if (!assets.length) return 0;
+  await deleteAssets(assets);
+  return assets.length;
+}
+
+/** Deletes assets for good: every version, derivative, share and file. Review uses it when one of its videos is gone. */
+export async function deleteAssets(assets: string[]): Promise<void> {
+  if (!assets.length) return;
+  const d = libraryDb();
   const A = inList(assets.length);
   const versions = (d.prepare(`SELECT id FROM asset_versions WHERE asset_id IN (${A})`).all(...assets) as { id: string }[]).map((v) => v.id);
   const V = inList(versions.length);
@@ -62,7 +69,6 @@ export async function purgeTrash(now = Date.now()): Promise<number> {
   // ponytail: files outlive their rows if the process dies here (orphans, no harm), and empty v/<id>/ folders stay;
   // a sweep of unreferenced keys if the disk ever needs it
   for (const k of keys) await blobs.delete(k).catch((e) => console.error("[library] purge:", k, e));
-  return assets.length;
 }
 
 /** Runs the purge now and every hour. */

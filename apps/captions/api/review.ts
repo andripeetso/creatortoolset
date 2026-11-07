@@ -17,6 +17,7 @@ import {
   readUploadState,
   receivedParts,
   receivePart,
+  sha256File,
   startUpload,
   writeBody,
   type UploadState,
@@ -25,6 +26,12 @@ import { env } from "./lib/env";
 import { clipReadyToEdit, createProjectFromFile, linkOrCopy } from "./projects";
 import { DEMO_USER, findUser, isDemoName, USERNAME_RE, type SessionUser } from "./users";
 import { takeGuest } from "./guest";
+import { blobs, libraryDb } from "./library/db";
+import { enqueueJob } from "./library/jobs";
+import { probe as probeSummary } from "./library/media/probe";
+import { indexAsset } from "./library/query";
+import { deleteAssets } from "./library/trash";
+import { ensureWorkspace } from "./lib/workspaces";
 
 export { sendFile };
 
@@ -80,6 +87,8 @@ const REVIEWER_APPROVALS: Approval[] = ["changes", "approved"];
 
 interface Version {
   n: number;
+  /** Its Media Library version (toLibrary): stable while `n` changes with order, stack and unstack. */
+  versionId?: string;
   name: string;
   mime: string;
   bytes: number;
@@ -434,6 +443,7 @@ async function processVersion(id: string, n: number): Promise<void> {
       error: e instanceof Error ? e.message.slice(0, 400) : String(e),
     });
   }
+  await syncLibrary(id);
 }
 
 const queued = new Set<string>();
@@ -458,8 +468,147 @@ async function resumePending(): Promise<void> {
     }
   }
 }
+// ---------- the Media Library (tasks/media-library-plan.md, section 10) ----------
+
+/**
+ * Every Review video is also a Media Library asset with the same id, and each of its versions a library version
+ * (`versionId` in the meta). Review stays the source of truth: toLibrary(id) makes the library's rows match the meta
+ * and the files on disk, whatever just changed. The library's files are hard links to Review's, so Review's renames
+ * (order, stack, unstack, trash) never break them. Comments, drawings, approvals and share links stay in Review,
+ * keyed by version. Demo and guest videos stay out of the library. No AI runs on the way in: transcribe and describe
+ * wait until someone asks for them in the library (they spend that person's key).
+ */
+const notInLibrary = (owner: string) => /^guest(-|$)/.test(owner) || owner === DEMO_USER || isDemoName(owner);
+
+/** The library a Review owner's videos go in: their workspace's first, made when there is none. */
+function libraryFor(owner: string): string | null {
+  const w = ensureWorkspace(owner);
+  if (!w) return null;
+  const d = libraryDb();
+  const found = d.prepare("SELECT id FROM libraries WHERE workspace_id = ? ORDER BY created_at, id LIMIT 1").get(w.id) as { id: string } | undefined;
+  if (found) return found.id;
+  const id = `lib_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+  d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES (?, ?, 'Library', 'local', ?)").run(id, w.id, Date.now());
+  return id;
+}
+
+/** A version's id, given once and kept in the meta (the live one; a video in the trash gets its ids when restored). */
+async function withVersionIds(id: string): Promise<Meta | null> {
+  return withLock(id, async () => {
+    const m = await readMeta(id);
+    if (!m || m.versions.every((x) => x.versionId)) return m;
+    for (const x of m.versions) x.versionId ??= randomUUID();
+    await writeJson(metaPath(id), m); // updatedAt stays: an id is not a change retention should see
+    return m;
+  });
+}
+
+/** A hard link to one of Review's files, stored in the library under `key`. */
+async function linkInto(key: string, file: string): Promise<void> {
+  const staged = path.join(env.dataDir, "library", "staging", `review-${randomUUID()}`);
+  await linkOrCopy(file, staged);
+  await blobs.put(key, staged);
+}
+
+/** Removes the library's links to a version's video files (Review deleted them, to save space). */
+async function unlinkFromLibrary(versionId: string): Promise<void> {
+  const d = libraryDb();
+  const keys = [
+    ...(d.prepare("SELECT source_key AS k FROM asset_versions WHERE id = ?").all(versionId) as { k: string }[]),
+    ...(d.prepare("SELECT storage_key AS k FROM derivatives WHERE version_id = ? AND kind = 'proxy' AND storage_key IS NOT NULL").all(versionId) as { k: string }[]),
+  ];
+  for (const { k } of keys) await blobs.delete(k);
+  d.prepare("DELETE FROM derivatives WHERE version_id = ? AND kind = 'proxy'").run(versionId);
+}
+
+/** Makes the library match Review for one video id: added, changed, in the trash, or gone. */
+export async function toLibrary(id: string): Promise<void> {
+  const live = await withVersionIds(id);
+  const m = live ?? (await readTrashed(id));
+  const d = libraryDb();
+  const row = d.prepare("SELECT library_id FROM assets WHERE id = ?").get(id) as { library_id: string } | undefined;
+  if (!m) {
+    if (row) await deleteAssets([id]);
+    return;
+  }
+  if (notInLibrary(m.owner) || m.versions.some((x) => !x.versionId)) return;
+  const libraryId = row?.library_id ?? libraryFor(m.owner);
+  if (!libraryId) return;
+  const dir = live ? assetDir(id) : trashDir(id);
+  const file = (n: number, name: string) => path.join(dir, `v${n}`, name);
+  const shown = m.versions.filter((x) => x.status !== "processing");
+  if (!shown.length && !row) return; // nothing to show yet: it comes in when its first version is processed
+
+  // the files first (async); then every row in one transaction
+  const added: { x: Version; key: string; sha256: string; probe: string | null }[] = [];
+  const derived: { versionId: string; kind: "thumb" | "proxy"; key: string; bytes: number }[] = [];
+  for (const x of shown) {
+    const vid = x.versionId!;
+    const base = `libraries/${libraryId}/v/${vid}`;
+    if (x.removed) await unlinkFromLibrary(vid);
+    if (!d.prepare("SELECT 1 FROM asset_versions WHERE id = ?").get(vid)) {
+      const src = file(x.n, "source");
+      const there = !x.removed && existsSync(src);
+      if (there) await linkInto(`${base}/source`, src);
+      const p = there ? await probeSummary(src).catch(() => null) : null;
+      added.push({ x, key: `${base}/source`, sha256: there ? await sha256File(src) : "", probe: p && JSON.stringify(p) });
+    }
+    for (const [kind, name] of [["thumb", "thumb.jpg"], ["proxy", "proxy.mp4"]] as const) {
+      const f = file(x.n, name);
+      if (!existsSync(f) || d.prepare("SELECT 1 FROM derivatives WHERE version_id = ? AND kind = ?").get(vid, kind)) continue;
+      const key = `${base}/${name}`;
+      await linkInto(key, f);
+      derived.push({ versionId: vid, kind, key, bytes: (await stat(f)).size });
+    }
+  }
+  const state = (x: Version) => (x.removed ? "missing" : x.status === "ready" ? "ready" : "failed");
+  d.exec("BEGIN");
+  try {
+    d.prepare(
+      `INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at, trashed_at)
+       VALUES (?, ?, 'video', ?, NULL, ?, ?, ?)
+       ON CONFLICT (id) DO UPDATE SET title = excluded.title, trashed_at = excluded.trashed_at`,
+    ).run(id, libraryId, m.name, m.owner, m.createdAt, live ? null : (m.deletedAt ?? Date.now()));
+    // out of the way first: a version's number changes with order, stack and unstack, and (asset, n) is unique
+    d.prepare("UPDATE asset_versions SET n = -rowid WHERE asset_id = ?").run(id);
+    for (const a of added) {
+      d.prepare(
+        `INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, mime, probe, state, created_by, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(a.x.versionId!, id, a.x.n, a.key, a.x.bytes, a.sha256, a.x.mime, a.probe, state(a.x), m.owner, a.x.createdAt);
+      // the local, keyless extras: a waveform and the fingerprint the duplicate check reads
+      if (state(a.x) === "ready" && a.probe) {
+        enqueueJob(d, libraryId, a.x.versionId!, "wave", m.owner);
+        if (a.x.width) enqueueJob(d, libraryId, a.x.versionId!, "fingerprint", m.owner);
+      }
+    }
+    for (const x of shown) d.prepare("UPDATE asset_versions SET asset_id = ?, n = ?, state = ? WHERE id = ?").run(id, x.n, state(x), x.versionId!);
+    for (const r of derived) {
+      d.prepare("INSERT OR REPLACE INTO derivatives (version_id, kind, storage_key, bytes) VALUES (?, ?, ?, ?)").run(r.versionId, r.kind, r.key, r.bytes);
+    }
+    d.prepare("UPDATE assets SET current_version_id = ? WHERE id = ?").run(shown.at(-1)?.versionId ?? null, id);
+    indexAsset(d, id);
+    d.exec("COMMIT");
+  } catch (e) {
+    d.exec("ROLLBACK");
+    throw e;
+  }
+}
+
+/** toLibrary for each id in turn; a library error is logged, never Review's answer. */
+async function syncLibrary(...ids: string[]): Promise<void> {
+  for (const id of ids) await toLibrary(id).catch((e) => console.error(`[review] library ${id}:`, e));
+}
+
+/** At start: every Review video, the trash too, into the library. Unchanged ones cost a read of their meta. */
+export async function reviewToLibrary(): Promise<void> {
+  const trashed = await readdir(path.join(ROOT, "trash")).catch(() => [] as string[]);
+  await syncLibrary(...(await allMetas()).map((m) => m.id), ...trashed.filter((t) => UUID.test(t)));
+}
+
 void mkdir(path.join(ROOT, "links"), { recursive: true })
   .then(resumePending)
+  .then(reviewToLibrary)
   .catch(() => {});
 
 // ---------- validation ----------
@@ -934,6 +1083,7 @@ reviewApp.patch("/assets/:id", async (c) => {
   if (!meta) return c.json({ error: "Not found" }, 404);
   if (oldToken) await rm(linkPath(oldToken), { force: true });
   if (meta.share) await writeFile(linkPath(meta.share.token), meta.id);
+  if (name) await syncLibrary(meta.id);
   return c.json(publicAsset(meta, true));
 });
 
@@ -955,6 +1105,7 @@ async function trashAsset(id: string): Promise<void> {
     await rename(assetDir(id), trashDir(id));
     await writeJson(path.join(trashDir(id), "meta.json"), { ...meta, deletedAt: Date.now() });
   });
+  await syncLibrary(id);
 }
 
 // ---------- the demo ("See the demo" on the login screen, auth.ts) ----------
@@ -982,6 +1133,7 @@ async function copyAsset(id: string, to: string, owner: string, patch: (m: Meta)
     try {
       await cloneDir(assetDir(id), assetDir(to));
       const copy: Meta = { ...meta, id: to, owner, updatedAt: Date.now() };
+      copy.versions = copy.versions.map((x) => ({ ...x, versionId: undefined })); // a copy is never the same library version
       delete copy.share;
       patch(copy);
       await writeJson(metaPath(to), copy);
@@ -1089,6 +1241,7 @@ reviewApp.post("/trash/:id/restore", async (c) => {
     return true;
   });
   if (!restored) return c.json({ error: "Already restored" }, 409);
+  await syncLibrary(m.id);
   return c.json(publicAsset(m, true));
 });
 
@@ -1096,6 +1249,7 @@ reviewApp.delete("/trash/:id", async (c) => {
   const m = await trashedFor(c);
   if (!m) return c.json({ error: "Not found" }, 404);
   await withLock(m.id, () => rm(trashDir(m.id), { recursive: true, force: true }));
+  await syncLibrary(m.id);
   return c.json({ ok: true });
 });
 
@@ -1106,6 +1260,7 @@ async function purgeTrash(): Promise<void> {
     const m = await readTrashed(id);
     if (m && (m.deletedAt ?? 0) < cutoff) {
       await withLock(id, () => rm(trashDir(id), { recursive: true, force: true }));
+      await syncLibrary(id);
     }
   }
   const stale = Date.now() - UPLOAD_DAYS * 86_400_000;
@@ -1128,11 +1283,13 @@ export async function purgeExpiredReview(expired: Expired): Promise<void> {
       if (m.share) await rm(linkPath(m.share.token), { force: true });
       await rm(assetDir(m.id), { recursive: true, force: true });
     });
+    await syncLibrary(m.id);
   }
   for (const id of await readdir(path.join(ROOT, "trash")).catch(() => [] as string[])) {
     const m = await readTrashed(id);
     if (m && expired(m.owner, m.deletedAt ?? m.updatedAt)) {
       await withLock(id, () => rm(trashDir(id), { recursive: true, force: true }));
+      await syncLibrary(id);
     }
   }
   const filed = new Set((await allMetas()).map((m) => m.projectId));
@@ -1209,6 +1366,7 @@ reviewApp.post("/assets/:id/stack", async (c) => {
   });
   if (result === 404) return c.json({ error: "Not found" }, 404);
   if (result === 409) return c.json({ error: "Wait until both videos are ready" }, 409);
+  await syncLibrary(toId, fromId); // the versions move over first, then the emptied video goes
   return c.json(publicAsset(result, true));
 });
 
@@ -1261,6 +1419,7 @@ reviewApp.post("/assets/:id/order", async (c) => {
   if (result === 404) return c.json({ error: "Not found" }, 404);
   if (result === 400) return c.json({ error: "Send every version once" }, 400);
   if (result === 409) return c.json({ error: "Wait until every version is ready" }, 409);
+  await syncLibrary(id);
   return c.json(publicAsset(result, true));
 });
 
@@ -1272,6 +1431,7 @@ reviewApp.post("/assets/:id/unstack", async (c) => {
   const body = (await c.req.json().catch(() => null)) as { n?: unknown } | null;
   if (!v) return c.json({ error: "Not found" }, 404);
   const id = v.meta.id;
+  let made: string[] = [];
   const result = await withLock(id, async () => {
     const meta = await readMeta(id);
     if (!meta) return 404 as const;
@@ -1280,6 +1440,7 @@ reviewApp.post("/assets/:id/unstack", async (c) => {
     const order = meta.versions.filter((x) => !out.includes(x)).map((x) => x.n);
     if (!out.length || !order.length) return meta;
     const split = out.map((x) => ({ version: x, id: randomUUID() }));
+    made = split.map((s) => s.id);
     try {
       for (const s of split) await mkdir(assetDir(s.id));
       await moveDirs([
@@ -1312,6 +1473,7 @@ reviewApp.post("/assets/:id/unstack", async (c) => {
   });
   if (result === 404) return c.json({ error: "Not found" }, 404);
   if (result === 409) return c.json({ error: "Wait until every version is ready" }, 409);
+  await syncLibrary(...made, id);
   return c.json(publicAsset(result, true));
 });
 
@@ -1361,6 +1523,8 @@ reviewApp.post("/assets/:id/v/:n/clear-earlier", async (c) => {
     const m = await readMeta(v.meta.id);
     if (!m) return null;
     for (const x of clearableBefore(m.versions, n)) {
+      // the library's links go first, or the files would stay on disk through them
+      if (x.versionId) await unlinkFromLibrary(x.versionId).catch((e) => console.error(`[review] library ${m.id}:`, e));
       for (const f of [sourcePath(m.id, x.n), proxyPath(m.id, x.n)]) {
         const st = await stat(f).catch(() => null);
         // a file hard-linked into Caption Studio stays there, so it frees nothing
@@ -1374,6 +1538,7 @@ reviewApp.post("/assets/:id/v/:n/clear-earlier", async (c) => {
     return m;
   });
   if (!meta) return c.json({ error: "Not found" }, 404);
+  await syncLibrary(meta.id);
   return c.json({ asset: publicAsset(meta, true), freed });
 });
 

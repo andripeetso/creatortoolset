@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router";
-import { AudioLines, Captions, Quote, Share2, FileText, Folder, Image as ImageIcon, Loader2, RotateCcw, Trash2, Upload, Video } from "lucide-react";
+import { useNavigate, useSearchParams } from "react-router";
+import { AudioLines, Captions, Quote, Share2, FileText, Folder, Image as ImageIcon, Loader2, RotateCcw, Star, Trash2, Upload, Video } from "lucide-react";
 import type { AssetCard, AssetDetail, AssetKind, Collection, LibrarySummary, SearchHit } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
 import { Button } from "@/components/ui/button";
@@ -58,6 +58,10 @@ interface Upload {
   error?: string;
 }
 
+/** Finals: a plain manual collection, pinned first in every library and made the first time someone uses it. */
+const FINALS = "Finals";
+const isFinals = (c: Collection) => c.kind === "manual" && c.parentId === null && c.name === FINALS;
+
 const clock = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -85,12 +89,22 @@ export default function LibraryPage() {
 
   const library = libraries?.find((l) => l.id === libraryId) ?? libraries?.[0] ?? null;
   const libId = library?.id;
+  const finals = collections.find(isFinals);
+  const [linked] = useSearchParams(); // ?library=&asset= (the Video Cleaner's duplicate check links here)
 
   useEffect(() => {
     listLibraries()
       .then(setLibraries)
       .catch((e) => setError(message(e)));
   }, []);
+
+  useEffect(() => {
+    const lib = linked.get("library");
+    const asset = linked.get("asset");
+    if (lib) setLibraryId(lib);
+    if (lib && asset) getAsset(lib, asset).then((a) => open(a), (e) => setError(message(e)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linked]);
 
   useEffect(() => {
     const t = setTimeout(() => setTerm(q.trim()), 250);
@@ -235,6 +249,16 @@ export default function LibraryPage() {
     }
   };
 
+  // ponytail: two people opening Finals at once can make two; the first one made is the one shown
+  const finalsId = async (): Promise<string> => {
+    if (finals) return finals.id;
+    const c = await createCollection(libId!, { name: FINALS });
+    setFolders((n) => n + 1);
+    return c.id;
+  };
+  const openFinals = () =>
+    finalsId().then(setScope, (e) => setError(message(e)));
+
   const addToFolder = async (a: AssetCard, folderId: string) => {
     if (!libId || !folderId) return;
     try {
@@ -336,7 +360,12 @@ export default function LibraryPage() {
               <Button size="sm" variant={scope === "all" ? "default" : "outline"} aria-pressed={scope === "all"} onClick={() => setScope("all")}>
                 All
               </Button>
-              {collections.map((c) => (
+              <Button size="sm" variant={finals && scope === finals.id ? "default" : "outline"} aria-pressed={!!finals && scope === finals.id} onClick={() => void openFinals()}>
+                <Star className="h-3.5 w-3.5" />
+                {FINALS}
+                {finals?.count ? <span className="text-xs opacity-60">{finals.count}</span> : null}
+              </Button>
+              {collections.filter((c) => c !== finals).map((c) => (
                 <Button key={c.id} size="sm" variant={scope === c.id ? "default" : "outline"} aria-pressed={scope === c.id} onClick={() => setScope(c.id)}>
                   <Folder className="h-3.5 w-3.5" />
                   {c.name}
@@ -469,6 +498,12 @@ export default function LibraryPage() {
                   <Button size="sm" variant="outline" onClick={() => void moveAsset(preview, true)}>
                     <Trash2 className="h-4 w-4" />
                     Move to trash
+                  </Button>
+                )}
+                {scope !== "trash" && (
+                  <Button size="sm" variant="outline" onClick={() => void finalsId().then((id) => addToFolder(preview, id), (e) => setError(message(e)))}>
+                    <Star className="h-4 w-4" />
+                    Add to {FINALS}
                   </Button>
                 )}
                 {collections.some((c) => c.kind === "manual") && (

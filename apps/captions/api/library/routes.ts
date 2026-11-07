@@ -1,7 +1,9 @@
 import { Hono, type Context } from "hono";
 import { randomUUID } from "node:crypto";
-import { mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { copyFile, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import type { DatabaseSync } from "node:sqlite";
 import type { AuthVars } from "../auth";
 import { env } from "../lib/env";
 import { appendBody, freeBytes, sha256File } from "../lib/uploads";
@@ -12,6 +14,7 @@ import { canManage, ensureWorkspace, memberIn, workspaceOf } from "../lib/worksp
 import { sendFile } from "../lib/send-file";
 import type { LibrarySettings, LibrarySummary } from "../../contracts/library";
 import { enqueueJob } from "./jobs";
+import { similar } from "./similar";
 import { buildAssetQuery, indexAsset, pageOf, parseSearch, type CardRow } from "./query";
 
 /**
@@ -62,6 +65,112 @@ const MIME: [RegExp, string][] = [
 ];
 export const mimeOf = (filename: string) => MIME.find(([re]) => re.test(filename))?.[1] ?? "application/octet-stream";
 
+/**
+ * One new version's rows, inside the caller's transaction: a new asset titled after the file (or version n+1 of
+ * `assetId`), made current, indexed, its probe queued, and put in `collectionId` while that is a manual collection
+ * here (any member may add items). Returns the asset id. Uploads, watch folders and saved exports all come in here.
+ */
+export function recordVersion(
+  d: DatabaseSync,
+  o: {
+    libraryId: string;
+    assetId?: string | null;
+    versionId: string;
+    sourceKey: string;
+    sourcePath?: string | null;
+    filename: string;
+    size: number;
+    sha256: string;
+    by: string;
+    collectionId?: string | null;
+  },
+): string {
+  const now = Date.now();
+  const assetId = o.assetId ?? randomUUID();
+  if (!o.assetId) {
+    d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at) VALUES (?, ?, ?, ?, NULL, ?, ?)").run(
+      assetId,
+      o.libraryId,
+      kindOf(o.filename),
+      path.parse(o.filename).name.slice(0, 160) || "Untitled",
+      o.by,
+      now,
+    );
+  }
+  const { n } = d.prepare("SELECT COALESCE(MAX(n), 0) + 1 AS n FROM asset_versions WHERE asset_id = ?").get(assetId) as { n: number };
+  d.prepare(
+    `INSERT INTO asset_versions (id, asset_id, n, source_key, source_path, bytes, sha256, mime, state, created_by, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'processing', ?, ?)`,
+  ).run(o.versionId, assetId, n, o.sourceKey, o.sourcePath ?? null, o.size, o.sha256, mimeOf(o.filename), o.by, now);
+  d.prepare("UPDATE assets SET current_version_id = ? WHERE id = ?").run(o.versionId, assetId);
+  if (o.collectionId && d.prepare("SELECT 1 FROM collections WHERE id = ? AND library_id = ? AND kind = 'manual'").get(o.collectionId, o.libraryId)) {
+    d.prepare(
+      `INSERT OR IGNORE INTO collection_items (collection_id, asset_id, position, added_by)
+       SELECT ?, ?, COALESCE(MAX(position), 0) + 1, ? FROM collection_items WHERE collection_id = ?`,
+    ).run(o.collectionId, assetId, o.by, o.collectionId);
+  }
+  indexAsset(d, assetId);
+  enqueueJob(d, o.libraryId, o.versionId, "probe", o.by);
+  return assetId;
+}
+
+/**
+ * A finished file saved into a library as a new asset (a Caption Studio export): copied, so the file stays where it
+ * is. `sources` are the library versions it was made from; each one the caller may read gets a `derived_from` row.
+ * Without `libraryId`, the first library of the caller's workspace. Null: no library the caller may use.
+ */
+export async function saveToLibrary(
+  username: string,
+  file: string,
+  filename: string,
+  sources: string[],
+  libraryId?: string,
+): Promise<{ assetId: string; versionId: string } | { duplicateOf: string } | { error: string; code: "disk_reserve" } | null> {
+  const w = workspaceOf(username);
+  const lib =
+    libraryId ??
+    (w && (db().prepare("SELECT id FROM libraries WHERE workspace_id = ? ORDER BY created_at, id LIMIT 1").get(w.id) as { id: string } | undefined)?.id);
+  if (!lib || !libraryRole(username, lib)) return null;
+  const { size } = await stat(file);
+  await mkdir(stagingDir(), { recursive: true });
+  if ((await freeBytes(stagingDir())) - size < gbSetting("LIBRARY_DISK_RESERVE_GB", 20) * GiB) {
+    return { error: "Not enough free disk space for this file", code: "disk_reserve" };
+  }
+  const staged = path.join(stagingDir(), `save-${randomUUID()}`);
+  try {
+    await copyFile(file, staged);
+    const sha256 = await sha256File(staged);
+    const dup = db()
+      .prepare("SELECT a.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND v.sha256 = ? AND a.trashed_at IS NULL LIMIT 1")
+      .get(lib, sha256) as { id: string } | undefined;
+    if (dup) return { duplicateOf: dup.id };
+    const versionId = randomUUID();
+    const sourceKey = `libraries/${lib}/v/${versionId}/source`;
+    await blobs.put(sourceKey, staged);
+    const d = db();
+    d.exec("BEGIN");
+    try {
+      const assetId = recordVersion(d, { libraryId: lib, versionId, sourceKey, filename, size, sha256, by: username });
+      for (const from of new Set(sources)) {
+        const src = d.prepare("SELECT a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(from) as
+          | { library_id: string }
+          | undefined;
+        if (src && libraryRole(username, src.library_id)) {
+          d.prepare("INSERT OR IGNORE INTO derived_from (version_id, source_version_id, note) VALUES (?, ?, 'export')").run(versionId, from);
+        }
+      }
+      d.exec("COMMIT");
+      return { assetId, versionId };
+    } catch (e) {
+      d.exec("ROLLBACK");
+      await blobs.delete(sourceKey);
+      throw e;
+    }
+  } finally {
+    await rm(staged, { force: true });
+  }
+}
+
 interface UploadRow {
   id: string;
   library_id: string;
@@ -75,6 +184,14 @@ interface UploadRow {
 }
 
 const db = () => libraryDb();
+
+/**
+ * A Review video (api/review.ts toLibrary: same id). Review owns its versions and its trash, so the library refuses to
+ * add a version or trash it; Review's own routes do both.
+ */
+const inReview = (assetId: string) =>
+  [path.join(env.dataDir, "review", assetId), path.join(env.dataDir, "review", "trash", assetId)].some((d) => existsSync(path.join(d, "meta.json")));
+const IN_REVIEW = { error: "This video lives in Review: change it there", code: "conflict" } as const;
 
 /** The caller's upload, if they started it and still may use its library; otherwise null (404). */
 function ownUpload(c: Context<{ Variables: AuthVars }>): UploadRow | null {
@@ -116,6 +233,7 @@ libraryApp.post("/:id/uploads", async (c) => {
     if (!target) return c.json({ error: "Not found", code: "not_found" }, 404);
     // a member replaces only their own assets (plan section 9); the owner any
     if (!canManage(role) && target.created_by !== user.username) return c.json({ error: "Only the uploader or the owner can replace it", code: "forbidden" }, 403);
+    if (inReview(replaces)) return c.json(IN_REVIEW, 409);
   }
   const collection = typeof body?.collectionId === "string" ? body.collectionId : null;
   if (collection) {
@@ -217,32 +335,22 @@ libraryApp.post("/uploads/:uploadId/finish", async (c) => {
     const versionId = randomUUID();
     const sourceKey = `libraries/${row.library_id}/v/${versionId}/source`;
     await blobs.put(sourceKey, row.staging_path); // same disk: a rename, the file moves into the library
-    const now = Date.now();
-    const assetId = row.replaces_asset_id ?? randomUUID();
     const d = db();
     d.exec("BEGIN");
+    let assetId: string;
     try {
-      if (!row.replaces_asset_id) {
-        const title = path.parse(row.filename).name.slice(0, 160) || "Untitled";
-        d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at) VALUES (?, ?, ?, ?, NULL, ?, ?)")
-          .run(assetId, row.library_id, kindOf(row.filename), title, row.created_by, now);
-      }
-      const { n } = d.prepare("SELECT COALESCE(MAX(n), 0) + 1 AS n FROM asset_versions WHERE asset_id = ?").get(assetId) as { n: number };
-      d.prepare(
-        `INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, mime, state, created_by, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'processing', ?, ?)`,
-      ).run(versionId, assetId, n, sourceKey, row.size, sha256, mimeOf(row.filename), row.created_by, now);
-      d.prepare("UPDATE assets SET current_version_id = ? WHERE id = ?").run(versionId, assetId);
+      assetId = recordVersion(d, {
+        libraryId: row.library_id,
+        assetId: row.replaces_asset_id,
+        versionId,
+        sourceKey,
+        filename: row.filename,
+        size: row.size,
+        sha256,
+        by: row.created_by,
+        collectionId: row.collection_id, // the folder it was dropped in
+      });
       d.prepare("UPDATE uploads SET state = 'done', received = size WHERE id = ?").run(row.id);
-      // into the folder it was dropped in, while that is still a manual collection here (any member may add items)
-      if (row.collection_id && d.prepare("SELECT 1 FROM collections WHERE id = ? AND library_id = ? AND kind = 'manual'").get(row.collection_id, row.library_id)) {
-        d.prepare(
-          `INSERT OR IGNORE INTO collection_items (collection_id, asset_id, position, added_by)
-           SELECT ?, ?, COALESCE(MAX(position), 0) + 1, ? FROM collection_items WHERE collection_id = ?`,
-        ).run(row.collection_id, assetId, row.created_by, row.collection_id);
-      }
-      indexAsset(d, assetId);
-      enqueueJob(d, row.library_id, versionId, "probe", row.created_by);
       d.exec("COMMIT");
     } catch (e) {
       d.exec("ROLLBACK");
@@ -363,6 +471,12 @@ libraryApp.get("/media/:versionId/:kind", async (c) => {
   }
 });
 
+// GET /api/library/versions/:versionId/similar → the videos in the caller's libraries that share its pictures
+libraryApp.get("/versions/:versionId/similar", (c) => {
+  const found = similar(c.get("user").username, c.req.param("versionId"));
+  return found ? c.json(found) : c.json({ error: "Not fingerprinted yet", code: "not_found" }, 404);
+});
+
 /** Into the trash, or back out of it: the uploader or the owner. Other members of the library get 403; outsiders 404. */
 function setTrashed(c: Context<{ Variables: AuthVars }>, trash: boolean) {
   const user = c.get("user");
@@ -376,6 +490,7 @@ function setTrashed(c: Context<{ Variables: AuthVars }>, trash: boolean) {
     : undefined;
   if (!a || (trash ? a.trashed_at !== null : a.trashed_at === null)) return c.json({ error: "Not found", code: "not_found" }, 404);
   if (!canManage(role ?? undefined) && a.created_by !== user.username) return c.json({ error: "Only the uploader or the owner can do that", code: "forbidden" }, 403);
+  if (inReview(assetId)) return c.json(IN_REVIEW, 409);
   db().prepare("UPDATE assets SET trashed_at = ? WHERE id = ?").run(trash ? Date.now() : null, assetId);
   return c.json({ ok: true });
 }

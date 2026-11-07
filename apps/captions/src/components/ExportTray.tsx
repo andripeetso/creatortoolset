@@ -5,6 +5,7 @@ import {
   ChevronUp,
   Download,
   FileVideo,
+  Library,
   Loader2,
   TriangleAlert,
   X,
@@ -16,14 +17,20 @@ import {
   downloadExport,
   downloadExportsZip,
   fmtBytes,
+  saveExportToLibrary,
   useExports,
   watchExports,
   type ExportJob,
 } from "@/lib/exports";
-import { isGuest, useViewedMe } from "@/lib/auth";
+import { canUse, isGuest, useViewedMe } from "@/lib/auth";
 
-function JobCard({ job }: { job: ExportJob }) {
+function JobCard({ job, library }: { job: ExportJob; library: boolean }) {
   const active = job.status === "queued" || job.status === "running";
+  const [saved, setSaved] = useState<"saving" | "saved" | "already" | string>();
+  const save = () => {
+    setSaved("saving");
+    saveExportToLibrary(job.id).then(setSaved, (e: unknown) => setSaved(e instanceof Error ? e.message : String(e)));
+  };
   return (
     <div className="pointer-events-auto rounded-xl border border-zinc-700 bg-[#16161c] p-3 shadow-2xl">
       <div className="flex items-start gap-2.5">
@@ -69,6 +76,17 @@ function JobCard({ job }: { job: ExportJob }) {
               >
                 <Download className="h-3 w-3" /> Download
               </button>
+              {library && job.ext !== "zip" && (
+                <button
+                  onClick={save}
+                  disabled={saved === "saving" || saved === "saved" || saved === "already"}
+                  className="flex items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 py-1 text-[11px] text-zinc-200 hover:border-zinc-500 disabled:opacity-60"
+                >
+                  <Library className="h-3 w-3" />
+                  {saved === "saved" ? "In the library" : saved === "already" ? "Already in the library" : saved === "saving" ? "Saving…" : "Save to library"}
+                </button>
+              )}
+              {saved && !["saving", "saved", "already"].includes(saved) && <span className="text-[11px] text-red-400">{saved}</span>}
             </div>
           )}
         </div>
@@ -190,7 +208,7 @@ export function ExportTray() {
         </button>
       </div>
       {shown.map((j) => (
-        <JobCard key={j.id} job={j} />
+        <JobCard key={j.id} job={j} library={canUse(me, "media")} />
       ))}
       {overflow > 0 && (
         <p className="pointer-events-auto py-1 text-center text-[10px] text-zinc-500">

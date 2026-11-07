@@ -145,3 +145,13 @@ export interface WatchStatus {
   folders: (WatchFolder & { found: boolean; imported: number })[];
   missing: number; // versions whose original is gone from its folder
 }
+
+/** A video that shares pictures with a clip (api/library/similar.ts): `overlap` is the share of the clip's seconds found in it. */
+export interface SimilarMatch {
+  assetId: string;
+  libraryId: string;
+  versionId: string;
+  title: string;
+  thumbUrl: string;
+  overlap: number; // 0..1
+}

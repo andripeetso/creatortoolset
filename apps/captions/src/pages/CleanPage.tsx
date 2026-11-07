@@ -39,6 +39,7 @@ import { CleanEditorControls, Toggle } from "./CleanEditorControls";
 import { CleanEditorPreview } from "./CleanEditorPreview";
 import { MetadataList } from "./CleanMetadataList";
 import { CleanQuickScore } from "./CleanQuickScore";
+import { CleanDuplicateCheck } from "./CleanDuplicateCheck";
 import { CleanClipEditorDialog } from "./CleanClipEditorDialog";
 import {
   CleanComparisonTimeline,
@@ -883,6 +884,7 @@ export default function CleanPage() {
                     onMeasure={demo ? undefined : () => void measure(row)}
                     stored={shown}
                   />
+                  {!demo && <CleanDuplicateCheck sourceId={source?.id} />}
                   {(row.preview || source) && (
                     <CleanEditorPreview
                       key={row.key}

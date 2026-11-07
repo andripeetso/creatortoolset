@@ -1,13 +1,14 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import type { AuthVars } from "./auth";
 
-const dataDir = mkdtempSync(path.join(tmpdir(), "review-"));
+const dataDir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "review-"));
 process.env.DATA_DIR = dataDir;
+afterAll(() => rmSync(dataDir, { recursive: true, force: true }));
 const hasFfmpeg = spawnSync("ffmpeg", ["-version"]).status === 0;
 
 const h264 = (out: string) =>

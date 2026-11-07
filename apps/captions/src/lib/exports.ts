@@ -195,6 +195,14 @@ export async function startExport(payload: {
 }
 
 /** Hide a finished job from the tray; the file stays on the server. */
+/** A finished export into the Media Library (the workspace's first library). Says what happened, or throws. */
+export async function saveExportToLibrary(id: string): Promise<"saved" | "already"> {
+  const res = await fetch(`/api/exports/${id}/library`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+  const data = (await res.json().catch(() => ({}))) as { error?: string; duplicateOf?: string };
+  if (!res.ok) throw new Error(data.error || "Couldn't save it to the library");
+  return data.duplicateOf ? "already" : "saved";
+}
+
 export function dismissExport(id: string): void {
   const dismissed = [...useExports.getState().dismissed, id];
   localStorage.setItem(DISMISSED_KEY, JSON.stringify(dismissed));

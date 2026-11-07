@@ -201,7 +201,7 @@ function clipOriginalFile(projectId: string, clipId: string): string {
   );
 }
 
-async function readProjectClip(
+export async function readProjectClip(
   projectId: string,
   clipId: string,
 ): Promise<(ClipMedia & { owner?: string }) | null> {

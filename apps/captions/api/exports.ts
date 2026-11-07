@@ -23,7 +23,8 @@ import { createCaptionFrameRenderer } from "./caption-frames";
 import { filterEscape, requireFontsDir } from "./export";
 import { ffmpegCommand } from "./ffmpeg-runtime";
 import { env } from "./lib/env";
-import { ensureProjectOriginal, projectOriginalExists } from "./media-store";
+import { ensureProjectOriginal, projectOriginalExists, readProjectClip } from "./media-store";
+import { saveToLibrary } from "./library/routes";
 import { type SessionUser, bumpUsage } from "./users";
 
 /**
@@ -942,6 +943,32 @@ exportsApp.get("/:id/file", async (c) => {
       },
     },
   );
+});
+
+/* a finished export into the Media Library ({ libraryId? }: else the workspace's first): a new asset, made from the
+   library version its clip came from (derived_from) */
+exportsApp.post("/:id/library", async (c) => {
+  await loaded;
+  const user = c.get("user");
+  const job = jobs.get(c.req.param("id"));
+  if (!job || !canSee(job, user)) return c.json({ error: "Not found" }, 404);
+  if (job.status !== "done") return c.json({ error: "Not ready" }, 409);
+  if (user.role !== "admin" && user.off.includes("media")) return c.json({ error: "Not found" }, 404); // as boot.ts TOOL_GATES
+  if (job.ext === "zip") return c.json({ error: "A PNG sequence can't go in the library" }, 400);
+  const p = outPath(job);
+  if (!existsSync(p)) return c.json({ error: "File expired" }, 410);
+  const body = (await c.req.json().catch(() => null)) as { libraryId?: unknown } | null;
+  const clip = job.params.projectId && job.params.clipId ? await readProjectClip(job.params.projectId, job.params.clipId) : null;
+  const saved = await saveToLibrary(
+    user.username,
+    p,
+    job.filename,
+    clip?.libraryVersionId ? [clip.libraryVersionId] : [],
+    typeof body?.libraryId === "string" ? body.libraryId : undefined,
+  );
+  if (!saved) return c.json({ error: "There is no Media Library to save into", code: "not_found" }, 404);
+  if ("error" in saved) return c.json(saved, 507);
+  return c.json(saved);
 });
 
 /* cancel a running job, or delete a finished one */

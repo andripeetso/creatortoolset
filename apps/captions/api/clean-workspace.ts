@@ -44,6 +44,8 @@ import { createCleanBatchApp } from "./clean-batch";
 import { cleanupAudit, inspectMetadata } from "./lib/clean-inspection";
 import { timelineDuration } from "../contracts/clean-timeline";
 import { DEMO_USER } from "./users";
+import { phashPerSecond } from "./library/fingerprint";
+import { similarTo } from "./library/similar";
 
 export const cleanWorkspaceApp = new Hono<{ Variables: AuthVars }>();
 const ROOT = path.join(env.dataDir, "clean", "sources");
@@ -415,6 +417,16 @@ cleanWorkspaceApp.post("/:id/compare", async (c) => {
       fingerprints,
     });
   });
+});
+
+// Duplicate check: this upload's pictures against the videos in the caller's Media Library (library/similar.ts).
+cleanWorkspaceApp.post("/:id/duplicates", async (c) => {
+  const source = await ownedSource(c);
+  const hashes = await exclusively(source.id, () =>
+    phashPerSecond(originalPath(source)),
+  );
+  await saveSource(source, true);
+  return c.json(similarTo(c.get("user").username, hashes));
 });
 
 cleanWorkspaceApp.post("/:id/versions", async (c) => {

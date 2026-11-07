@@ -17,7 +17,7 @@ import { buildAssetQuery, CARD, MAX_LIMIT, pageOf, toCard, type CardRow } from "
  * Share links (tasks/media-library-plan.md, section 9). A link is a random token shown once; the database keeps only its
  * sha256. A link shows one asset, one version or a collection, and nothing else in the library. Scopes: view (the
  * player) and download (plus the original). Expiry and an optional password (scrypt); the password unlock is a cookie
- * scoped to the link's path. Comment links come with Review (S9).
+ * scoped to the link's path. A link to comment is still Review's own share link (api/review.ts).
  *
  * `shareApp` is for members (mounted at /api/library); `publicShareApp` needs no account and is listed in
  * api/boot.ts's public paths next to the Review share links.

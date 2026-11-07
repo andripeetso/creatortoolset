@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
@@ -217,5 +217,33 @@ describe("library: uploading into a folder", () => {
     expect(await read(finish("mem-a", init.id))).toMatchObject({ assetId: expect.any(String) });
     expect(items("col_gone")).toEqual([]);
     expect((await create("mem-a", 800, { collectionId: "col_smart" })).status).toBe(409);
+  });
+});
+
+describe("saving a finished file into the library", () => {
+  it("adds a copy as a new asset, made from the versions it names that the caller may read", async () => {
+    const { saveToLibrary } = await import("./routes");
+    const data = clip(800, 20);
+    const init = await read(create("mem-a", data.length));
+    await patch("mem-a", init.id, 0, data, data.length);
+    const source = (await read(finish("mem-a", init.id))) as { versionId: string };
+    const render = path.join(dir, "render.mp4");
+    writeFileSync(render, clip(900, 21));
+
+    const saved = (await saveToLibrary("mem-a", render, "Tiny Acrobatics roll captioned.mp4", [source.versionId, "no-such-version"])) as {
+      assetId: string;
+      versionId: string;
+    };
+    expect(libraryDb().prepare("SELECT title, created_by FROM assets WHERE id = ?").get(saved.assetId)).toEqual({
+      title: "Tiny Acrobatics roll captioned",
+      created_by: "mem-a",
+    });
+    expect(libraryDb().prepare("SELECT source_version_id FROM derived_from WHERE version_id = ?").all(saved.versionId)).toEqual([
+      { source_version_id: source.versionId },
+    ]);
+    expect(readFileSync(render).length).toBe(900); // the file stays where it was
+    // the same bytes again: already there; an account outside the workspace: no library
+    expect(await saveToLibrary("mem-a", render, "again.mp4", [])).toEqual({ duplicateOf: saved.assetId });
+    expect(await saveToLibrary("stranger", render, "x.mp4", [])).toBeNull();
   });
 });
