@@ -4,13 +4,13 @@ import { Hono } from "hono";
 import { checkPack, isPackSlot, type PackSlot } from "../contracts/packs";
 import type { AuthVars } from "./auth";
 import { env } from "./lib/env";
-import { installPack, listInstalled, removePack, setPackOn } from "./lib/packs";
+import { installPack, listInstalled, parseProjectIds, removePack, setPackOn, setPackProjects } from "./lib/packs";
 import type { Framework } from "./lib/workshop/types";
 import { packPresetStore } from "./presets";
 
 /**
- * Settings → Packs: the person's installed packs, install from a pack file, on/off per project, remove, and
- * "Share as pack" from their own frameworks, caption styles and instructions.
+ * Community → Installed: the person's installed packs, install from a pack file (API only), on/off and the projects
+ * a pack reaches, remove, and building a pack from their own frameworks and caption styles (Publish to Community).
  */
 export const packsApp = new Hono<{ Variables: AuthVars }>();
 
@@ -21,7 +21,7 @@ const cantSave = (c: { get: (k: "user") => AuthVars["user"] }) => {
 
 packsApp.get("/", async (c) => c.json(await listInstalled(c.get("user").username)));
 
-/** The automated checks alone, for the "Install from file" preview and `pnpm pack:check`. */
+/** The automated checks alone, for checking a pack file before installing it and `pnpm pack:check`. */
 packsApp.post("/check", async (c) => {
   const r = checkPack(await c.req.json().catch(() => null));
   return c.json({ ok: r.ok, problems: r.problems, level: r.level ?? null, pack: r.pack ?? null });
@@ -33,16 +33,20 @@ packsApp.post("/install", async (c) => {
   const b = await c.req.json().catch(() => null);
   const r = checkPack(b?.pack);
   if (!r.ok) return c.json({ error: "This pack didn't pass the checks", problems: r.problems }, 400);
-  const projectId = typeof b?.projectId === "string" && /^[a-z0-9-]{1,64}$/i.test(b.projectId) ? b.projectId : undefined;
   const user = c.get("user");
-  const out = await installPack(user.username, r.pack!, r.level!, { projectId });
+  const out = await installPack(user.username, r.pack!, r.level!, { projectIds: parseProjectIds(b) });
   return c.json(out, 201);
 });
 
-/** On/off: `{on, projectId?}`; no project = everywhere. */
+/** On/off: `{on, projectId?}` (no project = everywhere); or which projects it reaches: `{projectIds: [...] | null}`. */
 packsApp.patch("/:id", async (c) => {
   if (cantSave(c)) return c.json({ error: "Sign in to change packs" }, 403);
   const b = await c.req.json().catch(() => null);
+  if (b && "projectIds" in b) {
+    if (b.projectIds !== null && !Array.isArray(b.projectIds)) return c.json({ error: "projectIds: a list, or null for every project" }, 400);
+    const p = await setPackProjects(c.get("user").username, c.req.param("id"), b.projectIds === null ? undefined : parseProjectIds(b));
+    return p ? c.json(p) : c.json({ error: "Not installed" }, 404);
+  }
   if (typeof b?.on !== "boolean") return c.json({ error: "on: true or false" }, 400);
   const projectId = typeof b?.projectId === "string" ? b.projectId : undefined;
   const p = await setPackOn(c.get("user").username, c.req.param("id"), b.on, projectId);
@@ -56,7 +60,7 @@ packsApp.delete("/:id", async (c) => {
 });
 
 /**
- * "Share as pack": `{id, name, version, description, license, niche?, frameworks: ids, presets: ids,
+ * Building a pack (Publish to Community): `{id, name, version, description, license, niche?, frameworks: ids, presets: ids,
  * instructions: {slot: text}}` → a checked pack file built from the person's own items.
  */
 packsApp.post("/export", async (c) => {

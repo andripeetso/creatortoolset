@@ -1,7 +1,4 @@
-import { useWorkspace } from "@/lib/workspace";
-import { Notice } from "./ui";
 import { packContents } from "./packs-helpers";
-import { selectCls } from "./helpers";
 
 type Contents = Parameters<typeof packContents>[0];
 
@@ -43,20 +40,10 @@ export function ContentsSummary({ pack }: { pack: Contents }) {
   return <span>{parts.length ? parts.join(", ") : "nothing"}</span>;
 }
 
-/** Where an install goes: every project, or only the current one. */
-export function ScopeSelect({ value, onChange, disabled }: { value: "all" | "project"; onChange: (v: "all" | "project") => void; disabled?: boolean }) {
-  const currentProjectId = useWorkspace((s) => s.currentProjectId);
-  const projects = useWorkspace((s) => s.projects);
-  const name = projects.find((p) => p.id === currentProjectId)?.name;
+export function OfficialBadge() {
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value as "all" | "project")} disabled={disabled} className={selectCls} aria-label="Install for">
-      <option value="all">All my projects</option>
-      {currentProjectId && <option value="project">Only {name ?? "this project"}</option>}
-    </select>
+    <span className="inline-flex shrink-0 items-center rounded-full bg-violet-500/15 px-2 py-0.5 text-[11px] font-medium text-violet-700 dark:text-violet-300">
+      Official
+    </span>
   );
-}
-
-/** The warning above every install: nobody reviewed the file. */
-export function UnreviewedNote() {
-  return <Notice tone="warn">Not reviewed: only install packs from people you trust. A pack can change what the AI is told to write.</Notice>;
 }

@@ -1,9 +1,9 @@
 # Packs
 
 A pack is one JSON file (`*.ctpack.json`) that adds things to someone's account: storytelling frameworks, caption
-styles, and instructions that go on top of the app's own AI prompts. People make them in Settings → Packs → Share
-as pack, or by hand, and install them from the community catalog (Settings → Packs → Browse) or from a file
-(Settings → Packs → Install from file).
+styles, and instructions that go on top of the app's own AI prompts. People make them with Publish to Community on
+one of their own frameworks or caption styles, or by hand, and install them from Community (the account menu, top
+right). A pack file installs through the API (`POST /api/packs/install`).
 
 Code: `contracts/packs.ts` (format, checks), `api/lib/packs.ts` (install, update, remove, instructions, default
 packs), `api/packs.ts` (`/api/packs`), `api/pack-catalog.ts` (`/api/pack-catalog`, the community catalog's read
@@ -70,6 +70,7 @@ catalog were reviewed before they were listed.
   you edited.
 - Remove deletes the copies you haven't touched and keeps the ones you edited.
 - Instructions can be switched off everywhere, or for one project.
+- A pack reaches every project, or only the projects you tick (Community → Installed, or when installing).
 
 ## Default packs
 
@@ -79,8 +80,9 @@ Switch a default off, or remove it, to use a community pack instead. A removed d
 
 ## The community catalog
 
-Settings → Packs → Browse reads the shared catalog at `PACK_CATALOG_URL` (https://creatortoolset.com unless set),
-like a plugin directory: search, see what a pack adds, install it. Installed packs get update notices from it, and
+Community reads the shared catalog at `PACK_CATALOG_URL` (https://creatortoolset.com unless set),
+like a plugin directory: Explore, a section per place a pack works (writing frameworks, writing guides, caption
+styles, editing styles, analyzer guides), search, a page per pack with what it adds, install it. Installed packs get update notices from it, and
 a pack the catalog pulls is flagged and its instructions stop being used. This server keeps no catalog of its
 own. Set `PACK_CATALOG_URL` to an empty value to turn the catalog off.
 
@@ -93,6 +95,7 @@ own. Set `PACK_CATALOG_URL` to an empty value to turn the catalog off.
 
 ## Publishing
 
-Settings → Packs → Share as pack → Publish, once you've ticked that the pack is yours to share, points you to the
-catalog's site: download the file and send it there. It runs the same checks, then waits for a person to review
+Publish to Community sits on each of your own Workshop frameworks and caption styles. Once you've ticked that it's
+yours to share, the app builds the pack and checks it, then points you to the catalog's site: download the file and
+send it there. It runs the same checks, then waits for a person to review
 it. Once approved, it's listed.

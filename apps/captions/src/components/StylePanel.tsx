@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { useStudio } from "@/lib/store";
 import { useMe } from "@/lib/auth";
+import { PublishButton } from "@/components/community/PublishDialog";
 import { posSegmentAt } from "@/lib/captions";
 import {
   usePresets,
@@ -333,6 +334,11 @@ function PresetRow({
             >
               {p.name}
             </button>
+            {p.owner === me?.username && p.scope !== "global" && (
+              <span className="py-1 pl-0.5 pr-0.5 text-zinc-500 hover:text-violet-300">
+                <PublishButton item={{ kind: "captionStyle", id: p.id, defaultName: p.name }} compact className="flex items-center" />
+              </span>
+            )}
             {canDelete(p) ? (
               <button
                 onClick={() => void remove(p.id)}

@@ -1,5 +1,5 @@
 import { Link, Navigate, useLocation } from "react-router";
-import { Cable, Cpu, FileDown, Gauge, KeyRound, Laptop, ListChecks, Monitor, Package, Palette, SlidersHorizontal, UserRound, type LucideIcon } from "lucide-react";
+import { Cable, Cpu, FileDown, Gauge, KeyRound, Laptop, ListChecks, Monitor, Palette, SlidersHorizontal, UserRound, type LucideIcon } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { AccountSection } from "@/components/settings/AccountSection";
 import { AppearanceSection } from "@/components/settings/AppearanceSection";
@@ -8,7 +8,6 @@ import { ExportsSection } from "@/components/settings/ExportsSection";
 import { GeneralSection } from "@/components/settings/GeneralSection";
 import { ProvidersSection } from "@/components/settings/ProvidersSection";
 import { ConnectorsSection } from "@/components/settings/ConnectorsSection";
-import { PacksSection } from "@/components/settings/PacksSection";
 import { ServiceKeysSection } from "@/components/settings/ServiceKeysSection";
 import { MyKeysSection } from "@/components/settings/MyKeysSection";
 import { SetupSection } from "@/components/settings/SetupSection";
@@ -24,7 +23,6 @@ const SETTINGS_SECTIONS: ReadonlyArray<{ id: string; title: string; icon: Lucide
   { id: "providers", title: "AI providers", icon: Cpu },
   { id: "connectors", title: "Connectors", icon: Cable },
   { id: "my-keys", title: "My API keys", icon: KeyRound },
-  { id: "packs", title: "Packs", icon: Package },
   { id: "usage", title: "Usage", icon: Gauge },
   { id: "devices", title: "Devices", icon: Monitor },
   { id: "exports", title: "Exports", icon: FileDown },
@@ -45,6 +43,8 @@ const openThisMac = () =>
 export default function SettingsPage({ onClose }: { onClose: () => void }) {
   const [, , section = "general", sub] = useLocation().pathname.split("/");
   const me = useMe();
+  // Packs moved to Community, a window of its own; old links land on what's installed
+  if (section === "packs") return <Navigate to="/community/installed" replace />;
   const visible = SETTINGS_SECTIONS.filter((s) => !s.adminOnly || me?.role === "admin");
   const current = visible.find((s) => s.id === section);
   if (!current) return <Navigate to="/settings/general" replace />;
@@ -56,7 +56,6 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
     providers: <ProvidersSection sub={sub} />,
     connectors: <ConnectorsSection />,
     "my-keys": <MyKeysSection />,
-    packs: <PacksSection sub={sub} />,
     usage: <UsageSection />,
     devices: <DevicesSection />,
     exports: <ExportsSection />,

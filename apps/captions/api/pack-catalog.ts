@@ -3,7 +3,7 @@ import { checkPack, compareVersions, isPackSlot } from "../contracts/packs";
 import type { CatalogDetail, CatalogInstallResult, UpdateRow } from "../contracts/pack-catalog";
 import type { AuthVars } from "./auth";
 import { env } from "./lib/env";
-import { installPack, listInstalled, markDelisted } from "./lib/packs";
+import { installPack, listInstalled, markDelisted, parseProjectIds } from "./lib/packs";
 
 /**
  * The community catalog, read side: browse, install and update notices from the shared catalog at PACK_CATALOG_URL
@@ -37,10 +37,6 @@ async function resolve(id: string): Promise<Resolved | null> {
 
 // a share-link visitor reads what was shared with them and keeps nothing
 const cantSave = (u: AuthVars["user"]) => u.role === "visitor";
-const projectIdOf = (b: unknown) => {
-  const id = (b as { projectId?: unknown } | null)?.projectId;
-  return typeof id === "string" && /^[a-z0-9-]{1,64}$/i.test(id) ? id : undefined;
-};
 
 /** Mounted behind the account gate at /api/pack-catalog (api/boot.ts). */
 export const packCatalogApp = new Hono<{ Variables: AuthVars }>()
@@ -92,7 +88,7 @@ export const packCatalogApp = new Hono<{ Variables: AuthVars }>()
     if ("delisted" in r) return c.json({ error: "This pack was removed from the catalog", reason: r.delisted }, 410);
     const check = checkPack(r.listed.pack);
     if (!check.ok || !check.pack) return c.json({ error: "This pack didn't pass the checks", problems: check.problems }, 400);
-    const out = await installPack(user.username, check.pack, check.level ?? 0, { projectId: projectIdOf(await c.req.json().catch(() => null)) });
+    const out = await installPack(user.username, check.pack, check.level ?? 0, { projectIds: parseProjectIds(await c.req.json().catch(() => null)) });
     const result: CatalogInstallResult = { installed: out.installed, kept: out.kept };
     return c.json(result, 201);
   })

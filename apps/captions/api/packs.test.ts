@@ -174,3 +174,29 @@ describe("the team's default packs", () => {
     expect((await listInstalled("latecreator")).length).toBe(DEFAULT_PACKS.length);
   });
 });
+
+describe("which projects a pack reaches", () => {
+  it("installs for several projects, changes them later, and every project again with null", async () => {
+    const res = await call("POST", "/api/packs/install", { pack: pack("2.0.0", { id: "two-brands", frameworks: undefined, captionStyles: undefined }), projectIds: ["brand-a", "brand-b"] });
+    expect(res.status).toBe(201);
+    expect(await packInstructions("tinyacrobatics", "workshop.write", "brand-a")).toContain("Punchy Hooks");
+    expect(await packInstructions("tinyacrobatics", "workshop.write", "brand-b")).toContain("Punchy Hooks");
+    expect(await packInstructions("tinyacrobatics", "workshop.write", "brand-c")).toBe("");
+    expect(await packInstructions("tinyacrobatics", "workshop.write", null)).toBe("");
+
+    await call("PATCH", "/api/packs/two-brands", { projectIds: ["brand-c"] });
+    expect(await packInstructions("tinyacrobatics", "workshop.write", "brand-a")).toBe("");
+    expect(await packInstructions("tinyacrobatics", "workshop.write", "brand-c")).toContain("Punchy Hooks");
+
+    await call("PATCH", "/api/packs/two-brands", { projectIds: null });
+    expect(await packInstructions("tinyacrobatics", "workshop.write", "brand-a")).toContain("Punchy Hooks");
+    await call("DELETE", "/api/packs/two-brands");
+  });
+
+  it("reads an older one-project install as that one project", async () => {
+    const { packOn } = await import("./lib/packs");
+    const old = { projectId: "brand-a", off: [], instructions: {} } as unknown as Parameters<typeof packOn>[0];
+    expect(packOn(old, "brand-a")).toBe(true);
+    expect(packOn(old, "brand-b")).toBe(false);
+  });
+});

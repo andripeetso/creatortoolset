@@ -114,7 +114,8 @@ export interface InstallResult {
 }
 
 export interface InstallOptions {
-  projectId?: string;
+  /** Only these projects; missing or empty = every project. */
+  projectIds?: string[];
 }
 
 /**
@@ -179,7 +180,10 @@ async function installInto(state: State, username: string, pack: Pack, level: Pa
       id: pack.id, name: pack.name, version: pack.version, author: pack.author, license: pack.license, description: pack.description,
       ...(pack.niche ? { niche: pack.niche } : {}), ...(pack.homepage ? { homepage: pack.homepage } : {}),
       installedAt: prev?.installedAt ?? now, updatedAt: now, level,
-      ...(o.projectId ?? prev?.projectId ? { projectId: o.projectId ?? prev?.projectId } : {}),
+      ...(() => {
+        const ids = o.projectIds ?? (prev ? projectsOf(prev) : undefined);
+        return ids?.length ? { projectIds: ids } : {};
+      })(),
       off: prev?.off ?? [],
       instructions: pack.instructions ?? {},
       items: { frameworks, presets },
@@ -242,9 +246,38 @@ export async function markDelisted(username: string, id: string, reason: string)
   });
 }
 
+/** The projects a pack is limited to; undefined = every project. Reads the one-project field of older installs too. */
+export const projectsOf = (p: Pick<InstalledPack, "projectIds" | "projectId">): string[] | undefined =>
+  p.projectIds?.length ? p.projectIds : p.projectId ? [p.projectId] : undefined;
+
+/** `projectIds` (or an older client's `projectId`) from a request body; undefined when it names none. */
+export function parseProjectIds(body: unknown): string[] | undefined {
+  const b = body as { projectIds?: unknown; projectId?: unknown } | null;
+  const raw = Array.isArray(b?.projectIds) ? b.projectIds : typeof b?.projectId === "string" ? [b.projectId] : [];
+  const ids = [...new Set(raw.filter((x): x is string => typeof x === "string" && /^[a-z0-9-]{1,64}$/i.test(x)))].slice(0, 100);
+  return ids.length ? ids : undefined;
+}
+
+/** Change which projects a pack's instructions reach: a list, or every project (undefined). */
+export function setPackProjects(username: string, id: string, projectIds: string[] | undefined): Promise<InstalledPack | null> {
+  return withLock(username, async () => {
+    const state = await readState(username);
+    const pack = state.packs.find((p) => p.id === id);
+    if (!pack) return null;
+    delete pack.projectId;
+    if (projectIds?.length) pack.projectIds = projectIds;
+    else delete pack.projectIds;
+    await saveState(username, state);
+    return pack;
+  });
+}
+
 /** Is this pack's instructions in use for a run in this project? */
-export const packOn = (p: InstalledPack, projectId?: string | null): boolean =>
-  !p.delisted && !p.off.includes("*") && !(projectId && p.off.includes(projectId)) && (!p.projectId || p.projectId === projectId);
+export const packOn = (p: InstalledPack, projectId?: string | null): boolean => {
+  if (p.delisted || p.off.includes("*") || (projectId && p.off.includes(projectId))) return false;
+  const only = projectsOf(p);
+  return !only || (!!projectId && only.includes(projectId));
+};
 
 /**
  * The instructions installed packs add at one slot, ready to go into a system prompt after the app's own text and

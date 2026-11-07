@@ -5,6 +5,7 @@ import { AppBar } from "@/components/AppBar";
 import { ProjectList } from "@/components/workspace/ProjectList";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
 import { ConfirmButton } from "@/components/instagram/ConfirmButton";
+import { PublishButton } from "@/components/community/PublishDialog";
 import { FrameworkForm, type FrameworkDraft } from "@/components/workshop/FrameworkForm";
 import { KnowledgePanel } from "@/components/workshop/KnowledgePanel";
 import { RuleRow } from "@/components/workshop/RuleRow";
@@ -593,6 +594,12 @@ export default function WorkshopPage() {
                       {fw.whenToUse ? <p className="mt-1 text-[11px] text-zinc-600">Best for: {fw.whenToUse}</p> : null}
                       {fw.pairsWith ? <p className="mt-0.5 text-[11px] text-zinc-600">Pairs with: {fw.pairsWith}</p> : null}
                     </div>
+                    {fw.owner === me?.username && (
+                      <PublishButton
+                        item={{ kind: "framework", id: fw.id, defaultName: fw.name, defaultDescription: fw.summary }}
+                        className={secondary}
+                      />
+                    )}
                     <button type="button" onClick={() => setEditing(fw.id)} className={secondary} disabled={busy !== null}>
                       <Pencil className="h-3 w-3" /> Edit
                     </button>

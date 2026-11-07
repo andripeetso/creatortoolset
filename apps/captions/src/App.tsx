@@ -52,6 +52,7 @@ const MobileWorkshopSessionPage = lazy(() =>
   })),
 );
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
+const CommunityPage = lazy(() => import("./pages/CommunityPage"));
 
 function PhoneTool({ children }: { children: ReactNode }) {
   return (
@@ -143,6 +144,17 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   );
 }
 
+/** Community, a modal over the page behind it: every signed-in account. */
+function CommunityModal({ onClose }: { onClose: () => void }) {
+  const me = useMe();
+  if (!me) return <Navigate to="/" replace />;
+  return (
+    <Suspense fallback={null}>
+      <CommunityPage onClose={onClose} />
+    </Suspense>
+  );
+}
+
 /** ⌘, opens Settings (the account menu shows it). */
 function SettingsShortcut() {
   const navigate = useNavigate();
@@ -184,12 +196,13 @@ function InstagramAnalyzeRoute() {
 export default function App() {
   const location = useLocation();
   const navigate = useNavigate();
-  // /settings/* and /projects are modals: the page you were on stays mounted behind (home when opened directly)
+  // /settings/*, /community/* and /projects are modals: the page you were on stays mounted behind (home when opened directly)
   const inSettings = /^\/settings(?:\/|$)/.test(location.pathname);
+  const inCommunity = /^\/community(?:\/|$)/.test(location.pathname);
   const inProjects = location.pathname === "/projects";
   const behind = useRef<Location | null>(null);
-  if (!inSettings && !inProjects) behind.current = location;
-  const page = inSettings || inProjects ? (behind.current ?? { ...location, pathname: "/", search: "", hash: "" }) : location;
+  if (!inSettings && !inProjects && !inCommunity) behind.current = location;
+  const page = inSettings || inProjects || inCommunity ? (behind.current ?? { ...location, pathname: "/", search: "", hash: "" }) : location;
   const closeSettings = () => navigate(behind.current ? behind.current.pathname + behind.current.search + behind.current.hash : "/");
   const onMobile = location.pathname.startsWith("/m");
   const publicPage =
@@ -275,11 +288,12 @@ export default function App() {
       {/* phones have their own export screens; the tray's memory of dismissed
           cards is per browser, so a new one (the iPhone app) got every old export */}
       {!onMobile && !publicPage && !isPhoneHub() && <ExportTray />}
-      {!publicPage && !inSettings && <SetupDialog />}
-      {!publicPage && !inSettings && <FirstOpen />}
+      {!publicPage && !inSettings && !inCommunity && <SetupDialog />}
+      {!publicPage && !inSettings && !inCommunity && <FirstOpen />}
       {!onMobile && !publicPage && <AssistantDock />}
       {!onMobile && !publicPage && <CornerNav />}
       {inSettings && <SettingsModal onClose={closeSettings} />}
+      {inCommunity && <CommunityModal onClose={closeSettings} />}
       {inProjects && <ProjectsRoute onClose={closeSettings} />}
     </>
   );

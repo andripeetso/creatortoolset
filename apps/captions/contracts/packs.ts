@@ -81,7 +81,9 @@ export interface InstalledPack extends PackManifest {
   installedAt: number;
   updatedAt: number;
   level: PackLevel;
-  /** Only this project gets the pack's instructions; missing = every project. */
+  /** Only these projects get the pack's instructions; missing or empty = every project. */
+  projectIds?: string[];
+  /** @deprecated read as `projectIds: [projectId]` (installs from before several projects could be picked). */
   projectId?: string;
   /** Projects that switched the pack's instructions off. */
   off: string[];

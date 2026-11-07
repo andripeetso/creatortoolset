@@ -2,8 +2,8 @@ import { useLocation, useNavigate } from "react-router";
 import {
   ChevronDown,
   BarChart3,
+  Globe,
   LogOut,
-  Package,
   Settings,
   UserRound,
 } from "lucide-react";
@@ -30,7 +30,7 @@ export function useAccountInCorner(): boolean {
   );
 }
 
-/** The account menu, top right beside the project switcher: Settings, Community packs, Usage, the Mac app, sign out. */
+/** The account menu, top right beside the project switcher: Settings, Community, Usage, the Mac app, sign out. */
 export function UserMenu() {
   const required = useAuth((s) => s.required);
   const me = useAuth((s) => s.me);
@@ -64,8 +64,8 @@ export function UserMenu() {
             <Settings /> Settings
             <DropdownMenuShortcut>⌘,</DropdownMenuShortcut>
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => navigate("/settings/packs/browse")} className="text-xs">
-            <Package /> Community packs
+          <DropdownMenuItem onSelect={() => navigate("/community")} className="text-xs">
+            <Globe /> Community
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => navigate("/settings/usage")} className="text-xs">
             <BarChart3 /> Usage
