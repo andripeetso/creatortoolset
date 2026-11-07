@@ -7,7 +7,7 @@ import WebKit
 @main
 struct CreatorToolsetMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var shell = Shell()
+    @StateObject private var shell: Shell
     /// Sparkle: reads the site's appcast every 4 hours and installs what it finds (Info.plist keys from
     /// build-app.sh). A build without a feed (`swift run`) starts no updater.
     private let updater = SPUStandardUpdaterController(
@@ -15,6 +15,12 @@ struct CreatorToolsetMacApp: App {
         updaterDelegate: nil,
         userDriverDelegate: nil
     )
+
+    init() {
+        let shell = Shell()
+        _shell = StateObject(wrappedValue: shell)
+        AppDelegate.shell = shell   // links arrive at the delegate, also while the window is closed
+    }
 
     var body: some Scene {
         Window("Creator Toolset", id: "main") {
@@ -53,9 +59,19 @@ struct CreatorToolsetMacApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    @MainActor static var shell: Shell?
+
     /// The menu bar item stays up when the window is closed.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    /// A creatortoolset:// link (or the site's own https link) opened anywhere: that page in the window, brought forward.
+    @MainActor func application(_ application: NSApplication, open urls: [URL]) {
+        guard let shell = Self.shell else { return }
+        for url in urls {
+            if let href = appHref(from: url, site: shell.base) { shell.showWindow(href: href) }
+        }
     }
 }
 
@@ -158,8 +174,6 @@ struct SettingsView: View {
                             Button("Change port") { savePort() }
                             Button("Open server log") { shell.openServerLog() }
                         }
-                                        Text("Opens your default browser signed in already, with a link that works once, for a minute.")
-                            .font(.caption).foregroundStyle(.secondary)
                     }
                 }
                 if shell.runsHere, let server = shell.server {

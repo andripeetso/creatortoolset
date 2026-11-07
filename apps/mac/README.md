@@ -157,6 +157,9 @@ one at most once a minute). A crash of the app itself is macOS's report in
   login lives in WebKit's own persistent store, so it survives relaunches.
 - **Go** menu: ⌘1 Home, ⌘2 Workshop, ⌘3 Analyzer; ⌘[ and ⌘] go
   back and forward; ⌘R reloads. The routes are the ones in `apps/captions/src/App.tsx`.
+- **Links.** The app registers `creatortoolset://`: `creatortoolset://review/<id>?v=2` opens that page in the
+  window and brings it forward, also with the window closed. A link to the window's own site handed to the app
+  (`open -a "Creator Toolset" <url>`) opens there too. `appHref` in `Logic.swift`.
 - **Settings** (⌘,) opens the site's Settings page in the window. **Mac settings…** (the menu bar)
   is this app's own: **Use this Mac for my AI**, the server (on or off, port, log, Data location,
   Access from other devices), and with the server off the site address (default `https://creatortoolset.com`;

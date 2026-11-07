@@ -22,6 +22,25 @@ func isSite(_ url: URL, _ site: URL) -> Bool {
     url.host?.lowercased() == site.host?.lowercased()
 }
 
+/// A link the window should open: creatortoolset://review/<id>?v=2 (the scheme the app registers), or the site's own
+/// https link, as `open -a "Creator Toolset" <url>` delivers it. The path, query and fragment to load in the window;
+/// nil for anything else.
+func appHref(from url: URL, site: URL) -> String? {
+    guard let c = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+    let path: String
+    switch c.scheme?.lowercased() {
+    case "creatortoolset":   // creatortoolset://review/abc: "review" is the URL's host
+        path = "/" + (c.percentEncodedHost ?? "") + c.percentEncodedPath
+    case "http", "https":
+        guard isSite(url, site) else { return nil }
+        path = c.percentEncodedPath.isEmpty ? "/" : c.percentEncodedPath
+    default:
+        return nil
+    }
+    let normalized = path.replacingOccurrences(of: "//", with: "/")
+    return normalized + (c.percentEncodedQuery.map { "?" + $0 } ?? "") + (c.percentEncodedFragment.map { "#" + $0 } ?? "")
+}
+
 /// The cookies the site would be sent: cookies for its host or a parent domain of it (Secure ones only over https).
 func cookies(for site: URL, in all: [HTTPCookie]) -> [HTTPCookie] {
     guard let host = site.host?.lowercased() else { return [] }
