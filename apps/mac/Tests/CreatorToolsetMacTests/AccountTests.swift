@@ -92,6 +92,13 @@ final class AccountTests: XCTestCase {
             let off = try await client.isSetUp("apple")
             XCTAssertFalse(off)
         }
+        // only the redirect to Apple or Google means sign-in is there: a site login's 401, a fork's app page (200) or an
+        // error would show sign-in buttons that lead nowhere, with no way past the step
+        for code in [200, 401, 403, 500] {
+            StubServer.routes["/api/account/login/apple"] = (code, "")
+            let no = try await client.isSetUp("apple")
+            XCTAssertFalse(no, "\(code)")
+        }
         StubServer.routes["/api/account/login/apple"] = (302, "")
         let on = try await client.isSetUp("apple")
         XCTAssertTrue(on)
@@ -105,6 +112,25 @@ final class AccountTests: XCTestCase {
         } catch {
             XCTAssertEqual(error as? AccountError, .codeRejected("the server answered 404"))
         }
+    }
+
+    /// A creatortoolset://account link with no sign-in started in this app is someone else's code: never swapped.
+    @MainActor func testAccountLinkNeedsASignInInFlight() async {
+        let saved = UserDefaults.standard.string(forKey: "accountServer")
+        UserDefaults.standard.set("https://accounts.example.com", forKey: "accountServer")
+        defer { UserDefaults.standard.set(saved, forKey: "accountServer") }
+        let reply = await Account().link(code: "someone-elses-code")
+        XCTAssertEqual(reply["state"], "error")
+        XCTAssertTrue(reply["message"]?.contains("didn't come from this app") == true)
+    }
+
+    func testAccountMessagesOnlyFromTheWindowsOwnPage() {
+        XCTAssertEqual(accountAsk("status", mainFrame: true), "status")
+        XCTAssertEqual(accountAsk("google", mainFrame: true), "google")
+        XCTAssertNil(accountAsk("status", mainFrame: false))   // an embed inside the page
+        XCTAssertNil(accountAsk("apple", mainFrame: false))
+        XCTAssertNil(accountAsk("delete", mainFrame: true))
+        XCTAssertNil(accountAsk(["status"], mainFrame: true))
     }
 
     func testMeSendsTheTokenAndSaysWhenItNoLongerWorks() async throws {

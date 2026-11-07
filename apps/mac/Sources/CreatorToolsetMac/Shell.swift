@@ -175,7 +175,7 @@ final class Shell: NSObject, ObservableObject {
     /// window's account step asks again. The code never reaches the page or the log.
     func accountLink(_ code: String) {
         Task {
-            await account.finish(code: code)
+            await account.link(code: code)
             _ = try? await webView.evaluateJavaScript("dispatchEvent(new Event('ct-account'))")
             showWindow()
         }

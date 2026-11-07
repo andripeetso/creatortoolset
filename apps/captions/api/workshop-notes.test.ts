@@ -12,13 +12,13 @@ const { OBSIDIAN_TEMPLATE } = await import("../src/lib/workshop-markdown");
 
 const app = new Hono<{ Variables: { user: unknown } }>();
 app.use("*", async (c, next) => {
-  const username = c.req.header("x-user") ?? "andri";
+  const username = c.req.header("x-user") ?? "sam";
   c.set("user", { username, role: "user", cloud: true, off: [] });
   await next();
 });
 app.route("/api/workshop", workshopApp as never);
 
-const call = async (method: string, url: string, body?: unknown, user = "andri") =>
+const call = async (method: string, url: string, body?: unknown, user = "sam") =>
   app.request(url, {
     method,
     headers: { "Content-Type": "application/json", "x-user": user },
@@ -100,23 +100,23 @@ describe("Obsidian note sync", () => {
   });
 
   it("links a session the Workshop already has by its name instead of making a second one", async () => {
-    const made = await json<{ id: string }>(await call("POST", "/api/workshop/sessions", { title: "Tiny Teeth And Sugar" }));
-    const linked = await put({ path: "Scripts/TinyTeethAndSugar.md", title: "TinyTeethAndSugar", status: "🎥 Filming", mtime: Date.now() + 1000, markdown: reelNote("Jaws"), media: "🎞️ Reel" });
+    const made = await json<{ id: string }>(await call("POST", "/api/workshop/sessions", { title: "Tiny Paper Boats" }));
+    const linked = await put({ path: "Scripts/TinyPaperBoats.md", title: "TinyPaperBoats", status: "🎥 Filming", mtime: Date.now() + 1000, markdown: reelNote("Boats"), media: "🎞️ Reel" });
     expect(linked.id).toBe(made.id);
-    expect((await getSession(made.id)).note?.path).toBe("Scripts/TinyTeethAndSugar.md");
-    expect((await put({ path: "Scripts/TinyTeethAndSugar.md", title: "TinyTeethAndSugar", status: "🎥 Filming", mtime: Date.now() + 2000, markdown: reelNote("Jaws") })).id).toBe(made.id);
+    expect((await getSession(made.id)).note?.path).toBe("Scripts/TinyPaperBoats.md");
+    expect((await put({ path: "Scripts/TinyPaperBoats.md", title: "TinyPaperBoats", status: "🎥 Filming", mtime: Date.now() + 2000, markdown: reelNote("Boats") })).id).toBe(made.id);
   });
 
   it("keeps each account's notes to itself", async () => {
     const mine = (await put({ path: "Scripts/Private.md", title: "Private", status: "🎥 Filming", mtime: T0, markdown: reelNote("Mine"), media: "🎞️ Reel" })).id!;
     // another account's note at the same path is its own session; mine is not touched
-    const theirs = await put({ path: "Scripts/Private.md", title: "Theirs", status: "📁 Shelved", mtime: T0 + 99999, markdown: "x", media: "🎞️ Reel", create: "send" }, "bea");
+    const theirs = await put({ path: "Scripts/Private.md", title: "Theirs", status: "📁 Shelved", mtime: T0 + 99999, markdown: "x", media: "🎞️ Reel", create: "send" }, "riley");
     expect(theirs.id).toBeTruthy();
     expect(theirs.id).not.toBe(mine);
     expect((await getSession(mine)).status).toBe("production");
-    expect((await json<unknown[]>(await call("GET", "/api/workshop/notes?since=0", undefined, "bea"))).length).toBe(1);
-    expect((await call("GET", `/api/workshop/sessions/${mine}`, undefined, "bea")).status).toBe(404);
-    expect((await call("POST", `/api/workshop/sessions/${mine}/export/obsidian`, undefined, "bea")).status).toBe(404);
+    expect((await json<unknown[]>(await call("GET", "/api/workshop/notes?since=0", undefined, "riley"))).length).toBe(1);
+    expect((await call("GET", `/api/workshop/sessions/${mine}`, undefined, "riley")).status).toBe(404);
+    expect((await call("POST", `/api/workshop/sessions/${mine}/export/obsidian`, undefined, "riley")).status).toBe(404);
   });
 
   it("refuses a note without a path or mtime", async () => {
@@ -141,7 +141,7 @@ describe("Custom exports", () => {
     expect(saved[1]!.folder).toBe("Tiny Acrobatics/Scripts");
     expect(saved[1]!.template).toBe(OBSIDIAN_TEMPLATE);
     expect(await json<unknown[]>(await call("GET", "/api/workshop/exports"))).toHaveLength(3);
-    expect(await json<unknown[]>(await call("GET", "/api/workshop/exports", undefined, "bea"))).toHaveLength(1);
+    expect(await json<unknown[]>(await call("GET", "/api/workshop/exports", undefined, "riley"))).toHaveLength(1);
 
     expect((await call("PUT", "/api/workshop/exports", [{ name: "Up", target: "plugin", folder: "../outside" }])).status).toBe(400);
     expect((await call("PUT", "/api/workshop/exports", [{ name: "Mail", target: "email" }])).status).toBe(400);
@@ -165,9 +165,9 @@ describe("Custom exports", () => {
     expect(pending[0]!.markdown).toContain("selector.Media: 🎞️ Reel");
     expect(pending[0]!.markdown).toContain("Queued script");
 
-    expect((await call("GET", "/api/workshop/exports/pending", undefined, "bea")).status).toBe(200);
-    expect(await json<unknown[]>(await call("GET", "/api/workshop/exports/pending", undefined, "bea"))).toEqual([]);
-    expect((await call("POST", `/api/workshop/exports/pending/${pending[0]!.id}/done`, undefined, "bea")).status).toBe(404);
+    expect((await call("GET", "/api/workshop/exports/pending", undefined, "riley")).status).toBe(200);
+    expect(await json<unknown[]>(await call("GET", "/api/workshop/exports/pending", undefined, "riley"))).toEqual([]);
+    expect((await call("POST", `/api/workshop/exports/pending/${pending[0]!.id}/done`, undefined, "riley")).status).toBe(404);
     expect((await call("POST", `/api/workshop/exports/pending/${pending[0]!.id}/done`)).status).toBe(200);
     expect(await json<unknown[]>(await call("GET", "/api/workshop/exports/pending"))).toEqual([]);
     expect((await call("POST", `/api/workshop/exports/pending/${pending[0]!.id}/done`)).status).toBe(404);

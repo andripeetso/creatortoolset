@@ -52,13 +52,13 @@ struct AccountClient {
         URL(string: "/api/account/login/\(provider)?app=1", relativeTo: server)!.absoluteURL
     }
 
-    /// Whether the server's sign-in is set up: 404 or 501 = not yet; anything else (its redirect to Apple or Google) = yes.
+    /// Whether the server's sign-in is set up: only its redirect to Apple or Google says yes. Anything else (404, 501, a
+    /// sign-in page that wants a site login, a fork's app page) = not yet, so the step lets the person go on.
     func isSetUp(_ provider: String) async throws -> Bool {
         var request = URLRequest(url: loginURL(provider))
         request.timeoutInterval = 10
         let (_, response) = try await session.data(for: request, delegate: NoRedirects())
-        let code = (response as? HTTPURLResponse)?.statusCode ?? 0
-        return code != 404 && code != 501
+        return (300..<400).contains((response as? HTTPURLResponse)?.statusCode ?? 0)
     }
 
     /// POST {code} → {token, name, email}. The code works once and soon expires.
@@ -103,8 +103,15 @@ private final class NoRedirects: NSObject, URLSessionTaskDelegate {
                     newRequest request: URLRequest) async -> URLRequest? { nil }
 }
 
+/// The page's account message: "status", "apple" or "google", and only from the window's own page, never from a frame
+/// inside it (an embed would read the name and email, or open a sign-in).
+func accountAsk(_ body: Any, mainFrame: Bool) -> String? {
+    guard mainFrame, let ask = body as? String, ["status", "apple", "google"].contains(ask) else { return nil }
+    return ask
+}
+
 /// What the page's account step is told (AccountStep.tsx): state signedIn / signedOut / notSetUp / off / cancelled /
-/// error, with the name, email or message that goes with it.
+/// unreachable / error, with the name, email, server or message that goes with it.
 typealias AccountReply = [String: String]
 
 /// The sign-in flow and the stored account: the token in the Keychain, the profile in UserDefaults, both per server.
@@ -163,7 +170,7 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
         do {
             return try await client.isSetUp("apple") ? ["state": "signedOut"] : ["state": "notSetUp", "server": host]
         } catch {
-            return ["state": "error", "message": "Can't reach \(host): \(error.localizedDescription)"]
+            return unreachable(error)
         }
     }
 
@@ -180,7 +187,7 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
             do {
                 guard try await client.isSetUp(provider) else { answer(reply(AccountError.notSetUp)); return }
             } catch {
-                answer(["state": "error", "message": "Can't reach \(host): \(error.localizedDescription)"])
+                answer(unreachable(error))
                 return
             }
             let sheet = ASWebAuthenticationSession(url: client.loginURL(provider), callbackURLScheme: "creatortoolset") { [weak self] url, error in
@@ -202,9 +209,24 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
         }
     }
 
+    /// Offline or the account server is down: the step may be passed (it asks again next time), with a retry.
+    private func unreachable(_ error: Error) -> AccountReply {
+        ["state": "unreachable", "server": host, "message": "Can't reach \(host): \(error.localizedDescription)"]
+    }
+
+    /// A creatortoolset://account link handed to the app: swapped only while this app has a sign-in of its own in
+    /// flight. Any other link is someone else's code (it would sign this Mac in to their account), so it is refused.
+    @discardableResult
+    func link(code: String) async -> AccountReply {
+        guard pending != nil else { return ["state": "error", "message": "That sign-in link didn't come from this app. Sign in from the app."] }
+        session?.cancel()
+        session = nil
+        return await finish(code: code)
+    }
+
     /// A one-time code, from the sheet or a creatortoolset://account link: swapped once for the token.
     @discardableResult
-    func finish(code: String) async -> AccountReply {
+    private func finish(code: String) async -> AccountReply {
         guard let server else { return answer(["state": "off"]) }
         do {
             let (token, profile) = try await AccountClient(server: server).exchange(code)

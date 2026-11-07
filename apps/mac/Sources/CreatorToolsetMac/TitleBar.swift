@@ -59,7 +59,7 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage,
                                replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
-        guard let ask = message.body as? String, let onAccount else { return replyHandler(["state": "off"], nil) }
+        guard let ask = accountAsk(message.body, mainFrame: message.frameInfo.isMainFrame), let onAccount else { return replyHandler(["state": "off"], nil) }
         onAccount(ask) { replyHandler($0, nil) }
     }
 

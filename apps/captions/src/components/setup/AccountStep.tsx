@@ -4,8 +4,8 @@ import { Button } from "@/components/ui/button";
 /**
  * First run, step 1: the person's Creator Toolset account, signed in with Apple or Google. The Mac app does the sign-in
  * (its `account` message handler, Account.swift) and answers each message with the state below. Required: Continue
- * shows only once signed in, or while the account server says sign-in isn't set up yet, or with no account step at
- * all (no Mac app, or Mac settings left the account server empty). Each mount asks again, so the step becomes
+ * shows only once signed in, or while the account server says sign-in isn't set up yet or can't be reached (offline:
+ * it asks again next time), or with no account step at all (no Mac app, or Mac settings left the account server empty). Each mount asks again, so the step becomes
  * required by itself once the server has sign-in.
  */
 
@@ -13,6 +13,7 @@ export type AccountState =
   | { state: "checking" | "signedOut" | "cancelled" | "off" }
   | { state: "signedIn"; name?: string; email?: string }
   | { state: "notSetUp"; server?: string }
+  | { state: "unreachable"; server?: string; message?: string }
   | { state: "error"; message?: string };
 
 type Bridge = { postMessage: (m: string) => Promise<AccountState> };
@@ -23,7 +24,7 @@ const bridge = (): Bridge | undefined =>
 export const hasAccountBridge = () => !!bridge();
 
 /** Whether the person may go on from this step. */
-export const accountDone = (s: AccountState) => s.state === "signedIn" || s.state === "notSetUp" || s.state === "off";
+export const accountDone = (s: AccountState) => s.state === "signedIn" || s.state === "notSetUp" || s.state === "unreachable" || s.state === "off";
 
 export function AccountStepView({ account, busy, onSignIn, onDone }: { account: AccountState; busy: boolean; onSignIn: (provider: "apple" | "google") => void; onDone: () => void }) {
   return (
@@ -37,6 +38,9 @@ export function AccountStepView({ account, busy, onSignIn, onDone }: { account: 
       )}
       {account.state === "notSetUp" && (
         <p>Sign-in isn't set up on {account.server || "the account server"} yet, so you can go on without an account. This step will ask again once it is.</p>
+      )}
+      {account.state === "unreachable" && (
+        <p>Can't reach {account.server || "the account server"} right now, so you can go on without an account. This step will ask again next time.</p>
       )}
       {account.state === "off" && <p>No account is needed here.</p>}
       {(account.state === "signedOut" || account.state === "cancelled" || account.state === "error") && (

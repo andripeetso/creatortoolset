@@ -25,4 +25,8 @@ it("goes on once signed in, while the server has no sign-in yet, or with no acco
   expect(notYet).toContain("Sign-in isn&#x27;t set up on creatortoolset.com yet");
   expect(notYet).toContain(">Continue<");
   expect(view({ state: "off" })).toContain(">Continue<");
+  // offline on the first run: never stuck on a step that can't be passed
+  const offline = view({ state: "unreachable", server: "creatortoolset.com" });
+  expect(offline).toContain("Can&#x27;t reach creatortoolset.com");
+  expect(offline).toContain(">Continue<");
 });
