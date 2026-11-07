@@ -1,5 +1,5 @@
 import { Link, Navigate, useLocation } from "react-router";
-import { Cable, Cpu, FileDown, Gauge, KeyRound, ListChecks, Monitor, Package, Palette, SlidersHorizontal, UserRound, type LucideIcon } from "lucide-react";
+import { Cable, Cpu, FileDown, Gauge, KeyRound, Laptop, ListChecks, Monitor, Package, Palette, SlidersHorizontal, UserRound, type LucideIcon } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { AccountSection } from "@/components/settings/AccountSection";
 import { AppearanceSection } from "@/components/settings/AppearanceSection";
@@ -31,6 +31,11 @@ const SETTINGS_SECTIONS: ReadonlyArray<{ id: string; title: string; icon: Lucide
   { id: "account", title: "Account", icon: UserRound },
   { id: "keys", title: "API keys", icon: KeyRound, adminOnly: true },
 ];
+
+/** Inside the Mac app (apps/mac marks its page with html.mac-app): its own options open in a native panel. */
+const macApp = () => typeof document !== "undefined" && document.documentElement.classList.contains("mac-app");
+const openThisMac = () =>
+  (window as unknown as { webkit?: { messageHandlers?: { window?: { postMessage: (m: string) => void } } } }).webkit?.messageHandlers?.window?.postMessage("this-mac");
 
 /**
  * Settings, a modal
@@ -84,6 +89,17 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
               </Link>
             );
           })}
+          {/* the Mac app's servers, AI on this Mac, the server here and its data: a native panel, not a page */}
+          {macApp() && (
+            <button
+              type="button"
+              onClick={openThisMac}
+              className="flex shrink-0 items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground md:mt-2 md:border-t md:border-border md:pt-2.5"
+            >
+              <Laptop className="h-4 w-4" />
+              This Mac
+            </button>
+          )}
         </nav>
         <main className="min-w-0 flex-1 overflow-y-auto p-6">
           <h1 className="text-lg font-semibold tracking-tight">{current.title}</h1>

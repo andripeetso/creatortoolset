@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { useAuth } from "@/lib/auth";
 import {
+  aiAnswerer,
   checkProvider,
   deviceOf,
   getProviders,
@@ -25,6 +26,7 @@ import {
   saveOwn,
   saveWorkspace,
   selectionLabel,
+  thisMacDevice,
 } from "@/lib/providers";
 import { cn } from "@/lib/utils";
 import { AddProviderDialog } from "./AddProviderDialog";
@@ -236,6 +238,7 @@ export function ProvidersSection({ sub }: { sub?: string }) {
       <p className="text-sm text-muted-foreground">
         The AI runs on a Mac, through the coding tools signed in there. Each provider belongs to one Mac.
       </p>
+      <p className="mt-2 text-sm">{aiAnswerer(view, thisMacDevice())}</p>
       {saving && <p className="mt-2 text-xs text-muted-foreground">Saving…</p>}
       {error && <Notice tone="error">{error}</Notice>}
 

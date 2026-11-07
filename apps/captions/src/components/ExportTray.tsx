@@ -116,7 +116,7 @@ function JobCard({ job, library }: { job: ExportJob; library: boolean }) {
 }
 
 /**
- * Bottom-right stack of export toasts. Exports render on the server, so
+ * Bottom-right stack of export toasts, above the assistant's pill (AssistantDock, bottom-4 right-4). Exports render on the server, so
  * the tray re-attaches to in-flight or finished jobs after a reload.
  * Finished cards stay until closed (they carry Download
  * Download) or until the server drops the file after 24 hours. The stack
@@ -166,7 +166,7 @@ export function ExportTray() {
       <button
         onClick={toggleCollapsed}
         title="Show exports"
-        className="fixed bottom-4 right-4 z-40 flex items-center gap-2 rounded-full border border-zinc-700 bg-[#16161c] px-3 py-1.5 text-[11px] text-zinc-300 shadow-2xl transition-colors hover:border-zinc-500 hover:text-white"
+        className="fixed bottom-16 right-4 z-40 flex items-center gap-2 rounded-full border border-zinc-700 bg-[#16161c] px-3 py-1.5 text-[11px] text-zinc-300 shadow-2xl transition-colors hover:border-zinc-500 hover:text-white"
       >
         {active.length ? (
           <>
@@ -187,7 +187,7 @@ export function ExportTray() {
   }
 
   return (
-    <div className="pointer-events-none fixed bottom-4 right-4 z-40 flex max-h-[60vh] w-80 flex-col gap-2 overflow-y-auto">
+    <div className="pointer-events-none fixed bottom-16 right-4 z-40 flex max-h-[60vh] w-80 flex-col gap-2 overflow-y-auto">
       <div className="pointer-events-auto flex items-center justify-end gap-1.5">
         {doneCount > 1 && (
           <button

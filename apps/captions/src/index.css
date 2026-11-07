@@ -131,8 +131,8 @@ html, body, #root { height: 100%; }
 body { background: #0b0b10; }
 html:not(.dark) body { background: #fafafa; }
 
-/* The Mac app (apps/mac) has no title bar: its window buttons sit at the left of the page's top bar. */
-html.mac-app:not(.mac-full) [data-titlebar] { padding-left: 104px; }
+/* The Mac app (apps/mac) has no title bar: its window buttons and its server picker sit at the left of the page's top bar. */
+html.mac-app:not(.mac-full) [data-titlebar] { padding-left: 124px; }
 
 /* mobile PWA: no rubber-band scroll past the app, no flash on taps */
 body { overscroll-behavior-y: none; }

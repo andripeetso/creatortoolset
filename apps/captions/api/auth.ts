@@ -214,7 +214,7 @@ const isLoopback = (c: Context) => {
 };
 const localOnly = (c: Context) => process.env.CT_LOCAL === "1" && !isLoopback(c);
 const remoteRefused = (c: Context, user: UserRecord) => localOnly(c) && !!env.appSecret && verifyPassword(user, env.appSecret);
-const NO_PASSWORD_YET = "Set a password on the Mac first: Mac settings → Access from other devices";
+const NO_PASSWORD_YET = "Set a password on the Mac first: the Mac app's This Mac → Access from other devices";
 
 /**
  * One-time sign-in links, for pairing a phone later (no UI uses them yet). POST mints one for the account
