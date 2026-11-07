@@ -10,10 +10,11 @@ import {
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { createWriteStream, existsSync } from "node:fs";
-import { mkdir, readFile, rename, rm } from "node:fs/promises";
+import { copyFile, link, mkdir, readFile, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { env } from "./lib/env";
+import { versionSource } from "./library/access";
 import {
   mediaOwnerProjectId,
   originalProjectIds,
@@ -185,6 +186,8 @@ type ClipMedia = {
   id?: string;
   originalObjectKey?: string;
   mediaProjectId?: string;
+  /** The clip came from the Media Library: its original is that version's source (api/library/access.ts). */
+  libraryVersionId?: string;
 };
 
 function clipOriginalFile(projectId: string, clipId: string): string {
@@ -201,15 +204,16 @@ function clipOriginalFile(projectId: string, clipId: string): string {
 async function readProjectClip(
   projectId: string,
   clipId: string,
-): Promise<ClipMedia | null> {
+): Promise<(ClipMedia & { owner?: string }) | null> {
   try {
     const meta = JSON.parse(
       await readFile(
         path.join(env.dataDir, "projects", projectId, "meta.json"),
         "utf-8",
       ),
-    ) as { clips?: ClipMedia[] };
-    return meta.clips?.find((clip) => clip.id === clipId) ?? null;
+    ) as { owner?: string; clips?: ClipMedia[] };
+    const clip = meta.clips?.find((c) => c.id === clipId);
+    return clip ? { ...clip, owner: meta.owner } : null;
   } catch {
     return null;
   }
@@ -223,6 +227,8 @@ async function resolveSharedOriginal(
   localPaths: string[];
   objectKey: string | null;
   cachePath: string;
+  /** the library version the clip came from, read as the project's owner */
+  library: { versionId: string; owner: string } | null;
 }> {
   const clip = await readProjectClip(projectId, clipId);
   const home = mediaOwnerProjectId(projectId, clip);
@@ -237,7 +243,11 @@ async function resolveSharedOriginal(
   if (!objectKey && home !== projectId) {
     objectKey = sharedOriginalObjectKey(await readProjectClip(home, clipId));
   }
-  return { localPaths, objectKey, cachePath };
+  const library =
+    clip?.libraryVersionId && clip.owner
+      ? { versionId: clip.libraryVersionId, owner: clip.owner }
+      : null;
+  return { localPaths, objectKey, cachePath, library };
 }
 
 /**
@@ -251,21 +261,27 @@ export async function ensureProjectOriginal(
   clipId: string,
   destination: string,
 ): Promise<string | null> {
-  const { localPaths, objectKey, cachePath } = await resolveSharedOriginal(
-    projectId,
-    clipId,
-    destination,
-  );
+  const { localPaths, objectKey, cachePath, library } =
+    await resolveSharedOriginal(projectId, clipId, destination);
   for (const localPath of localPaths) {
     if (existsSync(localPath)) return localPath;
   }
-  if (!objectKey) return null;
-  try {
-    await downloadStoredSource(objectKey, cachePath);
-    return cachePath;
-  } catch {
-    return null;
+  if (objectKey) {
+    try {
+      await downloadStoredSource(objectKey, cachePath);
+      return cachePath;
+    } catch {
+      if (!library) return null;
+    }
   }
+  if (!library) return null;
+  // the library's file under the clip's name again: a hard link (no extra disk), a copy across disks
+  const source = await versionSource(library.owner, library.versionId);
+  if (!source) return null;
+  await mkdir(path.dirname(cachePath), { recursive: true });
+  await rm(cachePath, { force: true });
+  await link(source, cachePath).catch(() => copyFile(source, cachePath));
+  return cachePath;
 }
 
 export async function projectOriginalExists(
@@ -273,10 +289,14 @@ export async function projectOriginalExists(
   clipId: string,
   legacyPath: string,
 ): Promise<boolean> {
-  const { localPaths, objectKey } = await resolveSharedOriginal(
+  const { localPaths, objectKey, library } = await resolveSharedOriginal(
     projectId,
     clipId,
     legacyPath,
   );
-  return localPaths.some((localPath) => existsSync(localPath)) || !!objectKey;
+  return (
+    localPaths.some((localPath) => existsSync(localPath)) ||
+    !!objectKey ||
+    (!!library && (await versionSource(library.owner, library.versionId)) !== null)
+  );
 }

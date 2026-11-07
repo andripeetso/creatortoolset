@@ -159,6 +159,8 @@ export interface TurnPromptInput {
   images?: Array<{ name: string; file?: string }>;
   /** Files with this message (PDFs), after the pictures: a file in the folder on the Mac. */
   files?: Array<{ name: string; file: string }>;
+  /** Media Library clips with this message: title, description and a transcript excerpt (their thumbnails are with the pictures). */
+  library?: Array<{ title: string; description?: { text: string; source: "user" | "ai" }; transcript?: string }>;
   /** Claude on the Mac reads a folder (folder.ts): sources and context files are files there, nothing is cut. */
   folder?: { contextFiles: string[] };
   /** The Mac's Claude session for this conversation is resumed: it holds the history and the sources it saw, so this turn
@@ -441,6 +443,21 @@ export function buildTurnPrompt(input: TurnPromptInput): { system: string; user:
     const n = input.files.length;
     blocks.push(
       `The author attached ${n === 1 ? "a file" : `${n} files`} with this message:\n${input.files.map((f) => `- ${f.name}: read ${f.file} (the Read tool reads PDFs)`).join("\n")}`,
+    );
+  }
+  if (input.library?.length) {
+    blocks.push(
+      `The author attached ${input.library.length === 1 ? "a clip" : `${input.library.length} clips`} from their Media Library. You don't have the video, only what follows and each clip's thumbnail (with the pictures):\n\n${input.library
+        .map((l) =>
+          [
+            `### ${l.title}`,
+            l.description && `Description (${l.description.source === "user" ? "written by the author" : "written by an AI, not the author"}): ${l.description.text}`,
+            l.transcript ? `What is said in it (a speech-to-text transcript, [m:ss] where each line starts):\n${l.transcript}` : "No transcript.",
+          ]
+            .filter(Boolean)
+            .join("\n"),
+        )
+        .join("\n\n")}`,
     );
   }
   if (input.quotes?.length) {

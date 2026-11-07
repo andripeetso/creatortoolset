@@ -18,6 +18,7 @@ import { workshopApp, workshopShareApp } from "./workshop";
 import { reviewApp } from "./review";
 import { libraryApp } from "./library/routes";
 import { collectionApp } from "./library/collections";
+import { searchApp } from "./library/search";
 import { publicShareApp, shareApp } from "./library/shares";
 import { startLibraryWorker } from "./library/worker";
 import { startTrashPurge } from "./library/trash";
@@ -275,6 +276,7 @@ app.route("/api/library", publicShareApp);
 app.route("/api/library", libraryApp);
 app.route("/api/library", shareApp);
 app.route("/api/library", collectionApp);
+app.route("/api/library", searchApp);
 app.route("/api/library", watchApp);
 // the library's worker: probes, thumbs and proxies queued uploads; and the trash purge (not under tests, which call them)
 if (process.env.NODE_ENV !== "test") {

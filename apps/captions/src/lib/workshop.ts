@@ -513,6 +513,8 @@ export interface ChatMessage {
   images?: ImageRef[];
   /** Files sent with it (PDFs), after the pictures. */
   files?: FileRef[];
+  /** Media Library clips sent with the message (the AI reads their thumbnail, description and transcript). */
+  library?: Array<{ kind: "library"; assetId: string; versionId: string; title: string }>;
   status?: "thinking" | "done" | "error";
   error?: string;
   /** While thinking: what is happening, and who is answering. */
@@ -800,6 +802,8 @@ export interface TurnInput {
   files?: Array<{ name: string; type: FileRef["type"]; data: string }>;
   /** A retry: files the server already keeps. */
   fileRefs?: FileRef[];
+  /** Media Library clips, by id. */
+  library?: Array<{ assetId: string; versionId: string }>;
   /** A retry of a web search you approved. */
   web?: string;
   /** A retry: the server removes these messages in the same write that appends the new pair. */

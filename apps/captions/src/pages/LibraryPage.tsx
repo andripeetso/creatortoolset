@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { AudioLines, Share2, FileText, Folder, Image as ImageIcon, Loader2, RotateCcw, Trash2, Upload, Video } from "lucide-react";
-import type { AssetCard, AssetKind, Collection, LibrarySummary } from "@contracts/library";
+import { useNavigate } from "react-router";
+import { AudioLines, Captions, Quote, Share2, FileText, Folder, Image as ImageIcon, Loader2, RotateCcw, Trash2, Upload, Video } from "lucide-react";
+import type { AssetCard, AssetDetail, AssetKind, Collection, LibrarySummary, SearchHit } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,10 +11,14 @@ import {
   createCollection,
   createLibrary,
   createShare,
+  getAsset,
   listAssets,
   listCollections,
   listLibraries,
   changeFolderItems,
+  openInCaptions,
+  rerunJobs,
+  searchLibrary,
   setTrashed,
   uploadFile,
 } from "@/lib/library";
@@ -22,7 +27,8 @@ import { LibraryWatchFolders } from "./LibraryWatchFolders";
 
 /**
  * Media Library (/library): one library's footage as a grid of 16:9 cards. Search runs over titles and tags
- * (FTS5, api/library/query.ts); a card opens its preview. Uploads go in one at a time, from the tray. Cards that are
+ * (FTS5, api/library/query.ts), and over what is said in the clips (api/library/search.ts): a line said opens the
+ * preview at its second. A card opens its preview. Uploads go in one at a time, from the tray. Cards that are
  * still being prepared poll every two seconds until they are ready.
  */
 
@@ -63,6 +69,8 @@ export default function LibraryPage() {
   const [next, setNext] = useState<string | undefined>();
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [preview, setPreview] = useState<AssetCard | null>(null);
+  const [startAt, setStartAt] = useState(0); // the second the preview opens at (a line said in it)
+  const [said, setSaid] = useState<SearchHit[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
   const [scope, setScope] = useState("all"); // "all", "trash", or a collection id
@@ -105,6 +113,21 @@ export default function LibraryPage() {
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [libId, term, kind, scope, refresh]);
+
+  // lines said in the clips that match the search
+  useEffect(() => {
+    if (!libId || !term || scope === "trash") return setSaid([]);
+    let live = true;
+    searchLibrary(libId, term)
+      .then((hits) => live && setSaid(hits.filter((h) => h.seconds !== undefined)))
+      .catch(() => live && setSaid([]));
+    return () => void (live = false);
+  }, [libId, term, scope]);
+
+  const open = (a: AssetCard, at = 0) => {
+    setStartAt(at);
+    setPreview(a);
+  };
 
   useEffect(() => {
     if (!libId) return;
@@ -288,7 +311,7 @@ export default function LibraryPage() {
                 type="search"
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
-                placeholder="Search titles and tags"
+                placeholder="Search titles, tags and what is said"
                 aria-label="Search"
                 className="min-w-0 flex-1 basis-full sm:basis-72 sm:flex-none"
               />
@@ -370,11 +393,30 @@ export default function LibraryPage() {
               </section>
             )}
 
+            {said.length > 0 && (
+              <section aria-label="Said in clips" className="flex flex-col gap-1 rounded-xl border border-zinc-500/20 p-3">
+                <span className="text-sm font-medium">Said in clips</span>
+                {said.slice(0, 12).map((h, i) => (
+                  <button
+                    key={`${h.asset.versionId}-${i}`}
+                    type="button"
+                    onClick={() => open(h.asset, h.seconds)}
+                    className="flex items-baseline gap-2 rounded px-1 py-1 text-left text-sm hover:bg-zinc-500/10"
+                  >
+                    <Quote className="h-3.5 w-3.5 shrink-0 self-center text-zinc-500" />
+                    <span className="shrink-0 font-mono text-xs text-zinc-500">{clock(h.seconds ?? 0)}</span>
+                    <span className="min-w-0 flex-1 truncate">{h.snippet}</span>
+                    <span className="max-w-[35%] shrink-0 truncate text-xs text-zinc-500">{h.asset.title}</span>
+                  </button>
+                ))}
+              </section>
+            )}
+
             {items.length > 0 ? (
               <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
                 {items.map((a) => (
                   <li key={a.id}>
-                    <AssetTile asset={a} onOpen={() => setPreview(a)} />
+                    <AssetTile asset={a} onOpen={() => open(a)} />
                   </li>
                 ))}
               </ul>
@@ -449,21 +491,10 @@ export default function LibraryPage() {
                 </p>
               )}
               {libId && scope !== "trash" && <ShareBox libraryId={libId} assetId={preview.id} />}
-              {preview.kind === "video" && (
-                <video
-                  key={preview.versionId}
-                  src={`/api/library/media/${preview.versionId}/play`}
-                  controls
-                  playsInline
-                  preload="metadata"
-                  className="w-full rounded-lg bg-black"
-                />
-              )}
-              {preview.kind === "audio" && (
-                <audio key={preview.versionId} src={`/api/library/media/${preview.versionId}/play`} controls preload="metadata" className="w-full" />
-              )}
-              {preview.kind === "image" && (
+              {preview.kind === "image" ? (
                 <img src={`/api/library/media/${preview.versionId}/play`} alt={preview.title} className="w-full rounded-lg" />
+              ) : (
+                libId && <Player libraryId={libId} asset={preview} startAt={startAt} inTrash={scope === "trash"} onError={setError} />
               )}
             </div>
           )}
@@ -547,5 +578,101 @@ function ShareBox({ libraryId, assetId }: { libraryId: string; assetId: string }
       )}
       {failed && <p className="text-xs text-red-400">{failed}</p>}
     </section>
+  );
+}
+
+/**
+ * The preview's player with what is said in it: the media opens at `startAt` (a #t= media fragment), a transcript line
+ * seeks there. Below: the transcript's state (a key missing says so, with Retry) and Open in Caption Studio.
+ */
+function Player({
+  libraryId,
+  asset,
+  startAt,
+  inTrash,
+  onError,
+}: {
+  libraryId: string;
+  asset: AssetCard;
+  startAt: number;
+  inTrash: boolean;
+  onError: (e: string) => void;
+}) {
+  const media = useRef<HTMLVideoElement & HTMLAudioElement>(null);
+  const [detail, setDetail] = useState<AssetDetail | null>(null);
+  const [reread, setReread] = useState(0);
+  const [opening, setOpening] = useState(false);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    let live = true;
+    getAsset(libraryId, asset.id)
+      .then((d) => live && setDetail(d))
+      .catch(() => live && setDetail(null));
+    return () => void (live = false);
+  }, [libraryId, asset.id, reread]);
+
+  // a transcript still being made: look again in three seconds
+  const job = detail?.jobs.find((j) => j.kind === "transcribe");
+  const waiting = job?.state === "queued" || job?.state === "running";
+  useEffect(() => {
+    if (!waiting) return;
+    const t = setTimeout(() => setReread((n) => n + 1), 3000);
+    return () => clearTimeout(t);
+  }, [waiting, detail]);
+
+  const seek = (s: number) => {
+    if (!media.current) return;
+    media.current.currentTime = s;
+    void media.current.play().catch(() => {});
+  };
+  const src = `/api/library/media/${asset.versionId}/play${startAt ? `#t=${startAt}` : ""}`;
+  const retry = () =>
+    rerunJobs(libraryId, asset.id, ["transcribe"])
+      .then(() => setReread((n) => n + 1))
+      .catch((e) => onError(message(e)));
+  const captions = () => {
+    setOpening(true);
+    openInCaptions(libraryId, asset.id)
+      .then(({ projectId }) => navigate(`/captions?project=${projectId}`))
+      .catch((e) => onError(message(e)))
+      .finally(() => setOpening(false));
+  };
+
+  return (
+    <>
+      {asset.kind === "video" ? (
+        <video key={src} ref={media} src={src} controls playsInline preload="metadata" className="w-full rounded-lg bg-black" />
+      ) : (
+        <audio key={src} ref={media} src={src} controls preload="metadata" className="w-full" />
+      )}
+      {asset.kind === "video" && !inTrash && (
+        <Button size="sm" variant="outline" className="w-fit" disabled={opening} onClick={captions}>
+          {opening ? <Loader2 className="h-4 w-4 animate-spin" /> : <Captions className="h-4 w-4" />}
+          Open in Caption Studio
+        </Button>
+      )}
+      {detail?.transcript ? (
+        <section aria-label="Transcript" className="flex max-h-80 flex-col gap-0.5 overflow-y-auto rounded-xl border border-zinc-500/20 p-2">
+          {detail.transcript.segments.map((seg, i) => (
+            <button key={i} type="button" onClick={() => seek(seg.start)} className="flex gap-2 rounded px-1 py-0.5 text-left text-sm hover:bg-zinc-500/10">
+              <span className="shrink-0 font-mono text-xs leading-5 text-zinc-500">{clock(seg.start)}</span>
+              <span>{seg.text}</span>
+            </button>
+          ))}
+        </section>
+      ) : (
+        job && (
+          <p className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+            {waiting ? "Transcribing…" : job.state === "done" ? "Nothing is said in this clip." : job.error ?? "The transcript failed."}
+            {(job.state === "needs_key" || job.state === "failed") && !inTrash && (
+              <Button size="sm" variant="outline" onClick={retry}>
+                Retry
+              </Button>
+            )}
+          </p>
+        )
+      )}
+    </>
   );
 }

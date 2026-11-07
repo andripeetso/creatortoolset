@@ -187,6 +187,8 @@ interface ClipMeta {
   originalObjectKey?: string;
   /** Another project already holds this clip's proxy/original on disk. */
   mediaProjectId?: string;
+  /** Came from the Media Library: a missing original is read from that version again (media-store.ts). */
+  libraryVersionId?: string;
   originalBytes?: number;
   objectUpload?: {
     id: string;
@@ -588,7 +590,8 @@ function clipOriginalInfo(
     const st = statSync(clipOriginalPath(home, clipId));
     return { hasOriginal: true, originalBytes: st.size };
   } catch {
-    return { hasOriginal: false, originalBytes: 0 };
+    // ponytail: assumed still in the library; the render's own lookup (ensureProjectOriginal) answers NO_ORIGINAL if not
+    return { hasOriginal: !!clip?.libraryVersionId, originalBytes: 0 };
   }
 }
 
@@ -2450,13 +2453,14 @@ export async function linkOrCopy(from: string, to: string): Promise<void> {
 export const clipSourceFile = (projectId: string, clipId: string) =>
   ensureProjectOriginal(projectId, clipId, clipOriginalPath(projectId, clipId));
 
-/** A one-clip project on a file already on the server (a Review upload). */
+/** A one-clip project on a file already on the server (a Review upload, or a Media Library version). */
 export async function createProjectFromFile(o: {
   owner: string;
   name: string;
   clipName: string;
   file: string;
   duration: number;
+  libraryVersionId?: string;
 }): Promise<{ projectId: string; clipId: string }> {
   const id = randomUUID();
   const clipId = randomUUID();
@@ -2476,6 +2480,7 @@ export async function createProjectFromFile(o: {
         name: o.clipName.slice(0, 120),
         duration: o.duration,
         createdAt: now,
+        ...(o.libraryVersionId ? { libraryVersionId: o.libraryVersionId } : {}),
       },
     ],
     revision: 0,

@@ -12,6 +12,7 @@ export const SERVICE_KEYS = [
   { env: "NVIDIA_API_KEY", name: "NVIDIA", what: "Studio Voice, the Audio Enhancer's second voice engine.", where: "https://build.nvidia.com" },
   { env: "ELEVENLABS_API_KEY", name: "ElevenLabs", what: "Voice isolator in the Audio Enhancer.", where: "https://elevenlabs.io/app/settings/api-keys" },
   { env: "DEEPGRAM_API_KEY", name: "Deepgram", what: "Cloud transcription (nova-3). Without it, transcription runs on the device.", where: "https://console.deepgram.com" },
+  { env: "OPENAI_API_KEY", name: "OpenAI", what: "Transcribes Media Library clips when there is no Deepgram key (any OpenAI-compatible service: OPENAI_BASE_URL in the .env).", where: "https://platform.openai.com/api-keys" },
   { env: "ANTHROPIC_API_KEY", name: "Anthropic API", what: "The workspace's API budget for members without their own AI, and Instagram frame reading.", where: "https://console.anthropic.com/settings/keys" },
   { env: "PERPLEXITY_API_KEY", name: "Perplexity", what: "The Content Workshop's accuracy check and deep research.", where: "https://www.perplexity.ai/account/api" },
   { env: "TYPESAFE_API_KEY", name: "TypeSafe", what: "Quick yes/no checks behind a few features; they work without it." },

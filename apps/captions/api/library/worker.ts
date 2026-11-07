@@ -3,11 +3,12 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { env } from "../lib/env";
 import { blobs, libraryDb } from "./db";
-import { claimJob, enqueueJob, finishJob, requeueExpired, type JobRow } from "./jobs";
+import { claimJob, enqueueJob, finishJob, parkJob, requeueExpired, type JobRow } from "./jobs";
 import { makeProxy, needsProxy } from "./media/proxy";
 import { probe, type ProbeSummary } from "./media/probe";
 import { makeThumb } from "./media/thumb";
 import { makeWave } from "./media/wave";
+import { NeedsKey, transcribeVersion } from "./transcribe";
 
 /**
  * The library's worker (tasks/media-library-plan.md, section 5): one job at a time, in the order the queue gives.
@@ -38,9 +39,14 @@ export async function tick(now = Date.now()): Promise<boolean> {
     await run(job);
     finishJob(db, job.id, true, undefined, now);
   } catch (e) {
+    if (e instanceof NeedsKey) {
+      parkJob(db, job.id, e.message);
+      return true;
+    }
     finishJob(db, job.id, false, e instanceof Error ? e.message : String(e), now);
     const after = db.prepare("SELECT state FROM jobs WHERE id = ?").get(job.id) as { state: string };
-    if (after.state === "failed") db.prepare("UPDATE asset_versions SET state = 'failed' WHERE id = ?").run(job.version_id);
+    // a failed transcript leaves the version playable; only the files it is shown with fail it
+    if (after.state === "failed" && job.kind !== "transcribe") db.prepare("UPDATE asset_versions SET state = 'failed' WHERE id = ?").run(job.version_id);
   }
   return true;
 }
@@ -89,6 +95,7 @@ async function run(job: JobRow): Promise<void> {
     if (p.vcodec) enqueueJob(db, v.library_id, v.id, "thumb", job.actor);
     enqueueJob(db, v.library_id, v.id, "wave", job.actor);
     if (needsProxy(p)) enqueueJob(db, v.library_id, v.id, "proxy", job.actor);
+    if (p.acodec) enqueueJob(db, v.library_id, v.id, "transcribe", job.actor);
   } else if (!p) {
     throw new Error("Not probed yet");
   } else if (job.kind === "thumb") {
@@ -103,6 +110,8 @@ async function run(job: JobRow): Promise<void> {
     const file = out("mp4");
     await makeProxy(src, file);
     await keep("proxy", file, `${base}/proxy.mp4`);
+  } else if (job.kind === "transcribe") {
+    await transcribeVersion(db, v.id, src, p.duration, job.actor, dir);
   } else {
     throw new Error(`No worker for ${job.kind}`);
   }

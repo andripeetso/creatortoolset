@@ -1,4 +1,4 @@
-import type { AssetPage, Collection, LibrarySummary, SearchQuery, ShareCreated, ShareInput } from "@contracts/library";
+import type { AssetDetail, AssetPage, Collection, LibrarySummary, SearchHit, SearchQuery, ShareCreated, ShareInput } from "@contracts/library";
 
 /** The Media Library's calls to api/library/routes.ts, and the chunked upload that follows its offset protocol. */
 
@@ -47,6 +47,20 @@ export const changeFolderItems = (libraryId: string, collectionId: string, asset
 /** Into the trash (`trash` true) or back out of it. */
 export const setTrashed = (libraryId: string, assetId: string, trash: boolean) =>
   send<unknown>(`/api/library/${libraryId}/assets/${assetId}${trash ? "" : "/restore"}`, trash ? "DELETE" : "POST");
+
+/** Titles, tags and what is said in the clips: a hit with `seconds` is a line said at that second. */
+export const searchLibrary = (libraryId: string, q: string) =>
+  send<SearchHit[]>(`/api/library/${libraryId}/search?${new URLSearchParams({ q })}`, "GET");
+
+export const getAsset = (libraryId: string, assetId: string) => send<AssetDetail>(`/api/library/${libraryId}/assets/${assetId}`, "GET");
+
+/** Queue a job again (a transcript that needed a key), as the caller. */
+export const rerunJobs = (libraryId: string, assetId: string, kinds: string[]) =>
+  send<unknown>(`/api/library/${libraryId}/assets/${assetId}/jobs`, "POST", { kinds });
+
+/** A Caption Studio project on the clip; resolves once its editing proxy is ready. */
+export const openInCaptions = (libraryId: string, assetId: string) =>
+  send<{ projectId: string }>(`/api/library/${libraryId}/assets/${assetId}/captions`, "POST");
 
 export const createShare = (libraryId: string, input: ShareInput) => send<ShareCreated>(`/api/library/${libraryId}/shares`, "POST", input);
 

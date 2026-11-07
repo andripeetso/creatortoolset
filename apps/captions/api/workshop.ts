@@ -31,7 +31,7 @@ import { researchConfigured, perplexityComplete, type ResearchAnswer, type Resea
 import { AUDIT_JSON_SCHEMA, AUDIT_SYSTEM, MAC_RESEARCH, MAX_AUDIT_CHARS, RESEARCH_QUESTION_SYSTEM, auditEdits, auditSummaryText, documentAudit, parseAuditResult, postAuditText, splitSources } from "./lib/workshop/audit";
 import { partialTurn } from "./lib/workshop/stream-json";
 import { bumpUsage, findUser } from "./users";
-import type { ClaudeSession, FileRef, ImageRef, PastedRef, TurnStep } from "./lib/workshop/types";
+import type { ClaudeSession, FileRef, ImageRef, LibraryRef, PastedRef, TurnStep } from "./lib/workshop/types";
 import { ATTACH_EXT, attachedFile } from "./lib/workshop/attached";
 import type { AuditMeta, AuditTarget, Chat, ChatMessage, Document, DraftKind, DraftMeta, Framework, KnowledgeFile, KnowledgeSource, LoadedSource, Project, Proposal, ResearchNote, Rule, SessionMeta, SessionStatus, SourcePart } from "./lib/workshop/types";
 import { type AuditInput, LIMITS, okId, parseAuditInput, parseDocCreate, parseDocPatch, parseFrameworkInput, parseGenerateInput, parseLayoutRequest, parseProjectInput, PROJECT_COLORS, parseRuleInput, parseSessionPatch, parseSources, parseTurnInput } from "./lib/workshop/validate";
@@ -66,6 +66,7 @@ import { readThrough } from "./lib/workshop/readthrough";
 import { type EditPair, editsFile, mergeLog, pairsOf } from "./lib/workshop/edit-log";
 import { buildLinesPrompt, parseLines } from "./lib/workshop/lines";
 import { buildAsidePrompt } from "./lib/workshop/aside";
+import { clipContext, libraryRef } from "./library/attach";
 import { resolveCarouselType, visualizeCarousel } from "../src/lib/carousel-visualize";
 import {
   buildLayoutPrompt,
@@ -1051,6 +1052,15 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
       const data = await readFile(imagePath(session.id, im)).catch(() => null);
       if (data) askImages.push({ ...im, data: data.toString("base64") });
     }
+    // Media Library clips: read now, as the author; each thumbnail goes with the pictures, the words into the prompt
+    const askLibrary: Array<{ title: string; description?: { text: string; source: "user" | "ai" }; transcript?: string }> = [];
+    for (const ref of ask.library ?? []) {
+      const clip = await clipContext(user.username, ref);
+      if (!clip) continue;
+      const { thumb, ...words } = clip;
+      askLibrary.push(words);
+      if (thumb) askImages.push({ id: ref.versionId, name: `${clip.title} (library thumbnail)`, type: "image/jpeg", data: thumb });
+    }
     // PDFs are read by the Mac only (its folder, or the files it reads without one); the API-key path has no way to read them
     const macReads = onMac(user, session.ai);
     const askFiles: Array<FileRef & { data: string }> = [];
@@ -1167,6 +1177,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
         pasted: askPasted.map((p) => ({ name: p.name, text: p.text, ...(folder ? { file: pastedFile(session, p) } : {}) })),
         images: askImages.map((im, i) => ({ name: im.name, ...(folder || macReads ? { file: attachedFile(im, i) } : {}) })),
         files: askFiles.map((f, j) => ({ name: f.name, file: attachedFile(f, askImages.length + j) })),
+        library: askLibrary.length ? askLibrary : undefined,
         folder: folder ? { contextFiles: Object.keys(folder).filter((f) => f.startsWith("context/")).map((f) => f.slice("context/".length)) } : undefined,
         resumed: resume && folder ? { newSources: index.filter((e) => !resume.sources.includes(e.id)).map((e) => ({ ref: refOf.get(e.id)!, handle: e.handle })) } : undefined,
       });
@@ -2719,6 +2730,12 @@ workshopApp.post("/sessions/:id/chat", async (c) => {
     return c.json({ error: errorMessage(e) }, 400);
   }
   if (!(await readDoc(meta.id, input.docId))) return c.json({ error: "That document is gone" }, 404);
+  const library: LibraryRef[] = [];
+  for (const r of input.library ?? []) {
+    const ref = libraryRef(user.username, r.assetId, r.versionId);
+    if (!ref) return c.json({ error: "A library clip is gone, or not in your library" }, 404);
+    library.push(ref);
+  }
   await readChat(meta.id); // a reply a restart left thinking is marked first; the one-turn check is in startTurn
   const pasted: PastedRef[] = [];
   for (const r of input.pastedRefs ?? []) {
@@ -2767,6 +2784,7 @@ workshopApp.post("/sessions/:id/chat", async (c) => {
     pasted: pasted.length ? pasted : undefined,
     images: images.length ? images : undefined,
     files: files.length ? files : undefined,
+    library: library.length ? library : undefined,
     web: input.web,
     status: "done",
   };

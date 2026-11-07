@@ -18,7 +18,7 @@ export type { MineAccountStats } from "./account-insights";
  * Official Instagram Graph API for the Toolset user's own professional
  * account (Analyzer `mine` only). Competitors stay on Apify / cookies.
  * Credentials are install-wide: META_ACCESS_TOKEN + INSTAGRAM_USER_ID,
- * same shape as ba-analytics. They read one Instagram account, so only the
+ * read from the .env. They read one Instagram account, so only the
  * owner's (SOCIAL_FEED_OWNER) Mine account uses them. Never persist paging.next — it embeds the token.
  */
 

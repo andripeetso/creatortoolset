@@ -702,7 +702,7 @@ export default function WorkshopSessionPage() {
         setMessages((ms) => [...ms.filter((x) => x.id !== m.id && x.id !== ask.id), res.ask, res.reply]);
         return;
       }
-      const res = await sendTurn(session.id, { docId: ask.docId, text: ask.text, context: ask.context, reading: ask.reading, deep: ask.deep, comments: ask.comments, mine: ask.mine, scope: ask.scope, quotes: ask.quotes, pastedRefs: ask.pasted, imageRefs: ask.images, fileRefs: ask.files, web: ask.web, retryOf: [m.id, ask.id] });
+      const res = await sendTurn(session.id, { docId: ask.docId, text: ask.text, context: ask.context, reading: ask.reading, deep: ask.deep, comments: ask.comments, mine: ask.mine, scope: ask.scope, quotes: ask.quotes, pastedRefs: ask.pasted, imageRefs: ask.images, fileRefs: ask.files, library: ask.library, web: ask.web, retryOf: [m.id, ask.id] });
       setMessages((ms) => [...ms.filter((x) => x.id !== m.id && x.id !== ask.id), res.ask, res.reply]);
     } catch (e) {
       fail(e);

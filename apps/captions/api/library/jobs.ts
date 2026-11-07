@@ -22,13 +22,13 @@ export interface JobRow {
   error: string | null;
 }
 
-/** Queues a job. A job already queued, running or done stays as it is; a failed one is queued again from zero. */
+/** Queues a job. A job already queued, running or done stays as it is; a failed or needs_key one is queued again from zero. */
 export function enqueueJob(db: DatabaseSync, libraryId: string, versionId: string, kind: string, actor: string | null): void {
   db.prepare(
     `INSERT INTO jobs (library_id, version_id, kind, state, actor) VALUES (?, ?, ?, 'queued', ?)
      ON CONFLICT (version_id, kind) DO UPDATE SET state = 'queued', attempts = 0, run_after = 0,
        lease_until = NULL, error = NULL, actor = excluded.actor
-     WHERE jobs.state = 'failed'`,
+     WHERE jobs.state IN ('failed', 'needs_key')`,
   ).run(libraryId, versionId, kind, actor);
 }
 
@@ -74,4 +74,9 @@ export function requeueExpired(db: DatabaseSync, now = Date.now()): number {
       )
       .run(MAX_ATTEMPTS, MAX_ATTEMPTS, now).changes,
   );
+}
+
+/** A claimed job its actor has no key or AI route for: parked as needs_key (not failed) until someone queues it again. */
+export function parkJob(db: DatabaseSync, id: number, why: string): void {
+  db.prepare("UPDATE jobs SET state = 'needs_key', lease_until = NULL, error = ? WHERE id = ?").run(why, id);
 }

@@ -47,6 +47,8 @@ export const LIMITS = {
   files: 5,
   fileData: 14_000_000,
   filesTotal: 14_000_000,
+  /** Media Library clips with one message (their thumbnails ride with the pictures). */
+  libraryClips: 5,
   title: 120,
   query: 200,
   sourceNote: 400,
@@ -524,17 +526,22 @@ export function parseTurnInput(raw: unknown): TurnInput {
     .slice(0, LIMITS.images)
     .map((r) => ({ id: r.id as string, name: str(r.name, 80) || "Image", type: r.type as ImageRef["type"] }));
   const quotes = parseQuotes(body.quotes);
+  const library = (Array.isArray(body.library) ? body.library : [])
+    .filter(isRec)
+    .filter((r) => okId(r.assetId) && okId(r.versionId))
+    .slice(0, LIMITS.libraryClips)
+    .map((r) => ({ assetId: r.assetId as string, versionId: r.versionId as string }));
   // Only citation chips (⟦1⟧…) is not a message: it gets the words a pictures-only one gets
   const typed = str(body.text, LIMITS.turnText);
   const words = typed.replace(/⟦\d+⟧/g, "").trim();
-  const text = words ? typed : pasted.length || refs.length ? "Read what I pasted." : images.length || imageRefs.length || files.length || fileRefs.length || quotes.length ? "Look at these." : "";
+  const text = words ? typed : pasted.length || refs.length ? "Read what I pasted." : images.length || imageRefs.length || files.length || fileRefs.length || quotes.length || library.length ? "Look at these." : "";
   if (!text) throw new Error("Say something first");
   const retryOf = (Array.isArray(body.retryOf) ? body.retryOf : []).filter(okId).slice(0, 4);
   const reading =
     isRec(body.reading) && okId(body.reading.postId)
       ? { postId: body.reading.postId, ...(typeof body.reading.slide === "number" ? { slide: Math.max(0, Math.floor(body.reading.slide)) } : {}) }
       : undefined;
-  return { docId: body.docId, text, context: parseSnippets(body.context), reading, deep: body.deep === true, comments: body.comments === true, mine: body.mine === true, ...(body.scope === "slight" || body.scope === "rewrite" ? { scope: body.scope } : {}), ...(quotes.length ? { quotes } : {}), ...(pasted.length ? { pasted } : {}), ...(refs.length ? { pastedRefs: refs } : {}), ...(images.length ? { images } : {}), ...(imageRefs.length ? { imageRefs } : {}), ...(files.length ? { files } : {}), ...(fileRefs.length ? { fileRefs } : {}), ...(str(body.web, 600) ? { web: str(body.web, 600) } : {}), ...(retryOf.length ? { retryOf } : {}) };
+  return { docId: body.docId, text, context: parseSnippets(body.context), reading, deep: body.deep === true, comments: body.comments === true, mine: body.mine === true, ...(body.scope === "slight" || body.scope === "rewrite" ? { scope: body.scope } : {}), ...(quotes.length ? { quotes } : {}), ...(pasted.length ? { pasted } : {}), ...(refs.length ? { pastedRefs: refs } : {}), ...(images.length ? { images } : {}), ...(imageRefs.length ? { imageRefs } : {}), ...(files.length ? { files } : {}), ...(fileRefs.length ? { fileRefs } : {}), ...(library.length ? { library } : {}), ...(str(body.web, 600) ? { web: str(body.web, 600) } : {}), ...(retryOf.length ? { retryOf } : {}) };
 }
 
 export interface AuditInput {

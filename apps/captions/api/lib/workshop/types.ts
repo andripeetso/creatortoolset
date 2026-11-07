@@ -309,6 +309,17 @@ export interface ImageRef {
   type: "image/jpeg" | "image/png" | "image/webp";
 }
 
+/**
+ * A Media Library clip sent with a message (api/library/attach.ts). The AI gets its thumbnail, description and a
+ * transcript excerpt, read at turn time as the author; never the file.
+ */
+export interface LibraryRef {
+  kind: "library";
+  assetId: string;
+  versionId: string;
+  title: string;
+}
+
 /** A file sent with a message (a PDF the AI reads from the Mac folder), kept in sessions/<id>/files/<id>.<ext>. */
 export interface FileRef {
   id: string;
@@ -339,6 +350,8 @@ export interface ChatMessage {
   images?: ImageRef[];
   /** Other files sent with the message (PDFs), in the order they go after the pictures. */
   files?: FileRef[];
+  /** Media Library clips sent with the message. */
+  library?: LibraryRef[];
   /** A web search the author approved for this turn. */
   web?: string;
   status?: "thinking" | "done" | "error";
@@ -459,6 +472,8 @@ export interface TurnInput {
   files?: Array<{ name: string; type: FileRef["type"]; data: string }>;
   /** A retry: files this session already keeps. */
   fileRefs?: FileRef[];
+  /** Media Library clips, by id: the server checks the author may read each and fills in its title. */
+  library?: Array<{ assetId: string; versionId: string }>;
   /** A retry of an approved web search. */
   web?: string;
   /** A retry: the failed question and reply, removed in the same write that starts this turn. */
