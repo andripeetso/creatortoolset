@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { MY_KEYS } from "../contracts/service-keys";
 import { TOOLS as APP_TOOLS, TOOL_NAMES, readiness, type SetupView } from "../contracts/tools";
+import { CHECK, EDITORS, TALK } from "../contracts/work-prefs";
 import { routeFor } from "./lib/providers";
 import { deviceName } from "./lib/devices";
 import { readConnectors } from "./lib/connectors/store";
@@ -52,7 +53,10 @@ own writer, which reads the project, the user's posts and past rewrites (it runs
 change the text yourself with workshop_edit_piece. Locked blocks are ones the user approved: leave them as they are.
 
 Review: his videos waiting for feedback, their versions and timed comments (with the frame each points at).
-Resolve a comment only once the change it asks for is made.`;
+Resolve a comment only once the change it asks for is made.
+
+How the user wants to work (get_work_prefs / set_work_prefs): where they talk to the AI (the app, their own AI chat, or
+both) and where they check the work (the app, their own editor, or both).`;
 
 const str = { type: "string" };
 const lines = { type: "array", items: { type: "object", properties: { id: str, text: str }, required: ["text"] } };
@@ -114,6 +118,12 @@ export const TOOLS = [
     name: "resolve_comment",
     description: "Mark a Review comment done once the change it asks for is made (resolved: false reopens it).",
     inputSchema: { type: "object", properties: { link: str, comment_id: str, resolved: { type: "boolean" } }, required: ["link", "comment_id"] },
+  },
+  { name: "get_work_prefs", description: "How the user wants to work: talk (app | chat | both), check (app | editor | both) and their editor.", inputSchema: { type: "object", properties: {} } },
+  {
+    name: "set_work_prefs",
+    description: "Change how the user wants to work. talk = where they talk to the AI (app, chat = their own AI chat, both); check = where they check the work (app, editor, both); editor = which video editor (or null).",
+    inputSchema: { type: "object", properties: { talk: { type: "string", enum: [...TALK] }, check: { type: "string", enum: [...CHECK] }, editor: { type: ["string", "null"], enum: [...EDITORS, null] } } },
   },
 ];
 
@@ -297,6 +307,13 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
       const id = ((await json(reviewPath(String(a.link), origin))).asset as Args).id;
       const cm = await json(`/api/review/assets/${id}/comments/${encodeURIComponent(String(a.comment_id))}`, "PATCH", { resolved: a.resolved !== false });
       return { id: cm.id, resolved: !!cm.resolved, text: cm.text };
+    },
+    get_work_prefs: async () => json("/api/work-prefs"),
+    set_work_prefs: async (a) => {
+      const body = pick(a, ["talk", "check"]);
+      if (a.editor !== undefined) body.editor = a.editor;
+      if (!Object.keys(body).length) throw new ToolError("Nothing to change: give talk, check or editor.");
+      return json("/api/work-prefs", "PUT", body);
     },
     setup_status: async () => {
       const route = routeFor(user.username, user.role === "admin", "notes");

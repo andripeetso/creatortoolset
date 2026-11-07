@@ -2,23 +2,27 @@ import { useEffect } from "react";
 import { create } from "zustand";
 import { planWarning, type Feature, type PlanId } from "@contracts/plans";
 import { usesAi, type SetupView, type Tool } from "@contracts/tools";
+import type { WorkPrefs } from "@contracts/work-prefs";
 import { confirmDialog } from "./dialogs";
 
 export type { SetupView };
 
 /** The first-run steps, in order. */
-export type SetupStep = "account" | "tools" | "project" | "ai" | "left";
+export type SetupStep = "how" | "tools" | "project" | "ai" | "connect" | "left";
 
 /**
- * Which steps show: the account only in the Mac app (it does the sign-in), the first project only for the Workshop or
- * the Analyzer, the AI only when a ticked tool uses it. Which tools and What's left always.
+ * Which steps show. "How do you want to use Creator Toolset?" first; its answer (work-prefs `talk`) decides the rest.
+ * In the app: tools, the first project only for the Workshop or the Analyzer, the AI only when a ticked tool uses it.
+ * In my own AI: connect it, nothing else. Both: the app's steps, then connect. What's left always.
  */
-export function setupSteps(ticked: readonly Tool[], o: { account: boolean }): SetupStep[] {
+export function setupSteps(ticked: readonly Tool[], talk: WorkPrefs["talk"]): SetupStep[] {
+  if (talk === "chat") return ["how", "connect", "left"];
   return [
-    ...(o.account ? (["account"] as const) : []),
+    "how",
     "tools",
     ...(ticked.includes("workshop") || ticked.includes("instagram") ? (["project"] as const) : []),
     ...(ticked.some(usesAi) ? (["ai"] as const) : []),
+    ...(talk === "both" ? (["connect"] as const) : []),
     "left",
   ];
 }

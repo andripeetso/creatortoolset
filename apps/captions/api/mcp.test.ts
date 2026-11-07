@@ -74,6 +74,6 @@ describe("Creator Toolset as a remote MCP server", () => {
 
   it("keeps its tool list's size on purpose: it goes into every AI session that connects", () => {
     // growth must be deliberate: check what the new words buy, then update this number (never fix it by cutting words)
-    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(4383);
+    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(5089);
   });
 });

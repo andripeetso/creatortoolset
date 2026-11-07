@@ -4,6 +4,7 @@ import { CheckCircle2, Circle } from "lucide-react";
 import { MY_KEYS } from "@contracts/service-keys";
 import { readiness, toolsUsing, TOOL_NAMES, TOOLS, type Have, type Tool } from "@contracts/tools";
 import { Button } from "@/components/ui/button";
+import { AccountStep, hasAccountBridge } from "@/components/setup/AccountStep";
 import { PlanQuestion, ToolNeeds, ToolsPicker } from "@/components/setup/ToolNeeds";
 import { canUse, useMe } from "@/lib/auth";
 import { useSetup, useSetupLive } from "@/lib/setup";
@@ -74,15 +75,21 @@ export function SetupSection() {
         <PlanQuestion view={view} onSave={savePlan} />
       </Group>
 
-      <Group title="Setup" hint="The first-run walk-through: your tools, a project, your AI, what's left.">
+      <Group title="Setup" hint="The first-run walk-through: in the app or your own AI, your tools, a project, your AI, what's left.">
         <Card>
           <Row label="Run setup again">
             <Button asChild size="sm" variant="outline">
-              <Link to="/?setup=tools">Open</Link>
+              <Link to="/?setup=how">Open</Link>
             </Button>
           </Row>
         </Card>
       </Group>
+
+      {hasAccountBridge() && (
+        <Group title="Account" hint="Optional: sign in with Apple or Google. Your work runs on this Mac either way.">
+          <AccountStep />
+        </Group>
+      )}
     </>
   );
 }

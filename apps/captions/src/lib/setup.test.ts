@@ -2,21 +2,26 @@ import { describe, expect, it } from "vitest";
 import { setupSteps, toolForPath } from "./setup";
 
 describe("setup steps", () => {
-  it("asks about the account only in the Mac app", () => {
-    expect(setupSteps([], { account: true })).toEqual(["account", "tools", "left"]);
-    expect(setupSteps([], { account: false })).toEqual(["tools", "left"]);
+  it("follows the answer to How do you want to use Creator Toolset?", () => {
+    expect(setupSteps(["workshop"], "app")).toEqual(["how", "tools", "project", "ai", "left"]);
+    expect(setupSteps(["workshop"], "chat")).toEqual(["how", "connect", "left"]);
+    expect(setupSteps(["workshop"], "both")).toEqual(["how", "tools", "project", "ai", "connect", "left"]);
+    expect(setupSteps([], "app")).toEqual(["how", "tools", "left"]);
   });
 
   it("asks for a first project only for the Workshop or the Analyzer", () => {
-    expect(setupSteps(["workshop"], { account: false })).toEqual(["tools", "project", "ai", "left"]);
-    expect(setupSteps(["instagram"], { account: false })).toContain("project");
-    expect(setupSteps(["editor", "captions"], { account: false })).not.toContain("project");
+    expect(setupSteps(["instagram"], "app")).toContain("project");
+    expect(setupSteps(["editor", "captions"], "app")).not.toContain("project");
   });
 
   it("asks about AI only when a ticked tool uses it", () => {
-    expect(setupSteps(["enhance", "review", "clean", "stories"], { account: true })).toEqual(["account", "tools", "left"]);
-    expect(setupSteps(["captions"], { account: false })).toEqual(["tools", "ai", "left"]);
-    expect(setupSteps(["notes"], { account: false })).toContain("ai");
+    expect(setupSteps(["enhance", "review", "clean", "stories"], "both")).toEqual(["how", "tools", "connect", "left"]);
+    expect(setupSteps(["captions"], "app")).toEqual(["how", "tools", "ai", "left"]);
+    expect(setupSteps(["notes"], "app")).toContain("ai");
+  });
+
+  it("never asks for an account on the first run", () => {
+    for (const talk of ["app", "chat", "both"] as const) expect(setupSteps(["workshop"], talk)).not.toContain("account");
   });
 });
 

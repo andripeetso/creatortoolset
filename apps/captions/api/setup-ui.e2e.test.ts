@@ -3,7 +3,7 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 // The browser smoke run for first-run setup. It starts the app's own Vite server in this process and runs one
-// headless Chrome, as the Mac app's window would be, with the account step answered "sign-in isn't set up yet". Alone:
+// headless Chrome, as the Mac app's window would be, answering "In the app" to the first question. Alone:
 //   SETUP_E2E=1 CT_SCRATCH_DIR=<a scratch folder on a big disk> pnpm -s exec vitest run api/setup-ui.e2e.test.ts
 // Everything it writes lives under CT_SCRATCH_DIR and is removed at the end.
 // Not part of the server typecheck (tsconfig.server.json excludes it): the browser types are not in this workspace.
@@ -41,19 +41,15 @@ afterAll(async () => {
 });
 
 describe.skipIf(!enabled)("first-run setup in the browser", () => {
-  it("account (not set up yet) → tools → AI with the plan → what's left → done", async () => {
+  it("in the app → tools → AI with the plan → what's left → done", async () => {
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
     const errors: string[] = [];
     page.on("pageerror", (e: Error) => errors.push(e.message));
-    // the Mac app's account bridge, its server without sign-in
-    await page.addInitScript(() => {
-      (window as Any).webkit = { messageHandlers: { account: { postMessage: async () => ({ state: "notSetUp", server: "accounts.example" }) } } };
-    });
     await page.goto(new URL("/?setup=start", base).toString());
 
     const dialog = page.getByRole("dialog");
-    await dialog.getByText("Sign-in isn't set up on accounts.example yet", { exact: false }).waitFor({ timeout: 60_000 });
-    await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+    await dialog.getByText("How do you want to use Creator Toolset?").waitFor({ timeout: 60_000 });
+    await dialog.getByRole("button", { name: /In the app/ }).click();
 
     await dialog.getByText("Which tools do you use?", { exact: false }).waitFor();
     expect(await dialog.getByRole("button", { name: "Next" }).isDisabled()).toBe(true);

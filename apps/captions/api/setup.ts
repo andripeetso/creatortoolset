@@ -1,7 +1,9 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { promisify } from "node:util";
 import { Hono } from "hono";
-import type { AuthVars } from "./auth";
+import { getSessionUser, type AuthVars } from "./auth";
 import { anyAiConfigured } from "./ai-complete";
 import { env } from "./lib/env";
 import { listDevices } from "./lib/devices";
@@ -12,7 +14,7 @@ import { ownedProjects } from "./lib/workshop/workspace";
 import { homeOf } from "./library/access";
 import { libraryDb } from "./library/db";
 import { keyFor } from "./my-keys";
-import { USERNAME_RE, type SessionUser } from "./users";
+import { apiKeysOf, findUser, newApiKey, USERNAME_RE, type SessionUser } from "./users";
 import { MY_KEYS } from "../contracts/service-keys";
 import { isTool, TOOLS, type Have, type SetupView, type Tool } from "../contracts/tools";
 import { isPlan, planFromCli, type PlanId } from "../contracts/plans";
@@ -24,6 +26,8 @@ import { isPlan, planFromCli, type PlanId } from "../contracts/plans";
  *
  *   GET /api/setup  → SetupView
  *   PUT /api/setup  { tools?: Tool[], plan?: PlanId | null, done?: boolean } → SetupView
+ *   GET  /api/setup/connect → { clis: [{ driver }], hasKey }   the AI CLIs on this Mac (the Mac app's report)
+ *   POST /api/setup/connect { run: boolean } → { ok } | { command }  setup's connect step (signed-in browser only)
  */
 
 interface Saved {
@@ -61,6 +65,11 @@ export async function haveFor(user: SessionUser): Promise<Have[]> {
   if (readConnectors(u).accounts.some((a) => a.platform === "instagram" && a.via === "login")) have.push("instagram");
   if (publicApifyStatus(await readApify(u)).configured) have.push("apify");
   if (libraryDb().prepare("SELECT 1 FROM libraries WHERE workspace_id = ? LIMIT 1").get(homeOf(u))) have.push("library");
+  const full = (() => {
+    const rec = findUser(u);
+    return rec ? apiKeysOf(rec).full : null;
+  })();
+  if (full?.usedAt && full.usedAt >= (full.at ?? 0)) have.push("mcp");
   return have;
 }
 
@@ -96,4 +105,63 @@ setupApp.put("/", async (c) => {
   if (b.done !== undefined) next.done = b.done === true;
   write(user.username, next);
   return c.json(await view(user));
+});
+
+/** The name this server goes by in the AI CLIs' MCP lists. */
+const MCP_NAME = "creator-toolset";
+
+/**
+ * `claude mcp add` for this server on this Mac, for every project of the person's (user scope), as an argument list
+ * for execFile (never a shell). The address is always this Mac's own server, never a hosted one.
+ */
+export function claudeMcpAdd(port: number, key: string): string[] {
+  return ["mcp", "add", "--transport", "http", "--scope", "user", MCP_NAME, `http://127.0.0.1:${port}/api/mcp`, "--header", `Authorization: Bearer ${key}`];
+}
+
+/** The same, typed into a terminal: each argument with a space in quotes. */
+export const shellLine = (bin: string, args: string[]) => [bin, ...args].map((a) => (/[^\w@%+=:,./-]/.test(a) ? `"${a}"` : a)).join(" ");
+
+/**
+ * The AI CLIs found on this Mac: the paths the Mac app reported (MacReport.swift finds them) that exist here. Codex
+ * is listed but not added: its MCP list takes only a command to start (no web address), so it waits.
+ */
+const clisHere = (u: string) => {
+  const seen = new Map<"claude" | "codex", string>();
+  for (const r of listDevices((d) => d.owner === u).flatMap((d) => d.report?.drivers ?? [])) {
+    if ((r.driver === "claude" || r.driver === "codex") && r.installed && r.path && !seen.has(r.driver) && existsSync(r.path)) seen.set(r.driver, r.path);
+  }
+  return [...seen].map(([driver, p]) => ({ driver, path: p }));
+};
+
+setupApp.get("/connect", (c) => {
+  const rec = findUser(c.get("user").username);
+  return c.json({ clis: clisHere(c.get("user").username).map((x) => ({ driver: x.driver })), hasKey: !!(rec && apiKeysOf(rec).full) });
+});
+
+/**
+ * Makes a Full key for this account (the old one stops working) and adds this server to Claude Code with it, or
+ * (`run: false`) hands back the command to paste instead. The key goes only into the CLI's config or that command.
+ * A signed-in browser only: never a key or an MCP call, so a key can't make itself another one.
+ */
+setupApp.post("/connect", async (c) => {
+  const session = getSessionUser(c.req.header("cookie"));
+  const rec = session && findUser(session.username);
+  if (!rec) return c.json({ error: "Sign in with an account first" }, 401);
+  const b = (await c.req.json().catch(() => null)) as { run?: unknown } | null;
+  const claude = clisHere(rec.username).find((x) => x.driver === "claude");
+  if (b?.run === true && !claude) return c.json({ error: "Claude Code isn't on this Mac" }, 404);
+  const key = newApiKey(rec, "full");
+  const args = claudeMcpAdd(Number(process.env.PORT || 3000), key);
+  if (!claude || b?.run !== true) return c.json({ command: shellLine("claude", args) });
+  // `claude` is a node script: its own folder first on PATH, so `env node` finds the node it came with
+  const opts = { timeout: 30_000, env: { ...process.env, PATH: `${path.dirname(claude.path)}:${process.env.PATH ?? ""}` } };
+  const run = promisify(execFile);
+  await run(claude.path, ["mcp", "remove", "--scope", "user", MCP_NAME], opts).catch(() => null); // a second click replaces it
+  try {
+    await run(claude.path, args, opts);
+    return c.json({ ok: true });
+  } catch (e) {
+    const why = (e as { stderr?: string }).stderr || (e instanceof Error ? e.message : String(e));
+    return c.json({ error: `Claude Code said: ${why.replaceAll(key, "…").trim().slice(0, 300)}` }, 500);
+  }
 });

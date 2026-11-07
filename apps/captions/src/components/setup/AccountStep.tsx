@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 
 /**
- * First run, step 1: the person's Creator Toolset account, signed in with Apple or Google. The Mac app does the sign-in
+ * The person's Creator Toolset account, signed in with Apple or Google: optional, in setup's What's left and Settings → Setup. The Mac app does the sign-in
  * (its `account` message handler, Account.swift) and answers each message with the state below. Required: Continue
  * shows only once signed in, or while the account server says sign-in isn't set up yet or can't be reached (offline:
  * it asks again next time), or with no account step at all (no Mac app, or Mac settings left the account server empty). Each mount asks again, so the step becomes
@@ -26,7 +26,7 @@ export const hasAccountBridge = () => !!bridge();
 /** Whether the person may go on from this step. */
 export const accountDone = (s: AccountState) => s.state === "signedIn" || s.state === "notSetUp" || s.state === "unreachable" || s.state === "off";
 
-export function AccountStepView({ account, busy, onSignIn, onDone }: { account: AccountState; busy: boolean; onSignIn: (provider: "apple" | "google") => void; onDone: () => void }) {
+export function AccountStepView({ account, busy, onSignIn, onDone }: { account: AccountState; busy: boolean; onSignIn: (provider: "apple" | "google") => void; onDone?: () => void }) {
   return (
     <div className="max-w-xl space-y-4 text-sm text-muted-foreground">
       {account.state === "checking" && <p>Checking your account…</p>}
@@ -58,7 +58,7 @@ export function AccountStepView({ account, busy, onSignIn, onDone }: { account: 
           </div>
         </>
       )}
-      {accountDone(account) && (
+      {onDone && accountDone(account) && (
         <Button size="sm" onClick={onDone}>
           Continue
         </Button>
@@ -67,7 +67,8 @@ export function AccountStepView({ account, busy, onSignIn, onDone }: { account: 
   );
 }
 
-export function AccountStep({ onDone }: { onDone: () => void }) {
+/** Without `onDone` (What's left, Settings → Setup) it is an optional row: no Continue button. */
+export function AccountStep({ onDone }: { onDone?: () => void }) {
   const [account, setAccount] = useState<AccountState>({ state: "checking" });
   const [busy, setBusy] = useState(false);
   const ask = useCallback(async (m: string) => {

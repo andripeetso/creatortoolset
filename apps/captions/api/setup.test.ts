@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 
 process.env.DATA_DIR = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "setup-"));
 process.env.APP_SECRET = "test-secret";
-const { setupApp } = await import("./setup");
+const { setupApp, claudeMcpAdd, shellLine } = await import("./setup");
 const { saveMyKey } = await import("./my-keys");
 const { pairDevice, saveReport } = await import("./lib/devices");
 import type { AuthVars } from "./auth";
@@ -46,4 +46,11 @@ describe("setup: my tools, my plan, what is set up", () => {
     expect((await app.request("/api/setup")).status).toBe(403);
     expect((await put({ done: true })).status).toBe(403);
   });
+});
+
+it("adds this Mac's own server to Claude Code, the key only in the header", () => {
+  const key = `ctk_${"a".repeat(48)}`;
+  const args = claudeMcpAdd(4123, key);
+  expect(args).toEqual(["mcp", "add", "--transport", "http", "--scope", "user", "creator-toolset", "http://127.0.0.1:4123/api/mcp", "--header", `Authorization: Bearer ${key}`]);
+  expect(shellLine("claude", args)).toBe(`claude mcp add --transport http --scope user creator-toolset http://127.0.0.1:4123/api/mcp --header "Authorization: Bearer ${key}"`);
 });

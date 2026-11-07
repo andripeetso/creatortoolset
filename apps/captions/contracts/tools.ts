@@ -61,9 +61,10 @@ export const TOOL_GROUPS: Record<Tool, string> = {
 /**
  * What a person has set up, as the server sees it (api/setup.ts): a Workshop project, AI (any route: their own
  * Claude/Codex, or an API key), their own AI (a provider: the Workshop has no API-key path), a Media Library,
- * an Instagram login, their Apify key, and each key keyFor (api/my-keys.ts) finds for them.
+ * an Instagram login, their Apify key, their own AI connected through the MCP (their Full key used since it was made),
+ * and each key keyFor (api/my-keys.ts) finds for them.
  */
-export type Have = "project" | "ai" | "ownAi" | "library" | "instagram" | "apify" | MyKeyEnv;
+export type Have = "project" | "ai" | "ownAi" | "library" | "instagram" | "apify" | "mcp" | MyKeyEnv;
 
 /** The screen that sets a row up: My API keys (its keys only), Apify, the Media Library, AI providers, a project. */
 export type NeedForm = "keys" | "apify" | "library" | "ai" | "project";
