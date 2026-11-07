@@ -23,7 +23,7 @@ final class ServersTests: XCTestCase {
     }
 
     func testThisMacIsListedOnlyWithTheServerInTheBuild() {
-        let added = [ServerEntry(id: "a", name: "Studio", url: "https://studio.example.com")]
+        let added = [ServerEntry(id: "a", name: "Office", url: "https://office.example.com")]
         XCTAssertEqual(listedServers(added, hasLocal: true).map(\.id), [thisMacID, "a"])
         XCTAssertEqual(listedServers(added, hasLocal: false).map(\.id), ["a"])
         XCTAssertEqual(validCurrent(thisMacID, in: added, hasLocal: false), nil)
@@ -50,16 +50,16 @@ final class ServersTests: XCTestCase {
         let again = addingServer(url, name: "Other", to: list, newID: ids())
         XCTAssertEqual(again.servers.count, 1)
         XCTAssertEqual(again.id, id)
-        list = renamingServer(id, to: " Studio ", in: list)
-        XCTAssertEqual(list[0].name, "Studio")
-        XCTAssertEqual(renamingServer(id, to: "  ", in: list)[0].name, "Studio")
+        list = renamingServer(id, to: " Office ", in: list)
+        XCTAssertEqual(list[0].name, "Office")
+        XCTAssertEqual(renamingServer(id, to: "  ", in: list)[0].name, "Office")
         // removing the open server leaves none picked; removing another keeps the pick
         XCTAssertNil(removingServer(id, from: list, current: id).current)
         let kept = removingServer(id, from: list, current: thisMacID)
         XCTAssertEqual(kept.servers, [])
         XCTAssertEqual(kept.current, thisMacID)
         (list, id) = addingServer(URL(string: "https://b.example.com")!, name: "B", to: list, newID: ids())
-        XCTAssertEqual(list.map(\.name), ["Studio", "B"])
+        XCTAssertEqual(list.map(\.name), ["Office", "B"])
     }
 
     func testTheGuideReadsTheHealthCheck() {
