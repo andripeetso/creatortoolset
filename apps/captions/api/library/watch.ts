@@ -62,6 +62,10 @@ async function checkFolder(libraryId: string, raw: unknown, by: string): Promise
   if (inside(real, data) || inside(data, real)) return `That folder holds the app's own data: ${given}`;
   const mode = r.mode === "copy" ? "copy" : r.mode === "reference" || r.mode === undefined ? "reference" : null;
   if (!mode) return "Mode is reference or copy";
+  // a bucket can't hold a link to a file on this disk (usage.ts refuses the switch the other way round)
+  if (mode === "reference" && (db().prepare("SELECT storage_kind FROM libraries WHERE id = ?").get(libraryId) as { storage_kind: string }).storage_kind !== "local") {
+    return "This library keeps its files in a bucket: choose copy";
+  }
   const collectionId = typeof r.collectionId === "string" && r.collectionId ? r.collectionId : undefined;
   if (collectionId && !db().prepare("SELECT 1 FROM collections WHERE id = ? AND library_id = ? AND kind = 'manual'").get(collectionId, libraryId)) {
     return "That folder is not in this library";

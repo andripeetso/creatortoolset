@@ -4,13 +4,12 @@ import { createHash, createHmac, randomBytes, scrypt, timingSafeEqual } from "no
 import { promisify } from "node:util";
 import type { AuthVars } from "../auth";
 import { env } from "../lib/env";
-import { sendFile } from "../lib/send-file";
 import { canManage } from "../lib/workspaces";
 import type { AssetCard, ShareCreated, ShareInput, ShareRow, SharedItem, SharedView } from "../../contracts/library";
 import { libraryRole } from "./access";
-import { blobs, libraryDb } from "./db";
+import { libraryDb } from "./db";
 import { savedQuery } from "./collections";
-import { mediaFile } from "./routes";
+import { mediaFile, serveBlob } from "./routes";
 import { buildAssetQuery, CARD, MAX_LIMIT, pageOf, toCard, type CardRow } from "./query";
 
 /**
@@ -265,9 +264,5 @@ publicShareApp.get("/s/:token/media/:versionId/:kind", async (c) => {
   if (!file) return notFound(c);
   if (!file.key) return c.json({ error: "Not ready", code: "conflict" }, 409);
   const name = kind === "source" ? `${shareName(s).replace(/[^\w .-]/g, "_").slice(0, 120) || "download"}` : undefined;
-  try {
-    return await sendFile(c, await blobs.localCopy(file.key), file.type, name);
-  } catch {
-    return c.json({ error: "Not ready", code: "conflict" }, 409);
-  }
+  return serveBlob(c, file.key, file.type, name);
 });

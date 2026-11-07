@@ -1,4 +1,16 @@
-import type { AssetDetail, AssetPage, Collection, LibrarySettings, LibrarySummary, SearchHit, SearchQuery, ShareCreated, ShareInput } from "@contracts/library";
+import type {
+  AssetDetail,
+  AssetPage,
+  Collection,
+  LibrarySettings,
+  LibraryStorage,
+  LibraryStorageInput,
+  LibrarySummary,
+  SearchHit,
+  SearchQuery,
+  ShareCreated,
+  ShareInput,
+} from "@contracts/library";
 
 /** The Media Library's calls to api/library/routes.ts, and the chunked upload that follows its offset protocol. */
 
@@ -21,6 +33,11 @@ export const createLibrary = (name: string) =>
 /** The owner's switches for a library: AI descriptions, search by meaning. */
 export const updateLibrary = (libraryId: string, patch: { name?: string; settings?: Partial<LibrarySettings> }) =>
   send<LibrarySummary>(`/api/library/${libraryId}`, "PATCH", patch);
+
+/** Where the library's files live and how much its bucket holds (the owner only). */
+export const getLibraryStorage = (libraryId: string) => send<LibraryStorage>(`/api/library/${libraryId}/usage`, "GET");
+
+export const setLibraryStorage = (libraryId: string, input: LibraryStorageInput) => send<LibraryStorage>(`/api/library/${libraryId}/storage`, "PUT", input);
 
 /** Title, tags (the whole list) or the human description ("" removes it, the AI's shows again). */
 export const updateAsset = (libraryId: string, assetId: string, patch: { title?: string; tags?: string[]; description?: string }) =>

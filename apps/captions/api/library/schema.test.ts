@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterAll, describe, expect, it } from "vitest";
 import { openLibraryDb } from "./db";
 import { MIGRATIONS } from "./schema";
@@ -23,5 +24,26 @@ describe("library schema", () => {
     expect(version(again)).toBe(MIGRATIONS.length);
     expect(again.prepare("SELECT COUNT(*) AS n FROM libraries").get()).toEqual({ n: 1 });
     again.close();
+  });
+
+  it("migration 3 drops the 'bunny' storage kind and keeps the libraries and the rows that point at them", () => {
+    const file = path.join(dir, "old.db");
+    const old = new DatabaseSync(file); // a database from before migration 3
+    old.exec("PRAGMA foreign_keys = ON");
+    for (const m of MIGRATIONS.slice(0, 2)) old.exec(m);
+    old.exec("PRAGMA user_version = 2");
+    old.exec(`INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_1', 'ws_1', 'Tiny Acrobatics', 'local', 1);
+      INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES ('ast_1', 'lib_1', 'video', 'Roll', 'u', 1);
+      INSERT INTO collections (id, library_id, name, kind, created_at) VALUES ('col_1', 'lib_1', 'Finals', 'manual', 1);`);
+    old.close();
+
+    const db = openLibraryDb(file);
+    expect(version(db)).toBe(MIGRATIONS.length);
+    expect(db.prepare("SELECT id, name FROM libraries").all()).toEqual([{ id: "lib_1", name: "Tiny Acrobatics" }]);
+    expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    expect(() => db.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_2', 'w', 'x', 'bunny', 1)").run()).toThrow();
+    // the assets' foreign key now points at the rebuilt table
+    expect(() => db.prepare("INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES ('ast_2', 'lib_none', 'video', 'x', 'u', 1)").run()).toThrow();
+    db.close();
   });
 });

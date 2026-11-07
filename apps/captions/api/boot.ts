@@ -23,6 +23,7 @@ import { publicShareApp, shareApp } from "./library/shares";
 import { startLibraryWorker } from "./library/worker";
 import { startTrashPurge } from "./library/trash";
 import { startWatchFolders, watchApp } from "./library/watch";
+import { storageApp } from "./library/usage";
 import { presetsApp } from "./presets";
 import { projectsApp } from "./projects";
 import { storiesApp } from "./stories";
@@ -278,6 +279,7 @@ app.route("/api/library", shareApp);
 app.route("/api/library", collectionApp);
 app.route("/api/library", searchApp);
 app.route("/api/library", watchApp);
+app.route("/api/library", storageApp);
 // the library's worker: probes, thumbs and proxies queued uploads; and the trash purge (not under tests, which call them)
 if (process.env.NODE_ENV !== "test") {
   startLibraryWorker();

@@ -15,6 +15,8 @@ export const SERVICE_KEYS = [
   { env: "OPENAI_API_KEY", name: "OpenAI", what: "Transcribes Media Library clips when there is no Deepgram key, and makes its search by meaning (any OpenAI-compatible service: OPENAI_BASE_URL in the .env).", where: "https://platform.openai.com/api-keys" },
   { env: "ANTHROPIC_API_KEY", name: "Anthropic API", what: "The workspace's API budget for members without their own AI, and Instagram frame reading.", where: "https://console.anthropic.com/settings/keys" },
   { env: "PERPLEXITY_API_KEY", name: "Perplexity", what: "The Content Workshop's accuracy check and deep research.", where: "https://www.perplexity.ai/account/api" },
+  { env: "LIBRARY_S3_ACCESS_KEY", name: "Media Library bucket: Access key", what: "The server's S3-compatible bucket that libraries can keep their files in (bucket and endpoint: LIBRARY_S3_* in the .env)." },
+  { env: "LIBRARY_S3_SECRET_KEY", name: "Media Library bucket: Secret key", what: "Goes with the access key above." },
   { env: "TYPESAFE_API_KEY", name: "TypeSafe", what: "Quick yes/no checks behind a few features; they work without it." },
 ] as const;
 

@@ -1,15 +1,10 @@
 import { mkdir, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
-import type { BlobStore } from "./types";
+import { keyParts, type BlobStore } from "./types";
 
 /** Blobs as plain files under `root` ($DATA_DIR/library/blobs in the server, see db.ts for the layout). */
 export function localBlobs(root: string): BlobStore {
-  // a key is slash-separated plain names: no empty, `.` or `..` part, no absolute path
-  const fileOf = (key: string): string => {
-    const parts = key.split("/");
-    if (path.isAbsolute(key) || parts.some((p) => p === "" || p === "." || p === "..")) throw new Error(`Bad blob key: ${key}`);
-    return path.join(root, ...parts);
-  };
+  const fileOf = (key: string): string => path.join(root, ...keyParts(key));
   const localCopy = async (key: string): Promise<string> => {
     const p = fileOf(key);
     await stat(p); // throws ENOENT when the blob is missing

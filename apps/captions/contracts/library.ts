@@ -71,9 +71,34 @@ export interface LibrarySettings {
 export interface LibrarySummary {
   id: string;
   name: string;
-  storage: "local" | "s3" | "bunny";
+  storage: "local" | "s3";
   canManage: boolean;
   settings: LibrarySettings;
+}
+
+/**
+ * Where a library's files live, as its owner sets it (PUT /api/library/:id/storage): the server's disk, the server's
+ * bucket (set up by whoever runs the server), or the library's own S3-compatible bucket. Own keys may be left out to
+ * keep the ones already saved; they are never sent back.
+ */
+export type LibraryStorageInput =
+  | { kind: "local" }
+  | { kind: "s3"; mode: "server" }
+  | { kind: "s3"; mode: "own"; endpoint: string; region?: string; bucket: string; pathStyle?: boolean; accessKey?: string; secretKey?: string };
+
+/** GET /api/library/:id/usage, the owner only. */
+export interface LibraryStorage {
+  kind: "local" | "s3";
+  mode?: "server" | "own";
+  endpoint?: string; // own bucket only
+  region?: string;
+  bucket?: string;
+  pathStyle?: boolean;
+  keysSet: boolean; // own bucket: its keys are saved (they never leave the server)
+  serverBucket: boolean; // the server offers a bucket for libraries
+  locked: boolean; // the library holds files: where they live can't change (the keys can)
+  storedBytes?: number; // bucket libraries: bytes in the bucket now
+  days: { day: string; storedBytes: number }[]; // bucket libraries: the last 30 days with a change, newest first
 }
 
 export interface AssetPage {

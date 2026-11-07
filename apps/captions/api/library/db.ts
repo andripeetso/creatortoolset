@@ -1,9 +1,11 @@
-import { mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { env } from "../lib/env";
 import { MIGRATIONS } from "./schema";
 import { localBlobs } from "./storage/local";
+import { s3Blobs, s3Client, type S3Place } from "./storage/s3";
+import type { BlobStore } from "./storage/types";
 
 /**
  * The library database uses Node's built-in `node:sqlite`: no native dependency. It needs Node 22.13+ (the
@@ -14,12 +16,15 @@ import { localBlobs } from "./storage/local";
 export function openLibraryDb(file: string): DatabaseSync {
   mkdirSync(path.dirname(file), { recursive: true });
   const db = new DatabaseSync(file);
-  db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
+  if (file !== ":memory:") chmodSync(file, 0o600); // it holds libraries' own bucket keys (storage_config); the -wal and -shm files follow its mode
+  // foreign keys (node:sqlite's default is on) are off while migrations run: a table rebuild (migration 3) drops a parent table
+  db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = OFF; PRAGMA busy_timeout = 5000;");
   const done = Number((db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version);
   for (let i = done; i < MIGRATIONS.length; i++) {
     db.exec("BEGIN");
     try {
       db.exec(MIGRATIONS[i]!);
+      if (db.prepare("PRAGMA foreign_key_check").all().length) throw new Error(`Library migration ${i + 1} broke a foreign key`);
       db.exec(`PRAGMA user_version = ${i + 1}`);
       db.exec("COMMIT");
     } catch (e) {
@@ -27,6 +32,7 @@ export function openLibraryDb(file: string): DatabaseSync {
       throw e;
     }
   }
+  db.exec("PRAGMA foreign_keys = ON");
   return db;
 }
 
@@ -35,8 +41,98 @@ let shared: DatabaseSync | null = null;
 /** The server's library database, $DATA_DIR/library/library.db, opened on first use. */
 export const libraryDb = (): DatabaseSync => (shared ??= openLibraryDb(path.join(env.dataDir, "library", "library.db")));
 
-/** The library's files, $DATA_DIR/library/blobs, by key (storage/local.ts). Shared by the routes and the worker. */
-export const blobs = localBlobs(path.join(env.dataDir, "library", "blobs"));
+const local = localBlobs(path.join(env.dataDir, "library", "blobs"));
+const remotes = new Map<string, BlobStore>();
+
+/** Where an S3 library's bucket is: the server's (LIBRARY_S3_*, keys may come from Settings → API keys) or its own. */
+export interface StorageConfig {
+  mode: "server" | "own";
+  endpoint?: string;
+  region?: string;
+  bucket?: string;
+  pathStyle?: boolean;
+  accessKey?: string;
+  secretKey?: string;
+}
+
+/** The server's bucket for libraries, read at each use (a key saved in Settings lands in process.env). Null: not set up. */
+export function serverBucket(): S3Place | null {
+  const e = process.env;
+  const bucket = e.LIBRARY_S3_BUCKET?.trim();
+  const accessKey = e.LIBRARY_S3_ACCESS_KEY?.trim();
+  const secretKey = e.LIBRARY_S3_SECRET_KEY?.trim();
+  if (!bucket || !accessKey || !secretKey) return null;
+  const endpoint = e.LIBRARY_S3_ENDPOINT?.trim() ?? "";
+  return { endpoint, region: e.LIBRARY_S3_REGION?.trim() ?? "", bucket, pathStyle: e.LIBRARY_S3_FORCE_PATH_STYLE === "true", accessKey, secretKey };
+}
+
+/** The bucket a stored config names: own keys go only with the library's own endpoint and bucket, never the server's. */
+export function placeOf(c: StorageConfig): S3Place | null {
+  if (c.mode === "server") return serverBucket();
+  if (!c.bucket || !c.accessKey || !c.secretKey) return null;
+  return { endpoint: c.endpoint ?? "", region: c.region ?? "", bucket: c.bucket, pathStyle: !!c.pathStyle, accessKey: c.accessKey, secretKey: c.secretKey };
+}
+
+/** The store a library keeps its files in: local unless its owner chose a bucket. */
+export function libraryStore(libraryId: string): BlobStore {
+  const r = libraryDb().prepare("SELECT storage_kind, storage_config FROM libraries WHERE id = ?").get(libraryId) as
+    | { storage_kind: "local" | "s3"; storage_config: string | null }
+    | undefined;
+  if (!r || r.storage_kind === "local") return local;
+  const place = placeOf(JSON.parse(r.storage_config ?? "{}") as StorageConfig);
+  if (!place) throw new Error("This library's bucket is not set up");
+  const id = JSON.stringify(place);
+  let store = remotes.get(id);
+  if (!store) {
+    const gb = Number(process.env.LIBRARY_CACHE_GB?.trim() || 20);
+    const cacheBytes = (Number.isFinite(gb) && gb > 0 ? gb : 20) * 1024 ** 3;
+    store = s3Blobs(s3Client(place), place.bucket, path.join(env.dataDir, "library", "cache"), { cacheBytes });
+    remotes.set(id, store);
+  }
+  return store;
+}
+
+/** A change in a library's stored bytes, on today's usage_daily row (UTC), which starts from the latest earlier row. */
+export function meter(libraryId: string, delta: number): void {
+  if (!delta) return;
+  libraryDb()
+    .prepare(
+      `INSERT INTO usage_daily (library_id, day, stored_bytes)
+       VALUES ($lib, $day, COALESCE((SELECT stored_bytes FROM usage_daily WHERE library_id = $lib ORDER BY day DESC LIMIT 1), 0) + $delta)
+       ON CONFLICT (library_id, day) DO UPDATE SET stored_bytes = excluded.stored_bytes`,
+    )
+    .run({ lib: libraryId, day: new Date().toISOString().slice(0, 10), delta });
+}
+
+const libraryOf = (key: string) => /^libraries\/([^/]+)\//.exec(key)?.[1] ?? "";
+
+/**
+ * The library's files by key, in the store of the library the key names (every key starts libraries/<libraryId>/).
+ * Shared by the routes and the worker. Bucket libraries are metered: each put and delete moves usage_daily by its bytes
+ * (a put over an existing key by the difference). Local libraries are the server's own disk and write no usage.
+ */
+export const blobs: Omit<BlobStore, "kind" | "caps"> = {
+  async put(key, file, opts) {
+    const lib = libraryOf(key);
+    const store = libraryStore(lib);
+    if (store.kind === "local") return store.put(key, file, opts);
+    const before = (await store.stat(key))?.bytes ?? 0;
+    const r = await store.put(key, file, opts);
+    meter(lib, r.bytes - before);
+    return r;
+  },
+  async delete(key) {
+    const lib = libraryOf(key);
+    const store = libraryStore(lib);
+    if (store.kind === "local") return store.delete(key);
+    const before = (await store.stat(key))?.bytes ?? 0;
+    await store.delete(key);
+    meter(lib, -before);
+  },
+  stat: (key) => libraryStore(libraryOf(key)).stat(key),
+  localCopy: (key) => libraryStore(libraryOf(key)).localCopy(key),
+  locate: (key, ttl, opts) => libraryStore(libraryOf(key)).locate(key, ttl, opts),
+};
 
 /** A library's on/off setting. describe and embed spend AI on every upload, so they are off until its owner turns them on. */
 export const librarySetting = (libraryId: string, key: "describe" | "embed"): boolean =>

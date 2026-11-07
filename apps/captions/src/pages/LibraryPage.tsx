@@ -25,6 +25,7 @@ import {
   uploadFile,
 } from "@/lib/library";
 import { cn } from "@/lib/utils";
+import { LibraryStorageSettings } from "./LibraryStorage";
 import { LibraryWatchFolders } from "./LibraryWatchFolders";
 
 /**
@@ -395,6 +396,12 @@ export default function LibraryPage() {
             </div>
 
             {library.canManage && <LibraryWatchFolders libraryId={library.id} folders={collections.filter((c) => c.kind === "manual")} />}
+            {library.canManage && (
+              <LibraryStorageSettings
+                libraryId={library.id}
+                onSaved={(storage) => setLibraries((all) => all?.map((x) => (x.id === library.id ? { ...x, storage } : x)) ?? all)}
+              />
+            )}
             {library.canManage && (
               <AiSwitches library={library} onChange={(l) => setLibraries((all) => all?.map((x) => (x.id === l.id ? l : x)) ?? all)} onError={setError} />
             )}

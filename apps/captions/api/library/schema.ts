@@ -181,4 +181,20 @@ export const MIGRATIONS: string[] = [
   `
   ALTER TABLE collections ADD COLUMN created_by TEXT NOT NULL DEFAULT '';
   `,
+  // 3: no 'bunny' storage (no backend for it). SQLite cannot change a CHECK: the table is rebuilt (foreign keys are
+  // off while migrations run, db.ts); the child tables still name libraries, so their keys point at the new one
+  `
+  CREATE TABLE libraries_new (
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    storage_kind TEXT NOT NULL CHECK (storage_kind IN ('local','s3')),
+    storage_config TEXT,
+    settings TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL
+  );
+  INSERT INTO libraries_new SELECT id, workspace_id, name, storage_kind, storage_config, settings, created_at FROM libraries;
+  DROP TABLE libraries;
+  ALTER TABLE libraries_new RENAME TO libraries;
+  `,
 ];

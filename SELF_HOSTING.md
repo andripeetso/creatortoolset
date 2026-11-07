@@ -117,6 +117,12 @@ provider's console:
 
 Set all four required values, or none. The doctor (step 6) tests the bucket with a small file and removes it.
 
+**Media Library buckets.** Each library keeps its files on the server's disk unless its owner picks a bucket in the
+library's storage settings: the library's own (its endpoint, bucket and keys are typed there) or one the server
+offers. To offer one, set `LIBRARY_S3_BUCKET` (plus `LIBRARY_S3_ENDPOINT` and `LIBRARY_S3_REGION` as above) in `.env`,
+and its two keys there or in Settings → API keys. Videos play from a 15-minute signed link, so the bucket's CORS rules
+need `GET` from your address. The settings show how much each bucket library holds, day by day.
+
 ## 5. Start it
 
 ```sh

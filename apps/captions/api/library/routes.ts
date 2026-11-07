@@ -453,6 +453,16 @@ export function mediaFile(versionId: string, kind: string): { key?: string; type
   return null;
 }
 
+/** A blob as a response: streamed with Range from local disk, or a 302 to a 15-minute signed URL on a bucket. */
+export async function serveBlob(c: Context, key: string, type: string, download?: string): Promise<Response> {
+  try {
+    const at = await blobs.locate(key, 900, { contentType: type, download });
+    return at.kind === "url" ? c.redirect(at.url, 302) : await sendFile(c, at.path, type, download);
+  } catch {
+    return c.json({ error: "Not ready", code: "conflict" }, 409);
+  }
+}
+
 // GET /api/library/media/:versionId/:kind: thumb | play (the proxy when there is one, else the source) | source
 libraryApp.get("/media/:versionId/:kind", async (c) => {
   const user = c.get("user");
@@ -464,11 +474,7 @@ libraryApp.get("/media/:versionId/:kind", async (c) => {
   const file = mediaFile(versionId, c.req.param("kind"));
   if (!file) return c.json({ error: "Not found", code: "not_found" }, 404);
   if (!file.key) return c.json({ error: "Not ready", code: "conflict" }, 409);
-  try {
-    return await sendFile(c, await blobs.localCopy(file.key), file.type);
-  } catch {
-    return c.json({ error: "Not ready", code: "conflict" }, 409);
-  }
+  return serveBlob(c, file.key, file.type);
 });
 
 // GET /api/library/versions/:versionId/similar → the videos in the caller's libraries that share its pictures
