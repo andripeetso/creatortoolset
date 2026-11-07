@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE fcpxml>
+<fcpxml version="1.10">
+  <resources>
+    <format id="r1" frameDuration="1001/30000s" width="1080" height="1920"/>
+    <format id="r2" frameDuration="1001/30000s" width="1080" height="1920"/>
+    <asset id="r3" name="Take A" start="8999991/2500s" duration="599599/30000s" hasVideo="1" hasAudio="1" format="r2" audioSources="1" audioChannels="2" audioRate="48000">
+      <media-rep kind="original-media" src="file:///Users/tiny/Footage/Take%20A.mov"/>
+    </asset>
+    <format id="r4" frameDuration="1001/60000s" width="1080" height="1920"/>
+    <asset id="r5" name="Take B" start="0s" duration="1200199/60000s" hasVideo="1" hasAudio="1" format="r4" audioSources="1" audioChannels="2" audioRate="48000">
+      <media-rep kind="original-media" src="file:///Users/tiny/Footage/Take%20B.mov"/>
+    </asset>
+  </resources>
+  <library>
+    <event name="AI Editor">
+      <project name="Tiny Acrobatics v1">
+        <sequence format="r1" duration="7007/2000s" tcStart="18018/5s" tcFormat="NDF" audioLayout="stereo" audioRate="48k">
+          <spine>
+            <asset-clip ref="r3" name="Take A" offset="0s" start="2250248/625s" duration="3003/2000s" format="r2" tcFormat="NDF">
+              <marker start="2250248/625s" duration="1001/30000s" value="L1" note="We teach rolls"/>
+            </asset-clip>
+            <asset-clip ref="r5" name="Take B" offset="3003/2000s" start="1001/200s" duration="1001/500s" format="r4" tcFormat="NDF">
+              <adjust-transform position="0 -1.8" scale="1.15 1.15"/>
+              <marker start="1001/200s" duration="1001/60000s" value="L2" note="Join the class &amp; stay"/>
+            </asset-clip>
+          </spine>
+        </sequence>
+      </project>
+    </event>
+  </library>
+</fcpxml>

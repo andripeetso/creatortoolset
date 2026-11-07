@@ -4,6 +4,10 @@ import type { AuthVars } from "../auth";
 import { libraryDb } from "../library/db";
 import { enqueueJob } from "../library/jobs";
 import { workspaceById, memberIn } from "../lib/workspaces";
+import { ZipFile } from "yazl";
+import { toFcpxml } from "./fcpxml";
+import { LINK_TTL_S, mediaPaths } from "./media";
+import { toOtio } from "./otio";
 import { qaOf } from "./qa";
 import { allEdits, cleanBrief, createEdit, draftNames, editRole, NoCollection, readDraft, readEdit, saveEdit, summaryOf, viewOf, type EditMeta } from "./store";
 import { stopEdit } from "./worker";
@@ -132,6 +136,38 @@ editorApp.get("/:id/drafts/:name", (c) => {
       }),
   );
   return c.json({ ...d, qa: qaOf(d.timeline, others) });
+});
+
+/** The draft for the user's own editor: OTIO, FCPXML, or both in a zip (with download links when the footage is in a bucket). */
+editorApp.get("/:id/drafts/:name/export", async (c) => {
+  const r = load(c);
+  const name = c.req.param("name");
+  const d = r && readDraft(r.e.id, name);
+  if (!r || !d) return notFound(c);
+  const format = c.req.query("format") ?? "zip";
+  if (!["otio", "fcpxml", "zip"].includes(format)) return c.json({ error: "format is otio, fcpxml or zip", code: "invalid" }, 400);
+  const tl = d.timeline;
+  const m = await mediaPaths(r.e, Object.keys(tl.sources));
+  const base = `${r.e.name} ${name}`.replace(/[^\w .-]+/g, "_").trim() || name;
+  const otio = () => JSON.stringify(toOtio(tl, m.files), null, 2);
+  const send = (body: string | Buffer, file: string, type: string) =>
+    new Response(body, { headers: { "Content-Type": type, "Content-Disposition": `attachment; filename="${file}"`, "Cache-Control": "no-store" } });
+  if (format === "otio") return send(otio(), `${base}.otio`, "application/json");
+  if (format === "fcpxml") return send(toFcpxml(tl, m.files), `${base}.fcpxml`, "application/xml");
+  const zip = new ZipFile();
+  const at = { mtime: new Date("2000-01-01T00:00:00Z") };
+  zip.addBuffer(Buffer.from(otio()), `${base}/${base}.otio`, at);
+  zip.addBuffer(Buffer.from(toFcpxml(tl, m.files)), `${base}/${base}.fcpxml`, at);
+  if (m.downloads.length) {
+    const hours = LINK_TTL_S / 3600;
+    const list = [`Download these into the media folder next to the timeline, then open the timeline (links work for ${hours} hours):`, ""];
+    for (const x of m.downloads) list.push(x.name, x.url, "");
+    zip.addBuffer(Buffer.from(list.join("\n")), `${base}/media/Download media.txt`, at);
+  }
+  zip.end();
+  const chunks: Buffer[] = [];
+  for await (const ch of zip.outputStream) chunks.push(ch as Buffer);
+  return send(Buffer.concat(chunks), `${base}.zip`, "application/zip");
 });
 
 editorApp.delete("/:id", async (c) => {

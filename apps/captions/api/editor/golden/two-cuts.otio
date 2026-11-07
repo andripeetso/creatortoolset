@@ -1,0 +1,421 @@
+{
+  "OTIO_SCHEMA": "Timeline.1",
+  "name": "Tiny Acrobatics v1",
+  "global_start_time": {
+    "OTIO_SCHEMA": "RationalTime.1",
+    "rate": 29.97,
+    "value": 108000
+  },
+  "metadata": {
+    "Resolve_OTIO": {
+      "Resolve OTIO Meta Version": "1.0"
+    }
+  },
+  "tracks": {
+    "OTIO_SCHEMA": "Stack.1",
+    "name": "",
+    "metadata": {},
+    "source_range": null,
+    "effects": [],
+    "markers": [
+      {
+        "OTIO_SCHEMA": "Marker.2",
+        "name": "L1",
+        "color": "BLUE",
+        "metadata": {
+          "Resolve_OTIO": {
+            "Keywords": [],
+            "Note": "We teach rolls"
+          }
+        },
+        "marked_range": {
+          "OTIO_SCHEMA": "TimeRange.1",
+          "duration": {
+            "OTIO_SCHEMA": "RationalTime.1",
+            "rate": 29.97,
+            "value": 1
+          },
+          "start_time": {
+            "OTIO_SCHEMA": "RationalTime.1",
+            "rate": 29.97,
+            "value": 0
+          }
+        }
+      },
+      {
+        "OTIO_SCHEMA": "Marker.2",
+        "name": "L2",
+        "color": "BLUE",
+        "metadata": {
+          "Resolve_OTIO": {
+            "Keywords": [],
+            "Note": "Join the class & stay"
+          }
+        },
+        "marked_range": {
+          "OTIO_SCHEMA": "TimeRange.1",
+          "duration": {
+            "OTIO_SCHEMA": "RationalTime.1",
+            "rate": 29.97,
+            "value": 1
+          },
+          "start_time": {
+            "OTIO_SCHEMA": "RationalTime.1",
+            "rate": 29.97,
+            "value": 45
+          }
+        }
+      }
+    ],
+    "children": [
+      {
+        "OTIO_SCHEMA": "Track.1",
+        "name": "Speaker",
+        "kind": "Video",
+        "enabled": true,
+        "metadata": {
+          "Resolve_OTIO": {
+            "Locked": false
+          }
+        },
+        "source_range": null,
+        "effects": [],
+        "markers": [],
+        "children": [
+          {
+            "OTIO_SCHEMA": "Clip.2",
+            "metadata": {
+              "Resolve_OTIO": {
+                "Link Group ID": 1
+              }
+            },
+            "name": "Take A",
+            "source_range": {
+              "OTIO_SCHEMA": "TimeRange.1",
+              "duration": {
+                "OTIO_SCHEMA": "RationalTime.1",
+                "rate": 29.97,
+                "value": 45
+              },
+              "start_time": {
+                "OTIO_SCHEMA": "RationalTime.1",
+                "rate": 29.97,
+                "value": 107904
+              }
+            },
+            "effects": [],
+            "markers": [],
+            "enabled": true,
+            "media_references": {
+              "DEFAULT_MEDIA": {
+                "OTIO_SCHEMA": "ExternalReference.1",
+                "metadata": {},
+                "name": "Take A.mov",
+                "available_range": {
+                  "OTIO_SCHEMA": "TimeRange.1",
+                  "duration": {
+                    "OTIO_SCHEMA": "RationalTime.1",
+                    "rate": 29.97,
+                    "value": 599
+                  },
+                  "start_time": {
+                    "OTIO_SCHEMA": "RationalTime.1",
+                    "rate": 29.97,
+                    "value": 107892
+                  }
+                },
+                "available_image_bounds": null,
+                "target_url": "/Users/tiny/Footage/Take A.mov"
+              }
+            },
+            "active_media_reference_key": "DEFAULT_MEDIA"
+          },
+          {
+            "OTIO_SCHEMA": "Clip.2",
+            "metadata": {
+              "Resolve_OTIO": {
+                "Link Group ID": 2
+              }
+            },
+            "name": "Take B",
+            "source_range": {
+              "OTIO_SCHEMA": "TimeRange.1",
+              "duration": {
+                "OTIO_SCHEMA": "RationalTime.1",
+                "rate": 29.97,
+                "value": 60
+              },
+              "start_time": {
+                "OTIO_SCHEMA": "RationalTime.1",
+                "rate": 29.97,
+                "value": 150
+              }
+            },
+            "effects": [
+              {
+                "OTIO_SCHEMA": "Effect.1",
+                "name": "",
+                "effect_name": "Resolve Effect",
+                "metadata": {
+                  "Resolve_OTIO": {
+                    "Display Type": 1,
+                    "Effect Name": "Transform",
+                    "Enabled": true,
+                    "Name": "Transform",
+                    "Parameters": [
+                      {
+                        "Default Parameter Value": 1,
+                        "Key Frames": {},
+                        "Parameter ID": "transformationZoomX",
+                        "Parameter Value": 1.15,
+                        "Variant Type": "Double",
+                        "maxValue": 100,
+                        "minValue": 0
+                      },
+                      {
+                        "Default Parameter Value": 1,
+                        "Key Frames": {},
+                        "Parameter ID": "transformationZoomY",
+                        "Parameter Value": 1.15,
+                        "Variant Type": "Double",
+                        "maxValue": 100,
+                        "minValue": 0
+                      },
+                      {
+                        "Default Parameter Value": 0,
+                        "Key Frames": {},
+                        "Parameter ID": "transformationPan",
+                        "Parameter Value": 0,
+                        "Variant Type": "Double",
+                        "maxValue": 4,
+                        "minValue": -4
+                      },
+                      {
+                        "Default Parameter Value": 0,
+                        "Key Frames": {},
+                        "Parameter ID": "transformationTilt",
+                        "Parameter Value": -0.018000000000000002,
+                        "Variant Type": "Double",
+                        "maxValue": 4,
+                        "minValue": -4
+                      }
+                    ],
+                    "Type": 2
+                  }
+                }
+              }
+            ],
+            "markers": [],
+            "enabled": true,
+            "media_references": {
+              "DEFAULT_MEDIA": {
+                "OTIO_SCHEMA": "ExternalReference.1",
+                "metadata": {},
+                "name": "Take B.mov",
+                "available_range": {
+                  "OTIO_SCHEMA": "TimeRange.1",
+                  "duration": {
+                    "OTIO_SCHEMA": "RationalTime.1",
+                    "rate": 59.94,
+                    "value": 1199
+                  },
+                  "start_time": {
+                    "OTIO_SCHEMA": "RationalTime.1",
+                    "rate": 59.94,
+                    "value": 0
+                  }
+                },
+                "available_image_bounds": null,
+                "target_url": "/Users/tiny/Footage/Take B.mov"
+              }
+            },
+            "active_media_reference_key": "DEFAULT_MEDIA"
+          }
+        ]
+      },
+      {
+        "OTIO_SCHEMA": "Track.1",
+        "name": "B-roll",
+        "kind": "Video",
+        "enabled": true,
+        "metadata": {
+          "Resolve_OTIO": {
+            "Locked": false
+          }
+        },
+        "source_range": null,
+        "effects": [],
+        "markers": [],
+        "children": []
+      },
+      {
+        "OTIO_SCHEMA": "Track.1",
+        "name": "Voice",
+        "kind": "Audio",
+        "enabled": true,
+        "metadata": {
+          "Resolve_OTIO": {
+            "Locked": false,
+            "Audio Type": "Stereo",
+            "SoloOn": false
+          }
+        },
+        "source_range": null,
+        "effects": [],
+        "markers": [],
+        "children": [
+          {
+            "OTIO_SCHEMA": "Clip.2",
+            "metadata": {
+              "Resolve_OTIO": {
+                "Channels": [
+                  {
+                    "Source Channel ID": 0,
+                    "Source Track ID": 0
+                  },
+                  {
+                    "Source Channel ID": 1,
+                    "Source Track ID": 0
+                  }
+                ],
+                "Link Group ID": 1
+              }
+            },
+            "name": "Take A",
+            "source_range": {
+              "OTIO_SCHEMA": "TimeRange.1",
+              "duration": {
+                "OTIO_SCHEMA": "RationalTime.1",
+                "rate": 29.97,
+                "value": 45
+              },
+              "start_time": {
+                "OTIO_SCHEMA": "RationalTime.1",
+                "rate": 29.97,
+                "value": 107904
+              }
+            },
+            "effects": [],
+            "markers": [],
+            "enabled": true,
+            "media_references": {
+              "DEFAULT_MEDIA": {
+                "OTIO_SCHEMA": "ExternalReference.1",
+                "metadata": {},
+                "name": "Take A.mov",
+                "available_range": {
+                  "OTIO_SCHEMA": "TimeRange.1",
+                  "duration": {
+                    "OTIO_SCHEMA": "RationalTime.1",
+                    "rate": 29.97,
+                    "value": 599
+                  },
+                  "start_time": {
+                    "OTIO_SCHEMA": "RationalTime.1",
+                    "rate": 29.97,
+                    "value": 107892
+                  }
+                },
+                "available_image_bounds": null,
+                "target_url": "/Users/tiny/Footage/Take A.mov"
+              }
+            },
+            "active_media_reference_key": "DEFAULT_MEDIA"
+          },
+          {
+            "OTIO_SCHEMA": "Clip.2",
+            "metadata": {
+              "Resolve_OTIO": {
+                "Channels": [
+                  {
+                    "Source Channel ID": 0,
+                    "Source Track ID": 0
+                  },
+                  {
+                    "Source Channel ID": 1,
+                    "Source Track ID": 0
+                  }
+                ],
+                "Link Group ID": 2
+              }
+            },
+            "name": "Take B",
+            "source_range": {
+              "OTIO_SCHEMA": "TimeRange.1",
+              "duration": {
+                "OTIO_SCHEMA": "RationalTime.1",
+                "rate": 29.97,
+                "value": 60
+              },
+              "start_time": {
+                "OTIO_SCHEMA": "RationalTime.1",
+                "rate": 29.97,
+                "value": 150
+              }
+            },
+            "effects": [],
+            "markers": [],
+            "enabled": true,
+            "media_references": {
+              "DEFAULT_MEDIA": {
+                "OTIO_SCHEMA": "ExternalReference.1",
+                "metadata": {},
+                "name": "Take B.mov",
+                "available_range": {
+                  "OTIO_SCHEMA": "TimeRange.1",
+                  "duration": {
+                    "OTIO_SCHEMA": "RationalTime.1",
+                    "rate": 59.94,
+                    "value": 1199
+                  },
+                  "start_time": {
+                    "OTIO_SCHEMA": "RationalTime.1",
+                    "rate": 59.94,
+                    "value": 0
+                  }
+                },
+                "available_image_bounds": null,
+                "target_url": "/Users/tiny/Footage/Take B.mov"
+              }
+            },
+            "active_media_reference_key": "DEFAULT_MEDIA"
+          }
+        ]
+      },
+      {
+        "OTIO_SCHEMA": "Track.1",
+        "name": "Music",
+        "kind": "Audio",
+        "enabled": true,
+        "metadata": {
+          "Resolve_OTIO": {
+            "Locked": false,
+            "Audio Type": "Stereo",
+            "SoloOn": false
+          }
+        },
+        "source_range": null,
+        "effects": [],
+        "markers": [],
+        "children": []
+      },
+      {
+        "OTIO_SCHEMA": "Track.1",
+        "name": "Sound effects",
+        "kind": "Audio",
+        "enabled": true,
+        "metadata": {
+          "Resolve_OTIO": {
+            "Locked": false,
+            "Audio Type": "Stereo",
+            "SoloOn": false
+          }
+        },
+        "source_range": null,
+        "effects": [],
+        "markers": [],
+        "children": []
+      }
+    ]
+  }
+}
