@@ -233,7 +233,7 @@ export default function ToolsetHome() {
           {!t.can(me) && (
             <Lock className="absolute -bottom-1 -right-1 h-4 w-4 rounded-full bg-zinc-900 p-0.5 text-zinc-300" />
           )}
-          {t.can(me) && (t.to === "/workshop" ? showCounts && <WorkshopBadge /> : <Badge n={waiting[t.to] ?? 0} />)}
+          {t.can(me) && (t.to === "/workshop" ? showCounts && <WorkshopBadge /> : <Badge n={waiting[t.to] ?? 0} means={BADGE_MEANS[t.to]} />)}
         </span>
         <span className={`text-xs leading-tight group-hover:text-white ${quiet ? "text-zinc-400" : "text-zinc-300"}`}>
           {t.name}
@@ -362,14 +362,22 @@ function useWaiting(me: Me | null): Record<string, number> {
 
 /** Its own component, so only an account that can read the Workshop polls its sessions. */
 function WorkshopBadge() {
-  return <Badge n={(useSessionSummaries() ?? []).filter((r) => r.ready).length} />;
+  return <Badge n={(useSessionSummaries() ?? []).filter((r) => r.ready).length} means={BADGE_MEANS["/workshop"]} />;
 }
 
-function Badge({ n }: { n: number }) {
+/** What a badge counts, said on hover. */
+const BADGE_MEANS: Record<string, (n: number) => string> = {
+  "/workshop": (n) => `${plural(n, "session")} with replies you haven't read`,
+  "/editor": (n) => `${plural(n, "edit")} whose last step failed or needs a key`,
+  "/review": (n) => `${plural(n, "video")} to review`,
+};
+
+function Badge({ n, means }: { n: number; means?: (n: number) => string }) {
   if (!n) return null;
   return (
     <span
-      aria-label={`${n} waiting`}
+      aria-label={means?.(n) ?? `${n} waiting`}
+      title={means?.(n)}
       className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[11px] font-semibold leading-none text-white ring-2 ring-[#0b0b10]"
     >
       {n > 99 ? "99+" : n}

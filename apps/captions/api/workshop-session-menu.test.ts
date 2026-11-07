@@ -141,6 +141,18 @@ describe("mark unread", () => {
   });
 });
 
+describe("no dot for finished stages", () => {
+  it("a reply the author hasn't read gives no dot once the session is Ready to post, Published or Shelved", async () => {
+    const reply = { id: "reply-quiet-0001", role: "assistant", text: "Done.", status: "done", at: Date.now() + 60_000 };
+    for (const status of ["toPost", "published", "shelved"]) {
+      const { id } = seed({ status, messages: [reply] });
+      expect(await summaryOf(id)).toMatchObject({ ready: false });
+    }
+    const { id } = seed({ status: "editing", messages: [reply] });
+    expect(await summaryOf(id)).toMatchObject({ ready: true });
+  });
+});
+
 describe("duplicate", () => {
   it("copies the pieces, the notes, the sources and the chat under a new id, not the post it became", async () => {
     const { id } = seed({

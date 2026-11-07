@@ -82,9 +82,13 @@ export default function WorkshopPage() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
-  // the list by what each session makes: a type filter and a sort, remembered
+  // the list by what each session makes: a type filter and a sort, remembered. Sorted by status by default (the most
+  // complete at the bottom); the key is new so the old "recent" default doesn't stick.
   const [kindFilter, setKindFilter] = useState<PieceKind | "all">(() => (localStorage.getItem("workshop:kind") as PieceKind | null) ?? "all");
-  const [sortBy, setSortBy] = useState<"recent" | "type" | "status">(() => (localStorage.getItem("workshop:sort") as "type" | "status" | null) ?? "recent");
+  const [sortBy, setSortBy] = useState<SessionSort>(() => {
+    const v = localStorage.getItem("workshop:list-sort");
+    return v === "recent" || v === "type" || v === "status" ? v : "status";
+  });
   // the folded groups at the end: Ready + In Production open by default, Published closed
   const [showPublished, setShowPublished] = useState(() => localStorage.getItem("workshop:published") === "open");
   const [showProduction, setShowProduction] = useState(() => localStorage.getItem("workshop:production") !== "closed");
@@ -138,7 +142,7 @@ export default function WorkshopPage() {
   const [menu, setMenu] = useState<{ s: SessionRow; x: number; y: number } | null>(null);
   useEffect(() => {
     localStorage.setItem("workshop:kind", kindFilter);
-    localStorage.setItem("workshop:sort", sortBy);
+    localStorage.setItem("workshop:list-sort", sortBy);
   }, [kindFilter, sortBy]);
   const [frameworks, setFrameworks] = useState<WorkshopFramework[]>([]);
   const [rules, setRules] = useState<WorkshopRule[]>([]);
@@ -614,7 +618,9 @@ export default function WorkshopPage() {
 }
 
 /** The sessions the list shows: one type (or all), newest first, or grouped by type or by status (newest first within). */
-function shownSessions(rows: SessionRow[], kind: PieceKind | "all", sortBy: "recent" | "type" | "status"): SessionRow[] {
+export type SessionSort = "recent" | "type" | "status";
+
+export function shownSessions(rows: SessionRow[], kind: PieceKind | "all", sortBy: SessionSort): SessionRow[] {
   const typeRank = (r: SessionRow) => Math.min(...(r.kinds ?? []).map((k) => DOC_KINDS.findIndex((d) => d.id === k)), DOC_KINDS.length);
   const statusRank = (r: SessionRow) => SESSION_STATUSES.findIndex((x) => x.id === (r.status ?? "draft"));
   return rows

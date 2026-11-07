@@ -2192,6 +2192,8 @@ workshopApp.get("/kept", async (c) => {
  */
 const kindsCache = new Map<string, { at: number; kinds: DraftKind[] }>();
 const replyCache = new Map<string, { at: number; working: boolean; last?: string; lastAt?: number }>();
+/** Ready to post and the done states: nothing waits on you there, so no dot or badge. */
+const QUIET_STATUSES: SessionStatus[] = ["toPost", "published", "shelved"];
 async function summaryParts(meta: SessionMeta, username: string): Promise<{ kinds: DraftKind[]; working: boolean; ready: boolean; replyAt?: number }> {
   const [docsAt, chatAt] = await Promise.all([stat(docsDir(meta.id)).then((x) => x.mtimeMs, () => 0), stat(chatPath(meta.id)).then((x) => x.mtimeMs, () => 0)]);
   let k = kindsCache.get(meta.id);
@@ -2207,7 +2209,8 @@ async function summaryParts(meta: SessionMeta, username: string): Promise<{ kind
   const seen = await seenFor(username);
   // replies from before the account's first look at the sidebar count as seen (else every old session lit up at once)
   const fresh = (r.lastAt ?? 0) >= Number(seen._since ?? 0);
-  return { kinds: k.kinds, working: r.working, ready: !!r.last && fresh && r.last !== seen[meta.id], ...(r.last ? { replyAt: chatAt } : {}) };
+  const quiet = QUIET_STATUSES.includes(meta.status ?? "draft");
+  return { kinds: k.kinds, working: r.working, ready: !!r.last && fresh && r.last !== seen[meta.id] && !quiet, ...(r.last ? { replyAt: chatAt } : {}) };
 }
 
 /** Which reply of each session the author has seen (the sidebar's dot), one small file per account. */
