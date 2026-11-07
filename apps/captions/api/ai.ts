@@ -8,6 +8,7 @@ import {
   type ProviderOpts,
 } from "./ai-complete";
 import { splitPoints, thoughtMarks } from "./lib/cadence-lines";
+import { packInstructions } from "./lib/packs";
 import { MAX_SCRIPT_CHARS, scriptCheckOpts, scriptEdits } from "./lib/script-check";
 import { bumpUsage } from "./users";
 
@@ -111,6 +112,7 @@ aiApp.post("/segment", async (c) => {
     const marks = await thoughtMarks(words, {
       signal: controller.signal,
       provider: providerFor(c.get("user")),
+      packText: await packInstructions(c.get("user").username, "captions.lines"),
     });
     bumpUsage(c.get("user").username, { aiRuns: 1 });
     return c.json({ marks });
@@ -161,6 +163,7 @@ aiApp.post("/split", async (c) => {
     const splits = await splitPoints(lines as string[][], Math.floor(maxChars), {
       signal: c.req.raw.signal,
       provider: providerFor(c.get("user")),
+      packText: await packInstructions(c.get("user").username, "captions.lines"),
     });
     return c.json({ splits });
   } catch (e) {

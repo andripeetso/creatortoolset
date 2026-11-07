@@ -4,6 +4,7 @@ import { mkdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Hono } from "hono";
 import type { AuthVars } from "./auth";
+import type { PackOrigin } from "../contracts/packs";
 import { env } from "./lib/env";
 
 /**
@@ -24,6 +25,8 @@ export interface PresetRecord {
   owner: string; // username of the creator
   style: Record<string, unknown>;
   createdAt: number;
+  /** Installed from a community pack (api/lib/packs.ts); dropped once the person saves over it. */
+  from?: PackOrigin;
 }
 
 const PRESETS_FILE = path.join(env.dataDir, "presets.json");
@@ -55,6 +58,9 @@ function persist(): void {
     }
   });
 }
+
+/** For api/lib/packs.ts: the live list (install adds to it, remove takes from it) and the writer. */
+export const packPresetStore = { all: () => presets, save: persist };
 
 export const presetsApp = new Hono<{ Variables: AuthVars }>();
 
@@ -98,6 +104,7 @@ presetsApp.post("/", async (c) => {
     existing.style = style;
     existing.scope = scope;
     existing.owner = user.username;
+    delete existing.from;
     persist();
     return c.json(existing);
   }

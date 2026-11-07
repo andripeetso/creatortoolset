@@ -50,3 +50,15 @@ describe("a follower's read", () => {
     expect(user).toContain("A follower's read (another model, shown only the piece): I'd stop at slide 3.");
   });
 });
+
+describe("pack instructions in the follower's read", () => {
+  it("are added to the system prompt after the app's own, and an empty text changes nothing", () => {
+    const input = { doc: carousel(), handle: "tinyacrobatics", audience: "parents", best: [] };
+    const plain = buildReviewPrompt(input);
+    expect(buildReviewPrompt({ ...input, packText: "" })).toEqual(plain);
+    const packed = buildReviewPrompt({ ...input, packText: "PACK-REVIEW-ZQ" });
+    expect(packed.system.startsWith(plain.system)).toBe(true);
+    expect(packed.system).toContain("PACK-REVIEW-ZQ");
+    expect(packed.user).toBe(plain.user);
+  });
+});

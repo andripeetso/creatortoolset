@@ -61,6 +61,7 @@ import { PLAN_PARSERS } from "./lib/workshop/plans";
 import { renderDraft } from "./lib/workshop/render";
 import { applyEdits, docToMarkdown, keep, markEditsSeen, newDocument, revert, setVersionKept, snapshot, userEdit } from "./lib/workshop/doc";
 import { askedForCaption, askedOnlyForCaption, editsForNewDocument, isAccountFetchSource, gateCompanionEdits, parseTurn, type TurnPlan } from "./lib/workshop/chat-plans";
+import { packInstructions } from "./lib/packs";
 import { buildTurnPrompt, wantsComments } from "./lib/workshop/chat-prompt";
 import { REVIEW_MODEL, audienceOf, buildReviewPrompt, type ReviewPost } from "./lib/workshop/review";
 import { readThrough } from "./lib/workshop/readthrough";
@@ -1154,6 +1155,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
       }
       // Tagged sources first, then the open one, then the most recently pulled ones.
       views.sort((a, b) => Number(!!b.tagged) - Number(!!a.tagged) || Number(!!b.open) - Number(!!a.open) || b.at - a.at);
+      const packText = await packInstructions(user.username, "workshop.write", project?.id ?? null);
       const prompt = buildTurnPrompt({
         project: project ?? undefined,
         account: account ?? undefined,
@@ -1161,6 +1163,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
         loadedKnowledge: loadedKnowledge.length ? loadedKnowledge : undefined,
         frameworks,
         rules: rules.map((r) => r.text),
+        packText,
         doc,
         others: (await listDocs(session.id)).filter((d) => d.id !== doc.id && d.kind !== "notes" && d.blocks.some((b) => b.text.trim())),
         pinned: ask.context ?? [],
@@ -1528,7 +1531,8 @@ async function runReview(session: SessionMeta, user: SessionUser, messageId: str
     if (!doc?.blocks.length) throw new Error("That document is empty");
     const project = await projectForAi(session.projectId, user);
     const { handle, best } = await bestPosts(user, project, 8);
-    const { system, user: prompt } = buildReviewPrompt({ doc, handle, audience: audienceOf(project), best });
+    const packText = await packInstructions(user.username, "workshop.review", project?.id ?? null);
+    const { system, user: prompt } = buildReviewPrompt({ doc, handle, audience: audienceOf(project), best, packText });
     let usage: MacUsage | undefined;
     const write = progressWriter(session.id, messageId);
     const text = await streamMacClaude(system, prompt, signal, (t) => write({ text: t, stage: "writing" }), (u) => (usage = u), { label: "Workshop follower's read", provider: fableProvider(user), model: REVIEW_MODEL });
@@ -1587,7 +1591,9 @@ async function runAudit(session: SessionMeta, user: SessionUser, messageId: stri
       text = postAuditText(pack.handle, pack.kind, pack.markdown);
     }
     await patchMessage(session.id, messageId, { stage: "researching", provider: researchLabel(user) });
-    const answer = await webResearch(user, AUDIT_SYSTEM, text, { depth: input.depth, jsonSchema: AUDIT_JSON_SCHEMA, signal });
+    const packText = await packInstructions(user.username, "workshop.review", session.projectId ?? null);
+    const system = packText ? `${AUDIT_SYSTEM}\n\n${packText}` : AUDIT_SYSTEM;
+    const answer = await webResearch(user, system, text, { depth: input.depth, jsonSchema: AUDIT_JSON_SCHEMA, signal });
     const result = { ...parseAuditResult(answer.content, answer.citations), ...(covered ? { covered } : {}) };
     if (signal.aborted) throw new Error("Stopped");
     await patchMessage(session.id, messageId, {
@@ -3403,6 +3409,7 @@ async function runDraft(session: SessionMeta, draft: DraftMeta, user: SessionUse
       project: project ?? undefined,
       frameworks,
       rules: rules.map((r) => r.text),
+      packText: await packInstructions(user.username, "workshop.write", project?.id ?? null),
       notes,
       prompt: draft.prompt,
       packs: packs.map((p) => ({ ...p, note: noteFor.get(p.id), savedFor: p.savedFor })),

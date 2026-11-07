@@ -3,6 +3,7 @@ import { aiFailJson, mayUse, providerFor } from "./ai";
 import { anyAiConfigured } from "./ai-complete";
 import type { AuthVars } from "./auth";
 import { splitPoints, thoughtMarks } from "./lib/cadence-lines";
+import { packInstructions } from "./lib/packs";
 import { MAX_SCRIPT_CHARS, scriptCheckOpts, scriptEdits } from "./lib/script-check";
 import { bumpUsage } from "./users";
 import { alignDocumentTokens } from "../src/lib/align";
@@ -133,7 +134,8 @@ captionLayoutApp.post("/auto", async (c) => {
       fixes.push(...applied.fixes.map(({ before, after }) => ({ before, after })));
       bumpUsage(user.username, { aiRuns: 1 });
     }
-    const marks = await thoughtMarks(words, opts);
+    const packText = await packInstructions(user.username, "captions.lines");
+    const marks = await thoughtMarks(words, { ...opts, packText });
     bumpUsage(user.username, { aiRuns: 1 });
     words = words.map((w, i) => ({ ...w, cut: marks[i] }));
 
@@ -143,7 +145,7 @@ captionLayoutApp.post("/auto", async (c) => {
       const splits = await splitPoints(
         wide.map(([a, b]) => words.slice(a, b).map((w) => w.text)),
         Math.floor(caps.maxChars),
-        opts,
+        { ...opts, packText },
       );
       words = withSplits(words, wide, splits);
     }

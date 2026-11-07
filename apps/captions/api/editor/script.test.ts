@@ -104,6 +104,13 @@ describe("AI Editor script: the prompt", () => {
     expect(user).toContain("4 S2 4.0-4.5 sentence 4");
     expect(system).not.toMatch(/hook|punch|tone|style|energy|viral|engag|retention|call to action|\bcta\b|emotion|story|pacing/i);
   });
+
+  it("adds pack instructions after the app's own system prompt; an empty text changes nothing", () => {
+    const input = { sentences, titles: { ver_a: "Take A", ver_b: "Take B" }, brief: "", script: "", versions: 1, targetS: 30 };
+    const plain = scriptPrompt(input);
+    expect(scriptPrompt({ ...input, packText: "" })).toEqual(plain);
+    expect(scriptPrompt({ ...input, packText: "PACK-SCRIPT-ZQ" }).system).toBe(`${plain.system}\n\nPACK-SCRIPT-ZQ`);
+  });
 });
 
 describe("AI Editor script: the step", () => {

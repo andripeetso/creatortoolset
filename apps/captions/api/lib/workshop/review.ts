@@ -37,10 +37,10 @@ export function audienceOf(p: { audience?: string; notes?: string } | null | und
   return line?.[1]?.trim() ?? "";
 }
 
-export function buildReviewPrompt(input: { doc: Document; handle?: string; audience: string; best: ReviewPost[] }): { system: string; user: string } {
+export function buildReviewPrompt(input: { doc: Document; handle?: string; audience: string; best: ReviewPost[]; packText?: string }): { system: string; user: string } {
   const kind = KIND_WORD[input.doc.kind] ?? "post";
   const who = input.audience ? `You're one of the people this account posts for: ${input.audience}` : "You're one of the people this account posts for.";
-  const system = `${who} You follow ${input.handle ? `@${input.handle}` : "this account"}. A new ${kind} from them just came up in your feed. Read it the way you would on your phone${kind === "carousel" ? ", one slide at a time" : ""}, and be honest about how it lands.
+  const base = `${who} You follow ${input.handle ? `@${input.handle}` : "this account"}. A new ${kind} from them just came up in your feed. Read it the way you would on your phone${kind === "carousel" ? ", one slide at a time" : ""}, and be honest about how it lands.
 
 Then tell the author, briefly and plainly:
 - Where you'd stop ${kind === "reel" ? "watching" : "swiping"}, and the line that lost you. If you'd get to the end, say so and why.${kind === "carousel" ? "\n- Instagram shows a carousel a second time opening on slide 2. Would slide 1 stop your thumb? Would slide 2, seen first?" : ""}
@@ -55,5 +55,6 @@ You're a reader, not an editor: don't rewrite the piece. Under 250 words, plain 
         .map((p) => `[${p.date} · ${p.views.toLocaleString("en-US")} views · ${p.keptPer1k.toFixed(1)} per 1,000]\n${p.text.trim().slice(0, 1500)}`)
         .join("\n\n")}`
     : "";
+  const system = input.packText ? `${base}\n\n${input.packText}` : base;
   return { system, user: [`The new ${kind}:\n\n${pieceAsPosted(input.doc)}`, best].filter(Boolean).join("\n\n---\n\n") };
 }

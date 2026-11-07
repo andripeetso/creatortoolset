@@ -69,6 +69,7 @@ import {
   type IdeaCatalogRow,
 } from "./lib/instagram/idea-board";
 import { coerceTag, mergeTags, parseTagsPayload, TAGS_SYSTEM, tagsHaystack } from "./lib/instagram/tags";
+import { packInstructions } from "./lib/packs";
 import { cleanPostSlideText } from "./lib/instagram/slide-text";
 import { buildFindDoc, queryTerms, rankFind, type FindDoc } from "./lib/instagram/find";
 import { applyRelevance, relevance, RERANK_MIN_TERMS, RERANK_TOP } from "./lib/instagram/rerank";
@@ -1678,8 +1679,9 @@ async function visionSlide(
         images.push({ jpegBase64: buf.toString("base64") });
       }
     }
+    const packText = await packInstructions(user.username, "analyzer.ideas", meta.projectId ?? null);
     const { value, provider } = await completeVisionWithFallback(
-      VISION_SYSTEM,
+      packText ? `${VISION_SYSTEM}\n\n${packText}` : VISION_SYSTEM,
       visionUserText({
         creator: meta.creator.username,
         kind: meta.kind,
@@ -2052,7 +2054,8 @@ function mergeLibraryIntoCatalog(catalog: CatalogItem[], posts: PostMeta[]): Cat
 }
 
 async function tagPost(meta: PostMeta, user: SessionUser, signal: AbortSignal): Promise<void> {
-  const tags = await completeWithFallback(TAGS_SYSTEM, await postReadText(meta), signal, parseTagsPayload, aiFor(user, "analyzer", "Analyzer tags"));
+  const packText = await packInstructions(user.username, "analyzer.ideas", meta.projectId ?? null);
+  const tags = await completeWithFallback(packText ? `${TAGS_SYSTEM}\n\n${packText}` : TAGS_SYSTEM, await postReadText(meta), signal, parseTagsPayload, aiFor(user, "analyzer", "Analyzer tags"));
   meta.tags = mergeTags(meta.tags, tags);
   bumpUsage(user.username, { aiRuns: 1 });
 }
@@ -2185,8 +2188,9 @@ async function generateIdeaBoardNow(
   // the Analyzer's AI provider (Admin → AI providers), its usage on the board
   let usage: MacUsage | undefined;
   const mac = aiFor(user, "analyzer", "Idea board");
+  const packText = await packInstructions(user.username, "analyzer.ideas", projectId ?? null);
   const parsed = await completeWithFallback(
-    IDEA_BOARD_SYSTEM,
+    packText ? `${IDEA_BOARD_SYSTEM}\n\n${packText}` : IDEA_BOARD_SYSTEM,
     ideaBoardUserMessage(catalog, previous.length ? previous : undefined),
     signal,
     (text) => parseIdeaBoard(text, catalog.map((p) => p.id)),
@@ -2206,8 +2210,9 @@ async function ideaPost(meta: PostMeta, user: SessionUser, signal: AbortSignal):
   const text = await postReadText(meta);
   const folders = await libraryIdeaFolders(user, meta.id);
   const titles = folders.map((f) => f.title);
+  const packText = await packInstructions(user.username, "analyzer.ideas", meta.projectId ?? null);
   const idea = await completeWithFallback(
-    IDEA_SYSTEM,
+    packText ? `${IDEA_SYSTEM}\n\n${packText}` : IDEA_SYSTEM,
     ideaUserMessage(text, folders),
     signal,
     (answer) => parseIdeaPayload(answer, titles),
@@ -2824,8 +2829,9 @@ async function processAccountWith(id: string, meta: NonNullable<ReturnType<typeo
           .map((c) => c.captionPreview)
           .filter(Boolean)
           .join("\n");
+        const packText = await packInstructions(user.username, "analyzer.ideas", meta.projectId ?? null);
         const tags = await completeWithFallback(
-          TAGS_SYSTEM,
+          packText ? `${TAGS_SYSTEM}\n\n${packText}` : TAGS_SYSTEM,
           [`@${meta.username}`, meta.biography || "", captions].filter(Boolean).join("\n"),
           signal,
           parseTagsPayload,

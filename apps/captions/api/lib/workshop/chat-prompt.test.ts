@@ -445,3 +445,19 @@ describe("citations", () => {
     expect(inline).toContain("(⟦n⟧ in their message is where citation n stands)");
   });
 });
+
+describe("pack instructions in the turn's system prompt", () => {
+  it("sit after the app's own text and before the author's rules", () => {
+    const { system } = buildTurnPrompt({ ...base, rules: ["Keep it under 40 words"], packText: "PACK-TEXT-ZQ" });
+    const at = system.indexOf("PACK-TEXT-ZQ");
+    expect(at).toBeGreaterThan(0);
+    expect(system.indexOf("How this works:")).toBeLessThan(at);
+    expect(system.indexOf("Rules (they always apply):")).toBeGreaterThan(at);
+  });
+
+  it("an empty or missing pack text leaves the prompt byte-identical", () => {
+    const plain = buildTurnPrompt({ ...base, rules: ["Keep it under 40 words"] });
+    expect(buildTurnPrompt({ ...base, rules: ["Keep it under 40 words"], packText: "" })).toEqual(plain);
+    expect(buildTurnPrompt({ ...base, rules: ["Keep it under 40 words"], packText: undefined })).toEqual(plain);
+  });
+});

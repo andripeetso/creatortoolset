@@ -5,6 +5,7 @@ import { MacClaudeError } from "../lib/mac-claude";
 import { libraryDb } from "../library/db";
 import { whoFor } from "../library/describe";
 import { NeedsKey } from "../library/transcribe";
+import { packInstructions } from "../lib/packs";
 import { readStep, saveStep, type EditMeta } from "./store";
 import type { StepContext } from "./worker";
 
@@ -35,6 +36,8 @@ export interface ScriptInput {
   script: string;
   versions: number;
   targetS: number;
+  /** Installed packs' instructions for editor.script (api/lib/packs.ts), added after the app's own system prompt. */
+  packText?: string;
 }
 
 export function scriptPrompt(i: ScriptInput): { system: string; user: string } {
@@ -48,7 +51,7 @@ export function scriptPrompt(i: ScriptInput): { system: string; user: string } {
   parts.push(
     `Sentences (number, source, seconds, text):\n${i.sentences.map((s) => `${s.n} ${tag(s.src)} ${s.s.toFixed(1)}-${s.e.toFixed(1)} ${s.text}`).join("\n")}`,
   );
-  return { system: SYSTEM, user: parts.join("\n\n") };
+  return { system: i.packText ? `${SYSTEM}\n\n${i.packText}` : SYSTEM, user: parts.join("\n\n") };
 }
 
 export interface RawScript {
@@ -177,6 +180,7 @@ export async function scriptStep({ edit, job, signal }: StepContext): Promise<vo
     script: edit.script,
     versions: edit.versions,
     targetS: edit.targetS,
+    packText: await packInstructions(job.actor!, "editor.script", null),
   });
   let raw: RawScript;
   try {

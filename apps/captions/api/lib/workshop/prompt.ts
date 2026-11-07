@@ -24,6 +24,8 @@ export interface PromptInput {
   packs: PromptPack[];
   /** Writing rules that apply to this piece, in the author's words. */
   rules?: string[];
+  /** Installed packs' instructions for workshop.write (api/lib/packs.ts): added to the system prompt after the app's own. */
+  packText?: string;
 }
 
 export const NOTES_MAX = 8000;
@@ -286,5 +288,6 @@ export function buildGeneratePrompt(input: PromptInput): { system: string; user:
         .join("\n"),
     );
   });
-  return { system: `${SYSTEM_BASE}\n\n${KIND_SPEC[input.kind]}`, user: blocks.join("\n\n") };
+  const system = `${SYSTEM_BASE}\n\n${KIND_SPEC[input.kind]}`;
+  return { system: input.packText ? `${system}\n\n${input.packText}` : system, user: blocks.join("\n\n") };
 }

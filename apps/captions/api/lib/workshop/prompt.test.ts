@@ -156,3 +156,14 @@ describe("renderAccountContext", () => {
     expect(text).toContain("their scripts");
   });
 });
+
+describe("pack instructions in the generate prompt", () => {
+  it("are added after the app's own system prompt, and an empty text changes nothing", () => {
+    const input = { ...base, kind: "reel" as const };
+    const plain = buildGeneratePrompt(input);
+    expect(buildGeneratePrompt({ ...input, packText: "" })).toEqual(plain);
+    const packed = buildGeneratePrompt({ ...input, packText: "PACK-GEN-ZQ" });
+    expect(packed.system).toBe(`${plain.system}\n\nPACK-GEN-ZQ`);
+    expect(packed.user).toBe(plain.user);
+  });
+});

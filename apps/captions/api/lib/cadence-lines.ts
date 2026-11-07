@@ -176,8 +176,11 @@ export async function thoughtMarks(
     pieceWords?: number;
     provider?: ProviderOpts;
     hedgeAfterMs?: number;
+    /** Installed packs' instructions for captions.lines (api/lib/packs.ts), added after CADENCE_SYSTEM. */
+    packText?: string;
   } = {},
 ): Promise<Mark[]> {
+  const system = opts.packText ? `${CADENCE_SYSTEM}\n\n${opts.packText}` : CADENCE_SYSTEM;
   const pieces = splitAtSentences(words, opts.pieceWords ?? PIECE_WORDS);
   const text = (a: number, b: number) =>
     words
@@ -198,7 +201,7 @@ export async function thoughtMarks(
       results[k] = await hedged(
         (signal) =>
           completeWithFallback(
-            CADENCE_SYSTEM,
+            system,
             prompt,
             signal,
             (answer) => marksFromLines(parseThoughtLines(answer), piece),
@@ -244,9 +247,10 @@ export function splitPrompt(lines: string[], maxChars: number): string {
 export async function splitPoints(
   lines: string[][],
   maxChars: number,
-  opts: { signal?: AbortSignal; provider?: ProviderOpts } = {},
+  opts: { signal?: AbortSignal; provider?: ProviderOpts; packText?: string } = {},
 ): Promise<number[][]> {
   if (!lines.length) return [];
+  const system = opts.packText ? `${SPLIT_SYSTEM}\n\n${opts.packText}` : SPLIT_SYSTEM;
   // small batches in parallel: a reasoning model takes far longer on one
   // long list than on several short ones
   const batches: string[][][] = [];
@@ -258,7 +262,7 @@ export async function splitPoints(
       return hedged(
         (signal) =>
           completeWithFallback(
-            SPLIT_SYSTEM,
+            system,
             prompt,
             signal,
             (answer) => marksFromLines(parseThoughtLines(answer), words),

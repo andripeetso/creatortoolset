@@ -129,6 +129,8 @@ export interface TurnPromptInput {
   loadedKnowledge?: KnowledgeFile[];
   frameworks: Array<Pick<Framework, "name" | "role" | "summary" | "steps" | "whenToUse">>;
   rules: string[];
+  /** Installed packs' instructions for workshop.write (api/lib/packs.ts): after the app's text, before the rules. */
+  packText?: string;
   doc: Document;
   /** The session's other written pieces (another format of the same idea): read here, edits go to doc only. */
   others?: Document[];
@@ -295,6 +297,7 @@ export function buildTurnPrompt(input: TurnPromptInput): { system: string; user:
     if (folder.contextFiles.length) systemBits.push(`Context files: ${folder.contextFiles.map((f) => `context/${f}`).join(", ")}`);
   } else if (p) systemBits.push(renderProjectStable(p, input.account));
   else if (input.account) systemBits.push(renderAccountIndex(input.account));
+  if (input.packText) systemBits.push(input.packText);
   if (input.rules.length) systemBits.push(`Rules (they always apply):\n${input.rules.map((r) => `- ${r}`).join("\n")}`);
 
   const resumed = input.resumed;

@@ -58,6 +58,8 @@ export interface Framework {
   example?: string;
   /** Set on the starter frameworks so they are not re-seeded after deletion. */
   seedKey?: string;
+  /** Installed from a community pack (api/lib/packs.ts). An untouched copy has updatedAt === createdAt. */
+  from?: { pack: string; version: string };
   createdAt: number;
   updatedAt: number;
 }
