@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useLocation } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 import { Blocks, Lock, UserRound } from "lucide-react";
 import { returnTo, useAuth, type Me } from "@/lib/auth";
 import { useWorkspace } from "@/lib/workspace";
@@ -50,12 +50,15 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [canSignup, setCanSignup] = useState(false);
+  const [creating, setCreating] = useState(false);
   const setAuth = useAuth((s) => s.setAuth);
+  const navigate = useNavigate();
 
   useEffect(() => {
     fetch("/api/auth/check")
       .then((r) => r.json())
-      .then((d: { required: boolean; authed: boolean; user: Me | null; demo?: boolean }) => {
+      .then((d: { required: boolean; authed: boolean; user: Me | null; demo?: boolean; signup?: boolean }) => {
         // Signed in with an account and sent here to sign in (?next=): go back.
         const back = returnTo(window.location.search, window.location.origin);
         const account = d.authed && d.user?.role !== "guest";
@@ -64,6 +67,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
           return;
         }
         setAuth(d.required, d.user);
+        setCanSignup(!!d.signup);
         if (d.user) void useWorkspace.getState().load();
         else useWorkspace.getState().reset();
         setState(
@@ -88,7 +92,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     setBusy(true);
     setError("");
     try {
-      const res = await fetch("/api/auth/login", {
+      const res = await fetch(creating ? "/api/auth/signup" : "/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password }),
@@ -96,15 +100,17 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
       const d = await res.json().catch(() => ({}));
       if (res.ok) {
         const back = returnTo(window.location.search, window.location.origin);
-        if (back) {
+        if (back && !creating) {
           window.location.replace(back);
           return;
         }
+        // a new account starts in setup (SetupDialog): its first project
+        if (creating) navigate("/?setup=project", { replace: true });
         setAuth(true, d.user ?? null);
         void useWorkspace.getState().load();
         setState("ok");
       } else {
-        setError(d.error || "Login failed");
+        setError(d.error || (creating ? "Could not create the account" : "Login failed"));
       }
     } catch {
       setError("Could not reach the server");
@@ -121,7 +127,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         </div>
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Creator Toolset</h1>
-          <p className="text-sm text-zinc-500">Sign in to your account</p>
+          <p className="text-sm text-zinc-500">{creating ? "Create your account" : "Sign in to your account"}</p>
         </div>
       </div>
       <form onSubmit={submit} className="flex w-72 flex-col gap-2">
@@ -141,21 +147,34 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
           <Lock className="h-4 w-4 shrink-0 text-zinc-500" />
           <input
             type="password"
-            autoComplete="current-password"
+            autoComplete={creating ? "new-password" : "current-password"}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder="Password"
             className="w-full bg-transparent text-sm outline-none placeholder:text-zinc-600"
           />
         </div>
+        {creating && <p className="text-xs text-zinc-500">Username: 2 to 24 letters, digits, - or _. Password: 6 characters or more.</p>}
         {error && <p className="text-xs text-red-400">{error}</p>}
         <button
           type="submit"
           disabled={busy || !username || !password}
           className="rounded-lg bg-violet-600 py-2 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50"
         >
-          {busy ? "Checking…" : "Sign in"}
+          {busy ? "Checking…" : creating ? "Create account" : "Sign in"}
         </button>
+        {canSignup && (
+          <button
+            type="button"
+            onClick={() => {
+              setCreating(!creating);
+              setError("");
+            }}
+            className="py-1 text-xs text-zinc-500 hover:text-zinc-300"
+          >
+            {creating ? "I have an account: sign in" : "New here? Create account"}
+          </button>
+        )}
       </form>
     </div>
   );

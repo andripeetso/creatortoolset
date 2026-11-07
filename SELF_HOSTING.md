@@ -168,6 +168,11 @@ Invite members from **Settings → Team**. An invite link makes a new account, o
 signed in there. Give each member the tools they need in the Users panel: switch off the ones they should not
 use.
 
+To let anyone create an account from the sign-in screen, set `ALLOW_SIGNUP=1` in `.env` (off by default). Each
+new account gets a free workspace of its own and a short setup: a first project, then their own AI, their own
+Instagram login and Apify key, and their own API keys. Your server's keys never serve these accounts.
+Sign-ups are limited to 5 per address an hour.
+
 ## 8. Connect AI
 
 Creator Toolset never sends AI work to an account it does not belong to. There are two kinds of AI:

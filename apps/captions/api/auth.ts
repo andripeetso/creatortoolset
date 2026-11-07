@@ -3,7 +3,9 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypt
 import { env } from "./lib/env";
 import { cloneDemoReview } from "./review";
 import { INVITE_TOKEN_RE, type InviteInfo } from "../contracts/workspaces";
-import { acceptInvite, inviteByToken, memberIn } from "./lib/workspaces";
+import { getConnInfo } from "@hono/node-server/conninfo";
+import type { Context } from "hono";
+import { acceptInvite, ensureWorkspace, inviteByToken, memberIn, workspaceOf } from "./lib/workspaces";
 import {
   DEMO_USER,
   GUEST_USER,
@@ -134,6 +136,7 @@ authApp.get("/check", (c) => {
     authed: !!user,
     user: user ? withLogins(user) : null,
     demo: !!env.appSecret && !!findUser(DEMO_USER), // the login screen's "See the demo"
+    signup: signupOn(), // the login screen's "Create account"
   });
 });
 
@@ -230,6 +233,58 @@ authApp.post("/invite/:token", async (c) => {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 410);
   }
   return c.json({ ok: true, username: user.username });
+});
+
+/** Open sign-up (ALLOW_SIGNUP=1): only on a server with accounts; read at use so a change needs no code. */
+const signupOn = () => !!env.appSecret && /^(1|true)$/i.test(process.env.ALLOW_SIGNUP ?? "");
+
+/** The caller's address: the last X-Forwarded-For entry (the one the proxy in front added), else the socket's. */
+function clientIp(c: Context): string {
+  const xff = c.req.header("x-forwarded-for");
+  if (xff) return xff.split(",").pop()!.trim();
+  try {
+    return getConnInfo(c).remote.address ?? "";
+  } catch {
+    return ""; // no socket (tests)
+  }
+}
+
+// ponytail: in-process, per IP per hour, forgotten on restart, and it trusts the proxy's X-Forwarded-For (Caddy in the
+// Docker kit sets it); a shared store if the app ever runs as several processes
+const SIGNUPS_PER_HOUR = 5;
+let signupHour = 0;
+const signupTries = new Map<string, number>();
+
+/**
+ * "Create account" (ALLOW_SIGNUP): username + password with the same rules as an invite link, a free workspace of
+ * its own, signed in. Every try counts toward the limit, failed ones too, so it can't be used to probe names.
+ */
+authApp.post("/signup", async (c) => {
+  if (!signupOn()) return c.json({ error: "Sign-up is off on this server: ask its admin for an invite link" }, 404);
+  const hour = Math.floor(Date.now() / 3600_000);
+  if (hour !== signupHour) {
+    signupHour = hour;
+    signupTries.clear();
+  }
+  const ip = clientIp(c);
+  const tries = (signupTries.get(ip) ?? 0) + 1;
+  signupTries.set(ip, tries);
+  if (tries > SIGNUPS_PER_HOUR) return c.json({ error: "Too many new accounts from here. Try again in an hour" }, 429);
+  const b = await c.req.json<{ username?: unknown; password?: unknown }>().catch(() => ({}) as { username?: unknown; password?: unknown });
+  const username = typeof b.username === "string" ? b.username.trim().toLowerCase() : "";
+  const password = typeof b.password === "string" ? b.password : "";
+  // load the workspaces before the account exists: a first load folds every account into the admin's team
+  workspaceOf(username);
+  let user: UserRecord;
+  try {
+    user = createUser(username, password, { role: "user" });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+  }
+  ensureWorkspace(user.username);
+  bumpUsage(user.username, { logins: 1 });
+  setLoginCookie(c, user);
+  return c.json({ ok: true, user: withLogins(sessionOf(user)) });
 });
 
 /* "Try as guest": a capped try-out session with its own name (guest.ts) */

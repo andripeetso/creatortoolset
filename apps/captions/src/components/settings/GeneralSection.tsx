@@ -81,11 +81,11 @@ export function GeneralSection() {
           </Row>
         </Card>
       </Group>
-      <Group title="Setup" hint="The first-login walk-through: your AI, your accounts, a project, your knowledge.">
+      <Group title="Setup" hint="The first-run walk-through: a project, your AI, your Instagram, your other keys.">
         <Card>
           <Row label="Run setup again">
             <Button asChild size="sm" variant="outline">
-              <Link to="/?setup=ai">Open</Link>
+              <Link to="/?setup=project">Open</Link>
             </Button>
           </Row>
         </Card>

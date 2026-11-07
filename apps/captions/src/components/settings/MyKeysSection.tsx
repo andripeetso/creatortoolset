@@ -19,20 +19,18 @@ const SERVER = { admin: "The server's key serves you (platform admin)", budget: 
  * Settings → My API keys: this account's own keys for the paid services. Each one is billed by its provider to the
  * person whose key it is; the tools that need one say which to add here.
  */
-export function MyKeysSection() {
+export function MyKeysSection({ only }: { only?: MyKeyEnv[] } = {}) {
   const [keys, setKeys] = useState<MyKeyView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const load = () => getKeys().then(setKeys).catch((e) => setError(String(e.message ?? e)));
   useEffect(() => void load(), []);
   const run = (p: Promise<unknown>) => p.then(load).catch((e) => setError(String(e.message ?? e)));
   if (!keys) return error ? <Notice tone="error">{error}</Notice> : <Loading />;
-  return (
-    <Group
-      title="My API keys"
-      hint="Your own keys for the services the tools call. The cost is yours, paid to that provider: this site never pays for them and never shares a key with anyone else. A tool without the key it needs says which one to add."
-    >
-      <Card>
-        {keys.map((k) => (
+  const rows = (
+    <Card>
+      {keys
+        .filter((k) => !only || only.includes(k.env))
+        .map((k) => (
           <KeyRow
             key={k.env}
             k={k}
@@ -42,7 +40,22 @@ export function MyKeysSection() {
             save={(v) => run(putKey(k.env, v))}
           />
         ))}
-      </Card>
+    </Card>
+  );
+  // the setup dialog shows a few rows in place, with its own words around them
+  if (only)
+    return (
+      <>
+        {rows}
+        {error && <div className="mt-2"><Notice tone="error">{error}</Notice></div>}
+      </>
+    );
+  return (
+    <Group
+      title="My API keys"
+      hint="Your own keys for the services the tools call. The cost is yours, paid to that provider: this site never pays for them and never shares a key with anyone else. A tool without the key it needs says which one to add."
+    >
+      {rows}
       <p className="mt-2 text-xs text-muted-foreground">
         Reading other creators' Instagram posts uses your own Apify key, in{" "}
         <Link to="/settings/connectors" replace className="underline">

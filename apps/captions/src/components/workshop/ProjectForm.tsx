@@ -59,7 +59,8 @@ export function ProjectForm({
   initial?: WorkshopProject;
   busy: boolean;
   onSave: (fields: ProjectFields) => void | Promise<unknown>;
-  onCancel: () => void;
+  /** Absent = no Cancel (the first-run setup, where a project is required). */
+  onCancel?: () => void;
 }) {
   const [f, setF] = useState<ProjectFields>(() => fieldsFrom(initial));
   const [handle, setHandle] = useState("");
@@ -241,7 +242,7 @@ export function ProjectForm({
         <p className="mt-0.5 text-[10px] text-zinc-600">
           {canSync
             ? "Sync is this project's Instagram in Analyzer: Meta Graph (private insights, comments, trial reels) plus the public grid."
-            : "Links the handle as My account. Add META_ACCESS_TOKEN and INSTAGRAM_USER_ID, or an Apify token, then Sync."}
+            : "Links the handle as your account. To read its posts, log in with Instagram or add your own Apify key (Settings → Connectors), then Sync."}
         </p>
         {error ? <p className="mt-0.5 text-[10px] text-red-400">{error}</p> : null}
       </div>
@@ -301,9 +302,11 @@ export function ProjectForm({
       ) : null}
       {/* Cancel / Save stay in view at the bottom while the form scrolls */}
       <div className="sticky bottom-0 z-10 -mx-4 -mb-4 flex justify-end gap-2 rounded-b-xl border-t border-zinc-800 bg-zinc-900/95 px-4 py-3 backdrop-blur">
-        <button type="button" onClick={onCancel} className="rounded-md px-3 py-1.5 text-xs text-zinc-400 hover:bg-zinc-800">
-          Cancel
-        </button>
+        {onCancel && (
+          <button type="button" onClick={onCancel} className="rounded-md px-3 py-1.5 text-xs text-zinc-400 hover:bg-zinc-800">
+            Cancel
+          </button>
+        )}
         <button
           type="submit"
           disabled={locked || f.name.trim().length === 0}
