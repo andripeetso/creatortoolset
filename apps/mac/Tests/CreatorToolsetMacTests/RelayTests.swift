@@ -85,6 +85,23 @@ final class RelayTests: XCTestCase {
         XCTAssertEqual(args[args.firstIndex(of: "--permission-mode")! + 1], "dontAsk")
     }
 
+    func testAssistantRunGetsTheAppsMcpToolsOnly() throws {
+        let job = #"{"id":"j1","mcp":{"url":"https://example.test/api/mcp","token":"ctj_"# + String(repeating: "a", count: 48) + #""}}"#
+        let req = try XCTUnwrap(RelayRequest(json: Data(job.utf8)))
+        XCTAssertEqual(req.mcp?.url, "https://example.test/api/mcp")
+        let config = try XCTUnwrap(JSONSerialization.jsonObject(with: mcpConfig(url: req.mcp!.url, token: req.mcp!.token)) as? [String: Any])
+        let server = try XCTUnwrap((config["mcpServers"] as? [String: Any])?["creator-toolset"] as? [String: Any])
+        XCTAssertEqual((server["headers"] as? [String: String])?["Authorization"], "Bearer " + req.mcp!.token)
+        let args = claudeArguments(model: "claude-opus-5-5", effort: "xhigh", systemFile: "/tmp/s.txt", tools: "", session: false, resume: "", mcpConfigFile: "/tmp/m.json")
+        XCTAssertEqual(args[args.firstIndex(of: "--mcp-config")! + 1], "/tmp/m.json")
+        XCTAssertTrue(args.contains("--strict-mcp-config"))
+        XCTAssertEqual(args[args.firstIndex(of: "--allowedTools")! + 1], "mcp__creator-toolset__*")
+        XCTAssertEqual(args[args.firstIndex(of: "--tools")! + 1], "")
+        // a token that isn't a job token, or another address, is ignored
+        XCTAssertNil(RelayRequest(json: Data(#"{"id":"j2","mcp":{"url":"https://example.test/api/mcp","token":"ctk_x"}}"#.utf8))?.mcp)
+        XCTAssertNil(RelayRequest(json: Data((#"{"id":"j3","mcp":{"url":"file:///etc/passwd","token":"ctj_"# + String(repeating: "a", count: 48) + #""}}"#).utf8))?.mcp)
+    }
+
     func testSessionKeepsItsTranscriptAndResumes() {
         let args = claudeArguments(model: "claude-opus-5-5", effort: "xhigh", systemFile: "/tmp/s.txt", tools: readTools, session: true, resume: "abc-1")
         XCTAssertFalse(args.contains("--no-session-persistence"))

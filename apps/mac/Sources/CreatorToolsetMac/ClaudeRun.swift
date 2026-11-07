@@ -81,10 +81,18 @@ func claudeAnswer(_ req: RelayRequest, _ opts: RelayOptions, cli: String, work: 
     let systemFile = tmp.appendingPathComponent("system.txt")
     try system.write(to: systemFile, atomically: true, encoding: .utf8)
 
+    var mcpFile = ""
+    if let mcp = req.mcp {   // the token lives only in this run's private temp folder, removed with it
+        let file = tmp.appendingPathComponent("mcp.json")
+        guard fm.createFile(atPath: file.path, contents: mcpConfig(url: mcp.url, token: mcp.token), attributes: [.posixPermissions: 0o600]) else {
+            throw RelayError(message: "couldn't write the MCP config")
+        }
+        mcpFile = file.path
+    }
     let tools = [folder ? readTools : nil, req.web ? webTools : nil].compactMap { $0 }.joined(separator: ",")
     let resume = req.session.isEmpty ? "" : opts.resume
     let args = claudeArguments(model: opts.model, effort: opts.effort, systemFile: systemFile.path,
-                               tools: tools, session: !req.session.isEmpty, resume: resume)
+                               tools: tools, session: !req.session.isEmpty, resume: resume, mcpConfigFile: mcpFile)
     let outcome = try runClaude(cli: cli, args: args, cwd: cwd, env: claudeEnv(base: ProcessInfo.processInfo.environment, home: opts.home),
                                 prompt: requestText(req.user, folder: folder), folder: folder, send: send, step: step, tmp: tmp)
 

@@ -35,6 +35,8 @@ struct RelayRequest {
     let home: String
     let session: String
     let resume: String
+    /// The app's own MCP server for this run (the assistant): its /api/mcp and a job token for one turn. Never logged.
+    let mcp: (url: String, token: String)?
 
     init?(json: Data) {
         guard let obj = (try? JSONSerialization.jsonObject(with: json)) as? [String: Any],
@@ -50,8 +52,21 @@ struct RelayRequest {
         home = obj["home"] as? String ?? ""
         session = obj["session"] as? String ?? ""
         resume = obj["resume"] as? String ?? ""
+        if let m = obj["mcp"] as? [String: Any], let url = m["url"] as? String, let token = m["token"] as? String,
+           matches(url, "^https?://[^\\s]+/api/mcp\\z"), matches(token, "^ctj_[a-f0-9]{48}\\z") {
+            mcp = (url, token)
+        } else {
+            mcp = nil
+        }
     }
 }
+
+/// The --mcp-config file for the app's own MCP server: its tools then show up as mcp__creator-toolset__*.
+func mcpConfig(url: String, token: String) -> Data {
+    let config: [String: Any] = ["mcpServers": ["creator-toolset": ["type": "http", "url": url, "headers": ["Authorization": "Bearer " + token]]]]
+    return (try? JSONSerialization.data(withJSONObject: config)) ?? Data()
+}
+let mcpTools = "mcp__creator-toolset__*"
 
 /// The request's checked options (the Mac relay request_options).
 struct RelayOptions: Equatable {
@@ -128,14 +143,18 @@ func homeEnv(_ home: String) -> [String: String] {
 // MARK: the command line
 
 /// the Mac relay's `claude -p` arguments (the prompt comes on stdin). `resume` is passed only with a session.
-func claudeArguments(model: String, effort: String, systemFile: String, tools: String, session: Bool, resume: String) -> [String] {
+/// `mcpConfigFile`: the app's own MCP server (the assistant), whose tools are then allowed too.
+func claudeArguments(model: String, effort: String, systemFile: String, tools: String, session: Bool, resume: String,
+                     mcpConfigFile: String = "") -> [String] {
     var args = ["-p", "--model", model, "--effort", effort,
                 "--output-format", "stream-json", "--verbose", "--include-partial-messages",
                 "--system-prompt-file", systemFile, "--tools", tools, "--strict-mcp-config",
                 "--setting-sources", ""]
     if !session { args.append("--no-session-persistence") }   // a cold run leaves no transcript behind
     if !resume.isEmpty { args += ["--resume", resume] }
-    if !tools.isEmpty { args += ["--allowedTools", tools, "--permission-mode", "dontAsk"] }   // anything else is refused
+    if !mcpConfigFile.isEmpty { args += ["--mcp-config", mcpConfigFile] }
+    let allowed = [tools, mcpConfigFile.isEmpty ? "" : mcpTools].filter { !$0.isEmpty }.joined(separator: ",")
+    if !allowed.isEmpty { args += ["--allowedTools", allowed, "--permission-mode", "dontAsk"] }   // anything else is refused
     return args
 }
 
