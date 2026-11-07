@@ -1,5 +1,7 @@
 packages:
   - apps/*
+  # its own npm lockfile (apps/obsidian/package-lock.json): keeps pnpm-lock.yaml unchanged
+  - "!apps/obsidian"
 
 # The same install scripts npm ran for captions-app: native binaries
 # (esbuild, sharp, onnxruntime-node, fsevents, protobufjs) and the

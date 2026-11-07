@@ -133,6 +133,9 @@ export function obsidianFilename(title: string | undefined, fallback = "Untitled
   return `${name}.md`;
 }
 
+/** A custom export's default template: the built-in note's shape (its frontmatter, then the body). */
+export const OBSIDIAN_TEMPLATE = "---\nchange: {{date}}\ndetails:\nselector.Status: {{status}}\nselector.Media: {{media}}\n---\n{{body}}\n";
+
 /**
  * An Obsidian script note: frontmatter (selector.Media = the author's vault's custom-selectors option), the hook lines (// each), then the
  * script's paragraphs. Nothing else. `day` is YYYY-MM-DD.

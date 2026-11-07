@@ -1,11 +1,12 @@
 import { Fragment } from "react";
 import { Link, Navigate, useLocation } from "react-router";
-import { Cable, Cpu, Gauge, KeyRound, Monitor, Palette, ShieldCheck, SlidersHorizontal, UserRound, Users, type LucideIcon } from "lucide-react";
+import { Cable, Cpu, FileDown, Gauge, KeyRound, Monitor, Palette, ShieldCheck, SlidersHorizontal, UserRound, Users, type LucideIcon } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { AccountSection } from "@/components/settings/AccountSection";
 import { AdminSection } from "@/components/settings/AdminSection";
 import { AppearanceSection } from "@/components/settings/AppearanceSection";
 import { DevicesSection } from "@/components/settings/DevicesSection";
+import { ExportsSection } from "@/components/settings/ExportsSection";
 import { GeneralSection } from "@/components/settings/GeneralSection";
 import { ProvidersSection } from "@/components/settings/ProvidersSection";
 import { ConnectorsSection } from "@/components/settings/ConnectorsSection";
@@ -29,6 +30,7 @@ const SETTINGS_SECTIONS: ReadonlyArray<{ id: string; title: string; icon: Lucide
   { id: "my-keys", title: "My API keys", icon: KeyRound, account: true },
   { id: "usage", title: "Usage", icon: Gauge },
   { id: "devices", title: "Devices", icon: Monitor },
+  { id: "exports", title: "Exports", icon: FileDown, account: true },
   { id: "account", title: "Account", icon: UserRound },
   { id: "team", title: "Team", icon: Users, workspace: true, account: true },
   { id: "keys", title: "API keys", icon: KeyRound, adminOnly: true, workspace: true },
@@ -56,6 +58,7 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
     "my-keys": <MyKeysSection />,
     usage: <UsageSection />,
     devices: <DevicesSection />,
+    exports: <ExportsSection />,
     account: <AccountSection />,
     team: <WorkspaceSection />,
     keys: <ServiceKeysSection />,

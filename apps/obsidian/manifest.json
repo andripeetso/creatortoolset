@@ -1,0 +1,10 @@
+{
+  "id": "creator-toolset",
+  "name": "Creator Toolset",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Links notes in a folder with Creator Toolset's Content Workshop: send a note, keep its status in step both ways, and receive Obsidian exports.",
+  "author": "Creator Toolset",
+  "authorUrl": "https://creatortoolset.com",
+  "isDesktopOnly": true
+}

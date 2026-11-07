@@ -137,6 +137,10 @@ export interface SessionMeta {
   pinned?: boolean;
   /** Posts the author marked as not this session's, so the matcher never picks them again. */
   postedNot?: string[];
+  /** The Obsidian note this session is linked to (vault-relative path, the note's mtime when last seen). */
+  note?: { path: string; mtime: number };
+  /** When the status last changed (the note sync compares it with the note's mtime). */
+  statusAt?: number;
   createdAt: number;
   updatedAt: number;
 }

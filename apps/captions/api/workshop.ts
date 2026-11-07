@@ -46,7 +46,8 @@ import {
   writeUserMarker,
 } from "./lib/workshop/workspace";
 import { ORIGINAL_SEED_KEYS, RETIRED_SEED_KEYS, SEED_FRAMEWORKS, extraFrameworkCopyIds, missingSeeds, planRuleSeedSync, ruleSeedAt } from "./lib/workshop/seeds";
-import { attachment, buildExportMarkdown, demoteHeadings, KIND_TITLE, obsidianExports } from "./lib/workshop/export";
+import { attachment, buildExportMarkdown, demoteHeadings, KIND_TITLE, obsidianExports, obsidianPieces, obsidianStatus, sessionStatusOf, type ObsidianPiece } from "./lib/workshop/export";
+import { exportFile, listExports, parseExports, pieceFromNote, renderTemplate, SYNCED_STATUSES, type PendingExport, type WorkshopExport } from "./lib/workshop/notes";
 import { cardsFrontmatter, exportFilename, exportStem, pictureIds, PICTURE_TOKEN, pieceMarkdown } from "../src/lib/workshop-markdown";
 import { PICTURE_EXT, PICTURE_TYPES, parsePictureUpload } from "./lib/workshop/pictures";
 import { ZipFile } from "yazl";
@@ -2076,6 +2077,7 @@ async function linkPosted(user: SessionUser): Promise<void> {
         if (m.posted) return;
         m.posted = { shortcode: post.item.shortcode, url: post.item.url, by: "auto", at: Date.now() };
         m.status = "published";
+        m.statusAt = Date.now();
       });
       console.log(`workshop: session ${id} became post ${post.item.shortcode} (matched by its words)`);
     }
@@ -2316,7 +2318,10 @@ workshopApp.patch("/sessions/:id", async (c) => {
       if (patch.query !== undefined) m.query = patch.query;
       if (patch.projectId === null) delete m.projectId;
       else if (patch.projectId) m.projectId = patch.projectId;
-      if (patch.status) m.status = patch.status;
+      if (patch.status) {
+        m.status = patch.status;
+        m.statusAt = Date.now();
+      }
       if (patch.pinned === true) m.pinned = true;
       else if (patch.pinned === false) delete m.pinned;
       if (patch.posted === null && m.posted) {
@@ -2326,6 +2331,7 @@ workshopApp.patch("/sessions/:id", async (c) => {
       } else if (patch.posted) {
         m.posted = { ...patch.posted, by: "you", at: Date.now() };
         m.status = "published";
+        m.statusAt = Date.now();
       }
       if (patch.sources) {
         m.sources = patch.sources;
@@ -3178,6 +3184,197 @@ workshopApp.get("/sessions/:id/obsidian.md", async (c) => {
   return new Response(new Uint8Array(Buffer.concat(chunks)), { headers: { ...headers, "Content-Type": "application/zip", "Content-Disposition": attachment(name) } });
 });
 
+/* ---- Obsidian notes (the plugin's sync) and custom exports: the pure parts are in lib/workshop/notes.ts ---- */
+
+const EXPORTS_DIR = path.join(WS_ROOT, "exports");
+const PENDING_DIR = path.join(WS_ROOT, "exports-pending");
+const exportsFile = (username: string) => path.join(EXPORTS_DIR, `${username}.json`);
+const pendingFile = (username: string) => path.join(PENDING_DIR, `${username}.json`);
+
+/** The account's own sessions: a note belongs to its owner, admins included. ponytail: each note's PUT reads every session, add a path index when a vault gets big. */
+async function ownSessions(username: string): Promise<SessionMeta[]> {
+  let names: string[] = [];
+  try {
+    names = await readdir(DIRS.sessions);
+  } catch {
+    return [];
+  }
+  const out: SessionMeta[] = [];
+  for (const id of names) {
+    const meta = await readSession(id);
+    if (meta?.owner === username) out.push(meta);
+  }
+  return out;
+}
+
+const storedExports = async (username: string): Promise<WorkshopExport[]> => (await readJson<WorkshopExport[]>(exportsFile(username))) ?? [];
+const pendingList = async (username: string): Promise<PendingExport[]> => (await readJson<PendingExport[]>(pendingFile(username))) ?? [];
+
+/** The placeholders a custom export's name and template can use; `title` is the note's name, as the built-in names it. */
+function exportVars(piece: ObsidianPiece, status: SessionStatus, day: string): Record<string, string> {
+  return {
+    title: piece.filename.replace(/\.md$/, ""),
+    status: obsidianStatus(status),
+    media: piece.kind === "reel" ? "🎞️ Reel" : "🎪 Carousel",
+    body: piece.body.trim(),
+    caption: piece.caption,
+    date: day,
+  };
+}
+
+/** A session made from a note: its piece is the note's body, from then on the Workshop's own text (a sync never rewrites it). */
+async function sessionFromNote(user: SessionUser, body: Record<string, unknown>, notePath: string, mtime: number, status: SessionStatus | undefined): Promise<SessionMeta> {
+  const now = Date.now();
+  const id = randomUUID();
+  const projectId = await resolveProjectId(user, typeof body.projectId === "string" ? body.projectId : null);
+  const meta: SessionMeta = {
+    id,
+    owner: user.username,
+    title: (typeof body.title === "string" && body.title.trim().slice(0, LIMITS.title)) || "Untitled session",
+    query: "",
+    status: status ?? "draft",
+    ...(projectId ? { projectId } : {}),
+    sources: [],
+    drafts: [],
+    note: { path: notePath, mtime },
+    statusAt: now,
+    createdAt: now,
+    updatedAt: now,
+  };
+  await writeJsonAtomic(sessionMetaPath(id), meta);
+  const piece = pieceFromNote(typeof body.markdown === "string" ? body.markdown : "", typeof body.media === "string" ? body.media : "");
+  const doc = newDocument(randomUUID(), id, piece.kind, KIND_TITLE[piece.kind], { now });
+  doc.blocks = piece.blocks.map((text, i) => ({ id: `b${i + 1}`, text, author: "user", at: now }));
+  doc.nextBlock = piece.blocks.length + 1;
+  if (piece.hooks.length) {
+    doc.hooks = piece.hooks.map((text, i) => ({ id: `h${i + 1}`, text, author: "user", at: now }));
+    doc.nextHook = piece.hooks.length + 1;
+  }
+  await writeDoc(doc);
+  return meta;
+}
+
+/**
+ * The Obsidian plugin's note in (upsert by path among the account's sessions; the rules are in lib/workshop/notes.ts):
+ * a linked session takes a newer note's status and nothing else; a new one is made only for a synced status or `create: "send"`.
+ */
+workshopApp.put("/notes", async (c) => {
+  const user = c.get("user");
+  const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+  const notePath = typeof body?.path === "string" ? body.path.trim() : "";
+  const mtime = typeof body?.mtime === "number" ? body.mtime : NaN;
+  if (!notePath || !Number.isFinite(mtime)) return c.json({ error: "A note needs its path and mtime" }, 400);
+  const status = typeof body?.status === "string" ? sessionStatusOf(body.status) : undefined;
+  const own = await ownSessions(user.username);
+  // linked by path; else an unlinked session of the same name (letters and digits) takes the link, so notes written
+  // before the link existed don't come in twice
+  const nameKey = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+  const noteName = nameKey(typeof body?.title === "string" && body.title.trim() ? body.title : notePath.split("/").pop()!.replace(/\.md$/i, ""));
+  const linked = own.filter((s) => s.note?.path === notePath).sort((a, b) => b.updatedAt - a.updatedAt)[0]
+    ?? own.filter((s) => !s.note && !!noteName && nameKey(s.title ?? "") === noteName).sort((a, b) => b.updatedAt - a.updatedAt)[0];
+  let meta: SessionMeta | null = null;
+  if (linked) {
+    meta = await updateSession(
+      linked.id,
+      (m) => {
+        m.note = { path: notePath, mtime };
+        if (status && status !== m.status && mtime > (m.statusAt ?? 0)) {
+          m.status = status;
+          m.statusAt = mtime;
+        }
+      },
+      { touch: false },
+    );
+  } else if (body?.create === "send" || (status && SYNCED_STATUSES.includes(status))) {
+    meta = await sessionFromNote(user, body!, notePath, mtime, status);
+  }
+  // no session for this note (it is not one of the synced statuses, and nobody pressed send): nothing made
+  if (!meta) return c.json({ id: null, url: null });
+  return c.json({ id: meta.id, status: meta.status ?? "draft", updatedAt: meta.updatedAt, statusAt: meta.statusAt ?? null, url: `/workshop/sessions/${meta.id}` });
+});
+
+/** Status changes since `since` (ms) on the account's linked sessions, in the notes' Selector.Status values, for the plugin to write back. */
+workshopApp.get("/notes", async (c) => {
+  const since = Number(c.req.query("since")) || 0;
+  const rows = (await ownSessions(c.get("user").username))
+    .filter((s) => s.note && (s.statusAt ?? 0) > since)
+    .map((s) => ({ id: s.id, path: s.note!.path, status: obsidianStatus(s.status), statusAt: s.statusAt ?? 0 }));
+  return c.json(rows);
+});
+
+/** The account's exports: the built-in Obsidian Markdown first, then its own. */
+workshopApp.get("/exports", async (c) => c.json(listExports(await storedExports(c.get("user").username))));
+
+workshopApp.put("/exports", async (c) => {
+  const username = c.get("user").username;
+  try {
+    const next = parseExports(await c.req.json().catch(() => null));
+    await writeJsonAtomic(exportsFile(username), next);
+    return c.json(listExports(next));
+  } catch (e) {
+    return c.json({ error: errorMessage(e) }, 400);
+  }
+});
+
+/** Queued plugin files, for the Obsidian plugin to write into the vault (its own account's only). */
+workshopApp.get("/exports/pending", async (c) => c.json(await pendingList(c.get("user").username)));
+
+workshopApp.post("/exports/pending/:id/done", async (c) => {
+  const username = c.get("user").username;
+  return chained(`exports:${username}`, async () => {
+    const queue = await pendingList(username);
+    const next = queue.filter((p) => p.id !== c.req.param("id"));
+    if (next.length === queue.length) return c.json({ error: "Not found" }, 404);
+    await writeJsonAtomic(pendingFile(username), next);
+    return c.json({ ok: true });
+  });
+});
+
+/**
+ * Run one of the account's exports on a session. A download answers the file (`part` picks one piece, as the built-in
+ * does; several pieces without it answer their names). A plugin export queues one file per piece and links the session
+ * to the first note's path, which moves it to In Production like a share.
+ */
+workshopApp.post("/sessions/:id/export/:exportId", async (c) => {
+  const user = c.get("user");
+  const meta = await ownedSession(c.req.param("id"), user);
+  if (!meta) return c.json({ error: "Not found" }, 404);
+  const exp = listExports(await storedExports(user.username)).find((e) => e.id === c.req.param("exportId"));
+  if (!exp) return c.json({ error: "No such export" }, 404);
+  const q = c.req.query("day") ?? "";
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(q) ? q : new Date().toISOString().slice(0, 10);
+  const docs = await listDocs(meta.id);
+  const types = await pieceTypes(meta.id, docs);
+  if (!obsidianPieces(meta, docs, day, types).length) return c.json({ error: "This session has no reel or carousel with words yet" }, 400);
+  const status = await sharedForProduction(meta);
+  const files = obsidianPieces({ ...meta, status }, docs, day, types).map((piece) => {
+    const vars = exportVars(piece, status, day);
+    const name = exportFile(exp, vars);
+    return { name, markdown: `${renderTemplate(exp.template, vars).replace(/\n*$/, "")}\n` };
+  });
+  if (exp.target === "download") {
+    const part = Number(c.req.query("part") ?? (files.length > 1 ? NaN : 0));
+    if (!Number.isInteger(part)) return c.json({ parts: files.map((f) => f.name) });
+    const out = files[part];
+    if (!out) return c.json({ error: "No such piece" }, 404);
+    return new Response(out.markdown, {
+      headers: { "Cache-Control": "no-store", "X-Session-Status": status, "Content-Type": "text/markdown; charset=utf-8", "Content-Disposition": attachment(out.name) },
+    });
+  }
+  const queued: PendingExport[] = files.map((f) => ({
+    id: randomUUID(),
+    exportId: exp.id,
+    path: [exp.folder, f.name].filter(Boolean).join("/"),
+    markdown: f.markdown,
+    sessionId: meta.id,
+  }));
+  await chained(`exports:${user.username}`, async () => writeJsonAtomic(pendingFile(user.username), [...(await pendingList(user.username)), ...queued]));
+  await updateSession(meta.id, (m) => {
+    m.note = { path: queued[0]!.path, mtime: Date.now() };
+  }, { touch: false });
+  return c.json({ queued: queued.length, path: queued[0]!.path });
+});
+
 /* ---- generation ---- */
 
 async function patchDraft(sessionId: string, draftId: string, patch: Partial<DraftMeta>): Promise<void> {
@@ -3356,7 +3553,7 @@ workshopApp.get("/sessions/:id/shares", async (c) => {
 async function sharedForProduction(meta: SessionMeta): Promise<SessionStatus> {
   // never back: a session past In Production (Editing, Ready to post), published or shelved stays where it is
   if (meta.status && ["production", "editing", "toPost", "published", "shelved"].includes(meta.status)) return meta.status;
-  await updateSession(meta.id, (m) => void (m.status = "production"), { touch: false });
+  await updateSession(meta.id, (m) => void ((m.status = "production"), (m.statusAt = Date.now())), { touch: false });
   return "production";
 }
 
@@ -3575,7 +3772,10 @@ workshopShareApp.post("/:token/progress", async (c) => {
   share.progress = { state, ...(by ? { by } : {}), at: Date.now() };
   await writeJsonAtomic(SHARES_FILE, shares);
   // the editor making it = Editing; "It's done" = Ready to post; published or shelved stay
-  if (meta.status !== "published" && meta.status !== "shelved") await updateSession(meta.id, (m) => void (m.status = state === "done" ? "toPost" : "editing"));
+  if (meta.status !== "published" && meta.status !== "shelved") await updateSession(meta.id, (m) => {
+    m.status = state === "done" ? "toPost" : "editing";
+    m.statusAt = Date.now();
+  });
   await notifyWorkshopOwner(share.owner, { kind: state === "done" ? "delivered" : "producing", by: by || "A freelancer", name: meta.title || share.title, href: `/workshop/sessions/${meta.id}`, ref: meta.id });
   return c.json({ progress: share.progress });
 });

@@ -47,6 +47,25 @@ The Workshop turns research into pieces (reel, carousel, ad, free and YouTube sc
 - **Comments on a share link.** Signed in with access to the session, the link's comments show at the top of the sidebar with open questions first. Reply drafts are for the author to copy; the app never posts them. Comments are read only when the author asks (Read comments / Refresh). The AI gets the pieces, the notes, the chat and the comments, and edits nothing. The thread lives in `sessions/<id>/answers.json`.
 - **Posted sessions.** Opening the sessions list matches, at most every 10 minutes, each session without a post against the author's own posts (`posted.ts`: a text-similarity match, one post per session, only a clear winner). A matched session shows a Post link. "Link post" pastes an Instagram link by hand.
 
+## Obsidian
+
+The Obsidian plugin (`apps/obsidian`) links one vault folder with the Workshop, using an access key with Full access.
+Code: `api/workshop.ts` (routes), `api/lib/workshop/notes.ts` (rules, templates, reading a note as a piece),
+`api/lib/workshop/export.ts` (the status values).
+
+- `session.note = { path, mtime }` links a session to its note; `session.statusAt` is when its status last changed.
+- `PUT /api/workshop/notes` upserts by path among the account's own sessions. A linked session takes a newer note's
+  status (note `mtime` > `statusAt`) and nothing else: its text is never rewritten. A new session is made only for
+  👍 Ready, 🎥 Filming, ✂️ Editing, or with `create: "send"`; its body becomes a reel (hooks from leading `// ` lines),
+  a carousel (slides apart by `---`) or a free piece (🎞️ Reel / 🎪 Carousel / else).
+- `GET /api/workshop/notes?since=<ms>` lists linked sessions whose status changed since, for the plugin to write back.
+- Exports (Settings → Exports, `$DATA_DIR/workshop/exports/<user>.json`): the built-in Obsidian Markdown first, then the
+  account's own, each with a name, target (`download` or `plugin`), folder, file name pattern and template.
+  Placeholders `{{title}} {{status}} {{media}} {{body}} {{caption}} {{date}}`.
+- `POST /api/workshop/sessions/:id/export/:exportId`: a download answers the file; a plugin export queues one file per
+  piece (`GET /api/workshop/exports/pending`, `POST …/pending/:id/done`) and links the session to the first path.
+  Pictures are not carried by custom exports.
+
 ## Navigation and usage
 
 - **Sidebar.** Writing now (a reply running), Waiting for you (a finished reply not yet looked at), Ideas & writing, Ready & in production, Published. ⌘K finds a session by name; ⌘1–9 open the first nine in the Mac app.

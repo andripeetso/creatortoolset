@@ -1,4 +1,4 @@
-import type { DocKind, DraftKind, DraftMeta, Document, ImageRef, SessionMeta } from "./types";
+import type { DocKind, DraftKind, DraftMeta, Document, ImageRef, SessionMeta, SessionStatus } from "./types";
 import { PICTURE_TOKEN, carouselObsidianMarkdown, obsidianFilename, pictureIds, reelObsidianMarkdown } from "../../../src/lib/workshop-markdown";
 import { PICTURE_EXT } from "./pictures";
 
@@ -16,6 +16,12 @@ const OBSIDIAN_STATUS = new Map<string, string>([
 
 export function obsidianStatus(status: string | undefined): string {
   return OBSIDIAN_STATUS.get(status ?? "draft") ?? OBSIDIAN_STATUS.get("draft")!;
+}
+
+/** A note's Selector.Status value back to the Workshop's status; undefined for a value the Workshop has no word for. */
+export function sessionStatusOf(obsidian: string): SessionStatus | undefined {
+  for (const [status, value] of OBSIDIAN_STATUS) if (value === obsidian) return status as SessionStatus;
+  return undefined;
 }
 
 /**
@@ -37,6 +43,20 @@ export function obsidianExports(
   day: string,
   types: Map<string, ImageRef["type"]> = new Map(),
 ): ObsidianNote[] {
+  return obsidianPieces(session, docs, day, types).map(({ filename, markdown, pictures }) => ({ filename, markdown, pictures }));
+}
+
+/** A piece as its note, plus what a custom export's template can name: its kind, post description and body (no frontmatter). */
+export type ObsidianPiece = ObsidianNote & { kind: "reel" | "carousel"; caption: string; body: string };
+
+const FRONTMATTER = /^---\n[\s\S]*?\n---\n/;
+
+export function obsidianPieces(
+  session: Pick<SessionMeta, "title" | "status">,
+  docs: Document[],
+  day: string,
+  types: Map<string, ImageRef["type"]> = new Map(),
+): ObsidianPiece[] {
   const worded = (kind: Document["kind"]) => docs.find((d) => d.kind === kind && d.blocks.some((b) => b.text.trim()));
   const pieces = [worded("reel"), worded("carousel")].filter((d): d is Document => !!d);
   const base = obsidianFilename(session.title).replace(/\.md$/, "");
@@ -61,7 +81,8 @@ export function obsidianExports(
       doc.kind === "reel"
         ? reelObsidianMarkdown({ day, status, hooks: doc.hooks ? doc.hooks.map((h) => ({ text: swap(h.text) })) : null, blocks })
         : carouselObsidianMarkdown({ day, status, blocks });
-    return { filename: `${stem}.md`, markdown, pictures };
+    const kind = doc.kind as "reel" | "carousel";
+    return { filename: `${stem}.md`, markdown, pictures, kind, caption: doc.caption?.text.trim() ?? "", body: markdown.replace(FRONTMATTER, "") };
   });
 }
 

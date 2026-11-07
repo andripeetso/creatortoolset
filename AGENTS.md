@@ -14,6 +14,7 @@ relays AI requests to the Claude Code or Codex tool its owner installed and sign
 |---|---|---|
 | `apps/captions/` | The web app and its server: UI in `src/`, API in `api/`, shared types in `contracts/`, the database schema in `db/` | React, Vite, Hono, tRPC, TypeScript |
 | `apps/mac/` | The Mac app: a native shell around the web app, the server it runs on this Mac (bundled by `scripts/build-app.sh`), plus the local AI runner and its menu bar item | SwiftUI, Swift Package Manager, Sparkle |
+| `apps/obsidian/` | An Obsidian plugin: a vault folder's notes and the Content Workshop in step (status both ways, Send, exports). Its own npm lockfile, outside the pnpm workspace | TypeScript, esbuild |
 | `scripts/` | Repository checks (`check-public.sh`) and the public-repo patterns in `scripts/public/` | Bash |
 | `.githooks/` | `pre-commit` (public-repo guard, secret scan) | Bash |
 

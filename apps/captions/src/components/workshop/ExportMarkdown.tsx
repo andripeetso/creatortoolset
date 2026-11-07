@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Check, ChevronDown, Copy, Download } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { fetchExportMarkdown } from "@/lib/workshop";
+import { fetchExportMarkdown, listExports, runExport, type WorkshopExport } from "@/lib/workshop";
 
 /** Today in the owner's time zone, for the note's frontmatter. */
 function localDay(): string {
@@ -47,13 +47,14 @@ export async function saveObsidianMany(ids: string[]): Promise<{ saved: number; 
   return { saved, skipped: ids.length - saved };
 }
 
-/** The reel as an Obsidian note, saved under the server's name (the session title). */
-async function saveObsidian(sessionId: string): Promise<void> {
-  const day = localDay();
-  const get = async (part?: number) =>
-    okOrThrow(await fetch(`/api/workshop/sessions/${sessionId}/obsidian.md?day=${day}${part === undefined ? "" : `&part=${part}`}`));
+/**
+ * A session's file from one of its download routes, saved under the server's name. A reel and a carousel: one file each,
+ * one after the other; the route answers their names as JSON then.
+ */
+async function saveFiles(route: string, init?: RequestInit): Promise<void> {
+  const sep = route.includes("?") ? "&" : "?";
+  const get = async (part?: number) => okOrThrow(await fetch(part === undefined ? route : `${route}${sep}part=${part}`, init));
   const first = await get();
-  // a reel and a carousel: one file each, one after the other
   if ((first.headers.get("Content-Type") ?? "").includes("application/json")) {
     const { parts } = (await first.json()) as { parts: string[] };
     for (let i = 0; i < parts.length; i++) {
@@ -63,6 +64,16 @@ async function saveObsidian(sessionId: string): Promise<void> {
     return;
   }
   await save(first);
+}
+
+/** The reel as an Obsidian note (the built-in export). */
+const saveObsidian = (sessionId: string) => saveFiles(`/api/workshop/sessions/${sessionId}/obsidian.md?day=${localDay()}`);
+
+/** One of the account's Settings → Exports: a download is saved; a plugin export is queued for the Obsidian plugin to write. */
+async function runCustom(sessionId: string, exp: WorkshopExport): Promise<void> {
+  const query = `day=${localDay()}`;
+  if (exp.target === "download") return saveFiles(`/api/workshop/sessions/${sessionId}/export/${exp.id}?${query}`, { method: "POST" });
+  await okOrThrow(await runExport(sessionId, exp.id, query));
 }
 
 /** Header control: copy the session as Markdown, or save the same file. */
@@ -78,6 +89,9 @@ export function ExportMarkdown({
   onExported?: () => void;
 }) {
   const [copied, setCopied] = useState(false);
+  // the account's own exports (Settings → Exports); the built-in one is the "Save as Markdown" item below
+  const [exports, setExports] = useState<WorkshopExport[]>([]);
+  useEffect(() => void listExports().then((list) => setExports(list.filter((e) => e.id !== "obsidian")), () => {}), []);
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -110,6 +124,11 @@ export function ExportMarkdown({
         <DropdownMenuItem onSelect={() => void saveObsidian(sessionId).then(() => onExported?.(), (e) => onError?.(e))}>
           <Download className="h-3.5 w-3.5" /> Save as Markdown
         </DropdownMenuItem>
+        {exports.map((exp) => (
+          <DropdownMenuItem key={exp.id} onSelect={() => void runCustom(sessionId, exp).then(() => onExported?.(), (e) => onError?.(e))}>
+            <Download className="h-3.5 w-3.5" /> {exp.target === "plugin" ? `Export to ${exp.name}` : exp.name}
+          </DropdownMenuItem>
+        ))}
       </DropdownMenuContent>
     </DropdownMenu>
   );

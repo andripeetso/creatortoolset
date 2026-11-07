@@ -373,6 +373,20 @@ export const fetchExportMarkdown = (id: string) =>
     return r.text();
   });
 
+/** A custom export (Settings → Exports). The built-in Obsidian Markdown comes first, with id "obsidian". */
+export interface WorkshopExport {
+  id: string;
+  name: string;
+  target: "download" | "plugin";
+  folder: string;
+  filename: string;
+  template: string;
+}
+export const listExports = () => fetch("/api/workshop/exports").then((r) => json<WorkshopExport[]>(r));
+export const saveExports = (exports: WorkshopExport[]) => fetch("/api/workshop/exports", jsonInit(exports, "PUT")).then((r) => json<WorkshopExport[]>(r));
+/** Runs an export on a session: a download answers the file (or, with several pieces, their names); a plugin export queues them. */
+export const runExport = (sessionId: string, exportId: string, query: string) => fetch(`/api/workshop/sessions/${sessionId}/export/${exportId}?${query}`, { method: "POST" });
+
 export const generateDraft = (sessionId: string, input: GenerateInput) =>
   fetch(`/api/workshop/sessions/${sessionId}/generate`, jsonInit(input)).then((r) =>
     json<{ draft: DraftMeta }>(r),

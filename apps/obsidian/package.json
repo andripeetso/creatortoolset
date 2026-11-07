@@ -1,0 +1,19 @@
+{
+  "name": "@creator-toolset/obsidian",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Obsidian plugin: links notes in a vault folder with Creator Toolset's Content Workshop",
+  "main": "main.js",
+  "scripts": {
+    "build": "node esbuild.config.mjs production",
+    "dev": "node esbuild.config.mjs",
+    "test": "node --test src/lib.test.ts",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.0",
+    "esbuild": "^0.25.0",
+    "obsidian": "^1.14.4",
+    "typescript": "^5.9.0"
+  }
+}
