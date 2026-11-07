@@ -1,12 +1,12 @@
 /**
  * AI providers: a provider is one coding-agent CLI on a Mac, signed in as one identity. Anthropic runs through
- * the Claude CLI, so the server's own Claude sign-in serves it; the Anthropic API key is only for demo accounts, when an admin
- * enables it.
+ * the Claude CLI, so the server's own Claude sign-in serves it. An Anthropic API key is not a provider (see below).
  *
  * A provider instance is one coding-agent CLI (its driver) signed in as one identity (its home folder, e.g.
  * ~/.claude-work, which sends Claude through the signed-in Claude account), run by a paired Mac (the Mac relay).
- * Every job picks an instance, a model and an effort. The Anthropic API key is not a provider: it answers only
- * the demo account and guests, and only when an admin turns it on for them.
+ * Every job picks an instance, a model and an effort. An Anthropic API key is not a provider: it answers an account
+ * with no provider (its own key from Settings → My API keys; the server's for the platform admin or a member on an API
+ * budget), and guests and the demo account only when an admin turns it on for them (api/my-keys.ts keyFor).
  */
 
 export type Driver = "claude" | "codex" | "cursor" | "grok" | "opencode" | "antigravity" | "muse" | "pi";
@@ -64,7 +64,7 @@ export interface ProviderSettings {
   /** every job without its own pick */
   default: Selection;
   jobs: Partial<Record<JobId, Selection>>;
-  /** the Anthropic API key: answers guests and the demo account (its visitors too) only when switched on here */
+  /** the server's keys (Anthropic, and Deepgram and NVIDIA for guests): serve guests and the demo account (its visitors too) only when switched on here */
   api: { guests: boolean; demo: boolean; model: string; effort: Effort };
 }
 
