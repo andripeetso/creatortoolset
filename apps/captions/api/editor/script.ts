@@ -20,12 +20,12 @@ export const USABLE = 0.5;
 
 const SYSTEM = `You plan the edit of a video from its raw footage. The footage is transcribed into numbered sentences, in recording order, across one or more source files. The speaker often says the same thing more than once: each attempt is a take.
 
-Group the sentences into lines: a line is one thing the finished video says. For each line, list every take of it in the footage. A take is a run of consecutive sentences, first..last, from one source file, with a score from 0 to 1 for how usable it is. Sentences the video does not need belong to no line.
+Group the sentences into lines: a line is one thing the finished video says. A line's text is the words its best take speaks, not a summary: the cut keeps the words of each take that match it. For each line, list every take of it in the footage. A take is a run of consecutive sentences, first..last, from one source file, with a score from 0 to 1 for how usable it is. Sentences the video does not need belong to no line.
 
 Then plan the versions asked for: each version is an order of line ids that makes a whole video. Versions may use different lines and orders. Follow the user's brief.
 
 Answer with JSON only, in this shape:
-{"lines":[{"id":"L1","text":"what the line says","takes":[{"first":3,"last":4,"score":0.9}]}],"versions":[{"name":"a short name","lines":["L1","L2"]}]}`;
+{"lines":[{"id":"L1","text":"the line's words as its best take says them","takes":[{"first":3,"last":4,"score":0.9}]}],"versions":[{"name":"a short name","lines":["L1","L2"]}]}`;
 
 export interface ScriptInput {
   sentences: Sentence[];

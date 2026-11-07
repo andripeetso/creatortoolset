@@ -109,6 +109,16 @@ describe("AI Editor: edits and who sees them", () => {
     expect((await call("mem-a", "GET", `/api/editor/${id}`)).status).toBe(404);
   });
 
+  it("the creator sets a source's eye line; the owner can't, a source not in the edit is 404, a y off the picture 400", async () => {
+    const { id } = await json<{ id: string }>(create("mem-a", ["ver_a1"]));
+    expect((await json<Edit>(call("mem-a", "GET", `/api/editor/${id}`))).eyeline).toEqual({});
+    expect((await json<Edit>(call("mem-a", "PUT", `/api/editor/${id}/eyeline/ver_a1`, { y: 0.3 }))).eyeline).toEqual({ ver_a1: 0.3 });
+    expect((await call("owner-a", "PUT", `/api/editor/${id}/eyeline/ver_a1`, { y: 0.4 })).status).toBe(403);
+    expect((await call("mem-a", "PUT", `/api/editor/${id}/eyeline/ver_a2`, { y: 0.4 })).status).toBe(404);
+    expect((await call("mem-a", "PUT", `/api/editor/${id}/eyeline/ver_a1`, { y: 1.5 })).status).toBe(400);
+    expect((await call("mem-a", "GET", `/api/editor/${id}/drafts/v1`)).status).toBe(404);
+  });
+
   it("is 403 for an account with the AI Editor switched off", async () => {
     setOff(findUser("mem-b")!, ["editor"]);
     const res = await call("mem-b", "GET", "/api/editor");
@@ -121,14 +131,14 @@ describe("AI Editor: edits and who sees them", () => {
 describe("AI Editor: the worker", () => {
   it("parks a step that names no account, and fails a step that isn't built yet", async () => {
     const { id } = await json<{ id: string }>(create("mem-a", ["ver_a1"]));
-    enqueueJob(libraryDb(), "ws_a", `${id}:`, "draft", null, false, "edit_jobs");
+    enqueueJob(libraryDb(), "ws_a", `${id}:`, "broll", null, false, "edit_jobs");
     await drain();
     const [job] = (await json<Edit>(call("mem-a", "GET", `/api/editor/${id}`))).jobs;
     expect(job).toMatchObject({ state: "needs_key", error: expect.stringMatching(/names no account/) });
 
-    await call("mem-a", "POST", `/api/editor/${id}/run`, { from: "draft" }); // as the creator now
+    await call("mem-a", "POST", `/api/editor/${id}/run`, { from: "broll" }); // as the creator now
     await drain();
-    expect(jobState(job!.id)).toEqual({ state: "failed", error: "No draft step yet" });
+    expect(jobState(job!.id)).toEqual({ state: "failed", error: "No broll step yet" });
   });
 
   it("runs a step as the creator, queues the next one, parks on a missing key, and Retry queues it again", async () => {

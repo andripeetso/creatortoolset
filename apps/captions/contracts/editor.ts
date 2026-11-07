@@ -9,6 +9,9 @@
  *   POST   /api/editor/:id/run             { from?: EditStep } (the creator) → Edit
  *   POST   /api/editor/:id/jobs/:jobId/retry  (the creator) → Edit
  *   POST   /api/editor/:id/stop            stops queued and running steps → Edit
+ *   PUT    /api/editor/:id/eyeline/:versionId  { y: 0..1 } (the creator) → Edit
+ *   GET    /api/editor/:id/drafts/:name    → Draft
+ *   GET    /api/editor/:id/drafts/:name/export?format=otio|fcpxml|zip   the draft for the user's own editor (a download)
  *   DELETE /api/editor/:id                 to the trash (kept LIBRARY_TRASH_DAYS)
  * Every step runs as the edit's creator, on their own keys and AI: a workspace owner sees, stops and deletes, never runs.
  */
@@ -99,6 +102,10 @@ export interface VersionPlan {
 
 export interface Edit extends EditSummary, EditBrief {
   workspaceId: string;
+  /** per source version: the speaker's eye line, a fraction of the picture's height from the top (punch-ins keep it in place) */
+  eyeline: Record<string, number>;
+  /** the versions with a draft timeline, by name */
+  drafts: string[];
   jobs: EditJob[];
   /** the caller may change and run it (the creator) */
   mine: boolean;
@@ -108,4 +115,71 @@ export interface Edit extends EditSummary, EditBrief {
   plans: VersionPlan[];
   /** what a step skipped or could not do (a source with no sound, a take out of range…) */
   notes: string[];
+}
+
+/** The eye line when the user has not set one: a little above the middle, where a speaker's eyes usually are. */
+export const DEFAULT_EYELINE = 0.38;
+
+export const TRACKS = ["V1", "V2", "A1", "A2", "A3"] as const;
+export type TrackId = (typeof TRACKS)[number];
+
+/**
+ * One clip on a track. `rec` and `len` are timeline frames; `in` is the first frame used, in the source's own frames
+ * counted from its first frame (its start timecode not included).
+ */
+export interface Item {
+  /** the source's key in Timeline.sources (its library version id) */
+  src: string;
+  in: number;
+  len: number;
+  rec: number;
+  /** scale, 1 = the source fitted into the frame */
+  zoom?: number;
+  /** timeline pixels the picture moves up (negative: down) */
+  tilt?: number;
+  gainDb?: number;
+  /** items that share it move together (a speaker shot and its voice) */
+  link?: string;
+}
+
+export interface TimelineSource {
+  versionId: string;
+  /** file name without extension, as the library shows it */
+  name: string;
+  fps: number;
+  /** start timecode, in the source's frames */
+  tc: number;
+  /** length in the source's frames */
+  dur: number;
+  /** picture size as shown (rotation applied); 0 for sound only */
+  w: number;
+  h: number;
+}
+
+/** A draft: one version's cut, the single model every export and check reads. */
+export interface Timeline {
+  name: string;
+  fps: number;
+  width: number;
+  height: number;
+  sources: Record<string, TimelineSource>;
+  /** V1 speaker, V2 B-roll, A1 voice, A2 music, A3 sound effects */
+  tracks: Record<TrackId, { name: string; items: Item[] }>;
+  /** one per script line, at the line's first frame; colour is an OTIO marker colour (RED, BLUE, …) */
+  markers: { rec: number; name: string; color: string; note: string }[];
+}
+
+/** What the checks found on a draft; failures are notes, never a block. */
+export interface QaReport {
+  ok: boolean;
+  notes: string[];
+  /** voice this version shares with each other version: share of this version's voice frames, longest shared run */
+  shared: { with: string; pct: number; longestS: number }[];
+}
+
+export interface Draft {
+  timeline: Timeline;
+  /** what the cut skipped (a take with no speech found…) */
+  notes: string[];
+  qa: QaReport;
 }

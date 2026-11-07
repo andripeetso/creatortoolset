@@ -4,7 +4,8 @@ import type { AuthVars } from "../auth";
 import { libraryDb } from "../library/db";
 import { enqueueJob } from "../library/jobs";
 import { workspaceById, memberIn } from "../lib/workspaces";
-import { allEdits, cleanBrief, createEdit, editRole, NoCollection, readEdit, saveEdit, summaryOf, viewOf, type EditMeta } from "./store";
+import { qaOf } from "./qa";
+import { allEdits, cleanBrief, createEdit, draftNames, editRole, NoCollection, readDraft, readEdit, saveEdit, summaryOf, viewOf, type EditMeta } from "./store";
 import { stopEdit } from "./worker";
 
 /**
@@ -102,6 +103,35 @@ editorApp.post("/:id/stop", (c) => {
   if (!r) return notFound(c);
   stopEdit(r.e.id);
   return c.json(viewOf(r.e, c.get("user").username));
+});
+
+editorApp.put("/:id/eyeline/:versionId", async (c) => {
+  const r = load(c);
+  if (!r) return notFound(c);
+  if (r.role !== "creator") return c.json({ error: "Only the edit's creator can change it", code: "forbidden" }, 403);
+  const v = c.req.param("versionId");
+  const y = (await body(c)).y;
+  if (!r.e.sources.includes(v)) return notFound(c);
+  if (typeof y !== "number" || !Number.isFinite(y) || y < 0 || y > 1) return c.json({ error: "y is a fraction of the picture's height, 0 to 1", code: "invalid" }, 400);
+  await saveEdit({ ...r.e, eyeline: { ...r.e.eyeline, [v]: y } });
+  return c.json(viewOf(readEdit(r.e.id)!, r.e.createdBy));
+});
+
+/** A version's draft with its checks, run against the edit's other drafts as they are now. */
+editorApp.get("/:id/drafts/:name", (c) => {
+  const r = load(c);
+  const name = c.req.param("name");
+  const d = r && readDraft(r.e.id, name);
+  if (!r || !d) return notFound(c);
+  const others = Object.fromEntries(
+    draftNames(r.e.id)
+      .filter((n) => n !== name)
+      .flatMap((n) => {
+        const o = readDraft(r.e.id, n);
+        return o ? [[n, o.timeline]] : [];
+      }),
+  );
+  return c.json({ ...d, qa: qaOf(d.timeline, others) });
 });
 
 editorApp.delete("/:id", async (c) => {

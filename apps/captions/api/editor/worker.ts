@@ -5,6 +5,7 @@ import { NeedsKey } from "../library/transcribe";
 import { trashDays } from "../library/trash";
 import { analyzeStep, Waiting } from "./analyze";
 import { scriptStep } from "./script";
+import { draftStep } from "./timeline";
 import { purgeEdits, readEdit, sourcesWorkspace, type EditMeta } from "./store";
 
 /**
@@ -27,11 +28,11 @@ export interface StepContext {
   signal: AbortSignal;
 }
 
-/** The steps by kind; draft and the rest come with their slices. */
-export const STEPS: Record<string, (ctx: StepContext) => Promise<void>> = { analyze: analyzeStep, script: scriptStep };
+/** The steps by kind; B-roll comes with its slice. */
+export const STEPS: Record<string, (ctx: StepContext) => Promise<void>> = { analyze: analyzeStep, script: scriptStep, draft: draftStep };
 
-/** What a finished step queues next, for the same edit and variant. */
-export const NEXT: Record<string, string[]> = { analyze: ["script"] };
+/** What a finished step queues next, for the same edit and variant (a whole-edit draft queues one per version itself). */
+export const NEXT: Record<string, string[]> = { analyze: ["script"], script: ["draft"] };
 
 const running = new Map<number, { edit: string; ctl: AbortController }>();
 

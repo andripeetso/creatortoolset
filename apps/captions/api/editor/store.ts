@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync } from "node:fs";
-import { rm } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
-import { MAX_VERSIONS, type Edit, type EditBrief, type EditJob, type EditSummary, type Line, type Sentence, type VersionPlan } from "../../contracts/editor";
+import { MAX_VERSIONS, type Edit, type Timeline, type EditBrief, type EditJob, type EditSummary, type Line, type Sentence, type VersionPlan } from "../../contracts/editor";
 import { env } from "../lib/env";
 import { memberIn, workspaceById } from "../lib/workspaces";
 import { libraryRole } from "../library/access";
@@ -22,12 +22,15 @@ export interface EditMeta extends EditBrief {
   createdAt: number;
   updatedAt: number;
   sources: string[];
+  /** per source version, set on the edit page (PUT eyeline) */
+  eyeline?: Record<string, number>;
   trashedAt?: number;
 }
 
 const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const root = () => path.join(env.dataDir, "editor");
-const fileOf = (id: string) => path.join(root(), id, "edit.json");
+export const editDir = (id: string) => path.join(root(), id);
+const fileOf = (id: string) => path.join(editDir(id), "edit.json");
 const MAX_SOURCES = 50;
 
 /** The edit, trashed or not; null for an id that is no edit. */
@@ -57,6 +60,40 @@ export function readStep<K extends keyof StepFiles>(id: string, name: K): StepFi
 }
 
 export const saveStep = <K extends keyof StepFiles>(id: string, name: K, value: StepFiles[K]) => writeJsonAtomic(path.join(root(), id, `${name}.json`), value);
+
+/** A version's draft as the draft step saved it: drafts/<name>.json. */
+export interface DraftFile {
+  timeline: Timeline;
+  notes: string[];
+}
+
+const DRAFT = /^v[1-9]$/;
+
+export function readDraft(id: string, name: string): DraftFile | null {
+  if (!DRAFT.test(name)) return null;
+  try {
+    return JSON.parse(readFileSync(path.join(editDir(id), "drafts", `${name}.json`), "utf8")) as DraftFile;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveDraft(id: string, name: string, d: DraftFile): Promise<void> {
+  await mkdir(path.join(editDir(id), "drafts"), { recursive: true });
+  await writeJsonAtomic(path.join(editDir(id), "drafts", `${name}.json`), d);
+}
+
+/** The names of the edit's drafts, in order. */
+export function draftNames(id: string): string[] {
+  try {
+    return readdirSync(path.join(editDir(id), "drafts"))
+      .map((f) => f.replace(/\.json$/, ""))
+      .filter((n) => DRAFT.test(n))
+      .sort();
+  } catch {
+    return [];
+  }
+}
 
 /** Every edit on the server, trashed ones too. */
 export function allEdits(): EditMeta[] {
@@ -190,6 +227,8 @@ export function viewOf(e: EditMeta, username: string): Edit {
     ...summaryOf(e),
     jobs: jobsOf(e.id),
     mine: e.createdBy === username,
+    eyeline: e.eyeline ?? {},
+    drafts: draftNames(e.id),
     sentences: a?.sentences.length ?? 0,
     lines: p?.lines ?? [],
     plans: p?.plans ?? [],
