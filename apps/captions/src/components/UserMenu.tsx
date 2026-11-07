@@ -13,7 +13,6 @@ import { isGuest, logout, useAuth } from "@/lib/auth";
 import { getWorkspace } from "@/lib/workspaces";
 import { isPhoneHub } from "@/lib/mobile";
 import { isPublicReviewPath, isPublicSharePath } from "./AuthGate";
-import { useMacRelease } from "./MacAppDownload";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -40,7 +39,6 @@ export function UserMenu() {
   const me = useAuth((s) => s.me);
   const viewAs = useAuth((s) => s.viewAs);
   const navigate = useNavigate();
-  const release = useMacRelease();
   // the team role, read when the menu opens: "Owner · Workspace" (never the server-operator role)
   const [team, setTeam] = useState<string | null>(null);
 
@@ -91,9 +89,9 @@ export function UserMenu() {
               <DropdownMenuItem onSelect={() => navigate("/settings/usage")} className="text-xs">
                 <BarChart3 /> Usage
               </DropdownMenuItem>
-              {release && !document.documentElement.classList.contains("mac-app") && (
+              {!document.documentElement.classList.contains("mac-app") && (
                 <DropdownMenuItem asChild className="text-xs">
-                  <a href="/api/mac-app/download">
+                  <a href="/download">
                     <Download /> Get the Mac app
                   </a>
                 </DropdownMenuItem>

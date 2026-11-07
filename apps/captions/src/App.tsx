@@ -23,7 +23,7 @@ import LibrarySharePage from "./pages/LibrarySharePage";
 import EditorPage from "./pages/EditorPage";
 import EditorEditPage from "./pages/EditorEditPage";
 import type { Tool } from "@contracts/tools";
-import { isPublicLibraryPath, isPublicReviewPath, isPublicSharePath } from "@/components/AuthGate";
+import { isPublicDownloadPath, isPublicLibraryPath, isPublicReviewPath, isPublicSharePath } from "@/components/AuthGate";
 import { analyzerHome } from "@/lib/instagram";
 import { isPhoneHub } from "@/lib/mobile";
 import { ExportTray } from "@/components/ExportTray";
@@ -59,6 +59,7 @@ const MobileWorkshopSessionPage = lazy(() =>
   })),
 );
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
+const DownloadPage = lazy(() => import("./pages/DownloadPage"));
 
 function PhoneTool({ children }: { children: ReactNode }) {
   return (
@@ -200,7 +201,8 @@ export default function App() {
   const closeSettings = () => navigate(behind.current ? behind.current.pathname + behind.current.search + behind.current.hash : "/");
   const onMobile = location.pathname.startsWith("/m");
   const publicPage =
-    isPublicSharePath(location.pathname) || isPublicReviewPath(location.pathname) || isPublicLibraryPath(location.pathname);
+    isPublicSharePath(location.pathname) || isPublicReviewPath(location.pathname) || isPublicLibraryPath(location.pathname) ||
+    isPublicDownloadPath(location.pathname);
   // a role preview: a banner on top, the page scrolls below it; the demo: a
   // frame round it, the page inside
   const viewAs = useAuth((state) => !!state.viewAs);
@@ -283,6 +285,7 @@ export default function App() {
           <Route path="/rp/:ptoken" element={<ReviewSharedProjectPage />} />
           <Route path="/ws/:token" element={<WorkshopSharePage />} />
           <Route path="/library/s/:token" element={<LibrarySharePage />} />
+          <Route path="/download" element={<Suspense fallback={<div className="h-dvh bg-[#0b0b10]" />}><DownloadPage /></Suspense>} />
           <Route path="/privacy" element={<LegalPage page="/privacy" />} />
           <Route path="/terms" element={<LegalPage page="/terms" />} />
           <Route path="/data-deletion" element={<LegalPage page="/data-deletion" />} />

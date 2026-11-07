@@ -63,6 +63,9 @@ function MacAppPrompt({ version }: { version: string }) {
         The site in its own window, with notifications, and your AI running on
         your own Mac.
       </p>
+      <a href="/download" onClick={close} className="mt-1 inline-block text-[12px] text-violet-300 hover:text-violet-200">
+        Downloads and your own server
+      </a>
       <div className="mt-2.5 flex items-center gap-2">
         <a
           href="/api/mac-app/download"

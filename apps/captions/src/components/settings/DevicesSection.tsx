@@ -67,6 +67,9 @@ export function DevicesSection() {
           ) : (
             <Notice>The download link for the Mac app comes later.</Notice>
           )}
+          <p className="mt-2 text-xs text-muted-foreground">
+            <a href="/download" className="underline underline-offset-2 hover:text-foreground">Downloads and the self-hosting guide</a>
+          </p>
         </div>
       </Group>
     </>
