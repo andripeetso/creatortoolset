@@ -40,9 +40,27 @@ one of two ways:
    for my AI". The Mac app relays only your own requests, from your own account, to that tool. Nothing routes
    one person's subscription for anyone else: everyone else on the server brings their own Mac and their own
    sign-in. Settings → AI providers walks you through the install and the sign-in.
-2. **Your own API key.** On your own server, put your Anthropic key in `.env` (`ANTHROPIC_API_KEY`). It serves
-   your own work, and members of your workspace only when you choose to give them a monthly API budget (you pay
-   for that).
+2. **Your own API key.** Add your Anthropic key in Settings → My API keys. Anthropic bills you for what you use,
+   and the key answers only your own account.
+
+There is no fallback. With no provider and no key of your own, a tool that needs AI says so; the Content Workshop
+always needs your own Claude Code or Codex, and when that Mac is off or a run fails it says so too.
+
+## Whose keys pay
+
+Every paid service (AI, cloud transcription, audio engines, research, Apify) runs on the key of the person who
+uses it: each account adds its own in **Settings → My API keys** (Apify in **Settings → Connectors**), and that
+provider bills them directly. One resolver, `keyFor` in `apps/captions/api/my-keys.ts`, decides which key a call
+runs on. The server's own keys (in `.env` or Settings → API keys) serve only:
+
+- the platform admin's own work, except AI: the server's Anthropic key is never the admin's AI;
+- members whose workspace the platform admin owns and who were given a monthly API budget (AI and transcripts,
+  billed to that budget);
+- guests and the demo account, only when an admin switches that on.
+
+Accounts made with open sign-up (`ALLOW_SIGNUP=1`) get their own workspace and never use the server's keys.
+Instagram is read only through the official logins (your own posts and their numbers) and, for other creators,
+your own Apify key: the app never reads Instagram's web pages.
 
 Without any AI, everything else still works. Captions transcribe on the device in the browser, and Review,
 Video Cleaner and the rest need no AI at all.

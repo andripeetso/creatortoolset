@@ -13,7 +13,7 @@ import { MY_KEYS, type MyKeyEnv, type MyKeyView } from "../contracts/service-key
  * through. Each account's keys: $DATA_DIR/my-keys/<username>.json (0600), never logged, never sent back (last 4 only).
  *
  * keyFor(actor, service): the actor's own key; else the server's key (Settings → API keys or the .env) only for the
- * platform admin, a member whose workspace owner gave them an API budget (services the budget can price, billed with
+ * platform admin (not the Anthropic key: an admin's AI is their own provider or key), a member whose workspace owner gave them an API budget (services the budget can price, billed with
  * addSpend by the caller), or a guest or the demo when an admin switched that on; else none, with the message that
  * says which key to add. No actor = none: background work always names whose work it is.
  */
@@ -96,7 +96,8 @@ export function keyFor(actor: Actor, name: MyKeyEnv): KeyRoute {
   if (!w.username) return { key: "", missing: addKeyMessage(name) };
   const own = myKeys(w.username)[name];
   if (own) return { key: own };
-  if (w.admin) return server ? { key: server } : { key: "", missing: addKeyMessage(name) };
+  // the server's Anthropic key is never the admin's AI: their AI is their own provider or their own key (ai-complete.ts aiFor)
+  if (w.admin) return server && name !== "ANTHROPIC_API_KEY" ? { key: server } : { key: "", missing: addKeyMessage(name) };
   const left = BUDGETED.has(name) ? budgetLeft(w.username) : null;
   if (left !== null && left <= 0) return { key: "", missing: `Your API budget for this month is used up: ask your workspace's owner, or ${addKeyMessage(name).toLowerCase()}` };
   if (left !== null && server) return { key: server, bill: w.username };

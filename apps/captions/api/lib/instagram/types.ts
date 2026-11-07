@@ -183,7 +183,7 @@ export interface PostIdea {
 export type CatalogVisibility = "public" | "trial";
 
 /** Which evidence decided `visibility` (see classifyVisibility). */
-export type VisibilityBasis = "grid" | "grid_complete" | "shared_to_feed" | "not_shared_to_feed" | "kind";
+export type VisibilityBasis = "shared_to_feed" | "not_shared_to_feed" | "kind";
 
 /** Raw Graph values from the last fetch that returned the post. CDN URLs expire. */
 export interface CatalogGraph {

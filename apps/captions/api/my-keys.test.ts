@@ -26,6 +26,7 @@ const { addSpend, createInvite, updateMember, workspaceById } = await import("./
 const { saveSettings } = await import("./lib/providers");
 const { DEFAULT_SETTINGS } = await import("../contracts/providers");
 const { transcribeApp, cloudTranscribeBlock } = await import("./transcribe");
+const { aiFor } = await import("./ai-complete");
 createUser("mia", "password1");
 createUser("lee", "password1");
 createUser("nina", "password1");
@@ -73,6 +74,23 @@ describe("keyFor: whose key pays", () => {
     expect(keyFor("nina", "DEEPGRAM_API_KEY").key).toBe("");
     // the admin's workspace still can
     expect(() => updateMember(workspaceById("w1")!, "lee", "owner", { ai: "own" })).not.toThrow();
+  });
+
+  it("the server's Anthropic key is never an admin's AI; guests switched on and budget members still get it", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "server-ai");
+    await saveSettings({ ...DEFAULT_SETTINGS, api: { ...DEFAULT_SETTINGS.api, guests: true } });
+    const admin = { username: "admin", role: "admin" as const };
+    // no provider of their own: no AI, and it says where to add one
+    expect(aiFor(admin, "captions", "Caption Studio")).toEqual({ only: [], off: expect.stringMatching(/^No AI provider for your account: add one in Settings → AI providers/) });
+    expect(keyFor(admin, "ANTHROPIC_API_KEY").key).toBe("");
+    // their own key is their choice
+    saveMyKey("admin", "ANTHROPIC_API_KEY", "admin-own-1234");
+    expect(aiFor(admin, "captions", "Caption Studio")).toMatchObject({ only: ["anthropic"], apiKey: "admin-own-1234" });
+    saveMyKey("admin", "ANTHROPIC_API_KEY", null);
+    // the server's key still serves a guest when switched on, and a budget member, billed to them
+    expect(aiFor({ username: "guest-0123456789ab", role: "guest" }, "captions", "Caption Studio")).toMatchObject({ only: ["anthropic"], apiKey: "server-ai" });
+    updateMember(workspaceById("w1")!, "mia", "owner", { budgetUsd: 100 });
+    expect(aiFor("mia", "captions", "Caption Studio")).toMatchObject({ only: ["anthropic"], apiKey: "server-ai", bill: "mia" });
   });
 
   it("Settings → My API keys never sends a key back, and is not for guests", async () => {

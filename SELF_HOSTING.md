@@ -20,8 +20,11 @@ Ground rules for whoever runs it:
 - Your accounts: one admin (you) and as many members as you invite.
 - Your data on the server's disk, or in a private S3-compatible bucket you own.
 - AI from your own subscription: you install Claude Code (or Codex) on your own Mac and sign in with your own
-  subscription; the Mac app relays only your own requests to it. Each member does the same on their own Mac.
-  You can also add your own API key on the server.
+  subscription; the Mac app relays only your own requests to it. Each member does the same on their own Mac, or
+  adds their own Anthropic key in Settings → My API keys.
+- Every paid service on the key of the person who uses it (Settings → My API keys). Your server's keys serve
+  only you (not for AI), the members you give an API budget, and guests and the demo when you switch that on.
+  See "Whose keys pay" in step 8.
 - The web app works on phones: open it in the phone's browser and add it to the home screen.
 
 This repository does not include an iPhone app.
@@ -85,10 +88,13 @@ Set these in `.env` (edit the file, or use `sed`):
 
 Optional, now or later (see step 4 and `.env.example` for every variable):
 
-- `ANTHROPIC_API_KEY`: an API key for the team's API budget (step 8).
-- `DEEPGRAM_API_KEY`: cloud transcription.
-- `ELEVENLABS_API_KEY`, `NVIDIA_API_KEY`: the Audio Enhancer's engines.
-- `PERPLEXITY_API_KEY`: the Content Workshop's accuracy check.
+- `ANTHROPIC_API_KEY`: pays for the API budgets you give members, and guests' and the demo's AI when on (step 8).
+  It is never your own AI: add your own key in Settings → My API keys for that.
+- `DEEPGRAM_API_KEY`: cloud transcription, for you and budget members.
+- `ELEVENLABS_API_KEY`, `NVIDIA_API_KEY`: the Audio Enhancer's engines, for you.
+- `PERPLEXITY_API_KEY`: the Content Workshop's accuracy check, for you.
+
+These are the server's keys. Every other account adds its own in Settings → My API keys (step 8).
 - `OBJECT_STORAGE_*`: a private bucket for uploads (step 5).
 - `COOKIE_DOMAIN`: only if several subdomains of one server share the sign-in, e.g. `.example.com`. Empty = the exact host.
 
@@ -194,10 +200,28 @@ On your Mac:
 5. In the site: **Settings → AI providers → Set up your AI** shows the install and sign-in commands for Claude
    Code and Codex. Run them once in Terminal on that Mac, then press **check**.
 
-**Your own API key on the server (for your work, and a budget you choose to give).** Set `ANTHROPIC_API_KEY` in `.env` and run
-`docker compose up -d`. Members who have no AI of their own can then use a monthly budget. In
-**Settings → Team** you set each member's AI route (their own Mac, or the budget) and the budget in dollars.
-A budget only works when the key is set.
+**An API key of your own.** Anyone, you included, can add their own Anthropic key in **Settings → My API keys**:
+it answers only their account, and Anthropic bills them. There is no fallback: with no provider and no key of
+their own, a tool that needs AI says so. The Content Workshop always needs a person's own Claude Code or Codex.
+
+**A budget you choose to give (on the server's key).** Set `ANTHROPIC_API_KEY` in `.env` and run
+`docker compose up -d`. Members of your own workspace who have no AI of their own can then use a monthly budget:
+in **Settings → Team** you set each member's AI route (their own Mac, or the budget) and the budget in dollars.
+A budget only works when the key is set, and only in the platform admin's workspace (another owner's Team page
+does not offer it). The server's key never answers your own AI.
+
+### Whose keys pay
+
+One resolver, `keyFor` in `apps/captions/api/my-keys.ts`, picks the key every paid call runs on: the person's own
+key from **Settings → My API keys** first. Else the server's key (`.env` or **Settings → API keys**), only for:
+
+- you, the platform admin (or the one local account when `APP_SECRET` is unset), for every service except AI;
+- members of your workspace on an API budget, for AI and transcripts, billed to their month;
+- guests and the demo account, when you switch them on in **Settings → AI providers**.
+
+Everyone else, including every account made with `ALLOW_SIGNUP=1`, uses their own keys; a tool without one says
+which key to add. Instagram: the official Meta login reads a person's own posts and their numbers; other
+creators' posts are read only with that person's own Apify key (**Settings → Connectors**).
 
 Check: **Settings → AI providers** shows your Mac as online with a tool installed, and a test call passes. The
 doctor's `Anthropic` line is `ok` when the key is accepted.
@@ -205,7 +229,7 @@ doctor's `Anthropic` line is `ok` when the key is accepted.
 Rules to keep:
 
 - A person's Mac and login serve that person. Do not share one Mac or one subscription with another person.
-- Do not put a subscription login in a shared place. Use a budget for members.
+- Do not put a subscription login in a shared place. Members bring their own AI or key, or you give them a budget.
 
 ## 9. Backups
 

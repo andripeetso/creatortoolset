@@ -84,10 +84,10 @@ describe("mergeCatalogCounts", () => {
 
   it("keeps the Graph block and visibility basis when a newer row lacks them", () => {
     const graph = { mediaType: "VIDEO", productType: "REELS", permalink: "https://www.instagram.com/reel/aaa/", seenAt: 5, insightsAt: 5 };
-    const prev = [row("aaa", { graphId: "1", graph, visibility: "trial", visibilityBasis: "grid_complete" })];
+    const prev = [row("aaa", { graphId: "1", graph, visibility: "trial", visibilityBasis: "not_shared_to_feed" })];
     // a library/Apify row for the same post: no Graph data, no visibility
     const merged = mergeCatalog(prev, [row("aaa", { counts: { plays: 11 } })]);
-    expect(merged[0]).toMatchObject({ graph, visibility: "trial", visibilityBasis: "grid_complete", counts: { plays: 11 } });
+    expect(merged[0]).toMatchObject({ graph, visibility: "trial", visibilityBasis: "not_shared_to_feed", counts: { plays: 11 } });
   });
 
   it("takes a fresh Graph block but keeps when insights were last read if this fetch had none", () => {
@@ -109,15 +109,15 @@ describe("mergeCatalogCounts", () => {
   });
 
   it("moves the visibility basis together with the visibility", () => {
-    const prev = [row("aaa", { visibility: "public", visibilityBasis: "grid" })];
+    const prev = [row("aaa", { visibility: "public", visibilityBasis: "shared_to_feed" })];
     expect(mergeCatalog(prev, [row("aaa", { visibility: "trial", visibilityBasis: "not_shared_to_feed" })])[0]).toMatchObject({
       visibility: "trial",
       visibilityBasis: "not_shared_to_feed",
     });
     expect(mergeCatalog(prev, [row("aaa", { visibility: "public" })])[0]?.visibilityBasis).toBeUndefined();
-    expect(mergeCatalogCounts(prev, [row("aaa", { visibility: "trial", visibilityBasis: "grid_complete" })])[0]).toMatchObject({
+    expect(mergeCatalogCounts(prev, [row("aaa", { visibility: "trial", visibilityBasis: "not_shared_to_feed" })])[0]).toMatchObject({
       visibility: "trial",
-      visibilityBasis: "grid_complete",
+      visibilityBasis: "not_shared_to_feed",
     });
   });
 

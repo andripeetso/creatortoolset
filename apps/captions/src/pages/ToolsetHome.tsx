@@ -152,10 +152,10 @@ export default function ToolsetHome() {
   const { projectTint, homeGlow } = useAppearance();
 
   if (phone && location.pathname === "/") {
-    return <Navigate to="/m" replace />;
+    return <Navigate to={{ pathname: "/m", search: location.search }} replace />;
   }
   if (!phone && location.pathname === "/m") {
-    return <Navigate to="/" replace />;
+    return <Navigate to={{ pathname: "/", search: location.search }} replace />;
   }
 
   const openTool = async (

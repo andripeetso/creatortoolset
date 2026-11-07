@@ -84,12 +84,16 @@ export function WorkspaceSection() {
       {manager && (
         <Group
           title="AI for members"
-          hint="Your own AI (Claude or ChatGPT on your Mac) answers only you. Each member either connects their own in Settings → AI providers, or gets a monthly budget on the workspace's API key, paid per call."
+          hint={
+            view.budgets
+              ? "Your own AI (Claude or ChatGPT on your Mac) answers only you. Each member either connects their own in Settings → AI providers, or gets a monthly budget on the workspace's API key, paid per call."
+              : "Your own AI (Claude or ChatGPT on your Mac) answers only you. Each member connects their own in Settings → AI providers, or adds their own key in Settings → My API keys."
+          }
         >
-          {!view.apiKey && view.members.some((m) => m.ai === "budget") && (
+          {view.budgets && !view.apiKey && view.members.some((m) => m.ai === "budget") && (
             <Notice tone="warn">Some members are on an API budget, but this server has no Anthropic API key, so their AI is off.</Notice>
           )}
-          <Notice>Content Workshop always needs the member's own AI: it reads the whole project folder, which an API budget can't.</Notice>
+          {view.budgets && <Notice>Content Workshop always needs the member's own AI: it reads the whole project folder, which an API budget can't.</Notice>}
         </Group>
       )}
     </div>
@@ -142,7 +146,7 @@ function MemberRow({
       >
         {editable && (
           <div className="flex flex-wrap items-center gap-2">
-            <AiPicker key={m.budgetUsd} ai={m.ai} budget={m.budgetUsd} onChange={(ai, budgetUsd) => patch({ ai, budgetUsd })} label={m.username} />
+            {view.budgets && <AiPicker key={m.budgetUsd} ai={m.ai} budget={m.budgetUsd} onChange={(ai, budgetUsd) => patch({ ai, budgetUsd })} label={m.username} />}
             <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setApps((a) => !a)} aria-expanded={apps}>
               Apps
             </Button>
@@ -227,7 +231,7 @@ function InviteGroup({ view, run }: { view: WorkspaceView; run: (p: Promise<unkn
       <Card>
         <Row label="New invite link">
           <div className="flex flex-wrap items-center gap-2">
-            <AiPicker ai={input.ai} budget={input.budgetUsd} onChange={(ai, budgetUsd) => setInput({ ...input, ai, budgetUsd })} label="The invited person" />
+            {view.budgets && <AiPicker ai={input.ai} budget={input.budgetUsd} onChange={(ai, budgetUsd) => setInput({ ...input, ai, budgetUsd })} label="The invited person" />}
             <Button size="sm" className="h-7 text-xs" onClick={() => void make()}>
               Create link
             </Button>

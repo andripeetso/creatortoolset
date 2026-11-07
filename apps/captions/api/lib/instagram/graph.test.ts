@@ -324,19 +324,11 @@ describe("fetchMineCatalogAll", () => {
 });
 
 describe("classifyVisibility", () => {
-  it("uses a complete public grid when Instagram lets us see it", () => {
-    const grid = { ok: true, complete: true, shortcodes: new Set(["AaAaAaAaAaA"]), ids: new Set<string>() };
-    expect(classifyVisibility({ kind: "reel", shortcode: "AaAaAaAaAaA" }, grid)).toBe("public");
-    expect(classifyVisibility({ kind: "reel", shortcode: "TrialCode1" }, grid)).toBe("trial");
-  });
-
-  it("falls back to is_shared_to_feed when the public grid is incomplete", () => {
-    const grid = { ok: true, complete: false, shortcodes: new Set(["SeenPub1"]), ids: new Set<string>() };
-    expect(classifyVisibility({ kind: "reel", shortcode: "SeenPub1", isSharedToFeed: false }, grid)).toBe("public");
-    expect(classifyVisibility({ kind: "reel", shortcode: "x", isSharedToFeed: true })).toBe("public");
-    expect(classifyVisibility({ kind: "reel", shortcode: "x", isSharedToFeed: false })).toBe("trial");
-    expect(classifyVisibility({ kind: "carousel", shortcode: "x" })).toBe("public");
-    expect(classifyVisibility({ kind: "reel", shortcode: "x" })).toBeUndefined();
+  it("reads is_shared_to_feed from the official login only; a reel without it stays unknown", () => {
+    expect(classifyVisibility({ kind: "reel", isSharedToFeed: true })).toBe("public");
+    expect(classifyVisibility({ kind: "reel", isSharedToFeed: false })).toBe("trial");
+    expect(classifyVisibility({ kind: "carousel" })).toBe("public");
+    expect(classifyVisibility({ kind: "reel" })).toBeUndefined();
   });
 
   it("stamps a catalog from shared-to-feed flags", () => {
@@ -355,26 +347,10 @@ describe("classifyVisibility", () => {
   });
 
   it("says which evidence decided", () => {
-    const complete = { ok: true, complete: true, shortcodes: new Set(["OnGrid"]), ids: new Set<string>() };
-    const partial = { ...complete, complete: false };
-    expect(classifyVisibilityWithBasis({ kind: "reel", shortcode: "OnGrid" }, partial)).toEqual({
-      visibility: "public",
-      basis: "grid",
-    });
-    expect(classifyVisibilityWithBasis({ kind: "reel", shortcode: "Hidden", isSharedToFeed: true }, complete)).toEqual({
-      visibility: "trial",
-      basis: "grid_complete",
-    });
-    expect(classifyVisibilityWithBasis({ kind: "reel", shortcode: "x", isSharedToFeed: true }, partial)).toEqual({
-      visibility: "public",
-      basis: "shared_to_feed",
-    });
-    expect(classifyVisibilityWithBasis({ kind: "reel", shortcode: "x", isSharedToFeed: false }, partial)).toEqual({
-      visibility: "trial",
-      basis: "not_shared_to_feed",
-    });
-    expect(classifyVisibilityWithBasis({ kind: "post", shortcode: "x" })).toEqual({ visibility: "public", basis: "kind" });
-    expect(classifyVisibilityWithBasis({ kind: "reel", shortcode: "x" })).toEqual({});
+    expect(classifyVisibilityWithBasis({ kind: "reel", isSharedToFeed: true })).toEqual({ visibility: "public", basis: "shared_to_feed" });
+    expect(classifyVisibilityWithBasis({ kind: "reel", isSharedToFeed: false })).toEqual({ visibility: "trial", basis: "not_shared_to_feed" });
+    expect(classifyVisibilityWithBasis({ kind: "post" })).toEqual({ visibility: "public", basis: "kind" });
+    expect(classifyVisibilityWithBasis({ kind: "reel" })).toEqual({});
   });
 });
 

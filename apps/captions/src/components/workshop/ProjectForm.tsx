@@ -217,7 +217,7 @@ export function ProjectForm({
             type="button"
             disabled={locked || !handle.trim() || !canSync}
             onClick={sync}
-            title="Refresh profile, every post, insights and comments from Graph, plus the public grid"
+            title="Refresh profile, every post, insights and comments from the official Instagram login"
             className="flex shrink-0 items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 py-1.5 text-[11px] text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
           >
             {pulling || linked?.status === "processing" ? (
@@ -242,7 +242,7 @@ export function ProjectForm({
         ) : null}
         <p className="mt-0.5 text-[10px] text-zinc-600">
           {canSync
-            ? "Sync is this project's Instagram in Analyzer: Meta Graph (private insights, comments, trial reels) plus the public grid."
+            ? "Sync is this project's Instagram in Analyzer: the official login's posts, insights, comments and trial reels."
             : "Links the handle as your account. To read its posts, log in with Instagram or add your own Apify key (Settings → Connectors), then Sync."}
         </p>
         {error ? <p className="mt-0.5 text-[10px] text-red-400">{error}</p> : null}

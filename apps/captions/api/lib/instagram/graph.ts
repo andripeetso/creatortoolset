@@ -183,50 +183,26 @@ export function catalogItemFromGraph(raw: Rec, now = Date.now()): CatalogItem | 
   };
 }
 
-export interface PublicGridKeys {
-  ok: boolean;
-  complete: boolean;
-  shortcodes: Set<string>;
-  ids: Set<string>;
-  expected?: number;
-}
+type VisibilityInput = Pick<CatalogItem, "kind" | "isSharedToFeed">;
 
-type VisibilityInput = Pick<CatalogItem, "kind" | "shortcode" | "graphId" | "isSharedToFeed">;
-
-/** classifyVisibility plus the evidence it used, so a stricter reader can drop the weak cases. */
-export function classifyVisibilityWithBasis(
-  item: VisibilityInput,
-  publicGrid?: PublicGridKeys | null,
-): { visibility?: CatalogVisibility; basis?: VisibilityBasis } {
-  const onPublicGrid =
-    publicGrid?.ok &&
-    (publicGrid.shortcodes.has(item.shortcode) || Boolean(item.graphId && publicGrid.ids.has(item.graphId)));
-  if (onPublicGrid) return { visibility: "public", basis: "grid" };
-  if (publicGrid?.ok && publicGrid.complete) return { visibility: "trial", basis: "grid_complete" };
+/**
+ * Trial or public from the official login only: a reel's is_shared_to_feed, and every other kind is public. Nothing
+ * else (no read of Instagram's web pages): a reel without the flag stays unknown. Returns the evidence it used too.
+ */
+export function classifyVisibilityWithBasis(item: VisibilityInput): { visibility?: CatalogVisibility; basis?: VisibilityBasis } {
   if (item.isSharedToFeed === true) return { visibility: "public", basis: "shared_to_feed" };
   if (item.isSharedToFeed === false) return { visibility: "trial", basis: "not_shared_to_feed" };
   if (item.kind !== "reel") return { visibility: "public", basis: "kind" };
   return {};
 }
 
-/** On the public profile = public. In Graph but not public = trial. */
-export function classifyVisibility(
-  item: VisibilityInput,
-  publicGrid?: PublicGridKeys | null,
-): CatalogVisibility | undefined {
-  return classifyVisibilityWithBasis(item, publicGrid).visibility;
-}
+export const classifyVisibility = (item: VisibilityInput): CatalogVisibility | undefined => classifyVisibilityWithBasis(item).visibility;
 
-export function applyMineVisibility(
-  items: CatalogItem[],
-  shared: Map<string, boolean>,
-  publicGrid?: PublicGridKeys | null,
-): CatalogItem[] {
+export function applyMineVisibility(items: CatalogItem[], shared: Map<string, boolean>): CatalogItem[] {
   return items.map((item) => {
-    const isSharedToFeed =
-      item.graphId && shared.has(item.graphId) ? shared.get(item.graphId) : item.isSharedToFeed;
+    const isSharedToFeed = item.graphId && shared.has(item.graphId) ? shared.get(item.graphId) : item.isSharedToFeed;
     const next = { ...item, isSharedToFeed };
-    const { visibility, basis } = classifyVisibilityWithBasis(next, publicGrid);
+    const { visibility, basis } = classifyVisibilityWithBasis(next);
     return { ...next, visibility, visibilityBasis: basis };
   });
 }

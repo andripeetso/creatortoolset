@@ -55,6 +55,13 @@ describe("workspaces: the team, its members and invites", () => {
       ["lee", "member", "own"],
     ]); // the demo account is no member
     expect(v.seats).toBe(2);
+    expect(v.budgets).toBe(true); // the platform admin's workspace: the server's key can pay a budget
+  });
+
+  it("someone else's own workspace is told it has no API budget to give", async () => {
+    createUser("sam", "password1", { role: "user" });
+    as("sam", "user");
+    expect(await view()).toMatchObject({ me: "owner", budgets: false, apiKey: false });
   });
 
   it("an invite link makes a new account, signs it in, and joins it with the invite's AI; the link works once", async () => {

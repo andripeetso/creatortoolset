@@ -85,7 +85,7 @@ import {
  * (carousel layouts) runs on the default.
  */
 const workshopAi = (user: SessionUser, own?: Selection): ProviderOpts => route(user, "workshop", "Workshop", own);
-// the Workshop's own route: a member on an API budget has AI elsewhere, but not here (aiFor onBudget)
+// the Workshop's own route: a member on an API budget has AI elsewhere, but not here (aiFor onApiKey)
 const aiOn = (user: SessionUser) => !workshopAi(user).off;
 /** Which provider and model answer this session: a resumed Mac session belongs to exactly one. */
 const providerKey = (user: SessionUser, own?: Selection) => {

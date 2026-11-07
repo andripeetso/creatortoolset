@@ -48,6 +48,7 @@ function viewFor(u: SessionUser): WorkspaceView | null {
     me: me.role,
     members,
     invites: manager ? invitesOf(w) : [],
+    budgets: serverPays(w),
     apiKey: serverPays(w) && !!anthropicKey(),
     seats: w.members.filter((m) => m.role !== "owner").length,
   };

@@ -73,6 +73,8 @@ export interface WorkspaceView {
   members: MemberView[];
   /** the owner only */
   invites: Invite[];
+  /** the server honours an API budget here (the platform admin's workspace): otherwise every member uses their own AI */
+  budgets: boolean;
   /** the workspace's API key is set on the server (a `budget` route needs it) */
   apiKey: boolean;
   /** seats in use: everyone but the owner */

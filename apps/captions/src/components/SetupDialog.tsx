@@ -27,7 +27,8 @@ const seenKey = (u: string) => `ct-setup-done:${u}`;
  * First-run setup. Each step is the same screen as in Settings / the Workshop, so nothing here is a second copy. The
  * first project is required (while a Workshop user has none the dialog can't be closed); every other step can be
  * skipped, and the whole thing reopened with ?setup=project (Settings → General). Opens by itself after "Create
- * account" (AuthGate) and on the first login of a Workshop user with no project.
+ * account" (AuthGate) and on the first login of a Workshop user with no project. On a phone it is a full-screen sheet;
+ * a step's link into Settings (Connect a Mac) comes back here when Settings closes (App.tsx keeps the page behind it).
  */
 export function SetupDialog() {
   const me = useViewedMe();
@@ -73,8 +74,8 @@ export function SetupDialog() {
 
   return (
     <Dialog open onOpenChange={(o) => !o && !required && go(null)}>
-      <DialogContent showCloseButton={!required} className="flex h-[min(860px,calc(100dvh-2rem))] w-[min(980px,calc(100vw-2rem))] max-w-none flex-col gap-0 overflow-hidden p-0 sm:max-w-none">
-        <div className="border-b border-border px-6 pb-4 pt-5">
+      <DialogContent showCloseButton={!required} className="flex h-[min(860px,calc(100dvh-2rem))] w-[min(980px,calc(100vw-2rem))] max-w-none flex-col gap-0 overflow-hidden p-0 sm:max-w-none max-sm:h-dvh max-sm:w-screen max-sm:rounded-none max-sm:border-0 max-sm:pt-[env(safe-area-inset-top)]">
+        <div className="border-b border-border px-4 pb-4 pt-5 sm:px-6">
           <DialogTitle>Set up Creator Toolset</DialogTitle>
           <DialogDescription className="mt-1">{STEPS[at]!.hint}</DialogDescription>
           <ol className="mt-3 flex flex-wrap gap-1.5 text-xs">
@@ -92,7 +93,7 @@ export function SetupDialog() {
             ))}
           </ol>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
           {step === "project" &&
             (projects.length ? (
               <p className="text-sm text-muted-foreground">
@@ -112,7 +113,7 @@ export function SetupDialog() {
           {step === "connectors" && <ConnectorsSection back="/?setup=connectors" compact />}
           {step === "keys" && <MyKeysSection only={[...OTHER_KEYS]} />}
         </div>
-        <div className="flex items-center justify-between border-t border-border px-6 py-3">
+        <div className="flex items-center justify-between gap-2 border-t border-border px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
           {required ? (
             <span className="text-xs text-muted-foreground">Create a project to go on</span>
           ) : (

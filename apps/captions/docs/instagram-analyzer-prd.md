@@ -6,9 +6,19 @@ Owner: Creator Toolset (`/instagram` today)
 Live product name today: Instagram ingest
 Target product name: **Instagram Analyzer**
 
-> Since 2026-11: the burner/session-cookie path described below is gone. Other creators' posts are read only on each
-> user's own Apify key, your own account through the official Meta login; the app never reads Instagram's web pages
-> with cookies.
+> **How it reads Instagram today (2026-11).** Two sources, nothing else:
+>
+> - **The official Meta login** (Settings → Connectors, or `META_ACCESS_TOKEN` for the server admin's own account):
+>   your own professional account only. It gives your posts, their insights and comments, your account's numbers,
+>   and whether a reel was shared to the feed (trial reels). It gives nothing about other creators, and a reel it
+>   has no shared-to-feed flag for stays "visibility unknown".
+> - **Your own Apify key** (Settings → Connectors): other creators' public profiles, posts and comments. Apify bills
+>   you for each read; nobody else's key, and no server-wide key, is ever used for you (`APIFY_TOKEN` serves only
+>   the one local account when `APP_SECRET` is unset).
+>
+> There are no session cookies, burner accounts or browser collectors, and the app never reads Instagram's web
+> pages, logged in or not. The sections below are the original plan: where they mention a burner, a session, cookies
+> or a browser comment scraper, that part was removed.
 
 This document turns the nine requests below into one product: objects, jobs, UI, data, and a build order. Nothing here is implemented yet except what is called out under Current state.
 
@@ -53,10 +63,10 @@ What you actually want is a **library of Instagram accounts and their posts**, w
 - Creator is a `{ username, id }` blob on the post. There is **no account record**, no catalog, no “all videos for @x”.
 - Search is lowercase token-and over `search.txt` (caption, slides, transcripts, comments). No tags, no vectors.
 - Access: same gate as cloud transcription (`admin` or `user.cloud`).
-- **Apify token and burner cookies are global** (`$DATA_DIR/instagram/apify.json` and `session.json`), pasted in an admin-only card. Any user who can open the tool **runs jobs on that shared token**. `savedBy` is audit only.
+- **Apify token and burner cookies were global** (2026-09; the cookies are gone since, and the token is per user), pasted in an admin-only card. Any user who can open the tool **runs jobs on that shared token**. `savedBy` is audit only.
 - Persistence is JSON under `$DATA_DIR/instagram/<postId>/`. No database.
 
-The rebuild is: **keep the fetchers** (Apify + burner session + download + Deepgram + vision + comments), **stop treating “ingest” as one atomic pipeline**.
+The rebuild is: **keep the fetchers** (Apify + download + Deepgram + vision + comments), **stop treating “ingest” as one atomic pipeline**.
 
 ---
 
@@ -102,9 +112,7 @@ Stored at `$DATA_DIR/instagram/users/<username>/` mode `0600`, never returned to
 
 | File | Purpose |
 | --- | --- |
-| `source.json` | `"apify"` or `"session"` for **this** user |
-| `apify.json` | Their Apify token |
-| `session.json` | Their burner cookies (if they use that path) |
+| `apify.json` | Their Apify token (set in Settings → Connectors) |
 
 Ingest and jobs always use **the calling user’s** credentials. If they have none, the UI says so. An admin token is not a fallback for other people.
 
@@ -161,7 +169,7 @@ Append-only public numbers.
 ```
 {
   at: number,             // when we fetched
-  source: "apify" | "session",
+  source: "apify" | "graph",
   likes?, comments?, plays?,
   followers?              // account snapshots only
 }
@@ -199,7 +207,7 @@ The queue already exists (`INSTAGRAM_CONCURRENCY`). Reuse it. One job at a time 
 
 | Job | Does | Cost |
 | --- | --- | --- |
-| `account.profile` | Username, bio, follower counts, avatar | Cheap (one Apify profile / web profile) |
+| `account.profile` | Username, bio, follower counts, avatar | Cheap (one Apify profile, or the official login for your own account) |
 | `account.catalog` | List posts/reels (paginated, cap e.g. 50/100/all-capped) | Medium |
 | `account.stats` | Refresh public counts for catalog items (no download) | Medium |
 | `account.tags` | AI tags from bio + recent captions | AI |
@@ -310,19 +318,19 @@ Do not rename `$DATA_DIR/instagram/` on disk. Folder name is storage, not the pr
 
 ## 10. Credentials (request 9) — required correction
 
-**Today:** one Apify token, one cookie jar, admin UI, shared by every cloud user.
+**Then (2026-09):** one Apify token and a cookie jar (since removed), admin UI, shared by every cloud user.
 
 **Required:**
 
 - Settings card moves from “admin-only global” to **each user’s Analyzer page**.
-- `GET/PUT/DELETE /api/instagram/apify` (and session) operate on `$DATA_DIR/instagram/users/<username>/`.
+- The Apify token is read and saved per user in `$DATA_DIR/instagram/users/<username>/apify.json` (Settings → Connectors).
 - Jobs read credentials of `jobUsers.get(id)`, never the global file.
 - Migrate existing `instagram/apify.json` once: copy into the admin user’s folder, then stop reading the global path (keep a read fallback for one release).
 - Env `APIFY_TOKEN` only seeds the **local** user when `APP_SECRET` is unset.
 - Never log or return tokens. Same as today.
 - Usage: optional `usage.apifyRuns` later so you can see who spent what. Not blocking.
 
-Burner cookies follow the same per-user rule. If you never want others to use a burner either, this covers it.
+There are no burner cookies or sessions: Apify on the user's own token and the official login are the only sources.
 
 ---
 
@@ -331,8 +339,6 @@ Burner cookies follow the same per-user rule. If you never want others to use a 
 ```
 $DATA_DIR/instagram/
   users/<toolsetUser>/apify.json
-  users/<toolsetUser>/session.json
-  users/<toolsetUser>/source.json
   accounts/<uuid>/meta.json
   accounts/<uuid>/catalog.json
   accounts/<uuid>/snapshots.json
@@ -358,7 +364,6 @@ New / changed:
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET/PUT | `/api/instagram/apify` | **Per-user** token |
-| GET/PUT | `/api/instagram/session` | **Per-user** cookies |
 | GET | `/api/instagram/accounts` | List accounts (`?q=`) |
 | POST | `/api/instagram/accounts` | `{ url or username, recipe, run: now\|later }` |
 | GET | `/api/instagram/accounts/:id` | Profile + catalog |
@@ -381,7 +386,7 @@ New / changed:
 - Analyzer home: accounts strip + post library + paste box with **recipe**.
 - Account page (new).
 - Post page: recipe + snapshots + age; existing media/comments.
-- Credentials card: per user, Burner | Apify (already exists, re-own).
+- Credentials: per user, the Apify key and the Meta login in Settings → Connectors.
 - “Run jobs” dialog (shared by library, account, post).
 - Group/sort controls on the library.
 
@@ -391,7 +396,7 @@ No new design system. Same zinc/violet chrome as the rest of the Toolset.
 
 ## 14. Non-goals (v1)
 
-- Meta Graph / “connect my Instagram”
+- Meta Graph / “connect my Instagram” (since built: the official login for your own account)
 - Stories, highlights, DMs, followers list
 - Posting, scheduling, replies
 - Cross-user shared libraries
@@ -408,7 +413,7 @@ No new design system. Same zinc/violet chrome as the rest of the Toolset.
 | --- | --- |
 | Apify profile/catalog actors differ from post scrape | Isolate account fetch next to `apify.ts`; same token, different actor input (`resultsType` / profile URL). Prove with one fixture account before UI. |
 | Catalog of 500+ videos is huge and expensive | Cap default (50), “load more”, never auto-download. |
-| Parallel jobs + comments Playwright | Comments already one-browser-at-a-time. Keep that. Apify comments can parallel within concurrency. |
+| Parallel comment jobs | Apify comments run within the queue's concurrency (no browser collector). |
 | Disk: people tick Full on 40 links | Recipe default Stats. Quota on media bytes. Warn when a recipe includes media or comments. |
 | Username changes | Key accounts on `igUserId`. Username is a display field. |
 | Shared token leftover | Per-user credentials is P0, before account scrape, so bills don’t explode. |
@@ -424,7 +429,7 @@ Ship in vertical slices. Each slice is usable alone.
 Why first: you asked for Analyzer, and you asked that others not spend your Apify key. Account scrape on a shared key would make that worse.
 
 - Tile, H1, `/analyzer` alias.
-- Move apify/session/source under `users/<username>/`.
+- Move the Apify token under `users/<username>/`.
 - Migrate existing global files to the admin who saved them.
 - Non-admin users see their own token card and cannot read anyone else’s.
 

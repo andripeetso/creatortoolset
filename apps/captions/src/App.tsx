@@ -294,7 +294,7 @@ export default function App() {
           cards is per browser, so a new one (the iPhone app) got every old export */}
       {!onMobile && !publicPage && !isPhoneHub() && <ExportTray />}
       {!onMobile && !publicPage && <GuestWelcomeDialog />}
-      {!onMobile && !publicPage && !inSettings && <SetupDialog />}
+      {!publicPage && !inSettings && <SetupDialog />}
       {!onMobile && !publicPage && <CornerNav />}
       {inSettings && <SettingsModal onClose={closeSettings} />}
       {inProjects && <ProjectsRoute onClose={closeSettings} />}

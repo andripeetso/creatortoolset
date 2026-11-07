@@ -97,8 +97,8 @@ export function aiFor(who: Who, job: JobId, label: string, own?: Selection): Pro
 }
 
 /**
- * An account with no provider: the Anthropic key keyFor gives it (its own from Settings → My API keys; the server's for
- * the platform admin, or for a member whose workspace gives them a monthly API budget, billed to them), at the API's
+ * An account with no provider: the Anthropic key keyFor gives it (its own from Settings → My API keys; the server's only
+ * for a member whose workspace gives them a monthly API budget, billed to them, never the platform admin), at the API's
  * model and effort (Admin → AI access). Never the Workshop: a Workshop
  * turn is Claude Code reading the session's folder, which a plain API call can't (it needs their own AI).
  */

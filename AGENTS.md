@@ -44,13 +44,25 @@ of the account that owns them. Members use their own providers, or a
 monthly API budget that the workspace owner sets. Never add a path that runs one person's subscription for
 another person, and never let a request from one account reach another account's provider.
 
+**Whose keys pay.** Every paid service call (AI on an API key, transcription, audio engines, research, Apify)
+gets its key from `keyFor` in `apps/captions/api/my-keys.ts`; never read a service key from `process.env` in a
+feature. Each user adds their own keys in Settings → My API keys (Apify in Settings → Connectors) and pays their
+provider. The server's keys serve only the platform admin's own work (never their AI: an admin's AI is their own
+provider or own key), members of the admin's workspace on an API budget, and guests and the demo when an admin
+switches that on. Accounts from open sign-up (`ALLOW_SIGNUP=1`) never use them. AI with no provider and no own key
+fails with a message saying what to add; the Workshop has no API-key path at all.
+
+**No scraping.** Nothing reads websites on a user's behalf: Instagram comes only from the official logins and the
+user's own Apify key, never from Instagram's web pages, logged in or not; no browser automation of other services.
+
 **Accounts and access.** With `APP_SECRET` unset the server is open and every request runs as a local admin.
 That is for one person's own machine only. Production refuses to start without `APP_SECRET`. Guests and the demo
 account have their own limits (see `api/boot.ts`, `api/users.ts`); keep those checks where the routes are mounted,
 not inside each handler.
 
 **No secrets in code, docs or fixtures.** Keys, tokens, cookies and passwords come from environment variables or
-per-user files written with mode 0600. Read them with `process.env` at the point of use, and list every new
+per-user files written with mode 0600. Read them with `process.env` at the point of use (paid service keys only
+through `keyFor`, above), and list every new
 variable in `apps/captions/.env.example` with no value. Never print a secret in logs, errors or the UI.
 
 **Public repo.** Everything here is published. Do not add the names, hosts, addresses, account or app ids of any

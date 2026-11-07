@@ -432,7 +432,7 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
                   onClick={() => void runJobs(["profile", "catalog"])}
                   title={
                     account.mine
-                      ? "Refresh profile and every post — Graph plus the public grid when Graph is on"
+                      ? "Refresh profile and every post from the official Instagram login"
                       : "Refresh the profile and list the latest videos — nothing is ingested until you pull it"
                   }
                   className="flex items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 py-1.5 text-[11px] text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
@@ -645,7 +645,7 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
                 {catalog.length === 0 ? (
                   <p className="py-8 text-center text-sm text-zinc-600">
                     {pane === "trial"
-                      ? "No trial reels in Graph that are missing from the public profile."
+                      ? "No trial reels: the official login marks none as not shared to the feed."
                       : pane === "public"
                         ? "No public posts listed yet — pull the profile & catalog."
                         : posts.length
