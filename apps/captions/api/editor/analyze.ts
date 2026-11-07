@@ -8,7 +8,7 @@ import { blobs, libraryDb } from "../library/db";
 import { enqueueJob } from "../library/jobs";
 import { ffmpegSlot } from "../library/media/run";
 import type { ProbeSummary } from "../library/media/probe";
-import { NeedsKey, wordsOf, type TimedWord } from "../library/transcribe";
+import { transcribeRoute, wordsOf, type TimedWord } from "../library/transcribe";
 import { saveStep } from "./store";
 import type { StepContext } from "./worker";
 
@@ -155,8 +155,9 @@ export async function analyzeStep({ edit, signal }: StepContext): Promise<void> 
       | undefined;
     if (job?.state === "queued" || job?.state === "running") wait = true;
     else if (job?.state === "failed") throw new Error(`Transcribing “${row.title}” failed (${job.error ?? "no reason given"}): retry it in the Media Library`);
-    else if (job?.state === "needs_key" && job.actor === edit.createdBy) throw new NeedsKey(job.error ?? "Add a transcription key in Settings → My API keys");
     else {
+      // parked for the creator: still no key throws NeedsKey with what to add; a key added since queues it again
+      if (job?.state === "needs_key" && job.actor === edit.createdBy) transcribeRoute(edit.createdBy);
       // none yet, done before word timings were kept, or parked for someone else: transcribe as the edit's creator
       enqueueJob(db, row.library_id, row.id, "transcribe", edit.createdBy, true);
       wait = true;

@@ -102,6 +102,13 @@ describe("AI Editor analyze", () => {
     libraryDb().prepare("UPDATE jobs SET state = 'needs_key', error = ? WHERE version_id = 'ver_late' AND kind = 'transcribe'").run(why);
     const { job } = await analyze(["ver_late"], Date.now());
     expect(job()).toMatchObject({ state: "needs_key", error: why });
+    // the creator adds a key: a retry queues the transcribe again and waits for it
+    const { saveMyKey } = await import("../my-keys");
+    saveMyKey("mem-a", "OPENAI_API_KEY", "sk-test");
+    const again = await analyze(["ver_late"], Date.now());
+    expect(transcribeJob("ver_late")).toEqual({ state: "queued", actor: "mem-a" });
+    expect(again.job()).toMatchObject({ state: "queued" });
+    saveMyKey("mem-a", "OPENAI_API_KEY", null);
   });
 
   it("numbers sentences across sources in recording order, caches each source's energy and notes a source with no sound", async () => {
