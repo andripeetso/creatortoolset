@@ -74,6 +74,29 @@ export interface Sentence {
   w1: number;
 }
 
+/** One reading of a line: sentences first..last (one source), scored 0-1 by the AI. */
+export interface Take {
+  first: number;
+  last: number;
+  score: number;
+}
+
+/** One thing the video says, with every take of it the footage has, best first. */
+export interface Line {
+  id: string;
+  text: string;
+  takes: Take[];
+}
+
+/** One version's cut (script): its lines in order, each with the take handed to it. */
+export interface VersionPlan {
+  /** "v1".."v5": the draft's file name and job variant */
+  name: string;
+  /** what the AI called it */
+  title: string;
+  lines: { line: string; take: Take }[];
+}
+
 export interface Edit extends EditSummary, EditBrief {
   workspaceId: string;
   jobs: EditJob[];
@@ -81,6 +104,8 @@ export interface Edit extends EditSummary, EditBrief {
   mine: boolean;
   /** how many sentences analyze found */
   sentences: number;
-  /** what a step skipped or could not do (a source with no sound…) */
+  lines: Line[];
+  plans: VersionPlan[];
+  /** what a step skipped or could not do (a source with no sound, a take out of range…) */
   notes: string[];
 }

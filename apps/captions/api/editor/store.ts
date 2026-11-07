@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import path from "node:path";
-import { MAX_VERSIONS, type Edit, type EditBrief, type EditJob, type EditSummary, type Sentence } from "../../contracts/editor";
+import { MAX_VERSIONS, type Edit, type EditBrief, type EditJob, type EditSummary, type Line, type Sentence, type VersionPlan } from "../../contracts/editor";
 import { env } from "../lib/env";
 import { memberIn, workspaceById } from "../lib/workspaces";
 import { libraryRole } from "../library/access";
@@ -45,6 +45,7 @@ export const saveEdit = (e: EditMeta) => writeJsonAtomic(fileOf(e.id), { ...e, u
 /** What the steps found, each in its own file beside edit.json, so a step never overwrites a change the user made meanwhile. */
 export interface StepFiles {
   analysis: { sentences: Sentence[]; notes: string[] };
+  plan: { lines: Line[]; plans: VersionPlan[]; notes: string[] };
 }
 
 export function readStep<K extends keyof StepFiles>(id: string, name: K): StepFiles[K] | null {
@@ -183,13 +184,16 @@ export function summaryOf(e: EditMeta): EditSummary {
 export function viewOf(e: EditMeta, username: string): Edit {
   const { trashedAt: _, ...meta } = e;
   const a = readStep(e.id, "analysis");
+  const p = readStep(e.id, "plan");
   return {
     ...meta,
     ...summaryOf(e),
     jobs: jobsOf(e.id),
     mine: e.createdBy === username,
     sentences: a?.sentences.length ?? 0,
-    notes: a?.notes ?? [],
+    lines: p?.lines ?? [],
+    plans: p?.plans ?? [],
+    notes: [...(a?.notes ?? []), ...(p?.notes ?? [])],
   };
 }
 

@@ -65,7 +65,7 @@ export function parseDescribe(text: string): Described {
 export const frameTimes = (duration: number) => (duration > 1 ? Array.from({ length: FRAMES }, (_, i) => (duration * (i + 0.5)) / FRAMES) : [0]);
 
 /** The job's AI caller: the platform admin (or the solo install's own account) as admin, anyone else as themselves. */
-const whoFor = (actor: string) => ({ username: actor, role: isAdminActor(actor) ? ("admin" as const) : (findUser(actor)?.role ?? "user") });
+export const whoFor = (actor: string) => ({ username: actor, role: isAdminActor(actor) ? ("admin" as const) : (findUser(actor)?.role ?? "user") });
 
 /** Stores the AI's description and tags for a version and rewrites the asset's search row, in one transaction. */
 export function saveDescribed(db: DatabaseSync, versionId: string, d: Described, provider: string): void {
