@@ -36,6 +36,7 @@ import { mcpApp } from "./mcp";
 import { workspaceApp } from "./workspace";
 import { connectorsApp, startConnectorPulls, tiktokVerifyFile } from "./connectors";
 import { macAppPublic, macAppRelease } from "./mac-app";
+import { ownerProfileApp } from "./owner-profile";
 import { devicesApp } from "./devices";
 import { deviceForToken } from "./lib/devices";
 import { adminApp } from "./admin";
@@ -318,6 +319,8 @@ app.get("/:file{tiktok[\\w-]*\\.txt}", (c) => {
 startConnectorPulls();
 app.route("/api/devices", devicesApp);
 app.route("/api/mac-app", macAppRelease);
+// the Mac app's signed-in account as this server's owner (owner-profile.ts)
+app.route("/api/owner-profile", ownerProfileApp);
 app.use("/api/trpc/*", async (c) => {
   return fetchRequestHandler({
     endpoint: "/api/trpc",

@@ -22,7 +22,7 @@ func titleBarScript(fullScreen: Bool) -> String {
     """
 }
 
-final class AppWebView: WKWebView, WKScriptMessageHandler {
+final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandlerWithReply {
     private var lastMouseDown: NSEvent?
     private var observers: [NSObjectProtocol] = []
 
@@ -34,6 +34,7 @@ final class AppWebView: WKWebView, WKScriptMessageHandler {
         configuration.userContentController.add(self, name: "window")
         configuration.userContentController.add(self, name: "appLog")
         configuration.userContentController.add(self, name: "badge")
+        configuration.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "account")
         setFullScreen(false)
     }
 
@@ -53,6 +54,14 @@ final class AppWebView: WKWebView, WKScriptMessageHandler {
 
     /// A page still blank 10 s after loading (pageLogScript); reloaded at most once a minute.
     var onBlank: (() -> Void)?
+    /// The account step (AccountStep.tsx): "status", "apple" or "google"; the reply resolves the page's postMessage.
+    var onAccount: ((String, @escaping (AccountReply) -> Void) -> Void)?
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage,
+                               replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
+        guard let ask = message.body as? String, let onAccount else { return replyHandler(["state": "off"], nil) }
+        onAccount(ask) { replyHandler($0, nil) }
+    }
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         if message.name == "appLog", let line = message.body as? String {

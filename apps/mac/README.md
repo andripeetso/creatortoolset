@@ -160,6 +160,14 @@ one at most once a minute). A crash of the app itself is macOS's report in
 - **Links.** The app registers `creatortoolset://`: `creatortoolset://review/<id>?v=2` opens that page in the
   window and brings it forward, also with the window closed. A link to the window's own site handed to the app
   (`open -a "Creator Toolset" <url>`) opens there too. `appHref` in `Logic.swift`.
+- **Account.** The first run's step 1 (`src/components/setup/AccountStep.tsx`, through the page's `account` message
+  handler) signs in with Apple or Google: the app opens `<account server>/api/account/login/apple?app=1` (or
+  `google`) in the system's sign-in sheet, the server ends on `creatortoolset://account?code=<one-time code>`, and the
+  app swaps the code at `POST /api/account/token` for a token it keeps in the Keychain (`GET /api/account/me` checks
+  it). The name and email become the owner's profile on the server on this Mac (`api/owner-profile.ts`). While the
+  account server answers 404 or 501 there, the step says sign-in isn't set up yet and lets you go on. The account
+  server is in Mac settings → Account (default `https://creatortoolset.com`; empty = no account step, for your own
+  server). `Account.swift`.
 - **Settings** (⌘,) opens the site's Settings page in the window. **Mac settings…** (the menu bar)
   is this app's own: **Use this Mac for my AI**, the server (on or off, port, log, Data location,
   Access from other devices), and with the server off the site address (default `https://creatortoolset.com`;

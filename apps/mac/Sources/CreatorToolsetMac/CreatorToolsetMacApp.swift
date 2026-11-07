@@ -70,6 +70,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor func application(_ application: NSApplication, open urls: [URL]) {
         guard let shell = Self.shell else { return }
         for url in urls {
+            // an account sign-in's one-time code: swapped for the account, never loaded as a page
+            if let code = accountCode(from: url) {
+                shell.accountLink(code)
+                continue
+            }
             if let href = appHref(from: url, site: shell.base) { shell.showWindow(href: href) }
         }
     }
@@ -146,6 +151,8 @@ struct SettingsView: View {
     @State private var accessMessage: String?
     @State private var busy = false
     @State private var dataSize: String?
+    @State private var accountServer = ""
+    @State private var accountInvalid = false
 
     var body: some View {
         Form {
@@ -196,10 +203,24 @@ struct SettingsView: View {
                     }
                 }
             }
+            Section("Account") {
+                TextField("Account server", text: $accountServer)
+                    .onSubmit { saveAccountServer() }
+                Text(accountInvalid
+                     ? "Use a full address, such as https://creatortoolset.com, or leave it empty."
+                     : "Where you sign in with Apple or Google on the first run. Empty: no account step.")
+                    .font(.caption).foregroundStyle(accountInvalid ? .red : .secondary)
+                HStack {
+                    Button("Use creatortoolset.com") { accountServer = productionSite.absoluteString; saveAccountServer() }
+                    Spacer()
+                    Button("Save") { saveAccountServer() }
+                }
+            }
         }
         .padding()
         .frame(width: 520)
         .onAppear {
+            accountServer = shell.account.serverText
             address = shell.runsHere ? productionSite.absoluteString : shell.base.absoluteString
             port = shell.server.map { String($0.port) } ?? ""
         }
@@ -300,6 +321,12 @@ struct SettingsView: View {
             return
         }
         shell.setServerPort(value)
+    }
+
+    private func saveAccountServer() {
+        let text = accountServer.trimmingCharacters(in: .whitespaces)
+        accountInvalid = !text.isEmpty && siteURL(from: text) == nil
+        if !accountInvalid { shell.account.setServer(text) }
     }
 
     private func save() {

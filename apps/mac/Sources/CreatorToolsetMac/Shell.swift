@@ -26,6 +26,9 @@ final class Shell: NSObject, ObservableObject {
     private var serverWatch: AnyCancellable?
     private let runsHereKey = "runServerHere"
 
+    /// The person's account (Account.swift): first run's sign-in with Apple or Google.
+    let account = Account()
+
     private let noteCenter = NoteCenter()
     private var timer: Timer?
     private let seenKey = "seenNotificationIDs"
@@ -54,6 +57,16 @@ final class Shell: NSObject, ObservableObject {
             self.lastBlankReload = Date()
             AppLog.write("reloading the blank page")
             self.webView.reload()
+        }
+        account.window = { [weak self] in self?.webView.window }
+        account.signedIn = { [weak self] profile in self?.ownerProfile(profile) }
+        view.onAccount = { [weak self] ask, done in
+            guard let self else { return done(["state": "off"]) }
+            if ask == "status" {
+                Task { done(await self.account.status()) }
+            } else {
+                self.account.signIn(ask, done: done)
+            }
         }
         noteCenter.open = { [weak self] href, id in
             Task { @MainActor in self?.noteClicked(href: href, id: id) }
@@ -144,6 +157,28 @@ final class Shell: NSObject, ObservableObject {
         server.stop()
         startServer()
         return nil
+    }
+
+    /// The account's name and email become the owner's profile on the server on this Mac (api/owner-profile.ts).
+    private func ownerProfile(_ profile: AccountProfile) {
+        guard runsHere else { return }
+        Task {
+            do {
+                try await client().post("/api/owner-profile", ["name": profile.name, "email": profile.email])
+            } catch {
+                AppLog.write("the server on this Mac did not take the account's profile: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// A creatortoolset://account link (the sign-in ended outside the sheet): the code is swapped here and the
+    /// window's account step asks again. The code never reaches the page or the log.
+    func accountLink(_ code: String) {
+        Task {
+            await account.finish(code: code)
+            _ = try? await webView.evaluateJavaScript("dispatchEvent(new Event('ct-account'))")
+            showWindow()
+        }
     }
 
     // MARK: data location (Mac settings)
