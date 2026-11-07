@@ -55,6 +55,15 @@ export interface MacOpts {
   session?: { key: string; resume?: string };
   /** The Claude session the answer ran in (only when `session` is given). */
   onSession?: (s: MacSession) => void;
+  /**
+   * Creator Toolset's own MCP server for this run (the assistant): `url` is this server's /api/mcp, `token` a job token
+   * (auth.ts, ctj_…, 30 min, one turn). The job body carries both as `mcp`. What the Mac must do with it (not built yet):
+   * write an --mcp-config file with { "mcpServers": { "creator-toolset": { "type": "http", "url": url,
+   * "headers": { "Authorization": "Bearer " + token } } } }, pass --mcp-config <that file> --strict-mcp-config, add
+   * "mcp__creator-toolset__*" to --allowedTools, and never log, persist or echo the token. The server's MCP name is
+   * "creator-toolset" (mcp.ts initialize). Nothing else changes for a job without it.
+   */
+  mcp?: { url: string; token: string };
 }
 
 /* ---- usage: every answer's tokens and API-equivalent cost, by hour (UTC) and what it was for ---- */
@@ -128,6 +137,7 @@ interface Req {
   provider?: MacOpts["provider"];
   onStep?: (label: string) => void;
   session?: MacOpts["session"];
+  mcp?: MacOpts["mcp"];
   claimed: boolean;
   claimedAt: number;
   text: string;
@@ -212,6 +222,7 @@ export function streamMacClaude(
       provider: opts.provider,
       onStep: opts.onStep,
       session: opts.session,
+      mcp: opts.mcp,
       claimed: false,
       claimedAt: 0,
       text: "",
@@ -417,6 +428,7 @@ const pack = (r: Req) => ({
   ...(r.provider ? { instance: r.provider.instance, driver: r.provider.driver, effort: r.provider.effort, ...(r.provider.home ? { home: r.provider.home } : {}), ...(r.provider.scope ? { scope: r.provider.scope } : {}) } : {}),
   ...(r.model || r.provider ? { model: r.model ?? r.provider!.model } : {}),
   ...(r.session ? { session: r.session.key, ...(r.session.resume ? { resume: r.session.resume } : {}) } : {}),
+  ...(r.mcp ? { mcp: r.mcp } : {}),
 });
 const body = (c: { req: { json: () => Promise<unknown> } }) =>
   c.req.json().then((b) => (b && typeof b === "object" ? (b as Record<string, unknown>) : {})).catch(() => ({}) as Record<string, unknown>);

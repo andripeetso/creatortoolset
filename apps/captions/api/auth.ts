@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { env } from "./lib/env";
 import { cloneDemoReview } from "./review";
 import { INVITE_TOKEN_RE, type InviteInfo } from "../contracts/workspaces";
@@ -108,6 +109,41 @@ const demoSession = (demo: UserRecord, visitor: string): SessionUser => ({
   off: DEMO_OFF,
   demo: visitor,
 });
+
+/**
+ * The assistant's job tokens (api/assistant.ts): one per turn, `ctj_…`, in memory only, 30 min, revoked when its turn
+ * ends. Accepted by boot.ts on /api/mcp alone; the tools it reaches run as its account through `innerCall`. Never
+ * a Full key: rotating that would break the account's claude.ai connector.
+ */
+export const JOB_TOKEN_MS = 30 * 60_000;
+const jobs = new Map<string, { username: string; turn: string; expires: number }>();
+
+export function mintJobToken(username: string, turn: string): string {
+  const now = Date.now();
+  for (const [k, v] of jobs) if (v.expires <= now) jobs.delete(k);
+  const token = `ctj_${randomBytes(24).toString("hex")}`;
+  jobs.set(token, { username, turn, expires: now + JOB_TOKEN_MS });
+  return token;
+}
+
+export const revokeJobToken = (token: string): void => {
+  jobs.delete(token);
+};
+
+export function jobTokenUser(authorization: string | undefined): SessionUser | null {
+  const token = /^Bearer (ctj_[a-f0-9]{48})$/.exec(authorization ?? "")?.[1];
+  const job = token ? jobs.get(token) : undefined;
+  if (!token || !job) return null;
+  if (job.expires <= Date.now()) {
+    jobs.delete(token);
+    return null;
+  }
+  const user = findUser(job.username);
+  return user ? sessionOf(user) : null;
+}
+
+/** The account an in-process MCP tool call runs as (mcp.ts sets it around each call; boot.ts reads it). Outside a tool call it is empty. */
+export const innerCall = new AsyncLocalStorage<SessionUser>();
 
 /** `Authorization: Bearer ctk_…` from a script or AI, at one key level (boot.ts decides what each reaches). */
 export function getApiKeyUser(authorization: string | undefined, level: KeyLevel = "review"): SessionUser | null {
