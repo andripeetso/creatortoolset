@@ -15,16 +15,19 @@ final class Shell: NSObject, ObservableObject {
     /// This Mac as an AI device (Relay.swift): on = the person turned it on; ai = what the runner reports.
     @Published private(set) var aiOn = false
     @Published private(set) var ai = AIStatus()
-    /// Opens the main window; the window sets it so a notification click can bring a closed window back.
-    var openWindow: (() -> Void)?
+    /// Opens a window by its scene id ("main", "this-mac", "guide"); the main window sets it when it appears.
+    var openWindowID: ((String) -> Void)?
     /// The server on this Mac (Server.swift), when this build has one; runsHere = the window uses it, not a site.
     let server: LocalServer? = LocalServer.folder == nil ? nil : LocalServer()
     @Published private(set) var runsHere = false
+    /// The servers added by address (Servers.swift) and the one the window shows: thisMacID, an added one's id, or nil
+    /// (no server picked: the window asks to pick or add one).
+    @Published private(set) var servers: [ServerEntry] = []
+    @Published private(set) var current: String?
     @Published private(set) var serverLine: String?
     /// "Only N GB free on the data disk", when under 10 GB (checked with the notes, every 30 s).
     @Published private(set) var spaceLine: String?
     private var serverWatch: AnyCancellable?
-    private let runsHereKey = "runServerHere"
 
     /// The person's account (Account.swift): first run's sign-in with Apple or Google.
     let account = Account()
@@ -32,7 +35,8 @@ final class Shell: NSObject, ObservableObject {
     private let noteCenter = NoteCenter()
     private var timer: Timer?
     private let seenKey = "seenNotificationIDs"
-    private let siteKey = "siteAddress"
+    private let serversKey = "servers"
+    private let currentKey = "currentServer"
     private let aiKey = "aiOnThisMac"
     private var runner: RelayRunner?
     private var runnerID = UUID()
@@ -44,9 +48,21 @@ final class Shell: NSObject, ObservableObject {
         AppLog.write("launched \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev")")
         let view = AppWebView()
         webView = view
-        let here = server != nil && UserDefaults.standard.object(forKey: "runServerHere") as? Bool != false
-        runsHere = here
-        base = here ? server!.url : Self.savedSite
+        let defaults = UserDefaults.standard
+        let hasLocal = server != nil
+        if !defaults.bool(forKey: "serversMigrated") {
+            // once: the old "siteAddress" and "runServerHere" become the list; the old keys stay for older copies
+            let old = migratedServers(site: defaults.string(forKey: "siteAddress"), runsHere: defaults.object(forKey: "runServerHere") as? Bool, hasLocal: hasLocal)
+            defaults.set(try? JSONEncoder().encode(old.servers), forKey: serversKey)
+            defaults.set(old.current, forKey: currentKey)
+            defaults.set(true, forKey: "serversMigrated")
+        }
+        let list = defaults.data(forKey: serversKey).flatMap { try? JSONDecoder().decode([ServerEntry].self, from: $0) } ?? []
+        let picked = validCurrent(defaults.string(forKey: currentKey), in: list, hasLocal: hasLocal)
+        servers = list
+        current = picked
+        runsHere = picked == thisMacID
+        base = Self.url(of: picked, in: list, local: server)
         super.init()
         webView.navigationDelegate = self
         webView.uiDelegate = self
@@ -58,6 +74,8 @@ final class Shell: NSObject, ObservableObject {
             AppLog.write("reloading the blank page")
             self.webView.reload()
         }
+        view.onThisMac = { [weak self] in self?.openWindowID?("this-mac") }
+        view.pickerMenu = { [weak self] in self?.pickerItems() ?? [] }
         account.window = { [weak self] in self?.webView.window }
         account.signedIn = { [weak self] profile in self?.ownerProfile(profile) }
         view.onAccount = { [weak self] ask, done in
@@ -78,9 +96,10 @@ final class Shell: NSObject, ObservableObject {
         }
         server?.onReady = { [weak self] in self?.serverReady() }
         aiOn = UserDefaults.standard.bool(forKey: aiKey)
+        markDevice()
         if runsHere {
             startServer()   // the page and the AI runner wait for it
-        } else {
+        } else if current != nil {
             open("/")
             if aiOn { startAI() }
         }
@@ -94,8 +113,105 @@ final class Shell: NSObject, ObservableObject {
         Task { await refresh() }
     }
 
-    private static var savedSite: URL {
-        UserDefaults.standard.string(forKey: "siteAddress").flatMap(siteURL(from:)) ?? productionSite
+    /// Where the window has no server: nothing loads, nothing is polled, no runner starts.
+    private static let noServer = URL(string: "about:blank")!
+
+    private static func url(of id: String?, in list: [ServerEntry], local: LocalServer?) -> URL {
+        if id == thisMacID, let local { return local.url }
+        return list.first { $0.id == id }.flatMap { siteURL(from: $0.url) } ?? noServer
+    }
+
+    var hasServer: Bool { current != nil }
+
+    // MARK: servers (Servers.swift)
+
+    /// This Mac (with the server in this build) and the added servers, in menu order.
+    var listed: [ServerEntry] { listedServers(servers, hasLocal: server != nil) }
+
+    var currentName: String? { listed.first { $0.id == current }?.name }
+
+    /// The window opens this server: This Mac starts the server here, another one stops it (one runner at a time).
+    func select(_ id: String?) {
+        guard id != current else { return }
+        current = id
+        UserDefaults.standard.set(id, forKey: currentKey)
+        let here = id == thisMacID && server != nil
+        if runsHere && !here { server?.stop() }
+        runsHere = here
+        switchTo(Self.url(of: id, in: servers, local: server))
+        if here {
+            startServer()
+        } else if hasServer {
+            open("/")
+        } else {
+            webView.loadHTMLString("", baseURL: nil)
+        }
+    }
+
+    /// "Add server": the address (or a pasted one-time sign-in link), added once and opened. Returns what's wrong, or nil.
+    @discardableResult func addServer(_ text: String, name: String = "") -> String? {
+        guard let input = serverInput(text) else {
+            return "Use the server's address, such as https://tools.example.com (http only for this Mac)."
+        }
+        let added = addingServer(input.url, name: name, to: servers)
+        saveServers(added.servers)
+        select(added.id)
+        if let path = input.signInPath { open(path) }   // signs the window in on that server
+        showWindow()
+        return nil
+    }
+
+    func removeServer(_ id: String) {
+        let next = removingServer(id, from: servers, current: current)
+        saveServers(next.servers)
+        if next.current != current { select(next.current) }
+    }
+
+    func renameServer(_ id: String, to name: String) {
+        saveServers(renamingServer(id, to: name, in: servers))
+    }
+
+    private func saveServers(_ list: [ServerEntry]) {
+        servers = list
+        UserDefaults.standard.set(try? JSONEncoder().encode(list), forKey: serversKey)
+        markDevice()   // the picker's tooltip carries the name
+    }
+
+    /// The picker's menu right of the window buttons (TitleBar.swift).
+    private func pickerItems() -> [NSMenuItem] {
+        var items: [NSMenuItem] = listed.map { s in ActionItem(s.name, checked: s.id == current) { [weak self] in self?.select(s.id) } }
+        items.append(.separator())
+        items.append(ActionItem("Add server…") { [weak self] in self?.openWindowID?("this-mac") })
+        items.append(ActionItem("Run your own server…") { [weak self] in self?.openWindowID?("guide") })
+        items.append(ActionItem("This Mac…") { [weak self] in self?.openWindowID?("this-mac") })
+        return items
+    }
+
+    /// The page learns this Mac's device id on the open server (html data-mac-device), for its AI line.
+    private func markDevice() {
+        (webView as? AppWebView)?.macDevice = hasServer ? DeviceVault.deviceID(for: base.host ?? "") : nil
+        (webView as? AppWebView)?.picker.toolTip = "Server: \(currentName ?? "none picked")"
+    }
+
+    /// The guide's two network checks for https://<domain>: HTTPS valid, the app answers (GET /api/health).
+    func probe(_ url: URL) async -> (https: GuideCheck, reachable: GuideCheck) {
+        var request = URLRequest(url: url.appendingPathComponent("api/health"), timeoutInterval: 10)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            return healthChecks(status: (response as? HTTPURLResponse)?.statusCode, body: data, error: nil)
+        } catch {
+            return healthChecks(status: nil, body: nil, error: error)
+        }
+    }
+
+    /// The guide's last check: the window's cookies for that server sign it in (GET /api/auth/check).
+    func signedIn(at url: URL) async -> Bool {
+        let all: [HTTPCookie] = await withCheckedContinuation { continuation in
+            webView.configuration.websiteDataStore.httpCookieStore.getAllCookies { continuation.resume(returning: $0) }
+        }
+        let check: AuthCheck? = try? await Site(base: url, cookies: cookies(for: url, in: all)).get("/api/auth/check")
+        return check?.authed ?? false
     }
 
     // MARK: the server on this Mac (Server.swift)
@@ -181,7 +297,7 @@ final class Shell: NSObject, ObservableObject {
         }
     }
 
-    // MARK: data location (Mac settings)
+    // MARK: data location (This Mac)
 
     /// Move… : the window shows a message while the server is stopped; the runner restarts on the new folder.
     func moveData(to dest: URL) async -> String? {
@@ -199,6 +315,7 @@ final class Shell: NSObject, ObservableObject {
         let host = base.host ?? ""
         DeviceVault.remove(for: host)
         DeviceVault.setDeviceID(nil, for: host)
+        markDevice()
         server?.useFolder(url)
     }
 
@@ -214,19 +331,10 @@ final class Shell: NSObject, ObservableObject {
         }
     }
 
-    /// "Run the server on this Mac" (Mac settings): on = the window opens it; off = the saved site address.
+    /// "Run the server on this Mac" (This Mac): on = the window opens it; off = the first added server, or none.
     func setRunsHere(_ on: Bool) {
-        guard let server else { return }
-        runsHere = on
-        UserDefaults.standard.set(on, forKey: runsHereKey)
-        if on {
-            switchTo(server.url)
-            startServer()
-        } else {
-            server.stop()
-            switchTo(Self.savedSite)
-            open("/")
-        }
+        guard server != nil else { return }
+        select(on ? thisMacID : servers.first?.id)
     }
 
     func setServerPort(_ port: Int) {
@@ -244,10 +352,12 @@ final class Shell: NSObject, ObservableObject {
 
     // MARK: menu bar state
 
-    /// The menu bar's icon: off, on, or running a job.
-    var menuSymbol: String {
-        guard aiOn else { return "moon.zzz" }
-        return ai.running > 0 ? "wand.and.stars" : "wand.and.rays"
+    /// The menu bar icon's dot (MenuIcon.swift).
+    var status: MenuStatus {
+        var failed = false
+        if case .failed = server?.state { failed = runsHere }
+        return menuStatus(serverFailed: failed, serverUp: runsHere && server?.state == .running, aiOn: aiOn,
+                          aiRunning: ai.running, aiError: ai.lastError != nil, lowSpace: spaceLine != nil)
     }
 
     var aiLine: String {
@@ -261,7 +371,7 @@ final class Shell: NSObject, ObservableObject {
     // MARK: window and site
 
     func open(_ href: String) {
-        guard let url = URL(string: href, relativeTo: base)?.absoluteURL else { return }
+        guard hasServer, let url = URL(string: href, relativeTo: base)?.absoluteURL else { return }
         if isSite(url, base) {
             webView.load(URLRequest(url: url))
         } else {
@@ -271,29 +381,24 @@ final class Shell: NSObject, ObservableObject {
 
     func showWindow(href: String? = nil) {
         if let href { open(href) }
-        openWindow?()
+        openWindowID?("main")
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    /// A site address from Mac settings: the window uses that site, and the server on this Mac stops.
-    func setSite(_ url: URL) {
-        UserDefaults.standard.set(url.absoluteString, forKey: siteKey)
-        if runsHere {
-            runsHere = false
-            UserDefaults.standard.set(false, forKey: runsHereKey)
-            server?.stop()
-        }
-        switchTo(url)
-        open("/")
+    /// "Settings…": the server's Settings in the window; with no server picked, This Mac (Servers is there).
+    func openSettings() {
+        if hasServer { showWindow(href: "/settings") } else { openWindowID?("this-mac"); NSApp.activate(ignoringOtherApps: true) }
     }
 
     /// The notes and the AI runner follow the window's address.
     private func switchTo(_ url: URL) {
         base = url
+        markDevice()
         Task { await refresh() }
         stopRunner()
+        ai = AIStatus()
         // a token is per site: pair again if this one has none (the server on this Mac: once it answers, serverReady)
-        if aiOn && !runsHere { startAI() }
+        if aiOn && !runsHere && hasServer { startAI() }
     }
 
     func openAppLog() {
@@ -324,6 +429,7 @@ final class Shell: NSObject, ObservableObject {
     }
 
     private func startAI() {
+        guard hasServer else { return }
         if DeviceVault.token(for: base.host ?? "") != nil {
             startRunner()
             return
@@ -347,6 +453,7 @@ final class Shell: NSObject, ObservableObject {
         let pair = try JSONDecoder().decode(PairReply.self, from: data)
         guard DeviceVault.save(pair.token, for: host) else { throw SiteError.keychain }
         DeviceVault.setDeviceID(pair.device.id, for: host)
+        markDevice()
     }
 
     private func startRunner() {
@@ -383,6 +490,7 @@ final class Shell: NSObject, ObservableObject {
         let host = base.host ?? ""
         DeviceVault.remove(for: host)
         DeviceVault.setDeviceID(nil, for: host)
+        markDevice()
         setAIOff("This Mac was removed from your account. Turn it on again to pair it.")
     }
 
@@ -401,6 +509,7 @@ final class Shell: NSObject, ObservableObject {
         setAIOff(nil)
         DeviceVault.remove(for: host)
         DeviceVault.setDeviceID(nil, for: host)
+        markDevice()
         guard let id else { return }
         Task {
             let client = await client()
@@ -420,6 +529,7 @@ final class Shell: NSObject, ObservableObject {
         } else {
             spaceLine = nil
         }
+        guard hasServer else { return }
         let client = await client()
         do {
             let notes: NotesResponse = try await client.get("/api/review/notifications")

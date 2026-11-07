@@ -46,11 +46,11 @@ final class AccountTests: XCTestCase {
         XCTAssertNil(accountCode(from: URL(string: "creatortoolset://account")!))
         XCTAssertNil(accountCode(from: URL(string: "creatortoolset://account?code=")!))
         XCTAssertNil(accountCode(from: URL(string: "creatortoolset://review/abc?code=abc123")!))
-        XCTAssertNil(accountCode(from: URL(string: "https://creatortoolset.com/account?code=abc123")!))
+        XCTAssertNil(accountCode(from: URL(string: "https://accounts.example.com/account?code=abc123")!))
     }
 
     func testAccountServerSetting() {
-        XCTAssertEqual(accountServerURL(nil), productionSite)   // never set
+        XCTAssertEqual(accountServerURL(nil), defaultAccountServer)   // never set
         XCTAssertNil(accountServerURL(""))                       // empty: no account step
         XCTAssertNil(accountServerURL("  "))
         XCTAssertEqual(accountServerURL("https://accounts.example.com/x")?.absoluteString, "https://accounts.example.com")

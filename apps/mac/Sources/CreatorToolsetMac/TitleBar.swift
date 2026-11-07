@@ -1,6 +1,7 @@
 // The window draws no title bar of its own: the page's top bar runs to the window's
 // top edge, the window buttons sit inside it, and its empty parts move the window. The page makes
-// room for the buttons on its [data-titlebar] rows when <html> has .mac-app (apps/captions/src/index.css).
+// room for the buttons on its [data-titlebar] rows when <html> has .mac-app (apps/captions/src/index.css). Right of the
+// window buttons sits the server picker: the servers, Add server, Run your own server, This Mac.
 import AppKit
 import WebKit
 
@@ -22,9 +23,19 @@ func titleBarScript(fullScreen: Bool) -> String {
     """
 }
 
-final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandlerWithReply {
+final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandlerWithReply, NSMenuDelegate {
     private var lastMouseDown: NSEvent?
     private var observers: [NSObjectProtocol] = []
+    private var fullScreen = false
+    /// The server picker right of the window buttons; its menu is built each time it opens.
+    let picker = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 34, height: 22), pullsDown: true)
+    var pickerMenu: (() -> [NSMenuItem])?
+    /// This Mac's device id on the open server, for the page's AI line (html data-mac-device); nil when not paired.
+    var macDevice: String? {
+        didSet { if macDevice != oldValue { installScripts() } }
+    }
+    /// The page's Settings → This Mac (only shown inside the app): opens the native panel.
+    var onThisMac: (() -> Void)?
 
     init() {
         let config = WKWebViewConfiguration()
@@ -35,7 +46,35 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
         configuration.userContentController.add(self, name: "appLog")
         configuration.userContentController.add(self, name: "badge")
         configuration.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "account")
-        setFullScreen(false)
+        installScripts()
+        picker.isBordered = false
+        picker.toolTip = "Servers"
+        picker.setAccessibilityLabel("Servers")
+        picker.menu?.delegate = self
+        picker.addItem(withTitle: "")
+        picker.item(at: 0)?.image = NSImage(systemSymbolName: "server.rack", accessibilityDescription: "Servers")
+        addSubview(picker)
+    }
+
+    /// The picker's menu, fresh each time: item 0 is the button's own face.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        let face = menu.item(at: 0)
+        menu.removeAllItems()
+        if let face { menu.addItem(face) }
+        for item in pickerMenu?() ?? [] { menu.addItem(item) }
+    }
+
+    override func layout() {
+        super.layout()
+        placePicker()
+    }
+
+    /// Right of the window buttons, centred in the top bar; hidden in full screen (no buttons, no room kept).
+    private func placePicker() {
+        picker.isHidden = fullScreen
+        let x = window?.standardWindowButton(.zoomButton).map { $0.convert($0.bounds, to: nil).maxX + 6 } ?? 80
+        let top = ((titleBarHeight - picker.frame.height) / 2).rounded()
+        picker.setFrameOrigin(NSPoint(x: x, y: isFlipped ? top : bounds.height - top - picker.frame.height))
     }
 
     @available(*, unavailable)
@@ -78,6 +117,8 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
         switch message.body as? String {
         case "drag":
             if let event = lastMouseDown { window.performDrag(with: event) }
+        case "this-mac":
+            onThisMac?()
         case "zoom":
             // System Settings › Desktop & Dock › "Double-click a window's title bar to"
             switch UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") {
@@ -130,14 +171,47 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
         for (i, button) in [close, mini, zoom].enumerated() {
             button.setFrameOrigin(NSPoint(x: inset + CGFloat(i) * gap, y: 0))
         }
+        placePicker()
     }
 
     /// Full screen hides the buttons, so the page drops the room it kept for them.
     private func setFullScreen(_ on: Bool) {
-        let scripts = configuration.userContentController
-        scripts.removeAllUserScripts()
-        scripts.addUserScript(WKUserScript(source: titleBarScript(fullScreen: on), injectionTime: .atDocumentStart, forMainFrameOnly: true))
-        scripts.addUserScript(WKUserScript(source: pageLogScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        fullScreen = on
+        installScripts()
+        placePicker()
         evaluateJavaScript("document.documentElement.classList.toggle('mac-full', \(on))")
     }
+
+    private func installScripts() {
+        let scripts = configuration.userContentController
+        scripts.removeAllUserScripts()
+        scripts.addUserScript(WKUserScript(source: titleBarScript(fullScreen: fullScreen), injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        scripts.addUserScript(WKUserScript(source: pageLogScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        let device = macDeviceScript(macDevice)
+        scripts.addUserScript(WKUserScript(source: device, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        evaluateJavaScript(device)   // the page already open learns it too (after pairing)
+    }
+}
+
+/// Sets or clears <html data-mac-device>, which the page's Settings → AI providers reads to say "this Mac".
+func macDeviceScript(_ id: String?) -> String {
+    let value = id.flatMap { String(data: (try? JSONEncoder().encode($0)) ?? Data(), encoding: .utf8) } ?? "null"
+    return "(() => { const id = \(value); if (id) document.documentElement.dataset.macDevice = id; else delete document.documentElement.dataset.macDevice; })();"
+}
+
+/// A menu item that runs a closure.
+final class ActionItem: NSMenuItem {
+    private let run: () -> Void
+
+    init(_ title: String, checked: Bool = false, key: String = "", _ run: @escaping () -> Void) {
+        self.run = run
+        super.init(title: title, action: #selector(fire), keyEquivalent: key)
+        target = self
+        state = checked ? .on : .off
+    }
+
+    @available(*, unavailable)
+    required init(coder: NSCoder) { fatalError("not used") }
+
+    @objc private func fire() { run() }
 }

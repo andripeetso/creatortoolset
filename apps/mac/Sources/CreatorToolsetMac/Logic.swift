@@ -2,9 +2,6 @@
 // without a window, a site or a worker.
 import Foundation
 
-/// The site the window opens and the API it polls. Settings can point it at localhost.
-let productionSite = URL(string: "https://creatortoolset.com")!
-
 /// Settings text to a site address (https, or http for localhost only: the session cookie is sent by hand, so
 /// it must never go in clear to another host); host and optional port. nil when it isn't one.
 func siteURL(from text: String) -> URL? {

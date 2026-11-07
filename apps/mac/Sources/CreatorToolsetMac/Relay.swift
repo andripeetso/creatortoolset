@@ -207,6 +207,7 @@ final class RelayRunner {
 
     /// the Mac relay serve(): one long poll at a time, and none while every slot runs (the site's request waits or goes elsewhere).
     private func serve() {
+        var pollFailed = false   // a poll's error clears once a poll goes through again (the menu bar's problem dot)
         while !isStopped {
             slots.wait()
             let reply: DeviceReply
@@ -215,8 +216,13 @@ final class RelayRunner {
             } catch {
                 slots.signal()
                 publish { $0.lastError = "\(error.localizedDescription)" }
+                pollFailed = true
                 sleepUnlessStopped(15)
                 continue
+            }
+            if pollFailed {
+                pollFailed = false
+                publish { $0.lastError = nil }
             }
             if reply.status == 401 {   // revoked: the callback has run
                 slots.signal()
@@ -260,7 +266,7 @@ final class RelayRunner {
             _ = try? api.call("POST", "\(base)/done", [
                 "text": answer.text, "usage": answer.usage, "session_id": answer.session, "session_state": answer.state,
             ], tries: 4)
-            publish { $0.running -= 1; $0.lastDone = doneLine(opts, answer) }
+            publish { $0.running -= 1; $0.lastDone = doneLine(opts, answer); $0.lastError = nil }
         } catch {
             let message = (error as? ClaudeFailure)?.message ?? (error as? RelayError)?.message ?? error.localizedDescription
             var body: [String: Any] = [

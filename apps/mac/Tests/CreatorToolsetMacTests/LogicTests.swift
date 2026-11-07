@@ -4,11 +4,11 @@ import XCTest
 
 final class LogicTests: XCTestCase {
     func testSiteAddressNeedsHttpOrHttps() {
-        XCTAssertEqual(siteURL(from: " https://creatortoolset.com/ ")?.absoluteString, "https://creatortoolset.com")
+        XCTAssertEqual(siteURL(from: " https://tools.example.com/ ")?.absoluteString, "https://tools.example.com")
         XCTAssertEqual(siteURL(from: "http://localhost:3000/x")?.absoluteString, "http://localhost:3000")
-        XCTAssertNil(siteURL(from: "creatortoolset.com"))
+        XCTAssertNil(siteURL(from: "tools.example.com"))
         XCTAssertNil(siteURL(from: "file:///etc"))
-        XCTAssertNil(siteURL(from: "http://creatortoolset.com"))   // the cookie goes by hand: never in clear
+        XCTAssertNil(siteURL(from: "http://tools.example.com"))   // the cookie goes by hand: never in clear
         XCTAssertNil(siteURL(from: "http://10.0.0.5:3000"))
     }
 
@@ -16,9 +16,10 @@ final class LogicTests: XCTestCase {
         func cookie(_ domain: String) -> HTTPCookie {
             HTTPCookie(properties: [.domain: domain, .path: "/", .name: "cap_auth", .value: "x"])!
         }
-        let kept = cookies(for: productionSite, in: [cookie(".creatortoolset.com"), cookie("api.creatortoolset.com")])
-        XCTAssertEqual(kept.map(\.domain), [".creatortoolset.com"])
-        XCTAssertEqual(cookies(for: productionSite, in: [cookie("example.com"), cookie("notcreatortoolset.com")]).count, 0)
+        let site = URL(string: "https://example.com")!
+        let kept = cookies(for: site, in: [cookie(".example.com"), cookie("api.example.com")])
+        XCTAssertEqual(kept.map(\.domain), [".example.com"])
+        XCTAssertEqual(cookies(for: site, in: [cookie("example.org"), cookie("notexample.com")]).count, 0)
     }
 
     func testUniqueURLNeverReplacesAFile() throws {

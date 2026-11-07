@@ -1,7 +1,7 @@
 // The server on this Mac: the app starts Resources/server/bin/node dist/boot.js (build-app.sh puts it there),
 // waits for /api/health, restarts it after a crash (1, 2, 4… s; five crashes in five minutes stops trying),
 // writes its output to ~/Library/Logs/Creator Toolset Server.log and stops it on quit. A build without the
-// server (`swift run`) or the "site" choice in Mac settings leaves it off: the window opens a remote site.
+// server (`swift run`), or another server picked in Servers, leaves it off.
 import AppKit
 import Darwin
 import Foundation
@@ -31,7 +31,7 @@ func freeBytes(_ url: URL) -> Int64? {
     return (try? at.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?.volumeAvailableCapacityForImportantUsage
 }
 
-/// Under 10 GB free on the data disk: the menu and Mac settings say so (video fills disks).
+/// Under 10 GB free on the data disk: the menu and This Mac say so (video fills disks).
 let lowSpaceBytes: Int64 = 10_000_000_000
 
 /// Files and bytes under a folder (what a move must carry over, checked after the copy).
@@ -107,6 +107,13 @@ enum ServerLog {
     }
 }
 
+/// CT_CHANNEL=release and CT_VERSION for the bundled server, only in a release build: build-app.sh writes CTChannel into
+/// Info.plist when it signs with SIGN_IDENTITY. Dev runs, `swift run` and ad-hoc builds get nothing.
+func releaseEnv(_ info: [String: Any]?) -> [String: String] {
+    guard info?["CTChannel"] as? String == "release" else { return [:] }
+    return ["CT_CHANNEL": "release", "CT_VERSION": info?["CFBundleShortVersionString"] as? String ?? ""]
+}
+
 /// The path of a running process's program (to tell our own node from another program before stopping it).
 func processPath(_ pid: pid_t) -> String? {
     var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
@@ -144,7 +151,7 @@ final class LocalServer: ObservableObject {
         }
     }
 
-    /// Mac settings can change it (stop first); saved phone and browser addresses carry it, so it never hops by itself.
+    /// This Mac can change it (stop first); saved phone and browser addresses carry it, so it never hops by itself.
     var port: Int {
         get {
             let saved = UserDefaults.standard.integer(forKey: portKey)
@@ -157,7 +164,7 @@ final class LocalServer: ObservableObject {
 
     static let defaultDataDir = appSupport.appendingPathComponent("data")
 
-    /// The data folder (DATA_DIR): Application Support by default, anywhere after Move… (Mac settings → Data location).
+    /// The data folder (DATA_DIR): Application Support by default, anywhere after Move… (This Mac → Data location).
     var dataDir: URL {
         UserDefaults.standard.string(forKey: "dataFolder").map { URL(fileURLWithPath: $0) } ?? Self.defaultDataDir
     }
@@ -171,15 +178,15 @@ final class LocalServer: ObservableObject {
     /// like lost data (and on a missing disk it would land on the Mac's own disk under /Volumes).
     func dataProblem() -> String? {
         if let disk = missingDisk(dataDir.path, mounted: mountedVolumes()) {
-            return "Your data is on \(disk), which isn't connected. Connect it, or choose another folder in Mac settings → Data location."
+            return "Your data is on \(disk), which isn't connected. Connect it, or choose another folder in This Mac → Data location."
         }
         if dataDir != Self.defaultDataDir && !FileManager.default.fileExists(atPath: dataDir.path) {
-            return "Your data folder \(dataDir.path) is gone. Choose another folder in Mac settings → Data location."
+            return "Your data folder \(dataDir.path) is gone. Choose another folder in This Mac → Data location."
         }
         return nil
     }
 
-    /// "Access from other devices" (Mac settings): on = the server listens on every interface (phones, the LAN);
+    /// "Access from other devices" (This Mac): on = the server listens on every interface (phones, the LAN);
     /// off = this Mac only. The server lets another device sign in only once the owner has a password of their own.
     var otherDevices: Bool {
         get { UserDefaults.standard.bool(forKey: "serverOtherDevices") }
@@ -264,7 +271,7 @@ final class LocalServer: ObservableObject {
         let pid = (try? String(contentsOf: pidFile, encoding: .utf8)).flatMap { pid_t($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
         guard let theirs = answer.environment, theirs == ours, let pid,
               processPath(pid)?.hasSuffix("/server/bin/node") == true else {
-            return "Port \(port) is in use by another program. Change the port in Mac settings."
+            return "Port \(port) is in use by another program. Change the port in This Mac."
         }
         ServerLog.note("stopping the server left from an earlier run (pid \(pid))")
         kill(pid, SIGTERM)
@@ -302,6 +309,7 @@ final class LocalServer: ObservableObject {
         env["PLAYWRIGHT_BROWSERS_PATH"] = appSupport.appendingPathComponent("runtime/chromium").path
         env["CT_LOCAL"] = "1"
         env["CT_EXIT_WITH_PARENT"] = "1"
+        env.merge(releaseEnv(Bundle.main.infoDictionary), uniquingKeysWith: { $1 })
         p.environment = env
         // stdin stays open while the app runs: a Finder launch's /dev/null would end the server at once
         let stdin = Pipe(), output = Pipe()

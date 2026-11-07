@@ -82,7 +82,14 @@ final class ServerTests: XCTestCase {
     func testTheRunnersFolderFollowsTheDataFolderForTheServerHere() {
         let data = URL(fileURLWithPath: "/Volumes/Footage/data")
         XCTAssertEqual(relayFolder(for: URL(string: "http://127.0.0.1:43128")!, localData: data).path, "/Volumes/Footage/data/relay")
-        XCTAssertEqual(relayFolder(for: productionSite, localData: nil), appSupport.appendingPathComponent("relay/creatortoolset.com"))
+        XCTAssertEqual(relayFolder(for: URL(string: "https://tools.example.com")!, localData: nil), appSupport.appendingPathComponent("relay/tools.example.com"))
         XCTAssertEqual(relayFolder(for: URL(string: "http://localhost:3000")!, localData: nil).lastPathComponent, "localhost-3000")
+    }
+
+    func testOnlyAReleaseBuildTellsTheServerItsChannel() {
+        XCTAssertEqual(releaseEnv(["CTChannel": "release", "CFBundleShortVersionString": "1.0.990"]),
+                       ["CT_CHANNEL": "release", "CT_VERSION": "1.0.990"])
+        XCTAssertEqual(releaseEnv(["CFBundleShortVersionString": "1.0.990"]), [:])   // ad-hoc build
+        XCTAssertEqual(releaseEnv(nil), [:])                                         // swift run
     }
 }

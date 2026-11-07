@@ -44,6 +44,10 @@ elif [ -n "${SPARKLE_PUBLIC_KEY:-}${FEED_URL:-}" ]; then
   exit 1
 fi
 
+# a release (signed with SIGN_IDENTITY) tells its bundled server so (CT_CHANNEL, Server.swift); ad-hoc builds don't
+channel=""
+[ -z "${SIGN_IDENTITY:-}" ] || channel="  <key>CTChannel</key><string>release</string>"
+
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -56,6 +60,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key><string>1.0.$build</string>
   <key>CFBundleVersion</key><string>$build</string>
 $sparkle
+$channel
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundleURLTypes</key><array><dict>
     <key>CFBundleURLName</key><string>Creator Toolset link</string>

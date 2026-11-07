@@ -1,15 +1,19 @@
 // The person's Creator Toolset account, asked for on the first run. The app opens the account server's Apple or
 // Google sign-in in the system's sign-in sheet; the server ends on creatortoolset://account?code=<one-time code>, the
 // app swaps the code for a token (POST /api/account/token) and keeps it in the Keychain. The account's name and email
-// go to the server on this Mac as its owner's profile. An empty account server (Mac settings) means no account step.
+// go to the server on this Mac as its owner's profile. An empty account server (This Mac) means no account step.
 import AppKit
 import AuthenticationServices
 import CryptoKit
 import Foundation
 
-/// The account server from Mac settings: never set = creatortoolset.com; "" = none (forks, own servers).
+/// The optional account server for the first run's Apple or Google sign-in, when none is set. It has nothing to do with
+/// which server the window opens (Servers.swift has no default).
+let defaultAccountServer = URL(string: "https://creatortoolset.com")!
+
+/// The account server from This Mac → Account: never set = defaultAccountServer; "" = none (forks, own servers).
 func accountServerURL(_ saved: String?) -> URL? {
-    guard let saved else { return productionSite }
+    guard let saved else { return defaultAccountServer }
     return saved.trimmingCharacters(in: .whitespaces).isEmpty ? nil : siteURL(from: saved)
 }
 
@@ -166,7 +170,7 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
     private var pkce: Pkce?
 
     var server: URL? { accountServerURL(UserDefaults.standard.string(forKey: serverKey)) }
-    /// The text Mac settings shows ("" when off).
+    /// The text This Mac shows ("" when off).
     var serverText: String { server?.absoluteString ?? "" }
 
     func setServer(_ text: String) {
