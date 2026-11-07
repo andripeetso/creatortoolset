@@ -14,6 +14,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { createEdit, listEdits, runEdit } from "@/lib/editor";
 import { listAssets, listCollections, listLibraries } from "@/lib/library";
 import { cn } from "@/lib/utils";
+import { confirmHeavy } from "@/lib/setup";
 
 /**
  * AI Editor (/editor): the edits I made (a workspace owner: the members' too), and New edit: footage picked from the
@@ -189,6 +190,7 @@ function NewEditSheet({ open, onClose }: { open: boolean; onClose: () => void })
   };
 
   const create = async () => {
+    if (!(await confirmHeavy("editor"))) return;
     setBusy(true);
     setError(null);
     try {

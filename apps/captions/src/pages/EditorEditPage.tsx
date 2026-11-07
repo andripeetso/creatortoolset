@@ -5,6 +5,7 @@ import { DEFAULT_EYELINE, type Draft, type Edit, type Sentence } from "@contract
 import { AppBar } from "@/components/AppBar";
 import { Button } from "@/components/ui/button";
 import { deleteEdit, exportUrl, getEdit, getSentences, putLines, retryJob, reviewDraft, runEdit, setEyeline, stopEdit, swapTake, takeSpan } from "@/lib/editor";
+import { confirmHeavy } from "@/lib/setup";
 import { StateBadge, thumb } from "./EditorPage";
 
 /**
@@ -91,7 +92,7 @@ export default function EditorEditPage() {
           </Button>
         )}
         {mine && !busy && (
-          <Button size="sm" variant="outline" onClick={() => void act(runEdit(id))}>
+          <Button size="sm" variant="outline" onClick={() => void confirmHeavy("editor").then((go) => { if (go) void act(runEdit(id)); })}>
             <RotateCcw className="h-3.5 w-3.5" />
             Run again
           </Button>

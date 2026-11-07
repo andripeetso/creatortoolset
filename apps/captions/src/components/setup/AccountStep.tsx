@@ -19,6 +19,9 @@ type Bridge = { postMessage: (m: string) => Promise<AccountState> };
 const bridge = (): Bridge | undefined =>
   (window as unknown as { webkit?: { messageHandlers?: { account?: Bridge } } }).webkit?.messageHandlers?.account;
 
+/** The Mac app's sign-in is here: only then does setup show this step. */
+export const hasAccountBridge = () => !!bridge();
+
 /** Whether the person may go on from this step. */
 export const accountDone = (s: AccountState) => s.state === "signedIn" || s.state === "notSetUp" || s.state === "off";
 

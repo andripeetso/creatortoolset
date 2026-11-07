@@ -14,6 +14,7 @@ import { ModelChip } from "./ModelChip";
 import { Notice } from "./Notice";
 import { ChipComposer, numbered, readable, type ComposerHandle } from "./ChipComposer";
 import type { Selection } from "@contracts/providers";
+import { confirmHeavy } from "@/lib/setup";
 
 /**
  * The conversation: the AI thinks here and edits the document below.
@@ -823,7 +824,7 @@ export function ChatPane({
           </span>
           <button
             type="button"
-            onClick={() => onDeep(!deep)}
+            onClick={() => (deep ? onDeep(false) : void confirmHeavy("research").then((go) => go && onDeep(true)))}
             disabled={!researchAvailable}
             className={`${chip} ${deep ? "border-sky-500/60 bg-sky-500/20 text-sky-950 dark:text-sky-100" : chipIdle} disabled:opacity-50`}
             title={researchAvailable ? "Deep research: 5–15 minutes of web research on your message before the AI answers, sources included. Off after each send." : "Research needs your own AI provider, or your Perplexity key in Settings → My API keys"}

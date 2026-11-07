@@ -40,28 +40,50 @@ func binary(_ driver: String, home: URL) -> String? {
     return nil
 }
 
-/// The first line of `<bin> --version`, 2 s at most (the Mac relay version()).
-func cliVersion(_ path: String) -> String? {
+/// `<bin> <args>`'s output (stdout, else stderr), or nil when it can't start or runs past `seconds`.
+func runQuick(_ path: String, _ args: [String], seconds: Double) -> String? {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: path)
-    process.arguments = ["--version"]
+    process.arguments = args
     let out = Pipe()
     let err = Pipe()
     process.standardOutput = out
     process.standardError = err
     process.standardInput = FileHandle.nullDevice
     do { try process.run() } catch { return nil }
-    let deadline = Date().addingTimeInterval(2)
+    let deadline = Date().addingTimeInterval(seconds)
     while process.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.02) }
     if process.isRunning {
         process.terminate()
         return nil
     }
     let text = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-    let words = text.isEmpty ? String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self) : text
-    guard let first = words.split(separator: "\n", omittingEmptySubsequences: true).first else { return nil }
+    return text.isEmpty ? String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self) : text
+}
+
+/// The first line of `<bin> --version`, 2 s at most (the Mac relay version()).
+func cliVersion(_ path: String) -> String? {
+    guard let words = runQuick(path, ["--version"], seconds: 2),
+          let first = words.split(separator: "\n", omittingEmptySubsequences: true).first else { return nil }
     return String(first.trimmingCharacters(in: .whitespaces).prefix(120))
 }
+
+/// What a CLI says about its own sign-in (`claude auth status --json`, `codex login status`): signed in, and the plan
+/// when it says one (Claude's subscriptionType and planTier; Codex never says). Never read from the CLI's files.
+func signInFrom(driver: String, output: String) -> (signedIn: Bool, plan: String?)? {
+    switch driver {
+    case "claude":
+        guard let data = output.data(using: .utf8), let o = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
+        let plan = [o["subscriptionType"], o["planTier"]].compactMap { $0 as? String }.filter { !$0.isEmpty }.joined(separator: " ")
+        return (o["loggedIn"] as? Bool ?? false, plan.isEmpty ? nil : String(plan.prefix(80)))
+    case "codex":
+        return (output.localizedCaseInsensitiveContains("logged in") && !output.localizedCaseInsensitiveContains("not logged in"), nil)
+    default:
+        return nil
+    }
+}
+
+private let signInArgs: [String: [String]] = ["claude": ["auth", "status", "--json"], "codex": ["login", "status"]]
 
 /// the Mac relay drivers(): each driver's CLI, installed, its version and path.
 func driverReport(home: URL) -> [[String: Any]] {
@@ -71,6 +93,11 @@ func driverReport(home: URL) -> [[String: Any]] {
             row["installed"] = true
             row["path"] = path
             if let version = cliVersion(path) { row["version"] = version }
+            if let args = signInArgs[driver.id], let out = runQuick(path, args, seconds: 5),
+               let status = signInFrom(driver: driver.id, output: out) {
+                row["signedIn"] = status.signedIn
+                if let plan = status.plan { row["plan"] = plan }
+            }
         }
         return row
     }

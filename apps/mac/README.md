@@ -84,12 +84,14 @@ on this Mac…" and opens `http://127.0.0.1:43128` once `/api/health` answers (p
 3. This Mac pairs as the owner's AI device (`POST /api/devices`, see "Runs your AI") with no toggle. On a server
    with `CT_LOCAL=1` the server puts the default Claude provider on the owner's first paired Mac, so the AI answers
    once `claude` is installed and signed in.
-4. The page opens the first-run setup (`SetupDialog` in `apps/captions`) inside the window: welcome, the first
-   project (required), your AI (the Mac's report shows whether `claude` or `codex` is on its PATH or in
-   `~/.local/bin`, `/opt/homebrew/bin` or `/usr/local/bin`, the official install and sign-in commands, and a
-   check that runs one line through it), then Instagram and your own keys (both optional), then done. The AI
-   step looks again every 5 s, and the app reports its tools again whenever it comes to the front, so a tool
-   installed in Terminal shows up without a reload. These are the same screens as Settings.
+4. The page opens the first-run setup (`SetupDialog` in `apps/captions`) inside the window: the account, which
+   tools you use, the first project (only for the Workshop or the Analyzer), your AI (only when a ticked tool uses
+   it: the Mac's report shows whether `claude` or `codex` is on its PATH or in `~/.local/bin`, `/opt/homebrew/bin`
+   or `/usr/local/bin`, the official install and sign-in commands, a check that runs one line through it, and
+   "Which plan are you on?", filled in from what `claude auth status --json` itself says), then what's left for
+   the ticked tools (all optional). The AI step looks again every 5 s, and the app reports its tools again
+   whenever it comes to the front, so a tool installed in Terminal shows up without a reload. These are the same
+   screens as Settings; Settings → Setup shows every tool's readiness and runs setup again.
 
 A creatortoolset.com account is not part of this: the server on your Mac works without one.
 

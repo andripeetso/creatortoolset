@@ -42,6 +42,7 @@ import { deviceForToken } from "./lib/devices";
 import { adminApp } from "./admin";
 import { serviceKeysApp } from "./service-keys";
 import { myKeysApp } from "./my-keys";
+import { setupApp } from "./setup";
 import { captionLayoutApp } from "./caption-layout";
 import { GUEST_USER, mayUse, touchActive, type Tool } from "./users";
 import { env } from "./lib/env";
@@ -306,6 +307,8 @@ app.route("/api/admin", adminApp);
 app.route("/api/service-keys", serviceKeysApp);
 // Settings → My API keys: each account's own keys for the paid services (never through an AI key)
 app.route("/api/my-keys", myKeysApp);
+// first-run setup and Settings → Setup: my tools, my plan, what is set up (setup.ts)
+app.route("/api/setup", setupApp);
 app.route("/api/providers", providersApp);
 // Creator Toolset as a remote MCP server (Full key only: not on the key routes): its tools call these same routes
 app.route("/api/mcp", mcpApp((path, init) => Promise.resolve(app.request(path, init))));

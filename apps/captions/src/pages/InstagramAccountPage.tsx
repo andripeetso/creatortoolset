@@ -73,6 +73,7 @@ import { TagsEditor } from "@/components/instagram/TagsEditor";
 import { IdeaStatusSelect, RankStars, SavedForToggle } from "@/components/instagram/IdeaMark";
 import { ConfirmButton } from "@/components/instagram/ConfirmButton";
 import { QueueMenu } from "@/components/instagram/QueueMenu";
+import { confirmHeavy } from "@/lib/setup";
 
 const COUNT_PRESETS = [12, 25, 50];
 const CATALOG_SORTS: { id: CatalogSort; label: string }[] = [
@@ -237,6 +238,7 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
   const pull = async (run: RunWhen, codes?: string[]) => {
     const picked = codes ?? [...selected];
     if (!account || !picked.length) return;
+    if (run === "now" && !(await confirmHeavy("analyzer", picked.length))) return;
     setBusy(codes?.length === 1 ? `pull:${codes[0]}` : "pull");
     setError(null);
     try {

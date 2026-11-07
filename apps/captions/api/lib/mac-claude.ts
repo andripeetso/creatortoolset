@@ -2,7 +2,8 @@ import { Hono, type Context } from "hono";
 import { createHash, randomUUID } from "node:crypto";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { Driver, Effort, MacReport, Scope } from "../../contracts/providers";
+import { DRIVERS, type Driver, type Effort, type MacReport, type Scope } from "../../contracts/providers";
+import { limitMessage } from "../../contracts/plans";
 import { env } from "./env";
 import { deviceName, isOnline, saveReport, touchDevice } from "./devices";
 
@@ -358,7 +359,9 @@ export function relayRoutes(deviceOf: (c: Context) => string | null) {
     if (usage) void recordUsage(r?.label ?? "Stopped", usage, r?.provider?.instance, r?.provider?.scope);
     if (!r) return c.json({ error: "Not found" }, 404);
     const error = String(b.error ?? "failed").slice(0, 300);
-    const err = new MacClaudeError(`Claude on the Mac: ${error}`, b.gone === true ? "gone" : b.limit === true ? "limit" : "failed"); // the relay says what the CLI said
+    // the relay says what the CLI said; a closed usage window says when it opens again
+    const tool = DRIVERS.find((d) => d.id === r.provider?.driver)?.label ?? "Claude";
+    const err = b.limit === true ? new MacClaudeError(limitMessage(error, tool), "limit") : new MacClaudeError(`Claude on the Mac: ${error}`, b.gone === true ? "gone" : "failed");
     err.usage = usage;
     r.fail(err);
     return c.json({ ok: true });

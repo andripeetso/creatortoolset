@@ -286,6 +286,20 @@ final class RelayTests: XCTestCase {
         XCTAssertNotNil(report["homes"])
     }
 
+    func testSignInAndPlanComeFromWhatTheCLISays() {
+        let pro = signInFrom(driver: "claude", output: #"{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"pro","planTier":"default_claude_pro"}"#)
+        XCTAssertEqual(pro?.signedIn, true)
+        XCTAssertEqual(pro?.plan, "pro default_claude_pro")
+        let token = signInFrom(driver: "claude", output: #"{"loggedIn":true,"authMethod":"oauth_token"}"#)
+        XCTAssertEqual(token?.signedIn, true)
+        XCTAssertNil(token?.plan)
+        XCTAssertEqual(signInFrom(driver: "claude", output: #"{"loggedIn":false}"#)?.signedIn, false)
+        XCTAssertNil(signInFrom(driver: "claude", output: "not json"))
+        XCTAssertEqual(signInFrom(driver: "codex", output: "Logged in using ChatGPT")?.signedIn, true)
+        XCTAssertNil(signInFrom(driver: "codex", output: "Logged in using ChatGPT")?.plan)
+        XCTAssertEqual(signInFrom(driver: "codex", output: "Not logged in")?.signedIn, false)
+    }
+
     // MARK: pairing and the request's device body
 
     func testDeviceBodyFromThePairReply() throws {

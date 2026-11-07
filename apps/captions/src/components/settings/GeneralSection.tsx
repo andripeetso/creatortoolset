@@ -1,6 +1,4 @@
 import { useState } from "react";
-import { Link } from "react-router";
-import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { CLIP_SPEEDS, loadClipSpeed, saveClipSpeed, isClipSpeed, type ClipSpeed } from "@/lib/clip-playback";
 import { persistAutoCadence, storedAutoCadence } from "@/lib/cadence-preference";
@@ -78,15 +76,6 @@ export function GeneralSection() {
                 </option>
               ))}
             </select>
-          </Row>
-        </Card>
-      </Group>
-      <Group title="Setup" hint="The first-run walk-through: a project, your AI, your Instagram, your other keys.">
-        <Card>
-          <Row label="Run setup again">
-            <Button asChild size="sm" variant="outline">
-              <Link to="/?setup=project">Open</Link>
-            </Button>
           </Row>
         </Card>
       </Group>

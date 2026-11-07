@@ -90,7 +90,8 @@ export interface Device {
 /** What the Mac app found on the Mac (the Mac relay `report`, hourly and at start). */
 export interface MacReport {
   at: number;
-  drivers: Array<{ driver: Driver; installed: boolean; version?: string; path?: string }>;
+  /** `signedIn` and `plan`: what the CLI itself says (`claude auth status --json`: its subscriptionType and planTier; `codex login status`), never read from its files */
+  drivers: Array<{ driver: Driver; installed: boolean; version?: string; path?: string; signedIn?: boolean; plan?: string }>;
   /** config folders found for a driver, e.g. ~/.claude-work */
   homes: Array<{ driver: Driver; home: string }>;
 }

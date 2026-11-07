@@ -17,6 +17,7 @@ export default defineConfig({
     include: [
       "api/**/*.test.ts",
       "api/**/*.spec.ts",
+      "contracts/**/*.test.ts",
       "src/**/*.test.ts",
       "src/**/*.test.tsx",
     ],

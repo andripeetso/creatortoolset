@@ -44,6 +44,7 @@ import {
 } from "@/lib/enhance";
 import { EnhancePlayer } from "@/components/EnhancePlayer";
 import { AppBar } from "@/components/AppBar";
+import { openToolSetup } from "@/lib/setup";
 
 /**
  * The Audio Enhancer — a standalone tool at /enhance inside Creator
@@ -678,8 +679,14 @@ export default function EnhancePage() {
             {avail && offered(avail).length === 0 && (
               <p className="mt-2 flex items-center gap-1.5 text-[11px] text-amber-400/80">
                 <TriangleAlert className="h-3 w-3 shrink-0" />
-                Enhancement is off: {avail.guest ? "not available in guest mode right now" : "add your NVIDIA or ElevenLabs key in Settings → My API keys"}.
-                The cost is yours, paid to that provider.
+                Enhancement is off: {avail.guest ? "not available in guest mode right now." : (
+                  <>
+                    it needs an ElevenLabs or NVIDIA key, billed to you by that provider.{" "}
+                    <button type="button" className="underline" onClick={() => openToolSetup("enhance")}>
+                      Set up
+                    </button>
+                  </>
+                )}
               </p>
             )}
             {avail?.guest && (

@@ -39,6 +39,8 @@ export function AiSetup({
 }) {
   const installed = device?.report?.drivers.filter((d) => d.installed && DRIVERS.find((x) => x.id === d.driver)?.runs) ?? [];
   const ready = providers.find((p) => checks[p.id]?.ok);
+  // what the CLI itself said in the Mac's report
+  const signedOut = installed.length > 0 && installed.every((d) => d.signedIn === false);
   const steps = [
     {
       done: devices.length > 0,
@@ -79,6 +81,7 @@ export function AiSetup({
       title: "Check it answers",
       body: (
         <>
+          {signedOut && <span className="text-foreground">The tool on the Mac says it isn't signed in yet. </span>}
           A one-line test through the Mac. If it says to sign in, run the tool once in Terminal on that Mac ({TOOLS.map((t) => <code key={t.name} className="mx-0.5">{t.signIn}</code>)}) and sign in, then check again.
           {providers[0] && (
             <Button size="sm" variant="outline" className="mt-2 block" onClick={() => onCheck(providers.find((p) => p.enabled) ?? providers[0]!)}>

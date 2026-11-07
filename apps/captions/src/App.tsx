@@ -29,6 +29,7 @@ import { isPhoneHub } from "@/lib/mobile";
 import { ExportTray } from "@/components/ExportTray";
 import { GuestWelcomeDialog } from "@/components/GuestWelcomeDialog";
 import { SetupDialog } from "@/components/SetupDialog";
+import { FirstOpen } from "@/components/setup/FirstOpen";
 import LegalPage from "@/pages/LegalPage";
 import { DemoBanner, ViewAsBanner } from "@/components/ViewAsBanner";
 import { AppDialogs } from "@/components/AppDialogs";
@@ -302,6 +303,7 @@ export default function App() {
       {!onMobile && !publicPage && !isPhoneHub() && <ExportTray />}
       {!onMobile && !publicPage && <GuestWelcomeDialog />}
       {!publicPage && !inSettings && <SetupDialog />}
+      {!publicPage && !inSettings && <FirstOpen />}
       {!onMobile && !publicPage && <CornerNav />}
       {inSettings && <SettingsModal onClose={closeSettings} />}
       {inProjects && <ProjectsRoute onClose={closeSettings} />}

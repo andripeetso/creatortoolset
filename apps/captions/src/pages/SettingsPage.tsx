@@ -1,6 +1,6 @@
 import { Fragment } from "react";
 import { Link, Navigate, useLocation } from "react-router";
-import { Cable, Cpu, FileDown, Gauge, KeyRound, Monitor, Palette, ShieldCheck, SlidersHorizontal, UserRound, Users, type LucideIcon } from "lucide-react";
+import { Cable, Cpu, FileDown, Gauge, KeyRound, ListChecks, Monitor, Palette, ShieldCheck, SlidersHorizontal, UserRound, Users, type LucideIcon } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { AccountSection } from "@/components/settings/AccountSection";
 import { AdminSection } from "@/components/settings/AdminSection";
@@ -12,6 +12,7 @@ import { ProvidersSection } from "@/components/settings/ProvidersSection";
 import { ConnectorsSection } from "@/components/settings/ConnectorsSection";
 import { ServiceKeysSection } from "@/components/settings/ServiceKeysSection";
 import { MyKeysSection } from "@/components/settings/MyKeysSection";
+import { SetupSection } from "@/components/settings/SetupSection";
 import { UsageSection } from "@/components/settings/UsageSection";
 import { WorkspaceSection } from "@/components/settings/WorkspaceSection";
 import { useViewedMe } from "@/lib/auth";
@@ -24,6 +25,7 @@ import { cn } from "@/lib/utils";
  */
 const SETTINGS_SECTIONS: ReadonlyArray<{ id: string; title: string; icon: LucideIcon; adminOnly?: boolean; workspace?: boolean; account?: boolean }> = [
   { id: "general", title: "General", icon: SlidersHorizontal },
+  { id: "setup", title: "Setup", icon: ListChecks, account: true },
   { id: "appearance", title: "Appearance", icon: Palette },
   { id: "providers", title: "AI providers", icon: Cpu },
   { id: "connectors", title: "Connectors", icon: Cable },
@@ -52,6 +54,7 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
 
   const body = {
     general: <GeneralSection />,
+    setup: <SetupSection />,
     appearance: <AppearanceSection />,
     providers: <ProvidersSection sub={sub} />,
     connectors: <ConnectorsSection />,
