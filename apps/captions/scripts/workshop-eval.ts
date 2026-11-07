@@ -3,7 +3,7 @@
  *
  *   npx tsx scripts/workshop-eval.ts --dry-run [--owner admin] [--cases 6]
  *   WORKSHOP_EVAL_COOKIE='cap_auth=…' npx tsx scripts/workshop-eval.ts
- *     [--server https://creatortoolset.com] [--samples 2] [--case <id>]
+ *     [--server https://tools.example.com] [--samples 2] [--case <id>]
  *     [--timeout-min 20] [--out eval-out.json] [--baseline eval-old.json]
  *
  * Cases come from the author's kept rewrites (DATA_DIR/workshop/users/<owner>.edits.json,

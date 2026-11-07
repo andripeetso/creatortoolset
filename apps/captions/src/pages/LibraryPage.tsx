@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router";
-import { AudioLines, Captions, Quote, Share2, FileText, Folder, Image as ImageIcon, Loader2, RotateCcw, Star, Trash2, Upload, Video } from "lucide-react";
+import { Link, useNavigate, useSearchParams } from "react-router";
+import { AudioLines, Captions, MessageSquare, Quote, Share2, FileText, Folder, Image as ImageIcon, Loader2, RotateCcw, Star, Trash2, Upload, Video } from "lucide-react";
 import type { AssetCard, AssetDetail, AssetKind, Collection, LibrarySummary, SearchHit } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
 import { Button } from "@/components/ui/button";
@@ -496,7 +496,15 @@ export default function LibraryPage() {
                   .join(" · ")}
               </SheetDescription>
               <div className="flex flex-wrap items-center gap-2">
-                {scope === "trash" ? (
+                {preview.review ? (
+                  // Review owns its versions and its trash (one in Review's trash opens there): the library's trash answers 409 for it
+                  <Button size="sm" variant="outline" asChild>
+                    <Link to={preview.trashedAt ? "/review?trash=1" : `/review/${preview.id}`}>
+                      <MessageSquare className="h-4 w-4" />
+                      Open in Review
+                    </Link>
+                  </Button>
+                ) : scope === "trash" ? (
                   <Button size="sm" variant="outline" onClick={() => void moveAsset(preview, false)}>
                     <RotateCcw className="h-4 w-4" />
                     Restore

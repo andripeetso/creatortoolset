@@ -134,6 +134,9 @@ describe("Review in the Media Library", () => {
     expect(meta.versions[0]!.versionId).toMatch(/^[0-9a-f-]{36}$/);
     expect(numbers(id)).toEqual({ [meta.versions[0]!.versionId!]: 1 });
     expect(row(id)).toMatchObject({ title: "Older video" });
+    // the library opens it in Review instead of offering its own trash (which answers 409)
+    const page = await read(app.request(`/api/library/${row(id)!.library_id}/assets`));
+    expect(page.items.find((a: { id: string }) => a.id === id)).toMatchObject({ review: true });
     // Review reads it as before
     const view = await read(app.request(`/assets/${id}`));
     expect(view.comments.map((x: { text: string }) => x.text)).toEqual(["kept"]);

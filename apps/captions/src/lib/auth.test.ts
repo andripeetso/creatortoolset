@@ -75,11 +75,13 @@ describe("returnTo after signing in", () => {
   it("goes back to a page here", () => {
     expect(returnTo(next("/review"), prod)).toBe("https://creatortoolset.com/review");
     expect(returnTo("", prod)).toBeNull();
+    expect(returnTo(next("https://media.creatortoolset.com/x"), prod)).toBe("https://media.creatortoolset.com/x");
+    expect(returnTo(next("https://media.tools.example.com/"), "https://tools.example.com")).toBe("https://media.tools.example.com/");
   });
 
   it("never sends anyone anywhere else", () => {
     for (const bad of [
-      "https://evil.example/", "https://creatortoolset.com.evil.example/",
+      "https://evil.example/", "https://creatortoolset.com.evil.example/", "https://xcreatortoolset.com/",
       "http://media.example.com/", "javascript:alert(1)", "//evil.example/x",
     ]) expect(returnTo(next(bad), prod)).toBeNull();
   });

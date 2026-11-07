@@ -13,11 +13,10 @@ type Content = { type: "text"; text: string } | { type: "image"; mimeType: strin
 
 class ToolError extends Error {}
 
-const ORIGIN = "https://creatortoolset.com";
 /** MCP clients give up on a tool call after about a minute: a reply still thinking hands back its id to wait on. */
 const WAIT_MAX_S = 55;
 
-const INSTRUCTIONS = `Creator Toolset (creatortoolset.com), as the signed-in user's account.
+const INSTRUCTIONS = `Creator Toolset, as the signed-in user's account.
 
 Content Workshop: the same projects, sessions, pieces and chat the user sees on the site and the iPhone app, so whatever
 you do here shows there at once. A project is one brand (audience, voice, CTA). A session is one idea: its sources,
@@ -108,11 +107,11 @@ const when = (ms: unknown) => (typeof ms === "number" && ms ? new Date(ms).toISO
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** A review link or id → its API path (the user's own, a share link's, or a shared folder's video). */
-function reviewPath(link: string): string {
+function reviewPath(link: string, origin: string): string {
   const uuid = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
   const p = (() => {
     try {
-      return new URL(link, ORIGIN).pathname;
+      return new URL(link, origin).pathname;
     } catch {
       return link;
     }
@@ -126,11 +125,11 @@ function reviewPath(link: string): string {
     const m = re.exec(p) ?? re.exec(link);
     if (m) return api(m.slice(1));
   }
-  throw new ToolError(`That isn't a review link: expected ${ORIGIN}/review/<id>, /r/<token> or /rp/<token>/<id>.`);
+  throw new ToolError(`That isn't a review link: expected ${origin}/review/<id>, /r/<token> or /rp/<token>/<id>.`);
 }
 
 /** The tools, each a thin client of the site's own routes with the caller's credentials. */
-function tools(call: Call, auth: Headers) {
+function tools(call: Call, auth: Headers, origin: string) {
   const api = async (path: string, method = "GET", body?: unknown): Promise<Response> => {
     const headers = new Headers();
     for (const h of ["authorization", "cookie"]) if (auth.get(h)) headers.set(h, auth.get(h)!);
@@ -210,12 +209,12 @@ function tools(call: Call, auth: Headers) {
           latest_comments: r.comments,
           new_comments: r.newComments,
           updated: when(r.updatedAt),
-          link: `${ORIGIN}/review/${r.id}`,
+          link: `${origin}/review/${r.id}`,
         };
       }),
     }),
     get_review: async (a) => {
-      const path = reviewPath(String(a.link));
+      const path = reviewPath(String(a.link), origin);
       const view = await json(path);
       const asset = view.asset as Args;
       const versions = new Map(((asset.versions as Args[] | undefined) ?? []).map((v) => [v.n as number, v]));
@@ -237,7 +236,7 @@ function tools(call: Call, auth: Headers) {
         });
       const shaped = {
         ...pick(asset, ["id", "name"]),
-        link: `${ORIGIN}/review/${asset.id}`,
+        link: `${origin}/review/${asset.id}`,
         approval: (asset.approval as Args | undefined)?.status,
         versions: [...versions.values()].map((v) => pick(v, ["n", "name", "duration", "fps", "width", "height", "status", "removed"])),
         open_comments: threads.filter((t) => !t.resolved).length,
@@ -254,7 +253,7 @@ function tools(call: Call, auth: Headers) {
       return out;
     },
     resolve_comment: async (a) => {
-      const id = ((await json(reviewPath(String(a.link)))).asset as Args).id;
+      const id = ((await json(reviewPath(String(a.link), origin))).asset as Args).id;
       const cm = await json(`/api/review/assets/${id}/comments/${encodeURIComponent(String(a.comment_id))}`, "PATCH", { resolved: a.resolved !== false });
       return { id: cm.id, resolved: !!cm.resolved, text: cm.text };
     },
@@ -262,8 +261,8 @@ function tools(call: Call, auth: Headers) {
   return handlers;
 }
 
-async function callTool(call: Call, auth: Headers, name: string, args: Args) {
-  const handler = tools(call, auth)[name];
+async function callTool(call: Call, auth: Headers, origin: string, name: string, args: Args) {
+  const handler = tools(call, auth, origin)[name];
   try {
     if (!handler) throw new ToolError(`Unknown tool ${name}.`);
     const result = await handler(args ?? {});
@@ -273,8 +272,8 @@ async function callTool(call: Call, auth: Headers, name: string, args: Args) {
   }
 }
 
-/** One JSON-RPC message in, its answer out (null for a notification). */
-export async function handle(call: Call, auth: Headers, msg: Args): Promise<Args | null> {
+/** One JSON-RPC message in, its answer out (null for a notification). `origin` starts the links the tools hand back. */
+export async function handle(call: Call, auth: Headers, msg: Args, origin: string): Promise<Args | null> {
   if (msg.id === undefined) return null;
   const params = (msg.params ?? {}) as Args;
   const ok = (result: unknown) => ({ jsonrpc: "2.0", id: msg.id, result });
@@ -291,7 +290,7 @@ export async function handle(call: Call, auth: Headers, msg: Args): Promise<Args
     case "tools/list":
       return ok({ tools: TOOLS });
     case "tools/call":
-      return ok(await callTool(call, auth, String(params.name), (params.arguments ?? {}) as Args));
+      return ok(await callTool(call, auth, origin, String(params.name), (params.arguments ?? {}) as Args));
     default:
       return { jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: `Method not found: ${String(msg.method)}` } };
   }
@@ -303,11 +302,14 @@ export function mcpApp(call: Call) {
     const body = (await c.req.json().catch(() => null)) as Args | Args[] | null;
     if (!body) return c.json({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } }, 400);
     const auth = c.req.raw.headers;
+    // this server's public address: PUBLIC_ORIGIN, else the address the request came in on (as connectors.ts)
+    const url = new URL(c.req.url);
+    const origin = process.env.PUBLIC_ORIGIN?.replace(/\/$/, "") || `${c.req.header("x-forwarded-proto") ?? url.protocol.replace(":", "")}://${url.host}`;
     if (Array.isArray(body)) {
-      const out = (await Promise.all(body.map((m) => handle(call, auth, m)))).filter(Boolean);
+      const out = (await Promise.all(body.map((m) => handle(call, auth, m, origin)))).filter(Boolean);
       return out.length ? c.json(out) : c.body(null, 202);
     }
-    const out = await handle(call, auth, body);
+    const out = await handle(call, auth, body, origin);
     return out ? c.json(out) : c.body(null, 202);
   });
   // no server-sent stream: everything is answered in the POST

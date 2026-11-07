@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { AssetCard, AssetKind, AssetPage, SearchQuery } from "../../contracts/library";
 import type { ProbeSummary } from "./media/probe";
+import { inReview } from "./trash";
 
 /**
  * Asset listing for the library (tasks/media-library-plan.md, sections 6 and 8): one SQL statement from a
@@ -152,6 +153,7 @@ export function toCard(r: CardRow): AssetCard {
     state: r.state,
     ...(p.capturedAt ? { capturedAt: p.capturedAt } : {}),
     ...(r.trashed_at ? { trashedAt: r.trashed_at } : {}),
+    ...(inReview(r.id) ? { review: true as const } : {}), // ponytail: two stats a card; a column when pages get big
   };
 }
 

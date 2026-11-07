@@ -181,7 +181,7 @@ export const MIGRATIONS: string[] = [
   `
   ALTER TABLE collections ADD COLUMN created_by TEXT NOT NULL DEFAULT '';
   `,
-  // 3: no 'bunny' storage (no backend for it). SQLite cannot change a CHECK: the table is rebuilt (foreign keys are
+  // 3: storage is 'local' or 's3' only (a third kind in migration 1 had no backend). SQLite cannot change a CHECK: the table is rebuilt (foreign keys are
   // off while migrations run, db.ts); the child tables still name libraries, so their keys point at the new one
   `
   CREATE TABLE libraries_new (

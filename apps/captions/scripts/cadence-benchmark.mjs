@@ -11,7 +11,8 @@ dotenv.config();
 
 const [shortVideo, longVideo, runsArg = "10"] = process.argv.slice(2);
 const runs = Number(runsArg);
-const baseUrl = (process.env.CADENCE_BENCHMARK_URL || "https://creatortoolset.com").replace(/\/$/, "");
+// the server this .env belongs to: its APP_SECRET signs the benchmark in
+const baseUrl = (process.env.CADENCE_BENCHMARK_URL || process.env.PUBLIC_ORIGIN || `http://localhost:${process.env.PORT || 3000}`).replace(/\/$/, "");
 
 if (!shortVideo || !longVideo || !Number.isInteger(runs) || runs < 1) {
   console.error("Usage: node scripts/cadence-benchmark.mjs SHORT_VIDEO LONG_VIDEO [RUNS]");

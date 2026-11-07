@@ -35,12 +35,14 @@ Several tools use AI: the caption timing pass, the script check, Instagram frame
 writing, and the accuracy check. Creator Toolset never comes with an AI account of its own. You bring one, in
 one of two ways:
 
-1. **Your own Claude or ChatGPT subscription, through the Mac app.** Install the Mac app on the Mac you work
-   on and turn on "Use this Mac for my AI". The Mac runs the official Claude Code or Codex command-line tool,
-   signed in with your own login, and the server hands it jobs. Settings → AI providers walks you through the
-   install and the sign-in.
-2. **An API key.** Put an Anthropic key in the server's `.env` (`ANTHROPIC_API_KEY`). It serves the workspace's
-   API budget, which members without their own AI draw on.
+1. **Your own subscription, on your own Mac.** You install Claude Code (or Codex) on your own Mac and sign in
+   to it with your own Claude (or ChatGPT) subscription. Then you install the Mac app and turn on "Use this Mac
+   for my AI". The Mac app relays only your own requests, from your own account, to that tool. Nothing routes
+   one person's subscription for anyone else: everyone else on the server brings their own Mac and their own
+   sign-in. Settings → AI providers walks you through the install and the sign-in.
+2. **Your own API key.** On your own server, put your Anthropic key in `.env` (`ANTHROPIC_API_KEY`). It serves
+   your own work, and members of your workspace only when you choose to give them a monthly API budget (you pay
+   for that).
 
 Without any AI, everything else still works. Captions transcribe on the device in the browser, and Review,
 Video Cleaner and the rest need no AI at all.
@@ -88,4 +90,5 @@ Read [AGENTS.md](AGENTS.md) first. Enable the repository hooks once per clone wi
 
 ## License
 
-[MIT](LICENSE). Copyright (c) 2026 Andri Peetso. The fonts bundled in `apps/captions/public/fonts/` are Google Fonts under the SIL Open Font License 1.1 (see `OFL.txt` there).
+[MIT](LICENSE). Copyright (c) 2026 Andri Peetso. The fonts bundled in `apps/captions/public/fonts/` are Google Fonts under the SIL Open Font License 1.1 (see `OFL.txt` there). Other third-party parts, including the GPL FFmpeg build the Docker image downloads, are listed in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

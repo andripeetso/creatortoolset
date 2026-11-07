@@ -107,7 +107,8 @@ drops it and turns the setting off, with a note in the menu.
 While it is on, `Relay.swift` long-polls `POST /api/devices/relay/wait` (empty body; 204 = nothing;
 up to 4 jobs at once) with `Authorization: Bearer <token>`. Each job runs the way
 the Mac relay runs a Claude request (`ClaudeRun.swift`, `ClaudeRequest.swift`):
-the `claude` the Claude desktop app bundles (else `claude` on PATH), signed in through the request's
+the official `claude` command-line tool (Claude Code) found on PATH or in `~/.local/bin`, `/opt/homebrew/bin` or
+`/usr/local/bin`, never a copy inside another app, signed in through the request's
 home folder (its `settings.json` `env` rides along, the API key is dropped), `--permission-mode dontAsk`,
 the Workshop folder read with Read, Glob and Grep, streamed text posted to `/api/devices/relay/<id>/text`
 (at most every 0.4 s, at least every 20 s), tool calls to `/step`, then `/done` with the answer and its

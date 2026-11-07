@@ -8,35 +8,15 @@ let reportDrivers: [(id: String, label: String)] = [
     ("antigravity", "Antigravity"), ("muse", "Muse Code"), ("pi", "Pi"),
 ]
 
-/// Where each non-Claude CLI may be (the Mac relay BINARIES). Claude is found by claudeBinary.
+/// Where each CLI may be (the Mac relay BINARIES): the official install on PATH or in the usual folders below.
+/// Claude is the `claude` command-line tool its owner installed and signed in to, never a copy inside another app.
 let driverBinaries: [String: [String]] = [
-    "codex": ["codex", "/opt/homebrew/bin/codex"], "grok": ["grok", "~/.grok/bin/grok"], "cursor": ["cursor-agent"],
+    "claude": ["claude"], "codex": ["codex", "/opt/homebrew/bin/codex"], "grok": ["grok", "~/.grok/bin/grok"], "cursor": ["cursor-agent"],
     "opencode": ["opencode", "~/.opencode/bin/opencode"], "antigravity": ["antigravity"], "muse": ["muse"], "pi": ["pi"],
 ]
 
 /// The folders a GUI app's PATH leaves out (launchd's PATH is short).
 private let extraBinDirs = ["/opt/homebrew/bin", "/usr/local/bin", "~/.local/bin", "/usr/bin", "/bin"]
-
-/// The CLI a `claude` run uses: the newest Claude Code the desktop app keeps (its bundled copy knows the newest models),
-/// else `claude` on PATH (llm.cli()). nil when neither exists.
-func claudeBinary(home: URL) -> String? {
-    let fm = FileManager.default
-    let root = home.appendingPathComponent("Library/Application Support/Claude/claude-code")
-    var bundled: [(key: [Int], path: String)] = []
-    for version in (try? fm.contentsOfDirectory(atPath: root.path)) ?? [] {
-        let versionDir = root.appendingPathComponent(version)
-        let key = version.split(separator: ".").compactMap { Int($0) }
-        // <version>/claude.app, or <version>/<hash>/claude.app (the desktop app's layout since 2026-10-01)
-        var dirs = [versionDir]
-        dirs += ((try? fm.contentsOfDirectory(atPath: versionDir.path)) ?? []).map { versionDir.appendingPathComponent($0) }
-        for dir in dirs {
-            let path = dir.appendingPathComponent("claude.app/Contents/MacOS/claude").path
-            if fm.isExecutableFile(atPath: path) { bundled.append((key, path)) }
-        }
-    }
-    if let newest = bundled.max(by: { $0.key.lexicographicallyPrecedes($1.key) }) { return newest.path }
-    return which("claude")
-}
 
 /// The first executable named `name` on PATH or in the usual folders (`name` may be a path, with ~).
 func which(_ name: String) -> String? {
@@ -54,7 +34,6 @@ func which(_ name: String) -> String? {
 
 /// A driver's CLI on this Mac (the Mac relay binary()).
 func binary(_ driver: String, home: URL) -> String? {
-    if driver == "claude" { return claudeBinary(home: home) }
     for name in driverBinaries[driver] ?? [] {
         if let found = which(name) { return found }
     }

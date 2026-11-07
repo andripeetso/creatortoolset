@@ -77,7 +77,7 @@ export function AiKeyDialog({ open, onClose }: { open: boolean; onClose: () => v
               <div className="rounded-md border p-2.5 text-xs text-muted-foreground">
                 <p className="font-medium text-foreground">Use it from claude.ai, ChatGPT or any AI app</p>
                 <p className="mt-1">
-                  Add a custom connector with the address <code>https://creatortoolset.com/api/mcp</code>, choose no sign-in,
+                  Add a custom connector with the address <code>{`${window.location.origin}/api/mcp`}</code>, choose no sign-in,
                   and add the request header <code>Authorization</code> = <code>Bearer</code> + this key. In claude.ai: Settings →
                   Connectors → Add custom connector. It then works in the Claude app on your phone too.
                 </p>

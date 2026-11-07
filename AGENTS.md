@@ -8,7 +8,7 @@ stops being true, fix the rule in the same change.
 Creator Toolset: open-source tools for content creators (captions, audio enhancement, client review, video
 cleaning, story splitting, video notes, guides, an Instagram content analyzer, a writing workspace, teams and
 AI providers). It runs as one web app on the user's machine or on their own server, plus a Mac app that
-supplies AI from the user's own Claude or ChatGPT login.
+relays AI requests to the Claude Code or Codex tool its owner installed and signed in to with their own subscription.
 
 | Folder | What | Stack |
 |---|---|---|
@@ -38,8 +38,9 @@ Enable the hooks once per clone: `git config core.hooksPath .githooks`.
 
 ## Rules that matter
 
-**AI providers.** A server's AI providers are a person's own Claude or ChatGPT logins, paired from a Mac. They
-answer only the admin and background work of the account that owns them. Members use their own providers, or a
+**AI providers.** A server's AI providers are a person's own Claude Code or Codex, installed on their own Mac and
+signed in with their own subscription, paired through the Mac app. They answer only the requests and background work
+of the account that owns them. Members use their own providers, or a
 monthly API budget that the workspace owner sets. Never add a path that runs one person's subscription for
 another person, and never let a request from one account reach another account's provider.
 

@@ -305,7 +305,7 @@ final class RelayTests: XCTestCase {
         let hub = home.appendingPathComponent(".claude-work").path
         let req = request(#"{"id":"real-1","system":"Reply with just OK.","user":"Reply with just OK.","driver":"claude","model":"claude-opus-5-5","effort":"low","home":"\#(hub)"}"#)
         let opts = try requestOptions(req)
-        let cli = claudeBinary(home: home) ?? "claude"
+        let cli = binary("claude", home: home) ?? "claude"
         var streamed: [String] = []
         let started = Date()
         let answer = try claudeAnswer(req, opts, cli: cli, send: { streamed.append($0); return true }, step: { _ in })

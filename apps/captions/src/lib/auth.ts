@@ -114,8 +114,8 @@ export function getViewedMe(): Me | null {
 }
 
 /**
- * Where to go after signing in: `?next=` on this site, or on a sibling
- * *.creatortoolset.com site over https. Anything else is ignored, so this is never an open redirect.
+ * Where to go after signing in: `?next=` on this site, or on a subdomain of this site over https
+ * (media.<this host>). Anything else is ignored, so this is never an open redirect.
  */
 export function returnTo(search: string, origin: string): string | null {
   const next = new URLSearchParams(search).get("next");
@@ -130,7 +130,8 @@ export function returnTo(search: string, origin: string): string | null {
   const local = (h: string) => h === "localhost" || h === "127.0.0.1";
   const sibling =
     url.protocol === "https:" &&
-    (url.hostname === "creatortoolset.com" || url.hostname.endsWith(".creatortoolset.com"));
+    !local(home.hostname) &&
+    url.hostname.endsWith(`.${home.hostname}`);
   const sameSite =
     url.origin === home.origin ||
     (local(home.hostname) && local(url.hostname) && url.protocol === home.protocol);

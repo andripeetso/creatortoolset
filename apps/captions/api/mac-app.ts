@@ -55,8 +55,10 @@ export const macAppPublic = new Hono()
   })
   .get("/appcast.xml", async (c) => {
     const r = await latest();
-    const host = c.req.header("host") ?? "creatortoolset.com";
-    const origin = `${c.req.header("x-forwarded-proto") ?? (host.startsWith("localhost") || host.startsWith("127.") ? "http" : "https")}://${host}`;
+    const host = c.req.header("host") ?? "localhost";
+    const origin =
+      process.env.PUBLIC_ORIGIN?.replace(/\/$/, "") ||
+      `${c.req.header("x-forwarded-proto") ?? (host.startsWith("localhost") || host.startsWith("127.") ? "http" : "https")}://${host}`;
     const item = r
       ? `<item><title>Version ${esc(r.version)}</title><pubDate>${new Date(r.at).toUTCString()}</pubDate>` +
         `<sparkle:version>${r.build}</sparkle:version><sparkle:shortVersionString>${esc(r.version)}</sparkle:shortVersionString>` +

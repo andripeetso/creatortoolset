@@ -26,7 +26,7 @@ describe("library schema", () => {
     again.close();
   });
 
-  it("migration 3 drops the 'bunny' storage kind and keeps the libraries and the rows that point at them", () => {
+  it("migration 3 allows only local and s3 storage and keeps the libraries and the rows that point at them", () => {
     const file = path.join(dir, "old.db");
     const old = new DatabaseSync(file); // a database from before migration 3
     old.exec("PRAGMA foreign_keys = ON");
@@ -41,7 +41,7 @@ describe("library schema", () => {
     expect(version(db)).toBe(MIGRATIONS.length);
     expect(db.prepare("SELECT id, name FROM libraries").all()).toEqual([{ id: "lib_1", name: "Tiny Acrobatics" }]);
     expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
-    expect(() => db.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_2', 'w', 'x', 'bunny', 1)").run()).toThrow();
+    expect(() => db.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_2', 'w', 'x', 'ftp', 1)").run()).toThrow();
     // the assets' foreign key now points at the rebuilt table
     expect(() => db.prepare("INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES ('ast_2', 'lib_none', 'video', 'x', 'u', 1)").run()).toThrow();
     db.close();

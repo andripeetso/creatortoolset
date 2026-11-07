@@ -19,8 +19,9 @@ Ground rules for whoever runs it:
   for your domain.
 - Your accounts: one admin (you) and as many members as you invite.
 - Your data on the server's disk, or in a private S3-compatible bucket you own.
-- AI from the Mac app: the Claude Code or Codex command-line tool runs on your Mac under your own login. You
-  can also add an API key on the server.
+- AI from your own subscription: you install Claude Code (or Codex) on your own Mac and sign in with your own
+  subscription; the Mac app relays only your own requests to it. Each member does the same on their own Mac.
+  You can also add your own API key on the server.
 - The web app works on phones: open it in the phone's browser and add it to the home screen.
 
 This repository does not include an iPhone app.
@@ -171,8 +172,9 @@ use.
 
 Creator Toolset never sends AI work to an account it does not belong to. There are two kinds of AI:
 
-**Your own Claude or ChatGPT login, on your Mac (recommended for you).** The Mac app runs the Claude Code or
-Codex command-line tool on your Mac, under your login, and the server sends it jobs.
+**Your own subscription, on your own Mac (recommended).** Each person installs Claude Code (or Codex) on their
+own Mac and signs in with their own Claude (or ChatGPT) subscription. The Mac app relays only that person's own
+requests to it; nothing routes one person's subscription for another person.
 
 On your Mac:
 
@@ -186,7 +188,7 @@ On your Mac:
 5. In the site: **Settings → AI providers → Set up your AI** shows the install and sign-in commands for Claude
    Code and Codex. Run them once in Terminal on that Mac, then press **check**.
 
-**An API key on the server (for the team's budget).** Set `ANTHROPIC_API_KEY` in `.env` and run
+**Your own API key on the server (for your work, and a budget you choose to give).** Set `ANTHROPIC_API_KEY` in `.env` and run
 `docker compose up -d`. Members who have no AI of their own can then use a monthly budget. In
 **Settings → Team** you set each member's AI route (their own Mac, or the budget) and the budget in dollars.
 A budget only works when the key is set.

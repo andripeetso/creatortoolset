@@ -41,6 +41,13 @@ describe("the Mac app's download and appcast", () => {
     expect(cast).toContain("<sparkle:version>5</sparkle:version>");
     expect(cast).toContain('url="https://creatortoolset.com/api/mac-app/download/5.zip" length="2002"');
     expect(cast).toContain(`sparkle:edSignature="${sig}"`);
+    process.env.PUBLIC_ORIGIN = "https://tools.example.com/";   // behind a proxy that rewrites the host
+    try {
+      const behind = await (await app.request("/api/mac-app/appcast.xml", { headers: { host: "127.0.0.1:3000" } })).text();
+      expect(behind).toContain('url="https://tools.example.com/api/mac-app/download/5.zip"');
+    } finally {
+      delete process.env.PUBLIC_ORIGIN;
+    }
     const dl = await app.request("/api/mac-app/download");
     expect(dl.headers.get("location")).toBe("/api/mac-app/download/5.zip");
     expect((await (await app.request("/api/mac-app/download/5.zip")).arrayBuffer()).byteLength).toBe(2002);

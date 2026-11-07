@@ -24,6 +24,8 @@ export interface AssetCard {
   state: VersionState;
   capturedAt?: number;
   trashedAt?: number;
+  /** a Review video (same id): Review owns its versions and its trash, so the library opens it there */
+  review?: true;
 }
 
 export interface AssetDetail extends AssetCard {

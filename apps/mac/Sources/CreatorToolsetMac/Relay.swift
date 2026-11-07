@@ -238,7 +238,7 @@ final class RelayRunner {
                 return obj["text"] as? String
             }
             let opts = try requestOptions(req, root: home)
-            let cli = claudeBinary(home: home) ?? "claude"
+            let cli = binary("claude", home: home) ?? "claude"
             let answer = try claudeAnswer(req, opts, cli: cli, send: { [self] text in
                 // a blip is not a stop: the next post carries the whole text anyway
                 guard let reply = try? api.call("POST", "\(base)/text", ["text": text]) else { return true }
