@@ -12,8 +12,10 @@ import type { SessionUser } from "./users";
  * Creator Toolset as a remote MCP server: POST /api/mcp, MCP's Streamable HTTP answered as plain JSON, no sessions. Only a Full AI key gets here
  * (boot.ts: the key is the account itself), sent as `Authorization: Bearer ctk_…` (claude.ai: the connector's
  * Request headers). Every tool calls the site's own routes with the caller's credentials, so each route's checks
- * stay the only checks. The assistant's job token (ctj_…, auth.ts) also gets here, and only the assistant tools
- * (ASSISTANT_TOOLS) are open to it: a Full key sees and calls the Workshop and Review tools alone.
+ * stay the only checks. The assistant's job token (ctj_…, auth.ts) also gets here: it sees the same tools plus
+ * ASSISTANT_DEFS, and only it may call those (isJob checks the header). A Full key sees TOOLS alone. The check is on
+ * the header, not the account: a signed-in session that sends a ctj_ header can call them as its own account. That
+ * is no wider than the account's own reach, since the tools only act for the account they run as.
  */
 
 type Call = (path: string, init: RequestInit) => Promise<Response>;

@@ -30,7 +30,7 @@ const MAX_TEXT = 4000;
 const HISTORY = 20;
 
 /** What the app is and what its tools do: no writing or style rules, only the facts the assistant needs. */
-const SYSTEM = `You are the assistant built into Creator Toolset, a web app for content creators. Its tools: ${Object.values(TOOL_NAMES).join(", ")}. Each has its own page in the app.
+export const SYSTEM = `You are the assistant built into Creator Toolset, a web app for content creators. Its tools: ${Object.values(TOOL_NAMES).join(", ")}. Each has its own page in the app.
 
 Your reply is shown in a small chat dock. You act in the app only through its tools (the creator-toolset MCP server):
 - setup_status: what is set up (the AI, logins, which keys are saved, the project count). Call it before you walk someone through setup.
@@ -39,9 +39,7 @@ Your reply is shown in a small chat dock. You act in the app only through its to
 - ask_secret asks the user for one API key. The app shows a secure box in the chat; the key goes straight to the app and never to you. Never ask the user to paste a key, token or password into the chat, and never repeat one back.
 
 The keys the app takes, and what each one is for:
-${MY_KEYS.map((k) => `- ${k.env} (${k.name}): ${k.what}`).join("\n")}
-
-When you set something up, say what it is for in one sentence before you ask for it, and do one thing at a time.`;
+${MY_KEYS.map((k) => `- ${k.env} (${k.name}): ${k.what}`).join("\n")}`;
 
 /* ---- the conversation, in memory and on disk ---- */
 

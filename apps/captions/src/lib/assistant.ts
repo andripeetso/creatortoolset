@@ -36,6 +36,7 @@ export function rememberedFor(user: string): string | null {
   }
 }
 
+/** "self" | "chat" | "later" */
 export function remember(user: string, value: string): void {
   try {
     localStorage.setItem(keyOf(user, "choice"), value);

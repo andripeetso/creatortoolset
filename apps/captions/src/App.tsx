@@ -305,7 +305,7 @@ export default function App() {
       {!onMobile && !publicPage && <GuestWelcomeDialog />}
       {!publicPage && !inSettings && <SetupDialog />}
       {!publicPage && !inSettings && <FirstOpen />}
-      {!publicPage && <AssistantDock />}
+      {!onMobile && !publicPage && <AssistantDock />}
       {!onMobile && !publicPage && <CornerNav />}
       {inSettings && <SettingsModal onClose={closeSettings} />}
       {inProjects && <ProjectsRoute onClose={closeSettings} />}

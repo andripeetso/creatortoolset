@@ -45,9 +45,12 @@ export function AssistantDock() {
 
   useEffect(() => {
     if (!real) return;
-    setChoice(rememberedFor(user));
+    const remembered = rememberedFor(user);
+    // only a setup path counts as chosen; "later" just starts collapsed, and the choices still show when it opens
+    setChoice(remembered === "self" || remembered === "chat" ? remembered : null);
+    if (remembered === "later") set({ collapsed: true });
     void load();
-  }, [real, user, load]);
+  }, [real, user, load, set]);
 
   const thinking = view?.messages.at(-1)?.status === "thinking";
   // a reply on the Mac takes a while: look again every 1.5 s until it's done
@@ -98,13 +101,20 @@ export function AssistantDock() {
     else void send("Set me up. Go one step at a time.");
   };
 
-  const later = () => set({ collapsed: true });
+  // Later stays collapsed across page loads (the X only folds it for this page)
+  const later = () => {
+    remember(user, "later");
+    set({ collapsed: true });
+  };
 
   if (collapsed) {
     return (
       <button
         type="button"
-        onClick={() => openAssistant()}
+        onClick={() => {
+          remember(user, "open");
+          openAssistant();
+        }}
         className="fixed right-4 bottom-4 z-40 flex items-center gap-2 rounded-full border bg-popover px-4 py-2 text-sm text-popover-foreground shadow-md hover:bg-accent"
       >
         <MessageCircle className="size-4" aria-hidden />
@@ -113,7 +123,7 @@ export function AssistantDock() {
     );
   }
 
-  const showChoice = !!view && view.provider !== "none" && (!choice || setupAsked) && view.messages.length === 0;
+  const showChoice = !!view && view.provider !== "none" && (setupAsked || (!choice && view.messages.length === 0));
   const pending = view?.pending;
 
   return (
@@ -123,7 +133,7 @@ export function AssistantDock() {
     >
       <header className="flex items-center justify-between border-b px-4 py-2.5">
         <span className="text-sm font-medium">Assistant</span>
-        <Button variant="ghost" size="icon-sm" onClick={later} aria-label="Hide the assistant">
+        <Button variant="ghost" size="icon-sm" onClick={() => set({ collapsed: true })} aria-label="Hide the assistant">
           <X className="size-4" />
         </Button>
       </header>

@@ -105,6 +105,15 @@ describe("before an AI is connected", () => {
   });
 });
 
+describe("the dock's prompt", () => {
+  it("carries facts about the app and its tools, no writing or style rules", async () => {
+    const { SYSTEM } = await import("./assistant");
+    expect(SYSTEM).toContain("Creator Toolset");
+    expect(SYSTEM).toContain("ask_secret");
+    expect(SYSTEM).not.toMatch(/one sentence|one step|one thing/i);
+  });
+});
+
 describe("a turn", () => {
   it("queues a relay job with mcp set, and the Mac's answer lands; the token is revoked after", async () => {
     const cookie = await cookieOf("ana");
