@@ -60,9 +60,27 @@ export interface EditSummary {
   last: Pick<EditJob, "kind" | "state"> | null;
 }
 
+/** One spoken sentence of the footage (analyze): numbered from 1 across every source, in recording order. */
+export interface Sentence {
+  n: number;
+  /** the library version it was said in */
+  src: string;
+  text: string;
+  /** seconds in the source */
+  s: number;
+  e: number;
+  /** its first and last word, indexes into the version's transcript words */
+  w0: number;
+  w1: number;
+}
+
 export interface Edit extends EditSummary, EditBrief {
   workspaceId: string;
   jobs: EditJob[];
   /** the caller may change and run it (the creator) */
   mine: boolean;
+  /** how many sentences analyze found */
+  sentences: number;
+  /** what a step skipped or could not do (a source with no sound…) */
+  notes: string[];
 }

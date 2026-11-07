@@ -30,7 +30,7 @@ const app = (await import("../boot")).default;
 const { libraryDb } = await import("../library/db");
 const { enqueueJob } = await import("../library/jobs");
 const { NeedsKey } = await import("../library/transcribe");
-const { NEXT, STEPS, tick } = await import("./worker");
+const { STEPS, tick } = await import("./worker");
 
 const cookies: Record<string, string> = {};
 async function login(username: string) {
@@ -121,23 +121,23 @@ describe("AI Editor: edits and who sees them", () => {
 describe("AI Editor: the worker", () => {
   it("parks a step that names no account, and fails a step that isn't built yet", async () => {
     const { id } = await json<{ id: string }>(create("mem-a", ["ver_a1"]));
-    enqueueJob(libraryDb(), "ws_a", `${id}:`, "analyze", null, false, "edit_jobs");
+    enqueueJob(libraryDb(), "ws_a", `${id}:`, "draft", null, false, "edit_jobs");
     await drain();
     const [job] = (await json<Edit>(call("mem-a", "GET", `/api/editor/${id}`))).jobs;
     expect(job).toMatchObject({ state: "needs_key", error: expect.stringMatching(/names no account/) });
 
-    await call("mem-a", "POST", `/api/editor/${id}/run`, {}); // as the creator now
+    await call("mem-a", "POST", `/api/editor/${id}/run`, { from: "draft" }); // as the creator now
     await drain();
-    expect(jobState(job!.id)).toEqual({ state: "failed", error: "No analyze step yet" });
+    expect(jobState(job!.id)).toEqual({ state: "failed", error: "No draft step yet" });
   });
 
   it("runs a step as the creator, queues the next one, parks on a missing key, and Retry queues it again", async () => {
     const seen: string[] = [];
+    const real = { ...STEPS };
     STEPS.analyze = async ({ job }) => void seen.push(`analyze:${job.actor}`);
     STEPS.script = async () => {
       throw new NeedsKey("Add your Anthropic key in Settings → My API keys");
     };
-    NEXT.analyze = ["script"];
     try {
       const { id } = await json<{ id: string }>(create("mem-a", ["ver_a1"]));
       await call("mem-a", "POST", `/api/editor/${id}/run`, { from: "analyze" });
@@ -150,14 +150,13 @@ describe("AI Editor: the worker", () => {
       const retried = await json<Edit>(call("mem-a", "POST", `/api/editor/${id}/jobs/${jobs[1]!.id}/retry`));
       expect(retried.jobs[1]!.state).toBe("queued");
     } finally {
-      delete STEPS.analyze;
-      delete STEPS.script;
-      delete NEXT.analyze;
+      Object.assign(STEPS, real);
       await drain();
     }
   });
 
   it("checks the footage again at every step: a source trashed since fails the step", async () => {
+    const real = STEPS.analyze;
     STEPS.analyze = async () => {};
     try {
       const { id } = await json<{ id: string }>(create("mem-a", ["ver_a2"]));
@@ -166,7 +165,7 @@ describe("AI Editor: the worker", () => {
       await drain();
       expect((await json<Edit>(call("mem-a", "GET", `/api/editor/${id}`))).jobs[0]).toMatchObject({ state: "failed", error: expect.stringMatching(/no longer yours/) });
     } finally {
-      delete STEPS.analyze;
+      STEPS.analyze = real!;
       libraryDb().prepare("UPDATE assets SET trashed_at = NULL WHERE id = 'ast_a2'").run();
     }
   });

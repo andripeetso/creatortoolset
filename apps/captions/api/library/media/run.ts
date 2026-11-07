@@ -8,7 +8,8 @@ let running = 0;
 const waiting: (() => void)[] = [];
 const limit = () => Math.max(1, Number(process.env.FFMPEG_CONCURRENCY) || 1);
 
-async function slot<T>(work: () => Promise<T>): Promise<T> {
+/** Runs `work` (one ffmpeg process) in the server-wide limit; for a caller that spawns ffmpeg itself to read its output. */
+export async function ffmpegSlot<T>(work: () => Promise<T>): Promise<T> {
   if (running < limit()) running++;
   else await new Promise<void>((r) => waiting.push(r)); // the releasing run hands its slot over: `running` stays counted
   try {
@@ -22,7 +23,7 @@ async function slot<T>(work: () => Promise<T>): Promise<T> {
 
 /** One ffmpeg run; stderr's tail is the error. Callers pass the arguments after the global flags. */
 export function ffmpeg(args: string[]): Promise<void> {
-  return slot(() => run(args));
+  return ffmpegSlot(() => run(args));
 }
 
 function run(args: string[]): Promise<void> {

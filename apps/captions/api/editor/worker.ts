@@ -1,8 +1,9 @@
 import type { DatabaseSync } from "node:sqlite";
 import { libraryDb } from "../library/db";
-import { claimJob, enqueueJob, extendLease, finishJob, parkJob, requeueExpired, type JobRow } from "../library/jobs";
+import { claimJob, defer, enqueueJob, extendLease, finishJob, parkJob, requeueExpired, type JobRow } from "../library/jobs";
 import { NeedsKey } from "../library/transcribe";
 import { trashDays } from "../library/trash";
+import { analyzeStep, Waiting } from "./analyze";
 import { purgeEdits, readEdit, sourcesWorkspace, type EditMeta } from "./store";
 
 /**
@@ -25,11 +26,11 @@ export interface StepContext {
   signal: AbortSignal;
 }
 
-/** The steps by kind. Empty until the slices that build them (analyze, script, draft…) add theirs. */
-export const STEPS: Record<string, (ctx: StepContext) => Promise<void>> = {};
+/** The steps by kind; script, draft and the rest come with their slices. */
+export const STEPS: Record<string, (ctx: StepContext) => Promise<void>> = { analyze: analyzeStep };
 
 /** What a finished step queues next, for the same edit and variant. */
-export const NEXT: Record<string, string[]> = {};
+export const NEXT: Record<string, string[]> = { analyze: ["script"] };
 
 const running = new Map<number, { edit: string; ctl: AbortController }>();
 
@@ -73,7 +74,8 @@ export async function tick(now = Date.now()): Promise<boolean> {
     for (const kind of NEXT[job.kind] ?? []) enqueueJob(db, edit.workspaceId, vid, kind, job.actor, true, T);
   } catch (e) {
     if (ctl.signal.aborted) return true;
-    if (e instanceof NeedsKey) parkJob(db, job.id, e.message, T);
+    if (e instanceof Waiting) defer(db, job.id, e.seconds, now, T);
+    else if (e instanceof NeedsKey) parkJob(db, job.id, e.message, T);
     else finishJob(db, job.id, false, e instanceof Error ? e.message : String(e), Date.now(), T);
   } finally {
     clearInterval(beat);
