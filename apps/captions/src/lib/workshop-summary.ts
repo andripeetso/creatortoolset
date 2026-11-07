@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 import type { PieceKind, SessionStatus } from "@/lib/workshop";
-import { appendProjectId } from "@/lib/workspace";
+import { appendProjectId, useWorkspace } from "@/lib/workspace";
 
 /**
  * Every Workshop session at a glance (GET /api/workshop/sessions/summary), shared by the sidebar, the tab title and
@@ -27,18 +27,20 @@ let rows: SessionSummary[] | null = null;
 const seenHere = new Set<string>();
 const listeners = new Set<() => void>();
 let timer: number | undefined;
-let inFlight = false;
+// the query of the poll in flight: a poll for another project doesn't wait for it, and its answer is dropped
+let inFlight: string | null = null;
 
 const emit = () => listeners.forEach((f) => f());
 
 export async function refreshSummaries(): Promise<void> {
-  if (inFlight) return;
-  inFlight = true;
+  const params = new URLSearchParams();
+  appendProjectId(params); // the project you're in, like the sessions list
+  const qs = params.toString();
+  if (inFlight === qs) return;
+  inFlight = qs;
   try {
-    const params = new URLSearchParams();
-    appendProjectId(params); // the project you're in, like the sessions list
-    const qs = params.toString();
     const r = await fetch(`/api/workshop/sessions/summary${qs ? `?${qs}` : ""}`);
+    if (inFlight !== qs) return; // the project changed while it ran
     if (r.ok) {
       const got = (await r.json()) as SessionSummary[];
       for (const x of got) if (!x.ready) seenHere.delete(x.id);
@@ -48,9 +50,17 @@ export async function refreshSummaries(): Promise<void> {
   } catch {
     // offline for a moment: the next tick tries again
   } finally {
-    inFlight = false;
+    if (inFlight === qs) inFlight = null;
   }
 }
+
+// another project: its counts at once, never the last one's
+useWorkspace.subscribe((s, prev) => {
+  if (s.currentProjectId === prev.currentProjectId) return;
+  rows = null;
+  emit();
+  if (listeners.size) void refreshSummaries();
+});
 
 function schedule() {
   window.clearTimeout(timer);
