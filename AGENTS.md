@@ -13,7 +13,7 @@ relays AI requests to the Claude Code or Codex tool its owner installed and sign
 | Folder | What | Stack |
 |---|---|---|
 | `apps/captions/` | The web app and its server: UI in `src/`, API in `api/`, shared types in `contracts/`, the database schema in `db/` | React, Vite, Hono, tRPC, TypeScript |
-| `apps/mac/` | The Mac app: a native shell around the web app, plus the local AI runner and its menu bar item | SwiftUI, Swift Package Manager, Sparkle |
+| `apps/mac/` | The Mac app: a native shell around the web app, the server it runs on this Mac (bundled by `scripts/build-app.sh`), plus the local AI runner and its menu bar item | SwiftUI, Swift Package Manager, Sparkle |
 | `scripts/` | Repository checks (`check-public.sh`) and the public-repo patterns in `scripts/public/` | Bash |
 | `.githooks/` | `pre-commit` (public-repo guard, secret scan) | Bash |
 
@@ -28,7 +28,7 @@ pnpm --filter @creator-toolset/captions dev    # dev server on http://localhost:
 pnpm test                                      # all test suites (turbo)
 pnpm check                                     # TypeScript, apps/captions
 pnpm build                                     # production build of the web app
-pnpm build:mac                                 # Mac app bundle (apps/mac/scripts/build-app.sh)
+pnpm build:mac                                 # Mac app bundle with its server (apps/mac/scripts/build-app.sh, Apple silicon)
 pnpm test:mac                                  # Mac app tests (swift test)
 pnpm --filter @creator-toolset/captions run doctor   # checks a running install; bare `pnpm doctor` is pnpm's own command
 scripts/check-public.sh                        # the public-repo guard; the pre-commit hook runs it too

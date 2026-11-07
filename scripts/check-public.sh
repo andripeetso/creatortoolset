@@ -17,7 +17,8 @@ deny_files_local="${CT_PUBLIC_DENY_FILES_LOCAL:-$HOME/.config/creator-toolset/pu
 
 # 1. Private mentions in file contents. scripts/public/ holds the patterns themselves, so it is skipped.
 hits=$(grep -rIEn -f <(patterns scripts/public/deny.txt "$deny_local") \
-  --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=dist --exclude-dir=.turbo . \
+  --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=dist --exclude-dir=.turbo \
+  --exclude-dir=build --exclude-dir=.build . \
   | grep -v '^\./scripts/public/' || true)
 if [ -n "$hits" ]; then
   echo "private mentions (scripts/public/deny.txt):"
@@ -26,7 +27,8 @@ if [ -n "$hits" ]; then
 fi
 
 # 2. Private file names, anywhere in the tree.
-names=$(find . \( -name node_modules -o -name .git -o -name dist -o -name .turbo \) -prune -o -type f -print \
+# build/ and .build/ are the Mac app's ignored build output (its Swift packages' checkouts, the bundled server)
+names=$(find . \( -name node_modules -o -name .git -o -name dist -o -name .turbo -o -name build -o -name .build \) -prune -o -type f -print \
   | grep -iE -f <(patterns scripts/public/deny-files.txt "$deny_files_local") || true)
 if [ -n "$names" ]; then
   echo "private file names (scripts/public/deny-files.txt):"

@@ -51,3 +51,13 @@ copy each one's licence next to the files they install.
 ## Mac app
 
 - [Sparkle](https://github.com/sparkle-project/Sparkle) (updates): MIT. It is the Mac app's only package.
+- The server inside the app (`apps/mac/scripts/build-app.sh` puts it in `Contents/Resources/server`):
+  - Node.js 22 for macOS arm64 (the official build from nodejs.org, version and SHA-256 in the script): MIT,
+    with the licences of the libraries it includes in `NODE-LICENSE` next to it.
+  - FFmpeg and ffprobe 7.1.1 for macOS arm64 (`apps/captions/scripts/install-ffmpeg-runtime-mac.sh`): the static
+    build `1741000090_7.1.1` from https://ffmpeg.martin-riedl.de (URL and SHA-256 in the script), GPL because it
+    enables GPL components (`ffmpeg -L`). Its source is FFmpeg's `n7.1.1` tag at https://github.com/FFmpeg/FFmpeg;
+    the build's library versions are on that page (`versions.txt`). If you hand out an app you built, make that
+    source available with it, as for the Docker image above.
+  - `onnxruntime-node` (MIT) and `playwright-chromium` with `playwright-core` (Apache-2.0), and their npm
+    dependencies; the fingerprint tools and, when built with it, the SSCD model listed below.
