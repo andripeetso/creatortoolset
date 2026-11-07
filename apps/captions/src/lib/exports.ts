@@ -18,6 +18,7 @@ export interface ExportJob {
   filename: string;
   status: "queued" | "running" | "done" | "error";
   progress: number;
+  note?: string;
   error?: string;
   bytes?: number;
   createdAt: number;

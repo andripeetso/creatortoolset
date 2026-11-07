@@ -1,4 +1,7 @@
+import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+// the bundle's banner declares createRequire itself (package.json build), so not a named import
+import nodeModule from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Browser, Page } from "playwright-chromium";
@@ -37,6 +40,30 @@ function rendererUrl(): string {
   return pathToFileURL(file).href;
 }
 
+let installing: Promise<void> | null = null;
+
+/**
+ * Downloads Chromium's headless shell once, with Playwright's own installer run by this same node (the Mac app's
+ * bundle has no npm or npx). It lands in PLAYWRIGHT_BROWSERS_PATH, which the Mac app points outside the data
+ * folder. Exports that ask while it runs wait for the same download; a failed one is tried again next export.
+ */
+export function installExportBrowser(): Promise<void> {
+  installing ??= new Promise<void>((resolve, reject) => {
+    const pkg = nodeModule.createRequire(import.meta.url).resolve("playwright-chromium/package.json");
+    const child = spawn(process.execPath, [path.join(path.dirname(pkg), "cli.js"), "install", "chromium-headless-shell"], {
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let err = "";
+    child.stderr?.on("data", (d) => (err = (err + d).slice(-2000)));
+    child.on("error", reject);
+    child.on("close", (code) =>
+      code === 0 ? resolve() : reject(new Error(`Downloading the export browser failed: ${err.trim() || `exit ${code}`}`)));
+  }).finally(() => {
+    installing = null;
+  });
+  return installing;
+}
+
 export interface CaptionFrameRenderer {
   capacity: number;
   render(times: number[]): Promise<Buffer[]>;
@@ -49,7 +76,9 @@ export interface CaptionFrameRenderer {
  * order remains deterministic when the PNGs are written to FFmpeg.
  */
 export async function createCaptionFrameRenderer(
-  spec: CaptionRenderSpec
+  spec: CaptionRenderSpec,
+  /** called when Chromium is missing and the first export downloads it */
+  onDownload?: () => void,
 ): Promise<CaptionFrameRenderer> {
   // lazy: a missing/broken playwright install must fail exports with a
   // clean error, never crash the whole server at module load
@@ -58,14 +87,22 @@ export async function createCaptionFrameRenderer(
       "playwright-chromium is not installed on the server — caption video exports are unavailable"
     );
   });
-  let browser: Browser | null = await chromium.launch({
-    headless: true,
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--allow-file-access-from-files",
-      "--disable-dev-shm-usage",
-    ],
+  const launch = () =>
+    chromium.launch({
+      headless: true,
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--allow-file-access-from-files",
+        "--disable-dev-shm-usage",
+      ],
+    });
+  let browser: Browser | null = await launch().catch(async (e: unknown) => {
+    // ponytail: Playwright's missing-browser message (1.62); recheck it when Playwright is upgraded
+    if (!String((e as Error)?.message).includes("Executable doesn't exist")) throw e;
+    onDownload?.();
+    await installExportBrowser();
+    return launch();
   });
   const pixels = spec.width * spec.height;
   const configured = Number(process.env.EXPORT_RENDER_PAGES || 4);

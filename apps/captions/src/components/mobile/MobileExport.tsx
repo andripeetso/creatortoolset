@@ -150,7 +150,7 @@ export function MobileExport() {
           <Loader2 className="h-10 w-10 animate-spin text-violet-400" />
           <div className="text-center">
             <p className="text-base font-medium text-zinc-100">
-              {job.status === "queued" ? "Waiting to render…" : "Rendering…"}
+              {job.status === "queued" ? "Waiting to render…" : job.note ?? "Rendering…"}
             </p>
             <p className="mt-1.5 text-sm text-zinc-500">
               {Math.round(job.progress * 100)}% — keep the app open

@@ -74,6 +74,8 @@ interface Job {
   filename: string; // download name shown to the user
   status: JobStatus;
   progress: number; // 0..1
+  /** what a running job is doing besides rendering (the first export's browser download) */
+  note?: string;
   error?: string;
   bytes?: number;
   createdAt: number;
@@ -200,7 +202,14 @@ async function runRenderedFfmpeg(
   spec: CaptionRenderSpec,
   args: string[],
 ): Promise<void> {
-  const renderer = await createCaptionFrameRenderer(spec);
+  const renderer = await createCaptionFrameRenderer(spec, () => {
+    job.note = "Downloading the export browser (196 MB)…";
+    void persist(job);
+  });
+  if (job.note) {
+    delete job.note;
+    await persist(job);
+  }
   const fps = job.params.fps ?? 30;
   const total = Math.max(1, Math.ceil(job.params.duration * fps));
   const p = spawn(
