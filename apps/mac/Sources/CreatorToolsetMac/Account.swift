@@ -4,6 +4,7 @@
 // go to the server on this Mac as its owner's profile. An empty account server (Mac settings) means no account step.
 import AppKit
 import AuthenticationServices
+import CryptoKit
 import Foundation
 
 /// The account server from Mac settings: never set = creatortoolset.com; "" = none (forks, own servers).
@@ -22,7 +23,42 @@ func accountCode(from url: URL) -> String? {
 
 struct AccountProfile: Codable, Equatable {
     let name: String
+    /// "" when the server has no verified email for the account (Google sends one only when it verified it).
     let email: String
+
+    init(name: String, email: String) {
+        self.name = name
+        self.email = email
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        email = try c.decodeIfPresent(String.self, forKey: .email) ?? ""
+    }
+}
+
+/// A PKCE pair: the app keeps `verifier` (32 random bytes, base64url, 43 chars) and sends `challenge`
+/// (base64url of its SHA-256) when it starts a sign-in, so only this app can redeem the code that sign-in ends with.
+struct Pkce {
+    let verifier: String
+    let challenge: String
+
+    init(verifier: String) {
+        self.verifier = verifier
+        challenge = base64url(Data(SHA256.hash(data: Data(verifier.utf8))))
+    }
+
+    static func make() -> Pkce {
+        var bytes = [UInt8](repeating: 0, count: 32)
+        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        return Pkce(verifier: base64url(Data(bytes)))
+    }
+}
+
+func base64url(_ data: Data) -> String {
+    data.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
+        .replacingOccurrences(of: "=", with: "")
 }
 
 enum AccountError: LocalizedError, Equatable {
@@ -48,28 +84,30 @@ struct AccountClient {
     let server: URL
     var session: URLSession = .shared
 
-    func loginURL(_ provider: String) -> URL {
-        URL(string: "/api/account/login/\(provider)?app=1", relativeTo: server)!.absoluteURL
+    func loginURL(_ provider: String, challenge: String) -> URL {
+        URL(string: "/api/account/login/\(provider)?app=1&challenge=\(challenge)", relativeTo: server)!.absoluteURL
     }
 
     /// Whether the server's sign-in is set up: only its redirect to Apple or Google says yes. Anything else (404, 501, a
     /// sign-in page that wants a site login, a fork's app page) = not yet, so the step lets the person go on.
     func isSetUp(_ provider: String) async throws -> Bool {
-        var request = URLRequest(url: loginURL(provider))
+        // the server refuses a sign-in start without a challenge, so the probe sends a throwaway one
+        var request = URLRequest(url: loginURL(provider, challenge: Pkce.make().challenge))
         request.timeoutInterval = 10
         let (_, response) = try await session.data(for: request, delegate: NoRedirects())
         return (300..<400).contains((response as? HTTPURLResponse)?.statusCode ?? 0)
     }
 
-    /// POST {code} → {token, name, email}. The code works once and soon expires.
-    func exchange(_ code: String) async throws -> (token: String, profile: AccountProfile) {
+    /// POST {code, verifier} → {token, name, email}. The code works once, soon expires, and only with the verifier of
+    /// the sign-in that made it.
+    func exchange(_ code: String, verifier: String) async throws -> (token: String, profile: AccountProfile) {
         var request = URLRequest(url: URL(string: "/api/account/token", relativeTo: server)!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(["code": code])
-        struct Reply: Decodable { let token: String; let name: String; let email: String }
+        request.httpBody = try JSONEncoder().encode(["code": code, "verifier": verifier])
+        struct Reply: Decodable { let token: String; let name: String; let email: String? }
         let reply: Reply = try await send(request)
-        return (reply.token, AccountProfile(name: reply.name, email: reply.email))
+        return (reply.token, AccountProfile(name: reply.name, email: reply.email ?? ""))
     }
 
     /// GET /api/account/me with the token: who it signs in as. 401 = the token no longer works.
@@ -124,6 +162,8 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
     var signedIn: (AccountProfile) -> Void = { _ in }
     private var session: ASWebAuthenticationSession?
     private var pending: ((AccountReply) -> Void)?
+    /// The verifier of the sign-in in flight: a code is swapped only with it.
+    private var pkce: Pkce?
 
     var server: URL? { accountServerURL(UserDefaults.standard.string(forKey: serverKey)) }
     /// The text Mac settings shows ("" when off).
@@ -182,6 +222,8 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
         session?.cancel()
         pending?(["state": "cancelled"])
         pending = done
+        let pair = Pkce.make()
+        pkce = pair
         Task { () -> Void in
             let client = AccountClient(server: server)
             do {
@@ -190,7 +232,7 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
                 answer(unreachable(error))
                 return
             }
-            let sheet = ASWebAuthenticationSession(url: client.loginURL(provider), callbackURLScheme: "creatortoolset") { [weak self] url, error in
+            let sheet = ASWebAuthenticationSession(url: client.loginURL(provider, challenge: pair.challenge), callbackURLScheme: "creatortoolset") { [weak self] url, error in
                 Task { @MainActor in
                     guard let self else { return }
                     self.session = nil
@@ -218,7 +260,7 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
     /// flight. Any other link is someone else's code (it would sign this Mac in to their account), so it is refused.
     @discardableResult
     func link(code: String) async -> AccountReply {
-        guard pending != nil else { return ["state": "error", "message": "That sign-in link didn't come from this app. Sign in from the app."] }
+        guard pending != nil, pkce != nil else { return ["state": "error", "message": "That sign-in link didn't come from this app. Sign in from the app."] }
         session?.cancel()
         session = nil
         return await finish(code: code)
@@ -228,8 +270,10 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
     @discardableResult
     private func finish(code: String) async -> AccountReply {
         guard let server else { return answer(["state": "off"]) }
+        guard let pair = pkce else { return answer(["state": "error", "message": "No sign-in is in progress. Sign in from the app."]) }
+        pkce = nil   // one try per sign-in: the server burns the code on a wrong verifier anyway
         do {
-            let (token, profile) = try await AccountClient(server: server).exchange(code)
+            let (token, profile) = try await AccountClient(server: server).exchange(code, verifier: pair.verifier)
             guard DeviceVault.save(token, for: host, service: Self.vault) else {
                 return answer(["state": "error", "message": "The Keychain didn't keep the sign-in."])
             }

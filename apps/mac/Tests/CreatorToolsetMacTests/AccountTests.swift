@@ -59,7 +59,7 @@ final class AccountTests: XCTestCase {
 
     func testCodeExchange() async throws {
         StubServer.routes["/api/account/token"] = (200, #"{"token":"tok-1","name":"Sam Tiny","email":"sam@tinyacrobatics.com"}"#)
-        let (token, profile) = try await client.exchange("abc123")
+        let (token, profile) = try await client.exchange("abc123", verifier: "v-123")
         XCTAssertEqual(token, "tok-1")
         XCTAssertEqual(profile, AccountProfile(name: "Sam Tiny", email: "sam@tinyacrobatics.com"))
         let sent = StubServer.seen.last!
@@ -70,14 +70,32 @@ final class AccountTests: XCTestCase {
             while stream.hasBytesAvailable { let n = stream.read(&buffer, maxLength: 1024); if n <= 0 { break }; data.append(buffer, count: n) }
             return data
         }
-        XCTAssertEqual(try JSONDecoder().decode([String: String].self, from: body!), ["code": "abc123"])
+        XCTAssertEqual(try JSONDecoder().decode([String: String].self, from: body!), ["code": "abc123", "verifier": "v-123"])
+    }
+
+    func testPkcePair() {
+        // challenge = base64url(SHA-256(verifier)) without padding; the expected value was computed independently
+        // (Python hashlib + urlsafe_b64encode)
+        let known = Pkce(verifier: "dBjftJeZ4CVP-mJ92K27uhbUJU1p1r_wW1gFWFOEjXk")
+        XCTAssertEqual(known.challenge, "ngF5GsXcbwljx6u133FFr3Xht9xooA_DuaX_3QwODtc")
+        let fresh = Pkce.make()
+        XCTAssertEqual(fresh.verifier.count, 43)
+        XCTAssertNil(fresh.verifier.rangeOfCharacter(from: CharacterSet(charactersIn: "+/=")))
+        XCTAssertNotEqual(fresh.verifier, Pkce.make().verifier)
+    }
+
+    func testNoVerifiedEmailIsAnEmptyEmail() async throws {
+        StubServer.routes["/api/account/token"] = (200, #"{"token":"tok-2","name":"Jo Tiny","email":null}"#)
+        let (_, profile) = try await client.exchange("abc123", verifier: "v-123")
+        XCTAssertEqual(profile, AccountProfile(name: "Jo Tiny", email: ""))
+        XCTAssertEqual(try JSONDecoder().decode(AccountProfile.self, from: Data(#"{"name":"Jo Tiny","email":null}"#.utf8)).email, "")
     }
 
     func testUsedAndExpiredCodesAreRejectedWithTheServersWords() async {
         for (code, why) in [(400, "code already used"), (410, "code expired")] {
             StubServer.routes["/api/account/token"] = (code, #"{"error":"\#(why)"}"#)
             do {
-                _ = try await client.exchange("abc123")
+                _ = try await client.exchange("abc123", verifier: "v-123")
                 XCTFail("\(code) should fail")
             } catch {
                 XCTAssertEqual(error as? AccountError, .codeRejected(why))
@@ -103,11 +121,13 @@ final class AccountTests: XCTestCase {
         let on = try await client.isSetUp("apple")
         XCTAssertTrue(on)
         XCTAssertFalse(StubServer.seen.contains { $0.url?.host == "appleid.example.com" })
-        XCTAssertEqual(client.loginURL("google").absoluteString, "https://accounts.example.com/api/account/login/google?app=1")
+        XCTAssertEqual(client.loginURL("google", challenge: "c1").absoluteString, "https://accounts.example.com/api/account/login/google?app=1&challenge=c1")
+        // the probe also carries a challenge (the server refuses an app sign-in start without one)
+        XCTAssertTrue(StubServer.seen.contains { ($0.url?.query ?? "").contains("challenge=") })
         // past the sign-in page a 404 is a code it doesn't know: never a way around the account
         StubServer.routes["/api/account/token"] = (404, "")
         do {
-            _ = try await client.exchange("abc123")
+            _ = try await client.exchange("abc123", verifier: "v-123")
             XCTFail("404 should fail")
         } catch {
             XCTAssertEqual(error as? AccountError, .codeRejected("the server answered 404"))
