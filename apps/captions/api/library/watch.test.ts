@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
@@ -99,6 +99,12 @@ describe("watch folder scan", () => {
     writeFileSync(clip, "frame data one");
     writeFileSync(path.join(watched, ".hidden", "skip.mp4"), "hidden");
     writeFileSync(path.join(watched, "notes.txt"), "not media");
+    // links lead out of the folder the owner chose: a linked file or folder is never followed
+    const outside = path.join(dir, "Elsewhere");
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(path.join(outside, "Private.mp4"), "not in the watched folder");
+    symlinkSync(path.join(outside, "Private.mp4"), path.join(watched, "Linked.mp4"));
+    symlinkSync(outside, path.join(watched, "Linked folder"));
     expect(await scanWatchFolders(t0)).toBe(0); // first sight: not settled yet
     expect(await scanWatchFolders(t0 + SETTLE_MS - 1)).toBe(0);
     expect(await scanWatchFolders(t0 + SETTLE_MS)).toBe(1);

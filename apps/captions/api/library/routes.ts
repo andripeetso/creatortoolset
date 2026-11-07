@@ -1,6 +1,5 @@
 import { Hono, type Context } from "hono";
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
 import { copyFile, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
@@ -14,6 +13,7 @@ import { canManage, ensureWorkspace, memberIn, workspaceOf } from "../lib/worksp
 import { sendFile } from "../lib/send-file";
 import type { LibrarySettings, LibrarySummary } from "../../contracts/library";
 import { enqueueJob } from "./jobs";
+import { inReview } from "./trash";
 import { similar } from "./similar";
 import { buildAssetQuery, indexAsset, pageOf, parseSearch, type CardRow } from "./query";
 
@@ -185,12 +185,7 @@ interface UploadRow {
 
 const db = () => libraryDb();
 
-/**
- * A Review video (api/review.ts toLibrary: same id). Review owns its versions and its trash, so the library refuses to
- * add a version or trash it; Review's own routes do both.
- */
-const inReview = (assetId: string) =>
-  [path.join(env.dataDir, "review", assetId), path.join(env.dataDir, "review", "trash", assetId)].some((d) => existsSync(path.join(d, "meta.json")));
+// a Review video: Review owns its versions and its trash, so the library refuses to add a version or trash it
 const IN_REVIEW = { error: "This video lives in Review: change it there", code: "conflict" } as const;
 
 /** The caller's upload, if they started it and still may use its library; otherwise null (404). */

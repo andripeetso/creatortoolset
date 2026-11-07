@@ -492,14 +492,18 @@ function libraryFor(owner: string): string | null {
   return id;
 }
 
-/** A version's id, given once and kept in the meta (the live one; a video in the trash gets its ids when restored). */
-async function withVersionIds(id: string): Promise<Meta | null> {
+/**
+ * The video as Review has it, live or in the trash, read under one lock (a restore in between would read as gone).
+ * A live version's id is given once and kept in the meta; a video in the trash gets its ids when restored.
+ */
+async function withVersionIds(id: string): Promise<{ m: Meta | null; live: boolean }> {
   return withLock(id, async () => {
     const m = await readMeta(id);
-    if (!m || m.versions.every((x) => x.versionId)) return m;
+    if (!m) return { m: await readTrashed(id), live: false };
+    if (m.versions.every((x) => x.versionId)) return { m, live: true };
     for (const x of m.versions) x.versionId ??= randomUUID();
     await writeJson(metaPath(id), m); // updatedAt stays: an id is not a change retention should see
-    return m;
+    return { m, live: true };
   });
 }
 
@@ -523,8 +527,7 @@ async function unlinkFromLibrary(versionId: string): Promise<void> {
 
 /** Makes the library match Review for one video id: added, changed, in the trash, or gone. */
 export async function toLibrary(id: string): Promise<void> {
-  const live = await withVersionIds(id);
-  const m = live ?? (await readTrashed(id));
+  const { m, live } = await withVersionIds(id);
   const d = libraryDb();
   const row = d.prepare("SELECT library_id FROM assets WHERE id = ?").get(id) as { library_id: string } | undefined;
   if (!m) {

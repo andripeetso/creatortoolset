@@ -63,4 +63,14 @@ describe("library trash purge", () => {
     expect(await purgeTrash(now)).toBe(1);
     expect(left("SELECT id FROM assets")).toEqual([]);
   });
+
+  it("leaves a video in Review's trash to Review, whose trash keeps it longer", async () => {
+    const now = Date.now();
+    trashed("ast_review", 20, now);
+    mkdirSync(path.join(dir, "review", "trash", "ast_review"), { recursive: true });
+    writeFileSync(path.join(dir, "review", "trash", "ast_review", "meta.json"), "{}");
+    trashed("ast_plain", 20, now);
+    expect(await purgeTrash(now)).toBe(1);
+    expect(libraryDb().prepare("SELECT id FROM assets").all()).toEqual([{ id: "ast_review" }]);
+  });
 });

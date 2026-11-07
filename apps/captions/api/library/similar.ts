@@ -1,5 +1,6 @@
 import type { SimilarMatch } from "../../contracts/library";
 import { workspaceOf } from "../lib/workspaces";
+import { findUser, mayUse } from "../users";
 import { libraryRole } from "./access";
 import { libraryDb } from "./db";
 import type { Fingerprint } from "./fingerprint";
@@ -34,7 +35,9 @@ export interface SimilarResult {
 /** `phashes` (one per second) against every fingerprinted current version in the caller's workspace's libraries. */
 export function similarTo(username: string, phashes: string[], exclude?: string): SimilarResult {
   const w = workspaceOf(username);
-  if (!w || !phashes.length) return { matches: [], checked: 0, pending: 0 };
+  const account = findUser(username);
+  // as libraryRole: the Media Library switched off for the account means nothing of it, here too
+  if (!w || !phashes.length || (account && !mayUse(account, "media"))) return { matches: [], checked: 0, pending: 0 };
   const d = libraryDb();
   const rows = d
     .prepare(

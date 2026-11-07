@@ -1,13 +1,18 @@
 import { memberIn, workspaceById } from "../lib/workspaces";
+import { findUser, mayUse } from "../users";
 import type { WorkspaceRole } from "../../contracts/workspaces";
 import { blobs, libraryDb } from "./db";
 
 /**
  * What an account may do in a library: its role in the library's workspace (contracts/workspaces.ts), or null.
  * A library in another workspace, or one that does not exist, is null too: callers answer 404, never 403.
- * Owner manages libraries, storage, keys and shares; member uploads and edits their own assets.
+ * Owner manages libraries, storage, keys and shares; member uploads and edits their own assets. An account with the
+ * Media Library switched off (Admin → Users, or the workspace owner) is null too: the Workshop, the Video Cleaner and
+ * exports read the library through here, outside the /api/library tool gate (boot.ts).
  */
 export function libraryRole(username: string, libraryId: string): WorkspaceRole | null {
+  const account = findUser(username);
+  if (account && !mayUse(account, "media")) return null;
   const row = libraryDb().prepare("SELECT workspace_id FROM libraries WHERE id = ?").get(libraryId) as
     | { workspace_id: string }
     | undefined;

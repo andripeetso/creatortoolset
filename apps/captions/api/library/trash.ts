@@ -1,3 +1,6 @@
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { env } from "../lib/env";
 import { blobs, libraryDb } from "./db";
 
 /**
@@ -16,6 +19,13 @@ function trashDays(): number {
   return Number.isFinite(v) && v >= 0 ? v : 14;
 }
 
+/**
+ * A Review video (api/review.ts toLibrary: same id), live or in Review's trash. Review owns its versions and its trash
+ * (TRASH_DAYS there), so the library neither changes nor purges it: Review's own purge removes it from the library.
+ */
+export const inReview = (assetId: string) =>
+  [path.join(env.dataDir, "review", assetId), path.join(env.dataDir, "review", "trash", assetId)].some((d) => existsSync(path.join(d, "meta.json")));
+
 const inList = (n: number) => Array(n).fill("?").join(", ");
 
 /** Deletes assets trashed before now − LIBRARY_TRASH_DAYS. Returns how many went. */
@@ -26,11 +36,13 @@ export async function purgeTrash(now = Date.now()): Promise<number> {
     d
       .prepare(
         `SELECT id FROM assets a WHERE trashed_at IS NOT NULL AND trashed_at < ?
-         AND NOT EXISTS (SELECT 1 FROM jobs j JOIN asset_versions v ON v.id = j.version_id WHERE v.asset_id = a.id AND j.state = 'running')
-         LIMIT 500`, // ponytail: 500 a pass keeps the IN lists short; the next hour takes the rest
+         AND NOT EXISTS (SELECT 1 FROM jobs j JOIN asset_versions v ON v.id = j.version_id WHERE v.asset_id = a.id AND j.state = 'running')`,
       )
       .all(now - trashDays() * DAY) as { id: string }[]
-  ).map((a) => a.id);
+  )
+    .map((a) => a.id)
+    .filter((id) => !inReview(id))
+    .slice(0, 500); // ponytail: 500 a pass keeps the IN lists short; the next hour takes the rest
   await deleteAssets(assets);
   return assets.length;
 }
