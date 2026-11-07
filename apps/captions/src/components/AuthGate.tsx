@@ -19,6 +19,11 @@ export function isPublicDocumentPath(pathname: string): boolean {
   return new RegExp(`^/documents/${PUBLIC_UUID}/?$`, "i").test(pathname);
 }
 
+/** Media Library share links: /library/s/<token>, viewable without an account. */
+export function isPublicLibraryPath(pathname: string): boolean {
+  return /^\/library\/s\/[A-Za-z0-9_-]{22}\/?$/.test(pathname);
+}
+
 export function isPublicSharePath(pathname: string): boolean {
   return isPublicClipPath(pathname) || isPublicDocumentPath(pathname) || /^\/(privacy|terms|data-deletion)\/?$/.test(pathname);
 }
@@ -39,7 +44,7 @@ export function isPublicReviewPath(pathname: string): boolean {
  */
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const { pathname } = useLocation();
-  const publicShare = isPublicSharePath(pathname) || isPublicReviewPath(pathname);
+  const publicShare = isPublicSharePath(pathname) || isPublicReviewPath(pathname) || isPublicLibraryPath(pathname);
   const [state, setState] = useState<"checking" | "login" | "ok">("checking");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");

@@ -177,4 +177,8 @@ export const MIGRATIONS: string[] = [
     PRIMARY KEY (library_id, day)
   );
   `,
+  // 2: who made a collection (folders are collections; a member edits their own, the owner any)
+  `
+  ALTER TABLE collections ADD COLUMN created_by TEXT NOT NULL DEFAULT '';
+  `,
 ];

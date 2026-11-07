@@ -1,12 +1,22 @@
 import { useEffect, useRef, useState } from "react";
-import { AudioLines, FileText, Image as ImageIcon, Loader2, Upload, Video } from "lucide-react";
-import type { AssetCard, AssetKind, LibrarySummary } from "@contracts/library";
+import { AudioLines, Share2, FileText, Folder, Image as ImageIcon, Loader2, RotateCcw, Trash2, Upload, Video } from "lucide-react";
+import type { AssetCard, AssetKind, Collection, LibrarySummary } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
-import { createLibrary, listAssets, listLibraries, uploadFile } from "@/lib/library";
+import {
+  createCollection,
+  createLibrary,
+  createShare,
+  listAssets,
+  listCollections,
+  listLibraries,
+  changeFolderItems,
+  setTrashed,
+  uploadFile,
+} from "@/lib/library";
 import { cn } from "@/lib/utils";
 
 /**
@@ -52,6 +62,10 @@ export default function LibraryPage() {
   const [preview, setPreview] = useState<AssetCard | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
+  const [scope, setScope] = useState("all"); // "all", "trash", or a collection id
+  const [collections, setCollections] = useState<Collection[]>([]);
+  const [folders, setFolders] = useState(0); // counts folder changes, so the list is read again
+  const [folderName, setFolderName] = useState("");
   const picker = useRef<HTMLInputElement>(null);
   const seq = useRef(0);
   const keys = useRef(0);
@@ -71,10 +85,12 @@ export default function LibraryPage() {
   }, [q]);
 
   // the first page for the current library, search and kind; `refresh` counts re-reads (uploads, cards in progress)
+  const folder = scope === "all" ? {} : scope === "trash" ? { trashed: true } : { collectionId: scope };
+
   useEffect(() => {
     if (!libId) return;
     const mine = ++seq.current;
-    listAssets(libId, { q: term || undefined, kind: kind === "all" ? undefined : [kind] })
+    listAssets(libId, { q: term || undefined, kind: kind === "all" ? undefined : [kind], ...folder })
       .then((page) => {
         if (mine !== seq.current) return;
         setItems(page.items);
@@ -84,12 +100,20 @@ export default function LibraryPage() {
       .catch((e) => {
         if (mine === seq.current) setError(message(e));
       });
-  }, [libId, term, kind, refresh]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [libId, term, kind, scope, refresh]);
+
+  useEffect(() => {
+    if (!libId) return;
+    listCollections(libId)
+      .then(setCollections)
+      .catch((e) => setError(message(e)));
+  }, [libId, folders]);
 
   const loadMore = () => {
     if (!libId || !next) return;
     const mine = ++seq.current;
-    listAssets(libId, { q: term || undefined, kind: kind === "all" ? undefined : [kind], cursor: next })
+    listAssets(libId, { q: term || undefined, kind: kind === "all" ? undefined : [kind], ...folder, cursor: next })
       .then((page) => {
         if (mine !== seq.current) return;
         setItems((prev) => [...prev, ...page.items]);
@@ -138,6 +162,54 @@ export default function LibraryPage() {
       const lib = await createLibrary("Library");
       setLibraries((prev) => [...(prev ?? []), lib]);
       setLibraryId(lib.id);
+    } catch (e) {
+      setError(message(e));
+    }
+  };
+
+  const newFolder = async () => {
+    if (!libId || !folderName.trim()) return;
+    try {
+      await createCollection(libId, { name: folderName.trim().slice(0, 80) });
+      setFolderName("");
+      setFolders((n) => n + 1);
+    } catch (e) {
+      setError(message(e));
+    }
+  };
+
+  // the current search and kind, kept as a smart folder that runs them again
+  const saveSearch = async () => {
+    if (!libId || !term) return;
+    try {
+      const c = await createCollection(libId, {
+        name: term.slice(0, 80),
+        kind: "smart",
+        query: { q: term, kind: kind === "all" ? undefined : [kind] },
+      });
+      setFolders((n) => n + 1);
+      setScope(c.id);
+    } catch (e) {
+      setError(message(e));
+    }
+  };
+
+  const moveAsset = async (a: AssetCard, trash: boolean) => {
+    if (!libId) return;
+    try {
+      await setTrashed(libId, a.id, trash);
+      setPreview(null);
+      setRefresh((n) => n + 1);
+    } catch (e) {
+      setError(message(e));
+    }
+  };
+
+  const addToFolder = async (a: AssetCard, folderId: string) => {
+    if (!libId || !folderId) return;
+    try {
+      await changeFolderItems(libId, folderId, [a.id], true);
+      setFolders((n) => n + 1);
     } catch (e) {
       setError(message(e));
     }
@@ -230,6 +302,39 @@ export default function LibraryPage() {
               </div>
             </div>
 
+            <div role="group" aria-label="Folders" className="flex flex-wrap items-center gap-1.5">
+              <Button size="sm" variant={scope === "all" ? "default" : "outline"} aria-pressed={scope === "all"} onClick={() => setScope("all")}>
+                All
+              </Button>
+              {collections.map((c) => (
+                <Button key={c.id} size="sm" variant={scope === c.id ? "default" : "outline"} aria-pressed={scope === c.id} onClick={() => setScope(c.id)}>
+                  <Folder className="h-3.5 w-3.5" />
+                  {c.name}
+                </Button>
+              ))}
+              <Button size="sm" variant={scope === "trash" ? "default" : "outline"} aria-pressed={scope === "trash"} onClick={() => setScope("trash")}>
+                <Trash2 className="h-3.5 w-3.5" />
+                Trash
+              </Button>
+              <form
+                className="flex items-center gap-1.5"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void newFolder();
+                }}
+              >
+                <Input value={folderName} onChange={(e) => setFolderName(e.target.value)} placeholder="New folder" aria-label="New folder" className="h-8 w-36" />
+                <Button type="submit" size="sm" variant="ghost" disabled={!folderName.trim()}>
+                  Add
+                </Button>
+              </form>
+              {term && (
+                <Button size="sm" variant="ghost" onClick={() => void saveSearch()}>
+                  Save search as folder
+                </Button>
+              )}
+            </div>
+
             {uploads.length > 0 && (
               <section aria-label="Uploads" className="flex flex-col gap-2 rounded-xl border border-zinc-500/20 p-3">
                 <div className="flex items-center justify-between text-sm">
@@ -300,6 +405,37 @@ export default function LibraryPage() {
                   .filter(Boolean)
                   .join(" · ")}
               </SheetDescription>
+              <div className="flex flex-wrap items-center gap-2">
+                {scope === "trash" ? (
+                  <Button size="sm" variant="outline" onClick={() => void moveAsset(preview, false)}>
+                    <RotateCcw className="h-4 w-4" />
+                    Restore
+                  </Button>
+                ) : (
+                  <Button size="sm" variant="outline" onClick={() => void moveAsset(preview, true)}>
+                    <Trash2 className="h-4 w-4" />
+                    Move to trash
+                  </Button>
+                )}
+                {collections.some((c) => c.kind === "manual") && (
+                  <select
+                    aria-label="Add to folder"
+                    value=""
+                    onChange={(e) => void addToFolder(preview, e.target.value)}
+                    className="h-9 rounded-md border border-zinc-500/30 bg-transparent px-2 text-sm"
+                  >
+                    <option value="">Add to folder…</option>
+                    {collections
+                      .filter((c) => c.kind === "manual")
+                      .map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                  </select>
+                )}
+              </div>
+              {libId && scope !== "trash" && <ShareBox libraryId={libId} assetId={preview.id} />}
               {preview.kind === "video" && (
                 <video
                   key={preview.versionId}
@@ -346,5 +482,57 @@ function AssetTile({ asset: a, onOpen }: { asset: AssetCard; onOpen: () => void 
       </div>
       <span className="truncate text-sm font-medium">{a.title}</span>
     </button>
+  );
+}
+
+/** A share link for one asset: watch only or watch and download, optional password, days to live. The link shows once. */
+function ShareBox({ libraryId, assetId }: { libraryId: string; assetId: string }) {
+  const [scope, setScope] = useState<"view" | "download">("view");
+  const [days, setDays] = useState("7");
+  const [password, setPassword] = useState("");
+  const [link, setLink] = useState<string | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+
+  const make = () => {
+    setFailed(null);
+    createShare(libraryId, {
+      target: { kind: "asset", id: assetId },
+      scope,
+      expiresInDays: Number(days) || 7,
+      ...(password ? { password } : {}),
+    })
+      .then((s) => setLink(`${location.origin}${s.url}`))
+      .catch((e) => setFailed(message(e)));
+  };
+
+  return (
+    <section aria-label="Share link" className="flex flex-col gap-2 rounded-xl border border-zinc-500/20 p-3">
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <Share2 className="h-4 w-4 text-zinc-500" />
+        <select
+          aria-label="Link scope"
+          value={scope}
+          onChange={(e) => setScope(e.target.value as "view" | "download")}
+          className="h-9 rounded-md border border-zinc-500/30 bg-transparent px-2"
+        >
+          <option value="view">Watch only</option>
+          <option value="download">Watch and download</option>
+        </select>
+        <Input type="number" min={1} max={90} value={days} onChange={(e) => setDays(e.target.value)} aria-label="Days to live" className="h-9 w-20" />
+        <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password (optional)" aria-label="Link password" className="h-9 w-44" />
+        <Button size="sm" onClick={make}>
+          Create link
+        </Button>
+      </div>
+      {link && (
+        <div className="flex items-center gap-2">
+          <Input readOnly value={link} aria-label="Share link address" onFocus={(e) => e.currentTarget.select()} className="h-9 text-xs" />
+          <Button size="sm" variant="outline" onClick={() => void navigator.clipboard?.writeText(link)}>
+            Copy
+          </Button>
+        </div>
+      )}
+      {failed && <p className="text-xs text-red-400">{failed}</p>}
+    </section>
   );
 }

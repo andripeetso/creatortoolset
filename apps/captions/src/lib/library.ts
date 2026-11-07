@@ -1,4 +1,4 @@
-import type { AssetPage, LibrarySummary, SearchQuery } from "@contracts/library";
+import type { AssetPage, Collection, LibrarySummary, SearchQuery, ShareCreated, ShareInput } from "@contracts/library";
 
 /** The Media Library's calls to api/library/routes.ts, and the chunked upload that follows its offset protocol. */
 
@@ -22,9 +22,33 @@ export function listAssets(libraryId: string, q: SearchQuery & { cursor?: string
   const p = new URLSearchParams();
   if (q.q) p.set("q", q.q);
   if (q.kind?.length) p.set("kind", q.kind.join(","));
+  if (q.collectionId) p.set("collectionId", q.collectionId);
+  if (q.trashed) p.set("trashed", "1");
   if (q.cursor) p.set("cursor", q.cursor);
   return fetch(`/api/library/${libraryId}/assets?${p}`).then((r) => json<AssetPage>(r));
 }
+
+const send = <T,>(url: string, method: string, body?: unknown): Promise<T> =>
+  fetch(url, {
+    method,
+    headers: body === undefined ? undefined : { "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  }).then((r) => json<T>(r));
+
+export const listCollections = (libraryId: string) =>
+  send<{ collections: Collection[] }>(`/api/library/${libraryId}/collections`, "GET").then((x) => x.collections);
+
+export const createCollection = (libraryId: string, input: { name: string; kind?: "manual" | "smart"; query?: SearchQuery; parentId?: string }) =>
+  send<Collection>(`/api/library/${libraryId}/collections`, "POST", input);
+
+export const changeFolderItems = (libraryId: string, collectionId: string, assetIds: string[], add: boolean) =>
+  send<unknown>(`/api/library/${libraryId}/collections/${collectionId}/items`, add ? "POST" : "DELETE", { assetIds });
+
+/** Into the trash (`trash` true) or back out of it. */
+export const setTrashed = (libraryId: string, assetId: string, trash: boolean) =>
+  send<unknown>(`/api/library/${libraryId}/assets/${assetId}${trash ? "" : "/restore"}`, trash ? "DELETE" : "POST");
+
+export const createShare = (libraryId: string, input: ShareInput) => send<ShareCreated>(`/api/library/${libraryId}/shares`, "POST", input);
 
 export interface UploadResult {
   assetId?: string;

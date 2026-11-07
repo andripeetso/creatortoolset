@@ -19,8 +19,9 @@ import ReviewSharedProjectPage from "./pages/ReviewSharedProjectPage";
 import WorkshopSharePage from "./pages/WorkshopSharePage";
 import StorySplitterPage from "./pages/StorySplitterPage";
 import LibraryPage from "./pages/LibraryPage";
+import LibrarySharePage from "./pages/LibrarySharePage";
 import type { Tool } from "@contracts/tools";
-import { isPublicReviewPath, isPublicSharePath } from "@/components/AuthGate";
+import { isPublicLibraryPath, isPublicReviewPath, isPublicSharePath } from "@/components/AuthGate";
 import { analyzerHome } from "@/lib/instagram";
 import { isPhoneHub } from "@/lib/mobile";
 import { ExportTray } from "@/components/ExportTray";
@@ -197,7 +198,7 @@ export default function App() {
   const closeSettings = () => navigate(behind.current ? behind.current.pathname + behind.current.search + behind.current.hash : "/");
   const onMobile = location.pathname.startsWith("/m");
   const publicPage =
-    isPublicSharePath(location.pathname) || isPublicReviewPath(location.pathname);
+    isPublicSharePath(location.pathname) || isPublicReviewPath(location.pathname) || isPublicLibraryPath(location.pathname);
   // a role preview: a banner on top, the page scrolls below it; the demo: a
   // frame round it, the page inside
   const viewAs = useAuth((state) => !!state.viewAs);
@@ -279,6 +280,7 @@ export default function App() {
           <Route path="/r/:token" element={<ReviewAssetPage />} />
           <Route path="/rp/:ptoken" element={<ReviewSharedProjectPage />} />
           <Route path="/ws/:token" element={<WorkshopSharePage />} />
+          <Route path="/library/s/:token" element={<LibrarySharePage />} />
           <Route path="/privacy" element={<LegalPage page="/privacy" />} />
           <Route path="/terms" element={<LegalPage page="/terms" />} />
           <Route path="/data-deletion" element={<LegalPage page="/data-deletion" />} />

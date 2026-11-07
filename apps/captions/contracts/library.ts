@@ -41,6 +41,7 @@ export interface SearchQuery {
   from?: number;
   to?: number;
   hasTranscript?: boolean;
+  trashed?: boolean; // the trash instead of the library
   cursor?: string;
   limit?: number; // limit ≤ 200
 }
@@ -69,4 +70,54 @@ export interface LibrarySummary {
 export interface AssetPage {
   items: AssetCard[];
   next?: string; // cursor for the next page
+}
+
+/** A folder or collection (manual: its items; smart: the saved SearchQuery, run on every read). */
+export interface Collection {
+  id: string;
+  name: string;
+  parentId: string | null;
+  kind: "manual" | "smart";
+  query?: SearchQuery; // smart only
+  count?: number; // manual only: items in it
+  createdBy: string;
+}
+
+/** A share as its owner or creator lists it. `id` is the token's sha256, the handle for revoke: the token itself is shown once. */
+export interface ShareRow {
+  id: string;
+  target: ShareInput["target"];
+  scope: ShareInput["scope"];
+  locked: boolean;
+  createdBy: string;
+  expiresAt: number;
+  views: number;
+}
+
+export interface ShareCreated {
+  id: string;
+  token: string;
+  url: string; // /library/s/<token>, in the web app
+  expiresAt: number;
+}
+
+/** What a share link shows: one video (or a collection's videos), with media URLs on the share route. */
+export interface SharedItem {
+  id: string;
+  title: string;
+  kind: AssetKind;
+  versionId: string;
+  durationS?: number;
+  width?: number;
+  height?: number;
+  thumbUrl?: string;
+  playUrl: string;
+  sourceUrl?: string; // scope download only
+}
+
+export interface SharedView {
+  locked: boolean;
+  name?: string; // not sent while locked
+  scope?: ShareInput["scope"];
+  items: SharedItem[];
 }

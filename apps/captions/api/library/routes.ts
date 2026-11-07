@@ -6,6 +6,7 @@ import type { AuthVars } from "../auth";
 import { env } from "../lib/env";
 import { appendBody, freeBytes, sha256File } from "../lib/uploads";
 import { libraryRole } from "./access";
+import { expandCollection } from "./collections";
 import { blobs, libraryDb } from "./db";
 import { canManage, memberIn, workspaceOf } from "../lib/workspaces";
 import { sendFile } from "../lib/send-file";
@@ -271,41 +272,68 @@ libraryApp.get("/:id/assets", (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
   if (!libraryRole(user.username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
-  const { sql, params, limit } = buildAssetQuery(libraryId, parseSearch(c.req.query()));
+  const query = expandCollection(libraryId, parseSearch(c.req.query()));
+  if (!query) return c.json({ error: "Not found", code: "not_found" }, 404);
+  const { sql, params, limit } = buildAssetQuery(libraryId, query);
   return c.json(pageOf(db().prepare(sql).all(...params) as unknown as CardRow[], limit));
 });
+
+/** The blob a media URL serves: thumb, play (the proxy when there is one, else the source) or source. Null: no such kind. */
+export function mediaFile(versionId: string, kind: string): { key?: string; type: string } | null {
+  const v = db().prepare("SELECT source_key, mime FROM asset_versions WHERE id = ?").get(versionId) as
+    | { source_key: string; mime: string | null }
+    | undefined;
+  if (!v) return null;
+  const derived = (k: string) =>
+    (db().prepare("SELECT storage_key FROM derivatives WHERE version_id = ? AND kind = ?").get(versionId, k) as
+      | { storage_key: string | null }
+      | undefined)?.storage_key ?? undefined;
+  const original = v.mime ?? "application/octet-stream";
+  if (kind === "thumb") return { key: derived("thumb"), type: "image/jpeg" };
+  if (kind === "play") {
+    const proxy = derived("proxy");
+    return { key: proxy ?? v.source_key, type: proxy ? "video/mp4" : original };
+  }
+  if (kind === "source") return { key: v.source_key, type: original };
+  return null;
+}
 
 // GET /api/library/media/:versionId/:kind: thumb | play (the proxy when there is one, else the source) | source
 libraryApp.get("/media/:versionId/:kind", async (c) => {
   const user = c.get("user");
   const versionId = c.req.param("versionId");
   const v = db()
-    .prepare("SELECT v.source_key, v.mime, a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?")
-    .get(versionId) as { source_key: string; mime: string | null; library_id: string } | undefined;
+    .prepare("SELECT a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?")
+    .get(versionId) as { library_id: string } | undefined;
   if (!v || !libraryRole(user.username, v.library_id)) return c.json({ error: "Not found", code: "not_found" }, 404);
-  const derived = (kind: string) =>
-    (db().prepare("SELECT storage_key FROM derivatives WHERE version_id = ? AND kind = ?").get(versionId, kind) as
-      | { storage_key: string }
-      | undefined)?.storage_key;
-  const kind = c.req.param("kind");
-  let key: string | undefined;
-  let type = v.mime ?? "application/octet-stream";
-  if (kind === "thumb") {
-    key = derived("thumb");
-    type = "image/jpeg";
-  } else if (kind === "play") {
-    const proxy = derived("proxy");
-    key = proxy ?? v.source_key;
-    if (proxy) type = "video/mp4";
-  } else if (kind === "source") {
-    key = v.source_key;
-  } else {
-    return c.json({ error: "Not found", code: "not_found" }, 404);
-  }
-  if (!key) return c.json({ error: "Not ready", code: "conflict" }, 409);
+  const file = mediaFile(versionId, c.req.param("kind"));
+  if (!file) return c.json({ error: "Not found", code: "not_found" }, 404);
+  if (!file.key) return c.json({ error: "Not ready", code: "conflict" }, 409);
   try {
-    return await sendFile(c, await blobs.localCopy(key), type);
+    return await sendFile(c, await blobs.localCopy(file.key), file.type);
   } catch {
     return c.json({ error: "Not ready", code: "conflict" }, 409);
   }
 });
+
+/** Into the trash, or back out of it: the uploader or the owner. Other members of the library get 403; outsiders 404. */
+function setTrashed(c: Context<{ Variables: AuthVars }>, trash: boolean) {
+  const user = c.get("user");
+  const libraryId = c.req.param("id") ?? "";
+  const assetId = c.req.param("assetId") ?? "";
+  const role = libraryRole(user.username, libraryId);
+  const a = role
+    ? (db().prepare("SELECT created_by, trashed_at FROM assets WHERE id = ? AND library_id = ?").get(assetId, libraryId) as
+        | { created_by: string; trashed_at: number | null }
+        | undefined)
+    : undefined;
+  if (!a || (trash ? a.trashed_at !== null : a.trashed_at === null)) return c.json({ error: "Not found", code: "not_found" }, 404);
+  if (!canManage(role ?? undefined) && a.created_by !== user.username) return c.json({ error: "Only the uploader or the owner can do that", code: "forbidden" }, 403);
+  db().prepare("UPDATE assets SET trashed_at = ? WHERE id = ?").run(trash ? Date.now() : null, assetId);
+  return c.json({ ok: true });
+}
+
+// DELETE /api/library/:id/assets/:assetId → the trash; its share links stop working until it is restored
+libraryApp.delete("/:id/assets/:assetId", (c) => setTrashed(c, true));
+// POST /api/library/:id/assets/:assetId/restore → out of the trash
+libraryApp.post("/:id/assets/:assetId/restore", (c) => setTrashed(c, false));

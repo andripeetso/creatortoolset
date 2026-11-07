@@ -17,6 +17,8 @@ import { instagramApp } from "./instagram";
 import { workshopApp, workshopShareApp } from "./workshop";
 import { reviewApp } from "./review";
 import { libraryApp } from "./library/routes";
+import { collectionApp } from "./library/collections";
+import { publicShareApp, shareApp } from "./library/shares";
 import { startLibraryWorker } from "./library/worker";
 import { presetsApp } from "./presets";
 import { projectsApp } from "./projects";
@@ -109,6 +111,9 @@ const PUBLIC_WORKSHOP = new RegExp(`^/api/workshop-share/${PUBLIC_UUID}(?:/deliv
 const PUBLIC_WORKSHOP_WRITE = new RegExp(`^/api/workshop-share/${PUBLIC_UUID}/(?:progress|deliveries)$`, "i");
 // review share links (a video or a project): reviewers read, comment and approve without an account
 const PUBLIC_REVIEW = new RegExp(`^/api/review/[sp]/${PUBLIC_UUID}(?:/|$)`, "i");
+// Media Library share links (api/library/shares.ts): the shared view and its media, and the password unlock
+const PUBLIC_LIBRARY_SHARE = /^\/api\/library\/s\/[A-Za-z0-9_-]{22}(?:\/|$)/;
+const PUBLIC_LIBRARY_SHARE_WRITE = /^\/api\/library\/s\/[A-Za-z0-9_-]{22}\/unlock$/;
 const REVIEW = /^\/api\/review(?:\/|$)/;
 // what a demo visitor can't do in their copy of Review: add videos or references (a
 // timeline file is fine), start a Caption Studio project
@@ -160,6 +165,7 @@ app.use("/api/*", async (c, next) => {
   if (
     c.req.method === "GET" &&
     (PUBLIC_CLIP_GET.test(c.req.path) ||
+      PUBLIC_LIBRARY_SHARE.test(c.req.path) ||
       PUBLIC_AGENT_GET.test(c.req.path) ||
       PUBLIC_DOC_GET.test(c.req.path) ||
       PUBLIC_WORKSHOP.test(c.req.path))
@@ -168,7 +174,7 @@ app.use("/api/*", async (c, next) => {
     if (user && user.role !== "guest") touchActive(user.username);
     return next();
   }
-  if (c.req.method === "POST" && PUBLIC_WORKSHOP_WRITE.test(c.req.path)) {
+  if (c.req.method === "POST" && (PUBLIC_WORKSHOP_WRITE.test(c.req.path) || PUBLIC_LIBRARY_SHARE_WRITE.test(c.req.path))) {
     c.set("user", user ?? GUEST_USER);
     return next();
   }
@@ -262,7 +268,11 @@ app.route("/api/instagram", instagramApp);
 app.route("/api/workshop", workshopApp);
 app.route("/api/workshop-share", workshopShareApp);
 app.route("/api/review", reviewApp);
+// the public share routes first: their /s/:token must not be read as another library route
+app.route("/api/library", publicShareApp);
 app.route("/api/library", libraryApp);
+app.route("/api/library", shareApp);
+app.route("/api/library", collectionApp);
 // the library's worker: probes, thumbs and proxies queued uploads (not under tests, which start it themselves)
 if (process.env.NODE_ENV !== "test") startLibraryWorker();
 app.route("/api/stories", storiesApp);

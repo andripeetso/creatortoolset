@@ -10,7 +10,7 @@ import type { ProbeSummary } from "./media/probe";
 
 export const DEFAULT_LIMIT = 60;
 export const MAX_LIMIT = 200;
-const KINDS: AssetKind[] = ["video", "image", "audio", "doc"];
+export const KINDS: AssetKind[] = ["video", "image", "audio", "doc"];
 
 /** FTS5 query: each word quoted as a prefix match, words ANDed. Null when there are no words. */
 export function ftsQuery(q: string): string | null {
@@ -48,12 +48,14 @@ export function parseSearch(p: Record<string, string | undefined>): SearchQuery 
     ...(num(p.from) !== undefined ? { from: num(p.from) } : {}),
     ...(num(p.to) !== undefined ? { to: num(p.to) } : {}),
     ...(p.cursor ? { cursor: p.cursor } : {}),
+    ...(p.collectionId ? { collectionId: p.collectionId.slice(0, 64) } : {}),
+    ...(p.trashed === "1" ? { trashed: true } : {}),
     limit: Math.min(MAX_LIMIT, Math.max(1, Math.floor(limit ?? DEFAULT_LIMIT))),
   };
 }
 
-const CARD = `a.id AS id, a.library_id AS library_id, a.kind AS kind, a.title AS title, a.created_at AS created_at,
-  v.id AS version_id, v.n AS version_n, v.state AS state, v.probe AS probe,
+export const CARD = `a.id AS id, a.library_id AS library_id, a.kind AS kind, a.title AS title, a.created_at AS created_at,
+  a.trashed_at AS trashed_at, v.id AS version_id, v.n AS version_n, v.state AS state, v.probe AS probe,
   EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'thumb') AS has_thumb,
   (SELECT group_concat(tag, char(31)) FROM asset_tags t WHERE t.asset_id = a.id) AS tags,
   (SELECT group_concat(tag, char(31)) FROM asset_tags t WHERE t.asset_id = a.id AND t.source = 'ai') AS ai_tags`;
@@ -64,6 +66,7 @@ export interface CardRow {
   kind: AssetKind;
   title: string;
   created_at: number;
+  trashed_at: number | null;
   version_id: string;
   version_n: number;
   state: AssetCard["state"];
@@ -75,7 +78,7 @@ export interface CardRow {
 
 /** The SQL for one page of a library's assets, with `limit + 1` rows so the caller knows there is a next page. */
 export function buildAssetQuery(libraryId: string, query: SearchQuery = {}): { sql: string; params: (string | number)[]; limit: number } {
-  const where = ["a.library_id = ?", "a.trashed_at IS NULL"];
+  const where = ["a.library_id = ?", query.trashed ? "a.trashed_at IS NOT NULL" : "a.trashed_at IS NULL"];
   const params: (string | number)[] = [libraryId];
   const fts = query.q ? ftsQuery(query.q) : null;
   if (fts) {
@@ -97,6 +100,10 @@ export function buildAssetQuery(libraryId: string, query: SearchQuery = {}): { s
   if (query.to !== undefined) {
     where.push("a.created_at < ?");
     params.push(query.to);
+  }
+  if (query.collectionId) {
+    where.push("a.id IN (SELECT asset_id FROM collection_items WHERE collection_id = ?)");
+    params.push(query.collectionId);
   }
   const at = query.cursor ? cursorOf(query.cursor) : null;
   if (at) {
@@ -136,6 +143,7 @@ export function toCard(r: CardRow): AssetCard {
     aiTags: split(r.ai_tags),
     state: r.state,
     ...(p.capturedAt ? { capturedAt: p.capturedAt } : {}),
+    ...(r.trashed_at ? { trashedAt: r.trashed_at } : {}),
   };
 }
 
