@@ -18,7 +18,7 @@ export function EnginePicker({ className }: { className?: string }) {
   const setModel = useStudio((s) => s.setModel);
   const me = useViewedMe();
   const allowedByView = canUseCloud(me);
-  const [cloud, setCloud] = useState({ available: false, allowed: false });
+  const [cloud, setCloud] = useState<{ available: boolean; allowed: boolean; why?: string }>({ available: false, allowed: false });
 
   useEffect(() => {
     cloudStatus().then((c) => {
@@ -45,11 +45,11 @@ export function EnginePicker({ className }: { className?: string }) {
       onChange={(e) => setModel(e.target.value)}
       className={className}
     >
-      {(cloud.available ? [CLOUD_MODEL, ...MODELS] : MODELS).map((m) => {
-        const locked = m.id === CLOUD_MODEL_ID && !cloud.allowed;
+      {(cloud.available || cloud.why ? [CLOUD_MODEL, ...MODELS] : MODELS).map((m) => {
+        const locked = m.id === CLOUD_MODEL_ID && (!cloud.allowed || !cloud.available);
         return (
           <option key={m.id} value={m.id} disabled={locked}>
-            {locked ? `🔒 ${m.label} — ${lockedNote}` : m.label}
+            {locked ? `🔒 ${m.label} — ${cloud.allowed ? (cloud.why ?? lockedNote) : lockedNote}` : m.label}
           </option>
         );
       })}

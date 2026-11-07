@@ -142,7 +142,7 @@ describe("embed job", () => {
   it("stores one row per chunk with the answer's dims and bills a budget member", async () => {
     seed("ast-new", "Handstand");
     saveTranscript(libraryDb(), "ver-ast-new", "deepgram", "en", [{ start: 0, end: 2, text: "Hold it." }]);
-    await expect(embedVersion(libraryDb(), "ver-ast-new", "own-a")).rejects.toThrow(/API budget/);
+    await expect(embedVersion(libraryDb(), "ver-ast-new", "own-a")).rejects.toThrow("Add your OpenAI key in Settings → My API keys");
     process.env.OPENAI_API_KEY = "test-key";
     answer([0.1, 0.2, 0.3, 0.4]);
     await embedVersion(libraryDb(), "ver-ast-new", "budget-a");

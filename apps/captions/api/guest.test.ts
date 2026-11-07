@@ -57,6 +57,11 @@ describe("guest mode", () => {
         headers: { cookie, "content-type": "audio/wav", "x-file-name": encodeURIComponent("my reel.mp4") },
         body: wav(seconds),
       });
+    // the server's Deepgram key serves guests only once an admin switched guests on
+    expect((await post(60)).status).toBe(402);
+    const { saveSettings } = await import("./lib/providers");
+    const { DEFAULT_SETTINGS } = await import("../contracts/providers");
+    await saveSettings({ ...DEFAULT_SETTINGS, api: { ...DEFAULT_SETTINGS.api, guests: true } });
     expect((await post(181)).status).toBe(413);
     expect(fetchMock).not.toHaveBeenCalled();
     expect((await post(60)).status).toBe(200);
@@ -78,10 +83,11 @@ describe("guest mode", () => {
     const cookie = await tryAsGuest();
     const available = async () =>
       ((await (await app.request("/api/ai/available", { headers: { cookie } })).json()) as { allowed: boolean }).allowed;
-    expect(await available()).toBe(false); // off by default: guests get no AI at all
-
     const { saveSettings } = await import("./lib/providers");
     const { DEFAULT_SETTINGS } = await import("../contracts/providers");
+    await saveSettings(DEFAULT_SETTINGS);
+    expect(await available()).toBe(false); // off by default: guests get no AI at all
+
     await saveSettings({ ...DEFAULT_SETTINGS, api: { ...DEFAULT_SETTINGS.api, guests: true } });
     expect(await available()).toBe(true);
     const fetchMock = vi.fn(async () => new Response("usage limit reached", { status: 429 }));

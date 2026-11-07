@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router";
 import { AtSign, Facebook, Instagram, Music2, RefreshCw, Youtube, type LucideIcon } from "lucide-react";
 import { ConfirmButton } from "@/components/instagram/ConfirmButton";
-import { SessionCard } from "@/components/instagram/SessionCard";
+import { ApifyCard } from "@/components/instagram/ApifyCard";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
 import { analyzerHome, getInstagramAvailability, type InstagramAvailability } from "@/lib/instagram";
@@ -149,8 +149,11 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
         </p>
       </Group>
 
-      <Group title="Scraping key (Apify)" hint="Yours, never shared: reading public posts and profiles runs on your own Apify account and its plan.">
-        <SessionCard inDialog availability={avail} onChange={() => void reload()} />
+      <Group
+        title="Your Apify key"
+        hint="Your Instagram login gives you your own posts and their numbers. Other creators' posts, profiles and full comment threads need an Apify key of your own: Apify bills you for each read, the server never pays for it."
+      >
+        <ApifyCard availability={avail} onChange={() => void reload()} />
       </Group>
       {!compact && <p className="mt-6 text-xs text-muted-foreground">Logins are read again every 12 hours. Handles are read when you press Pull, since each read costs your Apify credits.</p>}
     </>

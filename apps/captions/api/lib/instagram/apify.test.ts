@@ -6,7 +6,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const dataDir = mkdtempSync(path.join(tmpdir(), "ig-apify-"));
 process.env.DATA_DIR = dataDir;
 delete process.env.APIFY_TOKEN;
-delete process.env.INSTAGRAM_COOKIE;
 
 const {
   APIFY_INVALID_MSG,
@@ -19,9 +18,7 @@ const {
   normalizeApifyPost,
   publicApifyStatus,
   readApify,
-  readMode,
   writeApify,
-  writeMode,
 } = await import("./apify");
 type StoredApify = import("./apify").StoredApify;
 
@@ -222,7 +219,6 @@ describe("apify store", () => {
     vi.unstubAllGlobals();
     await clearApify(OWNER);
     await clearApify(OTHER);
-    await writeMode(OWNER, "session");
   });
 
   it("writes an owner-only file and never exposes the token", async () => {
@@ -243,23 +239,6 @@ describe("apify store", () => {
     expect((await readApify(OTHER))?.token).toBe(otherToken);
     expect(JSON.stringify(publicApifyStatus(await readApify(OWNER)))).not.toContain(otherToken);
     expect(JSON.stringify(publicApifyStatus(await readApify(OTHER)))).not.toContain(token);
-  });
-
-  it("does not unlock another user from a leftover global apify.json", async () => {
-    const fs = await import("node:fs/promises");
-    await fs.mkdir(path.join(dataDir, "instagram"), { recursive: true });
-    await fs.writeFile(
-      path.join(dataDir, "instagram", "apify.json"),
-      JSON.stringify({ token, savedAt: 1, savedBy: OWNER, valid: true, source: "file" }),
-      { mode: 0o600 },
-    );
-    expect(await readApify(OTHER)).toBeNull();
-    const mine = await readApify(OWNER);
-    expect(mine?.token).toBe(token);
-    expect(() => statSync(path.join(dataDir, "instagram", "apify.json"))).toThrow();
-    expect(statSync(path.join(dataDir, "instagram", "users", OWNER, "apify.json")).mode & 0o777).toBe(
-      0o600,
-    );
   });
 
   it("checkApify accepts users/me and stores the username", async () => {
@@ -284,28 +263,17 @@ describe("apify store", () => {
     expect(s?.invalidReason).toMatch(/401/);
   });
 
-  it("ingestGate follows the chosen source", async () => {
-    expect((await ingestGate(OWNER)).ok).toBe(false);
-    await writeApify(OWNER, stored());
-    await writeMode(OWNER, "apify");
-    expect(await ingestGate(OWNER)).toEqual({ ok: true, mode: "apify" });
-    await writeMode(OWNER, "session");
+  it("ingestGate: the user's own Apify key, and the message says where to add it", async () => {
     const gate = await ingestGate(OWNER);
     expect(gate.ok).toBe(false);
-    if (!gate.ok) expect(gate.code).toBe("NO_SESSION");
-  });
-
-  it("defaults to apify when only a token exists", async () => {
+    if (!gate.ok) expect(gate.error).toMatch(/your own Apify key: add it in Settings → Connectors/);
     await writeApify(OWNER, stored());
-    await import("node:fs/promises").then((fs) =>
-      fs.rm(path.join(dataDir, "instagram", "users", OWNER, "source.json"), { force: true }),
-    );
-    expect(await readMode(OWNER)).toBe("apify");
+    expect(await ingestGate(OWNER)).toEqual({ ok: true, mode: "apify" });
+    expect((await ingestGate(OTHER)).ok).toBe(false);
   });
 
   it("fetchPostViaApify retries the other resultsType when the first run is empty", async () => {
     await writeApify(OWNER, stored());
-    await writeMode(OWNER, "apify");
     const post = {
       type: "Image",
       shortCode: "TestPost001",

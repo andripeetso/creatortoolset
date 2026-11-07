@@ -75,10 +75,7 @@ const save = (key: string, v: string) => {
 
 /** Why this user can't pick an engine now, or null when they can. */
 const lockReason = (key: Engine, a: EnhanceAvailability): string | null =>
-  a[key] ? null
-  : key === "nvidia" || a.admin ? "Not set up"
-  : a.guest ? "Not in guest mode"
-  : "Not on this account";
+  a[key] ? null : a.why?.[key] ?? "Not set up";
 
 /** The engines this user can pick now. */
 const offered = (avail: EnhanceAvailability | null) =>
@@ -681,8 +678,8 @@ export default function EnhancePage() {
             {avail && offered(avail).length === 0 && (
               <p className="mt-2 flex items-center gap-1.5 text-[11px] text-amber-400/80">
                 <TriangleAlert className="h-3 w-3 shrink-0" />
-                Enhancement is off — no engine is set up on the server
-                (NVIDIA_API_KEY or ELEVENLABS_API_KEY).
+                Enhancement is off: {avail.guest ? "not available in guest mode right now" : "add your NVIDIA or ElevenLabs key in Settings → My API keys"}.
+                The cost is yours, paid to that provider.
               </p>
             )}
             {avail?.guest && (

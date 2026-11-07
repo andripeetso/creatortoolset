@@ -25,7 +25,6 @@ import {
 import { ffmpegCommand } from "./ffmpeg-runtime";
 import { extractClipJpegFrame } from "./lib/clip-frame";
 import {
-  SESSION_MISSING_MSG,
   availabilitySnapshot,
   checkApify,
   clearApify,
@@ -38,7 +37,6 @@ import {
   publicApifyStatus,
   readApify,
   writeApify,
-  writeMode,
   type IngestMode,
   type StoredApify,
   updateApify,
@@ -52,12 +50,7 @@ import {
   performanceBy,
   type PostLabel,
 } from "./lib/instagram/post-labels";
-import { typesafeConfigured } from "./lib/jev";
-import {
-  collectComments,
-  countReplies,
-  mergeComments,
-} from "./lib/instagram/comments";
+import { countReplies, mergeComments } from "./lib/instagram/comments";
 import {
   DownloadError,
   downloadToFile,
@@ -105,20 +98,7 @@ import {
 import { accountOwnsPost, nextMineFlags, postInProject } from "./lib/instagram/mine";
 import { accountProjects, inProject, resolveProjectId } from "./lib/workshop/workspace";
 import { catalogNewestAt, mergeCatalog, mergeCatalogCounts, parseCatalogCount } from "./lib/instagram/catalog";
-import {
-  IG_ROOT,
-  checkSession,
-  clearSession,
-  igCredsDir,
-  igHeaders,
-  igUserFile,
-  missingCookies,
-  parseCookieInput,
-  publicSessionStatus,
-  readSession,
-  writeSession,
-  type StoredSession,
-} from "./lib/instagram/session";
+import { IG_ROOT, InstagramError, igCredsDir, igUserFile } from "./lib/instagram/base";
 import type {
   AccountContext,
   AccountJobType,
@@ -149,7 +129,6 @@ import {
   extractInstagramUrls,
   parseInstagramUrl,
   parseProfileHandle,
-  resolveShareLink,
   shortcodeToMediaId,
 } from "./lib/instagram/url";
 import {
@@ -166,29 +145,22 @@ import {
   parseVisionPayload,
   visionUserText,
 } from "./lib/instagram/vision";
-import {
-  InstagramError,
-  SESSION_EXPIRED_MSG,
-  fetchMediaInfo,
-  fetchUserCatalog,
-  fetchWebProfile,
-  normalizePostInfo,
-} from "./lib/instagram/web-api";
-import {
-  cloudTranscriptionConfigured,
-  transcribeWav,
-  userMayCloudTranscribe,
-} from "./transcribe";
+import { cloudTranscribeBlock, transcribeWav } from "./transcribe";
+import { keyFor, type Actor } from "./my-keys";
+
+/** The TypeSafe key that serves `who` (my-keys.ts), or "": its features fall back without one. */
+const typesafeFor = (who: Actor) => keyFor(who, "TYPESAFE_API_KEY").key;
 import { LOCAL_USER, bumpUsage, findUser, type SessionUser } from "./users";
 import type { LibraryPost, OwnPost } from "./lib/workshop/folder";
 
 /**
  * Instagram Analyzer — library of accounts and posts. Jobs (stats, media,
- * transcript, vision, comments, tags) run on demand. Credentials live per
- * Toolset user under $DATA_DIR/instagram/users/<username>/.
+ * transcript, vision, comments, tags) run on demand. Other creators' posts are read on the user's own Apify key
+ * (lib/instagram/apify.ts); the account's own posts and numbers through the official login (lib/instagram/graph.ts).
+ * Paid steps (transcripts, judging) run on the post owner's keys (my-keys.ts keyFor).
  *
  * Layout:
- *   users/<user>/{apify,session,source}.json
+ *   users/<user>/apify.json
  *   accounts/<id>/{meta,catalog,snapshots}.json
  *   <postId>/meta.json
  *   <postId>/snapshots.json
@@ -217,8 +189,6 @@ const MAX_COMMENTS = Math.max(
   20,
   Number(process.env.INSTAGRAM_MAX_COMMENTS) || 1000,
 );
-const COMMENTS_TIMEOUT_MS =
-  Math.max(30, Number(process.env.INSTAGRAM_COMMENTS_TIMEOUT_S) || 120) * 1000;
 const THUMB_MAX_BYTES = 8 * 1024 * 1024;
 const RESTART_MSG = "Interrupted by a server restart — retry.";
 const SKIP_TOP = new Set(["users", "accounts", "stacks"]);
@@ -253,9 +223,10 @@ const accountLabelsPath = (id: string) => path.join(accountDir(id), "labels.json
  * with an older list) are labelled now. Null without a TypeSafe key or
  * when Jev fails, so the page just leaves the section out.
  */
-async function whatWorksFor(account: { id: string; username: string; biography?: string }, catalog: CatalogItem[], signal?: AbortSignal) {
+async function whatWorksFor(who: Actor, account: { id: string; username: string; biography?: string }, catalog: CatalogItem[], signal?: AbortSignal) {
   const accountId = account.id;
-  if (!typesafeConfigured() || !catalog.length) return null;
+  const key = typesafeFor(who);
+  if (!key || !catalog.length) return null;
   let labels: Record<string, PostLabel> = {};
   try {
     labels = JSON.parse(await readFile(accountLabelsPath(accountId), "utf-8")) as Record<string, PostLabel>;
@@ -268,6 +239,7 @@ async function whatWorksFor(account: { id: string; username: string; biography?:
   if (todo.length) {
     try {
       const fresh = await labelPosts(
+        key,
         todo.map((row) => ({ id: row.shortcode, text: row.caption ?? "" })),
         `@${account.username}${account.biography?.trim() ? `, whose bio says: ${account.biography.trim().replace(/\s+/g, " ")}` : ""}`,
         signal,
@@ -360,7 +332,7 @@ function prefetchInfo(meta: PostMeta, user: SessionUser): void {
   if (!meta.url || !meta.shortcode || meta.platform === "youtube") return;
   const p = (async () => {
     const gate = await ingestGate(user.username);
-    if (!gate.ok || gate.mode !== "apify") return null;
+    if (!gate.ok) return null;
     return postBatcherFor(user.username).request(meta.url, meta.kind === "reel");
   })();
   p.catch(() => {});
@@ -1756,28 +1728,13 @@ async function loadPostInfo(
     if (!ref) throw new InstagramError("Not a YouTube link", "NOT_FOUND", false);
     return fetchYoutubeViaApify(ref, { username, signal });
   }
-  if (mode === "apify") {
-    const pre = infoPrefetch.get(meta.id);
-    infoPrefetch.delete(meta.id);
-    if (pre) {
-      const hit = await pre.catch(() => null);
-      if (hit) return hit;
-    }
-    return postBatcherFor(username).request(meta.url, meta.kind === "reel");
+  const pre = infoPrefetch.get(meta.id);
+  infoPrefetch.delete(meta.id);
+  if (pre) {
+    const hit = await pre.catch(() => null);
+    if (hit) return hit;
   }
-  const session = await readSession(username);
-  if (!session || session.valid === false) {
-    throw new InstagramError(
-      session ? SESSION_EXPIRED_MSG : SESSION_MISSING_MSG,
-      "SESSION",
-      false,
-    );
-  }
-  const raw = await fetchMediaInfo(meta.mediaId, session, { signal, username });
-  return {
-    raw,
-    info: normalizePostInfo(raw, { shortcode: meta.shortcode, mediaId: meta.mediaId }),
-  };
+  return postBatcherFor(username).request(meta.url, meta.kind === "reel");
 }
 
 async function findAccount(
@@ -1918,16 +1875,7 @@ async function loadProfile(
   signal?: AbortSignal,
 ): Promise<ProfileInfo> {
   if (mode === "graph") return fetchMineProfile({ signal });
-  if (mode === "apify") return fetchProfileViaApify(url, { username: user, signal });
-  const session = await readSession(user);
-  if (!session || session.valid === false) {
-    throw new InstagramError(
-      session ? SESSION_EXPIRED_MSG : SESSION_MISSING_MSG,
-      "SESSION",
-      false,
-    );
-  }
-  return fetchWebProfile(username, session, { signal, username: user });
+  return fetchProfileViaApify(url, { username: user, signal });
 }
 
 async function fetchAccountFeed(
@@ -1944,22 +1892,13 @@ async function fetchAccountFeed(
     if (!after) return fetchMineCatalogAll({ signal, since });
     return fetchMineCatalog({ cap, after, signal });
   }
-  if (mode === "apify") return fetchCatalogViaApify(url, { username: user, cap, signal });
-  const session = await readSession(user);
-  if (!session || session.valid === false) {
-    throw new InstagramError(
-      session ? SESSION_EXPIRED_MSG : SESSION_MISSING_MSG,
-      "SESSION",
-      false,
-    );
-  }
-  return fetchUserCatalog(acc.igUserId, session, { cap, signal, username: user, after, since });
+  return fetchCatalogViaApify(url, { username: user, cap, signal });
 }
 
 async function accountPullMode(user: string, acc: { mine?: boolean; owner?: string }): Promise<AccountPullMode> {
   if (mineUsesGraph(acc)) return "graph";
   const gate = await ingestGate(user);
-  if (!gate.ok) throw new InstagramError(gate.error, gate.mode === "apify" ? "APIFY" : "SESSION", false);
+  if (!gate.ok) throw new InstagramError(gate.error, "APIFY", false);
   return gate.mode;
 }
 
@@ -2273,7 +2212,7 @@ async function generateIdeaBoardNow(
   signal?: AbortSignal,
   projectId?: string,
 ): Promise<IdeaBoard> {
-  if (!anyAiConfigured()) throw new Error("No AI key is configured");
+  if (!anyAiConfigured(user)) throw new Error("No AI provider is set up for you (Settings → AI providers)");
   const metas = (await metasInProject(user, projectId)).filter((m) => !m.duplicateOf);
   const taken = await workshopSourcePostIds(user);
   const catalog = ideaCatalog(metas.filter((m) => !taken.has(m.id)));
@@ -2315,8 +2254,9 @@ async function ideaPost(meta: PostMeta, user: SessionUser, signal: AbortSignal):
     aiFor(user, "analyzer", "Analyzer filing"),
   );
   // a new folder name may still be a topic the library already has
-  if (typesafeConfigured() && folders.length && !titles.includes(idea.title)) {
-    const existing = await existingFolderFor(text, idea, folders, signal).catch((e) => {
+  const tsKey = typesafeFor(user);
+  if (tsKey && folders.length && !titles.includes(idea.title)) {
+    const existing = await existingFolderFor(tsKey, text, idea, folders, signal).catch((e) => {
       console.warn(`[instagram] folder check failed, keeping the new folder: ${errorMessage(e)}`);
       return null;
     });
@@ -2352,13 +2292,8 @@ async function cachedInfo(meta: PostMeta): Promise<PostInfo | null> {
       const ref = parseYoutubeUrl(meta.url);
       return ref ? normalizeYoutubeItem(raw, ref) : null;
     }
-    if ("shortCode" in raw || "shortcode" in raw || "childPosts" in raw) {
-      return normalizeApifyPost(raw, meta.url);
-    }
-    return normalizePostInfo(raw as Parameters<typeof normalizePostInfo>[0], {
-      shortcode: meta.shortcode,
-      mediaId: meta.mediaId,
-    });
+    // an Apify item; anything else (read some other way before) is read again
+    return "shortCode" in raw || "shortcode" in raw || "childPosts" in raw ? normalizeApifyPost(raw, meta.url) : null;
   } catch {
     return null;
   }
@@ -2378,7 +2313,7 @@ async function processPost(id: string): Promise<void> {
   let fetched: { raw: unknown; info: PostInfo } | undefined;
   try {
     const gate = await ingestGate(user.username);
-    if (!gate.ok) throw new InstagramError(gate.error, gate.mode === "apify" ? "APIFY" : "SESSION", false);
+    if (!gate.ok) throw new InstagramError(gate.error, "APIFY", false);
     // YouTube has no album to crawl: its thumbnail is the one slide, so the slide always exists.
     const youtube = meta.platform === "youtube";
     const srcMode = youtube ? "apify" : gate.mode;
@@ -2387,21 +2322,6 @@ async function processPost(id: string): Promise<void> {
     const ensureInfo = async (): Promise<PostInfo> => {
       if (fetched) return fetched.info;
       const hadShortcode = Boolean(meta.shortcode);
-      if (!meta.shortcode && gate.mode === "session") {
-        await setStep(meta, "resolve", 0.02);
-        const session = await readSession(user.username);
-        if (!session) throw new InstagramError(SESSION_MISSING_MSG, "SESSION", false);
-        const ref = await resolveShareLink(meta.url, { headers: igHeaders(session), signal });
-        meta.shortcode = ref.shortcode;
-        meta.mediaId = shortcodeToMediaId(ref.shortcode);
-        meta.url = canonicalPostUrl(ref.shortcode, ref.reelHint);
-        await persist(meta);
-        const dup = await findByShortcode(meta.shortcode, user, meta.id);
-        if (dup) {
-          meta.duplicateOf = dup.id;
-          throw new Error("This post is already in your library");
-        }
-      }
       await setStep(meta, "info", 0.06);
       fetched = await loadPostInfo(meta, gate.mode, user.username, signal);
       await writeFile(infoPath(id), JSON.stringify(fetched.raw)).catch(() => {});
@@ -2510,9 +2430,10 @@ async function processPost(id: string): Promise<void> {
             meta.jobs = patchJob(meta.jobs, job, { status: "skipped" });
             continue;
           }
-          if (!(cloudTranscriptionConfigured() && userMayCloudTranscribe(user))) {
+          const blocked = cloudTranscribeBlock(user);
+          if (blocked) {
             for (const s of videos) s.transcript = { status: "skipped" };
-            pushWarning(meta, "Transcripts skipped — cloud transcription is locked or DEEPGRAM_API_KEY is missing");
+            pushWarning(meta, `Transcripts skipped — ${blocked}`);
             meta.jobs = patchJob(meta.jobs, job, { status: "skipped" });
             continue;
           }
@@ -2534,7 +2455,7 @@ async function processPost(id: string): Promise<void> {
             meta.jobs = patchJob(meta.jobs, job, { status: "skipped" });
             continue;
           }
-          if (!anyVisionConfigured()) {
+          if (!anyVisionConfigured(user)) {
             for (const s of work) s.vision = { status: "skipped" };
             pushWarning(meta, "Slide text skipped — no vision-capable AI key is configured");
             meta.jobs = patchJob(meta.jobs, job, { status: "skipped" });
@@ -2555,7 +2476,7 @@ async function processPost(id: string): Promise<void> {
           await collectCommentsForPost(meta, gate.mode, user.username, signal, opts.more === true);
           stopCrawl();
         } else if (job === "tags") {
-          if (!anyAiConfigured()) {
+          if (!anyAiConfigured(user)) {
             pushWarning(meta, "Tags skipped — no AI key is configured");
             meta.jobs = patchJob(meta.jobs, job, { status: "skipped" });
             continue;
@@ -2563,7 +2484,7 @@ async function processPost(id: string): Promise<void> {
           await setStep(meta, "vision", 0.9);
           await tagPost(meta, user, signal);
         } else if (job === "idea") {
-          if (!anyAiConfigured()) {
+          if (!anyAiConfigured(user)) {
             pushWarning(meta, "Idea skipped — no AI key is configured");
             meta.jobs = patchJob(meta.jobs, job, { status: "skipped" });
             continue;
@@ -2610,7 +2531,7 @@ async function processPost(id: string): Promise<void> {
       !meta.idea &&
       !meta.duplicateOf &&
       !meta.knowhow &&
-      anyAiConfigured() &&
+      anyAiConfigured(user) &&
       jobStatusOf(meta.jobs, "idea") === "idle"
     ) {
       const user = jobUsers.get(id);
@@ -2652,8 +2573,7 @@ async function processPost(id: string): Promise<void> {
 }
 
 /**
- * Collect comments through the active source (Playwright + burner
- * session, or Apify) and store them with the low-value filter applied.
+ * Collect comments on the user's Apify key and store them with the low-value filter applied.
  * Never fatal for the post: a failure leaves `comments.status = "failed"`
  * plus a warning, and the UI offers Re-fetch.
  */
@@ -2673,32 +2593,10 @@ async function collectCommentsForPost(
   const have = existing?.comments.length ?? 0;
   const cap = more ? have + countReplies(existing?.comments ?? []) + MAX_COMMENTS : MAX_COMMENTS;
   try {
-    let result: { comments: Comment[]; status: CommentsFile["status"]; cursor?: string };
-    if (mode === "apify") {
-      result = await fetchCommentsViaApify(meta.url, { username, cap, signal });
-    } else {
-      const session = await readSession(username);
-      if (!session || session.valid === false) {
-        throw new InstagramError(
-          session ? SESSION_EXPIRED_MSG : SESSION_MISSING_MSG,
-          "SESSION",
-          false,
-        );
-      }
-      result = await collectComments({
-        shortcode: meta.shortcode,
-        session,
-        username,
-        cap,
-        expectedTotal: meta.counts.comments,
-        timeoutMs: COMMENTS_TIMEOUT_MS,
-        signal,
-        log: (line) => console.log(`[instagram] ${meta.shortcode} comments: ${line}`),
-      });
-    }
+    const result: { comments: Comment[]; status: CommentsFile["status"]; cursor?: string } = await fetchCommentsViaApify(meta.url, { username, cap, signal });
     const merged = mergeComments(existing?.comments ?? [], result.comments);
     // Jev scores new comments; the word filter decides without a key
-    const { filteredOut, questions, keywords } = await annotateComments(merged, { caption: meta.caption, handle: meta.creator.username }, signal);
+    const { filteredOut, questions, keywords } = await annotateComments(typesafeFor(username), merged, { caption: meta.caption, handle: meta.creator.username }, signal);
     const file: CommentsFile = {
       status: result.status,
       fetchedAt: Date.now(),
@@ -2959,7 +2857,7 @@ async function processAccountWith(id: string, meta: NonNullable<ReturnType<typeo
           if (mode === "graph") await refreshMineGraphStats(meta.id, signal);
         }
       } else if (job === "tags") {
-        if (!anyAiConfigured()) throw new Error("Tags skipped — no AI key is configured");
+        if (!anyAiConfigured(user)) throw new Error("Tags skipped — no AI key is configured");
         const catalog = await loadCatalog(meta.id);
         const captions = catalog
           .slice(0, 12)
@@ -2971,7 +2869,7 @@ async function processAccountWith(id: string, meta: NonNullable<ReturnType<typeo
           [`@${meta.username}`, meta.biography || "", captions].filter(Boolean).join("\n"),
           signal,
           parseTagsPayload,
-          aiFor(undefined, "analyzer", "Analyzer tags"),
+          aiFor(user, "analyzer", "Analyzer tags"),
         );
         meta.tags = mergeTags(meta.tags, tags);
         bumpUsage(user.username, { aiRuns: 1 });
@@ -3199,7 +3097,7 @@ async function streamFile(
   });
 }
 
-/* ---- routes: capability + session (before /:id) ---- */
+/* ---- routes: capability + Apify key (before /:id) ---- */
 
 instagramApp.get("/availability", async (c) => {
   const user = c.get("user");
@@ -3207,10 +3105,9 @@ instagramApp.get("/availability", async (c) => {
   return c.json({
     available: snap.available,
     allowed: user.role === "admin",
-    cloud: cloudTranscriptionConfigured() && userMayCloudTranscribe(user),
-    ai: anyVisionConfigured(),
-    source: snap.source,
-    session: snap.session,
+    cloud: !cloudTranscribeBlock(user),
+    cloudWhy: cloudTranscribeBlock(user) ?? undefined,
+    ai: anyVisionConfigured(user),
     apify: snap.apify,
     graph: { configured: graphConfigured() },
     limits: {
@@ -3298,67 +3195,6 @@ instagramApp.get("/queue", async (c) => {
   return c.json({ running, max: MAX_CONCURRENT, items: [...items, ...failed.slice(0, 50)] });
 });
 
-instagramApp.get("/session", async (c) => {
-  const username = c.get("user").username;
-  return c.json(publicSessionStatus(await readSession(username)));
-});
-
-instagramApp.put("/session", async (c) => {
-  const username = c.get("user").username;
-  const body = (await c.req.json().catch(() => null)) as { cookies?: unknown } | null;
-  const text = typeof body?.cookies === "string" ? body.cookies : "";
-  const cookies = parseCookieInput(text);
-  if (!cookies.length) {
-    return c.json({ error: "Paste the Cookie header, a cookies.txt export, or a JSON cookie list" }, 400);
-  }
-  const missing = missingCookies(cookies);
-  if (missing.length) {
-    return c.json(
-      { error: `Missing required cookie${missing.length > 1 ? "s" : ""}: ${missing.join(", ")}` },
-      400,
-    );
-  }
-  const session: StoredSession = {
-    cookies,
-    savedAt: Date.now(),
-    savedBy: username,
-    valid: null,
-    source: "file",
-  };
-  await writeSession(username, session);
-  await writeMode(username, "session");
-  const checked = await checkSession(username);
-  return c.json(publicSessionStatus(checked ?? session));
-});
-
-instagramApp.post("/session/check", async (c) => {
-  const username = c.get("user").username;
-  const checked = await checkSession(username);
-  if (!checked) return c.json({ error: "No session saved" }, 404);
-  return c.json(publicSessionStatus(checked));
-});
-
-instagramApp.delete("/session", async (c) => {
-  const username = c.get("user").username;
-  await clearSession(username);
-  return c.json(publicSessionStatus(await readSession(username)));
-});
-
-instagramApp.get("/source", async (c) => {
-  const snap = await availabilitySnapshot(c.get("user").username);
-  return c.json({ mode: snap.source, available: snap.available });
-});
-
-instagramApp.put("/source", async (c) => {
-  const username = c.get("user").username;
-  const body = (await c.req.json().catch(() => null)) as { mode?: unknown } | null;
-  if (body?.mode !== "session" && body?.mode !== "apify") {
-    return c.json({ error: "mode must be session or apify" }, 400);
-  }
-  await writeMode(username, body.mode);
-  return c.json(await availabilitySnapshot(username));
-});
-
 instagramApp.get("/apify", async (c) => {
   const username = c.get("user").username;
   return c.json(publicApifyStatus(await readApify(username)));
@@ -3382,7 +3218,6 @@ instagramApp.put("/apify", async (c) => {
     source: "file",
   };
   await writeApify(username, stored);
-  await writeMode(username, "apify");
   const checked = await checkApify(username);
   return c.json(publicApifyStatus(checked ?? stored));
 });
@@ -3497,25 +3332,9 @@ async function ingestOne(
   if (parsed?.kind === "profile") {
     return { ok: false, error: "Use Add account for profile links", status: 400 };
   }
-  let shortcode = ytRef ? `yt-${ytRef.videoId}` : parsed?.kind === "post" ? parsed.shortcode : "";
-  let reelHint = ytRef ? ytRef.short : parsed?.kind === "post" ? parsed.reelHint : false;
-  let url = ytRef ? ytRef.canonical : parsed?.kind === "post" ? parsed.canonical : (parsed?.url ?? "");
-  if (parsed?.kind === "share" && mode === "session" && run === "now") {
-    try {
-      const session = await readSession(user.username);
-      if (!session) return { ok: false, error: SESSION_MISSING_MSG, status: 409 };
-      const ref = await resolveShareLink(parsed.url, { headers: igHeaders(session) });
-      shortcode = ref.shortcode;
-      reelHint = ref.reelHint;
-      url = canonicalPostUrl(ref.shortcode, ref.reelHint);
-    } catch (e) {
-      return {
-        ok: false,
-        error: e instanceof InstagramUrlError ? e.message : errorMessage(e),
-        status: 400,
-      };
-    }
-  }
+  const shortcode = ytRef ? `yt-${ytRef.videoId}` : parsed?.kind === "post" ? parsed.shortcode : "";
+  const reelHint = ytRef ? ytRef.short : parsed?.kind === "post" ? parsed.reelHint : false;
+  const url = ytRef ? ytRef.canonical : parsed?.kind === "post" ? parsed.canonical : (parsed?.url ?? "");
   if (shortcode && queued.has(shortcode)) {
     return { ok: true, meta: queued.get(shortcode)!, existing: true };
   }
@@ -3658,10 +3477,8 @@ instagramApp.post("/", async (c) => {
 
 /** Why a shared link was saved but not crawled, worded for a phone (no "paste above"). */
 function shareLaterReason(code: string): string {
-  if (code === "APIFY_INVALID") return "your Apify token needs replacing in the Analyzer";
-  if (code === "NO_SESSION") return "add Instagram cookies in the Analyzer to crawl it";
-  if (code === "SESSION_INVALID") return "your Instagram cookies expired, paste fresh ones in the Analyzer";
-  return "add your Apify token in the Analyzer to crawl it";
+  if (code === "APIFY_INVALID") return "your Apify key needs replacing in Settings → Connectors";
+  return "add your Apify key in Settings → Connectors to crawl it";
 }
 
 /**
@@ -4172,13 +3989,14 @@ export async function findPostsForUser(
     ? all.filter((h) => byId.get(h.id)!.kind === opts.kind)
     : all;
   // a descriptive search: Jev re-orders the top by what the posts are about
-  if (typesafeConfigured() && queryTerms(q).length >= RERANK_MIN_TERMS && ranked.length > 1) {
+  const tsKey = typesafeFor(user);
+  if (tsKey && queryTerms(q).length >= RERANK_MIN_TERMS && ranked.length > 1) {
     const top = ranked.slice(0, RERANK_TOP);
     const key = `${user.username}|${opts.projectId ?? ""}|${q.toLowerCase()}|${top.map((h) => h.id).join(",")}`;
     try {
       let scores = rerankCache.get(key)?.scores;
       if (!scores) {
-        scores = await relevance(q, top.map((h) => ({ id: h.id, text: rerankText(byId.get(h.id)!) })));
+        scores = await relevance(tsKey, q, top.map((h) => ({ id: h.id, text: rerankText(byId.get(h.id)!) })));
         rerankCache.set(key, { scores, at: Date.now() });
         pruneRerankCache();
       }
@@ -4377,7 +4195,7 @@ instagramApp.get("/accounts/:id", async (c) => {
     { id: meta.id, username: meta.username, catalog },
   ])[0];
   const [graph, daily] = await Promise.all([loadGraphStats(meta.id), loadGraphDaily(meta.id)]);
-  const whatWorks = await whatWorksFor(meta, catalog, c.req.raw.signal);
+  const whatWorks = await whatWorksFor(user, meta, catalog, c.req.raw.signal);
   return c.json({
     ...publicAccount(meta, catalog.length),
     catalog,
@@ -4645,8 +4463,9 @@ instagramApp.get("/:id/comments", async (c) => {
   }
   // comments fetched before Jev scored them get scored the first time
   // they're opened, once
-  if (typesafeConfigured() && hasUnjudged(file.comments)) {
-    const tally = await annotateComments(file.comments, { caption: meta.caption, handle: meta.creator.username }, c.req.raw.signal).catch(
+  const tsKey = typesafeFor(c.get("user"));
+  if (tsKey && hasUnjudged(file.comments)) {
+    const tally = await annotateComments(tsKey, file.comments, { caption: meta.caption, handle: meta.creator.username }, c.req.raw.signal).catch(
       () => null,
     );
     if (tally && !hasUnjudged(file.comments)) {
@@ -4751,7 +4570,7 @@ instagramApp.post("/:id/refresh-counts", async (c) => {
     });
   } catch (e) {
     const status =
-      e instanceof InstagramError && (e.code === "SESSION" || e.code === "APIFY") ? 409 : 502;
+      e instanceof InstagramError && e.code === "APIFY" ? 409 : 502;
     return c.json({ error: errorMessage(e) }, status);
   }
 });

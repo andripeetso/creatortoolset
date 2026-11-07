@@ -1,6 +1,6 @@
 import type { Word } from "./types";
 
-/** Server-proxied Deepgram engine — offered when the server has a key. */
+/** Server-proxied Deepgram engine, on the account's own key (Settings → My API keys) or the server's when it serves them. */
 export const CLOUD_MODEL_ID = "cloud/deepgram";
 export const CLOUD_MODEL = {
   id: CLOUD_MODEL_ID,
@@ -9,8 +9,9 @@ export const CLOUD_MODEL = {
 };
 
 export interface CloudStatus {
-  available: boolean; // server has a Deepgram key
+  available: boolean; // a Deepgram key serves this account
   allowed: boolean; // this account may use it (admin, or unlocked by admin)
+  why?: string; // when not available: the key to add
 }
 
 let cloudCache: CloudStatus | null = null;
@@ -22,6 +23,7 @@ export async function cloudStatus(): Promise<CloudStatus> {
     cloudCache = {
       available: d.available === true,
       allowed: d.allowed === true,
+      ...(typeof d.why === "string" ? { why: d.why } : {}),
     };
   } catch {
     cloudCache = { available: false, allowed: false };

@@ -10,6 +10,7 @@ import type { AuthVars } from "./auth";
 import { isOutOfCredits, outOfCreditsMessage } from "./credits";
 import { GUEST_CLIP_S, logGuestRun, takeGuest } from "./guest";
 import { env } from "./lib/env";
+import { keyFor, type Actor } from "./my-keys";
 import { NvidiaRefused, readWav, SR as NV_SR, studioVoice, wav16 } from "./lib/nvidia-voice";
 import { type SessionUser, bumpUsage, isGuestName } from "./users";
 
@@ -23,8 +24,10 @@ import { type SessionUser, bumpUsage, isGuestName } from "./users";
  * ENGINES, picked per run, every result levelled to the same -15 LUFS so
  * switching never jumps in volume:
  * - nvidia (the default): NVIDIA Studio Voice on NVIDIA's hosted API
- *   (NVIDIA_API_KEY; lib/nvidia-voice.ts), in this process.
- * - elevenlabs: ElevenLabs Voice Isolator (ELEVENLABS_API_KEY), admins only.
+ *   (lib/nvidia-voice.ts), in this process.
+ * - elevenlabs: ElevenLabs Voice Isolator, not for guests.
+ * Each runs on the session owner's key (my-keys.ts keyFor: their own from Settings → My API keys; the server's only
+ * for the platform admin, or guests when an admin switched that on).
  * Admins can add a second pass (`?then=`): `meta.chain`, `meta.step`; a
  * pass's output feeds the next as pass-<step>.wav.
  * Strength: the page blends the original and the result live; `meta.mix`
@@ -271,18 +274,20 @@ function runStep(
 
 /* ---- engines ---- */
 
-const elevenLabsKey = () => process.env.ELEVENLABS_API_KEY || "";
-const nvidiaKey = () => process.env.NVIDIA_API_KEY || "";
+const KEY = { nvidia: "NVIDIA_API_KEY", elevenlabs: "ELEVENLABS_API_KEY" } as const;
+/** The engine's key for whoever the session belongs to; throws the "add your key" message when none serves them. */
+function engineKey(engine: Engine, owner: Actor): string {
+  const r = keyFor(owner, KEY[engine]);
+  if (r.missing) throw new Error(r.missing);
+  return r.key;
+}
 /** The default engine: NVIDIA for everyone. */
 const defaultEngine = (): Engine => "nvidia";
 
 /** Why `user` can't run `engine`, or null. */
 function refusal(engine: Engine, user: SessionUser): string | null {
-  if (engine === "elevenlabs" && user.role !== "admin") return "ElevenLabs isn't available on this account.";
-  if (engine === "nvidia" && !nvidiaKey()) return "NVIDIA isn't set up on the server (NVIDIA_API_KEY).";
-  if (engine === "elevenlabs" && !elevenLabsKey())
-    return "ElevenLabs isn't set up on the server (ELEVENLABS_API_KEY).";
-  return null;
+  if (engine === "elevenlabs" && user.role === "guest") return "ElevenLabs isn't available in guest mode.";
+  return keyFor(user, KEY[engine]).missing ?? null;
 }
 
 /** NVIDIA Studio Voice on the extracted 48 kHz WAV -> enhance-nv.wav, lined up with it. */
@@ -291,7 +296,7 @@ async function runNvidia(id: string, meta: Meta, wavPath: string, outDir: string
   apiCalls.set(id, controller);
   try {
     const { x } = readWav(await readFile(wavPath));
-    const y = await studioVoice(nvidiaKey(), x, controller.signal, (done, total) => {
+    const y = await studioVoice(engineKey("nvidia", meta.owner), x, controller.signal, (done, total) => {
       meta.progress = Math.max(meta.progress, lo + (done / total) * (hi - lo));
       void persist(meta);
     });
@@ -327,11 +332,8 @@ const EL_EXT: Record<string, string> = {
  * in a crawl. Registered in `apiCalls` so cancel() aborts the fetch
  * exactly like killing an ffmpeg step.
  */
-async function runElevenLabs(id: string, wavPath: string, outDir: string): Promise<string> {
-  const key = elevenLabsKey();
-  if (!key) {
-    throw new Error("ELEVENLABS_API_KEY is not set on the server — add it to .env and restart.");
-  }
+async function runElevenLabs(id: string, owner: string | undefined, wavPath: string, outDir: string): Promise<string> {
+  const key = engineKey("elevenlabs", owner);
   const audio = await readFile(wavPath);
   const form = new FormData();
   form.append("audio", new Blob([audio], { type: "audio/wav" }), "audio.wav");
@@ -362,7 +364,7 @@ async function runElevenLabs(id: string, wavPath: string, outDir: string): Promi
       throw new Error(outOfCreditsMessage("Audio enhancement"));
     }
     if (res.status === 401) {
-      throw new Error("ElevenLabs rejected the API key — check ELEVENLABS_API_KEY.");
+      throw new Error("ElevenLabs rejected the API key — check it in Settings → My API keys.");
     }
     if (res.status === 429) {
       throw new Error("Audio enhancement is rate limited — try again in a minute.");
@@ -495,7 +497,7 @@ async function runJob(id: string): Promise<void> {
           meta.progress = Math.max(meta.progress, lo + frac * (hi - lo));
           void persist(meta);
         }, 1000);
-        clean = await runElevenLabs(id, wav, dir);
+        clean = await runElevenLabs(id, meta.owner, wav, dir);
         clearInterval(crawl);
         crawl = null;
       }
@@ -610,8 +612,9 @@ enhanceApp.get("/availability", async (c) => {
   const user = c.get("user");
   const guest = user.role === "guest";
   return c.json({
-    nvidia: !!nvidiaKey(),
-    elevenlabs: !!elevenLabsKey() && user.role === "admin",
+    nvidia: !refusal("nvidia", user),
+    elevenlabs: !refusal("elevenlabs", user),
+    why: { nvidia: refusal("nvidia", user) ?? undefined, elevenlabs: refusal("elevenlabs", user) ?? undefined },
     default: defaultEngine(),
     admin: user.role === "admin", // a second pass
     guest: guest ? { maxSeconds: GUEST_CLIP_S, maxBytes: GUEST_MAX_BYTES, keepMinutes: GUEST_KEEP_MS / 60_000 } : null,

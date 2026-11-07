@@ -13,11 +13,11 @@ beforeEach(() => vi.clearAllMocks());
 describe("re-ranking a descriptive search", () => {
   it("asks one yes/no per post with the search as shared state", async () => {
     vi.mocked(ask).mockResolvedValueOnce({ p0: { noul: 0.2 }, p1: { noul: 0.9 } });
-    const scores = await relevance("parents pushing back on screens", [
+    const scores = await relevance("k", "parents pushing back on screens", [
       { id: "a", text: "tummy time" },
       { id: "b", text: "you told me I'm wrong about sweets" },
     ]);
-    expect(vi.mocked(ask).mock.calls[0][0]).toEqual({ search: "parents pushing back on screens" });
+    expect(vi.mocked(ask).mock.calls[0][1]).toEqual({ search: "parents pushing back on screens" });
     expect(scores).toEqual(new Map([["a", 0.2], ["b", 0.9]]));
   });
 

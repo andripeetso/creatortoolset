@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { instagramLogin } from "../connectors/store";
 import { parseInstagramUrl } from "./url";
 import type { CatalogItem, CatalogPage, CatalogVisibility, Comment, ProfileInfo, VisibilityBasis } from "./types";
-import { InstagramError } from "./web-api";
+import { InstagramError } from "./base";
 import { env } from "../env";
 import {
   DAY_MS,
@@ -16,7 +16,7 @@ export type { MineAccountStats } from "./account-insights";
 
 /**
  * Official Instagram Graph API for the Toolset user's own professional
- * account (Analyzer `mine` only). Competitors stay on Apify / cookies.
+ * account (Analyzer `mine` only). Other creators stay on the user's own Apify key.
  * Credentials are install-wide: META_ACCESS_TOKEN + INSTAGRAM_USER_ID,
  * read from the .env. They read one Instagram account, so only the
  * owner's (SOCIAL_FEED_OWNER) Mine account uses them. Never persist paging.next — it embeds the token.
@@ -100,7 +100,7 @@ export function withGraphCreds<T>(creds: GraphCreds | null, fn: () => Promise<T>
   return creds ? scoped.run(creds, fn) : fn();
 }
 
-/** Mine-account catalog/profile can use Graph even when Apify/cookies are off. */
+/** Mine-account catalog/profile can use Graph even without an Apify key. */
 export function mineUsesGraph(account?: { mine?: boolean; owner?: string; username?: string } | null): boolean {
   return graphCredsFor(account) !== null;
 }

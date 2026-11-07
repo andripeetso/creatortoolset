@@ -3,6 +3,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { env } from "./lib/env";
 import { deleteUserContent } from "./retention";
+import { forgetMyKeys } from "./my-keys";
 import type { AuthVars } from "./auth";
 import { guestOverview } from "./guest";
 import { addMember, forgetAccount, workspaceOf } from "./lib/workspaces";
@@ -255,6 +256,7 @@ adminApp.delete("/users/:username", async (c) => {
   }
   deleteUser(target.username);
   forgetAccount(target.username);
+  forgetMyKeys(target.username);
   // their projects, originals, Review videos, notes and guides go with them
   await deleteUserContent(target.username);
   return c.json({ ok: true });

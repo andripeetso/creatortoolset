@@ -36,7 +36,7 @@ import {
 import { capChapters, chapterCountRange, timedTranscript } from "./lib/timed-transcript";
 import { type SessionUser } from "./users";
 import {
-  cloudTranscriptionConfigured,
+  cloudTranscribeBlock,
   transcribeWav,
   userMayCloudTranscribe,
 } from "./transcribe";
@@ -552,7 +552,7 @@ async function generateBlock(
   if (!force && kind === "chapters" && meta.chapters?.length) {
     return { id: "chapters", kind: "chapters", chapters: meta.chapters };
   }
-  if (!anyAiConfigured()) {
+  if (!anyAiConfigured(meta.owner)) {
     throw new AiProviderError("AI is not configured", "FAILED", false);
   }
   const words = await loadWords(meta.id);
@@ -666,8 +666,7 @@ async function processClip(id: string, user: SessionUser): Promise<void> {
       thumbPath(id),
     ]).catch(() => {});
 
-    const canTranscribe =
-      cloudTranscriptionConfigured() && userMayCloudTranscribe(user);
+    const canTranscribe = !cloudTranscribeBlock(user);
     let words: Word[] = [];
     if (canTranscribe && (await probeHasAudio(src))) {
       meta.step = "audio";
@@ -697,9 +696,9 @@ async function processClip(id: string, user: SessionUser): Promise<void> {
       words = result.words;
       // ASR error-correction pass: rewrite only tokens that don't make
       // sense. Timestamps stay put so captions stay in sync.
-      if (words.length && anyAiConfigured()) {
+      if (words.length && anyAiConfigured(user)) {
         try {
-          words = await rewriteTranscriptWords(words, CORRECT_SYSTEM);
+          words = await rewriteTranscriptWords(words, CORRECT_SYSTEM, user.username);
         } catch (e) {
           if (!(e instanceof AiProviderError)) throw e;
           console.warn(`[clips] transcript correct skipped: ${e.message}`);
@@ -713,7 +712,7 @@ async function processClip(id: string, user: SessionUser): Promise<void> {
       }
     }
 
-    if (words.length && anyAiConfigured()) {
+    if (words.length && anyAiConfigured(user)) {
       meta.step = "title";
       meta.progress = Math.max(meta.progress, 0.78);
       await persist(meta);
@@ -842,9 +841,9 @@ async function streamFile(
 clipsApp.get("/availability", (c) => {
   const user = c.get("user");
   return c.json({
-    cloud:
-      cloudTranscriptionConfigured() && userMayCloudTranscribe(user),
-    ai: anyAiConfigured() && userMayCloudTranscribe(user),
+    cloud: !cloudTranscribeBlock(user),
+    cloudWhy: cloudTranscribeBlock(user) ?? undefined,
+    ai: anyAiConfigured(user) && userMayCloudTranscribe(user),
   });
 });
 
@@ -1113,6 +1112,7 @@ clipsApp.get("/:id/transcript", async (c) => {
 async function rewriteTranscriptWords(
   words: Word[],
   system: string,
+  owner: string,
 ): Promise<Word[]> {
   const drop: number[] = [];
   const fixes: { i: number; text: string }[] = [];
@@ -1123,7 +1123,7 @@ async function rewriteTranscriptWords(
       cleanupUserPrompt(slice, start, previous),
       undefined,
       parseCleanupPayload,
-      aiFor(undefined, "notes", "Transcript cleanup"),
+      aiFor(owner, "notes", "Transcript cleanup"),
     );
     drop.push(...payload.drop);
     fixes.push(...payload.fixes);
@@ -1132,15 +1132,15 @@ async function rewriteTranscriptWords(
   return applyTranscriptCleanup(words, { drop, fixes });
 }
 
-async function cleanupTranscriptWords(words: Word[]): Promise<Word[]> {
-  return rewriteTranscriptWords(words, CLEANUP_SYSTEM);
+async function cleanupTranscriptWords(words: Word[], owner: string): Promise<Word[]> {
+  return rewriteTranscriptWords(words, CLEANUP_SYSTEM, owner);
 }
 
 clipsApp.post("/:id/cleanup", async (c) => {
   const user = c.get("user");
   const meta = await ownedMeta(c.req.param("id"), user);
   if (!meta) return c.json({ error: "Not found" }, 404);
-  if (!anyAiConfigured()) {
+  if (!anyAiConfigured(user)) {
     return c.json({ error: "AI is not configured" }, 400);
   }
   const file = await loadTranscript(meta.id);
@@ -1148,7 +1148,7 @@ clipsApp.post("/:id/cleanup", async (c) => {
     return c.json({ error: "No transcript to clean" }, 400);
   }
   try {
-    const cleaned = await cleanupTranscriptWords(file.words);
+    const cleaned = await cleanupTranscriptWords(file.words, meta.owner ?? user.username);
     const original = file.originalWords ?? file.words;
     const changed =
       cleaned.length !== file.words.length ||

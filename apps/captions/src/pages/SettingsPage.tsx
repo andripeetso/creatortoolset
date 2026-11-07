@@ -10,24 +10,27 @@ import { GeneralSection } from "@/components/settings/GeneralSection";
 import { ProvidersSection } from "@/components/settings/ProvidersSection";
 import { ConnectorsSection } from "@/components/settings/ConnectorsSection";
 import { ServiceKeysSection } from "@/components/settings/ServiceKeysSection";
+import { MyKeysSection } from "@/components/settings/MyKeysSection";
 import { UsageSection } from "@/components/settings/UsageSection";
 import { WorkspaceSection } from "@/components/settings/WorkspaceSection";
 import { useViewedMe } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
 /**
- * The sections, in the order the sidebar shows them: the account's own, then the Workspace group pinned at the bottom:
+ * The sections, in the order the sidebar shows them: the account's own (My API keys: accounts only, not guests or the
+ * demo), then the Workspace group pinned at the bottom:
  * Team (the workspace: members, invites, their AI; any account), then API keys and Server (the platform operator, admins only).
  */
-const SETTINGS_SECTIONS: ReadonlyArray<{ id: string; title: string; icon: LucideIcon; adminOnly?: boolean; workspace?: boolean }> = [
+const SETTINGS_SECTIONS: ReadonlyArray<{ id: string; title: string; icon: LucideIcon; adminOnly?: boolean; workspace?: boolean; account?: boolean }> = [
   { id: "general", title: "General", icon: SlidersHorizontal },
   { id: "appearance", title: "Appearance", icon: Palette },
   { id: "providers", title: "AI providers", icon: Cpu },
   { id: "connectors", title: "Connectors", icon: Cable },
+  { id: "my-keys", title: "My API keys", icon: KeyRound, account: true },
   { id: "usage", title: "Usage", icon: Gauge },
   { id: "devices", title: "Devices", icon: Monitor },
   { id: "account", title: "Account", icon: UserRound },
-  { id: "team", title: "Team", icon: Users, workspace: true },
+  { id: "team", title: "Team", icon: Users, workspace: true, account: true },
   { id: "keys", title: "API keys", icon: KeyRound, adminOnly: true, workspace: true },
   { id: "admin", title: "Server", icon: ShieldCheck, adminOnly: true, workspace: true },
 ];
@@ -41,7 +44,7 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
   const [, , section = "general", sub] = useLocation().pathname.split("/");
   const me = useViewedMe();
   const account = !!me && me.role !== "guest" && !me.demo;
-  const visible = SETTINGS_SECTIONS.filter((s) => (!s.adminOnly || me?.role === "admin") && (s.id !== "team" || account));
+  const visible = SETTINGS_SECTIONS.filter((s) => (!s.adminOnly || me?.role === "admin") && (!s.account || account));
   const current = visible.find((s) => s.id === section);
   if (!current) return <Navigate to="/settings/general" replace />;
 
@@ -50,6 +53,7 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
     appearance: <AppearanceSection />,
     providers: <ProvidersSection sub={sub} />,
     connectors: <ConnectorsSection />,
+    "my-keys": <MyKeysSection />,
     usage: <UsageSection />,
     devices: <DevicesSection />,
     account: <AccountSection />,

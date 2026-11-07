@@ -2,7 +2,7 @@ import { createWriteStream } from "node:fs";
 import { rename, rm } from "node:fs/promises";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { DESKTOP_UA } from "./session";
+import { DESKTOP_UA } from "./base";
 
 /**
  * Streamed download of Instagram CDN media to disk. The CDN URLs are

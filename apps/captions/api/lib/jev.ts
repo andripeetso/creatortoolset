@@ -5,20 +5,19 @@ import { choice, noul, TypeSafeClient } from "@typesafe-ai/sdk";
  * a list (choice) or yes/no as a probability (noul). Many questions over
  * the same text go in one request. Jev never writes; the chat models do.
  *
- * Every feature that uses it keeps its old behaviour when TYPESAFE_API_KEY
- * is missing or a request fails, so Jev only ever improves a result.
+ * Every feature that uses it keeps its old behaviour when the asker has no
+ * key (my-keys.ts keyFor) or a request fails, so Jev only ever improves a result.
  */
 
 export { choice, noul };
 
-export function typesafeConfigured(): boolean {
-  return !!(process.env.TYPESAFE_API_KEY || "").trim();
-}
-
-let client: TypeSafeClient | null = null;
-export function jev(): TypeSafeClient {
-  return (client ??= new TypeSafeClient());
-}
+// ponytail: one client per key, never dropped; a small LRU if many accounts bring their own keys
+const clients = new Map<string, TypeSafeClient>();
+const jev = (apiKey: string): TypeSafeClient => {
+  let c = clients.get(apiKey);
+  if (!c) clients.set(apiKey, (c = new TypeSafeClient({ apiKey })));
+  return c;
+};
 
 type Question = ReturnType<typeof choice> | ReturnType<typeof noul>;
 
@@ -31,13 +30,15 @@ export interface Answer {
   noul?: number;
 }
 
-/** One request: shared state, named questions, answers by name. */
+/** One request on `key` (the asker's, from keyFor): shared state, named questions, answers by name. */
 export async function ask(
+  key: string,
   state: Record<string, unknown> | string,
   questions: Record<string, Question>,
   signal?: AbortSignal,
 ): Promise<Record<string, Answer>> {
-  const result = await jev().systemOne(
+  if (!key) throw new Error("No TypeSafe key");
+  const result = await jev(key).systemOne(
     { state: state as never, questions },
     { signal, timeout: 30_000 },
   );

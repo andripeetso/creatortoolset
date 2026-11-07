@@ -760,18 +760,8 @@ export interface InstagramPost {
   existing?: boolean;
 }
 
-export interface SessionStatus {
-  configured: boolean;
-  valid: boolean | null;
-  checkedAt?: number;
-  savedAt?: number;
-  savedBy?: string;
-  account?: { id: string; username?: string };
-  invalidReason?: string;
-  source: "file" | "env" | "none";
-}
-
-export type IngestMode = "session" | "apify";
+/** Fired after the Apify key changes (Settings → Connectors), so an open Analyzer page re-reads its availability. */
+export const INSTAGRAM_CONNECTION_EVENT = "instagram-connection";
 
 export interface ApifyStatus {
   configured: boolean;
@@ -790,15 +780,16 @@ export interface InstagramAvailability {
   available: boolean;
   allowed: boolean;
   cloud: boolean;
+  /** why transcripts are off: the key to add, or the lock */
+  cloudWhy?: string;
   ai: boolean;
-  source: IngestMode;
-  session: SessionStatus;
+  /** the user's own Apify key: the only way to read other creators' posts */
   apify: ApifyStatus;
   graph?: { configured: boolean };
   limits: { maxSlideMb: number; maxPostMb: number };
 }
 
-/** Catalog/profile for Mine can use Graph even when Apify/cookies are off. */
+/** Catalog/profile for Mine can use Graph even without an Apify key. */
 export function accountCatalogReady(
   avail?: InstagramAvailability | null,
   mine?: boolean,
@@ -1329,29 +1320,6 @@ export const mediaUrl = (id: string, slide: number) =>
   `/api/instagram/${id}/media/${slide}`;
 export const thumbUrl = (id: string, slide: number) =>
   `/api/instagram/${id}/thumb/${slide}`;
-
-export const getSession = () =>
-  fetch("/api/instagram/session").then((r) => json<SessionStatus>(r));
-
-export const saveSession = (cookies: string) =>
-  fetch("/api/instagram/session", jsonInit({ cookies }, "PUT")).then((r) =>
-    json<SessionStatus>(r),
-  );
-
-export const checkSession = () =>
-  fetch("/api/instagram/session/check", { method: "POST" }).then((r) =>
-    json<SessionStatus>(r),
-  );
-
-export const removeSession = () =>
-  fetch("/api/instagram/session", { method: "DELETE" }).then((r) =>
-    json<SessionStatus>(r),
-  );
-
-export const setInstagramSource = (mode: IngestMode) =>
-  fetch("/api/instagram/source", jsonInit({ mode }, "PUT")).then((r) =>
-    json<Pick<InstagramAvailability, "source" | "available" | "session" | "apify">>(r),
-  );
 
 export const saveApify = (token: string) =>
   fetch("/api/instagram/apify", jsonInit({ token }, "PUT")).then((r) =>

@@ -1,4 +1,4 @@
-import { ask, choice, noul, typesafeConfigured, yes } from "../jev";
+import { ask, choice, noul, yes } from "../jev";
 import { annotateLowValue } from "./comment-filter";
 import type { Comment, CommentJudgment } from "./types";
 
@@ -50,6 +50,7 @@ const bare = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N} ]+/gu, "").tri
 
 /** Judge a post's comments. Returns judgments keyed by comment id. */
 export async function judgeComments(
+  key: string,
   post: { caption?: string; handle?: string },
   comments: { id: string; text: string }[],
   signal?: AbortSignal,
@@ -73,6 +74,7 @@ export async function judgeComments(
       );
     });
     const answers = await ask(
+      key,
       { creator: creatorLine(post.handle), post: (post.caption ?? "").slice(0, 800) },
       questions,
       signal,
@@ -105,10 +107,11 @@ export interface CommentsTally {
 /**
  * Mark a post's comments: Jev judges any comment (or reply) not judged
  * yet, and its "worth reading" score decides what's hidden. Without a
- * TypeSafe key, or when Jev fails, the word-count filter decides as
+ * TypeSafe key (`key`, the post owner's from keyFor), or when Jev fails, the word-count filter decides as
  * before. Mutates the comments in place, like annotateLowValue.
  */
 export async function annotateComments(
+  key: string,
   comments: Comment[],
   post: { caption?: string; handle?: string },
   signal?: AbortSignal,
@@ -123,9 +126,9 @@ export async function annotateComments(
   };
   walk(comments);
   const todo = all.filter((c) => !c.judged);
-  if (todo.length && typesafeConfigured()) {
+  if (todo.length && key) {
     try {
-      const judged = await judgeComments(post, todo, signal);
+      const judged = await judgeComments(key, post, todo, signal);
       for (const c of todo) {
         const j = judged.get(c.id);
         if (j) c.judged = j;

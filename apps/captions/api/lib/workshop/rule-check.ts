@@ -29,6 +29,7 @@ function draftText(doc: Document): string {
 }
 
 export async function checkDraft(
+  key: string,
   doc: Document,
   rules: Rule[],
   signal?: AbortSignal,
@@ -54,7 +55,7 @@ export async function checkDraft(
     );
   }
   if (!Object.keys(questions).length) return [];
-  const answers = await ask({ draft: draftText(doc) }, questions, signal);
+  const answers = await ask(key, { draft: draftText(doc) }, questions, signal);
   const flags: RuleFlag[] = [];
   active.forEach((r, i) => {
     const p = yes(answers[`rule${i}`]);

@@ -87,6 +87,7 @@ const NEW_TOPIC = "new topic";
  * the writer's.
  */
 export async function existingFolderFor(
+  key: string,
   postText: string,
   idea: PostIdea,
   folders: IdeaFolder[],
@@ -98,6 +99,7 @@ export async function existingFolderFor(
   for (const f of offered) criteria[f.title] = f.takeaway || f.title;
   criteria[NEW_TOPIC] = "None of these: a topic the library doesn't have yet.";
   const answers = await ask(
+    key,
     {
       post: postText.slice(0, 3000),
       proposed_folder: `${idea.title} — ${idea.takeaway}`,

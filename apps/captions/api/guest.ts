@@ -4,9 +4,9 @@ import { env } from "./lib/env";
 import type { SessionUser } from "./users";
 
 /**
- * Guest mode ("Try as guest", no account) runs the real engines —
- * Deepgram, and the AI caption pass on the API key only when an admin
- * switched it on for guests (Admin → AI providers; ai.ts) — under caps, so a
+ * Guest mode ("Try as guest", no account) runs the real engines on the
+ * server's keys — Deepgram, NVIDIA and the AI caption pass — only when an admin
+ * switched guests on (Admin → AI providers; my-keys.ts keyFor) — under caps, so a
  * stranger can try all of Caption Studio without running up the bill. Worst case at these caps:
  * 60 guest minutes a day ≈ $0.26 of Deepgram. Every guest transcription
  * lands in guest-log.jsonl; Admin → Guests lists it.

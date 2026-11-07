@@ -5,13 +5,15 @@ import {
 import type { JobId, Selection } from "../contracts/providers";
 import { MAC_MISS, MacClaudeError, recordUsage, streamMacClaude, type MacOpts, type MacUsage } from "./lib/mac-claude";
 import { instanceIn, limitFallbacks, providerSettings, routeFor } from "./lib/providers";
-import { addSpend, budgetLeft } from "./lib/workspaces";
+import { addSpend } from "./lib/workspaces";
+import { keyFor } from "./my-keys";
 import { DEMO_USER, findUser, isDemoName, isGuestName, type SessionUser } from "./users";
 
 /**
  * Every AI call in the app. It goes to a provider (contracts/providers.ts: a coding-agent CLI on a Mac,
- * through a paired Mac; Anthropic goes through the Claude CLI so the server's proxy serves it). The Anthropic API key answers only guests and the demo account, and
- * only when an admin switches it on for them.
+ * through a paired Mac; Anthropic goes through the Claude CLI so the server's proxy serves it). An Anthropic API key answers
+ * an account with no provider that saved its own (Settings → My API keys); the server's answers only members on an API
+ * budget, and guests and the demo account when an admin switches it on for them (my-keys.ts keyFor).
  */
 
 export const OUT_OF_TOKENS_CODE = "OUT_OF_TOKENS";
@@ -57,6 +59,8 @@ export type ProviderOpts = {
   model?: string;
   /** A workspace member on an API budget (contracts/workspaces.ts): the API answer's cost goes on their month. */
   bill?: string;
+  /** The Anthropic API key this call runs on (keyFor's: the caller's own, or the server's where it serves them). */
+  apiKey?: string;
   /** Why there is no provider for this caller (a guest with the API key off): the call fails with it. */
   off?: string;
   /** Pictures before the text (Anthropic only; pass `only: ["anthropic"]`, the others would never see them). */
@@ -77,12 +81,12 @@ export function aiFor(who: Who, job: JobId, label: string, own?: Selection): Pro
   const role = typeof who === "string" ? (isGuestName(who) ? "guest" : findUser(who)?.role) : who?.role;
   const api = providerSettings().api;
   if (role === "guest" || (name && (name === DEMO_USER || isDemoName(name))) || (typeof who === "object" && who?.demo)) {
-    const on = role === "guest" ? api.guests : api.demo;
-    if (!on || !anthropicKey()) return { only: [], off: `AI is off for ${role === "guest" ? "guests" : "the demo"}` };
-    return { only: ["anthropic"], retries: 1, effort: api.effort, model: api.model, mac: { label } };
+    const k = keyFor(typeof who === "object" ? who : name, "ANTHROPIC_API_KEY");
+    if (!k.key) return { only: [], off: `AI is off for ${role === "guest" ? "guests" : "the demo"}` };
+    return { only: ["anthropic"], retries: 1, effort: api.effort, model: api.model, apiKey: k.key, mac: { label } };
   }
   const r = routeFor(name, role === "admin", job, own);
-  if (!r) return (name && onBudget(name, job, label)) || { only: [], off: "No AI provider for your account: add one in Settings → AI providers" };
+  if (!r) return (name && onApiKey(name, job, label)) || { only: [], off: "No AI provider for your account: add one in Settings → AI providers, or your Anthropic key in Settings → My API keys" };
   const { selection, instance } = r;
   return {
     only: ["mac"],
@@ -91,18 +95,18 @@ export function aiFor(who: Who, job: JobId, label: string, own?: Selection): Pro
 }
 
 /**
- * A member with no provider of their own whose workspace gives them a monthly API budget (Settings → Workspace):
- * the API key, billed to them, at the API's model and effort (Admin → AI access). Never the Workshop: a Workshop turn
- * is Claude Code reading the session's folder, which a plain API call can't (it needs their own AI).
+ * An account with no provider: the Anthropic key keyFor gives it (its own from Settings → My API keys; the server's for
+ * the platform admin, or for a member whose workspace gives them a monthly API budget, billed to them), at the API's
+ * model and effort (Admin → AI access). Never the Workshop: a Workshop
+ * turn is Claude Code reading the session's folder, which a plain API call can't (it needs their own AI).
  */
-function onBudget(name: string, job: JobId, label: string): ProviderOpts | null {
-  const left = budgetLeft(name);
-  if (left === null) return null;
+function onApiKey(name: string, job: JobId, label: string): ProviderOpts | null {
+  const k = keyFor(name, "ANTHROPIC_API_KEY");
+  if (k.missing && !/budget/.test(k.missing)) return null;
   if (job === "workshop") return { only: [], off: "Content Workshop runs on your own AI (it reads the whole project folder): connect yours in Settings → AI providers" };
-  if (left <= 0) return { only: [], off: "Your AI budget for this month is used up: ask your workspace's owner or an admin for more" };
-  if (!anthropicKey()) return { only: [], off: "The workspace's API key isn't set up: ask the owner" };
+  if (!k.key) return { only: [], off: k.missing ?? "No Anthropic key" };
   const s = providerSettings();
-  return { only: ["anthropic"], retries: 1, model: s.api.model, effort: s.api.effort, bill: name, mac: { label } };
+  return { only: ["anthropic"], retries: 1, model: s.api.model, effort: s.api.effort, apiKey: k.key, ...(k.bill ? { bill: k.bill } : {}), mac: { label } };
 }
 
 /** Order the configured providers: exactly `only`, in its order. */
@@ -186,7 +190,8 @@ export function anthropicParams(effort?: Effort, model?: string) {
 
 function providers(): Provider[] {
   const all: Provider[] = [
-    { id: "anthropic", label: "Anthropic API", configured: !!anthropicKey(), complete: completeAnthropic },
+    // the route (aiFor) picked the key: a call without one is not sent
+    { id: "anthropic", label: "Anthropic API", configured: true, complete: completeAnthropic },
     { id: "mac", label: "Claude (Mac)", configured: true, complete: (system, user, cancel, opts) => streamMac(system, user, cancel, () => {}, opts?.onUsage, opts ?? {}) },
   ];
   return all.filter((p) => p.configured);
@@ -292,7 +297,7 @@ async function completeAnthropic(
     resp = await fetch(`${base}/v1/messages`, {
       method: "POST",
       headers: {
-        "x-api-key": anthropicKey(),
+        "x-api-key": opts.apiKey ?? "",
         "anthropic-version": "2023-06-01",
         "Content-Type": "application/json",
       },
@@ -477,7 +482,7 @@ async function streamAnthropic(system: string, user: string, cancelSignal: Abort
   try {
     resp = await fetch(`${base}/v1/messages`, {
       method: "POST",
-      headers: { "x-api-key": anthropicKey(), "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
+      headers: { "x-api-key": opts.apiKey ?? "", "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
       body: JSON.stringify({ ...params, max_tokens: 32000, system, messages: [{ role: "user", content }], stream: true }),
       signal: streamSignal(cancelSignal, ctrl),
     });

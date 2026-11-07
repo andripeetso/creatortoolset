@@ -2,14 +2,7 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { env } from "../env";
 import { canonicalPostUrl, shortcodeToMediaId } from "./url";
-import {
-  adoptLegacyIfOwner,
-  adoptLegacySource,
-  IG_ROOT,
-  igUserFile,
-  publicSessionStatus,
-  readSession,
-} from "./session";
+import { igUserFile, InstagramError } from "./base";
 import type {
   CatalogItem,
   CatalogPage,
@@ -21,28 +14,23 @@ import type {
   PostKind,
   ProfileInfo,
 } from "./types";
-import { InstagramError, SESSION_EXPIRED_MSG } from "./web-api";
 
 /**
- * Paid Instagram fetch via Apify actors. Token lives per user at
- * $DATA_DIR/instagram/users/<username>/apify.json (mode 0600) and is
- * never returned. APIFY_TOKEN in .env is a local-only fallback for the
- * `local` user when APP_SECRET is unset.
+ * Reading other creators' public posts, profiles and comment threads: Apify actors on the user's own Apify token,
+ * billed by Apify to them. The token lives per user at $DATA_DIR/instagram/users/<username>/apify.json (mode 0600)
+ * and is never returned. APIFY_TOKEN in .env is a fallback only for the `local` user when APP_SECRET is unset (one
+ * person's own machine). There is no other way in: no session cookies, no server-wide token.
  */
-
-const LEGACY_APIFY = path.join(IG_ROOT, "apify.json");
 const POST_ACTOR = "apify~instagram-scraper";
 const COMMENT_ACTOR = "apify~instagram-comment-scraper";
 const RUN_TIMEOUT_S = 300;
 
 export const APIFY_MISSING_MSG =
-  "Apify is not configured — paste your Apify API token above";
+  "Reading other creators' posts needs your own Apify key: add it in Settings → Connectors (Apify bills you for each read)";
 export const APIFY_INVALID_MSG =
   "Apify token is invalid or expired — paste a fresh token from console.apify.com";
-export const SESSION_MISSING_MSG =
-  "Instagram session not configured — paste burner-account cookies above";
-
-export type IngestMode = "session" | "apify";
+/** How a post or profile was read: the one way left for other creators' posts (snapshots keep it as their source). */
+export type IngestMode = "apify";
 
 export interface StoredApify {
   token: string;
@@ -71,7 +59,7 @@ export interface ApifyStatus {
 
 export type IngestGate =
   | { ok: true; mode: IngestMode }
-  | { ok: false; mode: IngestMode; error: string; code: string };
+  | { ok: false; mode: IngestMode; error: string; code: "NO_APIFY" | "APIFY_INVALID" };
 
 type Rec = Record<string, unknown>;
 const isRec = (v: unknown): v is Rec => !!v && typeof v === "object" && !Array.isArray(v);
@@ -124,8 +112,6 @@ function fromEnv(username: string): StoredApify | null {
 }
 
 export async function readApify(username: string): Promise<StoredApify | null> {
-  const adopted = await adoptLegacyIfOwner(username, LEGACY_APIFY, "apify.json");
-  if (adopted) await adoptLegacySource(username);
   try {
     const raw = JSON.parse(await readFile(igUserFile(username, "apify.json"), "utf-8")) as StoredApify;
     if (typeof raw?.token !== "string" || !raw.token.trim()) return fromEnv(username);
@@ -188,57 +174,16 @@ export function publicApifyStatus(s: StoredApify | null): ApifyStatus {
   };
 }
 
-export async function readMode(username: string): Promise<IngestMode> {
-  const apify = await readApify(username);
-  const session = await readSession(username);
-  try {
-    const raw = JSON.parse(await readFile(igUserFile(username, "source.json"), "utf-8")) as {
-      mode?: unknown;
-    };
-    if (raw.mode === "apify" || raw.mode === "session") return raw.mode;
-  } catch {
-    /* default below */
-  }
-  if (apify && !session) return "apify";
-  return "session";
-}
-
-export async function writeMode(username: string, mode: IngestMode): Promise<void> {
-  await writeFileAtomic(igUserFile(username, "source.json"), JSON.stringify({ mode }), 0o644);
-}
-
 export async function ingestGate(username: string): Promise<IngestGate> {
-  const mode = await readMode(username);
-  if (mode === "apify") {
-    const a = await readApify(username);
-    if (!a) return { ok: false, mode, error: APIFY_MISSING_MSG, code: "NO_APIFY" };
-    if (a.valid === false) {
-      return { ok: false, mode, error: APIFY_INVALID_MSG, code: "APIFY_INVALID" };
-    }
-    return { ok: true, mode };
-  }
-  const s = await readSession(username);
-  if (!s) return { ok: false, mode, error: SESSION_MISSING_MSG, code: "NO_SESSION" };
-  if (s.valid === false) {
-    return { ok: false, mode, error: SESSION_EXPIRED_MSG, code: "SESSION_INVALID" };
-  }
-  return { ok: true, mode };
+  const a = await readApify(username);
+  if (!a) return { ok: false, mode: "apify", error: APIFY_MISSING_MSG, code: "NO_APIFY" };
+  if (a.valid === false) return { ok: false, mode: "apify", error: APIFY_INVALID_MSG, code: "APIFY_INVALID" };
+  return { ok: true, mode: "apify" };
 }
 
-export async function availabilitySnapshot(username: string): Promise<{
-  source: IngestMode;
-  available: boolean;
-  session: ReturnType<typeof publicSessionStatus>;
-  apify: ApifyStatus;
-}> {
-  const source = await readMode(username);
-  const session = publicSessionStatus(await readSession(username));
+export async function availabilitySnapshot(username: string): Promise<{ available: boolean; apify: ApifyStatus }> {
   const apify = publicApifyStatus(await readApify(username));
-  const available =
-    source === "apify"
-      ? apify.configured && apify.valid !== false
-      : session.configured && session.valid !== false;
-  return { source, available, session, apify };
+  return { available: apify.configured && apify.valid !== false, apify };
 }
 
 /**

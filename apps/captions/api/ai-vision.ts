@@ -2,7 +2,6 @@ import {
   AiProviderError,
   aiFor,
   anyAiConfigured,
-  anthropicKey,
   anthropicParams,
   apiUsage,
   classifyHttpError,
@@ -17,7 +16,8 @@ import { addSpend } from "./lib/workspaces";
 
 /**
  * Reading pictures (the Analyzer's slides and video frames) on the Analyzer's AI provider: the pictures go to
- * the Mac as files in the run's folder, which the provider reads in order. A guest or the demo, when switched on, sends them to the API key instead.
+ * the Mac as files in the run's folder, which the provider reads in order. Without a provider they go to the Anthropic API
+ * key aiFor picked (the account's own, a budget member's server key, or a guest's or the demo's when switched on).
  */
 
 export interface VisionImage {
@@ -52,7 +52,7 @@ export async function completeVisionWithFallback<T>(
     );
     return { value, provider: route.mac?.provider?.instance ?? "mac" };
   }
-  return { value: parse(await completeAnthropic(system, userText, images, cancelSignal, route.model, route.effort, route.bill)), provider: "anthropic" };
+  return { value: parse(await completeAnthropic(system, userText, images, cancelSignal, route.apiKey ?? "", route.model, route.effort, route.bill)), provider: "anthropic" };
 }
 
 async function completeAnthropic(
@@ -60,6 +60,7 @@ async function completeAnthropic(
   userText: string,
   images: VisionImage[],
   cancelSignal: AbortSignal | undefined,
+  apiKey: string,
   model: string | undefined,
   effort: Parameters<typeof anthropicParams>[0],
   bill?: string,
@@ -70,7 +71,7 @@ async function completeAnthropic(
   try {
     resp = await fetch(`${base}/v1/messages`, {
       method: "POST",
-      headers: { "x-api-key": anthropicKey(), "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
+      headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
       body: JSON.stringify({
         ...params,
         // thinking counts toward max_tokens on Claude Opus 5.5

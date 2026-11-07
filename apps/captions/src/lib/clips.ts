@@ -204,6 +204,8 @@ export function captionCueAt(
 
 export interface ClipsAvailability {
   cloud: boolean;
+  /** why not: the key to add, or the lock */
+  cloudWhy?: string;
   ai: boolean;
 }
 

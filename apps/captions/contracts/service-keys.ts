@@ -31,3 +31,35 @@ export interface ServiceKeyView {
   source: "settings" | "server" | null;
   last4?: string;
 }
+
+/**
+ * Settings → My API keys: each account's own keys, billed by the provider to that person, never to the server.
+ * A tool that needs one and finds none says which key to add here. The server's keys above serve the platform admin,
+ * members a workspace owner gave an API budget (AI and transcription only), and guests and the demo when an admin
+ * switched them on. Apify (other creators' posts) is in Settings → Connectors.
+ *
+ *   GET /api/my-keys          → MyKeyView[]   (never a key, only its last 4)
+ *   PUT /api/my-keys/:env     { value: string | null }  (null = forget it)
+ */
+export const MY_KEYS = [
+  { env: "DEEPGRAM_API_KEY", name: "Deepgram", what: "Cloud transcripts in Caption Studio, Clips, the Analyzer and the Media Library. Without it, Caption Studio transcribes on your device.", where: "https://console.deepgram.com" },
+  { env: "ELEVENLABS_API_KEY", name: "ElevenLabs", what: "Voice isolation in the Audio Enhancer.", where: "https://elevenlabs.io/app/settings/api-keys" },
+  { env: "NVIDIA_API_KEY", name: "NVIDIA", what: "Studio Voice in the Audio Enhancer.", where: "https://build.nvidia.com" },
+  { env: "ANTHROPIC_API_KEY", name: "Anthropic API", what: "AI on an API key when you have no AI provider of your own (not the Content Workshop, which needs your own Claude or ChatGPT login).", where: "https://console.anthropic.com/settings/keys" },
+  { env: "OPENAI_API_KEY", name: "OpenAI", what: "Media Library transcripts when you have no Deepgram key, and its search by meaning.", where: "https://platform.openai.com/api-keys" },
+  { env: "PERPLEXITY_API_KEY", name: "Perplexity", what: "The Content Workshop's accuracy check and deep research.", where: "https://www.perplexity.ai/account/api" },
+  { env: "TYPESAFE_API_KEY", name: "TypeSafe", what: "Judges comments and sharpens a few picks in the Analyzer and Workshop; they work without it." },
+] as const;
+
+export type MyKeyEnv = (typeof MY_KEYS)[number]["env"];
+
+export interface MyKeyView {
+  env: MyKeyEnv;
+  name: string;
+  what: string;
+  where?: string;
+  set: boolean;
+  last4?: string;
+  /** Without a key of your own: who pays when the server's key serves you instead ("admin", "budget"), else absent. */
+  server?: "admin" | "budget";
+}

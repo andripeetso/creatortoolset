@@ -3,7 +3,8 @@ import type { SearchHit } from "../../contracts/library";
 import { addSpend } from "../lib/workspaces";
 import { libraryDb, librarySetting } from "./db";
 import { CARD, toCard, type CardRow } from "./query";
-import { keyRoute, NeedsKey, segmentsOf, type Segment } from "./transcribe";
+import { keyFor } from "../my-keys";
+import { needKey, segmentsOf, type Segment } from "./transcribe";
 
 /**
  * Optional semantic search (tasks/media-library-plan.md, section 6): the library's owner switches it on
@@ -32,10 +33,8 @@ export function embedChunks(title: string, description: string | null, segments:
   return out;
 }
 
-/** Vectors for `texts`, in order, billed to `bill` when set. NeedsKey without an OpenAI-compatible key. */
-export async function embedTexts(texts: string[], bill?: string): Promise<Float32Array[]> {
-  const key = process.env.OPENAI_API_KEY;
-  if (!key) throw new NeedsKey("No embedding key: an admin adds OpenAI in Settings → API keys");
+/** Vectors for `texts`, in order, on the OpenAI-compatible key from keyFor, billed to `bill` when set. */
+export async function embedTexts(texts: string[], { key, bill }: { key: string; bill?: string }): Promise<Float32Array[]> {
   const base = (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "");
   const r = await fetch(`${base}/embeddings`, {
     method: "POST",
@@ -53,7 +52,7 @@ export async function embedTexts(texts: string[], bill?: string): Promise<Float3
 
 /** Embeds one version's chunks as its job's actor and replaces its rows for this model. */
 export async function embedVersion(db: DatabaseSync, versionId: string, actor: string | null): Promise<void> {
-  const route = keyRoute(actor, "Semantic search");
+  const route = needKey(actor, "OPENAI_API_KEY");
   const row = db
     .prepare(
       `SELECT a.title, (SELECT text FROM descriptions d WHERE d.version_id = v.id ORDER BY d.source = 'user' DESC LIMIT 1) AS description
@@ -62,7 +61,7 @@ export async function embedVersion(db: DatabaseSync, versionId: string, actor: s
     .get(versionId) as { title: string; description: string | null };
   // ponytail: one request per version; a very long transcript would need batches under the endpoint's input limit
   const chunks = embedChunks(row.title, row.description, segmentsOf(db, versionId));
-  const vecs = await embedTexts(chunks.map((c) => c.text), route.bill);
+  const vecs = await embedTexts(chunks.map((c) => c.text), route);
   const model = embedModel();
   db.exec("BEGIN");
   try {
@@ -120,12 +119,8 @@ export const hitKey = (h: SearchHit) => `${h.asset.id}@${h.seconds ?? ""}`;
  */
 export async function semanticHits(libraryId: string, q: string, username: string): Promise<SearchHit[] | null> {
   if (!librarySetting(libraryId, "embed")) return null;
-  let bill: string | undefined;
-  try {
-    bill = keyRoute(username, "Semantic search").bill;
-  } catch {
-    return null;
-  }
+  const route = keyFor(username, "OPENAI_API_KEY");
+  if (route.missing) return null;
   const db = libraryDb();
   // ponytail: every chunk of the library read and scanned in memory per search; fine to about 100k chunks, then sqlite-vec
   const rows = (
@@ -137,7 +132,7 @@ export async function semanticHits(libraryId: string, q: string, username: strin
       .all(libraryId, embedModel()) as { version_id: string; chunk: number; start_s: number; vec: Uint8Array }[]
   ).map((r) => ({ ...r, vec: new Float32Array(Uint8Array.from(r.vec).buffer) }));
   if (!rows.length) return null;
-  const [qv] = await embedTexts([q], bill).catch(() => [undefined]);
+  const [qv] = await embedTexts([q], route).catch(() => [undefined]);
   if (!qv) return null;
   const top = cosineTop(qv, rows);
   const ids = [...new Set(top.map((r) => r.version_id))];

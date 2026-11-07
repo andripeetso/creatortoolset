@@ -9,7 +9,8 @@ import { findUser } from "../users";
 import { transcriptExcerpt } from "./attach";
 import { ffmpegTo } from "./media/run";
 import { indexAsset } from "./query";
-import { isAdminActor, NeedsKey, segmentsOf } from "./transcribe";
+import { NeedsKey, segmentsOf } from "./transcribe";
+import { isAdminActor } from "../my-keys";
 
 /**
  * The library's `describe` job (tasks/media-library-plan.md, sections 5 and 11): four frames, the title and a

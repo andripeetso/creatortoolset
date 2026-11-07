@@ -1,13 +1,12 @@
 /**
  * Perplexity Sonar: chat completions with live web search and citations.
  * Used by the Workshop's accuracy audit. Quick checks run on the fast
- * model, deep research on the slow one that reads dozens of sources.
+ * model, deep research on the slow one that reads dozens of sources. The caller passes the key that serves the asker
+ * (my-keys.ts keyFor).
  */
 
 const API_URL = process.env.PERPLEXITY_BASE_URL || "https://api.perplexity.ai/chat/completions";
 
-export const perplexityKey = () => process.env.PERPLEXITY_API_KEY || "";
-export const researchConfigured = () => !!perplexityKey();
 
 export const RESEARCH_MODELS = {
   quick: process.env.RESEARCH_QUICK_MODEL || "sonar-pro",
@@ -40,10 +39,9 @@ export interface ResearchAnswer {
 export async function perplexityComplete(
   system: string,
   user: string,
-  opts: { depth?: ResearchDepth; model?: string; signal?: AbortSignal; jsonSchema?: Record<string, unknown> } = {},
+  opts: { key: string; depth?: ResearchDepth; model?: string; signal?: AbortSignal; jsonSchema?: Record<string, unknown> },
 ): Promise<ResearchAnswer> {
-  const key = perplexityKey();
-  if (!key) throw new Error("Research is not configured — add PERPLEXITY_API_KEY on the server");
+  const key = opts.key;
   const depth = opts.depth ?? "quick";
   const model = opts.model || RESEARCH_MODELS[depth];
   // a Stop (opts.signal) ends the call; the timeout still bounds it either way

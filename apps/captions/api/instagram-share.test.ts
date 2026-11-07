@@ -10,7 +10,7 @@ process.env.DATA_DIR = dataDir;
 
 const { instagramApp } = await import("./instagram");
 
-// No Apify token or cookies are set up, so every share is saved for later
+// No Apify key is set up, so every share is saved for later
 // and nothing reaches the network.
 const app = new Hono<{ Variables: AuthVars }>();
 app.use("*", async (c, next) => {
@@ -19,7 +19,7 @@ app.use("*", async (c, next) => {
 });
 app.route("/", instagramApp);
 
-const LATER = "for later: add Instagram cookies in the Analyzer to crawl it";
+const LATER = "for later: add your Apify key in Settings → Connectors to crawl it";
 
 type ShareBody = {
   message?: string;
@@ -175,7 +175,7 @@ describe("POST /accounts after the share refactor", () => {
       body: JSON.stringify({ url: "@third.creator", run: "now" }),
     });
     expect(now.status).toBe(409);
-    expect(((await now.json()) as { code: string }).code).toBe("NO_SESSION");
+    expect(((await now.json()) as { code: string }).code).toBe("NO_APIFY");
 
     const bad = await app.request("/accounts", {
       method: "POST",

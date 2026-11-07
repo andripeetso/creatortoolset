@@ -2,19 +2,19 @@ import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
-import { transcribeWav } from "../transcribe";
-import { env } from "../lib/env";
-import { addSpend, budgetLeft } from "../lib/workspaces";
-import { findUser, LOCAL_USER } from "../users";
+import { transcribeUsdPerMinute, transcribeWav } from "../transcribe";
+import { isAdminActor, keyFor } from "../my-keys";
+import { addSpend } from "../lib/workspaces";
+import { findUser } from "../users";
 import { ffmpegTo } from "./media/run";
 
 /**
- * The library's `transcribe` job (tasks/media-library-plan.md, sections 5, 6 and 11). It runs as the job's actor:
- * the server's transcription key (Settings → API keys or the .env) answers a platform admin, and a workspace member
- * on an API budget while the budget lasts, billed to them. Anyone else, or no key at all, parks the job as
- * `needs_key`: never failed, and never on another person's account.
- * Deepgram first (the request Caption Studio sends, api/transcribe.ts), else an OpenAI-compatible
- * /audio/transcriptions endpoint.
+ * The library's `transcribe` job (tasks/media-library-plan.md, sections 5, 6 and 11). It runs as the job's actor, on the
+ * key that serves them (my-keys.ts keyFor): their own Deepgram or OpenAI key, else the server's for a platform admin
+ * or a member on an API budget, billed to them. Without one the job parks as `needs_key` with the key to add: never
+ * failed, and never on another person's account.
+ * Deepgram first (the request Caption Studio sends, api/transcribe.ts, which bills its own minutes), else an
+ * OpenAI-compatible /audio/transcriptions endpoint.
  */
 
 export interface Segment {
@@ -26,31 +26,20 @@ export interface Segment {
 /** The job can't run for this actor yet: the worker parks it as needs_key with this message. */
 export class NeedsKey extends Error {}
 
-// ponytail: one flat, rounded-up rate for both providers; check your provider's price sheet and set the env value
-const usdPerMinute = () => Number(process.env.LIBRARY_TRANSCRIBE_USD_PER_MIN) || 0.01;
-
-/** A platform admin, or the solo install's own account (APP_SECRET unset): the server's keys are theirs. */
-export const isAdminActor = (name: string) => findUser(name)?.role === "admin" || (!env.appSecret && name === LOCAL_USER.username);
-
-/**
- * May the server's paid keys run for `actor`, and whose budget pays: a platform admin (nobody's), or a member on a
- * workspace API budget while it lasts (theirs). Throws NeedsKey otherwise. `what` names the work in the message.
- */
-export function keyRoute(actor: string | null, what: string): { bill?: string } {
-  const name = actor ?? "";
-  if (isAdminActor(name)) return {};
-  const left = budgetLeft(name);
-  if (left === null) throw new NeedsKey(`${what} uses the server's key: ask the workspace owner for an API budget`);
-  if (left <= 0) throw new NeedsKey("Your AI budget for this month is used up");
-  return { bill: name };
+/** The key for `actor`, or NeedsKey with what to add. */
+export function needKey(actor: string | null, name: Parameters<typeof keyFor>[1]): { key: string; bill?: string } {
+  const r = keyFor(actor, name);
+  if (r.missing) throw new NeedsKey(r.missing);
+  return r;
 }
 
-/** Which key transcribes for `actor`, and whose budget pays. Throws NeedsKey when there is no route. */
-export function transcribeRoute(actor: string | null): { provider: "deepgram" | "openai"; bill?: string } {
-  const route = keyRoute(actor, "Transcription");
-  const provider = process.env.DEEPGRAM_API_KEY ? "deepgram" : process.env.OPENAI_API_KEY ? "openai" : null;
-  if (!provider) throw new NeedsKey("No transcription key: an admin adds Deepgram or OpenAI in Settings → API keys");
-  return { provider, ...route };
+/** Which key transcribes for `actor`, and whose budget pays. Throws NeedsKey when there is none. */
+export function transcribeRoute(actor: string | null): { provider: "deepgram" | "openai"; key: string; bill?: string } {
+  const dg = keyFor(actor, "DEEPGRAM_API_KEY");
+  if (!dg.missing) return { provider: "deepgram", ...dg };
+  const oa = keyFor(actor, "OPENAI_API_KEY");
+  if (!oa.missing) return { provider: "openai", ...oa };
+  throw new NeedsKey(/budget/.test(dg.missing) ? dg.missing : "Add your Deepgram (or OpenAI) key in Settings → My API keys");
 }
 
 /** Words into segments: one per utterance when Deepgram marks them, else a new one after a pause or 30 words. */
@@ -94,14 +83,14 @@ export function segmentsOf(db: DatabaseSync, versionId: string): Segment[] {
 }
 
 async function deepgram(file: string, actor: string): Promise<{ segments: Segment[]; language: string | null }> {
-  const role = findUser(actor)?.role ?? "admin";
+  const role = isAdminActor(actor) ? "admin" : (findUser(actor)?.role ?? "user");
   const r = await transcribeWav(await readFile(file), { username: actor, role, cloud: true, off: [] });
   if ("error" in r) throw new Error(r.error);
   return { segments: wordsToSegments(r.words), language: "en" };
 }
 
 // ponytail: OpenAI's endpoint takes 25 MB, about 100 minutes of the 32 kbps audio sent here; longer files need chunks
-async function openai(file: string): Promise<{ segments: Segment[]; language: string | null }> {
+async function openai(file: string, key: string): Promise<{ segments: Segment[]; language: string | null }> {
   const form = new FormData();
   form.set("file", new Blob([await readFile(file)], { type: "audio/mp4" }), "audio.m4a");
   form.set("model", process.env.OPENAI_TRANSCRIBE_MODEL || "whisper-1");
@@ -109,7 +98,7 @@ async function openai(file: string): Promise<{ segments: Segment[]; language: st
   const base = (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "");
   const r = await fetch(`${base}/audio/transcriptions`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+    headers: { Authorization: `Bearer ${key}` },
     body: form,
   });
   if (!r.ok) throw new Error(`Transcription ${r.status}: ${(await r.text().catch(() => "")).slice(0, 200)}`);
@@ -125,9 +114,10 @@ export async function transcribeVersion(db: DatabaseSync, versionId: string, src
   try {
     const codec = route.provider === "deepgram" ? ["-c:a", "pcm_s16le"] : ["-c:a", "aac", "-b:a", "32k"];
     await ffmpegTo(out, ["-i", src, "-vn", "-ac", "1", "-ar", "16000", ...codec]);
-    const { segments, language } = route.provider === "deepgram" ? await deepgram(out, actor ?? "") : await openai(out);
+    const { segments, language } = route.provider === "deepgram" ? await deepgram(out, actor ?? "") : await openai(out, route.key);
     saveTranscript(db, versionId, route.provider, language, segments);
-    if (route.bill) addSpend(route.bill, (durationS / 60) * usdPerMinute());
+    // the Deepgram path bills its own minutes (transcribeWav)
+    if (route.bill && route.provider === "openai") addSpend(route.bill, (durationS / 60) * transcribeUsdPerMinute());
   } finally {
     await rm(out, { force: true });
   }

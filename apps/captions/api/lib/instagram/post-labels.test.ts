@@ -20,11 +20,11 @@ describe("labelling posts", () => {
       format1: { choice: "talking head", confidence: 0.7 },
       cta1: { choice: "comment keyword", confidence: 0.9 },
     });
-    const labels = await labelPosts([
+    const labels = await labelPosts("k", [
       { id: "A", text: "Sample post line about the rollout…" },
       { id: "B", text: "Comment POTTY and I'll send the guide" },
     ], "@someone, whose bio says: potty training help");
-    expect(vi.mocked(ask).mock.calls[0]![0]).toEqual({ creator: "@someone, whose bio says: potty training help" });
+    expect(vi.mocked(ask).mock.calls[0]![1]).toEqual({ creator: "@someone, whose bio says: potty training help" });
     expect(labels.get("A")).toEqual({
       hook: "story",
       format: "story or vlog",
@@ -39,7 +39,7 @@ describe("labelling posts", () => {
 
   it("sends at most 10 posts per request", async () => {
     vi.mocked(ask).mockResolvedValue({});
-    await labelPosts(Array.from({ length: 25 }, (_, i) => ({ id: String(i), text: "x" })), "@someone");
+    await labelPosts("k", Array.from({ length: 25 }, (_, i) => ({ id: String(i), text: "x" })), "@someone");
     expect(ask).toHaveBeenCalledTimes(3);
   });
 });

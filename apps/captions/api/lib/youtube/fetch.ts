@@ -6,7 +6,7 @@
  */
 import { apifyRun, type ApifyFetchOptions } from "../instagram/apify";
 import type { PostInfo } from "../instagram/types";
-import { InstagramError } from "../instagram/web-api";
+import { InstagramError } from "../instagram/base";
 import { normalizeYoutubeItem, pickSrt } from "./normalize";
 import type { YoutubeRef } from "./url";
 

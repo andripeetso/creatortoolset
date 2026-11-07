@@ -3,33 +3,44 @@ import type { AuthVars } from "./auth";
 import type { SessionUser } from "./users";
 import { bumpUsage } from "./users";
 import { isOutOfCredits, outOfCreditsMessage } from "./credits";
+import { keyFor } from "./my-keys";
+import { addSpend } from "./lib/workspaces";
 import { GUEST_CLIP_S, GUEST_OUT_OF_CREDITS, logGuestRun, takeGuest } from "./guest";
 
 /**
- * Optional cloud transcription via Deepgram nova-3. Active only when
- * DEEPGRAM_API_KEY is set — the client then offers a "Cloud" engine in
- * the model picker (better accuracy + native word timestamps, no model
- * download). On-device Whisper remains available either way.
- *
- * Cloud access is per-account: admins always may; other users only
- * when the admin has unlocked it for them; guests within their caps
- * (guest.ts). The picker still shows the engine to locked users —
- * greyed out — so they know it exists.
+ * Optional cloud transcription via Deepgram nova-3, on the key that serves the caller (my-keys.ts keyFor: their own
+ * key from Settings → My API keys; the server's for the platform admin, a member on an API budget, billed to them,
+ * or guests when an admin switched that on). The client then offers a "Cloud" engine in the model picker (better
+ * accuracy + native word timestamps, no model download); without a key it says which one to add. On-device Whisper
+ * remains available either way.
  */
 export const transcribeApp = new Hono<{ Variables: AuthVars }>();
 
-const key = () => process.env.DEEPGRAM_API_KEY || "";
-
-export const cloudTranscriptionConfigured = () => !!key();
 export const userMayCloudTranscribe = (u: AuthVars["user"]) =>
   u.role === "admin" || u.cloud;
 
 const mayUseCloud = (u: AuthVars["user"]) =>
   userMayCloudTranscribe(u) || u.role === "guest";
 
-transcribeApp.get("/available", (c) =>
-  c.json({ available: !!key(), allowed: mayUseCloud(c.get("user")) }),
-);
+// ponytail: one flat, rounded-up rate per minute of audio for a budget member's transcripts (Deepgram here, the
+// OpenAI-compatible path in library/transcribe.ts); set it from your provider's price sheet
+export const transcribeUsdPerMinute = () => Number(process.env.LIBRARY_TRANSCRIBE_USD_PER_MIN) || 0.01;
+
+/** Why `user` can't transcribe in the cloud right now (locked, or no key serves them), or null. */
+export function cloudTranscribeBlock(user: AuthVars["user"]): string | null {
+  if (!mayUseCloud(user)) {
+    return user.role === "guest"
+      ? "Cloud transcription is not available in guest mode — sign in with an account"
+      : "Cloud transcription is locked for your account — ask the admin";
+  }
+  return keyFor(user, "DEEPGRAM_API_KEY").missing ?? null;
+}
+
+transcribeApp.get("/available", (c) => {
+  const user = c.get("user");
+  const missing = keyFor(user, "DEEPGRAM_API_KEY").missing;
+  return c.json({ available: !missing, allowed: mayUseCloud(user), ...(missing ? { why: missing } : {}) });
+});
 
 interface DgWord {
   word: string;
@@ -114,13 +125,14 @@ const DG_URL =
 
 /** `optOut`: Deepgram keeps nothing past the request (guests; costs ~2× the listed rate). */
 async function deepgramWords(
+  key: string,
   audio: Uint8Array | ArrayBuffer,
   optOut = false,
 ): Promise<{ words: Word[] } | { error: string; status: number }> {
   const resp = await fetch(optOut ? `${DG_URL}&mip_opt_out=true` : DG_URL, {
     method: "POST",
     headers: {
-      Authorization: `Token ${key()}`,
+      Authorization: `Token ${key}`,
       "Content-Type": "audio/wav",
     },
     body: audio,
@@ -178,7 +190,7 @@ type Word = {
 
 type TranscriptionResult =
   | { words: Word[] }
-  | { error: string; status: 502 };
+  | { error: string; status: 402 | 502 };
 
 function fromDg(w: DgWord, start: number, end: number, utterance?: number): Word {
   const out: Word = {
@@ -252,6 +264,8 @@ export async function transcribeWav(
   audio: Uint8Array | ArrayBuffer,
   user: SessionUser,
 ): Promise<TranscriptionResult> {
+  const route = keyFor(user, "DEEPGRAM_API_KEY");
+  if (route.missing) return { error: route.missing, status: 402 };
   // guests' audio is strangers' audio: out of Deepgram's model training
   const optOut = user.role === "guest";
   const wav = parseWav(new Uint8Array(audio));
@@ -272,7 +286,7 @@ export async function transcribeWav(
       });
     }
     const results = await Promise.all(
-      chunks.map((ch) => deepgramWords(wavWrap(ch.pcm, wav.sampleRate), optOut)),
+      chunks.map((ch) => deepgramWords(route.key, wavWrap(ch.pcm, wav.sampleRate), optOut)),
     );
     for (const r of results) {
       if ("error" in r) return { error: r.error, status: 502 };
@@ -284,7 +298,7 @@ export async function transcribeWav(
       })),
     );
   } else {
-    const r = await deepgramWords(audio, optOut);
+    const r = await deepgramWords(route.key, audio, optOut);
     if ("error" in r) return { error: r.error, status: 502 };
     words = r.words;
   }
@@ -297,15 +311,9 @@ export async function transcribeWav(
       : Math.max(0, audio.byteLength - 44) / 32000,
   );
   bumpUsage(user.username, { cloudRuns: 1, cloudSeconds: seconds });
+  // billed by the audio's length, as the provider bills it
+  if (route.bill) addSpend(route.bill, ((durationS || seconds) / 60) * transcribeUsdPerMinute());
   return { words };
-}
-
-function cloudAccessError(user: SessionUser): string | null {
-  if (!key()) return "Cloud transcription not configured";
-  if (mayUseCloud(user)) return null;
-  return user.role === "guest"
-    ? "Cloud transcription is not available in guest mode — sign in with an account"
-    : "Cloud transcription is locked for your account — ask the admin";
 }
 
 /** The request body, or null once it passes `max` bytes (the rest is never read). */
@@ -329,12 +337,10 @@ async function bodyUpTo(req: Request, max: number): Promise<Uint8Array | null> {
 
 transcribeApp.post("/", async (c) => {
   const user = c.get("user");
-  const accessError = cloudAccessError(user);
+  const accessError = cloudTranscribeBlock(user);
   if (accessError) {
-    return c.json(
-      { error: accessError, code: key() ? "CLOUD_LOCKED" : "NOT_CONFIGURED" },
-      key() ? 403 : 501,
-    );
+    const locked = !mayUseCloud(user);
+    return c.json({ error: accessError, code: locked ? "CLOUD_LOCKED" : "NEEDS_KEY" }, locked ? 403 : 402);
   }
   const guest = user.role === "guest";
   // guests: the client sends 16 kHz mono 16-bit, so bytes cap the clip —

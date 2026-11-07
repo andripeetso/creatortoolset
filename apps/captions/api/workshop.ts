@@ -1,7 +1,6 @@
 import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { checkDraft } from "./lib/workshop/rule-check";
-import { typesafeConfigured } from "./lib/jev";
 import { createHash, randomUUID } from "node:crypto";
 import { cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createReadStream, createWriteStream } from "node:fs";
@@ -27,7 +26,8 @@ import { isOnline } from "./lib/devices";
 import type { AccountContext, Comment } from "./lib/instagram/types";
 import { annotateComments } from "./lib/instagram/comment-judge";
 import { buildAnswerPrompt, listComments, type AnswerMessage, type AnswersFile } from "./lib/workshop/answers";
-import { researchConfigured, perplexityComplete, type ResearchAnswer, type ResearchDepth } from "./lib/research/perplexity";
+import { perplexityComplete, type ResearchAnswer, type ResearchDepth } from "./lib/research/perplexity";
+import { keyFor } from "./my-keys";
 import { AUDIT_JSON_SCHEMA, AUDIT_SYSTEM, MAC_RESEARCH, MAX_AUDIT_CHARS, RESEARCH_QUESTION_SYSTEM, auditEdits, auditSummaryText, documentAudit, parseAuditResult, postAuditText, splitSources } from "./lib/workshop/audit";
 import { partialTurn } from "./lib/workshop/stream-json";
 import { bumpUsage, findUser } from "./users";
@@ -110,7 +110,10 @@ const RESUME_MAX_TOKENS = 100_000;
 
 /** The Workshop runs on a provider on the Mac for this user (accounts), not the API key (guests, demo). */
 const onMac = (user: SessionUser, own?: Selection) => !!workshopAi(user, own).only?.includes("mac");
-const researchFor = (user: SessionUser) => researchConfigured() || onMac(user);
+/** The asker's Perplexity key (their own, or the server's for the platform admin), or "" */
+const perplexityFor = (user: SessionUser) => keyFor(user, "PERPLEXITY_API_KEY").key;
+const researchFor = (user: SessionUser) => !!perplexityFor(user) || onMac(user);
+const RESEARCH_OFF = "Research needs an AI provider of your own (Settings → AI providers) or your Perplexity key in Settings → My API keys";
 const researchLabel = (user: SessionUser) => (onMac(user) ? "Claude (Mac)" : "Perplexity");
 const macLabel = (u?: MacUsage) => (u ? `Claude (Mac) · ${(u.tokens / 1000).toFixed(1)}k tokens · $${u.costUsd.toFixed(2)} API-equivalent` : "Claude (Mac)");
 
@@ -140,11 +143,13 @@ async function webResearch(
       return { content, citations, searchResults: [], model: macLabel(usage), tokens: usage?.tokens ?? 0, usage };
     } catch (e) {
       // only when Claude never took the question (unclaimed, or its limit): a Claude that answered is not run again on Perplexity
-      if (opts.signal?.aborted || !(e instanceof MacClaudeError && MAC_MISS.has(e.kind)) || !researchConfigured()) throw e;
+      if (opts.signal?.aborted || !(e instanceof MacClaudeError && MAC_MISS.has(e.kind)) || !perplexityFor(user)) throw e;
       console.warn(`[workshop] Claude research failed, Perplexity instead: ${errorMessage(e)}`);
     }
   }
-  return perplexityComplete(system, prompt, { depth: opts.depth, jsonSchema: opts.jsonSchema, signal: opts.signal });
+  const key = perplexityFor(user);
+  if (!key) throw new Error(RESEARCH_OFF);
+  return perplexityComplete(system, prompt, { key, depth: opts.depth, jsonSchema: opts.jsonSchema, signal: opts.signal });
 }
 
 /**
@@ -1416,10 +1421,11 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
     }
     // the draft changed: check it against its rules (flags only, never blocks)
     let flags: Awaited<ReturnType<typeof checkDraft>> | undefined;
-    if (typesafeConfigured() && (blockIds.length || created)) {
+    const tsKey = keyFor(user, "TYPESAFE_API_KEY").key;
+    if (tsKey && (blockIds.length || created)) {
       const edited = await readDoc(session.id, target.id);
       if (edited) {
-        flags = await checkDraft(edited, await rulesFor(user, edited.ruleIds, project)).catch((e) => {
+        flags = await checkDraft(tsKey, edited, await rulesFor(user, edited.ruleIds, project)).catch((e) => {
           console.warn(`[workshop] rule check failed: ${errorMessage(e)}`);
           return undefined;
         });
@@ -2808,7 +2814,7 @@ workshopApp.post("/sessions/:id/chat/:messageId/stop", async (c) => {
 
 /** Put an audit on the chat and start it. Returns the two messages, or why it could not start. */
 async function beginAudit(meta: SessionMeta, user: SessionUser, input: AuditInput): Promise<{ ask: ChatMessage; reply: ChatMessage } | { error: string; status: 400 | 404 | 409 }> {
-  if (!researchFor(user)) return { error: "Research is not configured — add PERPLEXITY_API_KEY on the server", status: 400 };
+  if (!researchFor(user)) return { error: RESEARCH_OFF, status: 400 };
   const doc = await readDoc(meta.id, input.docId);
   if (!doc) return { error: "That document is gone", status: 404 };
   let target: AuditTarget;
@@ -2991,7 +2997,7 @@ workshopApp.post("/sessions/:id/chat/:messageId/proposal", async (c) => {
     if ("error" in r) return c.json({ error: r.error }, r.status);
     return c.json({ message: await settle("accepted"), ...r }, 202);
   }
-  if (!researchFor(user)) return c.json({ error: "Research is not configured — add PERPLEXITY_API_KEY on the server" }, 400);
+  if (!researchFor(user)) return c.json({ error: RESEARCH_OFF }, 400);
   const edited = typeof body?.question === "string" ? body.question.trim().slice(0, 600) : "";
   const question = edited || m.proposal.question || "";
   if (!question) return c.json({ error: "The proposal has no question" }, 400);
@@ -3460,7 +3466,7 @@ async function loadPostComments(meta: SessionMeta, user: SessionUser, fresh: boo
       walk(file.comments);
       const carry = (list: Comment[]) => list.forEach((x) => (judged.has(x.id) && !x.judged && (x.judged = judged.get(x.id)), carry(x.replies ?? [])));
       carry(got.comments);
-      if (got.comments.length) await annotateComments(got.comments, { caption: got.caption, handle: got.handle }).catch(() => null);
+      if (got.comments.length) await annotateComments(keyFor(user, "TYPESAFE_API_KEY").key, got.comments, { caption: got.caption, handle: got.handle }).catch(() => null);
       file.comments = got.comments;
       file.fetchedAt = Date.now();
       file.shortcode = meta.posted?.shortcode;

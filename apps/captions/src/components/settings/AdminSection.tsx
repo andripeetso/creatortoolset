@@ -87,19 +87,20 @@ function AiAccessSection() {
       </div>
       <div className="rounded-xl border border-zinc-800 bg-[#16161c] p-5 text-zinc-200">
         <p className="text-xs text-zinc-400">
-          The Anthropic API key answers guests and the demo when switched on here, and team members on an API budget
-          (Settings → Team), at this model and effort. It is paid per call.
+          The server's keys (Settings → API keys) serve guests and the demo only when switched on here, and team members
+          on an API budget (Settings → Team) for AI and transcripts. The server pays for every call; everyone else uses
+          their own keys (Settings → My API keys).
           {saving && <span className="ml-2 text-zinc-500">Saving…</span>}
         </p>
         {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
         <div className="mt-4 divide-y divide-zinc-800 rounded-lg border border-zinc-800 px-3">
           <Toggle
             label="Guests"
-            hint="People using the tools without an account. Their AI runs on the API key."
+            hint="People using the tools without an account: their AI, cloud transcripts and the Audio Enhancer run on the server's keys, under the guest caps."
             on={api.guests}
             onChange={(on) => setApi({ guests: on })}
           />
-          <Toggle label="Demo account" hint="Visitors who read through the demo account." on={api.demo} onChange={(on) => setApi({ demo: on })} />
+          <Toggle label="Demo account" hint="Visitors who read through the demo account: their AI runs on the server's Anthropic key." on={api.demo} onChange={(on) => setApi({ demo: on })} />
           <div className="flex flex-wrap items-center gap-2 py-3">
             <span className="mr-auto text-xs text-zinc-400">Model and effort for these calls</span>
             <ModelSelect value={api.model} options={API_MODELS} onChange={(m) => setApi({ model: m })} />

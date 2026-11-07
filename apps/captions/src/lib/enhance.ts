@@ -41,9 +41,11 @@ export interface EnhanceSession {
 }
 
 export interface EnhanceAvailability {
-  /** NVIDIA_API_KEY / ELEVENLABS_API_KEY set on the server? */
+  /** A key serves this account for the engine (their own from Settings → My API keys, or the server's)? */
   nvidia: boolean;
   elevenlabs: boolean;
+  /** Why not, per engine: the key to add */
+  why?: Partial<Record<Engine, string>>;
 
   default: Engine;
   /** may add a second pass */

@@ -826,7 +826,7 @@ export function ChatPane({
             onClick={() => onDeep(!deep)}
             disabled={!researchAvailable}
             className={`${chip} ${deep ? "border-sky-500/60 bg-sky-500/20 text-sky-950 dark:text-sky-100" : chipIdle} disabled:opacity-50`}
-            title={researchAvailable ? "Deep research: 5–15 minutes of web research on your message before the AI answers, sources included. Off after each send." : "Add PERPLEXITY_API_KEY on the server to enable research"}
+            title={researchAvailable ? "Deep research: 5–15 minutes of web research on your message before the AI answers, sources included. Off after each send." : "Research needs your own AI provider, or your Perplexity key in Settings → My API keys"}
             aria-pressed={deep}
           >
             <Telescope className="h-3.5 w-3.5" /> Deep research{deep ? " on" : ""}

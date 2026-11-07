@@ -62,6 +62,7 @@ const BATCH = 10;
  * LABELS_VERSION are unchanged, so existing labels stand.
  */
 export async function labelPosts(
+  key: string,
   posts: { id: string; text: string }[],
   creator: string,
   signal?: AbortSignal,
@@ -79,7 +80,7 @@ export async function labelPosts(
         questions[`format${k}`] = choice(`${quoted}\nWhat format is this post?`, FORMATS);
         questions[`cta${k}`] = choice(`${quoted}\nWhat does the post ask viewers to do? Pick "none" unless it clearly asks.`, CTAS);
       });
-      const answers = await ask({ creator }, questions, signal);
+      const answers = await ask(key, { creator }, questions, signal);
       batch.forEach((p, k) => {
         const pick = <T extends string>(key: string, allowed: Record<T, string>, fallback: T) => {
           const a = answers[`${key}${k}`];

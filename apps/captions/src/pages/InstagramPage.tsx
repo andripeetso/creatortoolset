@@ -98,11 +98,11 @@ import {
   type Tag,
   type TranscriptWord,
   type PostIdea,
+  INSTAGRAM_CONNECTION_EVENT,
 } from "@/lib/instagram";
 import { AppBar } from "@/components/AppBar";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
 import { useWorkspace } from "@/lib/workspace";
-import { INSTAGRAM_CONNECTION_EVENT, InstagramConnectionDialog } from "@/components/instagram/InstagramConnectionDialog";
 import { IngestBox } from "@/components/instagram/IngestBox";
 import { RunJobsDialog } from "@/components/instagram/RunJobsDialog";
 import { TagsEditor } from "@/components/instagram/TagsEditor";
@@ -999,7 +999,6 @@ export default function InstagramPage() {
   const [addingMine, setAddingMine] = useState(false);
   const [showAllAccounts, setShowAllAccounts] = useState(false);
   const [pullingAll, setPullingAll] = useState(false);
-  const [connecting, setConnecting] = useState(false);
   const [pullAllError, setPullAllError] = useState<string | null>(null);
   const [mineError, setMineError] = useState<string | null>(null);
   const [stacks, setStacks] = useState<InstagramStack[]>([]);
@@ -1105,7 +1104,7 @@ export default function InstagramPage() {
       .then(setAvail)
       .catch(() => {});
   }, []);
-  // The connection lives in the account menu now: re-read it when it changes there.
+  // The Apify key lives in Settings → Connectors: re-read it when it changes there.
   useEffect(() => {
     window.addEventListener(INSTAGRAM_CONNECTION_EVENT, refreshAvailability);
     return () => window.removeEventListener(INSTAGRAM_CONNECTION_EVENT, refreshAvailability);
@@ -1453,17 +1452,11 @@ export default function InstagramPage() {
   const opening = Boolean(postId && !viewing && !routeError);
   const ownsCurrent =
     !!me && !!viewing && (me.role === "admin" || me.username === viewing.owner);
-  const sessionReason = !avail
+  const sessionReason = !avail || avail.available
     ? null
-    : avail.available
-      ? null
-      : avail.source === "apify"
-        ? avail.apify?.valid === false
-          ? "Your Apify token is invalid"
-          : "No Apify token yet"
-        : avail.session?.valid === false
-          ? "Your Instagram session is invalid"
-          : "Instagram isn't connected yet";
+    : avail.apify?.valid === false
+      ? "Your Apify key is invalid"
+      : "Other creators' posts need your own Apify key";
 
   const searchingLibrary = q.trim().length >= 2;
   const ideasView = libraryView === "ideas";
@@ -1647,18 +1640,24 @@ export default function InstagramPage() {
             {!me?.demo && <IngestBox
               defaultValue={sharePrefill}
               nowDisabledReason={sessionReason}
-              onConnect={() => setConnecting(true)}
+              onConnect={() => navigate("/settings/connectors")}
               onIngest={onIngest}
             />}
-            <InstagramConnectionDialog open={connecting} onClose={() => setConnecting(false)} />
+            {avail && !me?.demo && !avail.available && (
+              <p className="mt-2 text-[11px] text-zinc-400">
+                With only your Instagram login (Settings → Connectors) you get your own posts and their numbers. Other
+                creators' posts and full comment threads need an Apify key of your own, added in Settings → Connectors:
+                Apify bills you for each read.
+              </p>
+            )}
             {avail && !me?.demo && (!avail.cloud || !avail.ai) && (
               <p className="mt-2 flex items-center gap-1.5 text-[11px] text-amber-400/80">
                 <TriangleAlert className="h-3 w-3 shrink-0" />
                 {!avail.cloud && !avail.ai
-                  ? "Transcripts and slide text are off — cloud transcription is locked and no AI key is configured."
+                  ? `Transcripts and slide text are off: ${avail.cloudWhy ?? "cloud transcription is locked"}, and no AI provider is set up for you (Settings → AI providers).`
                   : !avail.cloud
-                    ? "Transcripts are off — cloud transcription is locked or DEEPGRAM_API_KEY is missing."
-                    : "Slide text is off — no vision-capable AI key is configured."}
+                    ? `Transcripts are off: ${avail.cloudWhy ?? "cloud transcription is locked for your account"}.`
+                    : "Slide text is off: no AI provider is set up for you (Settings → AI providers)."}
               </p>
             )}
 

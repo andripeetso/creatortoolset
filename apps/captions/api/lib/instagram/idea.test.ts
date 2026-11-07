@@ -73,8 +73,8 @@ describe("filing into a folder that already exists", () => {
 
   it("uses the folder Jev picks when it is confident", async () => {
     vi.mocked(ask).mockResolvedValueOnce({ folder: { choice: "Bedtime Routines For Toddlers", confidence: 0.82 } });
-    expect(await existingFolderFor("Caption: no screens before two", idea, folders)).toBe("Bedtime Routines For Toddlers");
-    const [, questions] = vi.mocked(ask).mock.calls[0];
+    expect(await existingFolderFor("k", "Caption: no screens before two", idea, folders)).toBe("Bedtime Routines For Toddlers");
+    const [, , questions] = vi.mocked(ask).mock.calls[0];
     expect(Object.keys((questions.folder as { criteria: object }).criteria)).toEqual([
       "Bedtime Routines For Toddlers",
       "Raising Tall Kids",
@@ -84,13 +84,13 @@ describe("filing into a folder that already exists", () => {
 
   it("keeps the writer's new folder for a new topic or a shaky pick", async () => {
     vi.mocked(ask).mockResolvedValueOnce({ folder: { choice: "new topic", confidence: 0.9 } });
-    expect(await existingFolderFor("x", idea, folders)).toBeNull();
+    expect(await existingFolderFor("k", "x", idea, folders)).toBeNull();
     vi.mocked(ask).mockResolvedValueOnce({ folder: { choice: "Raising Tall Kids", confidence: 0.4 } });
-    expect(await existingFolderFor("x", idea, folders)).toBeNull();
+    expect(await existingFolderFor("k", "x", idea, folders)).toBeNull();
   });
 
   it("asks nothing when the library has no folders", async () => {
-    expect(await existingFolderFor("x", idea, [])).toBeNull();
+    expect(await existingFolderFor("k", "x", idea, [])).toBeNull();
     expect(ask).not.toHaveBeenCalled();
   });
 });

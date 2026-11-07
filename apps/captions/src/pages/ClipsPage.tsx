@@ -961,8 +961,7 @@ export default function ClipsPage() {
             {avail && !avail.cloud && (
               <p className="mt-2 flex items-center gap-1.5 text-[11px] text-amber-400/80">
                 <TriangleAlert className="h-3 w-3 shrink-0" />
-                Auto-transcript is off — cloud transcription is locked or
-                DEEPGRAM_API_KEY is missing. Clips still save.
+                Auto-transcript is off: {avail.cloudWhy ?? "cloud transcription is locked for your account"}. Clips still save.
               </p>
             )}
 

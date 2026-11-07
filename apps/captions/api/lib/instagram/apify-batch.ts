@@ -1,4 +1,4 @@
-import { InstagramError } from "./web-api";
+import { InstagramError } from "./base";
 
 /**
  * Apify bills every actor run its start-up cost (booting the scraper takes

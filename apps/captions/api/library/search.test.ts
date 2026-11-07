@@ -120,7 +120,7 @@ describe("transcribe job", () => {
     enqueueJob(libraryDb(), "lib_a", v, "transcribe", "local");
     expect(await tick()).toBe(true);
     expect(job(v).state).toBe("needs_key");
-    expect(job(v).error).toMatch(/Settings → API keys/);
+    expect(job(v).error).toBe("Add your Deepgram (or OpenAI) key in Settings → My API keys");
     expect(versionState(v)).toBe("ready");
   });
 
@@ -130,6 +130,7 @@ describe("transcribe job", () => {
     enqueueJob(libraryDb(), "lib_a", v, "transcribe", "own-a");
     await tick();
     expect(job(v).state).toBe("needs_key");
+    expect(job(v).error).toBe("Add your Deepgram (or OpenAI) key in Settings → My API keys");
     // queued again (Retry, or the owner set a budget): it starts from zero
     enqueueJob(libraryDb(), "lib_a", v, "transcribe", "budget-a");
     expect(job(v).state).toBe("queued");
@@ -139,13 +140,13 @@ describe("transcribe job", () => {
 
   it("routes: admin on the key, a budget member billed, others need a key", () => {
     process.env.DEEPGRAM_API_KEY = "test-key";
-    expect(transcribeRoute("local")).toEqual({ provider: "deepgram" });
-    expect(transcribeRoute("budget-a")).toEqual({ provider: "deepgram", bill: "budget-a" });
+    expect(transcribeRoute("local")).toEqual({ provider: "deepgram", key: "test-key" });
+    expect(transcribeRoute("budget-a")).toEqual({ provider: "deepgram", key: "test-key", bill: "budget-a" });
     expect(() => transcribeRoute("own-a")).toThrow(NeedsKey);
     expect(() => transcribeRoute("other-b")).toThrow(NeedsKey);
     delete process.env.DEEPGRAM_API_KEY;
     process.env.OPENAI_API_KEY = "test-key";
-    expect(transcribeRoute("local")).toEqual({ provider: "openai" });
+    expect(transcribeRoute("local")).toEqual({ provider: "openai", key: "test-key" });
     delete process.env.OPENAI_API_KEY;
   });
 
@@ -166,7 +167,7 @@ describe("transcribe job", () => {
       await transcribeVersion(libraryDb(), v, clip, 60, "budget-a", dir);
       expect(segmentsOf(libraryDb(), v)).toEqual([{ start: 0.1, end: 0.6, text: "Hold it." }]);
       expect(sent[0]).toEqual({ url: expect.stringContaining("api.deepgram.com"), type: "audio/wav" });
-      expect(spentThisMonth("budget-a")).toBeCloseTo(0.01); // one minute at the default rate
+      expect(spentThisMonth("budget-a")).toBeCloseTo(0.01 / 60, 4); // about the one second of audio sent, at the default rate
       delete process.env.DEEPGRAM_API_KEY;
       process.env.OPENAI_API_KEY = "test-key";
       await transcribeVersion(libraryDb(), v, clip, 1, "local", dir);
