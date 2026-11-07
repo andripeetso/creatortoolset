@@ -5,6 +5,7 @@ import {
 import type { JobId, Selection } from "../contracts/providers";
 import { MAC_MISS, MacClaudeError, recordUsage, streamMacClaude, type MacOpts, type MacUsage } from "./lib/mac-claude";
 import { instanceIn, limitFallbacks, providerSettings, routeFor } from "./lib/providers";
+import { completeLocal } from "./lib/local-claude";
 import { addSpend } from "./lib/workspaces";
 import { keyFor } from "./my-keys";
 import { DEMO_USER, findUser, isDemoName, isGuestName, type SessionUser } from "./users";
@@ -41,8 +42,9 @@ export class AiProviderError extends Error {
   }
 }
 
-/** "mac" = a provider on a paired Mac (lib/mac-claude.ts); "anthropic" = the API key (guests, demo). */
-export type ProviderId = "anthropic" | "mac";
+/** "mac" = a provider on a paired Mac (lib/mac-claude.ts); "anthropic" = the API key (guests, demo);
+ *  "local" = Claude Code on the machine running this code (lib/local-claude.ts), for scripts only. */
+export type ProviderId = "anthropic" | "mac" | "local";
 
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 
@@ -193,6 +195,12 @@ function providers(): Provider[] {
     // the route (aiFor) picked the key: a call without one is not sent
     { id: "anthropic", label: "Anthropic API", configured: true, complete: completeAnthropic },
     { id: "mac", label: "Claude (Mac)", configured: true, complete: (system, user, cancel, opts) => streamMac(system, user, cancel, () => {}, opts?.onUsage, opts ?? {}) },
+    // Claude Code on this machine: only scripts name it in `only`; aiFor never routes a site request here
+    { id: "local", label: "Claude Code (this machine)", configured: true, complete: async (system, user, cancel) => {
+      const r = await completeLocal(system, user, cancel);
+      console.error(`claude -p: $${r.usage.costUsd.toFixed(4)} API-equivalent, ${r.usage.inputTokens} in / ${r.usage.outputTokens} out, ${(r.usage.ms / 1000).toFixed(1)} s`);
+      return r.text;
+    } },
   ];
   return all.filter((p) => p.configured);
 }
@@ -532,6 +540,12 @@ function parseAnswer<T>(id: ProviderId, text: string, parse: (text: string) => T
 const STREAMERS: Record<ProviderId, (system: string, user: string, cancel: AbortSignal | undefined, onDelta: (t: string) => Promise<void> | void, onUsage: ((u: MacUsage) => void) | undefined, opts: ProviderOpts) => Promise<string>> = {
   anthropic: streamAnthropic,
   mac: streamMac,
+  // Claude Code here answers in one piece (`claude -p --output-format json`): the whole text is one delta
+  local: async (system, user, cancel, onDelta) => {
+    const { text } = await completeLocal(system, user, cancel);
+    await onDelta(text);
+    return text;
+  },
 };
 
 /**

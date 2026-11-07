@@ -4,7 +4,11 @@
  * Match cadence thoughts, split points for thoughts wider than the box, then
  * layoutCues, exactly the steps POST /api/captions/auto runs.
  *
- *   npx tsx scripts/cadence-lines-for.ts words.json out.json [--box 26x1] [--env path/.env] [--provider anthropic]
+ *   npx tsx scripts/cadence-lines-for.ts words.json out.json [--box 26x1] [--env path/.env]
+ *
+ * The AI runs as Claude Code on this machine (the "local" provider, api/lib/local-claude.ts: Opus 5.5 at xhigh on
+ * your own subscription, no API key), the binary from CT_CLAUDE or `claude` on PATH. The site's providers answer
+ * through a paired Mac's relay, which a script can't reach.
  *
  * words.json = [{t|text, s|start, e|end}]; out.json = [{start, end, words: [{t, s, e}]}], one per caption.
  */
@@ -21,8 +25,8 @@ const option = (name: string) => {
 const env = option("--env");
 if (env) process.loadEnvFile(env);
 const [maxChars, maxLines] = (option("--box") ?? "26x1").split("x").map(Number);
-const provider = { prefer: (option("--provider") ?? "anthropic") as ProviderId };
-const [inPath, outPath] = args.filter((a) => !a.startsWith("--") && ![env, option("--box"), option("--provider")].includes(a));
+const provider = { only: ["local" as ProviderId], retries: 1, mac: { label: "captions" } };
+const [inPath, outPath] = args.filter((a) => !a.startsWith("--") && ![env, option("--box")].includes(a));
 
 const raw = JSON.parse(readFileSync(inPath, "utf8")) as Record<string, unknown>[];
 const words = raw.map((w, id) => ({
