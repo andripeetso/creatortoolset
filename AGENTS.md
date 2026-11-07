@@ -52,8 +52,10 @@ provider or own key), members of the admin's workspace on an API budget, and gue
 switches that on. Accounts from open sign-up (`ALLOW_SIGNUP=1`) never use them. AI with no provider and no own key
 fails with a message saying what to add; the Workshop has no API-key path at all.
 
-**No scraping.** Nothing reads websites on a user's behalf: Instagram comes only from the official logins and the
-user's own Apify key, never from Instagram's web pages, logged in or not; no browser automation of other services.
+**No scraping.** Social platforms come only from the official logins and the user's own Apify key, never from
+their web pages, logged in or not; no browser automation of other services. The one page fetch is Knowledge → Add a
+link (`webPageText` in `api/lib/workshop/source-files.ts`): the single public page the user pasted, no login, no
+crawling, inside addresses and social platforms refused.
 
 **Accounts and access.** With `APP_SECRET` unset the server is open and every request runs as a local admin.
 That is for one person's own machine only. Production refuses to start without `APP_SECRET`. Guests and the demo

@@ -11,7 +11,7 @@ import { DEMO_USER, findUser, isDemoName, isGuestName, type SessionUser } from "
 
 /**
  * Every AI call in the app. It goes to a provider (contracts/providers.ts: a coding-agent CLI on a Mac,
- * through a paired Mac; Anthropic goes through the Claude CLI so the server's proxy serves it). An Anthropic API key answers
+ * through a paired Mac, signed in as that person). An Anthropic API key answers
  * an account with no provider that saved its own (Settings → My API keys); the server's answers only members on an API
  * budget, and guests and the demo account when an admin switches it on for them (my-keys.ts keyFor).
  */

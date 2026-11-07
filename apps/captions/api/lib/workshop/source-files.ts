@@ -109,6 +109,9 @@ export function privateAddress(ip: string): boolean {
   return a === 0 || a === 10 || a === 127 || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || a >= 224;
 }
 
+// social platforms are read only through their official APIs or the user's own Apify key, never as web pages
+const SOCIAL_HOST = /(^|\.)(instagram\.com|instagr\.am|facebook\.com|fb\.com|fb\.watch|threads\.net|threads\.com|tiktok\.com|x\.com|twitter\.com|youtube\.com|youtu\.be)$/i;
+
 async function publicUrl(raw: string): Promise<URL> {
   let url: URL;
   try {
@@ -119,6 +122,7 @@ async function publicUrl(raw: string): Promise<URL> {
   if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error("Only http and https links");
   if (url.username || url.password) throw new Error("Links with a login in them aren't read");
   const host = url.hostname.replace(/^\[|\]$/g, "");
+  if (SOCIAL_HOST.test(host)) throw new Error("Social posts go in the Content Analyzer, which reads them through the official logins and your own Apify key");
   const ips = isIP(host) ? [host] : (await lookup(host, { all: true })).map((r) => r.address);
   if (!ips.length || ips.some(privateAddress)) throw new Error("That address isn't on the public internet");
   return url;

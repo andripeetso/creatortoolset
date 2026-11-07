@@ -104,7 +104,7 @@ export interface ProviderCheck {
   at: number;
 }
 
-/** Models offered per driver (the proxy serves every Claude). */
+/** Models offered per driver (the Claude CLI on the user's Mac runs every one). */
 export const DRIVER_MODELS: Partial<Record<Driver, string[]>> = {
   claude: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"],
 };

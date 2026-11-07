@@ -35,7 +35,7 @@ The Workshop turns research into pieces (reel, carousel, ad, free and YouTube sc
 
 ## Pictures, files and citations
 
-- **Pictures.** Drop, paste or pick images with the paperclip. Each is shrunk to 1568 px JPEG and ordered by the number in its name. They're kept in `sessions/<id>/images/`; on the Mac they're files in the folder that the CLI can read; on the API key they go to the provider as image blocks. Into an empty piece, slides go in first, word for word.
+- **Pictures.** Drop, paste or pick images with the paperclip. Each is shrunk to 1568 px JPEG and ordered by the number in its name. They're kept in `sessions/<id>/images/`; on the Mac they're files in the folder that the CLI can read (the Workshop runs only on the person's own AI, never an API key). Into an empty piece, slides go in first, word for word.
 - **Other files.** Text-like files are read in the browser and sent whole. PDFs are sent as files (up to 10 MB) and written into the Mac folder.
 - **Pictures in a piece.** A picture dropped into a piece field is stored as `![label](pic:<id>)` and shown inline.
 - **Citing.** Select words on a slide or in a reply, then Cite puts them above the composer as a chip (`ChipComposer`, `⟦1⟧` marks in the text). Ask opens a side chat about just that part (`aside.ts`); it answers and cannot edit.
@@ -52,7 +52,7 @@ The Workshop turns research into pieces (reel, carousel, ad, free and YouTube sc
 - **Sidebar.** Writing now (a reply running), Waiting for you (a finished reply not yet looked at), Ideas & writing, Ready & in production, Published. ⌘K finds a session by name; ⌘1–9 open the first nine in the Mac app.
 - **Summary poll.** `GET /api/workshop/sessions/summary`, every 3 s in front and 10 s behind. "Seen" is stored per account, so the unread dot shows on every device.
 - **Instant switching.** A session opened before paints from memory (`workshop-cache.ts`) while it refreshes. The piece is read-only until the fresh copy lands, so typing never overwrites a newer AI edit.
-- **Usage.** Replies, lines, asides, audits, drafts and research show tokens and the API-equivalent cost (`PRICE_PER_MTOK` in `api/ai-complete.ts`). A stopped Mac run's cost is not known; its tokens are counted under "Stopped". Every Workshop call on the API key runs at the highest effort.
+- **Usage.** Replies, lines, asides, audits, drafts and research show tokens and the API-equivalent cost (`PRICE_PER_MTOK` in `api/ai-complete.ts`). A stopped Mac run's cost is not known; its tokens are counted under "Stopped".
 - **Transcripts.** A source video without one is transcribed before a Mac turn reads the folder (up to 90 s).
 
 ## Projects

@@ -2,7 +2,8 @@
  * Instagram link parsing. Accepts post / reel / tv URLs (with or without
  * the creator's username in the path), login-redirect URLs that carry the
  * target in ?next=, and the opaque /share/... links the mobile app
- * produces, which have to be resolved by following redirects.
+ * produces (kept as links: nothing here fetches instagram.com; the
+ * user's own Apify key reads them).
  */
 
 const ALPHABET =
@@ -17,7 +18,6 @@ const PAGE_HOSTS = new Set([
   "www.instagram.com",
   "m.instagram.com",
 ]);
-const REDIRECT_HOSTS = new Set([...PAGE_HOSTS, "l.instagram.com"]);
 
 const RESERVED_PROFILES = new Set([
   "p",
@@ -208,52 +208,4 @@ export function extractInstagramProfiles(text: string, limit = 20): string[] {
     if (out.length >= limit) break;
   }
   return out;
-}
-
-export interface ResolveOptions {
-  headers?: Record<string, string>;
-  signal?: AbortSignal;
-  fetchImpl?: typeof fetch;
-  maxHops?: number;
-}
-
-/**
- * Follow an app share link until a post URL appears — in a redirect
- * Location, in the login page's ?next=, or in the final HTML body.
- */
-export async function resolveShareLink(
-  url: string,
-  opts: ResolveOptions = {},
-): Promise<PostRef> {
-  const fetchImpl = opts.fetchImpl ?? fetch;
-  const maxHops = opts.maxHops ?? 5;
-  let current = url;
-  for (let hop = 0; hop <= maxHops; hop++) {
-    const res = await fetchImpl(current, {
-      redirect: "manual",
-      headers: opts.headers,
-      signal: opts.signal,
-    });
-    const location = res.headers.get("location");
-    if (res.status >= 300 && res.status < 400 && location) {
-      await res.body?.cancel().catch(() => {});
-      const next = new URL(location, current);
-      if (!REDIRECT_HOSTS.has(next.hostname.toLowerCase())) {
-        throw new InstagramUrlError("The share link left instagram.com");
-      }
-      const post = postFromUrl(next);
-      if (post) return post;
-      current = next.toString();
-      continue;
-    }
-    const post = postFromUrl(new URL(current));
-    if (post) return post;
-    const body = await res.text().catch(() => "");
-    const found = postFromText(body);
-    if (found) return found;
-    throw new InstagramUrlError(
-      "Instagram did not resolve this share link. Open it in a browser and paste the final /p/ or /reel/ URL.",
-    );
-  }
-  throw new InstagramUrlError("Too many redirects while resolving the share link");
 }

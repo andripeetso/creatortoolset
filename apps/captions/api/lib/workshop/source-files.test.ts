@@ -42,4 +42,14 @@ describe("knowledge files and links", () => {
     expect(got.text).not.toContain("menu");
     expect(markupToText("<p>a&nbsp;b &#8212; c</p>")).toBe("a b — c");
   });
+
+  it("never reads a social platform's web pages, not even after a redirect", async () => {
+    const never = (async () => {
+      throw new Error("fetched");
+    }) as typeof fetch;
+    for (const u of ["https://www.instagram.com/p/abcdef/", "https://m.facebook.com/x", "https://www.threads.net/@a", "https://vm.tiktok.com/x", "https://x.com/a/status/1", "https://instagr.am/p/abcdef/"])
+      await expect(webPageText(u, never)).rejects.toThrow(/Content Analyzer/);
+    const hop = (async () => new Response(null, { status: 302, headers: { location: "https://www.instagram.com/p/abcdef/" } })) as typeof fetch;
+    await expect(webPageText("https://93.184.216.34/", hop)).rejects.toThrow(/Content Analyzer/);
+  });
 });

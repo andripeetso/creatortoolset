@@ -1887,7 +1887,6 @@ workshopApp.post("/sources/link", async (c) => {
   const body = (await c.req.json().catch(() => null)) as { url?: unknown; projectId?: unknown } | null;
   const url = typeof body?.url === "string" ? body.url.trim() : "";
   try {
-    if (/instagram\.com\//i.test(url)) throw new Error("Instagram posts go in the Content Analyzer: every turn already reads its library");
     const yt = parseYoutubeUrl(url);
     if (yt) {
       const { info } = await fetchYoutubeViaApify(yt, { username: user.username });

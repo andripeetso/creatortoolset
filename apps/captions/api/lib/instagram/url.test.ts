@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   InstagramUrlError,
   extractInstagramProfiles,
@@ -6,7 +6,6 @@ import {
   parseInstagramUrl,
   parseProfileHandle,
   postFromText,
-  resolveShareLink,
   shortcodeToMediaId,
 } from "./url";
 
@@ -133,78 +132,5 @@ describe("postFromText", () => {
 
   it("returns null when there is no post link", () => {
     expect(postFromText("<html>nothing here</html>")).toBeNull();
-  });
-});
-
-describe("resolveShareLink", () => {
-  const resp = (status: number, headers: Record<string, string> = {}, body = "") =>
-    ({
-      status,
-      headers: new Headers(headers),
-      body: null,
-      text: async () => body,
-    }) as unknown as Response;
-
-  it("follows redirects until a post URL appears", async () => {
-    const fetchImpl = vi
-      .fn()
-      .mockResolvedValueOnce(resp(302, { location: "/share-hop/x" }))
-      .mockResolvedValueOnce(
-        resp(302, { location: "https://www.instagram.com/reel/TestReel001/?igsh=1" }),
-      );
-    await expect(
-      resolveShareLink("https://www.instagram.com/share/abc/", {
-        fetchImpl: fetchImpl as unknown as typeof fetch,
-      }),
-    ).resolves.toEqual({ shortcode: "TestReel001", reelHint: true });
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
-  });
-
-  it("reads the target from a login redirect's ?next=", async () => {
-    const fetchImpl = vi
-      .fn()
-      .mockResolvedValueOnce(
-        resp(302, {
-          location: "https://www.instagram.com/accounts/login/?next=%2Fp%2FTestPost001%2F",
-        }),
-      );
-    await expect(
-      resolveShareLink("https://www.instagram.com/share/abc/", {
-        fetchImpl: fetchImpl as unknown as typeof fetch,
-      }),
-    ).resolves.toEqual({ shortcode: "TestPost001", reelHint: false });
-  });
-
-  it("falls back to a post link in the final body", async () => {
-    const fetchImpl = vi
-      .fn()
-      .mockResolvedValueOnce(
-        resp(200, {}, '<html><a href="https://www.instagram.com/p/TestPost001/">x</a></html>'),
-      );
-    await expect(
-      resolveShareLink("https://www.instagram.com/share/abc/", {
-        fetchImpl: fetchImpl as unknown as typeof fetch,
-      }),
-    ).resolves.toEqual({ shortcode: "TestPost001", reelHint: false });
-  });
-
-  it("refuses to leave instagram.com", async () => {
-    const fetchImpl = vi
-      .fn()
-      .mockResolvedValueOnce(resp(302, { location: "https://evil.example/p/abcdef/" }));
-    await expect(
-      resolveShareLink("https://www.instagram.com/share/abc/", {
-        fetchImpl: fetchImpl as unknown as typeof fetch,
-      }),
-    ).rejects.toThrow(InstagramUrlError);
-  });
-
-  it("gives up when the page has nothing to offer", async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(resp(200, {}, "<html>login</html>"));
-    await expect(
-      resolveShareLink("https://www.instagram.com/share/abc/", {
-        fetchImpl: fetchImpl as unknown as typeof fetch,
-      }),
-    ).rejects.toThrow(/did not resolve/);
   });
 });
