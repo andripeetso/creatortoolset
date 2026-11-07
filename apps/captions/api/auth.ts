@@ -166,7 +166,6 @@ authApp.post("/login", async (c) => {
   }
   failures.delete(username);
   bumpUsage(user.username, { logins: 1 });
-  // Secure only in production: dev runs over plain http on localhost/LAN
   setLoginCookie(c, user);
   return c.json({
     ok: true,
@@ -174,8 +173,17 @@ authApp.post("/login", async (c) => {
   });
 });
 
-const setLoginCookie = (c: { header: (k: string, v: string) => void }, user: UserRecord) => {
-  const secure = env.isProduction ? "; Secure" : "";
+/**
+ * The cookie's Secure flag: when the request came in over HTTPS (the URL, or X-Forwarded-Proto from a proxy in
+ * front). A phone on plain http over the LAN would drop a Secure cookie; a forged header only costs its sender.
+ */
+export const secureAttr = (c: Context) => {
+  const proto = c.req.header("x-forwarded-proto")?.split(",")[0].trim() || new URL(c.req.url).protocol.replace(":", "");
+  return proto.toLowerCase() === "https" ? "; Secure" : "";
+};
+
+const setLoginCookie = (c: Context, user: UserRecord) => {
+  const secure = secureAttr(c);
   c.header(
     "Set-Cookie",
     `${COOKIE}=${cookieValue(user.username, user.hash)}; HttpOnly; Path=/; Max-Age=${MAX_AGE}; SameSite=Lax${secure}${domainAttr()}`,
@@ -301,7 +309,7 @@ authApp.post("/signup", async (c) => {
 /* "Try as guest": a capped try-out session with its own name (guest.ts) */
 authApp.post("/guest", (c) => {
   if (!env.appSecret) return c.json({ ok: true, user: toPublic(LOCAL_USER) });
-  const secure = env.isProduction ? "; Secure" : "";
+  const secure = secureAttr(c);
   const name = `guest-${randomBytes(6).toString("hex")}`;
   c.header(
     "Set-Cookie",
@@ -325,7 +333,7 @@ authApp.post("/demo", async (c) => {
   if (++demoVisitors > DEMO_PER_HOUR) {
     return c.json({ error: "The demo is busy right now. Try again in a few minutes, or try it as a guest" }, 429);
   }
-  const secure = env.isProduction ? "; Secure" : "";
+  const secure = secureAttr(c);
   const name = `demo-${randomBytes(6).toString("hex")}`;
   await cloneDemoReview(name);
   c.header(
@@ -362,7 +370,7 @@ authApp.post("/api-key", async (c) => {
 });
 
 authApp.post("/logout", (c) => {
-  const secure = env.isProduction ? "; Secure" : "";
+  const secure = secureAttr(c);
   c.header(
     "Set-Cookie",
     `${COOKIE}=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax${secure}${domainAttr()}`,

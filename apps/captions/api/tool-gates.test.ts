@@ -1,13 +1,14 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { PassThrough } from "node:stream";
+import { describe, expect, it, vi } from "vitest";
 
 process.env.DATA_DIR = mkdtempSync(path.join(tmpdir(), "tool-gates-"));
 process.env.APP_SECRET = "tool-gates-test-secret";
 
 const { TOOLS } = await import("../contracts/tools");
-const { default: app, startupProblem, TOOL_GATES } = await import("./boot");
+const { default: app, startupProblem, TOOL_GATES, exitWithParent } = await import("./boot");
 const { env } = await import("./lib/env");
 
 // Apps with no entry in TOOL_GATES, and why. Each one is either hidden in the
@@ -45,8 +46,52 @@ describe("boot", () => {
     const res = await app.request("/api/health");
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
-    expect(Object.keys(body).sort()).toEqual(["ok", "rssMb", "uptimeSec"]);
+    expect(Object.keys(body).sort()).toEqual(["environment", "ok", "rssMb", "uptimeSec"]);
     expect(body.ok).toBe(true);
+    // the data folder's own id, made once and kept
+    const file = JSON.parse(readFileSync(path.join(process.env.DATA_DIR!, "environment.json"), "utf8"));
+    expect(body.environment).toBe(file.id);
+    const again = (await (await app.request("/api/health")).json()) as Record<string, unknown>;
+    expect(again.environment).toBe(body.environment);
+  });
+
+  it("with CT_LOCAL=1 answers only requests addressed to this machine", async () => {
+    const status = async (url: string) => (await app.request(url)).status;
+    expect(await status("http://evil.example/api/health")).toBe(200);
+    process.env.CT_LOCAL = "1";
+    process.env.PUBLIC_ORIGIN = "https://mac.tinyacrobatics.example";
+    try {
+      expect(await status("http://evil.example/api/health")).toBe(400);
+      expect(await status("http://evil.example/")).toBe(400);
+      expect(await status("http://127.0.0.1:43128/api/health")).toBe(200);
+      expect(await status("http://localhost:43128/api/health")).toBe(200);
+      expect(await status("http://[::1]:43128/api/health")).toBe(200);
+      expect(await status("https://mac.tinyacrobatics.example/api/health")).toBe(200);
+    } finally {
+      delete process.env.CT_LOCAL;
+      delete process.env.PUBLIC_ORIGIN;
+    }
+  });
+
+  it("marks the sign-in cookie Secure only when the request came in over HTTPS", async () => {
+    const cookie = async (url: string, headers: Record<string, string> = {}) =>
+      (await app.request(url, { method: "POST", headers })).headers.get("set-cookie")!;
+    expect(await cookie("http://10.0.0.20:43128/api/auth/guest")).not.toMatch(/Secure/);
+    expect(await cookie("https://tools.example.com/api/auth/guest")).toMatch(/; Secure/);
+    expect(await cookie("http://app:3000/api/auth/guest", { "x-forwarded-proto": "https" })).toMatch(/; Secure/);
+    expect(await cookie("http://app:3000/api/auth/logout", { "x-forwarded-proto": "http" })).not.toMatch(/Secure/);
+  });
+
+  it("CT_EXIT_WITH_PARENT: exits once stdin closes", () => {
+    const stdin = new PassThrough();
+    const exit = vi.fn();
+    exitWithParent(stdin, exit);
+    expect(exit).not.toHaveBeenCalled();
+    stdin.end();
+    return new Promise<void>((resolve) => setImmediate(() => {
+      expect(exit).toHaveBeenCalled();
+      resolve();
+    }));
   });
 
   it("refuses to start in production without APP_SECRET, and only then", () => {

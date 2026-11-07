@@ -43,6 +43,10 @@ import { captionLayoutApp } from "./caption-layout";
 import { GUEST_USER, mayUse, touchActive, type Tool } from "./users";
 import { env } from "./lib/env";
 import { disableRequestTimeouts } from "./lib/incoming";
+import { randomUUID } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { hostname, networkInterfaces } from "node:os";
+import path from "node:path";
 
 // surface font resolution at boot — a missing dir means every render
 // would silently use the wrong fonts (exports now refuse to run instead)
@@ -51,6 +55,27 @@ console.log(
 );
 
 const app = new Hono<{ Bindings: HttpBindings; Variables: AuthVars }>();
+
+/**
+ * The names a server on this Mac (CT_LOCAL=1) answers to: loopback, the Mac's own name, its addresses and the
+ * PUBLIC_ORIGIN host (a tailnet or relay name). Anything else is a page that pointed its DNS at this Mac to read it.
+ */
+export function localHostAllowed(host: string): boolean {
+  const h = host.toLowerCase().replace(/^\[|\]$/g, "");
+  const name = hostname().toLowerCase();
+  const allowed = new Set(["localhost", "127.0.0.1", "::1", name, name.replace(/\.local$/, "") + ".local"]);
+  for (const list of Object.values(networkInterfaces())) {
+    for (const a of list ?? []) allowed.add(a.address.toLowerCase().replace(/%.*$/, ""));
+  }
+  try {
+    if (process.env.PUBLIC_ORIGIN) allowed.add(new URL(process.env.PUBLIC_ORIGIN).hostname.toLowerCase().replace(/^\[|\]$/g, ""));
+  } catch { /* not a URL: nothing more allowed */ }
+  return allowed.has(h);
+}
+app.use(async (c, next) =>
+  process.env.CT_LOCAL === "1" && !localHostAllowed(new URL(c.req.url).hostname)
+    ? c.json({ error: "Unknown host" }, 400)
+    : next());
 
 // 50 MB body cap, except video uploads and transcription audio
 const limit = bodyLimit({ maxSize: 50 * 1024 * 1024 });
@@ -147,9 +172,30 @@ export const TOOL_GATES: [string, Tool[]][] = [
   ["/api/workshop", ["instagram", "workshop"]],
 ];
 
+let environmentId = "";
+/** This data folder's id (DATA_DIR/environment.json), made once: the Mac app tells its own server from another program. */
+export function environmentOf(): string {
+  if (environmentId) return environmentId;
+  const file = path.join(env.dataDir, "environment.json");
+  try {
+    environmentId = (JSON.parse(readFileSync(file, "utf8")) as { id?: string }).id ?? "";
+  } catch { /* first start */ }
+  if (!environmentId) {
+    environmentId = randomUUID();
+    mkdirSync(env.dataDir, { recursive: true });
+    writeFileSync(file, JSON.stringify({ id: environmentId }));
+  }
+  return environmentId;
+}
+
 // the deploy's readiness check (scripts/deploy.sh): before the account gate, nothing about users or secrets
 app.get("/api/health", (c) =>
-  c.json({ ok: true, uptimeSec: Math.round(process.uptime()), rssMb: Math.round(process.memoryUsage().rss / 1048576) }),
+  c.json({
+    ok: true,
+    environment: environmentOf(),
+    uptimeSec: Math.round(process.uptime()),
+    rssMb: Math.round(process.memoryUsage().rss / 1048576),
+  }),
 );
 
 // the Mac app's download and Sparkle appcast (mac-app.ts): public, before the account gate
@@ -298,6 +344,13 @@ export default app;
 export const startupProblem = (): string | null =>
   env.isProduction && !env.appSecret ? "APP_SECRET is required in production: without it every request is the admin" : null;
 
+/** CT_EXIT_WITH_PARENT=1: the Mac app holds our stdin, so it closing means the app is gone (macOS has no parent-death signal). */
+export function exitWithParent(stdin: NodeJS.ReadableStream, exit: () => void): void {
+  stdin.on("end", exit);
+  stdin.on("close", exit);
+  stdin.resume();
+}
+
 if (env.isProduction) {
   const problem = startupProblem();
   if (problem) throw new Error(problem);
@@ -306,15 +359,19 @@ if (env.isProduction) {
   serveStaticFiles(app);
 
   const port = parseInt(process.env.PORT || "3000");
+  // HOST: the interface to listen on (the Mac app passes 127.0.0.1); unset = every interface, as in Docker
+  const host = process.env.HOST || undefined;
   const server = serve(
     {
       fetch: app.fetch,
       port,
+      hostname: host,
       serverOptions: { requestTimeout: 0, headersTimeout: 0 },
     },
     () => {
-      console.log(`Server running on http://localhost:${port}/`);
+      console.log(`Server running on http://${host ?? "localhost"}:${port}/`);
     },
   );
   if ("requestTimeout" in server) disableRequestTimeouts(server);
+  if (process.env.CT_EXIT_WITH_PARENT === "1") exitWithParent(process.stdin, () => process.exit(0));
 }
