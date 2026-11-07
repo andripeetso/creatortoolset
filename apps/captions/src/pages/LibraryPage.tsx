@@ -20,6 +20,8 @@ import {
   rerunJobs,
   searchLibrary,
   setTrashed,
+  updateAsset,
+  updateLibrary,
   uploadFile,
 } from "@/lib/library";
 import { cn } from "@/lib/utils";
@@ -364,6 +366,9 @@ export default function LibraryPage() {
             </div>
 
             {library.canManage && <LibraryWatchFolders libraryId={library.id} folders={collections.filter((c) => c.kind === "manual")} />}
+            {library.canManage && (
+              <AiSwitches library={library} onChange={(l) => setLibraries((all) => all?.map((x) => (x.id === l.id ? l : x)) ?? all)} onError={setError} />
+            )}
 
             {uploads.length > 0 && (
               <section aria-label="Uploads" className="flex flex-col gap-2 rounded-xl border border-zinc-500/20 p-3">
@@ -490,6 +495,19 @@ export default function LibraryPage() {
                   when the file does.
                 </p>
               )}
+              {libId && (
+                <DescriptionBox
+                  key={preview.versionId}
+                  libraryId={libId}
+                  asset={preview}
+                  readOnly={scope === "trash"}
+                  onSaved={(a) => {
+                    setPreview(a);
+                    setItems((all) => all.map((x) => (x.id === a.id ? { ...x, description: a.description, tags: a.tags, aiTags: a.aiTags } : x)));
+                  }}
+                  onError={setError}
+                />
+              )}
               {libId && scope !== "trash" && <ShareBox libraryId={libId} assetId={preview.id} />}
               {preview.kind === "image" ? (
                 <img src={`/api/library/media/${preview.versionId}/play`} alt={preview.title} className="w-full rounded-lg" />
@@ -525,7 +543,103 @@ function AssetTile({ asset: a, onOpen }: { asset: AssetCard; onOpen: () => void 
         {dot && <span title={a.state} className={cn("absolute left-2 top-2 h-2.5 w-2.5 rounded-full ring-2 ring-black/40", dot)} />}
       </div>
       <span className="truncate text-sm font-medium">{a.title}</span>
+      {a.description && (
+        <span className="line-clamp-2 text-xs text-zinc-500">
+          {a.description.source === "ai" && <AiBadge />}
+          {a.description.text}
+        </span>
+      )}
     </button>
+  );
+}
+
+const AiBadge = () => (
+  <span title="Written by AI" className="mr-1 rounded bg-zinc-500/20 px-1 py-px text-[10px] font-medium uppercase text-zinc-400">
+    AI
+  </span>
+);
+
+/** The owner's switches: both spend AI on every new upload, so both start off. */
+function AiSwitches({ library, onChange, onError }: { library: LibrarySummary; onChange: (l: LibrarySummary) => void; onError: (e: string) => void }) {
+  const flip = (key: "describe" | "embed", on: boolean) =>
+    updateLibrary(library.id, { settings: { [key]: on } })
+      .then(onChange)
+      .catch((e) => onError(message(e)));
+  const row = (key: "describe" | "embed", text: string) => (
+    <label className="flex items-center gap-2">
+      <input type="checkbox" checked={library.settings[key]} onChange={(e) => void flip(key, e.target.checked)} />
+      {text}
+    </label>
+  );
+  return (
+    <div className="flex flex-wrap gap-x-5 gap-y-1 text-sm text-zinc-400">
+      {row("describe", "AI describes new videos")}
+      {row("embed", "Search by meaning (OpenAI key)")}
+    </div>
+  );
+}
+
+/**
+ * The asset's description: a person's text wins over the AI's, which shows (marked AI) until someone writes one.
+ * Saving an empty box removes the person's text. "Describe with AI" queues the describe job as the caller.
+ */
+function DescriptionBox({
+  libraryId,
+  asset,
+  readOnly,
+  onSaved,
+  onError,
+}: {
+  libraryId: string;
+  asset: AssetCard;
+  readOnly: boolean;
+  onSaved: (a: AssetCard) => void;
+  onError: (e: string) => void;
+}) {
+  const mine = asset.description?.source === "user" ? asset.description.text : "";
+  const [text, setText] = useState(mine);
+  const [queued, setQueued] = useState(false);
+  const save = () =>
+    updateAsset(libraryId, asset.id, { description: text.trim() })
+      .then(onSaved)
+      .catch((e) => onError(message(e)));
+  const describe = () =>
+    rerunJobs(libraryId, asset.id, ["describe"])
+      .then(() => setQueued(true))
+      .catch((e) => onError(message(e)));
+  return (
+    <section aria-label="Description" className="flex flex-col gap-1.5 text-sm">
+      {asset.description?.source === "ai" && (
+        <p className="text-zinc-400">
+          <AiBadge />
+          {asset.description.text}
+        </p>
+      )}
+      {readOnly ? (
+        mine && <p>{mine}</p>
+      ) : (
+        <>
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            rows={3}
+            placeholder={asset.description ? "Your own description (shown instead of the AI's)" : "Describe this clip"}
+            aria-label="Description"
+            className="w-full rounded-md border border-zinc-500/30 bg-transparent p-2"
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="outline" disabled={text.trim() === mine} onClick={() => void save()}>
+              Save description
+            </Button>
+            {(asset.kind === "video" || asset.kind === "image") && (
+              <Button size="sm" variant="ghost" disabled={queued} onClick={() => void describe()}>
+                {queued ? "Queued: the AI's description shows when it is done" : "Describe with AI"}
+              </Button>
+            )}
+          </div>
+        </>
+      )}
+    </section>
   );
 }
 
@@ -673,6 +787,13 @@ function Player({
           </p>
         )
       )}
+      {detail?.jobs
+        .filter((j) => (j.kind === "describe" || j.kind === "embed") && (j.state === "needs_key" || j.state === "failed"))
+        .map((j) => (
+          <p key={j.kind} className="text-xs text-zinc-500">
+            {j.kind === "describe" ? "AI description" : "Search by meaning"}: {j.error ?? "failed"}
+          </p>
+        ))}
     </>
   );
 }

@@ -152,66 +152,9 @@ export async function extendedScores(
         const samples: ReturnType<typeof parsePdq>[][] = [],
           intervals: number[] = [];
         for (const [side, file] of [before, after].entries()) {
-          const interval = Math.max(1, durations[side] / 64);
-          intervals.push(interval);
-          // Decode once; each video has its own sampling timeline and denominator.
-          await run(ffmpeg, [
-            "-v",
-            "error",
-            "-nostdin",
-            "-y",
-            "-i",
-            file,
-            "-map",
-            "0:V:0",
-            "-vf",
-            `fps=1/${interval}:start_time=0,scale=512:512:flags=bicubic`,
-            "-frames:v",
-            "64",
-            "-pix_fmt",
-            "rgb24",
-            "-start_number",
-            "0",
-            `vpdq-${side}-%03d.ppm`,
-          ]);
-          let names = (await readdir(dir))
-            .filter(
-              (name) =>
-                name.startsWith(`vpdq-${side}-`) && name.endsWith(".ppm"),
-            )
-            .sort();
-          // Clips shorter than half a sampling interval can be dropped by the fps filter.
-          if (!names.length) {
-            const name = `vpdq-${side}-000.ppm`;
-            await run(ffmpeg, [
-              "-v",
-              "error",
-              "-nostdin",
-              "-y",
-              "-i",
-              file,
-              "-map",
-              "0:V:0",
-              "-frames:v",
-              "1",
-              "-vf",
-              "scale=512:512:flags=bicubic",
-              "-pix_fmt",
-              "rgb24",
-              "-update",
-              "1",
-              name,
-            ]);
-            names = [name];
-          }
-          samples.push(
-            (await run(hasher, names)).trim().split(/\r?\n/).map(parsePdq),
-          );
-          if (samples[side].length !== names.length)
-            throw new Error("Incomplete vPDQ frame hashes.");
-          await Promise.all(
-            names.map((name) => rm(path.join(dir, name), { force: true })),
-          );
+          const sampled = await vpdqHashes(file, durations[side], dir, ffmpeg, hasher, `vpdq-${side}`, signal);
+          intervals.push(sampled.interval);
+          samples.push(sampled.frames);
         }
         return matchVpdq(samples[0], samples[1], intervals);
       }, signal);
@@ -295,4 +238,81 @@ export async function extendedScores(
     return { fps: 8, analysisSize: 64, before: results[0], after: results[1] };
   }, signal);
   return report;
+}
+
+/**
+ * One video's vPDQ frame hashes: up to 64 frames evenly sampled (1 s or wider apart) from zero, decoded once into
+ * `dir` as `<prefix>-NNN.ppm`, hashed by the PDQ tool, then deleted. The Cleaner's comparison and the Media Library's
+ * fingerprint job both read them.
+ */
+export async function vpdqHashes(
+  file: string,
+  duration: number,
+  dir: string,
+  ffmpeg: string,
+  hasher: string,
+  prefix: string,
+  signal?: AbortSignal,
+  timeoutMs = 120_000,
+): Promise<{ interval: number; frames: ReturnType<typeof parsePdq>[] }> {
+  const run = (cmd: string, args: string[]) =>
+    runFingerprintTool(cmd, args, dir, timeoutMs, signal);
+  const interval = Math.max(1, duration / 64);
+  // Decode once; each video has its own sampling timeline and denominator.
+  await run(ffmpeg, [
+    "-v",
+    "error",
+    "-nostdin",
+    "-y",
+    "-i",
+    file,
+    "-map",
+    "0:V:0",
+    "-vf",
+    `fps=1/${interval}:start_time=0,scale=512:512:flags=bicubic`,
+    "-frames:v",
+    "64",
+    "-pix_fmt",
+    "rgb24",
+    "-start_number",
+    "0",
+    `${prefix}-%03d.ppm`,
+  ]);
+  let names = (await readdir(dir))
+    .filter((name) => name.startsWith(`${prefix}-`) && name.endsWith(".ppm"))
+    .sort();
+  // Clips shorter than half a sampling interval can be dropped by the fps filter.
+  if (!names.length) {
+    const name = `${prefix}-000.ppm`;
+    await run(ffmpeg, [
+      "-v",
+      "error",
+      "-nostdin",
+      "-y",
+      "-i",
+      file,
+      "-map",
+      "0:V:0",
+      "-frames:v",
+      "1",
+      "-vf",
+      "scale=512:512:flags=bicubic",
+      "-pix_fmt",
+      "rgb24",
+      "-update",
+      "1",
+      name,
+    ]);
+    names = [name];
+  }
+  try {
+    const frames = (await run(hasher, names)).trim().split(/\r?\n/).map(parsePdq);
+    if (frames.length !== names.length)
+      throw new Error("Incomplete vPDQ frame hashes.");
+    return { interval, frames };
+  } finally {
+    await Promise.all(
+      names.map((name) => rm(path.join(dir, name), { force: true })),
+    );
+  }
 }

@@ -18,21 +18,26 @@ export function ftsQuery(q: string): string | null {
   return words.length ? words.map((w) => `"${w.replace(/"/g, '""')}"*`).join(" ") : null;
 }
 
-/** Rewrites an asset's search row (FTS5 has no upsert): its title and tags. Description joins in S8. */
+/** The description people see: a human's wins over the AI's. `source || char(31) || text`, split by toCard. */
+const SHOWN = (version: string) =>
+  `(SELECT source || char(31) || text FROM descriptions dd WHERE dd.version_id = ${version} ORDER BY dd.source = 'user' DESC LIMIT 1)`;
+
+/** Rewrites an asset's search row (FTS5 has no upsert): its title, tags and the shown description of its current version. */
 export function indexAsset(db: DatabaseSync, assetId: string): void {
-  const a = db.prepare("SELECT library_id, title FROM assets WHERE id = ?").get(assetId) as
-    | { library_id: string; title: string }
+  const a = db.prepare(`SELECT library_id, title, ${SHOWN("assets.current_version_id")} AS description FROM assets WHERE id = ?`).get(assetId) as
+    | { library_id: string; title: string; description: string | null }
     | undefined;
   if (!a) return;
   const tags = (db.prepare("SELECT tag FROM asset_tags WHERE asset_id = ?").all(assetId) as { tag: string }[])
     .map((r) => r.tag)
     .join(" ");
   db.prepare("DELETE FROM search_assets WHERE asset_id = ?").run(assetId);
-  db.prepare("INSERT INTO search_assets (asset_id, library_id, title, tags, description) VALUES (?, ?, ?, ?, '')").run(
+  db.prepare("INSERT INTO search_assets (asset_id, library_id, title, tags, description) VALUES (?, ?, ?, ?, ?)").run(
     assetId,
     a.library_id,
     a.title,
     tags,
+    a.description ? describedAs(a.description).text : "",
   );
 }
 
@@ -58,7 +63,8 @@ export const CARD = `a.id AS id, a.library_id AS library_id, a.kind AS kind, a.t
   a.trashed_at AS trashed_at, v.id AS version_id, v.n AS version_n, v.state AS state, v.probe AS probe,
   EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'thumb') AS has_thumb,
   (SELECT group_concat(tag, char(31)) FROM asset_tags t WHERE t.asset_id = a.id) AS tags,
-  (SELECT group_concat(tag, char(31)) FROM asset_tags t WHERE t.asset_id = a.id AND t.source = 'ai') AS ai_tags`;
+  (SELECT group_concat(tag, char(31)) FROM asset_tags t WHERE t.asset_id = a.id AND t.source = 'ai') AS ai_tags,
+  ${SHOWN("v.id")} AS description`;
 
 export interface CardRow {
   id: string;
@@ -74,6 +80,7 @@ export interface CardRow {
   has_thumb: number;
   tags: string | null;
   ai_tags: string | null;
+  description: string | null;
 }
 
 /** The SQL for one page of a library's assets, with `limit + 1` rows so the caller knows there is a next page. */
@@ -141,11 +148,17 @@ export function toCard(r: CardRow): AssetCard {
     ...(r.has_thumb ? { thumbUrl: `/api/library/media/${r.version_id}/thumb` } : {}),
     tags: split(r.tags),
     aiTags: split(r.ai_tags),
+    ...(r.description ? { description: describedAs(r.description) } : {}),
     state: r.state,
     ...(p.capturedAt ? { capturedAt: p.capturedAt } : {}),
     ...(r.trashed_at ? { trashedAt: r.trashed_at } : {}),
   };
 }
+
+const describedAs = (s: string): NonNullable<AssetCard["description"]> => {
+  const i = s.indexOf("\x1f");
+  return { source: s.slice(0, i) === "user" ? "user" : "ai", text: s.slice(i + 1) };
+};
 
 /** One page: items, plus the cursor when more follow. */
 export function pageOf(rows: CardRow[], limit: number): AssetPage {

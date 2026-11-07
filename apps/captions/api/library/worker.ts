@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { env } from "../lib/env";
-import { blobs, libraryDb } from "./db";
+import { blobs, libraryDb, librarySetting } from "./db";
+import { describeVersion } from "./describe";
+import { embedVersion } from "./embed";
+import { fingerprint } from "./fingerprint";
 import { claimJob, enqueueJob, finishJob, parkJob, requeueExpired, type JobRow } from "./jobs";
 import { makeProxy, needsProxy } from "./media/proxy";
 import { probe, type ProbeSummary } from "./media/probe";
@@ -19,6 +22,9 @@ import { NeedsKey, transcribeVersion } from "./transcribe";
 
 // ponytail: one job at a time for the whole server; the plan's per-kind limits come when a second job matters
 const IDLE_MS = 2000;
+
+/** Extras: a failure leaves the version playable. Only the files it is shown with fail it. */
+const EXTRA = new Set(["transcribe", "describe", "fingerprint", "embed"]);
 
 const scratch = () => process.env.LIBRARY_SCRATCH_DIR || path.join(env.dataDir, "library", "scratch");
 
@@ -45,8 +51,7 @@ export async function tick(now = Date.now()): Promise<boolean> {
     }
     finishJob(db, job.id, false, e instanceof Error ? e.message : String(e), now);
     const after = db.prepare("SELECT state FROM jobs WHERE id = ?").get(job.id) as { state: string };
-    // a failed transcript leaves the version playable; only the files it is shown with fail it
-    if (after.state === "failed" && job.kind !== "transcribe") db.prepare("UPDATE asset_versions SET state = 'failed' WHERE id = ?").run(job.version_id);
+    if (after.state === "failed" && !EXTRA.has(job.kind)) db.prepare("UPDATE asset_versions SET state = 'failed' WHERE id = ?").run(job.version_id);
   }
   return true;
 }
@@ -96,6 +101,9 @@ async function run(job: JobRow): Promise<void> {
     enqueueJob(db, v.library_id, v.id, "wave", job.actor);
     if (needsProxy(p)) enqueueJob(db, v.library_id, v.id, "proxy", job.actor);
     if (p.acodec) enqueueJob(db, v.library_id, v.id, "transcribe", job.actor);
+    if (p.vcodec) enqueueJob(db, v.library_id, v.id, "fingerprint", job.actor);
+    // after transcribe in the queue, so the description reads what is said
+    if (p.vcodec && librarySetting(v.library_id, "describe")) enqueueJob(db, v.library_id, v.id, "describe", job.actor);
   } else if (!p) {
     throw new Error("Not probed yet");
   } else if (job.kind === "thumb") {
@@ -110,8 +118,16 @@ async function run(job: JobRow): Promise<void> {
     const file = out("mp4");
     await makeProxy(src, file);
     await keep("proxy", file, `${base}/proxy.mp4`);
-  } else if (job.kind === "transcribe") {
-    await transcribeVersion(db, v.id, src, p.duration, job.actor, dir);
+  } else if (job.kind === "transcribe" || job.kind === "describe") {
+    if (job.kind === "transcribe") await transcribeVersion(db, v.id, src, p.duration, job.actor, dir);
+    else await describeVersion(db, v.id, src, p.duration, job.actor, dir);
+    // new words to search by meaning: embed (again) when the library has semantic search on
+    if (librarySetting(v.library_id, "embed")) enqueueJob(db, v.library_id, v.id, "embed", job.actor, true);
+  } else if (job.kind === "fingerprint") {
+    const f = JSON.stringify(await fingerprint(src, p.duration, dir));
+    db.prepare("INSERT OR REPLACE INTO derivatives (version_id, kind, inline, bytes) VALUES (?, 'fingerprint', ?, ?)").run(v.id, f, Buffer.byteLength(f));
+  } else if (job.kind === "embed") {
+    await embedVersion(db, v.id, job.actor);
   } else {
     throw new Error(`No worker for ${job.kind}`);
   }

@@ -29,16 +29,28 @@ export class NeedsKey extends Error {}
 // ponytail: one flat, rounded-up rate for both providers; check your provider's price sheet and set the env value
 const usdPerMinute = () => Number(process.env.LIBRARY_TRANSCRIBE_USD_PER_MIN) || 0.01;
 
+/** A platform admin, or the solo install's own account (APP_SECRET unset): the server's keys are theirs. */
+export const isAdminActor = (name: string) => findUser(name)?.role === "admin" || (!env.appSecret && name === LOCAL_USER.username);
+
+/**
+ * May the server's paid keys run for `actor`, and whose budget pays: a platform admin (nobody's), or a member on a
+ * workspace API budget while it lasts (theirs). Throws NeedsKey otherwise. `what` names the work in the message.
+ */
+export function keyRoute(actor: string | null, what: string): { bill?: string } {
+  const name = actor ?? "";
+  if (isAdminActor(name)) return {};
+  const left = budgetLeft(name);
+  if (left === null) throw new NeedsKey(`${what} uses the server's key: ask the workspace owner for an API budget`);
+  if (left <= 0) throw new NeedsKey("Your AI budget for this month is used up");
+  return { bill: name };
+}
+
 /** Which key transcribes for `actor`, and whose budget pays. Throws NeedsKey when there is no route. */
 export function transcribeRoute(actor: string | null): { provider: "deepgram" | "openai"; bill?: string } {
-  const name = actor ?? "";
-  const admin = findUser(name)?.role === "admin" || (!env.appSecret && name === LOCAL_USER.username);
-  const left = admin ? null : budgetLeft(name);
-  if (!admin && left === null) throw new NeedsKey("Transcription uses the server's key: ask the workspace owner for an API budget");
-  if (left !== null && left <= 0) throw new NeedsKey("Your AI budget for this month is used up");
+  const route = keyRoute(actor, "Transcription");
   const provider = process.env.DEEPGRAM_API_KEY ? "deepgram" : process.env.OPENAI_API_KEY ? "openai" : null;
   if (!provider) throw new NeedsKey("No transcription key: an admin adds Deepgram or OpenAI in Settings → API keys");
-  return { provider, ...(admin ? {} : { bill: name }) };
+  return { provider, ...route };
 }
 
 /** Words into segments: one per utterance when Deepgram marks them, else a new one after a pause or 30 words. */

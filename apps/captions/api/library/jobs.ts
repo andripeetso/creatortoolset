@@ -22,13 +22,16 @@ export interface JobRow {
   error: string | null;
 }
 
-/** Queues a job. A job already queued, running or done stays as it is; a failed or needs_key one is queued again from zero. */
-export function enqueueJob(db: DatabaseSync, libraryId: string, versionId: string, kind: string, actor: string | null): void {
+/**
+ * Queues a job. A job already queued, running or done stays as it is; a failed or needs_key one is queued again from
+ * zero. `again` queues a done one too: its input changed (a new transcript to embed, a describe someone asked for again).
+ */
+export function enqueueJob(db: DatabaseSync, libraryId: string, versionId: string, kind: string, actor: string | null, again = false): void {
   db.prepare(
     `INSERT INTO jobs (library_id, version_id, kind, state, actor) VALUES (?, ?, ?, 'queued', ?)
      ON CONFLICT (version_id, kind) DO UPDATE SET state = 'queued', attempts = 0, run_after = 0,
        lease_until = NULL, error = NULL, actor = excluded.actor
-     WHERE jobs.state IN ('failed', 'needs_key')`,
+     WHERE jobs.state IN ('failed', 'needs_key'${again ? ", 'done'" : ""})`,
   ).run(libraryId, versionId, kind, actor);
 }
 

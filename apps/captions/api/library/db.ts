@@ -37,3 +37,7 @@ export const libraryDb = (): DatabaseSync => (shared ??= openLibraryDb(path.join
 
 /** The library's files, $DATA_DIR/library/blobs, by key (storage/local.ts). Shared by the routes and the worker. */
 export const blobs = localBlobs(path.join(env.dataDir, "library", "blobs"));
+
+/** A library's on/off setting. describe and embed spend AI on every upload, so they are off until its owner turns them on. */
+export const librarySetting = (libraryId: string, key: "describe" | "embed"): boolean =>
+  !!(libraryDb().prepare(`SELECT json_extract(settings, '$.${key}') AS on_ FROM libraries WHERE id = ?`).get(libraryId) as { on_: number | null } | undefined)?.on_;

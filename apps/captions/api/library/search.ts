@@ -4,8 +4,9 @@ import type { AssetDetail, SearchHit } from "../../contracts/library";
 import { canManage } from "../lib/workspaces";
 import { libraryRole, versionSource } from "./access";
 import { libraryDb } from "./db";
+import { hitKey, rrf, semanticHits } from "./embed";
 import { enqueueJob } from "./jobs";
-import { CARD, ftsQuery, toCard, type CardRow } from "./query";
+import { CARD, ftsQuery, indexAsset, toCard, type CardRow } from "./query";
 import { segmentsOf } from "./transcribe";
 
 /**
@@ -81,13 +82,16 @@ export function assetDetail(libraryId: string, assetId: string): AssetDetail | n
   };
 }
 
-// GET /api/library/:id/search?q → SearchHit[]
-searchApp.get("/:id/search", (c) => {
+// GET /api/library/:id/search?q → SearchHit[]: full text, fused with the closest chunks by meaning when semantic search is on
+searchApp.get("/:id/search", async (c) => {
+  const user = c.get("user");
   const libraryId = c.req.param("id");
-  if (!libraryRole(c.get("user").username, libraryId)) return notFound(c);
+  if (!libraryRole(user.username, libraryId)) return notFound(c);
   const q = (c.req.query("q") ?? "").trim().slice(0, 200);
   if (!q) return c.json({ error: "Type something to search for", code: "invalid" }, 400);
-  return c.json(searchLibrary(libraryId, q));
+  const text = searchLibrary(libraryId, q);
+  const meaning = await semanticHits(libraryId, q, user.username).catch(() => null);
+  return c.json(meaning ? rrf([text, meaning], hitKey).slice(0, 2 * LIMIT) : text);
 });
 
 // GET /api/library/:id/assets/:assetId → AssetDetail
@@ -98,7 +102,7 @@ searchApp.get("/:id/assets/:assetId", (c) => {
   return detail ? c.json(detail) : notFound(c);
 });
 
-const RERUN = new Set(["transcribe"]);
+const RERUN = new Set(["transcribe", "describe", "fingerprint", "embed"]);
 
 // POST /api/library/:id/assets/:assetId/jobs { kinds } → queued again, with the caller as the actor (their key or budget)
 searchApp.post("/:id/assets/:assetId/jobs", async (c) => {
@@ -114,9 +118,59 @@ searchApp.post("/:id/assets/:assetId/jobs", async (c) => {
   if (!canManage(role ?? undefined) && a.created_by !== user.username) return c.json({ error: "Only the uploader or the owner can do that", code: "forbidden" }, 403);
   const body = (await c.req.json().catch(() => null)) as { kinds?: unknown } | null;
   const kinds = Array.isArray(body?.kinds) ? body.kinds.filter((k): k is string => typeof k === "string" && RERUN.has(k)) : [];
-  if (!kinds.length) return c.json({ error: "Nothing to run: kinds may be transcribe", code: "invalid" }, 400);
-  for (const k of kinds) enqueueJob(db(), libraryId, a.current_version_id, k, user.username);
+  if (!kinds.length) return c.json({ error: `Nothing to run: kinds may be ${[...RERUN].join(", ")}`, code: "invalid" }, 400);
+  // asked for by name: a done job runs again too (a fresh description, new vectors)
+  for (const k of kinds) enqueueJob(db(), libraryId, a.current_version_id, k, user.username, true);
   return c.json({ ok: true });
+});
+
+// PATCH /api/library/:id/assets/:assetId { title?, tags?, description? }: the uploader or the owner.
+// `tags` is the whole list people see: a tag left out goes (the AI's too), a new one is theirs. `description` is the
+// human one, shown over the AI's; empty removes it and the AI's shows again.
+// ponytail: a changed description is not re-embedded until the next transcribe or describe; Retry embed does it now
+searchApp.patch("/:id/assets/:assetId", async (c) => {
+  const user = c.get("user");
+  const libraryId = c.req.param("id");
+  const role = libraryRole(user.username, libraryId);
+  const assetId = c.req.param("assetId");
+  const a = role
+    ? (db().prepare("SELECT created_by, current_version_id FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL").get(assetId, libraryId) as
+        | { created_by: string; current_version_id: string | null }
+        | undefined)
+    : undefined;
+  if (!a?.current_version_id) return notFound(c);
+  if (!canManage(role ?? undefined) && a.created_by !== user.username) return c.json({ error: "Only the uploader or the owner can do that", code: "forbidden" }, 403);
+  const b = (await c.req.json().catch(() => null)) as { title?: unknown; tags?: unknown; description?: unknown } | null;
+  const title = typeof b?.title === "string" ? b.title.trim().slice(0, 160) : undefined;
+  const tags = Array.isArray(b?.tags)
+    ? [...new Set(b.tags.filter((t): t is string => typeof t === "string").map((t) => t.trim().slice(0, 80)).filter(Boolean))].slice(0, 50)
+    : undefined;
+  const description = typeof b?.description === "string" ? b.description.trim().slice(0, 4000) : undefined;
+  if (title === "" || (title === undefined && tags === undefined && description === undefined))
+    return c.json({ error: "Send a title, tags or a description", code: "invalid" }, 400);
+  const d = db();
+  d.exec("BEGIN");
+  try {
+    if (title) d.prepare("UPDATE assets SET title = ? WHERE id = ?").run(title, assetId);
+    if (tags) {
+      d.prepare(`DELETE FROM asset_tags WHERE asset_id = ? AND tag NOT IN (SELECT value FROM json_each(?))`).run(assetId, JSON.stringify(tags));
+      const add = d.prepare("INSERT OR IGNORE INTO asset_tags (asset_id, tag, source) VALUES (?, ?, 'user')");
+      for (const t of tags) add.run(assetId, t);
+    }
+    if (description) {
+      d.prepare("INSERT OR REPLACE INTO descriptions (version_id, source, text, provider, created_at) VALUES (?, 'user', ?, NULL, ?)").run(
+        a.current_version_id,
+        description,
+        Date.now(),
+      );
+    } else if (description === "") d.prepare("DELETE FROM descriptions WHERE version_id = ? AND source = 'user'").run(a.current_version_id);
+    indexAsset(d, assetId);
+    d.exec("COMMIT");
+  } catch (e) {
+    d.exec("ROLLBACK");
+    throw e;
+  }
+  return c.json(assetDetail(libraryId, assetId));
 });
 
 const opening = new Map<string, Promise<string>>();

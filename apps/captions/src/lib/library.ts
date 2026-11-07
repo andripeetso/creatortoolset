@@ -1,4 +1,4 @@
-import type { AssetDetail, AssetPage, Collection, LibrarySummary, SearchHit, SearchQuery, ShareCreated, ShareInput } from "@contracts/library";
+import type { AssetDetail, AssetPage, Collection, LibrarySettings, LibrarySummary, SearchHit, SearchQuery, ShareCreated, ShareInput } from "@contracts/library";
 
 /** The Media Library's calls to api/library/routes.ts, and the chunked upload that follows its offset protocol. */
 
@@ -17,6 +17,14 @@ export const createLibrary = (name: string) =>
   fetch("/api/library", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }) }).then(
     (r) => json<LibrarySummary>(r),
   );
+
+/** The owner's switches for a library: AI descriptions, search by meaning. */
+export const updateLibrary = (libraryId: string, patch: { name?: string; settings?: Partial<LibrarySettings> }) =>
+  send<LibrarySummary>(`/api/library/${libraryId}`, "PATCH", patch);
+
+/** Title, tags (the whole list) or the human description ("" removes it, the AI's shows again). */
+export const updateAsset = (libraryId: string, assetId: string, patch: { title?: string; tags?: string[]; description?: string }) =>
+  send<AssetDetail>(`/api/library/${libraryId}/assets/${assetId}`, "PATCH", patch);
 
 export function listAssets(libraryId: string, q: SearchQuery & { cursor?: string }): Promise<AssetPage> {
   const p = new URLSearchParams();

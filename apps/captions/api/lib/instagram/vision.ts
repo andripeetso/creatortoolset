@@ -60,7 +60,7 @@ export interface VisionPayload {
   hook?: string;
 }
 
-function parseJsonObject(text: string): Record<string, unknown> {
+export function parseJsonObject(text: string): Record<string, unknown> {
   const stripped = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   const start = stripped.indexOf("{");
   const end = stripped.lastIndexOf("}");

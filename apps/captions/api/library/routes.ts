@@ -10,7 +10,7 @@ import { expandCollection } from "./collections";
 import { blobs, libraryDb } from "./db";
 import { canManage, ensureWorkspace, memberIn, workspaceOf } from "../lib/workspaces";
 import { sendFile } from "../lib/send-file";
-import type { LibrarySummary } from "../../contracts/library";
+import type { LibrarySettings, LibrarySummary } from "../../contracts/library";
 import { enqueueJob } from "./jobs";
 import { buildAssetQuery, indexAsset, pageOf, parseSearch, type CardRow } from "./query";
 
@@ -264,10 +264,39 @@ libraryApp.get("/", (c) => {
   if (!w) return c.json({ libraries: [] as LibrarySummary[] });
   const manage = canManage(memberIn(w, user.username)?.role);
   const rows = db()
-    .prepare("SELECT id, name, storage_kind FROM libraries WHERE workspace_id = ? ORDER BY created_at, id")
-    .all(w.id) as { id: string; name: string; storage_kind: LibrarySummary["storage"] }[];
-  const libraries: LibrarySummary[] = rows.map((r) => ({ id: r.id, name: r.name, storage: r.storage_kind, canManage: manage }));
+    .prepare("SELECT id, name, storage_kind, settings FROM libraries WHERE workspace_id = ? ORDER BY created_at, id")
+    .all(w.id) as { id: string; name: string; storage_kind: LibrarySummary["storage"]; settings: string }[];
+  const libraries: LibrarySummary[] = rows.map((r) => ({ id: r.id, name: r.name, storage: r.storage_kind, canManage: manage, settings: settingsOf(r.settings) }));
   return c.json({ libraries });
+});
+
+const settingsOf = (json: string): LibrarySettings => {
+  const s = JSON.parse(json || "{}") as Partial<LibrarySettings>;
+  return { describe: s.describe === true, embed: s.embed === true };
+};
+
+// PATCH /api/library/:id { name?, settings?: { describe?, embed? } } → LibrarySummary; the owner only
+libraryApp.patch("/:id", async (c) => {
+  const user = c.get("user");
+  const libraryId = c.req.param("id");
+  const role = libraryRole(user.username, libraryId);
+  if (!role) return c.json({ error: "Not found", code: "not_found" }, 404);
+  if (!canManage(role)) return c.json({ error: "Only the owner changes the library", code: "forbidden" }, 403);
+  const b = (await c.req.json().catch(() => null)) as { name?: unknown; settings?: Record<string, unknown> } | null;
+  const name = typeof b?.name === "string" ? b.name.trim().slice(0, 80) : "";
+  if (name) db().prepare("UPDATE libraries SET name = ? WHERE id = ?").run(name, libraryId);
+  // one key at a time: other settings (watch folders) are written by other code
+  for (const key of ["describe", "embed"] as const) {
+    const on = b?.settings?.[key];
+    if (typeof on === "boolean") db().prepare(`UPDATE libraries SET settings = json_set(settings, '$.${key}', json(?)) WHERE id = ?`).run(String(on), libraryId);
+  }
+  const r = db().prepare("SELECT name, storage_kind, settings FROM libraries WHERE id = ?").get(libraryId) as {
+    name: string;
+    storage_kind: LibrarySummary["storage"];
+    settings: string;
+  };
+  const updated: LibrarySummary = { id: libraryId, name: r.name, storage: r.storage_kind, canManage: true, settings: settingsOf(r.settings) };
+  return c.json(updated);
 });
 
 // POST /api/library { name } → a local library in the caller's workspace; the owner only
@@ -281,7 +310,7 @@ libraryApp.post("/", async (c) => {
   const name = (typeof body?.name === "string" ? body.name.trim().slice(0, 80) : "") || "Library";
   const id = `lib_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
   db().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES (?, ?, ?, 'local', ?)").run(id, w.id, name, Date.now());
-  const created: LibrarySummary = { id, name, storage: "local", canManage: true };
+  const created: LibrarySummary = { id, name, storage: "local", canManage: true, settings: { describe: false, embed: false } };
   return c.json(created, 201);
 });
 

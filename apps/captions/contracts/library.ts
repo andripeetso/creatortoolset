@@ -61,12 +61,19 @@ export interface ShareInput {
   password?: string;
 }
 
+/** What the owner switches on per library. Both spend AI on every upload, so both start off. */
+export interface LibrarySettings {
+  describe: boolean; // the AI writes a description and tags for each new video
+  embed: boolean; // semantic search: search by meaning as well as by words
+}
+
 /** A library the caller can see, with whether they manage it (the workspace owner). */
 export interface LibrarySummary {
   id: string;
   name: string;
   storage: "local" | "s3" | "bunny";
   canManage: boolean;
+  settings: LibrarySettings;
 }
 
 export interface AssetPage {
