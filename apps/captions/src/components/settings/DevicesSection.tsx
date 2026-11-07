@@ -4,7 +4,6 @@ import { getProviders, removeDevice, renameDevice } from "@/lib/providers";
 import type { ProvidersView } from "@contracts/providers";
 import { ConfirmButton } from "@/components/instagram/ConfirmButton";
 import { Button } from "@/components/ui/button";
-import { useMacRelease } from "@/components/MacAppDownload";
 import { Dot, Group, Loading, Notice } from "./ui";
 import { fmtAgo, msg, selectCls } from "./helpers";
 
@@ -15,7 +14,6 @@ export function DevicesSection() {
   const me = useAuth((s) => s.me);
   const [view, setView] = useState<ProvidersView | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const release = useMacRelease();
 
   const reload = () =>
     getProviders()
@@ -59,18 +57,6 @@ export function DevicesSection() {
           <li>Sign in with this account.</li>
           <li>When it asks, allow it to run your AI on this Mac. It shows up here as online within a minute.</li>
         </ol>
-        <div className="mt-3">
-          {release ? (
-            <Button asChild size="sm">
-              <a href="/api/mac-app/download">Download the Mac app ({release.version})</a>
-            </Button>
-          ) : (
-            <Notice>The download link for the Mac app comes later.</Notice>
-          )}
-          <p className="mt-2 text-xs text-muted-foreground">
-            <a href="/download" className="underline underline-offset-2 hover:text-foreground">Downloads and the self-hosting guide</a>
-          </p>
-        </div>
       </Group>
     </>
   );

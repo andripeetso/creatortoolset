@@ -22,8 +22,6 @@ COPY apps/mac/package.json apps/mac/
 RUN pnpm install --frozen-lockfile
 
 COPY apps/captions apps/captions
-# the /download page renders the self-hosting guide (src/pages/DownloadPage.tsx)
-COPY SELF_HOSTING.md ./
 RUN pnpm --filter @creator-toolset/captions run build \
   && pnpm --filter @creator-toolset/captions exec playwright install chromium-headless-shell \
   && pnpm --filter @creator-toolset/captions deploy --prod /deploy

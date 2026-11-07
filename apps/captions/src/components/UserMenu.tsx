@@ -2,7 +2,6 @@ import { useLocation, useNavigate } from "react-router";
 import {
   ChevronDown,
   BarChart3,
-  Download,
   LogOut,
   Package,
   Settings,
@@ -71,13 +70,6 @@ export function UserMenu() {
           <DropdownMenuItem onSelect={() => navigate("/settings/usage")} className="text-xs">
             <BarChart3 /> Usage
           </DropdownMenuItem>
-          {!document.documentElement.classList.contains("mac-app") && (
-            <DropdownMenuItem asChild className="text-xs">
-              <a href="/download">
-                <Download /> Get the Mac app
-              </a>
-            </DropdownMenuItem>
-          )}
 
           {required && (
             <>

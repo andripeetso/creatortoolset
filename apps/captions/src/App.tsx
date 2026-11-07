@@ -23,14 +23,13 @@ import LibrarySharePage from "./pages/LibrarySharePage";
 import EditorPage from "./pages/EditorPage";
 import EditorEditPage from "./pages/EditorEditPage";
 import type { Tool } from "@contracts/tools";
-import { isPublicDownloadPath, isPublicLibraryPath, isPublicReviewPath, isPublicSharePath } from "@/components/AuthGate";
+import { isPublicLibraryPath, isPublicReviewPath, isPublicSharePath } from "@/components/AuthGate";
 import { analyzerHome } from "@/lib/instagram";
 import { isPhoneHub } from "@/lib/mobile";
 import { ExportTray } from "@/components/ExportTray";
 import { SetupDialog } from "@/components/SetupDialog";
 import { FirstOpen } from "@/components/setup/FirstOpen";
 import { AssistantDock } from "@/components/assistant/AssistantDock";
-import LegalPage from "@/pages/LegalPage";
 import { AppDialogs } from "@/components/AppDialogs";
 import { canUse, useAuth, useMe } from "@/lib/auth";
 import { initTabGuard } from "@/lib/tabs";
@@ -53,7 +52,6 @@ const MobileWorkshopSessionPage = lazy(() =>
   })),
 );
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
-const DownloadPage = lazy(() => import("./pages/DownloadPage"));
 
 function PhoneTool({ children }: { children: ReactNode }) {
   return (
@@ -195,8 +193,7 @@ export default function App() {
   const closeSettings = () => navigate(behind.current ? behind.current.pathname + behind.current.search + behind.current.hash : "/");
   const onMobile = location.pathname.startsWith("/m");
   const publicPage =
-    isPublicSharePath(location.pathname) || isPublicReviewPath(location.pathname) || isPublicLibraryPath(location.pathname) ||
-    isPublicDownloadPath(location.pathname);
+    isPublicSharePath(location.pathname) || isPublicReviewPath(location.pathname) || isPublicLibraryPath(location.pathname);
 
   useEffect(() => {
     initTabGuard(() => useStudio.getState().setTabConflict(true));
@@ -267,10 +264,6 @@ export default function App() {
           <Route path="/rp/:ptoken" element={<ReviewSharedProjectPage />} />
           <Route path="/ws/:token" element={<WorkshopSharePage />} />
           <Route path="/library/s/:token" element={<LibrarySharePage />} />
-          <Route path="/download" element={<Suspense fallback={<div className="h-dvh bg-[#0b0b10]" />}><DownloadPage /></Suspense>} />
-          <Route path="/privacy" element={<LegalPage page="/privacy" />} />
-          <Route path="/terms" element={<LegalPage page="/terms" />} />
-          <Route path="/data-deletion" element={<LegalPage page="/data-deletion" />} />
           <Route path="/library" element={<AppRoute tool="media"><LibraryPage /></AppRoute>} />
           <Route path="/stories" element={<AppRoute tool="stories"><StorySplitterPage /></AppRoute>} />
           <Route path="/editor" element={<AppRoute tool="editor"><EditorPage /></AppRoute>} />

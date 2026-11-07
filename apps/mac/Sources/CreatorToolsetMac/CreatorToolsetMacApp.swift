@@ -8,7 +8,7 @@ import WebKit
 struct CreatorToolsetMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var shell: Shell
-    /// Sparkle: reads the site's appcast every 4 hours and installs what it finds (Info.plist keys from
+    /// Sparkle: reads the appcast at FEED_URL every 4 hours and installs what it finds (Info.plist keys from
     /// build-app.sh). A build without a feed (`swift run`) starts no updater.
     private let updater = SPUStandardUpdaterController(
         startingUpdater: Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil,
@@ -197,7 +197,6 @@ struct SettingsView: View {
                             .foregroundStyle(.red)
                     }
                     HStack {
-                        Button("Use creatortoolset.com") { shell.setSite(productionSite) }
                         Spacer()
                         Button("Save") { save() }.keyboardShortcut(.defaultAction)
                     }
@@ -211,7 +210,6 @@ struct SettingsView: View {
                      : "Where you sign in with Apple or Google on the first run. Empty: no account step.")
                     .font(.caption).foregroundStyle(accountInvalid ? .red : .secondary)
                 HStack {
-                    Button("Use creatortoolset.com") { accountServer = productionSite.absoluteString; saveAccountServer() }
                     Spacer()
                     Button("Save") { saveAccountServer() }
                 }

@@ -23,7 +23,7 @@ export function isPublicLibraryPath(pathname: string): boolean {
 }
 
 export function isPublicSharePath(pathname: string): boolean {
-  return isPublicClipPath(pathname) || isPublicDocumentPath(pathname) || /^\/(privacy|terms|data-deletion)\/?$/.test(pathname);
+  return isPublicClipPath(pathname) || isPublicDocumentPath(pathname);
 }
 
 /** Review share links: /r/<token>, and a project's /rp/<token>[/<video>];
@@ -34,11 +34,6 @@ export function isPublicReviewPath(pathname: string): boolean {
   return new RegExp(`^/(?:r/${PUBLIC_UUID}|rp/${PUBLIC_UUID}(?:/${PUBLIC_UUID})?|fs/${PUBLIC_UUID}|ws/${PUBLIC_UUID})/?$`, "i").test(pathname);
 }
 
-/** The download page (pages/DownloadPage.tsx): public, so a visitor gets the Mac app before any account; always dark. */
-export function isPublicDownloadPath(pathname: string): boolean {
-  return /^\/download\/?$/.test(pathname);
-}
-
 /**
  * Blocks the app behind an account login when the server has
  * APP_SECRET set (public hosting). Renders children immediately when
@@ -47,7 +42,7 @@ export function isPublicDownloadPath(pathname: string): boolean {
  */
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const { pathname } = useLocation();
-  const publicShare = isPublicSharePath(pathname) || isPublicReviewPath(pathname) || isPublicLibraryPath(pathname) || isPublicDownloadPath(pathname);
+  const publicShare = isPublicSharePath(pathname) || isPublicReviewPath(pathname) || isPublicLibraryPath(pathname);
   const [state, setState] = useState<"checking" | "login" | "ok">("checking");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");

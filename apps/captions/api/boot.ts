@@ -37,7 +37,6 @@ import { assistantApp } from "./assistant";
 import { providersApp } from "./providers";
 import { mcpApp } from "./mcp";
 import { connectorsApp, startConnectorPulls } from "./connectors";
-import { macAppPublic, macAppRelease } from "./mac-app";
 import { ownerProfileApp } from "./owner-profile";
 import { devicesApp } from "./devices";
 import { deviceForToken } from "./lib/devices";
@@ -154,10 +153,8 @@ const REVIEW = /^\/api\/review(?:\/|$)/;
 const REVIEW_COMMENT = new RegExp(`^/api/review/assets/${PUBLIC_UUID}/comments/[^/]+$`, "i");
 const REVIEW_UPLOAD = new RegExp(`^/api/review/uploads(?:/${PUBLIC_UUID}/(?:parts/\\d+|complete))?$`, "i");
 // what an AI access key may call, route by route: Review reads, resolving a comment and uploading a
-// video or a new version (a final cut) for any account; for admins also the Mac app
-// release (PUT /api/mac-app/release).
+// video or a new version (a final cut) for any account.
 const KEY_ROUTES: [string, RegExp][] = [["GET", REVIEW], ["PATCH", REVIEW_COMMENT], ["POST", REVIEW_UPLOAD]];
-const ADMIN_KEY_ROUTES: [string, RegExp][] = [["PUT", /^\/api\/mac-app\/release$/]];
 const FULL_KEY_NEVER = /^\/api\/(?:providers|devices|service-keys|my-keys)(?:\/|$)/;
 const keyRoute = (routes: [string, RegExp][], method: string, p: string) =>
   routes.some(([m, r]) => m === method && r.test(p));
@@ -201,9 +198,6 @@ app.get("/api/health", (c) =>
   }),
 );
 
-// the Mac app's download and Sparkle appcast (mac-app.ts): public, before the account gate
-app.route("/api/mac-app", macAppPublic);
-
 // account gate (active only when APP_SECRET is set — see api/auth.ts)
 app.use("/api/*", async (c, next) => {
   if (c.req.path.startsWith("/api/auth")) return next();
@@ -243,13 +237,11 @@ app.use("/api/*", async (c, next) => {
     return next();
   }
   if (!user) {
-    // an AI access key: KEY_ROUTES (review.ts refuses text edits from it),
-    // ADMIN_KEY_ROUTES only when its account is an admin; nothing else
-    const adminOnly = keyRoute(ADMIN_KEY_ROUTES, c.req.method, c.req.path);
-    const keyUser = adminOnly || keyRoute(KEY_ROUTES, c.req.method, c.req.path)
+    // an AI access key: KEY_ROUTES only (review.ts refuses text edits from it)
+    const keyUser = keyRoute(KEY_ROUTES, c.req.method, c.req.path)
       ? getApiKeyUser(c.req.header("authorization"))
       : null;
-    if (!keyUser || (adminOnly && keyUser.role !== "admin")) return c.json({ error: "Unauthorized" }, 401);
+    if (!keyUser) return c.json({ error: "Unauthorized" }, 401);
     c.set("user", keyUser);
     return next();
   }
@@ -275,7 +267,6 @@ app.route("/api/assistant", assistantApp);
 app.route("/api/connectors", connectorsApp);
 startConnectorPulls();
 app.route("/api/devices", devicesApp);
-app.route("/api/mac-app", macAppRelease);
 // the Mac app's signed-in account as this server's owner (owner-profile.ts)
 app.route("/api/owner-profile", ownerProfileApp);
 app.use("/api/trpc/*", async (c) => {

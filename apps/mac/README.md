@@ -128,7 +128,7 @@ build script.
 
 ## Download and updates
 
-The site can serve the app's download and its Sparkle appcast (`apps/captions/api/mac-app.ts`). With
+The app's download and its Sparkle appcast are hosted outside this repository; the web app serves neither. With
 `SPARKLE_PUBLIC_KEY` and `FEED_URL` set at build time, Sparkle reads the appcast every 4 hours, downloads a
 newer build, checks its EdDSA signature and installs it when the app quits (Check for Updates… in the app
 menu and the menu bar item). The page inside the window updates with every site deploy: it offers a Reload
