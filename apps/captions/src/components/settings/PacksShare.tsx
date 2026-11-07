@@ -9,9 +9,9 @@ import { Loading, Notice } from "./ui";
 import { msg, selectCls } from "./helpers";
 import { ContentsView } from "./PacksShared";
 import { LICENCES, USED_SLOTS, slugify } from "./packs-helpers";
-import { ApiError, exportPack, listOwnFrameworks, listOwnPresets } from "./packs-api";
+import { ApiError, exportPack, listOwnFrameworks, listOwnPresets, submitPack } from "./packs-api";
 
-/** Share as pack: pick your own items, write the instructions per place, check, then download the file. */
+/** Share as pack: pick your own items, write the instructions per place, check, then download or publish. */
 export function PacksShare() {
   const me = useAuth((s) => s.me);
   const [own, setOwn] = useState<{ frameworks: Array<{ id: string; name: string }>; presets: Array<{ id: string; name: string; kind?: string }> } | null>(null);
@@ -32,6 +32,8 @@ export function PacksShare() {
   const [error, setError] = useState<string | null>(null);
   const [built, setBuilt] = useState<Pack | null>(null);
   const [busy, setBusy] = useState(false);
+  const [rights, setRights] = useState(false);
+  const [published, setPublished] = useState<{ text: string; href?: string } | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -62,6 +64,7 @@ export function PacksShare() {
     setProblems([]);
     setError(null);
     setBuilt(null);
+    setPublished(null);
     try {
       const r = await exportPack({
         id: id || slugify(name),
@@ -92,6 +95,26 @@ export function PacksShare() {
     a.download = `${built.id}.ctpack.json`;
     a.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  // this server only reads the community catalog: publishing answers with the catalog's site, where packs are sent
+  const publish = async () => {
+    if (!built) return;
+    setBusy(true);
+    setPublished(null);
+    try {
+      await submitPack(built);
+      setPublished({ text: "Sent to the community catalog." });
+    } catch (err) {
+      const at = err instanceof ApiError ? err.body.publishAt : undefined;
+      if (typeof at === "string" && /^https?:\/\//.test(at)) {
+        setPublished({ text: "Publish it on the community catalog's site: download the file, then send it there.", href: at });
+      } else {
+        setPublished({ text: msg(err) });
+      }
+    } finally {
+      setBusy(false);
+    }
   };
 
   if (loadError) return <Notice tone="error">{loadError}</Notice>;
@@ -200,9 +223,34 @@ export function PacksShare() {
             <span className="text-xs text-muted-foreground">v{built.version}</span>
           </div>
           <ContentsView pack={built} />
-          <Button size="sm" variant="outline" onClick={download}>
-            Download .ctpack.json
-          </Button>
+          <label className="flex items-start gap-2 text-xs text-muted-foreground">
+            <input type="checkbox" className="mt-0.5" checked={rights} onChange={(e) => setRights(e.target.checked)} />
+            <span>
+              This is mine to share: I wrote it, or it&apos;s under a licence that allows this. It copies no text from books, courses
+              or other people&apos;s posts, and nothing from my Knowledge.
+            </span>
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" onClick={download}>
+              Download .ctpack.json
+            </Button>
+            <Button size="sm" onClick={() => void publish()} disabled={busy || !rights}>
+              Publish to the community
+            </Button>
+          </div>
+          {published && (
+            <Notice tone="muted">
+              {published.text}
+              {published.href && (
+                <>
+                  {" "}
+                  <a href={published.href} target="_blank" rel="noreferrer" className="underline">
+                    Open it
+                  </a>
+                </>
+              )}
+            </Notice>
+          )}
         </section>
       )}
     </div>

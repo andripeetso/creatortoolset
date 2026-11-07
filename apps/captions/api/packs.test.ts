@@ -132,3 +132,45 @@ describe("the official starter pack", () => {
     expect(frameworks().length).toBe(before + 2);
   });
 });
+
+describe("the team's default packs", () => {
+  it("every shipped pack passes the checks", async () => {
+    const { readOfficialPacks } = await import("./official-packs");
+    const { DEFAULT_PACKS } = await import("./lib/packs");
+    const ids = readOfficialPacks().map((o) => o.pack.id);
+    expect(ids).toEqual(expect.arrayContaining([...DEFAULT_PACKS, "storytelling-basics"]));
+    expect(readdirSync(path.join(import.meta.dirname, "..", "packs")).length).toBe(ids.length);
+  });
+
+  it("a new account gets them on; an account from before packs gets them off; a removed one stays gone", async () => {
+    const { createUser, findUser } = await import("./users");
+    const { DEFAULT_PACKS, listInstalled, removePack } = await import("./lib/packs");
+    createUser("newcreator", "secret-pass");
+    createUser("oldcreator", "secret-pass");
+    findUser("oldcreator")!.createdAt = Date.UTC(2026, 9, 1);
+    findUser("newcreator")!.createdAt = Date.UTC(2027, 0, 1);
+
+    const fresh = await listInstalled("newcreator");
+    expect(fresh.map((p) => p.id).sort()).toEqual([...DEFAULT_PACKS].sort());
+    expect(fresh.every((p) => p.default && p.off.length === 0)).toBe(true);
+    expect(await packInstructions("newcreator", "workshop.write", null)).toContain('[Pack "Writing basics"');
+
+    const old = await listInstalled("oldcreator");
+    expect(old.every((p) => p.default && p.off.includes("*"))).toBe(true);
+    expect(await packInstructions("oldcreator", "workshop.write", null)).toBe("");
+
+    await removePack("newcreator", "writing-basics");
+    expect((await listInstalled("newcreator")).map((p) => p.id)).not.toContain("writing-basics");
+  });
+
+  it("guests and unknown names get none, and a missing packs folder doesn't use up the defaults", async () => {
+    const { createUser } = await import("./users");
+    const { DEFAULT_PACKS, ensureDefaults, listInstalled } = await import("./lib/packs");
+    expect(await listInstalled("guest")).toEqual([]);
+    createUser("latecreator", "secret-pass");
+    await ensureDefaults("latecreator", ["no-such-pack"]);
+    const state = JSON.parse(readFileSync(path.join(dataDir, "packs", "installed", "latecreator.json"), "utf-8"));
+    expect(state.defaultsSeen).not.toContain("no-such-pack");
+    expect((await listInstalled("latecreator")).length).toBe(DEFAULT_PACKS.length);
+  });
+});

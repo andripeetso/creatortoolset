@@ -2,7 +2,9 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { PACK_SLOTS, type InstalledPack, type Pack, type PackLevel, type PackOrigin, type PackSlot } from "../../contracts/packs";
+import { readOfficialPacks } from "../official-packs";
 import { packPresetStore, type PresetRecord } from "../presets";
+import { findUser } from "../users";
 import { env } from "./env";
 import type { Framework } from "./workshop/types";
 
@@ -11,8 +13,18 @@ import type { Framework } from "./workshop/types";
  * `from: {pack, version}`; the instructions stay here and are added to
  * prompts by `packInstructions`. Update rewrites only untouched copies; remove deletes only untouched copies.
  *
- *   $DATA_DIR/packs/installed/<username>.json   {packs: InstalledPack[]}
+ *   $DATA_DIR/packs/installed/<username>.json   {packs: InstalledPack[], defaultsSeen: string[]}
+ *
+ * Default packs (DEFAULT_PACKS) are the team's official ones, installed for every account the first time its packs
+ * are read, so they shape prompts from day one and can be switched off or swapped for community packs. Accounts made
+ * before DEFAULTS_ON_FROM get them switched off: those already had their own setup, and a pack must not change it
+ * unasked. A removed default never comes back (`defaultsSeen`); a new default reaches everyone once.
  */
+
+/** The team's packs every account starts with (files in apps/captions/packs/). */
+export const DEFAULT_PACKS = ["writing-basics", "editing-basics", "analyzer-basics", "caption-styles-basics"];
+/** Accounts created before this get the defaults installed but switched off. */
+const DEFAULTS_ON_FROM = Date.UTC(2026, 10, 7, 20);
 
 const ROOT = () => path.join(env.dataDir, "packs");
 const installedFile = (username: string) => path.join(ROOT(), "installed", `${username}.json`);
@@ -44,12 +56,45 @@ function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
   return next;
 }
 
+interface State {
+  packs: InstalledPack[];
+  defaultsSeen?: string[];
+}
+const readState = async (username: string): Promise<State> => (await readJson<State>(installedFile(username))) ?? { packs: [] };
+const saveState = (username: string, state: State) => writeJsonAtomic(installedFile(username), state);
+
 export async function listInstalled(username: string): Promise<InstalledPack[]> {
   if (!USER.test(username)) return [];
-  return (await readJson<{ packs: InstalledPack[] }>(installedFile(username)))?.packs ?? [];
+  await ensureDefaults(username);
+  return (await readState(username)).packs;
 }
 
-const saveInstalled = (username: string, packs: InstalledPack[]) => writeJsonAtomic(installedFile(username), { packs });
+/** Install the default packs this account hasn't been given yet. Real accounts only (not guests or demo visitors). */
+export async function ensureDefaults(username: string, ids = DEFAULT_PACKS): Promise<void> {
+  const seen = new Set((await readState(username)).defaultsSeen ?? []);
+  if (ids.every((id) => seen.has(id))) return;
+  const account = findUser(username);
+  if (!account && username !== "local") return;
+  const on = !account || (account.createdAt ?? 0) >= DEFAULTS_ON_FROM;
+  await withLock(username, async () => {
+    const state = await readState(username);
+    const done = new Set(state.defaultsSeen ?? []);
+    const official = readOfficialPacks();
+    for (const id of ids) {
+      if (done.has(id)) continue;
+      const o = official.find((x) => x.pack.id === id);
+      // a build without the packs folder tries again next time instead of marking the default as given
+      if (!o) continue;
+      done.add(id);
+      if (state.packs.some((p) => p.id === id)) continue;
+      const { installed } = await installInto(state, username, o.pack, o.level, {});
+      installed.default = true;
+      if (!on) installed.off = ["*"];
+    }
+    state.defaultsSeen = [...done];
+    await saveState(username, state);
+  });
+}
 
 // ponytail: reads every framework file per install; an owner index if installs get frequent on a big server
 async function ownFrameworks(username: string): Promise<Framework[]> {
@@ -80,7 +125,17 @@ export interface InstallOptions {
 export function installPack(username: string, pack: Pack, level: PackLevel, o: InstallOptions = {}): Promise<InstallResult> {
   if (!USER.test(username)) throw new Error("Bad user");
   return withLock(username, async () => {
-    const all = await listInstalled(username);
+    const state = await readState(username);
+    const out = await installInto(state, username, pack, level, o);
+    await saveState(username, state);
+    return out;
+  });
+}
+
+/** The install itself, inside the person's lock: copies the items and puts the record into `state.packs`. */
+async function installInto(state: State, username: string, pack: Pack, level: PackLevel, o: InstallOptions): Promise<InstallResult> {
+  {
+    const all = state.packs;
     const prev = all.find((p) => p.id === pack.id);
     const origin: PackOrigin = { pack: pack.id, version: pack.version };
     const now = Date.now();
@@ -128,16 +183,18 @@ export function installPack(username: string, pack: Pack, level: PackLevel, o: I
       off: prev?.off ?? [],
       instructions: pack.instructions ?? {},
       items: { frameworks, presets },
+      ...(prev?.default ? { default: true } : {}),
     };
-    await saveInstalled(username, [...all.filter((p) => p.id !== pack.id), installed]);
+    state.packs = [...all.filter((p) => p.id !== pack.id), installed];
     return { installed, kept };
-  });
+  }
 }
 
 /** Remove a pack: its untouched copies go, edited ones stay (they're the person's now). */
 export function removePack(username: string, id: string): Promise<{ removed: boolean; kept: number }> {
   return withLock(username, async () => {
-    const all = await listInstalled(username);
+    const state = await readState(username);
+    const all = state.packs;
     const pack = all.find((p) => p.id === id);
     if (!pack) return { removed: false, kept: 0 };
     let kept = 0;
@@ -154,7 +211,8 @@ export function removePack(username: string, id: string): Promise<{ removed: boo
       else kept++;
     }
     packPresetStore.save();
-    await saveInstalled(username, all.filter((p) => p.id !== id));
+    state.packs = all.filter((p) => p.id !== id);
+    await saveState(username, state);
     return { removed: true, kept };
   });
 }
@@ -162,19 +220,31 @@ export function removePack(username: string, id: string): Promise<{ removed: boo
 /** Switch a pack's instructions on or off for one project (or for everything, with no project). */
 export function setPackOn(username: string, id: string, on: boolean, projectId?: string): Promise<InstalledPack | null> {
   return withLock(username, async () => {
-    const all = await listInstalled(username);
+    const state = await readState(username);
+    const all = state.packs;
     const pack = all.find((p) => p.id === id);
     if (!pack) return null;
     const key = projectId ?? "*";
     pack.off = on ? pack.off.filter((p) => p !== key) : [...new Set([...pack.off, key])];
-    await saveInstalled(username, all);
+    await saveState(username, state);
     return pack;
+  });
+}
+
+/** The catalog pulled a pack: this account stops using its instructions until it's updated or removed. */
+export async function markDelisted(username: string, id: string, reason: string): Promise<void> {
+  await withLock(username, async () => {
+    const state = await readState(username);
+    const pack = state.packs.find((p) => p.id === id);
+    if (!pack) return;
+    pack.delisted = reason;
+    await saveState(username, state);
   });
 }
 
 /** Is this pack's instructions in use for a run in this project? */
 export const packOn = (p: InstalledPack, projectId?: string | null): boolean =>
-  !p.off.includes("*") && !(projectId && p.off.includes(projectId)) && (!p.projectId || p.projectId === projectId);
+  !p.delisted && !p.off.includes("*") && !(projectId && p.off.includes(projectId)) && (!p.projectId || p.projectId === projectId);
 
 /**
  * The instructions installed packs add at one slot, ready to go into a system prompt after the app's own text and

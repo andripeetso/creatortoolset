@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "version": "1.0.0",
+  "author": "Creator Toolset",
+  "license": "CC0-1.0",
+  "niche": "any",
+  "id": "analyzer-basics",
+  "name": "Analyzer basics",
+  "description": "The team's default for the Content Analyzer: ideas named by what the viewer gets, in words a viewer would search for.",
+  "instructions": {
+    "analyzer.ideas": "Name each idea by what the viewer gets out of it, in plain words they would type into a search box, not by the format of the post. Keep the creator's own claim as the takeaway; don't add facts the post doesn't make."
+  }
+}

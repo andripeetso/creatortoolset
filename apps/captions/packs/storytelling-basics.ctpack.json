@@ -2,7 +2,7 @@
   "format": 1,
   "id": "storytelling-basics",
   "name": "Storytelling frameworks",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "Creator Toolset",
   "license": "CC-BY-4.0",
   "description": "21 well-known story, persuasion and argument structures (AIDA, PAS, Story Circle, SCQA, Toulmin…), each with steps, when to use it and a short example.",
@@ -156,15 +156,15 @@
       "name": "StoryBrand",
       "role": "narrative",
       "pairsWith": "Promise – Picture – Proof – Push; Before – After – Bridge. The audience is the hero, you are the guide.",
-      "summary": "Donald Miller's seven-part brand story: a character with a want meets a problem, meets a guide with a plan, is called to act, avoids failure, ends in success.",
+      "summary": "A brand-story structure named after Donald Miller's StoryBrand, in our words: the viewer is the hero with a want and a problem, you are the guide with a plan, and the piece ends on the ask, the cost of waiting and the result.",
       "steps": [
-        "A character who wants something",
-        "Meets a problem: external (the thing), internal (how it feels), philosophical (why it's wrong)",
-        "Meets a guide who shows empathy and authority",
-        "Who gives them a plan",
-        "And calls them to action",
-        "That helps them avoid failure",
-        "And ends in success"
+        "The hero: your viewer, and the one thing they want",
+        "What stands in the way: the practical problem, how it makes them feel, and why it isn't fair",
+        "You step in as the guide: you understand the problem and have solved it",
+        "A short, clear plan they can follow",
+        "One direct ask: the step to take now",
+        "What doing nothing costs them",
+        "What life looks like once it works"
       ],
       "whenToUse": "Marketing and brand messaging of any length. Never make yourself the hero; the audience is the hero and you are the guide.",
       "example": "A cook wants a better stock → jars everywhere, guilt, \"this can't be right\" → a chef who did the work → a method matched to the week → start tonight → skip the shortcut → a stock worth keeping."

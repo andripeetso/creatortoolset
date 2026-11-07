@@ -1,5 +1,6 @@
 import { Link } from "react-router";
 import { cn } from "@/lib/utils";
+import { PacksBrowse } from "./PacksBrowse";
 import { PacksFile } from "./PacksFile";
 import { PacksInstalled } from "./PacksInstalled";
 import { PacksShare } from "./PacksShare";
@@ -7,15 +8,17 @@ import { PacksShare } from "./PacksShare";
 /** The sub-pages, as the URL names them: /settings/packs/<id>. */
 const TABS = [
   { id: "installed", label: "Installed" },
+  { id: "browse", label: "Browse" },
   { id: "file", label: "Install from file" },
   { id: "share", label: "Share as pack" },
 ] as const;
 
-/** Settings → Packs: installed packs, installing a pack file, and sharing your own as one. */
+/** Settings → Packs: installed packs, the community catalog, installing a pack file, and sharing your own as one. */
 export function PacksSection({ sub }: { sub?: string }) {
   const tab = TABS.find((t) => t.id === sub)?.id ?? "installed";
   const body = {
     installed: <PacksInstalled />,
+    browse: <PacksBrowse />,
     file: <PacksFile />,
     share: <PacksShare />,
   }[tab];

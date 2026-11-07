@@ -20,4 +20,6 @@ export const env = {
   objectStorageForcePathStyle:
     process.env.OBJECT_STORAGE_FORCE_PATH_STYLE === "true",
   adminUsername: (process.env.ADMIN_USERNAME || "admin").toLowerCase(),
+  // the shared community catalog, read like a plugin directory; an empty value turns it off
+  packCatalogUrl: (process.env.PACK_CATALOG_URL ?? "https://creatortoolset.com").trim(),
 };

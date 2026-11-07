@@ -88,6 +88,10 @@ export interface InstalledPack extends PackManifest {
   instructions: Partial<Record<PackSlot, string>>;
   /** What install copied into the account, so update and remove find it again. */
   items: { frameworks: string[]; presets: string[] };
+  /** Set when the community catalog pulled this pack; the app warns and stops using its instructions. */
+  delisted?: string;
+  /** One of the team's default packs (api/lib/packs.ts DEFAULT_PACKS), installed for the account automatically. */
+  default?: boolean;
 }
 
 /** Where an installed copy came from: set on frameworks and presets. */

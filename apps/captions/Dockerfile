@@ -51,6 +51,8 @@ RUN apt-get update \
 COPY --from=build /deploy/package.json ./package.json
 COPY --from=build /deploy/node_modules ./node_modules
 COPY --from=build /repo/apps/captions/dist ./dist
+# the shipped packs (api/official-packs.ts reads ../packs from dist/)
+COPY apps/captions/packs ./packs
 COPY --from=build /ms-playwright /ms-playwright
 # `docker compose exec app node scripts/doctor.mjs` checks the running install
 COPY apps/captions/scripts/doctor.mjs ./scripts/doctor.mjs

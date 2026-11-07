@@ -2,10 +2,12 @@
 
 A pack is one JSON file (`*.ctpack.json`) that adds things to someone's account: storytelling frameworks, caption
 styles, and instructions that go on top of the app's own AI prompts. People make them in Settings → Packs → Share
-as pack, or by hand, and install them from a file in Settings → Packs → Install from file.
+as pack, or by hand, and install them from the community catalog (Settings → Packs → Browse) or from a file
+(Settings → Packs → Install from file).
 
-Code: `contracts/packs.ts` (format, checks), `api/lib/packs.ts` (install, update, remove, instructions),
-`api/packs.ts` (`/api/packs`). Official packs live in `packs/`.
+Code: `contracts/packs.ts` (format, checks), `api/lib/packs.ts` (install, update, remove, instructions, default
+packs), `api/packs.ts` (`/api/packs`), `api/pack-catalog.ts` (`/api/pack-catalog`, the community catalog's read
+side). Official packs live in `packs/`.
 
 ## The file
 
@@ -29,7 +31,8 @@ Code: `contracts/packs.ts` (format, checks), `api/lib/packs.ts` (install, update
 ```
 
 - `id`: lowercase letters, digits, dashes.
-- `version`: `x.y.z`. Installing a newer file of the same pack updates it.
+- `version`: `x.y.z`. Installing a newer file of the same pack updates it, and Installed offers the update when the
+  catalog lists a newer version.
 - `license` is required. The pack must be yours to share: no quoted books, no fonts, sounds or images you
   don't have the rights to.
 - Everything else is optional, but a pack needs at least one of instructions, frameworks or caption styles.
@@ -55,7 +58,8 @@ Where they disagree, the person wins. Each slot takes up to 2,000 characters. Sa
 slots, and a pack can't give the AI a tool, a key or a permission.
 
 The checks refuse instruction text with links, or text that tries to replace the app's instructions or asks for
-keys and passwords. Nobody reviews a pack file: install packs only from people you trust.
+keys and passwords. Nobody reviews a pack file: install packs only from people you trust. Packs in the community
+catalog were reviewed before they were listed.
 
 ## Install, update, remove
 
@@ -66,3 +70,29 @@ keys and passwords. Nobody reviews a pack file: install packs only from people y
   you edited.
 - Remove deletes the copies you haven't touched and keeps the ones you edited.
 - Instructions can be switched off everywhere, or for one project.
+
+## Default packs
+
+Four of the team's packs are installed for every account: Writing basics, Editing basics, Analyzer basics and
+Caption styles. Accounts made before packs existed get them switched off, so nothing changes for them unasked.
+Switch a default off, or remove it, to use a community pack instead. A removed default doesn't come back.
+
+## The community catalog
+
+Settings → Packs → Browse reads the shared catalog at `PACK_CATALOG_URL` (https://creatortoolset.com unless set),
+like a plugin directory: search, see what a pack adds, install it. Installed packs get update notices from it, and
+a pack the catalog pulls is flagged and its instructions stop being used. This server keeps no catalog of its
+own. Set `PACK_CATALOG_URL` to an empty value to turn the catalog off.
+
+## What may go in a pack
+
+- Your own words. Name a framework's originator, but write the summary, steps and example yourself.
+- Nothing from books, courses or other people's posts, and nothing from your Knowledge.
+- Trademarked names only as a description, never as the pack's id or author.
+- No fonts, images or sounds yet. Those need a licence check per file.
+
+## Publishing
+
+Settings → Packs → Share as pack → Publish, once you've ticked that the pack is yours to share, points you to the
+catalog's site: download the file and send it there. It runs the same checks, then waits for a person to review
+it. Once approved, it's listed.

@@ -1,0 +1,14 @@
+{
+  "format": 1,
+  "version": "1.0.0",
+  "author": "Creator Toolset",
+  "license": "CC0-1.0",
+  "niche": "any",
+  "id": "editing-basics",
+  "name": "Editing basics",
+  "description": "The team's default for the AI Editor: tight talking-head cuts that keep everything the speaker meant to say, B-roll that shows what is being said, simple readable cards.",
+  "instructions": {
+    "editor.script": "Cut silences, false starts and repeated takes; of several takes of a line, keep the one with the clearest delivery, not the first. Keep every point and aside the speaker recorded unless it repeats another one, in the order they said it. Put B-roll where it shows what the speaker is naming at that moment, and over jump cuts. Never end on a black or empty frame.",
+    "editor.cards": "One idea per card, in a few words a viewer can read in under a second on a phone. Keep cards clear of the speaker's face. Let the card's movement follow the rhythm of the sentence it sits on."
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "format": 1,
+  "version": "1.0.0",
+  "author": "Creator Toolset",
+  "license": "CC0-1.0",
+  "niche": "any",
+  "id": "writing-basics",
+  "name": "Writing basics",
+  "description": "The team's default for the Content Workshop: write in the author's own words, concrete over general, and a review that reads like a stranger scrolling. Swap it for a community pack any time.",
+  "instructions": {
+    "workshop.write": "Write the way this author talks: reuse their phrases from their posts, notes and context before inventing new ones. Prefer the concrete case (who did what, the number, the moment) over a summary of it. Keep one idea per piece. Open with the most surprising true thing the piece has, not a warm-up. If a line can go without the piece losing anything, leave it out.",
+    "workshop.review": "Read it as someone scrolling past who has never heard of the author. Point to the first line where they would stop reading and say why. Flag every claim a viewer could doubt that has no source in the piece or its notes."
+  }
+}

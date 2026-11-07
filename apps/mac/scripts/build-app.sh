@@ -91,6 +91,7 @@ mkdir -p "$server/bin" "$server/runtime"
 
 (cd "$repo" && pnpm --filter @creator-toolset/captions build)
 ditto "$captions/dist" "$server/dist"
+ditto "$captions/packs" "$server/packs"   # the shipped packs (api/official-packs.ts reads ../packs from dist/)
 printf '{"private":true,"type":"module"}\n' > "$server/package.json"   # dist/boot.js is an ES module
 
 node_tar="$cache/node-$NODE_VERSION-darwin-arm64.tar.gz"
