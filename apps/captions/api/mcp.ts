@@ -1,10 +1,19 @@
 import { Hono } from "hono";
+import { MY_KEYS } from "../contracts/service-keys";
+import { routeFor } from "./lib/providers";
+import { deviceName } from "./lib/devices";
+import { readConnectors } from "./lib/connectors/store";
+import { myKeys } from "./my-keys";
+import { askSecret, navigateTo } from "./assistant";
+import { innerCall, type AuthVars } from "./auth";
+import type { SessionUser } from "./users";
 
 /**
  * Creator Toolset as a remote MCP server: POST /api/mcp, MCP's Streamable HTTP answered as plain JSON, no sessions. Only a Full AI key gets here
  * (boot.ts: the key is the account itself), sent as `Authorization: Bearer ctk_…` (claude.ai: the connector's
  * Request headers). Every tool calls the site's own routes with the caller's credentials, so each route's checks
- * stay the only checks.
+ * stay the only checks. The assistant's job token (ctj_…, auth.ts) also gets here, and only the assistant tools
+ * (ASSISTANT_TOOLS) are open to it: a Full key sees and calls the Workshop and Review tools alone.
  */
 
 type Call = (path: string, init: RequestInit) => Promise<Response>;
@@ -12,6 +21,10 @@ type Args = Record<string, unknown>;
 type Content = { type: "text"; text: string } | { type: "image"; mimeType: string; data: string };
 
 class ToolError extends Error {}
+
+/** The tools only the assistant's job token may call (the dock, assistant.ts). */
+const ASSISTANT_TOOLS = new Set(["setup_status", "ask_secret", "navigate"]);
+const isJob = (auth: Headers) => /^Bearer ctj_/.test(auth.get("authorization") ?? "");
 
 /** MCP clients give up on a tool call after about a minute: a reply still thinking hands back its id to wait on. */
 const WAIT_MAX_S = 55;
@@ -92,6 +105,17 @@ export const TOOLS = [
   },
 ];
 
+/** The assistant's tools (the dock, assistant.ts): listed and callable for its job token only, so a Full key's list stays TOOLS. */
+const ASSISTANT_DEFS = [
+  { name: "setup_status", description: "What is set up: the AI provider, connected logins, which API keys the user has saved (never their values), and the project count.", inputSchema: { type: "object", properties: {} } },
+  {
+    name: "ask_secret",
+    description: "Ask the user for one API key. It opens a secure box in the chat; the key goes straight to the server, never to you. Pass only the key's name and why it's needed.",
+    inputSchema: { type: "object", properties: { env: { type: "string", enum: MY_KEYS.map((k) => k.env) }, why: str }, required: ["env", "why"] },
+  },
+  { name: "navigate", description: "Open a page of the app for the user: a relative path such as /workshop or /settings/connectors.", inputSchema: { type: "object", properties: { path: str }, required: ["path"] } },
+];
+
 const pick = (row: Args, keys: string[]) => Object.fromEntries(keys.filter((k) => row[k] != null && row[k] !== "" && !(Array.isArray(row[k]) && !(row[k] as unknown[]).length)).map((k) => [k, row[k]]));
 const linesOf = (blocks: unknown) => ((blocks as Args[] | undefined) ?? []).map((b) => ({ id: b.id, text: b.text }));
 const piece = (d: Args) => ({
@@ -129,7 +153,7 @@ function reviewPath(link: string, origin: string): string {
 }
 
 /** The tools, each a thin client of the site's own routes with the caller's credentials. */
-function tools(call: Call, auth: Headers, origin: string) {
+function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
   const api = async (path: string, method = "GET", body?: unknown): Promise<Response> => {
     const headers = new Headers();
     for (const h of ["authorization", "cookie"]) if (auth.get(h)) headers.set(h, auth.get(h)!);
@@ -257,14 +281,36 @@ function tools(call: Call, auth: Headers, origin: string) {
       const cm = await json(`/api/review/assets/${id}/comments/${encodeURIComponent(String(a.comment_id))}`, "PATCH", { resolved: a.resolved !== false });
       return { id: cm.id, resolved: !!cm.resolved, text: cm.text };
     },
+    setup_status: async () => {
+      const route = routeFor(user.username, user.role === "admin", "notes");
+      const keys = myKeys(user.username);
+      const projects = await ws<Args[]>("/projects");
+      return {
+        ai: route
+          ? { connected: true, name: route.instance.name, driver: route.instance.driver, on: deviceName(route.device) }
+          : { connected: false, note: "No AI provider yet: connect Claude Code on a paired Mac (Settings → AI providers)." },
+        logins: readConnectors(user.username).accounts.map((a) => ({ platform: a.platform, handle: a.handle, via: a.via })),
+        keys: MY_KEYS.map((k) => ({ env: k.env, name: k.name, what: k.what, saved: !!keys[k.env] })),
+        projects: projects.length,
+      };
+    },
+    ask_secret: async (a) => {
+      const env = MY_KEYS.find((k) => k.env === a.env);
+      if (!env) throw new ToolError(`${String(a.env)} is not a key the app takes.`);
+      // only the name and the reason: any other argument (a value included) is dropped unread
+      await askSecret(user.username, env.env, String(a.why ?? "").slice(0, 300));
+      return { status: "asked", note: "The user will type the key into a secure box in the chat. It does not come to you; carry on without it until it's saved." };
+    },
+    navigate: async (a) => ({ status: "opening", path: await navigateTo(user.username, String(a.path ?? "")) }),
   };
   return handlers;
 }
 
-async function callTool(call: Call, auth: Headers, origin: string, name: string, args: Args) {
-  const handler = tools(call, auth, origin)[name];
+async function callTool(call: Call, auth: Headers, origin: string, user: SessionUser, name: string, args: Args) {
+  const handler = tools(call, auth, origin, user)[name];
   try {
     if (!handler) throw new ToolError(`Unknown tool ${name}.`);
+    if (ASSISTANT_TOOLS.has(name) && !isJob(auth)) throw new ToolError(`${name} is for the assistant only.`);
     const result = await handler(args ?? {});
     return { content: Array.isArray(result) ? (result as Content[]) : [{ type: "text", text: JSON.stringify(result, null, 1) }] };
   } catch (e) {
@@ -273,7 +319,7 @@ async function callTool(call: Call, auth: Headers, origin: string, name: string,
 }
 
 /** One JSON-RPC message in, its answer out (null for a notification). `origin` starts the links the tools hand back. */
-export async function handle(call: Call, auth: Headers, msg: Args, origin: string): Promise<Args | null> {
+export async function handle(call: Call, auth: Headers, msg: Args, origin: string, user: SessionUser): Promise<Args | null> {
   if (msg.id === undefined) return null;
   const params = (msg.params ?? {}) as Args;
   const ok = (result: unknown) => ({ jsonrpc: "2.0", id: msg.id, result });
@@ -288,28 +334,31 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
     case "ping":
       return ok({});
     case "tools/list":
-      return ok({ tools: TOOLS });
+      return ok({ tools: isJob(auth) ? [...TOOLS, ...ASSISTANT_DEFS] : TOOLS });
     case "tools/call":
-      return ok(await callTool(call, auth, origin, String(params.name), (params.arguments ?? {}) as Args));
+      return ok(await callTool(call, auth, origin, user, String(params.name), (params.arguments ?? {}) as Args));
     default:
       return { jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: `Method not found: ${String(msg.method)}` } };
   }
 }
 
 export function mcpApp(call: Call) {
-  const app = new Hono();
+  const app = new Hono<{ Variables: AuthVars }>();
   app.post("/", async (c) => {
     const body = (await c.req.json().catch(() => null)) as Args | Args[] | null;
     if (!body) return c.json({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } }, 400);
     const auth = c.req.raw.headers;
+    // the account this call runs as (boot.ts): its tools' own calls run as the same account (innerCall)
+    const user = c.get("user");
+    const inner: Call = (path, init) => innerCall.run(user, () => call(path, init));
     // this server's public address: PUBLIC_ORIGIN, else the address the request came in on (as connectors.ts)
     const url = new URL(c.req.url);
     const origin = process.env.PUBLIC_ORIGIN?.replace(/\/$/, "") || `${c.req.header("x-forwarded-proto") ?? url.protocol.replace(":", "")}://${url.host}`;
     if (Array.isArray(body)) {
-      const out = (await Promise.all(body.map((m) => handle(call, auth, m, origin)))).filter(Boolean);
+      const out = (await Promise.all(body.map((m) => handle(inner, auth, m, origin, user)))).filter(Boolean);
       return out.length ? c.json(out) : c.body(null, 202);
     }
-    const out = await handle(call, auth, body, origin);
+    const out = await handle(inner, auth, body, origin, user);
     return out ? c.json(out) : c.body(null, 202);
   });
   // no server-sent stream: everything is answered in the POST

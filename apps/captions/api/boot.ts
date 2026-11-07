@@ -30,7 +30,8 @@ import { presetsApp } from "./presets";
 import { projectsApp } from "./projects";
 import { storiesApp } from "./stories";
 import { transcribeApp } from "./transcribe";
-import { authApp, getApiKeyUser, getSessionUser, type AuthVars } from "./auth";
+import { authApp, getApiKeyUser, getSessionUser, innerCall, jobTokenUser, type AuthVars } from "./auth";
+import { assistantApp } from "./assistant";
 import { providersApp } from "./providers";
 import { mcpApp } from "./mcp";
 import { workspaceApp } from "./workspace";
@@ -235,8 +236,14 @@ app.use("/api/*", async (c, next) => {
   }
   // a Full AI key is the account itself, gates and all,
   // except Admin, AI settings and paired Macs; /api/auth reads only cookies, so a key never makes keys
+  // The assistant's job token (auth.ts) opens /api/mcp only; the tools' own calls run as its account (innerCall), and
+  // FULL_KEY_NEVER still refuses them the admin, provider, device, Mac-key and service-key routes.
   const user = getSessionUser(c.req.header("cookie")) ??
-    (FULL_KEY_NEVER.test(c.req.path) ? null : getApiKeyUser(c.req.header("authorization"), "full"));
+    (FULL_KEY_NEVER.test(c.req.path)
+      ? null
+      : getApiKeyUser(c.req.header("authorization"), "full") ??
+        (c.req.path === "/api/mcp" ? jobTokenUser(c.req.header("authorization")) : null) ??
+        innerCall.getStore() ?? null);
   if (
     c.req.method === "GET" &&
     (PUBLIC_CLIP_GET.test(c.req.path) ||
@@ -312,6 +319,7 @@ app.route("/api/setup", setupApp);
 app.route("/api/providers", providersApp);
 // Creator Toolset as a remote MCP server (Full key only: not on the key routes): its tools call these same routes
 app.route("/api/mcp", mcpApp((path, init) => Promise.resolve(app.request(path, init))));
+app.route("/api/assistant", assistantApp);
 app.route("/api/workspace", workspaceApp);
 app.route("/api/connectors", connectorsApp);
 // TikTok's site check (Settings → Admin → Connector apps): a public file at the root while the app is registered
