@@ -68,8 +68,11 @@ async function systemOf(id: string, docId: string): Promise<string> {
     systems.push(s);
     return { result: parse(JSON.stringify({ reply: "ok" })), provider: "Claude" };
   }) as never);
-  const r = (await (await call("POST", `/api/workshop/sessions/${id}/chat`, { docId, text: "Go." })).json()) as { reply: { id: string } };
-  for (let i = 0; i < 500 && !systems.length; i++) {
+  const res = await call("POST", `/api/workshop/sessions/${id}/chat`, { docId, text: "Go." });
+  const r = (await res.json()) as { reply: { id: string } };
+  if (!r.reply) throw new Error(`chat POST ${res.status}: ${JSON.stringify(r)}`);
+  // until the reply is saved, not just until the model was called: the next turn on this session would get 409
+  for (let i = 0; i < 500; i++) {
     const chat = (await (await call("GET", `/api/workshop/sessions/${id}/chat`)).json()) as Array<{ id: string; status?: string }>;
     if (chat.find((m) => m.id === r.reply.id)?.status !== "thinking") break;
     await new Promise((res) => setTimeout(res, 10));
