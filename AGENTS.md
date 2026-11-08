@@ -87,6 +87,20 @@ dedicated external disk when there is one, not in the repository or the home fol
 repository root) and `Caddyfile`; `apps/captions/scripts/setup-server.sh <domain>` writes `.env` and starts it. Do not change the image's user, its read-only root or its dropped capabilities without a reason
 written in the pull request.
 
+## Releases
+
+The Mac app is released on this repository's GitHub Releases, and every installed copy updates itself from the
+newest one. A release reaches everyone's Mac, so make one only when the maintainer says to.
+
+- `apps/mac/scripts/release.sh <version>` (see `apps/mac/README.md`, "Download and updates") builds from a clean
+  checkout of a pushed commit and always makes a **draft**. Open the disk image, click through what changed, then
+  publish with `gh release edit v<version> --draft=false`.
+- Versions: `0.<minor>.0` when a release brings new features, `0.<minor>.<patch>` for fixes only. Never reuse or
+  move a tag. The build number (the commit count) is what the updater compares, so release from `main` only.
+- Each release carries the disk image, `appcast.xml` (the update feed) and the source of the bundled FFmpeg
+  (GPL). Don't drop any of the three.
+- The notes list what a person gets, in plain words; `release.sh` drafts them from the commit subjects.
+
 ## Working in the code
 
 - Routes: each `api/*.ts` file exports a Hono app; `api/boot.ts` mounts them and applies the account gate.
