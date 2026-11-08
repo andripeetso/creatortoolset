@@ -443,7 +443,7 @@ export function AssistantDock() {
           </button>
         )}
         {!!view?.messages.length && !showPast && <CopyButton className={headBtn} text={() => chatText(view.messages)} label="Copy the whole chat" />}
-        {!!view?.past.length && (
+        {view && (
           <button
             type="button"
             className={cn(headBtn, showPast && "bg-muted text-foreground")}
@@ -530,10 +530,6 @@ export function AssistantDock() {
 
         {empty && !showPast && (
           <div className="flex h-full flex-col justify-end gap-2 pb-1">
-            <p className="mb-1 flex items-start gap-2 text-muted-foreground motion-safe:animate-in motion-safe:fade-in">
-              <Film className="mt-0.5 size-4 shrink-0 text-[var(--tint)]" aria-hidden />
-              Drop a video or recording here and say what you want: caption it, sum it up, put it up for review.
-            </p>
             {suggestionsFor(pathname).map((s, i) => (
               <button
                 key={`${pathname}-${s}`}
@@ -799,6 +795,7 @@ function PastList({ view, busy, onOpen, onDelete }: { view: AssistantView; busy:
   return (
     <div className="motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-1">
       <p className="mb-2 text-xs font-medium text-muted-foreground">Earlier chats</p>
+      {!view.past.length && <p className="px-2.5 py-2 text-muted-foreground">No earlier chats yet.</p>}
       <ul className="flex flex-col">
         {view.past.map((p) => (
           <li key={p.id} className="group/past flex items-center gap-1 rounded-lg hover:bg-muted">

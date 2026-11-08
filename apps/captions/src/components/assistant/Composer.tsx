@@ -4,6 +4,7 @@ import { ArrowUp, Camera, Check, FileText, Film, Loader2, Mic, Paperclip, Quote,
 import { BARS, useVoiceInput } from "@/lib/voice-input";
 import { attachScreen } from "@/lib/assistant";
 import { canSnapshot } from "@/lib/page-context";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { MAX_PICTURES, draftEmpty, filesPending, lineCount, type Draft } from "./draft";
 import { cn } from "@/lib/utils";
 
@@ -249,32 +250,46 @@ export function Composer({
                 e.target.value = "";
               }}
             />
-            <button
-              type="button"
-              onClick={() => pick.current?.click()}
-              disabled={writing || draft.images.length >= MAX_PICTURES}
-              className={cn(iconBtn, "text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40")}
-              aria-label="Add pictures or videos"
-              title="Add pictures, videos or recordings (or drop them here)"
-            >
-              <Paperclip className="size-4" />
-            </button>
-            {/* the Mac app can take a picture of the screen (the open chat is in it too) */}
-            {canSnapshot() && (
+            {/* one attach button; in the Mac app it also offers a picture of this screen (the open chat is in it too) */}
+            {canSnapshot() ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    disabled={writing || shooting || draft.images.length >= MAX_PICTURES}
+                    className={cn(iconBtn, "text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40")}
+                    aria-label="Attach"
+                    title="Attach"
+                  >
+                    {shooting ? <Loader2 className="size-4 animate-spin" /> : <Paperclip className="size-4" />}
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent side="top" align="end">
+                  <DropdownMenuItem onSelect={() => pick.current?.click()}>
+                    <Paperclip /> Files
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={() => {
+                      setShooting(true);
+                      void attachScreen()
+                        .then((ok) => !ok && setShotFailed(true))
+                        .finally(() => setShooting(false));
+                    }}
+                  >
+                    <Camera /> This screen
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
               <button
                 type="button"
-                onClick={() => {
-                  setShooting(true);
-                  void attachScreen()
-                    .then((ok) => !ok && setShotFailed(true))
-                    .finally(() => setShooting(false));
-                }}
-                disabled={writing || shooting || draft.images.length >= MAX_PICTURES}
+                onClick={() => pick.current?.click()}
+                disabled={writing || draft.images.length >= MAX_PICTURES}
                 className={cn(iconBtn, "text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40")}
-                aria-label="Add a picture of this screen"
-                title="Add a picture of this screen"
+                aria-label="Attach"
+                title="Attach (or drop files here)"
               >
-                {shooting ? <Loader2 className="size-4 animate-spin" /> : <Camera className="size-4" />}
+                <Paperclip className="size-4" />
               </button>
             )}
             <button
