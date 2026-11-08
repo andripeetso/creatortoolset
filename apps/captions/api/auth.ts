@@ -104,6 +104,10 @@ export const revokeJobToken = (token: string): void => {
   jobs.delete(token);
 };
 
+/** The turn a job token was made for (the assistant's reply id, or an automation's). */
+export const jobTurn = (authorization: string | undefined): string | null =>
+  jobs.get(/^Bearer (ctj_[a-f0-9]{48})$/.exec(authorization ?? "")?.[1] ?? "")?.turn ?? null;
+
 export function jobTokenUser(authorization: string | undefined): SessionUser | null {
   const token = /^Bearer (ctj_[a-f0-9]{48})$/.exec(authorization ?? "")?.[1];
   const job = token ? jobs.get(token) : undefined;

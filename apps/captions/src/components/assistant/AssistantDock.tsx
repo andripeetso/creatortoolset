@@ -115,7 +115,7 @@ export function AssistantDock() {
 
   useEffect(() => {
     if (!collapsed) bottom.current?.scrollIntoView({ block: "end", behavior: "smooth" });
-  }, [view?.messages.length, last?.text, view?.pending, collapsed]);
+  }, [view?.messages.length, last?.text, last?.steps?.length, view?.pending, collapsed]);
 
   // docked and open: the page moves over to make room
   const docked = !collapsed && place.mode === "dock";
@@ -398,13 +398,55 @@ function Message({ m }: { m: AssistantMessage }) {
         {m.text}
       </div>
     );
-  if (m.status === "thinking" && !m.text) return <Dots />;
+  const steps = m.steps ?? [];
+  const working = m.status === "thinking";
+  if (working && !m.text)
+    return (
+      <div className="space-y-1">
+        <Steps steps={steps} working />
+        <Dots />
+      </div>
+    );
   if (m.status === "error" && !m.text) return <p className={cn("text-destructive", enter)}>That didn&apos;t work. Try again.</p>;
   return (
     <div className={cn("max-w-[94%] leading-relaxed", enter, "motion-safe:slide-in-from-bottom-1")}>
+      {working ? (
+        <Steps steps={steps} working />
+      ) : (
+        steps.length > 0 && (
+          <details className="group mb-1.5 text-xs text-muted-foreground">
+            <summary className="w-fit cursor-pointer list-none select-none hover:text-foreground">
+              {steps.length === 1 ? steps[0] : `${steps.length} steps`}
+              {steps.length > 1 && <span className="ml-1 inline-block transition-transform group-open:rotate-90">›</span>}
+            </summary>
+            {steps.length > 1 && <Steps steps={steps} />}
+          </details>
+        )
+      )}
       <ReplyText text={m.text} />
       {m.status === "thinking" && <span className="ml-0.5 inline-block h-3.5 w-1.5 rounded-sm bg-[var(--tint)] align-middle motion-safe:animate-pulse" aria-hidden />}
     </div>
+  );
+}
+
+/** What the reply did on the way, one line per tool; while it works, the newest one pulses. */
+function Steps({ steps, working = false }: { steps: string[]; working?: boolean }) {
+  if (!steps.length) return null;
+  return (
+    <ul className="mt-1 mb-1.5 space-y-0.5 text-xs text-muted-foreground">
+      {steps.map((s, i) => {
+        const now = working && i === steps.length - 1;
+        return (
+          <li key={i} className="flex items-center gap-1.5 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-left-1 motion-safe:duration-300">
+            <span className={cn("size-1.5 shrink-0 rounded-full", now ? "bg-[var(--tint)] motion-safe:animate-pulse" : "bg-muted-foreground/40")} aria-hidden />
+            <span className={cn(now && "text-foreground")}>
+              {s}
+              {now && "…"}
+            </span>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 

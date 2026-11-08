@@ -7,8 +7,8 @@ import { routeFor } from "./lib/providers";
 import { deviceName } from "./lib/devices";
 import { readConnectors } from "./lib/connectors/store";
 import { myKeys } from "./my-keys";
-import { askSecret, navigateTo } from "./assistant";
-import { innerCall, type AuthVars } from "./auth";
+import { askSecret, navigateTo, noteStep } from "./assistant";
+import { innerCall, jobTurn, type AuthVars } from "./auth";
 import type { SessionUser } from "./users";
 
 /**
@@ -463,8 +463,47 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
   return handlers;
 }
 
+/** What a tool call looks like to the person watching the assistant work (noteStep). */
+const STEPS: Record<string, string> = {
+  setup_status: "Checking what's set up",
+  save_setup: "Saving your setup",
+  ask_secret: "Asking for a key",
+  get_work_prefs: "Checking how you like to work",
+  set_work_prefs: "Saving how you like to work",
+  workshop_projects: "Looking at your projects",
+  workshop_sessions: "Looking through the Workshop",
+  workshop_session: "Reading a Workshop session",
+  workshop_new_session: "Starting a Workshop session",
+  workshop_update_session: "Updating a Workshop session",
+  workshop_new_piece: "Adding a piece",
+  workshop_edit_piece: "Editing a piece",
+  workshop_chat: "Asking the Workshop's writer",
+  workshop_wait: "Waiting for the writer",
+  list_reviews: "Looking through Review",
+  get_review: "Checking the video in Review",
+  resolve_comment: "Resolving a comment",
+  review_set_approval: "Setting the approval",
+  editor_list: "Looking at the AI Editor's edits",
+  editor_get: "Opening the edit",
+  editor_run: "Starting an AI Editor job",
+  instagram_posts: "Reading your Instagram posts",
+  instagram_refresh: "Refreshing Instagram",
+  automations_list: "Looking at your automations",
+  automations_create: "Making the automation",
+  automations_update: "Changing the automation",
+  automations_delete: "Deleting the automation",
+  automations_run: "Running the automation",
+};
+const PAGES: Record<string, string> = { review: "Review", workshop: "the Workshop", editor: "the AI Editor", settings: "Settings", instagram: "the Analyzer", analyzer: "the Analyzer" };
+export const stepFor = (name: string, args: Args): string =>
+  name === "navigate"
+    ? `Opening ${PAGES[String(args.path ?? "").split(/[/?]/)[1] ?? ""] ?? "the page"}`
+    : (STEPS[name] ?? name.replace(/_/g, " "));
+
 async function callTool(call: Call, auth: Headers, origin: string, user: SessionUser, name: string, args: Args) {
   const handler = tools(call, auth, origin, user)[name];
+  const turn = jobTurn(auth.get("authorization") ?? undefined);
+  if (turn) noteStep(user.username, turn, stepFor(name, args ?? {}));
   try {
     if (!handler) throw new ToolError(`Unknown tool ${name}.`);
     if (ASSISTANT_TOOLS.has(name) && !isJob(auth)) throw new ToolError(`${name} is for the assistant only.`);

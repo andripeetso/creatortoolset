@@ -93,6 +93,17 @@ function saveSoon(username: string): void {
 
 const messageOf = (username: string, id: string) => load(username).messages.find((m) => m.id === id);
 
+/** A tool the reply is using, as a line under it (mcp.ts); an automation's turn has no message, so nothing. */
+export function noteStep(username: string, turn: string, step: string): void {
+  const m = messageOf(username, turn);
+  if (m?.status !== "thinking") return;
+  const steps = (m.steps ??= []);
+  // waiting for the writer calls the same tool again and again: one line
+  if (steps.at(-1) === step || steps.length >= 40) return;
+  steps.push(step);
+  saveSoon(username);
+}
+
 /** The app's own path only: relative, inside this app, no scheme, host or whitespace. */
 export function appPath(p: string): string | null {
   return /^\/(?!\/)[A-Za-z0-9/_.~%-]*(\?[A-Za-z0-9_=&.%-]*)?$/.test(p) ? p : null;

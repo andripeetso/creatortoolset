@@ -128,6 +128,11 @@ describe("a turn", () => {
     expect(job.user).not.toContain(job.mcp!.token);
     // the job's token opens the MCP tools for this account
     expect((await toolOf(job.mcp!.token, "setup_status")).error).toBe(false);
+    // each tool it uses shows under the reply as it works; the same tool again stays one line
+    await toolOf(job.mcp!.token, "setup_status");
+    await toolOf(job.mcp!.token, "navigate", { path: "/review" });
+    const working = (await (await app.request("/api/assistant", { headers: { cookie } })).json()) as { messages: Array<{ steps?: string[] }> };
+    expect(working.messages.at(-1)?.steps).toEqual(["Checking what's set up", "Opening Review"]);
     const done = await app.request(`/api/devices/relay/${job.id}/done`, { method: "POST", ...json({ text: "Hello, let's start." }, { authorization: `Bearer ${mac.token}` }) });
     expect(done.status).toBe(200);
     const view = (await (await app.request("/api/assistant", { headers: { cookie } })).json()) as { messages: Array<{ role: string; text: string; status?: string }> };

@@ -16,6 +16,8 @@ export interface AssistantMessage {
   at: number;
   /** An assistant reply: thinking until it's done or fails. */
   status?: "thinking" | "done" | "error";
+  /** What the reply did on the way, one line per tool it used ("Looking through Review"), shown as it works. */
+  steps?: string[];
 }
 
 /** A key the assistant asked for (ask_secret): shown as a password box in the dock. */
