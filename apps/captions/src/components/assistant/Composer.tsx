@@ -60,8 +60,8 @@ export function Composer({ onSend, waiting, autoFocus }: { onSend: (text: string
       <div
         className={cn(
           "flex items-end gap-1.5 rounded-[22px] border bg-background p-1.5 pl-3.5 shadow-sm transition-[border-color,box-shadow] duration-200",
-          "focus-within:border-violet-500/60 focus-within:shadow-[0_0_0_3px] focus-within:shadow-violet-500/15",
-          recording && "border-violet-500/60 shadow-[0_0_0_3px] shadow-violet-500/15",
+          "focus-within:border-[color-mix(in_srgb,var(--tint)_60%,transparent)] focus-within:shadow-[0_0_0_3px] focus-within:shadow-[color:color-mix(in_srgb,var(--tint)_15%,transparent)]",
+          recording && "border-[color-mix(in_srgb,var(--tint)_60%,transparent)] shadow-[0_0_0_3px] shadow-[color:color-mix(in_srgb,var(--tint)_15%,transparent)]",
         )}
         onKeyDown={(e) => recording && e.key === "Escape" && voice.cancel()}
       >
@@ -75,7 +75,7 @@ export function Composer({ onSend, waiting, autoFocus }: { onSend: (text: string
               {voice.bars.map((b, i) => (
                 <span
                   key={i}
-                  className="w-[3px] shrink-0 rounded-full bg-violet-500 transition-[height] duration-75"
+                  className="w-[3px] shrink-0 rounded-full bg-[var(--tint)] transition-[height] duration-75"
                   style={{ height: `${Math.max(3, Math.min(24, b * 24))}px`, opacity: 0.35 + (i / BARS) * 0.65 }}
                 />
               ))}
@@ -106,7 +106,7 @@ export function Composer({ onSend, waiting, autoFocus }: { onSend: (text: string
             <button type="button" onClick={voice.cancel} className={cn(iconBtn, "text-muted-foreground hover:bg-muted hover:text-foreground")} aria-label="Cancel" title="Cancel (Esc)">
               <X className="size-4" />
             </button>
-            <button type="button" onClick={voice.toggle} className={cn(iconBtn, "bg-violet-600 text-white hover:bg-violet-500")} aria-label="Done talking" title="Done: write it down">
+            <button type="button" onClick={voice.toggle} className={cn(iconBtn, "bg-[var(--tint)] text-white hover:brightness-110")} aria-label="Done talking" title="Done: write it down">
               <Check className="size-4" />
             </button>
           </>
@@ -128,7 +128,7 @@ export function Composer({ onSend, waiting, autoFocus }: { onSend: (text: string
               disabled={!text.trim() || waiting || writing}
               className={cn(
                 iconBtn,
-                text.trim() && !waiting ? "scale-100 bg-violet-600 text-white hover:bg-violet-500" : "scale-90 bg-muted text-muted-foreground",
+                text.trim() && !waiting ? "scale-100 bg-[var(--tint)] text-white hover:brightness-110" : "scale-90 bg-muted text-muted-foreground",
               )}
               aria-label="Send"
               title={waiting ? "Wait for the reply" : "Send (Enter)"}

@@ -20,7 +20,7 @@ import { canUse, useMe, type Me } from "@/lib/auth";
 import { isPhoneHub } from "@/lib/mobile";
 import { useStudio } from "@/lib/store";
 import { UserMenu } from "@/components/UserMenu";
-import { ToolsetLogo } from "@/components/HomeLink";
+import { Wordmark } from "@/components/HomeLink";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
 import { useSessionSummaries } from "@/lib/workshop-summary";
 import { listEdits } from "@/lib/editor";
@@ -250,7 +250,7 @@ export default function ToolsetHome() {
         phone ? "justify-start py-8" : "justify-center"
       }`}
     >
-      {homeGlow && (
+      {homeGlow && dark && ( // light: no glow (it banded and distracted there)
         <div
           aria-hidden
           className="pointer-events-none absolute inset-0 -z-10"
@@ -262,25 +262,12 @@ export default function ToolsetHome() {
         <UserMenu />
       </div>
 
-      <div className={`mb-10 flex items-center gap-3 ${phone ? "mt-16" : ""}`}>
-        <ToolsetLogo className="h-12 w-12" />
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Creator Toolset
-          </h1>
-          {/* which project everything works in, right under the name */}
-          {canUse(me, "instagram") || canUse(me, "workshop") ? (
-            // no width of its own: a longer project name grows to the right, the logo and the name stay put
-            <div className="w-0">
-              <div className="w-max">
-                <ProjectSwitcher variant="title" />
-              </div>
-            </div>
-          ) : (
-            <p className="text-sm text-zinc-500">Everything your content needs before it ships</p>
-          )}
-        </div>
-      </div>
+      {/* the name typed out, top left as in the other tool pages (no icon lockup in the middle, it fought the project
+          colours); which project you're in is the switcher top right */}
+      <h1 data-titlebar className="absolute left-3 top-[max(0.75rem,env(safe-area-inset-top))] flex h-8 items-center">
+        <Wordmark className="px-1.5 text-[15px]" />
+      </h1>
+      {phone && <div className="h-16 shrink-0" />}
 
       {/* two rows: the work's three steps, verbs, in equal boxes; under them Tools, quieter, no box, a centred label
           as a divider and the tools spread evenly across the same width. Red badges say what waits where. */}

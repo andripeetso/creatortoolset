@@ -29,7 +29,7 @@ export function ToolsetLogo({ className }: { className?: string }) {
   );
 }
 
-/** Always-on way back to the Creator Toolset dashboard; a real link, so it opens in a new tab too. */
+/** Always-on way back to the Creator Toolset dashboard (the wordmark); a real link, so it opens in a new tab too. */
 export function HomeLink({
   className,
   onClick,
@@ -43,9 +43,19 @@ export function HomeLink({
       onClick={onClick}
       title="Creator Toolset"
       aria-label="Creator Toolset home"
-      className={cn("shrink-0 rounded-md p-1 hover:bg-zinc-500/15", className)}
+      className={cn("shrink-0 rounded-md px-1.5 py-1 hover:bg-zinc-500/15", className)}
     >
-      <ToolsetLogo className="h-6 w-6" />
+      <Wordmark />
     </Link>
+  );
+}
+
+/** The name typed out, in the app's top bar instead of the icon (the violet mark fought the project colours).
+ *  The second word quieter. */
+export function Wordmark({ className }: { className?: string }) {
+  return (
+    <span className={cn("whitespace-nowrap text-sm font-semibold tracking-tight text-zinc-50", className)}>
+      Creator<span className="font-medium text-zinc-500"> Toolset</span>
+    </span>
   );
 }

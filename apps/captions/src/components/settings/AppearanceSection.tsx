@@ -87,7 +87,7 @@ export function AppearanceSection() {
           </Row>
           <Row
             label="Background glow"
-            hint="A faint glow of that colour behind the tools."
+            hint="A faint glow of that colour behind the tools, in the dark theme."
           >
             <Switch
               checked={homeGlow}

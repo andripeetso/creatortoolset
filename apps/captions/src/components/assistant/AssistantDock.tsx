@@ -21,6 +21,8 @@ import {
 import { cornerOf, storePlace, storedPlace, type Corner, type Place } from "@/lib/dock-place";
 import { canSpeak, speak, stopSpeaking, unlockAudio, useReadAloud } from "@/lib/read-aloud";
 import { cn } from "@/lib/utils";
+import { currentProject, PROJECT_COLORS, projectColor, useWorkspace } from "@/lib/workspace";
+import { useAppearance } from "@/lib/settings";
 import { Composer } from "./Composer";
 import { useThrow } from "./useThrow";
 
@@ -135,6 +137,11 @@ export function AssistantDock() {
     };
   }, [docked]);
 
+  // the current project's colour, like the home page's tools (violet when Settings → Appearance turns it off)
+  const project = useWorkspace(currentProject);
+  const { projectTint } = useAppearance();
+  const tint = { "--tint": `rgb(${PROJECT_COLORS[projectTint && project ? projectColor(project) : "violet"].rgb})` } as React.CSSProperties;
+
   if (!real) return null;
 
   const corner = cornerOf(place);
@@ -152,17 +159,18 @@ export function AssistantDock() {
           openAssistant();
         }}
         aria-label={unread ? "Open the assistant: a new reply" : "Open the assistant"}
+        style={tint}
         title="Assistant · drag to move"
         className={cn(
-          "group fixed z-40 size-14 touch-none rounded-full outline-none focus-visible:ring-2 focus-visible:ring-violet-400 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+          "group fixed z-40 size-14 touch-none rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--tint)] focus-visible:ring-offset-2 focus-visible:ring-offset-background",
           "motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-50 motion-safe:duration-300",
           AT[corner],
         )}
       >
-        {thinking && <span className="absolute inset-0 rounded-full bg-violet-500/50 motion-safe:animate-ping" aria-hidden />}
+        {thinking && <span className="absolute inset-0 rounded-full bg-[color-mix(in_srgb,var(--tint)_50%,transparent)] motion-safe:animate-ping" aria-hidden />}
         <span
           className={cn(
-            "relative flex size-full items-center justify-center rounded-full bg-violet-600 text-white shadow-lg shadow-violet-950/40",
+            "relative flex size-full items-center justify-center rounded-full bg-[var(--tint)] text-white shadow-lg shadow-black/25",
             "transition-transform duration-300 ease-[cubic-bezier(.3,1.6,.5,1)] group-hover:scale-110 group-active:scale-95",
             unread && "motion-safe:animate-[ct-nudge_0.9s_ease-out_2]",
           )}
@@ -235,7 +243,7 @@ export function AssistantDock() {
               place.mode === "dock" ? "motion-safe:slide-in-from-right" : "motion-safe:fade-in motion-safe:zoom-in-90 motion-safe:ease-[cubic-bezier(.3,1.3,.5,1)]",
             ),
       )}
-      style={place.mode === "dock" ? { width: DOCK_W } : undefined}
+      style={place.mode === "dock" ? { ...tint, width: DOCK_W } : tint}
     >
       <header
         onPointerDown={cardThrow.onPointerDown}
@@ -247,15 +255,15 @@ export function AssistantDock() {
         title="Drag to move · against the right edge to dock · double-click to dock or float"
       >
         <span className="relative flex size-2.5" aria-hidden>
-          {thinking && <span className="absolute inset-0 rounded-full bg-violet-400 motion-safe:animate-ping" />}
-          <span className={cn("relative size-2.5 rounded-full transition-colors duration-500", thinking ? "bg-violet-500" : connected ? "bg-emerald-500" : "bg-muted-foreground/50")} />
+          {thinking && <span className="absolute inset-0 rounded-full bg-[color-mix(in_srgb,var(--tint)_70%,transparent)] motion-safe:animate-ping" />}
+          <span className={cn("relative size-2.5 rounded-full transition-colors duration-500", thinking ? "bg-[var(--tint)]" : connected ? "bg-emerald-500" : "bg-muted-foreground/50")} />
         </span>
         <span className="flex-1 text-sm font-semibold tracking-tight">Assistant</span>
         {canSpeak() && (
           <button
             type="button"
             onClick={readAloud.toggle}
-            className={cn(headBtn, readAloud.on && "text-violet-500 hover:text-violet-400", readAloud.speaking && "motion-safe:animate-pulse")}
+            className={cn(headBtn, readAloud.on && "text-[var(--tint)] hover:brightness-110", readAloud.speaking && "motion-safe:animate-pulse")}
             aria-pressed={readAloud.on}
             aria-label="Read replies aloud"
             title={readAloud.on ? "Reading replies aloud. Click to turn off." : "Read replies aloud (a natural voice that runs on this computer; downloads once, about 90 MB)"}
@@ -280,7 +288,7 @@ export function AssistantDock() {
       {readAloud.loading !== null && (
         <p className="mx-4 mb-1 flex shrink-0 items-center gap-2 text-xs text-muted-foreground motion-safe:animate-in motion-safe:fade-in" aria-live="polite">
           <span className="h-1 flex-1 overflow-hidden rounded-full bg-muted">
-            <span className="block h-full rounded-full bg-violet-500 transition-[width] duration-300" style={{ width: `${Math.round(readAloud.loading * 100)}%` }} />
+            <span className="block h-full rounded-full bg-[var(--tint)] transition-[width] duration-300" style={{ width: `${Math.round(readAloud.loading * 100)}%` }} />
           </span>
           Getting the voice ready
         </p>
@@ -320,12 +328,12 @@ export function AssistantDock() {
                 style={{ animationDelay: `${i * 60}ms` }}
                 className={cn(
                   "group flex w-fit max-w-full items-center gap-2 rounded-2xl border bg-background px-3.5 py-2 text-left text-sm transition-all duration-200",
-                  "hover:-translate-y-0.5 hover:border-violet-500/50 hover:shadow-md active:translate-y-0",
+                  "hover:-translate-y-0.5 hover:border-[color-mix(in_srgb,var(--tint)_50%,transparent)] hover:shadow-md active:translate-y-0",
                   "motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-3 motion-safe:fill-mode-both motion-safe:duration-300",
                 )}
               >
                 <span>{s}</span>
-                <ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-violet-500" />
+                <ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-[var(--tint)]" />
               </button>
             ))}
           </div>
@@ -388,7 +396,7 @@ function Message({ m }: { m: AssistantMessage }) {
     return (
       <div
         className={cn(
-          "ml-auto max-w-[85%] rounded-2xl rounded-br-md bg-violet-600 px-3.5 py-2 whitespace-pre-wrap text-white",
+          "ml-auto max-w-[85%] rounded-2xl rounded-br-md bg-[var(--tint)] px-3.5 py-2 whitespace-pre-wrap text-white",
           enter,
           "motion-safe:slide-in-from-bottom-2 motion-safe:zoom-in-95 motion-safe:origin-bottom-right",
         )}
@@ -401,7 +409,7 @@ function Message({ m }: { m: AssistantMessage }) {
   return (
     <div className={cn("max-w-[94%] leading-relaxed", enter, "motion-safe:slide-in-from-bottom-1")}>
       <ReplyText text={m.text} />
-      {m.status === "thinking" && <span className="ml-0.5 inline-block h-3.5 w-1.5 rounded-sm bg-violet-500 align-middle motion-safe:animate-pulse" aria-hidden />}
+      {m.status === "thinking" && <span className="ml-0.5 inline-block h-3.5 w-1.5 rounded-sm bg-[var(--tint)] align-middle motion-safe:animate-pulse" aria-hidden />}
     </div>
   );
 }
