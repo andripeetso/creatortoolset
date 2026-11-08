@@ -161,6 +161,7 @@ export function SetupDialog() {
     else finish();
   };
   const pickTalk = (t: WorkPrefs["talk"]) => {
+    to(step); // the open step in the address keeps it open: "In my own AI" can make an early-closed setup count as finished
     setPrefs({ ...prefs, talk: t });
     void putPrefs({ talk: t });
   };

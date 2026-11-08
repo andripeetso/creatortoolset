@@ -5,7 +5,7 @@ import { TOOLS } from "@contracts/tools";
 describe("setup steps", () => {
   it("follows the answer to How do you want to use Creator Toolset?", () => {
     expect(setupSteps(["workshop"], "app")).toEqual(["how", "make", "tools", "project", "ai", "left"]);
-    expect(setupSteps(["workshop"], "chat")).toEqual(["how", "connect", "left"]);
+    expect(setupSteps(["workshop"], "chat")).toEqual(["how", "connect"]);
     expect(setupSteps(["workshop"], "both")).toEqual(["how", "make", "tools", "project", "ai", "connect", "left"]);
     expect(setupSteps([], "app")).toEqual(["how", "make", "tools", "left"]);
   });

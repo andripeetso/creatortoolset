@@ -13,10 +13,10 @@ export type SetupStep = "how" | "make" | "tools" | "project" | "ai" | "connect" 
 /**
  * Which steps show. "How do you want to use Creator Toolset?" first; its answer (work-prefs `talk`) decides the rest.
  * In the app: what they make, tools, the first project only for the Workshop or the Analyzer, the AI only when a ticked tool uses it.
- * In my own AI: connect it, nothing else. Both: the app's steps, then connect. What's left always.
+ * In my own AI: connect it, nothing else. Both: the app's steps, then connect. What's left after the app's steps.
  */
 export function setupSteps(ticked: readonly Tool[], talk: WorkPrefs["talk"]): SetupStep[] {
-  if (talk === "chat") return ["how", "connect", "left"];
+  if (talk === "chat") return ["how", "connect"]; // no tools picked, so nothing left to list: Done on Connect
   return [
     "how",
     "make",
