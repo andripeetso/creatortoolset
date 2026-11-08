@@ -156,7 +156,7 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
       >
         <ApifyCard availability={avail} onChange={() => void reload()} />
       </Group>
-      {!compact && <div className="mt-8"><Footnote>Logins are read every 12 hours. Handles are read when you press Pull.</Footnote></div>}
+      {!compact && <div className="mt-8"><Footnote>Logins are read every 12 hours. Handles are read when you add them or press Read it again.</Footnote></div>}
     </>
   );
 }
