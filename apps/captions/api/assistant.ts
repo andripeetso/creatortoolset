@@ -37,6 +37,7 @@ Your reply is shown in a small chat dock. You act in the app only through its to
 - The workshop_* tools (projects, sessions, pieces), list_reviews, get_review, resolve_comment and review_set_approval work on the user's own content.
 - instagram_posts and instagram_refresh: the user's Instagram posts in the Analyzer and their numbers.
 - editor_list, editor_get and editor_run: the AI Editor's edits, their drafts and jobs.
+- automations_list, automations_create, automations_update, automations_delete and automations_run: scheduled prompts. Each runs on the user's AI at a set time (daily or weekly at HH:MM in a timezone, or every N hours) and reports to the inbox and its last result.
 - navigate opens a page of the app for the user, given as a relative path such as /workshop.
 - ask_secret asks the user for one API key. The app shows a secure box in the chat; the key goes straight to the app and never to you. Never ask the user to paste a key, token or password into the chat, and never repeat one back.
 
@@ -119,13 +120,19 @@ const publicOrigin = (c: Context) => {
   return process.env.PUBLIC_ORIGIN?.replace(/\/$/, "") || `${c.req.header("x-forwarded-proto") ?? url.protocol.replace(":", "")}://${url.host}`;
 };
 
+/** The account's own AI only: the workspace's providers (the owner's own logins) answer the assistant for an admin alone. */
+export const routeOf = (username: string, admin: boolean): Route | null => {
+  const r = routeFor(username, admin, JOB);
+  return r && (admin || r.scope !== "workspace") ? r : null;
+};
+
 const providerOf = (route: Route | null): AssistantProvider => (!route ? "none" : route.instance.driver === "claude" ? "claude" : "other");
 
 function view(username: string, admin: boolean): AssistantView {
   const conv = load(username);
   const pending = conv.pending ? MY_KEYS.find((k) => k.env === conv.pending!.env) : undefined;
   return {
-    provider: providerOf(routeFor(username, admin, JOB)),
+    provider: providerOf(routeOf(username, admin)),
     messages: conv.messages.slice(-80),
     pending: pending && conv.pending ? { env: pending.env, name: pending.name, why: conv.pending.why } : null,
     navigate: conv.navigate ?? null,
@@ -142,28 +149,50 @@ function promptFor(messages: AssistantMessage[]): string {
 }
 
 /**
- * One turn on the Mac. The job token is minted for this reply only, and revoked when the turn ends either way.
+ * One answer from the account's Claude Code on its Mac, with this server's MCP tools under a job token made for
+ * this answer only (turn names it: the reply id, or an automation's). The token is revoked when the answer ends
+ * either way, and never appears in a thrown message. Used by the dock's turns and by automations (automations.ts).
  * streamMacClaude queues the job synchronously, so the Mac's next poll gets it.
  */
-async function runTurn(username: string, replyId: string, route: Route, url: string, prompt: string): Promise<void> {
-  const token = mintJobToken(username, replyId);
+export async function answerWithTools(
+  username: string,
+  route: Route,
+  url: string,
+  prompt: string,
+  opts: { label: string; turn: string; onDelta?: (text: string) => void; background?: boolean },
+): Promise<string> {
+  const token = mintJobToken(username, opts.turn);
   try {
-    const text = await streamMacClaude(SYSTEM, prompt, undefined, (t) => {
-      const m = messageOf(username, replyId);
-      if (m) m.text = t;
-      saveSoon(username);
-    }, undefined, {
-      label: "Assistant",
+    return await streamMacClaude(SYSTEM, prompt, undefined, (t) => opts.onDelta?.(t), undefined, {
+      label: opts.label,
+      background: opts.background,
       provider: { instance: route.instance.id, driver: route.instance.driver, home: route.instance.home, model: route.selection.model, effort: route.selection.effort, device: route.device, scope: route.scope },
       mcp: { url, token },
     });
-    Object.assign(messageOf(username, replyId) ?? {}, { status: "done", text });
   } catch (e) {
     // the token never goes into a stored reply
-    const detail = (e instanceof Error ? e.message : String(e)).split(token).join("");
-    Object.assign(messageOf(username, replyId) ?? {}, { status: "error", text: detail.slice(0, 300) || "The answer failed." });
+    throw new Error((e instanceof Error ? e.message : String(e)).split(token).join(""));
   } finally {
     revokeJobToken(token);
+  }
+}
+
+/** One turn of the dock: the reply fills in as it streams, then its status says how it ended. */
+async function runTurn(username: string, replyId: string, route: Route, url: string, prompt: string): Promise<void> {
+  try {
+    const text = await answerWithTools(username, route, url, prompt, {
+      label: "Assistant",
+      turn: replyId,
+      onDelta: (t) => {
+        const m = messageOf(username, replyId);
+        if (m) m.text = t;
+        saveSoon(username);
+      },
+    });
+    Object.assign(messageOf(username, replyId) ?? {}, { status: "done", text });
+  } catch (e) {
+    Object.assign(messageOf(username, replyId) ?? {}, { status: "error", text: (e instanceof Error ? e.message : String(e)).slice(0, 300) || "The answer failed." });
+  } finally {
     const t = pendingSave.get(username);
     if (t) clearTimeout(t);
     pendingSave.delete(username);
@@ -189,7 +218,7 @@ assistantApp.post("/turn", async (c) => {
   const conv = load(u.username);
   if (conv.messages.at(-1)?.status === "thinking") return c.json({ error: "Still answering the last message: wait for it" }, 409);
   // Before an AI is connected: no model call, no job, no paid call of any kind (the server's keys included).
-  const route = routeFor(u.username, u.role === "admin", JOB);
+  const route = routeOf(u.username, u.role === "admin");
   if (!route) return c.json({ error: "Connect your AI first", code: "NO_PROVIDER" }, 409);
   if (route.instance.driver !== "claude") return c.json({ error: "The assistant needs Claude Code on your Mac for now", code: "NOT_CLAUDE" }, 409);
   const now = Date.now();

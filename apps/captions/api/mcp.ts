@@ -66,6 +66,11 @@ How the user wants to work (get_work_prefs / set_work_prefs): where they talk to
 both) and where they check the work (the app, their own editor, or both).`;
 
 const str = { type: "string" };
+const schedule = {
+  type: "object",
+  properties: { kind: { type: "string", enum: ["daily", "weekly", "hours"] }, at: str, weekday: { type: "integer" }, every: { type: "integer" } },
+  required: ["kind"],
+};
 const lines = { type: "array", items: { type: "object", properties: { id: str, text: str }, required: ["text"] } };
 export const TOOLS = [
   { name: "workshop_projects", description: "The Workshop's projects (brands): id, name, audience, voice, CTA, notes.", inputSchema: { type: "object", properties: {} } },
@@ -151,6 +156,24 @@ export const TOOLS = [
     description: "Run an AI Editor edit from a step on (analyze, script, draft, broll); send_to_review files a draft's preview in Review (needs draft).",
     inputSchema: { type: "object", properties: { edit: str, kind: { type: "string", enum: [...EDIT_STEPS, "send_to_review"] }, draft: str }, required: ["edit", "kind"] },
   },
+  // automations (automations.ts): a prompt the account's own AI runs on a schedule, reporting to the inbox
+  { name: "automations_list", description: "The user's automations: name, schedule, prompt, enabled, next run, and the last result (done, error or skipped, with its text).", inputSchema: { type: "object", properties: {} } },
+  {
+    name: "automations_create",
+    description: "Schedule a prompt to run on the user's AI (as if they typed it, with these tools). schedule: kind daily (at), weekly (weekday 0 Sunday to 6 Saturday, at) or hours (every 1 to 168). Times are in timezone (IANA, such as Europe/Berlin): required for daily and weekly, so ask if you don't know it. project = a Workshop project id.",
+    inputSchema: {
+      type: "object",
+      properties: { name: str, schedule: schedule, prompt: str, timezone: str, project: str },
+      required: ["name", "schedule", "prompt"],
+    },
+  },
+  {
+    name: "automations_update",
+    description: "Change an automation (id): any of name, schedule, prompt, timezone, project (null clears it), enabled. A new schedule or turning it on counts the next run from now.",
+    inputSchema: { type: "object", properties: { id: str, name: str, schedule: schedule, prompt: str, timezone: str, project: { type: ["string", "null"] }, enabled: { type: "boolean" } }, required: ["id"] },
+  },
+  { name: "automations_delete", description: "Delete an automation (id) for good.", inputSchema: { type: "object", properties: { id: str }, required: ["id"] } },
+  { name: "automations_run", description: "Run an automation (id) now, as its schedule would. It runs in the background: its result lands in automations_list (last result) and the user's inbox.", inputSchema: { type: "object", properties: { id: str }, required: ["id"] } },
   { name: "get_work_prefs", description: "How the user wants to work: talk (app | chat | both), check (app | editor | both) and their editor.", inputSchema: { type: "object", properties: {} } },
   {
     name: "set_work_prefs",
@@ -397,6 +420,15 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
       await json(`/api/editor/${edit}/run`, "POST", { from: a.kind });
       return { status: "queued", from: a.kind };
     },
+    automations_list: async () => ({ automations: (await json<{ items: Args[] }>("/api/automations")).items }),
+    automations_create: async (a) => json("/api/automations", "POST", pick(a, ["name", "schedule", "prompt", "timezone", "project"])),
+    automations_update: async (a) => {
+      const body = pick(a, ["name", "schedule", "prompt", "timezone", "project", "enabled"]);
+      if (a.project === null) body.project = null;
+      return json(`/api/automations/${encodeURIComponent(String(a.id))}`, "PATCH", body);
+    },
+    automations_delete: async (a) => json(`/api/automations/${encodeURIComponent(String(a.id))}`, "DELETE"),
+    automations_run: async (a) => json(`/api/automations/${encodeURIComponent(String(a.id))}/run`, "POST"),
     get_work_prefs: async () => json("/api/work-prefs"),
     set_work_prefs: async (a) => {
       const body = pick(a, ["talk", "check"]);

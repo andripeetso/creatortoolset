@@ -34,6 +34,7 @@ import { storiesApp } from "./stories";
 import { transcribeApp } from "./transcribe";
 import { authApp, getApiKeyUser, getSessionUser, innerCall, jobTokenUser, type AuthVars } from "./auth";
 import { assistantApp } from "./assistant";
+import { automationsApp, startAutomations } from "./automations";
 import { providersApp } from "./providers";
 import { mcpApp } from "./mcp";
 import { connectorsApp, startConnectorPulls } from "./connectors";
@@ -267,6 +268,9 @@ app.route("/api/providers", providersApp);
 // Creator Toolset as a remote MCP server (Full key only: not on the key routes): its tools call these same routes
 app.route("/api/mcp", mcpApp((path, init) => Promise.resolve(app.request(path, init))));
 app.route("/api/assistant", assistantApp);
+// automations (automations.ts): scheduled prompts for the account's own assistant; REST here, and the MCP tools in mcp.ts
+app.route("/api/automations", automationsApp);
+startAutomations();
 app.route("/api/connectors", connectorsApp);
 startConnectorPulls();
 app.route("/api/devices", devicesApp);

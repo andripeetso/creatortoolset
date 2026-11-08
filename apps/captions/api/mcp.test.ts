@@ -87,7 +87,8 @@ describe("Creator Toolset as a remote MCP server", () => {
   it("keeps its tool list's size on purpose: it goes into every AI session that connects", () => {
     // growth must be deliberate: check what the new words buy, then update this number (never fix it by cutting words)
     // 5814 -> 6925: review_set_approval (approve or send back a Review video from a chat) and instagram_refresh/posts
-    // (start an Analyzer account's pull and list its posts); 6925 -> 7071: workshop_update_session links or unlinks a post
-    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(7071);
+    // (start an Analyzer account's pull and list its posts); 6925 -> 7071: workshop_update_session links or unlinks a post;
+    // 7071 -> 9162: automations_list/create/update/delete/run (scheduled prompts on the user's own AI)
+    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(9162);
   });
 });

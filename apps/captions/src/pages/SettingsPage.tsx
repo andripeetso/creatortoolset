@@ -1,8 +1,9 @@
 import { Link, Navigate, useLocation } from "react-router";
-import { Cable, Cpu, FileDown, Gauge, KeyRound, Laptop, ListChecks, Monitor, Palette, SlidersHorizontal, UserRound, type LucideIcon } from "lucide-react";
+import { Cable, CalendarClock, Cpu, FileDown, Gauge, KeyRound, Laptop, ListChecks, Monitor, Palette, SlidersHorizontal, UserRound, type LucideIcon } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { AccountSection } from "@/components/settings/AccountSection";
 import { AppearanceSection } from "@/components/settings/AppearanceSection";
+import { AutomationsSection } from "@/components/settings/AutomationsSection";
 import { DevicesSection } from "@/components/settings/DevicesSection";
 import { ExportsSection } from "@/components/settings/ExportsSection";
 import { GeneralSection } from "@/components/settings/GeneralSection";
@@ -25,6 +26,7 @@ const SETTINGS_SECTIONS: ReadonlyArray<{ id: string; title: string; icon: Lucide
   { id: "my-keys", title: "My API keys", icon: KeyRound },
   { id: "usage", title: "Usage", icon: Gauge },
   { id: "devices", title: "Devices", icon: Monitor },
+  { id: "automations", title: "Automations", icon: CalendarClock },
   { id: "exports", title: "Exports", icon: FileDown },
   { id: "account", title: "Account", icon: UserRound },
   { id: "keys", title: "API keys", icon: KeyRound, adminOnly: true },
@@ -58,6 +60,7 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
     "my-keys": <MyKeysSection />,
     usage: <UsageSection />,
     devices: <DevicesSection />,
+    automations: <AutomationsSection />,
     exports: <ExportsSection />,
     account: <AccountSection />,
     keys: <ServiceKeysSection />,
