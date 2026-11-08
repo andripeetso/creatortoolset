@@ -19,7 +19,9 @@ import {
   UploadCloud,
   X,
   MessageSquareText,
+  Circle,
 } from "lucide-react";
+import { canRecordScreen, recordScreen } from "@/lib/mac-record";
 import { ToolIntro } from "@/components/AppBar";
 import { AppBar } from "@/components/AppBar";
 import { ReviewShareButton } from "@/components/ReviewShareButton";
@@ -300,6 +302,12 @@ export default function ReviewPage() {
               }}
               className="h-8 text-sm"
             />
+          )}
+          {!trash && canRecordScreen() && (
+            <Button size="sm" variant="outline" onClick={() => recordScreen("review")} className="h-8 text-sm"
+              title="Records the screen under the pointer; it lands here when you stop, ready for Zoom & pointer">
+              <Circle className="fill-red-500 text-red-500" /> <span className="hidden sm:inline">Record screen</span>
+            </Button>
           )}
           {!trash && (
             <Button size="sm" onClick={() => setAdding({})} className="bg-violet-600 text-white hover:bg-violet-500">

@@ -36,6 +36,8 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
     }
     /// The page's Settings → This Mac (only shown inside the app): opens the native panel.
     var onThisMac: (() -> Void)?
+    /// The page's Record screen buttons (Review, Video Notes; src/lib/mac-record.ts): the native recorder (Recorder.swift).
+    var onRecord: ((RecordingTarget) -> Void)?
 
     init() {
         let config = WKWebViewConfiguration()
@@ -124,6 +126,10 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
             if let event = lastMouseDown { window.performDrag(with: event) }
         case "this-mac":
             onThisMac?()
+        case "record-review":
+            onRecord?(.review)
+        case "record-notes":
+            onRecord?(.notes)
         case "zoom":
             // System Settings › Desktop & Dock › "Double-click a window's title bar to"
             switch UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") {
@@ -205,6 +211,10 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
         scripts.removeAllUserScripts()
         scripts.addUserScript(WKUserScript(source: titleBarScript(fullScreen: fullScreen), injectionTime: .atDocumentStart, forMainFrameOnly: true))
         scripts.addUserScript(WKUserScript(source: pageLogScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        // the page shows its Record screen buttons only where this app can record (macOS 15+)
+        if Recorder.available {
+            scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macRecord = '1';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        }
         let device = macDeviceScript(macDevice)
         scripts.addUserScript(WKUserScript(source: device, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         evaluateJavaScript(device)   // the page already open learns it too (after pairing)

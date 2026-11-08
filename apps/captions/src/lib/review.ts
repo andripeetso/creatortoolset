@@ -1,4 +1,5 @@
 import { chunkedUpload } from "@/lib/clips";
+import type { ScreenEvents, ScreenLook } from "./screen-recording";
 
 /** Review — Frame.io-style video review. Server: api/review.ts. */
 
@@ -29,6 +30,8 @@ export interface ReviewVersion {
   bytes: number;
   /** Its video files were deleted to save space; comments and thumbnail stay. */
   removed?: boolean;
+  /** (owners) a screen recording from the Mac app with its pointer log: the Zoom & pointer editor opens on it. */
+  screen?: boolean;
   createdAt: number;
 }
 
@@ -160,6 +163,12 @@ const send = (method: string, body?: unknown): RequestInit => ({
 });
 
 export const listReviewAssets = () => call<ReviewAsset[]>("/api/review");
+
+/** A screen recording's pointer log and the look saved for it (null until one is). */
+export const getScreenRecording = (assetId: string, n: number) =>
+  call<{ events: ScreenEvents; look: ScreenLook | null }>(`/api/review/assets/${assetId}/v/${n}/screen`);
+export const saveScreenLook = (assetId: string, n: number, look: ScreenLook) =>
+  call<{ ok: true }>(`/api/review/assets/${assetId}/v/${n}/screen/look`, send("PUT", look));
 
 export async function uploadReviewFile(
   file: File,

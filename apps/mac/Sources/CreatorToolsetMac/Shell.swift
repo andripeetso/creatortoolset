@@ -19,6 +19,8 @@ final class Shell: NSObject, ObservableObject {
     @Published private(set) var ai = AIStatus()
     /// Opens a window by its scene id ("main", "this-mac", "guide"); the main window sets it when it appears.
     var openWindowID: ((String) -> Void)?
+    /// Screen recording (Recorder.swift): started from the page, the menu bar or the Record menu.
+    let recorder = Recorder()
     /// The server on this Mac (Server.swift), when this build has one; runsHere = the window uses it, not a site.
     let server: LocalServer? = LocalServer.folder == nil ? nil : LocalServer()
     @Published private(set) var runsHere = false
@@ -78,6 +80,12 @@ final class Shell: NSObject, ObservableObject {
             self.webView.reload()
         }
         view.onThisMac = { [weak self] in self?.openWindowID?("this-mac") }
+        view.onRecord = { [weak self] in self?.recorder.start(to: $0) }
+        recorder.upload = { [weak self] file, events, target, progress in
+            guard let self else { throw SiteError.status(0) }
+            return try await self.client().uploadRecording(file, events: events, to: target, progress: progress)
+        }
+        recorder.openPage = { [weak self] in self?.showWindow(href: $0) }
         view.pickerMenu = { [weak self] in self?.pickerItems() ?? [] }
         account.window = { [weak self] in self?.webView.window }
         account.signedIn = { [weak self] profile in self?.ownerProfile(profile) }

@@ -71,7 +71,7 @@ $channel
   <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
   <key>LSUIElement</key><false/>
   <key>NSHighResolutionCapable</key><true/>
-  <key>NSMicrophoneUsageDescription</key><string>So you can talk to the assistant instead of typing.</string>
+  <key>NSMicrophoneUsageDescription</key><string>So you can talk to the assistant instead of typing, and your voice is in your screen recordings.</string>
   <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
 </dict></plist>
 PLIST

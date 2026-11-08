@@ -37,6 +37,17 @@ struct CreatorToolsetMacApp: App {
             CommandGroup(replacing: .appSettings) {
                 Button("Settings…") { shell.openSettings() }.keyboardShortcut(",", modifiers: .command)
             }
+            CommandMenu("Record") {
+                if Recorder.available {
+                    Button("Record Screen to Review") { shell.recorder.start(to: .review) }.keyboardShortcut("r", modifiers: [.command, .option])
+                    Button("Record Screen to Video Notes") { shell.recorder.start(to: .notes) }
+                    Button("Stop Recording") { shell.recorder.stop() }.keyboardShortcut(".", modifiers: [.command, .option])
+                    Divider()
+                    RecordingMenu(recorder: shell.recorder)
+                } else {
+                    Text("Screen recording needs macOS 15")
+                }
+            }
             CommandMenu("Servers") {
                 ServersMenu(shell: shell)
             }

@@ -82,6 +82,7 @@ import { cn } from "@/lib/utils";
 import { useCachedLoad } from "@/lib/local-cache";
 import { fmtBytes } from "@/lib/exports";
 import { ReviewCompare } from "./ReviewCompare";
+import { ScreenRecordingEditor } from "@/components/ScreenRecordingEditor";
 
 const COLORS = ["#ff3b30", "#ffcc00", "#34c759", "#0a84ff", "#ffffff"];
 const AVATARS = ["bg-violet-600", "bg-sky-600", "bg-emerald-600", "bg-amber-600", "bg-rose-600", "bg-fuchsia-600", "bg-teal-600"];
@@ -193,6 +194,8 @@ function Review({
 }) {
   const { asset, manage } = view;
   const [comparing, setComparing] = useState(false);
+  // a screen recording from the Mac app: its Zoom & pointer editor (components/ScreenRecordingEditor.tsx)
+  const [screenEditor, setScreenEditor] = useState(false);
   const version = asset.versions.find((v) => v.n === n)!;
   const fps = version.fps;
   const video = useRef<HTMLVideoElement>(null);
@@ -614,6 +617,10 @@ function Review({
           pause();
           setComparing(true);
         }}
+        onZoom={() => {
+          pause();
+          setScreenEditor(true);
+        }}
       />
       {comparing && (
         <ReviewCompare
@@ -622,6 +629,19 @@ function Review({
           n={n}
           start={video.current?.currentTime ?? time}
           onClose={() => setComparing(false)}
+        />
+      )}
+      {screenEditor && (
+        <ScreenRecordingEditor
+          assetId={asset.id}
+          version={version}
+          src={api.media(version, "play")}
+          onClose={() => setScreenEditor(false)}
+          onMade={(made) => {
+            setScreenEditor(false);
+            const top = made.versions.at(-1);
+            void reload().then(() => top && pickVersion(top.n));
+          }}
         />
       )}
 
@@ -1027,6 +1047,7 @@ function Header({
   approve,
   comments,
   onCompare,
+  onZoom,
 }: {
   view: ReviewView;
   setView: React.Dispatch<React.SetStateAction<ReviewView | null>>;
@@ -1037,6 +1058,8 @@ function Header({
   approve: (s: Approval) => Promise<void>;
   comments: ReviewComment[];
   onCompare: () => void;
+  /** A screen recording: open Zoom & pointer. */
+  onZoom: () => void;
 }) {
   const [error, setError] = useState("");
   const { asset, manage } = view;
@@ -1169,6 +1192,15 @@ function Header({
           className="flex items-center gap-1 rounded-md border border-zinc-800 px-2 py-1 text-xs font-medium hover:bg-zinc-900"
         >
           <Columns2 className="h-3.5 w-3.5" /> Compare
+        </button>
+      )}
+      {manage && version.screen && version.status === "ready" && !version.removed && (
+        <button
+          onClick={onZoom}
+          title="Zooms where you clicked, a smooth pointer, background and frame shape; makes the next version"
+          className="rounded-md bg-violet-600/20 px-2 py-1 text-xs font-medium text-violet-200 hover:bg-violet-600/30"
+        >
+          Zoom & pointer
         </button>
       )}
       <input

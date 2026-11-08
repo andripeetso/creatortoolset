@@ -69,6 +69,10 @@ export const sourcePath = (id: string, n: number) => path.join(versionDir(id, n)
 const proxyPath = (id: string, n: number) => path.join(versionDir(id, n), "proxy.mp4");
 const thumbPath = (id: string, n: number) => path.join(versionDir(id, n), "thumb.jpg");
 const refsDir = (id: string, n: number) => path.join(versionDir(id, n), "refs");
+/** A screen recording's pointer log from the Mac app (apps/mac Recorder.swift) and the look picked in Review's
+ *  Zoom & pointer editor (src/lib/screen-recording.ts): `screen-events.json`, `screen-look.json`. */
+const screenPath = (id: string, n: number, part: "events" | "look") => path.join(versionDir(id, n), `screen-${part}.json`);
+const MAX_SCREEN_BYTES = { events: 32 * 1024 * 1024, look: 256 * 1024 };
 const uploadDir = (uid: string) => path.join(ROOT, "uploads", uid);
 const linkPath = (token: string) => path.join(ROOT, "links", token);
 const projectsPath = path.join(ROOT, "projects.json");
@@ -103,6 +107,8 @@ interface Version {
   captioned?: boolean;
   /** The version in this stack it was made from: the same cut without captions. */
   madeFrom?: number;
+  /** A screen recording with its pointer log (screen-events.json): Review's Zoom & pointer editor opens on it. */
+  screen?: boolean;
   /** When its video files were deleted to save space (a later version went on
    *  to Caption Studio); its comments and thumbnail stay. */
   removed?: number;
@@ -800,6 +806,7 @@ function publicAsset(m: Meta, manage: boolean, download = manage || !!m.share?.d
       error: v.error,
       captioned: !!v.captioned,
       madeFrom: v.madeFrom,
+      ...(manage && v.screen && !v.removed ? { screen: true } : {}),
       bytes: v.bytes,
       removed: !!v.removed,
       createdAt: v.createdAt,
@@ -1004,6 +1011,52 @@ async function finishUpload(
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
   }
+}
+
+/** A screen recording's pointer log (`events`, once, from the Mac app) or the look picked for it (`look`, on every change). */
+reviewApp.put("/assets/:id/v/:n/screen/:part{events|look}", async (c) => {
+  const v = await viewer(c);
+  const n = Number(c.req.param("n"));
+  const version = v?.manage ? v.meta.versions.find((x) => x.n === n) : undefined;
+  if (!v || !version) return c.json({ error: "Not found" }, 404);
+  const part = c.req.param("part") as "events" | "look";
+  const text = await c.req.text();
+  if (text.length > MAX_SCREEN_BYTES[part]) return c.json({ error: "Too big" }, 413);
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    return c.json({ error: "Not JSON" }, 400);
+  }
+  const ok = part === "look"
+    ? !!body && typeof body === "object" && !Array.isArray(body)
+    : isScreenEvents(body);
+  if (!ok) return c.json({ error: `Not a screen recording's ${part}` }, 400);
+  const dest = screenPath(v.meta.id, n, part);
+  const tmp = `${dest}.tmp-${randomUUID()}`;
+  await writeFile(tmp, text);
+  await rename(tmp, dest);
+  if (part === "look") return c.json({ ok: true });
+  const meta = await setVersion(v.meta.id, n, { screen: true });
+  return meta ? c.json(publicAsset(meta, true)) : c.json({ error: "Not found" }, 404);
+});
+
+/** Both parts of a screen recording for the editor; `look` is null until one is saved. */
+reviewApp.get("/assets/:id/v/:n/screen", async (c) => {
+  const v = await viewer(c);
+  const n = Number(c.req.param("n"));
+  const version = v?.manage ? v.meta.versions.find((x) => x.n === n) : undefined;
+  if (!v || !version?.screen) return c.json({ error: "Not found" }, 404);
+  const read = (part: "events" | "look") => readFile(screenPath(v.meta.id, n, part), "utf-8").then(JSON.parse, () => null);
+  const [events, look] = await Promise.all([read("events"), read("look")]);
+  return events ? c.json({ events, look }, 200, { "Cache-Control": "no-store" }) : c.json({ error: "Not found" }, 404);
+});
+
+/** The Mac app's pointer log: sizes and [t, x, y] rows of numbers. */
+export function isScreenEvents(x: unknown): boolean {
+  const e = x as { width?: unknown; height?: unknown; moves?: unknown; clicks?: unknown };
+  const rows = (r: unknown) => Array.isArray(r) && r.every((p) => Array.isArray(p) && p.length === 3 && p.every(Number.isFinite));
+  return !!e && typeof e === "object" && Number.isFinite(e.width) && Number.isFinite(e.height) && rows(e.moves) && rows(e.clicks);
 }
 
 // ---------- Caption Studio ----------
