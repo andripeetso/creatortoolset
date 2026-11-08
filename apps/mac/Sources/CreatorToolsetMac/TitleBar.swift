@@ -36,8 +36,8 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
     }
     /// A page that posts `this-mac` (older servers' Settings → This Mac): opens the native panel.
     var onThisMac: (() -> Void)?
-    /// The page's Record screen buttons (Review, Video Notes; src/lib/mac-record.ts): the native recorder (Recorder.swift).
-    var onRecord: ((RecordingTarget) -> Void)?
+    /// The page's recorder messages (`record-<what>`, src/lib/mac-record.ts): the native recorder (Recorder.swift).
+    var onRecord: ((String) -> Void)?
 
     init() {
         let config = WKWebViewConfiguration()
@@ -126,10 +126,8 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
             if let event = lastMouseDown { window.performDrag(with: event) }
         case "this-mac":
             onThisMac?()
-        case "record-review":
-            onRecord?(.review)
-        case "record-notes":
-            onRecord?(.notes)
+        case let m? where m.hasPrefix("record-"):
+            onRecord?(String(m.dropFirst(7)))
         case "zoom":
             // System Settings › Desktop & Dock › "Double-click a window's title bar to"
             switch UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") {

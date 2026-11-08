@@ -9,6 +9,7 @@ import {
   MessageSquareText,
   NotebookPen,
   ScanSearch,
+  ScreenShare,
   Scissors,
   Video,
 } from "lucide-react";
@@ -115,6 +116,14 @@ export const OTHER: Tool[] = [
     name: "Video Notes",
     desc: "Drop in a recording: transcript, summary, chapters, takeaways.",
     can: (me) => canUse(me, "notes"),
+  },
+  {
+    // the Mac app's recorder (apps/mac Recorder.swift); Review and Video Notes start it too
+    to: "/record",
+    icon: ScreenShare,
+    name: "Screen Recorder",
+    desc: "Record your screen into Review or Video Notes: zooms where you click, a smooth pointer.",
+    can: (me) => canUse(me, "review") || canUse(me, "notes"),
   },
   {
     to: "/documents",

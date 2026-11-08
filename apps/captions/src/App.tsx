@@ -19,6 +19,7 @@ import ReviewSharedProjectPage from "./pages/ReviewSharedProjectPage";
 import WorkshopSharePage from "./pages/WorkshopSharePage";
 import StorySplitterPage from "./pages/StorySplitterPage";
 import LibraryPage from "./pages/LibraryPage";
+import ScreenRecorderPage from "./pages/ScreenRecorderPage";
 import LibrarySharePage from "./pages/LibrarySharePage";
 import EditorPage from "./pages/EditorPage";
 import EditorEditPage from "./pages/EditorEditPage";
@@ -68,6 +69,11 @@ function PhoneTool({ children }: { children: ReactNode }) {
 function AppRoute({ tool, children }: { tool: Tool; children: ReactNode }) {
   const me = useMe();
   return canUse(me, tool) ? children : <Navigate to="/" replace />;
+}
+
+function RecordRoute() {
+  const me = useMe();
+  return canUse(me, "review") || canUse(me, "notes") ? <ScreenRecorderPage /> : <Navigate to="/" replace />;
 }
 
 function ClipsRoute() {
@@ -296,6 +302,7 @@ export default function App() {
           <Route path="/enhance" element={<AppRoute tool="enhance"><EnhancePage /></AppRoute>} />
           <Route path="/enhance/:sessionId" element={<AppRoute tool="enhance"><EnhancePage /></AppRoute>} />
           <Route path="/clean" element={<AppRoute tool="clean"><CleanPage /></AppRoute>} />
+          <Route path="/record" element={<RecordRoute />} />
           <Route path="/clips" element={<ClipsRoute />} />
           <Route path="/clips/:clipId" element={<ClipsRoute />} />
           <Route path="/documents" element={<DocumentsRoute />} />

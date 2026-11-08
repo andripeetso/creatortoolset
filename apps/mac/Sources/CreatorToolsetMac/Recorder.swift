@@ -9,8 +9,8 @@ import AppKit
 import ScreenCaptureKit
 import SwiftUI
 
-/// Where a recording goes when it stops.
-enum RecordingTarget: String { case review, notes }
+/// Where a recording goes when it stops: uploaded to Review or Video Notes, or only kept in the recordings folder.
+enum RecordingTarget: String { case review, notes, mac }
 
 /// What Review reads beside the video (api/review.ts, PUT …/screen/events): seconds from the first frame,
 /// positions as 0–1 of the recorded display (top left 0,0; outside 0–1 = the pointer was on another display).
@@ -233,6 +233,20 @@ final class Recorder: ObservableObject {
     private var banked: TimeInterval = 0
     private var runFrom: Date?
 
+    /// What the Screen Recorder page shows (src/lib/mac-record.ts): what it is doing, the sound choices, the folder.
+    func pageState(_ phase: Phase? = nil) -> String {
+        let name: String = switch phase ?? self.phase {
+        case .idle: "idle"
+        case .countdown: "countdown"
+        case .recording: "recording"
+        case .paused: "paused"
+        case .saving: "saving"
+        case .uploading: "uploading"
+        }
+        let body: [String: Any] = ["phase": name, "mic": withMic, "sound": withSystemAudio, "folder": folder.path]
+        return (try? JSONSerialization.data(withJSONObject: body)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+    }
+
     var elapsed: TimeInterval { banked + (runFrom.map { Date().timeIntervalSince($0) } ?? 0) }
     var busy: Bool { phase != .idle }
 
@@ -408,7 +422,11 @@ final class Recorder: ObservableObject {
     }
 
     private func send(_ file: URL, _ events: ScreenEvents) async {
-        guard let upload else { return finish() }
+        guard let upload, target != .mac else {
+            finish()
+            if target == .mac { NSWorkspace.shared.activateFileViewerSelecting([file]) }
+            return
+        }
         while true {
             phase = .uploading(0)
             do {

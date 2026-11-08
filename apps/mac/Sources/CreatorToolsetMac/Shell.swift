@@ -32,6 +32,7 @@ final class Shell: NSObject, ObservableObject {
     /// "Only N GB free on the data disk", when under 10 GB (checked with the notes, every 30 s).
     @Published private(set) var spaceLine: String?
     private var serverWatch: AnyCancellable?
+    private var recorderWatch: AnyCancellable?
 
     /// The person's account (Account.swift): first run's sign-in with Apple or Google.
     let account = Account()
@@ -80,7 +81,10 @@ final class Shell: NSObject, ObservableObject {
             self.webView.reload()
         }
         view.onThisMac = { [weak self] in self?.openWindowID?("this-mac") }
-        view.onRecord = { [weak self] in self?.recorder.start(to: $0) }
+        view.onRecord = { [weak self] in self?.recorderCommand($0) }
+        recorderWatch = recorder.$phase.sink { [weak self] phase in
+            DispatchQueue.main.async { self?.pushRecorderState(phase) }
+        }
         recorder.upload = { [weak self] file, events, target, progress in
             guard let self else { throw SiteError.status(0) }
             return try await self.client().uploadRecording(file, events: events, to: target, progress: progress)
@@ -393,6 +397,24 @@ final class Shell: NSObject, ObservableObject {
         } else {
             NSWorkspace.shared.open(url)
         }
+    }
+
+    /// A `record-<what>` message from the page (src/lib/mac-record.ts); every one answers with the recorder's state.
+    private func recorderCommand(_ what: String) {
+        switch what {
+        case "review", "notes", "mac": recorder.start(to: RecordingTarget(rawValue: what)!)
+        case "stop": recorder.stop()
+        case "mic-on", "mic-off": recorder.withMic = what == "mic-on"
+        case "sound-on", "sound-off": recorder.withSystemAudio = what == "sound-on"
+        case "folder": recorder.pickFolder()
+        case "show": recorder.showFolder()
+        default: break   // "state": only the answer
+        }
+        pushRecorderState()
+    }
+
+    private func pushRecorderState(_ phase: Recorder.Phase? = nil) {
+        webView.evaluateJavaScript("window.dispatchEvent(new CustomEvent('mac-recorder', {detail: \(recorder.pageState(phase))}))")
     }
 
     func showWindow(href: String? = nil) {
