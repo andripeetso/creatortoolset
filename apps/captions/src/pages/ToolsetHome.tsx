@@ -105,7 +105,7 @@ export default function ToolsetHome() {
   return (
     <div
       style={tintStyle}
-      className={`home-hub relative isolate flex min-h-dvh flex-col items-center bg-zinc-950 pt-safe pb-safe text-zinc-200 ${
+      className={`home-hub relative isolate select-none flex min-h-dvh flex-col items-center bg-zinc-950 pt-safe pb-safe text-zinc-200 ${
         phone ? "justify-start py-8" : "justify-center"
       }`}
     >

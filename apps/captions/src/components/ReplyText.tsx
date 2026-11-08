@@ -12,7 +12,7 @@ const REPLY: Components = {
   h3: ({ children }) => <p className="mb-1 mt-3 font-semibold first:mt-0">{children}</p>,
   strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
   a: ({ href, children }) => (
-    <a href={href} target="_blank" rel="noreferrer" className="text-violet-300 underline decoration-violet-500/40 underline-offset-2 hover:text-violet-200">
+    <a href={href} target="_blank" rel="noreferrer" className="select-text text-violet-300 underline decoration-violet-500/40 underline-offset-2 hover:text-violet-200">
       {children}
     </a>
   ),

@@ -2,6 +2,16 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Controls aren't text: like a native app, Cmd+A or a drag selects only what's worth copying (replies, scripts,
+   transcripts), never buttons, links, tiles or headers. Zero specificity, so `select-text` (links in a reply) and
+   anything editable win. */
+@layer base {
+  :where(button, a, label, header, nav, [role="button"], [role="tab"], [role="menuitem"]):where(:not([contenteditable] *)) {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}
+
 @layer base {
   :root {
     --background: 0 0% 100%;
