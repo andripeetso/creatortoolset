@@ -21,6 +21,21 @@ installs it as `/app/runtime/ffmpeg`. FFmpeg is not in this repository.
 If you publish an image you built, you distribute that FFmpeg binary: make its source available with it, as
 the GPL asks (pointing at the two repositories above at those versions is the usual way).
 
+## FFmpeg (GPL), bundled in the Mac app
+
+The Mac app carries `ffmpeg` and `ffprobe` in `Contents/Resources/server/runtime/`. While the app builds,
+`apps/captions/scripts/install-ffmpeg-runtime-mac.sh` downloads them from a checksum-pinned static build.
+
+- The build: FFmpeg 7.1.1 for macOS arm64 from https://ffmpeg.martin-riedl.de (the exact URLs and SHA-256 are in
+  the script). It is configured with `--enable-gpl`; `ffmpeg -version` prints the full configuration.
+- Its licence: the GPL. `ffmpeg -L` prints the exact terms.
+- Its source: every GitHub release of the app carries `ffmpeg-<version>.tar.xz`, FFmpeg's source for the version
+  inside it, as published at https://ffmpeg.org/releases/. The scripts that make the build, with the libraries it
+  links, are at https://git.martin-riedl.de/ffmpeg/build-script.
+
+The app also bundles Node.js (its licence is `server/NODE-LICENSE` inside the app). This file and the app's own
+`LICENSE` are in `Contents/Resources/`.
+
 ## npm dependencies
 
 | Package | Licence | How it is used |

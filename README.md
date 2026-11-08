@@ -7,7 +7,7 @@
 <p align="center">
   Plan, make and distribute video, in one app that runs on your own machine.
   <br />
-  <a href="#run-it-on-your-mac">Mac app</a> ·
+  <a href="../../releases/latest"><b>Download for Mac</b></a> ·
   <a href="#run-it-from-source">Run from source</a> ·
   <a href="SELF_HOSTING.md">Self-host</a> ·
   <a href="LICENSE">MIT</a>
@@ -90,13 +90,15 @@ and the Media Library need no AI at all.
 
 The Mac app (Apple silicon, macOS 14 or newer) has the whole server inside it, so there's nothing else to install.
 
-1. **Open it.** It starts the server and makes your account. It doesn't ask for a password, because the
+1. **Download it** from [Releases](../../releases/latest): open the disk image and drag Creator Toolset to
+   Applications. It updates itself after that.
+2. **Open it.** It starts the server and makes your account. It doesn't ask for a password, because the
    account's secret is kept in your Keychain.
-2. **Follow the setup.** It starts with one question: do you want to work in the app, in your own AI, or both?
+3. **Follow the setup.** It starts with one question: do you want to work in the app, in your own AI, or both?
    In the app, you pick your tools, make your first project and connect your AI. The app finds Claude Code or
    Codex, or shows the official commands to install one. In your own AI, one click adds Creator Toolset to
    Claude Code. Sign-in, the Instagram login and other keys are optional.
-3. **Use it from other devices (optional).** Turn on **This Mac → Access from other devices** (Settings → This Mac,
+4. **Use it from other devices (optional).** Turn on **This Mac → Access from other devices** (Settings → This Mac,
    inside the app) and choose a password. Phones and other computers sign in with it.
 
 Your data lives in `~/Library/Application Support/Creator Toolset/data`. You can move it to an external disk

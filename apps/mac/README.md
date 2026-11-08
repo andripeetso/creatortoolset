@@ -163,13 +163,24 @@ build script.
 
 ## Download and updates
 
-The app's download and its Sparkle appcast are hosted outside this repository; the web app serves neither. With
-`SPARKLE_PUBLIC_KEY` and `FEED_URL` set at build time, Sparkle reads the appcast every 4 hours, downloads a
+Releases are on this repository's GitHub Releases page. `scripts/release.sh <version>` builds the app from a clean
+checkout of the current (pushed) commit, signs and notarizes it, and makes a draft release with three files: the
+disk image, `appcast.xml` (the update feed) and the source of the bundled FFmpeg. Try the disk image, then publish
+the draft with `gh release edit v<version> --draft=false`:
+
+```sh
+SIGN_IDENTITY="Developer ID Application: …" NOTARY_PROFILE=… apps/mac/scripts/release.sh 0.2.0
+```
+
+A release build reads its feed at `releases/latest/download/appcast.xml`, so publishing a release updates every
+installed copy. Builds you make yourself have no updater unless you set both `SPARKLE_PUBLIC_KEY` and `FEED_URL`.
+With them set, Sparkle reads the appcast every 4 hours, downloads a
 newer build, checks its EdDSA signature and installs it when the app quits (Check for Updates… in the app
 menu and the menu bar item). The page inside the window updates with every site deploy: it offers a Reload
 when one lands.
 
-- The build number is the repo's commit count (`build-app.sh`), so each release is newer.
+- The version people see is the one given to `release.sh`; the build number is the repo's commit count
+  (`build-app.sh`), so each release is newer.
 - Keep the Sparkle private key somewhere safe. Lose it and installed copies can't take updates any more;
   back it up with `generate_keys -x <file>`.
 - Other people's Macs need a Developer ID build and notarization: an ad-hoc one is refused by Gatekeeper,

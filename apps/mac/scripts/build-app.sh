@@ -4,7 +4,8 @@
 # (Resources/server: Node, the built web app, its two external packages, FFmpeg, the fingerprint tools and,
 # with SSCD_CACHE, the SSCD model), and a code signature. Ad-hoc by default; SIGN_IDENTITY="Developer ID
 # Application: …" signs for other Macs (with the hardened runtime notarization needs). The build number is the
-# repo's commit count, so every release is newer than the one before. Apple silicon only.
+# repo's commit count, so every release is newer than the one before; VERSION=… sets the version people see
+# (default 1.0.<build>). Apple silicon only.
 #   SPARKLE_PUBLIC_KEY=…  the EdDSA public key of your Sparkle signing key (Sparkle's generate_keys)
 #   FEED_URL=…            the appcast the app reads (with SPARKLE_PUBLIC_KEY; set both or neither)
 #   NOTARY_PROFILE=…      a notarytool keychain profile: with SIGN_IDENTITY, notarizes and staples the app
@@ -57,7 +58,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>CFBundleDisplayName</key><string>Creator Toolset</string>
   <key>CFBundleExecutable</key><string>CreatorToolsetMac</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.0.$build</string>
+  <key>CFBundleShortVersionString</key><string>${VERSION:-1.0.$build}</string>
   <key>CFBundleVersion</key><string>$build</string>
 $sparkle
 $channel
@@ -87,6 +88,8 @@ if [ -f "$src" ]; then
   iconutil -c icns -o "$app/Contents/Resources/AppIcon.icns" "$set_dir"
   rm -rf "$set_dir"
 fi
+
+cp "$repo/LICENSE" "$repo/THIRD_PARTY_NOTICES.md" "$app/Contents/Resources/"   # the licences travel with the app
 
 # ---- the server the app runs (Server.swift starts server/bin/node dist/boot.js in server/) ----
 NODE_VERSION=v22.23.4
