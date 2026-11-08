@@ -1,11 +1,12 @@
-import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { AuthVars } from "../auth";
 
-const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "library-watch-"));
+// its real path: the watcher resolves links, and macOS hands out /var/folders under /private
+const dir = realpathSync(mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "library-watch-")));
 process.env.DATA_DIR = path.join(dir, "data");
 process.env.LIBRARY_WATCH_FOLDERS = "1";
 process.env.LIBRARY_DISK_RESERVE_GB = "0";
