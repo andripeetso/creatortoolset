@@ -36,7 +36,7 @@ function suggestionsFor(path: string): string[] {
   if (path.startsWith("/review")) return ["What's new in Review?", "Sum up the comments on my latest video", "Which versions are approved?"];
   if (path.startsWith("/editor")) return ["How are my edits doing?", "What changed in the last draft?"];
   if (path.startsWith("/instagram") || path.startsWith("/analyzer")) return ["How did my last five posts do?", "Refresh my Instagram numbers"];
-  return ["What's waiting for me today?", "What can you do for me here?", "Open the Workshop"];
+  return ["Where did I leave off?", "What can I finish right away?", "Find my next content idea"];
 }
 
 /**
