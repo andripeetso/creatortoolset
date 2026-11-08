@@ -1,95 +1,109 @@
+import type { ReactNode } from "react";
+
 /**
- * The pictures on setup's three "How do you want to work?" cards, drawn in the theme's own colours (the accent is the
- * project colour, `--tint`) so they sit right in light and dark. Each draws in a 200×120 box; Both places the other two.
+ * The pictures on setup's three "How do you want to work?" cards. All three are the same window, the same size and in
+ * the theme's own colours (light in light, dark in dark); only what's inside changes: the app, your own AI's chat, or
+ * the two side by side. The accent is the project colour (`--tint`). The window is drawn in a 200×120 box.
  */
 
 const TINT = "var(--tint)";
+const GREEN = "#10b981";
+const MONO = { fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" };
 
-/** The app: a window with the tools on the left, a video in the middle and the assistant's chat on the right. */
-function AppWindow() {
+/** The window every picture uses: rounded, three dots, a title bar line. */
+function Frame({ children }: { children: ReactNode }) {
   return (
-    <g>
+    <svg viewBox="-4 -4 208 128" className="h-full w-full drop-shadow-sm" aria-hidden>
       <rect x="0.5" y="0.5" width="199" height="119" rx="10" className="fill-background stroke-border" />
       <circle cx="12" cy="11" r="2.5" className="fill-muted-foreground/30" />
       <circle cx="20" cy="11" r="2.5" className="fill-muted-foreground/30" />
       <circle cx="28" cy="11" r="2.5" className="fill-muted-foreground/30" />
       <line x1="0.5" y1="21.5" x2="199.5" y2="21.5" className="stroke-border" />
-      {/* tools */}
-      {[30, 42, 54, 66].map((y, i) => (
-        <rect key={y} x="9" y={y} width={i === 1 ? 26 : 20} height="6" rx="3" fill={i === 1 ? TINT : undefined} className={i === 1 ? undefined : "fill-muted"} />
-      ))}
-      {/* the video being worked on */}
-      <rect x="46" y="30" width="86" height="50" rx="5" fill={TINT} fillOpacity="0.16" />
-      <path d="M84 46 L96 55 L84 64 Z" fill={TINT} />
-      <rect x="46" y="88" width="70" height="5" rx="2.5" className="fill-muted" />
-      <rect x="46" y="99" width="52" height="5" rx="2.5" className="fill-muted" />
-      {/* the assistant beside it */}
-      <rect x="140" y="30" width="51" height="81" rx="6" className="fill-muted" />
-      <rect x="146" y="38" width="32" height="9" rx="4.5" className="fill-background" />
-      <rect x="153" y="53" width="32" height="9" rx="4.5" fill={TINT} />
-      <rect x="146" y="68" width="26" height="9" rx="4.5" className="fill-background" />
-      <rect x="146" y="98" width="39" height="7" rx="3.5" className="fill-background stroke-border" strokeWidth="0.75" />
+      {children}
+    </svg>
+  );
+}
+
+/** The app's inside, between x and x+w: a video being worked on, and (`full`) the tools and the assistant's chat. */
+function AppInside({ x, w, full }: { x: number; w: number; full?: boolean }) {
+  const left = full ? x + 37 : x + 12; // room for the tools column
+  const chatW = 51;
+  const chatX = x + w - chatW - 9;
+  const videoW = (full ? chatX - 8 : x + w - 12) - left;
+  return (
+    <g>
+      {full &&
+        [30, 42, 54, 66].map((y, i) => (
+          <rect key={y} x={x + 9} y={y} width={i === 1 ? 22 : 18} height="6" rx="3" fill={i === 1 ? TINT : undefined} className={i === 1 ? undefined : "fill-muted"} />
+        ))}
+      <rect x={left} y="30" width={videoW} height="50" rx="5" fill={TINT} fillOpacity="0.16" />
+      <path d={`M${left + videoW / 2 - 5} 46 l11 9 l-11 9 Z`} fill={TINT} />
+      <rect x={left} y="88" width={videoW * 0.8} height="5" rx="2.5" className="fill-muted" />
+      <rect x={left} y="99" width={videoW * 0.6} height="5" rx="2.5" className="fill-muted" />
+      {full && (
+        <>
+          <rect x={chatX} y="30" width={chatW} height="81" rx="6" className="fill-muted" />
+          <rect x={chatX + 6} y="38" width="32" height="9" rx="4.5" className="fill-background" />
+          <rect x={chatX + 13} y="53" width="32" height="9" rx="4.5" fill={TINT} />
+          <rect x={chatX + 6} y="68" width="26" height="9" rx="4.5" className="fill-background" />
+          <rect x={chatX + 6} y="98" width="39" height="7" rx="3.5" className="fill-background stroke-border" strokeWidth="0.75" />
+        </>
+      )}
     </g>
   );
 }
 
-/** Their own AI: a terminal where Claude Code or Codex calls Creator Toolset's tools. Always dark, like a terminal. */
-function Terminal() {
-  const mono = { fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 8.5 };
+/** Your own AI's chat, from x: you ask, it calls Creator Toolset, the work is done. `short` for half a window. */
+function ChatInside({ x, short }: { x: number; short?: boolean }) {
+  const size = short ? 7 : 8.5;
   return (
-    <g>
-      <rect x="0.5" y="0.5" width="199" height="119" rx="10" fill="#141416" stroke="#2a2a2e" />
-      <circle cx="12" cy="11" r="2.5" fill="#3f3f46" />
-      <circle cx="20" cy="11" r="2.5" fill="#3f3f46" />
-      <circle cx="28" cy="11" r="2.5" fill="#3f3f46" />
-      <text x="12" y="38" style={mono} fill="#a1a1aa">
-        <tspan fill={TINT}>❯</tspan> plan three reels from
+    <g style={{ ...MONO, fontSize: size }}>
+      <text x={x + 10} y="38" className="fill-foreground">
+        <tspan fill={TINT}>❯</tspan> {short ? "plan three reels" : "plan three reels from"}
       </text>
-      <text x="22" y="50" style={mono} fill="#a1a1aa">
-        my last posts
+      {!short && (
+        <text x={x + 20} y="50" className="fill-foreground">
+          my last posts
+        </text>
+      )}
+      <rect x={x + 10} y={short ? 47 : 60} width={short ? 74 : 150} height="15" rx="4" fill={TINT} fillOpacity="0.16" />
+      <circle cx={x + 19} cy={short ? 54.5 : 67.5} r="2.5" fill={TINT} />
+      <text x={x + 26} y={short ? 57 : 70.5} className="fill-foreground">
+        {short ? "workshop" : "creator-toolset · workshop"}
       </text>
-      <rect x="12" y="60" width="150" height="15" rx="4" fill={TINT} fillOpacity="0.22" />
-      <circle cx="21" cy="67.5" r="2.5" fill={TINT} />
-      <text x="28" y="70.5" style={mono} fill="#e4e4e7">
-        creator-toolset · workshop
+      <text x={x + 10} y={short ? 78 : 92} className="fill-muted-foreground">
+        <tspan fill={GREEN}>✓</tspan> 3 drafts ready
       </text>
-      <text x="12" y="92" style={mono} fill="#4ade80">
-        ✓ <tspan fill="#a1a1aa">3 drafts ready</tspan>
-      </text>
-      <rect x="12" y="102" width="5" height="9" fill="#e4e4e7" opacity="0.7" />
+      <rect x={x + 10} y={short ? 87 : 102} width="5" height="9" className="fill-foreground" opacity="0.5" />
     </g>
   );
 }
 
 export function AppArt() {
   return (
-    <svg viewBox="-4 -4 208 128" className="h-full w-full drop-shadow-sm" aria-hidden>
-      <AppWindow />
-    </svg>
+    <Frame>
+      <AppInside x={0} w={200} full />
+    </Frame>
   );
 }
 
 export function ChatArt() {
   return (
-    <svg viewBox="-4 -4 208 128" className="h-full w-full drop-shadow-sm" aria-hidden>
-      <Terminal />
-    </svg>
+    <Frame>
+      <ChatInside x={0} />
+    </Frame>
   );
 }
 
-/** Both: the terminal in front, the app behind it, linked. */
+/** Both: your AI's chat on the left, the app on the right, linked in the middle. */
 export function BothArt() {
   return (
-    <svg viewBox="-4 -4 208 128" className="h-full w-full drop-shadow-sm" aria-hidden>
-      <g transform="translate(68 0) scale(0.66)">
-        <AppWindow />
-      </g>
-      <g transform="translate(0 41) scale(0.66)">
-        <Terminal />
-      </g>
-      {/* the link between them, in the corner where they meet */}
-      <circle cx="140" cy="88" r="11" fill={TINT} className="stroke-background" strokeWidth="2.5" />
-      <path d="M135.5 92.5 L144 84 M138.5 84 H144 V89.5" fill="none" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
+    <Frame>
+      <ChatInside x={0} short />
+      <line x1="96.5" y1="22" x2="96.5" y2="119.5" className="stroke-border" />
+      <AppInside x={96} w={104} />
+      <circle cx="96.5" cy="71" r="9" fill={TINT} className="stroke-background" strokeWidth="2.5" />
+      <path d="M92 71 H101 M97.5 67.5 L101 71 L97.5 74.5" fill="none" stroke="white" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </Frame>
   );
 }
