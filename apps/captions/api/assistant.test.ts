@@ -143,6 +143,30 @@ describe("a turn", () => {
   });
 });
 
+describe("history", () => {
+  it("New chat keeps the old one; it opens again (the current one kept in its place) and deletes for good", async () => {
+    const cookie = await cookieOf("ana");
+    const get = async (r: Promise<Response> | Response) => (await (await r).json()) as { messages: Array<{ text: string }>; past: Array<{ id: string; title: string; count: number }> };
+    const before = await get(app.request("/api/assistant", { headers: { cookie } }));
+    expect(before.messages.length).toBeGreaterThan(0);
+    const fresh = await get(app.request("/api/assistant", { method: "DELETE", headers: { cookie } }));
+    expect(fresh.messages).toEqual([]);
+    const kept = fresh.past[0]!;
+    expect(kept.count).toBe(before.messages.length);
+    expect(kept.title).toBe(before.messages.find((m) => (m as { role?: string }).role === "user")!.text);
+    // a new chat with nothing in it isn't kept
+    expect((await get(app.request("/api/assistant", { method: "DELETE", headers: { cookie } }))).past.length).toBe(fresh.past.length);
+    const back = await get(app.request(`/api/assistant/past/${kept.id}/open`, { method: "POST", headers: { cookie } }));
+    expect(back.messages.map((m) => m.text)).toEqual(before.messages.map((m) => m.text));
+    expect(back.past.find((p) => p.id === kept.id)).toBeUndefined();
+    await app.request("/api/assistant", { method: "DELETE", headers: { cookie } });
+    const again = await get(app.request("/api/assistant", { headers: { cookie } }));
+    const gone = await get(app.request(`/api/assistant/past/${again.past[0]!.id}`, { method: "DELETE", headers: { cookie } }));
+    expect(gone.past.length).toBe(again.past.length - 1);
+    expect((await app.request(`/api/assistant/past/${again.past[0]!.id}`, { method: "DELETE", headers: { cookie } })).status).toBe(404);
+  });
+});
+
 describe("stop", () => {
   it("stops the running reply: it ends as stopped and the next message can go", async () => {
     const cookie = await cookieOf("ana");

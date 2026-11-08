@@ -27,9 +27,21 @@ export interface AssistantPending {
   why: string;
 }
 
+/** An earlier conversation, kept when a new one starts (Earlier chats in the dock). */
+export interface AssistantPast {
+  id: string;
+  /** Its first message, shortened. */
+  title: string;
+  /** When its last message was written. */
+  at: number;
+  count: number;
+}
+
 export interface AssistantView {
   provider: AssistantProvider;
   messages: AssistantMessage[];
+  /** Earlier conversations, newest first. */
+  past: AssistantPast[];
   pending: AssistantPending | null;
   /** A page the assistant opened for the user (navigate); the dock moves there and acks it. */
   navigate: string | null;

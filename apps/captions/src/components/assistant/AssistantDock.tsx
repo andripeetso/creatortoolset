@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
-import { ArrowUpRight, CornerDownLeft, KeyRound, MessageCircle, PanelRight, PanelRightClose, Pencil, VolumeX, X } from "lucide-react";
+import { ArrowUpRight, Check, Copy, CornerDownLeft, History, KeyRound, MessageCircle, PanelRight, PanelRightClose, Pencil, SquarePen, Trash2, VolumeX, X } from "lucide-react";
 import type { AssistantMessage, AssistantView } from "@contracts/assistant";
 import { ReplyText } from "@/components/ReplyText";
 import { Button } from "@/components/ui/button";
@@ -8,12 +8,16 @@ import { Input } from "@/components/ui/input";
 import { useMe } from "@/lib/auth";
 import {
   cancelSecret,
+  chatText,
+  deletePast,
   getAssistant,
   keySaved,
   navigated,
   openAssistant,
+  openPast,
   saveKey,
   sendTurn,
+  startOver,
   stopTurn,
   useAssistant,
 } from "@/lib/assistant";
@@ -73,6 +77,8 @@ export function AssistantDock() {
   const [closing, setClosing] = useState(false);
   /** The last message you've seen (undefined until the first load): a newer reply while closed nudges the bubble. */
   const [seenId, setSeenId] = useState<string | null | undefined>(undefined);
+  /** The list of earlier conversations shows in place of the chat. */
+  const [showPast, setShowPast] = useState(false);
   const bottom = useRef<HTMLDivElement>(null);
   const bubbleRef = useRef<HTMLButtonElement>(null);
   const cardRef = useRef<HTMLElement>(null);
@@ -319,6 +325,39 @@ export function AssistantDock() {
             <VolumeX className="size-4" />
           </button>
         )}
+        {!!view?.messages.length && !showPast && <CopyButton className={headBtn} text={() => chatText(view.messages)} label="Copy the whole chat" />}
+        {!!view?.past.length && (
+          <button
+            type="button"
+            className={cn(headBtn, showPast && "bg-muted text-foreground")}
+            onClick={() => setShowPast((s) => !s)}
+            aria-pressed={showPast}
+            aria-label="Earlier chats"
+            title="Earlier chats"
+          >
+            <History className="size-4" />
+          </button>
+        )}
+        {!!view?.messages.length && (
+          <button
+            type="button"
+            className={headBtn}
+            disabled={thinking}
+            onClick={() => {
+              stopSpeaking();
+              setShowPast(false);
+              void startOver().then((r) => {
+                if (!r.ok) return;
+                setView(r.data);
+                setSeenId(null);
+              });
+            }}
+            aria-label="Start a new chat"
+            title="New chat (this one stays in Earlier chats)"
+          >
+            <SquarePen className="size-4" />
+          </button>
+        )}
         <button
           type="button"
           className={headBtn}
@@ -335,6 +374,22 @@ export function AssistantDock() {
 
       <div className="relative min-h-0 flex-1 overflow-y-auto px-4 pt-2 pb-3 text-sm">
         {!view && <Dots />}
+
+        {view && showPast && (
+          <PastList
+            view={view}
+            busy={thinking}
+            onOpen={(id) =>
+              void openPast(id).then((r) => {
+                if (!r.ok) return setError(r.error);
+                setView(r.data);
+                setSeenId(r.data.messages.at(-1)?.id ?? null);
+                setShowPast(false);
+              })
+            }
+            onDelete={(id) => void deletePast(id).then((r) => r.ok && setView(r.data))}
+          />
+        )}
 
         {view?.provider === "none" && (
           <div className="flex h-full flex-col items-start justify-end gap-3 pb-2 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2">
@@ -356,7 +411,7 @@ export function AssistantDock() {
           </div>
         )}
 
-        {empty && (
+        {empty && !showPast && (
           <div className="flex h-full flex-col justify-end gap-2 pb-1">
             {suggestionsFor(pathname).map((s, i) => (
               <button
@@ -378,7 +433,7 @@ export function AssistantDock() {
           </div>
         )}
 
-        {chatting && !empty && (
+        {chatting && !empty && !showPast && (
           <div className="flex flex-col gap-3">
             {view.messages.map((m) => (
               <Message key={m.id} m={m} />
@@ -462,14 +517,17 @@ function Message({ m }: { m: AssistantMessage }) {
   if (m.role === "note") return <p className={cn("mx-auto max-w-[90%] text-center text-xs text-muted-foreground", enter)}>{m.text}</p>;
   if (m.role === "user")
     return (
-      <div
-        className={cn(
-          "ml-auto max-w-[85%] rounded-2xl rounded-br-md bg-[var(--tint)] px-3.5 py-2 whitespace-pre-wrap text-white",
-          enter,
-          "motion-safe:slide-in-from-bottom-2 motion-safe:zoom-in-95 motion-safe:origin-bottom-right",
-        )}
-      >
-        {m.text}
+      <div className="group/msg ml-auto flex max-w-[85%] items-end gap-1">
+        <CopyButton className={msgCopy} text={() => m.text} label="Copy" />
+        <div
+          className={cn(
+            "rounded-2xl rounded-br-md bg-[var(--tint)] px-3.5 py-2 whitespace-pre-wrap text-white",
+            enter,
+            "motion-safe:slide-in-from-bottom-2 motion-safe:zoom-in-95 motion-safe:origin-bottom-right",
+          )}
+        >
+          {m.text}
+        </div>
       </div>
     );
   const steps = m.steps ?? [];
@@ -483,7 +541,7 @@ function Message({ m }: { m: AssistantMessage }) {
     );
   if (m.status === "error" && !m.text) return <p className={cn("text-destructive", enter)}>That didn&apos;t work. Try again.</p>;
   return (
-    <div className={cn("max-w-[94%] leading-relaxed", enter, "motion-safe:slide-in-from-bottom-1")}>
+    <div className={cn("group/msg max-w-[94%] leading-relaxed", enter, "motion-safe:slide-in-from-bottom-1")}>
       {working ? (
         <Steps steps={steps} working />
       ) : (
@@ -499,6 +557,73 @@ function Message({ m }: { m: AssistantMessage }) {
       )}
       <ReplyText text={m.text} />
       {m.status === "thinking" && <span className="ml-0.5 inline-block h-3.5 w-1.5 rounded-sm bg-[var(--tint)] align-middle motion-safe:animate-pulse" aria-hidden />}
+      {!working && <CopyButton className={cn(msgCopy, "-ml-1 mt-0.5")} text={() => m.text} label="Copy" />}
+    </div>
+  );
+}
+
+const msgCopy =
+  "flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 group-hover/msg:opacity-100 [@media(hover:none)]:opacity-60";
+
+/** Copies text; a tick for a moment says it did. */
+function CopyButton({ text, label, className }: { text: () => string; label: string; className: string }) {
+  const [done, setDone] = useState(false);
+  return (
+    <button
+      type="button"
+      className={className}
+      aria-label={label}
+      title={done ? "Copied" : label}
+      onClick={() =>
+        void navigator.clipboard.writeText(text()).then(() => {
+          setDone(true);
+          setTimeout(() => setDone(false), 1200);
+        })
+      }
+    >
+      {done ? <Check className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}
+    </button>
+  );
+}
+
+const ago = (at: number) => {
+  const d = new Date(at);
+  const days = Math.floor((Date.now() - at) / 86_400_000);
+  if (days < 1 && d.getDate() === new Date().getDate()) return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (days < 7) return d.toLocaleDateString([], { weekday: "short" });
+  return d.toLocaleDateString([], { month: "short", day: "numeric" });
+};
+
+/** Earlier chats, newest first: open one to read it or carry on; the bin deletes it for good. */
+function PastList({ view, busy, onOpen, onDelete }: { view: AssistantView; busy: boolean; onOpen: (id: string) => void; onDelete: (id: string) => void }) {
+  return (
+    <div className="motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-1">
+      <p className="mb-2 text-xs font-medium text-muted-foreground">Earlier chats</p>
+      <ul className="flex flex-col">
+        {view.past.map((p) => (
+          <li key={p.id} className="group/past flex items-center gap-1 rounded-lg hover:bg-muted">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => onOpen(p.id)}
+              className="flex min-w-0 flex-1 items-baseline gap-2 px-2.5 py-2 text-left disabled:opacity-50"
+              title={busy ? "Wait for the reply first" : "Open this chat"}
+            >
+              <span className="min-w-0 flex-1 truncate">{p.title}</span>
+              <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{ago(p.at)}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onDelete(p.id)}
+              className="mr-1 flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 hover:bg-background hover:text-destructive focus-visible:opacity-100 group-hover/past:opacity-100"
+              aria-label={`Delete "${p.title}"`}
+              title="Delete for good"
+            >
+              <Trash2 className="size-3.5" />
+            </button>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

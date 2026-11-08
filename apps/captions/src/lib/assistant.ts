@@ -45,6 +45,16 @@ export const stopTurn = () => call<AssistantView>("/stop", "POST");
 export const keySaved = (env: string) => call<AssistantView>("/saved", "POST", { env });
 export const cancelSecret = () => call<AssistantView>("/cancel", "POST");
 export const navigated = () => call<AssistantView>("/navigated", "POST");
+export const startOver = () => call<AssistantView>("", "DELETE");
+export const openPast = (id: string) => call<AssistantView>(`/past/${encodeURIComponent(id)}/open`, "POST");
+export const deletePast = (id: string) => call<AssistantView>(`/past/${encodeURIComponent(id)}`, "DELETE");
+
+/** A conversation as plain text, for Copy. */
+export const chatText = (messages: Array<{ role: string; text: string }>): string =>
+  messages
+    .filter((m) => m.text.trim())
+    .map((m) => `${m.role === "user" ? "Me" : m.role === "note" ? "Note" : "Assistant"}:\n${m.text.trim()}`)
+    .join("\n\n");
 
 /** The key goes straight from the box to my-keys: the assistant's record only ever sees "saved". */
 export const saveKey = (env: string, value: string) =>

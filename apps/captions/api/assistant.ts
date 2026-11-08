@@ -50,6 +50,23 @@ interface Conv {
   messages: AssistantMessage[];
   pending?: { env: string; why: string; at: number };
   navigate?: string;
+  /** Earlier conversations, newest first (New chat keeps the one it replaces here). */
+  past?: Array<{ id: string; messages: AssistantMessage[] }>;
+}
+
+/** How many earlier conversations an account keeps; the oldest goes past this. */
+const PAST_KEPT = 100;
+
+const titleOf = (messages: AssistantMessage[]) => {
+  const first = (messages.find((m) => m.role === "user")?.text ?? "Conversation").replace(/\s+/g, " ").trim();
+  return first.length > 70 ? `${first.slice(0, 69)}…` : first;
+};
+
+/** The conversation on screen goes into the history (when it has anything) and a fresh one starts. */
+function archive(conv: Conv): void {
+  if (conv.messages.length) conv.past = [{ id: randomUUID(), messages: conv.messages }, ...(conv.past ?? [])].slice(0, PAST_KEPT);
+  conv.messages = [];
+  conv.navigate = undefined;
 }
 
 const cache = new Map<string, Conv>();
@@ -145,6 +162,7 @@ function view(username: string, admin: boolean): AssistantView {
   return {
     provider: providerOf(routeOf(username, admin)),
     messages: conv.messages.slice(-80),
+    past: (conv.past ?? []).map((p) => ({ id: p.id, title: titleOf(p.messages), at: p.messages.at(-1)?.at ?? 0, count: p.messages.length })),
     pending: pending && conv.pending ? { env: pending.env, name: pending.name, why: conv.pending.why } : null,
     navigate: conv.navigate ?? null,
   };
@@ -281,6 +299,41 @@ assistantApp.post("/cancel", (c) => {
   const u = c.get("user");
   const conv = load(u.username);
   conv.pending = undefined;
+  save(u.username);
+  return c.json(view(u.username, u.role === "admin"));
+});
+
+/** New chat: the conversation goes into the history and a fresh one starts. */
+assistantApp.delete("/", (c) => {
+  const u = c.get("user");
+  const conv = load(u.username);
+  if (conv.messages.at(-1)?.status === "thinking") return c.json({ error: "Still answering: wait for it" }, 409);
+  archive(conv);
+  save(u.username);
+  return c.json(view(u.username, u.role === "admin"));
+});
+
+/** Back to an earlier conversation: the one on screen goes into the history, and this one carries on. */
+assistantApp.post("/past/:id/open", (c) => {
+  const u = c.get("user");
+  const conv = load(u.username);
+  if (conv.messages.at(-1)?.status === "thinking") return c.json({ error: "Still answering: wait for it" }, 409);
+  const found = conv.past?.find((p) => p.id === c.req.param("id"));
+  if (!found) return c.json({ error: "That conversation is gone" }, 404);
+  conv.past = conv.past!.filter((p) => p !== found);
+  archive(conv);
+  conv.messages = found.messages;
+  save(u.username);
+  return c.json(view(u.username, u.role === "admin"));
+});
+
+/** Delete an earlier conversation for good. */
+assistantApp.delete("/past/:id", (c) => {
+  const u = c.get("user");
+  const conv = load(u.username);
+  const before = conv.past?.length ?? 0;
+  conv.past = (conv.past ?? []).filter((p) => p.id !== c.req.param("id"));
+  if (conv.past.length === before) return c.json({ error: "That conversation is gone" }, 404);
   save(u.username);
   return c.json(view(u.username, u.role === "admin"));
 });
