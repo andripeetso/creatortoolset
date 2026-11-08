@@ -8,7 +8,7 @@
  * with no provider: its own key from Settings → My API keys (api/my-keys.ts keyFor).
  */
 
-export type Driver = "claude" | "codex" | "cursor" | "grok" | "opencode" | "antigravity" | "muse" | "pi";
+export type Driver = "claude" | "codex" | "cursor" | "grok" | "gemini" | "opencode" | "antigravity" | "muse" | "pi";
 
 /** The drivers, in the order the settings page lists them. `runs`: a paired Mac can run it today (the others are listed, not run yet). */
 export const DRIVERS: ReadonlyArray<{ id: Driver; label: string; runs: boolean; homeEnv?: string }> = [
@@ -16,6 +16,7 @@ export const DRIVERS: ReadonlyArray<{ id: Driver; label: string; runs: boolean; 
   { id: "claude", label: "Claude", runs: true, homeEnv: "CLAUDE_CONFIG_DIR" },
   { id: "cursor", label: "Cursor", runs: false },
   { id: "grok", label: "Grok", runs: true },
+  { id: "gemini", label: "Gemini", runs: true, homeEnv: "GEMINI_CLI_HOME" },
   { id: "opencode", label: "OpenCode", runs: false },
   { id: "antigravity", label: "Antigravity", runs: false },
   { id: "muse", label: "Muse Code", runs: false },
@@ -139,6 +140,8 @@ export interface ProviderCheck {
 /** Models offered per driver (the Claude CLI on the user's Mac runs every one). */
 export const DRIVER_MODELS: Partial<Record<Driver, string[]>> = {
   claude: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"],
+  // the current GA flash and lite models, and the pro one that is still preview-only
+  gemini: ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.1-pro-preview"],
 };
 
 export const DEFAULT_SETTINGS: ProviderSettings = {

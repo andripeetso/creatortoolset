@@ -15,6 +15,7 @@ type Device = ProvidersView["devices"][number];
 const TOOLS = [
   { name: "Claude Code", install: "curl -fsSL https://claude.ai/install.sh | bash", signIn: "claude", how: "then follow the browser prompts (Pro, Max or a Console account)" },
   { name: "Codex", install: "npm install -g @openai/codex", signIn: "codex", how: "then pick Sign in with ChatGPT" },
+  { name: "Gemini", install: "npm install -g @google/gemini-cli", signIn: "gemini", how: "then pick Sign in with Google" },
 ];
 
 /**

@@ -208,6 +208,6 @@ function instanceId(driver: Driver, home: string, taken: string[]): string {
 /** "Claude (work)" for ~/.claude-work; "Codex (default)" with no folder. */
 function defaultName(driver: Driver, home: string): string {
   const label = DRIVERS.find((d) => d.id === driver)?.label ?? driver;
-  const part = basename(home).replace(/^\./, "").replace(/^(claude|codex|grok)[-_]?/i, "") || "default";
+  const part = basename(home).replace(/^\./, "").replace(/^(claude|codex|grok|gemini)[-_]?/i, "") || "default";
   return `${label} (${part})`;
 }
