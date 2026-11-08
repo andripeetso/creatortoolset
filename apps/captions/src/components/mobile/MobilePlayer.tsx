@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2, Play } from "lucide-react";
 import {
+  activeCadenceOutcome,
   isCadenceBusy,
   isEditorBusy,
   playerRef,
@@ -35,7 +36,7 @@ export function MobilePlayer() {
   const refining = useStudio((s) => s.refining);
   const cadenceBusy = useStudio(isCadenceBusy);
   const editorBusy = useStudio(isEditorBusy);
-  const cadenceRunOutcome = useStudio((s) => s.cadenceRunOutcome);
+  const cadenceRunOutcome = useStudio(activeCadenceOutcome);
 
   const wrapRef = useRef<HTMLDivElement>(null);
   const videoEl = useRef<HTMLVideoElement>(null);

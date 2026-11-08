@@ -275,7 +275,7 @@ final class RelayRunner {
                 "gone": (error as? ClaudeFailure)?.gone ?? false,
             ]
             if let usage = (error as? ClaudeFailure)?.usage { body["usage"] = usage }
-            _ = try? api.call("POST", "\(base)/fail", body)
+            _ = try? api.call("POST", "\(base)/fail", body, tries: 4)
             publish { $0.running -= 1; $0.lastError = message }
         }
     }

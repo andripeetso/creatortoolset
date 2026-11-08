@@ -93,6 +93,14 @@ function getWorker(): Worker {
   worker = new Worker(new URL("../workers/speak.worker.ts", import.meta.url), { type: "module" });
   worker.onmessage = (ev) => {
     const m = ev.data as { type: string; id: number; progress?: number; samples?: Float32Array; rate?: number; message?: string; text?: string };
+    // an error ends the download whichever request it came from (the warm-up has its own id, not the reply's)
+    if (m.type === "error") {
+      console.warn("[read aloud] the local voice failed, using the computer's own:", m.message);
+      kokoroBroken = true;
+      useReadAloud.setState({ loading: null });
+      if (m.id === playing) systemSpeak(pendingText);
+      return;
+    }
     if (m.type === "load-progress") useReadAloud.setState({ loading: m.progress ?? 0 });
     else if (m.type === "ready") useReadAloud.setState({ loading: null });
     else if (m.id !== playing) return;
@@ -114,12 +122,13 @@ function getWorker(): Worker {
     } else if (m.type === "end") {
       finished = m.id;
       if (!sources.length) useReadAloud.setState({ speaking: false });
-    } else if (m.type === "error") {
-      console.warn("[read aloud] the local voice failed, using the computer's own:", m.message);
-      kokoroBroken = true;
-      useReadAloud.setState({ loading: null });
-      systemSpeak(pendingText);
     }
+  };
+  // the worker itself died (not an error it reported): the same as a failed load
+  worker.onerror = () => {
+    kokoroBroken = true;
+    useReadAloud.setState({ loading: null });
+    systemSpeak(pendingText);
   };
   return worker;
 }

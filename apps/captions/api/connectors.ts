@@ -69,7 +69,7 @@ connectorsApp.get("/callback/:kind", async (c) => {
   if (denied) return back(`error=${encodeURIComponent(denied)}`);
   try {
     const got = await finishLogin(kind, c.req.query("code") ?? "", redirectFor(c, kind), st.verifier);
-    const saved = saveAccounts(user.username, got.map((a) => ({ ...a, ...(st.projectId ? { projectId: st.projectId } : {}) })));
+    const saved = saveAccounts(user.username, got.map((a) => ({ ...a, loginStatus: "connected" as const, pullError: undefined, ...(st.projectId ? { projectId: st.projectId } : {}) })));
     for (const a of saved) void pullOne(user, a.key);
     return back(`connected=${saved.length}`);
   } catch (e) {
@@ -126,12 +126,16 @@ async function pullOne(user: SessionUser | string, key: string): Promise<void> {
       patchAccount(name, key, { analyzerId, pulledAt: Date.now(), pullError: analyzerId ? undefined : "The Analyzer could not add it" });
       return;
     }
+    if (a.via === "login" && a.expiresAt && a.expiresAt <= Date.now() && !a.refresh) {
+      patchAccount(name, key, { loginStatus: "needs_reconnect", pullError: "The login expired. Connect it again.", pulledAt: Date.now() });
+      return;
+    }
     const fresh = a.via === "login" ? await freshToken(a) : {};
     if (fresh.token !== a.token) patchAccount(name, key, fresh); // TikTok's refresh token changes on every refresh: keep the new one at once
     const got = await pullAccount({ ...a, ...fresh } as StoredAccount, name);
-    patchAccount(name, key, { stats: got.stats, posts: got.posts.sort((x, y) => y.at - x.at).slice(0, 100), name: got.name || a.name, avatar: got.avatar || a.avatar, pulledAt: Date.now(), pullError: undefined });
+    patchAccount(name, key, { stats: got.stats, posts: got.posts.sort((x, y) => y.at - x.at).slice(0, 100), name: got.name || a.name, avatar: got.avatar || a.avatar, pulledAt: Date.now(), pullError: undefined, loginStatus: "connected" });
   } catch (e) {
-    patchAccount(name, key, { pullError: (e instanceof Error ? e.message : String(e)).slice(0, 300), pulledAt: Date.now() });
+    patchAccount(name, key, { pullError: (e instanceof Error ? e.message : String(e)).slice(0, 300), pulledAt: Date.now(), loginStatus: "error" });
   } finally {
     pulling.delete(`${name}/${key}`);
   }
@@ -144,7 +148,7 @@ export function startConnectorPulls(): void {
   setInterval(() => {
     for (const u of listUsers())
       for (const a of readConnectors(u.username).accounts)
-        if (a.via === "login" && a.platform !== "instagram" && Date.now() - (a.pulledAt ?? 0) > EVERY_MS) void pullOne(u.username, a.key);
+        if (a.via === "login" && a.platform !== "instagram" && a.loginStatus !== "needs_reconnect" && Date.now() - (a.pulledAt ?? 0) > EVERY_MS) void pullOne(u.username, a.key);
   }, 60 * 60_000).unref();
 }
 

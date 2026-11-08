@@ -54,7 +54,9 @@ export function useClipsRecorder() {
   const startedAtRef = useRef(0);
   const elapsedBaseRef = useRef(0);
   const mimeRef = useRef("");
-  const abortRef = useRef(false);
+  // bumped by every start and by discard: a capture still awaiting a
+  // permission prompt sees its run is stale and releases what it got
+  const runRef = useRef(0);
   const phaseRef = useRef<RecorderPhase>("idle");
   phaseRef.current = phase;
 
@@ -122,7 +124,11 @@ export function useClipsRecorder() {
     rec.ondataavailable = (e) => {
       if (e.data.size) chunksRef.current.push(e.data);
     };
-    rec.onerror = () => setError("Recording failed");
+    // the recorder stops after an error, and onstop then moves to the preview
+    rec.onerror = () => {
+      setError("Recording failed");
+      if (rec.state !== "inactive") rec.stop();
+    };
     rec.onstop = () => {
       const blob = new Blob(chunksRef.current, {
         type: mime || "video/webm",
@@ -210,7 +216,8 @@ export function useClipsRecorder() {
     return mixAudio(canvasStream);
   };
 
-  const beginCapture = async () => {
+  const beginCapture = async (run: number) => {
+    const stale = () => runRef.current !== run;
     const mime = pickMime();
     if (typeof MediaRecorder === "undefined") {
       throw new Error("This browser cannot record video");
@@ -223,6 +230,10 @@ export function useClipsRecorder() {
       },
       audio: micOn,
     } as DisplayMediaStreamOptions);
+    if (stale()) {
+      stopTracks(display);
+      return;
+    }
     displayRef.current = display;
     display.getVideoTracks()[0]?.addEventListener("ended", () => {
       if (
@@ -248,6 +259,10 @@ export function useClipsRecorder() {
       } catch {
         setCameraOn(false);
       }
+      if (stale()) {
+        cleanupLive();
+        return;
+      }
     }
 
     let mic: MediaStream | null = null;
@@ -261,16 +276,24 @@ export function useClipsRecorder() {
       } catch {
         setMicOn(false);
       }
+      if (stale()) {
+        cleanupLive();
+        return;
+      }
     }
 
     const mixed = await composeStream(display, camera, mic);
+    if (stale()) {
+      cleanupLive();
+      return;
+    }
     setMixStream(mixed);
     attachRecorder(mixed, mime);
   };
 
   const start = async () => {
     setError(null);
-    abortRef.current = false;
+    const run = ++runRef.current;
     if (preview?.url) URL.revokeObjectURL(preview.url);
     setPreview(null);
     setPhase("countdown");
@@ -278,11 +301,12 @@ export function useClipsRecorder() {
     for (let n = 3; n >= 1; n--) {
       setCount(n);
       await new Promise((r) => setTimeout(r, 1000));
-      if (abortRef.current) return;
+      if (runRef.current !== run) return;
     }
     try {
-      await beginCapture();
+      await beginCapture(run);
     } catch (e) {
+      if (runRef.current !== run) return;
       cleanupLive();
       setPhase("idle");
       setError(
@@ -317,7 +341,7 @@ export function useClipsRecorder() {
   };
 
   const discard = () => {
-    abortRef.current = true;
+    runRef.current++;
     if (recRef.current && recRef.current.state !== "inactive") {
       recRef.current.onstop = null;
       recRef.current.stop();

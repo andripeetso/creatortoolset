@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { CaptionRenderSpec } from "./types";
+import type { ExportStatus } from "@contracts/exports";
 
 /**
  * Client side of background exports. Jobs render on the server, so they
@@ -16,7 +17,7 @@ export interface ExportJob {
   format: string;
   ext: string;
   filename: string;
-  status: "queued" | "running" | "done" | "error";
+  status: ExportStatus;
   progress: number;
   note?: string;
   error?: string;

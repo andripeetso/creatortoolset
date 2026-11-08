@@ -26,6 +26,8 @@ import { env } from "./lib/env";
 import { ensureProjectOriginal, projectOriginalExists, readProjectClip } from "./media-store";
 import { saveToLibrary } from "./library/routes";
 import { type SessionUser, bumpUsage } from "./users";
+import type { ExportStatus } from "../contracts/exports";
+import { type Moves, canMove, move } from "./lib/transition";
 
 /**
  * Background export jobs (Canva-style). POST creates a job and returns
@@ -48,7 +50,14 @@ const projectOriginal = (id: string, clipId?: string) =>
     ? path.join(env.dataDir, "projects", id, "clips", clipId, "original")
     : path.join(env.dataDir, "projects", id, "original"); // legacy single-clip layout
 
-type JobStatus = "queued" | "running" | "done" | "error";
+type JobStatus = ExportStatus;
+/** A job renders from queued to running, then ends done or error; nothing leaves those. */
+export const EXPORT_MOVES: Moves<ExportStatus> = {
+  queued: ["running", "error"],
+  running: ["done", "error"],
+  done: [],
+  error: [],
+};
 
 interface JobParams {
   projectId?: string;
@@ -123,7 +132,7 @@ const loaded = (async () => {
         await readFile(path.join(jobDir(id), "job.json"), "utf-8"),
       );
       if (job.status === "queued" || job.status === "running") {
-        job.status = "error";
+        job.status = move(EXPORT_MOVES, job.status, "error", "export job");
         job.error = "Interrupted by a server restart — export again.";
         job.finishedAt = Date.now();
         await persist(job);
@@ -347,7 +356,7 @@ function run(cmd: string, args: string[]): Promise<void> {
 
 async function runJob(job: Job): Promise<void> {
   const dir = jobDir(job.id);
-  job.status = "running";
+  job.status = move(EXPORT_MOVES, job.status, "running", "export job");
   await persist(job);
   try {
     const { fps = 30, duration, crf, projectId, clipId } = job.params;
@@ -629,7 +638,8 @@ async function runJob(job: Job): Promise<void> {
       await assertMovHasTransparency(outPath(job));
     }
     const st = await stat(outPath(job));
-    job.status = "done";
+    if (!jobs.has(job.id)) return; // cancelled while the checks above ran
+    job.status = move(EXPORT_MOVES, job.status, "done", "export job");
     job.progress = 1;
     job.bytes = st.size;
     job.finishedAt = Date.now();
@@ -637,7 +647,8 @@ async function runJob(job: Job): Promise<void> {
     await rm(path.join(dir, "captions.ass"), { force: true }).catch(() => {});
     await persist(job);
   } catch (e) {
-    if (!jobs.has(job.id)) return; // cancelled — dir is gone, don't resurrect
+    // cancelled — dir is gone, don't resurrect; a job already done keeps its file
+    if (!jobs.has(job.id) || !canMove(EXPORT_MOVES, job.status, "error")) return;
     job.status = "error";
     job.error = e instanceof Error ? e.message : String(e);
     job.finishedAt = Date.now();

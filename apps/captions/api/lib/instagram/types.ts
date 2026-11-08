@@ -3,8 +3,16 @@
  * Everything here is persisted as-is in meta.json / comments.json, so
  * keep it JSON-plain.
  */
+import type { Moves } from "../transition";
 
 export type PostStatus = "processing" | "ready" | "error";
+
+/** A post's or an account's run. Changed only through `move()`; a restart's reconciliation runs in `resumeInterrupted`. */
+export const POST_STATUS_MOVES: Moves<PostStatus> = {
+  processing: ["ready", "error"],
+  ready: ["processing"],
+  error: ["processing"],
+};
 
 export type PostStep =
   | "queued"
@@ -126,6 +134,16 @@ export type JobType =
 export type AccountJobType = "profile" | "catalog" | "stats" | "tags";
 
 export type JobStatus = "idle" | "pending" | "running" | "done" | "skipped" | "error";
+
+/** A job record's moves. A failed job can be queued again (Retry); "done" and "skipped" are final until a force. */
+export const JOB_STATUS_MOVES: Moves<JobStatus> = {
+  idle: ["pending"],
+  pending: ["running", "skipped", "error", "idle"],
+  running: ["done", "skipped", "error", "pending"],
+  done: ["pending", "running", "idle"],
+  skipped: ["pending", "running", "idle"],
+  error: ["pending", "running", "idle"],
+};
 
 export type RecipePreset = "stats" | "watch" | "full" | "custom";
 

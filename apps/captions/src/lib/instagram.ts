@@ -16,37 +16,37 @@ import { appendProjectId, projectBody } from "./workspace";
 export { fmtCount, fmtMmSs, kindLabel, postToMarkdown, timedTranscriptText, transcriptParagraphs };
 export type { TranscriptWord };
 
-export type PostStatus = "processing" | "ready" | "error";
-export type PostStep =
-  | "queued"
-  | "resolve"
-  | "info"
-  | "download"
-  | "thumbs"
-  | "transcribe"
-  | "vision"
-  | "comments"
-  | "idea";
-export type PartStatus = "pending" | "done" | "skipped" | "error";
-export type PostKind = "reel" | "post" | "carousel";
-export type CommentsStatus = "pending" | "complete" | "capped" | "failed" | "skipped";
-export type JobType =
-  | "info"
-  | "stats"
-  | "media"
-  | "transcript"
-  | "vision"
-  | "comments"
-  | "tags"
-  | "idea";
-export type AccountJobType = "profile" | "catalog" | "stats" | "tags";
-export type JobStatus = "idle" | "pending" | "running" | "done" | "skipped" | "error";
-export type RecipePreset = "stats" | "watch" | "full" | "custom";
-export type RunWhen = "now" | "later";
-export type TagKind = "topic" | "format" | "hook" | "cta" | "audience" | "custom";
-export type IdeaStatus = "inbox" | "idea" | "done" | "skip";
-/** Why the post is in the library — the idea, the layout, or both. */
-export type SavedFor = "content" | "format";
+// The unions live on the server (api/lib/instagram/types.ts); the client only imports their types.
+import type {
+  AccountJobType,
+  CommentsStatus,
+  IdeaStatus,
+  JobStatus,
+  JobType,
+  PartStatus,
+  PostKind,
+  PostStatus,
+  PostStep,
+  RecipePreset,
+  RunWhen,
+  SavedFor,
+  TagKind,
+} from "../../api/lib/instagram/types";
+export type {
+  AccountJobType,
+  CommentsStatus,
+  IdeaStatus,
+  JobStatus,
+  JobType,
+  PartStatus,
+  PostKind,
+  PostStatus,
+  PostStep,
+  RecipePreset,
+  RunWhen,
+  SavedFor,
+  TagKind,
+};
 
 export const JOB_TYPES: JobType[] = [
   "info",

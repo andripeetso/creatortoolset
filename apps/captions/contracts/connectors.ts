@@ -47,6 +47,9 @@ export interface SocialStats {
   days?: Array<{ day: string; views?: number; watchMinutes?: number; followersGained?: number; reach?: number }>;
 }
 
+/** A login's state. Written only by the pull (api/connectors.ts `pullOne`); missing on rows from before it existed = connected. */
+export type LoginStatus = "connected" | "needs_reconnect" | "error";
+
 export interface ConnectedAccount {
   /** `${platform}:${platformId}` */
   key: string;
@@ -60,6 +63,7 @@ export interface ConnectedAccount {
   projectId?: string;
   connectedAt: number;
   loginExpiresAt?: number;
+  loginStatus?: LoginStatus;
   pulledAt?: number;
   pullError?: string;
   pulling?: boolean;

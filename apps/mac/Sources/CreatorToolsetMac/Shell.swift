@@ -452,6 +452,7 @@ final class Shell: NSObject, ObservableObject {
         Task {
             do {
                 try await pairThisMac()
+                guard aiOn else { return }   // turned off while pairing: the pairing stays, no runner
                 startRunner()
             } catch {
                 setAIOff("Could not pair this Mac: \(error.localizedDescription)")

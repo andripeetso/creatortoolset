@@ -8,10 +8,12 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { AuthVars } from "./auth";
 import { isOutOfCredits, outOfCreditsMessage } from "./credits";
+import type { EnhanceStatus } from "../contracts/enhance";
 import { env } from "./lib/env";
 import { keyFor, type Actor } from "./my-keys";
 import { NvidiaRefused, readWav, SR as NV_SR, studioVoice, wav16 } from "./lib/nvidia-voice";
 import { type SessionUser, bumpUsage } from "./users";
+import { type Moves, move } from "./lib/transition";
 
 /**
  * Standalone audio enhancement — its own tool, fully separate from
@@ -70,7 +72,19 @@ const blendVideo = (id: string, pct: number, ext: string) => path.join(sesDir(id
 /** Every result, and the original it's compared and blended with, at one loudness. */
 const LOUDNESS = "loudnorm=I=-15:TP=-1.5:LRA=9";
 
-type Status = "ready" | "queued" | "running" | "done" | "error";
+/** A session's status moves. A run is queued, then running (here or on the Mac), then done or error; a cancel gives back ready or done. */
+export const ENHANCE_MOVES: Moves<EnhanceStatus> = {
+  ready: ["queued"],
+  queued: ["running", "ready", "done", "error"],
+  running: ["queued", "ready", "done", "error"],
+  done: ["queued"],
+  error: ["queued"],
+};
+
+/** Every status change goes through here; an illegal move throws (routes answer 409). */
+function setStatus(meta: Meta, to: EnhanceStatus): void {
+  meta.status = move(ENHANCE_MOVES, meta.status, to, `enhance ${meta.id}`);
+}
 
 interface Meta {
   id: string;
@@ -79,7 +93,7 @@ interface Meta {
   hasVideo: boolean;
   duration: number;
   bytes: number;
-  status: Status;
+  status: EnhanceStatus;
   /** What processes (processed) the run: an Engine; older sessions may
    *  carry legacy names, display-only. */
   engine?: string;
@@ -121,18 +135,21 @@ async function readMeta(id: string): Promise<Meta | null> {
   const mem = active.get(id);
   if (mem) return mem;
   try {
-    const meta: Meta = JSON.parse(
-      await readFile(path.join(sesDir(id), "meta.json"), "utf-8")
-    );
-    // a job still queued or running with no server process behind it was cut off by a restart
-    if (meta.status === "queued" || meta.status === "running") {
-      meta.status = "error";
-      meta.error = "Interrupted by a server restart — try again.";
-      await persist(meta);
-    }
-    return meta;
+    return JSON.parse(await readFile(path.join(sesDir(id), "meta.json"), "utf-8"));
   } catch {
     return null;
+  }
+}
+
+/** Runs a restart left queued/running: error them. Production only (dev shares the data dir). A read never writes. */
+async function reconcileInterrupted(): Promise<void> {
+  for (const id of await sessionIds()) {
+    if (active.has(id)) continue;
+    const meta = await readMeta(id);
+    if (!meta || (meta.status !== "queued" && meta.status !== "running")) continue;
+    setStatus(meta, "error");
+    meta.error = "Interrupted by a server restart — try again.";
+    await persist(meta);
   }
 }
 
@@ -173,6 +190,10 @@ async function sweep(): Promise<void> {
 if (KEEP_DAYS > 0) {
   void sweep();
   setInterval(() => void sweep(), 6 * 3600 * 1000).unref();
+}
+// production only: dev servers share ~/.caption-studio with real sessions
+if (env.isProduction) {
+  void reconcileInterrupted();
 }
 
 
@@ -357,7 +378,7 @@ async function runElevenLabs(id: string, owner: string | undefined, wavPath: str
 /* ---- pipeline ---- */
 
 function enqueue(meta: Meta): void {
-  meta.status = "queued";
+  setStatus(meta, "queued");
   meta.progress = 0;
   meta.error = undefined;
   meta.chain = meta.chain?.length ? meta.chain : [isEngine(meta.engine) ? meta.engine : "nvidia"];
@@ -424,7 +445,7 @@ async function finish(id: string, meta: Meta, clean: string, duration: number, a
       }
     }
     if (!alive()) return;
-    meta.status = "done";
+    setStatus(meta, "done");
     meta.progress = 1;
     await persist(meta);
   } finally {
@@ -439,7 +460,7 @@ async function finish(id: string, meta: Meta, clean: string, duration: number, a
 async function runJob(id: string): Promise<void> {
   const meta = active.get(id);
   if (!meta) return; // cancelled while queued
-  meta.status = "running";
+  setStatus(meta, "running");
   await persist(meta);
 
   const dir = sesDir(id);
@@ -490,7 +511,7 @@ async function runJob(id: string): Promise<void> {
     await finish(id, meta, clean!, duration, () => active.get(id) === meta);
   } catch (e) {
     if (active.get(id) !== meta) return; // cancelled — don't resurrect
-    meta.status = "error";
+    setStatus(meta, "error");
     meta.error = e instanceof Error ? e.message : String(e);
     await persist(meta);
   } finally {
@@ -818,7 +839,7 @@ enhanceApp.post("/:id/cancel", async (c) => {
   if (!meta) return c.json({ error: "Not found" }, 404);
   if (meta.status === "queued" || meta.status === "running") {
     cancel(id);
-    meta.status = existsSync(enhancedAudio(id)) ? "done" : "ready";
+    setStatus(meta, existsSync(enhancedAudio(id)) ? "done" : "ready");
     meta.progress = 0;
     meta.error = undefined;
     await persist(meta);

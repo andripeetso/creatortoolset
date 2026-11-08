@@ -110,7 +110,7 @@ export async function macUsageSince(since: number): Promise<UsageTally> {
 
 /** Why an answer from the Mac did not come, so callers can tell a Stop from a limit from a Mac that never picked up. */
 export type MacErrorKind = "unclaimed" | "stopped" | "timeout" | "limit" | "failed" | "gone";
-/** The kinds where Claude never took the request, so a caller may run it on the API key instead. Any other kind means Claude already had it. */
+/** The kinds a caller may move to the next provider of the same scope: the Mac never picked the request up, or Claude's usage limit turned it away. Any other kind means Claude already had it: a Stop, timeout or failure is reported, never swapped. */
 export const MAC_MISS = new Set<MacErrorKind>(["unclaimed", "limit"]);
 
 export class MacClaudeError extends Error {

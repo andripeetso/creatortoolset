@@ -9,6 +9,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import {
+  activeCadenceOutcome,
   isCadenceBusy,
   isEditorBusy,
   narrowerThanMatched,
@@ -536,7 +537,7 @@ export function Player() {
   const refining = useStudio((s) => s.refining);
   const cadenceBusy = useStudio(isCadenceBusy);
   const editorBusy = useStudio(isEditorBusy);
-  const cadenceRunOutcome = useStudio((s) => s.cadenceRunOutcome);
+  const cadenceRunOutcome = useStudio(activeCadenceOutcome);
   const refineError = useStudio((s) => s.refineError);
   const [cadenceComplete, setCadenceComplete] = useState(false);
   const cloudTranscribing =

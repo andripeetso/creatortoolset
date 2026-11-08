@@ -88,7 +88,10 @@ export const findAccount = (user: string, key: string) => readConnectors(user).a
 export function instagramLogin(user: string, username: string): { token: string; userId: string } | null {
   const u = username.toLowerCase();
   const a = readConnectors(user).accounts.find((x) => x.platform === "instagram" && x.via === "login" && x.handle.toLowerCase() === u && x.token);
-  return a?.token ? { token: a.token, userId: a.platformId } : null;
+  if (!a?.token || a.loginStatus === "needs_reconnect") return null;
+  // an expired token with no refresh is dead: the Analyzer falls back to the install's own login
+  if (a.expiresAt && a.expiresAt <= Date.now() && !a.refresh) return null;
+  return { token: a.token, userId: a.platformId };
 }
 
 /** Public view: no tokens. */

@@ -101,9 +101,15 @@ export function AssistantDock() {
     setSeenId((s) => (s === undefined ? (r.data.messages.at(-1)?.id ?? null) : s));
   }, []);
 
+  // the provider is read with the view: again on each page (back from Settings → AI providers) and when the window comes back
+  useEffect(() => {
+    if (real) void load();
+  }, [real, load, pathname]);
   useEffect(() => {
     if (!real) return;
-    void load();
+    const again = () => void load();
+    window.addEventListener("focus", again);
+    return () => window.removeEventListener("focus", again);
   }, [real, load]);
 
   const last = view?.messages.at(-1);

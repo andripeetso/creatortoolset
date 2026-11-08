@@ -279,7 +279,10 @@ function SessionView({
   const changeMix = (v: number) => {
     setMix(v);
     clearTimeout(saveMix.current);
-    saveMix.current = setTimeout(() => void setEnhanceMix(session.id, v).catch(() => {}), 600);
+    saveMix.current = setTimeout(
+      () => void setEnhanceMix(session.id, v).catch((e) => setError(e instanceof Error ? e.message : String(e))),
+      600,
+    );
   };
   const pct = Math.round(mix * 100);
 

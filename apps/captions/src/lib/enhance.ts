@@ -5,6 +5,8 @@
  * engine — then A/B the result and download.
  */
 
+import type { EnhanceStatus } from "@contracts/enhance";
+
 /** The engines (api/enhance.ts ENGINES), every result at the same loudness. */
 export const ENGINES = [
   { key: "nvidia", label: "NVIDIA", name: "NVIDIA Studio Voice", hint: "Rebuilds a full, studio-quality voice" },
@@ -24,7 +26,7 @@ export interface EnhanceSession {
   hasVideo: boolean;
   duration: number;
   bytes: number;
-  status: "ready" | "queued" | "running" | "done" | "error";
+  status: EnhanceStatus;
   engine?: string;
 
   /** the passes in order (admins: a second one); step = the one running */

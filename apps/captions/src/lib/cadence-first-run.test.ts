@@ -9,6 +9,7 @@ vi.mock("./refine", async (importOriginal) => ({
 
 import { refineSegments } from "./refine";
 import {
+  activeCadenceOutcome,
   enqueueTranscription,
   loadClipSlots,
   useStudio,
@@ -141,6 +142,31 @@ describe("first-run automatic cadence", () => {
     await waitForDone();
     expect(refineSegments).not.toHaveBeenCalled();
     expect(useStudio.getState().cadenceApplied).toBe(false);
+  });
+
+  it("waits for another clip's running pass instead of marking this one done unmatched", async () => {
+    useStudio.setState({ refiningClipId: "some-other-clip" });
+    enqueueTranscription(["first-run"]);
+    await vi.waitFor(() =>
+      expect(useStudio.getState().clips[0].status.phase).toBe("matching"),
+    );
+    await new Promise((r) => setTimeout(r, 20));
+    expect(refineSegments).not.toHaveBeenCalled();
+    expect(useStudio.getState().clips[0].status.phase).toBe("matching");
+    useStudio.setState({ refiningClipId: null });
+    await waitForDone();
+    expect(refineSegments).toHaveBeenCalledOnce();
+    expect(useStudio.getState().cadenceApplied).toBe(true);
+  });
+
+  it("reports a cadence outcome only for the clip it belongs to", () => {
+    const base = { refining: false, cadenceRunOutcome: "completed" as const };
+    expect(
+      activeCadenceOutcome({ ...base, activeClipId: "a", cadenceOutcomeClipId: "a" }),
+    ).toBe("completed");
+    expect(
+      activeCadenceOutcome({ ...base, activeClipId: "b", cadenceOutcomeClipId: "a" }),
+    ).toBe("idle");
   });
 
   it("uses a new AI proposal when explicitly re-run", async () => {

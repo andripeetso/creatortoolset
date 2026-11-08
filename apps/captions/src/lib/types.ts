@@ -154,6 +154,15 @@ export type TranscribeStatus =
   | { phase: "done" }
   | { phase: "error"; message: string };
 
+/** Phases that hold the editor and the clip bar's busy count. */
+export const BUSY_PHASES: ReadonlySet<TranscribeStatus["phase"]> = new Set([
+  "extracting",
+  "loading",
+  "transcribing",
+  "checking",
+  "matching",
+]);
+
 export type ExportFormat =
   "mp4" | "hevc" | "mov" | "webm" | "png" | "srt" | "vtt" | "ass";
 

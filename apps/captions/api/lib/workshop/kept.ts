@@ -1,4 +1,4 @@
-import type { Document, SessionMeta } from "./types";
+import { SESSION_FINISHED, type Document, type SessionMeta } from "./types";
 
 /**
  * How much of the AI's text the author kept as it was. A block the author edits becomes the author's ("user"), so in a finished piece the share of
@@ -14,8 +14,7 @@ export function keptShare(doc: Pick<Document, "kind" | "blocks" | "hooks" | "cap
   return parts.filter((b) => b.author === "ai").reduce((n, b) => n + b.text.trim().length, 0) / total;
 }
 
-const DONE = new Set(["production", "ready", "editing", "toPost", "published"]);
-export const finished = (m: Pick<SessionMeta, "status" | "posted">) => !!m.posted || DONE.has(m.status ?? "");
+export const finished = (m: Pick<SessionMeta, "status" | "posted">) => !!m.posted || SESSION_FINISHED.includes(m.status ?? "draft");
 
 /** Monday of the week, as YYYY-MM-DD (UTC). */
 const weekOf = (ms: number) => {

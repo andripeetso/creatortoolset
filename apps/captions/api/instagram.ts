@@ -122,6 +122,8 @@ import type {
   StackMeta,
   Tag,
 } from "./lib/instagram/types";
+import { POST_STATUS_MOVES } from "./lib/instagram/types";
+import { move } from "./lib/transition";
 import {
   InstagramUrlError,
   canonicalPostUrl,
@@ -384,14 +386,8 @@ async function readAccount(id: string): Promise<AccountMeta | null> {
   const mem = accountActive.get(id);
   if (mem) return mem;
   try {
-    const meta: AccountMeta = JSON.parse(await readFile(accountMetaPath(id), "utf-8"));
-    if (meta.status === "processing") {
-      meta.status = "error";
-      meta.step = undefined;
-      meta.error = RESTART_MSG;
-      await persistAccount(meta);
-    }
-    return meta;
+    // A read never writes: a stale "processing" is reconciled once, at boot (resumeInterrupted).
+    return JSON.parse(await readFile(accountMetaPath(id), "utf-8")) as AccountMeta;
   } catch {
     return null;
   }
@@ -681,14 +677,8 @@ async function readMeta(id: string): Promise<PostMeta | null> {
   const mem = active.get(id);
   if (mem) return mem;
   try {
-    const meta: PostMeta = JSON.parse(await readFile(metaPath(id), "utf-8"));
-    if (meta.status === "processing") {
-      meta.status = "error";
-      meta.step = undefined;
-      meta.error = RESTART_MSG;
-      await persist(meta);
-    }
-    return meta;
+    // A read never writes: a stale "processing" is reconciled once, at boot (resumeInterrupted).
+    return JSON.parse(await readFile(metaPath(id), "utf-8")) as PostMeta;
   } catch {
     return null;
   }
@@ -2682,7 +2672,14 @@ function queueOrFollowUpAccount(
     jobs: merged,
     opts: { count: opts.count ?? prev?.opts.count, more: Boolean(prev?.opts.more || opts.more) },
   });
-  meta.jobs = merged.map((type) => ({ type, status: "pending" as JobStatus }));
+  // Patch only the named jobs (like the post side): a running one keeps its status, the others keep their errors until re-queued.
+  meta.jobs = merged.reduce<NonNullable<AccountMeta["jobs"]>>(
+    (list, type) => {
+      if (list.find((j) => j.type === type)?.status === "running") return list;
+      return [...list.filter((j) => j.type !== type), { type, status: "pending" as JobStatus }];
+    },
+    [...(meta.jobs ?? [])],
+  );
   return "queued";
 }
 
@@ -2703,6 +2700,17 @@ function pump(): void {
 function cancel(id: string): void {
   const at = queue.findIndex((q) => q.kind === "post" && q.id === id);
   if (at >= 0) queue.splice(at, 1);
+  // Terminal on disk too: a cancelled run must not look "processing" to the boot pass.
+  const live = active.get(id);
+  if (live) {
+    live.status = move(POST_STATUS_MOVES, live.status, "error", "post");
+    live.step = undefined;
+    live.error = "Cancelled";
+    live.jobs = (live.jobs ?? []).map((j) =>
+      j.status === "running" || j.status === "pending" ? { ...j, status: "error" as JobStatus, error: "Cancelled" } : j,
+    );
+    void persist(live).catch(() => {});
+  }
   active.delete(id);
   aborts.get(id)?.abort();
   aborts.delete(id);
@@ -2935,9 +2943,13 @@ async function resumeInterrupted(): Promise<void> {
       .map((j) => j.type);
     const user = sessionUserFor(meta.owner);
     if (!pending.length || !user) {
-      meta.status = "error";
+      // Nothing to resume: fail the post and its open jobs, so Retry offers them.
+      meta.status = move(POST_STATUS_MOVES, meta.status, "error", "post");
       meta.step = undefined;
       meta.error = RESTART_MSG;
+      meta.jobs = (meta.jobs ?? []).map((j) =>
+        j.status === "running" || j.status === "pending" ? { ...j, status: "error" as JobStatus, error: RESTART_MSG } : j,
+      );
       await persist(meta);
       continue;
     }
@@ -2947,6 +2959,24 @@ async function resumeInterrupted(): Promise<void> {
     resumed++;
   }
   if (resumed) console.log(`[instagram] resumed ${resumed} interrupted post job(s)`);
+  // Accounts have no resume path: a run cut off by the restart fails, with its open jobs.
+  for (const id of await allAccountIds()) {
+    if (accountActive.has(id)) continue;
+    let meta: AccountMeta;
+    try {
+      meta = JSON.parse(await readFile(accountMetaPath(id), "utf-8")) as AccountMeta;
+    } catch {
+      continue;
+    }
+    if (meta.status !== "processing") continue;
+    meta.status = "error";
+    meta.step = undefined;
+    meta.error = RESTART_MSG;
+    meta.jobs = (meta.jobs ?? []).map((j) =>
+      j.status === "running" || j.status === "pending" ? { ...j, status: "error" as JobStatus, error: RESTART_MSG } : j,
+    );
+    await persistAccount(meta);
+  }
 }
 setTimeout(() => void resumeInterrupted().catch(() => {}), 1500).unref();
 

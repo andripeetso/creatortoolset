@@ -103,6 +103,7 @@ describe("Creator Toolset as a remote MCP server", () => {
     // 7071 -> 9162: automations_list/create/update/delete/run (scheduled prompts on the user's own AI)
     // 9162 -> 9366: set_work_prefs makes (what they make, from setup; the assistant can change it)
     // 9366 -> 9864: review_share (a Review video's public share link, on or off, as its Share button)
-    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(9864);
+    // 9864 -> 9872: "ready" in workshop_update_session's status enum (every SessionStatus)
+    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(9872);
   });
 });

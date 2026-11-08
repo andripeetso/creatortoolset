@@ -14,8 +14,9 @@ vi.mock("./lib/nvidia-voice", async (orig) => ({
   ...(await orig<typeof import("./lib/nvidia-voice")>()),
   studioVoice: async (_key: string, x: Float32Array) => x,
 }));
-const { enhanceApp } = await import("./enhance");
+const { enhanceApp, ENHANCE_MOVES } = await import("./enhance");
 const { saveMyKey } = await import("./my-keys");
+const { IllegalTransition, move } = await import("./lib/transition");
 
 // x-as: a username; "local" = the admin of an install without sign-in (its sessions run on the server's keys)
 const app = new Hono<{ Variables: AuthVars }>();
@@ -59,6 +60,15 @@ describe("Audio Enhancer engines", () => {
     expect((await read(app.request("/?engine=kestrel", as("local", "POST", tone(1))))).error).toMatch(/Engine is one of/);
   });
 
+});
+
+describe("Audio Enhancer status moves", () => {
+  it("a finished session only starts a new run; a failed one can too; nothing goes done → running", () => {
+    expect(() => move(ENHANCE_MOVES, "done", "running", "t")).toThrow(IllegalTransition);
+    expect(() => move(ENHANCE_MOVES, "error", "done", "t")).toThrow(IllegalTransition);
+    expect(move(ENHANCE_MOVES, "error", "queued", "t")).toBe("queued");
+    expect(move(ENHANCE_MOVES, "running", "ready", "t")).toBe("ready"); // a cancel
+  });
 });
 
 describe("Audio Enhancer passes and strength", () => {

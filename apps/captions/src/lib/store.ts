@@ -47,6 +47,7 @@ import {
   MODELS,
 } from "./transcribe";
 import {
+  BUSY_PHASES,
   DEFAULT_STYLE,
   type CaptionStyle,
   type Cue,
@@ -56,6 +57,17 @@ import {
 
 /** Singleton handle to the <video> element so any component can seek/play. */
 export const playerRef: { video: HTMLVideoElement | null } = { video: null };
+
+/** The cadence outcome for the clip on screen only ("idle" for any other clip). */
+export function activeCadenceOutcome(state: {
+  activeClipId: string | null;
+  cadenceRunOutcome: StudioState["cadenceRunOutcome"];
+  cadenceOutcomeClipId: string | null;
+}): StudioState["cadenceRunOutcome"] {
+  return state.cadenceOutcomeClipId === state.activeClipId
+    ? state.cadenceRunOutcome
+    : "idle";
+}
 
 /** The active clip cannot be played or edited while cadence is being resolved. */
 export function isCadenceBusy(state: {
@@ -74,14 +86,7 @@ export function isEditorBusy(state: {
   refining: boolean;
   status: TranscribeStatus;
 }): boolean {
-  return (
-    state.refining ||
-    state.status.phase === "extracting" ||
-    state.status.phase === "loading" ||
-    state.status.phase === "transcribing" ||
-    state.status.phase === "checking" ||
-    state.status.phase === "matching"
-  );
+  return state.refining || BUSY_PHASES.has(state.status.phase);
 }
 
 /**
@@ -329,12 +334,36 @@ async function runTranscribeQueue(): Promise<void> {
   }
 }
 
-/** Set a clip's processing phase, mirrored to the editor when it's on screen. */
+/** The only writer of a clip's processing phase, mirrored to the editor when it's on screen. */
 function setClipPhase(id: string, phase: TranscribeStatus): void {
   updateClipInfo(id, { status: phase });
   if (useStudio.getState().activeClipId === id) {
-    if (phase.phase !== "done") playerRef.video?.pause();
-    useStudio.setState({ status: phase });
+    const holds = BUSY_PHASES.has(phase.phase);
+    if (holds) playerRef.video?.pause();
+    useStudio.setState({ status: phase, ...(holds ? { playing: false } : {}) });
+  }
+}
+
+/** The one cadence outcome writer: it says which clip the outcome belongs to. */
+function cadenceOutcomePatch(clipId: string | null, outcome: StudioState["cadenceRunOutcome"]) {
+  return { cadenceRunOutcome: outcome, cadenceOutcomeClipId: clipId };
+}
+
+function phaseOf(id: string): string | undefined {
+  return useStudio.getState().clips.find((c) => c.id === id)?.status.phase;
+}
+
+/** Resolves once no cadence pass holds the lock (a manual one or another clip's). */
+async function waitForCadenceIdle(): Promise<void> {
+  while (useStudio.getState().refiningClipId) {
+    await new Promise<void>((resolve) => {
+      const unsub = useStudio.subscribe((st) => {
+        if (!st.refiningClipId) {
+          unsub();
+          resolve();
+        }
+      });
+    });
   }
 }
 
@@ -374,39 +403,24 @@ async function autoMatchCadence(id: string): Promise<void> {
   const s = useStudio.getState();
   if (!s.clips.some((c) => c.id === id)) return;
   if (!clipSlots.get(id)?.words.length) return;
-  const setPhase = (phase: TranscribeStatus) => {
-    updateClipInfo(id, { status: phase });
-    if (useStudio.getState().activeClipId === id) {
-      if (phase.phase === "matching") playerRef.video?.pause();
-      useStudio.setState({
-        status: phase,
-        ...(phase.phase === "matching"
-          ? { cadenceRunOutcome: "running" as const }
-          : {}),
-      });
-    }
-  };
   // hold the done-reveal synchronously — anything advancing on "done"
   // (the mobile flow) must wait for the outcome, available or not
-  setPhase({ phase: "matching" });
+  setClipPhase(id, { phase: "matching" });
+  useStudio.setState(cadenceOutcomePatch(id, "running"));
   const status = await aiStatus().catch(() => null);
   // The user may have stopped the pass while availability was resolving.
-  if (
-    useStudio.getState().clips.find((c) => c.id === id)?.status.phase !==
-    "matching"
-  ) {
-    return;
-  }
+  if (phaseOf(id) !== "matching") return;
+  // a manual pass (or another clip's) holds the lock: wait, don't skip this clip
+  await waitForCadenceIdle();
+  if (phaseOf(id) !== "matching") return;
   if (status?.available && status.allowed) {
     await s.refineCues(id).catch(() => {});
-  } else if (useStudio.getState().activeClipId === id) {
-    useStudio.setState({ cadenceRunOutcome: "failed" });
+  } else {
+    useStudio.setState(cadenceOutcomePatch(id, "failed"));
   }
   // the clip could have been re-queued/removed mid-pass — only close the
   // phase we opened
-  const now = useStudio.getState();
-  const cur = now.clips.find((c) => c.id === id);
-  if (cur?.status.phase === "matching") setPhase({ phase: "done" });
+  if (phaseOf(id) === "matching") setClipPhase(id, { phase: "done" });
 }
 
 /** Clear queued-but-not-started transcriptions (project switch/reset). */
@@ -510,6 +524,8 @@ interface StudioState {
   refineError: string | null;
   /** Outcome of the most recent cadence request; drives truthful completion UI. */
   cadenceRunOutcome: "idle" | "running" | "completed" | "cancelled" | "failed";
+  /** The clip the outcome above belongs to; read it through activeCadenceOutcome. */
+  cadenceOutcomeClipId: string | null;
   /**
    * The current cue grouping came from the AI cadence pass. While true,
    * resizing the caption box (or changing the font size) never re-segments
@@ -1052,6 +1068,7 @@ function snapshotToLive(
     // a cadence pass keeps running through clip switches — its lock
     // applies only while its own clip is on screen
     refining: useStudio.getState().refiningClipId === clip.id,
+    fittingSplits: splitsInFlight.has(clip.id),
   };
 }
 
@@ -1121,18 +1138,7 @@ async function transcribeClip(id: string): Promise<boolean> {
     slot.pcm = slot.pcm ?? s.pcm;
     slot.peaks = slot.peaks ?? s.peaks;
   }
-  const setStatus = (status: TranscribeStatus) => {
-    updateClipInfo(id, { status });
-    if (isActive()) {
-      const processing =
-        status.phase === "extracting" ||
-        status.phase === "loading" ||
-        status.phase === "transcribing" ||
-        status.phase === "matching";
-      if (processing) playerRef.video?.pause();
-      useStudio.setState({ status, ...(processing ? { playing: false } : {}) });
-    }
-  };
+  const setStatus = (status: TranscribeStatus) => setClipPhase(id, status);
   // re-transcribing? the old transcript is backed up, cleared visibly at
   // the start of the run, and restored if the run fails
   let backup: {
@@ -1338,7 +1344,8 @@ async function transcribeClip(id: string): Promise<boolean> {
       : useStudio.getState().autoCadence
         ? { phase: "matching" }
         : { phase: "done" };
-    updateClipInfo(id, { status: completedStatus, transcribed: true });
+    setClipPhase(id, completedStatus);
+    updateClipInfo(id, { transcribed: true });
     if (isActive()) {
       clearEditHistory();
       cueGen++;
@@ -1441,6 +1448,7 @@ export const useStudio = create<StudioState>((rawSet, get) => {
   refiningClipId: null,
   refineError: null,
   cadenceRunOutcome: "idle",
+  cadenceOutcomeClipId: null,
   cadenceApplied: false,
   cadenceFit: null,
   cadenceDirty: false,
@@ -1998,18 +2006,10 @@ export const useStudio = create<StudioState>((rawSet, get) => {
     const r = s0.rangeSel;
     const id = s0.activeClipId;
     if (!r || !id || r.end - r.start < 0.1) return;
-    const busy =
-      s0.status.phase === "extracting" ||
-      s0.status.phase === "loading" ||
-      s0.status.phase === "transcribing" ||
-      s0.status.phase === "matching";
-    if (busy) return;
+    if (isEditorBusy(s0)) return;
     const clip = s0.clips.find((c) => c.id === id);
     if (!clip) return;
-    const setStatus = (status: TranscribeStatus) => {
-      updateClipInfo(id, { status });
-      if (get().activeClipId === id) set({ status });
-    };
+    const setStatus = (status: TranscribeStatus) => setClipPhase(id, status);
     try {
       // pcm for the slice — live decode, the slot's, or fresh from the proxy
       let pcm = get().pcm ?? clipSlots.get(id)?.pcm ?? null;
@@ -2121,15 +2121,16 @@ export const useStudio = create<StudioState>((rawSet, get) => {
       set({
         words: merged,
         cues: out,
-        status: { phase: "done" },
         ...(model === CLOUD_MODEL_ID ? { pcm: null } : {}),
         // fresh words spliced into a matched grouping — offer a re-match
         ...(get().cadenceApplied ? { cadenceDirty: true } : {}),
       });
-      updateClipInfo(id, {
-        status: { phase: "done" },
-        transcribed: merged.length > 0,
-      });
+      // a check or match the queue opened on this clip meanwhile closes itself
+      const inFlight = phaseOf(id);
+      if (inFlight !== "checking" && inFlight !== "matching") {
+        setClipPhase(id, { phase: "done" });
+      }
+      updateClipInfo(id, { transcribed: merged.length > 0 });
     } catch (e) {
       setStatus({
         phase: "error",
@@ -2172,13 +2173,13 @@ export const useStudio = create<StudioState>((rawSet, get) => {
       // pass doesn't (its own lock applies whenever it's on screen)
       refining: wasActive,
       refineError: null,
-      cadenceRunOutcome: "running",
+      ...cadenceOutcomePatch(targetId, "running"),
     });
     try {
       const status = await aiStatus();
       if (request.controller.signal.aborted) return;
       if (!status.available || !status.allowed) {
-        set({ cadenceRunOutcome: "failed" });
+        set(cadenceOutcomePatch(targetId, "failed"));
         return;
       }
       const marks = await refineSegments(words, {
@@ -2211,7 +2212,7 @@ export const useStudio = create<StudioState>((rawSet, get) => {
         ? gen === cueGen && identitySame
         : identitySame;
       if (!unchanged) {
-        set({ cadenceRunOutcome: "cancelled" });
+        set(cadenceOutcomePatch(targetId, "cancelled"));
         return;
       }
       // marks ride on new word objects — undo snapshots share the old ones
@@ -2250,7 +2251,7 @@ export const useStudio = create<StudioState>((rawSet, get) => {
           cadenceApplied: true,
           cadenceFit: fit,
           cadenceDirty: false,
-          cadenceRunOutcome: "completed",
+          ...cadenceOutcomePatch(targetId, "completed"),
         });
         void get().fitSplits(targetId);
       } else {
@@ -2263,7 +2264,7 @@ export const useStudio = create<StudioState>((rawSet, get) => {
         slot.cadenceFit = fit;
         slot.cadenceDirty = false;
         saveClipHook?.(targetId);
-        set({ cadenceRunOutcome: "completed" });
+        set(cadenceOutcomePatch(targetId, "completed"));
         void get().fitSplits(targetId);
       }
     } catch (e) {
@@ -2272,10 +2273,10 @@ export const useStudio = create<StudioState>((rawSet, get) => {
         set({
           refineError:
             e instanceof Error ? e.message : "AI caption pass failed",
-          cadenceRunOutcome: "failed",
+          ...cadenceOutcomePatch(targetId, "failed"),
         });
       } else {
-        set({ cadenceRunOutcome: "failed" });
+        set(cadenceOutcomePatch(targetId, "failed"));
       }
     } finally {
       if (activeCadenceRequest === request) {
@@ -2356,7 +2357,8 @@ export const useStudio = create<StudioState>((rawSet, get) => {
       }
     } finally {
       splitsInFlight.delete(targetId);
-      if (get().activeClipId === targetId) set({ fittingSplits: false });
+      // the flag means "the clip on screen is fitting" — recompute, don't clear
+      set({ fittingSplits: splitsInFlight.has(get().activeClipId ?? "") });
     }
   },
 
@@ -2380,17 +2382,13 @@ export const useStudio = create<StudioState>((rawSet, get) => {
       activeCadenceRequest = null;
     }
     if (targetId && target?.status.phase === "matching") {
-      updateClipInfo(targetId, { status: { phase: "done" } });
+      setClipPhase(targetId, { phase: "done" });
     }
-    const activeIsTarget = get().activeClipId === targetId;
     set({
       refiningClipId: null,
       refining: false,
       refineError: null,
-      cadenceRunOutcome: "cancelled",
-      ...(activeIsTarget && get().status.phase === "matching"
-        ? { status: { phase: "done" } as TranscribeStatus }
-        : {}),
+      ...cadenceOutcomePatch(targetId, "cancelled"),
     });
   },
 

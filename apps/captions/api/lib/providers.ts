@@ -40,11 +40,17 @@ const readJson = <T>(file: string): T | null => {
   }
 };
 
-async function writeAtomic(file: string, data: unknown): Promise<void> {
-  await mkdir(path.dirname(file), { recursive: true });
-  const tmp = `${file}.tmp-${process.pid}`;
-  await writeFile(tmp, JSON.stringify(data, null, 2));
-  await rename(tmp, file);
+// one write at a time: two saves from two requests can't interleave the tmp file (as users.ts does)
+let writes: Promise<void> = Promise.resolve();
+function writeAtomic(file: string, data: unknown): Promise<void> {
+  const run = writes.then(async () => {
+    await mkdir(path.dirname(file), { recursive: true });
+    const tmp = `${file}.tmp-${process.pid}`;
+    await writeFile(tmp, JSON.stringify(data, null, 2));
+    await rename(tmp, file);
+  });
+  writes = run.catch(() => {});
+  return run;
 }
 
 /** "workspace", or a username (its own). Anything else (a path, a reserved word) has no settings. */

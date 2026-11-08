@@ -108,3 +108,7 @@ newest one. A release reaches everyone's Mac, so make one only when the maintain
 - Types shared by client and server live in `contracts/`.
 - Long-running work (exports, enhancement, the Mac relay) runs in background queues with concurrency limits set
   by environment variables; keep those limits when you add work to them.
+- Status fields (jobs, sessions, sources, exports): the union lives once (a `contracts/` file or the module's
+  `as const` array, which the client imports, never retypes), its allowed moves sit next to it as a `Moves` table
+  (`apps/captions/api/lib/transition.ts`), and every write goes through `move()` (`canMove()` in background loops;
+  a route answers 409). Reads never write: a stale `running`/`processing`/`thinking` is reconciled once at startup.

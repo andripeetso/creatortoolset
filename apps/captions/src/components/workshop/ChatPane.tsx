@@ -3,7 +3,7 @@ import { CornerDownLeft, ExternalLink, Eye, FileText, Pencil, Globe, Loader2, Mi
 import { ReplyText } from "@/components/ReplyText";
 import { MarkdownBody } from "@/components/MarkdownBody";
 import type { InstagramPost } from "@/lib/instagram";
-import { CONTEXT_FIELD_LABELS, PART_LABELS, PASTE_AS_FILE, PDF_MAX_BYTES, STAGE_LABELS, TEXT_ATTACH_MAX, attachKind, fileBase64, imageUrl, inSlideOrder, shrinkImage, type PendingFile, type PendingImage, countUnits, docTabLabel, durationLabel, editSummary, pastedUrl, stepsSummary, turnDocChange, type ChangeScope, type ChatMessage, type ContextSnippet, type LoadedSource, type PieceQuote, type WorkshopDocument } from "@/lib/workshop";
+import { CONTEXT_FIELD_LABELS, PART_LABELS, PASTE_AS_FILE, PDF_MAX_BYTES, STAGE_LABELS, TEXT_ATTACH_MAX, TURN_STOPPED, attachKind, fileBase64, imageUrl, inSlideOrder, shrinkImage, type PendingFile, type PendingImage, countUnits, docTabLabel, durationLabel, editSummary, pastedUrl, stepsSummary, turnDocChange, type ChangeScope, type ChatMessage, type ContextSnippet, type LoadedSource, type PieceQuote, type WorkshopDocument } from "@/lib/workshop";
 import { AuditOpenRow } from "./AuditCard";
 import { CopyButton } from "./CopyButton";
 import { SourceResultCard } from "./SourceResultCard";
@@ -438,7 +438,7 @@ export function ChatPane({
         )}
         <div className="flex flex-col gap-2">
           {/* a reply you stopped (Stop, or Steer) leaves no trace: your message stays, the empty reply goes */}
-          {messages.filter((m) => !(m.role === "assistant" && m.status === "error" && m.error === "Stopped")).map((m) =>
+          {messages.filter((m) => !(m.role === "assistant" && m.status === "error" && m.error === TURN_STOPPED)).map((m) =>
             m.role === "user" ? (
               <div key={m.id} className="ml-2 rounded-2xl bg-muted px-3.5 py-2.5 text-[15px] leading-relaxed text-foreground">
                 <p className="whitespace-pre-wrap">{withChips(m.text, m.quotes, activeDoc?.kind)}</p>

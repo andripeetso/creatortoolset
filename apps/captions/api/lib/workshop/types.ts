@@ -1,4 +1,5 @@
 import type { Selection } from "../../../contracts/providers";
+import { canMove, move, type Moves } from "../transition";
 /** Content Workshop records. Mirrored for the browser in src/lib/workshop.ts. */
 
 /** A dropped .md/.txt (or a written note) that stays in every generation. */
@@ -111,9 +112,46 @@ export interface SessionSource {
   addedAt: number;
 }
 
-/** Where a session sits in the writing pipeline. Missing on old records = draft. */
-/** Idea → Writing → Ready → In Production (filming) → Editing → Ready to post → Published, or Shelved. */
-export type SessionStatus = "draft" | "writing" | "production" | "ready" | "editing" | "toPost" | "published" | "shelved";
+export { SESSION_STATUSES, TURN_STOPPED, type SessionStatus } from "../../../contracts/workshop-statuses";
+import type { SessionStatus } from "../../../contracts/workshop-statuses";
+
+/**
+ * Every move a session's status may make. The pipeline is free (the status menu picks any stage), Shelved is parked:
+ * it leaves only to Writing (Unshelve). PATCH answers 409 to a refused move; an automatic writer (a posting, a note,
+ * a share) skips it, so a shelved session never moves on by itself.
+ */
+export const SESSION_MOVES: Moves<SessionStatus> = {
+  draft: ["writing", "ready", "production", "editing", "toPost", "published", "shelved"],
+  writing: ["draft", "ready", "production", "editing", "toPost", "published", "shelved"],
+  ready: ["draft", "writing", "production", "editing", "toPost", "published", "shelved"],
+  production: ["draft", "writing", "ready", "editing", "toPost", "published", "shelved"],
+  editing: ["draft", "writing", "ready", "production", "toPost", "published", "shelved"],
+  toPost: ["draft", "writing", "ready", "production", "editing", "published", "shelved"],
+  published: ["draft", "writing", "ready", "production", "editing", "toPost", "shelved"],
+  shelved: ["writing"],
+};
+/** The script is settled (Ready on): the kept-share stats count these pieces as finished. */
+export const SESSION_FINISHED: readonly SessionStatus[] = ["ready", "production", "editing", "toPost", "published"];
+/** Filmed or later with no post yet: the sessions index lists these as waiting for a post (Ready is not filmed yet). */
+export const SESSION_WAITING: readonly SessionStatus[] = ["production", "editing", "toPost", "published"];
+
+/**
+ * The one writer of a session's status (call it inside the session's updateSession callback, so the check and the
+ * write share its lock). `skipIllegal`: an automatic writer (a posting, a note, a share) leaves the status alone
+ * instead of throwing. `at`: the time to stamp (a note's own mtime for a note sync). Returns false when skipped.
+ */
+export function setSessionStatus(
+  m: { status?: SessionStatus; statusAt?: number },
+  to: SessionStatus,
+  what: string,
+  { skipIllegal = false, at = Date.now() }: { skipIllegal?: boolean; at?: number } = {},
+): boolean {
+  const from = m.status ?? "draft";
+  if (skipIllegal && !canMove(SESSION_MOVES, from, to)) return false;
+  m.status = move(SESSION_MOVES, from, to, what);
+  m.statusAt = at;
+  return true;
+}
 
 export interface SessionMeta {
   id: string;

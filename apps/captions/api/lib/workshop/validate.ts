@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { ContextField, ContextSnippet, DocKind, DraftKind, FileRef, Framework, FrameworkRole, GenerateInput, ImageRef, KnowledgeFile, LoadedSource, PieceQuote, Project, ProviderChoice, Rule, SessionSource, SessionStatus, TurnInput } from "./types";
+import { SESSION_STATUSES, type ContextField, type ContextSnippet, type DocKind, type DraftKind, type FileRef, type Framework, type FrameworkRole, type GenerateInput, type ImageRef, type KnowledgeFile, type LoadedSource, type PieceQuote, type Project, type ProviderChoice, type Rule, type SessionSource, type SessionStatus, type TurnInput } from "./types";
 import { isCarouselTypeId } from "../../../src/lib/carousel-visualize";
 import { postedFromUrl } from "./posted";
 import { EFFORTS, type Effort, type Selection } from "../../../contracts/providers";
@@ -60,8 +60,6 @@ export const LIMITS = {
 } as const;
 
 export const DRAFT_KINDS: DraftKind[] = ["reel", "carousel", "ad", "free"];
-
-export const SESSION_STATUSES: SessionStatus[] = ["draft", "writing", "ready", "production", "editing", "toPost", "published", "shelved"];
 
 export function parseSessionStatus(raw: unknown): SessionStatus | undefined {
   return SESSION_STATUSES.includes(raw as SessionStatus) ? (raw as SessionStatus) : undefined;

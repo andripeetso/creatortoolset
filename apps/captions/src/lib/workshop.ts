@@ -1,5 +1,6 @@
 import type { FindHit } from "@/lib/instagram";
 import type { Selection } from "@contracts/providers";
+import { SESSION_STATUSES as STAGE_IDS, TURN_STOPPED, type SessionStatus } from "@contracts/workshop-statuses";
 /**
  * Client for the Content Workshop (api/workshop.ts): research sessions on
  * top of the Content Analyzer library — sources, notes, drafts.
@@ -123,20 +124,22 @@ export interface SessionSource {
   addedAt: number;
 }
 
-/** Where a session sits: Idea → Writing → Ready (the script is done) → In Production (being
- * filmed) → Editing → Ready to post (the final is made) → Published. The id "draft" is Idea; missing = Idea. */
-export type SessionStatus = "draft" | "writing" | "production" | "ready" | "editing" | "toPost" | "published" | "shelved";
+/** The stages, their moves and TURN_STOPPED live with the server (contracts/workshop-statuses.ts); only the labels are here. */
+export { TURN_STOPPED };
+export type { SessionStatus };
 
-export const SESSION_STATUSES: { id: SessionStatus; label: string }[] = [
-  { id: "draft", label: "Idea" },
-  { id: "writing", label: "Writing" },
-  { id: "ready", label: "Ready" },
-  { id: "production", label: "In Production" },
-  { id: "editing", label: "Editing" },
-  { id: "toPost", label: "Ready to post" },
-  { id: "published", label: "Published" },
-  { id: "shelved", label: "Shelved" },
-];
+const SESSION_LABELS: Record<SessionStatus, string> = {
+  draft: "Idea",
+  writing: "Writing",
+  ready: "Ready",
+  production: "In Production",
+  editing: "Editing",
+  toPost: "Ready to post",
+  published: "Published",
+  shelved: "Shelved",
+};
+
+export const SESSION_STATUSES: { id: SessionStatus; label: string }[] = STAGE_IDS.map((id) => ({ id, label: SESSION_LABELS[id] }));
 
 export function sessionStatusOf(status: SessionStatus | undefined): SessionStatus {
   return status ?? "draft";

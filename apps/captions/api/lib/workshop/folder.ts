@@ -1,4 +1,4 @@
-import type { ChatMessage, Document, Framework, SessionMeta, UserEdit } from "./types";
+import { SESSION_WAITING, type ChatMessage, type Document, type Framework, type SessionMeta, type UserEdit } from "./types";
 import type { CatalogItem } from "../instagram/types";
 
 /**
@@ -140,7 +140,7 @@ export function ownPostFiles(handle: string, posts: OwnPost[], asOf: { fetchedAt
 export function sessionsIndex(sessions: Array<Pick<SessionMeta, "id" | "title" | "createdAt" | "status" | "posted">>, posts: OwnPost[]): string | undefined {
   const byCode = new Map(posts.map((p) => [p.item.shortcode, p]));
   const posted = sessions.filter((s) => s.posted);
-  const waiting = sessions.filter((s) => !s.posted && ["production", "editing", "toPost", "published"].includes(s.status ?? ""));
+  const waiting = sessions.filter((s) => !s.posted && SESSION_WAITING.includes(s.status ?? "draft"));
   if (!posted.length && !waiting.length) return undefined;
   const name = (s: Pick<SessionMeta, "id" | "title" | "createdAt">) => sessionFile(s).slice("sessions/".length);
   const row = (s: (typeof posted)[number]) => {

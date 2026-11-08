@@ -26,6 +26,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { filterEscape, requireFontsDir } from "./export";
 import { deleteExportsForProject } from "./exports";
+import { env } from "./lib/env";
 import {
   abortSourceMultipart,
   completeSourceMultipart,
@@ -2359,8 +2360,11 @@ async function sweepDeletedProjects(): Promise<void> {
   }
 }
 
-void sweepDeletedProjects();
-setInterval(() => void sweepDeletedProjects(), 12 * 3600 * 1000).unref();
+// production only: dev servers share ~/.caption-studio with real trash
+if (env.isProduction && env.appSecret) {
+  void sweepDeletedProjects();
+  setInterval(() => void sweepDeletedProjects(), 12 * 3600 * 1000).unref();
+}
 
 // ---------- shared with Review (api/review.ts) ----------
 

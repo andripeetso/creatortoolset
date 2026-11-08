@@ -22,6 +22,7 @@ import {
 } from "@/lib/store";
 import { flushPendingSave, retryClipUpload } from "@/lib/persist";
 import { fmtClock } from "@/lib/ass";
+import { BUSY_PHASES } from "@/lib/types";
 
 /**
  * The project's clip pool: one chip per clip with its transcription /
@@ -274,11 +275,7 @@ export function ClipBar() {
       (c) =>
         c.uploadState === "uploading" ||
         c.uploadState === "processing" ||
-        c.status.phase === "extracting" ||
-        c.status.phase === "transcribing" ||
-        c.status.phase === "checking" ||
-        c.status.phase === "matching" ||
-        c.status.phase === "loading",
+        BUSY_PHASES.has(c.status.phase),
     ).length;
     const doneCount = clips.filter((c) => c.done).length;
     return (

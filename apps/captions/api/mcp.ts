@@ -9,6 +9,7 @@ import { readConnectors } from "./lib/connectors/store";
 import { myKeys } from "./my-keys";
 import { askSecret, navigateTo, noteStep, noteWork } from "./assistant";
 import type { AssistantWork } from "../contracts/assistant";
+import { SESSION_STATUSES } from "./lib/workshop/types";
 import { innerCall, jobTurn, type AuthVars } from "./auth";
 import type { SessionUser } from "./users";
 
@@ -92,7 +93,7 @@ export const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        session: str, title: str, notes: str, status: { type: "string", enum: ["draft", "writing", "production", "editing", "toPost", "published", "shelved"] },
+        session: str, title: str, notes: str, status: { type: "string", enum: [...SESSION_STATUSES] },
         post_url: str, remove_post: { type: "boolean" },
       },
       required: ["session"],

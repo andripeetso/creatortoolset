@@ -35,6 +35,8 @@ import type { ClaudeSession, FileRef, ImageRef, LibraryRef, PastedRef, TurnStep 
 import { ATTACH_EXT, attachedFile } from "./lib/workshop/attached";
 import type { AuditMeta, AuditTarget, Chat, ChatMessage, Document, DraftKind, DraftMeta, Framework, KnowledgeFile, KnowledgeSource, LoadedSource, Project, Proposal, ResearchNote, Rule, SessionMeta, SessionStatus, SourcePart } from "./lib/workshop/types";
 import { type AuditInput, LIMITS, okId, parseAuditInput, parseDocCreate, parseDocPatch, parseFrameworkInput, parseGenerateInput, parseLayoutRequest, parseProjectInput, PROJECT_COLORS, parseRuleInput, parseSessionPatch, parseSources, parseTurnInput } from "./lib/workshop/validate";
+import { setSessionStatus, TURN_STOPPED } from "./lib/workshop/types";
+import { IllegalTransition } from "./lib/transition";
 import {
   getWorkspace,
   inProject,
@@ -52,7 +54,7 @@ import { cardsFrontmatter, exportFilename, exportStem, pictureIds, PICTURE_TOKEN
 import { PICTURE_EXT, PICTURE_TYPES, parsePictureUpload } from "./lib/workshop/pictures";
 import { ZipFile } from "yazl";
 import { buildGeneratePrompt, clipLoadedKnowledge, matchKnowledge, renderAccountContext } from "./lib/workshop/prompt";
-import { OCR_BATCH, OCR_SYSTEM, READ_STALE_MS, READ_SYSTEM, SOURCE_LIMITS, asKnowledge, knowledgeIndex, knowledgePath, ocrPrompt, parseReading, parseSourcePatch, readPrompt } from "./lib/workshop/sources";
+import { OCR_BATCH, OCR_SYSTEM, READ_SYSTEM, SOURCE_LIMITS, asKnowledge, knowledgeIndex, knowledgePath, ocrPrompt, parseReading, parseSourcePatch, readPrompt } from "./lib/workshop/sources";
 import { documentText, webPageText } from "./lib/workshop/source-files";
 import { parseYoutubeUrl } from "./lib/youtube/url";
 import { channelFiles } from "./connectors";
@@ -169,6 +171,11 @@ async function webResearch(
  *   sessions/<id>/drafts/<id>.md  rendered draft (+ .json plan)
  */
 export const workshopApp = new Hono<{ Variables: AuthVars }>();
+// the restart pass runs before the first request, so no read ever has to tidy a stale state
+workshopApp.use("*", async (_c, next) => {
+  await reconcileRestart();
+  await next();
+});
 
 const WS_ROOT = path.join(env.dataDir, "workshop");
 const DIRS = {
@@ -237,15 +244,10 @@ const sourcePagesDir = (id: string) => path.join(DIRS.sources, id);
 const readSourceText = (id: string) => readFile(sourceTextPath(id), "utf-8").catch(() => "");
 const lineCount = (text: string) => text.split("\n").length;
 
-/** A read that never came back shows as failed, so it can be read again. */
-function sourceShown(s: KnowledgeSource): KnowledgeSource {
-  return s.status === "reading" && Date.now() - (s.startedAt ?? 0) > READ_STALE_MS ? { ...s, status: "failed", error: "The read never finished" } : s;
-}
-
 async function readSource(id: string, user: SessionUser): Promise<KnowledgeSource | null> {
   if (!okId(id)) return null;
   const s = await readJson<KnowledgeSource>(sourcePath(id));
-  return s && s.owner === user.username ? sourceShown(s) : null;
+  return s && s.owner === user.username ? s : null;
 }
 
 async function writeSource(s: KnowledgeSource, text?: string): Promise<void> {
@@ -255,6 +257,19 @@ async function writeSource(s: KnowledgeSource, text?: string): Promise<void> {
   }
   await writeJsonAtomic(sourcePath(s.id), s);
 }
+
+/** Every change to a source's record: read, change and write under the source's own lock, so a rename and a read's progress never overwrite each other. */
+function patchSource(id: string, change: (s: KnowledgeSource) => KnowledgeSource, text?: string): Promise<KnowledgeSource | null> {
+  return chained(`source:${id}`, async () => {
+    const cur = await readJson<KnowledgeSource>(sourcePath(id));
+    if (!cur) return null;
+    const next = change(cur);
+    await writeSource(next, text);
+    return next;
+  });
+}
+/** Sources being read in this process: a second read of one waits for the first. */
+const inRead = new Set<string>();
 
 /**
  * The account's sources, oldest first. A project's context files from before (Project.knowledge) move in once,
@@ -275,7 +290,6 @@ async function listSources(user: SessionUser): Promise<KnowledgeSource[]> {
   }
   return (await listRecords<KnowledgeSource>(DIRS.sources, user))
     .filter((s) => s.owner === user.username)
-    .map(sourceShown)
     .sort((a, b) => a.createdAt - b.createdAt);
 }
 
@@ -296,10 +310,20 @@ async function projectForAi(id: string | undefined, user: SessionUser): Promise<
  * account's provider. Edits the author made meanwhile are kept only where the read has nothing.
  */
 async function fileSource(user: SessionUser, id: string): Promise<void> {
+  if (inRead.has(id)) return;
+  inRead.add(id);
+  try {
+    await fileSourceOnce(user, id);
+  } finally {
+    inRead.delete(id);
+  }
+}
+
+async function fileSourceOnce(user: SessionUser, id: string): Promise<void> {
   const s = await readSource(id, user);
   if (!s) return;
   let text = await readSourceText(id);
-  await writeSource({ ...s, status: "reading", startedAt: Date.now(), error: undefined });
+  await patchSource(id, (cur) => ({ ...cur, status: "reading", startedAt: Date.now(), error: undefined }));
   let usage: MacUsage | undefined;
   try {
     const ai = route(user, "workshop", "Knowledge");
@@ -315,9 +339,8 @@ async function fileSource(user: SessionUser, id: string): Promise<void> {
         onUsage: (u) => (usage = sumUsage(usage, u)),
       });
       text += `${text ? "\n\n" : ""}${got}`;
-      const cur = await readJson<KnowledgeSource>(sourcePath(id));
-      if (!cur) return;
-      await writeSource({ ...cur, chars: text.length, readCost: usage?.costUsd, startedAt: Date.now() }, text); // progress: not stale
+      // progress only: a rename made meanwhile is kept, and a deleted source is not written back
+      if (!(await patchSource(id, (cur) => ({ ...cur, chars: text.length, readCost: usage?.costUsd, startedAt: Date.now() }), text))) return;
       for (const n of batch) await rm(path.join(sourcePagesDir(id), n), { force: true });
     }
     if (pages.length) await rm(sourcePagesDir(id), { recursive: true, force: true });
@@ -329,12 +352,10 @@ async function fileSource(user: SessionUser, id: string): Promise<void> {
       mac: { ...ai.mac, label: "Knowledge", background: true, files: { "source.txt": text } },
       onUsage: (u) => (usage = sumUsage(usage, u)),
     });
-    const now = await readJson<KnowledgeSource>(sourcePath(id));
-    if (!now) return; // deleted while it was read
-    await writeSource({ ...now, ...filing, status: "read", error: undefined, readAt: Date.now(), readCost: usage?.costUsd, updatedAt: Date.now() });
+    // deleted while it was read: patchSource finds nothing and writes nothing
+    await patchSource(id, (cur) => ({ ...cur, ...filing, status: "read", error: undefined, readAt: Date.now(), readCost: usage?.costUsd, updatedAt: Date.now() }));
   } catch (e) {
-    const now = await readJson<KnowledgeSource>(sourcePath(id));
-    if (now) await writeSource({ ...now, status: "failed", error: errorMessage(e).slice(0, 300), readCost: usage?.costUsd, updatedAt: Date.now() });
+    await patchSource(id, (cur) => ({ ...cur, status: "failed", error: errorMessage(e).slice(0, 300), readCost: usage?.costUsd, updatedAt: Date.now() }));
     console.warn(`[workshop] reading "${s.name}" failed: ${errorMessage(e)}`);
   }
 }
@@ -513,18 +534,46 @@ const RESTART_MSG = "Interrupted by a server restart — regenerate.";
 
 async function readSession(id: string): Promise<SessionMeta | null> {
   if (!okId(id)) return null;
-  const meta = await readJson<SessionMeta>(sessionMetaPath(id));
-  if (!meta) return null;
-  let stale = false;
-  for (const d of meta.drafts) {
-    if (d.status === "generating" && !generating.has(d.id)) {
-      d.status = "error";
-      d.error = RESTART_MSG;
-      stale = true;
+  return readJson<SessionMeta>(sessionMetaPath(id));
+}
+
+/**
+ * What a restart ended: a draft still generating, a reply still thinking, a source still being read. Nothing runs
+ * across a restart, so each is marked failed once, before the first request (the workshop middleware awaits it).
+ */
+let restarted: Promise<void> | undefined;
+function reconcileRestart(): Promise<void> {
+  return (restarted ??= (async () => {
+    for (const id of await readdir(DIRS.sessions).catch(() => [] as string[])) {
+      if (!okId(id)) continue;
+      await chained(id, async () => {
+        const meta = await readJson<SessionMeta>(sessionMetaPath(id));
+        if (meta?.drafts.some((d) => d.status === "generating")) {
+          for (const d of meta.drafts) {
+            if (d.status !== "generating") continue;
+            d.status = "error";
+            d.error = RESTART_MSG;
+          }
+          await writeJsonAtomic(sessionMetaPath(id), meta);
+        }
+        const chat = await readJson<Chat>(chatPath(id));
+        if (chat?.messages.some((m) => m.status === "thinking")) {
+          for (const m of chat.messages) {
+            if (m.status !== "thinking") continue;
+            m.status = "error";
+            m.error = TURN_RESTART_MSG;
+          }
+          await writeJsonAtomic(chatPath(id), chat);
+        }
+      });
     }
-  }
-  if (stale) await writeJsonAtomic(sessionMetaPath(id), meta);
-  return meta;
+    for (const f of await readdir(DIRS.sources).catch(() => [] as string[])) {
+      const id = f.endsWith(".json") ? f.slice(0, -".json".length) : "";
+      if (!okId(id)) continue;
+      const s = await readJson<KnowledgeSource>(sourcePath(id));
+      if (s?.status === "reading") await patchSource(id, (cur) => ({ ...cur, status: "failed", error: "The read never finished" }));
+    }
+  })().catch((e) => console.error("[workshop] restart pass", errorMessage(e))));
 }
 
 async function ownedSession(id: string, user: SessionUser): Promise<SessionMeta | null> {
@@ -647,6 +696,8 @@ async function readPasted(sessionId: string, refs: PastedRef[] | undefined): Pro
 }
 /** Assistant messages whose turn is running in this process. */
 const chatting = new Set<string>();
+/** The one test for "a reply is running": the chat says thinking and this process is still writing it. */
+const turnRunning = (m: ChatMessage) => m.status === "thinking" && chatting.has(m.id);
 /** Each running reply's stop: aborting it ends that turn as "Stopped", and nothing is re-run on the API key. */
 const stops = new Map<string, AbortController>();
 /** The signal a running reply's Stop aborts; released where the reply ends (stops.delete). */
@@ -771,17 +822,7 @@ function mergeLoaded(current: LoadedSource[], add: Array<{ postId: string; parts
 }
 
 async function readChat(sessionId: string): Promise<Chat> {
-  const chat = (await readJson<Chat>(chatPath(sessionId))) ?? { messages: [] };
-  let stale = false;
-  for (const m of chat.messages) {
-    if (m.status === "thinking" && !chatting.has(m.id)) {
-      m.status = "error";
-      m.error = TURN_RESTART_MSG;
-      stale = true;
-    }
-  }
-  if (stale) await writeJsonAtomic(chatPath(sessionId), chat);
-  return chat;
+  return (await readJson<Chat>(chatPath(sessionId))) ?? { messages: [] };
 }
 
 async function updateChat(sessionId: string, fn: (chat: Chat) => void): Promise<Chat> {
@@ -1477,7 +1518,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
     // a Claude session a stop or a failure cut short may hold half a turn: the next turn starts over
     if (macStarted) await updateSession(session.id, (m) => { m.claudeSession = undefined; }).catch(() => {});
     outcome = signal.aborted ? "Stopped" : "Failed";
-    await patchMessage(session.id, assistantId, { status: "error", stage: undefined, error: signal.aborted ? "Stopped" : errorMessage(e).slice(0, 300), usage });
+    await patchMessage(session.id, assistantId, { status: "error", stage: undefined, error: signal.aborted ? TURN_STOPPED : errorMessage(e).slice(0, 300), usage });
     console.warn(`[workshop] turn ${assistantId} failed: ${errorMessage(e)}`);
   } finally {
     chatting.delete(assistantId);
@@ -1929,14 +1970,14 @@ workshopApp.patch("/sources/:id", async (c) => {
   if (!s) return c.json({ error: "Not found" }, 404);
   try {
     const { projectId, ...fields } = parseSourcePatch(await c.req.json().catch(() => null), lineCount(await readSourceText(s.id)));
-    const next: KnowledgeSource = { ...s, ...fields, updatedAt: Date.now() };
-    if (projectId === null) delete next.projectId;
-    else if (projectId) {
-      if (!(await readProject(projectId, user))) return c.json({ error: "Unknown project" }, 400);
-      next.projectId = projectId;
-    }
-    await writeSource(next);
-    return c.json(next);
+    if (projectId && !(await readProject(projectId, user))) return c.json({ error: "Unknown project" }, 400);
+    const next = await patchSource(s.id, (cur) => {
+      const x: KnowledgeSource = { ...cur, ...fields, updatedAt: Date.now() };
+      if (projectId === null) delete x.projectId;
+      else if (projectId) x.projectId = projectId;
+      return x;
+    });
+    return next ? c.json(next) : c.json({ error: "Not found" }, 404);
   } catch (e) {
     return c.json({ error: errorMessage(e) }, 400);
   }
@@ -2073,8 +2114,7 @@ async function linkPosted(user: SessionUser): Promise<void> {
       await updateSession(id, (m) => {
         if (m.posted) return;
         m.posted = { shortcode: post.item.shortcode, url: post.item.url, by: "auto", at: Date.now() };
-        m.status = "published";
-        m.statusAt = Date.now();
+        setSessionStatus(m, "published", "matched post", { skipIllegal: true }); // a shelved session stays shelved
       });
       console.log(`workshop: session ${id} became post ${post.item.shortcode} (matched by its words)`);
     }
@@ -2192,9 +2232,9 @@ async function summaryParts(meta: SessionMeta, username: string): Promise<{ kind
   let r = replyCache.get(meta.id);
   if (!r || r.at !== chatAt) {
     const last = [...(await readChat(meta.id)).messages].reverse().find((m) => m.role === "assistant");
-    const working = last?.status === "thinking" && chatting.has(last.id);
+    const working = !!last && turnRunning(last);
     // a reply you stopped isn't news; a finished one or a failure is
-    const finished = !!last && !working && !(last.status === "error" && last.error === "Stopped");
+    const finished = !!last && !working && !(last.status === "error" && last.error === TURN_STOPPED);
     replyCache.set(meta.id, (r = { at: chatAt, working, last: finished ? last.id : undefined, lastAt: finished ? last.at : undefined }));
   }
   const seen = await seenFor(username);
@@ -2312,16 +2352,12 @@ workshopApp.patch("/sessions/:id", async (c) => {
   if (!meta) return c.json({ error: "Not found" }, 404);
   try {
     const patch = parseSessionPatch(await c.req.json().catch(() => null));
-    if (patch.notes !== undefined) await writeNotes(meta.id, patch.notes);
     const next = await updateSession(meta.id, (m) => {
       if (patch.title !== undefined) m.title = patch.title || "Untitled session";
       if (patch.query !== undefined) m.query = patch.query;
       if (patch.projectId === null) delete m.projectId;
       else if (patch.projectId) m.projectId = patch.projectId;
-      if (patch.status) {
-        m.status = patch.status;
-        m.statusAt = Date.now();
-      }
+      if (patch.status) setSessionStatus(m, patch.status, "session"); // a refused move throws: 409 below
       if (patch.pinned === true) m.pinned = true;
       else if (patch.pinned === false) delete m.pinned;
       if (patch.posted === null && m.posted) {
@@ -2330,8 +2366,7 @@ workshopApp.patch("/sessions/:id", async (c) => {
         delete m.posted;
       } else if (patch.posted) {
         m.posted = { ...patch.posted, by: "you", at: Date.now() };
-        m.status = "published";
-        m.statusAt = Date.now();
+        setSessionStatus(m, "published", "posted", { skipIllegal: true }); // a shelved session stays shelved
       }
       if (patch.sources) {
         m.sources = patch.sources;
@@ -2343,11 +2378,13 @@ workshopApp.patch("/sessions/:id", async (c) => {
       else if (patch.ai) m.ai = patch.ai;
     }, { touch: patch.notes !== undefined || !!patch.sources });
     if (!next) return c.json({ error: "Not found" }, 404);
+    if (patch.notes !== undefined) await writeNotes(meta.id, patch.notes); // after the status check: a refused PATCH writes nothing
     // a video just added starts its transcript now, so it's there by the time a reply reads the folder
     const added = (patch.sources ?? []).map((x) => x.postId).filter((id) => !meta.sources.some((x) => x.postId === id));
     if (added.length) void transcribeForUser(added, user, 0).catch(() => {});
     return c.json(next);
   } catch (e) {
+    if (e instanceof IllegalTransition) return c.json({ error: e.message }, 409);
     return c.json({ error: errorMessage(e) }, 400);
   }
 });
@@ -2810,7 +2847,7 @@ workshopApp.post("/sessions/:id/chat/:messageId/stop", async (c) => {
   const meta = await ownedSession(c.req.param("id"), c.get("user"));
   if (!meta) return c.json({ error: "Not found" }, 404);
   const id = c.req.param("messageId");
-  const running = (await readChat(meta.id)).messages.some((m) => m.id === id && m.status === "thinking");
+  const running = (await readChat(meta.id)).messages.some((m) => m.id === id && turnRunning(m));
   const stop = running ? stops.get(id) : undefined;
   if (!stop) return c.json({ error: "Nothing is running for that message" }, 404);
   stop.abort();
@@ -3161,8 +3198,10 @@ workshopApp.get("/sessions/:id/obsidian.md", async (c) => {
   // one note per piece (reel, carousel): `part` picks one; without it, a session with several says how many
   const types = await pieceTypes(meta.id, docs);
   if (!obsidianExports(meta, docs, day, types).length) return c.json({ error: "This session has no reel or carousel with words yet" }, 400);
-  // exported = handed on, like a share, and the note says so; a published or shelved session keeps its own status
-  const status = await sharedForProduction(meta);
+  // the note says what a share would make it (In Production, not the Ready it had in the Workshop); this read shows
+  // that without moving the session: the share route does the move
+  const stored = meta.status ?? "draft";
+  const status: SessionStatus = ["draft", "writing", "ready"].includes(stored) ? "production" : stored;
   const notes = obsidianExports({ ...meta, status }, docs, day, types);
   const part = Number(c.req.query("part") ?? (notes.length > 1 ? NaN : 0));
   if (!Number.isInteger(part)) return c.json({ parts: notes.map((n) => n.filename) });
@@ -3278,10 +3317,7 @@ workshopApp.put("/notes", async (c) => {
       linked.id,
       (m) => {
         m.note = { path: notePath, mtime };
-        if (status && status !== m.status && mtime > (m.statusAt ?? 0)) {
-          m.status = status;
-          m.statusAt = mtime;
-        }
+        if (status && status !== m.status && mtime > (m.statusAt ?? 0)) setSessionStatus(m, status, "note", { skipIllegal: true, at: mtime });
       },
       { touch: false },
     );
@@ -3553,9 +3589,14 @@ workshopApp.get("/sessions/:id/shares", async (c) => {
 /** Sharing hands the pieces on to production: an idea, writing or ready session moves to In Production, never back. */
 async function sharedForProduction(meta: SessionMeta): Promise<SessionStatus> {
   // never back: a session past In Production (Editing, Ready to post), published or shelved stays where it is
-  if (meta.status && ["production", "editing", "toPost", "published", "shelved"].includes(meta.status)) return meta.status;
-  await updateSession(meta.id, (m) => void ((m.status = "production"), (m.statusAt = Date.now())), { touch: false });
-  return "production";
+  const after = await updateSession(
+    meta.id,
+    (m) => {
+      if (!["production", "editing", "toPost", "published", "shelved"].includes(m.status ?? "draft")) setSessionStatus(m, "production", "share", { skipIllegal: true });
+    },
+    { touch: false },
+  );
+  return after?.status ?? meta.status ?? "draft";
 }
 
 workshopApp.post("/sessions/:id/shares", async (c) => {
@@ -3773,9 +3814,8 @@ workshopShareApp.post("/:token/progress", async (c) => {
   share.progress = { state, ...(by ? { by } : {}), at: Date.now() };
   await writeJsonAtomic(SHARES_FILE, shares);
   // the editor making it = Editing; "It's done" = Ready to post; published or shelved stay
-  if (meta.status !== "published" && meta.status !== "shelved") await updateSession(meta.id, (m) => {
-    m.status = state === "done" ? "toPost" : "editing";
-    m.statusAt = Date.now();
+  await updateSession(meta.id, (m) => {
+    if (!["published", "shelved"].includes(m.status ?? "draft")) setSessionStatus(m, state === "done" ? "toPost" : "editing", "freelancer progress");
   });
   await notifyWorkshopOwner(share.owner, { kind: state === "done" ? "delivered" : "producing", by: by || "A freelancer", name: meta.title || share.title, href: `/workshop/sessions/${meta.id}`, ref: meta.id });
   return c.json({ progress: share.progress });

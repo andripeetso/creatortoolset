@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { Captions, TriangleAlert } from "lucide-react";
-import { useStudio } from "@/lib/store";
+import { activeCadenceOutcome, useStudio } from "@/lib/store";
 import { CLOUD_MODEL_ID } from "@/lib/transcribe";
 import {
   CadenceProcessingStatus,
@@ -27,7 +27,7 @@ export function MobileTranscribe({
   const words = useStudio((s) => s.words);
   const duration = useStudio((s) => s.duration);
   const model = useStudio((s) => s.model);
-  const cadenceRunOutcome = useStudio((s) => s.cadenceRunOutcome);
+  const cadenceRunOutcome = useStudio(activeCadenceOutcome);
   const cadenceApplied = useStudio((s) => s.cadenceApplied);
 
   useEffect(() => {

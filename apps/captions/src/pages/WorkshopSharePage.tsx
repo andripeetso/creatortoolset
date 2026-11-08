@@ -177,8 +177,9 @@ function Production({ token, data, onChange, list = true }: { token: string; dat
     try {
       const r = await fetch(`/api/workshop-share/${token}/progress`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ state, by: name.trim() }) });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? `HTTP ${r.status}`);
-      const { progress } = (await r.json()) as { progress: ShareProgress };
-      onChange({ progress, status: state === "done" ? "toPost" : "editing" });
+      // the server's answer: the status it kept (a published or shelved session does not move)
+      const { progress, status } = (await r.json()) as { progress: ShareProgress; status: SessionStatus };
+      onChange({ progress, status });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
