@@ -23,10 +23,10 @@ async function bootstrap() {
   initPersistence();
   await initLocalRecovery();
 
-  if (import.meta.env.PROD && "serviceWorker" in navigator) {
-    window.addEventListener("load", () => {
-      navigator.serviceWorker.register("/sw.js").catch(() => {});
-    });
+  // not an installable web app: drop a service worker and caches a browser still has from an older version
+  if ("serviceWorker" in navigator) {
+    void navigator.serviceWorker.getRegistrations().then((all) => all.forEach((r) => void r.unregister()));
+    if ("caches" in window) void caches.keys().then((keys) => keys.forEach((k) => void caches.delete(k)));
   }
 
   createRoot(document.getElementById("root")!).render(
