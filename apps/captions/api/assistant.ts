@@ -1,16 +1,17 @@
 import { Hono, type Context } from "hono";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { AuthVars } from "./auth";
 import { mintJobToken, revokeJobToken } from "./auth";
 import { env } from "./lib/env";
 import { routeFor, type Route } from "./lib/providers";
 import { streamMacClaude } from "./lib/mac-claude";
+import { slug } from "./lib/workshop/folder";
 import { myKeys } from "./my-keys";
 import { MY_KEYS, type MyKeyEnv } from "../contracts/service-keys";
 import { TOOL_NAMES } from "../contracts/tools";
-import type { AssistantMessage, AssistantProvider, AssistantView } from "../contracts/assistant";
+import type { AssistantContext, AssistantImage, AssistantMessage, AssistantPaste, AssistantProvider, AssistantView } from "../contracts/assistant";
 
 /**
  * The in-app assistant (the dock, src/components/assistant): one conversation per account in
@@ -25,7 +26,7 @@ export const assistantApp = new Hono<{ Variables: AuthVars }>();
 
 /** The job whose provider answers the dock: its own pick, else the default (contracts/providers.ts). */
 const JOB = "notes";
-const MAX_TEXT = 4000;
+const MAX_TEXT = 50_000;
 /** Each turn's prompt carries this many recent messages. */
 const HISTORY = 20;
 
@@ -58,7 +59,7 @@ interface Conv {
 const PAST_KEPT = 100;
 
 const titleOf = (messages: AssistantMessage[]) => {
-  const first = (messages.find((m) => m.role === "user")?.text ?? "Conversation").replace(/\s+/g, " ").trim();
+  const first = (messages.find((m) => m.role === "user")?.text || "Conversation").replace(/\s+/g, " ").trim();
   return first.length > 70 ? `${first.slice(0, 69)}…` : first;
 };
 
@@ -72,6 +73,109 @@ function archive(conv: Conv): void {
 const cache = new Map<string, Conv>();
 const dirOf = () => path.join(env.dataDir, "assistant");
 const fileOf = (username: string) => path.join(dirOf(), `${username}.json`);
+
+/* ---- what a message brings along: pictures (kept on disk), pastes and the page it was sent from ---- */
+
+const IMAGE_EXT: Record<AssistantImage["type"], string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif" };
+const MAX_IMAGES = 6;
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const MAX_PASTES = 5;
+const MAX_PASTED = 200_000;
+const CONTEXT_CAPS = { path: 300, title: 200, selection: 4000, visible: 2000 } as const;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+const imagesDir = (username: string) => path.join(dirOf(), "images", username);
+/** The stored file of one of this account's pictures, or null (a strict id only: never a path). */
+function imageFile(username: string, id: string): { file: string; type: AssistantImage["type"] } | null {
+  if (!UUID.test(id)) return null;
+  for (const [type, ext] of Object.entries(IMAGE_EXT) as Array<[AssistantImage["type"], string]>) {
+    const file = path.join(imagesDir(username), `${id}.${ext}`);
+    if (existsSync(file)) return { file, type };
+  }
+  return null;
+}
+
+function saveImage(username: string, im: AssistantImage, bytes: Buffer): { id: string; name: string } {
+  const id = randomUUID();
+  mkdirSync(imagesDir(username), { recursive: true, mode: 0o700 });
+  const file = path.join(imagesDir(username), `${id}.${IMAGE_EXT[im.type]}`);
+  writeFileSync(`${file}.tmp`, bytes, { mode: 0o600 });
+  renameSync(`${file}.tmp`, file);
+  return { id, name: im.name };
+}
+
+/** The pictures of messages that are gone for good. */
+function dropImages(username: string, messages: AssistantMessage[]): void {
+  for (const m of messages) for (const im of m.images ?? []) {
+    const found = imageFile(username, im.id);
+    if (found) rmSync(found.file, { force: true });
+  }
+}
+
+interface TurnInput {
+  text: string;
+  images: Array<AssistantImage & { bytes: Buffer }>;
+  pasted: AssistantPaste[];
+  context?: AssistantContext;
+}
+
+const nameOf = (v: unknown, fallback: string) => (typeof v === "string" && v.trim() ? v.trim().replace(/\s+/g, " ").slice(0, 80) : fallback);
+const capped = (v: unknown, max: number) => (typeof v === "string" && v.trim() ? v.trim().slice(0, max) : undefined);
+
+/** POST /turn's body, checked: a bad picture or paste is refused (one sentence), the page's own context is cut to size. */
+function parseTurn(raw: unknown): TurnInput {
+  const b = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const text = typeof b.text === "string" ? b.text.trim() : "";
+  if (text.length > MAX_TEXT) throw new Error(`Keep the message under ${MAX_TEXT} characters.`);
+  if (b.images !== undefined && !Array.isArray(b.images)) throw new Error("The pictures did not come through: send them again.");
+  if (b.pasted !== undefined && !Array.isArray(b.pasted)) throw new Error("The pasted text did not come through: send it again.");
+  const rawImages = (b.images ?? []) as unknown[];
+  const rawPasted = (b.pasted ?? []) as unknown[];
+  if (rawImages.length > MAX_IMAGES) throw new Error(`Send up to ${MAX_IMAGES} pictures at a time.`);
+  if (rawPasted.length > MAX_PASTES) throw new Error(`Send up to ${MAX_PASTES} pasted texts at a time.`);
+  const images = rawImages.map((x, i) => {
+    const p = (x && typeof x === "object" ? x : {}) as Record<string, unknown>;
+    const name = nameOf(p.name, `Picture ${i + 1}`);
+    if (typeof p.type !== "string" || !(p.type in IMAGE_EXT)) throw new Error(`${name} isn't a PNG, JPEG, WebP or GIF picture.`);
+    const data = typeof p.data === "string" ? p.data : "";
+    if (!data || data.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(data)) throw new Error(`${name} did not come through: send it again.`);
+    // the length says the size before anything is decoded
+    if ((data.length / 4) * 3 - (data.match(/=*$/)![0].length) > MAX_IMAGE_BYTES) throw new Error(`${name} is too big: send pictures under 8 MB.`);
+    return { name, type: p.type as AssistantImage["type"], data, bytes: Buffer.from(data, "base64") };
+  });
+  let total = 0;
+  const pasted = rawPasted.map((x, i) => {
+    const p = (x && typeof x === "object" ? x : {}) as Record<string, unknown>;
+    if (typeof p.text !== "string") throw new Error("The pasted text did not come through: send it again.");
+    total += p.text.length;
+    if (total > MAX_PASTED) throw new Error(`The pasted text is too long: up to ${MAX_PASTED.toLocaleString("en-US")} characters in all.`);
+    return { name: nameOf(p.name, `Pasted text ${i + 1}`), text: p.text };
+  });
+  if (!text && !images.length && !pasted.length) throw new Error("Write a message, or add a picture or pasted text.");
+  const c = (b.context && typeof b.context === "object" ? b.context : null) as Record<string, unknown> | null;
+  const where = c && capped(c.path, CONTEXT_CAPS.path);
+  const context: AssistantContext | undefined = c && where
+    ? {
+        path: where.replace(/\s+/g, " "),
+        title: capped(c.title, CONTEXT_CAPS.title)?.replace(/\s+/g, " ") ?? "",
+        selection: capped(c.selection, CONTEXT_CAPS.selection),
+        visible: capped(c.visible, CONTEXT_CAPS.visible),
+      }
+    : undefined;
+  return { text, images, pasted, context };
+}
+
+/** Where the newest message's pictures and pastes sit in the folder the Mac's Claude reads. */
+const attachedName = (name: string, i: number, ext: string) => `attached/${String(i + 1).padStart(2, "0")}-${slug(name.replace(/\.[a-z0-9]+$/i, ""))}.${ext}`;
+const pastedName = (name: string, i: number) => `pasted/${String(i + 1).padStart(2, "0")}-${slug(name, 40)}.txt`;
+
+/** The newest message's files for the Mac (the relay writes "base64:" entries as bytes), or undefined with none. */
+function filesFor(input: TurnInput): Record<string, string> | undefined {
+  const files: Record<string, string> = {};
+  input.images.forEach((im, i) => (files[attachedName(im.name, i, IMAGE_EXT[im.type])] = `base64:${im.data}`));
+  input.pasted.forEach((p, i) => (files[pastedName(p.name, i)] = p.text));
+  return Object.keys(files).length ? files : undefined;
+}
 
 function load(username: string): Conv {
   const hit = cache.get(username);
@@ -118,6 +222,21 @@ export function noteStep(username: string, turn: string, step: string): void {
   // waiting for the writer calls the same tool again and again: one line
   if (steps.at(-1) === step || steps.length >= 40) return;
   steps.push(step);
+  saveSoon(username);
+}
+
+/**
+ * Something the reply started or opened, as a card under it (mcp.ts): the same id updates its card (status and
+ * detail; the title it first showed stays). onlyUpdate = change a card that's there, never add one.
+ */
+export function noteWork(username: string, turn: string, card: NonNullable<AssistantMessage["work"]>[number], onlyUpdate = false): void {
+  const m = messageOf(username, turn);
+  if (m?.status !== "thinking") return;
+  const work = (m.work ??= []);
+  const had = work.find((w) => w.id === card.id);
+  if (had) Object.assign(had, { status: card.status, detail: card.detail });
+  else if (!onlyUpdate && work.length < 20) work.push(card);
+  else return;
   saveSoon(username);
 }
 
@@ -168,13 +287,33 @@ function view(username: string, admin: boolean): AssistantView {
   };
 }
 
-/** The prompt: the recent messages, then the reply it is for. */
-function promptFor(messages: AssistantMessage[]): string {
+/** An earlier message's attachments, by count and name only: their files went with that turn. */
+const marks = (m: AssistantMessage) =>
+  [m.images?.length ? `[${m.images.length === 1 ? "1 picture" : `${m.images.length} pictures`}]` : "", ...(m.pasted ?? []).map((n) => `[pasted: ${n}]`)].filter(Boolean).join(" ");
+
+/** What came with the newest message, as facts: its files in the folder, the page it was sent from, what was highlighted. */
+function newestFacts(input: TurnInput): string[] {
+  const out: string[] = [];
+  const n = input.images.length;
+  if (n) out.push(`The user attached ${n === 1 ? "a picture" : `${n} pictures`}: ${input.images.map((im, i) => attachedName(im.name, i, IMAGE_EXT[im.type])).join(", ")} (the Read tool shows a picture).`);
+  for (const [i, p] of input.pasted.entries()) out.push(`The user pasted "${p.name}" (${p.text.length.toLocaleString("en-US")} characters), in ${pastedName(p.name, i)}.`);
+  const c = input.context;
+  if (c) {
+    out.push(`The user is on ${c.path}${c.title ? ` (page title: ${c.title})` : ""}.${c.visible ? ` On screen: ${c.visible}` : ""}`);
+    if (c.selection) out.push(`They highlighted this on the page: «${c.selection}»`);
+  }
+  return out;
+}
+
+/** The prompt: the recent messages, what came with the newest one, then the reply it is for. */
+function promptFor(messages: AssistantMessage[], input?: TurnInput): string {
+  const newest = input ? [...messages].reverse().find((m) => m.role === "user") : undefined;
   const lines = messages
     .filter((m) => m.status !== "thinking")
     .slice(-HISTORY)
-    .map((m) => `${m.role === "user" ? "User" : m.role === "note" ? "Note" : "Assistant"}: ${m.text}`);
-  return `${lines.join("\n\n")}\n\nAnswer the user's last message.`;
+    .map((m) => `${m.role === "user" ? "User" : m.role === "note" ? "Note" : "Assistant"}: ${[m.text, m === newest ? "" : marks(m)].filter(Boolean).join(" ")}`);
+  const facts = input ? newestFacts(input) : [];
+  return `${lines.join("\n\n")}${facts.length ? `\n\n${facts.join("\n")}` : ""}\n\nAnswer the user's last message.`;
 }
 
 /**
@@ -188,15 +327,21 @@ export async function answerWithTools(
   route: Route,
   url: string,
   prompt: string,
-  opts: { label: string; turn: string; onDelta?: (text: string) => void; background?: boolean; cancel?: AbortSignal },
+  opts: { label: string; turn: string; onDelta?: (text: string) => void; background?: boolean; cancel?: AbortSignal; files?: Record<string, string> },
 ): Promise<string> {
   const token = mintJobToken(username, opts.turn);
   try {
     return await streamMacClaude(SYSTEM, prompt, opts.cancel, (t) => opts.onDelta?.(t), undefined, {
       label: opts.label,
       background: opts.background,
+      web: true, // the assistant may search and read the web, as the Workshop's writer does
       provider: { instance: route.instance.id, driver: route.instance.driver, home: route.instance.home, model: route.selection.model, effort: route.selection.effort, device: route.device, scope: route.scope },
       mcp: { url, token },
+      files: opts.files,
+      // Claude's own reads and searches; its MCP calls are noted by mcp.ts already, and "Thinking" is the reply's own status
+      onStep: (label) => {
+        if (label !== "Thinking" && !label.startsWith("mcp__")) noteStep(username, opts.turn, label);
+      },
     });
   } catch (e) {
     // the token never goes into a stored reply
@@ -210,7 +355,7 @@ export async function answerWithTools(
 const running = new Map<string, AbortController>();
 
 /** One turn of the dock: the reply fills in as it streams, then its status says how it ended. */
-async function runTurn(username: string, replyId: string, route: Route, url: string, prompt: string): Promise<void> {
+async function runTurn(username: string, replyId: string, route: Route, url: string, prompt: string, files?: Record<string, string>): Promise<void> {
   const stop = new AbortController();
   running.set(username, stop);
   try {
@@ -218,6 +363,7 @@ async function runTurn(username: string, replyId: string, route: Route, url: str
       label: "Assistant",
       turn: replyId,
       cancel: stop.signal,
+      files,
       onDelta: (t) => {
         const m = messageOf(username, replyId);
         if (m) m.text = t;
@@ -251,9 +397,12 @@ assistantApp.get("/", (c) => {
 
 assistantApp.post("/turn", async (c) => {
   const u = c.get("user");
-  const b = (await c.req.json().catch(() => null)) as { text?: unknown } | null;
-  const text = typeof b?.text === "string" ? b.text.trim() : "";
-  if (!text || text.length > MAX_TEXT) return c.json({ error: `Write a message (up to ${MAX_TEXT} characters)` }, 400);
+  let input: TurnInput;
+  try {
+    input = parseTurn(await c.req.json().catch(() => null));
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 400);
+  }
   const conv = load(u.username);
   if (conv.messages.at(-1)?.status === "thinking") return c.json({ error: "Still answering the last message: wait for it" }, 409);
   // Before an AI is connected: no model call, no job, no paid call of any kind (the server's keys included).
@@ -261,11 +410,21 @@ assistantApp.post("/turn", async (c) => {
   if (!route) return c.json({ error: "Connect your AI first", code: "NO_PROVIDER" }, 409);
   if (route.instance.driver !== "claude") return c.json({ error: "The assistant needs Claude Code on your Mac for now", code: "NOT_CLAUDE" }, 409);
   const now = Date.now();
-  conv.messages.push({ id: randomUUID(), role: "user", text, at: now });
+  // the pictures are kept only once the turn runs
+  const images = input.images.map((im) => saveImage(u.username, im, im.bytes));
+  conv.messages.push({
+    id: randomUUID(),
+    role: "user",
+    text: input.text,
+    at: now,
+    ...(images.length ? { images } : {}),
+    ...(input.pasted.length ? { pasted: input.pasted.map((p) => p.name) } : {}),
+    ...(input.context?.selection ? { quote: input.context.selection } : {}),
+  });
   const reply: AssistantMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, status: "thinking" };
   conv.messages.push(reply);
   save(u.username);
-  void runTurn(u.username, reply.id, route, `${publicOrigin(c)}/api/mcp`, promptFor(conv.messages));
+  void runTurn(u.username, reply.id, route, `${publicOrigin(c)}/api/mcp`, promptFor(conv.messages, input), filesFor(input));
   return c.json(view(u.username, u.role === "admin"), 202);
 });
 
@@ -331,9 +490,10 @@ assistantApp.post("/past/:id/open", (c) => {
 assistantApp.delete("/past/:id", (c) => {
   const u = c.get("user");
   const conv = load(u.username);
-  const before = conv.past?.length ?? 0;
-  conv.past = (conv.past ?? []).filter((p) => p.id !== c.req.param("id"));
-  if (conv.past.length === before) return c.json({ error: "That conversation is gone" }, 404);
+  const found = conv.past?.find((p) => p.id === c.req.param("id"));
+  if (!found) return c.json({ error: "That conversation is gone" }, 404);
+  conv.past = conv.past!.filter((p) => p !== found);
+  dropImages(u.username, found.messages);
   save(u.username);
   return c.json(view(u.username, u.role === "admin"));
 });
@@ -345,4 +505,11 @@ assistantApp.post("/navigated", (c) => {
   conv.navigate = undefined;
   save(u.username);
   return c.json(view(u.username, u.role === "admin"));
+});
+
+/** One of the caller's own pictures (a message's attachment); anyone else's, or a bad id, is not found. */
+assistantApp.get("/images/:id", (c) => {
+  const found = imageFile(c.get("user").username, c.req.param("id"));
+  if (!found) return c.json({ error: "Not found" }, 404);
+  return c.body(readFileSync(found.file), 200, { "content-type": found.type, "cache-control": "private, max-age=86400", "x-content-type-options": "nosniff" });
 });

@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -216,5 +216,110 @@ describe("ask_secret and navigate", () => {
     await app.request("/api/assistant/navigated", { method: "POST", headers: { cookie } });
     expect(((await (await app.request("/api/assistant", { headers: { cookie } })).json()) as { navigate: string | null }).navigate).toBeNull();
     revokeJobToken(token);
+  });
+});
+
+describe("pictures, pastes and the page a message comes from", () => {
+  // a 1×1 PNG
+  const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+  const imagesOf = (u: string) => path.join(process.env.DATA_DIR!, "assistant", "images", u);
+  const claim = async () => (await (await app.request("/api/devices/relay/wait", { method: "POST", ...json({}, { authorization: `Bearer ${mac.token}` }) })).json()) as { id: string; user: string; files?: Record<string, string> };
+  const finish = (id: string) => app.request(`/api/devices/relay/${id}/done`, { method: "POST", ...json({ text: "Done." }, { authorization: `Bearer ${mac.token}` }) });
+  let imageId = "";
+
+  it("a picture and a paste go to the Mac as files the prompt names, with the page and the highlight as facts", async () => {
+    const cookie = await cookieOf("ana");
+    const r = await app.request("/api/assistant/turn", {
+      method: "POST",
+      ...json(
+        {
+          text: "",
+          images: [{ name: "Shot.png", type: "image/png", data: png }],
+          pasted: [{ name: "Notes", text: "Tiny Acrobatics plan" }],
+          context: { path: "/review/abc", title: "Review", selection: "the second hook", visible: "Tiny Acrobatics: rolls" },
+        },
+        { cookie },
+      ),
+    });
+    expect(r.status).toBe(202);
+    const job = await claim();
+    expect(job.files).toEqual({ "attached/01-shot.png": `base64:${png}`, "pasted/01-notes.txt": "Tiny Acrobatics plan" });
+    expect(job.user).toContain("attached/01-shot.png");
+    expect(job.user).toContain("pasted/01-notes.txt");
+    expect(job.user).toContain("The user is on /review/abc (page title: Review). On screen: Tiny Acrobatics: rolls");
+    expect(job.user).toContain("They highlighted this on the page: «the second hook»");
+    // Claude's own reads show under the reply; its MCP calls (mcp.ts notes those) and "Thinking" don't
+    for (const label of ["Read attached/01-shot.png", "mcp__creator-toolset__list_reviews", "Thinking"])
+      await app.request(`/api/devices/relay/${job.id}/step`, { method: "POST", ...json({ label }, { authorization: `Bearer ${mac.token}` }) });
+    const view = (await (await app.request("/api/assistant", { headers: { cookie } })).json()) as { messages: Array<{ images?: Array<{ id: string; name: string }>; pasted?: string[]; quote?: string; steps?: string[] }> };
+    expect(view.messages.at(-1)?.steps).toEqual(["Read attached/01-shot.png"]);
+    const ask = view.messages.at(-2)!;
+    expect(ask).toMatchObject({ pasted: ["Notes"], quote: "the second hook" });
+    imageId = ask.images![0]!.id;
+    expect(ask.images![0]!.name).toBe("Shot.png");
+    expect(statSync(path.join(imagesOf("ana"), `${imageId}.png`)).mode & 0o777).toBe(0o600);
+    expect((await finish(job.id)).status).toBe(200);
+
+    // the next turn names the earlier attachments only; their files don't travel again
+    expect((await app.request("/api/assistant/turn", { method: "POST", ...json({ text: "And now?" }, { cookie }) })).status).toBe(202);
+    const next = await claim();
+    expect(next.files).toBeUndefined();
+    expect(next.user).toContain("User: [1 picture] [pasted: Notes]");
+    expect(next.user).not.toContain("attached/");
+    expect(next.user).not.toContain("highlighted");
+    await finish(next.id);
+  });
+
+  it("a picture is served to its owner alone", async () => {
+    const mine = await app.request(`/api/assistant/images/${imageId}`, { headers: { cookie: await cookieOf("ana") } });
+    expect(mine.status).toBe(200);
+    expect(mine.headers.get("content-type")).toBe("image/png");
+    expect(Buffer.from(await mine.arrayBuffer()).equals(Buffer.from(png, "base64"))).toBe(true);
+    const nico = await cookieOf("nico");
+    expect((await app.request(`/api/assistant/images/${imageId}`, { headers: { cookie: nico } })).status).toBe(404);
+    for (const bad of ["..%2Fana.json", `${imageId}.png`, "not-an-id"])
+      expect((await app.request(`/api/assistant/images/${bad}`, { headers: { cookie: await cookieOf("ana") } })).status, bad).toBe(404);
+  });
+
+  it("refuses a wrong type, too many, too big, a broken picture, too much paste and an empty message", async () => {
+    const cookie = await cookieOf("ana");
+    const im = (over: Record<string, unknown> = {}) => ({ name: "a.png", type: "image/png", data: png, ...over });
+    const big = "A".repeat(Math.ceil((8 * 1024 * 1024 + 3) / 3) * 4);
+    for (const [why, body] of [
+      ["svg", { text: "x", images: [im({ type: "image/svg+xml" })] }],
+      ["seven", { text: "x", images: Array.from({ length: 7 }, () => im()) }],
+      ["over 8 MB", { text: "x", images: [im({ data: big })] }],
+      ["not base64", { text: "x", images: [im({ data: "a$b=" })] }],
+      ["six pastes", { text: "x", pasted: Array.from({ length: 6 }, () => ({ name: "p", text: "t" })) }],
+      ["paste too long", { text: "x", pasted: [{ name: "p", text: "x".repeat(150_000) }, { name: "q", text: "x".repeat(60_000) }] }],
+      ["nothing", { text: "  " }],
+    ] as const) {
+      const r = await app.request("/api/assistant/turn", { method: "POST", ...json(body, { cookie }) });
+      expect(r.status, why).toBe(400);
+      expect(((await r.json()) as { error: string }).error, why).toMatch(/\.$/);
+    }
+  });
+
+  it("deleting an earlier conversation deletes its pictures", async () => {
+    const cookie = await cookieOf("ana");
+    const fresh = (await (await app.request("/api/assistant", { method: "DELETE", headers: { cookie } })).json()) as { past: Array<{ id: string }> };
+    expect(existsSync(path.join(imagesOf("ana"), `${imageId}.png`))).toBe(true);
+    expect((await app.request(`/api/assistant/past/${fresh.past[0]!.id}`, { method: "DELETE", headers: { cookie } })).status).toBe(200);
+    expect(existsSync(path.join(imagesOf("ana"), `${imageId}.png`))).toBe(false);
+    expect((await app.request(`/api/assistant/images/${imageId}`, { headers: { cookie } })).status).toBe(404);
+  });
+});
+
+describe("work cards", () => {
+  it("a session the reply starts is a card that opens it; a Full key's call adds none", async () => {
+    const cookie = await cookieOf("ana");
+    expect((await app.request("/api/assistant/turn", { method: "POST", ...json({ text: "Draft a reel for Tiny Acrobatics" }, { cookie }) })).status).toBe(202);
+    const job = (await (await app.request("/api/devices/relay/wait", { method: "POST", ...json({}, { authorization: `Bearer ${mac.token}` }) })).json()) as { id: string; mcp: { token: string } };
+    const made = JSON.parse((await toolOf(job.mcp.token, "workshop_new_session", { title: "Rolling over" })).text) as { id: string };
+    await toolOf(fullKey.slice(7), "workshop_new_session", { title: "From a Full key" });
+    const workOf = async () => ((await (await app.request("/api/assistant", { headers: { cookie } })).json()) as { messages: Array<{ work?: unknown[] }> }).messages.at(-1)?.work;
+    expect(await workOf()).toEqual([{ id: `workshop:${made.id}`, kind: "workshop", title: "Rolling over", href: `/workshop/sessions/${made.id}`, status: "done", detail: "Session started" }]);
+    await app.request(`/api/devices/relay/${job.id}/done`, { method: "POST", ...json({ text: "Started it." }, { authorization: `Bearer ${mac.token}` }) });
+    expect(await workOf()).toHaveLength(1);
   });
 });

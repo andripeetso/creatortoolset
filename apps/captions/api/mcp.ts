@@ -7,7 +7,8 @@ import { routeFor } from "./lib/providers";
 import { deviceName } from "./lib/devices";
 import { readConnectors } from "./lib/connectors/store";
 import { myKeys } from "./my-keys";
-import { askSecret, navigateTo, noteStep } from "./assistant";
+import { askSecret, navigateTo, noteStep, noteWork } from "./assistant";
+import type { AssistantWork } from "../contracts/assistant";
 import { innerCall, jobTurn, type AuthVars } from "./auth";
 import type { SessionUser } from "./users";
 
@@ -513,6 +514,62 @@ export const stepFor = (name: string, args: Args): string =>
     ? `Opening ${PAGES[String(args.path ?? "").split(/[/?]/)[1] ?? ""] ?? "the page"}`
     : (STEPS[name] ?? name.replace(/_/g, " "));
 
+const WRITING = "The Workshop's writer is drafting";
+const kindTitle = (kind: unknown) => String(kind ?? "job").replace(/^./, (c) => c.toUpperCase()).replace(/_/g, " ");
+
+/**
+ * The card a tool call leaves under the assistant's reply (noteWork), when it started or opened something the user
+ * can look at: a Workshop session and its writer, an AI Editor job, a share link, an automation. Same thing = same
+ * id, so following it updates its card. only = update a card that's there, add none.
+ */
+export function workFor(name: string, a: Args, r: Args): { card: AssistantWork; only?: boolean } | null {
+  const session = (id: unknown, title: string, status: AssistantWork["status"], detail?: string): AssistantWork => ({
+    id: `workshop:${id}`, kind: "workshop", title, href: `/workshop/sessions/${id}`, status, ...(detail ? { detail } : {}),
+  });
+  switch (name) {
+    case "workshop_new_session":
+      return r.id ? { card: session(r.id, String(r.title ?? "Workshop session"), "done", "Session started") } : null;
+    case "workshop_chat":
+    case "workshop_wait": {
+      const reply = (r.reply ?? {}) as Args;
+      const status = reply.status === "thinking" ? "running" : reply.status === "error" ? "failed" : "done";
+      const detail = status === "running" ? WRITING : status === "failed" ? String(reply.error ?? "The writer stopped") : "The writer is done";
+      return { card: session(a.session, String((r.piece as Args | undefined)?.title ?? "Workshop session"), status, detail) };
+    }
+    case "workshop_session": {
+      const chat = (r.chat as Args[] | undefined) ?? [];
+      if (!chat.length) return null;
+      const writing = chat.some((m) => m.status === "thinking");
+      return { card: session(a.session, String(r.title ?? "Workshop session"), writing ? "running" : "done", writing ? WRITING : "The writer is done"), only: true };
+    }
+    case "editor_run": {
+      // this editor's run answers "queued" only: the card opens the edit, where the job shows
+      const edit = encodeURIComponent(String(a.edit));
+      const toReview = a.kind === "send_to_review";
+      return {
+        card: {
+          id: `edit:${a.edit}:${toReview ? `review:${a.draft}` : a.kind}`, kind: "edit", title: toReview ? `${a.draft} to Review` : kindTitle(a.kind), href: `/editor/${edit}`,
+          status: "running", detail: toReview ? "Going into Review" : "The AI Editor is working on it",
+        },
+      };
+    }
+    case "review_share":
+      return typeof r.share_link === "string" ? { card: { id: `link:${r.share_link}`, kind: "link", title: String(r.name ?? "Share link"), href: r.share_link, status: "done", detail: "Share link: anyone with it can watch" } } : null;
+    case "automations_create":
+    case "automations_run":
+      return r.id
+        ? {
+            card: {
+              id: `automation:${r.id}`, kind: "automation", title: String(r.name ?? "Automation"), href: "/settings/automations",
+              ...(name === "automations_run" ? { status: "running" as const, detail: "Running now: the result lands in your inbox" } : { status: "done" as const, detail: "Scheduled" }),
+            },
+          }
+        : null;
+    default:
+      return null;
+  }
+}
+
 async function callTool(call: Call, auth: Headers, origin: string, user: SessionUser, name: string, args: Args) {
   const handler = tools(call, auth, origin, user)[name];
   const turn = jobTurn(auth.get("authorization") ?? undefined);
@@ -521,6 +578,8 @@ async function callTool(call: Call, auth: Headers, origin: string, user: Session
     if (!handler) throw new ToolError(`Unknown tool ${name}.`);
     if (ASSISTANT_TOOLS.has(name) && !isJob(auth)) throw new ToolError(`${name} is for the assistant only.`);
     const result = await handler(args ?? {});
+    const work = turn && result && typeof result === "object" && !Array.isArray(result) ? workFor(name, args ?? {}, result as Args) : null;
+    if (turn && work) noteWork(user.username, turn, work.card, work.only);
     return { content: Array.isArray(result) ? (result as Content[]) : [{ type: "text", text: JSON.stringify(result, null, 1) }] };
   } catch (e) {
     return { content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }], isError: true };

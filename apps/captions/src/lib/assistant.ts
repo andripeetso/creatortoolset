@@ -1,5 +1,6 @@
 import { create } from "zustand";
-import type { AssistantTurnInput, AssistantView } from "@contracts/assistant";
+import type { AssistantImage, AssistantTurnInput, AssistantView } from "@contracts/assistant";
+import { snapshot } from "@/lib/page-context";
 
 /**
  * The dock's client (components/assistant/AssistantDock.tsx) and its server calls (api/assistant.ts). The dock is open
@@ -12,19 +13,58 @@ type AssistantState = {
   /** the setup choice was asked for (openAssistant("setup")): show the choices again */
   setupAsked: boolean;
   set: (patch: Partial<Pick<AssistantState, "collapsed" | "setupAsked">>) => void;
+  /** Highlighted text the next message asks about (AskAboutSelection). */
+  quote: string | null;
+  setQuote: (q: string | null) => void;
+  /** Pictures handed to the box from outside (a screenshot); the box takes them with takeImages. */
+  images: AssistantImage[];
+  /** Adds a picture and opens the dock. */
+  addImage: (img: AssistantImage) => void;
+  /** The waiting pictures, emptied. */
+  takeImages: () => AssistantImage[];
+  /** Ask about this text: it becomes the quote (at most 4000 characters) and the dock opens. */
+  askAbout: (text: string) => void;
+  /** A picture of the screen into the box (Mac app only); false when none could be taken. */
+  attachScreen: () => Promise<boolean>;
 };
 
-export const useAssistant = create<AssistantState>((set) => ({
+const MAX_QUOTE = 4000;
+
+export const useAssistant = create<AssistantState>((set, get) => ({
   // folded to its bubble until clicked: setup is the one first-run flow, the chat never opens by itself
   collapsed: true,
   setupAsked: false,
   set: (patch) => set(patch),
+  quote: null,
+  setQuote: (quote) => set({ quote }),
+  images: [],
+  addImage: (img) => set((s) => ({ images: [...s.images, img], collapsed: false })),
+  takeImages: () => {
+    const { images } = get();
+    if (images.length) set({ images: [] });
+    return images;
+  },
+  askAbout: (text) => {
+    const quote = text.trim().slice(0, MAX_QUOTE);
+    if (quote) set({ quote, collapsed: false });
+  },
+  attachScreen: async () => {
+    const img = await snapshot();
+    if (img) get().addImage(img);
+    return !!img;
+  },
 }));
 
 /** Open the dock from anywhere; "setup" starts it at the choice of setup paths. */
 export function openAssistant(mode?: "setup"): void {
   useAssistant.getState().set({ collapsed: false, setupAsked: mode === "setup" });
 }
+
+/** Ask about this text from anywhere (the quote, then the dock opens). */
+export const askAbout = (text: string): void => useAssistant.getState().askAbout(text);
+
+/** A picture of the screen into the box from anywhere (Mac app only; see canSnapshot in page-context.ts). */
+export const attachScreen = (): Promise<boolean> => useAssistant.getState().attachScreen();
 
 /** A JSON call to the assistant; a refusal carries the server's sentence. */
 async function call<T>(path: string, method = "GET", body?: unknown): Promise<{ ok: true; data: T } | { ok: false; error: string; code?: string }> {

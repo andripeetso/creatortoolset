@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
-import { ArrowUpRight, Check, Copy, CornerDownLeft, History, KeyRound, MessageCircle, PanelRight, PanelRightClose, Pencil, SquarePen, Trash2, VolumeX, X } from "lucide-react";
-import type { AssistantMessage, AssistantView } from "@contracts/assistant";
+import { ArrowUpRight, Check, Copy, CornerDownLeft, FileText, History, KeyRound, MessageCircle, PanelRight, PanelRightClose, Pencil, RotateCcw, SquarePen, Trash2, VolumeX, X } from "lucide-react";
+import type { AssistantImage, AssistantMessage, AssistantView } from "@contracts/assistant";
 import { ReplyText } from "@/components/ReplyText";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,12 +22,15 @@ import {
   useAssistant,
 } from "@/lib/assistant";
 import { cornerOf, storePlace, storedPlace, type Corner, type Place } from "@/lib/dock-place";
+import { pageContext } from "@/lib/page-context";
 import { speak, stopSpeaking, unlockAudio, useReadAloud } from "@/lib/read-aloud";
 import { cn } from "@/lib/utils";
 import { currentProject, PROJECT_COLORS, projectColor, useWorkspace } from "@/lib/workspace";
 import { useAppearance } from "@/lib/settings";
-import { Composer } from "./Composer";
+import { Composer, PictureOverlay } from "./Composer";
+import { EMPTY_DRAFT, MAX_PICTURES, isLongPaste, isPicture, toPicture, type Draft } from "./draft";
 import { useThrow } from "./useThrow";
+import { Elapsed, WorkCards } from "./WorkCards";
 
 /** Width of the chat docked to the right edge; the page moves over by as much. */
 const DOCK_W = 400;
@@ -36,7 +39,8 @@ const AT: Record<Corner, string> = { tl: "left-4 top-16", tr: "right-4 top-16", 
 const ORIGIN: Record<Corner, string> = { tl: "origin-top-left", tr: "origin-top-right", bl: "origin-bottom-left", br: "origin-bottom-right" };
 
 const QUEUE_KEY = "ct-assistant:queue";
-type Queued = { id: string; text: string };
+/** A message waiting its turn, with what goes with it (an older stored one is only { id, text }). */
+type Queued = { id: string; text: string; images?: AssistantImage[]; pasted?: Draft["pasted"]; quote?: string };
 const storedQueue = (): Queued[] => {
   try {
     return JSON.parse(localStorage.getItem(QUEUE_KEY) ?? "[]") as Queued[];
@@ -66,7 +70,7 @@ export function AssistantDock() {
   const me = useMe();
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  const { collapsed, setupAsked, set } = useAssistant();
+  const { collapsed, setupAsked, set, quote, setQuote, images: handed } = useAssistant();
   const readAloud = useReadAloud();
   const real = !!me;
   const [view, setView] = useState<AssistantView | null>(null);
@@ -151,12 +155,17 @@ export function AssistantDock() {
   const { projectTint } = useAppearance();
   const tint = { "--tint": `rgb(${PROJECT_COLORS[projectTint && project ? projectColor(project) : "violet"].rgb})` } as React.CSSProperties;
 
-  const send = async (text: string): Promise<boolean> => {
+  const send = async (it: Omit<Queued, "id">): Promise<boolean> => {
     stopSpeaking();
     unlockAudio();
     setBusy(true);
     setError(null);
-    const r = await sendTurn({ text });
+    const r = await sendTurn({
+      text: it.text,
+      ...(it.images?.length ? { images: it.images } : {}),
+      ...(it.pasted?.length ? { pasted: it.pasted } : {}),
+      context: { ...pageContext(), ...(it.quote ? { selection: it.quote } : {}) },
+    });
     setBusy(false);
     if (r.ok) setView(r.data);
     else {
@@ -168,25 +177,84 @@ export function AssistantDock() {
 
   // The queue, as in the Workshop's chat: Enter while a reply runs adds the message here, and the first one sends
   // when the reply is done. Steer stops the reply and sends that one now; Edit puts it back in the box.
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [queue, setQueue] = useState<Queued[]>(storedQueue);
   // a queued message the server refused stays first and waits for a click (no retry loop)
   const [held, setHeld] = useState(false);
   const sending = useRef(false);
   useEffect(() => {
+    const save = (q: Queued[]) => (q.length ? localStorage.setItem(QUEUE_KEY, JSON.stringify(q)) : localStorage.removeItem(QUEUE_KEY));
     try {
-      if (queue.length) localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
-      else localStorage.removeItem(QUEUE_KEY);
+      save(queue);
     } catch {
-      /* the queue stays until reload */
+      // pictures too big for this browser's storage: keep the words, the pictures stay until reload
+      try {
+        save(queue.map((it) => ({ ...it, images: undefined })));
+      } catch {
+        /* the queue stays until reload */
+      }
     }
   }, [queue]);
+
+  // Pictures and long pastes: dropped on the card, pasted, picked with the paperclip, or handed over from
+  // elsewhere in the app (a screenshot of this screen). Each one is shrunk here to stay well under the server's cap.
+  const [dropping, setDropping] = useState(false);
+  const addPictures = useCallback((imgs: AssistantImage[]) => {
+    setDraft((d) => {
+      if (d.images.length + imgs.length > MAX_PICTURES) setError(`At most ${MAX_PICTURES} pictures go with one message`);
+      return { ...d, images: [...d.images, ...imgs].slice(0, MAX_PICTURES) };
+    });
+  }, []);
+  const addFiles = useCallback(
+    async (files: File[]) => {
+      const pics = files.filter(isPicture);
+      if (pics.length < files.length) setError("Only pictures can go with a message: paste text into the box");
+      if (!pics.length) return;
+      try {
+        addPictures(await Promise.all(pics.map(toPicture)));
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [addPictures],
+  );
+  const handlePaste = useCallback(
+    (data: DataTransfer): boolean => {
+      const pics = Array.from(data.files).filter(isPicture);
+      if (pics.length) {
+        void addFiles(pics);
+        return true;
+      }
+      const t = data.getData("text/plain");
+      if (!isLongPaste(t)) return false;
+      setDraft((d) => ({ ...d, pasted: [...d.pasted, { name: d.pasted.length ? `Pasted text ${d.pasted.length + 1}` : "Pasted text", text: t }] }));
+      return true;
+    },
+    [addFiles],
+  );
+  // a paste while a dock button has focus (not the box) still lands in the box
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      const a = document.activeElement;
+      if (!e.clipboardData || !cardRef.current?.contains(a) || a?.closest("input, textarea, select, [contenteditable]")) return;
+      e.preventDefault();
+      if (handlePaste(e.clipboardData)) return;
+      const t = e.clipboardData.getData("text/plain");
+      if (t) setDraft((d) => ({ ...d, text: d.text + t }));
+    };
+    document.addEventListener("paste", onPaste);
+    return () => document.removeEventListener("paste", onPaste);
+  }, [handlePaste]);
+  // a picture handed to the dock from elsewhere (useAssistant.addImage) moves into the box
+  useEffect(() => {
+    if (handed.length) addPictures(useAssistant.getState().takeImages());
+  }, [handed, addPictures]);
   const connectedNow = !!view && view.provider !== "none";
   useEffect(() => {
     const next = queue[0];
     if (!next || thinking || held || !connectedNow || sending.current) return;
     sending.current = true;
-    void send(next.text).then((ok) => {
+    void send(next).then((ok) => {
       sending.current = false;
       if (ok) setQueue((q) => q.filter((x) => x.id !== next.id));
       else setHeld(true);
@@ -194,9 +262,22 @@ export function AssistantDock() {
     // send is a fresh function each render; the queue, the reply and the hold decide when to go
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queue, thinking, held, connectedNow]);
-  const submit = (text: string) => {
-    if (thinking || busy || queue.length) setQueue((q) => [...q, { id: `${Date.now()}-${q.length}`, text }]);
-    else void send(text);
+  /** A message (and the highlighted text it asks about) back in the box, after what's there. */
+  const putBack = (it: Queued) => {
+    setDraft((cur) => ({
+      text: cur.text.trim() ? `${cur.text}\n\n${it.text}` : it.text,
+      images: [...cur.images, ...(it.images ?? [])].slice(0, MAX_PICTURES),
+      pasted: [...cur.pasted, ...(it.pasted ?? [])],
+    }));
+    if (it.quote) setQuote(it.quote);
+  };
+  // the pending highlighted text goes with this message and leaves the box
+  const submit = (d: Draft) => {
+    const it: Queued = { id: `${Date.now()}-${queue.length}`, ...d, ...(quote ? { quote } : {}) };
+    setQuote(null);
+    if (thinking || busy || queue.length) setQueue((q) => [...q, it]);
+    // refused or failed: it comes back to the box rather than being lost
+    else void send(it).then((ok) => !ok && putBack(it));
   };
   const stop = () => void stopTurn().then((r) => r.ok && setView(r.data));
   const steer = (id: string) => {
@@ -207,7 +288,7 @@ export function AssistantDock() {
   const editQueued = (it: Queued) => {
     setQueue((q) => q.filter((x) => x.id !== it.id));
     if (queue[0]?.id === it.id) setHeld(false);
-    setDraft((cur) => (cur.trim() ? `${cur}\n\n${it.text}` : it.text));
+    putBack(it);
   };
   const unqueue = (it: Queued) => {
     setQueue((q) => q.filter((x) => x.id !== it.id));
@@ -274,7 +355,7 @@ export function AssistantDock() {
   const pick = (how: "self" | "chat") => {
     set({ setupAsked: false });
     if (how === "self") navigate("/?setup=how");
-    else void send("Set me up. Go one step at a time.");
+    else void send({ text: "Set me up. Go one step at a time." });
   };
 
   const later = () => set({ collapsed: true, setupAsked: false });
@@ -304,7 +385,24 @@ export function AssistantDock() {
             ),
       )}
       style={place.mode === "dock" ? { ...tint, width: DOCK_W } : tint}
+      onDragOver={(e) => {
+        if (!connectedNow || !e.dataTransfer.types.includes("Files")) return;
+        e.preventDefault();
+        setDropping(true);
+      }}
+      onDragLeave={(e) => !e.currentTarget.contains(e.relatedTarget as Node | null) && setDropping(false)}
+      onDrop={(e) => {
+        setDropping(false);
+        if (!connectedNow || !e.dataTransfer.files.length) return;
+        e.preventDefault();
+        void addFiles(Array.from(e.dataTransfer.files));
+      }}
     >
+      {dropping && (
+        <div className="pointer-events-none absolute inset-1.5 z-10 flex items-center justify-center rounded-[14px] border-2 border-dashed border-[var(--tint)] bg-[color-mix(in_srgb,var(--tint)_10%,transparent)] text-sm font-medium text-[var(--tint)] motion-safe:animate-in motion-safe:fade-in">
+          Drop pictures to add them
+        </div>
+      )}
       <header
         onPointerDown={cardThrow.onPointerDown}
         onDoubleClick={(e) => {
@@ -418,7 +516,7 @@ export function AssistantDock() {
                 key={`${pathname}-${s}`}
                 type="button"
                 disabled={busy}
-                onClick={() => submit(s)}
+                onClick={() => submit({ ...EMPTY_DRAFT, text: s })}
                 style={{ animationDelay: `${i * 60}ms` }}
                 className={cn(
                   "group flex w-fit max-w-full items-center gap-2 rounded-2xl border bg-background px-3.5 py-2 text-left text-sm transition-all duration-200",
@@ -435,9 +533,15 @@ export function AssistantDock() {
 
         {chatting && !empty && !showPast && (
           <div className="flex flex-col gap-3">
-            {view.messages.map((m) => (
-              <Message key={m.id} m={m} />
-            ))}
+            {view.messages.map((m, i, all) => {
+              const asked = all[i - 1];
+              // the last reply failed or was cut off (a restart, the Mac gone): send the question again
+              const retry =
+                i === all.length - 1 && m.status === "error" && asked?.role === "user" && !thinking && !busy
+                  ? () => void send({ text: asked.text, ...(asked.quote ? { quote: asked.quote } : {}) })
+                  : undefined;
+              return <Message key={m.id} m={m} onRetry={retry} />;
+            })}
           </div>
         )}
 
@@ -485,7 +589,8 @@ export function AssistantDock() {
                 >
                   <span className="shrink-0 text-[10px] tracking-wide text-muted-foreground uppercase">{i === 0 && held ? "Not sent" : "Queued"}</span>
                   <span className="min-w-0 flex-1 truncate" title={it.text}>
-                    {it.text}
+                    {it.text.trim() || attachmentsLabel(it)}
+                    {it.text.trim() && attachmentsLabel(it) ? <span className="ml-1.5 text-[11px] text-muted-foreground">+ {attachmentsLabel(it)}</span> : null}
                   </span>
                   <button
                     type="button"
@@ -505,29 +610,67 @@ export function AssistantDock() {
               ))}
             </ul>
           )}
-          <Composer text={draft} setText={setDraft} onSend={submit} onStop={stop} waiting={busy || thinking} autoFocus />
+          <Composer
+            draft={draft}
+            setDraft={setDraft}
+            onSend={(d) => {
+              setDraft(EMPTY_DRAFT);
+              submit(d);
+            }}
+            onStop={stop}
+            onFiles={(fs) => void addFiles(fs)}
+            onPaste={handlePaste}
+            quote={quote}
+            onDropQuote={() => setQuote(null)}
+            waiting={busy || thinking}
+            autoFocus
+          />
         </div>
       )}
     </section>
   );
 }
 
-function Message({ m }: { m: AssistantMessage }) {
+/** "2 pictures, Pasted text": what a queued message carries besides its words. */
+const attachmentsLabel = (it: Queued) =>
+  [it.images?.length ? `${it.images.length} picture${it.images.length === 1 ? "" : "s"}` : "", ...(it.pasted ?? []).map((p) => p.name)].filter(Boolean).join(", ");
+
+function Message({ m, onRetry }: { m: AssistantMessage; onRetry?: () => void }) {
+  const [big, setBig] = useState<string | null>(null);
   const enter = "motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300";
   if (m.role === "note") return <p className={cn("mx-auto max-w-[90%] text-center text-xs text-muted-foreground", enter)}>{m.text}</p>;
   if (m.role === "user")
     return (
-      <div className="group/msg ml-auto flex max-w-[85%] items-end gap-1">
-        <CopyButton className={msgCopy} text={() => m.text} label="Copy" />
-        <div
-          className={cn(
-            "rounded-2xl rounded-br-md bg-[var(--tint)] px-3.5 py-2 whitespace-pre-wrap text-white",
-            enter,
-            "motion-safe:slide-in-from-bottom-2 motion-safe:zoom-in-95 motion-safe:origin-bottom-right",
-          )}
-        >
-          {m.text}
-        </div>
+      <div className={cn("ml-auto flex max-w-[85%] flex-col items-end gap-1", enter)}>
+        {m.quote && (
+          <p className="line-clamp-2 border-r-2 border-[color-mix(in_srgb,var(--tint)_50%,transparent)] pr-2 text-right text-xs text-muted-foreground" title={m.quote}>
+            «{m.quote}»
+          </p>
+        )}
+        {(!!m.images?.length || !!m.pasted?.length) && (
+          <div className="flex flex-wrap justify-end gap-1.5">
+            {m.images?.map((im) => (
+              <button key={im.id} type="button" onClick={() => setBig(`/api/assistant/images/${encodeURIComponent(im.id)}`)} title={im.name} aria-label={`Show ${im.name}`} className="cursor-zoom-in">
+                <img src={`/api/assistant/images/${encodeURIComponent(im.id)}`} alt={im.name} loading="lazy" className="size-16 rounded-lg border bg-muted object-cover" />
+              </button>
+            ))}
+            {m.pasted?.map((name, i) => (
+              <span key={i} className="flex h-8 items-center gap-1.5 rounded-lg border bg-muted px-2 text-[11px]">
+                <FileText className="size-3.5 shrink-0 text-[var(--tint)]" aria-hidden />
+                {name}
+              </span>
+            ))}
+          </div>
+        )}
+        {m.text.trim() && (
+          <div className="group/msg flex items-end gap-1">
+            <CopyButton className={msgCopy} text={() => m.text} label="Copy" />
+            <div className={cn("rounded-2xl rounded-br-md bg-[var(--tint)] px-3.5 py-2 whitespace-pre-wrap text-white", enter, "motion-safe:slide-in-from-bottom-2 motion-safe:zoom-in-95 motion-safe:origin-bottom-right")}>
+              {m.text}
+            </div>
+          </div>
+        )}
+        {big && <PictureOverlay src={big} onClose={() => setBig(null)} />}
       </div>
     );
   const steps = m.steps ?? [];
@@ -536,10 +679,29 @@ function Message({ m }: { m: AssistantMessage }) {
     return (
       <div className="space-y-1">
         <Steps steps={steps} working />
+        <Elapsed since={m.at} />
+        <WorkCards work={m.work} />
         <Dots />
       </div>
     );
-  if (m.status === "error" && !m.text) return <p className={cn("text-destructive", enter)}>That didn&apos;t work. Try again.</p>;
+  const again = onRetry && (
+    <button
+      type="button"
+      onClick={onRetry}
+      className="mt-1.5 flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors hover:border-[color-mix(in_srgb,var(--tint)_50%,transparent)] hover:text-[var(--tint)]"
+      title="Send your last message again"
+    >
+      <RotateCcw className="size-3.5" /> Try again
+    </button>
+  );
+  if (m.status === "error" && !m.text)
+    return (
+      <div>
+        <WorkCards work={m.work} />
+        <p className={cn("text-destructive", enter)}>That didn&apos;t work.</p>
+        {again}
+      </div>
+    );
   return (
     <div className={cn("group/msg max-w-[94%] leading-relaxed", enter, "motion-safe:slide-in-from-bottom-1")}>
       {working ? (
@@ -555,7 +717,10 @@ function Message({ m }: { m: AssistantMessage }) {
           </details>
         )
       )}
-      <ReplyText text={m.text} />
+      {working && <Elapsed since={m.at} />}
+      <WorkCards work={m.work} />
+      {m.status === "error" ? <p className="text-destructive">{m.text}</p> : <ReplyText text={m.text} />}
+      {again}
       {m.status === "thinking" && <span className="ml-0.5 inline-block h-3.5 w-1.5 rounded-sm bg-[var(--tint)] align-middle motion-safe:animate-pulse" aria-hidden />}
       {!working && <CopyButton className={cn(msgCopy, "-ml-1 mt-0.5")} text={() => m.text} label="Copy" />}
     </div>

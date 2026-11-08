@@ -44,7 +44,8 @@ export function AppBar({
       <HomeLink onClick={onHome} />
       <span aria-hidden className="h-4 w-px shrink-0 bg-zinc-500/30" />
       {/* its own width (flex-auto), so the actions move to a second row before it gets squeezed */}
-      <nav className="flex min-w-0 flex-auto items-center gap-1.5 text-sm font-semibold tracking-tight">
+      {/* data-page-title: the assistant reads "where you are" from it (lib/page-context.ts) */}
+      <nav data-page-title className="flex min-w-0 flex-auto items-center gap-1.5 text-sm font-semibold tracking-tight">
         {to ? (
           <Link to={to} className={cn("shrink-0 truncate", trail && "text-zinc-500 hover:text-inherit")}>
             {tool}

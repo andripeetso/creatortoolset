@@ -30,6 +30,7 @@ import { ExportTray } from "@/components/ExportTray";
 import { SetupDialog } from "@/components/SetupDialog";
 import { FirstOpen } from "@/components/setup/FirstOpen";
 import { AssistantDock } from "@/components/assistant/AssistantDock";
+import { AskAboutSelection } from "@/components/assistant/AskAboutSelection";
 import { AppDialogs } from "@/components/AppDialogs";
 import { canUse, useAuth, useMe } from "@/lib/auth";
 import { initTabGuard } from "@/lib/tabs";
@@ -291,6 +292,7 @@ export default function App() {
       {!publicPage && !inSettings && !inCommunity && <SetupDialog />}
       {!publicPage && !inSettings && !inCommunity && <FirstOpen />}
       {!onMobile && !publicPage && <AssistantDock />}
+      {!onMobile && !publicPage && <AskAboutSelection />}
       {!onMobile && !publicPage && <CornerNav />}
       {inSettings && <SettingsModal onClose={closeSettings} />}
       {inCommunity && <CommunityModal onClose={closeSettings} />}

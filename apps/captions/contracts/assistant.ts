@@ -18,11 +18,27 @@ export interface AssistantMessage {
   status?: "thinking" | "done" | "error";
   /** What the reply did on the way, one line per tool it used ("Looking through Review"), shown as it works. */
   steps?: string[];
+  /** What the reply started or opened that the user can look at (a Workshop session, an edit, a link): a card each. */
+  work?: AssistantWork[];
   /** A user message's attachments as shown in the chat: pictures by name (served by GET /api/assistant/images/:id), pastes by name. */
   images?: Array<{ id: string; name: string }>;
   pasted?: string[];
   /** The highlighted text a user message asked about. */
   quote?: string;
+}
+
+/**
+ * One thing a reply started or opened, as a card in the chat (one per thing: the same id updates it). href is an app
+ * path ("/workshop/sessions/<id>") or, for kind "link", a full URL. A running card may stay running after the reply
+ * ends: the Workshop's writer and an editor job carry on by themselves.
+ */
+export interface AssistantWork {
+  id: string;
+  kind: "workshop" | "edit" | "automation" | "link";
+  title: string;
+  href: string;
+  status: "running" | "done" | "failed";
+  detail?: string;
 }
 
 /** A key the assistant asked for (ask_secret): shown as a password box in the dock. */
