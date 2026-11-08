@@ -22,8 +22,10 @@ const req = (who: Who, method: string, p: string, body?: unknown) =>
     headers: { authorization: keys[who], "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-const json = async (r: Response) => (await r.json()) as Record<string, any>;
-const list = async (who: Who) => (await json(await req(who, "GET", "/automations"))).items as Array<Record<string, any>>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- test reads of free-form JSON
+type Json = Record<string, any>;
+const json = async (r: Response) => (await r.json()) as Json;
+const list = async (who: Who) => (await json(await req(who, "GET", "/automations"))).items as Json[];
 const find = async (who: Who, id: string) => (await list(who)).find((x) => x.id === id);
 
 const daily = { kind: "daily", at: "09:00" };

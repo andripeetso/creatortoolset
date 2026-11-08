@@ -158,6 +158,7 @@ export default function ToolsetHome() {
   const project = useWorkspace(currentProject);
   const { projectTint, homeGlow } = useAppearance();
 
+  const { dark } = useShareTheme();
   if (phone && location.pathname === "/") {
     return <Navigate to={{ pathname: "/m", search: location.search }} replace />;
   }
@@ -219,7 +220,6 @@ export default function ToolsetHome() {
 
   // the current project's colour (Settings → Appearance can keep it violet), as CSS variables for the tiles and glow
   const c = PROJECT_COLORS[projectTint && project ? projectColor(project) : "violet"];
-  const { dark } = useShareTheme();
   const tintStyle = { "--tint": `rgb(${c.rgb})`, "--tint-text": `rgb(${dark ? c.text : c.rgb})`, transition: "--tint 500ms, --tint-text 500ms" } as React.CSSProperties;
 
   // a stage's tools in the project's colour; Tools (quiet) smaller and grey, the colour only on the icon
