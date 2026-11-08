@@ -62,11 +62,11 @@ struct CreatorToolsetMacApp: App {
         .windowResizability(.contentSize)
 
         MenuBarExtra {
-            MenuBarMenu(shell: shell, checkForUpdates: { updater.checkForUpdates(nil) })
+            ActivityPanel(shell: shell, checkForUpdates: { updater.checkForUpdates(nil) })
         } label: {
             MenuBarLabel(shell: shell)
         }
-        .menuBarExtraStyle(.menu)
+        .menuBarExtraStyle(.window)
     }
 }
 
@@ -76,6 +76,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The menu bar item stays up when the window is closed.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    @MainActor func applicationDidFinishLaunching(_ notification: Notification) {
+        LoginItem.setOnce()
+        // the last window closed: out of the Dock and the app switcher, still in the menu bar (Shell.showWindow brings it back)
+        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { note in
+            let closing = note.object as? NSWindow
+            DispatchQueue.main.async {
+                if !NSApp.windows.contains(where: { $0 !== closing && $0.isVisible && $0.styleMask.contains(.titled) }) {
+                    NSApp.setActivationPolicy(.accessory)
+                }
+            }
+        }
     }
 
     /// A creatortoolset:// link (or the site's own https link) opened anywhere: that page in the window, brought forward.
@@ -202,43 +215,7 @@ struct MenuBarLabel: View {
     @ObservedObject var shell: Shell
 
     var body: some View {
-        Image(nsImage: menuBarImage(shell.status))
-            .accessibilityLabel(menuStatusLabel(shell.status))
-    }
-}
-
-struct MenuBarMenu: View {
-    @ObservedObject var shell: Shell
-    let checkForUpdates: () -> Void
-    @Environment(\.openWindow) private var openWindow
-
-    var body: some View {
-        Text(shell.aiLine)
-            .onAppear { Task { await shell.refresh() } }
-        if let error = shell.ai.lastError {
-            Text("Last AI error: \(error)")
-        }
-        if let notice = shell.notice {
-            Text(notice)
-        }
-        if shell.runsHere, let line = shell.serverLine {
-            Text(line)
-        }
-        if let line = shell.spaceLine {
-            Text(line)
-        }
-        Divider()
-        Button("Open Creator Toolset") { shell.showWindow() }
-        Button("Open Workshop") { shell.showWindow(href: "/workshop") }
-        Menu("Servers") { ServersMenu(shell: shell) }
-        Button("Open app log") { shell.openAppLog() }
-        if shell.runsHere {
-            Button("Open server log") { shell.openServerLog() }
-        }
-        Toggle("Use this Mac for my AI", isOn: Binding(get: { shell.aiOn }, set: { shell.setAI($0) }))
-        Divider()
-        Button("Settings…") { shell.openSettings() }
-        Button("Check for Updates…") { checkForUpdates() }
-        Button("Quit Creator Toolset") { NSApp.terminate(nil) }
+        Image(nsImage: menuBarImage(shell.status, waiting: shell.rows.forYou.count))
+            .accessibilityLabel(menuStatusLabel(shell.status, waiting: shell.rows.forYou.count))
     }
 }

@@ -1,10 +1,15 @@
 // The menu bar item: a small dark pill with the Creator Toolset mark (the logo's one-stroke C and T, ToolsetLogo in
 // apps/captions) and a status dot. Drawn in code and in colour, not as a template, so the dark pill with its light
-// rim reads on light and dark menu bars alike and stands apart from the monochrome icons around it.
+// rim reads on light and dark menu bars alike and stands apart from the monochrome icons around it. A count between the
+// mark and the dot: the things waiting for you (the panel's For you).
 import AppKit
 
-func menuBarImage(_ status: MenuStatus) -> NSImage {
-    let image = NSImage(size: NSSize(width: 34, height: 18), flipped: true) { rect in
+func menuBarImage(_ status: MenuStatus, waiting: Int = 0) -> NSImage {
+    let count = waiting > 0 ? NSAttributedString(string: "\(waiting)", attributes: [
+        .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold), .foregroundColor: NSColor.white,
+    ]) : nil
+    let extra = count.map { ceil($0.size().width) + 3 } ?? 0
+    let image = NSImage(size: NSSize(width: 34 + extra, height: 18), flipped: true) { rect in
         let pill = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: 8.5, yRadius: 8.5)
         NSColor(srgbRed: 0.09, green: 0.08, blue: 0.14, alpha: 1).setFill()
         pill.fill()
@@ -29,6 +34,8 @@ func menuBarImage(_ status: MenuStatus) -> NSImage {
         NSBezierPath(rect: NSRect(origin: p(410, 220), size: NSSize(width: 500 * s, height: 130 * s))).fill()
         NSBezierPath(rect: NSRect(origin: p(662, 220), size: NSSize(width: 128 * s, height: 600 * s))).fill()
 
+        if let count { count.draw(at: NSPoint(x: 22, y: (rect.height - count.size().height) / 2)) }
+
         // The status: a filled dot (green up, violet running a job, amber a problem), a hollow ring when idle.
         let dot = NSBezierPath(ovalIn: NSRect(x: rect.maxX - 10.5, y: rect.midY - 3, width: 6, height: 6))
         switch status {
@@ -47,11 +54,13 @@ func menuBarImage(_ status: MenuStatus) -> NSImage {
 }
 
 /// The words VoiceOver reads for the item.
-func menuStatusLabel(_ status: MenuStatus) -> String {
+func menuStatusLabel(_ status: MenuStatus, waiting: Int = 0) -> String {
+    let base: String
     switch status {
-    case .idle: return "Creator Toolset"
-    case .up: return "Creator Toolset, running"
-    case .busy: return "Creator Toolset, running an AI job"
-    case .problem: return "Creator Toolset, needs a look"
+    case .idle: base = "Creator Toolset"
+    case .up: base = "Creator Toolset, running"
+    case .busy: base = "Creator Toolset, running an AI job"
+    case .problem: base = "Creator Toolset, needs a look"
     }
+    return waiting > 0 ? "\(base), \(waiting) waiting for you" : base
 }

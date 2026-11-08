@@ -11,6 +11,8 @@ final class Shell: NSObject, ObservableObject {
     let webView: WKWebView
     @Published private(set) var base: URL
     @Published private(set) var unread = 0
+    /// The menu bar panel's Workshop rows (Activity.swift), from the open server.
+    @Published private(set) var sessions: [SessionRow] = []
     @Published private(set) var notice: String?
     /// This Mac as an AI device (Relay.swift): on = the person turned it on; ai = what the runner reports.
     @Published private(set) var aiOn = false
@@ -356,8 +358,13 @@ final class Shell: NSObject, ObservableObject {
     var status: MenuStatus {
         var failed = false
         if case .failed = server?.state { failed = runsHere }
-        return menuStatus(serverFailed: failed, serverUp: runsHere && server?.state == .running, aiOn: aiOn,
-                          aiRunning: ai.running, aiError: ai.lastError != nil, lowSpace: spaceLine != nil)
+        let s = menuStatus(serverFailed: failed, serverUp: runsHere && server?.state == .running, aiOn: aiOn,
+                           aiRunning: ai.running, aiError: ai.lastError != nil, lowSpace: spaceLine != nil)
+        return s != .problem && !rows.active.isEmpty ? .busy : s
+    }
+
+    var rows: (active: [ActivityRow], forYou: [ActivityRow]) {
+        activityRows(sessions: sessions, aiRunning: aiOn ? ai.running : 0)
     }
 
     var aiLine: String {
@@ -381,7 +388,14 @@ final class Shell: NSObject, ObservableObject {
 
     func showWindow(href: String? = nil) {
         if let href { open(href) }
+        NSApp.setActivationPolicy(.regular)   // back in the Dock (closing the last window takes it out)
         openWindowID?("main")
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func openThisMac() {
+        NSApp.setActivationPolicy(.regular)
+        openWindowID?("this-mac")
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -529,8 +543,9 @@ final class Shell: NSObject, ObservableObject {
         } else {
             spaceLine = nil
         }
-        guard hasServer else { return }
+        guard hasServer else { return sessions = [] }
         let client = await client()
+        sessions = (try? await client.get("/api/workshop/sessions/summary")) ?? []
         do {
             let notes: NotesResponse = try await client.get("/api/review/notifications")
             unread = notes.unread

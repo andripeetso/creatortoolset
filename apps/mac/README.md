@@ -239,14 +239,18 @@ The icon is a small dark pill with the Creator Toolset mark (the logo's one-stro
 `ToolsetLogo` in `apps/captions`, `MenuIcon.swift`) and a status dot: a hollow ring when nothing runs here, green
 when the server here runs or this Mac answers AI, violet while it runs an AI job, amber when the server here
 failed, the last AI job or poll failed, or the data disk is nearly full (`menuStatus` in `Servers.swift`). It is a
-colour image, not a template, with a light rim so it reads on light and dark menu bars. The menu shows:
+colour image, not a template, with a light rim so it reads on light and dark menu bars. A count between the mark and
+the dot says how many things wait for you. A click opens a panel (`Activity.swift`):
 
-- "AI on this Mac: off / on / running N" and the last AI error (see "Runs your AI");
-- "Server on this Mac: starting / running on port 43128 / …" when the app runs the server;
-- the toggle **Use this Mac for my AI**;
-- "Only N GB free on the data disk" under 10 GB;
-- **Open Creator Toolset**, **Open Workshop**, **Servers** (the list, Add server, Run your own server, This Mac),
-  **Open app log**, **Open server log** (with the server), Settings, Check for Updates, Quit.
+- **Active**: Workshop replies being written and this Mac's AI requests, each with "Working" on the right;
+- **For you**: Workshop sessions with a new reply ("Ready"); a row opens its page in the window;
+- the last AI error, a notice, and "Only N GB free on the data disk" under 10 GB;
+- **Open Creator Toolset**, and a gear with "AI on this Mac: …", "Server on this Mac: …", **Use this Mac for my
+  AI**, **Servers**, **This Mac…**, Settings, **Open at login**, **Open app log**, **Open server log** (with the
+  server), Check for Updates, Quit.
+
+Closing the last window takes the app out of the Dock and the app switcher; it stays in the menu bar. A copy in
+/Applications opens at login (on once by default; the gear's switch turns it off).
 
 ## Runs your AI
 
