@@ -178,6 +178,15 @@ export function AssistantDock() {
           <MessageCircle className="size-6 transition-transform duration-300 group-hover:-rotate-12" aria-hidden />
           {unread && <span className="absolute top-0.5 right-0.5 size-3.5 rounded-full border-2 border-background bg-emerald-400" aria-hidden />}
         </span>
+        {/* its line beside the bubble, on the page's side of whichever corner it sits in */}
+        <span
+          className={cn(
+            "pointer-events-none absolute top-1/2 -translate-y-1/2 rounded-full border bg-popover px-4 py-2 text-sm whitespace-nowrap text-popover-foreground shadow-md",
+            corner.endsWith("r") ? "right-full mr-3" : "left-full ml-3",
+          )}
+        >
+          I&apos;m here if you need me.
+        </span>
       </button>
     );
   }
