@@ -40,10 +40,12 @@ sparkle="$work/src/apps/mac/.build/artifacts/sparkle/Sparkle/bin"
 app="$work/src/apps/mac/build/Creator Toolset.app"
 build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Contents/Info.plist")"
 
-# the disk image: the app next to a link to Applications, signed, notarized and stapled like the app inside it
+# the disk image: a window with the app, an arrow and a link to Applications (dmgbuild lays it out without Finder,
+# apps/mac/scripts/dmg/), signed, notarized and stapled like the app inside it
 dmg="$work/CreatorToolset-$version.dmg"
-mkdir "$work/dmg" && ditto "$app" "$work/dmg/Creator Toolset.app" && ln -s /Applications "$work/dmg/Applications"
-hdiutil create -volname "Creator Toolset" -srcfolder "$work/dmg" -format UDZO -ov "$dmg"
+python3 -m venv "$work/dmgbuild" && "$work/dmgbuild/bin/pip" -q install dmgbuild==1.6.7
+dmgdir="$work/src/apps/mac/scripts/dmg"
+"$work/dmgbuild/bin/dmgbuild" -s "$dmgdir/settings.py" -D app="$app" -D here="$dmgdir" "Creator Toolset" "$dmg"
 codesign --force --sign "$SIGN_IDENTITY" --timestamp "$dmg"
 xcrun notarytool submit "$dmg" --keychain-profile "$NOTARY_PROFILE" --wait
 xcrun stapler staple "$dmg"
