@@ -35,7 +35,8 @@ export const useWorkspace = create<WorkspaceState>((set) => ({
       const ws = await json<Workspace>(await fetch("/api/workshop/workspace"));
       set({ ...ws, loaded: true });
     } catch {
-      set({ currentProjectId: null, projects: [], loaded: true });
+      // nothing was loaded (signed out, a server restart): "loaded, no projects" would read as a brand-new account
+      set({ currentProjectId: null, projects: [], loaded: false });
     }
   },
   select: async (id) => {
@@ -48,7 +49,7 @@ export const useWorkspace = create<WorkspaceState>((set) => ({
     );
     set({ ...ws, loaded: true });
   },
-  reset: () => set({ currentProjectId: null, projects: [], loaded: true }),
+  reset: () => set({ currentProjectId: null, projects: [], loaded: false }),
 }));
 
 export const currentProject = (s: WorkspaceState): WorkshopProject | null =>
