@@ -17,3 +17,7 @@ onlyBuiltDependencies:
 # Lets `pnpm deploy` build a production node_modules from pnpm-lock.yaml
 # (without it, deploy re-resolves and pulls newer versions).
 injectWorkspacePackages: true
+
+# kokoro-js (the assistant's read-aloud voice) asks for transformers 3; it runs on the app's own 4, so there's one copy
+overrides:
+  kokoro-js>@huggingface/transformers: ^4.2.0

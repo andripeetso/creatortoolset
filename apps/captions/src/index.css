@@ -215,3 +215,15 @@ html:not(.dark) ::-webkit-scrollbar-thumb { background: #d4d4d8; }
   inherits: true;
   initial-value: rgb(167 139 250);
 }
+
+/* the assistant (components/assistant): its bubble's nudge when a reply lands, and the thinking dots */
+@keyframes ct-nudge {
+  0%, 100% { transform: translateY(0) scale(1); }
+  25% { transform: translateY(-10px) scale(1.06); }
+  50% { transform: translateY(0) scale(0.97); }
+  70% { transform: translateY(-4px) scale(1.02); }
+}
+@keyframes ct-dot {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30% { transform: translateY(-4px); opacity: 1; }
+}
