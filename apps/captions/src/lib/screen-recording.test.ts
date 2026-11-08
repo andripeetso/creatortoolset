@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { autoZooms, cameraAt, defaultLook, layout, outputSize, pointerAt, pointerPath, type ScreenEvents } from "./screen-recording";
+import { autoZooms, bubbleRect, cameraAt, defaultCamera, defaultLook, drawFrame, layout, outputSize, pointerAt, pointerPath, sideRects, type ScreenEvents } from "./screen-recording";
 
 const events: ScreenEvents = {
   v: 1,
@@ -51,4 +51,56 @@ describe("screen recording", () => {
     expect(outputSize("source", 3024, 1964, false)).toEqual({ width: 1662, height: 1080 });
     expect(outputSize("16:9", 0, 0, true)).toEqual({ width: 3840, height: 2160 });
   });
+
+  it("places the camera bubble in each corner with a 4% margin", () => {
+    const cam = { ...defaultCamera(), size: 0.24 };
+    const d = 0.24 * 1080;
+    const m = 0.04 * 1080;
+    expect(bubbleRect({ ...cam, corner: "tl" }, 1920, 1080)).toEqual({ x: m, y: m, w: d, h: d });
+    expect(bubbleRect({ ...cam, corner: "tr" }, 1920, 1080)).toEqual({ x: 1920 - m - d, y: m, w: d, h: d });
+    expect(bubbleRect({ ...cam, corner: "bl" }, 1920, 1080)).toEqual({ x: m, y: 1080 - m - d, w: d, h: d });
+    expect(bubbleRect({ ...cam, corner: "br" }, 1920, 1080)).toEqual({ x: 1920 - m - d, y: 1080 - m - d, w: d, h: d });
+  });
+
+  it("splits side by side into 62% screen and 38% camera", () => {
+    const { screen, camera } = sideRects(1920, 1080, 0);
+    const gap = 1080 * 0.012;
+    expect(screen.x).toBe(0);
+    expect(screen.w).toBeCloseTo(1920 * 0.62 - gap / 2);
+    expect(camera.x).toBeCloseTo(1920 * 0.62 + gap / 2);
+    expect(camera.x + camera.w).toBeCloseTo(1920);
+    expect(camera.w).toBeCloseTo(1920 * 0.38 - gap / 2);
+    expect(camera.h).toBe(1080);
+  });
+
+  it("draws no camera when the layout is hidden", () => {
+    const calls: unknown[][] = [];
+    const ctx = fakeContext(1920, 1080, calls);
+    const screen = { screen: true };
+    const look = { ...defaultLook(events, 30), camera: { ...defaultCamera(), layout: "hidden" as const } };
+    drawFrame(ctx, screen as unknown as CanvasImageSource, 3840, 2160, 1, look, pointerPath(events), events.clicks, { image: { cam: true } as unknown as CanvasImageSource, width: 640, height: 480 });
+    const drawn = calls.filter((c) => c[0] === "drawImage").map((c) => c[1]);
+    expect(drawn).toEqual([screen]);
+  });
 });
+
+/** A canvas context that records drawImage calls and ignores everything else. */
+function fakeContext(width: number, height: number, calls: unknown[][]): CanvasRenderingContext2D {
+  const noop = (...args: unknown[]) => {
+    calls.push(args);
+    return grad;
+  };
+  const grad = { addColorStop: () => {} };
+  const target: Record<string, unknown> = { canvas: { width, height } };
+  return new Proxy(target, {
+    get(t, key: string) {
+      if (key in t) return t[key];
+      if (key === "drawImage") return (...args: unknown[]) => calls.push(["drawImage", args[0]]);
+      return (...args: unknown[]) => noop(key, ...args);
+    },
+    set(t, key: string, value) {
+      t[key] = value;
+      return true;
+    },
+  }) as unknown as CanvasRenderingContext2D;
+}

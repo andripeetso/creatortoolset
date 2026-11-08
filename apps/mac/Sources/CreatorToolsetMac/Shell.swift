@@ -85,10 +85,11 @@ final class Shell: NSObject, ObservableObject {
         recorderWatch = recorder.$phase.sink { [weak self] phase in
             DispatchQueue.main.async { self?.pushRecorderState(phase) }
         }
-        recorder.upload = { [weak self] file, events, target, progress in
+        recorder.upload = { [weak self] project, destination, progress in
             guard let self else { throw SiteError.status(0) }
-            return try await self.client().uploadRecording(file, events: events, to: target, progress: progress)
+            return try await self.client().uploadRecording(project, to: destination, progress: progress)
         }
+        recorder.onRecordingsChanged = { [weak self] in self?.pushRecordings() }
         recorder.openPage = { [weak self] in self?.showWindow(href: $0) }
         view.pickerMenu = { [weak self] in self?.pickerItems() ?? [] }
         account.window = { [weak self] in self?.webView.window }
@@ -399,18 +400,37 @@ final class Shell: NSObject, ObservableObject {
         }
     }
 
-    /// A `record-<what>` message from the page (src/lib/mac-record.ts); every one answers with the recorder's state.
+    /// A `record-<what>` message from the page (src/lib/mac-record.ts). Every one answers with the recorder's state.
     private func recorderCommand(_ what: String) {
-        switch what {
-        case "review", "notes", "mac": recorder.start(to: RecordingTarget(rawValue: what)!)
+        // "<verb>:<id>[:<rest>]": the rest (a look's JSON) may hold colons itself
+        let parts = what.split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false).map(String.init)
+        let project = parts.count > 1 ? ProjectStore.project(id: parts[1], root: recorder.folder) : nil
+        switch parts[0] {
+        case "toolbar": recorder.openToolbar()
         case "stop": recorder.stop()
-        case "mic-on", "mic-off": recorder.withMic = what == "mic-on"
-        case "sound-on", "sound-off": recorder.withSystemAudio = what == "sound-on"
         case "folder": recorder.pickFolder()
         case "show": recorder.showFolder()
+        case "list": pushRecordings()
+        case "look":
+            if let project, parts.count == 3 {
+                do { try project.writeLook(Data(parts[2].utf8)) } catch { AppLog.write("recording look not saved: \(error.localizedDescription)") }
+            }
+        case "share":
+            if let project, parts.count == 3, let destination = ShareDestination(rawValue: parts[2]) {
+                Task { await recorder.share(project, to: destination) }
+            }
+        case "reveal": if let project { NSWorkspace.shared.activateFileViewerSelecting([project.screenURL]) }
+        case "delete": if let project { recorder.delete(project) }
         default: break   // "state": only the answer
         }
         pushRecorderState()
+    }
+
+    /// The recordings on this Mac, for the /record page ('mac-recordings').
+    private func pushRecordings() {
+        let items = recorder.recordings.map(\.listing)
+        guard let data = try? JSONSerialization.data(withJSONObject: ["items": items]), let json = String(data: data, encoding: .utf8) else { return }
+        webView.evaluateJavaScript("window.dispatchEvent(new CustomEvent('mac-recordings', {detail: \(json)}))")
     }
 
     private func pushRecorderState(_ phase: Recorder.Phase? = nil) {

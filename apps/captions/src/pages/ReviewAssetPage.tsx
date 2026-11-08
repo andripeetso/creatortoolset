@@ -83,6 +83,7 @@ import { useCachedLoad } from "@/lib/local-cache";
 import { fmtBytes } from "@/lib/exports";
 import { ReviewCompare } from "./ReviewCompare";
 import { ScreenRecordingEditor } from "@/components/ScreenRecordingEditor";
+import { reviewSource } from "@/lib/screen-source";
 
 const COLORS = ["#ff3b30", "#ffcc00", "#34c759", "#0a84ff", "#ffffff"];
 const AVATARS = ["bg-violet-600", "bg-sky-600", "bg-emerald-600", "bg-amber-600", "bg-rose-600", "bg-fuchsia-600", "bg-teal-600"];
@@ -633,15 +634,22 @@ function Review({
       )}
       {screenEditor && (
         <ScreenRecordingEditor
-          assetId={asset.id}
-          version={version}
-          src={api.media(version, "play")}
+          source={reviewSource(asset.id, version)}
+          meta={{ name: version.name, duration: version.duration, width: version.width, height: version.height }}
           onClose={() => setScreenEditor(false)}
-          onMade={(made) => {
-            setScreenEditor(false);
-            const top = made.versions.at(-1);
-            void reload().then(() => top && pickVersion(top.n));
-          }}
+          actions={[
+            {
+              label: "Make video",
+              primary: true,
+              title: "Renders it on this computer and adds it to this video as the next version",
+              run: async ({ blob, name }, progress) => {
+                const made = await uploadReviewFile(new File([blob], `${name}.mp4`, { type: "video/mp4" }), (pct) => progress("Uploading", pct), { assetId: asset.id });
+                setScreenEditor(false);
+                const top = made.versions.at(-1);
+                void reload().then(() => top && pickVersion(top.n));
+              },
+            },
+          ]}
         />
       )}
 

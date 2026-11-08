@@ -73,7 +73,7 @@ struct ActivityPanel: View {
             HStack {
                 Button("Open Creator Toolset") { shell.showWindow() }
                 if Recorder.available {
-                    Button("Record screen") { shell.recorder.start(to: .review) }.disabled(shell.recorder.busy)
+                    Button("Record screen") { shell.recorder.openToolbar() }.disabled(shell.recorder.busy)
                 }
                 Spacer()
                 Menu {
@@ -130,7 +130,7 @@ private struct MoreMenu: View {
             Text(line)
         }
         Toggle("Use this Mac for my AI", isOn: Binding(get: { shell.aiOn }, set: { shell.setAI($0) }))
-        if Recorder.available { RecordingMenu(recorder: shell.recorder) }
+        if Recorder.available { Menu("Screen Recordings") { RecordingMenu(recorder: shell.recorder) } }
         Divider()
         Menu("Servers") { ServersMenu(shell: shell) }
         Button("This Mac…") { shell.openThisMac() }
@@ -164,17 +164,13 @@ enum LoginItem {
     }
 }
 
-/// Screen recording's choices (the menu bar's gear menu and the app's Record menu): what it hears, where files go.
+/// Where screen recordings are kept (the menu bar's gear menu and the app's Record menu). What a recording hears is
+/// chosen on the recording toolbar (RecordToolbar.swift).
 struct RecordingMenu: View {
     let recorder: Recorder
 
     var body: some View {
-        Menu("Screen recording") {
-            Toggle("Record my microphone", isOn: Binding(get: { recorder.withMic }, set: { recorder.withMic = $0 }))
-            Toggle("Record the Mac's sound", isOn: Binding(get: { recorder.withSystemAudio }, set: { recorder.withSystemAudio = $0 }))
-            Divider()
-            Button("Recordings folder…") { recorder.pickFolder() }
-            Button("Show recordings") { recorder.showFolder() }
-        }
+        Button("Recordings Folder…") { recorder.pickFolder() }
+        Button("Show Recordings") { recorder.showFolder() }
     }
 }

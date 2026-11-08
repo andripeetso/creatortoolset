@@ -42,6 +42,11 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
     init() {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .default()   // the login stays between launches
+        // ctlocal://<recording>/<file>: the recordings on this Mac, for the editor on the site's page (ProjectScheme.swift).
+        // Marked secure, or the https page may play the video but not fetch it (the editor's export and the pointer log).
+        config.setURLSchemeHandler(ProjectScheme(root: { Recorder.folder }), forURLScheme: ProjectScheme.scheme)
+        let secure = NSSelectorFromString("_registerURLSchemeAsSecure:")
+        if config.processPool.responds(to: secure) { config.processPool.perform(secure, with: ProjectScheme.scheme) }
         super.init(frame: .zero, configuration: config)
         // Retains self: the window's one web view lives as long as the app.
         configuration.userContentController.add(self, name: "window")
@@ -127,7 +132,8 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
         case "this-mac":
             onThisMac?()
         case let m? where m.hasPrefix("record-"):
-            onRecord?(String(m.dropFirst(7)))
+            // only the site's own page, never a frame inside it
+            if message.frameInfo.isMainFrame { onRecord?(String(m.dropFirst(7))) }
         case "zoom":
             // System Settings › Desktop & Dock › "Double-click a window's title bar to"
             switch UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") {

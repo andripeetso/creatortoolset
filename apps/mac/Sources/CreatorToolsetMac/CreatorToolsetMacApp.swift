@@ -39,12 +39,10 @@ struct CreatorToolsetMacApp: App {
             }
             CommandMenu("Record") {
                 if Recorder.available {
-                    Button("Screen Recorder") { shell.showWindow(href: "/record") }
-                    Divider()
-                    Button("Record Screen to Review") { shell.recorder.start(to: .review) }.keyboardShortcut("r", modifiers: [.command, .option])
-                    Button("Record Screen to Video Notes") { shell.recorder.start(to: .notes) }
+                    Button("New Recording…") { shell.recorder.openToolbar() }.keyboardShortcut("r", modifiers: [.command, .option])
                     Button("Stop Recording") { shell.recorder.stop() }.keyboardShortcut(".", modifiers: [.command, .option])
                     Divider()
+                    Button("All Recordings") { shell.showWindow(href: "/record") }
                     RecordingMenu(recorder: shell.recorder)
                 } else {
                     Text("Screen recording needs macOS 15")

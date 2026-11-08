@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Loader2, Pause, Play, Plus, RotateCcw, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -16,7 +16,8 @@ import {
   type ScreenLook,
 } from "@/lib/screen-recording";
 import { renderScreenVideo } from "@/lib/screen-export";
-import { getScreenRecording, saveScreenLook, uploadReviewFile, type ReviewAsset, type ReviewVersion } from "@/lib/review";
+import type { ScreenSource } from "@/lib/screen-source";
+import { CameraControls } from "@/components/ScreenCameraControls";
 
 const SHAPES: { id: FrameShape; label: string }[] = [
   { id: "source", label: "Screen" },
@@ -28,23 +29,32 @@ const SHAPES: { id: FrameShape; label: string }[] = [
 
 const fmt = (t: number) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
 
+/** A header button. `run` gets the rendered video (`name` has no extension) and reports its own steps. */
+export type EditorAction = {
+  label: string;
+  title?: string;
+  primary?: boolean;
+  run: (out: { blob: Blob; name: string }, progress: (step: string, pct: number) => void) => Promise<void>;
+};
+
 /**
- * Zoom & pointer for a screen recording from the Mac app: zooms where you clicked (edit, add, remove), a smooth larger
- * pointer, background, padding, corners, frame shape. Make video renders it here and adds it as the next version.
+ * Zoom & pointer for a screen recording: zooms where you clicked (edit, add, remove), a smooth larger pointer,
+ * background, padding, corners, frame shape, 4K. The caller decides what to do with the rendered video (the
+ * header `actions`): Review adds it as the next version; the Screen Recorder page saves it or uploads it.
+ * `embedded` fills its parent (a page) instead of covering the window.
  */
 export function ScreenRecordingEditor({
-  assetId,
-  version,
-  src,
+  source,
+  meta,
+  actions,
   onClose,
-  onMade,
+  embedded = false,
 }: {
-  assetId: string;
-  version: ReviewVersion;
-  /** The recording as uploaded (the version's play URL). */
-  src: string;
-  onClose: () => void;
-  onMade: (asset: ReviewAsset) => void;
+  source: ScreenSource;
+  meta: { name: string; duration: number; width: number; height: number };
+  actions: EditorAction[];
+  onClose?: () => void;
+  embedded?: boolean;
 }) {
   const [events, setEvents] = useState<ScreenEvents | null>(null);
   const [look, setLook] = useState<ScreenLook | null>(null);
@@ -55,30 +65,45 @@ export function ScreenRecordingEditor({
   const [uhd, setUhd] = useState(false);
   const [making, setMaking] = useState<{ step: string; pct: number } | null>(null);
   const video = useRef<HTMLVideoElement>(null);
+  const cam = useRef<HTMLVideoElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const abort = useRef<AbortController | null>(null);
-  const duration = version.duration || 0;
+  // the source is read through a ref: its identity can change on every page render, its url cannot
+  const sourceRef = useRef(source);
+  sourceRef.current = source;
+  const { duration, width, height } = meta;
+  const base = meta.name.replace(/\.(mp4|mov|m4v|webm)$/i, "");
 
   useEffect(() => {
-    getScreenRecording(assetId, version.n)
+    sourceRef.current
+      .load()
       .then(({ events, look }) => {
+        if (!events) throw new Error("This recording has no pointer log");
         setEvents(events);
         setLook(look ?? defaultLook(events, duration));
       })
       .catch((e: Error) => setError(e.message));
-  }, [assetId, version.n, duration]);
+    // the url names the recording; a new source for the same one must not reload and lose edits
+  }, [source.url, duration]);
 
   // every change is kept (the page can close any time)
   const first = useRef(true);
+  const unsaved = useRef<ScreenLook | null>(null);
   useEffect(() => {
     if (!look) return;
     if (first.current) return void (first.current = false);
-    const t = window.setTimeout(() => void saveScreenLook(assetId, version.n, look).catch(() => {}), 700);
+    unsaved.current = look;
+    const t = window.setTimeout(() => {
+      unsaved.current = null;
+      sourceRef.current.saveLook(look);
+    }, 700);
     return () => window.clearTimeout(t);
-  }, [assetId, version.n, look]);
+  }, [look]);
+  // closing within the debounce still saves the last change
+  useEffect(() => () => void (unsaved.current && sourceRef.current.saveLook(unsaved.current)), []);
 
   const path = useMemo(() => (events ? pointerPath(events) : []), [events]);
-  const size = look ? outputSize(look.shape, version.width, version.height, false) : { width: 16, height: 9 };
+  const size = look ? outputSize(look.shape, width, height, false) : { width: 16, height: 9 };
 
   // the preview: the same drawFrame as the export, every animation frame
   useEffect(() => {
@@ -89,7 +114,10 @@ export function ScreenRecordingEditor({
       const c = canvas.current;
       const ctx = c?.getContext("2d", { alpha: false });
       if (v && c && ctx && v.readyState >= 2) {
-        drawFrame(ctx, v, v.videoWidth, v.videoHeight, v.currentTime, look, path, events.clicks);
+        const k = cam.current;
+        if (k && !v.paused && Math.abs(k.currentTime - v.currentTime) > 0.15) k.currentTime = v.currentTime;
+        const camera = k && k.readyState >= 2 ? { image: k, width: k.videoWidth, height: k.videoHeight } : null;
+        drawFrame(ctx, v, v.videoWidth, v.videoHeight, v.currentTime, look, path, events.clicks, camera);
         if (!v.paused) setTime(v.currentTime);
       }
       raf = requestAnimationFrame(tick);
@@ -104,8 +132,13 @@ export function ScreenRecordingEditor({
   const zoom = picked !== null ? look?.zooms[picked] : undefined;
   const setZoom = (patch: Partial<NonNullable<typeof zoom>>) =>
     setLook((l) => (l && picked !== null ? { ...l, zooms: l.zooms.map((z, i) => (i === picked ? { ...z, ...patch } : z)) } : l));
+  const syncCam = (t: number) => {
+    if (cam.current) cam.current.currentTime = t;
+  };
   const seek = (t: number) => {
-    if (video.current) video.current.currentTime = Math.max(0, Math.min(duration, t));
+    const at = Math.max(0, Math.min(duration, t));
+    if (video.current) video.current.currentTime = at;
+    syncCam(at);
     setTime(t);
   };
   const toggle = () => {
@@ -124,37 +157,45 @@ export function ScreenRecordingEditor({
     setPicked(zooms.indexOf(z));
   };
 
-  const make = async () => {
+  const run = async (a: EditorAction, uhdOut: boolean) => {
     if (!look || !events) return;
-    abort.current = new AbortController();
-    const out = outputSize(look.shape, version.width, version.height, uhd);
+    const ctl = new AbortController();
+    abort.current = ctl;
+    const out = outputSize(look.shape, width, height, uhdOut);
     try {
       setMaking({ step: "Making", pct: 0 });
       const blob = await renderScreenVideo({
-        url: src,
+        url: sourceRef.current.url,
+        cameraUrl: sourceRef.current.cameraUrl ?? undefined,
         events,
         look,
         ...out,
-        signal: abort.current.signal,
+        signal: ctl.signal,
         onProgress: (p) => setMaking({ step: "Making", pct: Math.round(p * 100) }),
       });
-      if (abort.current.signal.aborted) return;
-      const name = `${version.name.replace(/\.[^.]+$/, "")} (zoomed).mp4`;
-      setMaking({ step: "Uploading", pct: 0 });
-      const asset = await uploadReviewFile(new File([blob], name, { type: "video/mp4" }), (pct) => setMaking({ step: "Uploading", pct: Math.round(pct) }), { assetId });
-      onMade(asset);
+      if (ctl.signal.aborted) return;
+      await a.run({ blob, name: `${base} (zoomed)` }, (step, pct) => {
+        if (!ctl.signal.aborted) setMaking({ step, pct: Math.round(pct) });
+      });
     } catch (e) {
-      if (!abort.current?.signal.aborted) setError(e instanceof Error ? e.message : String(e));
+      if (!ctl.signal.aborted) setError(e instanceof Error ? e.message : String(e));
     } finally {
       setMaking(null);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-zinc-950 text-zinc-100" role="dialog" aria-label="Zoom and pointer">
+    <div
+      className={cn(
+        "flex flex-col bg-zinc-950 text-zinc-100",
+        embedded ? "min-h-0 flex-1" : "fixed inset-0 z-50",
+      )}
+      role={embedded ? undefined : "dialog"}
+      aria-label="Zoom and pointer"
+    >
       <div className="flex min-h-14 items-center gap-3 border-b border-zinc-800 px-4" data-titlebar>
         <span className="text-sm font-semibold">Zoom & pointer</span>
-        <span className="truncate text-xs text-zinc-500">{version.name}</span>
+        <span className="truncate text-xs text-zinc-500">{meta.name}</span>
         <div className="ml-auto flex items-center gap-2">
           {error && <span className="max-w-md truncate text-xs text-red-400" title={error}>{error}</span>}
           <label className="flex items-center gap-1.5 text-xs text-zinc-400">
@@ -165,14 +206,25 @@ export function ScreenRecordingEditor({
               <Loader2 className="animate-spin" /> {making.step} {making.pct}% · Stop
             </Button>
           ) : (
-            <Button size="sm" disabled={!look} onClick={() => void make()} className="bg-violet-600 text-white hover:bg-violet-500"
-              title="Renders it on this computer and adds it to this video as the next version">
-              Make video
+            actions.map((a) => (
+              <Button
+                key={a.label}
+                size="sm"
+                disabled={!look}
+                title={a.title}
+                variant={a.primary ? "default" : "outline"}
+                onClick={() => void run(a, uhd)}
+                className={a.primary ? "bg-violet-600 text-white hover:bg-violet-500" : undefined}
+              >
+                {a.label}
+              </Button>
+            ))
+          )}
+          {onClose && (
+            <Button size="icon" variant="ghost" onClick={onClose} aria-label="Close">
+              <X />
             </Button>
           )}
-          <Button size="icon" variant="ghost" onClick={onClose} aria-label="Close">
-            <X />
-          </Button>
         </div>
       </div>
 
@@ -194,14 +246,36 @@ export function ScreenRecordingEditor({
               />
               <video
                 ref={video}
-                src={src}
+                src={source.url}
+                crossOrigin="anonymous"
                 playsInline
                 preload="auto"
                 className="pointer-events-none absolute h-px w-px opacity-0"
-                onPlay={() => setPlaying(true)}
-                onPause={() => setPlaying(false)}
-                onSeeked={(e) => setTime(e.currentTarget.currentTime)}
+                onPlay={() => {
+                  setPlaying(true);
+                  if (cam.current) void cam.current.play().catch(() => {});
+                }}
+                onPause={() => {
+                  setPlaying(false);
+                  cam.current?.pause();
+                }}
+                onSeeked={(e) => {
+                  setTime(e.currentTarget.currentTime);
+                  syncCam(e.currentTarget.currentTime);
+                }}
               />
+              {source.cameraUrl && (
+                // muted: the screen's own track carries the voice; this one only feeds the camera picture
+                <video
+                  ref={cam}
+                  src={source.cameraUrl}
+                  crossOrigin="anonymous"
+                  muted
+                  playsInline
+                  preload="auto"
+                  className="pointer-events-none absolute h-px w-px opacity-0"
+                />
+              )}
             </div>
 
             <div className="border-t border-zinc-800 px-4 py-3">
@@ -307,6 +381,8 @@ export function ScreenRecordingEditor({
               <Toggle label="Ring on clicks" checked={look.clickRings} onChange={(clickRings) => set({ clickRings })} />
             </Section>
 
+            {source.cameraUrl && <CameraControls look={look} onChange={(next) => setLook(next)} />}
+
             <Section title="Frame">
               <div className="flex flex-wrap gap-1">
                 {SHAPES.map((s) => (
@@ -348,7 +424,7 @@ export function ScreenRecordingEditor({
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="space-y-2.5">
       <h3 className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">{title}</h3>

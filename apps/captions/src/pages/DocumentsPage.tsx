@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useLocation, useNavigate, useParams } from "react-router";
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import {
   ArrowDown,
   ArrowLeft,
@@ -74,16 +74,19 @@ function ComposeForm({
   onCreated,
   onUpdated,
   existingId,
+  clipId,
 }: {
   initial?: { prompt: string; sources: DocSource[]; kind?: DocKind };
   existingId?: string;
+  /** A Video Notes clip to start a guide from (?clip=): it becomes the guide's one source. */
+  clipId?: string;
   onCreated: (doc: DocumentRecord) => void;
   onUpdated?: (doc: DocumentRecord) => void;
 }) {
   const [media, setMedia] = useState<{ clips: MediaClip[] } | null>(null);
   const [ai, setAi] = useState<boolean | null>(null);
   const [kind, setKind] = useState<DocKind>(
-    initial?.kind === "guide" ? "guide" : "brief",
+    initial?.kind === "guide" || clipId ? "guide" : "brief",
   );
   const [picked, setPicked] = useState<DocSource[]>(initial?.sources ?? []);
   const [prompt, setPrompt] = useState(initial?.prompt ?? "");
@@ -93,7 +96,11 @@ function ComposeForm({
 
   useEffect(() => {
     listDocumentMedia()
-      .then((d) => setMedia({ clips: d.clips }))
+      .then((d) => {
+        setMedia({ clips: d.clips });
+        const clip = clipId ? d.clips.find((c) => c.id === clipId) : undefined;
+        if (clip) setPicked([{ type: "clip", id: clip.id, name: clip.name }]);
+      })
       .catch(() => setMedia({ clips: [] }));
     getDocumentsAvailability()
       .then((d) => setAi(d.ai))
@@ -783,6 +790,12 @@ export default function DocumentsPage() {
   const home = toolsetHomePath();
   const phone = isPhoneHub();
   const composing = docId === "new";
+  // ?clip=<id> (the Screen Recorder's "Make a guide"): a new guide from that Video Notes clip
+  const [params] = useSearchParams();
+  const clipId = params.get("clip") ?? undefined;
+  useEffect(() => {
+    if (clipId && !docId) navigate(`/documents/new?clip=${encodeURIComponent(clipId)}`, { replace: true });
+  }, [clipId, docId, navigate]);
   // the saved list shows at once and refreshes underneath (lib/local-cache)
   const { items: docs, setItems: setDocs, refresh: loadDocs } = useCachedList("/api/documents", listDocuments);
   const [current, setCurrent] = useState<DocumentRecord | null>(null);
@@ -885,6 +898,7 @@ export default function DocumentsPage() {
               </DesktopHint>
             ) : (
               <ComposeForm
+                clipId={clipId}
                 onCreated={(d) => {
                   setCurrent(d);
                   navigate(`/documents/${d.id}`);

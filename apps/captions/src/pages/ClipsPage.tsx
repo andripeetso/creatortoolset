@@ -17,7 +17,7 @@ import {
   Wand2,
   Circle,
 } from "lucide-react";
-import { canRecordScreen, recordScreen } from "@/lib/mac-record";
+import { canRecordScreen, openRecorder } from "@/lib/mac-record";
 import { canUse, useAuth } from "@/lib/auth";
 import { useCachedList } from "@/lib/local-cache";
 import { fmtBytes, timeAgo } from "@/lib/exports";
@@ -925,7 +925,7 @@ export default function ClipsPage() {
             </label>
             {canRecordScreen() && (
               <button
-                onClick={() => recordScreen("notes")}
+                onClick={openRecorder}
                 className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-800 py-3 text-sm text-zinc-200 hover:bg-zinc-900"
               >
                 <Circle className="h-3.5 w-3.5 fill-red-500 text-red-500" /> Record your screen

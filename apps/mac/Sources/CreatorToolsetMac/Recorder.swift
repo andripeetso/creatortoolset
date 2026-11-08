@@ -1,19 +1,19 @@
-// Screen recording: the display under the pointer, at its own sharpness up to 4K, 60 fps. The system pointer is left
-// out of the picture and its path and clicks are logged beside the video instead, so Review can draw a smooth, larger
-// pointer and zoom in where you click (src/lib/screen-recording.ts). The voice is the file's first sound track, the
-// Mac's own sound a second one, never mixed. On Stop the file uploads to Review (or Video Notes) on the open server and
-// that page opens in the window; the file stays in the recordings folder. Needs macOS 15 (the microphone comes through
-// the same capture stream, so voice and picture share one clock).
+// Screen recording. Record opens the toolbar (RecordToolbar.swift: Display / Window / Area, camera, microphone, Mac
+// sound); the source picker (SourcePicker.swift) chooses what to record; then a count-in and the floating bar. The
+// picture is captured at its own sharpness up to 4K, 60 fps, without the system pointer: the pointer's path and clicks
+// are logged beside the video, so the editor (src/lib/screen-recording.ts) draws a smooth, larger pointer and zooms in
+// where you click. The voice is the file's first sound track, the Mac's own sound a second one, never mixed; a camera
+// is its own file on the same clock (Camera.swift). Nothing renders and nothing uploads at Stop: the recording is a
+// folder on this Mac (LocalProject.swift) and a small preview (RecordingPreview.swift) offers Edit, Save, Copy and
+// Share. Needs macOS 15 (the microphone comes through the same capture stream, so voice and picture share one clock).
 import AVFoundation
+import Combine
 import AppKit
 import ScreenCaptureKit
 import SwiftUI
 
-/// Where a recording goes when it stops: uploaded to Review or Video Notes, or only kept in the recordings folder.
-enum RecordingTarget: String { case review, notes, mac }
-
 /// What Review reads beside the video (api/review.ts, PUT …/screen/events): seconds from the first frame,
-/// positions as 0–1 of the recorded display (top left 0,0; outside 0–1 = the pointer was on another display).
+/// positions as 0–1 of the recorded source (top left 0,0; outside 0–1 = the pointer was outside it).
 struct ScreenEvents: Codable {
     var v = 1
     var width = 0
@@ -24,7 +24,7 @@ struct ScreenEvents: Codable {
 }
 
 /// The pointer at `location` (NSEvent.mouseLocation: global points, origin bottom left of the main display) as 0–1 of
-/// `display` (CGDisplayBounds: global points, origin top left), rounded to 1/10000.
+/// `display` (the recorded rect in global points, origin top left, like CGDisplayBounds), rounded to 1/10000.
 func normalizedPointer(_ location: CGPoint, display: CGRect, mainHeight: CGFloat) -> (x: Double, y: Double) {
     let round = { (v: CGFloat) in (Double(v) * 10_000).rounded() / 10_000 }
     return (round((location.x - display.minX) / display.width), round((mainHeight - location.y - display.minY) / display.height))
@@ -71,6 +71,8 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Send
     private(set) var events: ScreenEvents
     /// The stream stopped by itself (display gone, permission taken away): called once, on `queue`.
     var onStop: ((Error) -> Void)?
+    /// The first frame arrived, at this host time (the file's 0): the camera starts its clock there. On `queue`.
+    var onFirstFrame: ((CMTime) -> Void)?
 
     init(file: URL, width: Int, height: Int, mic withMic: Bool, system withSystem: Bool) throws {
         writer = try AVAssetWriter(outputURL: file, fileType: .mp4)
@@ -128,7 +130,8 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Send
         try? await stream?.stopCapture()
         return try await withCheckedThrowingContinuation { done in
             queue.async {
-                guard let offset = self.offset, self.failed == nil else {
+                // a stream that failed midway (display gone, permission taken) still keeps what it wrote
+                guard let offset = self.offset, self.writer.status == .writing else {
                     self.writer.cancelWriting()
                     done.resume(throwing: self.failed ?? RecorderError.nothingRecorded)
                     return
@@ -143,9 +146,17 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Send
         }
     }
 
+    /// The pointer log so far (written beside the video every few seconds, so a crash keeps most of it).
+    func eventsSoFar(_ done: @escaping @Sendable (ScreenEvents) -> Void) {
+        queue.async { done(self.events) }
+    }
+
     func cancel() {
         Task { try? await stream?.stopCapture() }
-        queue.async { self.writer.cancelWriting() }
+        queue.async {
+            if self.failed == nil { self.failed = RecorderError.nothingRecorded }   // later buffers are dropped
+            self.writer.cancelWriting()
+        }
     }
 
     /// The pointer moved (`click` = a button went down), as 0–1 of the display.
@@ -171,6 +182,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Send
             if offset == nil {
                 offset = buffer.presentationTimeStamp
                 writer.startSession(atSourceTime: .zero)
+                onFirstFrame?(buffer.presentationTimeStamp)
             }
             append(buffer, to: video)
         case .microphone: if let mic { append(buffer, to: mic) }
@@ -207,18 +219,20 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Send
     }
 }
 
-/// Start, pause, stop and the upload; the small floating bar while it records (RecorderBar).
+/// Record → toolbar → source → count-in → recording → a project folder and its preview. Shares go through `upload`.
 @MainActor
 final class Recorder: ObservableObject {
-    enum Phase: Equatable { case idle, countdown(Int), recording, paused, saving, uploading(Double) }
+    enum Phase: Equatable { case idle, toolbar, countdown(Int), recording, paused, saving, uploading(Double) }
 
     @Published private(set) var phase = Phase.idle
-    @AppStorage("recordMic") var withMic = true
-    @AppStorage("recordSystemAudio") var withSystemAudio = false
+    /// The toolbar's choices (source kind, microphone, camera, Mac sound), remembered between recordings.
+    let setup = RecordSetup()
     @AppStorage("recordingsFolder") private var folderPath = ""
-    /// Uploads a finished recording and returns the page to open (Shell.uploadRecording).
-    var upload: ((URL, ScreenEvents, RecordingTarget, @escaping @Sendable (Double) -> Void) async throws -> String)?
+    /// Uploads a recording's original file and returns the page to open (Shell → Site.uploadRecording).
+    var upload: ((LocalProject, ShareDestination, @escaping @Sendable (Double) -> Void) async throws -> String)?
     var openPage: ((String) -> Void)?
+    /// The list of recordings on this Mac changed (a stop, a delete): the /record page asks again.
+    var onRecordingsChanged: (() -> Void)?
 
     static var available: Bool {
         if #available(macOS 15.0, *) { return true }
@@ -226,35 +240,39 @@ final class Recorder: ObservableObject {
     }
 
     private var capture: AnyObject?
+    private var camera: CameraRecorder?
+    private var project: LocalProject?
     private var panel: NSPanel?
     private var monitors: [Any] = []
-    private var target = RecordingTarget.review
-    private var file: URL?
+    private var saver: Timer?
     private var banked: TimeInterval = 0
     private var runFrom: Date?
 
-    /// What the Screen Recorder page shows (src/lib/mac-record.ts): what it is doing, the sound choices, the folder.
+    /// What the Screen Recorder page shows (src/lib/mac-record.ts): what it is doing and the folder.
     func pageState(_ phase: Phase? = nil) -> String {
         let name: String = switch phase ?? self.phase {
         case .idle: "idle"
+        case .toolbar: "toolbar"
         case .countdown: "countdown"
         case .recording: "recording"
         case .paused: "paused"
         case .saving: "saving"
         case .uploading: "uploading"
         }
-        let body: [String: Any] = ["phase": name, "mic": withMic, "sound": withSystemAudio, "folder": folder.path]
+        let body: [String: Any] = ["phase": name, "folder": folder.path]
         return (try? JSONSerialization.data(withJSONObject: body)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
     }
 
     var elapsed: TimeInterval { banked + (runFrom.map { Date().timeIntervalSince($0) } ?? 0) }
     var busy: Bool { phase != .idle }
 
-    /// Where recordings are kept (~/Movies/Creator Toolset unless picked).
-    var folder: URL {
-        folderPath.isEmpty
+    /// Where recordings are kept (~/Movies/Creator Toolset unless picked). Static too: the ctlocal:// scheme reads it.
+    var folder: URL { Self.folder }
+    static var folder: URL {
+        let picked = UserDefaults.standard.string(forKey: "recordingsFolder") ?? ""
+        return picked.isEmpty
             ? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Movies/Creator Toolset", isDirectory: true)
-            : URL(fileURLWithPath: folderPath, isDirectory: true)
+            : URL(fileURLWithPath: picked, isDirectory: true)
     }
 
     func pickFolder() {
@@ -265,6 +283,7 @@ final class Recorder: ObservableObject {
         open.prompt = "Keep recordings here"
         open.directoryURL = folder
         if open.runModal() == .OK, let url = open.url { folderPath = url.path }
+        onRecordingsChanged?()
     }
 
     func showFolder() {
@@ -272,8 +291,16 @@ final class Recorder: ObservableObject {
         NSWorkspace.shared.open(folder)
     }
 
-    func start(to target: RecordingTarget) {
-        guard #available(macOS 15.0, *), phase == .idle else { return }
+    /// The recordings on this Mac, newest first, as the page lists them.
+    var recordings: [LocalProject] { ProjectStore.list(root: folder) }
+
+    // MARK: toolbar and source
+
+    /// Record: the toolbar on the display under the pointer. Nothing records until a source is started.
+    func openToolbar() {
+        guard #available(macOS 15.0, *) else { return }
+        if phase == .toolbar { return RecordToolbar.window?.orderFrontRegardless() ?? () }
+        guard phase == .idle else { return }
         guard CGPreflightScreenCaptureAccess() else {
             CGRequestScreenCaptureAccess()
             alert("Allow screen recording",
@@ -281,38 +308,109 @@ final class Recorder: ObservableObject {
                   settings: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
             return
         }
-        self.target = target
-        Task { await begin() }
+        RecordingPreview.close()
+        let screen = screenUnderPointer()
+        phase = .toolbar
+        RecordToolbar.show(on: screen, setup: setup,
+                           onPick: { [weak self] kind in self?.pick(kind) },
+                           onClose: { [weak self] in self?.closeToolbar() },
+                           onFolder: { [weak self] in self?.pickFolder() },
+                           onShowFolder: { [weak self] in self?.showFolder() })
+        cameraPreview(on: screen)
+        cameraWatch = setup.objectWillChange.sink { [weak self] in
+            DispatchQueue.main.async { if self?.phase == .toolbar { self?.cameraPreview(on: screen) } }
+        }
     }
 
+    private var cameraWatch: AnyCancellable?
+
+    /// The camera bubble follows the toolbar's camera choice while it is open.
+    private func cameraPreview(on screen: NSScreen) {
+        guard let device = setup.cameraDevice else { return CameraPreview.close() }
+        Task {
+            if await CameraDevices.requestAccess(), self.phase == .toolbar { CameraPreview.show(device: device, on: screen) }
+        }
+    }
+
+    private func closeToolbar() {
+        SourcePicker.close()
+        RecordToolbar.close()
+        CameraPreview.close()
+        cameraWatch = nil
+        if phase == .toolbar { phase = .idle }
+    }
+
+    func pick(_ kind: SourceKind) {
+        guard phase == .toolbar else { return }
+        SourcePicker.pick(kind, onStart: { [weak self] source in
+            guard let self, #available(macOS 15.0, *) else { return }
+            Task { await self.begin(source) }
+        }, onCancel: {})
+    }
+
+    // MARK: recording
+
     @available(macOS 15.0, *)
-    private func begin() async {
-        var mic = withMic
-        if mic, AVCaptureDevice.authorizationStatus(for: .audio) != .authorized {
-            mic = await AVCaptureDevice.requestAccess(for: .audio)
-            if !mic { AppLog.write("recording without the microphone: access refused") }
+    func begin(_ source: RecordSource) async {
+        guard phase == .toolbar else { return }   // one start at a time (a second pick while a prompt is open)
+        phase = .countdown(3)
+        let attempt = UUID()
+        starting = attempt
+        // Stop or Throw away during the count-in or the start sets the phase to idle: everything after an await checks
+        let stillWanted = { [weak self] in self?.starting == attempt && self?.phase != .idle }
+        var cameraDevice = setup.cameraDevice
+        if cameraDevice != nil, !(await CameraDevices.requestAccess()) {
+            AppLog.write("recording without the camera: access refused")
+            cameraDevice = nil
         }
-        // the display under the pointer
-        let pointer = NSEvent.mouseLocation
-        guard let screen = NSScreen.screens.first(where: { NSMouseInRect(pointer, $0.frame, false) }) ?? NSScreen.main,
-              let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID else {
-            alert("Can't record", RecorderError.noDisplay.localizedDescription)
-            return
+        SourcePicker.close()
+        RecordToolbar.close()   // stops the level meter before the stream opens the same microphone
+        cameraWatch = nil
+        var micDevice = setup.micDevice
+        if micDevice != nil, AVCaptureDevice.authorizationStatus(for: .audio) != .authorized,
+           !(await AVCaptureDevice.requestAccess(for: .audio)) {
+            AppLog.write("recording without the microphone: access refused")
+            micDevice = nil
         }
+        let screen = screen(of: source) ?? screenUnderPointer()
         showBar(on: screen)
+        guard stillWanted() else { return }
         for n in [3, 2, 1] {
             phase = .countdown(n)
             try? await Task.sleep(for: .seconds(1))
-            if phase == .idle { return }   // cancelled during the countdown
+            if !stillWanted() { return }   // cancelled during the count-in
         }
+        var made: (capture: Capture?, project: LocalProject?) = (nil, nil)
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-            guard let display = content.displays.first(where: { $0.displayID == displayID }) else { throw RecorderError.noDisplay }
-            // everything on the display but the bar itself
-            let bar = content.windows.filter { $0.windowID == CGWindowID(panel?.windowNumber ?? -1) }
-            let filter = SCContentFilter(display: display, excludingWindows: bar)
-            let size = captureSize(points: CGSize(width: display.width, height: display.height), scale: screen.backingScaleFactor)
+            // our own floating windows stay out of the picture; the app's main window can still be recorded
+            let ours = Set(ownWindows().map { CGWindowID($0.windowNumber) })
+            let hidden = content.windows.filter { ours.contains($0.windowID) }
+            var windowScale: CGFloat?
+            let filter: SCContentFilter
+            let rect: CGRect            // the recorded part in global points, top left origin
             let config = SCStreamConfiguration()
+            switch source {
+            case .display(let id):
+                guard let display = content.displays.first(where: { $0.displayID == id }) else { throw RecorderError.noDisplay }
+                filter = SCContentFilter(display: display, excludingWindows: hidden)
+                rect = CGDisplayBounds(id)
+            case .window(let id):
+                guard let window = content.windows.first(where: { $0.windowID == id }) else { throw RecorderError.noDisplay }
+                filter = SCContentFilter(desktopIndependentWindow: window)
+                // ponytail: the window's place at the start; a window moved while recording shifts the drawn pointer
+                rect = window.frame
+                let mainHeight = CGDisplayBounds(CGMainDisplayID()).height
+                let center = NSPoint(x: rect.midX, y: mainHeight - rect.midY)
+                windowScale = NSScreen.screens.first { NSMouseInRect(center, $0.frame, false) }?.backingScaleFactor
+            case .area(let id, let area):
+                guard let display = content.displays.first(where: { $0.displayID == id }) else { throw RecorderError.noDisplay }
+                filter = SCContentFilter(display: display, excludingWindows: hidden)
+                config.sourceRect = area
+                let bounds = CGDisplayBounds(id)
+                rect = area.offsetBy(dx: bounds.minX, dy: bounds.minY)
+            }
+            let size = captureSize(points: rect.size, scale: windowScale ?? screen.backingScaleFactor)
             config.width = size.width
             config.height = size.height
             config.minimumFrameInterval = CMTime(value: 1, timescale: 60)
@@ -320,90 +418,136 @@ final class Recorder: ObservableObject {
             config.queueDepth = 8
             config.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
             config.colorSpaceName = CGColorSpace.sRGB
-            config.capturesAudio = withSystemAudio
+            config.capturesAudio = setup.systemAudio
             config.excludesCurrentProcessAudio = true
             config.sampleRate = 48_000
             config.channelCount = 2
-            config.captureMicrophone = mic
+            config.captureMicrophone = micDevice != nil
+            if let micDevice, !setup.micID.isEmpty { config.microphoneCaptureDeviceID = micDevice.uniqueID }
 
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            let stamp = DateFormatter()
-            stamp.dateFormat = "yyyy-MM-dd HH.mm.ss"
-            let file = folder.appendingPathComponent("Screen recording \(stamp.string(from: Date())).mp4")
-            let capture = try Capture(file: file, width: size.width, height: size.height, mic: mic, system: withSystemAudio)
+            let project = try LocalProject.create(in: folder, at: Date())
+            made.project = project
+            let capture = try Capture(file: project.screenURL, width: size.width, height: size.height,
+                                      mic: micDevice != nil, system: setup.systemAudio)
+            made.capture = capture
             capture.onStop = { [weak self] error in
                 Task { @MainActor in self?.stoppedByItself(error) }
             }
+            if let cameraDevice {
+                do {
+                    let camera = try CameraRecorder(device: cameraDevice, file: project.cameraURL)
+                    camera.startSession()
+                    capture.onFirstFrame = { host in camera.begin(atHost: host) }
+                    self.camera = camera
+                } catch {
+                    AppLog.write("recording without the camera: \(error.localizedDescription)")   // the screen still records
+                }
+            }
             try await capture.start(filter: filter, config: config)
+            guard stillWanted() else { throw CancellationError() }
             self.capture = capture
-            self.file = file
-            watchPointer(capture, display: CGDisplayBounds(displayID))
+            self.project = project
+            watchPointer(capture, rect: rect)
+            saver = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { _ in
+                capture.eventsSoFar { events in try? project.writeEvents(JSONEncoder().encode(events)) }
+            }
             banked = 0
             runFrom = Date()
             phase = .recording
-            AppLog.write("recording \(size.width)×\(size.height), mic \(mic), Mac sound \(withSystemAudio)")
+            AppLog.write("recording \(size.width)×\(size.height), mic \(micDevice != nil), Mac sound \(setup.systemAudio), camera \(cameraDevice != nil)")
         } catch {
+            made.capture?.cancel()
+            camera?.cancel()
+            camera = nil
+            try? made.project.map { try FileManager.default.removeItem(at: $0.folder) }   // nothing worth keeping yet
+            if error is CancellationError { return }
+            CameraPreview.close()
             closeBar()
             phase = .idle
             alert("Couldn't start recording", error.localizedDescription)
         }
     }
 
-    private func watchPointer(_ capture: AnyObject, display: CGRect) {
+    /// The start in progress; `finish()` clears it, so a start interrupted by Stop or Throw away gives up.
+    private var starting: UUID?
+
+    private func watchPointer(_ capture: AnyObject, rect: CGRect) {
         guard #available(macOS 15.0, *), let capture = capture as? Capture else { return }
         let mainHeight = CGDisplayBounds(CGMainDisplayID()).height
         let handle = { (event: NSEvent) in
-            let p = normalizedPointer(NSEvent.mouseLocation, display: display, mainHeight: mainHeight)
+            let p = normalizedPointer(NSEvent.mouseLocation, display: rect, mainHeight: mainHeight)
             capture.note(x: p.x, y: p.y, click: [.leftMouseDown, .rightMouseDown].contains(event.type))
         }
         // pointer events need no permission (key presses would: not logged)
         let mask: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .leftMouseDown, .rightMouseDown]
         if let global = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: handle) { monitors.append(global) }
         if let local = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { handle($0); return $0 }) { monitors.append(local) }
-        let start = normalizedPointer(NSEvent.mouseLocation, display: display, mainHeight: mainHeight)
+        let start = normalizedPointer(NSEvent.mouseLocation, display: rect, mainHeight: mainHeight)
         capture.note(x: start.x, y: start.y, click: false)   // where it starts
     }
 
     func togglePause() {
         guard #available(macOS 15.0, *), let capture = capture as? Capture else { return }
+        let now = CMClockGetTime(CMClockGetHostTimeClock())
         if phase == .recording {
             capture.pause()
+            camera?.pause(atHost: now)
             banked = elapsed
             runFrom = nil
             phase = .paused
         } else if phase == .paused {
             capture.resume()
+            camera?.resume(atHost: now)
             runFrom = Date()
             phase = .recording
         }
     }
 
+    /// Stop: the files are closed and the preview offers what to do with them. Nothing uploads here.
     func stop() {
         if case .countdown = phase { return finish() }
-        guard #available(macOS 15.0, *), let capture = capture as? Capture, let file,
+        if phase == .toolbar { return closeToolbar() }
+        guard #available(macOS 15.0, *), let capture = capture as? Capture, var project,
               phase == .recording || phase == .paused else { return }
+        let now = CMClockGetTime(CMClockGetHostTimeClock())
         endWatching()
         phase = .saving
+        let camera = self.camera
         Task {
             do {
-                let events = try await capture.stop()
-                self.capture = nil
-                let json = file.deletingPathExtension().appendingPathExtension("screen.json")
-                try? JSONEncoder().encode(events).write(to: json)
-                await send(file, events)
+                let events: ScreenEvents
+                do { events = try await capture.stop() } catch { camera?.cancel(); throw error }
+                var hasCamera = camera != nil
+                if let camera {
+                    do { try await camera.stop(atHost: now) } catch {
+                        AppLog.write("camera not kept: \(error.localizedDescription)")
+                        hasCamera = false
+                    }
+                }
+                try project.writeEvents(JSONEncoder().encode(events))
+                let duration = try await AVURLAsset(url: project.screenURL).load(.duration)
+                try project.markReady(durationMs: Int(duration.seconds * 1000), width: events.width, height: events.height,
+                                      tracks: events.audio, camera: hasCamera)
+                try? await project.writeThumb(from: project.screenURL)
+                let screen = panel?.screen ?? screenUnderPointer()
+                finish()
+                onRecordingsChanged?()
+                showPreview(project, on: screen)
+            } catch RecorderError.nothingRecorded {
+                try? FileManager.default.removeItem(at: project.folder)
+                finish()
             } catch {
                 finish()
-                alert("Couldn't save the recording", error.localizedDescription)
+                alert("Couldn't save the recording", "\(error.localizedDescription)\n\nWhat was recorded is in \(project.folder.path).")
             }
         }
     }
 
     /// Throws the recording away (asks first once it has started).
     func cancel() {
-        if case .countdown = phase {
-            finish()
-            return
-        }
+        if case .countdown = phase { return finish() }
+        if phase == .toolbar { return closeToolbar() }
         guard #available(macOS 15.0, *), let capture = capture as? Capture else { return }
         let ask = NSAlert()
         ask.messageText = "Throw this recording away?"
@@ -411,7 +555,8 @@ final class Recorder: ObservableObject {
         ask.addButton(withTitle: "Keep Recording")
         guard ask.runModal() == .alertFirstButtonReturn else { return }
         capture.cancel()
-        if let file { try? FileManager.default.removeItem(at: file) }
+        camera?.cancel()
+        try? project?.delete()
         finish()
     }
 
@@ -421,56 +566,134 @@ final class Recorder: ObservableObject {
         stop()
     }
 
-    private func send(_ file: URL, _ events: ScreenEvents) async {
-        guard let upload, target != .mac else {
-            finish()
-            if target == .mac { NSWorkspace.shared.activateFileViewerSelecting([file]) }
-            return
+    // MARK: after the recording
+
+    private func showPreview(_ project: LocalProject, on screen: NSScreen) {
+        RecordingPreview.show(project, on: screen, actions: .init(
+            edit: { [weak self] in
+                RecordingPreview.close()
+                self?.openPage?("/record/\(project.id)")
+            },
+            save: { [weak self] in self?.save(project) },
+            copy: {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.writeObjects([project.screenURL as NSURL])
+            },
+            share: { [weak self] destination in Task { await self?.share(project, to: destination) } },
+            reveal: { NSWorkspace.shared.activateFileViewerSelecting([project.screenURL]) },
+            discard: { [weak self] in self?.delete(project) }))
+    }
+
+    /// The original file, saved where you choose.
+    func save(_ project: LocalProject) {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "\(project.name).mp4"
+        panel.allowedContentTypes = [.mpeg4Movie]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
+            try FileManager.default.copyItem(at: project.screenURL, to: url)
+        } catch {
+            alert("Couldn't save the video", error.localizedDescription)
         }
+    }
+
+    /// The original file to Review, Video Notes or a new guide (a Video Notes clip the guide is made from).
+    func share(_ project: LocalProject, to destination: ShareDestination) async {
+        guard let upload, phase == .idle else { return }
         while true {
             phase = .uploading(0)
+            RecordingPreview.setBusy("Uploading…")
             do {
-                let page = try await upload(file, events, target) { p in
-                    Task { @MainActor in if case .uploading = self.phase { self.phase = .uploading(p) } }
+                let page = try await upload(project, destination) { p in
+                    Task { @MainActor in
+                        if case .uploading = self.phase { self.phase = .uploading(p) }
+                        RecordingPreview.setBusy("Uploading \(Int(p * 100))%")
+                    }
                 }
-                finish()
+                phase = .idle
+                RecordingPreview.close()
                 openPage?(page)
                 return
             } catch {
                 AppLog.write("recording upload failed: \(error.localizedDescription)")
+                phase = .idle
+                RecordingPreview.setBusy(nil)
                 let ask = NSAlert()
                 ask.messageText = "The upload didn't finish"
-                ask.informativeText = "\(error.localizedDescription)\n\nThe recording is saved in \(folder.path)."
+                ask.informativeText = "\(error.localizedDescription)\n\nThe recording stays on this Mac."
                 ask.addButton(withTitle: "Try Again")
-                ask.addButton(withTitle: "Show in Finder")
                 ask.addButton(withTitle: "OK")
-                let answer = ask.runModal()
-                if answer == .alertFirstButtonReturn { continue }
-                if answer == .alertSecondButtonReturn { NSWorkspace.shared.activateFileViewerSelecting([file]) }
-                return finish()
+                if ask.runModal() != .alertFirstButtonReturn { return }
             }
         }
     }
 
+    /// Throws a finished recording away (to the Trash), after asking.
+    func delete(_ project: LocalProject) {
+        if case .uploading = phase { return alert("Wait for the upload", "It can be thrown away when the upload is done.") }
+        let ask = NSAlert()
+        ask.messageText = "Throw \"\(project.name)\" away?"
+        ask.informativeText = "It goes to the Trash."
+        ask.addButton(withTitle: "Throw Away")
+        ask.addButton(withTitle: "Cancel")
+        guard ask.runModal() == .alertFirstButtonReturn else { return }
+        do {
+            try project.delete()
+            RecordingPreview.close()
+            onRecordingsChanged?()
+        } catch {
+            alert("Couldn't throw it away", error.localizedDescription)
+        }
+    }
+
+    // MARK: helpers
+
     private func endWatching() {
         monitors.forEach(NSEvent.removeMonitor)
         monitors = []
+        saver?.invalidate()
+        saver = nil
         banked = elapsed
         runFrom = nil
     }
 
     private func finish() {
+        starting = nil
         endWatching()
         capture = nil
-        file = nil
+        camera = nil
+        project = nil
         phase = .idle
+        CameraPreview.close()
         closeBar()
+    }
+
+    private func screenUnderPointer() -> NSScreen {
+        let pointer = NSEvent.mouseLocation
+        return NSScreen.screens.first(where: { NSMouseInRect(pointer, $0.frame, false) }) ?? NSScreen.main ?? NSScreen.screens[0]
+    }
+
+    private func screen(of source: RecordSource) -> NSScreen? {
+        let id: CGDirectDisplayID
+        switch source {
+        case .display(let d), .area(let d, _): id = d
+        case .window: return nil
+        }
+        return NSScreen.screens.first { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID) == id }
+    }
+
+    /// The app's floating windows: never in the picture.
+    private func ownWindows() -> [NSWindow] {
+        ([panel, RecordToolbar.window, CameraPreview.window, RecordingPreview.window] as [NSWindow?]).compactMap { $0 }
+            + SourcePicker.windows
     }
 
     // MARK: the floating bar
 
     private func showBar(on screen: NSScreen) {
-        let size = NSSize(width: 230, height: 44)
+        closeBar()
+        let size = NSSize(width: 250, height: 44)
         let panel = NSPanel(contentRect: NSRect(origin: .zero, size: size), styleMask: [.nonactivatingPanel, .borderless], backing: .buffered, defer: false)
         panel.level = .statusBar
         panel.isFloatingPanel = true
@@ -501,7 +724,7 @@ final class Recorder: ObservableObject {
     }
 }
 
-/// The bar at the top of the recorded display (left out of the recording): the count-in, then time, Pause, Stop, Throw away.
+/// The bar at the top of the recorded screen (left out of the recording): the count-in, then time, Pause, Stop, Throw away.
 struct RecorderBar: View {
     @ObservedObject var recorder: Recorder
 
@@ -519,15 +742,12 @@ struct RecorderBar: View {
                 Button { recorder.togglePause() } label: {
                     Image(systemName: recorder.phase == .paused ? "play.fill" : "pause.fill")
                 }.help(recorder.phase == .paused ? "Resume" : "Pause")
-                Button { recorder.stop() } label: { Image(systemName: "stop.fill") }.help("Stop and upload")
+                Button { recorder.stop() } label: { Image(systemName: "stop.fill") }.help("Stop (⌥⌘.)")
                 Button { recorder.cancel() } label: { Image(systemName: "trash") }.help("Throw away")
             case .saving:
                 ProgressView().controlSize(.small)
                 Text("Saving…")
-            case .uploading(let p):
-                ProgressView(value: p).frame(width: 90)
-                Text("Uploading \(Int(p * 100))%").monospacedDigit()
-            case .idle:
+            case .idle, .toolbar, .uploading:
                 EmptyView()
             }
         }
@@ -535,7 +755,10 @@ struct RecorderBar: View {
         .buttonStyle(.borderless)
         .padding(.horizontal, 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.regularMaterial, in: Capsule())
+        .foregroundStyle(.white)
+        .background(Color.black.opacity(0.82), in: Capsule())
+        .overlay(Capsule().strokeBorder(.white.opacity(0.12)))
+        .environment(\.colorScheme, .dark)
     }
 
     private func clock(_ t: TimeInterval) -> String {
@@ -545,27 +768,40 @@ struct RecorderBar: View {
 }
 
 extension Site {
-    /// A finished recording to Review (with its pointer log) or Video Notes, through the site's resumable upload
-    /// (api/lib/uploads.ts: 16 MB parts, four at a time). Returns the page to open.
-    func uploadRecording(_ file: URL, events: ScreenEvents, to target: RecordingTarget, progress: @escaping @Sendable (Double) -> Void) async throws -> String {
+    /// A recording's original file to Review (with its pointer log), Video Notes, or a new guide (a Video Notes clip the
+    /// guide is made from), through the site's resumable upload (api/lib/uploads.ts: 16 MB parts, four at a time).
+    /// Returns the page to open.
+    func uploadRecording(_ project: LocalProject, to destination: ShareDestination, progress: @escaping @Sendable (Double) -> Void) async throws -> String {
+        let file = project.screenURL
         let size = (try FileManager.default.attributesOfItem(atPath: file.path)[.size] as? NSNumber)?.intValue ?? 0
-        let finished = try await direct(file, name: file.lastPathComponent, size: size, to: target, progress: progress)
+        let finished = try await direct(file, name: "\(project.name).mp4", size: size, review: destination == .review, progress: progress)
         guard let asset = finished["id"] as? String else { throw SiteError.status(0) }
-        if target == .notes { return "/clips/\(asset)" }
+        switch destination {
+        case .notes: return "/clips/\(asset)"
+        case .guide: return "/guides?clip=\(asset)"
+        case .review: break
+        }
         let n = ((finished["versions"] as? [[String: Any]])?.last?["n"] as? Int) ?? 1
         var put = request("PUT", "/api/review/assets/\(asset)/v/\(n)/screen/events")
-        put.httpBody = try JSONEncoder().encode(events)
+        put.httpBody = try? Data(contentsOf: project.eventsURL)
         put.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        _ = try await checked(URLSession.shared.data(for: put))
+        // the video is in: a failed pointer log must not make Try Again upload it twice
+        if (try? await checked(URLSession.shared.data(for: put))) == nil { AppLog.write("recording pointer log not sent to Review") }
+        if let look = try? Data(contentsOf: project.lookURL) {
+            var putLook = request("PUT", "/api/review/assets/\(asset)/v/\(n)/screen/look")
+            putLook.httpBody = look
+            putLook.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            _ = try? await checked(URLSession.shared.data(for: putLook))   // the zooms made on this Mac come along
+        }
         return "/review/\(asset)?v=\(n)"
     }
 
     /// The site's own resumable upload; returns the finishing call's JSON.
-    private func direct(_ file: URL, name: String, size: Int, to target: RecordingTarget, progress: @escaping @Sendable (Double) -> Void) async throws -> [String: Any] {
-        let started = try await json("POST", target == .review ? "/api/review/uploads" : "/api/clips/init",
+    private func direct(_ file: URL, name: String, size: Int, review: Bool, progress: @escaping @Sendable (Double) -> Void) async throws -> [String: Any] {
+        let started = try await json("POST", review ? "/api/review/uploads" : "/api/clips/init",
                                      ["name": name, "mime": "video/mp4", "size": size])
         guard let id = started["id"] as? String, let partSize = started["partSize"] as? Int, partSize > 0 else { throw SiteError.status(0) }
-        let root = target == .review ? "/api/review/uploads/\(id)" : "/api/clips/\(id)"
+        let root = review ? "/api/review/uploads/\(id)" : "/api/clips/\(id)"
         let count = (size + partSize - 1) / partSize
         let tally = Tally()
         try await withThrowingTaskGroup(of: Void.self) { group in

@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { canUse, type Me } from "@/lib/auth";
 import { useStudio } from "@/lib/store";
+import { canRecordScreen, openRecorder } from "@/lib/mac-record";
 
 /** Every tool, in Home's order: the hub (pages/ToolsetHome.tsx) and the top bar's tool menu (components/AppBar.tsx). */
 export type Tool = {
@@ -122,7 +123,7 @@ export const OTHER: Tool[] = [
     to: "/record",
     icon: ScreenShare,
     name: "Screen Recorder",
-    desc: "Record your screen into Review or Video Notes: zooms where you click, a smooth pointer.",
+    desc: "Record your screen, a window or an area, with your camera and voice. Zooms where you click.",
     can: (me) => canUse(me, "review") || canUse(me, "notes"),
   },
   {
@@ -142,6 +143,8 @@ export function useOpenTool() {
   return (e: React.MouseEvent<HTMLAnchorElement>, to: string) => {
     if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
     e.preventDefault();
+    // in the Mac app, Screen Recorder is its toolbar, not a page (the recordings list is /record, from the Record menu)
+    if (to === "/record" && canRecordScreen()) return openRecorder();
     if (to.startsWith("/captions")) openProjectLibrary();
     navigate(to);
   };

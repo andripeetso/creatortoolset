@@ -20,6 +20,7 @@ import WorkshopSharePage from "./pages/WorkshopSharePage";
 import StorySplitterPage from "./pages/StorySplitterPage";
 import LibraryPage from "./pages/LibraryPage";
 import ScreenRecorderPage from "./pages/ScreenRecorderPage";
+import ScreenProjectPage from "./pages/ScreenProjectPage";
 import LibrarySharePage from "./pages/LibrarySharePage";
 import EditorPage from "./pages/EditorPage";
 import EditorEditPage from "./pages/EditorEditPage";
@@ -303,6 +304,7 @@ export default function App() {
           <Route path="/enhance/:sessionId" element={<AppRoute tool="enhance"><EnhancePage /></AppRoute>} />
           <Route path="/clean" element={<AppRoute tool="clean"><CleanPage /></AppRoute>} />
           <Route path="/record" element={<RecordRoute />} />
+          <Route path="/record/:id" element={<ScreenProjectPage />} />
           <Route path="/clips" element={<ClipsRoute />} />
           <Route path="/clips/:clipId" element={<ClipsRoute />} />
           <Route path="/documents" element={<DocumentsRoute />} />

@@ -21,7 +21,7 @@ import {
   MessageSquareText,
   Circle,
 } from "lucide-react";
-import { canRecordScreen, recordScreen } from "@/lib/mac-record";
+import { canRecordScreen, openRecorder } from "@/lib/mac-record";
 import { ToolIntro } from "@/components/AppBar";
 import { AppBar } from "@/components/AppBar";
 import { ReviewShareButton } from "@/components/ReviewShareButton";
@@ -304,8 +304,8 @@ export default function ReviewPage() {
             />
           )}
           {!trash && canRecordScreen() && (
-            <Button size="sm" variant="outline" onClick={() => recordScreen("review")} className="h-8 text-sm"
-              title="Records the screen under the pointer; it lands here when you stop, ready for Zoom & pointer">
+            <Button size="sm" variant="outline" onClick={openRecorder} className="h-8 text-sm"
+              title="Opens the screen recorder">
               <Circle className="fill-red-500 text-red-500" /> <span className="hidden sm:inline">Record screen</span>
             </Button>
           )}

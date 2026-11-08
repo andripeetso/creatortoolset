@@ -41,7 +41,30 @@ export type ScreenLook = {
   shape: FrameShape;
   /** In a frame of another shape: fill it (crop, the view follows the pointer) instead of fitting the whole screen. */
   fill: boolean;
+  /**
+   * The camera beside the screen, when the recording has one. A look without `camera` gets `defaultCamera()` when a
+   * camera exists, so old looks show the camera as a bubble.
+   */
+  camera?: CameraLook;
 };
+
+/** The camera: a bubble over the picture, the camera alone, side by side with the screen, or hidden. */
+export type CameraLook = {
+  layout: "bubble" | "only" | "side" | "hidden";
+  /** Bubble diameter as a fraction of the output's short side. */
+  size: number;
+  corner: "br" | "bl" | "tr" | "tl";
+  shape: "circle" | "rounded";
+  /** Flip the camera horizontally. */
+  mirror: boolean;
+};
+
+export function defaultCamera(): CameraLook {
+  return { layout: "bubble", size: 0.24, corner: "br", shape: "circle", mirror: false };
+}
+
+/** A decoded camera frame for drawFrame. */
+export type CameraImage = { image: CanvasImageSource; width: number; height: number };
 
 export const BACKGROUNDS: { id: string; label: string; stops: string[] }[] = [
   { id: "violet", label: "Violet", stops: ["#7c3aed", "#db2777"] },
@@ -203,11 +226,47 @@ export function outputSize(shape: FrameShape, srcW: number, srcH: number, uhd: b
 
 type Rect = { x: number; y: number; w: number; h: number };
 
-/** Where the picture sits in the output and which part of the source it shows at t. */
-export function layout(look: ScreenLook, path: [number, number, number][], t: number, srcW: number, srcH: number, outW: number, outH: number) {
+/** Side by side: the screen on the left (62% of the width less half the gap), the camera on the right (38%), full height. */
+export function sideRects(outW: number, outH: number, pad: number): { screen: Rect; camera: Rect } {
+  const gap = Math.max(pad, Math.min(outW, outH) * 0.012);
+  const x = pad;
+  const w = outW - 2 * pad;
+  return {
+    screen: { x, y: pad, w: w * 0.62 - gap / 2, h: outH - 2 * pad },
+    camera: { x: x + w * 0.62 + gap / 2, y: pad, w: w * 0.38 - gap / 2, h: outH - 2 * pad },
+  };
+}
+
+/** The bubble's square, in its corner with a margin of 4% of the short side. */
+export function bubbleRect(cam: CameraLook, outW: number, outH: number): Rect {
+  const short = Math.min(outW, outH);
+  const d = cam.size * short;
+  const m = short * 0.04;
+  return {
+    x: cam.corner[1] === "r" ? outW - m - d : m,
+    y: cam.corner[0] === "b" ? outH - m - d : m,
+    w: d,
+    h: d,
+  };
+}
+
+/**
+ * Where the picture sits in the output and which part of the source it shows at t. With a camera in the side layout
+ * the screen takes the left part of the frame.
+ */
+export function layout(
+  look: ScreenLook,
+  path: [number, number, number][],
+  t: number,
+  srcW: number,
+  srcH: number,
+  outW: number,
+  outH: number,
+  camera: CameraLook | null = null,
+) {
   const short = Math.min(outW, outH);
   const pad = look.padding * short;
-  const inner: Rect = { x: pad, y: pad, w: outW - 2 * pad, h: outH - 2 * pad };
+  const inner: Rect = camera?.layout === "side" ? sideRects(outW, outH, pad).screen : { x: pad, y: pad, w: outW - 2 * pad, h: outH - 2 * pad };
   const srcRatio = srcW / srcH;
   let box = inner;
   if (!look.fill || look.shape === "source") {
@@ -243,8 +302,53 @@ function roundRect(ctx: CanvasRenderingContext2D, r: Rect, radius: number) {
 }
 
 /**
- * One output frame at time t: background, the picture (zoomed), the pointer and click rings.
- * `source` is the recording's frame at t (a <video>, or the export's decoded frame).
+ * The camera in a rect: the centred crop that fills it (aspect fill), clipped to a rounded rect (a radius of half the
+ * side makes a circle), optionally mirrored, with a soft shadow and a thin light border.
+ */
+function drawCamera(
+  ctx: CanvasRenderingContext2D,
+  camera: CameraImage,
+  r: Rect,
+  o: { radius: number; mirror: boolean; short: number; shadow: boolean; border: boolean },
+) {
+  const ratio = r.w / r.h;
+  const sw = Math.min(camera.width, camera.height * ratio);
+  const sh = sw / ratio;
+  if (o.shadow) {
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.45)";
+    ctx.shadowBlur = o.short * 0.02;
+    ctx.shadowOffsetY = o.short * 0.006;
+    ctx.fillStyle = "#000";
+    roundRect(ctx, r, o.radius);
+    ctx.fill();
+    ctx.restore();
+  }
+  ctx.save();
+  roundRect(ctx, r, o.radius);
+  ctx.clip();
+  if (o.mirror) {
+    ctx.translate(r.x * 2 + r.w, 0);
+    ctx.scale(-1, 1);
+  }
+  ctx.drawImage(camera.image, (camera.width - sw) / 2, (camera.height - sh) / 2, sw, sh, r.x, r.y, r.w, r.h);
+  ctx.restore();
+  if (o.border) {
+    ctx.save();
+    roundRect(ctx, r, o.radius);
+    ctx.strokeStyle = "rgba(255,255,255,0.85)";
+    ctx.lineWidth = Math.max(1, o.short * 0.003);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+/**
+ * One output frame at time t: background, the picture (zoomed), the pointer and click rings, then the camera.
+ * `source` is the recording's frame at t (a <video>, or the export's decoded frame). `camera` is the camera's frame at
+ * t, or null when the recording has no camera. A look without `camera` gets `defaultCamera()` when a camera exists.
+ * Layouts: bubble (a circle or rounded square in a corner, drawn over everything, never zoomed), only (the camera
+ * fills the frame; the screen is not drawn), side (screen left, camera right), hidden (the camera is not drawn).
  */
 export function drawFrame(
   ctx: CanvasRenderingContext2D,
@@ -255,9 +359,12 @@ export function drawFrame(
   look: ScreenLook,
   path: [number, number, number][],
   clicks: ScreenEvents["clicks"],
+  camera: CameraImage | null = null,
 ) {
   const { width: outW, height: outH } = ctx.canvas;
   const short = Math.min(outW, outH);
+  const pad = look.padding * short;
+  const cam = camera ? (look.camera ?? defaultCamera()) : null;
   const bg = BACKGROUNDS.find((b) => b.id === look.background) ?? BACKGROUNDS[0];
   const grad = ctx.createLinearGradient(0, 0, outW, outH);
   grad.addColorStop(0, bg.stops[0]);
@@ -265,7 +372,12 @@ export function drawFrame(
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, outW, outH);
 
-  const { box, src } = layout(look, path, t, srcW, srcH, outW, outH);
+  if (camera && cam?.layout === "only") {
+    drawCamera(ctx, camera, { x: 0, y: 0, w: outW, h: outH }, { radius: 0, mirror: cam.mirror, short, shadow: false, border: false });
+    return;
+  }
+
+  const { box, src } = layout(look, path, t, srcW, srcH, outW, outH, cam);
   const radius = look.radius * short;
   if (look.shadow && look.padding > 0) {
     ctx.save();
@@ -328,4 +440,14 @@ export function drawFrame(
     ctx.globalAlpha = 1;
   }
   ctx.restore();
+
+  if (camera && cam && (cam.layout === "bubble" || cam.layout === "side")) {
+    if (cam.layout === "side") {
+      drawCamera(ctx, camera, sideRects(outW, outH, pad).camera, { radius, mirror: cam.mirror, short, shadow: true, border: true });
+    } else {
+      const r = bubbleRect(cam, outW, outH);
+      const round = cam.shape === "circle" ? r.w / 2 : r.w * 0.2;
+      drawCamera(ctx, camera, r, { radius: round, mirror: cam.mirror, short, shadow: true, border: true });
+    }
+  }
 }
