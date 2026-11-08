@@ -187,7 +187,7 @@ export function SetupDialog() {
           "max-sm:top-0 max-sm:h-dvh max-sm:max-h-none max-sm:w-screen max-sm:rounded-none max-sm:border-0 max-sm:pt-[env(safe-area-inset-top)]",
         )}
       >
-        <header className="shrink-0 px-6 pt-5 sm:px-8 sm:pt-6">
+        <header className="shrink-0 px-6 pt-5 sm:px-8">
           <div className="flex items-center gap-3">
             <ol className="flex flex-1 gap-1.5" aria-label={`Step ${at + 1} of ${steps.length}`}>
               {steps.map((s, i) => (
@@ -218,11 +218,12 @@ export function SetupDialog() {
               <X className="size-4" />
             </button>
           </div>
-          <DialogTitle className="mt-6 text-2xl font-semibold tracking-tight">{STEP[step].title}</DialogTitle>
+          {step === "how" && <p className="mt-5 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--tint-text)]">Welcome to Creator Toolset</p>}
+          <DialogTitle className={cn("text-2xl font-semibold tracking-tight", step === "how" ? "mt-1.5" : "mt-5")}>{STEP[step].title}</DialogTitle>
           <DialogDescription className="mt-1.5 text-sm">{STEP[step].hint}</DialogDescription>
         </header>
 
-        <div key={step} className="min-h-0 flex-1 overflow-y-auto px-6 pb-6 pt-6 sm:px-8 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-right-2 motion-safe:duration-200">
+        <div key={step} className="min-h-0 flex-1 overflow-y-auto px-6 pb-5 pt-5 sm:px-8 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-right-2 motion-safe:duration-200">
           {step === "how" && <HowPicker value={talk} onPick={pickTalk} />}
           {step === "make" && (
             <div className="grid gap-2 sm:grid-cols-2" role="group" aria-label="What will you make?">
