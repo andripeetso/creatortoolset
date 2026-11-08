@@ -210,8 +210,8 @@ const ASSISTANT_DEFS = [
   },
   {
     name: "use_file",
-    description: "Send a video or recording the user dropped in the chat (its file id) to a tool: notes = Video Notes (transcript, summary, takeaways, action items, chapters; follow it with notes_get), review = a Review video (then review_share for a link), captions = a Caption Studio project. name = a title for it (default the file's name). The same file can go to several.",
-    inputSchema: { type: "object", properties: { file: str, to: { type: "string", enum: [...FILE_USES] }, name: str }, required: ["file", "to"] },
+    description: "Send a video or recording to a tool: file = the id of one dropped in the chat, or path = a file on this computer (when the server runs on it; nothing is uploaded). to: notes = Video Notes (transcript, summary, takeaways, action items, chapters; follow it with notes_get), review = a Review video (then review_share for a link), captions = a Caption Studio project. name = a title for it (default the file's name). The same file can go to several.",
+    inputSchema: { type: "object", properties: { file: str, path: str, to: { type: "string", enum: [...FILE_USES] }, name: str }, required: ["to"] },
   },
   {
     name: "notes_get",
@@ -395,7 +395,19 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
       const cm = await json(`/api/review/assets/${id}/comments/${encodeURIComponent(String(a.comment_id))}`, "PATCH", { resolved: a.resolved !== false });
       return { id: cm.id, resolved: !!cm.resolved, text: cm.text };
     },
-    use_file: async (a) => json(`/api/assistant/files/${encodeURIComponent(String(a.file))}/use`, "POST", pick(a, ["to", "name"])),
+    use_file: async (a) => {
+      // what the tool still needs comes first: the assistant asks for it (ask_secret, a Settings page), then tries again
+      const tool = a.to === "review" ? "review" : a.to === "captions" ? "captions" : "notes";
+      const { missing } = readiness(tool, (await json<SetupView>("/api/setup")).have);
+      if (missing.length)
+        return {
+          not_yet: `${TOOL_NAMES[tool]} needs these first; then call use_file again.`,
+          needs: missing.map((n) => ({ what: n.what, ...(n.form === "keys" ? { ask_secret: n.anyOf } : { open: n.form === "ai" ? "/settings/providers" : "/settings/setup" }) })),
+        };
+      if (!a.file && !a.path) throw new ToolError("Give the dropped file's id, or a path on this computer.");
+      const file = a.path ? (await json(`/api/assistant/files/path`, "POST", { path: a.path })).id : a.file;
+      return json(`/api/assistant/files/${encodeURIComponent(String(file))}/use`, "POST", pick(a, ["to", "name"]));
+    },
     notes_get: async (a) => {
       const path = `/api/clips/${encodeURIComponent(String(a.id))}`;
       // GET /api/clips/:id also answers a shared note's link: only this account's own here
@@ -425,7 +437,10 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
       const share = { enabled: a.on !== false, ...(typeof a.download === "boolean" ? { download: a.download } : {}) };
       const r = await json(`/api/review/assets/${id}`, "PATCH", { share });
       const s = r.share as { token: string; enabled: boolean; download: boolean };
-      return s.enabled ? { name: r.name, share_link: `${origin}/r/${s.token}`, download: s.download } : { name: r.name, shared: false };
+      if (!s.enabled) return { name: r.name, shared: false };
+      // a server on this Mac with no address on the internet: the link opens here only
+      const here = process.env.CT_LOCAL === "1" && !process.env.PUBLIC_ORIGIN;
+      return { name: r.name, share_link: `${origin}/r/${s.token}`, download: s.download, ...(here ? { note: "This link opens only on this computer and its network. For other people the server needs an address on the internet (PUBLIC_ORIGIN: the name of a tunnel that points at it)." } : {}) };
     },
     instagram_refresh: async (a) => {
       const id = await accountOf(String(a.account));

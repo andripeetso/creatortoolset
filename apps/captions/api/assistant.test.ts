@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { copyFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -466,7 +466,32 @@ describe("a video dropped in the chat", () => {
     await app.request(`/api/devices/relay/${job.id}/done`, { method: "POST", ...json({ text: "It's in Review." }, { authorization: `Bearer ${mac.token}` }) });
     // another account's job can't reach ana's file
     const other = mintJobToken("nico", "turn-nico");
-    expect((await toolOf(other, "use_file", { file: file.id, to: "notes" })).text).toMatch(/isn't here/);
+    expect((await toolOf(other, "use_file", { file: file.id, to: "review" })).text).toMatch(/isn't here/);
     revokeJobToken(other);
+  });
+});
+
+describe("a file on this computer, by its path", () => {
+  it("only when the server runs here; footage only; a tool that isn't set up says what it needs first", async () => {
+    const token = mintJobToken("ana", "turn-path");
+    const dir = mkdtempSync(path.join(tmpdir(), "footage-"));
+    const clip = path.join(dir, "Call recording.mov");
+    writeFileSync(clip, Buffer.alloc(2048, 2));
+    writeFileSync(path.join(dir, "notes.txt"), "hi");
+    delete process.env.CT_LOCAL;
+    expect((await toolOf(token, "use_file", { path: clip, to: "review" })).text).toMatch(/isn't on your computer/);
+    process.env.CT_LOCAL = "1";
+    expect((await toolOf(token, "use_file", { path: path.join(dir, "notes.txt"), to: "review" })).text).toMatch(/isn't a video/);
+    expect((await toolOf(token, "use_file", { path: "Movies/x.mov", to: "review" })).text).toMatch(/full path/);
+    const made = JSON.parse((await toolOf(token, "use_file", { path: clip, to: "review" })).text) as { href: string; name: string };
+    expect(made).toMatchObject({ name: "Call recording.mov" });
+    expect(made.href).toMatch(/^\/review\//);
+    // Video Notes transcribes on the user's own Deepgram key: without it, the answer is what to set up
+    const nico = mintJobToken("nico", "turn-nico-path");
+    const notes = JSON.parse((await toolOf(nico, "use_file", { path: clip, to: "notes" })).text) as { needs?: Array<{ ask_secret?: string[] }> };
+    revokeJobToken(nico);
+    expect(notes.needs?.some((n) => n.ask_secret?.includes("DEEPGRAM_API_KEY"))).toBe(true);
+    delete process.env.CT_LOCAL;
+    revokeJobToken(token);
   });
 });

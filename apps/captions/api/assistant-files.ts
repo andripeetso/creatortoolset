@@ -89,6 +89,40 @@ assistantFilesApp.post("/:id/complete", async (c) => {
 });
 
 const TOOL_OF = { notes: "notes", review: "review", captions: "captions" } as const;
+const MIME: Record<string, string> = {
+  mp4: "video/mp4", m4v: "video/mp4", mov: "video/quicktime", webm: "video/webm", mkv: "video/x-matroska", avi: "video/x-msvideo",
+  mp3: "audio/mpeg", m4a: "audio/mp4", wav: "audio/wav", aac: "audio/aac", ogg: "audio/ogg",
+};
+
+/**
+ * A file on this computer by its path, taken like a dropped one: only when the server runs on the user's own Mac
+ * (CT_LOCAL=1), so the assistant can point at footage where it lies and nothing is uploaded. A hard link on the same
+ * disk; a file on another drive is copied once.
+ */
+export async function fileFromPath(user: string, p: string): Promise<AssistantFile> {
+  if (process.env.CT_LOCAL !== "1") throw new Error("This server isn't on your computer: drop the file in the chat so it uploads.");
+  if (!path.isAbsolute(p)) throw new Error("Give the file's full path, such as /Users/you/Movies/clip.mov.");
+  const st = await stat(p).catch(() => null);
+  if (!st?.isFile() || !st.size) throw new Error(`There's no file at ${p}.`);
+  const name = path.basename(p);
+  // ponytail: footage by its extension only; probe the streams if something else ever passes for a video
+  if (!isMedia("", name)) throw new Error(`${name} isn't a video or a recording.`);
+  const id = randomUUID();
+  await linkOrCopy(p, fileOf(user, id));
+  const meta: AssistantFile = { id, name, mime: MIME[path.extname(name).slice(1).toLowerCase()] ?? "video/mp4", size: st.size };
+  await writeFile(path.join(dirOf(user, id), "meta.json"), JSON.stringify({ ...meta, at: Date.now() }), { mode: 0o600 });
+  return meta;
+}
+
+assistantFilesApp.post("/path", async (c) => {
+  const b = (await c.req.json().catch(() => null)) as { path?: unknown } | null;
+  try {
+    return c.json(await fileFromPath(c.get("user").username, typeof b?.path === "string" ? b.path : ""));
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : String(e) }, 409);
+  }
+});
+
 const NAMES: Record<AssistantFileUse, string> = { notes: "Video Notes", review: "Review", captions: "Caption Studio" };
 
 /** Hand a dropped file to a tool; answers what it became and its page. */
