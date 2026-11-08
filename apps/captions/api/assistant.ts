@@ -11,7 +11,8 @@ import { slug } from "./lib/workshop/folder";
 import { myKeys } from "./my-keys";
 import { MY_KEYS, type MyKeyEnv } from "../contracts/service-keys";
 import { TOOL_NAMES } from "../contracts/tools";
-import type { AssistantApproval, AssistantContext, AssistantImage, AssistantMedia, AssistantMessage, AssistantPaste, AssistantProvider, AssistantView } from "../contracts/assistant";
+import { assistantFilesApp, readFileMeta } from "./assistant-files";
+import type { AssistantApproval, AssistantContext, AssistantFile, AssistantImage, AssistantMedia, AssistantMessage, AssistantPaste, AssistantProvider, AssistantView } from "../contracts/assistant";
 
 /**
  * The in-app assistant (the dock, src/components/assistant): one conversation per account in
@@ -23,6 +24,7 @@ import type { AssistantApproval, AssistantContext, AssistantImage, AssistantMedi
  */
 
 export const assistantApp = new Hono<{ Variables: AuthVars }>();
+assistantApp.route("/files", assistantFilesApp);
 
 /** The job whose provider answers the dock: its own pick, else the default (contracts/providers.ts). */
 const JOB = "notes";
@@ -41,6 +43,7 @@ Your reply is shown in a small chat dock. You act in the app only through its to
 - automations_list, automations_create, automations_update, automations_delete and automations_run: scheduled prompts. Each runs on the user's AI at a set time (daily or weekly at HH:MM in a timezone, or every N hours) and reports to the inbox and its last result.
 - navigate opens a page of the app for the user, given as a relative path such as /workshop.
 - show_video plays a Review video (or an AI Editor draft's preview) inside the chat, with a link to its page.
+- use_file sends a video or recording the user dropped in the chat to Video Notes (transcript, summary, takeaways, action items, chapters), Review (a video page with comments and a share link) or Caption Studio (captions on the video). notes_get follows a Video Note until it's ready and reads what it found.
 - ask_secret asks the user for one API key. The app shows a secure box in the chat; the key goes straight to the app and never to you. Never ask the user to paste a key, token or password into the chat, and never repeat one back.
 
 The keys the app takes, and what each one is for:
@@ -87,6 +90,7 @@ const MAX_IMAGES = 6;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_PASTES = 5;
 const MAX_PASTED = 200_000;
+const MAX_FILES = 5;
 const CONTEXT_CAPS = { path: 300, title: 200, selection: 4000, visible: 2000 } as const;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -122,6 +126,9 @@ interface TurnInput {
   text: string;
   images: Array<AssistantImage & { bytes: Buffer }>;
   pasted: AssistantPaste[];
+  /** Dropped videos and recordings: ids from the body, resolved to this account's files by POST /turn. */
+  fileIds: string[];
+  files: AssistantFile[];
   context?: AssistantContext;
 }
 
@@ -157,7 +164,9 @@ function parseTurn(raw: unknown): TurnInput {
     if (total > MAX_PASTED) throw new Error(`The pasted text is too long: up to ${MAX_PASTED.toLocaleString("en-US")} characters in all.`);
     return { name: nameOf(p.name, `Pasted text ${i + 1}`), text: p.text };
   });
-  if (!text && !images.length && !pasted.length) throw new Error("Write a message, or add a picture or pasted text.");
+  if (b.files !== undefined && (!Array.isArray(b.files) || b.files.length > MAX_FILES || b.files.some((x) => typeof x !== "string"))) throw new Error(`Send up to ${MAX_FILES} videos at a time.`);
+  const fileIds = (b.files ?? []) as string[];
+  if (!text && !images.length && !pasted.length && !fileIds.length) throw new Error("Write a message, or add a picture or pasted text.");
   const c = (b.context && typeof b.context === "object" ? b.context : null) as Record<string, unknown> | null;
   const where = c && capped(c.path, CONTEXT_CAPS.path);
   const context: AssistantContext | undefined = c && where
@@ -168,7 +177,7 @@ function parseTurn(raw: unknown): TurnInput {
         visible: capped(c.visible, CONTEXT_CAPS.visible),
       }
     : undefined;
-  return { text, images, pasted, context };
+  return { text, images, pasted, fileIds, files: [], context };
 }
 
 /** Where the newest message's pictures and pastes sit in the folder the Mac's Claude reads. */
@@ -383,13 +392,14 @@ function view(username: string, admin: boolean): AssistantView {
 
 /** An earlier message's attachments, by count and name only: their files went with that turn. */
 const marks = (m: AssistantMessage) =>
-  [m.images?.length ? `[${m.images.length === 1 ? "1 picture" : `${m.images.length} pictures`}]` : "", ...(m.pasted ?? []).map((n) => `[pasted: ${n}]`)].filter(Boolean).join(" ");
+  [m.images?.length ? `[${m.images.length === 1 ? "1 picture" : `${m.images.length} pictures`}]` : "", ...(m.pasted ?? []).map((n) => `[pasted: ${n}]`), ...(m.files ?? []).map((f) => `[video: ${f.name}, file id ${f.id}]`)].filter(Boolean).join(" ");
 
 /** What came with the newest message, as facts: its files in the folder, the page it was sent from, what was highlighted. */
 function newestFacts(input: TurnInput): string[] {
   const out: string[] = [];
   const n = input.images.length;
   if (n) out.push(`The user attached ${n === 1 ? "a picture" : `${n} pictures`}: ${input.images.map((im, i) => attachedName(im.name, i, IMAGE_EXT[im.type])).join(", ")} (the Read tool shows a picture).`);
+  for (const f of input.files) out.push(`The user attached ${f.mime.startsWith("audio/") ? "a recording" : "a video"}: "${f.name}" (${(f.size / 1048576).toFixed(f.size < 10485760 ? 1 : 0)} MB), file id ${f.id}.`);
   for (const [i, p] of input.pasted.entries()) out.push(`The user pasted "${p.name}" (${p.text.length.toLocaleString("en-US")} characters), in ${pastedName(p.name, i)}.`);
   const c = input.context;
   if (c) {
@@ -511,6 +521,11 @@ assistantApp.post("/turn", async (c) => {
   } catch (e) {
     return c.json({ error: (e as Error).message }, 400);
   }
+  for (const id of input.fileIds) {
+    const f = await readFileMeta(u.username, id);
+    if (!f) return c.json({ error: "A video didn't finish uploading: add it again" }, 400);
+    input.files.push(f);
+  }
   const conv = load(u.username);
   if (conv.messages.at(-1)?.status === "thinking") return c.json({ error: "Still answering the last message: wait for it" }, 409);
   // Before an AI is connected: no model call, no job, no paid call of any kind (the server's keys included).
@@ -527,6 +542,7 @@ assistantApp.post("/turn", async (c) => {
     at: now,
     ...(images.length ? { images } : {}),
     ...(input.pasted.length ? { pasted: input.pasted.map((p) => p.name) } : {}),
+    ...(input.files.length ? { files: input.files.map((f) => ({ id: f.id, name: f.name })) } : {}),
     ...(input.context?.selection ? { quote: input.context.selection } : {}),
   });
   const reply: AssistantMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, status: "thinking" };

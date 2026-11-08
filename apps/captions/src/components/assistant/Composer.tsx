@@ -1,10 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
-import { ArrowUp, Camera, Check, FileText, Loader2, Mic, Paperclip, Quote, Square, X } from "lucide-react";
+import { ArrowUp, Camera, Check, FileText, Film, Loader2, Mic, Paperclip, Quote, Square, X } from "lucide-react";
 import { BARS, useVoiceInput } from "@/lib/voice-input";
 import { attachScreen } from "@/lib/assistant";
 import { canSnapshot } from "@/lib/page-context";
-import { MAX_PICTURES, draftEmpty, lineCount, type Draft } from "./draft";
+import { MAX_PICTURES, draftEmpty, filesPending, lineCount, type Draft } from "./draft";
 import { cn } from "@/lib/utils";
 
 const MAX_ROWS_PX = 160;
@@ -67,8 +67,9 @@ export function Composer({
   }, [autoFocus]);
 
   const empty = draftEmpty(draft);
+  const uploading = filesPending(draft);
   const send = () => {
-    if (empty) return;
+    if (empty || uploading) return;
     onSend({ ...draft, text: text.trim() });
     setOpenPaste(null);
   };
@@ -117,8 +118,24 @@ export function Composer({
         </div>
       )}
 
-      {(draft.images.length > 0 || draft.pasted.length > 0) && (
+      {(draft.images.length > 0 || draft.pasted.length > 0 || draft.files.length > 0) && (
         <div className="flex flex-wrap gap-2 px-1 pt-1.5">
+          {draft.files.map((f) => (
+            <div key={f.key} className="group/chip relative motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95" title={f.error ?? f.name}>
+              <div className={cn("flex h-14 max-w-52 items-center gap-1.5 rounded-lg border bg-muted px-2.5 text-[11px]", f.error && "border-destructive/60")}>
+                {f.id || f.error ? <Film className="size-4 shrink-0 text-[var(--tint)]" aria-hidden /> : <Loader2 className="size-4 shrink-0 animate-spin text-[var(--tint)]" aria-hidden />}
+                <span className="min-w-0">
+                  <span className="block truncate font-medium">{f.name}</span>
+                  <span className={cn("block tabular-nums", f.error ? "text-destructive" : "text-muted-foreground")}>
+                    {f.error ? "Didn't upload: remove it and add it again" : f.id ? "Ready" : `Uploading · ${f.pct}%`}
+                  </span>
+                </span>
+              </div>
+              <button type="button" onClick={() => setDraft((d) => ({ ...d, files: d.files.filter((x) => x.key !== f.key) }))} className={chipX} aria-label={`Remove ${f.name}`}>
+                <X className="size-3" />
+              </button>
+            </div>
+          ))}
           {draft.images.map((im, i) => (
             <div key={i} className="group/chip relative motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95" title={im.name}>
               <button type="button" onClick={() => setBigPicture(`data:${im.type};base64,${im.data}`)} aria-label={`Show ${im.name}`}>
@@ -224,7 +241,7 @@ export function Composer({
             <input
               ref={pick}
               type="file"
-              accept="image/png,image/jpeg,image/webp,image/gif"
+              accept="image/png,image/jpeg,image/webp,image/gif,video/*,audio/*"
               multiple
               hidden
               onChange={(e) => {
@@ -237,8 +254,8 @@ export function Composer({
               onClick={() => pick.current?.click()}
               disabled={writing || draft.images.length >= MAX_PICTURES}
               className={cn(iconBtn, "text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40")}
-              aria-label="Add pictures"
-              title="Add pictures (or drop or paste them here)"
+              aria-label="Add pictures or videos"
+              title="Add pictures, videos or recordings (or drop them here)"
             >
               <Paperclip className="size-4" />
             </button>
@@ -278,10 +295,10 @@ export function Composer({
               <button
                 type="button"
                 onClick={send}
-                disabled={empty || writing}
-                className={cn(iconBtn, !empty ? "scale-100 bg-[var(--tint)] text-white hover:brightness-110" : "scale-90 bg-muted text-muted-foreground")}
+                disabled={empty || writing || uploading}
+                className={cn(iconBtn, !empty && !uploading ? "scale-100 bg-[var(--tint)] text-white hover:brightness-110" : "scale-90 bg-muted text-muted-foreground")}
                 aria-label={waiting ? "Queue" : "Send"}
-                title={waiting ? "Queue: sends when the reply is done (Enter)" : "Send (Enter)"}
+                title={uploading ? "Waiting for the video to upload" : waiting ? "Queue: sends when the reply is done (Enter)" : "Send (Enter)"}
               >
                 <ArrowUp className="size-4" />
               </button>

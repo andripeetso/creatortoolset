@@ -29,6 +29,7 @@ import { Choice } from "@/components/setup/Choice";
 import { ConnectStep, HowPicker } from "@/components/setup/OwnAi";
 import { PlanQuestion, ToolNeeds, ToolsPicker } from "@/components/setup/ToolNeeds";
 import { canUse, useMe } from "@/lib/auth";
+import { openAssistant } from "@/lib/assistant";
 import { MAKE_NAMES, setupFinished, setupSteps, toolsFor, useSetup, useSetupLive, type SetupStep } from "@/lib/setup";
 import { createProject } from "@/lib/workshop";
 import { useWorkspace } from "@/lib/workspace";
@@ -40,7 +41,7 @@ const STEP: Record<SetupStep, { title: string; hint: string }> = {
   make: { title: "What will you make?", hint: "Pick everything that fits. It switches on the right tools for you." },
   tools: { title: "Your tools", hint: "Ticked from what you make. Each tool asks for what it needs the first time you open it." },
   project: { title: "Your first project", hint: "One project per brand or channel: its name, your handle, and who it's for." },
-  ai: { title: "Connect your AI", hint: "The AI runs on your own Claude Code or Codex, on this Mac and your own plan." },
+  ai: { title: "Connect your AI", hint: "The AI runs on your own Claude Code or Codex, on this Mac and your own plan. The assistant needs Claude Code." },
   connect: { title: "Add Creator Toolset to your AI", hint: "One click adds it to the Claude Code or Codex on this Mac, with a key only for you." },
   left: { title: "Almost done", hint: "All optional: set up what you want now. Each tool asks again when you open it, and Settings → Setup has it all." },
 };
@@ -149,6 +150,8 @@ export function SetupDialog() {
     void save({ done: true });
     setTicked(null);
     setParams((p) => (p.delete("setup"), p), { replace: true });
+    // working in the app: setup ends on the assistant, where a dropped video and one sentence get it done
+    if (talk !== "chat") openAssistant();
   };
   const next = async () => {
     if (step === "make") {

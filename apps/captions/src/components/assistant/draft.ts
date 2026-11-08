@@ -8,10 +8,17 @@ export const MAX_PICTURES = 6;
 const MAX_SIDE = 2000;
 const MAX_PNG_BYTES = 4 * 1024 * 1024;
 
-/** What's in the box: the words, pictures and long pastes (sent as files beside the words). */
-export type Draft = { text: string; images: AssistantImage[]; pasted: AssistantPaste[] };
-export const EMPTY_DRAFT: Draft = { text: "", images: [], pasted: [] };
-export const draftEmpty = (d: Draft) => !d.text.trim() && !d.images.length && !d.pasted.length;
+/** A video or recording in the box: it uploads as soon as it's added (id once it's in, api/assistant-files.ts). */
+export type DraftFile = { key: string; name: string; size: number; pct: number; id?: string; error?: string };
+/** What's in the box: the words, pictures, long pastes (sent as files beside the words) and videos. */
+export type Draft = { text: string; images: AssistantImage[]; pasted: AssistantPaste[]; files: DraftFile[] };
+export const EMPTY_DRAFT: Draft = { text: "", images: [], pasted: [], files: [] };
+export const draftEmpty = (d: Draft) => !d.text.trim() && !d.images.length && !d.pasted.length && !d.files.length;
+/** Still uploading, or one failed: the message can't go yet. */
+export const filesPending = (d: Draft) => d.files.some((f) => !f.id);
+
+/** A video or a recording's sound (by type, or by name when the type is missing). */
+export const isMediaFile = (f: File) => /^(video|audio)\//.test(f.type) || /\.(mp4|mov|m4v|webm|mkv|avi|mp3|m4a|wav|aac|ogg)$/i.test(f.name);
 
 /** A screenshot dragged from the corner preview can arrive without a type: the name says it's a picture. */
 export const isPicture = (f: File) => f.type.startsWith("image/") || /\.(png|jpe?g|gif|webp)$/i.test(f.name);

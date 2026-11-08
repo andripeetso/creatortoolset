@@ -426,3 +426,47 @@ describe("approvals: what the reply asks to do on the Mac", () => {
     expect((await viewOf(cookie)).messages.at(-1)!.approvals!.map((a) => a.status)).toEqual(["expired", "expired"]);
   });
 });
+
+describe("a video dropped in the chat", () => {
+  const upload = async (cookie: string, name: string, mime: string, bytes: Buffer) => {
+    const init = await app.request("/api/assistant/files", { method: "POST", ...json({ name, mime, size: bytes.length }, { cookie }) });
+    if (init.status !== 200) return { status: init.status } as { status: number; id?: string };
+    const { id, partSize } = (await init.json()) as { id: string; partSize: number };
+    const part = await app.request(`/api/assistant/files/${id}/parts/1`, {
+      method: "POST",
+      headers: { cookie, "upload-length": String(bytes.length), "upload-part-size": String(partSize), "content-length": String(bytes.length), "content-type": "application/octet-stream" },
+      body: bytes,
+    });
+    expect(part.status).toBe(200);
+    const done = await app.request(`/api/assistant/files/${id}/complete`, { method: "POST", headers: { cookie } });
+    return { status: done.status, ...((await done.json()) as { id: string }) };
+  };
+
+  it("uploads, goes with the message as a fact, and use_file hands it to Review; nobody else can use it", async () => {
+    const cookie = await cookieOf("ana");
+    expect((await upload(cookie, "notes.txt", "text/plain", Buffer.from("hi"))).status).toBe(400);
+    const file = await upload(cookie, "My Loom.mp4", "video/mp4", Buffer.alloc(4096, 1));
+    expect(file.status).toBe(200);
+    // a made-up id never goes with a message
+    expect((await app.request("/api/assistant/turn", { method: "POST", ...json({ text: "x", files: ["00000000-0000-4000-8000-000000000000"] }, { cookie }) })).status).toBe(400);
+    expect((await app.request("/api/assistant/turn", { method: "POST", ...json({ text: "Put this up", files: [file.id] }, { cookie }) })).status).toBe(202);
+    const job = (await (await app.request("/api/devices/relay/wait", { method: "POST", ...json({}, { authorization: `Bearer ${mac.token}` }) })).json()) as { id: string; mcp: { token: string }; user: string };
+    expect(job.user).toContain(`"My Loom.mp4"`);
+    expect(job.user).toContain(`file id ${file.id}`);
+    const used = await toolOf(job.mcp.token, "use_file", { file: file.id, to: "review", name: "Loom walkthrough" });
+    expect(used.error).toBe(false);
+    const made = JSON.parse(used.text) as { href: string; id: string };
+    expect(made.href).toBe(`/review/${made.id}`);
+    expect(existsSync(path.join(process.env.DATA_DIR!, "review", made.id, "v1", "source"))).toBe(true);
+    expect((await toolOf(job.mcp.token, "use_file", { file: "nope", to: "review" })).error).toBe(true);
+    // the reply shows a card for it
+    const view = (await (await app.request("/api/assistant", { headers: { cookie } })).json()) as { messages: Array<{ files?: unknown[]; work?: Array<{ kind: string; href: string }> }> };
+    expect(view.messages.at(-2)?.files).toEqual([{ id: file.id, name: "My Loom.mp4" }]);
+    expect(view.messages.at(-1)?.work?.[0]).toMatchObject({ kind: "review", href: made.href });
+    await app.request(`/api/devices/relay/${job.id}/done`, { method: "POST", ...json({ text: "It's in Review." }, { authorization: `Bearer ${mac.token}` }) });
+    // another account's job can't reach ana's file
+    const other = mintJobToken("nico", "turn-nico");
+    expect((await toolOf(other, "use_file", { file: file.id, to: "notes" })).text).toMatch(/isn't here/);
+    revokeJobToken(other);
+  });
+});

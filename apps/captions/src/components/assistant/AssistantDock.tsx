@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
-import { ArrowUpRight, Check, Copy, CornerDownLeft, FileText, History, KeyRound, MessageCircle, PanelRight, PanelRightClose, Pencil, RotateCcw, SquarePen, Trash2, VolumeX, X } from "lucide-react";
+import { ArrowUpRight, Check, Copy, CornerDownLeft, FileText, Film, History, KeyRound, MessageCircle, PanelRight, PanelRightClose, Pencil, RotateCcw, SquarePen, Trash2, VolumeX, X } from "lucide-react";
 import type { AssistantImage, AssistantMessage, AssistantView } from "@contracts/assistant";
 import { ReplyText } from "@/components/ReplyText";
 import { Button } from "@/components/ui/button";
@@ -26,7 +26,8 @@ import { pageContext } from "@/lib/page-context";
 import { speak, stopSpeaking, unlockAudio, useReadAloud } from "@/lib/read-aloud";
 import { cn } from "@/lib/utils";
 import { Composer, PictureOverlay } from "./Composer";
-import { EMPTY_DRAFT, MAX_PICTURES, isLongPaste, isPicture, toPicture, type Draft } from "./draft";
+import { EMPTY_DRAFT, MAX_PICTURES, isLongPaste, isMediaFile, isPicture, toPicture, type Draft } from "./draft";
+import { chunkedUpload } from "@/lib/clips";
 import { useThrow } from "./useThrow";
 import { Elapsed, WorkCards } from "./WorkCards";
 import { VideoCards } from "./VideoCard";
@@ -40,7 +41,7 @@ const ORIGIN: Record<Corner, string> = { tl: "origin-top-left", tr: "origin-top-
 
 const QUEUE_KEY = "ct-assistant:queue";
 /** A message waiting its turn, with what goes with it (an older stored one is only { id, text }). */
-type Queued = { id: string; text: string; images?: AssistantImage[]; pasted?: Draft["pasted"]; quote?: string };
+type Queued = { id: string; text: string; images?: AssistantImage[]; pasted?: Draft["pasted"]; files?: Array<{ id: string; name: string }>; quote?: string };
 const storedQueue = (): Queued[] => {
   try {
     return JSON.parse(localStorage.getItem(QUEUE_KEY) ?? "[]") as Queued[];
@@ -170,6 +171,7 @@ export function AssistantDock() {
       text: it.text,
       ...(it.images?.length ? { images: it.images } : {}),
       ...(it.pasted?.length ? { pasted: it.pasted } : {}),
+      ...(it.files?.length ? { files: it.files.map((f) => f.id) } : {}),
       context: { ...pageContext(), ...(it.quote ? { selection: it.quote } : {}) },
     });
     setBusy(false);
@@ -214,7 +216,17 @@ export function AssistantDock() {
   const addFiles = useCallback(
     async (files: File[]) => {
       const pics = files.filter(isPicture);
-      if (pics.length < files.length) setError("Only pictures can go with a message: paste text into the box");
+      const media = files.filter((f) => !isPicture(f) && isMediaFile(f));
+      if (pics.length + media.length < files.length) setError("Pictures, videos and recordings can go with a message: paste text into the box");
+      // a video uploads at once; the message waits for it (Send is off until it's in)
+      for (const f of media) {
+        const key = `${Date.now()}-${f.name}-${f.size}`;
+        const patch = (p: Partial<Draft["files"][number]>) => setDraft((d) => ({ ...d, files: d.files.map((x) => (x.key === key ? { ...x, ...p } : x)) }));
+        setDraft((d) => ({ ...d, files: [...d.files, { key, name: f.name || "Recording", size: f.size, pct: 0 }] }));
+        chunkedUpload<{ id: string }>("/api/assistant/files", "/api/assistant/files", f, { name: f.name || "Recording", mime: f.type }, (pct) => patch({ pct }))
+          .then((r) => patch({ id: r.id, pct: 100 }))
+          .catch((e) => patch({ error: e instanceof Error ? e.message : String(e) }));
+      }
       if (!pics.length) return;
       try {
         addPictures(await Promise.all(pics.map(toPicture)));
@@ -274,12 +286,13 @@ export function AssistantDock() {
       text: cur.text.trim() ? `${cur.text}\n\n${it.text}` : it.text,
       images: [...cur.images, ...(it.images ?? [])].slice(0, MAX_PICTURES),
       pasted: [...cur.pasted, ...(it.pasted ?? [])],
+      files: [...cur.files, ...(it.files ?? []).map((f) => ({ key: f.id, name: f.name, size: 0, pct: 100, id: f.id }))],
     }));
     if (it.quote) setQuote(it.quote);
   };
   // the pending highlighted text goes with this message and leaves the box
-  const submit = (d: Draft) => {
-    const it: Queued = { id: `${Date.now()}-${queue.length}`, ...d, ...(quote ? { quote } : {}) };
+  const submit = ({ files, ...d }: Draft) => {
+    const it: Queued = { id: `${Date.now()}-${queue.length}`, ...d, ...(files.length ? { files: files.map((f) => ({ id: f.id!, name: f.name })) } : {}), ...(quote ? { quote } : {}) };
     setQuote(null);
     if (thinking || busy || queue.length) setQueue((q) => [...q, it]);
     // refused or failed: it comes back to the box rather than being lost
@@ -517,6 +530,10 @@ export function AssistantDock() {
 
         {empty && !showPast && (
           <div className="flex h-full flex-col justify-end gap-2 pb-1">
+            <p className="mb-1 flex items-start gap-2 text-muted-foreground motion-safe:animate-in motion-safe:fade-in">
+              <Film className="mt-0.5 size-4 shrink-0 text-[var(--tint)]" aria-hidden />
+              Drop a video or recording here and say what you want: caption it, sum it up, put it up for review.
+            </p>
             {suggestionsFor(pathname).map((s, i) => (
               <button
                 key={`${pathname}-${s}`}
@@ -639,7 +656,7 @@ export function AssistantDock() {
 
 /** "2 pictures, Pasted text": what a queued message carries besides its words. */
 const attachmentsLabel = (it: Queued) =>
-  [it.images?.length ? `${it.images.length} picture${it.images.length === 1 ? "" : "s"}` : "", ...(it.pasted ?? []).map((p) => p.name)].filter(Boolean).join(", ");
+  [it.images?.length ? `${it.images.length} picture${it.images.length === 1 ? "" : "s"}` : "", ...(it.pasted ?? []).map((p) => p.name), ...(it.files ?? []).map((f) => f.name)].filter(Boolean).join(", ");
 
 function Message({ m, onRetry }: { m: AssistantMessage; onRetry?: () => void }) {
   const [big, setBig] = useState<string | null>(null);
@@ -653,12 +670,18 @@ function Message({ m, onRetry }: { m: AssistantMessage; onRetry?: () => void }) 
             «{m.quote}»
           </p>
         )}
-        {(!!m.images?.length || !!m.pasted?.length) && (
+        {(!!m.images?.length || !!m.pasted?.length || !!m.files?.length) && (
           <div className="flex flex-wrap justify-end gap-1.5">
             {m.images?.map((im) => (
               <button key={im.id} type="button" onClick={() => setBig(`/api/assistant/images/${encodeURIComponent(im.id)}`)} title={im.name} aria-label={`Show ${im.name}`} className="cursor-zoom-in">
                 <img src={`/api/assistant/images/${encodeURIComponent(im.id)}`} alt={im.name} loading="lazy" className="size-16 rounded-lg border bg-muted object-cover" />
               </button>
+            ))}
+            {m.files?.map((f) => (
+              <span key={f.id} className="flex h-8 max-w-full items-center gap-1.5 rounded-lg border bg-muted px-2 text-[11px]" title={f.name}>
+                <Film className="size-3.5 shrink-0 text-[var(--tint)]" aria-hidden />
+                <span className="truncate">{f.name}</span>
+              </span>
             ))}
             {m.pasted?.map((name, i) => (
               <span key={i} className="flex h-8 items-center gap-1.5 rounded-lg border bg-muted px-2 text-[11px]">

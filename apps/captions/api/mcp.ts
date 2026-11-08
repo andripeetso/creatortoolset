@@ -8,7 +8,7 @@ import { deviceName } from "./lib/devices";
 import { readConnectors } from "./lib/connectors/store";
 import { myKeys } from "./my-keys";
 import { askSecret, navigateTo, noteMedia, noteStep, noteWork } from "./assistant";
-import type { AssistantMedia, AssistantWork } from "../contracts/assistant";
+import { FILE_USES, type AssistantMedia, type AssistantWork } from "../contracts/assistant";
 import { SESSION_STATUSES } from "./lib/workshop/types";
 import { innerCall, jobTurn, type AuthVars } from "./auth";
 import type { SessionUser } from "./users";
@@ -39,7 +39,7 @@ function setupView(v: SetupView) {
 }
 
 /** The tools only the assistant's job token may call (the dock, assistant.ts). */
-const ASSISTANT_TOOLS = new Set(["setup_status", "save_setup", "ask_secret", "navigate", "show_video"]);
+const ASSISTANT_TOOLS = new Set(["setup_status", "save_setup", "ask_secret", "navigate", "show_video", "use_file", "notes_get"]);
 const isJob = (auth: Headers) => /^Bearer ctj_/.test(auth.get("authorization") ?? "");
 
 /** MCP clients give up on a tool call after about a minute: a reply still thinking hands back its id to wait on. */
@@ -207,6 +207,16 @@ const ASSISTANT_DEFS = [
     name: "show_video",
     description: "Play a video inside the chat, with a link to its page: a Review video (link: its link or id, as get_review takes; version: its number, default the newest ready one), or an AI Editor draft's preview (edit and draft, as editor_get lists them).",
     inputSchema: { type: "object", properties: { link: str, version: { type: "integer" }, edit: str, draft: str } },
+  },
+  {
+    name: "use_file",
+    description: "Send a video or recording the user dropped in the chat (its file id) to a tool: notes = Video Notes (transcript, summary, takeaways, action items, chapters; follow it with notes_get), review = a Review video (then review_share for a link), captions = a Caption Studio project. name = a title for it (default the file's name). The same file can go to several.",
+    inputSchema: { type: "object", properties: { file: str, to: { type: "string", enum: [...FILE_USES] }, name: str }, required: ["file", "to"] },
+  },
+  {
+    name: "notes_get",
+    description: "A Video Note (use_file to: notes gives its id): status (processing with its step, ready, error), title, summary, takeaways, action items, chapters and quotes once ready. Waits up to 50 s while it processes.",
+    inputSchema: { type: "object", properties: { id: str }, required: ["id"] },
   },
 ];
 
@@ -385,6 +395,26 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
       const cm = await json(`/api/review/assets/${id}/comments/${encodeURIComponent(String(a.comment_id))}`, "PATCH", { resolved: a.resolved !== false });
       return { id: cm.id, resolved: !!cm.resolved, text: cm.text };
     },
+    use_file: async (a) => json(`/api/assistant/files/${encodeURIComponent(String(a.file))}/use`, "POST", pick(a, ["to", "name"])),
+    notes_get: async (a) => {
+      const path = `/api/clips/${encodeURIComponent(String(a.id))}`;
+      // GET /api/clips/:id also answers a shared note's link: only this account's own here
+      const mine = (n: Args) => {
+        if (n.owner !== user.username && user.role !== "admin") throw new ToolError("Not found, or not this account's.");
+        return n;
+      };
+      let n = mine(await json(path));
+      for (let t = 0; n.status === "processing" && t < 25; t++) n = (await sleep(2000), mine(await json(path)));
+      const blocks = Object.fromEntries(((n.blocks as Args[] | undefined) ?? []).map((b) => [b.kind, b.text ?? ((b.items as Args[] | undefined) ?? []).map((x) => x.text)]));
+      return {
+        ...pick(n, ["id", "name", "status", "step", "error"]),
+        link: `${origin}/video-notes/${n.id}`,
+        ...(n.status === "processing" ? { note: "Still processing: call notes_get again." } : {}),
+        ...(n.status === "ready" && !n.hasTranscript ? { note: "No transcript: the file has no speech, or this account's cloud transcription is off (an admin switches it on)." } : {}),
+        ...blocks,
+        ...((n.chapters as Args[] | undefined)?.length ? { chapters: (n.chapters as Args[]).map((c) => `${clock(Number(c.t))} ${c.title}`) } : {}),
+      };
+    },
     review_set_approval: async (a) => {
       const id = ((await json(reviewPath(String(a.link), origin))).asset as Args).id;
       const r = await json(`/api/review/assets/${id}/approval`, "POST", { status: a.status });
@@ -521,6 +551,8 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
 const STEPS: Record<string, string> = {
   setup_status: "Checking what's set up",
   show_video: "Showing the video",
+  use_file: "Sending your file",
+  notes_get: "Reading the Video Note",
   save_setup: "Saving your setup",
   ask_secret: "Asking for a key",
   get_work_prefs: "Checking how you like to work",
@@ -595,6 +627,17 @@ export function workFor(name: string, a: Args, r: Args): { card: AssistantWork; 
         },
       };
     }
+    case "use_file": {
+      const kind = a.to === "review" ? "review" : a.to === "captions" ? "captions" : "notes";
+      const where = { notes: "Video Notes", review: "Review", captions: "Caption Studio" }[kind];
+      return r.href
+        ? { card: { id: r.id ? `${kind}:${r.id}` : `file:${a.file}:${kind}`, kind, title: String(r.name ?? where), href: String(r.href), status: kind === "notes" ? "running" : "done", detail: String(r.note ?? (kind === "notes" ? "Transcribing and summing it up" : `In ${where}`)) } }
+        : null;
+    }
+    case "notes_get":
+      return r.id
+        ? { card: { id: `notes:${r.id}`, kind: "notes", title: String(r.name ?? "Video Note"), href: `/video-notes/${r.id}`, status: r.status === "error" ? "failed" : r.status === "ready" ? "done" : "running", detail: String(r.error ?? (r.status === "ready" ? "Ready" : (r.step ?? "Processing"))) }, only: true }
+        : null;
     case "review_share":
       return typeof r.share_link === "string" ? { card: { id: `link:${r.share_link}`, kind: "link", title: String(r.name ?? "Share link"), href: r.share_link, status: "done", detail: "Share link: anyone with it can watch" } } : null;
     case "automations_create":

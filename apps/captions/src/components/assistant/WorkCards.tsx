@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
-import { CalendarClock, Check, Clapperboard, Link2, Loader2, PenLine, X, type LucideIcon } from "lucide-react";
+import { CalendarClock, Captions, Check, Clapperboard, Film, Link2, Loader2, NotebookText, PenLine, X, type LucideIcon } from "lucide-react";
 import type { AssistantWork } from "@contracts/assistant";
 import { cn } from "@/lib/utils";
 
-const ICONS: Record<AssistantWork["kind"], LucideIcon> = { workshop: PenLine, edit: Clapperboard, automation: CalendarClock, link: Link2 };
+const ICONS: Record<AssistantWork["kind"], LucideIcon> = { workshop: PenLine, edit: Clapperboard, review: Film, automation: CalendarClock, link: Link2, notes: NotebookText, captions: Captions };
 
 /** What the reply started or opened (a Workshop session, an edit, a link): a card each, the whole card opens it. */
 export function WorkCards({ work, className }: { work?: AssistantWork[]; className?: string }) {

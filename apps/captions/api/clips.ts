@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createReadStream, existsSync } from "node:fs";
-import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, link, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import type { AuthVars } from "./auth";
@@ -90,6 +90,16 @@ async function finishUpload(
   await persist(meta);
   enqueue(meta, user);
   return meta;
+}
+
+/** A Video Note on a file already on this server (one dropped in the assistant, api/assistant-files.ts): the same
+ *  file under a second name, then processed like an upload. */
+export async function notesFromFile(file: string, name: string, mime: string, user: SessionUser): Promise<{ id: string }> {
+  const id = randomUUID();
+  await mkdir(sesDir(id), { recursive: true });
+  await link(file, recordingPath(id)).catch(() => copyFile(file, recordingPath(id)));
+  await finishUpload(id, name.slice(0, 120), mime, user.username, user);
+  return { id };
 }
 
 type Status = "processing" | "ready" | "error";
@@ -334,7 +344,7 @@ function probe(file: string, args: string[]): Promise<string> {
   });
 }
 
-const probeDuration = async (f: string) =>
+export const probeDuration = async (f: string) =>
   Number(
     await probe(f, ["-show_entries", "format=duration", "-of", "csv=p=0"]),
   ) || 0;

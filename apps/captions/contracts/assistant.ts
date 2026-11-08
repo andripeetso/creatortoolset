@@ -27,6 +27,8 @@ export interface AssistantMessage {
   /** A user message's attachments as shown in the chat: pictures by name (served by GET /api/assistant/images/:id), pastes by name. */
   images?: Array<{ id: string; name: string }>;
   pasted?: string[];
+  /** Videos and recordings sent with a user message (api/assistant-files.ts), by name. */
+  files?: Array<{ id: string; name: string }>;
   /** The highlighted text a user message asked about. */
   quote?: string;
 }
@@ -38,7 +40,7 @@ export interface AssistantMessage {
  */
 export interface AssistantWork {
   id: string;
-  kind: "workshop" | "edit" | "automation" | "link";
+  kind: "workshop" | "edit" | "review" | "automation" | "link" | "notes" | "captions";
   title: string;
   href: string;
   status: "running" | "done" | "failed";
@@ -107,8 +109,22 @@ export interface AssistantTurnInput {
   text: string;
   images?: AssistantImage[];
   pasted?: AssistantPaste[];
+  /** Ids of videos or recordings uploaded first (POST /api/assistant/files, parts, complete). */
+  files?: string[];
   context?: AssistantContext;
 }
+
+/** A video or recording dropped in the chat, uploaded before the message goes (api/assistant-files.ts; kept 7 days). */
+export interface AssistantFile {
+  id: string;
+  name: string;
+  mime: string;
+  size: number;
+}
+
+/** Where the assistant's use_file can send a dropped file: Video Notes, Review or Caption Studio. */
+export const FILE_USES = ["notes", "review", "captions"] as const;
+export type AssistantFileUse = (typeof FILE_USES)[number];
 
 /** An earlier conversation, kept when a new one starts (Earlier chats in the dock). */
 export interface AssistantPast {
