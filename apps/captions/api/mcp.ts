@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { MY_KEYS } from "../contracts/service-keys";
 import { TOOLS as APP_TOOLS, TOOL_NAMES, readiness, type SetupView } from "../contracts/tools";
-import { CHECK, EDITORS, TALK } from "../contracts/work-prefs";
+import { CHECK, EDITORS, MAKES, TALK } from "../contracts/work-prefs";
 import { EDIT_STEPS } from "../contracts/editor";
 import { routeFor } from "./lib/providers";
 import { deviceName } from "./lib/devices";
@@ -174,11 +174,11 @@ export const TOOLS = [
   },
   { name: "automations_delete", description: "Delete an automation (id) for good.", inputSchema: { type: "object", properties: { id: str }, required: ["id"] } },
   { name: "automations_run", description: "Run an automation (id) now, as its schedule would. It runs in the background: its result lands in automations_list (last result) and the user's inbox.", inputSchema: { type: "object", properties: { id: str }, required: ["id"] } },
-  { name: "get_work_prefs", description: "How the user wants to work: talk (app | chat | both), check (app | editor | both) and their editor.", inputSchema: { type: "object", properties: {} } },
+  { name: "get_work_prefs", description: "How the user wants to work: talk (app | chat | both), check (app | editor | both), their editor and what they make.", inputSchema: { type: "object", properties: {} } },
   {
     name: "set_work_prefs",
-    description: "Change how the user wants to work. talk = where they talk to the AI (app, chat = their own AI chat, both); check = where they check the work (app, editor, both); editor = which video editor (or null).",
-    inputSchema: { type: "object", properties: { talk: { type: "string", enum: [...TALK] }, check: { type: "string", enum: [...CHECK] }, editor: { type: ["string", "null"], enum: [...EDITORS, null] } } },
+    description: "Change how the user wants to work. talk = where they talk to the AI (app, chat = their own AI chat, both); check = where they check the work (app, editor, both); editor = which video editor (or null); makes = what they make.",
+    inputSchema: { type: "object", properties: { talk: { type: "string", enum: [...TALK] }, check: { type: "string", enum: [...CHECK] }, editor: { type: ["string", "null"], enum: [...EDITORS, null] }, makes: { type: "array", items: { type: "string", enum: [...MAKES] } } } },
   },
 ];
 
@@ -431,9 +431,9 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
     automations_run: async (a) => json(`/api/automations/${encodeURIComponent(String(a.id))}/run`, "POST"),
     get_work_prefs: async () => json("/api/work-prefs"),
     set_work_prefs: async (a) => {
-      const body = pick(a, ["talk", "check"]);
+      const body = pick(a, ["talk", "check", "makes"]);
       if (a.editor !== undefined) body.editor = a.editor;
-      if (!Object.keys(body).length) throw new ToolError("Nothing to change: give talk, check or editor.");
+      if (!Object.keys(body).length) throw new ToolError("Nothing to change: give talk, check, editor or makes.");
       return json("/api/work-prefs", "PUT", body);
     },
     setup_status: async () => {

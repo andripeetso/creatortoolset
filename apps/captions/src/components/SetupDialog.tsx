@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router";
 import { Check } from "lucide-react";
 import { TOOLS, type Tool } from "@contracts/tools";
-import type { WorkPrefs } from "@contracts/work-prefs";
+import { MAKES, type Make, type WorkPrefs } from "@contracts/work-prefs";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { ProvidersSection } from "@/components/settings/ProvidersSection";
@@ -12,13 +12,14 @@ import { AccountStep, hasAccountBridge } from "@/components/setup/AccountStep";
 import { ConnectStep, HowPicker } from "@/components/setup/OwnAi";
 import { PlanQuestion, ToolNeeds, ToolsPicker } from "@/components/setup/ToolNeeds";
 import { canUse, useMe } from "@/lib/auth";
-import { setupSteps, useSetup, useSetupLive, type SetupStep } from "@/lib/setup";
+import { MAKE_NAMES, setupSteps, toolsFor, useSetup, useSetupLive, type SetupStep } from "@/lib/setup";
 import { createProject } from "@/lib/workshop";
 import { useWorkspace } from "@/lib/workspace";
 import { cn } from "@/lib/utils";
 
 const STEP: Record<SetupStep, { title: string; hint: string }> = {
   how: { title: "How", hint: "Pick one. You can change it any time." },
+  make: { title: "What you make", hint: "What will you make with it? Pick everything that fits. It ticks the tools for you on the next step." },
   tools: { title: "Your tools", hint: "Which tools do you use? Tick the ones you want. Each one asks for what it needs the first time you open it; Settings → Setup changes this list." },
   project: { title: "Your first project", hint: "One project per brand: its name, your Instagram handle, and who you make it for (in Instructions)." },
   ai: { title: "Your AI", hint: "The AI runs on your own account, never anyone else's: the Claude Code or Codex you are signed in to on this Mac, on your own subscription. Or your own Anthropic API key: Anthropic bills you for what you use." },
@@ -31,7 +32,8 @@ const assistant = Object.values(import.meta.glob<{ openAssistant: (topic: string
 
 /**
  * First-run setup: how they want to use it (in the app, in their own AI, or both: work-prefs `talk`), then setupSteps
- * for that answer: which tools → first project (Workshop or Analyzer) → AI (a tool that uses it) → connect their own
+ * for that answer: what they make (work-prefs `makes`, it pre-ticks the tools) → which tools → first project (Workshop
+ * or Analyzer) → AI (a tool that uses it) → connect their own
  * AI → what's left. No sign-in here: it is optional, in What's left and Settings → Setup. Each step is the same screen
  * as in Settings, so nothing here is a second copy. Opens by itself on a first sign-in until it is finished or closed,
  * again from Settings → Setup (?setup=how); an unknown ?setup= starts at the first step. Closing it is "Finish later" (done). On a phone it is a full-screen sheet.
@@ -46,6 +48,7 @@ export function SetupDialog() {
   const [params, setParams] = useSearchParams();
   const [ticked, setTicked] = useState<Tool[] | null>(null);
   const [talk, setTalk] = useState<WorkPrefs["talk"]>("app");
+  const [makes, setMakes] = useState<Make[]>([]);
   const asked = params.get("setup");
   // a first sign-in, and again until it's finished once they've started
   const auto = !!view && !view.done && (view.tools !== null || (me?.logins ?? Infinity) <= 1);
@@ -61,7 +64,7 @@ export function SetupDialog() {
     if (open)
       void fetch("/api/work-prefs")
         .then((r) => (r.ok ? (r.json() as Promise<WorkPrefs>) : null))
-        .then((w) => w && setTalk(w.talk))
+        .then((w) => w && (setTalk(w.talk), setMakes(w.makes ?? [])))
         .catch(() => {});
   }, [open]);
   useSetupLive(open);
@@ -80,6 +83,10 @@ export function SetupDialog() {
     setParams((p) => (p.delete("setup"), p), { replace: true });
   };
   const next = async () => {
+    if (step === "make") {
+      await fetch("/api/work-prefs", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ makes }) }).catch(() => {});
+      if (makes.length) setTicked(toolsFor(makes, mine));
+    }
     if (step === "tools") await save({ tools });
     const n = steps[at + 1];
     if (n) to(n);
@@ -114,6 +121,19 @@ export function SetupDialog() {
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
           {step === "how" && <HowPicker value={talk} onPick={(t) => void pick(t)} />}
+          {step === "make" && (
+            <div className="grid gap-2 sm:grid-cols-2">
+              {MAKES.map((m) => {
+                const on = makes.includes(m);
+                return (
+                  <label key={m} className={cn("flex cursor-pointer items-center gap-2.5 rounded-lg border p-3 text-sm", on ? "border-violet-500 bg-violet-500/10" : "border-border hover:bg-accent/40")}>
+                    <input type="checkbox" checked={on} onChange={() => setMakes(on ? makes.filter((x) => x !== m) : MAKES.filter((x) => x === m || makes.includes(x)))} />
+                    <span className="font-medium">{MAKE_NAMES[m]}</span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
           {step === "connect" && <ConnectStep have={view.have} />}
           {step === "tools" && <ToolsPicker tools={mine} value={tools} onChange={setTicked} />}
           {step === "project" &&

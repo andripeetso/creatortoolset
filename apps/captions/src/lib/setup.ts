@@ -2,23 +2,24 @@ import { useEffect } from "react";
 import { create } from "zustand";
 import { planWarning, type Feature, type PlanId } from "@contracts/plans";
 import { usesAi, type SetupView, type Tool } from "@contracts/tools";
-import type { WorkPrefs } from "@contracts/work-prefs";
+import type { Make, WorkPrefs } from "@contracts/work-prefs";
 import { confirmDialog } from "./dialogs";
 
 export type { SetupView };
 
 /** The first-run steps, in order. */
-export type SetupStep = "how" | "tools" | "project" | "ai" | "connect" | "left";
+export type SetupStep = "how" | "make" | "tools" | "project" | "ai" | "connect" | "left";
 
 /**
  * Which steps show. "How do you want to use Creator Toolset?" first; its answer (work-prefs `talk`) decides the rest.
- * In the app: tools, the first project only for the Workshop or the Analyzer, the AI only when a ticked tool uses it.
+ * In the app: what they make, tools, the first project only for the Workshop or the Analyzer, the AI only when a ticked tool uses it.
  * In my own AI: connect it, nothing else. Both: the app's steps, then connect. What's left always.
  */
 export function setupSteps(ticked: readonly Tool[], talk: WorkPrefs["talk"]): SetupStep[] {
   if (talk === "chat") return ["how", "connect", "left"];
   return [
     "how",
+    "make",
     "tools",
     ...(ticked.includes("workshop") || ticked.includes("instagram") ? (["project"] as const) : []),
     ...(ticked.some(usesAi) ? (["ai"] as const) : []),
@@ -83,3 +84,43 @@ export async function confirmHeavy(feature: Feature, count = 1): Promise<boolean
   if (!warning) return true;
   return confirmDialog({ title: "This can use up your plan's limit", body: warning, ok: "Run it anyway" });
 }
+
+/** "What will you make?": each answer, the words setup shows for it. */
+export const MAKE_NAMES: Record<Make, string> = {
+  reel: "Short videos (Reels, TikTok, Shorts)",
+  youtube: "Long videos (YouTube)",
+  carousel: "Carousels and image posts",
+  ad: "Ads",
+  podcast: "Podcasts and audio",
+  course: "Courses, guides and SOPs",
+  recording: "Screen recordings and walkthroughs",
+  newsletter: "Newsletters and emails",
+  thread: "X posts and threads",
+  article: "Articles and blog posts",
+  other: "Something else",
+};
+
+/**
+ * What each answer ticks (the Workshop always). Footage tools (Media Library, AI Editor) only for video and pictures, so
+ * someone who only writes is never asked for a library; Review for anything someone else checks before it goes out.
+ */
+const VIDEO: Tool[] = ["media", "editor", "review", "captions", "enhance", "clean"];
+const MAKE_TOOLS: Record<Make, Tool[]> = {
+  reel: [...VIDEO, "instagram", "stories"],
+  youtube: [...VIDEO, "instagram", "notes"],
+  carousel: ["instagram", "media", "review", "clean"],
+  ad: ["media", "editor", "review", "captions", "clean"],
+  podcast: ["enhance", "notes"],
+  course: ["guides", "notes", "enhance"],
+  recording: ["notes", "guides", "review"],
+  thread: ["instagram"],
+  newsletter: [],
+  article: [],
+  other: [],
+};
+
+/** The tools "What will you make?" ticks, in `mine`'s order: the Workshop for everything, the rest per answer. */
+export const toolsFor = (makes: readonly Make[], mine: readonly Tool[]): Tool[] => {
+  const want = new Set<Tool>(["workshop", ...makes.flatMap((m) => MAKE_TOOLS[m])]);
+  return mine.filter((t) => want.has(t));
+};

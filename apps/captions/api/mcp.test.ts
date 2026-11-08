@@ -89,6 +89,7 @@ describe("Creator Toolset as a remote MCP server", () => {
     // 5814 -> 6925: review_set_approval (approve or send back a Review video from a chat) and instagram_refresh/posts
     // (start an Analyzer account's pull and list its posts); 6925 -> 7071: workshop_update_session links or unlinks a post;
     // 7071 -> 9162: automations_list/create/update/delete/run (scheduled prompts on the user's own AI)
-    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(9162);
+    // 9162 -> 9366: set_work_prefs makes (what they make, from setup; the assistant can change it)
+    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(9366);
   });
 });
