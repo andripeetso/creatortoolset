@@ -115,10 +115,12 @@ export function AssistantDock() {
           remember(user, "open");
           openAssistant();
         }}
-        className="fixed right-4 bottom-4 z-40 flex items-center gap-2 rounded-full border bg-popover px-4 py-2 text-sm text-popover-foreground shadow-md hover:bg-accent"
+        aria-label="Open the assistant"
+        title="Assistant"
+        className="fixed right-4 bottom-4 z-40 flex size-12 items-center justify-center rounded-full bg-violet-600 text-white shadow-lg shadow-black/40 hover:bg-violet-500"
       >
-        <MessageCircle className="size-4" aria-hidden />
-        I&apos;m here if you need me.
+        <MessageCircle className="size-5" aria-hidden />
+        {thinking && <span className="absolute top-1 right-1 size-2.5 animate-pulse rounded-full bg-white" aria-hidden />}
       </button>
     );
   }

@@ -7,7 +7,7 @@ import type { AssistantView } from "@contracts/assistant";
  */
 
 type AssistantState = {
-  /** the dock is collapsed to its small "I'm here if you need me" button */
+  /** the dock is collapsed to its chat bubble */
   collapsed: boolean;
   /** the setup choice was asked for (openAssistant("setup")): show the choices again */
   setupAsked: boolean;

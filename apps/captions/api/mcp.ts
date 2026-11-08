@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { MY_KEYS } from "../contracts/service-keys";
 import { TOOLS as APP_TOOLS, TOOL_NAMES, readiness, type SetupView } from "../contracts/tools";
 import { CHECK, EDITORS, TALK } from "../contracts/work-prefs";
+import { EDIT_STEPS } from "../contracts/editor";
 import { routeFor } from "./lib/providers";
 import { deviceName } from "./lib/devices";
 import { readConnectors } from "./lib/connectors/store";
@@ -54,6 +55,9 @@ change the text yourself with workshop_edit_piece. Locked blocks are ones the us
 
 Review: his videos waiting for feedback, their versions and timed comments (with the frame each points at).
 Resolve a comment only once the change it asks for is made.
+
+AI Editor: edits made from footage in the Media Library; each runs steps (analyze, script, draft, broll) into drafts,
+one per version, which can be filed in Review.
 
 How the user wants to work (get_work_prefs / set_work_prefs): where they talk to the AI (the app, their own AI chat, or
 both) and where they check the work (the app, their own editor, or both).`;
@@ -118,6 +122,13 @@ export const TOOLS = [
     name: "resolve_comment",
     description: "Mark a Review comment done once the change it asks for is made (resolved: false reopens it).",
     inputSchema: { type: "object", properties: { link: str, comment_id: str, resolved: { type: "boolean" } }, required: ["link", "comment_id"] },
+  },
+  { name: "editor_list", description: "AI Editor edits, newest first: id, name, the last step and its state.", inputSchema: { type: "object", properties: {} } },
+  { name: "editor_get", description: "One AI Editor edit: its brief, drafts, notes and jobs.", inputSchema: { type: "object", properties: { edit: str }, required: ["edit"] } },
+  {
+    name: "editor_run",
+    description: "Run an AI Editor edit from a step on (analyze, script, draft, broll); send_to_review files a draft's preview in Review (needs draft).",
+    inputSchema: { type: "object", properties: { edit: str, kind: { type: "string", enum: [...EDIT_STEPS, "send_to_review"] }, draft: str }, required: ["edit", "kind"] },
   },
   { name: "get_work_prefs", description: "How the user wants to work: talk (app | chat | both), check (app | editor | both) and their editor.", inputSchema: { type: "object", properties: {} } },
   {
@@ -307,6 +318,27 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
       const id = ((await json(reviewPath(String(a.link), origin))).asset as Args).id;
       const cm = await json(`/api/review/assets/${id}/comments/${encodeURIComponent(String(a.comment_id))}`, "PATCH", { resolved: a.resolved !== false });
       return { id: cm.id, resolved: !!cm.resolved, text: cm.text };
+    },
+    editor_list: async () => ({
+      edits: (await json<Args[]>("/api/editor")).map((e) => ({ ...pick(e, ["id", "name", "last"]), updated: when(e.updatedAt), link: `${origin}/editor/${e.id}` })),
+    }),
+    editor_get: async (a) => {
+      const e = await json(`/api/editor/${encodeURIComponent(String(a.edit))}`);
+      return {
+        ...pick(e, ["id", "name", "brief", "script", "versions", "drafts", "notes"]),
+        link: `${origin}/editor/${e.id}`,
+        jobs: ((e.jobs as Args[] | undefined) ?? []).slice(-10).map((j) => pick(j, ["id", "kind", "variant", "state", "error"])),
+      };
+    },
+    editor_run: async (a) => {
+      const edit = encodeURIComponent(String(a.edit));
+      if (a.kind === "send_to_review") {
+        if (!a.draft) throw new ToolError("send_to_review needs the draft's name (editor_get lists them).");
+        await json(`/api/editor/${edit}/drafts/${encodeURIComponent(String(a.draft))}/review`, "POST", {});
+        return { status: "queued", draft: a.draft };
+      }
+      await json(`/api/editor/${edit}/run`, "POST", { from: a.kind });
+      return { status: "queued", from: a.kind };
     },
     get_work_prefs: async () => json("/api/work-prefs"),
     set_work_prefs: async (a) => {
