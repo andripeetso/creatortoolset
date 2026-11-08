@@ -10,6 +10,8 @@ import type { Tool } from "@contracts/tools";
 
 export interface Me {
   username: string;
+  /** The display name (Settings → Account); the username when none is set. */
+  name?: string;
   role: "admin" | "team" | "user";
   cloud: boolean;
   /** Apps switched off for this account (see canUse). */

@@ -14,6 +14,7 @@ import {
   apiKeysOf,
   dropApiKey,
   newApiKey,
+  setDisplayName,
   setPassword,
   userForApiKey,
   verifyPassword,
@@ -77,6 +78,7 @@ export function getSessionUser(
 
 export const sessionOf = (user: UserRecord): SessionUser => ({
   username: user.username,
+  name: user.displayName || user.username,
   role: user.role,
   cloud: user.cloud,
   off: user.role === "admin" ? [] : user.off,
@@ -126,6 +128,7 @@ export function getApiKeyUser(authorization: string | undefined, level: KeyLevel
 
 const toPublic = (u: SessionUser) => ({
   username: u.username,
+  name: u.name ?? u.username,
   role: u.role,
   cloud: u.cloud || u.role === "admin",
   off: u.off,
@@ -270,6 +273,23 @@ authApp.post("/password", async (c) => {
 
 /** The account signed in on this browser. */
 const signedInAccount = (cookie: string | undefined) => getSessionUser(cookie);
+
+/** Settings → Account: the name the app calls you. The username underneath never changes: your files are filed under it. */
+authApp.get("/account", (c) => {
+  const me = signedInAccount(c.req.header("cookie"));
+  const user = me && findUser(me.username);
+  if (!user) return c.json({ error: "Sign in with an account first" }, 401);
+  return c.json({ username: user.username, name: user.displayName ?? "" });
+});
+
+authApp.patch("/account", async (c) => {
+  const me = signedInAccount(c.req.header("cookie"));
+  const user = me && findUser(me.username);
+  if (!user) return c.json({ error: "Sign in with an account first" }, 401);
+  const b = (await c.req.json().catch(() => ({}))) as { name?: unknown };
+  if (typeof b.name === "string") setDisplayName(user, b.name);
+  return c.json({ ok: true, user: withLogins(sessionOf(user)) });
+});
 
 /** A new AI access key for this account (body `{ level: "full" }` for the Full key); the old one of that level stops working. */
 /** This account's AI access keys: which are on, when each was made and last used, its last 4 characters. */

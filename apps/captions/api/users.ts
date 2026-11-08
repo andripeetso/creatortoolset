@@ -44,6 +44,8 @@ export interface UserRecord {
   fullKeyHash?: string;
   /** What the Settings page shows of each key it can't show again: when it was made, its last 4 characters, when it was last used. */
   keyInfo?: Partial<Record<KeyLevel, { at: number; last4: string; usedAt?: number }>>;
+  /** What the app calls the person (Settings → Account); unset = the username. */
+  displayName?: string;
   createdAt: number;
   usage: UserUsage;
 }
@@ -65,6 +67,8 @@ export function applyRole(user: UserRecord, role: Role): UserRecord {
 /** What request handlers see — never includes credentials. */
 export interface SessionUser {
   username: string;
+  /** The display name (accounts only). */
+  name?: string;
   role: Role | "visitor";
   cloud: boolean;
   off: Tool[];
@@ -146,6 +150,15 @@ const hashPassword = (password: string, salt: string) =>
 export function findUser(username: string): UserRecord | null {
   const name = username.toLowerCase();
   return users.find((u) => u.username === name) ?? null;
+}
+
+/** Settings → Account: what the app calls the person. Empty = the username again. */
+export function setDisplayName(user: UserRecord, name: string): void {
+  // eslint-disable-next-line no-control-regex
+  const n = name.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 60);
+  if (n) user.displayName = n;
+  else delete user.displayName;
+  persist();
 }
 
 export function verifyPassword(user: UserRecord, password: string): boolean {

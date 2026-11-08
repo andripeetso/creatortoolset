@@ -49,14 +49,14 @@ export function UserMenu() {
             <span className="flex h-5 w-5 items-center justify-center rounded bg-muted">
               <UserRound className="h-3.5 w-3.5 text-muted-foreground" />
             </span>
-            <span className="hidden max-w-28 truncate sm:inline">{me.username}</span>
+            <span className="hidden max-w-28 truncate sm:inline">{me.name ?? me.username}</span>
             <ChevronDown className="h-3 w-3 text-muted-foreground" />
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-64">
           <DropdownMenuLabel className="px-2 py-2 font-normal">
             <span className="block truncate text-xs font-medium text-foreground">
-              {me.username}
+              {me.name ?? me.username}
             </span>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />

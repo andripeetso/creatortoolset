@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { KeyRound, LogOut } from "lucide-react";
 import { logout, useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { AiKeyDialog } from "@/components/AiKeyDialog";
 import { Card, Group, Row } from "./ui";
 
@@ -16,9 +17,9 @@ export function AccountSection() {
 
   return (
     <>
-      <Group title="Signed in as">
+      <Group title="Profile" hint={`${ROLE_LABEL[me.role]}. Your files stay filed under "${me.username}" whatever you call yourself.`}>
         <Card>
-          <Row label={me.username} hint={ROLE_LABEL[me.role]} />
+          <NameRow />
           {required && <PasswordRow />}
         </Card>
       </Group>
@@ -48,6 +49,38 @@ export function AccountSection() {
 
       <AiKeyDialog open={aiKey} onClose={() => setAiKey(false)} />
     </>
+  );
+}
+
+/** What the app calls you (PATCH /api/auth/account): shown in the account menu and Settings. */
+function NameRow() {
+  const me = useAuth((s) => s.me);
+  const required = useAuth((s) => s.required);
+  const setAuth = useAuth((s) => s.setAuth);
+  const [name, setName] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  useEffect(() => {
+    void fetch("/api/auth/account")
+      .then((r) => (r.ok ? (r.json() as Promise<{ name: string }>) : null))
+      .then((d) => setName(d?.name ?? ""))
+      .catch(() => setName(""));
+  }, []);
+  if (!me || name === null) return null;
+  const save = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const value = String(new FormData(e.currentTarget).get("name") ?? "");
+    const r = await fetch("/api/auth/account", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: value }) });
+    const d = (await r.json().catch(() => ({}))) as { error?: string; user?: Partial<typeof me> };
+    if (r.ok && d.user) setAuth(required, { ...me, ...d.user });
+    setNote(r.ok ? "Saved." : (d.error ?? "Could not save it"));
+  };
+  return (
+    <Row label="Name" hint={note ?? "What the app calls you."}>
+      <form onSubmit={(e) => void save(e)} className="flex gap-2">
+        <Input name="name" defaultValue={name} placeholder={me.username} maxLength={60} className="h-8 w-44 text-sm" aria-label="Name" />
+        <Button type="submit" variant="outline" size="sm">Save</Button>
+      </form>
+    </Row>
   );
 }
 
