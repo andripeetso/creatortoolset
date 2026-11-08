@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router";
-import { CheckCircle2, Circle } from "lucide-react";
+import {
+  AudioLines, Captions, CheckCircle2, Circle, Clapperboard, Eraser, FileText, Library, MessageSquareText, NotebookPen, ScanSearch, Scissors, Video,
+  type LucideIcon,
+} from "lucide-react";
 import { MY_KEYS, type MyKeyEnv } from "@contracts/service-keys";
 import { PLANS, type PlanId } from "@contracts/plans";
 import { readiness, TOOL_LINES, TOOL_NAMES, TOOL_NEEDS, type Have, type Need, type SetupView, type Tool } from "@contracts/tools";
@@ -10,7 +13,7 @@ import { MyKeysSection } from "@/components/settings/MyKeysSection";
 import { ProvidersSection } from "@/components/settings/ProvidersSection";
 import { ProjectForm } from "@/components/workshop/ProjectForm";
 import { createProject } from "@/lib/workshop";
-import { cn } from "@/lib/utils";
+import { Choice } from "./Choice";
 
 const isKey = (h: Have): h is MyKeyEnv => MY_KEYS.some((k) => k.env === h);
 
@@ -87,19 +90,27 @@ export function ToolNeeds({ tool, have, missingOnly, title = true }: { tool: Too
 }
 
 /** "Which tools do you use?": a card per tool the account may use, ticked or not. */
+/** Each tool's icon, the same as on Home. */
+const TOOL_ICONS: Record<Tool, LucideIcon> = {
+  instagram: ScanSearch, workshop: NotebookPen, enhance: AudioLines, captions: Captions, review: MessageSquareText, media: Library,
+  editor: Clapperboard, clean: Eraser, stories: Scissors, notes: Video, guides: FileText,
+};
+
 export function ToolsPicker({ tools, value, onChange }: { tools: readonly Tool[]; value: readonly Tool[]; onChange: (next: Tool[]) => void }) {
   return (
     <div className="grid gap-2 sm:grid-cols-2">
       {tools.map((t) => {
         const on = value.includes(t);
         return (
-          <label key={t} className={cn("flex cursor-pointer gap-2.5 rounded-lg border p-3 text-sm", on ? "border-violet-500 bg-violet-500/10" : "border-border hover:bg-accent/40")}>
-            <input type="checkbox" className="mt-0.5" checked={on} onChange={() => onChange(on ? value.filter((x) => x !== t) : tools.filter((x) => x === t || value.includes(x)))} />
-            <span>
-              <span className="block font-medium">{TOOL_NAMES[t]}</span>
-              <span className="block text-xs text-muted-foreground">{TOOL_LINES[t]}</span>
-            </span>
-          </label>
+          <Choice
+            key={t}
+            multi
+            on={on}
+            onClick={() => onChange(on ? value.filter((x) => x !== t) : tools.filter((x) => x === t || value.includes(x)))}
+            icon={TOOL_ICONS[t]}
+            name={TOOL_NAMES[t]}
+            line={TOOL_LINES[t]}
+          />
         );
       })}
     </div>

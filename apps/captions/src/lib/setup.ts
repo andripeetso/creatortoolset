@@ -28,6 +28,14 @@ export function setupSteps(ticked: readonly Tool[], talk: WorkPrefs["talk"]): Se
   ];
 }
 
+/**
+ * Setup is finished once Done on its last step saved `done`. Earlier builds also saved `done` when the window was
+ * merely closed: with no tools picked and not the own-AI path (which never picks tools) that run never really
+ * happened, so setup shows again.
+ */
+export const setupFinished = (view: Pick<SetupView, "done" | "tools">, talk: WorkPrefs["talk"]): boolean =>
+  view.done && (view.tools !== null || talk === "chat");
+
 /** The tool a page belongs to, by its path (App.tsx's routes), for the first-open checklist. */
 export function toolForPath(p: string): Tool | null {
   const first = p.split("/")[1] ?? "";

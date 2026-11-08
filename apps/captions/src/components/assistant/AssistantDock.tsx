@@ -12,8 +12,6 @@ import {
   keySaved,
   navigated,
   openAssistant,
-  remember,
-  rememberedFor,
   saveKey,
   sendTurn,
   useAssistant,
@@ -45,7 +43,7 @@ function suggestionsFor(path: string): string[] {
  * The assistant, on every signed-in page (App.tsx): a bubble you can drag or throw to any corner, that opens into
  * the chat. Drag the chat by its header to another corner, or against the right edge to dock it there as a panel
  * beside the page. Its state is the server's (api/assistant.ts): no AI yet = "Install Claude Code first"; an AI = the
- * choice of setup paths on the first open, then the chat. "Later" keeps it folded to the bubble. A key it asks for is
+ * chat; the choice of setup paths only when asked for (openAssistant("setup")). It starts folded to the bubble. A key it asks for is
  * typed into a password box that saves straight to My API keys. You can talk to it (the mic) and have its replies
  * read aloud (the speaker).
  */
@@ -56,9 +54,7 @@ export function AssistantDock() {
   const { collapsed, setupAsked, set } = useAssistant();
   const readAloud = useReadAloud();
   const real = !!me;
-  const user = me?.username ?? "";
   const [view, setView] = useState<AssistantView | null>(null);
-  const [choice, setChoice] = useState<string | null>(null);
   const [secret, setSecret] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -86,12 +82,8 @@ export function AssistantDock() {
 
   useEffect(() => {
     if (!real) return;
-    const remembered = rememberedFor(user);
-    // only a setup path counts as chosen; "later" just starts folded, and the choices still show when it opens
-    setChoice(remembered === "self" || remembered === "chat" ? remembered : null);
-    if (remembered === "later") set({ collapsed: true });
     void load();
-  }, [real, user, load, set]);
+  }, [real, load]);
 
   const last = view?.messages.at(-1);
   const thinking = last?.status === "thinking";
@@ -155,7 +147,6 @@ export function AssistantDock() {
         onClick={() => {
           if (bubbleThrow.dragged.current) return;
           setSeenId(last?.id ?? null);
-          remember(user, "open");
           openAssistant();
         }}
         aria-label={unread ? "Open the assistant: a new reply" : "Open the assistant"}
@@ -215,21 +206,15 @@ export function AssistantDock() {
   };
 
   const pick = (how: "self" | "chat") => {
-    remember(user, how);
-    setChoice(how);
     set({ setupAsked: false });
-    if (how === "self") navigate("/?setup=project");
+    if (how === "self") navigate("/?setup=how");
     else void send("Set me up. Go one step at a time.");
   };
 
-  // Later stays folded across page loads (the X only folds it for this page)
-  const later = () => {
-    remember(user, "later");
-    set({ collapsed: true });
-  };
+  const later = () => set({ collapsed: true, setupAsked: false });
 
   const connected = !!view && view.provider !== "none";
-  const showChoice = connected && (setupAsked || (!choice && view.messages.length === 0));
+  const showChoice = connected && setupAsked;
   const chatting = connected && !showChoice;
   const empty = chatting && !view.messages.length;
   const pending = view?.pending;

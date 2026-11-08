@@ -26,6 +26,8 @@ struct CreatorToolsetMacApp: App {
         Window("Creator Toolset", id: "main") {
             WebWindow(shell: shell)
         }
+        // first open: most of the screen (the 960×640 minimum squeezed every page)
+        .defaultSize(roomyWindowFrame(screen: NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)).size)
         .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(after: .appInfo) {

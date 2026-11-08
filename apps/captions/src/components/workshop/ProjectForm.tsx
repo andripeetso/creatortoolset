@@ -55,12 +55,16 @@ export function ProjectForm({
   busy,
   onSave,
   onCancel,
+  formId,
 }: {
   initial?: WorkshopProject;
   busy: boolean;
   onSave: (fields: ProjectFields) => void | Promise<unknown>;
   /** Absent = no Cancel (the first-run setup, where a project is required). */
   onCancel?: () => void;
+  /** First-run setup: the form gets this id and the setup window's own button submits it (no box, no buttons here, no
+   *  knowledge off-switches yet: everything starts on). */
+  formId?: string;
 }) {
   const [f, setF] = useState<ProjectFields>(() => fieldsFrom(initial));
   const [handle, setHandle] = useState("");
@@ -164,7 +168,8 @@ export function ProjectForm({
 
   return (
     <form
-      className="flex flex-col gap-3 rounded-xl border border-zinc-800 bg-zinc-900/50 p-4"
+      id={formId}
+      className={formId ? "flex flex-col gap-4" : "flex flex-col gap-3 rounded-xl border border-zinc-800 bg-zinc-900/50 p-4"}
       onSubmit={(e) => {
         e.preventDefault();
         setError(null);
@@ -180,7 +185,7 @@ export function ProjectForm({
     >
       <label className="text-[11px] text-zinc-400">
         Name
-        <input autoFocus value={f.name} onChange={set("name")} placeholder="Tiny Acrobatics" className={`${input} mt-1`} />
+        <input autoFocus required value={f.name} onChange={set("name")} placeholder="Tiny Acrobatics" className={`${input} mt-1`} />
       </label>
       <div>
         <p className="text-[11px] text-zinc-400">Colour</p>
@@ -275,7 +280,7 @@ export function ProjectForm({
           {f.notes.length}/{PROJECT_NOTES_MAX} — always in the prompt, so keep it short.
         </span>
       </label>
-      {knowledge.length || frameworks.length || rules.length ? (
+      {!formId && (knowledge.length || frameworks.length || rules.length) ? (
         <div>
           <p className="text-[11px] text-zinc-400">Knowledge, frameworks and rules</p>
           <p className="mb-1.5 text-[10px] text-zinc-600">
@@ -302,7 +307,7 @@ export function ProjectForm({
         </div>
       ) : null}
       {/* Cancel / Save stay in view at the bottom while the form scrolls */}
-      <div className="sticky bottom-0 z-10 -mx-4 -mb-4 flex justify-end gap-2 rounded-b-xl border-t border-zinc-800 bg-zinc-900/95 px-4 py-3 backdrop-blur">
+      {!formId && <div className="sticky bottom-0 z-10 -mx-4 -mb-4 flex justify-end gap-2 rounded-b-xl border-t border-zinc-800 bg-zinc-900/95 px-4 py-3 backdrop-blur">
         {onCancel && (
           <button type="button" onClick={onCancel} className="rounded-md px-3 py-1.5 text-xs text-zinc-400 hover:bg-zinc-800">
             Cancel
@@ -316,7 +321,7 @@ export function ProjectForm({
           {(busy || pulling) && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
           {initial ? "Save" : "Create project"}
         </button>
-      </div>
+      </div>}
     </form>
   );
 }

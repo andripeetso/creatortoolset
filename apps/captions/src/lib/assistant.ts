@@ -3,7 +3,7 @@ import type { AssistantView } from "@contracts/assistant";
 
 /**
  * The dock's client (components/assistant/AssistantDock.tsx) and its server calls (api/assistant.ts). The dock is open
- * or collapsed, and whether this browser has chosen a setup path, are per-viewer conveniences kept in localStorage.
+ * or collapsed (it starts collapsed).
  */
 
 type AssistantState = {
@@ -15,7 +15,8 @@ type AssistantState = {
 };
 
 export const useAssistant = create<AssistantState>((set) => ({
-  collapsed: false,
+  // folded to its bubble until clicked: setup is the one first-run flow, the chat never opens by itself
+  collapsed: true,
   setupAsked: false,
   set: (patch) => set(patch),
 }));
@@ -23,26 +24,6 @@ export const useAssistant = create<AssistantState>((set) => ({
 /** Open the dock from anywhere; "setup" starts it at the choice of setup paths. */
 export function openAssistant(mode?: "setup"): void {
   useAssistant.getState().set({ collapsed: false, setupAsked: mode === "setup" });
-}
-
-const keyOf = (user: string, what: string) => `ct-assistant:${what}:${user}`;
-
-/** This browser's remembered answer for one account (no storage = not remembered). */
-export function rememberedFor(user: string): string | null {
-  try {
-    return localStorage.getItem(keyOf(user, "choice"));
-  } catch {
-    return null;
-  }
-}
-
-/** "self" | "chat" | "later" */
-export function remember(user: string, value: string): void {
-  try {
-    localStorage.setItem(keyOf(user, "choice"), value);
-  } catch {
-    /* private window or blocked storage: the answer is just asked again */
-  }
 }
 
 /** A JSON call to the assistant; a refusal carries the server's sentence. */

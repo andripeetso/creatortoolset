@@ -1,62 +1,26 @@
 import { useEffect, useState } from "react";
-import { Check, Loader2 } from "lucide-react";
+import { AppWindow, Check, Layers, Loader2, SquareTerminal, type LucideIcon } from "lucide-react";
 import type { Have } from "@contracts/tools";
 import type { WorkPrefs } from "@contracts/work-prefs";
 import { Button } from "@/components/ui/button";
 import { CopyButton } from "@/components/workshop/CopyButton";
-import { cn } from "@/lib/utils";
+import { Choice } from "./Choice";
 
 type Talk = WorkPrefs["talk"];
 
-const WAYS: Array<{ talk: Talk; name: string; what: string }> = [
-  {
-    talk: "app",
-    name: "In the app",
-    what: "Chat, review and edit here, in one window.",
-  },
-  {
-    talk: "chat",
-    name: "In my own AI",
-    what: "Keep using Claude or Codex. Creator Toolset works in the background.",
-  },
-  {
-    talk: "both",
-    name: "Both",
-    what: "Ask from your own AI and open the app when you want to see the work.",
-  },
+const WAYS: Array<{ talk: Talk; name: string; what: string; icon: LucideIcon }> = [
+  { talk: "app", name: "In the app", what: "Plan, edit and review here, with the assistant beside you.", icon: AppWindow },
+  { talk: "chat", name: "In my own AI", what: "Keep working in Claude Code or Codex. Creator Toolset works in the background.", icon: SquareTerminal },
+  { talk: "both", name: "Both", what: "Ask from your own AI, and open the app to see and touch the work.", icon: Layers },
 ];
 
-/** Setup's first question: where they talk to the AI (work-prefs `talk`). A card saves the answer and goes on. */
-export function HowPicker({
-  value,
-  onPick,
-}: {
-  value: Talk;
-  onPick: (t: Talk) => void;
-}) {
+/** Setup's first question: where they talk to the AI (work-prefs `talk`), three cards side by side. */
+export function HowPicker({ value, onPick }: { value: Talk; onPick: (t: Talk) => void }) {
   return (
-    <div>
-      <h3 className="mb-3 text-base font-medium">
-        How do you want to use Creator Toolset?
-      </h3>
-      <div className="grid gap-3 sm:grid-cols-3">
-        {WAYS.map((w) => (
-          <button
-            key={w.talk}
-            type="button"
-            onClick={() => onPick(w.talk)}
-            className={cn(
-              "rounded-lg border p-4 text-left hover:border-violet-500",
-              w.talk === value
-                ? "border-violet-500 bg-violet-500/10"
-                : "border-border",
-            )}
-          >
-            <p className="text-sm font-medium">{w.name}</p>
-            <p className="mt-1 text-xs text-muted-foreground">{w.what}</p>
-          </button>
-        ))}
-      </div>
+    <div role="radiogroup" aria-label="How do you want to work?" className="grid gap-3 sm:grid-cols-3">
+      {WAYS.map((w) => (
+        <Choice key={w.talk} big on={w.talk === value} onClick={() => onPick(w.talk)} icon={w.icon} name={w.name} line={w.what} />
+      ))}
     </div>
   );
 }

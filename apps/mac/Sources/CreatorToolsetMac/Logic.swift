@@ -101,3 +101,17 @@ func rememberedIDs(_ items: [ReviewNote], seen: [String]?) -> [String] {
     for id in seen ?? [] where !ids.contains(id) { ids.append(id) }
     return Array(ids.prefix(200))
 }
+
+/// The main window's size on first open: most of the screen, up to 1440×920 (the pages are laid out for that), never
+/// under the 960×640 minimum.
+func roomyWindowFrame(screen: CGRect) -> CGRect {
+    let w = max(960, min(1440, (screen.width * 0.85).rounded()))
+    let h = max(640, min(920, (screen.height * 0.85).rounded()))
+    return CGRect(x: (screen.midX - w / 2).rounded(), y: (screen.midY - h / 2).rounded(), width: w, height: h)
+}
+
+/// A window still at (or near) the minimum size grows to roomyWindowFrame once: earlier builds opened it that small
+/// and macOS keeps the size, even across a reinstall. nil = leave it.
+func grownWindowFrame(current: CGRect, screen: CGRect) -> CGRect? {
+    current.width < 1000 && current.height < 700 ? roomyWindowFrame(screen: screen) : nil
+}

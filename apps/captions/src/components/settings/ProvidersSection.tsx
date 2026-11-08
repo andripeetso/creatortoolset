@@ -41,8 +41,9 @@ type Device = ProvidersView["devices"][number];
  * the providers on the selected Mac, who does which job, and for admins whether the team shares them.
  * Admins edit the workspace's set (PUT /api/providers/workspace); anyone else edits their own
  * (PUT /api/providers/own) and sees the workspace's while they have none.
+ * `brief` (first-run setup): only the steps to a working AI, and the providers once there are some.
  */
-export function ProvidersSection({ sub }: { sub?: string }) {
+export function ProvidersSection({ sub, brief }: { sub?: string; brief?: boolean }) {
   const me = useAuth((s) => s.me);
   const isAdmin = me?.role === "admin";
   const [view, setView] = useState<ProvidersView | null>(null);
@@ -235,10 +236,14 @@ export function ProvidersSection({ sub }: { sub?: string }) {
 
   return (
     <>
-      <p className="text-sm text-muted-foreground">
-        The AI runs on a Mac, through the coding tools signed in there. Each provider belongs to one Mac.
-      </p>
-      <p className="mt-2 text-sm">{aiAnswerer(view, thisMacDevice())}</p>
+      {!brief && (
+        <>
+          <p className="text-sm text-muted-foreground">
+            The AI runs on a Mac, through the coding tools signed in there. Each provider belongs to one Mac.
+          </p>
+          <p className="mt-2 text-sm">{aiAnswerer(view, thisMacDevice())}</p>
+        </>
+      )}
       {saving && <p className="mt-2 text-xs text-muted-foreground">Saving…</p>}
       {error && <Notice tone="error">{error}</Notice>}
 
@@ -274,7 +279,7 @@ export function ProvidersSection({ sub }: { sub?: string }) {
         </div>
       )}
 
-      <Group
+      {!brief && <Group
         title="Mac"
         hint={readOnly ? "The Mac your own providers run on. The dot shows whether it is online." : "The dot shows whether the Mac is online. Providers on an offline Mac cannot answer."}
       >
@@ -314,9 +319,9 @@ export function ProvidersSection({ sub }: { sub?: string }) {
             )}
           </>
         )}
-      </Group>
+      </Group>}
 
-      <Group
+      {(!brief || listed.length > 0) && <Group
         title="Providers"
         hint={
           readOnly
@@ -338,9 +343,9 @@ export function ProvidersSection({ sub }: { sub?: string }) {
             <Plus className="h-3.5 w-3.5" /> Add my own on {device ? device.name : "a Mac"}
           </Button>
         )}
-      </Group>
+      </Group>}
 
-      {shown && (
+      {shown && !brief && (
         <Group
           title="Who does which job"
           hint={readOnly ? "Set by the workspace. Add your own provider to choose for yourself." : "Every job uses the default unless it has its own provider, model and effort."}
@@ -377,7 +382,7 @@ export function ProvidersSection({ sub }: { sub?: string }) {
         </Group>
       )}
 
-      {isAdmin && editing && (
+      {isAdmin && editing && !brief && (
         <p className="text-xs text-muted-foreground">
           These are the workspace's providers. Who else may use them:{" "}
           <Link to="/settings/admin/ai" className="underline underline-offset-2 hover:text-foreground">

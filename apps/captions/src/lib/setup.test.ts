@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { setupSteps, toolForPath, toolsFor } from "./setup";
+import { setupFinished, setupSteps, toolForPath, toolsFor } from "./setup";
 import { TOOLS } from "@contracts/tools";
 
 describe("setup steps", () => {
@@ -44,4 +44,11 @@ it("ticks the tools for what they make", () => {
 it("asks for a Media Library only when they make video or pictures", () => {
   for (const m of ["newsletter", "article", "thread", "podcast", "course", "recording", "other"] as const) expect(toolsFor([m], TOOLS)).not.toContain("media");
   for (const m of ["reel", "youtube", "carousel", "ad"] as const) expect(toolsFor([m], TOOLS)).toContain("media");
+});
+
+it("counts setup as finished only after Done, not after an early close", () => {
+  expect(setupFinished({ done: false, tools: ["workshop"] }, "app")).toBe(false);
+  expect(setupFinished({ done: true, tools: ["workshop"] }, "app")).toBe(true);
+  expect(setupFinished({ done: true, tools: null }, "app")).toBe(false); // closed on the first screen by an older build
+  expect(setupFinished({ done: true, tools: null }, "chat")).toBe(true); // the own-AI path never picks tools
 });

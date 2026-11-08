@@ -140,7 +140,10 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
         window.styleMask.insert(.fullSizeContentView)
         placeButtons()
         // AppKit puts the buttons back where it likes after a layout, a resize or full screen.
-        DispatchQueue.main.async { [weak self] in self?.placeButtons() }
+        DispatchQueue.main.async { [weak self] in
+            self?.placeButtons()
+            self?.growOnce()
+        }
         let watch: [(Notification.Name, (AppWebView) -> Void)] = [
             (NSWindow.didBecomeKeyNotification, { $0.placeButtons() }),
             (NSWindow.didResizeNotification, { $0.placeButtons() }),
@@ -152,6 +155,16 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
             observers.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { if let self { act(self) } }
             })
+        }
+    }
+
+    /// Grows a window left at the old 960×640 opening size, once per install (after macOS restored the saved frame).
+    private func growOnce() {
+        let key = "grewSmallWindow"
+        guard let window, let screen = window.screen ?? NSScreen.main, !UserDefaults.standard.bool(forKey: key) else { return }
+        UserDefaults.standard.set(true, forKey: key)
+        if let frame = grownWindowFrame(current: window.frame, screen: screen.visibleFrame) {
+            window.setFrame(frame, display: true, animate: false)
         }
     }
 

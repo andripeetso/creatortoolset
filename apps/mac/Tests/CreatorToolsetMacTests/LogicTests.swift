@@ -42,4 +42,15 @@ final class LogicTests: XCTestCase {
     private func note(id: String, read: Bool? = nil) -> ReviewNote {
         ReviewNote(id: id, kind: "comment", by: "Ada", name: "Launch cut", text: nil, href: "/review/x", read: read)
     }
+
+    func testSmallWindowGrowsToMostOfTheScreenOnce() {
+        let laptop = CGRect(x: 0, y: 25, width: 1512, height: 920)
+        let grown = grownWindowFrame(current: CGRect(x: 100, y: 100, width: 960, height: 640), screen: laptop)!
+        XCTAssertEqual(grown.width, 1285)
+        XCTAssertEqual(grown.height, 782)
+        XCTAssertEqual(grown.midX, laptop.midX, accuracy: 1)
+        XCTAssertNil(grownWindowFrame(current: CGRect(x: 0, y: 0, width: 1300, height: 800), screen: laptop)) // their own size stays
+        let big = roomyWindowFrame(screen: CGRect(x: 0, y: 0, width: 3000, height: 1800))
+        XCTAssertEqual(big.size, CGSize(width: 1440, height: 920))
+    }
 }
