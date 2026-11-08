@@ -5,7 +5,6 @@ import { persistAutoCadence, storedAutoCadence } from "@/lib/cadence-preference"
 import { persistConfirmDeletes, persistStatusBars, storedConfirmDeletes, storedStatusBars } from "@/lib/settings";
 import { canSpeak, useReadAloud } from "@/lib/read-aloud";
 import { Card, Group, Row } from "./ui";
-import { WorkPrefsGroup } from "./WorkPrefsGroup";
 import { selectCls } from "./helpers";
 
 /**
@@ -21,7 +20,6 @@ export function GeneralSection() {
 
   return (
     <>
-      <WorkPrefsGroup />
       <Group title="Notifications" hint="Review comments, replies and Workshop notes.">
         <Card>
           <Row label="In the app" hint="The bell at the top right, on every device you sign in on." />
