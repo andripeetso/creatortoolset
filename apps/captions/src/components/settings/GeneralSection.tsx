@@ -3,6 +3,7 @@ import { Switch } from "@/components/ui/switch";
 import { CLIP_SPEEDS, loadClipSpeed, saveClipSpeed, isClipSpeed, type ClipSpeed } from "@/lib/clip-playback";
 import { persistAutoCadence, storedAutoCadence } from "@/lib/cadence-preference";
 import { persistConfirmDeletes, persistStatusBars, storedConfirmDeletes, storedStatusBars } from "@/lib/settings";
+import { canSpeak, useReadAloud } from "@/lib/read-aloud";
 import { Card, Group, Row } from "./ui";
 import { WorkPrefsGroup } from "./WorkPrefsGroup";
 import { selectCls } from "./helpers";
@@ -81,6 +82,26 @@ export function GeneralSection() {
           </Row>
         </Card>
       </Group>
+      <ReadAloud />
     </>
+  );
+}
+
+
+/** The assistant's read-aloud add-on (lib/read-aloud.ts): off until switched on here; the voice downloads then. */
+function ReadAloud() {
+  const { on, loading, toggle } = useReadAloud();
+  if (!canSpeak()) return null;
+  return (
+    <Group title="Add-ons" hint="Off unless you turn them on. Kept on this device.">
+      <Card>
+        <Row
+          label="Read the assistant's replies aloud"
+          hint={loading !== null ? `Downloading the voice · ${Math.round(loading * 100)}%` : "A natural voice that runs on this computer. Downloads once, about 90 MB."}
+        >
+          <Switch checked={on} aria-label="Read the assistant's replies aloud" onCheckedChange={toggle} />
+        </Row>
+      </Card>
+    </Group>
   );
 }

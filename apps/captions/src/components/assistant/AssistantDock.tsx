@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
-import { ArrowUpRight, KeyRound, MessageCircle, PanelRight, PanelRightClose, Volume2, VolumeX, X } from "lucide-react";
+import { ArrowUpRight, KeyRound, MessageCircle, PanelRight, PanelRightClose, VolumeX, X } from "lucide-react";
 import type { AssistantMessage, AssistantView } from "@contracts/assistant";
 import { ReplyText } from "@/components/ReplyText";
 import { Button } from "@/components/ui/button";
@@ -17,7 +17,7 @@ import {
   useAssistant,
 } from "@/lib/assistant";
 import { cornerOf, storePlace, storedPlace, type Corner, type Place } from "@/lib/dock-place";
-import { canSpeak, speak, stopSpeaking, unlockAudio, useReadAloud } from "@/lib/read-aloud";
+import { speak, stopSpeaking, unlockAudio, useReadAloud } from "@/lib/read-aloud";
 import { cn } from "@/lib/utils";
 import { currentProject, PROJECT_COLORS, projectColor, useWorkspace } from "@/lib/workspace";
 import { useAppearance } from "@/lib/settings";
@@ -253,16 +253,10 @@ export function AssistantDock() {
           <span className={cn("relative size-2.5 rounded-full transition-colors duration-500", thinking ? "bg-[var(--tint)]" : connected ? "bg-emerald-500" : "bg-muted-foreground/50")} />
         </span>
         <span className="flex-1 text-sm font-semibold tracking-tight">Assistant</span>
-        {canSpeak() && (
-          <button
-            type="button"
-            onClick={readAloud.toggle}
-            className={cn(headBtn, readAloud.on && "text-[var(--tint)] hover:brightness-110", readAloud.speaking && "motion-safe:animate-pulse")}
-            aria-pressed={readAloud.on}
-            aria-label="Read replies aloud"
-            title={readAloud.on ? "Reading replies aloud. Click to turn off." : "Read replies aloud (a natural voice that runs on this computer; downloads once, about 90 MB)"}
-          >
-            {readAloud.on ? <Volume2 className="size-4" /> : <VolumeX className="size-4" />}
+        {/* read-aloud is an add-on (Settings → General): the dock only offers to stop a reply being read */}
+        {readAloud.speaking && (
+          <button type="button" onClick={stopSpeaking} className={cn(headBtn, "text-[var(--tint)] motion-safe:animate-pulse")} aria-label="Stop reading aloud" title="Stop reading">
+            <VolumeX className="size-4" />
           </button>
         )}
         <button
@@ -278,15 +272,6 @@ export function AssistantDock() {
           <X className="size-4" />
         </button>
       </header>
-
-      {readAloud.loading !== null && (
-        <p className="mx-4 mb-1 flex shrink-0 items-center gap-2 text-xs text-muted-foreground motion-safe:animate-in motion-safe:fade-in" aria-live="polite">
-          <span className="h-1 flex-1 overflow-hidden rounded-full bg-muted">
-            <span className="block h-full rounded-full bg-[var(--tint)] transition-[width] duration-300" style={{ width: `${Math.round(readAloud.loading * 100)}%` }} />
-          </span>
-          Getting the voice ready
-        </p>
-      )}
 
       <div className="relative min-h-0 flex-1 overflow-y-auto px-4 pt-2 pb-3 text-sm">
         {!view && <Dots />}
