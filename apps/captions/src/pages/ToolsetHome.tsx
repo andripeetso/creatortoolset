@@ -164,7 +164,7 @@ export default function ToolsetHome() {
             Tools
             <span className="h-px flex-1 bg-zinc-800/80" />
           </h2>
-          <div className="flex flex-wrap justify-center gap-x-2 gap-y-1 lg:grid lg:grid-cols-5 lg:justify-items-center lg:gap-0">
+          <div className="flex flex-wrap justify-center gap-x-2 gap-y-1 lg:grid lg:auto-cols-fr lg:grid-flow-col lg:justify-items-center lg:gap-0">
             {OTHER.map((t) => tile(t, true))}
           </div>
         </section>
