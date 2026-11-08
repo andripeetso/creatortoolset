@@ -46,6 +46,8 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
         configuration.userContentController.add(self, name: "appLog")
         configuration.userContentController.add(self, name: "badge")
         configuration.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "account")
+        // A picture of the page for the assistant (src/lib/page-context.ts snapshot()): replies with a PNG in base64
+        configuration.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "snapshot")
         installScripts()
         picker.isBordered = false
         picker.toolTip = "Servers"
@@ -95,9 +97,12 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
     var onBlank: (() -> Void)?
     /// The account step (AccountStep.tsx): "status", "apple" or "google"; the reply resolves the page's postMessage.
     var onAccount: ((String, @escaping (AccountReply) -> Void) -> Void)?
+    /// The site the window shows (Shell sets it): only its own pages may ask for a screenshot.
+    var site: (() -> URL)?
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage,
                                replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
+        if message.name == "snapshot" { return snapshot(message, replyHandler) }
         guard let ask = accountAsk(message.body, mainFrame: message.frameInfo.isMainFrame), let onAccount else { return replyHandler(["state": "off"], nil) }
         onAccount(ask) { replyHandler($0, nil) }
     }
@@ -227,4 +232,33 @@ final class ActionItem: NSMenuItem {
     required init(coder: NSCoder) { fatalError("not used") }
 
     @objc private func fire() { run() }
+}
+
+extension AppWebView {
+    /// "snapshot": the visible part of the page as a PNG, at most 2000 px on its longest side, in base64; answered
+    /// only for the open server's own main frame.
+    fileprivate func snapshot(_ message: WKScriptMessage, _ replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
+        guard message.frameInfo.isMainFrame, let page = message.frameInfo.request.url ?? url, let site, isSite(page, site()) else {
+            return replyHandler(nil, "not allowed")
+        }
+        takeSnapshot(with: nil) { image, error in
+            guard let image, let png = pngData(of: image) else {
+                return replyHandler(nil, error?.localizedDescription ?? "no picture")
+            }
+            replyHandler(png.base64EncodedString(), nil)
+        }
+    }
+}
+
+/// The image at its real pixel size, scaled down to fit 2000 px, as PNG.
+private func pngData(of image: NSImage) -> Data? {
+    guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+    let size = fittedSize(width: cg.width, height: cg.height)
+    guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: size.width, pixelsHigh: size.height,
+                                     bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                     colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+          let context = NSGraphicsContext(bitmapImageRep: rep) else { return nil }
+    context.imageInterpolation = .high
+    context.cgContext.draw(cg, in: CGRect(x: 0, y: 0, width: size.width, height: size.height))
+    return rep.representation(using: .png, properties: [:])
 }

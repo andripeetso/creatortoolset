@@ -70,6 +70,7 @@ final class Shell: NSObject, ObservableObject {
         webView.uiDelegate = self
         webView.allowsBackForwardNavigationGestures = true
         webView.isInspectable = true
+        view.site = { [unowned self] in self.base }
         view.onBlank = { [weak self] in
             guard let self, Date().timeIntervalSince(self.lastBlankReload) > 60 else { return }
             self.lastBlankReload = Date()

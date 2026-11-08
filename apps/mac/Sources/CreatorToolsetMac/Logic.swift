@@ -115,3 +115,11 @@ func roomyWindowFrame(screen: CGRect) -> CGRect {
 func grownWindowFrame(current: CGRect, screen: CGRect) -> CGRect? {
     current.width < 1000 && current.height < 700 ? roomyWindowFrame(screen: screen) : nil
 }
+
+/// A screenshot's size for the assistant: at most `longest` pixels on its longest side, never enlarged.
+func fittedSize(width: Int, height: Int, longest: Int = 2000) -> (width: Int, height: Int) {
+    let side = max(width, height)
+    guard side > longest, side > 0 else { return (width, height) }
+    let scale = Double(longest) / Double(side)
+    return (max(1, Int((Double(width) * scale).rounded())), max(1, Int((Double(height) * scale).rounded())))
+}

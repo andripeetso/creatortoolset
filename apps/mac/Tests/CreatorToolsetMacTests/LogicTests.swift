@@ -53,4 +53,10 @@ final class LogicTests: XCTestCase {
         let big = roomyWindowFrame(screen: CGRect(x: 0, y: 0, width: 3000, height: 1800))
         XCTAssertEqual(big.size, CGSize(width: 1440, height: 920))
     }
+
+    func testScreenshotFitsInTwoThousandPixels() {
+        XCTAssertTrue(fittedSize(width: 3024, height: 1964) == (2000, 1299))
+        XCTAssertTrue(fittedSize(width: 1000, height: 4000) == (500, 2000))
+        XCTAssertTrue(fittedSize(width: 1440, height: 900) == (1440, 900))   // small enough: as it is
+    }
 }
