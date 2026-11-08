@@ -61,9 +61,7 @@ export function HowPicker({
   );
 }
 
-async function post(
-  run: boolean,
-): Promise<{ ok?: true; command?: string; error?: string }> {
+async function post(run: boolean): Promise<Reply> {
   const r = await fetch("/api/setup/connect", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -71,12 +69,20 @@ async function post(
   }).catch(() => null);
   return ((await r?.json().catch(() => null)) ?? {
     error: "Couldn't reach the server",
-  }) as { ok?: true; command?: string; error?: string };
+  }) as Reply;
 }
 
+type Reply = {
+  ok?: true;
+  added?: string[];
+  failed?: string[];
+  command?: string;
+  error?: string;
+};
+
 /**
- * Connect their own AI to this Mac's server (api/setup.ts /connect): one button per AI CLI found here, a command to
- * paste instead, and a status that turns to ✓ once a call with the new key arrives (`mcp` in setup's `have`).
+ * Connect their own AI to this Mac's server (api/setup.ts /connect): one button adds it to every AI CLI found here
+ * (one key for all), a command to paste when there's none, and a status that turns to ✓ once a call with the new key arrives (`mcp` in setup's `have`).
  */
 export function ConnectStep({ have }: { have: readonly Have[] }) {
   const [info, setInfo] = useState<{
@@ -84,7 +90,8 @@ export function ConnectStep({ have }: { have: readonly Have[] }) {
     hasKey: boolean;
   } | null>(null);
   const [busy, setBusy] = useState(false);
-  const [added, setAdded] = useState(false);
+  const [added, setAdded] = useState<string[]>([]);
+  const [failed, setFailed] = useState<string[]>([]);
   const [command, setCommand] = useState("");
   const [error, setError] = useState("");
   useEffect(() => {
@@ -99,25 +106,21 @@ export function ConnectStep({ have }: { have: readonly Have[] }) {
     const r = await post(run);
     setBusy(false);
     if (r.error) return setError(r.error);
-    if (r.ok) setAdded(true);
+    if (r.ok) (setAdded(r.added ?? []), setFailed(r.failed ?? []));
     if (r.command) setCommand(r.command);
     setInfo((i) => i && { ...i, hasKey: true });
   };
   const connected = have.includes("mcp");
-  const has = (d: "claude" | "codex") =>
-    !!info?.clis.some((c) => c.driver === d);
 
   return (
     <div className="max-w-2xl space-y-4 text-sm">
       <div className="flex flex-wrap gap-2">
-        {has("claude") && (
+        {!!info?.clis.length && (
           <Button size="sm" disabled={busy} onClick={() => void act(true)}>
-            {added ? <Check /> : null} Add to Claude Code
-          </Button>
-        )}
-        {has("codex") && (
-          <Button size="sm" variant="outline" disabled>
-            Add to Codex (coming soon)
+            {added.length ? <Check /> : null} Connect{" "}
+            {info.clis
+              .map((c) => (c.driver === "claude" ? "Claude Code" : "Codex"))
+              .join(" and ")}
           </Button>
         )}
         {info && !info.clis.length && (
@@ -127,10 +130,19 @@ export function ConnectStep({ have }: { have: readonly Have[] }) {
           </p>
         )}
       </div>
-      {error && <p className="text-xs text-rose-500">{error}</p>}
+      {!!added.length && (
+        <p className="text-xs text-muted-foreground">
+          Added to {added.join(" and ")}.
+        </p>
+      )}
+      {[error, ...failed].filter(Boolean).map((f) => (
+        <p key={f} className="text-xs text-rose-500">
+          {f}
+        </p>
+      ))}
 
       {/* one Full key per account: a second way to make one would cut off the first, so the command is only for a Mac with no button */}
-      {info && !has("claude") && (
+      {info && !info.clis.length && (
         <div className="rounded-md border p-3">
           <p className="text-xs text-muted-foreground">
             Or paste this into a terminal:

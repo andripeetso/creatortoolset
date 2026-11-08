@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 
 process.env.DATA_DIR = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "setup-"));
 process.env.APP_SECRET = "test-secret";
-const { setupApp, claudeMcpAdd, shellLine } = await import("./setup");
+const { setupApp, claudeMcpAdd, codexMcpAdd, codexWithKey, shellLine } = await import("./setup");
 const { saveMyKey } = await import("./my-keys");
 const { pairDevice, saveReport } = await import("./lib/devices");
 import type { AuthVars } from "./auth";
@@ -53,4 +53,13 @@ it("adds this Mac's own server to Claude Code, the key only in the header", () =
   const args = claudeMcpAdd(4123, key);
   expect(args).toEqual(["mcp", "add", "--transport", "http", "--scope", "user", "creator-toolset", "http://127.0.0.1:4123/api/mcp", "--header", `Authorization: Bearer ${key}`]);
   expect(shellLine("claude", args)).toBe(`claude mcp add --transport http --scope user creator-toolset http://127.0.0.1:4123/api/mcp --header "Authorization: Bearer ${key}"`);
+});
+
+it("adds this Mac's own server to Codex by address, the key as a header on its entry only", () => {
+  expect(codexMcpAdd(4123)).toEqual(["mcp", "add", "creator-toolset", "--url", "http://127.0.0.1:4123/api/mcp"]);
+  const toml = 'model = "o3"\n\n[mcp_servers.creator-toolset]\nurl = "http://127.0.0.1:4123/api/mcp"\n\n[mcp_servers.other]\nurl = "x"\n';
+  const once = codexWithKey(toml, "ctk_one");
+  const twice = codexWithKey(once, "ctk_two");
+  expect(twice).toBe('model = "o3"\n\n[mcp_servers.creator-toolset]\nhttp_headers = { Authorization = "Bearer ctk_two" }\nurl = "http://127.0.0.1:4123/api/mcp"\n\n[mcp_servers.other]\nurl = "x"\n');
+  expect(() => codexWithKey("", "ctk_x")).toThrow();
 });
