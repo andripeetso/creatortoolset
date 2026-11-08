@@ -39,7 +39,8 @@ struct CreatorToolsetMacApp: App {
             }
             CommandMenu("Record") {
                 if Recorder.available {
-                    Button("New Recording…") { shell.recorder.openToolbar() }.keyboardShortcut("r", modifiers: [.command, .option])
+                    // its shortcut is global and the user's own (RecordShortcut.swift), shown in Recording Shortcut
+                    Button("New Recording…") { shell.recorder.openToolbar() }
                     Button("Stop Recording") { shell.recorder.stop() }.keyboardShortcut(".", modifiers: [.command, .option])
                     Divider()
                     Button("All Recordings") { shell.showWindow(href: "/record") }

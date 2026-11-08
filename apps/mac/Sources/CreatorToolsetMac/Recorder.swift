@@ -259,7 +259,7 @@ final class Recorder: ObservableObject {
         case .saving: "saving"
         case .uploading: "uploading"
         }
-        let body: [String: Any] = ["phase": name, "folder": folder.path]
+        let body: [String: Any] = ["phase": name, "folder": folder.path, "shortcut": RecordShortcut.shared.shortcut?.display ?? ""]
         return (try? JSONSerialization.data(withJSONObject: body)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
     }
 
@@ -501,6 +501,16 @@ final class Recorder: ObservableObject {
             camera?.resume(atHost: now)
             runFrom = Date()
             phase = .recording
+        }
+    }
+
+    /// The recording shortcut and the menu bar button (RecordShortcut.swift): start, or stop what is running.
+    func toggle() {
+        switch phase {
+        case .idle: openToolbar()
+        case .toolbar, .recording, .paused: stop()
+        case .countdown: cancel()
+        case .saving, .uploading: break
         }
     }
 

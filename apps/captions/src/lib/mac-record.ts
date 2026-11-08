@@ -37,10 +37,10 @@ export const openRecorder = () => tellRecorder("toolbar");
 export type RecorderPhase = "idle" | "toolbar" | "countdown" | "recording" | "paused" | "saving" | "uploading";
 
 /** The recorder's phase and recordings folder, as the app reports them. `busy`: a take is running (not idle or at the toolbar). */
-export function useRecorderState(): { phase: RecorderPhase; busy: boolean; folder: string } {
-  const [state, setState] = useState<{ phase: RecorderPhase; folder: string }>({ phase: "idle", folder: "" });
+export function useRecorderState(): { phase: RecorderPhase; busy: boolean; folder: string; shortcut: string } {
+  const [state, setState] = useState<{ phase: RecorderPhase; folder: string; shortcut?: string }>({ phase: "idle", folder: "" });
   useEffect(() => {
-    const on = (e: Event) => setState((e as CustomEvent<{ phase: RecorderPhase; folder: string }>).detail);
+    const on = (e: Event) => setState((e as CustomEvent<{ phase: RecorderPhase; folder: string; shortcut?: string }>).detail);
     const ask = () => tellRecorder("state");
     window.addEventListener("mac-recorder", on);
     window.addEventListener("focus", ask); // the folder may have changed in the app's menu
@@ -50,7 +50,7 @@ export function useRecorderState(): { phase: RecorderPhase; busy: boolean; folde
       window.removeEventListener("focus", ask);
     };
   }, []);
-  return { ...state, busy: state.phase !== "idle" && state.phase !== "toolbar" };
+  return { ...state, shortcut: state.shortcut ?? "", busy: state.phase !== "idle" && state.phase !== "toolbar" };
 }
 
 /** A recording still on this Mac: a local project folder in the recordings folder. */

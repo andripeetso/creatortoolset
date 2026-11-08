@@ -90,6 +90,7 @@ final class Shell: NSObject, ObservableObject {
             return try await self.client().uploadRecording(project, to: destination, progress: progress)
         }
         recorder.onRecordingsChanged = { [weak self] in self?.pushRecordings() }
+        if Recorder.available { RecordShortcut.shared.install(recorder) }
         recorder.openPage = { [weak self] in self?.showWindow(href: $0) }
         view.pickerMenu = { [weak self] in self?.pickerItems() ?? [] }
         account.window = { [weak self] in self?.webView.window }

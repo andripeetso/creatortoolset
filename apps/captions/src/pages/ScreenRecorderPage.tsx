@@ -37,7 +37,7 @@ const duration = (ms: number) => {
 export default function ScreenRecorderPage() {
   const me = useMe();
   const inApp = canRecordScreen();
-  const { phase, busy, folder } = useRecorderState();
+  const { phase, busy, folder, shortcut } = useRecorderState();
   const recordings = useLocalRecordings();
 
   const [recent, setRecent] = useState<ReviewAsset[] | null>(null);
@@ -83,6 +83,7 @@ export default function ScreenRecorderPage() {
               )}
               <p className="px-4 text-center text-xs text-zinc-500">
                 Pick the screen, a camera and a microphone, then Start. Nothing uploads until you send it.
+                {shortcut && <> From any app: {shortcut}.</>}
               </p>
               {folder && (
                 <div className="flex w-full max-w-md items-center gap-2 px-4 text-sm">

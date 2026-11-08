@@ -73,7 +73,7 @@ struct ActivityPanel: View {
             HStack {
                 Button("Open Creator Toolset") { shell.showWindow() }
                 if Recorder.available {
-                    Button("Record screen") { shell.recorder.openToolbar() }.disabled(shell.recorder.busy)
+                    RecordScreenButton(recorder: shell.recorder)
                 }
                 Spacer()
                 Menu {
@@ -164,13 +164,37 @@ enum LoginItem {
     }
 }
 
-/// Where screen recordings are kept (the menu bar's gear menu and the app's Record menu). What a recording hears is
-/// chosen on the recording toolbar (RecordToolbar.swift).
+/// Screen recording's own settings (the menu bar's gear menu and the app's Record menu): the shortcut, the menu bar
+/// button, the folder. What a recording hears is chosen on the recording toolbar (RecordToolbar.swift).
 struct RecordingMenu: View {
     let recorder: Recorder
+    @ObservedObject private var quick = RecordShortcut.shared
+
+    init(recorder: Recorder) { self.recorder = recorder }
 
     var body: some View {
+        Button("Recording Shortcut: \(quick.shortcut?.display ?? "None")…") { quick.choose() }
+        Toggle("Record Button in Menu Bar", isOn: $quick.showsButton)
+        Divider()
         Button("Recordings Folder…") { recorder.pickFolder() }
         Button("Show Recordings") { recorder.showFolder() }
+    }
+}
+
+/// The menu bar panel's Record screen, with the shortcut beside it.
+private struct RecordScreenButton: View {
+    @ObservedObject var recorder: Recorder
+    @ObservedObject private var quick = RecordShortcut.shared
+
+    var body: some View {
+        Button {
+            recorder.toggle()
+        } label: {
+            HStack(spacing: 6) {
+                Text(recorder.phase == .recording || recorder.phase == .paused ? "Stop recording" : "Record screen")
+                if let key = quick.shortcut?.display { Text(key).foregroundStyle(.tertiary) }
+            }
+        }
+        .disabled(recorder.phase == .saving)
     }
 }
