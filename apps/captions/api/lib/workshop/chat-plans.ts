@@ -43,7 +43,7 @@ export function isAudienceQuestion(text: string): boolean {
 
 /** This turn asked to write or change the post description, not just the piece. */
 export function askedForCaption(message: string): boolean {
-  return /\b(post descriptions?|descriptions?|write (?:the |a )?captions?|generate (?:the |a )?captions?|(?:the |a |in the |this |my |your )captions?)\b/i.test(message);
+  return /\b(post descriptions?|descriptions?|write (?:the |a )?captions?|generate (?:the |a )?captions?|(?:the |a |in the |this |my |your )captions?|(?:instagram|normal|short) captions?)\b/i.test(message);
 }
 
 /** This turn asked to write or change the pinned comment, not just the piece. */

@@ -136,6 +136,28 @@ describe("the description against the author's own captions (a 1,969-character s
     expect(readThrough(d).find((n) => n.includes("repeats the slides' own wording"))).toBeTruthy();
   });
 
+  it("a caption turn reads the author's captions and the last messages only: no scripts of other pieces, no older notes", () => {
+    const history = Array.from({ length: 30 }, (_, i) => ({ id: `m${i}`, role: (i % 2 ? "assistant" : "user") as "user" | "assistant", text: `older turn ${i}`, at: i, docId: "d1" }));
+    const { user } = buildTurnPrompt({
+      frameworks: [],
+      rules: [],
+      doc: carousel("the script"),
+      pinned: [],
+      sources: [],
+      history,
+      message: "rewrite as a normal Instagram caption like the ones I usually post",
+      others: [{ ...carousel("the other piece's script"), title: "Final B" }],
+      captionExamples: { examples: [{ text: "A reel caption.", keptPer1k: 40 }], saved: ["Saved on Final B."], median: 300, p90: 900 },
+    });
+    expect(user).not.toContain("other piece's script");
+    expect(user).toContain("Captions the author has saved on the other pieces of this session:\n---\nSaved on Final B.");
+    expect(user).toContain("The piece this description is for, in full");
+    expect(user).toContain("older turn 29");
+    expect(user).not.toContain("older turn 0");
+    expect(user).not.toContain("Everything the author said");
+    expect(user).toContain("newest reels first");
+  });
+
   it("shows the writer the author's own captions when the author asks for the description", () => {
     const { user } = buildTurnPrompt({
       frameworks: [],

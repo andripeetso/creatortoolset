@@ -94,6 +94,7 @@ describe("gateCompanionEdits", () => {
     expect(askedOnlyForCaption("Another take of the post description")).toBe(true);
     expect(askedOnlyForCaption("descriptions start with Most families and then add the income split")).toBe(true);
     expect(askedOnlyForCaption("write the description and tighten the hook")).toBe(false);
+    expect(askedOnlyForCaption("rewrite as a normal Instagram caption like the ones I usually post")).toBe(true);
   });
 
   it("clears a question that was replacing a question, even when they did not ask for a pin", () => {

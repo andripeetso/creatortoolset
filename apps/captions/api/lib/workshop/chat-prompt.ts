@@ -60,14 +60,18 @@ const OPS_BLOCK: Record<DocKind, string> = {
 
 // What each field is for and when it is written. How it should read comes from the author's posts and the author's rewrites, never from here.
 const DESCRIPTION_RULES = `- The post description (set_caption) and the pinned comment (set_pinned) are written when this message asks for them, one of each, into the field. A caption marked [you] is theirs: keep their wording and add what they asked.
-- What the description is for: the slides state a claim boldly, and the description balances it and cites the sources. The slides carry the claim; the description is where a reader who wants more finds who found it, how solid it is and what it leaves open. Instagram shows its first line under the post and stops at 2,200 characters. Their own posted captions show how theirs read.
+- The post description is the text under the post on Instagram. Instagram shows its first line and stops at 2,200 characters. Their own posted captions show how theirs read.
 - The pinned comment is usually empty: the author uses it to sell or to put a fact in the first comment.`;
+
+/** The carousel's description is where the claims get their sources (carousel craft). */
+const CAROUSEL_DESCRIPTION = `- What the description is for: the slides state a claim boldly, and the description balances it and cites the sources. The slides carry the claim; the description is where a reader who wants more finds who found it, how solid it is and what it leaves open.`;
 
 const KIND_RULES: Record<DocKind, string> = {
   reel: `This tab is a talking-to-camera reel: one freeform script (a single block), the words said to camera. Markdown is fine. Replace the existing page (or append if empty), do not split it into beats.
 - Do not call add_hook while drafting the script unless this message asks for hook versions or hook cards already exist. When asked for another hook or a hook variation, call add_hook on this reel — do not create a new document.
 ${DESCRIPTION_RULES}`,
   carousel: `This tab is an Instagram carousel: one slide per block, one idea per block. A blank line is a new area on the card. Keep ids exactly as given. Prefer replace / insert over rewriting everything. Instagram shows a carousel a second time opening on slide 2, so slides 1 and 2 each have to work as the opening on their own.
+${CAROUSEL_DESCRIPTION}
 ${DESCRIPTION_RULES}`,
   ad: `This tab is paid social ad copy: one variant per block — the primary text (hook first, CTA last, 60–150 words), then the headline (≤ 40 characters) as its own last line. Three variants with different angles. One idea per block. Keep ids exactly as given. Prefer replace / insert over rewriting everything.
 - Post description and pinned comment only if this message asks for them.`,
@@ -152,7 +156,7 @@ export interface TurnPromptInput {
   /** The author's own posts closest to this piece in words, most saved and shared first (closest.ts). */
   closestPosts?: Array<{ date: string; keptPer1k?: number; file?: string; text: string }>;
   /** Asked for the post description: the author's own posted captions, most saved first, and how long theirs run. */
-  captionExamples?: { examples: Array<{ text: string; keptPer1k: number }>; median: number; p90: number };
+  captionExamples?: { examples: Array<{ text: string; keptPer1k: number }>; saved?: string[]; median: number; p90: number };
   /** A web search the author approved for this turn: the Mac session has WebSearch/WebFetch for it. */
   web?: string;
   /** Big pastes attached to this message, whole: a file in the folder on the Mac, inline otherwise. */
@@ -286,6 +290,9 @@ export function renderUserEdits(edits: UserEdit[]): string {
   return cut(parts.join("\n\n"), TURN_BUDGET.edits);
 }
 
+/** A caption turn reads only the last few messages: earlier ones are about the script, and their research turns make the caption a footnote. */
+const CAPTION_TURN_HISTORY = 6;
+
 export function buildTurnPrompt(input: TurnPromptInput): { system: string; user: string } {
   const captionOnly = askedOnlyForCaption(input.message);
   const folder = input.folder;
@@ -316,8 +323,11 @@ export function buildTurnPrompt(input: TurnPromptInput): { system: string; user:
   blocks.push(`Deliverable: ${DOC_KIND_RULES[input.doc.kind]}`);
   const typeLine = carouselTypePrompt(input.doc.carouselType);
   if (typeLine) blocks.push(typeLine);
-  for (const o of input.others ?? []) blocks.push(`Another piece in this session, for reading (edits go only to the document below):\n${cut(renderDocument(o), TURN_BUDGET.document)}`);
-  blocks.push(folder ? renderDocument(input.doc) : cut(renderDocument(input.doc), TURN_BUDGET.document));
+  // a caption turn reads the other pieces' captions (captionExamples.saved), not their scripts
+  for (const o of captionOnly ? [] : input.others ?? []) blocks.push(`Another piece in this session, for reading (edits go only to the document below):\n${cut(renderDocument(o), TURN_BUDGET.document)}`);
+  // a caption turn reads the whole piece: its script is what the description has to follow
+  if (captionOnly) blocks.push(`The piece this description is for, in full (the video's own words, block by block):\n${renderDocument(input.doc)}`);
+  else blocks.push(folder ? renderDocument(input.doc) : cut(renderDocument(input.doc), TURN_BUDGET.document));
   if (input.doc.userEdits?.length) blocks.push(renderUserEdits(input.doc.userEdits));
   if (input.pinned.length) {
     let used = 0;
@@ -362,7 +372,7 @@ export function buildTurnPrompt(input: TurnPromptInput): { system: string; user:
   // Newest first into the budget, so a long session drops its oldest turns, never the last ones. The author's words are never cut.
   // The folder turn too; the
   // whole conversation stays in sessions/, and every note of theirs is listed in full below.
-  const recent = resumed ? [] : input.history.slice(-TURN_BUDGET.historyTurns);
+  const recent = resumed ? [] : input.history.slice(-(captionOnly ? CAPTION_TURN_HISTORY : TURN_BUDGET.historyTurns));
   if (recent.length) {
     let used = 0;
     const lines: string[] = [];
@@ -390,7 +400,7 @@ export function buildTurnPrompt(input: TurnPromptInput): { system: string; user:
   //. Every turn, a resumed one
   // too: restating every instruction so far each turn won back part of what models lose over long chats (Laban et al. 2025).
   const said = input.history.filter((m) => m.role === "user" && m.text.trim()).map((m) => m.text.trim());
-  if (said.length >= 2) {
+  if (said.length >= 2 && !captionOnly) {
     blocks.push(`Everything the author said about this piece before this message, in their words. Each one still stands unless they took it back:\n${said.map((t) => `- ${t.replace(/\n+/g, " ")}`).join("\n")}`);
   }
   if (input.mine) {
@@ -408,15 +418,18 @@ export function buildTurnPrompt(input: TurnPromptInput): { system: string; user:
   // the author's own setting for this message: how much of the piece it may change
   if (input.scope === "slight") blocks.push("Slight changes (the author's setting for this message): change only what this message points at, as little as it takes. Every other block, the caption and the hooks stay exactly as they are.");
   if (input.scope === "rewrite") blocks.push("Rewrite (the author's setting for this message): the whole piece is open, its opening and its order included.");
-  if (input.rewrites?.pieces.length && !resumed) blocks.push(renderPairs(input.rewrites.pieces, "slides, hooks and scripts"));
+  if (input.rewrites?.pieces.length && !resumed && !captionOnly) blocks.push(renderPairs(input.rewrites.pieces, "slides, hooks and scripts"));
   if (input.rewrites?.descriptions.length && !resumed) blocks.push(renderPairs(input.rewrites.descriptions, "post descriptions"));
   if (input.captionExamples?.examples.length) {
     const c = input.captionExamples;
     blocks.push(
-      `How the author's own posted captions look, most saved and shared first (theirs run about ${c.median.toLocaleString("en-US")} characters; 9 in 10 are under ${c.p90.toLocaleString("en-US")}):\n${c.examples
+      `How the author's own posted captions look, newest reels first (theirs run about ${c.median.toLocaleString("en-US")} characters; 9 in 10 are under ${c.p90.toLocaleString("en-US")}):\n${c.examples
         .map((e) => `---\n${e.text.trim()}`)
         .join("\n")}\n---`,
     );
+  }
+  if (input.captionExamples?.saved?.length) {
+    blocks.push(`Captions the author has saved on the other pieces of this session:\n${input.captionExamples.saved.map((t) => `---\n${t}`).join("\n")}\n---`);
   }
   if (input.web) {
     blocks.push(`The author approved one web search for this turn: «${input.web}». Search for it (WebSearch, WebFetch), then answer with what you found, and say what it doesn't support.`);

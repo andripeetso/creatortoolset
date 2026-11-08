@@ -60,6 +60,7 @@ import { fetchYoutubeViaApify } from "./lib/youtube/fetch";
 import { PLAN_PARSERS } from "./lib/workshop/plans";
 import { renderDraft } from "./lib/workshop/render";
 import { applyEdits, docToMarkdown, keep, markEditsSeen, newDocument, revert, setVersionKept, snapshot, userEdit } from "./lib/workshop/doc";
+import { captionExamplesFor } from "./lib/workshop/caption-examples";
 import { askedForCaption, askedOnlyForCaption, editsForNewDocument, isAccountFetchSource, gateCompanionEdits, parseTurn, type TurnPlan } from "./lib/workshop/chat-plans";
 import { packInstructions } from "./lib/packs";
 import { buildTurnPrompt, wantsComments } from "./lib/workshop/chat-prompt";
@@ -1078,21 +1079,26 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
       else unreadFiles.push(f);
     }
     const attachments = [...askImages, ...askFiles]; // the folder's attached/ files, numbered in this order
-    // asked for the post description: the writer sees how the author's own captions look
-    const captionExamples = askedForCaption(ask.text) ? await captionYardstick(user, project) : undefined;
     // Next to the piece: the few of the author's posts and rewrites closest to it (closest.ts), the
     // description rewrites when the author asks for one, the slide/hook/script ones always. The rest is in the folder.
     const own = await ownPostsForWorkshop(user, projectAccount(project)).catch(() => null);
+    // asked for the post description: the author's newest reel captions and the captions saved on this session's
+    // other pieces (caption-examples.ts), so the writer doesn't copy research footnotes it was shown
+    const captionExamples = askedForCaption(ask.text)
+      ? captionExamplesFor(own?.posts ?? [], (await listDocs(session.id)).filter((d) => d.id !== doc.id && d.caption?.text.trim()).map((d) => d.caption!.text))
+      : undefined;
     const near = [...doc.blocks, ...(doc.hooks ?? [])].map((b) => b.text).concat(history.filter((m) => m.role === "user").map((m) => m.text), ask.text).join("\n");
-    const nearPosts = own ? closestPosts(near, own.posts) : [];
+    // a caption turn reads its piece, the author's captions and the last few messages: no nearby posts, no folder
+    const nearPosts = own && !captionOnly ? closestPosts(near, own.posts) : [];
     const editLog = await readEditLog(session.owner);
     const rewrites = {
       descriptions: closestRewrites(near, editLog.filter((p) => p.kind === "description"), session.projectId, 3),
       pieces: closestRewrites(near, editLog.filter((p) => p.kind !== "description" && p.kind !== "pinned"), session.projectId, 4),
     };
-    // On the Mac the turn reads a folder with everything; on the API key, the packed prompt below.
+    // On the Mac the turn reads a folder with everything; on the API key, the packed prompt below. A caption turn
+    // needs none of it: the Mac answers from the prompt (a folder can be megabytes of tokens per turn).
     let folder: Folder | null = null;
-    if (onMac(user, session.ai)) {
+    if (onMac(user, session.ai) && !(captionOnly && !approvedWeb)) {
       // the folder is all it reads (no pulls): a source video nobody transcribed yet is transcribed first
       const untranscribed = index.filter((e) => e.kind !== "carousel" && !e.has.transcript).map((e) => e.id);
       if (untranscribed.length) {
@@ -1117,7 +1123,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
     const context = contextKey(project, frameworks);
     const claude = folder ? resumableClaude(session, askAt > 0 ? chat.messages[askAt - 1]!.id : undefined, ids, context, providerKey(user, session.ai)) : undefined;
     // say what sits next to the piece, before the thinking step (a resumed session has it from its first turn)
-    if (!(claude && folder) && (nearPosts.length || rewrites.pieces.length)) {
+    if (!captionOnly && !(claude && folder) && (nearPosts.length || rewrites.pieces.length)) {
       step(`Next to this piece: ${nearPosts.length} of your posts${nearPosts.length ? ` (${nearPosts.map((p) => new Date(p.item.takenAt).toISOString().slice(0, 10)).join(", ")})` : ""} and ${rewrites.pieces.length} of your rewrites, the closest to it`);
     }
     let macSeconds = 0;
@@ -1495,21 +1501,6 @@ async function bestPosts(user: SessionUser, project: Project | null, n: number):
     .sort((a, b) => b.keptPer1k - a.keptPer1k)
     .slice(0, n);
   return { handle: own?.handle, best };
-}
-
-/** The author's posted captions: the six most saved and shared, and how long theirs run. */
-async function captionYardstick(user: SessionUser, project: Project | null) {
-  const own = await ownPostsForWorkshop(user, projectAccount(project)).catch(() => null);
-  const posts = (own?.posts ?? []).map(({ item: i }) => {
-    const views = i.insights?.views ?? i.counts.plays ?? 0;
-    const kept = (i.insights?.saved ?? 0) + (i.insights?.shares ?? 0);
-    return { text: i.caption ?? "", keptPer1k: views >= 1000 ? (kept * 1000) / views : 0 };
-  });
-  const lengths = posts.map((p) => p.text.length).filter((n) => n > 0).sort((a, b) => a - b);
-  if (lengths.length < 10) return undefined;
-  const at = (q: number) => lengths[Math.min(lengths.length - 1, Math.floor(q * lengths.length))]!;
-  const examples = posts.filter((p) => p.text.trim() && p.keptPer1k > 0).sort((a, b) => b.keptPer1k - a.keptPer1k).slice(0, 6);
-  return { examples, median: at(0.5), p90: at(0.9) };
 }
 
 /** A Claude provider for Fable: the Workshop's when it is Claude, else the first Claude that is on. */
