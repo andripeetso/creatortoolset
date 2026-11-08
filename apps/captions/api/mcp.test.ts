@@ -62,6 +62,11 @@ describe("Creator Toolset as a remote MCP server", () => {
     expect(await tool("workshop_session", { session: "00000000-0000-4000-8000-000000000000" })).toEqual({ error: true, value: "Not found, or not this account's." });
     expect((await tool("list_reviews")).value).toEqual({ reviews: [] });
     expect((await tool("editor_list")).value).toEqual({ edits: [] });
+    expect(await tool("review_set_approval", { link: "not a link", status: "approved" })).toEqual({ error: true, value: expect.stringContaining("That isn't a review link") });
+    expect(await tool("review_set_approval", { link: "00000000-0000-4000-8000-000000000000", status: "changes" })).toEqual({ error: true, value: "Not found, or not this account's." });
+    expect(await tool("instagram_refresh", { account: "nobody" })).toEqual({ error: true, value: "No account of yours is called @nobody: add it in the Analyzer first." });
+    expect(await tool("instagram_posts", { account: "nobody" })).toEqual({ error: true, value: "No account of yours is called @nobody: add it in the Analyzer first." });
+    expect((await tool("instagram_posts", { account: "nobody", since: "not a date" })).error).toBe(true);
     expect((await tool("editor_run", { edit: "x", kind: "send_to_review" })).value).toContain("needs the draft");
     expect((await tool("get_review", { link: "not a link" })).error).toBe(true);
     // links start with this server's address: PUBLIC_ORIGIN, else the one the request came in on
@@ -76,6 +81,8 @@ describe("Creator Toolset as a remote MCP server", () => {
 
   it("keeps its tool list's size on purpose: it goes into every AI session that connects", () => {
     // growth must be deliberate: check what the new words buy, then update this number (never fix it by cutting words)
-    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(5814);
+    // 5814 -> 6925: review_set_approval (approve or send back a Review video from a chat) and instagram_refresh/posts
+    // (start an Analyzer account's pull and list its posts)
+    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(6925);
   });
 });

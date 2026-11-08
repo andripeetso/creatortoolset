@@ -54,7 +54,10 @@ own writer, which reads the project, the user's posts and past rewrites (it runs
 change the text yourself with workshop_edit_piece. Locked blocks are ones the user approved: leave them as they are.
 
 Review: his videos waiting for feedback, their versions and timed comments (with the frame each points at).
-Resolve a comment only once the change it asks for is made.
+Resolve a comment only once the change it asks for is made. review_set_approval marks a video approved or sent back.
+
+Instagram (the Analyzer): instagram_refresh starts a pull of one of the user's accounts (on their own Apify key or
+official login), instagram_posts lists its posts since a date and the state of its pulls.
 
 AI Editor: edits made from footage in the Media Library; each runs steps (analyze, script, draft, broll) into drafts,
 one per version, which can be filed in Review.
@@ -122,6 +125,21 @@ export const TOOLS = [
     name: "resolve_comment",
     description: "Mark a Review comment done once the change it asks for is made (resolved: false reopens it).",
     inputSchema: { type: "object", properties: { link: str, comment_id: str, resolved: { type: "boolean" } }, required: ["link", "comment_id"] },
+  },
+  {
+    name: "review_set_approval",
+    description: "Set a Review video's approval: approved, changes (sent back to the editor), or in_progress / needs_review / none.",
+    inputSchema: { type: "object", properties: { link: str, status: { type: "string", enum: ["none", "in_progress", "needs_review", "changes", "approved"] } }, required: ["link", "status"] },
+  },
+  {
+    name: "instagram_refresh",
+    description: "Start a pull of one of the user's Analyzer accounts (by handle): its catalog of posts, profile, stats or tags. It runs in the background; instagram_posts shows the state.",
+    inputSchema: { type: "object", properties: { account: str, types: { type: "array", items: { type: "string", enum: ["profile", "catalog", "stats", "tags"] } } }, required: ["account"] },
+  },
+  {
+    name: "instagram_posts",
+    description: "An Analyzer account's posts (by handle) taken on or after since (a date, like 2026-10-01): shortcode, url, kind, when, caption, plays, likes, comments, and the state of its pulls.",
+    inputSchema: { type: "object", properties: { account: str, since: str }, required: ["account"] },
   },
   { name: "editor_list", description: "AI Editor edits, newest first: id, name, the last step and its state.", inputSchema: { type: "object", properties: {} } },
   { name: "editor_get", description: "One AI Editor edit: its brief, drafts, notes and jobs.", inputSchema: { type: "object", properties: { edit: str }, required: ["edit"] } },
@@ -206,6 +224,13 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
   };
   const json = async <T = Args>(path: string, method = "GET", body?: unknown) => (await (await api(path, method, body)).json()) as T;
   const ws = <T = Args>(path: string, method = "GET", body?: unknown) => json<T>(`/api/workshop${path}`, method, body);
+  /** An Analyzer account of the user's by handle → its id (the account routes take the id). */
+  const accountOf = async (handle: string) => {
+    const name = handle.replace(/^@/, "").toLowerCase();
+    const found = (await json<Args[]>(`/api/instagram/accounts?q=${encodeURIComponent(name)}`)).find((a) => String(a.username ?? "").toLowerCase() === name);
+    if (!found) throw new ToolError(`No account of yours is called @${name}: add it in the Analyzer first.`);
+    return String(found.id);
+  };
   const pieces = async (session: string) => (await ws<Args[]>(`/sessions/${session}/docs`)).filter((d) => d.kind !== "notes").map(piece);
 
   const wait = async (a: Args) => {
@@ -318,6 +343,32 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
       const id = ((await json(reviewPath(String(a.link), origin))).asset as Args).id;
       const cm = await json(`/api/review/assets/${id}/comments/${encodeURIComponent(String(a.comment_id))}`, "PATCH", { resolved: a.resolved !== false });
       return { id: cm.id, resolved: !!cm.resolved, text: cm.text };
+    },
+    review_set_approval: async (a) => {
+      const id = ((await json(reviewPath(String(a.link), origin))).asset as Args).id;
+      const r = await json(`/api/review/assets/${id}/approval`, "POST", { status: a.status });
+      return { id: r.id, name: r.name, approval: (r.approval as Args | undefined)?.status };
+    },
+    instagram_refresh: async (a) => {
+      const id = await accountOf(String(a.account));
+      const types = Array.isArray(a.types) && a.types.length ? a.types : ["catalog"];
+      return pick(await json(`/api/instagram/accounts/${id}/jobs`, "POST", { types }), ["id", "username", "jobs", "catalogCount"]);
+    },
+    instagram_posts: async (a) => {
+      const sinceMs = a.since ? Date.parse(String(a.since)) : 0;
+      if (Number.isNaN(sinceMs)) throw new ToolError("since is a date, like 2026-10-01.");
+      const acc = await json(`/api/instagram/accounts/${await accountOf(String(a.account))}`);
+      const rows = ((acc.catalog as Args[] | undefined) ?? []).filter((r) => (r.takenAt as number) >= sinceMs).sort((x, y) => (y.takenAt as number) - (x.takenAt as number));
+      return {
+        account: acc.username,
+        jobs: acc.jobs,
+        posts: rows.map((r) => ({
+          ...pick(r, ["shortcode", "url", "kind"]),
+          when: when(r.takenAt),
+          caption: String(r.caption ?? r.captionPreview ?? "").slice(0, 300),
+          ...pick((r.counts ?? {}) as Args, ["plays", "likes", "comments"]),
+        })),
+      };
     },
     editor_list: async () => ({
       edits: (await json<Args[]>("/api/editor")).map((e) => ({ ...pick(e, ["id", "name", "last"]), updated: when(e.updatedAt), link: `${origin}/editor/${e.id}` })),
