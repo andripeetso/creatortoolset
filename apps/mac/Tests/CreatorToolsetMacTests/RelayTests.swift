@@ -301,6 +301,9 @@ final class RelayTests: XCTestCase {
         XCTAssertEqual((report["drivers"] as? [[String: Any]])?.count, reportDrivers.count)
         XCTAssertEqual((report["drivers"] as? [[String: Any]])?.first?["driver"] as? String, "codex")
         XCTAssertNotNil(report["homes"])
+        let machine = report["machine"] as? [String: Any]
+        XCTAssertEqual(machine?["os"] as? String, "mac")
+        XCTAssertGreaterThan(machine?["cpus"] as? Int ?? 0, 0)
     }
 
     func testSignInAndPlanComeFromWhatTheCLISays() {

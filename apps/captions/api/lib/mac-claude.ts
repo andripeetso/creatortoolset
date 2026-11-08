@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import { createHash, randomUUID } from "node:crypto";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { DRIVERS, type Driver, type Effort, type MacReport, type Scope } from "../../contracts/providers";
+import { DRIVERS, parseMachine, type Driver, type Effort, type MacReport, type Scope } from "../../contracts/providers";
 import { limitMessage } from "../../contracts/plans";
 import { env } from "./env";
 import { deviceName, isOnline, saveReport, touchDevice } from "./devices";
@@ -383,7 +383,8 @@ export function relayRoutes(deviceOf: (c: Context) => string | null) {
     const device = c.get("device");
     const b = await body(c);
     const list = <T>(x: unknown): T[] => (Array.isArray(x) ? (x as T[]) : []);
-    const r: MacReport = { at: Date.now(), drivers: list(b.drivers), homes: list(b.homes) };
+    const machine = parseMachine(b.machine);
+    const r: MacReport = { at: Date.now(), drivers: list(b.drivers), homes: list(b.homes), ...(machine ? { machine } : {}) };
     saveReport(device, r, typeof b.version === "string" ? b.version.slice(0, 40) : undefined);
     return c.json({ ok: true });
   });

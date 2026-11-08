@@ -90,6 +90,40 @@ export interface MacReport {
   drivers: Array<{ driver: Driver; installed: boolean; version?: string; path?: string; signedIn?: boolean; plan?: string }>;
   /** config folders found for a driver, e.g. ~/.claude-work */
   homes: Array<{ driver: Driver; home: string }>;
+  /** the computer itself: what it is and how busy it was when it reported */
+  machine?: Machine;
+}
+
+/** A computer's hardware and load (its report). */
+export interface Machine {
+  os?: "mac" | "linux" | "windows";
+  host?: string;
+  /** the CPU or chip, e.g. "Apple M2 Max" */
+  cpu?: string;
+  cpus: number;
+  /** how busy the CPU is, 0..1 (the last minute's load over the cores) */
+  load?: number;
+  memGb: number;
+  freeGb?: number;
+  gpu?: string;
+  gpuMemGb?: number;
+  gpuFreeGb?: number;
+}
+
+/** A Machine from an untrusted body, or undefined. */
+export function parseMachine(v: unknown): Machine | undefined {
+  const o = v as Record<string, unknown> | null;
+  const num = (x: unknown, max: number) => (typeof x === "number" && Number.isFinite(x) && x >= 0 && x <= max ? x : undefined);
+  const text = (x: unknown) => (typeof x === "string" && x.trim() ? x.trim().slice(0, 80) : undefined);
+  const cpus = num(o?.cpus, 4096);
+  const memGb = num(o?.memGb, 65536);
+  if (!o || typeof o !== "object" || !cpus || !memGb) return undefined;
+  const os = o.os === "mac" || o.os === "linux" || o.os === "windows" ? o.os : undefined;
+  const m: Machine = { cpus: Math.round(cpus), memGb };
+  const extra: Partial<Machine> = { os, host: text(o.host), cpu: text(o.cpu), load: num(o.load, 1), freeGb: num(o.freeGb, memGb),
+    gpu: text(o.gpu), gpuMemGb: num(o.gpuMemGb, 65536), gpuFreeGb: num(o.gpuFreeGb, 65536) };
+  for (const [k, x] of Object.entries(extra)) if (x !== undefined) (m as unknown as Record<string, unknown>)[k] = x;
+  return m;
 }
 
 /** A provider's check (POST /api/providers/:id/check): a one-line prompt through the Mac. */

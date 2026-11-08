@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useAuth } from "@/lib/auth";
 import { getProviders, removeDevice, renameDevice } from "@/lib/providers";
-import type { ProvidersView } from "@contracts/providers";
+import type { Machine, ProvidersView } from "@contracts/providers";
 import { ConfirmButton } from "@/components/instagram/ConfirmButton";
 import { Button } from "@/components/ui/button";
 import { Dot, Group, Loading, Notice } from "./ui";
@@ -70,6 +70,18 @@ function DeviceList({ devices, canManage, onChanged }: { devices: Device[]; canM
       ))}
     </ul>
   );
+}
+
+/** "Apple M2 Max · 12 cores · 32 GB, 8 GB free · 45 % busy · RTX 4080 SUPER, 3 of 16 GB free" */
+function machineLine(m: Machine): string {
+  const cpu = m.cpu?.replace(/\((R|TM)\)|\bProcessor\b|\b\d+-Core\b|\bCPU\b/g, "").replace(/\s+/g, " ").trim();
+  return [
+    cpu,
+    `${m.cpus} cores`,
+    `${Math.round(m.memGb)} GB${m.freeGb !== undefined ? `, ${Math.round(m.freeGb)} GB free` : ""}`,
+    m.load !== undefined ? `${Math.round(m.load * 100)} % busy` : null,
+    m.gpu ? `${m.gpu.replace(/^NVIDIA (GeForce )?/, "")}${m.gpuMemGb ? `, ${Math.round(m.gpuFreeGb ?? 0)} of ${Math.round(m.gpuMemGb)} GB free` : ""}` : null,
+  ].filter(Boolean).join(" · ");
 }
 
 function DeviceRow({ device: d, canManage, onChanged }: { device: Device; canManage: boolean; onChanged: () => void }) {
@@ -156,6 +168,7 @@ function DeviceRow({ device: d, canManage, onChanged }: { device: Device; canMan
               : "Has not reported its coding tools yet."}
             {d.report ? ` · reported ${fmtAgo(d.report.at)}` : ""}
           </div>
+          {d.report?.machine && <div className="mt-1 text-xs text-muted-foreground">{machineLine(d.report.machine)}</div>}
           {err && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{err}</p>}
         </div>
         {canManage && (

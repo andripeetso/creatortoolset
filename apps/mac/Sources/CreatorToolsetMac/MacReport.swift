@@ -138,5 +138,25 @@ func macReport(home: URL = FileManager.default.homeDirectoryForCurrentUser, now:
         "at": Int(now.timeIntervalSince1970 * 1000),
         "drivers": driverReport(home: home),
         "homes": homeReport(home: home),
+        "machine": machineReport(),
     ]
+}
+
+/// This Mac for the site's Devices page (`Machine` in apps/captions/contracts/providers.ts): chip, cores, memory, load.
+func machineReport() -> [String: Any] {
+    let info = ProcessInfo.processInfo
+    var out: [String: Any] = [
+        "os": "mac",
+        "host": info.hostName,
+        "cpus": info.processorCount,
+        "memGb": (Double(info.physicalMemory) / 1_073_741_824 * 10).rounded() / 10,
+    ]
+    var size = 0
+    if sysctlbyname("machdep.cpu.brand_string", nil, &size, nil, 0) == 0, size > 0 {
+        var chars = [CChar](repeating: 0, count: size)
+        if sysctlbyname("machdep.cpu.brand_string", &chars, &size, nil, 0) == 0 { out["cpu"] = String(cString: chars) }
+    }
+    var load = [Double](repeating: 0, count: 3)
+    if getloadavg(&load, 3) > 0 { out["load"] = min(1, (load[0] / Double(max(1, info.processorCount)) * 1000).rounded() / 1000) }
+    return out
 }
