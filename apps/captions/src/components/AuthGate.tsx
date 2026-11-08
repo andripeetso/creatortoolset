@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useLocation } from "react-router";
-import { Blocks, Lock, UserRound } from "lucide-react";
+import { Lock, UserRound } from "lucide-react";
+import { ToolsetLogo } from "@/components/HomeLink";
 import { returnTo, useAuth, type Me } from "@/lib/auth";
 import { useWorkspace } from "@/lib/workspace";
 
@@ -109,9 +110,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex h-screen flex-col items-center justify-center bg-zinc-950 text-zinc-200">
       <div className="mb-6 flex items-center gap-3">
-        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-violet-600">
-          <Blocks className="h-6 w-6 text-white" />
-        </div>
+        <ToolsetLogo className="h-11 w-11" />
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Creator Toolset</h1>
           <p className="text-sm text-zinc-500">Sign in to your account</p>
