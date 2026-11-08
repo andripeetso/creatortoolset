@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Asterisk, GaugeIcon, RefreshCw, Terminal, TrendingDownIcon, TrendingUpIcon, type LucideIcon } from "lucide-react";
+import { Link } from "react-router";
+import { Asterisk, GaugeIcon, Terminal, TrendingDownIcon, TrendingUpIcon, type LucideIcon } from "lucide-react";
 import { getProviders, instanceName, USAGE_PERIODS, usageBy, usageSince, type UsageTotals } from "@/lib/providers";
 import { DRIVERS, type Driver, type LimitsIdentity, type LimitWindow, type ProvidersView } from "@contracts/providers";
 import { tokensLabel } from "@/lib/workshop";
@@ -25,34 +26,14 @@ const PAID = "api";
 const isPaid = (r: { label: string }) => r.label.endsWith(" (API)");
 const HOUR_MS = 3_600_000;
 const STALE_MS = 15 * 60_000;
-const RELOAD_MS = 60_000;   // the Macs report limits every five minutes; a minute here is fresh enough
+const RELOAD_MS = 60_000; // the Macs report limits every five minutes; a minute here is fresh enough
 
-type Tab = "limits" | "cost" | "tokens";
-const TABS: Array<{ id: Tab; label: string }> = [
-  { id: "cost", label: "Cost" },
-  { id: "tokens", label: "Tokens" },
-  { id: "limits", label: "Limits" },
-];
-
-/** Settings → Usage: the plan limits left on each login (Limits, the default), then the calls, tokens and API-equivalent cost (Cost, Tokens). */
+/** Settings → Usage: the plan limits left on each login first, then the calls, tokens and API-equivalent cost. */
 export function UsageSection() {
   const [view, setView] = useState<ProvidersView | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>("limits");
-  const [busy, setBusy] = useState(false);
 
-  // the Refresh button's reload; the timer's are quiet (below)
-  const load = () => {
-    setBusy(true);
-    return getProviders()
-      .then((v) => {
-        setView(v);
-        setError(null);
-      })
-      .catch((e) => setError(msg(e)))
-      .finally(() => setBusy(false));
-  };
-
+  // no refresh button: it reloads every minute on its own
   useEffect(() => {
     const quiet = () => void getProviders().then((v) => (setView(v), setError(null))).catch((e) => setError(msg(e)));
     quiet();
@@ -65,36 +46,9 @@ export function UsageSection() {
 
   return (
     <>
-      <div className="flex items-center justify-between gap-3">
-        <div role="radiogroup" aria-label="View" className="flex flex-wrap gap-1.5">
-          {TABS.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              role="radio"
-              aria-checked={tab === t.id}
-              onClick={() => setTab(t.id)}
-              className={cn(
-                "h-8 rounded-md border px-3 text-xs transition-colors",
-                tab === t.id ? "border-violet-500/60 bg-violet-500/10 text-foreground" : "border-border text-muted-foreground hover:bg-accent hover:text-foreground",
-              )}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-        <button
-          type="button"
-          aria-label="Refresh"
-          title="Refresh"
-          onClick={() => void load()}
-          className="inline-flex size-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-        >
-          <RefreshCw className={cn("size-3.5", busy && "animate-spin")} aria-hidden />
-        </button>
-      </div>
       {error && <Notice tone="error">Could not refresh usage: {error}</Notice>}
-      {tab === "limits" ? <LimitsView view={view} /> : <CostUsage view={view} by={tab === "tokens" ? "tokens" : "cost"} />}
+      <LimitsView view={view} />
+      <CostUsage view={view} />
     </>
   );
 }
@@ -107,6 +61,9 @@ const PACE: Record<Pace, { label: string; icon: LucideIcon }> = {
 
 /** A driver's mark: a small icon, not a logo. */
 const MARK: Partial<Record<Driver, LucideIcon>> = { claude: Asterisk, codex: Terminal };
+
+/** The name of the Mac a login runs on, as this account sees it. */
+const macName = (view: ProvidersView, id: string) => view.devices.find((d) => d.id === id)?.name ?? "another Mac";
 
 /** Settings → Usage → Limits: per driver, one card per window with the share left and a bar per login. */
 function LimitsView({ view }: { view: ProvidersView }) {
@@ -121,43 +78,63 @@ function LimitsView({ view }: { view: ProvidersView }) {
   }, [view]);
   const driverName = (d: Driver) => DRIVERS.find((x) => x.id === d)?.label ?? d;
   const sections = limitSections(view.limits, now);
-  const notices = view.limits.filter((i) => noticeOf(i) !== null);
 
   if (!view.limits.length) {
     return (
-      <Group title="Limits" hint="How much of each plan is left, read from each Mac every five minutes.">
-        <Notice>Nothing to show yet. Once a Claude or Codex provider runs on a Mac, its limits appear here within five minutes.</Notice>
+      <Group title="Limits">
+        <Notice>
+          No plan data yet. It shows once a Claude or Codex provider has run on an online Mac.{" "}
+          <Link to="/settings/providers" className="underline underline-offset-2">Open AI providers</Link>
+        </Notice>
       </Group>
     );
   }
 
+  const drivers: Driver[] = ["claude", "codex"];
   return (
-    <>
-      {sections.map((section) => {
-        const Mark = MARK[section.driver] ?? Asterisk;
+    <Group title="Limits" hint="Read from each online Mac every five minutes.">
+      {drivers.map((driver) => {
+        const section = sections.find((s) => s.driver === driver);
+        const notices = view.limits.filter((i) => i.driver === driver && noticeOf(i) !== null);
+        if (!section && !notices.length) return null;
+        const Mark = MARK[driver] ?? Asterisk;
         return (
-          <section key={section.driver} className="mt-8 space-y-3 first:mt-0">
+          <section key={driver} className="space-y-3">
             <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
               <Mark className="size-4 text-violet-500" aria-hidden />
-              {driverName(section.driver)}
+              {driverName(driver)}
             </h2>
-            {section.pools.map((pool) => (
+            {section?.pools.map((pool) => (
               <WindowCard key={pool.key} pool={pool} view={view} now={now} />
             ))}
+            {notices.length > 0 && (
+              <Card>
+                {notices.map((i) => (
+                  <NoticeRow key={identityKey(i)} identity={i} view={view} />
+                ))}
+              </Card>
+            )}
           </section>
         );
       })}
-      {notices.length > 0 && (
-        <Card>
-          {notices.map((i) => (
-            <div key={identityKey(i)} className="px-3 py-3 text-xs sm:px-4">
-              <span className="text-foreground">{driverName(i.driver)} ({i.label})</span>{" "}
-              <span className="text-muted-foreground">{noticeOf(i)}</span>
-            </div>
-          ))}
-        </Card>
-      )}
-    </>
+    </Group>
+  );
+}
+
+/** A login with no usable reading: the folder, the Mac it runs on, what is wrong and where to fix it. */
+function NoticeRow({ identity, view }: { identity: LimitsIdentity; view: ProvidersView }) {
+  return (
+    <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 px-3 py-3 text-xs sm:px-4">
+      <span className="min-w-0">
+        <span className="text-foreground">
+          {DRIVERS.find((x) => x.id === identity.driver)?.label ?? identity.driver} ({identity.label}) on {macName(view, identity.device)}:
+        </span>{" "}
+        <span className="text-muted-foreground">{noticeOf(identity)}</span>
+      </span>
+      <Link to="/settings/providers" className="shrink-0 underline underline-offset-2 hover:text-foreground">
+        Open AI providers
+      </Link>
+    </div>
   );
 }
 
@@ -269,8 +246,8 @@ function ago(ms: number): string {
   return h < 48 ? `${h} h` : `${Math.floor(h / 24)} days`;
 }
 
-/** Settings → Usage → Cost and Tokens: calls, tokens and the API-equivalent cost, per provider and per job, over a period. */
-function CostUsage({ view, by }: { view: ProvidersView; by: "cost" | "tokens" }) {
+/** Settings → Usage → Calls and cost: calls, tokens and the API-equivalent cost, per provider and per job, over a period. */
+function CostUsage({ view }: { view: ProvidersView }) {
   const [days, setDays] = useState<number>(7);
 
   const since = usageSince(days);
@@ -280,7 +257,6 @@ function CostUsage({ view, by }: { view: ProvidersView; by: "cost" | "tokens" })
   const total = usageBy(view.usage, () => "all", since).get("all") ?? ZERO;
   const hasWorkspace = view.usage.some((r) => r.scope === "workspace");
   const period = USAGE_PERIODS.find((p) => p.id === days)?.label.toLowerCase() ?? `${days} days`;
-  const rank = (t: UsageTotals) => (by === "tokens" ? t.tokens : t.costUsd);
 
   const cell = (t: UsageTotals | undefined) =>
     t && t.calls ? (
@@ -320,7 +296,7 @@ function CostUsage({ view, by }: { view: ProvidersView; by: "cost" | "tokens" })
             <tr key={r.key} className="border-t border-border">
               <td className="py-2 pr-4">
                 {r.name}
-                {r.tag && <span className={cn("ml-2 text-[10px] uppercase tracking-wider", r.tag === "Workspace" ? "text-violet-500" : r.tag === "Paid" ? "text-amber-500" : "text-muted-foreground")}>{r.tag}</span>}
+                {r.tag && <span className={cn("ml-2 text-[10px] uppercase tracking-wider", r.tag === "Workspace" ? "text-violet-500" : r.tag === "API key" ? "text-amber-500" : "text-muted-foreground")}>{r.tag}</span>}
               </td>
               {cell(r.totals)}
             </tr>
@@ -332,52 +308,53 @@ function CostUsage({ view, by }: { view: ProvidersView; by: "cost" | "tokens" })
 
   const providerRows = [...byProvider.entries()]
     .map(([k, totals]) => {
-      if (k === PAID) return { key: k, name: "Anthropic API key", tag: "Paid", totals, rank: rank(totals) };
+      if (k === PAID) return { key: k, name: "Anthropic API key", tag: "API key", totals, rank: totals.costUsd };
       const [scope, instance] = k.split("\n");
-      return { key: k, name: instanceName(view, scope, instance), tag: hasWorkspace ? (scope === "workspace" ? "Workspace" : "Your own") : undefined, totals, rank: rank(totals) };
+      return { key: k, name: instanceName(view, scope, instance), tag: hasWorkspace ? (scope === "workspace" ? "Workspace" : "Yours") : undefined, totals, rank: totals.costUsd };
     })
     .sort((a, b) => b.rank - a.rank);
-  const jobRows = [...byJob.entries()].map(([k, totals]) => ({ key: k, name: k, totals, rank: rank(totals) })).sort((a, b) => b.rank - a.rank);
+  const jobRows = [...byJob.entries()].map(([k, totals]) => ({ key: k, name: k, totals, rank: totals.costUsd })).sort((a, b) => b.rank - a.rank);
 
   return (
-    <>
-      <div role="radiogroup" aria-label="Period" className="flex flex-wrap gap-1.5">
-        {USAGE_PERIODS.map((p) => (
-          <button
-            key={p.id}
-            type="button"
-            role="radio"
-            aria-checked={days === p.id}
-            onClick={() => setDays(p.id)}
-            className={cn(
-              "h-8 rounded-md border px-3 text-xs transition-colors",
-              days === p.id ? "border-violet-500/60 bg-violet-500/10 text-foreground" : "border-border text-muted-foreground hover:bg-accent hover:text-foreground",
-            )}
-          >
-            {p.label}
-          </button>
-        ))}
-      </div>
-      <Group
-        title="Summary"
-        hint={
-          total.calls ? (
-            <>
-              {total.calls} calls · {tokensLabel(total.tokens)} tokens in the last {period}. Spent on the API key: ${paid.costUsd.toFixed(2)}
-              {paid.calls ? ` (${paid.calls} call${paid.calls === 1 ? "" : "s"})` : ""}.
-            </>
-          ) : (
-            <>Nothing ran in the last {period}.</>
-          )
-        }
-      >
-        <Footnote>Everything else ran on your subscriptions. Its cost is what the same calls would cost at API prices.</Footnote>
-      </Group>
-
-      <Group title="By provider">{table("Provider", providerRows)}</Group>
-      <Group title="By job" hint="Content Workshop, Caption Studio, the Analyzer and Video Notes.">
-        {table("Job", jobRows)}
-      </Group>
-    </>
+    <Group
+      title="Calls and cost"
+      action={
+        <div role="radiogroup" aria-label="Period" className="flex flex-wrap gap-1.5">
+          {USAGE_PERIODS.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              role="radio"
+              aria-checked={days === p.id}
+              onClick={() => setDays(p.id)}
+              className={cn(
+                "h-8 rounded-md border px-3 text-xs transition-colors",
+                days === p.id ? "border-violet-500/60 bg-violet-500/10 text-foreground" : "border-border text-muted-foreground hover:bg-accent hover:text-foreground",
+              )}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      }
+    >
+      <p className="text-xs text-muted-foreground">
+        {total.calls ? (
+          <>
+            {total.calls} calls · {tokensLabel(total.tokens)} tokens in the last {period}. Spent on the API key: ${paid.costUsd.toFixed(2)}
+            {paid.calls ? ` (${paid.calls} call${paid.calls === 1 ? "" : "s"})` : ""}.
+          </>
+        ) : (
+          <>Nothing ran in the last {period}.</>
+        )}
+      </p>
+      {total.calls > 0 && (
+        <>
+          <Footnote>Subscription calls show what they would cost at API prices.</Footnote>
+          {table("Provider", providerRows)}
+          {table("Job", jobRows)}
+        </>
+      )}
+    </Group>
   );
 }

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router";
 import { Check, CheckCircle2, Circle, Copy } from "lucide-react";
-import { DRIVERS, type ProviderCheck, type ProviderInstance, type ProvidersView } from "@contracts/providers";
+import { runsOn, type ProviderCheck, type ProviderInstance, type ProvidersView } from "@contracts/providers";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -9,13 +9,12 @@ type Device = ProvidersView["devices"][number];
 
 /**
  * How to install and sign in each coding tool on a Mac, from their own docs (2026-11-06:
- * code.claude.com/docs/en/setup, github.com/openai/codex). The site never installs anything on a Mac
+ * code.claude.com/docs/en/setup, geminicli.com): the tools the Mac app runs (`runsOn`). The site never installs anything on a Mac
  * itself: that would make the relay a way to run commands there.
  */
 const TOOLS = [
   { name: "Claude Code", install: "curl -fsSL https://claude.ai/install.sh | bash", signIn: "claude" },
-  { name: "Codex", install: "npm install -g @openai/codex", signIn: "codex" },
-  { name: "Gemini", install: "npm install -g @google/gemini-cli", signIn: "gemini" },
+  { name: "Gemini CLI", install: "npm install -g @google/gemini-cli", signIn: "gemini" },
 ];
 
 /**
@@ -38,7 +37,7 @@ export function AiSetup({
   onAdd: () => void;
   onCheck: (inst: ProviderInstance) => void;
 }) {
-  const installed = device?.report?.drivers.filter((d) => d.installed && DRIVERS.find((x) => x.id === d.driver)?.runs) ?? [];
+  const installed = device?.report?.drivers.filter((d) => d.installed && runsOn(d.driver)) ?? [];
   const ready = providers.find((p) => checks[p.id]?.ok);
   // what the CLI itself said in the Mac's report
   const signedOut = installed.length > 0 && installed.every((d) => d.signedIn === false);
@@ -48,11 +47,16 @@ export function AiSetup({
       title: "Connect a Mac",
       body: (
         <>
-          Install the Mac app from <Link to="/settings/devices" className="underline underline-offset-2">Devices</Link> and sign in.
+          Install the Creator Toolset Mac app there and sign in. Its pairing shows under{" "}
+          <Link to="/settings/devices" className="underline underline-offset-2">Devices</Link>.
         </>
       ),
     },
-    { done: !!device?.online, title: "Keep it online", body: <>Open the Mac app; it shows online within a minute.</> },
+    {
+      done: !!device?.online,
+      title: "Turn on Use this Mac for my AI",
+      body: <>In the Mac app: Servers menu → This Mac…, then turn it on. The Mac shows online only while it is on.</>,
+    },
     {
       done: installed.length > 0,
       title: "Install a coding tool on it",
@@ -67,10 +71,10 @@ export function AiSetup({
     },
     {
       done: providers.length > 0,
-      title: "Add it as a provider",
+      title: "Add a provider",
       body: (
         <>
-          One tool, signed in as one account.
+          Pick the tool and its account.
           <Button size="sm" variant="outline" className="mt-2 block" onClick={onAdd}>
             Add provider
           </Button>

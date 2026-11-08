@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Laptop, Monitor, MoreHorizontal, Plus } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { getProviders, removeDevice, renameDevice } from "@/lib/providers";
-import type { Machine, ProvidersView } from "@contracts/providers";
+import { TOOL_NAMES, runsOn, type Machine, type ProvidersView } from "@contracts/providers";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -54,7 +54,7 @@ function AddComputer() {
   return (
     <Dialog>
       <DialogTrigger asChild>
-        <Button size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground">
+        <Button size="sm" variant="ghost" className="h-8 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground">
           <Plus className="h-3 w-3" />
           Add computer
         </Button>
@@ -93,7 +93,7 @@ function DeviceRow({ device: d, workspace, onChanged }: { device: Device; worksp
   const [err, setErr] = useState<string | null>(null);
   const [armed, setArmed] = useState(false);
   const Icon = d.report?.machine?.os === "mac" || !d.report?.machine ? Laptop : Monitor;
-  const installed = d.report?.drivers.filter((x) => x.installed) ?? [];
+  const installed = d.report?.drivers.filter((x) => x.installed && runsOn(x.driver)) ?? [];
 
   const rename = async (e: FormEvent) => {
     e.preventDefault();
@@ -120,11 +120,12 @@ function DeviceRow({ device: d, workspace, onChanged }: { device: Device; worksp
     }
   };
 
-  const status = d.online ? "Online" : `Last seen ${fmtAgo(d.lastSeen)}`;
+  // The app answers only while "Use this Mac for my AI" is on, so an app that is open but off reads as offline.
+  const status = d.online ? "Online · answering your AI" : d.lastSeen ? `Offline · last online ${fmtAgo(d.lastSeen)}` : "Offline";
   const tools = d.report
     ? installed.length
-      ? `Coding tools: ${installed.map((x) => `${x.driver}${x.version ? ` ${x.version}` : ""}`).join(", ")}`
-      : "No coding tools found on it."
+      ? `Runs your AI: ${installed.map((x) => `${TOOL_NAMES[x.driver] ?? x.driver}${x.version ? ` ${x.version}` : ""}`).join(", ")}`
+      : "Runs your AI: no coding tool installed yet"
     : "Has not reported its coding tools yet.";
 
   return (
@@ -141,13 +142,14 @@ function DeviceRow({ device: d, workspace, onChanged }: { device: Device; worksp
       subtitle={
         <span className="flex min-w-0 items-center gap-1.5">
           <Dot on={d.online} />
-          <span className="truncate">{["Mac app", workspace ? "Workspace" : null, status, d.version ? `v${d.version}` : null].filter(Boolean).join(" · ")}</span>
+          <span>{["Mac app", workspace ? "Workspace" : null, status, d.version ? `v${d.version}` : null].filter(Boolean).join(" · ")}</span>
         </span>
       }
       below={
         <>
           {d.report?.machine && <p className="mt-1 text-xs text-muted-foreground">{machineLine(d.report.machine)}</p>}
           <p className="mt-0.5 text-xs text-muted-foreground">{tools}{d.report ? ` · reported ${fmtAgo(d.report.at)}` : ""}</p>
+          {!d.online && <p className="mt-0.5 text-xs text-muted-foreground">Not answering. Open the Mac app and turn on Use this Mac for my AI.</p>}
           {err && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{err}</p>}
         </>
       }
@@ -177,10 +179,10 @@ function MachineRow({ icon, label, subtitle, below, children }: { icon: ReactNod
       <span aria-hidden className="text-muted-foreground">{icon}</span>
       <div className="min-w-0">
         <div className="truncate text-sm font-medium text-foreground">{label}</div>
-        <div className="truncate text-xs text-muted-foreground">{subtitle}</div>
+        <div className="text-xs text-muted-foreground">{subtitle}</div>
         {below}
       </div>
-      <div className="flex shrink-0 items-center gap-1">{children}</div>
+      <div className="flex shrink-0 items-center gap-2">{children}</div>
     </div>
   );
 }

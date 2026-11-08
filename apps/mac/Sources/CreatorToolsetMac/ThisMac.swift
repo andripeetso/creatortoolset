@@ -1,4 +1,4 @@
-// This Mac: the app's own options, reached from the server's Settings → This Mac (inside the app), the Servers menu
+// This Mac: the app's own options, reached from the Servers menu, the menu bar
 // and the picker in the window's top bar. Servers, AI on this Mac, the server here (port, log, data, other devices)
 // and the optional account server. The guide "Run your own server" is the second window here.
 import AppKit
@@ -37,7 +37,7 @@ struct ThisMacView: View {
                     Text(notice).font(.caption).foregroundStyle(.secondary)
                 }
                 if shell.pairedHere {
-                    Button("Forget this Mac", role: .destructive) { shell.forgetThisMac() }
+                    Button("Remove this Mac from my account", role: .destructive) { shell.forgetThisMac() }
                 }
             }
             if shell.server != nil {

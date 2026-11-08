@@ -1326,18 +1326,10 @@ export const saveApify = (token: string) =>
     json<ApifyStatus>(r),
   );
 
-export const checkApify = () =>
-  fetch("/api/instagram/apify/check", { method: "POST" }).then((r) =>
-    json<ApifyStatus>(r),
-  );
-
 export const removeApify = () =>
   fetch("/api/instagram/apify", { method: "DELETE" }).then((r) =>
     json<ApifyStatus>(r),
   );
-
-export const setApifySlow = (slow: boolean) =>
-  fetch("/api/instagram/apify/slow", jsonInit({ slow }, "PUT")).then((r) => json<ApifyStatus>(r));
 
 /* ---- presentation helpers ---- */
 

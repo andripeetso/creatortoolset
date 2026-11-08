@@ -185,7 +185,7 @@ struct AddServerField: View {
                     .onSubmit { add() }
                 Button("Add server") { add() }.disabled(address.trimmingCharacters(in: .whitespaces).isEmpty)
             }
-            Text(problem ?? "Then sign in on its page in the window. A one-time sign-in link from that server works here too.")
+            Text(problem ?? "Then sign in on its page in the window.")
                 .font(.caption).foregroundStyle(problem == nil ? Color.secondary : Color.red)
         }
     }

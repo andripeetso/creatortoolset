@@ -4,6 +4,7 @@ import { Plus } from "lucide-react";
 import {
   DRIVERS,
   JOBS,
+  TOOL_NAMES,
   type Driver,
   type ProviderCheck,
   type ProviderInstance,
@@ -11,6 +12,7 @@ import {
   type ProvidersView,
   type Scope,
   type Selection,
+  runsOn,
 } from "@contracts/providers";
 import { ConfirmButton } from "@/components/instagram/ConfirmButton";
 import { Button } from "@/components/ui/button";
@@ -164,9 +166,9 @@ export function ProvidersSection({ sub, brief }: { sub?: string; brief?: boolean
     const found = report?.drivers.find((d) => d.driver === inst.driver);
     const check = view.checks[`${scope}:${inst.id}`];
     const key = `${scope}:${inst.id}`;
-    const list = modelsOf(view, inst);
     const used = jobsUsing(inst.id);
     const isOnline = online(inst);
+    const toolName = TOOL_NAMES[inst.driver] ?? driverLabel(inst.driver);
     return (
       <div key={inst.id} className="flex items-start gap-3 px-3 py-3">
         <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-[11px] font-semibold text-violet-600 dark:text-violet-300">
@@ -175,21 +177,20 @@ export function ProvidersSection({ sub, brief }: { sub?: string; brief?: boolean
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-baseline gap-x-2 text-sm">
             <span className="text-foreground">{inst.name}</span>
-            {inst.name !== driverLabel(inst.driver) && <span className="text-xs text-muted-foreground">{driverLabel(inst.driver)}</span>}
-            {found?.installed && found.version && <span className="font-mono text-[11px] text-muted-foreground">v{found.version}</span>}
-            {info && !info.runs && <span className="text-[11px] text-muted-foreground">not supported yet</span>}
-            {report && info?.runs && !found?.installed && <span className="text-[11px] text-amber-600 dark:text-amber-400">not installed on the Mac</span>}
-            {!inst.enabled && <span className="text-[11px] text-muted-foreground">off</span>}
+            <span className="text-xs text-muted-foreground" title={inst.home || undefined}>
+              {toolName} · {inst.home ? "own folder" : "default folder"}
+              {found?.installed && found.version ? ` · v${found.version}` : ""}
+            </span>
+            {info && !runsOn(inst.driver) && <span className="text-[11px] text-muted-foreground">The Mac app doesn't run it</span>}
+            {report && runsOn(inst.driver) && !found?.installed && <span className="text-[11px] text-amber-600 dark:text-amber-400">Not installed on this Mac</span>}
+            {!inst.enabled && <span className="text-[11px] text-muted-foreground">Off</span>}
             {readOnly && <span className="text-[11px] text-muted-foreground">on {deviceName(deviceOf(inst))}</span>}
-          </div>
-          <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground" title={inst.home || undefined}>
-            {inst.home || "The tool's default folder"}
           </div>
           <div className="mt-1 text-[11px]">
             {checking === key ? (
               <span className="text-muted-foreground">Checking… up to a minute</span>
             ) : !check ? (
-              <span className="text-muted-foreground">{isOnline ? "Not checked yet" : "The Mac is offline"}</span>
+              isOnline && <span className="text-muted-foreground">Not checked: press Check</span>
             ) : check.ok ? (
               <span className="text-emerald-600 dark:text-emerald-400">
                 Ready{check.model ? ` · ${modelName(check.model)}` : ""} · {(check.ms / 1000).toFixed(1)} s · checked {fmtAgo(check.at)}
@@ -198,7 +199,6 @@ export function ProvidersSection({ sub, brief }: { sub?: string; brief?: boolean
               <span className="text-red-600 dark:text-red-400">{check.error || "The check failed"}</span>
             )}
           </div>
-          {list.length > 0 && <div className="mt-0.5 truncate text-[11px] text-muted-foreground">Models: {list.map(modelName).join(" · ")}</div>}
         </div>
         {!readOnly && (
           <div className="flex shrink-0 items-center gap-2 pt-0.5">
@@ -209,13 +209,8 @@ export function ProvidersSection({ sub, brief }: { sub?: string; brief?: boolean
                 void save({ ...editing!, instances: editing!.instances.map((i) => (i.id === inst.id ? { ...i, enabled: on } : i)) })
               }
             />
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => void runCheck(inst, scope)}
-              disabled={!isOnline || checking !== null}
-              title={isOnline ? "Send one short question through this provider" : "The Mac is offline"}
-            >
+            {!isOnline && <span className="text-[11px] text-muted-foreground">Mac offline</span>}
+            <Button variant="outline" size="sm" onClick={() => void runCheck(inst, scope)} disabled={!isOnline || checking !== null}>
               Check
             </Button>
             <ConfirmButton
@@ -261,27 +256,26 @@ export function ProvidersSection({ sub, brief }: { sub?: string; brief?: boolean
         <div className="mt-8 space-y-2">
           {view.using === "own" && (
             <Notice>
-              Your own providers answer your jobs.{" "}
+              Your providers answer.{" "}
               {view.workspace && (
                 <button type="button" onClick={() => void dropOwn()} className="underline underline-offset-2 hover:text-foreground">
-                  Use the workspace's providers instead
+                  Use the workspace's instead
                 </button>
               )}
             </Notice>
           )}
-          {view.using === "workspace" && <Notice>You use the workspace's providers. Add your own on a Mac you connected, and it answers instead.</Notice>}
+          {view.using === "workspace" && <Notice>You use the workspace's providers. Add your own on a Mac you connect; it answers instead.</Notice>}
           {view.using === "none" && <Notice tone="warn">No provider answers your jobs yet. Connect a Mac, then add a provider to it.</Notice>}
         </div>
       )}
 
-      {!brief && <Group
+      {/* no Mac yet: the setup steps above say what to do, so the empty Mac and Providers groups would only repeat it */}
+      {!brief && (readOnly || devices.length > 0) && <Group
         title="Mac"
-        hint={readOnly ? "Where your own providers run. The dot shows whether it is online." : "The dot shows whether it is online. Providers on an offline Mac can't answer."}
+        hint={readOnly ? "Where your own providers run." : "Providers on an offline Mac wait."}
       >
         {devices.length === 0 ? (
-          <Notice>
-            You have no Mac connected yet. <Link to="/settings/devices" className="underline underline-offset-2">Connect a Mac</Link> first.
-          </Notice>
+          <Notice>No Mac connected yet.</Notice>
         ) : (
           <>
             <div role="tablist" aria-label="Macs" className="flex flex-wrap gap-1.5">
@@ -303,26 +297,14 @@ export function ProvidersSection({ sub, brief }: { sub?: string; brief?: boolean
                 </button>
               ))}
             </div>
-            {device && (
-              <p className="mt-2 text-[11px] text-muted-foreground">
-                {device.online ? "Online" : "Offline"}
-                {device.version ? ` · app v${device.version}` : ""}
-                {device.report
-                  ? ` · ${device.report.drivers.filter((d) => d.installed).map((d) => `${driverLabel(d.driver)}${d.version ? ` ${d.version}` : ""}`).join(", ") || "no coding tools found"} · reported ${fmtAgo(device.report.at)}`
-                  : " · has not reported its tools yet"}
-              </p>
-            )}
+            {device && !device.online && <p className="mt-2 text-[11px] text-muted-foreground">Offline. Its providers can't answer until it is back.</p>}
           </>
         )}
       </Group>}
 
-      {(!brief || listed.length > 0) && <Group
+      {(!brief || listed.length > 0) && (readOnly || devices.length > 0) && <Group
         title="Providers"
-        hint={
-          readOnly
-            ? "The workspace's providers, on whichever Mac runs them."
-            : "One coding tool signed in as one account on this Mac. Off keeps it out of every job."
-        }
+        hint={readOnly ? "The workspace's providers, on whichever Mac runs them." : "A coding tool, signed in to one account on this Mac."}
       >
         {listed.length === 0 ? (
           <Notice>{readOnly ? "The workspace has no providers yet." : device ? "No providers on this Mac yet." : "Connect a Mac to add providers."}</Notice>
@@ -343,8 +325,7 @@ export function ProvidersSection({ sub, brief }: { sub?: string; brief?: boolean
         >
           <Card className="px-3">
             <JobRow
-              label="Default"
-              hint="Every job without its own pick"
+              label="Everything else"
               set={shown}
               listModels={(i) => modelsOf(view, i)}
               value={shown.default}
@@ -355,7 +336,6 @@ export function ProvidersSection({ sub, brief }: { sub?: string; brief?: boolean
               <JobRow
                 key={j.id}
                 label={j.label}
-                hint={j.hint}
                 set={shown}
                 listModels={(i) => modelsOf(view, i)}
                 value={shown.jobs[j.id]}
@@ -399,7 +379,6 @@ export function ProvidersSection({ sub, brief }: { sub?: string; brief?: boolean
 /** One job (or the default): its provider, model and effort. `value` undefined = "Use default" (shows the default's pick). */
 function JobRow({
   label,
-  hint,
   set,
   listModels,
   value,
@@ -408,7 +387,6 @@ function JobRow({
   onChange,
 }: {
   label: string;
-  hint: string;
   set: ProviderSettings;
   listModels: (inst: ProviderInstance) => string[];
   value?: Selection;
@@ -436,7 +414,6 @@ function JobRow({
     <div className="flex flex-wrap items-center gap-2 py-3">
       <div className="mr-auto min-w-[10rem] flex-1">
         <div className="text-sm text-foreground">{label}</div>
-        <div className="text-xs text-muted-foreground">{hint}</div>
       </div>
       <select
         value={explicit ? current.instance : ""}

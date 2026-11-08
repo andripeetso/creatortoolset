@@ -34,7 +34,7 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
     var macDevice: String? {
         didSet { if macDevice != oldValue { installScripts() } }
     }
-    /// The page's Settings → This Mac (only shown inside the app): opens the native panel.
+    /// A page that posts `this-mac` (older servers' Settings → This Mac): opens the native panel.
     var onThisMac: (() -> Void)?
     /// The page's Record screen buttons (Review, Video Notes; src/lib/mac-record.ts): the native recorder (Recorder.swift).
     var onRecord: ((RecordingTarget) -> Void)?

@@ -192,10 +192,10 @@ export function limitSections(identities: LimitsIdentity[], now: number): Sectio
   });
 }
 
-/** The notice for an identity with no usable windows, or null. */
+/** The notice for an identity with no usable windows, or null. The page puts the Mac's name in front of it. */
 export function noticeOf(i: LimitsIdentity): string | null {
-  if (i.state === "no_login") return "no sign-in in this folder";
-  if (i.state === "signed_out") return "signed out: sign in again in this folder";
-  if (i.state === "error") return `could not read its limits${i.error ? ` (${i.error})` : ""}`;
-  return i.windows.length === 0 ? "no limits reported" : null;
+  if (i.state === "no_login") return "not signed in. Sign in to this folder on that Mac, then refresh.";
+  if (i.state === "signed_out") return "signed out. Sign in again on that Mac, then refresh.";
+  if (i.state === "error") return `could not read its limits${i.error ? ` (${i.error})` : ""}.`;
+  return i.windows.length === 0 ? "no limits reported." : null;
 }

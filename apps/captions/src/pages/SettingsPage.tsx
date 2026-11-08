@@ -1,6 +1,7 @@
+import { Fragment } from "react";
 import { Link, Navigate, useLocation } from "react-router";
-import { Cable, CalendarClock, Cpu, Gauge, KeyRound, Laptop, ListChecks, Monitor, Palette, SlidersHorizontal, UserRound, type LucideIcon } from "lucide-react";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { Cable, CalendarClock, Cpu, Gauge, KeyRound, ListChecks, Monitor, Palette, SlidersHorizontal, UserRound, X, type LucideIcon } from "lucide-react";
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { AccountSection } from "@/components/settings/AccountSection";
 import { AppearanceSection } from "@/components/settings/AppearanceSection";
 import { AutomationsSection } from "@/components/settings/AutomationsSection";
@@ -15,30 +16,28 @@ import { UsageSection } from "@/components/settings/UsageSection";
 import { useMe } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
-/** The sections, in the order the sidebar shows them; API keys (the server's own keys) last, admins only. */
-const SETTINGS_SECTIONS: ReadonlyArray<{ id: string; title: string; blurb: string; icon: LucideIcon; adminOnly?: boolean }> = [
-  { id: "general", title: "General", blurb: "How the app behaves on this device, and how you work.", icon: SlidersHorizontal },
+/**
+ * The sections, in the order the sidebar shows them. `group` starts a labelled block; the "Server" block (the server's
+ * own API keys, admins only) is pinned to the bottom. `blurb` is the one line under the title: only what the title
+ * doesn't say. This Mac is not here: the Mac app's Servers menu opens it.
+ */
+const SETTINGS_SECTIONS: ReadonlyArray<{ id: string; title: string; blurb?: string; icon: LucideIcon; group?: string; adminOnly?: boolean }> = [
+  { id: "general", title: "General", blurb: "How the app behaves on this device.", icon: SlidersHorizontal },
   { id: "setup", title: "Setup", blurb: "Your AI, accounts, a first project and your knowledge, one step at a time.", icon: ListChecks },
-  { id: "appearance", title: "Appearance", blurb: "The theme, and the colours of the home page.", icon: Palette },
-  { id: "providers", title: "AI providers", blurb: "The coding tools on your Macs that answer the AI.", icon: Cpu },
-  { id: "connectors", title: "Connectors", blurb: "Your own accounts and the outside services that read them.", icon: Cable },
+  { id: "appearance", title: "Appearance", icon: Palette },
+  { id: "account", title: "Account", blurb: "Your name, password and AI access key.", icon: UserRound },
+  { id: "providers", title: "AI providers", blurb: "The coding tools on your Macs that answer your AI.", icon: Cpu, group: "AI" },
+  { id: "devices", title: "Devices", blurb: "The computers that run your AI.", icon: Monitor },
+  { id: "usage", title: "Usage", blurb: "How much of each AI plan is left, and what the app used.", icon: Gauge },
+  { id: "automations", title: "Automations", blurb: "Prompts the assistant runs on a schedule. Results go to your inbox.", icon: CalendarClock },
+  { id: "connectors", title: "Connectors", blurb: "Your accounts, and the Apify key that reads the rest.", icon: Cable, group: "Data" },
   { id: "my-keys", title: "My API keys", blurb: "Your own keys for the paid services the tools call.", icon: KeyRound },
-  { id: "usage", title: "Usage", blurb: "What the app used, per job and per provider.", icon: Gauge },
-  { id: "devices", title: "Devices", blurb: "The computers your AI runs on.", icon: Monitor },
-  { id: "automations", title: "Automations", blurb: "Prompts your AI runs on a schedule.", icon: CalendarClock },
-  { id: "account", title: "Account", blurb: "Your name, your password and your AI access key.", icon: UserRound },
-  { id: "keys", title: "API keys", blurb: "The server's own keys for the outside services.", icon: KeyRound, adminOnly: true },
+  { id: "keys", title: "API keys", blurb: "The server's own keys. They serve you, never your AI; other accounts use their own (My API keys).", icon: KeyRound, adminOnly: true, group: "Server" },
 ];
 
-/** Inside the Mac app (apps/mac marks its page with html.mac-app): its own options open in a native panel. */
-const macApp = () => typeof document !== "undefined" && document.documentElement.classList.contains("mac-app");
-const openThisMac = () =>
-  (window as unknown as { webkit?: { messageHandlers?: { window?: { postMessage: (m: string) => void } } } }).webkit?.messageHandlers?.window?.postMessage("this-mac");
-
 /**
- * Settings, a modal
- * over the page you were on (a modal on top, not a full page). `/settings/:section/:sub?`; App keeps
- * the page behind it and `onClose` goes back to it.
+ * Settings: a modal over the page you were on, `/settings/:section/:sub?`. App keeps the page behind it and `onClose`
+ * goes back to it. The title row holds the close button, so nothing ever scrolls under it.
  */
 export default function SettingsPage({ onClose }: { onClose: () => void }) {
   const [, , section = "general", sub] = useLocation().pathname.split("/");
@@ -65,45 +64,57 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="flex h-[min(860px,calc(100dvh-2rem))] w-[min(1100px,calc(100vw-2rem))] max-w-none flex-col gap-0 overflow-hidden p-0 sm:max-w-none md:flex-row">
-        <DialogTitle className="sr-only">Settings</DialogTitle>
-        <nav aria-label="Settings sections" className="flex shrink-0 gap-1 overflow-x-auto border-b border-border p-3 md:w-52 md:flex-col md:overflow-visible md:border-b-0 md:border-r">
-          <span className="hidden px-2.5 pb-2 pt-1 text-sm font-semibold md:block">Settings</span>
-          {visible.map((s) => {
+      <DialogContent
+        showCloseButton={false}
+        // focus the dialog itself, not its first button: opening Settings drew a focus ring round the close button
+        onOpenAutoFocus={(e) => {
+          e.preventDefault();
+          (e.currentTarget as HTMLElement).focus();
+        }}
+        className="flex h-[min(860px,calc(100dvh-2rem))] w-[min(1100px,calc(100vw-2rem))] max-w-none flex-col gap-0 overflow-hidden p-0 sm:max-w-none md:flex-row">
+        <nav aria-label="Settings sections" className="flex shrink-0 gap-1 overflow-x-auto border-b border-border p-3 md:w-60 md:flex-col md:overflow-y-auto md:border-b-0 md:border-r">
+          <span className="hidden px-2 pb-2 pt-1 text-sm font-semibold md:block">Settings</span>
+          {visible.map((s, i) => {
             const Icon = s.icon;
             const on = s.id === current.id;
+            const heading = s.group && s.group !== visible[i - 1]?.group;
             return (
-              <Link
-                key={s.id}
-                to={`/settings/${s.id}`}
-                replace
-                aria-current={on ? "page" : undefined}
-                className={cn(
-                  "flex shrink-0 items-center gap-2 rounded-md px-2.5 py-1.5 text-sm transition-colors",
-                  on ? "bg-accent font-medium text-foreground" : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+              <Fragment key={s.id}>
+                {heading && (
+                  <span className={cn("hidden px-2 pb-1 pt-4 text-xs font-medium text-muted-foreground/80 md:block", s.group === "Server" && "md:mt-auto")}>
+                    {s.group}
+                  </span>
                 )}
-              >
-                <Icon className="h-4 w-4" />
-                {s.title}
-              </Link>
+                <Link
+                  to={`/settings/${s.id}`}
+                  replace
+                  aria-current={on ? "page" : undefined}
+                  className={cn(
+                    "flex h-8 shrink-0 items-center gap-2 rounded-md px-2 text-sm transition-colors",
+                    on ? "bg-accent font-medium text-foreground" : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+                  )}
+                >
+                  <Icon className="h-4 w-4" />
+                  {s.title}
+                </Link>
+              </Fragment>
             );
           })}
-          {/* the Mac app's servers, AI on this Mac, the server here and its data: a native panel, not a page */}
-          {macApp() && (
-            <button
-              type="button"
-              onClick={openThisMac}
-              className="flex shrink-0 items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground md:mt-2 md:border-t md:border-border md:pt-2.5"
-            >
-              <Laptop className="h-4 w-4" />
-              This Mac
-            </button>
-          )}
         </nav>
-        <main className="min-w-0 flex-1 overflow-y-auto p-6">
-          <h1 className="text-lg font-semibold tracking-tight">{current.title}</h1>
-          <p className="mt-1 text-sm text-muted-foreground">{current.blurb}</p>
-          <div className="mt-6">{body}</div>
+        <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <header className="flex shrink-0 items-start gap-4 px-6 pb-4 pt-6">
+            <div className="min-w-0 flex-1">
+              <DialogTitle className="text-lg font-semibold tracking-tight">{current.title}</DialogTitle>
+              <DialogDescription className={cn("mt-1 text-sm text-muted-foreground", !current.blurb && "sr-only")}>
+                {current.blurb ?? `${current.title} settings`}
+              </DialogDescription>
+            </div>
+            <DialogClose className="-mr-2 -mt-1 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <X className="h-4 w-4" />
+              <span className="sr-only">Close</span>
+            </DialogClose>
+          </header>
+          <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-12 pt-2">{body}</div>
         </main>
       </DialogContent>
     </Dialog>

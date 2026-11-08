@@ -15,19 +15,19 @@ export function GeneralSection() {
 
   return (
     <>
-      <Group title="Working" hint="Kept on this device.">
+      <Group title="Working">
         <Card>
-          <Row label="Confirm before deleting" hint="Asks before a comment or video goes to the trash. Deleting for good always asks.">
+          <Row label="Ask before moving to trash or deleting a comment" hint="Deleting for good always asks.">
             <Switch
               checked={confirm}
-              aria-label="Confirm before deleting"
+              aria-label="Ask before moving to trash or deleting a comment"
               onCheckedChange={(on) => {
                 setConfirm(on);
                 persistConfirmDeletes(on);
               }}
             />
           </Row>
-          <Row label="Status colours in the Workshop sidebar" hint="A coloured bar beside each session.">
+          <Row label="Status colours in the Workshop sidebar">
             <Switch
               checked={bars}
               aria-label="Status colours in the Workshop sidebar"
@@ -50,7 +50,7 @@ function ReadAloud() {
   const { on, loading, toggle } = useReadAloud();
   if (!canSpeak()) return null;
   return (
-    <Group title="Add-ons" hint="Off unless you turn them on. Kept on this device.">
+    <Group title="Add-ons" hint="Off until you turn them on.">
       <Card>
         <Row
           label="Read the assistant's replies aloud"

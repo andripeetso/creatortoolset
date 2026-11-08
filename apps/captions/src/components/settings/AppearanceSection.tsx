@@ -70,11 +70,11 @@ export function AppearanceSection() {
           })}
         </div>
       </Group>
-      <Group title="Home" hint="Kept on this device.">
+      <Group title="Home">
         <Card>
           <Row
             label="Project colour"
-            hint="Tools take the current project's colour. Off = violet."
+            hint="Tools take the current project's colour. Off: violet everywhere."
           >
             <Switch
               checked={projectTint}

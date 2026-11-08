@@ -17,7 +17,7 @@ export const SERVICE_KEYS = [
   { env: "PERPLEXITY_API_KEY", name: "Perplexity", what: "The Content Workshop's accuracy check and deep research.", where: "https://www.perplexity.ai/account/api" },
   { env: "LIBRARY_S3_ACCESS_KEY", name: "Media Library bucket: Access key", what: "The server's S3-compatible bucket that libraries can keep their files in (bucket and endpoint: LIBRARY_S3_* in the .env)." },
   { env: "LIBRARY_S3_SECRET_KEY", name: "Media Library bucket: Secret key", what: "Goes with the access key above." },
-  { env: "TYPESAFE_API_KEY", name: "TypeSafe", what: "Quick yes/no checks behind a few features; they work without it." },
+  { env: "TYPESAFE_API_KEY", name: "TypeSafe", what: "Optional. Judges Analyzer comments, labels what works, checks Workshop rules." },
 ] as const;
 
 export type ServiceKeyEnv = (typeof SERVICE_KEYS)[number]["env"];
@@ -47,7 +47,7 @@ export const MY_KEYS = [
   { env: "ANTHROPIC_API_KEY", name: "Anthropic API", what: "AI on an API key when you have no AI provider of your own (not the Content Workshop, which needs your own Claude or ChatGPT login).", where: "https://console.anthropic.com/settings/keys" },
   { env: "OPENAI_API_KEY", name: "OpenAI", what: "Media Library transcripts when you have no Deepgram key, and its search by meaning.", where: "https://platform.openai.com/api-keys" },
   { env: "PERPLEXITY_API_KEY", name: "Perplexity", what: "The Content Workshop's accuracy check and deep research.", where: "https://www.perplexity.ai/account/api" },
-  { env: "TYPESAFE_API_KEY", name: "TypeSafe", what: "Judges comments and sharpens a few picks in the Analyzer and Workshop; they work without it." },
+  { env: "TYPESAFE_API_KEY", name: "TypeSafe", what: "Optional. Judges Analyzer comments, labels what works, checks Workshop rules." },
 ] as const;
 
 export type MyKeyEnv = (typeof MY_KEYS)[number]["env"];

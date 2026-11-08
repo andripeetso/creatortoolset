@@ -1,13 +1,13 @@
 import { useState } from "react";
-import { DRIVERS, type Driver, type MacReport, type ProviderInstance } from "@contracts/providers";
+import { DRIVERS, runsOn, type Driver, type MacReport, type ProviderInstance } from "@contracts/providers";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
 /**
- * Settings → AI providers → Add provider: three steps (Provider, Identity, Config) on the device the page
- * shows. The Mac's report lists what is installed and its config folders.
+ * Settings → AI providers → Add provider: three steps (Tool, Account, Name) on the Mac the page shows. Only the
+ * tools the Mac app runs are offered. The Mac's report lists what is installed and its config folders.
  */
 export function AddProviderDialog({
   deviceName,
@@ -60,38 +60,35 @@ export function AddProviderDialog({
         </DialogHeader>
 
         <div className="flex gap-3">
-          {stepLabel(1, "Provider")}
+          {stepLabel(1, "Tool")}
           <span className="text-muted-foreground/40">›</span>
-          {stepLabel(2, "Identity")}
+          {stepLabel(2, "Account")}
           <span className="text-muted-foreground/40">›</span>
-          {stepLabel(3, "Config")}
+          {stepLabel(3, "Name")}
         </div>
 
         {step === 1 && (
           <>
             <div className="grid grid-cols-2 gap-2">
-              {DRIVERS.map((d) => {
+              {DRIVERS.filter((d) => runsOn(d.id)).map((d) => {
                 const found = report?.drivers.find((x) => x.driver === d.id);
-                const note = !d.runs
-                  ? "Not supported yet"
-                  : !report
-                    ? "This Mac has not reported yet"
-                    : found?.installed
-                      ? `Installed${found.version ? ` · v${found.version}` : ""}`
-                      : "Not installed on the Mac";
+                const note = !report
+                  ? "This Mac has not reported yet"
+                  : found?.installed
+                    ? `Installed${found.version ? ` · v${found.version}` : ""}`
+                    : "Not installed";
                 return (
                   <button
                     key={d.id}
                     type="button"
-                    disabled={!d.runs}
                     onClick={() => setDriver(d.id)}
                     className={cn(
-                      "rounded-lg border px-3 py-2.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+                      "rounded-lg border px-3 py-2.5 text-left transition-colors",
                       driver === d.id ? "border-violet-500 bg-violet-500/10" : "border-border hover:bg-accent",
                     )}
                   >
                     <div className="text-sm text-foreground">{d.label}</div>
-                    <div className={cn("mt-0.5 text-xs", d.runs && found?.installed ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground")}>{note}</div>
+                    <div className={cn("mt-0.5 text-xs", found?.installed ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground")}>{note}</div>
                   </button>
                 );
               })}
@@ -101,14 +98,14 @@ export function AddProviderDialog({
 
         {step === 2 && info && (
           <>
-            <p className="text-sm text-muted-foreground">Which account does {info.label} use? Each folder on the Mac is one account.</p>
+            <p className="text-sm text-muted-foreground">Which {info.label} account? Each folder on the Mac holds one.</p>
             <div className="flex flex-col gap-1.5">
               <button
                 type="button"
                 onClick={() => setHome("")}
                 className={cn("rounded-lg border px-3 py-2 text-left text-sm", home === "" ? "border-violet-500 bg-violet-500/10" : "border-border hover:bg-accent")}
               >
-                Default folder <span className="text-muted-foreground">· the tool's own</span>
+                Default
               </button>
               {homes.map((h) => (
                 <button
@@ -123,7 +120,7 @@ export function AddProviderDialog({
             </div>
             {homes.length === 0 && <p className="text-xs text-muted-foreground">No folders found on the Mac for {info.label}. Use the default, or type one below.</p>}
             <label className="block text-xs text-muted-foreground">
-              Or type a folder
+              Or type its folder
               <input
                 value={home}
                 onChange={(e) => setHome(e.target.value)}
@@ -147,13 +144,10 @@ export function AddProviderDialog({
             <div className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2.5">
               <div className="min-w-0">
                 <div className="text-sm text-foreground">On</div>
-                <div className="text-xs text-muted-foreground">Off keeps it listed but out of every job.</div>
+                <div className="text-xs text-muted-foreground">Off: listed, runs no jobs.</div>
               </div>
               <Switch checked={enabled} onCheckedChange={setEnabled} aria-label="Enabled" />
             </div>
-            <p className="font-mono text-xs text-muted-foreground">
-              {info.label} · {home.trim() || "default folder"}
-            </p>
             {duplicate && <p className="text-xs text-amber-600 dark:text-amber-400">That account is already added.</p>}
           </>
         )}

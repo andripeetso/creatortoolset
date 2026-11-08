@@ -23,6 +23,15 @@ export const DRIVERS: ReadonlyArray<{ id: Driver; label: string; runs: boolean; 
   { id: "pi", label: "Pi", runs: false },
 ];
 
+/** The drivers the Creator Toolset Mac app runs (apps/mac ClaudeRequest.swift `runnableDrivers`). */
+const APP_DRIVERS: ReadonlyArray<Driver> = ["claude", "gemini"];
+
+/** Whether a paired Mac can run a driver: the settings offer only these. */
+export const runsOn = (driver: Driver): boolean => !!DRIVERS.find((d) => d.id === driver)?.runs && APP_DRIVERS.includes(driver);
+
+/** A driver's name as people say the tool: "Claude Code", not the short label. */
+export const TOOL_NAMES: Partial<Record<Driver, string>> = { claude: "Claude Code", codex: "Codex", gemini: "Gemini CLI" };
+
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 export type Effort = (typeof EFFORTS)[number];
 
@@ -47,11 +56,11 @@ export interface Selection {
 
 /** What a job is, for its default and the usage page. Every AI call names one. */
 export const JOBS = [
-  { id: "workshop", label: "Content Workshop", hint: "turns, line options, side chat, drafts, accuracy checks" },
-  { id: "captions", label: "Caption Studio", hint: "caption lines, polish, script check" },
-  { id: "analyzer", label: "Content Analyzer", hint: "reading posts and slides, tags, the Idea board" },
-  { id: "notes", label: "Video Notes and guides", hint: "summaries, chapters, Guide Builder, Documents" },
-  { id: "editor", label: "AI Editor", hint: "lines and takes, B-roll picks, revisions" },
+  { id: "workshop", label: "Content Workshop" },
+  { id: "captions", label: "Caption Studio" },
+  { id: "analyzer", label: "Content Analyzer" },
+  { id: "notes", label: "Video Notes and guides" },
+  { id: "editor", label: "AI Editor" },
 ] as const;
 export type JobId = (typeof JOBS)[number]["id"];
 

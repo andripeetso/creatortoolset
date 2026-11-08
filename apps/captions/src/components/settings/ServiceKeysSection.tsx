@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { ExternalLink } from "lucide-react";
 import type { ServiceKeyEnv, ServiceKeyView } from "@contracts/service-keys";
 import { Button } from "@/components/ui/button";
-import { Card, Group, Loading, Notice, Row } from "./ui";
+import { Card, Loading, Notice, Row } from "./ui";
 
 async function json<T>(res: Response): Promise<T> {
   const j = (await res.json().catch(() => null)) as { error?: string } | null;
@@ -25,7 +25,7 @@ export function ServiceKeysSection() {
   const run = (p: Promise<unknown>) => p.then(load).catch((e) => setError(String(e.message ?? e)));
   if (!keys) return error ? <Notice tone="error">{error}</Notice> : <Loading />;
   return (
-    <Group title="API keys" hint="The server's own keys: they serve you (the platform admin), never your AI. Any other account uses its own keys from Settings → My API keys.">
+    <>
       <Card>
         {keys.map((k) => (
           <KeyRow
@@ -39,7 +39,7 @@ export function ServiceKeysSection() {
         ))}
       </Card>
       {error && <div className="mt-2"><Notice tone="error">{error}</Notice></div>}
-    </Group>
+    </>
   );
 }
 
@@ -51,7 +51,7 @@ export function KeyRow({ k, status, on, canForget, save }: { k: { name: string; 
       label={
         <span className="flex items-center gap-2">
           {k.name}
-          <span className={`text-xs ${on ? "text-emerald-400" : "text-amber-400"}`}>{status}</span>
+          <span className={`text-xs ${on ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-300"}`}>{status}</span>
         </span>
       }
       hint={

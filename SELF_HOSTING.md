@@ -195,7 +195,7 @@ On your Mac:
    `apps/mac/build/Creator Toolset.app`. A build you make yourself runs only on your Mac. For other Macs,
    see `apps/mac/README.md` on signing and notarizing.
 2. Add your server: **Servers → Add server…** in the app's menu bar (or the server picker right of the window
-   buttons, or **Settings → This Mac → Servers**), with `https://tools.example.com`. Each server keeps its own
+   buttons, or **Servers → This Mac…**), with `https://tools.example.com`. Each server keeps its own
    sign-in; ⌥⌘1…⌥⌘9 switch between them. **Servers → Run your own server…** has the short form of this guide,
    with a check for HTTPS, the health call and the sign-in.
 3. Sign in to your server in the app's window.

@@ -6,19 +6,39 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AiKeyDialog } from "@/components/AiKeyDialog";
 import { Card, Group, Row } from "./ui";
+import { fmtAgo } from "./helpers";
 
-const ROLE_LABEL = { admin: "Administrator", team: "Team", user: "User" } as const;
+/** An AI access key as the server lists it (api/auth.ts GET /api-key): per level, null when there is none. */
+type KeyInfo = { at?: number; last4?: string; usedAt?: number } | null;
+type Keys = { review: KeyInfo; full: KeyInfo };
+const KEY_NAME = { review: "Review only", full: "Full access" } as const;
 
-/** Settings → Account: who is signed in, the password (when sign-in is on), the AI access key, sign out. */
+/** Settings → Account: who is signed in, the password (when sign-in is on), your AI access keys (list and Turn off), sign out. */
 export function AccountSection() {
   const me = useAuth((s) => s.me);
   const required = useAuth((s) => s.required);
   const [aiKey, setAiKey] = useState(false);
+  const [keys, setKeys] = useState<Keys | null>(null);
+  const loadKeys = () =>
+    fetch("/api/auth/api-key")
+      .then((r) => (r.ok ? (r.json() as Promise<Keys>) : null))
+      .then(setKeys)
+      .catch(() => setKeys(null));
+  useEffect(() => {
+    void loadKeys();
+  }, []);
+  // Turn off answers with the keys that are left
+  const turnOff = (level: "review" | "full") =>
+    fetch(`/api/auth/api-key?level=${level}`, { method: "DELETE" })
+      .then((r) => (r.ok ? (r.json() as Promise<Keys>) : Promise.reject(new Error(`Failed (${r.status})`))))
+      .then(setKeys)
+      .catch(() => void loadKeys());
   if (!me) return null;
+  const live = (["review", "full"] as const).filter((l) => keys?.[l]);
 
   return (
     <>
-      <Group title="Profile" hint={`${ROLE_LABEL[me.role]}. Your files stay filed under "${me.username}" whatever you call yourself.`}>
+      <Group title="Profile" hint={`Your files stay filed under "${me.username}" whatever you call yourself.`}>
         <Card>
           <NameRow />
           {required && <PasswordRow />}
@@ -27,6 +47,21 @@ export function AccountSection() {
 
       <Group title="Connections">
         <Card>
+          {live.map((level) => {
+            const k = keys?.[level];
+            const made = k?.at ? new Date(k.at).toLocaleDateString(undefined, { day: "numeric", month: "short" }) : null;
+            return (
+              <Row
+                key={level}
+                label={`${KEY_NAME[level]} key`}
+                hint={[made && `Made ${made}`, k?.usedAt ? `last used ${fmtAgo(k.usedAt)}` : "not used yet", k?.last4 && `ends ${k.last4}`].filter(Boolean).join(" · ")}
+              >
+                <Button variant="outline" size="sm" onClick={() => void turnOff(level)}>
+                  Turn off
+                </Button>
+              </Row>
+            );
+          })}
           <Row
             label="AI access key"
             hint="Lets your AI (an MCP connector in Claude, or a script) work here for you: Review only, or Full access to everything you can do. Shown once."
@@ -48,7 +83,13 @@ export function AccountSection() {
         </Card>
       </Group>
 
-      <AiKeyDialog open={aiKey} onClose={() => setAiKey(false)} />
+      <AiKeyDialog
+        open={aiKey}
+        onClose={() => {
+          setAiKey(false);
+          void loadKeys();
+        }}
+      />
     </>
   );
 }

@@ -55,14 +55,13 @@ export function AutomationsSection() {
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-xs text-muted-foreground">A prompt the assistant runs on your AI at a set time, with the same tools as the chat. Its result shows here and in your inbox.</p>
-        {!editing && (
+      {!editing && (
+        <div className="flex justify-end">
           <Button size="sm" onClick={() => setEditing("new")}>
             <Plus /> New automation
           </Button>
-        )}
-      </div>
+        </div>
+      )}
       {error && <Notice tone="error">{error}</Notice>}
       {editing ? (
         <AutomationForm
@@ -74,7 +73,7 @@ export function AutomationsSection() {
           }}
         />
       ) : items.length === 0 ? (
-        <Notice>No automations yet. Try: “every Monday at 9, pull my new Instagram posts and draft three hooks in the Workshop.”</Notice>
+        <Notice>No automations yet. For example: “every Monday at 9, pull my new Instagram posts and draft three hooks in the Workshop.”</Notice>
       ) : (
         <Card>
           {items.map((a) => (
@@ -112,7 +111,7 @@ export function AutomationsSection() {
                     <span className={a.lastResult.status === "done" ? "text-emerald-400" : a.lastResult.status === "error" ? "text-red-400" : "text-amber-400"}>
                       {a.lastResult.status}
                     </span>
-                    {` · ${fmtAgo(a.lastResult.at)}: ${a.lastResult.text.slice(0, 280)}`}
+                    {` · ${fmtAgo(a.lastResult.at)}: ${a.lastResult.text.length > 280 ? `${a.lastResult.text.slice(0, 280)}…` : a.lastResult.text}`}
                   </>
                 ) : (
                   "Not run yet"
@@ -143,6 +142,8 @@ function AutomationForm({ initial, onDone }: { initial: AutomationView | null; o
   const [error, setError] = useState<string | null>(null);
   const set = (patch: Partial<AutomationDraft>) => setD((cur) => ({ ...cur, ...patch }));
   const timed = d.kind !== "hours";
+  // an empty or out-of-range "Every" reads as 0 (Number("")), so it is blocked here, not sent
+  const everyOk = timed || (Number.isInteger(d.every) && d.every >= 1 && d.every <= 168);
 
   const save = async () => {
     setBusy(true);
@@ -163,11 +164,11 @@ function AutomationForm({ initial, onDone }: { initial: AutomationView | null; o
   };
 
   return (
-    <Card className="space-y-4 p-4">
+    <div className="space-y-4 rounded-xl border border-border/60 bg-card/40 p-4">
       <Field label="Name">
         <Input value={d.name} onChange={(e) => set({ name: e.target.value })} placeholder="e.g. Monday hooks" maxLength={80} aria-label="Name" className="h-8 max-w-sm text-xs" />
       </Field>
-      <Field label="What to do" hint="The prompt the assistant runs, with the same tools as the chat. Nobody is at the screen during a run.">
+      <Field label="What to do" hint="Runs with no one at the screen, with the chat's tools.">
         <Textarea value={d.prompt} onChange={(e) => set({ prompt: e.target.value })} rows={4} maxLength={4000} aria-label="Prompt" className="text-xs" />
       </Field>
       <div className="flex flex-wrap items-end gap-3">
@@ -195,19 +196,19 @@ function AutomationForm({ initial, onDone }: { initial: AutomationView | null; o
           </Field>
         ) : (
           <Field label="Every" hint="Hours, 1 to 168">
-            <Input type="number" min={1} max={168} value={d.every} onChange={(e) => set({ every: Number(e.target.value) })} aria-label="Hours" className="h-8 w-24 text-xs" />
+            <Input type="number" min={1} max={168} required value={d.every} onChange={(e) => set({ every: Number(e.target.value) })} aria-label="Hours" className="h-8 w-24 text-xs" />
           </Field>
         )}
       </div>
       {error && <Notice tone="error">{error}</Notice>}
       <div className="flex items-center gap-2">
-        <Button size="sm" disabled={busy || !d.name.trim() || !d.prompt.trim()} onClick={() => void save()}>
+        <Button size="sm" disabled={busy || !d.name.trim() || !d.prompt.trim() || !everyOk} onClick={() => void save()}>
           {initial ? "Save changes" : "Create automation"}
         </Button>
         <Button variant="outline" size="sm" onClick={() => onDone(false)} disabled={busy}>
           Cancel
         </Button>
       </div>
-    </Card>
+    </div>
   );
 }

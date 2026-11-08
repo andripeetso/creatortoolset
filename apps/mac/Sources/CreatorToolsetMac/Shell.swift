@@ -381,7 +381,7 @@ final class Shell: NSObject, ObservableObject {
         return ai.running > 0 ? "AI on this Mac: running \(ai.running)" : "AI on this Mac: on"
     }
 
-    /// The Mac's device is known for this site (paired once); "Forget this Mac" needs it.
+    /// The Mac's device is known for this site (paired once); "Remove this Mac from my account" needs it.
     var pairedHere: Bool { DeviceVault.deviceID(for: base.host ?? "") != nil }
 
     // MARK: window and site
@@ -526,7 +526,7 @@ final class Shell: NSObject, ObservableObject {
         notice = message
     }
 
-    /// "Forget this Mac": stops it, drops its token here and asks the site to remove the device.
+    /// "Remove this Mac from my account": stops it, drops its token here and asks the site to remove the device.
     func forgetThisMac() {
         let host = base.host ?? ""
         let id = DeviceVault.deviceID(for: host)

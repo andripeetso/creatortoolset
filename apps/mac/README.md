@@ -58,7 +58,7 @@ address. The list is `servers` in UserDefaults, `[{id, name, url}]` for the adde
 
 - **Where:** the **Servers** menu in the main menu bar, the same menu in the menu bar item, the picker right of the
   window buttons in the page's top bar (`TitleBar.swift`; the page keeps 124 px for both, `apps/captions/src/index.css`;
-  hidden in full screen), and **Settings → This Mac → Servers**.
+  hidden in full screen), and the **This Mac** window.
 - **Switching:** ⌥⌘1…⌥⌘9 in the Servers menu. ⌘⇧3–6 are the system's screenshot keys and ⌃⌘ digits reach the
   Workshop's list (`WorkshopSidebar.tsx` treats Control as Command), so the servers take Option-Command. Switching to
   This Mac starts the server here; switching away stops it, and the AI runner follows the window (one runner at a time).
@@ -219,10 +219,10 @@ one at most once a minute). A crash of the app itself is macOS's report in
   server is in This Mac → Account (default `https://creatortoolset.com`, the only place the app names it; empty = no
   account step, for your own server). `Account.swift`.
 - **Settings…** (⌘,, the one Settings item) opens the server's Settings in the window; with no server picked it opens
-  This Mac. Inside the app the page's Settings has a **This Mac** entry (shown only when `<html>` has `mac-app`) that
-  posts `this-mac` to the `window` message handler, which opens the native **This Mac** window: Servers, **Use this
-  Mac for my AI**, the server here (on or off, port, log, Data location, Access from other devices) and the account
-  server. The menu bar item and the Servers menu open it too (**This Mac…**). `ThisMac.swift`.
+  This Mac. The Servers menu and the menu bar item (**This Mac…**) open the native **This Mac** window: Servers,
+  **Use this Mac for my AI**, the server here (on or off, port, log, Data location, Access from other devices) and
+  the account server; the page's Settings has no entry for it. A page that posts `this-mac` to the `window` message
+  handler opens it too. `ThisMac.swift`.
 - The page learns this Mac's device id on the open server as `<html data-mac-device>` (a user script, renewed on
   each switch and pairing), so Settings → AI providers can say "This Mac (*name*) answers your AI" rather than
   another Mac's name.
@@ -259,7 +259,7 @@ run"); for another server, turn **Use this Mac for my AI** on (menu bar or This 
 pairs this Mac with the account: `POST /api/devices` with the window's cookies, body `{name, version}`.
 The site returns a device token once. The token goes to the Keychain (service
 `com.creatortoolset.mac.device`, account = the site's host); the device id goes to
-UserDefaults. Turning it off stops the runner and keeps the pairing. **Forget this Mac** also
+UserDefaults. Turning it off stops the runner and keeps the pairing. **Remove this Mac from my account** also
 calls `DELETE /api/devices/:id`. If the site answers 401 to the runner, the token was revoked: the app
 drops it and turns the setting off, with a note in the menu.
 

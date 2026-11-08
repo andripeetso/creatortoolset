@@ -90,7 +90,11 @@ export function deviceForToken(authorization: string | undefined): Device | null
   return d ? strip(d) : null;
 }
 
-/** A new app device for `owner`; the token is returned once and never stored. */
+/**
+ * A new app device for `owner`; the token is returned once and never stored. An earlier device of the same owner
+ * with the same name is the same Mac paired again (the app re-pairs when its token is lost): it is dropped, so its
+ * token stops working and the list keeps one row per Mac.
+ */
 export function pairDevice(owner: string, name: string, version?: string): { device: Device; token: string } {
   const token = `ctd_${randomBytes(32).toString("base64url")}`;
   const d: Stored = {
@@ -101,7 +105,8 @@ export function pairDevice(owner: string, name: string, version?: string): { dev
     tokenHash: sha(token),
     ...(version ? { version } : {}),
   };
-  all().push(d);
+  list = all().filter((x) => !(x.owner === owner && x.name === name));
+  list.push(d);
   persist();
   return { device: strip(d), token };
 }
