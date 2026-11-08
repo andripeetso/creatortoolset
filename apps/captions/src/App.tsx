@@ -39,6 +39,7 @@ import { getProjectPersistenceStatus } from "@/lib/persistence-status";
 import { useRootTint, useWorkspace } from "@/lib/workspace";
 import { warmScreens } from "@/lib/warm-cache";
 import { useAppearance } from "@/lib/settings";
+import { historyDepth } from "@/lib/history-depth";
 
 const MobileCaptionPage = lazy(
   () => import("./pages/mobile/MobileCaptionPage"),
@@ -227,9 +228,24 @@ export default function App() {
   const inCommunity = /^\/community(?:\/|$)/.test(location.pathname);
   const inProjects = location.pathname === "/projects";
   const behind = useRef<Location | null>(null);
-  if (!inSettings && !inProjects && !inCommunity) behind.current = location;
+  const behindIdx = useRef<number | null>(null); // react-router's history index of the page behind
+  if (inSettings || inProjects || inCommunity) historyDepth.modal.add(window.history.state?.idx ?? 0);
+  else {
+    historyDepth.modal.delete(window.history.state?.idx ?? 0);
+    behind.current = location;
+    behindIdx.current = window.history.state?.idx ?? null;
+  }
   const page = inSettings || inProjects || inCommunity ? (behind.current ?? { ...location, pathname: "/", search: "", hash: "" }) : location;
-  const closeSettings = () => navigate(behind.current ? behind.current.pathname + behind.current.search + behind.current.hash : "/");
+  // closing steps back to the page behind, so Back never reopens the modal; opened straight from a URL there is
+  // nothing behind it, so it is replaced by that page (or home)
+  const closeSettings = () => {
+    const steps = behindIdx.current === null ? 0 : behindIdx.current - (window.history.state?.idx ?? 0);
+    if (behind.current && steps < 0) {
+      navigate(steps);
+    } else {
+      navigate(behind.current ? behind.current.pathname + behind.current.search + behind.current.hash : "/", { replace: true });
+    }
+  };
   const onMobile = location.pathname.startsWith("/m");
   const publicPage =
     isPublicSharePath(location.pathname) || isPublicReviewPath(location.pathname) || isPublicLibraryPath(location.pathname);

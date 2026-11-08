@@ -1,27 +1,10 @@
 import { Fragment, useEffect, useState } from "react";
-import { Link, Navigate, useLocation, useNavigate } from "react-router";
-import {
-  Loader2,
-  ArrowRight,
-  AudioLines,
-  Captions,
-  ChevronRight,
-  Eraser,
-  FileText,
-  ScanSearch,
-  Library,
-  Clapperboard,
-  Lock,
-  Scissors,
-  MessageSquareText,
-  NotebookPen,
-  Video,
-} from "lucide-react";
+import { Link, Navigate, useLocation } from "react-router";
+import { Loader2, ArrowRight, ChevronRight, Lock } from "lucide-react";
 import { canUse, useMe, type Me } from "@/lib/auth";
 import { isPhoneHub } from "@/lib/mobile";
-import { useStudio } from "@/lib/store";
-import { UserMenu } from "@/components/UserMenu";
-import { HistoryArrows, HomeLink } from "@/components/HomeLink";
+import { OTHER, WORKFLOW, useOpenTool, type Tool } from "@/lib/tools";
+import { AppBar } from "@/components/AppBar";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
 import { useSessionSummaries } from "@/lib/workshop-summary";
 import { listEdits } from "@/lib/editor";
@@ -39,120 +22,10 @@ import { useShareTheme } from "@/components/ShareTheme";
  * Caption Studio opens the simplified /m/captions flow there.
  */
 
-type Tool = {
-  to: string;
-  phoneTo?: string;
-  icon: typeof Captions;
-  name: string;
-  desc: string;
-  can: (me: Me | null) => boolean;
-};
-
-const WORKFLOW: { stage: string; tools: Tool[] }[] = [
-  {
-    stage: "Plan",
-    tools: [
-      {
-        to: "/instagram",
-        icon: ScanSearch,
-        name: "Content Analyzer",
-        desc: "Dump interesting posts. Rank, stack topics, remake your own.",
-        can: (me) => canUse(me, "instagram"),
-      },
-      {
-        to: "/workshop",
-        icon: NotebookPen,
-        name: "Content Workshop",
-        desc: "Search your research, take notes, draft reels, carousels, YouTube scripts, newsletters, X threads and articles.",
-        can: (me) => canUse(me, "workshop"),
-      },
-    ],
-  },
-  {
-    stage: "Make",
-    tools: [
-      {
-        to: "/editor",
-        icon: Clapperboard,
-        name: "AI Editor",
-        desc: "Raw takes in, draft timelines out: best takes, restarts and pauses cut, a preview in Review.",
-        can: (me) => canUse(me, "editor"),
-      },
-      {
-        to: "/review",
-        icon: MessageSquareText,
-        name: "Review",
-        desc: "Share a cut with one link. Reviewers comment and draw on the exact frame.",
-        can: (me) => canUse(me, "review"),
-      },
-    ],
-  },
-  {
-    stage: "Distribute",
-    tools: [
-      {
-        to: "/clean",
-        icon: Eraser,
-        name: "Video Cleaner",
-        desc: "Clean metadata and compare fingerprints before posting.",
-        can: (me) => canUse(me, "clean"),
-      },
-      {
-        to: "/stories",
-        icon: Scissors,
-        name: "Story Splitter",
-        desc: "One video in, stories of about 20 s out: cut on the edit's cuts, pauses and beats. ZIP download.",
-        can: (me) => canUse(me, "stories"),
-      },
-    ],
-  },
-];
-
-/** The tools you may use but don't have to: under the stages, quieter. */
-const OTHER: Tool[] = [
-  {
-    to: "/library",
-    icon: Library,
-    name: "Media Library",
-    desc: "Your footage in one place: upload, search by title and tag, preview.",
-    can: (me) => canUse(me, "media"),
-  },
-  {
-    to: "/enhance",
-    icon: AudioLines,
-    name: "Audio Enhancer",
-    desc: "Studio sound for any recording: denoise, de-echo, level.",
-    can: (me) => canUse(me, "enhance"),
-  },
-  {
-    to: "/captions?view=projects",
-    phoneTo: "/m/captions",
-    icon: Captions,
-    name: "Caption Studio",
-    desc: "Transcribe, caption and export: burned-in videos or alpha overlays.",
-    can: (me) => canUse(me, "captions"),
-  },
-  {
-    to: "/clips",
-    icon: Video,
-    name: "Video Notes",
-    desc: "Drop in a recording: transcript, summary, chapters, takeaways.",
-    can: (me) => canUse(me, "notes"),
-  },
-  {
-    to: "/documents",
-    icon: FileText,
-    name: "Guide Builder",
-    desc: "Turn recordings into SOPs, walkthroughs and guides you can publish.",
-    can: (me) => canUse(me, "guides"),
-  },
-];
-
 export default function ToolsetHome() {
   const location = useLocation();
-  const navigate = useNavigate();
-  const openProjectLibrary = useStudio((s) => s.openProjectLibrary);
   const me = useMe();
+  const openTool = useOpenTool();
   const phone = isPhoneHub();
   const showCounts = canUse(me, "workshop");
   const waiting = useWaiting(me);
@@ -170,25 +43,6 @@ export default function ToolsetHome() {
     return <Navigate to={{ pathname: "/", search: location.search }} replace />;
   }
 
-  const openTool = async (
-    e: React.MouseEvent<HTMLAnchorElement>,
-    to: string,
-  ) => {
-    // Preserve normal browser behavior for Cmd/Ctrl-click, middle-click, etc.
-    // The URL itself carries the project-view intent, so new tabs work too.
-    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) {
-      return;
-    }
-    e.preventDefault();
-    // Entering from the tool hub always opens Caption Studio's project view.
-    // Keep the active project intact in memory so this navigation cannot lose
-    // work; selecting a project or importing media opens the editor again.
-    if (to.startsWith("/captions")) {
-      openProjectLibrary();
-    }
-    navigate(to);
-  };
-
   // One tool as a link, an external link, or a locked placeholder.
   const toolLink = (t: Tool, className: string, body: React.ReactNode) => {
     const dest = phone && t.phoneTo ? t.phoneTo : t.to;
@@ -204,7 +58,7 @@ export default function ToolsetHome() {
         </div>
       );
     }
-    const live = `group ${className}`; // hover lights the icon and the name only, no box behind them
+    const live = className; // no hover effect at all
     return dest.startsWith("https://") ? (
       <a key={t.to} href={dest} title={t.desc} className={live}>
         {body}
@@ -214,7 +68,7 @@ export default function ToolsetHome() {
         key={t.to}
         to={dest}
         title={t.desc}
-        onClick={(e) => void openTool(e, dest)}
+        onClick={(e) => openTool(e, dest)}
         className={live}
       >
         {body}
@@ -233,8 +87,8 @@ export default function ToolsetHome() {
       "flex w-[88px] flex-col items-center gap-2 rounded-xl px-1 py-2 text-center 2xl:w-[104px]",
       <>
         <span className={quiet
-          ? "relative flex h-10 w-10 items-center justify-center rounded-xl bg-zinc-800/80 group-hover:bg-zinc-700"
-          : "relative flex h-12 w-12 items-center justify-center rounded-2xl 2xl:h-14 2xl:w-14 bg-[color-mix(in_srgb,var(--tint)_90%,transparent)] group-hover:bg-[var(--tint)]"}>
+          ? "relative flex h-10 w-10 items-center justify-center rounded-xl bg-zinc-800/80"
+          : "relative flex h-12 w-12 items-center justify-center rounded-2xl 2xl:h-14 2xl:w-14 bg-[color-mix(in_srgb,var(--tint)_90%,transparent)]"}>
           <t.icon className={quiet ? "h-5 w-5 text-[var(--tint-text)]" : "h-6 w-6 text-white"} />
           {!t.can(me) && (
             <Lock className="absolute -bottom-1 -right-1 h-4 w-4 rounded-full bg-zinc-900 p-0.5 text-zinc-300" />
@@ -242,7 +96,7 @@ export default function ToolsetHome() {
           {t.can(me) && (t.to === "/workshop" ? showCounts && <WorkshopBadge /> : <Badge n={waiting[t.to] ?? 0} means={BADGE_MEANS[t.to]} />)}
           {t.can(me) && running[t.to] ? <Running n={running[t.to]} verb="writing" /> : null}
         </span>
-        <span className={`text-xs leading-tight group-hover:text-zinc-50 ${quiet ? "text-zinc-400" : "text-zinc-300"}`}>
+        <span className={`text-xs leading-tight ${quiet ? "text-zinc-400" : "text-zinc-300"}`}>
           {t.name}
         </span>
       </>,
@@ -263,18 +117,11 @@ export default function ToolsetHome() {
           />
         </div>
       )}
-      <div className="absolute right-3 top-[max(0.75rem,env(safe-area-inset-top))] flex items-center gap-2">
+      {/* the tool pages' own bar (components/AppBar.tsx) with no tool and an invisible edge, so the name, the arrows and
+          the account sit exactly where they do on every tool page and never move between them */}
+      <AppBar className="absolute inset-x-0 top-0 mt-[env(safe-area-inset-top)] border-transparent">
         {canUse(me, "instagram") || canUse(me, "workshop") ? <ProjectSwitcher /> : null}
-        <UserMenu />
-      </div>
-
-      {/* the name typed out, top left as in the other tool pages, at the same left edge, size and height as AppBar's
-          HomeLink, so the name never moves between home and a tool; which project you're in is the switcher top right.
-          The bar's border (invisible here) keeps the centre line at the tool pages' 0.5px */}
-      <div data-titlebar className="absolute left-0 top-0 flex h-14 items-center border-b border-transparent px-3 sm:px-4">
-        <HomeLink />
-        <HistoryArrows />
-      </div>
+      </AppBar>
       {phone && <div className="h-16 shrink-0" />}
 
       {/* two rows: the work's three steps, verbs, in equal boxes; under them Tools, quieter, no box, a centred label
@@ -422,7 +269,7 @@ function Between({ into }: { into: string }) {
     <Link
       to="/workshop"
       title={title}
-      className="flex flex-col items-center whitespace-nowrap text-center text-[11px] leading-tight text-[var(--tint-text)] hover:brightness-125 max-lg:flex-row max-lg:gap-1.5"
+      className="flex flex-col items-center whitespace-nowrap text-center text-[11px] leading-tight text-[var(--tint-text)] max-lg:flex-row max-lg:gap-1.5"
     >
       {parts.map((p) => <span key={p}>{p}</span>)}
     </Link>

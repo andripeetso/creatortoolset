@@ -3,28 +3,28 @@ import { Link, useLocation, useNavigate, useNavigationType } from "react-router"
 import { ArrowLeft, ArrowRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toolsetHomePath } from "@/lib/mobile";
-
-// the deepest history entry reached so far (react-router keeps its index in history.state.idx); a push drops the forward ones
-let deepest = 0;
-const reach = (push: boolean, idx: number) => (deepest = push ? idx : Math.max(deepest, idx));
+import { historyDepth, pageStep } from "@/lib/history-depth";
 
 /** Back and forward in the Mac app's top bar. Shown only there, after the name, so the name never
- *  moves; a browser has its own buttons. Disabled where there is nowhere to go. */
+ *  moves; a browser has its own buttons. They step between pages only, never onto Settings, Community or Projects.
+ *  Disabled where there is nowhere to go. */
 export function HistoryArrows({ className }: { className?: string }) {
   const navigate = useNavigate();
   const navType = useNavigationType();
   const { key } = useLocation();
   const idx = (window.history.state?.idx as number | undefined) ?? 0;
-  const furthest = reach(navType === "PUSH", idx);
+  historyDepth.deepest = navType === "PUSH" ? idx : Math.max(historyDepth.deepest, idx);
   void key; // re-render on every location change
   if (!document.documentElement.classList.contains("mac-app")) return null;
+  const back = pageStep(idx, -1);
+  const forward = pageStep(idx, 1);
   const button = "rounded-md p-1.5 text-zinc-500 hover:bg-zinc-500/15 hover:text-inherit disabled:opacity-30 disabled:hover:bg-transparent";
   return (
     <span className={cn("flex shrink-0 items-center gap-0.5", className)}>
-      <button type="button" aria-label="Back" title="Back" disabled={idx <= 0} onClick={() => navigate(-1)} className={button}>
+      <button type="button" aria-label="Back" title="Back" disabled={!back} onClick={() => navigate(back)} className={button}>
         <ArrowLeft className="h-4 w-4" />
       </button>
-      <button type="button" aria-label="Forward" title="Forward" disabled={idx >= furthest} onClick={() => navigate(1)} className={button}>
+      <button type="button" aria-label="Forward" title="Forward" disabled={!forward} onClick={() => navigate(forward)} className={button}>
         <ArrowRight className="h-4 w-4" />
       </button>
     </span>

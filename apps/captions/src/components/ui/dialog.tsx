@@ -44,15 +44,8 @@ function DialogOverlay({
   )
 }
 
-/** For a modal opened from the account menu (top right): it grows out of that corner. */
-export const FROM_TOP_RIGHT = {
-  "--tw-enter-translate-x": "-47%",
-  "--tw-enter-translate-y": "-53%",
-  "--tw-exit-translate-x": "-47%",
-  "--tw-exit-translate-y": "-53%",
-  transformOrigin: "top right",
-} as React.CSSProperties
-
+// Dialogs only fade and sit centred by margins, not a transform: the enter animation sets transform, so a
+// transform-centred dialog swept in from a corner.
 function DialogContent({
   className,
   children,
@@ -67,7 +60,7 @@ function DialogContent({
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-          "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-1/2 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-1/2 fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border p-6 shadow-lg duration-200 outline-none sm:max-w-lg",
+          "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 m-auto grid h-fit w-full max-w-[calc(100%-2rem)] gap-4 rounded-lg border p-6 shadow-lg duration-200 outline-none sm:max-w-lg",
           className
         )}
         {...props}

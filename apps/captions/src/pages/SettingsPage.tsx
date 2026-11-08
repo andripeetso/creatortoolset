@@ -1,6 +1,6 @@
 import { Link, Navigate, useLocation } from "react-router";
 import { Cable, CalendarClock, Cpu, Gauge, KeyRound, Laptop, ListChecks, Monitor, Palette, SlidersHorizontal, UserRound, type LucideIcon } from "lucide-react";
-import { Dialog, DialogContent, DialogTitle, FROM_TOP_RIGHT } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { AccountSection } from "@/components/settings/AccountSection";
 import { AppearanceSection } from "@/components/settings/AppearanceSection";
 import { AutomationsSection } from "@/components/settings/AutomationsSection";
@@ -65,7 +65,7 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent style={FROM_TOP_RIGHT} className="flex h-[min(860px,calc(100dvh-2rem))] w-[min(1100px,calc(100vw-2rem))] max-w-none flex-col gap-0 overflow-hidden p-0 sm:max-w-none md:flex-row">
+      <DialogContent className="flex h-[min(860px,calc(100dvh-2rem))] w-[min(1100px,calc(100vw-2rem))] max-w-none flex-col gap-0 overflow-hidden p-0 sm:max-w-none md:flex-row">
         <DialogTitle className="sr-only">Settings</DialogTitle>
         <nav aria-label="Settings sections" className="flex shrink-0 gap-1 overflow-x-auto border-b border-border p-3 md:w-52 md:flex-col md:overflow-visible md:border-b-0 md:border-r">
           <span className="hidden px-2.5 pb-2 pt-1 text-sm font-semibold md:block">Settings</span>
