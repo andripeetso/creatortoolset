@@ -10,7 +10,7 @@ import { selectCls } from "./helpers";
 export function Group({ title, hint, children, className }: { title: string; hint?: ReactNode; children: ReactNode; className?: string }) {
   return (
     <section className={cn("mt-8 first:mt-0", className)}>
-      <h3 className="text-sm font-medium text-foreground">{title}</h3>
+      <h3 className={cn("text-sm font-medium text-foreground", !hint && "mb-2")}>{title}</h3>
       {hint && <p className="mb-2 mt-0.5 text-xs text-muted-foreground">{hint}</p>}
       {children}
     </section>
