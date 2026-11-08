@@ -13,7 +13,6 @@ import {
   SlidersHorizontal,
   Sparkles,
   Trash2,
-  TriangleAlert,
 } from "lucide-react";
 import { useCachedList } from "@/lib/local-cache";
 import { fmtClock } from "@/lib/ass";
@@ -39,7 +38,7 @@ import {
 import { EnhancePlayer } from "@/components/EnhancePlayer";
 import { AppBar, ToolIntro } from "@/components/AppBar";
 import { DropZoneText, dropZoneClass } from "@/components/DropZone";
-import { openToolSetup } from "@/lib/setup";
+import { ToolSetupLine } from "@/components/setup/ToolSetupLine";
 
 /**
  * The Audio Enhancer — a standalone tool at /enhance inside Creator
@@ -562,6 +561,9 @@ export default function EnhancePage() {
       <AppBar tool="Audio Enhancer" to={current ? "/enhance" : undefined} trail={current?.name} />
 
       <ToolIntro icon={AudioLines} title="Audio Enhancer" line="Studio sound for any recording — denoise · de-echo · level" />
+      <div className="w-[560px] max-w-[92vw]">
+        <ToolSetupLine tool="enhance" />
+      </div>
 
       <div className="w-[560px] max-w-[92vw]">
         {openingSession ? (
@@ -636,15 +638,6 @@ export default function EnhancePage() {
             </label>
             {uploadError && (
               <p className="mt-2 text-xs text-red-400">{uploadError}</p>
-            )}
-            {avail && offered(avail).length === 0 && (
-              <p className="mt-2 flex items-center gap-1.5 text-[11px] text-amber-400/80">
-                <TriangleAlert className="h-3 w-3 shrink-0" />
-                Enhancement is off: it needs an ElevenLabs or NVIDIA key, billed to you by that provider.{" "}
-                <button type="button" className="underline" onClick={() => openToolSetup("enhance")}>
-                  Set up
-                </button>
-              </p>
             )}
 
             {sessions.length > 0 && (

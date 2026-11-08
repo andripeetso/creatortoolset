@@ -84,7 +84,7 @@ import {
 } from "../src/lib/carousel-layout";
 
 /**
- * Every Workshop call goes to the Workshop's AI provider (Admin → AI providers; the session's own pick first),
+ * Every Workshop call goes to the Workshop's AI provider (Admin → Your AI; the session's own pick first),
  * on the paired Mac. There is no
  * API-key fallback for accounts: a Mac that is off or a run that fails says so. A request with no user
  * (carousel layouts) runs on the default.
@@ -118,7 +118,7 @@ const onMac = (user: SessionUser, own?: Selection) => !!workshopAi(user, own).on
 /** The asker's Perplexity key (their own, or the server's for the platform admin), or "" */
 const perplexityFor = (user: SessionUser) => keyFor(user, "PERPLEXITY_API_KEY").key;
 const researchFor = (user: SessionUser) => !!perplexityFor(user) || onMac(user);
-const RESEARCH_OFF = "Research needs an AI provider of your own (Settings → AI providers) or your Perplexity key in Settings → My API keys";
+const RESEARCH_OFF = "Research needs an AI of your own (Settings → Your AI) or your Perplexity key in Settings → My API keys";
 const researchLabel = (user: SessionUser) => (onMac(user) ? "Claude (Mac)" : "Perplexity");
 const macLabel = (u?: MacUsage) => (u ? `Claude (Mac) · ${(u.tokens / 1000).toFixed(1)}k tokens · $${u.costUsd.toFixed(2)} API-equivalent` : "Claude (Mac)");
 
@@ -1300,7 +1300,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
           if (e instanceof MacClaudeError) addUsage(e.usage);
           const kind = macErrorKind(e);
           if (signal.aborted || kind === "stopped") throw new Error("Stopped");
-          throw new Error(`${kind === "unclaimed" || kind === "limit" ? errorMessage(e) : `The provider did not finish this reply (${errorMessage(e)})`}. Retry sends it again.`);
+          throw new Error(`${kind === "unclaimed" || kind === "limit" ? errorMessage(e) : `Your AI did not finish this reply (${errorMessage(e)})`}. Retry sends it again.`);
         };
         // the Mac's Claude session is gone (the Mac relay): this same turn runs once more as a new session, and the reply says so
         let lost = false;
@@ -3005,7 +3005,7 @@ workshopApp.post("/sessions/:id/reviews", async (c) => {
   const body = (await c.req.json().catch(() => null)) as { docId?: unknown } | null;
   const doc = typeof body?.docId === "string" ? await readDoc(meta.id, body.docId) : null;
   if (!doc || doc.kind === "notes" || !doc.blocks.length) return c.json({ error: "Open a piece with some text first" }, 400);
-  if (!onMac(user)) return c.json({ error: "A follower's read runs on Claude Fable through an AI provider on the Mac" }, 503);
+  if (!onMac(user)) return c.json({ error: "A follower's read runs on Claude Fable through your AI on the Mac" }, 503);
   await readChat(meta.id);
   const now = Date.now();
   const ask: ChatMessage = { id: randomUUID(), role: "user", text: "Read it as a follower would.", at: now, docId: doc.id, status: "done" };

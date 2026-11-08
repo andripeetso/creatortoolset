@@ -26,7 +26,7 @@ const SETTINGS_SECTIONS: ReadonlyArray<{ id: string; title: string; blurb?: stri
   { id: "setup", title: "Setup", blurb: "Your AI, accounts, a first project and your knowledge, one step at a time.", icon: ListChecks },
   { id: "appearance", title: "Appearance", icon: Palette },
   { id: "account", title: "Account", blurb: "Your name, password and AI access key.", icon: UserRound },
-  { id: "providers", title: "AI providers", blurb: "The coding tools on your Macs that answer your AI.", icon: Cpu, group: "AI" },
+  { id: "providers", title: "Your AI", blurb: "The coding tools on your Macs that answer your AI.", icon: Cpu, group: "AI" },
   { id: "devices", title: "Devices", blurb: "The computers that run your AI.", icon: Monitor },
   { id: "usage", title: "Usage", blurb: "How much of each AI plan is left, and what the app used.", icon: Gauge },
   { id: "automations", title: "Automations", blurb: "Prompts the assistant runs on a schedule. Results go to your inbox.", icon: CalendarClock },

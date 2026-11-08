@@ -1,4 +1,5 @@
 import type { Selection } from "../../../contracts/providers";
+import type { SocialPlatform } from "../../../contracts/connectors";
 import { canMove, move, type Moves } from "../transition";
 /** Content Workshop records. Mirrored for the browser in src/lib/workshop.ts. */
 
@@ -31,6 +32,8 @@ export interface Project {
   knowledge?: KnowledgeFile[];
   /** Analyzer account this brand is — usually the user's "my account". */
   accountId?: string;
+  /** Where it posts: a handle per platform (typed in setup; saved only, nothing is fetched). Missing on old records. */
+  handles?: Partial<Record<SocialPlatform, string>>;
   /** Its colour (PROJECT_COLORS key), so the current project shows at a glance; missing = picked from the id. */
   color?: string;
   /** Frameworks and rules (ids) switched off for this project; everything of the account is on unless listed. */
@@ -165,7 +168,7 @@ export interface SessionMeta {
   drafts: DraftMeta[];
   /** Kept on old sessions (before AI providers); not read. */
   model?: ProviderChoice;
-  /** This session's own AI provider pick (Admin → AI providers is the default). */
+  /** This session's own AI provider pick (Admin → Your AI is the default). */
   ai?: Selection;
   /** Parts of sources the AI (or the author) pulled into the conversation; slide text is always in. */
   loaded?: LoadedSource[];

@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from "react-router";
 import { AudioLines, Captions, MessageSquare, Quote, Share2, FileText, Folder, Image as ImageIcon, Loader2, RotateCcw, Star, Trash2, Upload, Video } from "lucide-react";
 import type { AssetCard, AssetDetail, AssetKind, Collection, LibrarySummary, SearchHit } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
+import { ToolSetupLine } from "@/components/setup/ToolSetupLine";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
@@ -301,6 +302,7 @@ export default function LibraryPage() {
       />
 
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 px-4 py-4 sm:px-6">
+        <ToolSetupLine tool="media" />
         {libraries === null && !error && (
           <div className="flex justify-center py-16 text-zinc-500">
             <Loader2 className="h-6 w-6 animate-spin" />
@@ -309,7 +311,7 @@ export default function LibraryPage() {
 
         {libraries?.length === 0 && (
           <div className="flex flex-col items-center gap-3 py-16 text-center">
-            <p className="text-sm text-zinc-500">No library yet. The workspace owner creates one.</p>
+            <p className="text-sm text-zinc-500">No library yet. Make one to start: it's where your footage lives.</p>
             <Button variant="outline" size="sm" onClick={create}>
               Create library
             </Button>

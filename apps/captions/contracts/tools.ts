@@ -1,5 +1,6 @@
 import type { PlanId } from "./plans";
 import type { MyKeyEnv } from "./service-keys";
+import type { CliId } from "./local-ai";
 
 /**
  * The apps, in the home page's order. Every app is on unless the account's
@@ -43,19 +44,50 @@ export const TOOL_LINES: Record<Tool, string> = {
   guides: "Turn recordings into guides and SOPs.",
 };
 
-/** The home page's sections. */
-export const TOOL_GROUPS: Record<Tool, string> = {
-  instagram: "Ideas",
-  workshop: "Ideas",
-  enhance: "Make",
-  captions: "Make",
-  review: "Make",
-  media: "Make",
-  editor: "Make",
-  clean: "Distribute",
-  stories: "Distribute",
-  notes: "Other tools",
-  guides: "Other tools",
+/** The home page's sections, in its order (the page renders from this, so the two cannot drift). */
+export const TOOL_GROUPS: ReadonlyArray<{ id: "plan" | "make" | "tools"; label: string; tools: Tool[] }> = [
+  { id: "plan", label: "Plan", tools: ["instagram", "workshop"] },
+  { id: "make", label: "Make", tools: ["media", "editor", "review"] },
+  { id: "tools", label: "Extras", tools: ["enhance", "captions", "clean", "stories", "notes", "guides"] },
+];
+
+/** Always on for every account and never part of the "What will you make?" pick: the Plan and Make tools above. */
+export const DEFAULT_TOOLS: readonly Tool[] = TOOL_GROUPS.filter((g) => g.id !== "tools").flatMap((g) => g.tools);
+
+/** What each thing a tool needs is called in a row's heading (plain, no vendor-first wording). */
+export const NEED_SHORT: Record<Have, string> = {
+  project: "a project",
+  ai: "an AI that answers",
+  ownAi: "your own AI",
+  library: "a Media Library",
+  instagram: "an Instagram login",
+  apify: "an Apify key",
+  mcp: "Creator Toolset in your AI",
+  DEEPGRAM_API_KEY: "a Deepgram key",
+  ELEVENLABS_API_KEY: "an ElevenLabs or NVIDIA key",
+  NVIDIA_API_KEY: "an ElevenLabs or NVIDIA key",
+  ANTHROPIC_API_KEY: "an Anthropic key",
+  OPENAI_API_KEY: "an OpenAI key",
+  PERPLEXITY_API_KEY: "a Perplexity key",
+  TYPESAFE_API_KEY: "a TypeSafe key",
+};
+
+/** One plain sentence per need: what it is for and who bills (section 11.2 of the onboarding spec). */
+export const NEED_SENTENCE: Record<Have, string> = {
+  project: "A project keeps this tool's work together. Making one takes a moment.",
+  ai: "Runs on Claude Code already on this Mac, on your own plan.",
+  ownAi: "Runs on the Claude Code or Codex already on this Mac, on your own plan.",
+  library: "The Media Library is where your footage lives. Make one to start.",
+  instagram: "Lets this tool read your own Instagram posts. You sign in yourself.",
+  apify: "Apify reads public posts for you. Apify bills you for each read, to your own account.",
+  mcp: "Lets your own Claude Code or Codex use Creator Toolset. Set it up in Settings → Your AI.",
+  DEEPGRAM_API_KEY: "Deepgram turns speech into text, so captions and notes can be made. Deepgram bills you, to your own account.",
+  ELEVENLABS_API_KEY: "Cleans up voice audio. ElevenLabs or NVIDIA bills you, to your own account.",
+  NVIDIA_API_KEY: "Cleans up voice audio. ElevenLabs or NVIDIA bills you, to your own account.",
+  ANTHROPIC_API_KEY: "Anthropic bills you for what you use, to your own account.",
+  OPENAI_API_KEY: "Used for search and descriptions in the Media Library. OpenAI bills you, to your own account.",
+  PERPLEXITY_API_KEY: "Lets research look things up on the web. Perplexity bills you, to your own account.",
+  TYPESAFE_API_KEY: "Sharper picks for Content Analyzer. TypeSafe bills you, to your own account.",
 };
 
 /**
@@ -91,7 +123,7 @@ export const TOOL_NEEDS: Record<Tool, readonly Need[]> = {
   ],
   workshop: [
     { what: "A project", anyOf: ["project"], form: "project" },
-    { what: "Your own AI: Claude Code or Codex on your Mac", anyOf: ["ownAi"], form: "ai" },
+    { what: "Your own AI: Claude Code on your Mac", anyOf: ["ownAi"], form: "ai" },
     { what: "Perplexity: accuracy checks and deep research without your AI", anyOf: ["PERPLEXITY_API_KEY"], form: "keys", optional: true },
   ],
   enhance: [{ what: "An ElevenLabs or NVIDIA key", anyOf: ["ELEVENLABS_API_KEY", "NVIDIA_API_KEY"], form: "keys" }],
@@ -146,4 +178,6 @@ export interface SetupView {
   detected: PlanId | null;
   done: boolean;
   have: Have[];
+  /** the AI CLIs that hold this account's Creator Toolset entry (stored in its setup file; they get the new key on each add) */
+  mcpTo: CliId[];
 }

@@ -18,6 +18,7 @@ import { ConfirmButton } from "@/components/instagram/ConfirmButton";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { useAuth } from "@/lib/auth";
+import { useWorkTalk } from "@/lib/setup";
 import {
   aiAnswerer,
   checkProvider,
@@ -33,19 +34,20 @@ import {
 import { cn } from "@/lib/utils";
 import { AddProviderDialog } from "./AddProviderDialog";
 import { AiSetup } from "./AiSetup";
+import { OwnAiMcpSection } from "./OwnAiMcpSection";
 import { Card, Dot, EffortSelect, Group, Loading, ModelSelect, Notice } from "./ui";
 import { fmtAgo, msg, selectCls } from "./helpers";
 
 type Device = ProvidersView["devices"][number];
 
 /**
- * Settings → AI providers: the Macs the account has (admins also the workspace's) as tabs,
- * the providers on the selected Mac, who does which job, and for admins whether the team shares them.
- * Admins edit the workspace's set (PUT /api/providers/workspace); anyone else edits their own
- * (PUT /api/providers/own) and sees the workspace's while they have none.
- * `brief` (first-run setup): only the steps to a working AI, and the providers once there are some.
+ * Settings → Your AI: the Macs the account has (admins also the workspace's) as tabs, the AI on the selected Mac, who
+ * does which job, and for admins whether the team shares it. Admins edit the workspace's set (PUT /api/providers/workspace);
+ * anyone else edits their own (PUT /api/providers/own) and sees the workspace's while they have none.
+ * In chat or both, it also holds the "Use Creator Toolset from your own AI" section (OwnAiMcpSection).
  */
-export function ProvidersSection({ sub, brief }: { sub?: string; brief?: boolean }) {
+export function ProvidersSection({ sub }: { sub?: string }) {
+  const { talk } = useWorkTalk();
   const me = useAuth((s) => s.me);
   const isAdmin = me?.role === "admin";
   const [view, setView] = useState<ProvidersView | null>(null);
@@ -69,7 +71,7 @@ export function ProvidersSection({ sub, brief }: { sub?: string; brief?: boolean
     return () => window.clearInterval(t);
   }, [waiting]);
 
-  if (loadError) return <Notice tone="error">Could not load AI providers: {loadError}</Notice>;
+  if (loadError) return <Notice tone="error">Could not load your AI: {loadError}</Notice>;
   if (!view || !me) return <Loading />;
 
   const devices = view.devices;
@@ -210,14 +212,20 @@ export function ProvidersSection({ sub, brief }: { sub?: string; brief?: boolean
               }
             />
             {!isOnline && <span className="text-[11px] text-muted-foreground">Mac offline</span>}
-            <Button variant="outline" size="sm" onClick={() => void runCheck(inst, scope)} disabled={!isOnline || checking !== null}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void runCheck(inst, scope)}
+              disabled={!isOnline || checking !== null}
+              title={isOnline ? "Send one short question to this AI" : "The Mac is offline"}
+            >
               Check
             </Button>
             <ConfirmButton
               label="Remove"
               confirmLabel="Click again"
               disabled={used.length > 0}
-              title={used.length ? `Used by ${used.join(", ")}. Pick another there first.` : "Remove this provider"}
+              title={used.length ? `Used by ${used.join(", ")}. Pick another there first.` : "Remove this AI"}
               className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:border-red-500/50 hover:text-red-600 disabled:opacity-40 dark:hover:text-red-300"
               armedClassName="border-red-500/60 text-red-600 dark:text-red-300"
               onConfirm={() => void save({ ...editing!, instances: editing!.instances.filter((i) => i.id !== inst.id) })}
@@ -230,14 +238,10 @@ export function ProvidersSection({ sub, brief }: { sub?: string; brief?: boolean
 
   return (
     <>
-      {!brief && (
-        <>
-          <p className="text-sm text-muted-foreground">
-            The AI runs on a Mac, through the coding tools signed in there. Each provider belongs to one Mac.
-          </p>
-          <p className="mt-2 text-sm">{aiAnswerer(view, thisMacDevice())}</p>
-        </>
-      )}
+      <p className="text-sm text-muted-foreground">
+        Your AI runs on a Mac, through the coding tools signed in there. Each one belongs to one Mac.
+      </p>
+      <p className="mt-2 text-sm">{aiAnswerer(view, thisMacDevice())}</p>
       {saving && <p className="mt-2 text-xs text-muted-foreground">Saving…</p>}
       {error && <Notice tone="error">{error}</Notice>}
 
@@ -252,27 +256,29 @@ export function ProvidersSection({ sub, brief }: { sub?: string; brief?: boolean
         />
       )}
 
+      {(talk === "chat" || talk === "both") && <OwnAiMcpSection />}
+
       {!isAdmin && (
         <div className="mt-8 space-y-2">
           {view.using === "own" && (
             <Notice>
-              Your providers answer.{" "}
+              Your own AI answers your jobs.{" "}
               {view.workspace && (
                 <button type="button" onClick={() => void dropOwn()} className="underline underline-offset-2 hover:text-foreground">
-                  Use the workspace's instead
+                  Use the workspace's AI instead
                 </button>
               )}
             </Notice>
           )}
-          {view.using === "workspace" && <Notice>You use the workspace's providers. Add your own on a Mac you connect; it answers instead.</Notice>}
-          {view.using === "none" && <Notice tone="warn">No provider answers your jobs yet. Connect a Mac, then add a provider to it.</Notice>}
+          {view.using === "workspace" && <Notice>You use the workspace's AI. Add your own on a Mac you connect; it answers instead.</Notice>}
+          {view.using === "none" && <Notice tone="warn">No AI answers your jobs yet. Connect a Mac, then add one to it.</Notice>}
         </div>
       )}
 
-      {/* no Mac yet: the setup steps above say what to do, so the empty Mac and Providers groups would only repeat it */}
-      {!brief && (readOnly || devices.length > 0) && <Group
+      {/* no Mac yet: the setup steps above say what to do, so the empty Mac and Your AI groups would only repeat it */}
+      {(readOnly || devices.length > 0) && <Group
         title="Mac"
-        hint={readOnly ? "Where your own providers run." : "Providers on an offline Mac wait."}
+        hint={readOnly ? "Where your own AI runs. The dot shows whether it is online." : "The dot shows whether it is online. Your AI on an offline Mac can't answer."}
       >
         {devices.length === 0 ? (
           <Notice>No Mac connected yet.</Notice>
@@ -297,31 +303,35 @@ export function ProvidersSection({ sub, brief }: { sub?: string; brief?: boolean
                 </button>
               ))}
             </div>
-            {device && !device.online && <p className="mt-2 text-[11px] text-muted-foreground">Offline. Its providers can't answer until it is back.</p>}
+            {device && !device.online && <p className="mt-2 text-[11px] text-muted-foreground">Offline. Its AI can't answer until it is back.</p>}
           </>
         )}
       </Group>}
 
-      {(!brief || listed.length > 0) && (readOnly || devices.length > 0) && <Group
-        title="Providers"
-        hint={readOnly ? "The workspace's providers, on whichever Mac runs them." : "A coding tool, signed in to one account on this Mac."}
+      {(readOnly || devices.length > 0) && <Group
+        title="Your AI"
+        hint={
+          readOnly
+            ? "The workspace's AI, on whichever Mac runs it."
+            : "One coding tool signed in as one account on this Mac. Off keeps it out of every job."
+        }
       >
         {listed.length === 0 ? (
-          <Notice>{readOnly ? "The workspace has no providers yet." : device ? "No providers on this Mac yet." : "Connect a Mac to add providers."}</Notice>
+          <Notice>{readOnly ? "The workspace has no AI yet." : device ? "No AI on this Mac yet." : "Connect a Mac to add your AI."}</Notice>
         ) : (
           <Card>{listed.map(renderInstance)}</Card>
         )}
         <div>
           <Button variant="outline" size="sm" disabled={!device} onClick={() => setAdding(true)}>
-            <Plus className="h-3.5 w-3.5" /> {readOnly && listed.length > 0 ? `Add my own on ${device ? device.name : "a Mac"}` : "Add provider"}
+            <Plus className="h-3.5 w-3.5" /> {readOnly && listed.length > 0 ? `Add my own on ${device ? device.name : "a Mac"}` : "Add one"}
           </Button>
         </div>
       </Group>}
 
-      {shown && !brief && (
+      {shown && (
         <Group
           title="Who does which job"
-          hint={readOnly ? "Set by the workspace. Add your own provider to choose." : "A job without its own pick uses the default."}
+          hint={readOnly ? "Set by the workspace. Add your own AI to choose." : "A job without its own pick uses the default."}
         >
           <Card className="px-3">
             <JobRow
@@ -353,9 +363,9 @@ export function ProvidersSection({ sub, brief }: { sub?: string; brief?: boolean
         </Group>
       )}
 
-      {isAdmin && editing && !brief && (
+      {isAdmin && editing && (
         <p className="text-xs text-muted-foreground">
-          These are the workspace's providers. Who else may use them:{" "}
+          This is the workspace's AI. Who else may use it:{" "}
           <Link to="/settings/admin/ai" className="underline underline-offset-2 hover:text-foreground">
             Admin → AI access
           </Link>
@@ -420,7 +430,7 @@ function JobRow({
         disabled={disabled}
         onChange={(e) => (e.target.value ? pickInstance(e.target.value) : onChange(undefined))}
         className={selectCls}
-        aria-label={`${label}: provider`}
+        aria-label={`${label}: AI`}
       >
         {!isDefault && <option value="">Use default</option>}
         {instanceOptions.map((i) => (

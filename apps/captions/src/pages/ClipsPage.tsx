@@ -12,7 +12,6 @@ import {
   Share2,
   Square,
   Trash2,
-  TriangleAlert,
   Video,
   Wand2,
   Circle,
@@ -53,6 +52,7 @@ import {
   useAutoChapters,
 } from "@/components/ClipBlocks";
 import { AppBar, ToolIntro } from "@/components/AppBar";
+import { ToolSetupLine } from "@/components/setup/ToolSetupLine";
 import { DropZoneText, dropZoneClass } from "@/components/DropZone";
 import { DesktopHint } from "@/components/mobile/DesktopHint";
 import { isPublicSharePath } from "@/components/AuthGate";
@@ -726,6 +726,11 @@ export default function ClipsPage() {
       {!clipId && (
         <ToolIntro icon={Video} title="Video Notes" line="Every recording gets a transcript, a title, a summary, chapters and takeaways" />
       )}
+      {!clipId && (
+        <div className="mx-auto w-[960px] max-w-[92vw]">
+          <ToolSetupLine tool="notes" />
+        </div>
+      )}
 
       {phone && !clipId ? (
         <div className="mb-5 w-[720px] max-w-[92vw]">
@@ -936,12 +941,6 @@ export default function ClipsPage() {
             )}
             {uploadError && (
               <p className="mt-2 text-xs text-red-400">{uploadError}</p>
-            )}
-            {avail && !avail.cloud && (
-              <p className="mt-2 flex items-center gap-1.5 text-[11px] text-amber-400/80">
-                <TriangleAlert className="h-3 w-3 shrink-0" />
-                Auto-transcript is off: {avail.cloudWhy ?? "cloud transcription is locked for your account"}. Clips still save.
-              </p>
             )}
 
             {showLibrary && sessions.length > 0 && (

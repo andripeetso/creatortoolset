@@ -89,7 +89,7 @@ export const thisMacDevice = (): string | undefined =>
 export function aiAnswerer(view: ProvidersView, thisMac?: string): string {
   const set = activeSet(view)?.settings;
   const inst = set?.instances.find((i) => i.id === set.default.instance);
-  if (!inst || !inst.enabled || !deviceOf(inst)) return "No Mac answers your AI right now. Connect a Mac and add a provider to it.";
+  if (!inst || !inst.enabled || !deviceOf(inst)) return "No Mac answers your AI right now. Connect a Mac and add an AI to it.";
   const d = view.devices.find((x) => x.id === deviceOf(inst));
   if (!d) return "A Mac you don't have here answers your AI.";
   if (d.id === thisMac) {
@@ -105,7 +105,7 @@ export function aiAnswerer(view: ProvidersView, thisMac?: string): string {
 /** The name of an instance in a scope, for usage rows. */
 export function instanceName(view: ProvidersView, scope: Scope, id: string): string {
   const set = scope === "workspace" ? view.workspace?.settings : view.own;
-  return set?.instances.find((i) => i.id === id)?.name ?? (id || "Before providers");
+  return set?.instances.find((i) => i.id === id)?.name ?? (id || "No AI yet");
 }
 
 export interface UsageTotals {

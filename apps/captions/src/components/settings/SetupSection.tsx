@@ -7,8 +7,11 @@ import { Button } from "@/components/ui/button";
 import { AccountStep, hasAccountBridge } from "@/components/setup/AccountStep";
 import { PlanQuestion, ToolNeeds, ToolsPicker } from "@/components/setup/ToolNeeds";
 import { canUse, useMe } from "@/lib/auth";
-import { useSetup, useSetupLive } from "@/lib/setup";
+import { useSetup, useSetupLive, useWorkTalk } from "@/lib/setup";
 import { Card, Group, Loading, Row } from "./ui";
+import { HowYouWorkDialog } from "./HowYouWorkDialog";
+
+const HOW_NAMES = { app: "In the app", chat: "In my own AI", both: "Both" } as const;
 
 const HAVE_NAMES: Array<[Have, string]> = [
   ["ownAi", "Your own AI (Claude Code or Codex)"],
@@ -28,6 +31,8 @@ export function SetupSection() {
   const view = useSetup((s) => s.view);
   const save = useSetup((s) => s.save);
   const [open, setOpen] = useState<Tool | null>(null);
+  const [howOpen, setHowOpen] = useState(false);
+  const { talk } = useWorkTalk();
   useSetupLive(true);
   const savePlan = useCallback((plan: Parameters<typeof save>[0]["plan"]) => void save({ plan }), [save]);
   if (!view) return <Loading />;
@@ -36,6 +41,18 @@ export function SetupSection() {
 
   return (
     <>
+      <Group title="How you work" hint="Change it any time. Your tools, projects and connections stay.">
+        <Card>
+          <Row label="You work" hint="The assistant and your own AI: what each answer changes">
+            <span className="text-sm text-foreground">{HOW_NAMES[talk ?? "app" as keyof typeof HOW_NAMES]}</span>
+            <Button size="sm" variant="outline" className="h-7" onClick={() => setHowOpen(true)}>
+              Change
+            </Button>
+          </Row>
+        </Card>
+        {howOpen && <HowYouWorkDialog onClose={() => setHowOpen(false)} />}
+      </Group>
+
       <Group title="By tool" hint="Each tool you may use: ready, or what it still needs. Set up opens the same forms as the rest of Settings.">
         <Card>
           {mine.map((t) => {
@@ -59,7 +76,7 @@ export function SetupSection() {
         </Card>
       </Group>
 
-      <Group title="By key" hint="Each key and login, and the tools it turns on or adds to. Each provider bills you directly.">
+      <Group title="By key" hint="Keys stay on this Mac. Each one is billed by its own service, to your account. Check its price before you add it.">
         <Card>
           {HAVE_NAMES.filter(([h]) => toolsUsing(h).some((t) => mine.includes(t))).map(([h, name]) => (
             <Row key={h} label={<span className="flex items-center gap-2">{has.has(h) ? <CheckCircle2 className="h-4 w-4 text-emerald-500" /> : <Circle className="h-4 w-4 text-muted-foreground/60" />}{name}</span>} hint={toolsUsing(h).filter((t) => mine.includes(t)).map((t) => TOOL_NAMES[t]).join(", ")} />
@@ -75,7 +92,7 @@ export function SetupSection() {
         <PlanQuestion view={view} onSave={savePlan} />
       </Group>
 
-      <Group title="Setup" hint="The first-run walk-through: in the app or your own AI, your tools, a project, your AI, what's left.">
+      <Group title="Setup" hint="Run the first-run walk-through again: how you work, what you make, a project, your AI, and what's left.">
         <Card>
           <Row label="Run setup again">
             <Button asChild size="sm" variant="outline">

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { Loader2, RefreshCw, Sparkles } from "lucide-react";
+import { PLATFORMS, type SocialPlatform } from "@contracts/connectors";
 import { timeAgo } from "@/lib/exports";
 import {
   addAccount,
@@ -49,13 +50,29 @@ function withAccount(list: InstagramAccount[], acc: InstagramAccount): Instagram
   return [acc, ...(acc.mine ? rest.map((a) => ({ ...a, mine: undefined })) : rest)];
 }
 
-/** Brand profile: instructions always in the prompt; which of the account's knowledge, frameworks and rules it uses. */
+/** Setup's payload: the name, the colour and the handles that have text. No accountId, so no Analyzer account and no fetch. */
+export function setupProjectFields(
+  f: { name: string; color?: string },
+  where: Partial<Record<SocialPlatform, string>>,
+): ProjectFields {
+  const handles: Partial<Record<SocialPlatform, string>> = {};
+  for (const [id, raw] of Object.entries(where) as Array<[SocialPlatform, string | undefined]>) {
+    const h = (raw ?? "").trim();
+    if (h) handles[id] = h;
+  }
+  return { name: f.name.trim(), audience: "", voice: "", cta: "", notes: "", color: f.color, handles };
+}
+
+/** Brand profile: instructions always in the prompt; which of the account's knowledge, frameworks and rules it uses.
+ *  variant "setup" is the first-run project step: name, colour, where it posts (handles only). */
 export function ProjectForm({
   initial,
   busy,
   onSave,
   onCancel,
   formId,
+  variant,
+  onReady,
 }: {
   initial?: WorkshopProject;
   busy: boolean;
@@ -65,9 +82,15 @@ export function ProjectForm({
   /** First-run setup: the form gets this id and the setup window's own button submits it (no box, no buttons here, no
    *  knowledge off-switches yet: everything starts on). */
   formId?: string;
+  /** "setup": the first-run project step. No Instagram lookup, Sync, instructions or knowledge; handles only. */
+  variant?: "setup";
+  /** Tells the parent whether the name has text, so it can enable its own Create button. */
+  onReady?: (ready: boolean) => void;
 }) {
+  const setup = variant === "setup";
   const [f, setF] = useState<ProjectFields>(() => fieldsFrom(initial));
   const [handle, setHandle] = useState("");
+  const [where, setWhere] = useState<Partial<Record<SocialPlatform, string>>>({});
   const [accounts, setAccounts] = useState<InstagramAccount[]>([]);
   const [avail, setAvail] = useState<InstagramAvailability | null>(null);
   const [pulling, setPulling] = useState(false);
@@ -85,6 +108,14 @@ export function ProjectForm({
     setF((cur) => {
       const now = cur.off ?? [];
       return { ...cur, off: now.includes(id) ? now.filter((x) => x !== id) : [...now, id] };
+    });
+  const togglePlatform = (id: SocialPlatform) =>
+    setWhere((cur) => {
+      if (id in cur) {
+        const { [id]: _gone, ...rest } = cur;
+        return rest;
+      }
+      return { ...cur, [id]: "" };
     });
   const draft = () => {
     if (!linked) return;
@@ -106,14 +137,20 @@ export function ProjectForm({
   }, []);
 
   useEffect(() => {
+    onReady?.(f.name.trim().length > 0);
+  }, [f.name, onReady]);
+
+  useEffect(() => {
+    if (setup) return;
     listFrameworks().then(setFrameworks).catch(() => {});
     listRules().then(setRules).catch(() => {});
     listSources().then(setSources).catch(() => {});
-  }, []);
+  }, [setup]);
   // another project's own sources never show here; a new project sees the account-wide ones
   const knowledge = sources.filter((s) => !s.projectId || s.projectId === initial?.id);
 
   useEffect(() => {
+    if (setup) return;
     Promise.all([listAccounts("", { projectId: null }), getInstagramAvailability()])
       .then(([list, nextAvail]) => {
         setAccounts(list);
@@ -126,7 +163,7 @@ export function ProjectForm({
         setF((cur) => ({ ...cur, accountId: acc.id }));
       })
       .catch(() => {});
-  }, [initial]);
+  }, [initial, setup]);
 
   const watch = (id: string) => {
     let n = 0;
@@ -173,6 +210,14 @@ export function ProjectForm({
       onSubmit={(e) => {
         e.preventDefault();
         setError(null);
+        if (setup) {
+          if (!f.name.trim()) return;
+          setPulling(true);
+          void Promise.resolve(onSave(setupProjectFields(f, where)))
+            .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+            .finally(() => setPulling(false));
+          return;
+        }
         setPulling(true);
         const raw = handle.trim();
         const skipPull = Boolean(linked && raw && sameHandle(raw, linked.username));
@@ -185,7 +230,14 @@ export function ProjectForm({
     >
       <label className="text-[11px] text-zinc-400">
         Name
-        <input autoFocus required value={f.name} onChange={set("name")} placeholder="Tiny Acrobatics" className={`${input} mt-1`} />
+        <input
+          autoFocus
+          required
+          value={f.name}
+          onChange={set("name")}
+          placeholder={setup ? "My brand" : "Tiny Acrobatics"}
+          className={`${input} mt-1`}
+        />
       </label>
       <div>
         <p className="text-[11px] text-zinc-400">Colour</p>
@@ -207,6 +259,42 @@ export function ProjectForm({
           })}
         </div>
       </div>
+      {setup ? (
+        <div>
+          <p className="text-[11px] text-zinc-400">Where do you post?</p>
+          <div className="mt-1 flex flex-wrap gap-1.5">
+            {PLATFORMS.map((p) => {
+              const on = p.id in where;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  aria-pressed={on}
+                  disabled={locked}
+                  onClick={() => togglePlatform(p.id)}
+                  className={`rounded-full border px-2.5 py-1 text-[11px] ${on ? "border-violet-500/50 bg-violet-500/10 text-zinc-100" : "border-zinc-800 text-zinc-400 hover:text-zinc-200"}`}
+                >
+                  {p.label}
+                </button>
+              );
+            })}
+          </div>
+          {PLATFORMS.filter((p) => p.id in where).map((p) => (
+            <label key={p.id} className="mt-2 block text-[11px] text-zinc-400">
+              {p.label} handle
+              <input
+                value={where[p.id] ?? ""}
+                onChange={(e) => setWhere((cur) => ({ ...cur, [p.id]: e.target.value }))}
+                placeholder="@yourhandle"
+                disabled={locked}
+                spellCheck={false}
+                className={`${input} mt-1`}
+              />
+            </label>
+          ))}
+          <p className="mt-1 text-[10px] text-zinc-600">Only the handle is saved. Nothing is fetched.</p>
+        </div>
+      ) : (
       <div>
         <p className="text-[11px] text-zinc-400">My Instagram</p>
         <div className="mt-1 flex gap-2">
@@ -250,8 +338,10 @@ export function ProjectForm({
             ? "Sync is this project's Instagram in Analyzer: the official login's posts, insights, comments and trial reels."
             : "Links the handle as your account. To read its posts, log in with Instagram or add your own Apify key (Settings → Connectors), then Sync."}
         </p>
-        {error ? <p className="mt-0.5 text-[10px] text-red-400">{error}</p> : null}
       </div>
+      )}
+      {error ? <p className="text-[10px] text-red-400">{error}</p> : null}
+      {!setup && (
       <label className="text-[11px] text-zinc-400">
         <span className="flex items-center justify-between">
           Instructions
@@ -280,7 +370,8 @@ export function ProjectForm({
           {f.notes.length}/{PROJECT_NOTES_MAX} — always in the prompt, so keep it short.
         </span>
       </label>
-      {!formId && (knowledge.length || frameworks.length || rules.length) ? (
+      )}
+      {!formId && !setup && (knowledge.length || frameworks.length || rules.length) ? (
         <div>
           <p className="text-[11px] text-zinc-400">Knowledge, frameworks and rules</p>
           <p className="mb-1.5 text-[10px] text-zinc-600">

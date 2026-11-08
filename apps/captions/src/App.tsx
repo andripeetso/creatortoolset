@@ -42,6 +42,7 @@ import { useRootTint, useWorkspace } from "@/lib/workspace";
 import { warmScreens } from "@/lib/warm-cache";
 import { useAppearance } from "@/lib/settings";
 import { historyDepth } from "@/lib/history-depth";
+import { setupOpen, useSetup, useWorkTalk } from "@/lib/setup";
 
 const MobileCaptionPage = lazy(
   () => import("./pages/mobile/MobileCaptionPage"),
@@ -228,7 +229,11 @@ function InstagramAnalyzeRoute() {
 
 export default function App() {
   useRootTint(useAppearance().projectTint);
+  // "just chat" (talk === "chat") has no dock, no selection popup and no welcome
+  const { talk } = useWorkTalk();
   const location = useLocation();
+  // the setup window up: no dock, no popup, no bubble behind it (the assistant comes in after Done)
+  const setupUp = setupOpen(useSetup((s) => s.view), new URLSearchParams(location.search).get("setup"));
   const navigate = useNavigate();
   // /settings/*, /community/* and /projects are modals: the page you were on stays mounted behind (home when opened directly)
   const inSettings = /^\/settings(?:\/|$)/.test(location.pathname);
@@ -342,8 +347,8 @@ export default function App() {
       {!onMobile && !publicPage && !isPhoneHub() && <ExportTray />}
       {!publicPage && !inSettings && !inCommunity && <SetupDialog />}
       {!publicPage && !inSettings && !inCommunity && <FirstOpen />}
-      {!onMobile && !publicPage && <AssistantDock />}
-      {!onMobile && !publicPage && <AskAboutSelection />}
+      {!onMobile && !publicPage && talk !== "chat" && !setupUp && <AssistantDock />}
+      {!onMobile && !publicPage && talk !== "chat" && !setupUp && <AskAboutSelection />}
       {!onMobile && !publicPage && <CornerNav />}
       {inSettings && <SettingsModal onClose={closeSettings} />}
       {inCommunity && <CommunityModal onClose={closeSettings} />}

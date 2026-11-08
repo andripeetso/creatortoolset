@@ -3,6 +3,7 @@ import { SESSION_STATUSES, type ContextField, type ContextSnippet, type DocKind,
 import { isCarouselTypeId } from "../../../src/lib/carousel-visualize";
 import { postedFromUrl } from "./posted";
 import { EFFORTS, type Effort, type Selection } from "../../../contracts/providers";
+import { PLATFORMS, type SocialPlatform } from "../../../contracts/connectors";
 import { parseCarouselLayoutSet, type CarouselLayoutSet } from "../../../src/lib/carousel-layout";
 
 export const LIMITS = {
@@ -79,7 +80,7 @@ function field(body: Record<string, unknown>, key: string, base: string, max: nu
   return key in body ? str(body[key], max) : base;
 }
 
-type ProjectFields = Pick<Project, "name" | "audience" | "voice" | "cta" | "notes" | "knowledge" | "color" | "off"> & {
+type ProjectFields = Pick<Project, "name" | "audience" | "voice" | "cta" | "notes" | "knowledge" | "color" | "off" | "handles"> & {
   accountId?: string | null;
 };
 
@@ -90,6 +91,27 @@ function parseAccountId(raw: unknown): string | null {
   if (raw === null || raw === "") return null;
   if (okId(raw)) return raw;
   throw new Error("Unknown account");
+}
+
+const HANDLE_RE = /^[A-Za-z0-9._-]{1,60}$/;
+const PLATFORM_IDS = new Set<string>(PLATFORMS.map((p) => p.id));
+
+/**
+ * A project's handles from the setup form: known platforms only, the @ dropped, trimmed, at most five; a blank value
+ * is dropped, a value with other characters is refused by name. Anything that is not an object reads as none.
+ */
+export function parseHandles(raw: unknown): Partial<Record<SocialPlatform, string>> {
+  const out: Partial<Record<SocialPlatform, string>> = {};
+  if (!isRec(raw)) return out;
+  for (const [platform, value] of Object.entries(raw)) {
+    if (Object.keys(out).length >= 5) break;
+    if (!PLATFORM_IDS.has(platform) || typeof value !== "string") continue;
+    const handle = value.trim().replace(/^@/, "");
+    if (!handle) continue;
+    if (!HANDLE_RE.test(handle)) throw new Error(`Handle for ${platform}: letters, numbers, dot, dash or underscore`);
+    out[platform as SocialPlatform] = handle;
+  }
+  return out;
 }
 
 export function parseKnowledge(raw: unknown, now = Date.now()): KnowledgeFile[] {
@@ -126,6 +148,8 @@ export function parseProjectInput(raw: unknown, base?: ProjectFields): ProjectFi
     notes: field(body, "notes", b.notes, LIMITS.projectNotes),
     knowledge: "knowledge" in body ? parseKnowledge(body.knowledge) : (b.knowledge ?? []),
     accountId: "accountId" in body ? parseAccountId(body.accountId) : b.accountId,
+    // always set (none = {}), so a PUT that clears the handles also overwrites the old ones
+    handles: "handles" in body ? parseHandles(body.handles) : (b.handles ?? {}),
   };
   const color = "color" in body ? PROJECT_COLORS.find((c) => c === body.color) : b.color;
   if (color) out.color = color;
@@ -255,7 +279,7 @@ export function parseSessionPatch(raw: unknown): SessionPatch {
     if (body.ai === null) out.ai = null;
     else {
       const a = isRec(body.ai) ? body.ai : {};
-      if (typeof a.instance !== "string" || typeof a.model !== "string" || !EFFORTS.includes(a.effort as Effort)) throw new Error("Pick a provider, a model and an effort");
+      if (typeof a.instance !== "string" || typeof a.model !== "string" || !EFFORTS.includes(a.effort as Effort)) throw new Error("Pick an AI, a model and an effort");
       out.ai = { instance: a.instance.slice(0, 60), model: a.model.slice(0, 80), effort: a.effort as Effort };
     }
   }

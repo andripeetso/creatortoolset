@@ -2165,7 +2165,7 @@ async function generateIdeaBoardNow(
   signal?: AbortSignal,
   projectId?: string,
 ): Promise<IdeaBoard> {
-  if (!anyAiConfigured(user)) throw new Error("No AI provider is set up for you (Settings → AI providers)");
+  if (!anyAiConfigured(user)) throw new Error("No AI is set up for you (Settings → Your AI)");
   const metas = (await metasInProject(user, projectId)).filter((m) => !m.duplicateOf);
   const taken = await workshopSourcePostIds(user);
   const catalog = ideaCatalog(metas.filter((m) => !taken.has(m.id)));
@@ -2175,7 +2175,7 @@ async function generateIdeaBoardNow(
     return board;
   }
   const previous = omitWorkshopPiles((await readIdeaBoard(user, projectId)).ideas, taken);
-  // the Analyzer's AI provider (Admin → AI providers), its usage on the board
+  // the Analyzer's AI (Admin → Your AI), its usage on the board
   let usage: MacUsage | undefined;
   const mac = aiFor(user, "analyzer", "Idea board");
   const packText = await packInstructions(user.username, "analyzer.ideas", projectId ?? null);

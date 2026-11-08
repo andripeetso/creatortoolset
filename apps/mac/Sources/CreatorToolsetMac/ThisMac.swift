@@ -278,7 +278,7 @@ struct GuideView: View {
                     checkRow("Signed in", signedIn)
                 }
                 step(5, "Your own keys") {
-                    Text("AI: with your server open, turn on Use this Mac for my AI; Settings → AI providers shows the install and sign-in commands. Storage: the server's disk, or your bucket's OBJECT_STORAGE_ values in .env. Research: your Apify key in Settings → Connectors. The Apple or Google sign-in on the first run is optional: leave This Mac → Account server empty to skip it.")
+                    Text("AI: with your server open, turn on Use this Mac for my AI; Settings → Your AI shows the install and sign-in commands. Storage: the server's disk, or your bucket's OBJECT_STORAGE_ values in .env. Research: your Apify key in Settings → Connectors. The Apple or Google sign-in on the first run is optional: leave This Mac → Account server empty to skip it.")
                 }
                 HStack {
                     Button(checking ? "Checking…" : "Check") { Task { await check() } }

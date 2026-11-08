@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { ProviderCheck, ProvidersView, Scope } from "../contracts/providers";
+import type { ProviderCheck, ProviderInstance, ProviderSettings, ProvidersView, Scope } from "../contracts/providers";
 import type { AuthVars } from "./auth";
 import { streamMacClaude, macUsageSince } from "./lib/mac-claude";
 import { isOnline, listDevices } from "./lib/devices";
@@ -8,7 +8,7 @@ import { limitsFor, type LimitRef } from "./lib/limits";
 import { findUser, type SessionUser } from "./users";
 
 /**
- * Admin → AI providers and the Settings page (boot.ts mounts it at /api/providers). Contract: contracts/providers.ts.
+ * Admin → Your AI and the Settings page (boot.ts mounts it at /api/providers). Contract: contracts/providers.ts.
  *   GET  /api/providers                       → ProvidersView (any account; guests and the demo get 403)
  *   PUT  /api/providers/workspace             body ProviderSettings (admins) → ProviderSettings
  *   PUT  /api/providers/own                   body ProviderSettings | null (null = drop mine) → ProvidersView
@@ -111,7 +111,28 @@ providersApp.put("/own", async (c) => {
   }
 });
 
-/** One line through the instance's device, like the status check on the Mac: does it answer, with what model, how fast. */
+/**
+ * One line through the instance's device, like the status check on the Mac: does it answer, with what model, how fast.
+ * Kept on the instance as its `lastCheck`. Settings → Your AI and setup's Connect both run this.
+ */
+export async function checkInstance(scope: Scope, inst: ProviderInstance, s: ProviderSettings | null): Promise<ProviderCheck> {
+  const device = inst.device ?? "";
+  const model = (s?.default.instance === inst.id ? s?.default.model : undefined) ?? modelsFor(inst)[0] ?? "";
+  const started = Date.now();
+  let check: ProviderCheck;
+  try {
+    const text = await streamMacClaude("Answer with one word.", "Reply with just: ready", undefined, () => {}, undefined, {
+      label: "Provider check",
+      provider: { instance: inst.id, driver: inst.driver, home: inst.home, model, effort: "low", device, scope },
+    });
+    check = { ok: true, ms: Date.now() - started, model, text: text.trim().slice(0, 80), at: Date.now() };
+  } catch (e) {
+    check = { ok: false, ms: Date.now() - started, model, error: (e instanceof Error ? e.message : String(e)).slice(0, 300), at: Date.now() };
+  }
+  await recordCheck(`${scope}:${inst.id}`, check);
+  return check;
+}
+
 providersApp.post("/:scope/:id/check", async (c) => {
   const u = c.get("user");
   const scope = c.req.param("scope");
@@ -119,21 +140,5 @@ providersApp.post("/:scope/:id/check", async (c) => {
   const inst = instanceIn(scope, c.req.param("id"));
   if (!inst) return c.json({ error: "Not found" }, 404);
   const s = scope === "workspace" ? providerSettings() : ownSettings(scope);
-  const device = inst.device ?? "";
-  const model = (s?.default.instance === inst.id ? s?.default.model : undefined) ?? modelsFor(inst)[0] ?? "";
-  const key = `${scope}:${inst.id}`;
-  const started = Date.now();
-  try {
-    const text = await streamMacClaude("Answer with one word.", "Reply with just: ready", undefined, () => {}, undefined, {
-      label: "Provider check",
-      provider: { instance: inst.id, driver: inst.driver, home: inst.home, model, effort: "low", device, scope },
-    });
-    const check: ProviderCheck = { ok: true, ms: Date.now() - started, model, text: text.trim().slice(0, 80), at: Date.now() };
-    recordCheck(key, check);
-    return c.json(check);
-  } catch (e) {
-    const check: ProviderCheck = { ok: false, ms: Date.now() - started, model, error: (e instanceof Error ? e.message : String(e)).slice(0, 300), at: Date.now() };
-    recordCheck(key, check);
-    return c.json(check);
-  }
+  return c.json(await checkInstance(scope, inst, s));
 });

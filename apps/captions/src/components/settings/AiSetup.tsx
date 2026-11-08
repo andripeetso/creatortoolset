@@ -18,7 +18,7 @@ const TOOLS = [
 ];
 
 /**
- * Settings → AI providers, first: the steps a Mac needs before the AI answers, each ticked from what the
+ * Settings → Your AI, first: the steps a Mac needs before the AI answers, each ticked from what the
  * server already knows (paired, online, the tools it reported, the providers on it, the last check).
  * Signing in can't be seen from here: a check that fails says so.
  */
@@ -71,12 +71,12 @@ export function AiSetup({
     },
     {
       done: providers.length > 0,
-      title: "Add a provider",
+      title: "Add it to Creator Toolset",
       body: (
         <>
           Pick the tool and its account.
           <Button size="sm" variant="outline" className="mt-2 block" onClick={onAdd}>
-            Add provider
+            Add it
           </Button>
         </>
       ),

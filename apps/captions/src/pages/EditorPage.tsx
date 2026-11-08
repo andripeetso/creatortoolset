@@ -14,7 +14,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { createEdit, listEdits, runEdit } from "@/lib/editor";
 import { listAssets, listCollections, listLibraries } from "@/lib/library";
 import { cn } from "@/lib/utils";
-import { confirmHeavy } from "@/lib/setup";
+import { confirmHeavy, openToolSetup } from "@/lib/setup";
+import { ToolSetupLine } from "@/components/setup/ToolSetupLine";
 
 /**
  * AI Editor (/editor): the edits I made (a workspace owner: the members' too), and New edit: footage picked from the
@@ -55,6 +56,7 @@ export default function EditorPage() {
         </Button>
       </AppBar>
       <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-3 px-4 py-4 sm:px-6">
+        <ToolSetupLine tool="editor" />
         {edits === null && !error && (
           <div className="flex justify-center py-16 text-zinc-500">
             <Loader2 className="h-6 w-6 animate-spin" />
@@ -223,7 +225,7 @@ function NewEditSheet({ open, onClose }: { open: boolean; onClose: () => void })
           <div>
             <SheetTitle className="text-base">New edit</SheetTitle>
             <SheetDescription className="text-xs text-zinc-500">
-              Pick the takes from your Media Library. Their transcripts and the AI run on your own keys and AI provider.
+              Pick the takes from your Media Library. Their transcripts and the AI run on your own keys and your own AI.
             </SheetDescription>
           </div>
 
@@ -290,7 +292,18 @@ function NewEditSheet({ open, onClose }: { open: boolean; onClose: () => void })
                 })}
               </ul>
             ) : (
-              <p className="py-6 text-center text-sm text-zinc-500">{libId ? "No videos here." : "No Media Library yet."}</p>
+              <p className="py-6 text-center text-sm text-zinc-500">
+                {libId ? (
+                  "No videos here."
+                ) : (
+                  <>
+                    No Media Library yet.{" "}
+                    <button type="button" className="underline underline-offset-2" onClick={() => openToolSetup("media")}>
+                      Set up
+                    </button>
+                  </>
+                )}
+              </p>
             )}
             <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
               <span>{picked.size} picked</span>

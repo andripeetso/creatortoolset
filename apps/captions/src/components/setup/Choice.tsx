@@ -13,6 +13,8 @@ export function Choice({
   name,
   line,
   multi,
+  dense,
+  locked,
 }: {
   on: boolean;
   onClick: () => void;
@@ -20,6 +22,10 @@ export function Choice({
   name: string;
   line?: ReactNode;
   multi?: boolean;
+  /** a shorter card for a grid of many (no line, smaller icon) */
+  dense?: boolean;
+  /** on and fixed (a tool that is always on): not clickable */
+  locked?: boolean;
 }) {
   return (
     <button
@@ -27,10 +33,12 @@ export function Choice({
       role={multi ? "checkbox" : "radio"}
       aria-checked={on}
       onClick={onClick}
+      disabled={locked}
       className={cn(
+        locked && "cursor-default disabled:opacity-100",
         "group relative flex w-full rounded-xl border text-left outline-none transition-[border-color,background-color,box-shadow] duration-150",
         "focus-visible:ring-2 focus-visible:ring-[var(--tint)]",
-        "items-center gap-3 px-3 py-2.5",
+        dense ? "items-center gap-2 px-2 py-1.5" : "items-center gap-3 px-3 py-2.5",
         on
           ? "border-[var(--tint)] bg-[color-mix(in_srgb,var(--tint)_7%,transparent)]"
           : "border-border/70 bg-card/40 hover:border-foreground/25 hover:bg-accent/40",
@@ -39,16 +47,16 @@ export function Choice({
       <span
         className={cn(
           "flex shrink-0 items-center justify-center rounded-lg transition-colors",
-          "size-8",
+          dense ? "size-7" : "size-8",
           on
             ? "bg-[color-mix(in_srgb,var(--tint)_20%,transparent)] text-[var(--tint-text)]"
             : "bg-muted text-muted-foreground group-hover:text-foreground",
         )}
       >
-        <Icon className="size-4" />
+        <Icon className={dense ? "size-3.5" : "size-4"} />
       </span>
-      <span className="min-w-0 flex-1 pr-5">
-        <span className="block text-sm font-medium text-foreground">{name}</span>
+      <span className={cn("min-w-0 flex-1", dense ? "pr-4" : "pr-5")}>
+        <span className={cn("block font-medium text-foreground", dense ? "text-[13px] leading-tight" : "text-sm")}>{name}</span>
         {line && <span className="block text-xs text-muted-foreground">{line}</span>}
       </span>
       <span

@@ -46,6 +46,8 @@ export interface ProviderInstance {
   home?: string;
   /** the paired Mac that runs it (a provider belongs to one device); missing = none picked, so it runs nowhere */
   device?: string;
+  /** the last check that ran on it (written by the check, kept across restarts); setup's "Connected" is this passing */
+  lastCheck?: { ok: boolean; at: number; ms: number };
 }
 
 export interface Selection {
@@ -187,9 +189,10 @@ export const DRIVER_MODELS: Partial<Record<Driver, string[]>> = {
   gemini: ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.1-pro-preview"],
 };
 
+/** Nothing is added, connected or signed in before a person presses Connect (setup, api/lib/local-ai.ts). */
 export const DEFAULT_SETTINGS: ProviderSettings = {
-  instances: [{ id: "claude", driver: "claude", name: "Claude", enabled: true }],
-  default: { instance: "claude", model: "claude-opus-5-5", effort: "xhigh" },
+  instances: [],
+  default: { instance: "", model: "", effort: "xhigh" },
   jobs: {},
 };
 

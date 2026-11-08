@@ -96,6 +96,7 @@ import {
   INSTAGRAM_CONNECTION_EVENT,
 } from "@/lib/instagram";
 import { AppBar, ToolIntro } from "@/components/AppBar";
+import { ToolSetupLine } from "@/components/setup/ToolSetupLine";
 import { filterChip, segmentItem, segmentList } from "@/components/SegmentedTabs";
 import { cn } from "@/lib/utils";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
@@ -1573,6 +1574,11 @@ export default function InstagramPage() {
       {!postId && (
         <ToolIntro icon={ScanSearch} title="Content Analyzer" line="Dump interesting posts. Distill the idea. Rank them." />
       )}
+      {!postId && (
+        <div className="w-[760px] max-w-[92vw]">
+          <ToolSetupLine tool="instagram" />
+        </div>
+      )}
 
       <div className={viewing || postId ? "mt-6 w-full" : "w-[760px] max-w-[92vw]"}>
         {opening ? (
@@ -1625,23 +1631,6 @@ export default function InstagramPage() {
               onConnect={() => navigate("/settings/connectors")}
               onIngest={onIngest}
             />
-            {avail && !avail.available && (
-              <p className="mt-2 text-[11px] text-zinc-400">
-                With only your Instagram login (Settings → Connectors) you get your own posts and their numbers. Other
-                creators' posts and full comment threads need an Apify key of your own, added in Settings → Connectors:
-                Apify bills you for each read.
-              </p>
-            )}
-            {avail && (!avail.cloud || !avail.ai) && (
-              <p className="mt-2 flex items-center gap-1.5 text-[11px] text-amber-400/80">
-                <TriangleAlert className="h-3 w-3 shrink-0" />
-                {!avail.cloud && !avail.ai
-                  ? `Transcripts and slide text are off: ${avail.cloudWhy ?? "cloud transcription is locked"}, and no AI provider is set up for you (Settings → AI providers).`
-                  : !avail.cloud
-                    ? `Transcripts are off: ${avail.cloudWhy ?? "cloud transcription is locked for your account"}.`
-                    : "Slide text is off: no AI provider is set up for you (Settings → AI providers)."}
-              </p>
-            )}
 
             <div className="mt-6 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
               {myAccount ? (

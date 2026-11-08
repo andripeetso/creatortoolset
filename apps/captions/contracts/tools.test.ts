@@ -36,3 +36,25 @@ describe("TOOL_NEEDS readiness", () => {
     expect(TOOLS.filter(usesAi)).toEqual(["instagram", "workshop", "captions", "media", "editor", "notes", "guides"]);
   });
 });
+
+describe("home order and need copy", () => {
+  it("TOOL_GROUPS is the home's order and lists every tool once", async () => {
+    const { TOOL_GROUPS } = await import("./tools");
+    expect(TOOL_GROUPS.map((g) => g.label)).toEqual(["Plan", "Make", "Extras"]);
+    expect(TOOL_GROUPS.map((g) => g.tools)).toEqual([
+      ["instagram", "workshop"],
+      ["media", "editor", "review"],
+      ["enhance", "captions", "clean", "stories", "notes", "guides"],
+    ]);
+    expect(TOOL_GROUPS.flatMap((g) => g.tools).sort()).toEqual([...TOOLS].sort());
+  });
+
+  it("every need has a short name and a sentence", async () => {
+    const { NEED_SHORT, NEED_SENTENCE } = await import("./tools");
+    const used = new Set(TOOLS.flatMap((t) => TOOL_NEEDS[t].flatMap((n) => [...n.anyOf])));
+    for (const h of used) {
+      expect(NEED_SHORT[h as keyof typeof NEED_SHORT], h).toBeTruthy();
+      expect(NEED_SENTENCE[h as keyof typeof NEED_SENTENCE], h).toBeTruthy();
+    }
+  });
+});

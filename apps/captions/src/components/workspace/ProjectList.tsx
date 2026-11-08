@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Pencil, Plus } from "lucide-react";
 import { ConfirmButton } from "@/components/instagram/ConfirmButton";
+import { PLATFORMS } from "@contracts/connectors";
 import { ProjectForm } from "@/components/workshop/ProjectForm";
 import { listAccounts, mineAccount, type InstagramAccount } from "@/lib/instagram";
 import {
@@ -111,6 +112,7 @@ function ProjectRow({
   onDelete: () => void;
 }) {
   const blurb = foldProjectInstructions(p);
+  const handles = Object.entries(p.handles ?? {}).filter((e): e is [string, string] => Boolean(e[1]));
   return (
     <div
       className={`flex items-start gap-3 rounded-lg border px-3 py-2.5 ${
@@ -128,6 +130,11 @@ function ProjectRow({
         {account ? (
           <p className="mt-0.5 text-[11px] text-violet-300/80">
             {account.mine || account.id === mineId ? "My account" : "Account"} · @{account.username}
+          </p>
+        ) : null}
+        {handles.length ? (
+          <p className="mt-0.5 text-[11px] text-zinc-500">
+            {handles.map(([id, h]) => `${PLATFORMS.find((x) => x.id === id)?.label ?? id} @${h.replace(/^@/, "")}`).join(" · ")}
           </p>
         ) : null}
         {blurb ? <p className="mt-0.5 line-clamp-2 text-[11px] text-zinc-500">{blurb}</p> : null}

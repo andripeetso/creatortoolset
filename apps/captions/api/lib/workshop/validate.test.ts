@@ -7,6 +7,7 @@ import {
   parseRuleInput,
   parseTurnInput,
   parseFiles,
+  parseHandles,
   parseProjectInput,
   parseLayoutRequest,
   parseSessionPatch,
@@ -62,6 +63,32 @@ describe("parseProjectInput", () => {
     expect(kept.accountId).toBe("acct-01");
     expect(parseProjectInput({ name: "Sample", accountId: null }).accountId).toBeNull();
     expect(() => parseProjectInput({ name: "Sample", accountId: "x" })).toThrow(/Unknown account/);
+  });
+});
+
+describe("parseHandles", () => {
+  it("keeps known platforms, trims and drops the @, drops blanks and unknown keys", async () => {
+    expect(parseHandles({ instagram: "  @tinyacrobatics ", youtube: "  ", myspace: "x", tiktok: 5 })).toEqual({ instagram: "tinyacrobatics" });
+    expect(parseHandles("nope")).toEqual({});
+    expect(parseHandles(null)).toEqual({});
+  });
+
+  it("refuses characters outside letters, digits, dot, dash and underscore, by platform", async () => {
+    expect(() => parseHandles({ x: "bad handle!" })).toThrow("Handle for x: letters, numbers, dot, dash or underscore");
+    expect(() => parseHandles({ instagram: "a".repeat(61) })).toThrow(/Handle for instagram/);
+  });
+
+  it("keeps at most five", async () => {
+    const six = { instagram: "a", facebook: "b", youtube: "c", tiktok: "d", x: "e" };
+    expect(Object.keys(parseHandles(six))).toHaveLength(5);
+  });
+
+  it("is set on the project input: a patch without it keeps the old handles, a blank one clears them", () => {
+    const base = { name: "Sample", audience: "", voice: "", cta: "", notes: "", knowledge: [], handles: { instagram: "old" } };
+    expect(parseProjectInput({ name: "Sample", handles: { tiktok: "@new" } }).handles).toEqual({ tiktok: "new" });
+    expect(parseProjectInput({ notes: "x" }, base).handles).toEqual({ instagram: "old" });
+    expect(parseProjectInput({ handles: {} }, base).handles).toEqual({});
+    expect(parseProjectInput({ name: "Sample" }).handles).toEqual({});
   });
 });
 

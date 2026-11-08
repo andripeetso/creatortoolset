@@ -1,28 +1,71 @@
-import { describe, expect, it } from "vitest";
-import { setupFinished, setupSteps, toolForPath, toolsFor } from "./setup";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { MAKE_NAMES, SETUP_STEPS, dismissSetup, resumeStep, setupDismissed, setupFinished, setupStepFromParam, toolForPath, toolsFor } from "./setup";
 import { TOOLS } from "@contracts/tools";
 
+afterEach(() => vi.unstubAllGlobals());
+
 describe("setup steps", () => {
-  it("follows the answer to How do you want to use Creator Toolset?", () => {
-    expect(setupSteps(["workshop"], "app")).toEqual(["how", "make", "tools", "project", "ai", "left"]);
-    expect(setupSteps(["workshop"], "chat")).toEqual(["how", "connect"]);
-    expect(setupSteps(["workshop"], "both")).toEqual(["how", "make", "tools", "project", "ai", "connect", "left"]);
-    expect(setupSteps([], "app")).toEqual(["how", "make", "tools", "left"]);
+  it("has the same five steps on every path, in order", () => {
+    expect(SETUP_STEPS).toEqual(["how", "make", "project", "ai", "done"]);
   });
 
-  it("asks for a first project only for the Workshop or the Analyzer", () => {
-    expect(setupSteps(["instagram"], "app")).toContain("project");
-    expect(setupSteps(["editor", "captions"], "app")).not.toContain("project");
+  it("maps the old step ids to the step they now belong to", () => {
+    expect(setupStepFromParam("tools")).toBe("make");
+    expect(setupStepFromParam("connect")).toBe("ai");
+    expect(setupStepFromParam("left")).toBe("done");
+    expect(setupStepFromParam("project")).toBe("project");
   });
 
-  it("asks about AI only when a ticked tool uses it", () => {
-    expect(setupSteps(["enhance", "review", "clean", "stories"], "both")).toEqual(["how", "make", "tools", "connect", "left"]);
-    expect(setupSteps(["captions"], "app")).toEqual(["how", "make", "tools", "ai", "left"]);
-    expect(setupSteps(["notes"], "app")).toContain("ai");
+  it("names no step for an empty, unknown or inherited id", () => {
+    expect(setupStepFromParam(null)).toBeNull();
+    expect(setupStepFromParam("start")).toBeNull();
+    expect(setupStepFromParam("constructor")).toBeNull();
+  });
+});
+
+describe("setupFinished", () => {
+  it("counts setup as finished only after Done saved it with tools picked", () => {
+    expect(setupFinished({ done: false, tools: ["workshop"] })).toBe(false);
+    expect(setupFinished({ done: true, tools: ["workshop"] })).toBe(true);
+    expect(setupFinished({ done: true, tools: null })).toBe(false); // closed early by an older build
+    expect(setupFinished({ done: true, tools: [] })).toBe(true); // nothing ticked is still a saved answer
+  });
+});
+
+describe("Not now and resume", () => {
+  it("reopens at the step Not now was pressed on", () => {
+    vi.stubGlobal("sessionStorage", { getItem: () => "ai", setItem: () => {} });
+    expect(resumeStep()).toBe("ai");
   });
 
-  it("never asks for an account on the first run", () => {
-    for (const talk of ["app", "chat", "both"] as const) expect(setupSteps(["workshop"], talk)).not.toContain("account");
+  it("starts at the first step when the stored step is not a step", () => {
+    vi.stubGlobal("sessionStorage", { getItem: () => "tools-old-junk", setItem: () => {} });
+    expect(resumeStep()).toBe("how");
+  });
+
+  it("starts at the first step when storage throws", () => {
+    vi.stubGlobal("sessionStorage", {
+      getItem: () => {
+        throw new Error("denied");
+      },
+      setItem: () => {
+        throw new Error("denied");
+      },
+    });
+    expect(resumeStep()).toBe("how");
+  });
+
+  it("keeps a dismissal for this page load even when storage throws", () => {
+    vi.stubGlobal("localStorage", {
+      getItem: () => {
+        throw new Error("denied");
+      },
+      setItem: () => {
+        throw new Error("denied");
+      },
+    });
+    dismissSetup();
+    expect(setupDismissed()).toBe(true);
   });
 });
 
@@ -34,21 +77,31 @@ it("knows each tool's pages", () => {
   expect(toolForPath("/")).toBeNull();
 });
 
-it("ticks the tools for what they make", () => {
-  expect(toolsFor(["newsletter", "article"], TOOLS)).toEqual(["workshop"]);
-  expect(toolsFor(["thread"], TOOLS)).toEqual(["instagram", "workshop"]);
-  expect(toolsFor(["reel"], TOOLS)).toContain("editor");
-  expect(toolsFor(["reel"], ["workshop", "review"])).toEqual(["workshop", "review"]);
+it("always on: the Plan and Make tools, whatever the answer; the Workshop and the rest are not part of the pick", () => {
+  const defaults = ["instagram", "workshop", "review", "media", "editor"];
+  expect(toolsFor(["newsletter", "article"], TOOLS)).toEqual(defaults);
+  expect(toolsFor([], TOOLS)).toEqual(defaults);
+  expect(toolsFor(["thread"], TOOLS)).toEqual(defaults);
+  expect(toolsFor(["reel"], ["workshop", "review"])).toEqual(["workshop", "review"]); // only what the account may use
 });
 
-it("asks for a Media Library only when they make video or pictures", () => {
-  for (const m of ["newsletter", "article", "thread", "podcast", "course", "recording", "other"] as const) expect(toolsFor([m], TOOLS)).not.toContain("media");
-  for (const m of ["reel", "youtube", "carousel", "ad"] as const) expect(toolsFor([m], TOOLS)).toContain("media");
+it("an answer switches on only the extra that clearly fits it", () => {
+  expect(toolsFor(["reel"], TOOLS)).toEqual(["instagram", "workshop", "captions", "review", "media", "editor"]);
+  expect(toolsFor(["podcast"], TOOLS)).toContain("enhance");
+  expect(toolsFor(["recording"], TOOLS)).toContain("notes");
+  expect(toolsFor(["course"], TOOLS)).toContain("guides");
+  expect(toolsFor(["podcast"], TOOLS)).not.toContain("captions");
+  expect(toolsFor(["youtube", "carousel", "ad"], TOOLS)).toEqual(toolsFor([], TOOLS)); // no extra fits
 });
 
-it("counts setup as finished only after Done, not after an early close", () => {
-  expect(setupFinished({ done: false, tools: ["workshop"] }, "app")).toBe(false);
-  expect(setupFinished({ done: true, tools: ["workshop"] }, "app")).toBe(true);
-  expect(setupFinished({ done: true, tools: null }, "app")).toBe(false); // closed on the first screen by an older build
-  expect(setupFinished({ done: true, tools: null }, "chat")).toBe(true); // the own-AI path never picks tools
+it("Video Cleaner and Story Splitter are never switched on by an answer", () => {
+  for (const m of ["reel", "youtube", "carousel", "ad", "podcast", "course", "recording", "thread", "newsletter", "article", "other"] as const) {
+    expect(toolsFor([m], TOOLS)).not.toContain("clean");
+    expect(toolsFor([m], TOOLS)).not.toContain("stories");
+  }
+});
+
+
+it("names all eleven makes", () => {
+  expect(Object.keys(MAKE_NAMES)).toHaveLength(11);
 });

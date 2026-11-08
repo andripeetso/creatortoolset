@@ -94,7 +94,7 @@ const runPrompt = (a: Automation): string =>
  */
 export async function runAutomation(username: string, a: Automation): Promise<void> {
   const route = routeOf(username, findUser(username)?.role === "admin");
-  if (!route) return finish(username, a.id, "skipped", "Connect your AI first (Settings → AI providers), so this run could not start.");
+  if (!route) return finish(username, a.id, "skipped", "Connect your AI first (Settings → Your AI), so this run could not start.");
   if (route.instance.driver !== "claude") return finish(username, a.id, "skipped", "Automations need Claude Code on your Mac for now.");
   if (!isOnline(route.device)) return finish(username, a.id, "skipped", `${deviceName(route.device)} is offline, so this run was skipped.`);
   // the tools' address: PUBLIC_ORIGIN, else the Mac app's own server on this Mac (CT_LOCAL), where the Mac's AI runs too

@@ -1,4 +1,5 @@
 import type { FindHit } from "@/lib/instagram";
+import type { SocialPlatform } from "@contracts/connectors";
 import type { Selection } from "@contracts/providers";
 import { SESSION_STATUSES as STAGE_IDS, TURN_STOPPED, type SessionStatus } from "@contracts/workshop-statuses";
 /**
@@ -32,11 +33,16 @@ export interface WorkshopProject {
   color?: string;
   /** Frameworks and rules (ids) switched off for this project. */
   off?: string[];
+  /** Where the brand posts: a handle per platform. Saved only, never fetched. */
+  handles?: Partial<Record<SocialPlatform, string>>;
   createdAt: number;
   updatedAt: number;
 }
 
-export type ProjectFields = Pick<WorkshopProject, "name" | "audience" | "voice" | "cta" | "notes" | "knowledge" | "color" | "off"> & {
+export type ProjectFields = Pick<
+  WorkshopProject,
+  "name" | "audience" | "voice" | "cta" | "notes" | "knowledge" | "color" | "off" | "handles"
+> & {
   accountId?: string | null;
 };
 

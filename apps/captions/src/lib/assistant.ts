@@ -7,12 +7,20 @@ import { snapshot } from "@/lib/page-context";
  * or collapsed (it starts collapsed).
  */
 
+/** A line the assistant shows on its own (a tool's first-open welcome). It is never sent by itself: the chip sends its text when clicked. */
+export interface AssistantNotice {
+  text: string;
+  chip?: { label: string; send: string };
+}
+
 type AssistantState = {
   /** the dock is collapsed to its chat bubble */
   collapsed: boolean;
-  /** the setup choice was asked for (openAssistant("setup")): show the choices again */
-  setupAsked: boolean;
-  set: (patch: Partial<Pick<AssistantState, "collapsed" | "setupAsked">>) => void;
+  /** an AI answers here: set by the dock's load (the view's provider is not "none") */
+  connected: boolean;
+  /** a notice shown in the chat, until the person sends something */
+  notice: AssistantNotice | null;
+  set: (patch: Partial<Pick<AssistantState, "collapsed" | "connected" | "notice">>) => void;
   /** Highlighted text the next message asks about (AskAboutSelection). */
   quote: string | null;
   setQuote: (q: string | null) => void;
@@ -31,9 +39,10 @@ type AssistantState = {
 const MAX_QUOTE = 4000;
 
 export const useAssistant = create<AssistantState>((set, get) => ({
-  // folded to its bubble until clicked: setup is the one first-run flow, the chat never opens by itself
+  // folded to its bubble until clicked: the chat never opens by itself (the first-run welcome opens it after setup)
   collapsed: true,
-  setupAsked: false,
+  connected: false,
+  notice: null,
   set: (patch) => set(patch),
   quote: null,
   setQuote: (quote) => set({ quote }),
@@ -55,9 +64,14 @@ export const useAssistant = create<AssistantState>((set, get) => ({
   },
 }));
 
-/** Open the dock from anywhere; "setup" starts it at the choice of setup paths. */
-export function openAssistant(mode?: "setup"): void {
-  useAssistant.getState().set({ collapsed: false, setupAsked: mode === "setup" });
+/** Open the dock from anywhere. */
+export function openAssistant(): void {
+  useAssistant.getState().set({ collapsed: false });
+}
+
+/** Show a notice in the chat and open the dock. Never sends anything by itself. */
+export function showAssistantNotice(n: AssistantNotice): void {
+  useAssistant.getState().set({ notice: n, collapsed: false });
 }
 
 /** Ask about this text from anywhere (the quote, then the dock opens). */

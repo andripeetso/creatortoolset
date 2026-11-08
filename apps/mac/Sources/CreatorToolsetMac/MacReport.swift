@@ -19,18 +19,51 @@ let driverBinaries: [String: [String]] = [
 /// The folders a GUI app's PATH leaves out (launchd's PATH is short).
 private let extraBinDirs = ["/opt/homebrew/bin", "/usr/local/bin", "~/.local/bin", "/usr/bin", "/bin"]
 
-/// The first executable named `name` on PATH or in the usual folders (`name` may be a path, with ~).
+/// The PATH a login shell gives (zsh -lic also reads .zshrc, where nvm is set up). Read once per process; nil when the
+/// shell says nothing usable. A Finder-launched app does not inherit the Terminal's PATH, so this is how a CLI under nvm is found.
+let loginShellPath: String? = {
+    runQuick("/bin/zsh", ["-lic", "echo $PATH"], seconds: 5).flatMap(pathFromShellOutput)
+}()
+
+/// The login shell's PATH from its output: the last line that starts with "/" (.zshrc may print other lines first).
+func pathFromShellOutput(_ text: String) -> String? {
+    text.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.last(where: { $0.hasPrefix("/") })
+}
+
+/// The newest Node version's bin folder under nvm, or nil (nvm's folder is not on a GUI app's PATH).
+func newestNvmBin() -> String? {
+    let root = ("~/.nvm/versions/node" as NSString).expandingTildeInPath
+    let versions = ((try? FileManager.default.contentsOfDirectory(atPath: root)) ?? []).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    return versions.last.map { (root as NSString).appendingPathComponent($0 + "/bin") }
+}
+
+/// Where a CLI may be, in order: the login shell's PATH, this process's PATH, the usual folders, the newest nvm Node.
+func searchDirs() -> [String] {
+    let shell = (loginShellPath ?? "").split(separator: ":").map(String.init)
+    let own = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map(String.init)
+    return shell + own + extraBinDirs.map { ($0 as NSString).expandingTildeInPath } + [newestNvmBin()].compactMap { $0 }
+}
+
+/// The first executable named `name` in searchDirs() (`name` may be a path, with ~). Each call checks the folders again,
+/// so a CLI installed or removed while the app runs is seen on the next report.
 func which(_ name: String) -> String? {
     let expanded = (name as NSString).expandingTildeInPath
     if expanded.hasPrefix("/") {
         return FileManager.default.isExecutableFile(atPath: expanded) ? expanded : nil
     }
-    let path = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map(String.init)
-    for dir in path + extraBinDirs.map({ ($0 as NSString).expandingTildeInPath }) {
+    for dir in searchDirs() {
         let candidate = (dir as NSString).appendingPathComponent(name)
         if FileManager.default.isExecutableFile(atPath: candidate) { return candidate }
     }
     return nil
+}
+
+/// The environment for a CLI run: the CLI's own folder first on PATH, so a Node script beside it (nvm) finds its own node.
+func withBinaryOnPath(_ env: [String: String], binary path: String) -> [String: String] {
+    guard path.contains("/") else { return env }
+    var out = env
+    out["PATH"] = (path as NSString).deletingLastPathComponent + ":" + (env["PATH"] ?? "")
+    return out
 }
 
 /// A driver's CLI on this Mac (the Mac relay binary()).
@@ -46,6 +79,7 @@ func runQuick(_ path: String, _ args: [String], seconds: Double) -> String? {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: path)
     process.arguments = args
+    process.environment = withBinaryOnPath(ProcessInfo.processInfo.environment, binary: path)
     let out = Pipe()
     let err = Pipe()
     process.standardOutput = out

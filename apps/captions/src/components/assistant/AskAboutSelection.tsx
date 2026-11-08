@@ -3,11 +3,19 @@ import { MessageCircle } from "lucide-react";
 import { useMe } from "@/lib/auth";
 import { useAssistant } from "@/lib/assistant";
 import { DOCK } from "@/lib/page-context";
+import { setupFinished, useSetup, useWorkTalk } from "@/lib/setup";
 
 /** Places the selection can't be asked about from: the chat itself and form fields (a document editor is fine). */
 const NOT_HERE = `${DOCK},input,textarea,select`;
 /** Keeps the pill's middle this far from the window's sides (about half its width plus a gutter). */
 const EDGE = 76;
+
+/**
+ * The popup and its shortcut work only once setup is finished and an AI answers, outside the chat-only path, and with
+ * no dialog open. A dialog open is checked where the selection shows (the popup never appears during setup).
+ */
+export const popupAllowed = (o: { connected: boolean; finished: boolean; talk: string | null | undefined; dialogOpen: boolean }): boolean =>
+  o.connected && o.finished && o.talk !== "chat" && !o.dialogOpen;
 
 /** The highlighted text and where it is, or null when there's nothing to ask about. */
 function currentSelection(): { text: string; rect: DOMRect } | null {
@@ -33,14 +41,20 @@ function currentSelection(): { text: string; rect: DOMRect } | null {
 export function AskAboutSelection() {
   const me = useMe();
   const askAbout = useAssistant((s) => s.askAbout);
+  const connected = useAssistant((s) => s.connected);
+  const view = useSetup((s) => s.view);
+  const { talk } = useWorkTalk();
+  const ok = !!me && popupAllowed({ connected, finished: !!view && setupFinished(view), talk, dialogOpen: false });
   const [at, setAt] = useState<{ x: number; y: number; below: boolean } | null>(null);
   const text = useRef("");
 
   useEffect(() => {
-    if (!me) return;
+    if (!ok) return;
     let timer = 0;
+    // a dialog open (setup, Settings, a confirm) keeps the popup and its shortcut away
+    const allowed = () => !document.querySelector('[role="dialog"]');
     const show = () => {
-      const cur = currentSelection();
+      const cur = allowed() ? currentSelection() : null;
       if (!cur) return setAt(null);
       text.current = cur.text;
       const below = cur.rect.top < 48;
@@ -65,7 +79,7 @@ export function AskAboutSelection() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") return hide();
       if (e.code === "KeyA" && e.shiftKey && (e.metaKey || e.ctrlKey) && !e.altKey) {
-        const cur = currentSelection();
+        const cur = allowed() ? currentSelection() : null;
         if (!cur) return;
         e.preventDefault();
         askAbout(cur.text);
@@ -89,9 +103,9 @@ export function AskAboutSelection() {
       window.removeEventListener("scroll", hide, true);
       window.removeEventListener("resize", hide);
     };
-  }, [me, askAbout]);
+  }, [ok, askAbout]);
 
-  if (!me || !at) return null;
+  if (!ok || !at) return null;
   return (
     <button
       type="button"

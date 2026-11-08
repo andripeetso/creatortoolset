@@ -191,7 +191,7 @@ export const TOOLS = [
 
 /** The assistant's tools (the dock, assistant.ts): listed and callable for its job token only, so a Full key's list stays TOOLS. */
 const ASSISTANT_DEFS = [
-  { name: "setup_status", description: "What is set up: the AI provider, connected logins, which API keys the user has saved (never their values), the project count, the tools the user picked and their plan, and for each tool what it still needs (missing) and what would add to it (extra).", inputSchema: { type: "object", properties: {} } },
+  { name: "setup_status", description: "What is set up: the AI, connected logins, which API keys the user has saved (never their values), the project count, the tools the user picked and their plan, and for each tool what it still needs (missing) and what would add to it (extra).", inputSchema: { type: "object", properties: {} } },
   {
     name: "save_setup",
     description: "Save the user's answers: the tools they want to use (ids from setup_status), their AI plan, or that setup is done.",
@@ -507,7 +507,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
       return {
         ai: route
           ? { connected: true, name: route.instance.name, driver: route.instance.driver, on: deviceName(route.device) }
-          : { connected: false, note: "No AI provider yet: connect Claude Code on a paired Mac (Settings → AI providers)." },
+          : { connected: false, note: "No AI yet: connect Claude Code on a paired Mac (Settings → Your AI)." },
         logins: readConnectors(user.username).accounts.map((a) => ({ platform: a.platform, handle: a.handle, via: a.via })),
         keys: MY_KEYS.map((k) => ({ env: k.env, name: k.name, what: k.what, saved: !!keys[k.env] })),
         projects: projects.length,

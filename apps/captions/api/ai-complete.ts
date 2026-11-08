@@ -79,7 +79,7 @@ export function aiFor(who: Who, job: JobId, label: string, own?: Selection): Pro
   // nobody named: never the server's providers (background work names whose work it is)
   if (!name || role === "visitor") return { only: [], off: "This AI call names no account" };
   const r = routeFor(name, role === "admin", job, own);
-  if (!r) return (name && onApiKey(name, job, label)) || { only: [], off: "No AI provider for your account: add one in Settings → AI providers, or your Anthropic key in Settings → My API keys" };
+  if (!r) return (name && onApiKey(name, job, label)) || { only: [], off: "No AI for your account: add one in Settings → Your AI, or your Anthropic key in Settings → My API keys" };
   const { selection, instance } = r;
   return {
     only: ["mac"],
@@ -95,7 +95,7 @@ export function aiFor(who: Who, job: JobId, label: string, own?: Selection): Pro
 function onApiKey(name: string, job: JobId, label: string): ProviderOpts | null {
   const k = keyFor(name, "ANTHROPIC_API_KEY");
   if (!k.key) return null;
-  if (job === "workshop") return { only: [], off: "Content Workshop runs on your own AI (it reads the whole project folder): connect yours in Settings → AI providers" };
+  if (job === "workshop") return { only: [], off: "Content Workshop runs on your own AI (it reads the whole project folder): connect yours in Settings → Your AI" };
   return { only: ["anthropic"], retries: 1, apiKey: k.key, mac: { label } };
 }
 

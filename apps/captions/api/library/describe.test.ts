@@ -79,7 +79,7 @@ describe("describe job", () => {
     const v = await seed("ast-own-001", "local", "not a video");
     enqueueJob(libraryDb(), "lib_a", v, "describe", "local");
     expect(await tick()).toBe(true);
-    expect(job(v, "describe")).toEqual({ state: "needs_key", error: expect.stringMatching(/AI provider/) });
+    expect(job(v, "describe")).toEqual({ state: "needs_key", error: expect.stringMatching(/No AI for your account/) });
     expect(libraryDb().prepare("SELECT COUNT(*) AS n FROM descriptions WHERE version_id = ?").get(v)).toEqual({ n: 0 });
     expect((libraryDb().prepare("SELECT state FROM asset_versions WHERE id = ?").get(v) as { state: string }).state).toBe("ready");
     expect(completeVisionWithFallback).not.toHaveBeenCalled();

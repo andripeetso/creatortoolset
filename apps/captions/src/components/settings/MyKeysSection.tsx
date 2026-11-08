@@ -53,7 +53,7 @@ export function MyKeysSection({ only }: { only?: MyKeyEnv[] } = {}) {
   return (
     <Group
       title="My API keys"
-      hint="Your own keys for the services the tools call. The cost is yours, paid to that provider: this site never pays for them and never shares a key with anyone else. A tool without the key it needs says which one to add."
+      hint="Your own keys for the services the tools call. The cost is yours, paid to that service: this site never pays for them and never shares a key with anyone else. A tool without the key it needs says which one to add."
     >
       {rows}
       <p className="mt-2 text-xs text-muted-foreground">
@@ -63,7 +63,7 @@ export function MyKeysSection({ only }: { only?: MyKeyEnv[] } = {}) {
         </Link>
         . AI runs on your own Claude or ChatGPT login in{" "}
         <Link to="/settings/providers" replace className="underline">
-          Settings → AI providers
+          Settings → Your AI
         </Link>
         ; the Anthropic key here is for when you have none.
       </p>

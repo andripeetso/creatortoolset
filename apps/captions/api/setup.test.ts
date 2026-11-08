@@ -6,7 +6,8 @@ import { describe, expect, it } from "vitest";
 
 process.env.DATA_DIR = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "setup-"));
 process.env.APP_SECRET = "test-secret";
-const { setupApp, claudeMcpAdd, codexMcpAdd, codexWithKey, shellLine } = await import("./setup");
+const { setupApp } = await import("./setup");
+const { claudeMcpAdd, codexMcpAdd, codexWithKey, shellLine } = await import("./lib/local-ai");
 const { saveMyKey } = await import("./my-keys");
 const { pairDevice, saveReport } = await import("./lib/devices");
 import type { AuthVars } from "./auth";
@@ -62,4 +63,32 @@ it("adds this Mac's own server to Codex by address, the key as a header on its e
   const twice = codexWithKey(once, "ctk_two");
   expect(twice).toBe('model = "o3"\n\n[mcp_servers.creator-toolset]\nhttp_headers = { Authorization = "Bearer ctk_two" }\nurl = "http://127.0.0.1:4123/api/mcp"\n\n[mcp_servers.other]\nurl = "x"\n');
   expect(() => codexWithKey("", "ctk_x")).toThrow();
+});
+
+describe("your AI on this Mac: only on the owner's Mac (CT_LOCAL=1)", () => {
+  const post = (url: string, body: unknown) => app.request(url, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } });
+
+  it("shows no CLIs and refuses the actions when CT_LOCAL is not 1", async () => {
+    delete process.env.CT_LOCAL;
+    who = { username: "sam", role: "user", cloud: true, off: [] };
+    expect(await (await app.request("/api/setup/ai")).json()).toEqual({ local: false, rows: [] });
+    expect((await post("/api/setup/ai/mcp", { id: "claude" })).status).toBe(403);
+    expect((await post("/api/setup/ai/signin", { id: "claude" })).status).toBe(403);
+    expect(await (await post("/api/setup/ai/connect", { id: "claude" })).json()).toMatchObject({ state: "mac" });
+  });
+
+  it("has no connect routes left from the old setup step", async () => {
+    expect((await app.request("/api/setup/connect")).status).toBe(404);
+    expect((await post("/api/setup/connect", { run: true })).status).toBe(404);
+  });
+
+  it("refuses an unknown CLI name before anything runs", async () => {
+    process.env.CT_LOCAL = "1";
+    expect((await post("/api/setup/ai/connect", { id: "rm -rf" })).status).toBe(400);
+    delete process.env.CT_LOCAL;
+  });
+
+  it("the setup view carries the CLIs Creator Toolset is in (empty to start)", async () => {
+    expect(await get()).toMatchObject({ mcpTo: [] });
+  });
 });

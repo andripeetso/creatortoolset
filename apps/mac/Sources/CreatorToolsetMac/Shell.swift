@@ -92,6 +92,14 @@ final class Shell: NSObject, ObservableObject {
         recorder.onRecordingsChanged = { [weak self] in self?.pushRecordings() }
         if Recorder.available { RecordShortcut.shared.install(recorder) }
         recorder.openPage = { [weak self] in self?.showWindow(href: $0) }
+        view.onThisMacAsk = { [weak self] ask, done in
+            guard let self else { return done(["aiOn": false, "paired": false]) }
+            if ask == "state" {
+                done(self.thisMacState())
+            } else {
+                Task { done(await self.startThisMac()) }
+            }
+        }
         view.pickerMenu = { [weak self] in self?.pickerItems() ?? [] }
         account.window = { [weak self] in self?.webView.window }
         account.signedIn = { [weak self] profile in self?.ownerProfile(profile) }
@@ -238,18 +246,14 @@ final class Shell: NSObject, ObservableObject {
         server?.start()
     }
 
-    /// The server answers: the window signs in as the owner by itself, leaves the starting (or stopped) page, and this
-    /// Mac pairs as the owner's AI device with no toggle (the server puts the default provider on it, api/devices.ts).
+    /// The server answers: the window signs in as the owner by itself and leaves the starting (or stopped) page. The AI
+    /// comes on here only when it was on before; a first run leaves it off until the person presses Connect (startThisMac).
     private func serverReady() {
         Task {
             await signIn()
             if !(webView.url.map { isSite($0, base) } ?? false) { open("/") }
             // ponytail: aiOn is one flag for every site; per environment when the Mac app keeps several (slice 8)
-            if DeviceVault.token(for: base.host ?? "") == nil {
-                setAI(true)
-            } else if aiOn && runner == nil {
-                startAI()
-            }
+            if startsAIWhenReady(aiOn: aiOn, running: runner != nil) { startAI() }
         }
     }
 
@@ -494,22 +498,44 @@ final class Shell: NSObject, ObservableObject {
         }
     }
 
-    private func startAI() {
-        guard hasServer else { return }
-        if DeviceVault.token(for: base.host ?? "") != nil {
-            startRunner()
-            return
-        }
-        Task {
-            do {
-                try await pairThisMac()
-                guard aiOn else { return }   // turned off while pairing: the pairing stays, no runner
-                startRunner()
-            } catch {
-                setAIOff("Could not pair this Mac: \(error.localizedDescription)")
+    private func startAI() { _ = bringUpAI() }
+
+    /// The pairing in progress, so a second press joins it instead of pairing again.
+    private var pairing: Task<Bool, Never>?
+
+    /// Pairs this Mac with the open site once, then starts the runner. The task's value: whether the runner is running.
+    private func bringUpAI() -> Task<Bool, Never> {
+        if let pairing { return pairing }
+        let task = Task { () -> Bool in
+            defer { pairing = nil }
+            guard hasServer else { return false }
+            if DeviceVault.token(for: base.host ?? "") == nil {
+                do {
+                    try await pairThisMac()
+                } catch {
+                    setAIOff("Could not pair this Mac: \(error.localizedDescription)")
+                    return false
+                }
+                guard aiOn else { return false }   // turned off while pairing: the pairing stays, no runner
             }
+            startRunner()
+            return runner != nil
         }
+        pairing = task
+        return task
     }
+
+    /// The page's Connect (TitleBar.swift, bridge "thisMac" start): turns the AI on, pairs this Mac and waits for that,
+    /// so the page's next check finds the device. Replies with the state.
+    func startThisMac() async -> [String: Any] {
+        guard hasServer else { return thisMacState() }
+        if !aiOn { setAI(true) }
+        if await bringUpAI().value { runner?.reportNow() }
+        return thisMacState()
+    }
+
+    /// The page's view of this Mac (bridge "thisMac" state): whether the AI is on, and whether it is paired with the open site.
+    func thisMacState() -> [String: Any] { ["aiOn": aiOn, "paired": pairedHere] }
 
     /// POST /api/devices with the window's cookies: the site makes the device and returns its token once.
     private func pairThisMac() async throws {

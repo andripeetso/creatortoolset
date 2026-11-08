@@ -61,6 +61,10 @@ func uniqueURL(in folder: URL, named name: String) -> URL {
     return candidate
 }
 
+/// Whether the AI comes on by itself when the open server answers: only when it was on before and no runner runs yet.
+/// A first run is off (no pairing until the person presses Connect). Pure, so the tests check it without a window.
+func startsAIWhenReady(aiOn: Bool, running: Bool) -> Bool { aiOn && !running }
+
 /// One line of the site's inbox (api/review.ts notifications): the fields the bell shows.
 struct ReviewNote: Decodable {
     let id: String

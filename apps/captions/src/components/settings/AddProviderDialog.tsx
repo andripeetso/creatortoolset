@@ -6,7 +6,7 @@ import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
 /**
- * Settings → AI providers → Add provider: three steps (Tool, Account, Name) on the Mac the page shows. Only the
+ * Settings → Your AI → Add your AI: three steps (Tool, Account, Name) on the Mac the page shows. Only the
  * tools the Mac app runs are offered. The Mac's report lists what is installed and its config folders.
  */
 export function AddProviderDialog({
@@ -55,7 +55,7 @@ export function AddProviderDialog({
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Add provider</DialogTitle>
+          <DialogTitle>Add your AI</DialogTitle>
           <DialogDescription>It runs on {deviceName}.</DialogDescription>
         </DialogHeader>
 
@@ -178,7 +178,7 @@ export function AddProviderDialog({
               disabled={busy || duplicate || !name.trim()}
               onClick={() => void add({ id, driver: driver!, name: name.trim(), enabled, ...(home.trim() ? { home: home.trim() } : {}) })}
             >
-              {busy ? "Adding…" : "Add provider"}
+              {busy ? "Adding…" : "Add"}
             </Button>
           )}
         </DialogFooter>

@@ -1,22 +1,13 @@
-import { execFile } from "node:child_process";
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
-import os from "node:os";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { promisify } from "node:util";
 import { Hono } from "hono";
-import { getSessionUser, type AuthVars } from "./auth";
 import { anyAiConfigured } from "./ai-complete";
 import { env } from "./lib/env";
 import { listDevices } from "./lib/devices";
 import { readConnectors } from "./lib/connectors/store";
 import { publicApifyStatus, readApify } from "./lib/instagram/apify";
-import { routeFor } from "./lib/providers";
+import { connectedOwn } from "./lib/providers";
+import { addMcp, connectCli, localAiView, signIn, CLI_IDS, MAC_ONLY } from "./lib/local-ai";
 import { ownedProjects } from "./lib/workshop/workspace";
 import { homeOf } from "./library/access";
 import { libraryDb } from "./library/db";
@@ -24,11 +15,12 @@ import { keyFor } from "./my-keys";
 import {
   apiKeysOf,
   findUser,
-  newApiKey,
   USERNAME_RE,
   type SessionUser,
 } from "./users";
+import type { AuthVars } from "./auth";
 import { MY_KEYS } from "../contracts/service-keys";
+import type { CliId, LocalAiView } from "../contracts/local-ai";
 import {
   isTool,
   TOOLS,
@@ -43,16 +35,19 @@ import { isPlan, planFromCli, type PlanId } from "../contracts/plans";
  * their AI runs on, whether they finished setup, and what they have set up (contracts/tools.ts Have) for the
  * readiness rows. $DATA_DIR/setup/<username>.json; accounts only (a share-link visitor has no setup).
  *
- *   GET /api/setup  → SetupView
- *   PUT /api/setup  { tools?: Tool[], plan?: PlanId | null, done?: boolean } → SetupView
- *   GET  /api/setup/connect → { clis: [{ driver }], hasKey }   the AI CLIs on this Mac (the Mac app's report)
- *   POST /api/setup/connect { run: boolean } → { ok } | { command }  setup's connect step (signed-in browser only)
+ *   GET  /api/setup  → SetupView
+ *   PUT  /api/setup  { tools?: Tool[], plan?: PlanId | null, done?: boolean } → SetupView
+ *   GET  /api/setup/ai                 → LocalAiView   the AI CLIs found on this Mac (CT_LOCAL=1; else local: false)
+ *   POST /api/setup/ai/signin  { id }  → SignInResult  opens Terminal with the tool's own sign-in (CT_LOCAL=1)
+ *   POST /api/setup/ai/connect { id }  → ConnectResult connects it as this account's AI after a real check (always 200)
+ *   POST /api/setup/ai/mcp     { id }  → McpResult     adds Creator Toolset to it, with one new Full key (CT_LOCAL=1)
  */
 
 interface Saved {
   tools?: Tool[];
   plan?: PlanId;
   done?: boolean;
+  mcpTo?: CliId[];
 }
 
 const fileOf = (u: string) =>
@@ -82,7 +77,7 @@ export async function haveFor(user: SessionUser): Promise<Have[]> {
     (k) => k.env,
   );
   if (anyAiConfigured(user)) have.push("ai");
-  if (routeFor(u, user.role === "admin", "workshop")) have.push("ownAi");
+  if (connectedOwn(u)) have.push("ownAi");
   if ((await ownedProjects(u)).length) have.push("project");
   if (
     readConnectors(u).accounts.some(
@@ -120,6 +115,7 @@ async function view(user: SessionUser): Promise<SetupView> {
     detected: detectedPlan(user.username),
     done: !!s.done,
     have: await haveFor(user),
+    mcpTo: s.mcpTo ?? [],
   };
 }
 
@@ -158,149 +154,41 @@ setupApp.put("/", async (c) => {
   return c.json(await view(user));
 });
 
-/** The name this server goes by in the AI CLIs' MCP lists. */
-const MCP_NAME = "creator-toolset";
+/* ---- your AI on this Mac (Connect your AI, Settings → Your AI) ---- */
 
-/**
- * `claude mcp add` for this server on this Mac, for every project of the person's (user scope), as an argument list
- * for execFile (never a shell). The address is always this Mac's own server, never a hosted one.
- */
-export function claudeMcpAdd(port: number, key: string): string[] {
-  return [
-    "mcp",
-    "add",
-    "--transport",
-    "http",
-    "--scope",
-    "user",
-    MCP_NAME,
-    `http://127.0.0.1:${port}/api/mcp`,
-    "--header",
-    `Authorization: Bearer ${key}`,
-  ];
-}
+const localOn = () => process.env.CT_LOCAL === "1";
+const port = () => Number(process.env.PORT || 3000);
+const cliOf = (v: unknown): CliId | null =>
+  typeof v === "string" && (CLI_IDS as string[]).includes(v) ? (v as CliId) : null;
+const mcpToOf = (u: string): CliId[] => read(u)?.mcpTo ?? [];
 
-/** The same, typed into a terminal: each argument with a space in quotes. */
-export const shellLine = (bin: string, args: string[]) =>
-  [bin, ...args]
-    .map((a) => (/[^\w@%+=:,./-]/.test(a) ? `"${a}"` : a))
-    .join(" ");
-
-/** `codex mcp add` for this server: Codex 0.40+ takes an address; the key goes into its config (codexWithKey). */
-export const codexMcpAdd = (port: number): string[] => [
-  "mcp",
-  "add",
-  MCP_NAME,
-  "--url",
-  `http://127.0.0.1:${port}/api/mcp`,
-];
-
-/**
- * Codex's config.toml with the key header on this server's entry. `codex mcp add` takes a key only from an
- * environment variable, so it goes in as `http_headers` (a key Codex reads on that table) right under the header.
- */
-export function codexWithKey(toml: string, key: string): string {
-  const head = `[mcp_servers.${MCP_NAME}]`;
-  const lines = toml
-    .split("\n")
-    .filter((l) => !/^http_headers\s*=.*ctk_/.test(l)); // an earlier key of ours
-  const at = lines.findIndex((l) => l.trim() === head);
-  if (at < 0) throw new Error("Codex didn't save the server");
-  lines.splice(at + 1, 0, `http_headers = { Authorization = "Bearer ${key}" }`);
-  return lines.join("\n");
-}
-
-/**
- * The AI CLIs found on this Mac: the paths the Mac app reported (MacReport.swift finds them) that exist here.
- */
-const clisHere = (u: string) => {
-  const seen = new Map<"claude" | "codex", string>();
-  for (const r of listDevices((d) => d.owner === u).flatMap(
-    (d) => d.report?.drivers ?? [],
-  )) {
-    if (
-      (r.driver === "claude" || r.driver === "codex") &&
-      r.installed &&
-      r.path &&
-      !seen.has(r.driver) &&
-      existsSync(r.path)
-    )
-      seen.set(r.driver, r.path);
-  }
-  return [...seen].map(([driver, p]) => ({ driver, path: p }));
-};
-
-setupApp.get("/connect", (c) => {
-  const rec = findUser(c.get("user").username);
-  return c.json({
-    clis: clisHere(c.get("user").username).map((x) => ({ driver: x.driver })),
-    hasKey: !!(rec && apiKeysOf(rec).full),
-  });
+setupApp.get("/ai", async (c) => {
+  const u = c.get("user").username;
+  if (!localOn()) return c.json({ local: false, rows: [] } satisfies LocalAiView);
+  return c.json(await localAiView(u, mcpToOf(u)));
 });
 
-/**
- * Makes a Full key for this account (the old one stops working) and adds this server, with that one key, to every
- * AI CLI on this Mac (one key per account: adding them one at a time would cut off the one before), or (`run: false`)
- * hands back Claude Code's command to paste instead. The key goes only into the CLIs' config or that command.
- * A signed-in browser only: never a key or an MCP call, so a key can't make itself another one.
- */
-setupApp.post("/connect", async (c) => {
-  const session = getSessionUser(c.req.header("cookie"));
-  const rec = session && findUser(session.username);
-  if (!rec) return c.json({ error: "Sign in with an account first" }, 401);
-  const b = (await c.req.json().catch(() => null)) as { run?: unknown } | null;
-  const clis = clisHere(rec.username);
-  if (b?.run === true && !clis.length)
-    return c.json({ error: "No Claude Code or Codex on this Mac" }, 404);
-  const port = Number(process.env.PORT || 3000);
-  const key = newApiKey(rec, "full");
-  if (b?.run !== true)
-    return c.json({ command: shellLine("claude", claudeMcpAdd(port, key)) });
-  const run = promisify(execFile);
-  const added: string[] = [];
-  const failed: string[] = [];
-  for (const cli of clis) {
-    const name = cli.driver === "claude" ? "Claude Code" : "Codex";
-    // each CLI is a node script: its own folder first on PATH, so `env node` finds the node it came with
-    const opts = {
-      timeout: 30_000,
-      env: {
-        ...process.env,
-        PATH: `${path.dirname(cli.path)}:${process.env.PATH ?? ""}`,
-      },
-    };
-    try {
-      if (cli.driver === "claude") {
-        await run(
-          cli.path,
-          ["mcp", "remove", "--scope", "user", MCP_NAME],
-          opts,
-        ).catch(() => null); // a second click replaces it
-        await run(cli.path, claudeMcpAdd(port, key), opts);
-      } else {
-        await run(cli.path, ["mcp", "remove", MCP_NAME], opts).catch(
-          () => null,
-        );
-        await run(cli.path, codexMcpAdd(port), opts);
-        const file = path.join(
-          process.env.CODEX_HOME || path.join(os.homedir(), ".codex"),
-          "config.toml",
-        );
-        writeFileSync(file, codexWithKey(readFileSync(file, "utf8"), key));
-      }
-      added.push(name);
-    } catch (e) {
-      const why =
-        (e as { stderr?: string }).stderr ||
-        (e instanceof Error ? e.message : String(e));
-      // Codex before 0.40 has no --url: say what to do, not its usage text
-      failed.push(
-        cli.driver === "codex" && /--url|unexpected argument/.test(why)
-          ? "Codex: update Codex, then try again"
-          : `${name}: ${why.replaceAll(key, "…").trim().slice(0, 200)}`,
-      );
-    }
-  }
-  if (!added.length) return c.json({ error: failed.join("; ") }, 500);
-  return c.json({ ok: true, added, failed });
+setupApp.post("/ai/signin", async (c) => {
+  if (!localOn()) return c.json({ ok: false, message: MAC_ONLY }, 403);
+  const id = cliOf(((await c.req.json().catch(() => null)) as { id?: unknown } | null)?.id);
+  if (!id) return c.json({ error: "Pick Claude Code, Codex or Gemini CLI" }, 400);
+  return c.json(await signIn(id));
+});
+
+setupApp.post("/ai/connect", async (c) => {
+  if (!localOn()) return c.json({ state: "mac", signedIn: null, answered: null, message: MAC_ONLY });
+  const id = cliOf(((await c.req.json().catch(() => null)) as { id?: unknown } | null)?.id);
+  if (!id) return c.json({ error: "Pick Claude Code, Codex or Gemini CLI" }, 400);
+  return c.json(await connectCli(c.get("user").username, id));
+});
+
+setupApp.post("/ai/mcp", async (c) => {
+  if (!localOn()) return c.json({ ok: false, added: [], failed: [], message: MAC_ONLY }, 403);
+  const u = c.get("user").username;
+  const id = cliOf(((await c.req.json().catch(() => null)) as { id?: unknown } | null)?.id);
+  if (!id) return c.json({ error: "Pick Claude Code or Codex" }, 400);
+  const { result, mcpTo } = await addMcp(u, id, mcpToOf(u), port());
+  // the targets are kept even when one failed, so the next add (or Try again) rewrites them too
+  write(u, { ...(read(u) ?? {}), mcpTo });
+  return c.json(result);
 });

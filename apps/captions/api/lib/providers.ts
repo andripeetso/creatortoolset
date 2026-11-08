@@ -71,11 +71,27 @@ export function providerSettings(): ProviderSettings {
 /** An account's own settings, or null when it has none. */
 export const ownSettings = (username: string): ProviderSettings | null => savedFor(username);
 
+/**
+ * Saves a scope's settings. An instance keeps its last check across saves while it is the same CLI on the same Mac in
+ * the same folder (parseSettings drops lastCheck from the page, so a Settings save would lose it otherwise).
+ */
 export async function saveSettings(s: ProviderSettings, scope: Scope = "workspace"): Promise<void> {
   if (!validScope(scope)) throw new Error("Not a provider scope");
-  await writeAtomic(FILE(scope), s);
-  saved.set(scope, s);
+  const prev = savedFor(scope)?.instances ?? [];
+  const next: ProviderSettings = {
+    ...s,
+    instances: s.instances.map((i) => {
+      if (i.lastCheck) return i;
+      const was = prev.find((p) => p.id === i.id && p.driver === i.driver && p.device === i.device && p.home === i.home);
+      return was?.lastCheck ? { ...i, lastCheck: was.lastCheck } : i;
+    }),
+  };
+  await writeAtomic(FILE(scope), next);
+  saved.set(scope, next);
 }
+
+/** Setup's "Connected": an enabled instance of this account's own whose last check passed. Survives a restart. */
+export const connectedOwn = (username: string): boolean => (ownSettings(username)?.instances ?? []).some((i) => i.enabled && i.lastCheck?.ok);
 
 export async function dropOwnSettings(username: string): Promise<void> {
   if (!validScope(username) || username === "workspace") throw new Error("Not a provider scope");
@@ -84,9 +100,17 @@ export async function dropOwnSettings(username: string): Promise<void> {
 }
 
 export const providerChecks = () => checks;
-export const recordCheck = (key: string, c: ProviderCheck): void => {
+/** Keeps a check (Settings shows it) and, on the instance it was for, its `lastCheck` (kept across restarts). */
+export async function recordCheck(key: string, c: ProviderCheck): Promise<void> {
   checks[key] = c;
-};
+  const at = key.indexOf(":");
+  const scope: Scope = at < 0 ? "workspace" : key.slice(0, at);
+  const id = at < 0 ? key : key.slice(at + 1);
+  const s = scope === "workspace" ? providerSettings() : ownSettings(scope);
+  if (!s?.instances.some((i) => i.id === id)) return;
+  const instances = s.instances.map((i) => (i.id === id ? { ...i, lastCheck: { ok: c.ok, at: c.at, ms: c.ms } } : i));
+  await saveSettings({ ...s, instances }, scope);
+}
 
 const DRIVER_IDS = new Set(DRIVERS.map((d) => d.id));
 const runs = (driver: Driver) => DRIVERS.find((d) => d.id === driver)?.runs ?? false;

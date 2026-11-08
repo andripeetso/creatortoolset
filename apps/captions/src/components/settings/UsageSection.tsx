@@ -81,10 +81,10 @@ function LimitsView({ view }: { view: ProvidersView }) {
 
   if (!view.limits.length) {
     return (
-      <Group title="Limits">
+      <Group title="Limits" hint="How much of each plan is left, read from each Mac every five minutes.">
         <Notice>
-          No plan data yet. It shows once a Claude or Codex provider has run on an online Mac.{" "}
-          <Link to="/settings/providers" className="underline underline-offset-2">Open AI providers</Link>
+          Nothing to show yet. Once a Claude or Codex AI runs on a Mac, its limits appear here within five minutes.{" "}
+          <Link to="/settings/providers" className="underline underline-offset-2">Open Your AI</Link>
         </Notice>
       </Group>
     );
@@ -132,7 +132,7 @@ function NoticeRow({ identity, view }: { identity: LimitsIdentity; view: Provide
         <span className="text-muted-foreground">{noticeOf(identity)}</span>
       </span>
       <Link to="/settings/providers" className="shrink-0 underline underline-offset-2 hover:text-foreground">
-        Open AI providers
+        Open Your AI
       </Link>
     </div>
   );
@@ -316,45 +316,44 @@ function CostUsage({ view }: { view: ProvidersView }) {
   const jobRows = [...byJob.entries()].map(([k, totals]) => ({ key: k, name: k, totals, rank: totals.costUsd })).sort((a, b) => b.rank - a.rank);
 
   return (
-    <Group
-      title="Calls and cost"
-      action={
-        <div role="radiogroup" aria-label="Period" className="flex flex-wrap gap-1.5">
-          {USAGE_PERIODS.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              role="radio"
-              aria-checked={days === p.id}
-              onClick={() => setDays(p.id)}
-              className={cn(
-                "h-8 rounded-md border px-3 text-xs transition-colors",
-                days === p.id ? "border-violet-500/60 bg-violet-500/10 text-foreground" : "border-border text-muted-foreground hover:bg-accent hover:text-foreground",
-              )}
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
-      }
-    >
-      <p className="text-xs text-muted-foreground">
-        {total.calls ? (
-          <>
-            {total.calls} calls · {tokensLabel(total.tokens)} tokens in the last {period}. Spent on the API key: ${paid.costUsd.toFixed(2)}
-            {paid.calls ? ` (${paid.calls} call${paid.calls === 1 ? "" : "s"})` : ""}.
-          </>
-        ) : (
-          <>Nothing ran in the last {period}.</>
-        )}
-      </p>
-      {total.calls > 0 && (
-        <>
-          <Footnote>Subscription calls show what they would cost at API prices.</Footnote>
-          {table("Provider", providerRows)}
-          {table("Job", jobRows)}
-        </>
-      )}
-    </Group>
+    <>
+      <div role="radiogroup" aria-label="Period" className="flex flex-wrap gap-1.5">
+        {USAGE_PERIODS.map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            role="radio"
+            aria-checked={days === p.id}
+            onClick={() => setDays(p.id)}
+            className={cn(
+              "h-8 rounded-md border px-3 text-xs transition-colors",
+              days === p.id ? "border-violet-500/60 bg-violet-500/10 text-foreground" : "border-border text-muted-foreground hover:bg-accent hover:text-foreground",
+            )}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+      <Group
+        title="Summary"
+        hint={
+          total.calls ? (
+            <>
+              {total.calls} calls · {tokensLabel(total.tokens)} tokens in the last {period}. Spent on the API key: ${paid.costUsd.toFixed(2)}
+              {paid.calls ? ` (${paid.calls} call${paid.calls === 1 ? "" : "s"})` : ""}.
+            </>
+          ) : (
+            <>Nothing ran in the last {period}.</>
+          )
+        }
+      >
+        <Footnote>Everything else ran on your subscriptions. Its cost is what the same calls would cost at API prices.</Footnote>
+      </Group>
+
+      <Group title="By AI">{table("AI", providerRows)}</Group>
+      <Group title="By job" hint="Content Workshop, Caption Studio, the Analyzer and Video Notes.">
+        {table("Job", jobRows)}
+      </Group>
+    </>
   );
 }

@@ -82,14 +82,12 @@ describe("a server on this Mac signs in from other devices only once a password 
 });
 
 describe("the Mac app pairs itself on a server on this Mac", () => {
-  it("puts the default providers on the owner's first Mac, and leaves a chosen Mac alone", async () => {
+  it("pairs a Mac and adds no provider: nothing is connected until the person presses Connect", async () => {
     vi.stubEnv("CT_LOCAL", "1");
     const { providerSettings } = await import("./lib/providers");
     const cookie = cookieOf(await login("127.0.0.1", "tinyacrobatics1"));
     const pair = async (name: string) => (await (await post("127.0.0.1", "/api/devices", { name }, cookie)).json()) as { device: { id: string } };
-    const first = await pair("Studio Mac");
-    expect(providerSettings().instances.map((i) => i.device)).toEqual([first.device.id]);
-    await pair("Second Mac");
-    expect(providerSettings().instances.map((i) => i.device)).toEqual([first.device.id]);
+    await pair("Studio Mac");
+    expect(providerSettings().instances).toEqual([]);
   });
 });

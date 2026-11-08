@@ -195,7 +195,7 @@ private func runStream<S: RunStream>(cli: String, args: [String], cwd: URL, env:
     process.executableURL = URL(fileURLWithPath: cli)
     process.arguments = args
     process.currentDirectoryURL = cwd
-    process.environment = env
+    process.environment = withBinaryOnPath(env, binary: cli)
     let input = Pipe()
     let output = Pipe()
     // stderr goes to a file: a pipe nobody reads yet would stall the run and hold its slot

@@ -86,7 +86,7 @@ describe("routing: whose providers answer an account's job", () => {
     // old settings that shared the workspace's AI with the team are ignored
     await saveSettings(parseSettings({ ...workspace(), shareWithTeam: true, sharedWith: ["casey"] }, "workspace"));
     expect(providerSettings()).not.toHaveProperty("sharedWith");
-    expect(aiFor({ username: "casey", role: "team" }, "workshop", "Workshop")).toEqual({ only: [], off: "No AI provider for your account: add one in Settings → AI providers, or your Anthropic key in Settings → My API keys" });
+    expect(aiFor({ username: "casey", role: "team" }, "workshop", "Workshop")).toEqual({ only: [], off: "No AI for your account: add one in Settings → Your AI, or your Anthropic key in Settings → My API keys" });
     expect(aiFor({ username: "alex", role: "admin" }, "workshop", "Workshop").mac?.provider).toMatchObject({ scope: "workspace" });
     expect(aiFor(undefined, "notes", "Video Notes").off).toBe("This AI call names no account"); // nobody named: nobody's providers
     expect(aiFor({ username: "jordan", role: "team" }, "captions", "Caption Studio").mac?.provider).toMatchObject({ scope: "jordan" }); // own still answers
@@ -97,7 +97,7 @@ describe("routing: whose providers answer an account's job", () => {
       { ...structuredClone(ownSettings("jordan")!), instances: [{ ...ownSettings("jordan")!.instances[0]!, enabled: false }] },
       "jordan",
     );
-    expect(aiFor({ username: "jordan", role: "team" }, "captions", "Caption Studio").off).toMatch(/No AI provider/);
+    expect(aiFor({ username: "jordan", role: "team" }, "captions", "Caption Studio").off).toMatch(/No AI for your account/);
   });
 
   it("a share-link visitor never reaches a provider", () => {

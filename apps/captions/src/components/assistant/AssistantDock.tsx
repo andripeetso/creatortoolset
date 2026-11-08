@@ -32,6 +32,8 @@ import { useThrow } from "./useThrow";
 import { Elapsed, WorkCards } from "./WorkCards";
 import { VideoCards } from "./VideoCard";
 import { ApprovalCards } from "./ApprovalCards";
+import { NoticeLine, WelcomeLine, WelcomePill, useWelcome } from "./Welcome";
+import { openSetupAt, setupFinished, useSetup, useWorkTalk } from "@/lib/setup";
 
 /** Width of the chat docked to the right edge; the page moves over by as much. */
 const DOCK_W = 400;
@@ -62,16 +64,16 @@ function suggestionsFor(path: string): string[] {
 /**
  * The assistant, on every signed-in page (App.tsx): a bubble you can drag or throw to any corner, that opens into
  * the chat. Drag the chat by its header to another corner, or against the right edge to dock it there as a panel
- * beside the page. Its state is the server's (api/assistant.ts): no AI yet = "Install Claude Code first"; an AI = the
- * chat; the choice of setup paths only when asked for (openAssistant("setup")). It starts folded to the bubble. A key it asks for is
- * typed into a password box that saves straight to My API keys. You can talk to it (the mic) and have its replies
- * read aloud (the speaker).
+ * beside the page. Its state is the server's (api/assistant.ts): no AI yet = a line and "Connect your AI" (setup,
+ * step 4); an AI = the chat. It starts folded to the bubble. After setup it says hello once (Welcome.tsx). A key it
+ * asks for is typed into a password box that saves straight to My API keys. You can talk to it (the mic) and have its
+ * replies read aloud (the speaker).
  */
 export function AssistantDock() {
   const me = useMe();
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  const { collapsed, setupAsked, set, quote, setQuote, images: handed } = useAssistant();
+  const { collapsed, set, quote, setQuote, images: handed, notice } = useAssistant();
   const readAloud = useReadAloud();
   const real = !!me;
   const [view, setView] = useState<AssistantView | null>(null);
@@ -94,15 +96,25 @@ export function AssistantDock() {
   }, []);
   const bubbleThrow = useThrow(bubbleRef, false, setPlace);
   const cardThrow = useThrow(cardRef, true, setPlace);
+  const { talk } = useWorkTalk();
+  const setup = useSetup((s) => s.view);
+  const connected = !!view && view.provider !== "none";
+  const welcome = useWelcome({
+    open: !collapsed,
+    eligible: !!view && !!setup && talk !== "chat" && setupFinished(setup) && view.messages.length === 0,
+    connected,
+    user: me?.username ?? "",
+  });
 
   const load = useCallback(async () => {
     const r = await getAssistant();
     if (!r.ok) return;
     setView(r.data);
+    useAssistant.getState().set({ connected: r.data.provider !== "none" });
     setSeenId((s) => (s === undefined ? (r.data.messages.at(-1)?.id ?? null) : s));
   }, []);
 
-  // the provider is read with the view: again on each page (back from Settings → AI providers) and when the window comes back
+  // the AI is read with the view: again on each page (back from Settings → Your AI) and when the window comes back
   useEffect(() => {
     if (real) void load();
   }, [real, load, pathname]);
@@ -294,10 +306,15 @@ export function AssistantDock() {
   const submit = ({ files, ...d }: Draft) => {
     const it: Queued = { id: `${Date.now()}-${queue.length}`, ...d, ...(files.length ? { files: files.map((f) => ({ id: f.id!, name: f.name })) } : {}), ...(quote ? { quote } : {}) };
     setQuote(null);
+    // the first thing sent ends the welcome and any notice a tool left
+    set({ notice: null });
+    welcome.end("sent");
     if (thinking || busy || queue.length) setQueue((q) => [...q, it]);
     // refused or failed: it comes back to the box rather than being lost
     else void send(it).then((ok) => !ok && putBack(it));
   };
+  /** A notice's chip: its words go out as a message. */
+  const chipSend = (text: string) => submit({ ...EMPTY_DRAFT, text });
   const stop = () => void stopTurn().then((r) => r.ok && setView(r.data));
   const steer = (id: string) => {
     setQueue((q) => [...q.filter((x) => x.id === id), ...q.filter((x) => x.id !== id)]);
@@ -314,74 +331,73 @@ export function AssistantDock() {
     if (queue[0]?.id === it.id) setHeld(false);
   };
 
-  if (!real) return null;
-
-  const corner = cornerOf(place);
-
-  if (collapsed) {
-    return (
-      <button
-        ref={bubbleRef}
-        type="button"
-        onPointerDown={bubbleThrow.onPointerDown}
-        onClick={() => {
-          if (bubbleThrow.dragged.current) return;
-          setSeenId(last?.id ?? null);
-          openAssistant();
-        }}
-        aria-label={asking ? "Open the assistant: it asks to do something on your Mac" : unread ? "Open the assistant: a new reply" : "Open the assistant"}
-        style={tint}
-        title="Assistant · drag to move"
-        className={cn(
-          "group fixed z-40 size-14 touch-none rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--tint)] focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-          "motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-50 motion-safe:duration-300",
-          AT[corner],
-        )}
-      >
-        {thinking && <span className="absolute inset-0 rounded-full bg-[color-mix(in_srgb,var(--tint)_50%,transparent)] motion-safe:animate-ping" aria-hidden />}
-        <span
-          className={cn(
-            "relative flex size-full items-center justify-center rounded-full bg-[var(--tint)] text-white shadow-lg shadow-black/25",
-            "transition-transform duration-300 ease-[cubic-bezier(.3,1.6,.5,1)] group-hover:scale-110 group-active:scale-95",
-            unread && "motion-safe:animate-[ct-nudge_0.9s_ease-out_2]",
-          )}
-        >
-          <MessageCircle className="size-6 transition-transform duration-300 group-hover:-rotate-12" aria-hidden />
-          {unread && <span className={cn("absolute top-0.5 right-0.5 size-3.5 rounded-full border-2 border-background", asking ? "bg-amber-400" : "bg-emerald-400")} aria-hidden />}
-        </span>
-        {/* its line beside the bubble, on the page's side of whichever corner it sits in */}
-        <span
-          className={cn(
-            "pointer-events-none absolute top-1/2 -translate-y-1/2 rounded-full border bg-popover px-4 py-2 text-sm whitespace-nowrap text-popover-foreground shadow-md",
-            corner.endsWith("r") ? "right-full mr-3" : "left-full ml-3",
-          )}
-        >
-          I&apos;m here if you need me.
-        </span>
-      </button>
-    );
-  }
-
-  const close = () => {
+  const close = useCallback(() => {
+    welcome.end("closed");
     setSeenId(last?.id ?? null);
     setClosing(true);
     setTimeout(() => {
       setClosing(false);
       set({ collapsed: true });
     }, 160);
-  };
+  }, [last?.id, set, welcome.end]);
 
-  const pick = (how: "self" | "chat") => {
-    set({ setupAsked: false });
-    if (how === "self") navigate("/?setup=how");
-    else void send({ text: "Set me up. Go one step at a time." });
-  };
+  // once the welcome has been said, a press outside the card and the bubble closes the dock, as the X does
+  useEffect(() => {
+    if (welcome.stage !== "ready") return;
+    const away = (e: PointerEvent) => {
+      const t = e.target as Node;
+      if (cardRef.current?.contains(t) || bubbleRef.current?.contains(t)) return;
+      welcome.end("away");
+      close();
+    };
+    document.addEventListener("pointerdown", away);
+    return () => document.removeEventListener("pointerdown", away);
+  }, [welcome.stage, welcome.end, close]);
 
-  const later = () => set({ collapsed: true, setupAsked: false });
+  if (!real) return null;
 
-  const connected = !!view && view.provider !== "none";
-  const showChoice = connected && setupAsked;
-  const chatting = connected && !showChoice;
+  const corner = cornerOf(place);
+
+  if (collapsed) {
+    return (
+      <>
+        <button
+          ref={bubbleRef}
+          type="button"
+          onPointerDown={bubbleThrow.onPointerDown}
+          onClick={() => {
+            if (bubbleThrow.dragged.current) return;
+            setSeenId(last?.id ?? null);
+            openAssistant();
+          }}
+          aria-label={asking ? "Open the assistant: it asks to do something on your Mac" : unread ? "Open the assistant: a new reply" : "Open the assistant"}
+          style={tint}
+          title="Assistant · drag to move"
+          className={cn(
+            "group fixed z-40 size-14 touch-none rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--tint)] focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+            "motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-50 motion-safe:duration-300",
+            AT[corner],
+          )}
+        >
+          {thinking && <span className="absolute inset-0 rounded-full bg-[color-mix(in_srgb,var(--tint)_50%,transparent)] motion-safe:animate-ping" aria-hidden />}
+          <span
+            className={cn(
+              "relative flex size-full items-center justify-center rounded-full bg-[var(--tint)] text-white shadow-lg shadow-black/25",
+              "transition-transform duration-300 ease-[cubic-bezier(.3,1.6,.5,1)] group-hover:scale-110 group-active:scale-95",
+              unread && "motion-safe:animate-[ct-nudge_0.9s_ease-out_2]",
+            )}
+          >
+            <MessageCircle className="size-6 transition-transform duration-300 group-hover:-rotate-12" aria-hidden />
+            {unread && <span className={cn("absolute top-0.5 right-0.5 size-3.5 rounded-full border-2 border-background", asking ? "bg-amber-400" : "bg-emerald-400")} aria-hidden />}
+          </span>
+        </button>
+        {/* the one "I'm here if you need me" after the welcome, once */}
+        {welcome.pillDue && <WelcomePill corner={corner} onOpen={openAssistant} onDone={welcome.pillDone} />}
+      </>
+    );
+  }
+
+  const chatting = connected;
   const empty = chatting && !view.messages.length;
   const pending = view?.pending;
   const headBtn = "flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40";
@@ -510,26 +526,24 @@ export function AssistantDock() {
 
         {view?.provider === "none" && (
           <div className="flex h-full flex-col items-start justify-end gap-3 pb-2 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2">
-            <p className="text-base font-semibold">Install Claude Code first</p>
-            <p className="text-muted-foreground">The assistant runs on your own Claude, on this Mac and your own plan. Install it and sign in, then come back:</p>
-            <pre className="w-full select-all rounded bg-muted px-2 py-1.5 text-xs">npm install -g @anthropic-ai/claude-code{"\n"}claude</pre>
-            <Button size="sm" variant="outline" onClick={() => navigate("/?setup=ai")}>Check again</Button>
-          </div>
-        )}
-
-        {showChoice && (
-          <div className="flex h-full flex-col justify-end gap-3 pb-1 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2">
-            <p>Want help setting up Creator Toolset?</p>
-            <div className="flex flex-col gap-2">
-              <Button variant="outline" onClick={() => pick("self")}>Do it myself (click through the setup)</Button>
-              <Button onClick={() => pick("chat")} disabled={busy}>Set up with chat</Button>
-              <Button variant="ghost" onClick={later}>Later</Button>
-            </div>
+            {notice && <NoticeLine notice={notice} />}
+            {welcome.showing ? (
+              <WelcomeLine text={welcome.shown} typing={welcome.stage === "typing"} />
+            ) : (
+              <p className="text-base font-semibold">The assistant needs your AI connected first.</p>
+            )}
+            {(!welcome.showing || welcome.stage === "ready") && (
+              <Button size="sm" onClick={() => openSetupAt("ai")}>
+                Connect your AI
+              </Button>
+            )}
           </div>
         )}
 
         {empty && !showPast && (
           <div className="flex h-full flex-col justify-end gap-2 pb-1">
+            {notice && <NoticeLine notice={notice} onChip={chipSend} />}
+            {welcome.showing && <WelcomeLine text={welcome.shown} typing={welcome.stage === "typing"} />}
             {suggestionsFor(pathname).map((s, i) => (
               <button
                 key={`${pathname}-${s}`}
@@ -561,6 +575,7 @@ export function AssistantDock() {
                   : undefined;
               return <Message key={m.id} m={m} onRetry={retry} />;
             })}
+            {notice && <NoticeLine notice={notice} onChip={chipSend} />}
           </div>
         )}
 

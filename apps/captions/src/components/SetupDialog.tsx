@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
-import { useLocation, useSearchParams } from "react-router";
+import { useEffect, useState } from "react";
+import { useLocation, useNavigate, useSearchParams } from "react-router";
 import {
-  ArrowRight,
   AtSign,
   CheckCircle2,
   CircleEllipsis,
@@ -14,36 +13,62 @@ import {
   Newspaper,
   ScreenShare,
   Smartphone,
+  Sparkles,
   X,
   type LucideIcon,
 } from "lucide-react";
-import { readiness, TOOL_NAMES, TOOLS, type Tool } from "@contracts/tools";
-import { MAKES, type Make, type WorkPrefs } from "@contracts/work-prefs";
+import { NEED_SENTENCE, NEED_SHORT, TOOL_NAMES, TOOLS, readiness, type Have, type Need, type Tool } from "@contracts/tools";
+import { MY_KEYS, type MyKeyEnv } from "@contracts/service-keys";
+import { MAKES, type Make } from "@contracts/work-prefs";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { ProvidersSection } from "@/components/settings/ProvidersSection";
+import { ConnectorsSection } from "@/components/settings/ConnectorsSection";
 import { MyKeysSection } from "@/components/settings/MyKeysSection";
 import { ProjectForm } from "@/components/workshop/ProjectForm";
-import { AccountStep, hasAccountBridge } from "@/components/setup/AccountStep";
+import { AiPanel } from "@/components/setup/AiPanel";
 import { Choice } from "@/components/setup/Choice";
-import { ConnectStep, HowPicker } from "@/components/setup/OwnAi";
-import { PlanQuestion, ToolNeeds, ToolsPicker } from "@/components/setup/ToolNeeds";
+import { HowPicker } from "@/components/setup/HowPicker";
+import { ToolsPicker } from "@/components/setup/ToolNeeds";
 import { canUse, useMe } from "@/lib/auth";
 import { openAssistant } from "@/lib/assistant";
-import { MAKE_NAMES, setupFinished, setupSteps, toolsFor, useSetup, useSetupLive, type SetupStep } from "@/lib/setup";
+import {
+  MAKE_NAMES,
+  SETUP_STEPS,
+  dismissSetup,
+  openSetupAt,
+  rememberLater,
+  setupOpen,
+  setupStepFromParam,
+  toolsFor,
+  useSetup,
+  useSetupLive,
+  useWorkPrefs,
+  useWorkTalk,
+  type SetupStep,
+} from "@/lib/setup";
 import { createProject } from "@/lib/workshop";
 import { useWorkspace } from "@/lib/workspace";
 import { cn } from "@/lib/utils";
 
-/** Each step: the question as its title, one line under it. */
+/** Each step: its title and the line under it (SPEC 2.1, 3 to 6, 2.4). The same five steps on every path. */
 const STEP: Record<SetupStep, { title: string; hint: string }> = {
-  how: { title: "How do you want to work?", hint: "Pick one. You can change it any time in Settings." },
-  make: { title: "What will you make?", hint: "Pick everything that fits. It switches on the right tools for you." },
-  tools: { title: "Your tools", hint: "Ticked from what you make. Each tool asks for what it needs the first time you open it." },
-  project: { title: "Your first project", hint: "One project per brand or channel: its name, your handle, and who it's for." },
-  ai: { title: "Connect your AI", hint: "The AI runs on your own Claude Code or Codex, on this Mac and your own plan. The assistant needs Claude Code." },
-  connect: { title: "Add Creator Toolset to your AI", hint: "One click adds it to the Claude Code or Codex on this Mac, with a key only for you." },
-  left: { title: "Almost done", hint: "All optional: set up what you want now. Each tool asks again when you open it, and Settings → Setup has it all." },
+  how: {
+    title: "How do you work best?",
+    hint: "Let's get you set up. Don't worry, nothing here locks you in, and you don't have to get it perfect. You can change any of it later in Settings → Setup.",
+  },
+  make: { title: "What will you make?", hint: "Pick what fits. Each one turns on the tools you'll use. You can change this any time in Settings → Setup." },
+  project: {
+    title: "Your first project",
+    hint: "Name it and pick a colour. Add where you post if you like. All optional, and you can add more later.",
+  },
+  ai: {
+    title: "Connect your AI",
+    hint: "Creator Toolset uses the AI you already have on this Mac. Nothing connects until you press a button.",
+  },
+  done: {
+    title: "You're ready to start",
+    hint: "You're in a good enough place to start. There's more you can connect: add keys now or later, or the assistant can take it from here.",
+  },
 };
 
 const MAKE_ICONS: Record<Make, LucideIcon> = {
@@ -51,31 +76,56 @@ const MAKE_ICONS: Record<Make, LucideIcon> = {
   recording: ScreenShare, newsletter: Mail, thread: AtSign, article: Newspaper, other: CircleEllipsis,
 };
 
-/** Closing setup hides it until the app opens again (sessionStorage) and remembers the step for "Finish setting up". */
-const LATER = "ct-setup-later";
-const stored = (key: string) => {
-  try {
-    return sessionStorage.getItem(key);
-  } catch {
-    return null; // no storage: it just opens again on the next page load
-  }
-};
-
 const PROJECT_FORM = "ct-setup-project";
+const SAVED_NOTE = "Your setup is saved. You'll find the rest on Home.";
+const BAR = SETUP_STEPS.slice(1); // the progress bar's four steps (the welcome has none)
 
-const putPrefs = (p: Partial<WorkPrefs>) =>
-  fetch("/api/work-prefs", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(p) }).catch(() => {});
+const isKey = (h: Have): h is MyKeyEnv => MY_KEYS.some((k) => k.env === h);
+const joinNames = (xs: string[]) => new Intl.ListFormat("en", { style: "long", type: "conjunction" }).format(xs);
+
+/** The optional needs still missing for the ticked tools, one row per need (named by its first key or login). */
+function moreNeeds(tools: Tool[], have: Have[]): Need[] {
+  const seen = new Map<Have, Need>();
+  for (const t of tools) for (const n of readiness(t, have).extra) if (!seen.has(n.anyOf[0]!)) seen.set(n.anyOf[0]!, n);
+  return [...seen.values()];
+}
+
+/** One row of "More you can connect": its key form or sign-in opens in place; the rest go to the place that sets them up. */
+function MoreRow({ need }: { need: Need }) {
+  const [open, setOpen] = useState(false);
+  const here = useLocation();
+  const navigate = useNavigate();
+  const h = need.anyOf[0]!;
+  const inline = need.form === "keys" || need.form === "apify";
+  const act = () => {
+    if (inline) setOpen(!open);
+    else if (need.form === "ai" || need.form === "project") openSetupAt(need.form === "ai" ? "ai" : "project");
+    else navigate("/library");
+  };
+  return (
+    <li className="py-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium">{NEED_SHORT[h]}</p>
+          <p className="text-xs text-muted-foreground">{NEED_SENTENCE[h]}</p>
+        </div>
+        <Button size="sm" variant="outline" className="shrink-0" onClick={act}>
+          {need.form === "keys" ? "Add key" : "Set up"}
+        </Button>
+      </div>
+      {open && inline && (
+        <div className="mt-3">
+          {need.form === "keys" ? <MyKeysSection only={need.anyOf.filter(isKey)} /> : <ConnectorsSection back={here.pathname + here.search} compact />}
+        </div>
+      )}
+    </li>
+  );
+}
 
 /**
- * First-run setup, one step at a time in one window: how they want to use it (work-prefs `talk`), then setupSteps for
- * that answer: what they make (work-prefs `makes`, it pre-ticks the tools) → which tools → first project (Workshop or
- * Analyzer) → AI (a tool that uses it) → connect their own AI → what's left. No sign-in here: it is optional, in What's
- * left and Settings → Setup. Each step is the same form as in Settings, so nothing here is a second copy.
- *
- * Opens by itself until Done on the last step (setupFinished). Closing it (the X, Escape, Finish later) only hides it
- * until the app opens again; a click outside does nothing, so moving the window by its title bar never closes it. While
- * hidden, Home shows "Finish setting up", which reopens it at the step they left (?setup=<step>). On a phone it is a
- * full-screen sheet.
+ * First-run setup in one window, five fixed steps: how you work → what you make (ticks the tools) → your first project
+ * → your AI (found on this Mac, nothing connected until pressed) → ready. Not now (the X, the footer link, Escape) hides
+ * it for this browser and remembers the step; Home's card brings it back. A click outside never closes it.
  */
 export function SetupDialog() {
   const me = useMe();
@@ -83,241 +133,254 @@ export function SetupDialog() {
   const view = useSetup((s) => s.view);
   const load = useSetup((s) => s.load);
   const save = useSetup((s) => s.save);
+  const prefs = useWorkPrefs((s) => s.prefs);
+  const loadPrefs = useWorkPrefs((s) => s.load);
+  const { talk, setTalk } = useWorkTalk();
   const { projects, loaded, load: loadProjects } = useWorkspace();
-  const { pathname } = useLocation();
+  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const [ticked, setTicked] = useState<Tool[] | null>(null);
-  const [prefs, setPrefs] = useState<WorkPrefs | null>(null);
-  const [later, setLater] = useState(() => stored(LATER) !== null);
+  const [aiOn, setAiOn] = useState(false);
+  const [note, setNote] = useState(false);
+  const [named, setNamed] = useState(false); // the project form reports when it has a name: Create stays off until then
+  const [unsure, setUnsure] = useState<boolean | null>(null); // "Not sure yet" ticked here; null = read it from the saved answers
   const asked = params.get("setup");
-  const talk = prefs?.talk ?? "app";
-  const makes = prefs?.makes ?? [];
-  const finished = !!view && !!prefs && setupFinished(view, talk);
-  const open = real && !!view && !!prefs && (asked !== null || (!finished && !later));
+  const open = real && !!prefs && setupOpen(view, asked);
 
   useEffect(() => {
     if (real) void load();
   }, [real, load]);
   useEffect(() => {
-    if (!real) return;
-    void fetch("/api/work-prefs")
-      .then((r) => (r.ok ? (r.json() as Promise<WorkPrefs>) : null))
-      .then((w) => setPrefs(w ?? { talk: "app", check: "app", editor: null, makes: [] }))
-      .catch(() => {});
-  }, [real]);
+    if (real) void loadPrefs();
+  }, [real, loadPrefs]);
   useEffect(() => {
     if (open && !loaded) void loadProjects();
   }, [open, loaded, loadProjects]);
+  useEffect(() => {
+    if (!note) return;
+    const t = window.setTimeout(() => setNote(false), 4000);
+    return () => window.clearTimeout(t);
+  }, [note]);
   useSetupLive(open);
-  const savePlan = useCallback((plan: Parameters<typeof save>[0]["plan"]) => void save({ plan }), [save]);
+
+  const savedNote = note ? (
+    <p role="status" className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-full border border-border bg-popover px-4 py-2 text-xs text-popover-foreground shadow-lg motion-safe:animate-in motion-safe:fade-in">
+      {SAVED_NOTE}
+    </p>
+  ) : null;
 
   if (!real || !view || !prefs) return null;
+  if (!open) return savedNote;
+
   const mine = TOOLS.filter((t) => canUse(me, t));
-  const tools = ticked ?? view.tools ?? [];
-  const steps = setupSteps(tools, talk);
-  const step = steps.find((s) => s === asked) ?? steps[0]!;
-  const at = steps.indexOf(step);
+  const makes = prefs.makes;
+  const tools = ticked ?? view.tools ?? toolsFor(makes, mine);
+  const step: SetupStep = setupStepFromParam(asked) ?? "how";
+  const at = SETUP_STEPS.indexOf(step);
+  const last = at === SETUP_STEPS.length - 1;
+  const newProject = step === "project" && !projects.length;
   const to = (s: SetupStep) => setParams((p) => (p.set("setup", s), p), { replace: true });
+
   const close = () => {
-    try {
-      sessionStorage.setItem(LATER, step);
-    } catch {
-      /* see stored() */
-    }
-    setLater(true);
+    rememberLater(step);
+    dismissSetup();
+    setNote(true);
     setParams((p) => (p.delete("setup"), p), { replace: true });
-  };
-
-  // hidden, not finished: Home offers the way back
-  if (!open) {
-    if (finished || pathname !== "/") return null;
-    return (
-      <button
-        type="button"
-        onClick={() => to(steps.find((s) => s === stored(LATER)) ?? step)}
-        // top middle, in the bar's empty space (between the name and the project switcher), never over a tool
-        className="fixed left-1/2 top-[max(0.75rem,env(safe-area-inset-top))] z-40 flex h-8 -translate-x-1/2 items-center gap-2 rounded-full border border-[color-mix(in_srgb,var(--tint)_45%,transparent)] bg-[color-mix(in_srgb,var(--tint)_10%,transparent)] pl-3.5 pr-1 text-xs font-medium text-foreground transition-colors hover:bg-[color-mix(in_srgb,var(--tint)_18%,transparent)] motion-safe:animate-in motion-safe:fade-in"
-      >
-        Finish setting up
-        <span className="flex size-6 items-center justify-center rounded-full bg-[var(--tint)] text-white">
-          <ArrowRight className="size-3.5" />
-        </span>
-      </button>
-    );
-  }
-
-  const finish = () => {
-    void save({ done: true });
-    setTicked(null);
-    setParams((p) => (p.delete("setup"), p), { replace: true });
-    // working in the app: setup ends on the assistant, where a dropped video and one sentence get it done
-    if (talk !== "chat") openAssistant();
   };
   const next = async () => {
     if (step === "make") {
-      await putPrefs({ makes });
-      if (makes.length) setTicked(toolsFor(makes, mine));
+      await useWorkPrefs.getState().put({ makes });
+      await save({ tools });
     }
-    if (step === "tools") await save({ tools });
-    const n = setupSteps(step === "make" && makes.length ? toolsFor(makes, mine) : tools, talk)[at + 1];
-    if (n) to(n);
-    else finish();
+    to(SETUP_STEPS[at + 1]!);
   };
-  const pickTalk = (t: WorkPrefs["talk"]) => {
-    to(step); // the open step in the address keeps it open: "In my own AI" can make an early-closed setup count as finished
-    setPrefs({ ...prefs, talk: t });
-    void putPrefs({ talk: t });
+  const finish = async () => {
+    await save({ done: true }).catch(() => {});
+    dismissSetup();
+    setParams((p) => (p.delete("setup"), p), { replace: true });
+    // working in the app: setup ends on the assistant, where a dropped video and one sentence get it done
+    if (talk !== "chat") openAssistant();
+    navigate("/review");
   };
-  const toggleMake = (m: Make) =>
-    setPrefs({ ...prefs, makes: makes.includes(m) ? makes.filter((x) => x !== m) : MAKES.filter((x) => x === m || makes.includes(x)) });
-  const blocked = step === "tools" && !tools.length;
-  const last = at === steps.length - 1;
-  const newProject = step === "project" && !projects.length;
+  const setMakes = (next: Make[]) => {
+    useWorkPrefs.setState({ prefs: { ...prefs, makes: next } });
+    setTicked(toolsFor(next, mine));
+  };
+  const toggleMake = (m: Make) => {
+    setUnsure(false);
+    setMakes(makes.includes(m) ? makes.filter((x) => x !== m) : MAKES.filter((x) => x === m || makes.includes(x)));
+  };
+  // "Not sure yet" is exclusive: on = every tool on and no answer ticked; picking an answer turns it off again
+  const notSure = unsure ?? (makes.length === 0 && tools.length > 0 && tools.length === mine.length);
+  const pickNotSure = () => {
+    setMakes([]);
+    setUnsure(!notSure);
+    if (!notSure) setTicked([...mine]);
+  };
+  const readyTools = TOOLS.filter((t) => (t === "review" || tools.includes(t)) && readiness(t, view.have).ready);
+  const more = moreNeeds(tools, view.have);
+  const assistantOn = view.have.includes("ai");
 
   return (
-    <Dialog open onOpenChange={(o) => !o && close()}>
-      <DialogContent
-        showCloseButton={false}
-        // a press outside (the Mac window's title bar, the page behind) never closes setup
-        onInteractOutside={(e) => e.preventDefault()}
-        onOpenAutoFocus={(e) => e.preventDefault()}
-        className={cn(
-          // as tall as the step needs, its top fixed below the window's title bar: a step change only moves the bottom edge
-          "top-[max(4rem,12dvh)] flex max-h-[min(680px,calc(100dvh-max(4rem,12dvh)-2rem))] w-[min(820px,calc(100vw-3rem))] max-w-none translate-y-0 flex-col gap-0 overflow-hidden rounded-2xl p-0 shadow-2xl shadow-black/40 sm:max-w-none",
-          "max-sm:top-0 max-sm:h-dvh max-sm:max-h-none max-sm:w-screen max-sm:rounded-none max-sm:border-0 max-sm:pt-[env(safe-area-inset-top)]",
-        )}
-      >
-        <header className="shrink-0 px-6 pt-5 sm:px-8">
-          <div className="flex items-center gap-3">
-            <ol className="flex flex-1 gap-1.5" aria-label={`Step ${at + 1} of ${steps.length}`}>
-              {steps.map((s, i) => (
-                <li key={s} className="flex-1">
-                  <button
-                    type="button"
-                    onClick={() => i < at && to(s)}
-                    disabled={i >= at}
-                    aria-label={STEP[s].title}
-                    title={STEP[s].title}
-                    className="block h-1.5 w-full rounded-full bg-muted transition-colors enabled:cursor-pointer enabled:hover:brightness-125"
-                  >
-                    <span className={cn("block h-full rounded-full transition-[width,background-color] duration-300", i <= at ? "w-full bg-[var(--tint)]" : "w-0")} />
-                  </button>
-                </li>
-              ))}
-            </ol>
-            <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-              {at + 1} / {steps.length}
-            </span>
-            <button
-              type="button"
-              onClick={close}
-              aria-label="Finish later"
-              title="Finish later"
-              className="-mr-2 flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            >
-              <X className="size-4" />
-            </button>
-          </div>
-          {step === "how" && <p className="mt-5 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--tint-text)]">Welcome to Creator Toolset</p>}
-          <DialogTitle className={cn("text-2xl font-semibold tracking-tight", step === "how" ? "mt-1.5" : "mt-5")}>{STEP[step].title}</DialogTitle>
-          <DialogDescription className="mt-1.5 text-sm">{STEP[step].hint}</DialogDescription>
-        </header>
-
-        <div key={step} className="min-h-0 flex-1 overflow-y-auto px-6 pb-5 pt-5 sm:px-8 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-right-2 motion-safe:duration-200">
-          {step === "how" && <HowPicker value={talk} onPick={pickTalk} />}
-          {step === "make" && (
-            <div className="grid gap-2 sm:grid-cols-2" role="group" aria-label="What will you make?">
-              {MAKES.map((m) => (
-                <Choice key={m} multi on={makes.includes(m)} onClick={() => toggleMake(m)} icon={MAKE_ICONS[m]} name={MAKE_NAMES[m]} />
-              ))}
+    <>
+      {savedNote}
+      <Dialog open onOpenChange={(o) => !o && close()}>
+        <DialogContent
+          showCloseButton={false}
+          // a press outside (the Mac window's title bar, the page behind) never closes setup
+          onInteractOutside={(e) => e.preventDefault()}
+          onOpenAutoFocus={(e) => e.preventDefault()}
+          className={cn(
+            // as tall as the step needs, its top fixed below the window's title bar: a step change only moves the bottom edge
+            "top-[max(4rem,12dvh)] flex max-h-[min(680px,calc(100dvh-max(4rem,12dvh)-2rem))] w-[min(820px,calc(100vw-3rem))] max-w-none translate-y-0 flex-col gap-0 overflow-hidden rounded-2xl p-0 shadow-2xl shadow-black/40 sm:max-w-none",
+            "max-sm:top-0 max-sm:h-dvh max-sm:max-h-none max-sm:w-screen max-sm:rounded-none max-sm:border-0 max-sm:pt-[env(safe-area-inset-top)]",
+          )}
+        >
+          <header className="shrink-0 px-6 pt-5 sm:px-8">
+            <div className="flex items-center gap-3">
+              {/* the welcome has no bar; from step 2 the bar counts the four steps after it, a total that never changes */}
+              {step !== "how" && (
+                <>
+                  <ol className="flex flex-1 gap-1.5" aria-label={`Step ${at} of ${BAR.length}`}>
+                    {BAR.map((s, i) => (
+                      <li key={s} className="flex-1">
+                        <button
+                          type="button"
+                          onClick={() => i + 1 < at && to(s)}
+                          disabled={i + 1 >= at}
+                          aria-label={STEP[s].title}
+                          title={STEP[s].title}
+                          className="block h-1.5 w-full rounded-full bg-muted transition-colors enabled:cursor-pointer enabled:hover:brightness-125"
+                        >
+                          <span className={cn("block h-full rounded-full transition-[width,background-color] duration-300", i + 1 <= at ? "w-full bg-[var(--tint)]" : "w-0")} />
+                        </button>
+                      </li>
+                    ))}
+                  </ol>
+                  <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                    {at} of {BAR.length}
+                  </span>
+                </>
+              )}
+              {step === "how" && <span className="flex-1" />}
+              <button
+                type="button"
+                onClick={close}
+                aria-label="Not now"
+                title="Not now"
+                className="-mr-2 flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                <X className="size-4" />
+              </button>
             </div>
-          )}
-          {step === "tools" && <ToolsPicker tools={mine} value={tools} onChange={setTicked} />}
-          {step === "project" &&
-            (projects.length ? (
-              <p className="rounded-xl border border-border/60 bg-card/40 p-4 text-sm text-muted-foreground">
-                You have {projects.length === 1 ? `a project: ${projects[0]!.name}` : `${projects.length} projects`}. Add more from the Workshop's project switcher.
-              </p>
-            ) : (
-              <ProjectForm formId={PROJECT_FORM} busy={false} onSave={(f) => createProject(f).then(() => void next())} />
-            ))}
-          {step === "ai" && (
-            <>
-              <ProvidersSection brief />
-              <div className="mt-6">
-                <PlanQuestion view={view} onSave={savePlan} />
-              </div>
-              <details className="group mt-6 rounded-xl border border-border/60 bg-card/40">
-                <summary className="cursor-pointer list-none px-4 py-3 text-sm text-muted-foreground hover:text-foreground">
-                  No Claude Code or Codex? Use an Anthropic API key instead (not for the Content Workshop)
-                </summary>
-                <div className="px-4 pb-4">
-                  <MyKeysSection only={["ANTHROPIC_API_KEY"]} />
+            {step === "how" && <p className="mt-5 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--tint-text)]">Welcome to Creator Toolset</p>}
+            <DialogTitle className={cn("text-2xl font-semibold tracking-tight", step === "how" ? "mt-1.5" : "mt-5")}>{STEP[step].title}</DialogTitle>
+            <DialogDescription className="mt-1.5 text-sm">{STEP[step].hint}</DialogDescription>
+          </header>
+
+          <div key={step} className="min-h-0 flex-1 overflow-y-auto px-6 pb-5 pt-5 sm:px-8 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-right-2 motion-safe:duration-200">
+            {step === "how" && <HowPicker value={prefs.talk} onChange={(t) => void setTalk(t)} />}
+
+            {step === "make" && (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-1.5 min-[720px]:grid-cols-3" role="group" aria-label="What will you make?">
+                  {MAKES.map((m) => (
+                    <Choice key={m} dense multi on={!notSure && makes.includes(m)} onClick={() => toggleMake(m)} icon={MAKE_ICONS[m]} name={MAKE_NAMES[m]} />
+                  ))}
+                  <Choice dense multi on={notSure} onClick={pickNotSure} icon={Sparkles} name="Not sure yet, show me everything" />
                 </div>
-              </details>
-            </>
-          )}
-          {step === "connect" && <ConnectStep have={view.have} />}
-          {step === "left" && (
-            <div className="space-y-2">
-              {tools.some((t) => readiness(t, view.have).ready) && (
+                <details className="group rounded-xl border border-border/60 bg-card/40">
+                  <summary className="cursor-pointer list-none px-4 py-3 text-sm text-muted-foreground hover:text-foreground">Your tools: {tools.length} on</summary>
+                  <div className="px-4 pb-4">
+                    <ToolsPicker tools={mine} value={tools} onChange={setTicked} />
+                  </div>
+                </details>
+              </div>
+            )}
+
+            {step === "project" &&
+              (projects.length ? (
+                <p className="rounded-xl border border-border/60 bg-card/40 p-4 text-sm text-muted-foreground">
+                  {projects.length === 1 ? `You have a project: ${projects[0]!.name}.` : `You have ${projects.length} projects.`} Add more from the Workshop's
+                  project switcher.
+                </p>
+              ) : (
+                <ProjectForm
+                  variant="setup"
+                  formId={PROJECT_FORM}
+                  busy={false}
+                  onReady={setNamed}
+                  onSave={(f) => createProject(f).then(() => void next())}
+                />
+              ))}
+
+            {step === "ai" && (
+              <AiPanel talk={prefs.talk} onConnectedChange={setAiOn} />
+            )}
+
+            {step === "done" && (
+              <div className="space-y-4">
                 <p className="flex items-start gap-2 rounded-xl border border-border/60 bg-card/40 px-4 py-3 text-sm">
                   <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-500" />
                   <span>
-                    <span className="font-medium">Ready to use:</span>{" "}
-                    <span className="text-muted-foreground">{tools.filter((t) => readiness(t, view.have).ready).map((t) => TOOL_NAMES[t]).join(", ")}</span>
+                    <span className="font-medium">Ready now:</span>{" "}
+                    <span className="text-muted-foreground">{joinNames(readyTools.map((t) => TOOL_NAMES[t]))}.</span>
                   </span>
                 </p>
+                {prefs.talk !== "chat" && (
+                  <p className="px-1 text-sm text-muted-foreground">
+                    {assistantOn
+                      ? "Your assistant is ready to help. It says hello in the corner."
+                      : "Your assistant needs your AI connected first. You can do that any time in Settings → Your AI."}
+                  </p>
+                )}
+                {more.length > 0 && (
+                  <details className="group rounded-xl border border-border/60 bg-card/40 px-4">
+                    <summary className="cursor-pointer list-none py-3 text-sm text-muted-foreground hover:text-foreground">More you can connect ({more.length})</summary>
+                    <ul className="divide-y divide-border pb-1">
+                      {more.map((n) => (
+                        <MoreRow key={n.anyOf[0]} need={n} />
+                      ))}
+                    </ul>
+                  </details>
+                )}
+              </div>
+            )}
+          </div>
+
+          <footer className="flex shrink-0 items-center justify-between gap-2 border-t border-border/60 px-6 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-8">
+            <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={close}>
+              Not now
+            </Button>
+            <div className="flex items-center gap-2">
+              {step === "ai" && <span className="mr-1 text-xs text-muted-foreground">{aiOn ? "Your AI is connected." : "Nothing is connected yet."}</span>}
+              {at > 0 && (
+                <Button variant="ghost" onClick={() => to(SETUP_STEPS[at - 1]!)}>
+                  Back
+                </Button>
               )}
-              {tools
-                .filter((t) => !readiness(t, view.have).ready)
-                .map((t) => (
-                  <div key={t} className="rounded-xl border border-border/60 bg-card/40 px-4 pt-3">
-                    <ToolNeeds tool={t} have={view.have} missingOnly />
-                  </div>
-                ))}
-              {tools.includes("instagram") && (
-                <p className="px-1 pt-2 text-xs text-muted-foreground">
-                  Instagram login: later. Meta accepts its sign-in only on a web address it has checked, so the app on your Mac can't offer the official Instagram login yet. Until then your own Apify key reads posts (Apify bills you for each read).
-                </p>
+              {newProject && (
+                <Button variant="ghost" className="text-muted-foreground" onClick={() => void next()}>
+                  Skip
+                </Button>
               )}
-              {hasAccountBridge() && (
-                <div className="rounded-xl border border-border/60 bg-card/40 p-4">
-                  <h3 className="mb-2 text-sm font-medium">Account (optional)</h3>
-                  <AccountStep />
-                </div>
+              {last ? (
+                <Button onClick={() => void finish()} className="min-w-28 bg-[var(--tint)] text-white hover:bg-[var(--tint)] hover:brightness-110">
+                  Open Review
+                </Button>
+              ) : (
+                <Button
+                  // a first project: the button submits the project form (its own checks, then Continue)
+                  {...(newProject ? { type: "submit" as const, form: PROJECT_FORM, disabled: !named } : { onClick: () => void next() })}
+                  className="min-w-28 bg-[var(--tint)] text-white hover:bg-[var(--tint)] hover:brightness-110"
+                >
+                  {step === "ai" && !aiOn ? "Continue without connecting" : newProject ? "Create project" : "Continue"}
+                </Button>
               )}
             </div>
-          )}
-        </div>
-
-        <footer className="flex shrink-0 items-center justify-between gap-2 border-t border-border/60 px-6 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-8">
-          <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={close}>
-            Finish later
-          </Button>
-          <div className="flex items-center gap-2">
-            {blocked && <span className="text-xs text-muted-foreground">Pick at least one</span>}
-            {at > 0 && (
-              <Button variant="ghost" onClick={() => to(steps[at - 1]!)}>
-                Back
-              </Button>
-            )}
-            {newProject && (
-              <Button variant="ghost" className="text-muted-foreground" onClick={() => void next()}>
-                Skip
-              </Button>
-            )}
-            <Button
-              // a first project: the button submits the project form (its own checks, then Continue)
-              {...(newProject ? { type: "submit" as const, form: PROJECT_FORM } : { onClick: () => void next() })}
-              disabled={blocked}
-              className="min-w-28 bg-[var(--tint)] text-white hover:bg-[var(--tint)] hover:brightness-110"
-            >
-              {last ? "Done" : newProject ? "Create project" : "Continue"}
-            </Button>
-          </div>
-        </footer>
-      </DialogContent>
-    </Dialog>
+          </footer>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
