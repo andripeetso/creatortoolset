@@ -3,6 +3,7 @@ import { KeyRound, LogOut } from "lucide-react";
 import { logout, useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AiKeyDialog } from "@/components/AiKeyDialog";
 import { Card, Group, Row } from "./ui";
 
@@ -84,26 +85,55 @@ function NameRow() {
   );
 }
 
-/** A new password (POST /api/auth/password): this session stays signed in, every other one is signed out. */
+/** Password: one Change button; the dialog takes the current and new password (POST /api/auth/password), this
+ * session stays signed in and every other one is signed out. */
 function PasswordRow() {
-  const [current, setCurrent] = useState("");
-  const [next, setNext] = useState("");
+  const [open, setOpen] = useState(false);
   const [note, setNote] = useState<string | null>(null);
-  const save = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const r = await fetch("/api/auth/password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ current, password: next }) });
-    const d = (await r.json().catch(() => ({}))) as { error?: string };
-    setNote(r.ok ? "Saved. Other devices are signed out." : (d.error ?? "Could not change it"));
-    if (r.ok) [setCurrent, setNext].forEach((f) => f(""));
-  };
-  const field = "h-8 w-36 rounded-md border border-input bg-transparent px-2 text-sm";
   return (
-    <Row label="Password" hint={note ?? "At least 6 characters."}>
-      <form onSubmit={(e) => void save(e)} className="flex flex-wrap items-center gap-2">
-        <input type="password" autoComplete="current-password" placeholder="Current" value={current} onChange={(e) => setCurrent(e.target.value)} className={field} />
-        <input type="password" autoComplete="new-password" placeholder="New" value={next} onChange={(e) => setNext(e.target.value)} className={field} />
-        <Button type="submit" variant="outline" size="sm" disabled={!current || next.length < 6}>Change</Button>
-      </form>
+    <Row label="Password" hint={note ?? undefined}>
+      <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
+        Change
+      </Button>
+      <PasswordDialog open={open} onClose={() => setOpen(false)} onDone={() => setNote("Changed. Other devices are signed out.")} />
     </Row>
+  );
+}
+
+function PasswordDialog({ open, onClose, onDone }: { open: boolean; onClose: () => void; onDone: () => void }) {
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    setBusy(true);
+    setError("");
+    const r = await fetch("/api/auth/password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ current: f.get("current"), password: f.get("next") }),
+    }).catch(() => null);
+    const d = (await r?.json().catch(() => ({}))) as { error?: string } | undefined;
+    setBusy(false);
+    if (r?.ok) return onDone(), onClose();
+    setError(d?.error ?? "Could not change it");
+  };
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && (setError(""), onClose())}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Change password</DialogTitle>
+          <DialogDescription>Your other devices sign in again with the new one.</DialogDescription>
+        </DialogHeader>
+        <form onSubmit={(e) => void submit(e)} className="grid gap-2">
+          <Input name="current" type="password" autoComplete="current-password" placeholder="Current password" autoFocus required />
+          <Input name="next" type="password" autoComplete="new-password" placeholder="New password (6+ characters)" minLength={6} required />
+          {error && <p className="text-xs text-red-400">{error}</p>}
+          <Button type="submit" disabled={busy}>
+            {busy ? "Saving…" : "Change password"}
+          </Button>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
