@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, Navigate, useLocation, useNavigate } from "react-router";
 import { BarChart3, Compass, Layers, Package, PenLine, Scissors, Type, type LucideIcon } from "lucide-react";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle, FROM_TOP_RIGHT } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { Loading, Notice } from "@/components/settings/ui";
@@ -67,7 +67,7 @@ export default function CommunityPage({ onClose }: { onClose: () => void }) {
     );
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="flex h-[min(900px,calc(100dvh-2rem))] w-[min(1240px,calc(100vw-2rem))] max-w-none flex-col gap-0 overflow-hidden p-0 sm:max-w-none">
+      <DialogContent style={FROM_TOP_RIGHT} className="flex h-[min(900px,calc(100dvh-2rem))] w-[min(1240px,calc(100vw-2rem))] max-w-none flex-col gap-0 overflow-hidden p-0 sm:max-w-none">
         <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border py-3 pl-4 pr-12 md:px-5">
           <DialogTitle className="text-base font-semibold">Community</DialogTitle>
           <Input

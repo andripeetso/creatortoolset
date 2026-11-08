@@ -134,7 +134,7 @@ export function QuickstartDialog() {
           <button
             autoFocus
             onClick={dismiss}
-            className="rounded-md bg-violet-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-violet-500"
+            className="h-9 rounded-md bg-violet-600 px-4 text-sm font-medium text-white hover:bg-violet-500"
           >
             Let's go
           </button>

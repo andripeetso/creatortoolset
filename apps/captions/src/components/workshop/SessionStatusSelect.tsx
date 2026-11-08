@@ -3,11 +3,11 @@ import { SESSION_STATUSES, sessionStatusOf, type SessionMeta, type SessionStatus
 
 const STATUS_CLASS: Record<SessionStatus, string> = {
   draft: "border-zinc-700 text-zinc-400",
-  writing: "border-sky-500/50 text-sky-300",
+  writing: "border-violet-500/50 text-violet-300",
   production: "border-amber-500/50 text-amber-300",
   ready: "border-emerald-500/40 text-emerald-300",
-  editing: "border-orange-500/50 text-orange-300",
-  toPost: "border-teal-400/50 text-teal-200",
+  editing: "border-amber-500/50 text-amber-300",
+  toPost: "border-emerald-400/50 text-emerald-200",
   published: "border-violet-500/50 text-violet-200",
   shelved: "border-zinc-800 text-zinc-600",
 };

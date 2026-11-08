@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { create } from "zustand";
 import type { WorkshopProject } from "./workshop";
 
@@ -104,4 +105,24 @@ export function projectColor(p: { id: string; color?: string } | null | undefine
     if (x.id === p.id) return free;
   }
   return keys.find((k) => !used.has(k)) ?? keys[0];
+}
+
+/** Puts the current project's colour on <html data-tint>, which every violet class follows (tailwind.config.js):
+ *  the tools, buttons and the update pill take the project's colour, not only the home page. */
+export function useRootTint(on: boolean): void {
+  const project = useWorkspace(currentProject);
+  const loaded = useWorkspace((s) => s.loaded);
+  // until the projects arrive, keep what index.html painted from the last visit (no violet flash)
+  const color = !on ? "violet" : loaded ? (project ? projectColor(project) : "violet") : null;
+  useEffect(() => {
+    if (!color) return;
+    const el = document.documentElement;
+    if (color === "violet") delete el.dataset.tint;
+    else el.dataset.tint = color;
+    try {
+      localStorage.setItem("ct-tint", color);
+    } catch {
+      /* private mode: this visit only */
+    }
+  }, [color]);
 }

@@ -148,7 +148,7 @@ function Chart({ s }: { s: Series }) {
               />
             </svg>
             <span
-              className="pointer-events-none absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-violet-400 ring-2 ring-[#131318]"
+              className="pointer-events-none absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-violet-400 ring-2 ring-zinc-950"
               style={{ left: `${x(i)}%`, top: `${top(pts[i].value)}%` }}
             />
           </>

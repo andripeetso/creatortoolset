@@ -25,8 +25,6 @@ import { cornerOf, storePlace, storedPlace, type Corner, type Place } from "@/li
 import { pageContext } from "@/lib/page-context";
 import { speak, stopSpeaking, unlockAudio, useReadAloud } from "@/lib/read-aloud";
 import { cn } from "@/lib/utils";
-import { currentProject, PROJECT_COLORS, projectColor, useWorkspace } from "@/lib/workspace";
-import { useAppearance } from "@/lib/settings";
 import { Composer, PictureOverlay } from "./Composer";
 import { EMPTY_DRAFT, MAX_PICTURES, isLongPaste, isPicture, toPicture, type Draft } from "./draft";
 import { useThrow } from "./useThrow";
@@ -157,9 +155,7 @@ export function AssistantDock() {
   }, [docked]);
 
   // the current project's colour, like the home page's tools (violet when Settings → Appearance turns it off)
-  const project = useWorkspace(currentProject);
-  const { projectTint } = useAppearance();
-  const tint = { "--tint": `rgb(${PROJECT_COLORS[projectTint && project ? projectColor(project) : "violet"].rgb})` } as React.CSSProperties;
+  const tint = { "--tint": "rgb(var(--violet-600))" } as React.CSSProperties; // the project's colour (data-tint on <html>)
 
   const send = async (it: Omit<Queued, "id">): Promise<boolean> => {
     stopSpeaking();

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Download, Eraser, Loader2, Play, Upload, WandSparkles, X } from "lucide-react";
-import { AppBar } from "@/components/AppBar";
+import { Download, Eraser, Loader2, Play, Scissors, Upload, UploadCloud, WandSparkles, X } from "lucide-react";
+import { AppBar, ToolIntro } from "@/components/AppBar";
+import { dropZoneClass } from "@/components/DropZone";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { useMe } from "@/lib/auth";
@@ -262,14 +263,13 @@ export default function StorySplitterPage() {
 
       {!source ? (
         <main className="flex flex-1 flex-col items-center justify-center gap-6 p-6">
+          <ToolIntro icon={Scissors} title="Story Splitter" line="Cut a finished edit into stories of about 20 seconds, in your browser" className="mb-0 mt-0" />
           {busy ? (
             <Progress label={busy.label} p={busy.p} />
           ) : (
             <>
               <div
-                className={`flex w-full max-w-lg flex-col items-center gap-4 rounded-2xl border-2 border-dashed px-6 py-14 text-center ${
-                  dragging ? "border-violet-500 bg-violet-500/5" : "border-zinc-800"
-                }`}
+                className={dropZoneClass(dragging, "max-w-lg gap-4 px-6")}
               >
                 {waiting ? (
                   <>
@@ -277,18 +277,19 @@ export default function StorySplitterPage() {
                       Drop <span className="font-medium text-zinc-50">{waiting.name}</span> again to open its split.
                     </p>
                     <p className="text-sm text-zinc-500">Only the cuts were kept, the video stays on your computer.</p>
-                    {filePicker("Choose it", "flex cursor-pointer items-center gap-2 rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-500")}
+                    {filePicker("Choose it", "flex cursor-pointer items-center gap-2 rounded-md bg-violet-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-violet-500")}
                     <button type="button" className="text-xs text-zinc-500 hover:text-zinc-300" onClick={() => setWaiting(null)}>
                       Cancel
                     </button>
                   </>
                 ) : (
                   <>
-                    <p className="text-base text-zinc-300">Drop a video to split it into stories of about 20 seconds.</p>
+                    <UploadCloud className="h-10 w-10 text-zinc-500" />
+                    <p className="text-base font-semibold">Drop a video to split it into stories of about 20 seconds.</p>
                     <p className="text-sm text-zinc-500">
                       It cuts on the edit's own cuts, in pauses and on the beat. Nothing is uploaded.
                     </p>
-                    {filePicker("Choose a video", "flex cursor-pointer items-center gap-2 rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-500")}
+                    {filePicker("Choose a video", "flex cursor-pointer items-center gap-2 rounded-md bg-violet-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-violet-500")}
                   </>
                 )}
               </div>

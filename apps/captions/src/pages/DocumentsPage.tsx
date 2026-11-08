@@ -20,9 +20,10 @@ import {
   Video,
 } from "lucide-react";
 import { canUse, useAuth } from "@/lib/auth";
+import { useCachedList } from "@/lib/local-cache";
 import { timeAgo } from "@/lib/exports";
 import { isPhoneHub, toolsetHomePath } from "@/lib/mobile";
-import { AppBar } from "@/components/AppBar";
+import { AppBar, ToolIntro } from "@/components/AppBar";
 import { DesktopHint } from "@/components/mobile/DesktopHint";
 import { thumbClipUrl } from "@/lib/clips";
 import {
@@ -35,7 +36,6 @@ import {
   listDocuments,
   patchDocument,
   type DocSource,
-  type DocumentMeta,
   type DocumentRecord,
   type MediaClip,
 } from "@/lib/documents";
@@ -783,7 +783,8 @@ export default function DocumentsPage() {
   const home = toolsetHomePath();
   const phone = isPhoneHub();
   const composing = docId === "new";
-  const [docs, setDocs] = useState<DocumentMeta[]>([]);
+  // the saved list shows at once and refreshes underneath (lib/local-cache)
+  const { items: docs, setItems: setDocs, refresh: loadDocs } = useCachedList("/api/documents", listDocuments);
   const [current, setCurrent] = useState<DocumentRecord | null>(null);
   const [opening, setOpening] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -792,10 +793,8 @@ export default function DocumentsPage() {
 
   useEffect(() => {
     if (!canUse(me, "guides") || composing || docId) return;
-    listDocuments()
-      .then(setDocs)
-      .catch(() => {});
-  }, [me, composing, docId]);
+    loadDocs().catch(() => {});
+  }, [me, composing, docId, loadDocs]);
 
   useEffect(() => {
     if (!docId || composing) {
@@ -846,26 +845,17 @@ export default function DocumentsPage() {
       <div className="flex flex-col items-center px-4 pt-4 sm:px-8 sm:pt-6">
 
       {!docId && (
-        <div className="mb-6 flex w-full max-w-[720px] items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-violet-600">
-            <FileText className="h-6 w-6 text-white" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <h1 className="text-xl font-semibold tracking-tight">Guide Builder</h1>
-            <p className="text-sm text-zinc-500">
-              Turn recordings into SOPs, walkthroughs and step-by-step guides
-            </p>
-          </div>
+        <ToolIntro icon={FileText} title="Guide Builder" line="Turn recordings into SOPs, walkthroughs and step-by-step guides" className="w-full max-w-[720px]">
           {canUse(me, "guides") && !phone && (
             <button
               type="button"
               onClick={() => navigate("/documents/new")}
-              className="flex items-center gap-1.5 rounded-md bg-violet-600 px-3 py-2 text-sm font-medium text-white hover:bg-violet-500"
+              className="flex items-center gap-1.5 rounded-md bg-violet-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-violet-500"
             >
               <Plus className="h-4 w-4" /> New
             </button>
           )}
-        </div>
+        </ToolIntro>
       )}
 
       {!docId && phone ? (

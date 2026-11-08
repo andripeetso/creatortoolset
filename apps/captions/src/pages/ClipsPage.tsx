@@ -13,11 +13,11 @@ import {
   Square,
   Trash2,
   TriangleAlert,
-  UploadCloud,
   Video,
   Wand2,
 } from "lucide-react";
 import { canUse, useAuth } from "@/lib/auth";
+import { useCachedList } from "@/lib/local-cache";
 import { fmtBytes, timeAgo } from "@/lib/exports";
 import { toolsetHomePath } from "@/lib/mobile";
 import { useClipsRecorder } from "@/hooks/use-clips-recorder";
@@ -50,7 +50,8 @@ import {
   ClipBlocks,
   useAutoChapters,
 } from "@/components/ClipBlocks";
-import { AppBar } from "@/components/AppBar";
+import { AppBar, ToolIntro } from "@/components/AppBar";
+import { DropZoneText, dropZoneClass } from "@/components/DropZone";
 import { DesktopHint } from "@/components/mobile/DesktopHint";
 import { isPublicSharePath } from "@/components/AuthGate";
 import { ShareThemeSwitch } from "@/components/ShareTheme";
@@ -561,7 +562,8 @@ export default function ClipsPage() {
   const [drag, setDrag] = useState(false);
   const [uploadPct, setUploadPct] = useState<number | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
-  const [sessions, setSessions] = useState<ClipSession[]>([]);
+  // the saved list shows at once and refreshes underneath (lib/local-cache)
+  const { items: sessions, setItems: setSessions, refresh: loadSessions } = useCachedList("/api/clips", listClips);
   const [current, setCurrent] = useState<ClipSession | null>(null);
   const [opening, setOpening] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -572,9 +574,6 @@ export default function ClipsPage() {
 
   useEffect(() => {
     if (!canUse(me, "notes")) return;
-    listClips()
-      .then(setSessions)
-      .catch(() => {});
     getClipsAvailability()
       .then(setAvail)
       .catch(() => {});
@@ -613,10 +612,8 @@ export default function ClipsPage() {
   }, [clipId]);
 
   const refreshList = useCallback(() => {
-    listClips()
-      .then(setSessions)
-      .catch(() => {});
-  }, []);
+    loadSessions().catch(() => {});
+  }, [loadSessions]);
 
   const applyClip = useCallback((s: ClipSession) => {
     setCurrent((prev) => {
@@ -725,17 +722,7 @@ export default function ClipsPage() {
       </AppBar>
 
       {!clipId && (
-        <div className="mb-8 mt-4 flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-violet-600">
-            <Video className="h-6 w-6 text-white" />
-          </div>
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight">Video Notes</h1>
-            <p className="text-sm text-zinc-500">
-              Every recording gets a transcript, a title, a summary, chapters and takeaways
-            </p>
-          </div>
-        </div>
+        <ToolIntro icon={Video} title="Video Notes" line="Every recording gets a transcript, a title, a summary, chapters and takeaways" />
       )}
 
       {phone && !clipId ? (
@@ -864,7 +851,7 @@ export default function ClipsPage() {
               <button
                 onClick={() => void savePreview()}
                 disabled={uploadPct !== null}
-                className="flex items-center gap-1.5 rounded-md bg-violet-600 px-3.5 py-2 text-sm font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
+                className="flex items-center gap-1.5 rounded-md bg-violet-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50"
               >
                 {uploadPct !== null ? (
                   <>
@@ -900,13 +887,7 @@ export default function ClipsPage() {
                 if (f) void uploadFile(f);
               }}
               aria-busy={uploadPct !== null}
-              className={`flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed px-4 py-10 text-sm transition-colors ${
-                uploadPct !== null
-                  ? "cursor-wait border-violet-500/50 bg-violet-500/10 text-violet-200"
-                  : drag
-                    ? "cursor-pointer border-violet-500 bg-violet-500/10 text-violet-200"
-                    : "cursor-pointer border-zinc-800 text-zinc-500 hover:border-zinc-600 hover:text-zinc-300"
-              }`}
+              className={dropZoneClass(drag, uploadPct !== null ? "cursor-wait border-violet-500/50" : "cursor-pointer")}
             >
               {uploadPct !== null ? (
                 <div className="w-full max-w-sm">
@@ -926,10 +907,7 @@ export default function ClipsPage() {
                   </div>
                 </div>
               ) : (
-                <span className="flex items-center gap-2">
-                  <UploadCloud className="h-4 w-4" />
-                  Drop a video, or click to upload
-                </span>
+                <DropZoneText title="Drop a video, or click to upload" hint="MP4 · MOV · M4V · MKV · WebM" />
               )}
               <input
                 type="file"

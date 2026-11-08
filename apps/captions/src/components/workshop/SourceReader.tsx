@@ -164,7 +164,7 @@ export function SourceReader({
         {onSavedFor ? (
           <SavedForToggle value={post.savedFor} onChange={onSavedFor} />
         ) : post.savedFor?.includes("format") ? (
-          <span className="rounded-md border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[10px] text-sky-200">Format</span>
+          <span className="rounded-md border border-violet-500/40 bg-violet-500/10 px-1.5 py-0.5 text-[10px] text-violet-200">Format</span>
         ) : null}
         {onOpenCreator ? (
           <button type="button" onClick={onOpenCreator} className="font-medium text-zinc-200 hover:text-violet-300 hover:underline" title={`Open @${post.creator.username} in the Analyzer: pull more of their posts`}>

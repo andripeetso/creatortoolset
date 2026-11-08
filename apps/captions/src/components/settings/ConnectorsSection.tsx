@@ -20,12 +20,12 @@ import {
   type ConnectorsView,
   type SocialPlatform,
 } from "@/lib/connectors";
-import { Card, Dot, Group, Loading, Notice, Row } from "./ui";
+import { Card, Dot, Footnote, Group, Loading, Notice, Row } from "./ui";
 import { fmtAgo, msg, selectCls } from "./helpers";
 
 export const PLATFORM_ICON: Record<SocialPlatform, LucideIcon> = { instagram: Instagram, facebook: Facebook, youtube: Youtube, tiktok: Music2, x: AtSign };
-const n = (v?: number) => (v === undefined ? "" : v >= 10_000 ? `${Math.round(v / 1000).toLocaleString("en-US")}k` : v.toLocaleString("en-US"));
 const ENV: Record<string, string> = { meta: "META_APP_ID + META_APP_SECRET", google: "GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET", tiktok: "TIKTOK_CLIENT_KEY + TIKTOK_CLIENT_SECRET" };
+const n = (v?: number) => (v === undefined ? "" : v >= 10_000 ? `${Math.round(v / 1000).toLocaleString("en-US")}k` : v.toLocaleString("en-US"));
 
 /**
  * Settings → Connectors: where each person brings their own accounts and scraping key.
@@ -86,9 +86,9 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
       )}
       {error && <Notice tone="error">{error}</Notice>}
 
-      <Group title="Your accounts" hint="Every connected account, the project it belongs to, and what was read last. The Workshop reads a project's accounts.">
+      <Group title="Your accounts" hint="Each account, its project, and when it was last read.">
         {view.accounts.length === 0 ? (
-          <Notice>Nothing connected yet. Log in below, or add a handle to read it on your Apify key.</Notice>
+          <Notice>Nothing connected yet. Log in below, or add a handle.</Notice>
         ) : (
           <Card>
             {view.accounts.map((a) => (
@@ -98,7 +98,7 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
         )}
       </Group>
 
-      <Group title="Log in to your accounts" hint="The official way: your own numbers (reach, watch time, saves) that public scraping can't see. Free.">
+      <Group title="Log in to your accounts" hint="Your own numbers (reach, watch time, saves) that public scraping can't see. Free.">
         <Card>
           {LOGINS.map((l) => (
             <Row
@@ -130,7 +130,7 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
         </Card>
       </Group>
 
-      <Group title="Add by handle" hint="Public profiles and posts of any account, yours or others', read with your own Apify key below. Each read is billed to your Apify account.">
+      <Group title="Add by handle" hint="Public profiles and posts of any account, read with your Apify key.">
         <form onSubmit={addByHandle} className="flex flex-wrap gap-2">
           <select value={handle.platform} onChange={(e) => setHandle({ ...handle, platform: e.target.value as SocialPlatform })} className={selectCls} aria-label="Platform">
             {PLATFORMS.filter((p) => p.id !== "instagram").map((p) => (
@@ -139,14 +139,15 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
               </option>
             ))}
           </select>
-          <input value={handle.text} onChange={(e) => setHandle({ ...handle, text: e.target.value })} placeholder="@handle or profile link" className="min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-1 text-xs" />
+          <input value={handle.text} onChange={(e) => setHandle({ ...handle, text: e.target.value })} placeholder="@handle or profile link" className="h-8 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-xs" />
           <Button type="submit" size="sm" variant="outline" disabled={!handle.text.trim() || !view.apify.configured}>
             Add
           </Button>
         </form>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Instagram accounts go in the <Link to={analyzerHome()} className="underline">Content Analyzer</Link>.{!view.apify.configured && " Add your Apify key first."}
-        </p>
+        <Footnote>
+          Each read costs your Apify credits. Instagram accounts go in the <Link to={analyzerHome()} className="underline">Content Analyzer</Link>.
+          {!view.apify.configured && " Add your Apify key first."}
+        </Footnote>
       </Group>
 
       <Group
@@ -155,7 +156,7 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
       >
         <ApifyCard availability={avail} onChange={() => void reload()} />
       </Group>
-      {!compact && <p className="mt-6 text-xs text-muted-foreground">Logins are read again every 12 hours. Handles are read when you press Pull, since each read costs your Apify credits.</p>}
+      {!compact && <div className="mt-8"><Footnote>Logins are read every 12 hours. Handles are read when you press Pull.</Footnote></div>}
     </>
   );
 }

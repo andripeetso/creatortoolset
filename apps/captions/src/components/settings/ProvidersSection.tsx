@@ -168,7 +168,7 @@ export function ProvidersSection({ sub, brief }: { sub?: string; brief?: boolean
     const used = jobsUsing(inst.id);
     const isOnline = online(inst);
     return (
-      <li key={inst.id} className="flex items-start gap-3 px-3 py-3">
+      <div key={inst.id} className="flex items-start gap-3 px-3 py-3">
         <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-[11px] font-semibold text-violet-600 dark:text-violet-300">
           {(info?.label ?? inst.driver).slice(0, 2)}
         </span>
@@ -212,7 +212,6 @@ export function ProvidersSection({ sub, brief }: { sub?: string; brief?: boolean
             <Button
               variant="outline"
               size="sm"
-              className="h-7 px-2 text-xs"
               onClick={() => void runCheck(inst, scope)}
               disabled={!isOnline || checking !== null}
               title={isOnline ? "Send one short question through this provider" : "The Mac is offline"}
@@ -230,7 +229,7 @@ export function ProvidersSection({ sub, brief }: { sub?: string; brief?: boolean
             />
           </div>
         )}
-      </li>
+      </div>
     );
   };
 
@@ -259,7 +258,7 @@ export function ProvidersSection({ sub, brief }: { sub?: string; brief?: boolean
       )}
 
       {!isAdmin && (
-        <div className="mt-4">
+        <div className="mt-8 space-y-2">
           {view.using === "own" && (
             <Notice>
               Your own providers answer your jobs.{" "}
@@ -270,18 +269,14 @@ export function ProvidersSection({ sub, brief }: { sub?: string; brief?: boolean
               )}
             </Notice>
           )}
-          {view.using === "workspace" && (
-            <Notice>
-              You use the workspace's providers. Add one of your own on a Mac you connected, and it answers your jobs instead.
-            </Notice>
-          )}
+          {view.using === "workspace" && <Notice>You use the workspace's providers. Add your own on a Mac you connected, and it answers instead.</Notice>}
           {view.using === "none" && <Notice tone="warn">No provider answers your jobs yet. Connect a Mac, then add a provider to it.</Notice>}
         </div>
       )}
 
       {!brief && <Group
         title="Mac"
-        hint={readOnly ? "The Mac your own providers run on. The dot shows whether it is online." : "The dot shows whether the Mac is online. Providers on an offline Mac cannot answer."}
+        hint={readOnly ? "Where your own providers run. The dot shows whether it is online." : "The dot shows whether it is online. Providers on an offline Mac can't answer."}
       >
         {devices.length === 0 ? (
           <Notice>
@@ -325,30 +320,26 @@ export function ProvidersSection({ sub, brief }: { sub?: string; brief?: boolean
         title="Providers"
         hint={
           readOnly
-            ? "The workspace's providers, for every Mac they run on."
-            : "Each row is one coding tool signed in as one account on this Mac (its folder). Turn one off to keep it out of every job."
+            ? "The workspace's providers, on whichever Mac runs them."
+            : "One coding tool signed in as one account on this Mac. Off keeps it out of every job."
         }
       >
         {listed.length === 0 ? (
           <Notice>{readOnly ? "The workspace has no providers yet." : device ? "No providers on this Mac yet." : "Connect a Mac to add providers."}</Notice>
         ) : (
-          <ul className="divide-y divide-border rounded-lg border border-border">{listed.map(renderInstance)}</ul>
+          <Card>{listed.map(renderInstance)}</Card>
         )}
-        {!readOnly || listed.length === 0 ? (
-          <Button variant="outline" size="sm" className="mt-2" disabled={!device} onClick={() => setAdding(true)}>
-            <Plus className="h-3.5 w-3.5" /> Add provider
+        <div>
+          <Button variant="outline" size="sm" disabled={!device} onClick={() => setAdding(true)}>
+            <Plus className="h-3.5 w-3.5" /> {readOnly && listed.length > 0 ? `Add my own on ${device ? device.name : "a Mac"}` : "Add provider"}
           </Button>
-        ) : (
-          <Button variant="outline" size="sm" className="mt-2" disabled={!device} onClick={() => setAdding(true)}>
-            <Plus className="h-3.5 w-3.5" /> Add my own on {device ? device.name : "a Mac"}
-          </Button>
-        )}
+        </div>
       </Group>}
 
       {shown && !brief && (
         <Group
           title="Who does which job"
-          hint={readOnly ? "Set by the workspace. Add your own provider to choose for yourself." : "Every job uses the default unless it has its own provider, model and effort."}
+          hint={readOnly ? "Set by the workspace. Add your own provider to choose." : "A job without its own pick uses the default."}
         >
           <Card className="px-3">
             <JobRow

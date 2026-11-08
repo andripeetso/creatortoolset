@@ -24,11 +24,11 @@ const ago = (t: number) => {
 
 const STATUS_BAR: Record<string, string> = {
   draft: "bg-zinc-600",
-  writing: "bg-sky-400",
+  writing: "bg-violet-400",
   ready: "bg-emerald-400",
   production: "bg-amber-400",
-  editing: "bg-orange-400",
-  toPost: "bg-teal-300",
+  editing: "bg-amber-400",
+  toPost: "bg-emerald-300",
   published: "bg-violet-400",
   shelved: "bg-zinc-700",
 };
@@ -86,7 +86,7 @@ function Row({ r, active, n }: { r: SessionSummary; active: boolean; n?: number 
       <KindTile kind={r.kinds[0] as PieceKind | undefined} />
       <span className={`min-w-0 flex-1 truncate ${unseen ? "font-medium" : ""}`}>{r.title || "Untitled session"}</span>
       {r.working ? (
-        <span className="flex shrink-0 items-center gap-1 text-[11px] text-sky-300">
+        <span className="flex shrink-0 items-center gap-1 text-[11px] text-violet-300">
           <Loader2 className="h-3 w-3 animate-spin" /> Working
         </span>
       ) : unseen ? (

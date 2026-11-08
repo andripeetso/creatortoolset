@@ -44,12 +44,12 @@ export function AskPanel({
     onAsk(q);
   };
   return (
-    <div className="mt-2 flex flex-col gap-2 rounded-md border border-sky-500/30 bg-sky-500/5 p-2">
-      <p className="flex items-start gap-1.5 text-[11px] text-sky-200/90" title="A side chat: it sees only this part and your most saved posts, answers, and never changes the piece or the main chat.">
+    <div className="mt-2 flex flex-col gap-2 rounded-md border border-violet-500/30 bg-violet-500/5 p-2">
+      <p className="flex items-start gap-1.5 text-[11px] text-violet-200/90" title="A side chat: it sees only this part and your most saved posts, answers, and never changes the piece or the main chat.">
         <MessageCircleQuestion className="mt-0.5 h-3.5 w-3.5 shrink-0" />
         <span className="min-w-0 flex-1">
           Asking about {label}
-          {quote ? <span className="line-clamp-1 text-sky-100/80">“{quote}”</span> : null}
+          {quote ? <span className="line-clamp-1 text-violet-100/80">“{quote}”</span> : null}
         </span>
         <button type="button" onClick={onClose} className="rounded p-0.5 hover:bg-muted hover:text-foreground" aria-label="Close the side chat">
           <X className="h-3 w-3" />
@@ -88,7 +88,7 @@ export function AskPanel({
           placeholder={history.length ? "Ask more" : "e.g. Is this a good written hook?"}
           className="min-w-0 flex-1 resize-none rounded bg-background/60 px-2 py-1 text-[13px] text-foreground outline-none placeholder:text-muted-foreground"
         />
-        <button type="button" onClick={send} disabled={busy || !text.trim()} className="rounded-md bg-sky-600 p-1.5 text-white hover:bg-sky-500 disabled:opacity-50" aria-label="Ask">
+        <button type="button" onClick={send} disabled={busy || !text.trim()} className="rounded-md bg-violet-600 p-1.5 text-white hover:bg-violet-500 disabled:opacity-50" aria-label="Ask">
           <Send className="h-3 w-3" />
         </button>
       </div>

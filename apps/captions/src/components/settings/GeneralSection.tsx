@@ -24,14 +24,14 @@ export function GeneralSection() {
       <WorkPrefsGroup />
       <Group title="Notifications" hint="Review comments, replies and Workshop notes.">
         <Card>
-          <Row label="In the app" hint="The bell at the top right. It works on every device you sign in on." />
-          <Row label="Mac notifications" hint="Come from the Creator Toolset Mac app once it runs on your Mac. Nothing to switch here." />
+          <Row label="In the app" hint="The bell at the top right, on every device you sign in on." />
+          <Row label="Mac notifications" hint="Sent by the Creator Toolset Mac app." />
         </Card>
       </Group>
 
       <Group title="Working" hint="Kept on this device.">
         <Card>
-          <Row label="Confirm before deleting" hint="Asks before a comment or a video goes to the trash. Deleting for good always asks.">
+          <Row label="Confirm before deleting" hint="Asks before a comment or video goes to the trash. Deleting for good always asks.">
             <Switch
               checked={confirm}
               aria-label="Confirm before deleting"
@@ -41,7 +41,7 @@ export function GeneralSection() {
               }}
             />
           </Row>
-          <Row label="Match cadence after transcription" hint="New Caption Studio projects start with it on or off. Off = place captions first.">
+          <Row label="Match cadence after transcription" hint="The default for new Caption Studio projects.">
             <Switch
               checked={cadence}
               aria-label="Match cadence after transcription"
@@ -51,7 +51,7 @@ export function GeneralSection() {
               }}
             />
           </Row>
-          <Row label="Status colours in the Workshop sidebar" hint="A coloured bar beside each session for its status.">
+          <Row label="Status colours in the Workshop sidebar" hint="A coloured bar beside each session.">
             <Switch
               checked={bars}
               aria-label="Status colours in the Workshop sidebar"
@@ -61,7 +61,7 @@ export function GeneralSection() {
               }}
             />
           </Row>
-          <Row label="Video Notes playback speed" hint="Where a Video Notes or guide video starts.">
+          <Row label="Video Notes playback speed">
             <select
               value={speed}
               aria-label="Video Notes playback speed"

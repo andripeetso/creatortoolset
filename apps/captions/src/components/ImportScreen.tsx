@@ -9,9 +9,9 @@ import {
   Pencil,
   RotateCcw,
   Trash2,
-  UploadCloud,
 } from "lucide-react";
 import { useStudio } from "@/lib/store";
+import { useCachedList } from "@/lib/local-cache";
 import {
   deleteSession,
   listDeletedSessions,
@@ -26,7 +26,8 @@ import {
 import { fmtClock } from "@/lib/ass";
 import { confirmDiscardUnsavedProject } from "@/lib/persistence-guard";
 import { PersistenceBadge } from "./PersistenceStatus";
-import { AppBar } from "./AppBar";
+import { AppBar, ToolIntro } from "./AppBar";
+import { DropZoneText, dropZoneClass } from "./DropZone";
 
 /** Recent projects shown on the import screen; the rest lives in "All projects". */
 const RECENT_COUNT = 6;
@@ -296,7 +297,12 @@ export function ImportScreen() {
   const importFiles = useStudio((s) => s.importFiles);
   const hasCurrentProject = useStudio((s) => s.clips.length > 0);
   const [drag, setDrag] = useState(false);
-  const [sessions, setSessions] = useState<SessionMeta[]>([]);
+  // the saved list shows at once and refreshes underneath (lib/local-cache)
+  const {
+    items: sessions,
+    setItems: setSessions,
+    refresh: refreshSessions,
+  } = useCachedList<SessionMeta>("caption-projects", listSessions);
   const [deletedSessions, setDeletedSessions] = useState<DeletedSessionMeta[]>(
     [],
   );
@@ -323,18 +329,9 @@ export function ImportScreen() {
   };
 
   useEffect(() => {
-    let cancelled = false;
-    void Promise.all([listSessions(), listDeletedSessions()]).then(
-      ([projects, deleted]) => {
-        if (cancelled) return;
-        setSessions(projects);
-        setDeletedSessions(deleted);
-      },
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    void listDeletedSessions().then(setDeletedSessions).catch(() => {});
+    void refreshSessions().catch(() => {});
+  }, [refreshSessions]);
 
   const open = async (id: string) => {
     if (!confirmDiscardUnsavedProject("Open another project")) return;
@@ -448,19 +445,7 @@ export function ImportScreen() {
         {hasCurrentProject && <PersistenceBadge />}
       </AppBar>
       <div className="flex flex-1 flex-col items-center justify-center py-8">
-      <div className="mb-8 flex items-center gap-3">
-        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-violet-600">
-          <Captions className="h-6 w-6 text-white" />
-        </div>
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">
-            Caption Studio
-          </h1>
-          <p className="text-sm text-zinc-500">
-            Transcribe · caption · export with alpha
-          </p>
-        </div>
-      </div>
+      <ToolIntro icon={Captions} title="Caption Studio" line="Transcribe · caption · export with alpha" className="mt-0" />
 
       <label
         onDragOver={(e) => {
@@ -469,19 +454,12 @@ export function ImportScreen() {
         }}
         onDragLeave={() => setDrag(false)}
         onDrop={onDrop}
-        className={`flex w-[560px] max-w-[90vw] shrink-0 cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed px-8 py-14 transition-colors ${
-          drag
-            ? "border-violet-500 bg-violet-500/10"
-            : "border-zinc-700 bg-zinc-900/50 hover:border-zinc-500"
-        }`}
+        className={dropZoneClass(drag, "w-[560px] max-w-[90vw] shrink-0 cursor-pointer")}
       >
-        <UploadCloud className="mb-4 h-10 w-10 text-zinc-500" />
-        <p className="text-base font-medium">
-          Drop videos here, or click to browse
-        </p>
-        <p className="mt-2 text-sm text-zinc-500">
-          MP4 · WebM · MOV — drop several to caption them as one batch
-        </p>
+        <DropZoneText
+          title="Drop videos here, or click to browse"
+          hint="MP4 · WebM · MOV — drop several to caption them as one batch"
+        />
         <input
           type="file"
           multiple

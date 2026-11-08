@@ -86,7 +86,7 @@ function Box({ ask, close }: { ask: Ask; close: (v: boolean | string | null) => 
           )}
           <AlertDialogAction
             onClick={yes}
-            className={ask.danger ? "bg-rose-600 text-white hover:bg-rose-500" : "bg-violet-600 text-white hover:bg-violet-500"}
+            className={ask.danger ? "bg-rose-600 text-white hover:bg-rose-500" : undefined}
           >
             {ask.ok ?? "OK"}
           </AlertDialogAction>

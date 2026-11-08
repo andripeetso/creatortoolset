@@ -27,7 +27,23 @@ const themed = (() => {
     for (const n of [50, 100, 200, 300, 400]) out.text[h][n] = vary(`t-${h}-${n}`, colors[h][n], colors[h][mirror[n]])
     for (const n of [800, 900, 950]) out.surface[h][n] = vary(`s-${h}-${n}`, colors[h][n], colors[h][mirror[n]])
   }
-  return { ...out, base: { ":root": light, ".dark": dark } }
+  // The current project's colour: violet is the accent everywhere, so every
+  // violet shade is a variable, and <html data-tint="sky"> (useRootTint, lib/workspace.ts) points them at that hue.
+  out.violet = {}
+  const shades = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950]
+  for (const n of shades) out.violet[n] = vary(`violet-${n}`, colors.violet[n], colors.violet[n])
+  const base = { ":root": light, ".dark": dark }
+  const tints = ["sky", "emerald", "amber", "rose", "orange", "teal", "pink"]
+  for (const [sel, isDark] of [[":root", false], [".dark", true]])
+    for (const h of tints) {
+      const v = {}
+      const pick = (n, m) => rgb(colors[h][isDark ? n : m])
+      for (const n of shades) v[`--violet-${n}`] = pick(n, n)
+      for (const n of [50, 100, 200, 300, 400]) v[`--t-violet-${n}`] = pick(n, mirror[n])
+      for (const n of [800, 900, 950]) v[`--s-violet-${n}`] = pick(n, mirror[n])
+      base[`${sel}[data-tint="${h}"]`] = v
+    }
+  return { ...out, base }
 })()
 
 /** @type {import('tailwindcss').Config} */
@@ -38,6 +54,7 @@ module.exports = {
     extend: {
       colors: {
         zinc: themed.zinc,
+        violet: themed.violet,
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",

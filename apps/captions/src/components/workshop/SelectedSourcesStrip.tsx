@@ -78,7 +78,7 @@ export function SelectedSourcesStrip({
           </button>
           <span className={`absolute left-1 top-1 rounded px-1 text-[9px] font-medium ${kindBadgeClass(p.kind)}`}>{kindLabel(p.kind)}</span>
           {effectiveSavedFor(p.savedFor).includes("format") ? (
-            <span className="absolute right-1 top-1 rounded bg-sky-600/85 px-1 text-[9px] font-medium text-white">F</span>
+            <span className="absolute right-1 top-1 rounded bg-violet-600/85 px-1 text-[9px] font-medium text-white">F</span>
           ) : (
             <span className="absolute right-1 top-1 rounded bg-violet-600/85 px-1 text-[9px] font-medium text-white">C</span>
           )}

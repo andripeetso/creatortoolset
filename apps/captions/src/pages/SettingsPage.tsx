@@ -1,11 +1,10 @@
 import { Link, Navigate, useLocation } from "react-router";
-import { Cable, CalendarClock, Cpu, FileDown, Gauge, KeyRound, Laptop, ListChecks, Monitor, Palette, SlidersHorizontal, UserRound, type LucideIcon } from "lucide-react";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { Cable, CalendarClock, Cpu, Gauge, KeyRound, Laptop, ListChecks, Monitor, Palette, SlidersHorizontal, UserRound, type LucideIcon } from "lucide-react";
+import { Dialog, DialogContent, DialogTitle, FROM_TOP_RIGHT } from "@/components/ui/dialog";
 import { AccountSection } from "@/components/settings/AccountSection";
 import { AppearanceSection } from "@/components/settings/AppearanceSection";
 import { AutomationsSection } from "@/components/settings/AutomationsSection";
 import { DevicesSection } from "@/components/settings/DevicesSection";
-import { ExportsSection } from "@/components/settings/ExportsSection";
 import { GeneralSection } from "@/components/settings/GeneralSection";
 import { ProvidersSection } from "@/components/settings/ProvidersSection";
 import { ConnectorsSection } from "@/components/settings/ConnectorsSection";
@@ -17,19 +16,18 @@ import { useMe } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
 /** The sections, in the order the sidebar shows them; API keys (the server's own keys) last, admins only. */
-const SETTINGS_SECTIONS: ReadonlyArray<{ id: string; title: string; icon: LucideIcon; adminOnly?: boolean }> = [
-  { id: "general", title: "General", icon: SlidersHorizontal },
-  { id: "setup", title: "Setup", icon: ListChecks },
-  { id: "appearance", title: "Appearance", icon: Palette },
-  { id: "providers", title: "AI providers", icon: Cpu },
-  { id: "connectors", title: "Connectors", icon: Cable },
-  { id: "my-keys", title: "My API keys", icon: KeyRound },
-  { id: "usage", title: "Usage", icon: Gauge },
-  { id: "devices", title: "Devices", icon: Monitor },
-  { id: "automations", title: "Automations", icon: CalendarClock },
-  { id: "exports", title: "Exports", icon: FileDown },
-  { id: "account", title: "Account", icon: UserRound },
-  { id: "keys", title: "API keys", icon: KeyRound, adminOnly: true },
+const SETTINGS_SECTIONS: ReadonlyArray<{ id: string; title: string; blurb: string; icon: LucideIcon; adminOnly?: boolean }> = [
+  { id: "general", title: "General", blurb: "How the app behaves on this device, and how you work.", icon: SlidersHorizontal },
+  { id: "setup", title: "Setup", blurb: "Your AI, accounts, a first project and your knowledge, one step at a time.", icon: ListChecks },
+  { id: "appearance", title: "Appearance", blurb: "The theme, and the colours of the home page.", icon: Palette },
+  { id: "providers", title: "AI providers", blurb: "The coding tools on your Macs that answer the AI.", icon: Cpu },
+  { id: "connectors", title: "Connectors", blurb: "Your own accounts and the outside services that read them.", icon: Cable },
+  { id: "my-keys", title: "My API keys", blurb: "Your own keys for the paid services the tools call.", icon: KeyRound },
+  { id: "usage", title: "Usage", blurb: "What the app used, per job and per provider.", icon: Gauge },
+  { id: "devices", title: "Devices", blurb: "The computers your AI runs on.", icon: Monitor },
+  { id: "automations", title: "Automations", blurb: "Prompts your AI runs on a schedule.", icon: CalendarClock },
+  { id: "account", title: "Account", blurb: "Your name, your password and your AI access key.", icon: UserRound },
+  { id: "keys", title: "API keys", blurb: "The server's own keys for the outside services.", icon: KeyRound, adminOnly: true },
 ];
 
 /** Inside the Mac app (apps/mac marks its page with html.mac-app): its own options open in a native panel. */
@@ -61,14 +59,13 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
     usage: <UsageSection />,
     devices: <DevicesSection />,
     automations: <AutomationsSection />,
-    exports: <ExportsSection />,
     account: <AccountSection />,
     keys: <ServiceKeysSection />,
   }[current.id];
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="flex h-[min(860px,calc(100dvh-2rem))] w-[min(1100px,calc(100vw-2rem))] max-w-none flex-col gap-0 overflow-hidden p-0 sm:max-w-none md:flex-row">
+      <DialogContent style={FROM_TOP_RIGHT} className="flex h-[min(860px,calc(100dvh-2rem))] w-[min(1100px,calc(100vw-2rem))] max-w-none flex-col gap-0 overflow-hidden p-0 sm:max-w-none md:flex-row">
         <DialogTitle className="sr-only">Settings</DialogTitle>
         <nav aria-label="Settings sections" className="flex shrink-0 gap-1 overflow-x-auto border-b border-border p-3 md:w-52 md:flex-col md:overflow-visible md:border-b-0 md:border-r">
           <span className="hidden px-2.5 pb-2 pt-1 text-sm font-semibold md:block">Settings</span>
@@ -105,7 +102,8 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
         </nav>
         <main className="min-w-0 flex-1 overflow-y-auto p-6">
           <h1 className="text-lg font-semibold tracking-tight">{current.title}</h1>
-          <div className="mt-2">{body}</div>
+          <p className="mt-1 text-sm text-muted-foreground">{current.blurb}</p>
+          <div className="mt-6">{body}</div>
         </main>
       </DialogContent>
     </Dialog>

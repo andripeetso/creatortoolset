@@ -13,9 +13,9 @@ type Device = ProvidersView["devices"][number];
  * itself: that would make the relay a way to run commands there.
  */
 const TOOLS = [
-  { name: "Claude Code", install: "curl -fsSL https://claude.ai/install.sh | bash", signIn: "claude", how: "then follow the browser prompts (Pro, Max or a Console account)" },
-  { name: "Codex", install: "npm install -g @openai/codex", signIn: "codex", how: "then pick Sign in with ChatGPT" },
-  { name: "Gemini", install: "npm install -g @google/gemini-cli", signIn: "gemini", how: "then pick Sign in with Google" },
+  { name: "Claude Code", install: "curl -fsSL https://claude.ai/install.sh | bash", signIn: "claude" },
+  { name: "Codex", install: "npm install -g @openai/codex", signIn: "codex" },
+  { name: "Gemini", install: "npm install -g @google/gemini-cli", signIn: "gemini" },
 ];
 
 /**
@@ -48,21 +48,21 @@ export function AiSetup({
       title: "Connect a Mac",
       body: (
         <>
-          Install the Creator Toolset Mac app and sign in with this account. <Link to="/settings/devices" className="underline underline-offset-2">Devices</Link> has the download.
+          Install the Mac app from <Link to="/settings/devices" className="underline underline-offset-2">Devices</Link> and sign in.
         </>
       ),
     },
-    { done: !!device?.online, title: "Keep it online", body: <>Open the Creator Toolset app on {device?.name ?? "the Mac"}. It shows online here within a minute.</> },
+    { done: !!device?.online, title: "Keep it online", body: <>Open the Mac app; it shows online within a minute.</> },
     {
       done: installed.length > 0,
       title: "Install a coding tool on it",
       body: device?.report ? (
         <>
-          None found on {device.name} yet. In Terminal on that Mac, install one:
+          None found on {device.name} yet. Install one in Terminal:
           <Commands />
         </>
       ) : (
-        <>The Mac hasn't reported its tools yet: wait a minute after it comes online.</>
+        <>Waiting for {device?.name ?? "the Mac"} to report its tools.</>
       ),
     },
     {
@@ -70,7 +70,7 @@ export function AiSetup({
       title: "Add it as a provider",
       body: (
         <>
-          One tool signed in as one account.
+          One tool, signed in as one account.
           <Button size="sm" variant="outline" className="mt-2 block" onClick={onAdd}>
             Add provider
           </Button>
@@ -128,7 +128,7 @@ function Commands() {
           <p className="text-foreground">{t.name}</p>
           <Command text={t.install} />
           <p className="mt-0.5">
-            Sign in: run <code>{t.signIn}</code> once, {t.how}.
+            Sign in: run <code>{t.signIn}</code> once.
           </p>
         </div>
       ))}

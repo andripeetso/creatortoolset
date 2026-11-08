@@ -54,7 +54,7 @@ function ClipStatus({ clip, applyCov }: { clip: ClipInfo; applyCov?: number }) {
   }
   if (clip.uploadState === "uploading") {
     return (
-      <span className="flex items-center gap-1 text-sky-400">
+      <span className="flex items-center gap-1 text-violet-400">
         <CloudUpload className="h-3 w-3 shrink-0 animate-pulse" />
         <span className="truncate">Uploading {clip.uploadPct}%</span>
       </span>
@@ -63,7 +63,7 @@ function ClipStatus({ clip, applyCov }: { clip: ClipInfo; applyCov?: number }) {
   if (clip.uploadState === "processing") {
     return (
       <span
-        className="flex items-center gap-1 text-sky-400"
+        className="flex items-center gap-1 text-violet-400"
         title="The server is compressing the uploaded video into a small editing proxy — captions are not affected"
       >
         <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
@@ -285,7 +285,7 @@ export function ClipBar() {
         title="Show the clip bar"
         className={`flex w-full items-center gap-2 border-t border-dashed bg-zinc-925 px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider transition-colors ${
           fileDrag
-            ? "border-sky-400/70 text-sky-300 ring-2 ring-inset ring-sky-400/40"
+            ? "border-violet-400/70 text-violet-300 ring-2 ring-inset ring-violet-400/40"
             : "border-zinc-700 text-zinc-500 hover:border-zinc-500 hover:text-zinc-300"
         }`}
       >
@@ -296,7 +296,7 @@ export function ClipBar() {
           <span className="max-w-48 truncate">{clips[0]?.name}</span>
         </span>
         {busy > 0 && (
-          <span className="flex items-center gap-1 normal-case tracking-normal text-sky-400">
+          <span className="flex items-center gap-1 normal-case tracking-normal text-violet-400">
             <Loader2 className="h-2.5 w-2.5 animate-spin" /> {busy} working
           </span>
         )}
@@ -326,7 +326,7 @@ export function ClipBar() {
       {...fileDropHandlers}
       className={`border-t bg-zinc-925 ${
         fileDrag
-          ? "border-sky-400/70 ring-2 ring-inset ring-sky-400/40"
+          ? "border-violet-400/70 ring-2 ring-inset ring-violet-400/40"
           : "border-zinc-800"
       }`}
     >
@@ -344,7 +344,7 @@ export function ClipBar() {
           <button
             onClick={() => setSelected(new Set())}
             title="Clear selection"
-            className="flex items-center gap-1 rounded bg-sky-500/15 px-1.5 py-0.5 text-sky-300 normal-case tracking-normal hover:bg-sky-500/25"
+            className="flex items-center gap-1 rounded bg-violet-500/15 px-1.5 py-0.5 text-violet-300 normal-case tracking-normal hover:bg-violet-500/25"
           >
             {selectedCount} selected <X className="h-2.5 w-2.5" />
           </button>
@@ -433,12 +433,12 @@ export function ClipBar() {
                       : `${clip.name} — shift-click to select a range, ⌘-click to toggle`
               }
               className={`group flex w-auto min-w-44 max-w-80 shrink-0 cursor-pointer select-none items-center gap-2 rounded-lg border px-2.5 py-1.5 transition-colors ${
-                dropAt === i ? "border-l-2 border-l-sky-400" : ""
+                dropAt === i ? "border-l-2 border-l-violet-400" : ""
               } ${
                 active
                   ? "border-violet-500 bg-violet-500/10"
                   : isSelected
-                    ? "border-sky-500/70 bg-sky-500/10 hover:border-sky-400"
+                    ? "border-violet-500/70 bg-violet-500/10 hover:border-violet-400"
                     : master
                       ? "border-amber-500/60 bg-amber-500/5 hover:border-amber-400"
                       : skipped
@@ -461,7 +461,7 @@ export function ClipBar() {
                 className="relative h-3.5 w-3.5 shrink-0"
               >
                 {isSelected ? (
-                  <CheckCircle2 className="h-3.5 w-3.5 text-sky-400" />
+                  <CheckCircle2 className="h-3.5 w-3.5 text-violet-400" />
                 ) : (
                   <>
                     <Film
@@ -476,7 +476,7 @@ export function ClipBar() {
                       }`}
                     />
                     <Circle
-                      className={`absolute inset-0 h-3.5 w-3.5 text-zinc-600 hover:text-sky-400 ${
+                      className={`absolute inset-0 h-3.5 w-3.5 text-zinc-600 hover:text-violet-400 ${
                         selected.size > 0 ? "" : "hidden group-hover:block"
                       }`}
                     />
@@ -566,7 +566,7 @@ export function ClipBar() {
           title="Add video files to the pool — or drop them anywhere on this bar"
           className={`flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-dashed px-2.5 py-1.5 text-[11px] transition-colors ${
             fileDrag
-              ? "border-sky-400 text-sky-300"
+              ? "border-violet-400 text-violet-300"
               : "border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200"
           }`}
         >

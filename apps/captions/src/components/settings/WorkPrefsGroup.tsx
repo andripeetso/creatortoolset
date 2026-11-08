@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { WorkPrefs } from "@contracts/work-prefs";
-import { Card, Group, Row } from "./ui";
+import { Card, Footnote, Group, Row } from "./ui";
 import { selectCls } from "./helpers";
 
 const TALK_LABEL: Record<WorkPrefs["talk"], string> = { app: "In this app", chat: "In my own AI chat", both: "Both" };
@@ -32,14 +32,14 @@ export function WorkPrefsGroup() {
   };
 
   return (
-    <Group title="How you work" hint="Nothing locks you in: use both, change it any time, or ask the assistant to.">
+    <Group title="How you work" hint="Change it any time, or ask the assistant.">
       <Card>
         <Row label="Talk to the AI" hint="In this app, or in your own Claude Code or Codex through the app's connector.">
           <select value={prefs.talk} aria-label="Talk to the AI" onChange={(e) => void change({ talk: e.target.value as WorkPrefs["talk"] })} className={selectCls}>
             {Object.entries(TALK_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select>
         </Row>
-        <Row label="Check the work" hint="In Review and the edit page here, or hands-on in your own editor.">
+        <Row label="Check the work" hint="In Review and the edit page here, or in your own editor.">
           <select value={prefs.check} aria-label="Check the work" onChange={(e) => void change({ check: e.target.value as WorkPrefs["check"] })} className={selectCls}>
             {Object.entries(CHECK_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select>
@@ -58,7 +58,7 @@ export function WorkPrefsGroup() {
           </Row>
         )}
       </Card>
-      {error && <p role="alert" className="mt-2 text-xs text-destructive">{error}</p>}
+      {error && <Footnote><span role="alert" className="text-destructive">{error}</span></Footnote>}
     </Group>
   );
 }

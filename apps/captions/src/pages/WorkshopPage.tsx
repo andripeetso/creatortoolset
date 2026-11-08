@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { cn } from "@/lib/utils";
+import { segmentItem, segmentList } from "@/components/SegmentedTabs";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { ChevronDown, CircleCheck, Download, Link2, Loader2, NotebookPen, Pencil, Plus, Search, TriangleAlert, X } from "lucide-react";
-import { AppBar } from "@/components/AppBar";
+import { AppBar, ToolIntro } from "@/components/AppBar";
 import { ProjectList } from "@/components/workspace/ProjectList";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
 import { ConfirmButton } from "@/components/instagram/ConfirmButton";
@@ -46,6 +48,7 @@ import {
   type WorkshopFramework,
   type WorkshopRule,
 } from "@/lib/workshop";
+import { useCachedList, useCachedLoad } from "@/lib/local-cache";
 import { useWorkspace } from "@/lib/workspace";
 
 type Tab = "sessions" | "projects" | "knowledge" | "frameworks" | "rules";
@@ -67,7 +70,7 @@ export default function WorkshopPage() {
   const projects = useWorkspace((s) => s.projects);
 
   const [tab, setTab] = useState<Tab>("sessions");
-  const [sessions, setSessions] = useState<SessionRow[]>([]);
+  const { items: sessions, setItems: setSessions, refresh: loadSessions } = useCachedList<SessionRow>(`workshop/sessions?p=${currentProjectId ?? ""}`, listSessions);
   const [find, setFind] = useState("");
   const summaries = useSessionSummaries();
   // no sidebar here: this list is the one, ⌘K is its search
@@ -145,24 +148,25 @@ export default function WorkshopPage() {
     localStorage.setItem("workshop:kind", kindFilter);
     localStorage.setItem("workshop:list-sort", sortBy);
   }, [kindFilter, sortBy]);
-  const [frameworks, setFrameworks] = useState<WorkshopFramework[]>([]);
-  const [rules, setRules] = useState<WorkshopRule[]>([]);
+  // these lists show their saved copy at once and refresh underneath (lib/local-cache); the sessions are per project
+  const frameworksList = useCachedList<WorkshopFramework>("workshop/frameworks", listFrameworks);
+  const rulesList = useCachedList<WorkshopRule>("workshop/rules", listRules);
+  const frameworks = frameworksList.items;
+  const rules = rulesList.items;
   const [newRule, setNewRule] = useState("");
-  const [avail, setAvail] = useState<{ ai: boolean; library: number } | null>(null);
+  const availList = useCachedLoad("workshop/availability", getWorkshopAvailability);
+  const avail = availList.data;
   const [editing, setEditing] = useState<string | "new" | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(() => {
-    listSessions().then(setSessions).catch(() => {});
-    listFrameworks().then(setFrameworks).catch(() => {});
-    listRules().then(setRules).catch(() => {});
-    getWorkshopAvailability().then(setAvail).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    if (allowed) load();
-  }, [allowed, load, currentProjectId]);
+    loadSessions().catch(() => {});
+    frameworksList.refresh().catch(() => {});
+    rulesList.refresh().catch(() => {});
+    availList.refresh().catch(() => {});
+    // the hook fetches on mount and when the project changes (the sessions key carries the project)
+  }, [loadSessions, frameworksList.refresh, rulesList.refresh, availList.refresh]);
 
   // /workshop?add=id1,id2 — sent from the Analyzer: open a session with those sources.
   const add = searchParams.get("add");
@@ -267,18 +271,11 @@ export default function WorkshopPage() {
       <div className="flex min-h-0 flex-1">
       <div className="min-w-0 flex-1 overflow-y-auto pb-[max(2.5rem,env(safe-area-inset-bottom))]">
       <div className="mx-auto w-[960px] max-w-[96%]">
-        <div className="mb-8 mt-10 flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-violet-600">
-            <NotebookPen className="h-6 w-6 text-white" />
-          </div>
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight">Content Workshop</h1>
-            <p className="text-sm text-zinc-500">
-              Search your research, take notes, draft reels, carousels and ads.
-              {avail ? ` · ${avail.library} posts in the library` : ""}
-            </p>
-          </div>
-        </div>
+        <ToolIntro
+          icon={NotebookPen}
+          title="Content Workshop"
+          line={`Search your research, take notes, draft reels, carousels, YouTube scripts, newsletters, X threads and articles.${avail ? ` · ${avail.library} posts in the library` : ""}`}
+        />
 
         {avail && !avail.ai && (
           <p className="mb-4 flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
@@ -287,7 +284,7 @@ export default function WorkshopPage() {
           </p>
         )}
 
-        <div className="mb-5 flex flex-wrap gap-1 border-b border-zinc-800 pb-px">
+        <div className={cn(segmentList, "mb-5 self-start overflow-x-auto")}>
           {(
             [
               ["sessions", `Sessions · ${sessions.length}`],
@@ -304,11 +301,7 @@ export default function WorkshopPage() {
                 setTab(id);
                 setEditing(null);
               }}
-              className={`rounded-t-md px-3 py-1.5 text-[11px] ${
-                tab === id
-                  ? "border border-b-transparent border-zinc-700 bg-zinc-950 text-zinc-100"
-                  : "border border-transparent text-zinc-500 hover:text-zinc-300"
-              }`}
+              className={segmentItem(tab === id)}
             >
               {text}
             </button>
@@ -469,7 +462,7 @@ export default function WorkshopPage() {
                       ))}
                       <span className={`truncate text-sm ${live(s).unseen ? "font-semibold text-zinc-50" : "text-zinc-300"}`}>{s.title}</span>
                       {live(s).working || s.generating ? (
-                        <span className="flex shrink-0 items-center gap-1 text-[11px] text-sky-300">
+                        <span className="flex shrink-0 items-center gap-1 text-[11px] text-violet-300">
                           <Loader2 className="h-3 w-3 animate-spin" /> Working
                         </span>
                       ) : live(s).unseen ? (

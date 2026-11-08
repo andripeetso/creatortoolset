@@ -565,7 +565,7 @@ export function ChatPane({
                     ) : null}
                     {m.steps?.length ? <StepList steps={m.steps} now={now} /> : null}
                     {m.fetched?.length ? (
-                      <p className="mt-1.5 text-[11px] text-sky-200/80">
+                      <p className="mt-1.5 text-[11px] text-violet-200/80">
                         Pulled in: {m.fetched.map((f) => (f.parts.length ? `@${f.handle} ${f.parts.map((p) => PART_LABELS[p]).join(" + ")}` : f.handle)).join(" · ")}
                       </p>
                     ) : null}
@@ -825,7 +825,7 @@ export function ChatPane({
             type="button"
             onClick={() => (deep ? onDeep(false) : void confirmHeavy("research").then((go) => go && onDeep(true)))}
             disabled={!researchAvailable}
-            className={`${chip} ${deep ? "border-sky-500/60 bg-sky-500/20 text-sky-950 dark:text-sky-100" : chipIdle} disabled:opacity-50`}
+            className={`${chip} ${deep ? "border-violet-500/60 bg-violet-500/20 text-violet-950 dark:text-violet-100" : chipIdle} disabled:opacity-50`}
             title={researchAvailable ? "Deep research: 5–15 minutes of web research on your message before the AI answers, sources included. Off after each send." : "Research needs your own AI provider, or your Perplexity key in Settings → My API keys"}
             aria-pressed={deep}
           >
@@ -1037,7 +1037,7 @@ function StepList({ steps, now, live = false }: { steps: NonNullable<ChatMessage
         const running = live && !s.end && i === steps.length - 1;
         const web = /web/i.test(s.label);
         return (
-          <li key={i} className={`flex items-baseline gap-1.5 text-[11px] ${web ? "text-sky-300" : "text-muted-foreground"}`}>
+          <li key={i} className={`flex items-baseline gap-1.5 text-[11px] ${web ? "text-violet-300" : "text-muted-foreground"}`}>
             {running ? <Loader2 className="h-3 w-3 shrink-0 translate-y-0.5 animate-spin" /> : <span className="w-3 shrink-0 text-center">·</span>}
             <span className="min-w-0 flex-1 truncate" title={s.label}>
               {s.label}
@@ -1062,8 +1062,8 @@ function StepList({ steps, now, live = false }: { steps: NonNullable<ChatMessage
 /** What the AI checked on the web, with the pages it read. */
 function ResearchCard({ research }: { research: NonNullable<ChatMessage["research"]> }) {
   return (
-    <div className="mt-2 rounded-lg border border-sky-500/25 bg-sky-500/10 px-2.5 py-2">
-      <p className="flex items-center gap-1.5 text-[11px] text-sky-200">
+    <div className="mt-2 rounded-lg border border-violet-500/25 bg-violet-500/10 px-2.5 py-2">
+      <p className="flex items-center gap-1.5 text-[11px] text-violet-200">
         <Globe className="h-3.5 w-3.5" /> {research.depth === "deep" ? "Deep research" : "Checked on the web"} · {research.question}
       </p>
       <div className="mt-1 text-[12px] text-zinc-200">
@@ -1072,7 +1072,7 @@ function ResearchCard({ research }: { research: NonNullable<ChatMessage["researc
       {research.citations?.length ? (
         <p className="mt-1.5 flex flex-wrap gap-1">
           {research.citations.slice(0, 10).map((u, i) => (
-            <a key={u} href={u} target="_blank" rel="noreferrer" className="flex items-center gap-0.5 rounded bg-zinc-800/80 px-1.5 py-0.5 text-[10px] text-sky-200 hover:bg-zinc-700" title={u}>
+            <a key={u} href={u} target="_blank" rel="noreferrer" className="flex items-center gap-0.5 rounded bg-zinc-800/80 px-1.5 py-0.5 text-[10px] text-violet-200 hover:bg-zinc-700" title={u}>
               <ExternalLink className="h-2.5 w-2.5" /> [{i + 1}] {host(u)}
             </a>
           ))}

@@ -36,10 +36,7 @@ export function AppearanceSection() {
   const { projectTint, homeGlow } = useAppearance();
   return (
     <>
-      <Group
-        title="Theme"
-        hint="The app, and every link you share (captions, documents, Review, Finals, Workshop). System follows the device."
-      >
+      <Group title="Theme" hint="The app and the links you share. System follows the device.">
         <div
           role="radiogroup"
           aria-label="Theme"
@@ -77,7 +74,7 @@ export function AppearanceSection() {
         <Card>
           <Row
             label="Project colour"
-            hint="The tools take the current project's colour. Off = violet."
+            hint="Tools take the current project's colour. Off = violet."
           >
             <Switch
               checked={projectTint}

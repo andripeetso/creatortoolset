@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router";
+import { HomeLink } from "@/components/HomeLink";
 import { Folder, Layers, Loader2 } from "lucide-react";
 import { APPROVAL, getSharedProject, thumbUrl, timecode, type ReviewAsset } from "@/lib/review";
 import { cn } from "@/lib/utils";
@@ -36,7 +37,8 @@ export default function ReviewSharedProjectPage() {
 
   return (
     <div className="min-h-dvh bg-zinc-950 text-zinc-200">
-      <header data-titlebar className="flex items-center gap-3 border-b border-zinc-900 px-4 py-3">
+      <header data-titlebar className="flex h-14 items-center gap-3 border-b border-zinc-900 px-3 sm:px-4">
+        <HomeLink />
         <Folder className="h-5 w-5 shrink-0 text-violet-400" />
         <h1 className="truncate text-lg font-semibold tracking-tight">{data.name}</h1>
         <p className="hidden text-sm text-zinc-500 sm:block">Open a video to comment on the exact frame.</p>

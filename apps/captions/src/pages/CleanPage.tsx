@@ -8,7 +8,6 @@ import {
   Plus,
   Save,
   Trash2,
-  UploadCloud,
 } from "lucide-react";
 import type {
   CleanSource,
@@ -25,6 +24,7 @@ import {
 } from "@contracts/clean-edit";
 import { fmtBytes } from "@/lib/exports";
 import { AppBar } from "@/components/AppBar";
+import { DropZoneText, dropZoneClass } from "@/components/DropZone";
 import {
   cleanMediaUrl,
   compareCleanSources,
@@ -753,15 +753,12 @@ export default function CleanPage() {
                     setDrag(false);
                     addVideos([...e.dataTransfer.files]);
                   }}
-                  className={`flex min-h-[390px] w-full flex-col items-center justify-center rounded-2xl border-2 border-dashed px-8 text-center ${drag ? "border-violet-500 bg-violet-500/10" : "border-zinc-800 bg-zinc-900/20 hover:border-zinc-600"}`}
+                  className={dropZoneClass(drag, "min-h-[390px] cursor-pointer")}
                 >
-                  <UploadCloud className="mb-5 h-10 w-10 text-violet-400" />
-                  <span className="text-lg font-medium">
-                    Drop your videos here
-                  </span>
-                  <span className="mt-2 text-sm text-zinc-400">
-                    or click to browse · MP4, MOV, M4V, MKV, WebM
-                  </span>
+                  <DropZoneText
+                    title="Drop your videos here"
+                    hint="or click to browse · MP4, MOV, M4V, MKV, WebM"
+                  />
                   <span className="mt-5 max-w-md text-xs leading-relaxed text-zinc-500">
                     Choose adjustments before or during upload. Presets save
                     settings, never your video.

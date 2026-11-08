@@ -108,7 +108,7 @@ export function IngestBox({
             className={`rounded-lg border px-3.5 py-1.5 text-sm ${
               on
                 ? s.id === "format"
-                  ? "border-sky-500/50 bg-sky-500/15 text-sky-200"
+                  ? "border-violet-500/50 bg-violet-500/15 text-violet-200"
                   : "border-violet-500/50 bg-violet-500/15 text-violet-200"
                 : "border-zinc-800 text-zinc-500 hover:border-zinc-600 hover:text-zinc-300"
             }`}

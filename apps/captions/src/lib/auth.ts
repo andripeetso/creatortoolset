@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { Tool } from "@contracts/tools";
+import { clearLocalCache } from "./local-cache";
 
 /**
  * Client-side view of the logged-in account. Populated by AuthGate on
@@ -67,6 +68,7 @@ export function returnTo(search: string, origin: string): string | null {
 }
 
 export async function logout(): Promise<void> {
+  clearLocalCache();
   await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
   window.location.reload();
 }

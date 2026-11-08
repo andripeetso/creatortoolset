@@ -74,7 +74,7 @@ export function SourceResultCard({
             <span className="shrink-0 rounded bg-violet-600/80 px-1 text-[10px] text-white">yours</span>
           ) : null}
           {effectiveSavedFor(post.savedFor).includes("format") ? (
-            <span className="shrink-0 rounded bg-sky-500/15 px-1 text-[10px] text-sky-800 dark:text-sky-200">format</span>
+            <span className="shrink-0 rounded bg-violet-500/15 px-1 text-[10px] text-violet-800 dark:text-violet-200">format</span>
           ) : null}
           {effectiveSavedFor(post.savedFor).includes("content") ? (
             <span className="shrink-0 rounded bg-violet-500/15 px-1 text-[10px] text-violet-800 dark:text-violet-200">content</span>
@@ -97,7 +97,7 @@ export function SourceResultCard({
                   : m.field === "slides"
                   ? "bg-violet-500/20 text-violet-800 dark:text-violet-100"
                   : m.field === "transcript"
-                    ? "bg-sky-500/15 text-sky-800 dark:text-sky-100"
+                    ? "bg-violet-500/15 text-violet-800 dark:text-violet-100"
                     : m.field === "caption"
                       ? "bg-muted text-foreground"
                       : "bg-muted/60 text-muted-foreground"

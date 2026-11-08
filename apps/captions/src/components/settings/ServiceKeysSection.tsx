@@ -79,9 +79,9 @@ export function KeyRow({ k, status, on, canForget, save }: { k: { name: string; 
           onChange={(e) => setValue(e.target.value)}
           placeholder={canForget ? "Replace key" : "Paste key"}
           aria-label={`${k.name} API key`}
-          className="h-7 w-40 rounded-md border border-border bg-transparent px-2 text-xs outline-none focus:border-ring"
+          className="h-8 w-40 rounded-md border border-input bg-background px-2 text-xs text-foreground placeholder:text-muted-foreground/60 focus:border-violet-500 focus:outline-none"
         />
-        <Button type="submit" size="sm" variant="outline" className="h-7 text-xs" disabled={!value.trim()}>
+        <Button type="submit" size="sm" variant="outline" disabled={!value.trim()}>
           Save
         </Button>
         {canForget && (

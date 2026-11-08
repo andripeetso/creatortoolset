@@ -151,6 +151,9 @@ export function Timeline() {
     }
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+    // the project colour (violet is a variable per tint), read for canvas fills
+    const cs = getComputedStyle(canvas);
+    const vc = (n: number) => `rgb(${cs.getPropertyValue(`--violet-${n}`).trim().split(/\s+/).join(", ")})`;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, W, canvasH);
 
@@ -217,8 +220,8 @@ export function Timeline() {
           const active = currentTime >= s.start && currentTime < s.end;
           ctx.fillStyle = custom
             ? active
-              ? "#7c3aed"
-              : "#5b21b6"
+              ? vc(600)
+              : vc(700)
             : active
               ? k("#4b4b55", "#c4c4cc")
               : k("#33333c", "#e4e4e7");
@@ -271,7 +274,7 @@ export function Timeline() {
     const waveTop = RULER_H + PAD + layersExtra;
     if (peaks && peaks.length > 0) {
       const mid = waveTop + WAVE_H / 2;
-      ctx.fillStyle = k("#4c1d95", "#c4b5fd");
+      ctx.fillStyle = k(vc(900), vc(300));
       const perPx = peaks.length / W;
       for (let x = 0; x < W; x++) {
         const i = Math.floor(x * perPx);
@@ -292,7 +295,7 @@ export function Timeline() {
       const x = t2x(c.start);
       const w = Math.max(2, t2x(c.end) - x);
       const active = currentTime >= c.start && currentTime < c.end;
-      ctx.fillStyle = active ? "#8b5cf6" : k("#3b3b46", "#e4e4e7");
+      ctx.fillStyle = active ? vc(500) : k("#3b3b46", "#e4e4e7");
       ctx.beginPath();
       ctx.roundRect(x + 1, cueTop, w - 2, CUE_H - 4, 3);
       ctx.fill();

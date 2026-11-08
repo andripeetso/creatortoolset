@@ -3,7 +3,7 @@ import { X } from "lucide-react";
 import { TAG_KINDS, type Tag, type TagKind } from "@/lib/instagram";
 
 const KIND_CLASS: Record<TagKind, string> = {
-  format: "border-sky-800/80 bg-sky-950/40 text-sky-200",
+  format: "border-violet-800/80 bg-violet-950/40 text-violet-200",
   topic: "border-zinc-800 bg-zinc-900/70 text-zinc-300",
   hook: "border-zinc-800 bg-zinc-900/70 text-zinc-300",
   cta: "border-zinc-800 bg-zinc-900/70 text-zinc-300",

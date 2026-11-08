@@ -55,11 +55,11 @@ export function workshopUsesByPost(sessions: SessionRow[]): Map<string, PostWork
 
 const WORKSHOP_CHIP: Record<SessionStatus, string> = {
   draft: "bg-zinc-800 text-zinc-300 hover:bg-zinc-700",
-  writing: "bg-sky-500/15 text-sky-200 hover:bg-sky-500/25",
+  writing: "bg-violet-500/15 text-violet-200 hover:bg-violet-500/25",
   production: "bg-amber-500/15 text-amber-200 hover:bg-amber-500/25",
   ready: "bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25",
-  editing: "bg-orange-500/15 text-orange-200 hover:bg-orange-500/25",
-  toPost: "bg-teal-400/15 text-teal-100 hover:bg-teal-400/25",
+  editing: "bg-amber-500/15 text-amber-200 hover:bg-amber-500/25",
+  toPost: "bg-emerald-400/15 text-emerald-100 hover:bg-emerald-400/25",
   published: "bg-violet-500/20 text-violet-100 hover:bg-violet-500/30",
   shelved: "bg-zinc-800/60 text-zinc-500 hover:bg-zinc-700",
 };
@@ -275,7 +275,7 @@ export function PostCard({
                     : m.field === "slides"
                     ? "bg-violet-500/20 text-violet-100"
                     : m.field === "transcript"
-                      ? "bg-sky-500/15 text-sky-100"
+                      ? "bg-violet-500/15 text-violet-100"
                       : "bg-zinc-800 text-zinc-400"
                 }`}
               >
@@ -297,7 +297,7 @@ export function PostCard({
               <span
                 key={t.id}
                 className={`rounded px-1.5 py-0.5 text-[10px] ${
-                  t.kind === "format" ? "bg-sky-500/15 text-sky-200" : "bg-zinc-800 text-zinc-400"
+                  t.kind === "format" ? "bg-violet-500/15 text-violet-200" : "bg-zinc-800 text-zinc-400"
                 }`}
               >
                 {t.kind === "format" ? `format: ${t.label}` : t.label}

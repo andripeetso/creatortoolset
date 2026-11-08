@@ -820,7 +820,7 @@ function PieceEditor({
                     ) : null}
                     <div className="ml-auto flex gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
                       {onAsk ? (
-                        <button type="button" disabled={!aiAvailable || !b.text.trim()} onClick={() => startAsk(b)} className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-sky-300 disabled:opacity-40" title={`Ask about ${unit.one} ${i + 1} in a side chat (it only answers, nothing changes)`}>
+                        <button type="button" disabled={!aiAvailable || !b.text.trim()} onClick={() => startAsk(b)} className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-violet-300 disabled:opacity-40" title={`Ask about ${unit.one} ${i + 1} in a side chat (it only answers, nothing changes)`}>
                           <MessageCircleQuestion className="h-3 w-3" />
                         </button>
                       ) : null}
@@ -857,7 +857,7 @@ function PieceEditor({
                         </button>
                       ) : null}
                       {onAsk ? (
-                        <button type="button" disabled={!aiAvailable} onClick={() => startAsk(b)} className={`${PILL_BUTTON} text-sky-300`} title="Ask about the selected words in a side chat. It only answers: nothing on the piece changes.">
+                        <button type="button" disabled={!aiAvailable} onClick={() => startAsk(b)} className={`${PILL_BUTTON} text-violet-300`} title="Ask about the selected words in a side chat. It only answers: nothing on the piece changes.">
                           <MessageCircleQuestion className="h-3.5 w-3.5" /> Ask
                         </button>
                       ) : null}
@@ -915,7 +915,7 @@ function PieceEditor({
             </div>
               </>
             )}
-            {doc.kind !== "notes" && (
+            {!["notes", "newsletter", "thread", "article"].includes(doc.kind) && (
               <div className={`mt-8 grid gap-6 border-t border-border pt-6 sm:grid-cols-2 ${isReel ? "px-3" : ""}`}>
                 <div className="group">
                   <div className="mb-1.5 flex items-center gap-2">

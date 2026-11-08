@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useCachedLoad } from "@/lib/local-cache";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import {
   Captions,
@@ -17,7 +18,9 @@ import {
   Undo2,
   UploadCloud,
   X,
+  MessageSquareText,
 } from "lucide-react";
+import { ToolIntro } from "@/components/AppBar";
 import { AppBar } from "@/components/AppBar";
 import { ReviewShareButton } from "@/components/ReviewShareButton";
 import { confirmDialog, promptDialog } from "@/lib/dialogs";
@@ -101,8 +104,13 @@ const media = (list: FileList | null | undefined) =>
 export default function ReviewPage() {
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
-  const [assets, setAssets] = useState<ReviewAsset[] | null>(null);
-  const [projects, setProjects] = useState<ReviewProject[]>([]);
+  const assetsList = useCachedLoad("/api/review", listReviewAssets);
+  const projectsList = useCachedLoad("/api/review/projects", listReviewProjects);
+  const assets = assetsList.data;
+  const setAssets = assetsList.set;
+  const projects = projectsList.data ?? [];
+  const { refresh: refreshAssets } = assetsList;
+  const { refresh: refreshProjects } = projectsList;
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
@@ -118,14 +126,10 @@ export default function ReviewPage() {
 
   const load = useCallback(
     () =>
-      Promise.all([listReviewAssets(), listReviewProjects()])
-        .then(([a, p]) => {
-          setAssets(a);
-          setProjects(p);
-          setError("");
-        })
+      Promise.all([refreshAssets(), refreshProjects()])
+        .then(() => setError(""))
         .catch((e: Error) => setError(e.message)),
-    [],
+    [refreshAssets, refreshProjects],
   );
 
   const project = projects.find((p) => p.id === params.get("p"));
@@ -149,8 +153,8 @@ export default function ReviewPage() {
 
   const busy =
     uploads.length > 0 || !!assets?.some((a) => a.versions.at(-1)?.status === "processing");
+  // the first load is the hook's (the saved list shows at once); this only polls while something processes
   useEffect(() => {
-    void load();
     if (!busy) return;
     const t = window.setInterval(() => void load(), 3000);
     return () => window.clearInterval(t);
@@ -305,7 +309,10 @@ export default function ReviewPage() {
       </AppBar>
 
       <main className="mx-auto max-w-6xl px-4 py-6">
-        {error && <p className="mb-4 text-sm text-rose-400">{error}</p>}
+        {!project && !trash && (
+          <ToolIntro icon={MessageSquareText} title="Review" line="Share a cut with one link. Reviewers comment on the exact frame." className="mt-4" />
+        )}
+        {error && <p className="mb-4 text-sm text-red-400">{error}</p>}
         {note && (
           <p className="mb-4 flex items-center gap-2 text-sm text-zinc-400">
             <Loader2 className="h-4 w-4 animate-spin" /> {note}
@@ -329,7 +336,7 @@ export default function ReviewPage() {
                   )}
                 </div>
                 {u.error ? (
-                  <p className="mt-1 text-rose-400">{u.error}</p>
+                  <p className="mt-1 text-red-400">{u.error}</p>
                 ) : (
                   <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-zinc-800">
                     <div className="h-full bg-violet-500 transition-[width]" style={{ width: `${u.pct}%` }} />
@@ -582,7 +589,7 @@ function ProjectCard({
           </ContextMenuItem>
         )}
         <ContextMenuSeparator />
-        <ContextMenuItem className="text-rose-400" onClick={() => setDeleting(true)}>
+        <ContextMenuItem className="text-red-400" onClick={() => setDeleting(true)}>
           <Trash2 /> Delete project
         </ContextMenuItem>
       </ContextMenuContent>
@@ -653,7 +660,7 @@ function DeleteProjectDialog({
               value={typed}
               onChange={(e) => setTyped(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && go()}
-              className="rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-zinc-200 outline-none focus:border-rose-500"
+              className="rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-zinc-200 outline-none focus:border-red-500"
             />
           </label>
         )}
@@ -661,7 +668,7 @@ function DeleteProjectDialog({
           <Button variant="outline" onClick={onClose} className="border-zinc-800 bg-transparent">
             Cancel
           </Button>
-          <Button disabled={!ok} onClick={go} className="bg-rose-600 text-white hover:bg-rose-500">
+          <Button disabled={!ok} onClick={go} className="bg-red-600 text-white hover:bg-red-500">
             <Trash2 /> {assets.length === 0 ? "Delete project" : `Delete project and ${many ? `${assets.length} videos` : "its video"}`}
           </Button>
         </div>
@@ -776,7 +783,7 @@ function AssetCard({
               </div>
             )}
             {v?.status === "error" && (
-              <div className="absolute inset-0 flex items-center justify-center gap-2 px-4 text-center text-xs text-rose-400">
+              <div className="absolute inset-0 flex items-center justify-center gap-2 px-4 text-center text-xs text-red-400">
                 <TriangleAlert className="h-4 w-4 shrink-0" /> {v.error}
               </div>
             )}
@@ -915,7 +922,7 @@ function AssetCard({
           </ContextMenuItem>
         )}
         <ContextMenuItem
-          className="text-rose-400"
+          className="text-red-400"
           onClick={() => {
             void confirmDialog({ title: `Move “${a.name}” to the trash?`, body: "You can restore it for 30 days.", ok: "Move to trash", danger: true, deleting: true })
               .then((yes) => {
@@ -1001,7 +1008,7 @@ function StackDialog({ asset: a, act, onClose }: { asset?: ReviewAsset; act: Act
                 ) : x.status === "processing" ? (
                   <Loader2 className="h-4 w-4 animate-spin text-violet-400" />
                 ) : (
-                  <TriangleAlert className="h-4 w-4 text-rose-400" />
+                  <TriangleAlert className="h-4 w-4 text-red-400" />
                 )}
               </span>
               <span className="w-7 shrink-0 text-sm font-medium">V{a.versions.length - i}</span>
@@ -1069,7 +1076,7 @@ function TrashView({ onRestored }: { onRestored: () => void }) {
   if (!items) return <Loader2 className="mx-auto mt-24 h-6 w-6 animate-spin text-zinc-600" />;
   return (
     <>
-      {error && <p className="mb-4 text-sm text-rose-400">{error}</p>}
+      {error && <p className="mb-4 text-sm text-red-400">{error}</p>}
       <p className="mb-4 text-sm text-zinc-500">
         {items.length ? "Deleted videos stay here for 30 days, then they're gone for good." : "The trash is empty."}
       </p>
@@ -1107,7 +1114,7 @@ function TrashView({ onRestored }: { onRestored: () => void }) {
                       if (yes) void run(deleteForever(a.id));
                     });
                 }}
-                className="rounded-md p-1.5 text-zinc-500 hover:bg-zinc-800 hover:text-rose-400"
+                className="rounded-md p-1.5 text-zinc-500 hover:bg-zinc-800 hover:text-red-400"
               >
                 <Trash2 className="h-4 w-4" />
               </button>

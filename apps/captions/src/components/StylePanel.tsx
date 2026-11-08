@@ -253,14 +253,12 @@ function PresetRow({
   active,
   applyServer,
   styleToSave,
-  accent,
 }: {
   kind: "caption" | "text";
   builtins: { name: string; apply: () => void }[];
   active: string | null;
   applyServer: (p: ServerPreset) => void;
   styleToSave: () => Record<string, unknown>;
-  accent: "violet" | "teal";
 }) {
   const presets = usePresets((s) => s.presets);
   const loaded = usePresets((s) => s.loaded);
@@ -288,9 +286,7 @@ function PresetRow({
     me?.role === "admin" || p.owner === me?.username;
 
   const activeCls =
-    accent === "violet"
-      ? "border-violet-500 bg-violet-500/20 text-violet-200"
-      : "border-teal-500 bg-teal-500/20 text-teal-200";
+    "border-violet-500 bg-violet-500/20 text-violet-200";
   const idleCls =
     "border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200";
 
@@ -407,13 +403,12 @@ function TextStylePanel() {
 
   return (
     <div className="flex h-full w-64 flex-col border-l border-zinc-800 bg-zinc-925">
-      <div className="flex items-center gap-2 border-b border-zinc-800 px-4 py-2.5 text-xs font-medium uppercase tracking-wider text-teal-300">
+      <div className="flex items-center gap-2 border-b border-zinc-800 px-4 py-2.5 text-xs font-medium uppercase tracking-wider text-violet-300">
         <Type className="h-3.5 w-3.5" /> Text style
       </div>
       <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-3">
         <PresetRow
           kind="text"
-          accent="teal"
           active={null}
           builtins={TEXT_PRESETS.map((p) => ({
             name: p.name,
@@ -439,7 +434,7 @@ function TextStylePanel() {
             // the whole typing session is one undo step
             onFocus={() => useStudio.getState().snapshotHistory()}
             onChange={(e) => updateText(t.id, { text: e.target.value })}
-            className="w-full resize-y rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-200 outline-none focus:border-teal-500"
+            className="w-full resize-y rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-200 outline-none focus:border-violet-500"
           />
         </Row>
         <Row label="Font">
@@ -592,7 +587,7 @@ function TextStylePanel() {
           <button
             onClick={() => updateText(t.id, { boxEnabled: !t.boxEnabled })}
             className={`h-5 w-9 rounded-full transition-colors ${
-              t.boxEnabled ? "bg-teal-600" : "bg-zinc-700"
+              t.boxEnabled ? "bg-violet-600" : "bg-zinc-700"
             } relative`}
           >
             <span
@@ -679,7 +674,6 @@ export function StylePanel() {
       <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-3">
         <PresetRow
           kind="caption"
-          accent="violet"
           active={activePreset}
           builtins={STYLE_PRESETS.map((p) => ({
             name: p.name,

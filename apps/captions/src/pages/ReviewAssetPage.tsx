@@ -41,7 +41,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PictureRulers, RULER, type Guide } from "@/components/PictureRulers";
-import { HomeLink } from "@/components/HomeLink";
+import { HistoryArrows, HomeLink } from "@/components/HomeLink";
 import { UserMenu } from "@/components/UserMenu";
 import { ReviewShareButton } from "@/components/ReviewShareButton";
 import {
@@ -79,6 +79,7 @@ import {
   type Stroke,
 } from "@/lib/review";
 import { cn } from "@/lib/utils";
+import { useCachedLoad } from "@/lib/local-cache";
 import { fmtBytes } from "@/lib/exports";
 import { ReviewCompare } from "./ReviewCompare";
 
@@ -111,7 +112,11 @@ export default function ReviewAssetPage() {
       : `/api/review/assets/${assetId}`;
   const api = useMemo(() => reviewApi(base), [base]);
   const [params] = useSearchParams();
-  const [view, setView] = useState<ReviewView | null>(null);
+  // the video's saved view shows at once; the fetch below refreshes it (signed in: kept on this device, lib/local-cache)
+  const shown = useCachedLoad<ReviewView>(base, () => api.get());
+  const view = shown.data;
+  const setView = shown.set;
+  const { refresh: refreshShown } = shown;
   const [loadError, setLoadError] = useState("");
   // a version picked here wins until the link itself changes
   const [picked, setPicked] = useState<{ n: number; search: string } | null>(null);
@@ -119,17 +124,13 @@ export default function ReviewAssetPage() {
 
   const load = useCallback(
     () =>
-      api
-        .get()
-        .then((v) => {
-          setView(v);
-          setLoadError("");
-        })
+      refreshShown()
+        .then(() => setLoadError(""))
         .catch((e: Error) => setLoadError(e.message)),
-    [api],
+    [refreshShown],
   );
   useEffect(() => {
-    void load();
+    // the first load is the hook's; this keeps it fresh while the page is open
     const t = window.setInterval(() => {
       if (document.visibilityState === "visible") void load();
     }, 5000);
@@ -746,7 +747,7 @@ function Review({
                 Preparing video for review · {Math.round(version.progress * 100)}%
               </div>
             ) : (
-              <p className="flex max-w-md items-center gap-2 px-6 text-sm text-rose-400">
+              <p className="flex max-w-md items-center gap-2 px-6 text-sm text-red-400">
                 <TriangleAlert className="h-4 w-4 shrink-0" /> {version.error || "This version failed to process"}
               </p>
             )}
@@ -885,13 +886,13 @@ function Review({
                     title={x.error ?? x.name}
                     className={cn(
                       "relative flex h-12 w-12 items-center justify-center overflow-hidden rounded-md border bg-zinc-900",
-                      x.error ? "border-rose-500" : "border-zinc-800",
+                      x.error ? "border-red-500" : "border-zinc-800",
                     )}
                   >
                     {x.ref ? (
                       <img src={api.refUrl(n, x.ref.id, "look")} alt={x.name} className="h-full w-full object-cover" />
                     ) : x.error ? (
-                      <TriangleAlert className="h-5 w-5 text-rose-400" />
+                      <TriangleAlert className="h-5 w-5 text-red-400" />
                     ) : (
                       <Loader2 className="h-5 w-5 animate-spin text-zinc-500" />
                     )}
@@ -906,7 +907,7 @@ function Review({
                 ))}
               </div>
             )}
-            {refFailed && <p className="mb-2 text-xs text-rose-400">{refFailed.name}: {refFailed.error}</p>}
+            {refFailed && <p className="mb-2 text-xs text-red-400">{refFailed.name}: {refFailed.error}</p>}
             <textarea
               ref={composerBox}
               value={text}
@@ -996,14 +997,14 @@ function Review({
               )}
               <Button
                 size="sm"
-                className="ml-auto h-7 bg-violet-600 text-white hover:bg-violet-500"
+                className="ml-auto h-8 rounded-md px-3 text-sm font-medium bg-violet-600 text-white hover:bg-violet-500"
                 disabled={posting || uploadingRefs || (!text.trim() && !draft.length && !refIds.length)}
                 onClick={() => void post()}
               >
                 {posting ? <Loader2 className="animate-spin" /> : <Send />} Send
               </Button>
             </div>
-            {postError && <p className="mt-1.5 text-xs text-rose-400">{postError}</p>}
+            {postError && <p className="mt-1.5 text-xs text-red-400">{postError}</p>}
             <p className="mt-1.5 hidden text-[11px] text-zinc-600 lg:block">
               Space play · J/K/L or 1/2/3 shuttle · ←/→ frame · Shift ←/→ second · C comment
             </p>
@@ -1090,10 +1091,11 @@ function Header({
 
   return (
     // the app's bar (AppBar) for the owner: logo, Review › this video; a reviewer on a link gets only the way back
-    <header data-titlebar className="flex min-h-14 flex-wrap items-center gap-2 border-b border-zinc-500/20 px-3 py-2 sm:px-4">
+    <header data-titlebar className="flex min-h-14 flex-wrap items-center gap-2 border-b border-zinc-500/20 px-3 py-2 sm:h-14 sm:flex-nowrap sm:px-4">
       {manage ? (
         <>
           <HomeLink />
+          <HistoryArrows />
           <Link to={libraryPath} className="shrink-0 text-sm font-semibold tracking-tight text-zinc-500 hover:text-zinc-200">
             Review
           </Link>
@@ -1185,7 +1187,7 @@ function Header({
           <Loader2 className="h-3.5 w-3.5 animate-spin" /> Uploading V{asset.versions.length + 1} · {uploadPct}%
         </span>
       )}
-      {error && <span className="text-xs text-rose-400">{error}</span>}
+      {error && <span className="text-xs text-red-400">{error}</span>}
 
       <div className="ml-auto flex items-center gap-2">
         <ApprovalControl asset={asset} manage={manage} approve={approve} />
@@ -1225,7 +1227,7 @@ function Header({
               <CaptionsMenu asset={asset} n={n} setAsset={setAsset} onError={setError} />
               <DropdownMenuSeparator />
               <DropdownMenuItem
-                className="text-rose-400"
+                className="text-red-400"
                 onClick={async () => {
                   if (!(await confirmDialog({ title: `Move “${asset.name}” to the trash?`, body: "You can restore it for 30 days.", ok: "Move to trash", danger: true, deleting: true }))) return;
                   await deleteReviewAsset(asset.id);
@@ -1257,7 +1259,7 @@ function CaptionStudioButton({ asset, n, next }: { asset: ReviewAsset; n: number
   const [error, setError] = useState("");
   return (
     <>
-      {error && <span className="text-xs text-rose-400">{error}</span>}
+      {error && <span className="text-xs text-red-400">{error}</span>}
       <Button
         size="sm"
         variant={next ? "default" : "outline"}
@@ -1577,7 +1579,7 @@ function Thread({
       id={`c-${c.id}`}
       className={cn(
         "mb-2 rounded-lg border px-3 py-2.5 transition-[background-color,border-color,box-shadow] duration-700",
-        flash ? "border-violet-400 bg-violet-950/70 shadow-[0_0_0_3px_rgba(167,139,250,0.35)]"
+        flash ? "border-violet-400 bg-violet-950/70 ring-[3px] ring-violet-400/35"
           : active ? "border-violet-500/60 bg-zinc-900" : "border-transparent hover:bg-zinc-900/60",
         c.resolved && "opacity-60",
       )}
@@ -1604,17 +1606,17 @@ function Thread({
             placeholder="Reply…"
             className="[field-sizing:content] min-h-16 max-h-60 w-full resize-none rounded-md border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 text-sm outline-none focus:border-violet-500"
           />
-          {error && <p className="text-xs text-rose-400">{error}</p>}
+          {error && <p className="text-xs text-red-400">{error}</p>}
         </div>
       ) : editingId ? (
         <div className="ml-8 mt-1.5 flex items-center gap-3 text-xs">
-          <button className="rounded-md bg-violet-600 px-2.5 py-1 font-medium text-white hover:bg-violet-500" onClick={() => void saveEdit()}>
+          <button className="h-8 rounded-md bg-violet-600 px-3 text-sm font-medium text-white hover:bg-violet-500" onClick={() => void saveEdit()}>
             Save
           </button>
           <button className="text-zinc-500 hover:text-zinc-300" onClick={() => setEditingId(null)}>
             Cancel
           </button>
-          {error && <span className="text-rose-400">{error}</span>}
+          {error && <span className="text-red-400">{error}</span>}
         </div>
       ) : (
         <div className="ml-8 mt-1.5 flex gap-3 text-xs text-zinc-500">
@@ -1692,7 +1694,7 @@ function Entry({
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   {c.mine && <DropdownMenuItem onClick={startEdit}>Edit</DropdownMenuItem>}
-                  <DropdownMenuItem className="text-rose-400" onClick={() => void onDelete(c.id)}>
+                  <DropdownMenuItem className="text-red-400" onClick={() => void onDelete(c.id)}>
                     Delete
                   </DropdownMenuItem>
                 </DropdownMenuContent>

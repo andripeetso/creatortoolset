@@ -18,6 +18,10 @@
         document.documentElement.style.colorScheme = dark ? "dark" : "light";
         var meta = document.querySelector('meta[name="theme-color"]');
         if (meta) meta.setAttribute("content", dark ? "#0b0b10" : "#fafafa");
+        // the last project's colour (useRootTint keeps it), so a reload never flashes violet first
+        var tint = null;
+        try { tint = localStorage.getItem("ct-tint"); } catch (e) {}
+        if (tint && !share) document.documentElement.dataset.tint = tint;
       })();
     </script>
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />

@@ -39,7 +39,7 @@ export function UpdateButton() {
       type="button"
       onClick={() => location.reload()}
       title="A new version of Creator Toolset is ready: reload to use it"
-      className="flex h-7 items-center gap-1.5 rounded-md bg-violet-600 px-2 text-xs font-medium text-white hover:bg-violet-500"
+      className="flex h-7 items-center gap-1.5 rounded-md bg-violet-600 px-2.5 text-xs font-medium text-white hover:bg-violet-500"
     >
       <RefreshCw className="h-3.5 w-3.5" />
       Update

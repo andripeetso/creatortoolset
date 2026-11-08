@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState } from "react";
 import { Link, Navigate, useLocation, useNavigate } from "react-router";
 import {
+  Loader2,
   ArrowRight,
   AudioLines,
   Captions,
@@ -20,7 +21,7 @@ import { canUse, useMe, type Me } from "@/lib/auth";
 import { isPhoneHub } from "@/lib/mobile";
 import { useStudio } from "@/lib/store";
 import { UserMenu } from "@/components/UserMenu";
-import { Wordmark } from "@/components/HomeLink";
+import { HistoryArrows, HomeLink } from "@/components/HomeLink";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
 import { useSessionSummaries } from "@/lib/workshop-summary";
 import { listEdits } from "@/lib/editor";
@@ -62,7 +63,7 @@ const WORKFLOW: { stage: string; tools: Tool[] }[] = [
         to: "/workshop",
         icon: NotebookPen,
         name: "Content Workshop",
-        desc: "Search your research, take notes, draft reels, carousels and ads.",
+        desc: "Search your research, take notes, draft reels, carousels, YouTube scripts, newsletters, X threads and articles.",
         can: (me) => canUse(me, "workshop"),
       },
     ],
@@ -157,6 +158,9 @@ export default function ToolsetHome() {
   const waiting = useWaiting(me);
   const project = useWorkspace(currentProject);
   const { projectTint, homeGlow } = useAppearance();
+  // what's working right now: a Workshop reply being written. Its stage's box pulses and the tile says how many.
+  const rows = useSessionSummaries();
+  const running: Record<string, number> = showCounts ? { "/workshop": rows?.filter((r) => r.working).length ?? 0 } : {};
 
   const { dark } = useShareTheme();
   if (phone && location.pathname === "/") {
@@ -236,6 +240,7 @@ export default function ToolsetHome() {
             <Lock className="absolute -bottom-1 -right-1 h-4 w-4 rounded-full bg-zinc-900 p-0.5 text-zinc-300" />
           )}
           {t.can(me) && (t.to === "/workshop" ? showCounts && <WorkshopBadge /> : <Badge n={waiting[t.to] ?? 0} means={BADGE_MEANS[t.to]} />)}
+          {t.can(me) && running[t.to] ? <Running n={running[t.to]} verb="writing" /> : null}
         </span>
         <span className={`text-xs leading-tight group-hover:text-zinc-50 ${quiet ? "text-zinc-400" : "text-zinc-300"}`}>
           {t.name}
@@ -246,27 +251,30 @@ export default function ToolsetHome() {
   return (
     <div
       style={tintStyle}
-      className={`relative isolate flex min-h-dvh flex-col items-center bg-zinc-950 pt-safe pb-safe text-zinc-200 ${
+      className={`home-hub relative isolate flex min-h-dvh flex-col items-center bg-zinc-950 pt-safe pb-safe text-zinc-200 ${
         phone ? "justify-start py-8" : "justify-center"
       }`}
     >
       {homeGlow && dark && ( // light: no glow (it banded and distracted there)
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-0 -z-10"
-          style={{ background: "radial-gradient(ellipse 70% 50% at 50% 55%, color-mix(in srgb, var(--tint) 10%, transparent), transparent 70%)" }}
-        />
+        <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
+          <div
+            className="home-glow absolute inset-0"
+            style={{ background: "radial-gradient(ellipse 70% 50% at 50% 55%, color-mix(in srgb, var(--tint) 10%, transparent), transparent 70%)" }}
+          />
+        </div>
       )}
       <div className="absolute right-3 top-[max(0.75rem,env(safe-area-inset-top))] flex items-center gap-2">
         {canUse(me, "instagram") || canUse(me, "workshop") ? <ProjectSwitcher /> : null}
         <UserMenu />
       </div>
 
-      {/* the name typed out, top left as in the other tool pages (no icon lockup in the middle, it fought the project
-          colours); which project you're in is the switcher top right */}
-      <h1 data-titlebar className="absolute left-3 top-[max(0.75rem,env(safe-area-inset-top))] flex h-8 items-center">
-        <Wordmark className="px-1.5 text-[15px]" />
-      </h1>
+      {/* the name typed out, top left as in the other tool pages, at the same left edge, size and height as AppBar's
+          HomeLink, so the name never moves between home and a tool; which project you're in is the switcher top right.
+          The bar's border (invisible here) keeps the centre line at the tool pages' 0.5px */}
+      <div data-titlebar className="absolute left-0 top-0 flex h-14 items-center border-b border-transparent px-3 sm:px-4">
+        <HomeLink />
+        <HistoryArrows />
+      </div>
       {phone && <div className="h-16 shrink-0" />}
 
       {/* two rows: the work's three steps, verbs, in equal boxes; under them Tools, quieter, no box, a centred label
@@ -282,7 +290,7 @@ export default function ToolsetHome() {
                 </div>
               )}
               <section
-                className={`rounded-2xl border p-3 ${
+                className={`rounded-2xl border p-3 ${s.tools.some((t) => t.can(me) && running[t.to]) ? "home-busy" : ""} ${
                   s.stage === "Make"
                     ? "border-[color-mix(in_srgb,var(--tint)_30%,transparent)] bg-[color-mix(in_srgb,var(--tint)_5%,transparent)]"
                     : "border-zinc-800/80 bg-zinc-900/30"
@@ -360,6 +368,18 @@ const BADGE_MEANS: Record<string, (n: number) => string> = {
   "/editor": (n) => `${plural(n, "edit")} whose last step failed or needs a key`,
   "/review": (n) => `${plural(n, "video")} to review`,
 };
+
+/** Work running at a tool, quiet beside its badge: a spinner and the count, never red. */
+function Running({ n, verb }: { n: number; verb: string }) {
+  return (
+    <span
+      title={`${n} ${verb}`}
+      className="absolute -bottom-1.5 -right-1.5 flex items-center gap-1 whitespace-nowrap rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] leading-none text-zinc-300 ring-2 ring-[#0b0b10]"
+    >
+      <Loader2 className="h-2.5 w-2.5 animate-spin" /> {n} {verb}
+    </span>
+  );
+}
 
 function Badge({ n, means }: { n: number; means?: (n: number) => string }) {
   if (!n) return null;

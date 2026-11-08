@@ -128,7 +128,7 @@ export function AddProviderDialog({
                 value={home}
                 onChange={(e) => setHome(e.target.value)}
                 placeholder="/Users/you/.claude-work"
-                className="mt-1 w-full rounded-md border border-input bg-background px-2.5 py-1.5 font-mono text-xs text-foreground placeholder:text-muted-foreground/60 focus:border-violet-500 focus:outline-none"
+                className="mt-1 h-8 w-full rounded-md border border-input bg-background px-2.5 font-mono text-xs text-foreground placeholder:text-muted-foreground/60 focus:border-violet-500 focus:outline-none"
               />
             </label>
           </>
@@ -141,7 +141,7 @@ export function AddProviderDialog({
               <input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className="mt-1 w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm text-foreground focus:border-violet-500 focus:outline-none"
+                className="mt-1 h-8 w-full rounded-md border border-input bg-background px-2.5 text-xs text-foreground focus:border-violet-500 focus:outline-none"
               />
             </label>
             <div className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2.5">

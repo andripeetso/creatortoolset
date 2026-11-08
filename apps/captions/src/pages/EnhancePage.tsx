@@ -14,8 +14,8 @@ import {
   Sparkles,
   Trash2,
   TriangleAlert,
-  UploadCloud,
 } from "lucide-react";
+import { useCachedList } from "@/lib/local-cache";
 import { fmtClock } from "@/lib/ass";
 import { fmtBytes, timeAgo } from "@/lib/exports";
 import {
@@ -37,7 +37,8 @@ import {
   type EnhanceSession,
 } from "@/lib/enhance";
 import { EnhancePlayer } from "@/components/EnhancePlayer";
-import { AppBar } from "@/components/AppBar";
+import { AppBar, ToolIntro } from "@/components/AppBar";
+import { DropZoneText, dropZoneClass } from "@/components/DropZone";
 import { openToolSetup } from "@/lib/setup";
 
 /**
@@ -473,7 +474,8 @@ export default function EnhancePage() {
   const [drag, setDrag] = useState(false);
   const [uploadPct, setUploadPct] = useState<number | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
-  const [sessions, setSessions] = useState<EnhanceSession[]>([]);
+  // the saved list shows at once and refreshes underneath (lib/local-cache)
+  const { items: sessions, setItems: setSessions, refresh: loadSessions } = useCachedList("/api/enhance", listEnhance);
   const [current, setCurrent] = useState<EnhanceSession | null>(null);
   const [openingSession, setOpeningSession] = useState(false);
   const [avail, setAvail] = useState<EnhanceAvailability | null>(null);
@@ -482,9 +484,6 @@ export default function EnhancePage() {
   const second = avail?.admin && then !== engine ? then : null;
 
   useEffect(() => {
-    listEnhance()
-      .then(setSessions)
-      .catch(() => {});
     getAvailability()
       .then((a) => {
         setAvail(a);
@@ -530,10 +529,8 @@ export default function EnhancePage() {
   }, [sessionId]);
 
   const refreshList = useCallback(() => {
-    listEnhance()
-      .then(setSessions)
-      .catch(() => {});
-  }, []);
+    loadSessions().catch(() => {});
+  }, [loadSessions]);
 
   const upload = async (f: File) => {
     setUploadError(null);
@@ -564,19 +561,7 @@ export default function EnhancePage() {
     <div className="relative flex min-h-screen flex-col items-center bg-zinc-950 pb-10 text-zinc-200">
       <AppBar tool="Audio Enhancer" to={current ? "/enhance" : undefined} trail={current?.name} />
 
-      <div className="mb-8 mt-10 flex items-center gap-3">
-        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-violet-600">
-          <AudioLines className="h-6 w-6 text-white" />
-        </div>
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">
-            Audio Enhancer
-          </h1>
-          <p className="text-sm text-zinc-500">
-            Studio sound for any recording — denoise · de-echo · level
-          </p>
-        </div>
-      </div>
+      <ToolIntro icon={AudioLines} title="Audio Enhancer" line="Studio sound for any recording — denoise · de-echo · level" />
 
       <div className="w-[560px] max-w-[92vw]">
         {openingSession ? (
@@ -618,11 +603,7 @@ export default function EnhancePage() {
               }}
               onDragLeave={() => setDrag(false)}
               onDrop={onDrop}
-              className={`flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed px-8 py-14 transition-colors ${
-                drag
-                  ? "border-violet-500 bg-violet-500/10"
-                  : "border-zinc-700 bg-zinc-900/50 hover:border-zinc-500"
-              }`}
+              className={dropZoneClass(drag, "cursor-pointer")}
             >
               {uploadPct !== null ? (
                 <>
@@ -635,14 +616,10 @@ export default function EnhancePage() {
                 </>
               ) : (
                 <>
-                  <UploadCloud className="mb-4 h-10 w-10 text-zinc-500" />
-                  <p className="text-base font-medium">
-                    Drop an audio or video file, or click to browse
-                  </p>
-                  <p className="mt-2 text-sm text-zinc-500">
-                    Enhanced automatically the moment it lands — the original is
-                    never changed
-                  </p>
+                  <DropZoneText
+                    title="Drop an audio or video file, or click to browse"
+                    hint="Enhanced automatically the moment it lands — the original is never changed"
+                  />
                 </>
               )}
               <input
@@ -691,7 +668,7 @@ export default function EnhancePage() {
                         </p>
                         <p className="text-[11px] text-zinc-500">
                           {timeAgo(s.createdAt)}
-                          {s.duration > 0 && <> · {fmtClock(s.duration)}</>}
+                          {s.duration > 0 && <> · {fmtClock(s.duration).slice(0, 5)}</>}
                           {s.engine && <> · {chainLabel(s)}</>}
                         </p>
                       </div>

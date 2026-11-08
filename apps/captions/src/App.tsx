@@ -36,7 +36,9 @@ import { canUse, useAuth, useMe } from "@/lib/auth";
 import { initTabGuard } from "@/lib/tabs";
 import { useStudio } from "@/lib/store";
 import { getProjectPersistenceStatus } from "@/lib/persistence-status";
-import { useWorkspace } from "@/lib/workspace";
+import { useRootTint, useWorkspace } from "@/lib/workspace";
+import { warmScreens } from "@/lib/warm-cache";
+import { useAppearance } from "@/lib/settings";
 
 const MobileCaptionPage = lazy(
   () => import("./pages/mobile/MobileCaptionPage"),
@@ -187,6 +189,28 @@ function WorkspaceSync() {
   return null;
 }
 
+/** After sign-in (and when the project changes): fills every screen's saved lists (lib/warm-cache) and loads the
+ *  route code that is lazy, so the first click doesn't wait for a chunk. */
+function WarmCaches() {
+  const signedIn = useAuth((s) => s.me?.username ?? null);
+  const project = useWorkspace((s) => s.currentProjectId);
+  useEffect(() => {
+    if (!signedIn) return;
+    const t = window.setTimeout(() => {
+      warmScreens();
+      void import("./pages/SettingsPage");
+      void import("./pages/CommunityPage");
+      if (isPhoneHub()) {
+        void import("./pages/mobile/MobileCaptionPage");
+        void import("./pages/mobile/MobileInstagramPage");
+        void import("./pages/mobile/MobileWorkshopPage");
+      }
+    }, 0);
+    return () => window.clearTimeout(t);
+  }, [signedIn, project]);
+  return null;
+}
+
 function InstagramAnalyzeRoute() {
   const me = useMe();
   if (!canUse(me, "instagram")) return <Navigate to="/" replace />;
@@ -195,6 +219,7 @@ function InstagramAnalyzeRoute() {
 }
 
 export default function App() {
+  useRootTint(useAppearance().projectTint);
   const location = useLocation();
   const navigate = useNavigate();
   // /settings/*, /community/* and /projects are modals: the page you were on stays mounted behind (home when opened directly)
@@ -234,6 +259,7 @@ export default function App() {
   return (
     <>
       <WorkspaceSync />
+      <WarmCaches />
       <SettingsShortcut />
       <AppDialogs />
       <main className="contents">

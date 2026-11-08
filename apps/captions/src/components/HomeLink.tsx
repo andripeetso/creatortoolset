@@ -1,10 +1,38 @@
 import { useId } from "react";
-import { Link } from "react-router";
+import { Link, useLocation, useNavigate, useNavigationType } from "react-router";
+import { ArrowLeft, ArrowRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toolsetHomePath } from "@/lib/mobile";
 
+// the deepest history entry reached so far (react-router keeps its index in history.state.idx); a push drops the forward ones
+let deepest = 0;
+const reach = (push: boolean, idx: number) => (deepest = push ? idx : Math.max(deepest, idx));
+
+/** Back and forward in the Mac app's top bar. Shown only there, after the name, so the name never
+ *  moves; a browser has its own buttons. Disabled where there is nowhere to go. */
+export function HistoryArrows({ className }: { className?: string }) {
+  const navigate = useNavigate();
+  const navType = useNavigationType();
+  const { key } = useLocation();
+  const idx = (window.history.state?.idx as number | undefined) ?? 0;
+  const furthest = reach(navType === "PUSH", idx);
+  void key; // re-render on every location change
+  if (!document.documentElement.classList.contains("mac-app")) return null;
+  const button = "rounded-md p-1.5 text-zinc-500 hover:bg-zinc-500/15 hover:text-inherit disabled:opacity-30 disabled:hover:bg-transparent";
+  return (
+    <span className={cn("flex shrink-0 items-center gap-0.5", className)}>
+      <button type="button" aria-label="Back" title="Back" disabled={idx <= 0} onClick={() => navigate(-1)} className={button}>
+        <ArrowLeft className="h-4 w-4" />
+      </button>
+      <button type="button" aria-label="Forward" title="Forward" disabled={idx >= furthest} onClick={() => navigate(1)} className={button}>
+        <ArrowRight className="h-4 w-4" />
+      </button>
+    </span>
+  );
+}
+
 /** The Creator Toolset logo, "CT, one stroke": the same mark as the favicon in index.html and
- *  the app icons (the app icon), white to lavender on deep violet. */
+ *  the app icons, white to lavender on deep violet. */
 export function ToolsetLogo({ className }: { className?: string }) {
   const id = useId();
   return (
@@ -40,7 +68,15 @@ export function HomeLink({
   return (
     <Link
       to={toolsetHomePath()}
-      onClick={onClick}
+      onClick={(e) => {
+        onClick?.(e);
+        // already home: the click reloads, so the name always does something
+        if (!e.defaultPrevented && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && e.button === 0
+          && window.location.pathname === toolsetHomePath()) {
+          e.preventDefault();
+          window.location.reload();
+        }
+      }}
       title="Creator Toolset"
       aria-label="Creator Toolset home"
       className={cn("shrink-0 rounded-md px-1.5 py-1 hover:bg-zinc-500/15", className)}

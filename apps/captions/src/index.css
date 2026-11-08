@@ -157,17 +157,17 @@ html:not(.dark) ::-webkit-scrollbar-thumb { background: #d4d4d8; }
   transition: background-color 120ms ease;
 }
 .cue-line-active {
-  background: rgba(139, 92, 246, 0.09);
+  background: rgb(var(--violet-500) / 0.09);
 }
 .cue-word {
   border-radius: 4px;
   cursor: pointer;
 }
 .cue-word:hover {
-  background: rgba(139, 92, 246, 0.22);
+  background: rgb(var(--violet-500) / 0.22);
 }
 .cue-word.word-active {
-  background: rgba(139, 92, 246, 0.45);
+  background: rgb(var(--violet-500) / 0.45);
   color: rgb(var(--zinc-50));
 }
 
@@ -176,7 +176,7 @@ html:not(.dark) ::-webkit-scrollbar-thumb { background: #d4d4d8; }
    tight; the gap between blocks is the caption boundary. */
 .transcript-words {
   cursor: text;
-  caret-color: #a78bfa;
+  caret-color: rgb(var(--violet-400));
   line-height: 1.35;
 }
 .transcript-words .cue-line {
@@ -191,7 +191,7 @@ html:not(.dark) ::-webkit-scrollbar-thumb { background: #d4d4d8; }
   white-space: pre;
 }
 .transcript-words ::selection {
-  background: rgba(139, 92, 246, 0.35);
+  background: rgb(var(--violet-500) / 0.35);
 }
 /* fixed by the script check; the title says what was heard */
 .cue-word.script-fixed {
@@ -200,7 +200,7 @@ html:not(.dark) ::-webkit-scrollbar-thumb { background: #d4d4d8; }
   text-underline-offset: 4px;
 }
 .cue-word.word-selected {
-  text-decoration: underline dotted rgba(167, 139, 250, 0.6);
+  text-decoration: underline dotted rgb(var(--violet-400) / 0.6);
   text-underline-offset: 3px;
 }
 
@@ -226,4 +226,29 @@ html:not(.dark) ::-webkit-scrollbar-thumb { background: #d4d4d8; }
 @keyframes ct-dot {
   0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
   30% { transform: translateY(-4px); opacity: 1; }
+}
+
+/* the home hub (pages/ToolsetHome.tsx): the glow breathes, a light walks the arrows while scripts wait to be made, an
+   icon hops on hover, and a stage with work running in it pulses its edge. All off for reduced motion; the running
+   pill on the tile stays either way. */
+@media (prefers-reduced-motion: no-preference) {
+  .home-glow { animation: home-breathe 18s ease-in-out infinite; }
+  .home-flow { animation: home-flow 6s ease-in-out infinite; animation-delay: calc(var(--i) * 0.7s); }
+  .home-hub a:hover > span:first-child > svg { animation: home-hop 0.5s cubic-bezier(0.3, 1.6, 0.5, 1); }
+  .home-busy { animation: home-busy 2.8s ease-in-out infinite; }
+}
+@keyframes home-breathe {
+  0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.75; }
+  50% { transform: translate(3%, -2%) scale(1.12); opacity: 1; }
+}
+@keyframes home-flow {
+  0%, 30%, 100% { scale: 1; }
+  12% { scale: 1.2; color: var(--tint-text); }
+}
+@keyframes home-hop {
+  40% { transform: translateY(-2px) rotate(-8deg) scale(1.08); }
+}
+@keyframes home-busy {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  50% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--tint) 45%, transparent), 0 0 24px -8px color-mix(in srgb, var(--tint) 55%, transparent); }
 }

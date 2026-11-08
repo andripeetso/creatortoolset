@@ -277,7 +277,7 @@ export function ProjectSetupDialog() {
         <div className="flex items-center gap-2">
           <button
             onClick={() => close(true)}
-            className="flex items-center gap-2 rounded-md bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-500"
+            className="flex items-center gap-2 h-9 rounded-md bg-violet-600 px-4 text-sm font-medium text-white hover:bg-violet-500"
           >
             <Sparkles className="h-4 w-4" />{" "}
             {batch ? `Transcribe all ${clipCount} clips` : "Transcribe now"}

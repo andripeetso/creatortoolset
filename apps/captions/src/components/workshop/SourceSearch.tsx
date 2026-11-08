@@ -81,7 +81,7 @@ export function SourceSearch({
             aria-pressed={format.on}
             onClick={format.onToggle}
             title="Only posts kept for their format: the layout to copy, not the topic"
-            className={`rounded-md border px-2 py-1 ${format.on ? "border-sky-500/50 bg-sky-500/15 text-sky-950 dark:text-sky-100" : "border-border text-muted-foreground hover:text-foreground"}`}
+            className={`rounded-md border px-2 py-1 ${format.on ? "border-violet-500/50 bg-violet-500/15 text-violet-950 dark:text-violet-100" : "border-border text-muted-foreground hover:text-foreground"}`}
           >
             Format
           </button>

@@ -95,9 +95,12 @@ import {
   type PostIdea,
   INSTAGRAM_CONNECTION_EVENT,
 } from "@/lib/instagram";
-import { AppBar } from "@/components/AppBar";
+import { AppBar, ToolIntro } from "@/components/AppBar";
+import { filterChip, segmentItem, segmentList } from "@/components/SegmentedTabs";
+import { cn } from "@/lib/utils";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
 import { useWorkspace } from "@/lib/workspace";
+import { useCachedList } from "@/lib/local-cache";
 import { IngestBox } from "@/components/instagram/IngestBox";
 import { RunJobsDialog } from "@/components/instagram/RunJobsDialog";
 import { TagsEditor } from "@/components/instagram/TagsEditor";
@@ -137,9 +140,6 @@ const LIBRARY_SORTS: { id: LibrarySort; label: string }[] = [
   { id: "age", label: "age at pull" },
 ];
 
-const chip = "rounded-md border px-2 py-1";
-const chipIdle = `${chip} border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200`;
-const chipOn = `${chip} border-violet-500/50 bg-violet-600/20 text-violet-100`;
 const STATUS_FILTERS: { id: IdeaStatus | ""; label: string }[] = [
   ...IDEA_STATUSES,
   { id: "", label: "All" },
@@ -989,8 +989,11 @@ export default function InstagramPage() {
   const required = useAuth((s) => s.required);
   const allowed = canUse(me, "instagram");
   const currentProjectId = useWorkspace((s) => s.currentProjectId);
-  const [posts, setPosts] = useState<InstagramPost[]>([]);
-  const [accounts, setAccounts] = useState<InstagramAccount[]>([]);
+  // the saved lists show at once and refresh underneath (lib/local-cache); keys carry the project and the filters
+  const { items: accounts, setItems: setAccounts, refresh: loadAccounts } = useCachedList<InstagramAccount>(
+    `instagram/accounts?p=${currentProjectId ?? ""}`,
+    () => listAccounts(),
+  );
   const [addingMine, setAddingMine] = useState(false);
   const [showAllAccounts, setShowAllAccounts] = useState(false);
   const [pullingAll, setPullingAll] = useState(false);
@@ -1050,6 +1053,10 @@ export default function InstagramPage() {
           },
     [accountFilter, tagFilter, ideaFilter, savedForFilter, sort, libraryView],
   );
+  const { items: posts, setItems: setPosts, refresh: loadPosts } = useCachedList<InstagramPost>(
+    `instagram/posts?${JSON.stringify(listQuery())}|p=${currentProjectId ?? ""}`,
+    () => listPosts(listQuery()),
+  );
 
   const pinLibraryChrome = useCallback(() => {
     const chrome = chromeRef.current;
@@ -1077,16 +1084,12 @@ export default function InstagramPage() {
   }, []);
 
   const refreshList = useCallback(() => {
-    listPosts(listQuery())
-      .then(setPosts)
-      .catch(() => {});
-  }, [listQuery]);
+    loadPosts().catch(() => {});
+  }, [loadPosts]);
 
   const refreshAccounts = useCallback(() => {
-    listAccounts()
-      .then(setAccounts)
-      .catch(() => {});
-  }, []);
+    loadAccounts().catch(() => {});
+  }, [loadAccounts]);
 
   const refreshStacks = useCallback(() => {
     listStacks()
@@ -1568,17 +1571,7 @@ export default function InstagramPage() {
       </AppBar>
 
       {!postId && (
-        <div className="mb-8 mt-10 flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-violet-600">
-            <ScanSearch className="h-6 w-6 text-white" />
-          </div>
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight">Content Analyzer</h1>
-            <p className="text-sm text-zinc-500">
-              Dump interesting posts. Distill the idea. Rank them.
-            </p>
-          </div>
-        </div>
+        <ToolIntro icon={ScanSearch} title="Content Analyzer" line="Dump interesting posts. Distill the idea. Rank them." />
       )}
 
       <div className={viewing || postId ? "mt-6 w-full" : "w-[760px] max-w-[92vw]"}>
@@ -1782,7 +1775,7 @@ export default function InstagramPage() {
                     </p>
                   ) : null}
                 </div>
-                <div role="tablist" aria-label="Kept for" className="flex rounded-xl border border-zinc-800 bg-zinc-950 p-1">
+                <div role="tablist" aria-label="Kept for" className={cn(segmentList, "w-full")}>
                   {LIBRARY_TABS.map((t) => {
                     const on = knowhowView ? t.id === "knowhow" : t.id === savedForFilter;
                     return (
@@ -1798,9 +1791,7 @@ export default function InstagramPage() {
                           setSavedForFilter(t.id);
                           setLibraryView("feed");
                         }}
-                        className={`min-w-0 flex-1 rounded-lg px-3 py-2.5 text-sm font-medium ${
-                          on ? "bg-violet-600/25 text-violet-100" : "text-zinc-400 hover:text-zinc-200"
-                        }`}
+                        className={segmentItem(on, "flex-1 text-center")}
                       >
                         {t.label}
                       </button>
@@ -1808,7 +1799,7 @@ export default function InstagramPage() {
                   })}
                 </div>
                 {!knowhowView && savedForFilter === "content" ? (
-                  <div role="radiogroup" aria-label="Content view" className="flex gap-1 self-start rounded-lg border border-zinc-800 bg-zinc-950 p-0.5 text-[12px]">
+                  <div role="radiogroup" aria-label="Content view" className={cn(segmentList, "self-start")}>
                     {(
                       [
                         ["feed", "Posts"],
@@ -1824,9 +1815,7 @@ export default function InstagramPage() {
                           pinLibraryChrome();
                           setLibraryView(id);
                         }}
-                        className={`rounded-md px-3 py-1 font-medium ${
-                          libraryView === id ? "bg-violet-600/25 text-violet-100" : "text-zinc-400 hover:text-zinc-200"
-                        }`}
+                        className={segmentItem(libraryView === id)}
                       >
                         {text}
                         {id === "ideas" && ideaBoard?.ideas.length ? (
@@ -1837,7 +1826,7 @@ export default function InstagramPage() {
                   </div>
                 ) : null}
                 {!ideasView && !knowhowView ? (
-                  <div role="radiogroup" aria-label="Status" className="flex rounded-xl border border-zinc-800 bg-zinc-950 p-1">
+                  <div role="radiogroup" aria-label="Status" className={cn(segmentList, "w-full")}>
                     {STATUS_FILTERS.map((s) => (
                       <button
                         key={s.id || "all"}
@@ -1848,11 +1837,7 @@ export default function InstagramPage() {
                           pinLibraryChrome();
                           setIdeaFilter(s.id);
                         }}
-                        className={`min-w-0 flex-1 whitespace-nowrap rounded-lg px-2 py-1.5 text-[11px] font-medium ${
-                          ideaFilter === s.id
-                            ? "bg-violet-600/25 text-violet-100"
-                            : "text-zinc-400 hover:text-zinc-200"
-                        }`}
+                        className={segmentItem(ideaFilter === s.id, "flex-1 px-2 text-center text-[13px]")}
                       >
                         {s.label}
                       </button>
@@ -1926,7 +1911,7 @@ export default function InstagramPage() {
                           pinLibraryChrome();
                           setKindFilter((cur) => (cur === k.id ? "" : k.id));
                         }}
-                        className={kindFilter === k.id ? chipOn : chipIdle}
+                        className={filterChip(kindFilter === k.id)}
                       >
                         {k.label}
                       </button>

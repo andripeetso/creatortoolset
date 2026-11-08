@@ -253,7 +253,7 @@ function ClaimRow({
           {c.sources.length ? (
             <p className="flex flex-wrap gap-1">
               {c.sources.map((s) => (
-                <a key={s.url} href={s.url} target="_blank" rel="noreferrer" className="flex items-center gap-0.5 rounded bg-muted px-1.5 py-0.5 text-[10px] text-sky-700 hover:bg-muted/80 dark:text-sky-200" title={s.title || s.url}>
+                <a key={s.url} href={s.url} target="_blank" rel="noreferrer" className="flex items-center gap-0.5 rounded bg-muted px-1.5 py-0.5 text-[10px] text-violet-700 hover:bg-muted/80 dark:text-violet-200" title={s.title || s.url}>
                   <ExternalLink className="h-2.5 w-2.5" /> {s.title ? s.title.slice(0, 48) : host(s.url)}
                 </a>
               ))}

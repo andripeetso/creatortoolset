@@ -101,7 +101,7 @@ export function ScriptDialog({ onClose }: { onClose: () => void }) {
               onClick={() => save(true)}
               disabled={!!checkBlocked}
               title={checkBlocked ?? "Save, then fix mis-heard words in this clip's transcript"}
-              className="flex items-center gap-2 rounded-md bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-40 disabled:hover:bg-violet-600"
+              className="flex items-center gap-2 h-9 rounded-md bg-violet-600 px-4 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-40 disabled:hover:bg-violet-600"
             >
               <Sparkles className="h-4 w-4" /> Save &amp; check transcript
             </button>
@@ -111,7 +111,7 @@ export function ScriptDialog({ onClose }: { onClose: () => void }) {
             className={
               canCheck
                 ? "rounded-md border border-zinc-700 px-3.5 py-2 text-sm text-zinc-300 hover:bg-zinc-800"
-                : "rounded-md bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-500"
+                : "h-9 rounded-md bg-violet-600 px-4 text-sm font-medium text-white hover:bg-violet-500"
             }
           >
             Save

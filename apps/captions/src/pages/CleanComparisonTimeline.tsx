@@ -243,7 +243,7 @@ export function CleanEditMap({
             onClick={() => onSeek?.(s.outputStart)}
             title={`Scene ${i + 1}: source ${time(s.start)}–${time(s.end)} → edit ${time(s.outputStart)}–${time(s.outputEnd)}`}
             aria-label={`Seek to scene ${i + 1}, source ${time(s.start)} to ${time(s.end)}`}
-            className={`min-w-0 overflow-hidden px-1 text-[10px] text-white hover:brightness-125 ${i % 2 ? "bg-indigo-800" : "bg-violet-800"}`}
+            className={`min-w-0 overflow-hidden px-1 text-[10px] text-white hover:brightness-125 ${i % 2 ? "bg-violet-700" : "bg-violet-800"}`}
             style={{
               width: `${((s.outputEnd - s.outputStart) / total) * 100}%`,
             }}
