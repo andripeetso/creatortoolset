@@ -82,10 +82,13 @@ export const TOOLS = [
   },
   {
     name: "workshop_update_session",
-    description: "Change a session's title, notes or status (moves it through the stages).",
+    description: "Change a session's title, notes or status (moves it through the stages), or link its post: post_url (its Instagram link), or remove_post: true to unlink it.",
     inputSchema: {
       type: "object",
-      properties: { session: str, title: str, notes: str, status: { type: "string", enum: ["draft", "writing", "production", "editing", "toPost", "published", "shelved"] } },
+      properties: {
+        session: str, title: str, notes: str, status: { type: "string", enum: ["draft", "writing", "production", "editing", "toPost", "published", "shelved"] },
+        post_url: str, remove_post: { type: "boolean" },
+      },
       required: ["session"],
     },
   },
@@ -270,9 +273,12 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
       return { ...pick(made, ["id", "title", "status", "projectId"]), pieces: await pieces(String(made.id)) };
     },
     workshop_update_session: async (a) => {
-      const body = pick(a, ["title", "notes", "status"]);
-      if (!Object.keys(body).length) throw new ToolError("Nothing to change: give a title, notes or status.");
-      return pick(await ws(`/sessions/${a.session}`, "PATCH", body), ["id", "title", "status"]);
+      const body: Args = pick(a, ["title", "notes", "status"]);
+      // through the session's own PATCH, so the link is checked as it is from the app
+      if (a.remove_post === true) body.posted = null;
+      else if (a.post_url) body.posted = a.post_url;
+      if (!Object.keys(body).length) throw new ToolError("Nothing to change: give a title, notes, status or a post.");
+      return pick(await ws(`/sessions/${a.session}`, "PATCH", body), ["id", "title", "status", "posted"]);
     },
     workshop_new_piece: async (a) => piece(await ws(`/sessions/${a.session}/docs`, "POST", pick(a, ["kind", "title", "text"]))),
     workshop_edit_piece: async (a) => {

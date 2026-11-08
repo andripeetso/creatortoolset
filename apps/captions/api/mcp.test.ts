@@ -58,6 +58,11 @@ describe("Creator Toolset as a remote MCP server", () => {
     const read = (await tool("workshop_session", { session: s.id })).value;
     expect(read.status).toBe("writing");
     expect(read.pieces[0].caption).toBe("Post");
+    // linking a post goes through the session's own PATCH (it checks the link, and moves the session on)
+    const linked = (await tool("workshop_update_session", { session: s.id, post_url: "https://www.instagram.com/reel/TinyAcro1/" })).value;
+    expect(linked.posted.shortcode).toBe("TinyAcro1");
+    expect((await tool("workshop_update_session", { session: s.id, post_url: "not a link" })).error).toBe(true);
+    expect((await tool("workshop_update_session", { session: s.id, remove_post: true })).value.posted).toBeUndefined();
     expect((await tool("workshop_sessions")).value.sessions.map((x: { id: string }) => x.id)).toContain(s.id);
     expect(await tool("workshop_session", { session: "00000000-0000-4000-8000-000000000000" })).toEqual({ error: true, value: "Not found, or not this account's." });
     expect((await tool("list_reviews")).value).toEqual({ reviews: [] });
@@ -82,7 +87,7 @@ describe("Creator Toolset as a remote MCP server", () => {
   it("keeps its tool list's size on purpose: it goes into every AI session that connects", () => {
     // growth must be deliberate: check what the new words buy, then update this number (never fix it by cutting words)
     // 5814 -> 6925: review_set_approval (approve or send back a Review video from a chat) and instagram_refresh/posts
-    // (start an Analyzer account's pull and list its posts)
-    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(6925);
+    // (start an Analyzer account's pull and list its posts); 6925 -> 7071: workshop_update_session links or unlinks a post
+    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(7071);
   });
 });
