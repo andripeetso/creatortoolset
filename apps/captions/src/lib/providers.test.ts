@@ -20,6 +20,7 @@ const view = (device: string | undefined, online: boolean, enabled = true): Prov
   checks: {},
   models: {},
   usage: [],
+  limits: [],
 });
 
 describe("aiAnswerer", () => {

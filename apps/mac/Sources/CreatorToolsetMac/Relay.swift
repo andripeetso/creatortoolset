@@ -181,6 +181,7 @@ final class RelayRunner {
     func start() {
         signal(SIGPIPE, SIG_IGN)
         Thread { [self] in reportLoop() }.start()
+        Thread { [self] in limitsForever(api: api, home: home, stopped: { isStopped }) }.start()
         Thread { [self] in serve() }.start()
     }
 

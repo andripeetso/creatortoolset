@@ -137,6 +137,40 @@ export interface ProviderCheck {
   at: number;
 }
 
+/** One plan limit window of a signed-in identity: how much of it is used, and when it resets. */
+export interface LimitWindow {
+  /** "five_hour", "seven_day", "primary"… as the provider names it */
+  id: string;
+  /** what the window is: "Session", "Weekly", "Weekly · Opus", "Monthly" */
+  label: string;
+  /** its length class: a session (hours), a week, or a month; "other" when the provider gives no length */
+  kind: "session" | "weekly" | "monthly" | "other";
+  usedPercent: number;
+  /** epoch ms; missing when the provider didn't say */
+  resetsAt?: number;
+  /** the window's length in ms */
+  windowMs?: number;
+}
+
+/**
+ * A signed-in identity's plan limits (a Claude or Codex config folder), as its Mac read them every five minutes
+ * (the Mac app's Limits.swift). Never a token. `instances` = the `${scope}:${id}` provider keys that run on it.
+ */
+export interface LimitsIdentity {
+  driver: Driver;
+  /** the folder's name without its dot prefix ("work"; "default" for ~/.claude, ~/.codex) */
+  label: string;
+  /** ok; no_login = no sign-in in that folder; signed_out = sign in again there; error = could not read it */
+  state: "ok" | "no_login" | "signed_out" | "error";
+  error?: string;
+  windows: LimitWindow[];
+  /** when the server got the reading (ms) */
+  at: number;
+  device: string;
+  online: boolean;
+  instances: string[];
+}
+
 /** Models offered per driver (the Claude CLI on the user's Mac runs every one). */
 export const DRIVER_MODELS: Partial<Record<Driver, string[]>> = {
   claude: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"],
@@ -179,4 +213,6 @@ export interface ProvidersView {
   models: Record<string, string[]>;
   /** this account's usage (admins: the workspace's too), 90 days by hour (UTC) */
   usage: Array<{ hour: string; label: string; scope: Scope; instance?: string; calls: number; tokens: number; costUsd: number }>;
+  /** the plan limits of the identities this account's visible providers run on (never another person's) */
+  limits: LimitsIdentity[];
 }

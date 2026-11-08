@@ -6,6 +6,7 @@ import { DRIVERS, parseMachine, type Driver, type Effort, type MacReport, type S
 import { limitMessage } from "../../contracts/plans";
 import { env } from "./env";
 import { deviceName, isOnline, saveReport, touchDevice } from "./devices";
+import { saveLimits } from "./limits";
 
 /**
  * The AI providers on the paired Macs (contracts/providers.ts). A request waits
@@ -375,6 +376,12 @@ export function relayRoutes(deviceOf: (c: Context) => string | null) {
     const err = b.limit === true ? new MacClaudeError(limitMessage(error, tool), "limit") : new MacClaudeError(`Claude on the Mac: ${error}`, b.gone === true ? "gone" : "failed");
     err.usage = usage;
     r.fail(err);
+    return c.json({ ok: true });
+  });
+
+  /** The plan limits of this Mac's config folders (Limits.swift, every five minutes). Kept in DATA_DIR/limits.json (api/lib/limits.ts); never a token. */
+  app.post("/limits", async (c) => {
+    saveLimits(c.get("device"), await body(c));
     return c.json({ ok: true });
   });
 

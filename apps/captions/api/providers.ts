@@ -3,7 +3,8 @@ import type { ProviderCheck, ProvidersView, Scope } from "../contracts/providers
 import type { AuthVars } from "./auth";
 import { streamMacClaude, macUsageSince } from "./lib/mac-claude";
 import { isOnline, listDevices } from "./lib/devices";
-import { dropOwnSettings, instanceIn, modelsFor, ownSettings, parseSettings, providerChecks, providerSettings, recordCheck, routeFor, saveSettings } from "./lib/providers";
+import { deviceIdOf, dropOwnSettings, instanceIn, modelsFor, ownSettings, parseSettings, providerChecks, providerSettings, recordCheck, routeFor, saveSettings } from "./lib/providers";
+import { limitsFor, type LimitRef } from "./lib/limits";
 import { findUser, type SessionUser } from "./users";
 
 /**
@@ -67,7 +68,16 @@ async function viewFor(u: SessionUser): Promise<ProvidersView> {
   const keep = (d: { owner: string }) => d.owner === u.username || (admin && (d.owner === "workspace" || findAdmin(d.owner)));
   const devices = listDevices(keep).map((d) => ({ ...d, online: isOnline(d.id) }));
 
-  return { workspace, own, using, devices, checks, models, usage };
+  // plan limits: the identities behind this account's own providers; the workspace's for admins only
+  const refs: LimitRef[] = [
+    ...(own?.instances ?? []).map((i) => ({ scope: u.username, i })),
+    ...(admin ? ws.instances.map((i) => ({ scope: "workspace", i })) : []),
+  ]
+    .filter(({ i }) => i.enabled)
+    .map(({ scope, i }) => ({ key: `${scope}:${i.id}`, driver: i.driver, device: deviceIdOf(i), home: i.home }));
+  const limits = limitsFor(refs, isOnline);
+
+  return { workspace, own, using, devices, checks, models, usage, limits };
 }
 
 const findAdmin = (owner: string) => findUser(owner)?.role === "admin";
