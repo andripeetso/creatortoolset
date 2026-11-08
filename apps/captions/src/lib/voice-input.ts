@@ -62,8 +62,15 @@ export function useVoiceInput(onText: (text: string) => void) {
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
-    } catch {
-      setError("No microphone. Allow it for this site in the browser's settings.");
+    } catch (e) {
+      const inApp = document.documentElement.classList.contains("mac-app");
+      setError(
+        e instanceof DOMException && e.name === "NotFoundError"
+          ? "No microphone found."
+          : inApp
+            ? "Mic blocked. Turn it on in System Settings → Microphone."
+            : "Mic blocked. Allow it from the address bar.",
+      );
       return;
     }
     const ctx = new AudioContext();

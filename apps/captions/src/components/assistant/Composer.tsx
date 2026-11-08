@@ -50,8 +50,8 @@ export function Composer({ onSend, waiting, autoFocus }: { onSend: (text: string
   return (
     <div className="space-y-1.5">
       {voice.error && (
-        <p role="alert" className="flex items-start gap-2 px-1 text-xs text-destructive motion-safe:animate-in motion-safe:fade-in">
-          <span className="flex-1">{voice.error}</span>
+        <p role="alert" className="flex items-center gap-2 px-1 text-xs text-destructive motion-safe:animate-in motion-safe:fade-in">
+          <span className="min-w-0 flex-1 truncate" title={voice.error}>{voice.error}</span>
           <button type="button" onClick={voice.clearError} aria-label="Dismiss" className="opacity-70 hover:opacity-100">
             <X className="size-3.5" />
           </button>

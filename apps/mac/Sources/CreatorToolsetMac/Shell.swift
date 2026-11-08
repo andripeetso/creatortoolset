@@ -648,6 +648,14 @@ extension Shell: WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
         _ = dialog("The download failed: \(error.localizedDescription)", buttons: ["OK"])
     }
 
+    /// The assistant's mic: the open server's page gets it without a second WebKit prompt; macOS still asks once
+    /// (NSMicrophoneUsageDescription, build-app.sh).
+    func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+                 initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType,
+                 decisionHandler: @escaping (WKPermissionDecision) -> Void) {
+        decisionHandler(origin.host.lowercased() == base.host?.lowercased() ? .grant : .deny)
+    }
+
     /// target=_blank and window.open go to the default browser, not a second window.
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {

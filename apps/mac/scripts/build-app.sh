@@ -71,6 +71,7 @@ $channel
   <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
   <key>LSUIElement</key><false/>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSMicrophoneUsageDescription</key><string>So you can talk to the assistant instead of typing.</string>
   <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
 </dict></plist>
 PLIST
@@ -151,7 +152,7 @@ codesign "${opts[@]}" --preserve-metadata=entitlements "$fw/XPCServices/Download
 codesign "${opts[@]}" "$fw/Autoupdate"
 codesign "${opts[@]}" "$fw/Updater.app"
 codesign "${opts[@]}" "$app/Contents/Frameworks/Sparkle.framework"
-codesign "${opts[@]}" "$app"
+codesign "${opts[@]}" --entitlements "$here/scripts/app.entitlements" "$app"
 
 if [ -n "${NOTARY_PROFILE:-}" ]; then
   [ "$id" != "-" ] || { echo "NOTARY_PROFILE needs SIGN_IDENTITY" >&2; exit 1; }
