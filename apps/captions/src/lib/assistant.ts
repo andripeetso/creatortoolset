@@ -88,6 +88,8 @@ export const navigated = () => call<AssistantView>("/navigated", "POST");
 export const startOver = () => call<AssistantView>("", "DELETE");
 export const openPast = (id: string) => call<AssistantView>(`/past/${encodeURIComponent(id)}/open`, "POST");
 export const deletePast = (id: string) => call<AssistantView>(`/past/${encodeURIComponent(id)}`, "DELETE");
+/** Allow or deny something the reply asked to do on the Mac. */
+export const answerApproval = (id: string, allow: boolean) => call<AssistantView>(`/approvals/${encodeURIComponent(id)}`, "POST", { allow });
 
 /** A conversation as plain text, for Copy. */
 export const chatText = (messages: Array<{ role: string; text: string }>): string =>

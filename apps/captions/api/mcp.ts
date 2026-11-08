@@ -7,8 +7,8 @@ import { routeFor } from "./lib/providers";
 import { deviceName } from "./lib/devices";
 import { readConnectors } from "./lib/connectors/store";
 import { myKeys } from "./my-keys";
-import { askSecret, navigateTo, noteStep, noteWork } from "./assistant";
-import type { AssistantWork } from "../contracts/assistant";
+import { askSecret, navigateTo, noteMedia, noteStep, noteWork } from "./assistant";
+import type { AssistantMedia, AssistantWork } from "../contracts/assistant";
 import { SESSION_STATUSES } from "./lib/workshop/types";
 import { innerCall, jobTurn, type AuthVars } from "./auth";
 import type { SessionUser } from "./users";
@@ -39,7 +39,7 @@ function setupView(v: SetupView) {
 }
 
 /** The tools only the assistant's job token may call (the dock, assistant.ts). */
-const ASSISTANT_TOOLS = new Set(["setup_status", "save_setup", "ask_secret", "navigate"]);
+const ASSISTANT_TOOLS = new Set(["setup_status", "save_setup", "ask_secret", "navigate", "show_video"]);
 const isJob = (auth: Headers) => /^Bearer ctj_/.test(auth.get("authorization") ?? "");
 
 /** MCP clients give up on a tool call after about a minute: a reply still thinking hands back its id to wait on. */
@@ -203,6 +203,11 @@ const ASSISTANT_DEFS = [
     inputSchema: { type: "object", properties: { env: { type: "string", enum: MY_KEYS.map((k) => k.env) }, why: str }, required: ["env", "why"] },
   },
   { name: "navigate", description: "Open a page of the app for the user: a relative path such as /workshop or /settings/connectors.", inputSchema: { type: "object", properties: { path: str }, required: ["path"] } },
+  {
+    name: "show_video",
+    description: "Play a video inside the chat, with a link to its page: a Review video (link: its link or id, as get_review takes; version: its number, default the newest ready one), or an AI Editor draft's preview (edit and draft, as editor_get lists them).",
+    inputSchema: { type: "object", properties: { link: str, version: { type: "integer" }, edit: str, draft: str } },
+  },
 ];
 
 const pick = (row: Args, keys: string[]) => Object.fromEntries(keys.filter((k) => row[k] != null && row[k] !== "" && !(Array.isArray(row[k]) && !(row[k] as unknown[]).length)).map((k) => [k, row[k]]));
@@ -473,6 +478,41 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
       return { status: "asked", note: "The user will type the key into a secure box in the chat. It does not come to you; carry on without it until it's saved." };
     },
     navigate: async (a) => ({ status: "opening", path: await navigateTo(user.username, String(a.path ?? "")) }),
+    // the card's src and href are the site's own routes, so the browser's cookie passes the same checks this call did
+    show_video: async (a) => {
+      let link = a.link;
+      let version = a.version;
+      if (a.edit || a.draft) {
+        // this editor files each draft's preview in Review: the draft plays from there
+        if (!a.edit || !a.draft) throw new ToolError("An AI Editor preview needs edit and draft (editor_get lists them).");
+        const e = await json(`/api/editor/${encodeURIComponent(String(a.edit))}`);
+        const p = ((e.previews as Record<string, { assetId: string; n: number }> | undefined) ?? {})[String(a.draft)];
+        if (!p) throw new ToolError("That draft has no preview yet: editor_run kind preview renders one.");
+        [link, version] = [p.assetId, p.n];
+      }
+      if (!link) throw new ToolError("Give the Review video's link or id, or an edit and draft.");
+      const path = reviewPath(String(link), origin);
+      const asset = (await json(path)).asset as Args;
+      const versions = ((asset.versions as Args[] | undefined) ?? []).filter((v) => !v.removed);
+      const v = version != null ? versions.find((x) => x.n === Number(version)) : versions.filter((x) => x.status === "ready").at(-1);
+      if (!v) throw new ToolError(version != null ? `This video has no version ${version}.` : "This video has no version ready to play yet.");
+      if (v.status !== "ready") throw new ToolError(`Version ${v.n} is ${v.status === "error" ? "broken" : "still processing"}.`);
+      // the page that opens it: the owner's /review/<id>, or the share link's own page
+      const page = path.replace(/^\/api\/review\/assets\//, "/review/").replace(/^\/api\/review\/s\//, "/r/").replace(/^\/api\/review\/p\/([^/]+)\/a\//, "/rp/$1/");
+      const card: AssistantMedia = {
+        id: `review:${asset.id}:${v.n}`,
+        kind: "video",
+        title: versions.length > 1 ? `${asset.name} · version ${v.n}` : String(asset.name),
+        src: `${path}/v/${v.n}/play`,
+        poster: `${path}/v/${v.n}/thumb`,
+        href: `${page}?v=${v.n}`,
+        ...(Number(v.duration) ? { duration: Number(v.duration) } : {}),
+      };
+      const turn = jobTurn(auth.get("authorization") ?? undefined);
+      if (turn) noteMedia(user.username, turn, card);
+      // the player is in the chat already: the reply needs only what it shows
+      return { showing: card.title, page: card.href };
+    },
   };
   return handlers;
 }
@@ -480,6 +520,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
 /** What a tool call looks like to the person watching the assistant work (noteStep). */
 const STEPS: Record<string, string> = {
   setup_status: "Checking what's set up",
+  show_video: "Showing the video",
   save_setup: "Saving your setup",
   ask_secret: "Asking for a key",
   get_work_prefs: "Checking how you like to work",

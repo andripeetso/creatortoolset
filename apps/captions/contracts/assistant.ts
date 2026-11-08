@@ -20,6 +20,10 @@ export interface AssistantMessage {
   steps?: string[];
   /** What the reply started or opened that the user can look at (a Workshop session, an edit, a link): a card each. */
   work?: AssistantWork[];
+  /** Things the reply asked to do on the user's Mac (a command, a file change, a read outside its folder): Allow / Deny each. */
+  approvals?: AssistantApproval[];
+  /** Videos the reply shows in the chat (show_video): a small player each. */
+  media?: AssistantMedia[];
   /** A user message's attachments as shown in the chat: pictures by name (served by GET /api/assistant/images/:id), pastes by name. */
   images?: Array<{ id: string; name: string }>;
   pasted?: string[];
@@ -39,6 +43,33 @@ export interface AssistantWork {
   href: string;
   status: "running" | "done" | "failed";
   detail?: string;
+}
+
+/**
+ * A video shown in the chat: src plays it (a same-origin route the signed-in browser can stream, with byte ranges),
+ * poster is its still, href the app page that opens it (/review/<id>?v=<n>). duration in seconds.
+ */
+export interface AssistantMedia {
+  id: string;
+  kind: "video";
+  title: string;
+  src: string;
+  poster?: string;
+  href: string;
+  duration?: number;
+}
+
+/**
+ * One thing the assistant asked to do on the user's Mac. summary says it in plain words, detail is the exact command
+ * or path. POST /api/assistant/approvals/:id { allow } answers it; unanswered after 10 minutes it is "expired" (a no).
+ */
+export interface AssistantApproval {
+  id: string;
+  tool: string;
+  summary: string;
+  detail: string;
+  at: number;
+  status: "waiting" | "allowed" | "denied" | "expired";
 }
 
 /** A key the assistant asked for (ask_secret): shown as a password box in the dock. */

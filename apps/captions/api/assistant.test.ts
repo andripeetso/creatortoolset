@@ -1,4 +1,6 @@
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, statSync } from "node:fs";
+import { copyFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -321,5 +323,106 @@ describe("work cards", () => {
     expect(await workOf()).toEqual([{ id: `workshop:${made.id}`, kind: "workshop", title: "Rolling over", href: `/workshop/sessions/${made.id}`, status: "done", detail: "Session started" }]);
     await app.request(`/api/devices/relay/${job.id}/done`, { method: "POST", ...json({ text: "Started it." }, { authorization: `Bearer ${mac.token}` }) });
     expect(await workOf()).toHaveLength(1);
+  });
+});
+
+describe("show_video", () => {
+  const hasFfmpeg = spawnSync("ffmpeg", ["-version"]).status === 0;
+
+  it.skipIf(!hasFfmpeg)("plays the account's own Review video in the reply; someone else's is refused, and a Full key can't call it", async () => {
+    const src = path.join(process.env.DATA_DIR!, "tiny-roll.mp4");
+    spawnSync("ffmpeg", ["-v", "error", "-f", "lavfi", "-i", "testsrc=size=160x90:rate=25:duration=1", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-f", "mp4", src]);
+    const { addVersion } = await import("./review");
+    const added = (await addVersion(undefined, { owner: "ana", name: "TinyRoll.mp4", mime: "video/mp4", bytes: statSync(src).size }, (dest) => copyFile(src, dest)))!;
+    const id = added.meta.id;
+    const cookie = await cookieOf("ana");
+    for (let i = 0; i < 100; i++) {
+      const v = ((await (await app.request(`/api/review/assets/${id}`, { headers: { cookie } })).json()) as { asset: { versions: Array<{ status: string }> } }).asset.versions[0]!;
+      if (v.status !== "processing") break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+
+    expect((await app.request("/api/assistant/turn", { method: "POST", ...json({ text: "Show me the Tiny Acrobatics roll" }, { cookie }) })).status).toBe(202);
+    const job = (await (await app.request("/api/devices/relay/wait", { method: "POST", ...json({}, { authorization: `Bearer ${mac.token}` }) })).json()) as { id: string; mcp: { token: string } };
+    const shown = await toolOf(job.mcp.token, "show_video", { link: `https://tools.example.com/review/${id}` });
+    expect(shown.error).toBe(false);
+    expect(JSON.parse(shown.text)).toEqual({ showing: "TinyRoll", page: `/review/${id}?v=1` });
+    const view = (await (await app.request("/api/assistant", { headers: { cookie } })).json()) as { messages: Array<{ media?: Array<{ src: string; poster?: string }>; steps?: string[] }> };
+    const card = view.messages.at(-1)!.media![0]!;
+    expect(card).toMatchObject({ id: `review:${id}:1`, kind: "video", title: "TinyRoll", src: `/api/review/assets/${id}/v/1/play`, href: `/review/${id}?v=1` });
+    expect(view.messages.at(-1)!.steps).toContain("Showing the video");
+    // the browser plays it with the owner's cookie, whole or in byte ranges
+    const whole = await app.request(card.src, { headers: { cookie } });
+    expect(whole.status).toBe(200);
+    expect(whole.headers.get("content-type")).toBe("video/mp4");
+    expect((await app.request(card.src, { headers: { cookie, range: "bytes=0-99" } })).status).toBe(206);
+    expect((await app.request(card.poster!, { headers: { cookie } })).status).toBe(200);
+    // anyone else's cookie can't
+    expect((await app.request(card.src, { headers: { cookie: await cookieOf("nico") } })).status).toBe(404);
+    await app.request(`/api/devices/relay/${job.id}/done`, { method: "POST", ...json({ text: "Here it is." }, { authorization: `Bearer ${mac.token}` }) });
+
+    const nico = mintJobToken("nico", "turn-show");
+    expect(await toolOf(nico, "show_video", { link: id })).toEqual({ error: true, text: "Not found, or not this account's." });
+    revokeJobToken(nico);
+    expect(await toolOf(newApiKey(ana, "full"), "show_video", { link: id })).toEqual({ error: true, text: "show_video is for the assistant only." });
+  });
+});
+
+describe("approvals: what the reply asks to do on the Mac", () => {
+  const device = { authorization: `Bearer ${mac.token}` };
+  type View = { messages: Array<{ status?: string; approvals?: Array<{ id: string; tool: string; summary: string; detail: string; status: string }> }> };
+  const viewOf = async (cookie: string) => (await (await app.request("/api/assistant", { headers: { cookie } })).json()) as View;
+  const ask = async (job: string, body: Record<string, unknown>) => {
+    const r = await app.request(`/api/devices/relay/${job}/ask`, { method: "POST", ...json(body, device) });
+    return { code: r.status, status: r.status === 200 ? ((await r.json()) as { status: string }).status : "" };
+  };
+  const start = async (cookie: string, text: string) => {
+    expect((await app.request("/api/assistant/turn", { method: "POST", ...json({ text }, { cookie }) })).status).toBe(202);
+    return (await (await app.request("/api/devices/relay/wait", { method: "POST", ...json({}, device) })).json()) as { id: string; asks?: boolean };
+  };
+  const answer = (cookie: string, id: string, allow: unknown) => app.request(`/api/assistant/approvals/${id}`, { method: "POST", ...json({ allow }, { cookie }) });
+
+  it("a dock turn may ask; the ask waits on the reply, the owner's yes or no goes back to the Mac, anyone else is refused", async () => {
+    const cookie = await cookieOf("ana");
+    const job = await start(cookie, "Make a file called made.txt");
+    expect(job.asks).toBe(true);
+    const touch = { ask_id: "req-touch", tool: "Bash", description: "Create made.txt", reason: "", detail: "touch made.txt" };
+    expect(await ask(job.id, touch)).toEqual({ code: 200, status: "waiting" });
+    expect(await ask(job.id, touch)).toEqual({ code: 200, status: "waiting" }); // asked again: still one card
+    const waiting = (await viewOf(cookie)).messages.at(-1)!;
+    expect(waiting.approvals).toEqual([{ id: "req-touch", tool: "Bash", summary: "Run a command: Create made.txt", detail: "touch made.txt", at: expect.any(Number), status: "waiting" }]);
+    // another account can't answer it, and a bad body isn't an answer
+    expect((await answer(await cookieOf("nico"), "req-touch", true)).status).toBe(404);
+    expect((await answer(cookie, "req-touch", "yes")).status).toBe(400);
+    const r = await answer(cookie, "req-touch", true);
+    expect(r.status).toBe(200);
+    expect(((await r.json()) as View).messages.at(-1)!.approvals![0]!.status).toBe("allowed");
+    expect(await ask(job.id, touch)).toEqual({ code: 200, status: "allowed" });
+    expect((await answer(cookie, "req-touch", false)).status).toBe(409); // answered once
+    // a no
+    expect(await ask(job.id, { ask_id: "req-rm", tool: "Write", detail: "/tmp/x" })).toEqual({ code: 200, status: "waiting" });
+    expect((await answer(cookie, "req-rm", false)).status).toBe(200);
+    expect(await ask(job.id, { ask_id: "req-rm", tool: "Write", detail: "/tmp/x" })).toEqual({ code: 200, status: "denied" });
+    // a bad ask, and another device's request
+    expect((await ask(job.id, { ask_id: "../x", tool: "Bash" })).code).toBe(400);
+    expect((await app.request(`/api/devices/relay/${job.id}/ask`, { method: "POST", ...json(touch, { authorization: "Bearer ctd_nope" }) })).status).toBe(401);
+    await app.request(`/api/devices/relay/${job.id}/done`, { method: "POST", ...json({ text: "Made it." }, device) });
+    // kept in the history with their answers
+    expect((await viewOf(cookie)).messages.at(-1)!.approvals!.map((a) => a.status)).toEqual(["allowed", "denied"]);
+  });
+
+  it("unanswered for 10 minutes is a no, and so is anything still waiting when the reply ends", async () => {
+    const cookie = await cookieOf("ana");
+    const job = await start(cookie, "Tidy my folder");
+    const slow = { ask_id: "req-slow", tool: "Bash", detail: "mv a b" };
+    expect((await ask(job.id, slow)).status).toBe("waiting");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now() + 10 * 60_000 + 1000);
+    expect((await ask(job.id, slow)).status).toBe("expired");
+    expect((await answer(cookie, "req-slow", true)).status).toBe(409);
+    vi.useRealTimers();
+    expect((await ask(job.id, { ask_id: "req-left", tool: "Edit", detail: "notes.md" })).status).toBe("waiting");
+    await app.request(`/api/devices/relay/${job.id}/done`, { method: "POST", ...json({ text: "Gave up." }, device) });
+    expect((await viewOf(cookie)).messages.at(-1)!.approvals!.map((a) => a.status)).toEqual(["expired", "expired"]);
   });
 });

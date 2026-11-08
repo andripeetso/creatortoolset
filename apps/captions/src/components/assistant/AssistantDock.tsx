@@ -29,6 +29,8 @@ import { Composer, PictureOverlay } from "./Composer";
 import { EMPTY_DRAFT, MAX_PICTURES, isLongPaste, isPicture, toPicture, type Draft } from "./draft";
 import { useThrow } from "./useThrow";
 import { Elapsed, WorkCards } from "./WorkCards";
+import { VideoCards } from "./VideoCard";
+import { ApprovalCards } from "./ApprovalCards";
 
 /** Width of the chat docked to the right edge; the page moves over by as much. */
 const DOCK_W = 400;
@@ -129,7 +131,9 @@ export function AssistantDock() {
       if (last.status === "done" && last.text && useReadAloud.getState().on) speak(last.text);
     }
   }, [last]);
-  const unread = collapsed && seenId !== undefined && last?.role === "assistant" && last.status === "done" && last.id !== seenId;
+  // the reply asks to do something on the Mac: the closed bubble nudges until it's answered
+  const asking = thinking && !!last?.approvals?.some((a) => a.status === "waiting");
+  const unread = asking || (collapsed && seenId !== undefined && last?.role === "assistant" && last.status === "done" && last.id !== seenId);
 
   // a page the assistant opened: move there once, then clear it on the server
   useEffect(() => {
@@ -312,7 +316,7 @@ export function AssistantDock() {
           setSeenId(last?.id ?? null);
           openAssistant();
         }}
-        aria-label={unread ? "Open the assistant: a new reply" : "Open the assistant"}
+        aria-label={asking ? "Open the assistant: it asks to do something on your Mac" : unread ? "Open the assistant: a new reply" : "Open the assistant"}
         style={tint}
         title="Assistant · drag to move"
         className={cn(
@@ -330,7 +334,7 @@ export function AssistantDock() {
           )}
         >
           <MessageCircle className="size-6 transition-transform duration-300 group-hover:-rotate-12" aria-hidden />
-          {unread && <span className="absolute top-0.5 right-0.5 size-3.5 rounded-full border-2 border-background bg-emerald-400" aria-hidden />}
+          {unread && <span className={cn("absolute top-0.5 right-0.5 size-3.5 rounded-full border-2 border-background", asking ? "bg-amber-400" : "bg-emerald-400")} aria-hidden />}
         </span>
         {/* its line beside the bubble, on the page's side of whichever corner it sits in */}
         <span
@@ -683,6 +687,8 @@ function Message({ m, onRetry }: { m: AssistantMessage; onRetry?: () => void }) 
         <Steps steps={steps} working />
         <Elapsed since={m.at} />
         <WorkCards work={m.work} />
+        <VideoCards media={m.media} />
+        <ApprovalCards approvals={m.approvals} />
         <Dots />
       </div>
     );
@@ -700,6 +706,8 @@ function Message({ m, onRetry }: { m: AssistantMessage; onRetry?: () => void }) 
     return (
       <div>
         <WorkCards work={m.work} />
+        <VideoCards media={m.media} />
+        <ApprovalCards approvals={m.approvals} />
         <p className={cn("text-destructive", enter)}>That didn&apos;t work.</p>
         {again}
       </div>
@@ -721,6 +729,8 @@ function Message({ m, onRetry }: { m: AssistantMessage; onRetry?: () => void }) 
       )}
       {working && <Elapsed since={m.at} />}
       <WorkCards work={m.work} />
+      <VideoCards media={m.media} />
+      <ApprovalCards approvals={m.approvals} />
       {m.status === "error" ? <p className="text-destructive">{m.text}</p> : <ReplyText text={m.text} />}
       {again}
       {m.status === "thinking" && <span className="ml-0.5 inline-block h-3.5 w-1.5 rounded-sm bg-[var(--tint)] align-middle motion-safe:animate-pulse" aria-hidden />}

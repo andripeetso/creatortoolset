@@ -6,12 +6,12 @@ import type { AuthVars } from "./auth";
 import { mintJobToken, revokeJobToken } from "./auth";
 import { env } from "./lib/env";
 import { routeFor, type Route } from "./lib/providers";
-import { streamMacClaude } from "./lib/mac-claude";
+import { streamMacClaude, type MacAsk, type MacAskStatus } from "./lib/mac-claude";
 import { slug } from "./lib/workshop/folder";
 import { myKeys } from "./my-keys";
 import { MY_KEYS, type MyKeyEnv } from "../contracts/service-keys";
 import { TOOL_NAMES } from "../contracts/tools";
-import type { AssistantContext, AssistantImage, AssistantMessage, AssistantPaste, AssistantProvider, AssistantView } from "../contracts/assistant";
+import type { AssistantApproval, AssistantContext, AssistantImage, AssistantMedia, AssistantMessage, AssistantPaste, AssistantProvider, AssistantView } from "../contracts/assistant";
 
 /**
  * The in-app assistant (the dock, src/components/assistant): one conversation per account in
@@ -40,10 +40,16 @@ Your reply is shown in a small chat dock. You act in the app only through its to
 - editor_list, editor_get and editor_run: the AI Editor's edits, their drafts and jobs.
 - automations_list, automations_create, automations_update, automations_delete and automations_run: scheduled prompts. Each runs on the user's AI at a set time (daily or weekly at HH:MM in a timezone, or every N hours) and reports to the inbox and its last result.
 - navigate opens a page of the app for the user, given as a relative path such as /workshop.
+- show_video plays a Review video (or an AI Editor draft's preview) inside the chat, with a link to its page.
 - ask_secret asks the user for one API key. The app shows a secure box in the chat; the key goes straight to the app and never to you. Never ask the user to paste a key, token or password into the chat, and never repeat one back.
 
 The keys the app takes, and what each one is for:
 ${MY_KEYS.map((k) => `- ${k.env} (${k.name}): ${k.what}`).join("\n")}`;
+
+/** Added for the dock's turns, where Claude also has the user's Mac (answerWithTools onAsk). */
+export const MAC_NOTE = `
+
+You also run on the user's own Mac, in a folder of your own there (the current folder), with Claude Code's tools: Bash, Read, Glob, Grep, Edit and Write. What Claude Code treats as safe runs at once; anything else (a command that changes something, a file write, a read outside your folder) is asked of the user in the chat first, and they allow or deny it. When they deny something, don't try it another way: say what you wanted to do and ask.`;
 
 /* ---- the conversation, in memory and on disk ---- */
 
@@ -187,7 +193,11 @@ function load(username: string): Conv {
     /* no conversation yet */
   }
   // a reply the server stopped in the middle of: it can't finish any more
-  for (const m of conv.messages) if (m.status === "thinking") m.status = "error";
+  // and it can't do what it asked
+  for (const m of conv.messages) if (m.status === "thinking") {
+    m.status = "error";
+    expireApprovals(m, 0);
+  }
   cache.set(username, conv);
   return conv;
 }
@@ -238,6 +248,90 @@ export function noteWork(username: string, turn: string, card: NonNullable<Assis
   else if (!onlyUpdate && work.length < 20) work.push(card);
   else return;
   saveSoon(username);
+}
+
+/** A video the reply shows in the chat (show_video, mcp.ts): the same id replaces its card. */
+export function noteMedia(username: string, turn: string, card: AssistantMedia): void {
+  const m = messageOf(username, turn);
+  if (m?.status !== "thinking") return;
+  const media = (m.media ??= []);
+  const at = media.findIndex((x) => x.id === card.id);
+  if (at >= 0) media[at] = card;
+  else if (media.length < 10) media.push(card);
+  else return;
+  saveSoon(username);
+}
+
+/* ---- what the reply asks to do on the user's Mac (MacOpts.onAsk) ---- */
+
+/** Unanswered this long = no. */
+export const APPROVAL_MS = 10 * 60_000;
+const MAX_APPROVALS = 30;
+
+/** Waiting approvals older than maxAge become expired; true when one did. */
+function expireApprovals(m: AssistantMessage, maxAge = APPROVAL_MS, now = Date.now()): boolean {
+  let changed = false;
+  for (const a of m.approvals ?? []) if (a.status === "waiting" && now - a.at >= maxAge) {
+    a.status = "expired";
+    changed = true;
+  }
+  return changed;
+}
+
+/** A question from Claude Code in plain words; the exact command or path goes beside it. */
+export function approvalSummary(ask: Pick<MacAsk, "tool" | "description" | "reason">): string {
+  const said = ask.description.replace(/\s+/g, " ").trim();
+  switch (ask.tool) {
+    case "Bash":
+      return said ? `Run a command: ${said}` : "Run a command on your Mac";
+    case "Write":
+      return "Create or replace a file";
+    case "Edit":
+    case "MultiEdit":
+    case "NotebookEdit":
+      return "Change a file";
+    case "Read":
+    case "Glob":
+    case "Grep":
+      return "Look at files outside its own folder";
+    case "WebFetch":
+    case "WebSearch":
+      return "Use the web";
+    default:
+      return `Use ${ask.tool}`;
+  }
+}
+
+/**
+ * The reply's approval for one ask: recorded the first time it comes (waiting), then its answer. A reply that's no
+ * longer running, or one with too many asks, gets a no.
+ */
+export function approvalFor(username: string, turn: string, ask: MacAsk): MacAskStatus {
+  const m = messageOf(username, turn);
+  if (m?.status !== "thinking") return "denied";
+  const list = (m.approvals ??= []);
+  let a = list.find((x) => x.id === ask.id);
+  if (!a) {
+    if (list.length >= MAX_APPROVALS) return "denied";
+    a = { id: ask.id, tool: ask.tool, summary: approvalSummary(ask), detail: ask.detail, at: Date.now(), status: "waiting" };
+    list.push(a);
+    save(username);
+  } else if (expireApprovals(m)) save(username);
+  return a.status;
+}
+
+/** The user's answer to one of their own replies' approvals; null when there is no such approval. */
+export function answerApproval(username: string, id: string, allow: boolean): AssistantApproval | null {
+  for (const m of load(username).messages) {
+    const a = m.approvals?.find((x) => x.id === id);
+    if (!a) continue;
+    if (expireApprovals(m) || a.status === "waiting") {
+      if (a.status === "waiting") a.status = allow ? "allowed" : "denied";
+      save(username);
+    }
+    return a;
+  }
+  return null;
 }
 
 /** The app's own path only: relative, inside this app, no scheme, host or whitespace. */
@@ -327,17 +421,27 @@ export async function answerWithTools(
   route: Route,
   url: string,
   prompt: string,
-  opts: { label: string; turn: string; onDelta?: (text: string) => void; background?: boolean; cancel?: AbortSignal; files?: Record<string, string> },
+  opts: {
+    label: string;
+    turn: string;
+    onDelta?: (text: string) => void;
+    background?: boolean;
+    cancel?: AbortSignal;
+    files?: Record<string, string>;
+    /** Someone is there to answer: Claude may use the Mac's own tools and asks (MacOpts.onAsk). Never for automations. */
+    onAsk?: (ask: MacAsk) => MacAskStatus;
+  },
 ): Promise<string> {
   const token = mintJobToken(username, opts.turn);
   try {
-    return await streamMacClaude(SYSTEM, prompt, opts.cancel, (t) => opts.onDelta?.(t), undefined, {
+    return await streamMacClaude(opts.onAsk ? SYSTEM + MAC_NOTE : SYSTEM, prompt, opts.cancel, (t) => opts.onDelta?.(t), undefined, {
       label: opts.label,
       background: opts.background,
       web: true, // the assistant may search and read the web, as the Workshop's writer does
       provider: { instance: route.instance.id, driver: route.instance.driver, home: route.instance.home, model: route.selection.model, effort: route.selection.effort, device: route.device, scope: route.scope },
       mcp: { url, token },
       files: opts.files,
+      onAsk: opts.onAsk,
       // Claude's own reads and searches; its MCP calls are noted by mcp.ts already, and "Thinking" is the reply's own status
       onStep: (label) => {
         if (label !== "Thinking" && !label.startsWith("mcp__")) noteStep(username, opts.turn, label);
@@ -364,6 +468,7 @@ async function runTurn(username: string, replyId: string, route: Route, url: str
       turn: replyId,
       cancel: stop.signal,
       files,
+      onAsk: (ask) => approvalFor(username, replyId, ask),
       onDelta: (t) => {
         const m = messageOf(username, replyId);
         if (m) m.text = t;
@@ -377,6 +482,9 @@ async function runTurn(username: string, replyId: string, route: Route, url: str
     if (stop.signal.aborted) Object.assign(m ?? {}, { status: "done", text: m?.text ? `${m.text}\n\n*Stopped.*` : "*Stopped.*" });
     else Object.assign(m ?? {}, { status: "error", text: (e instanceof Error ? e.message : String(e)).slice(0, 300) || "The answer failed." });
   } finally {
+    // what it asked and nobody answered can't be done any more
+    const m = messageOf(username, replyId);
+    if (m) expireApprovals(m, 0);
     if (running.get(username) === stop) running.delete(username);
     const t = pendingSave.get(username);
     if (t) clearTimeout(t);
@@ -495,6 +603,17 @@ assistantApp.delete("/past/:id", (c) => {
   conv.past = conv.past!.filter((p) => p !== found);
   dropImages(u.username, found.messages);
   save(u.username);
+  return c.json(view(u.username, u.role === "admin"));
+});
+
+/** Allow or deny something the reply asked to do on the Mac (only the caller's own replies; anyone else's is not found). */
+assistantApp.post("/approvals/:id", async (c) => {
+  const u = c.get("user");
+  const b = (await c.req.json().catch(() => null)) as { allow?: unknown } | null;
+  if (typeof b?.allow !== "boolean") return c.json({ error: "Say allow: true or false" }, 400);
+  const a = answerApproval(u.username, c.req.param("id"), b.allow);
+  if (!a) return c.json({ error: "Not found" }, 404);
+  if (a.status !== (b.allow ? "allowed" : "denied")) return c.json({ error: a.status === "expired" ? "Too late: it waited 10 minutes and wasn't done" : "Already answered" }, 409);
   return c.json(view(u.username, u.role === "admin"));
 });
 

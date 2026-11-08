@@ -65,7 +65,23 @@ export interface MacOpts {
    * "creator-toolset" (mcp.ts initialize). Nothing else changes for a job without it.
    */
   mcp?: { url: string; token: string };
+  /**
+   * The assistant's turns only: Claude also gets this Mac's tools (Bash, Edit, Write…) with Claude Code's own
+   * permission rules, and each question it would ask a person comes here. The Mac posts the same ask every few
+   * seconds (/:id/ask) until the answer is no longer "waiting"; anything but "allowed" is a no.
+   */
+  onAsk?: (ask: MacAsk) => MacAskStatus;
 }
+
+/** A permission question from Claude on the Mac: the tool, Claude's own words for it and the exact command or path. */
+export interface MacAsk {
+  id: string;
+  tool: string;
+  description: string;
+  reason: string;
+  detail: string;
+}
+export type MacAskStatus = "waiting" | "allowed" | "denied" | "expired";
 
 /* ---- usage: every answer's tokens and API-equivalent cost, by hour (UTC) and what it was for ---- */
 
@@ -139,6 +155,7 @@ interface Req {
   onStep?: (label: string) => void;
   session?: MacOpts["session"];
   mcp?: MacOpts["mcp"];
+  onAsk?: MacOpts["onAsk"];
   claimed: boolean;
   claimedAt: number;
   text: string;
@@ -224,6 +241,7 @@ export function streamMacClaude(
       onStep: opts.onStep,
       session: opts.session,
       mcp: opts.mcp,
+      onAsk: opts.onAsk,
       claimed: false,
       claimedAt: 0,
       text: "",
@@ -350,6 +368,25 @@ export function relayRoutes(deviceOf: (c: Context) => string | null) {
     return c.json({ ok: true });
   });
 
+  /** A permission question (MacOpts.onAsk), asked again until it's answered; a job without onAsk never asks, so no. */
+  app.post("/:id/ask", async (c) => {
+    const r = mine(c);
+    if (!r) return c.json({ error: "Not found" }, 404);
+    r.seen = Date.now();
+    const b = await body(c);
+    const text = (k: string, max: number) => (typeof b[k] === "string" ? (b[k] as string).slice(0, max) : "");
+    const id = text("ask_id", 100);
+    if (!/^[A-Za-z0-9_-]{1,100}$/.test(id) || !text("tool", 80)) return c.json({ error: "Bad ask" }, 400);
+    const ask: MacAsk = { id, tool: text("tool", 80), description: text("description", 300), reason: text("reason", 300), detail: text("detail", 4000) };
+    let status: MacAskStatus = "denied";
+    try {
+      if (r.onAsk) status = r.onAsk(ask);
+    } catch (e) {
+      console.warn(`[mac-claude] ask: ${e instanceof Error ? e.message : e}`);
+    }
+    return c.json({ status });
+  });
+
   app.post("/:id/done", async (c) => {
     const r = mine(c);
     const b = await body(c);
@@ -437,6 +474,7 @@ const pack = (r: Req) => ({
   ...(r.model || r.provider ? { model: r.model ?? r.provider!.model } : {}),
   ...(r.session ? { session: r.session.key, ...(r.session.resume ? { resume: r.session.resume } : {}) } : {}),
   ...(r.mcp ? { mcp: r.mcp } : {}),
+  ...(r.onAsk ? { asks: true } : {}),
 });
 const body = (c: { req: { json: () => Promise<unknown> } }) =>
   c.req.json().then((b) => (b && typeof b === "object" ? (b as Record<string, unknown>) : {})).catch(() => ({}) as Record<string, unknown>);
