@@ -17,6 +17,8 @@ let defaultEffort = "xhigh"
 let claudeEfforts = ["low", "medium", "high", "xhigh", "max"]
 let readTools = "Read,Glob,Grep"
 let webTools = "WebSearch,WebFetch"
+/// This Mac's own tools for the assistant (RelayRequest.asks): Claude Code's permission rules decide what asks first.
+let macTools = "Read,Glob,Grep,Bash,Edit,Write"
 let folderNote = "The files this request needs are in the current folder: read them there."
 let piecesNote = "\n- sessions/INDEX.md — every Workshop session that became a post, with the post and its numbers (the app links them)."
 /// The drivers this Mac runs (Claude and Gemini; Grok, Codex and the rest are answered with the message below).
@@ -39,6 +41,11 @@ struct RelayRequest {
     let resume: String
     /// The app's own MCP server for this run (the assistant): its /api/mcp and a job token for one turn. Never logged.
     let mcp: (url: String, token: String)?
+    /// The assistant with someone there to answer: this Mac's tools, and each permission question goes to the site
+    /// (only with `mcp`; the Workshop, automations and the rest never get it).
+    let asks: Bool
+    /// The assistant's own folder on this Mac for this server (assistantFolder), set by the runner when `asks`.
+    var workdir: URL?
 
     init?(json: Data) {
         guard let obj = (try? JSONSerialization.jsonObject(with: json)) as? [String: Any],
@@ -60,6 +67,7 @@ struct RelayRequest {
         } else {
             mcp = nil
         }
+        asks = mcp != nil && obj["asks"] as? Bool == true
     }
 }
 
@@ -156,8 +164,11 @@ func homeEnv(_ home: String) -> [String: String] {
 
 /// the Mac relay's `claude -p` arguments (the prompt comes on stdin). `resume` is passed only with a session.
 /// `mcpConfigFile`: the app's own MCP server (the assistant), whose tools are then allowed too.
+/// `asks`: Claude Code's own permission rules, its questions on stdout and the answers on stdin (stream-json; ClaudeRun
+/// answers them through the site). Only the web and the app's MCP tools are allowed up front then; the rest of `tools`
+/// runs when Claude Code treats it as safe, else it asks.
 func claudeArguments(model: String, effort: String, systemFile: String, tools: String, session: Bool, resume: String,
-                     mcpConfigFile: String = "") -> [String] {
+                     mcpConfigFile: String = "", asks: Bool = false) -> [String] {
     var args = ["-p", "--model", model, "--effort", effort,
                 "--output-format", "stream-json", "--verbose", "--include-partial-messages",
                 "--system-prompt-file", systemFile, "--tools", tools, "--strict-mcp-config",
@@ -165,9 +176,84 @@ func claudeArguments(model: String, effort: String, systemFile: String, tools: S
     if !session { args.append("--no-session-persistence") }   // a cold run leaves no transcript behind
     if !resume.isEmpty { args += ["--resume", resume] }
     if !mcpConfigFile.isEmpty { args += ["--mcp-config", mcpConfigFile] }
-    let allowed = [tools, mcpConfigFile.isEmpty ? "" : mcpTools].filter { !$0.isEmpty }.joined(separator: ",")
-    if !allowed.isEmpty { args += ["--allowedTools", allowed, "--permission-mode", "dontAsk"] }   // anything else is refused
+    let web = webTools.split(separator: ",")
+    let upFront = asks ? tools.split(separator: ",").filter { web.contains($0) }.joined(separator: ",") : tools
+    let allowed = [upFront, mcpConfigFile.isEmpty ? "" : mcpTools].filter { !$0.isEmpty }.joined(separator: ",")
+    if asks {
+        args += ["--input-format", "stream-json", "--permission-prompt-tool", "stdio", "--permission-mode", "manual"]
+        if !allowed.isEmpty { args += ["--allowedTools", allowed] }
+    } else if !allowed.isEmpty {
+        args += ["--allowedTools", allowed, "--permission-mode", "dontAsk"]   // anything else is refused
+    }
     return args
+}
+
+// MARK: permission questions (asks)
+
+/// One question Claude Code would ask a person ("can_use_tool" on its stdout): the tool, its own words, the exact command or path.
+struct PermissionAsk: Equatable {
+    let id: String
+    let tool: String
+    let description: String
+    let reason: String
+    let detail: String
+    /// sent back unchanged with a yes
+    let input: NSDictionary
+}
+
+/// A control_request line's question, or nil when it's another kind of request.
+func permissionAsk(_ obj: [String: Any]) -> PermissionAsk? {
+    guard let id = obj["request_id"] as? String, !id.isEmpty,
+          let req = obj["request"] as? [String: Any], req["subtype"] as? String == "can_use_tool",
+          let tool = req["tool_name"] as? String else { return nil }
+    let input = req["input"] as? [String: Any] ?? [:]
+    return PermissionAsk(id: id, tool: tool, description: req["description"] as? String ?? "",
+                         reason: req["decision_reason"] as? String ?? "", detail: askDetail(tool, input), input: input as NSDictionary)
+}
+
+/// The exact thing a question is about: the command, the path, the address; else the input as JSON.
+func askDetail(_ tool: String, _ input: [String: Any]) -> String {
+    func text(_ key: String) -> String { input[key] as? String ?? "" }
+    let detail: String
+    switch tool {
+    case "Bash": detail = text("command")
+    case "Read", "Write", "Edit", "MultiEdit": detail = text("file_path")
+    case "NotebookEdit": detail = text("notebook_path")
+    case "Glob", "Grep": detail = [text("pattern"), text("path")].filter { !$0.isEmpty }.joined(separator: " in ")
+    case "WebFetch": detail = text("url")
+    case "WebSearch": detail = text("query")
+    default:
+        detail = (try? JSONSerialization.data(withJSONObject: input, options: [.sortedKeys])).map { String(decoding: $0, as: UTF8.self) } ?? ""
+    }
+    return String(detail.prefix(4000))
+}
+
+/// The answer line for a question: "allowed" runs it as asked; anything else is a no that tells Claude not to work around it.
+func askAnswer(_ ask: PermissionAsk, status: String) -> Data {
+    let response: [String: Any]
+    switch status {
+    case "allowed": response = ["behavior": "allow", "updatedInput": ask.input]
+    case "expired", "waiting":
+        response = ["behavior": "deny", "message": "Nobody answered within 10 minutes, so it was not done. Don't try it another way."]
+    default:
+        response = ["behavior": "deny", "message": "The user declined this. Don't try it another way: say what you wanted to do and ask them."]
+    }
+    return jsonLine(["type": "control_response", "response": ["subtype": "success", "request_id": ask.id, "response": response]])
+}
+
+/// The prompt as one stream-json user message (stdin stays open for the answers).
+func userMessageLine(_ text: String) -> Data {
+    jsonLine(["type": "user", "message": ["role": "user", "content": text]])
+}
+
+private func jsonLine(_ obj: [String: Any]) -> Data {
+    ((try? JSONSerialization.data(withJSONObject: obj)) ?? Data()) + Data("\n".utf8)
+}
+
+/// The assistant's own folder on this Mac, one per server (the device token is per server, so per account):
+/// ~/Library/Application Support/Creator Toolset/assistant/<host>.
+func assistantFolder(host: String, home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
+    home.appendingPathComponent("Library/Application Support/Creator Toolset/assistant").appendingPathComponent(safeName(host.isEmpty ? "site" : host))
 }
 
 /// The prompt: the folder note first when there is a folder (the Mac relay request_text).
@@ -182,6 +268,11 @@ enum StreamUpdate: Equatable {
     case text(String)
     /// a tool call, as the author reads it, or "Thinking" after one
     case step(String)
+    /// a permission question (asks), and one Claude Code took back
+    case ask(PermissionAsk)
+    case cancelAsk(String)
+    /// the result line came: nothing more will be asked
+    case result
 }
 
 /// the Mac relay stream() reading: `claude -p --output-format stream-json --include-partial-messages`, one line at a time.
@@ -225,6 +316,11 @@ struct ClaudeStream: RunStream {
             }
         case "result":
             result = obj
+            updates.append(.result)
+        case "control_request":
+            if let ask = permissionAsk(obj) { updates.append(.ask(ask)) }
+        case "control_cancel_request":
+            if let id = obj["request_id"] as? String { updates.append(.cancelAsk(id)) }
         default:
             break
         }
@@ -251,6 +347,9 @@ func toolStep(_ block: [String: Any], cwd: String) -> String {
         let scope = rel(input["path"])
         return "Searched \(scope.isEmpty ? "the folder" : scope) for \"\(input["pattern"] as? String ?? "")\""
     case "Glob": return "Looked for \(input["pattern"] as? String ?? "")"
+    case "Bash": return "Command: \(String((input["command"] as? String ?? "").prefix(200)))"
+    case "Write": return "Write \(rel(input["file_path"]))"
+    case "Edit": return "Edit \(rel(input["file_path"]))"
     default: return ""
     }
 }
@@ -472,8 +571,9 @@ func resolveBlobs(_ files: [String: String], cache: URL, fetch: (String) throws 
 }
 
 /// the Mac relay sync_folder: make `root` hold the site's folder (path -> text). A changed file is rewritten, one no
-/// longer there is deleted, the rest is left alone. "base64:…" is a file's bytes. A path that would leave `root` is skipped.
-func syncFolder(_ root: URL, _ files: [String: String]) throws {
+/// longer there is deleted (unless `prune` is off: the assistant's own folder keeps what's in it), the rest is left
+/// alone. "base64:…" is a file's bytes. A path that would leave `root` is skipped.
+func syncFolder(_ root: URL, _ files: [String: String], prune: Bool = true) throws {
     var want: [String: Data] = [:]
     for (rel, text) in files where isSafeRelative(rel) {
         if text.hasPrefix("base64:") {
@@ -484,7 +584,7 @@ func syncFolder(_ root: URL, _ files: [String: String]) throws {
     }
     let fm = FileManager.default
     let base = realPath(root.path) + "/"   // /var and /private/var are the same folder: compare resolved paths
-    if let walk = fm.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey]) {
+    if prune, let walk = fm.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey]) {
         for case let file as URL in walk {
             let real = realPath(file.path)
             guard real.hasPrefix(base), (try? file.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else { continue }
@@ -506,12 +606,16 @@ func isSafeRelative(_ rel: String) -> Bool {
 
 /// the Mac relay session_dir: a Workshop session's folder, the same path every turn so its Claude session finds its transcript.
 func sessionFolder(_ key: String, root: URL) -> URL {
-    let safe = String(key.unicodeScalars.map { scalar -> Character in
+    root.appendingPathComponent(safeName(key)).appendingPathComponent("folder")
+}
+
+/// A folder name from any text: letters, digits, _ and - kept, the rest "_", at most 100.
+func safeName(_ key: String) -> String {
+    String(key.unicodeScalars.map { scalar -> Character in
         let ok = (scalar.value >= 48 && scalar.value <= 57) || (scalar.value >= 65 && scalar.value <= 90)
             || (scalar.value >= 97 && scalar.value <= 122) || scalar == "_" || scalar == "-"
         return ok ? Character(scalar) : "_"
     }.prefix(100))
-    return root.appendingPathComponent(safe).appendingPathComponent("folder")
 }
 
 /// the Mac relay prune_sessions: session folders no turn has used for `days` go; the next turn writes them again.

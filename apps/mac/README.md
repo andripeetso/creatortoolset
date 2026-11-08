@@ -272,6 +272,13 @@ home folder (its `settings.json` `env` rides along, the API key is dropped), `--
 the Workshop folder read with Read, Glob and Grep, streamed text posted to `/api/devices/relay/<id>/text`
 (at most every 0.4 s, at least every 20 s), tool calls to `/step`, then `/done` with the answer and its
 usage, or `/fail` with the error (and `limit` / `gone` flags). A text post that answers 404 stops the run.
+The assistant's turns (`asks` with `mcp`) also get this Mac's tools, Bash, Read, Glob, Grep, Edit and Write, in
+`~/Library/Application Support/Creator Toolset/assistant/<server>/` (kept between turns), with Claude Code's own permission
+rules (`--permission-mode manual --permission-prompt-tool stdio --input-format stream-json`): what Claude Code treats as
+safe runs at once, and each question it would ask a person arrives on its stdout as a `can_use_tool` request. The app posts
+it to `/api/devices/relay/<id>/ask` every 2 s until the person answers it in the chat (allowed / denied / expired after
+10 min) and writes the answer to claude's stdin; a no tells Claude not to try another way. Only the web and the app's MCP
+tools are allowed up front. An older server never sends `asks`, so its turns run as before.
 Claude and Gemini run here (Gemini with `gemini -o stream-json` in plan mode, the prompt on stdin, API keys left out of its environment, its own `~/.gemini`): a Grok or Codex request fails with "This Mac runs Claude and Gemini only for now".
 Once at start and hourly the app posts `POST /api/devices/relay/report` (`MacReport.swift`): which
 CLIs are installed (with `--version`) and the Claude and Codex config folders, read only. Nothing is ever
@@ -301,6 +308,7 @@ reply finishing or an AI edit failing, so those notifications need a server chan
 - The runner's folder: `relay/` in the data folder for the server on this Mac (so it moves with the data), else
   `~/Library/Application Support/Creator Toolset/relay/<site>`. In it, `workshop/` holds a Workshop session's
   folder while its Claude session is kept (14 days) and `blobs/` big files by their hash (30 days).
+- `~/Library/Application Support/Creator Toolset/assistant/<server>/`: the assistant's own folder (its working folder on this Mac).
 
 The site's login cookie lives in WebKit's own store for the app (like Safari's), so the login lasts
 between launches; Sign out on the site clears it. The one secret the app keeps is the device token of

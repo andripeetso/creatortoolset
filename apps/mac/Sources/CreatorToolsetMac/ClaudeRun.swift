@@ -35,6 +35,8 @@ private final class RunState<S: RunStream> {
     var lastSend = Date.distantPast
     var killed = false
     var finished = false
+    /// questions Claude Code took back
+    var cancelled: Set<String> = []
 
     init(stream: S) { self.stream = stream }
 
@@ -55,20 +57,28 @@ struct StreamOutcome<S: RunStream> {
 /// the Mac relay SEND_S / ALIVE_S: text at most this often while it arrives, and at least this often while the CLI thinks.
 let sendEverySeconds: TimeInterval = 0.4
 let aliveEverySeconds: TimeInterval = 20
+/// A question is asked again this often while it waits; past the site's 10 minutes (plus slack) it's a no here too.
+let askEverySeconds: TimeInterval = 2
+let askGiveUpSeconds: TimeInterval = 11 * 60
+
+/// The site's answer to a permission question: "waiting", "allowed", "denied", "expired", "gone" (nobody waits), or nil (unreachable: ask again).
+typealias AskSite = (PermissionAsk) -> String?
 
 /// the Mac relay answer() for the request's driver: Gemini, or Claude (the default).
 func runAnswer(_ req: RelayRequest, _ opts: RelayOptions, cli: String, work: URL,
-               send: @escaping (String) -> Bool, step: @escaping (String) -> Void) throws -> ClaudeAnswer {
+               send: @escaping (String) -> Bool, step: @escaping (String) -> Void, ask: AskSite? = nil) throws -> ClaudeAnswer {
     if opts.driver == "gemini" {
         return try geminiAnswer(req, opts, cli: cli, work: work, send: send, step: step)
     }
-    return try claudeAnswer(req, opts, cli: cli, work: work, send: send, step: step)
+    return try claudeAnswer(req, opts, cli: cli, work: work, send: send, step: step, ask: ask)
 }
 
 /// the Mac relay answer() for Claude: one `claude -p` run for a request. `send(text)` returns false when the site no longer
 /// waits (the run stops); `step(label)` hears each tool call. A Workshop turn with a folder or a session runs in that folder.
+/// With `req.asks` (the assistant), Claude runs in the assistant's own folder with this Mac's tools, and each question it
+/// would ask a person goes to `ask` (no `ask` = every question is a no).
 func claudeAnswer(_ req: RelayRequest, _ opts: RelayOptions, cli: String, work: URL,
-                  send: @escaping (String) -> Bool, step: @escaping (String) -> Void) throws -> ClaudeAnswer {
+                  send: @escaping (String) -> Bool, step: @escaping (String) -> Void, ask: AskSite? = nil) throws -> ClaudeAnswer {
     let fm = FileManager.default
     let folder = !req.files.isEmpty || !req.session.isEmpty
     let tmp = fm.temporaryDirectory.appendingPathComponent("relay-\(UUID().uuidString)")
@@ -87,13 +97,14 @@ func claudeAnswer(_ req: RelayRequest, _ opts: RelayOptions, cli: String, work: 
         }
         mcpFile = file.path
     }
-    let tools = [folder ? readTools : nil, req.web ? webTools : nil].compactMap { $0 }.joined(separator: ",")
+    let tools = [req.asks ? macTools : folder ? readTools : nil, req.web ? webTools : nil].compactMap { $0 }.joined(separator: ",")
     let resume = req.session.isEmpty ? "" : opts.resume
     let args = claudeArguments(model: opts.model, effort: opts.effort, systemFile: systemFile.path,
-                               tools: tools, session: !req.session.isEmpty, resume: resume, mcpConfigFile: mcpFile)
+                               tools: tools, session: !req.session.isEmpty, resume: resume, mcpConfigFile: mcpFile, asks: req.asks)
+    // asks: the chat's text streams as it comes (only a Workshop folder waits for its JSON answer)
     let outcome = try runStream(cli: cli, args: args, cwd: cwd, env: claudeEnv(base: ProcessInfo.processInfo.environment, home: opts.home),
-                                prompt: requestText(req.user, folder: folder), folder: folder, send: send, step: step, tmp: tmp,
-                                stream: ClaudeStream(cwd: cwd.path))
+                                prompt: requestText(req.user, folder: folder), folder: folder && !req.asks, send: send, step: step, tmp: tmp,
+                                stream: ClaudeStream(cwd: cwd.path), ask: req.asks ? (ask ?? { _ in "denied" }) : nil)
     let stream = outcome.stream
 
     var state = req.session.isEmpty ? "" : "new"
@@ -154,7 +165,9 @@ func prepareFolder(_ req: RelayRequest, work: URL, tmp: URL) throws -> (cwd: URL
     let folder = !req.files.isEmpty || !req.session.isEmpty
     var system = req.system
     let cwd: URL
-    if !req.session.isEmpty {
+    if let workdir = req.workdir {
+        cwd = workdir
+    } else if !req.session.isEmpty {
         let root = work.appendingPathComponent("workshop")
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
         pruneSessions(root: root)
@@ -167,16 +180,17 @@ func prepareFolder(_ req: RelayRequest, work: URL, tmp: URL) throws -> (cwd: URL
     try fm.createDirectory(at: cwd, withIntermediateDirectories: true)
     if folder {
         if req.files["sessions/INDEX.md"] != nil { system += piecesNote }
-        try syncFolder(cwd, req.files)
+        try syncFolder(cwd, req.files, prune: req.workdir == nil)   // the assistant's folder keeps what's in it
     }
     return (cwd, system)
 }
 
 /// the Mac relay stream(): one CLI run followed as it streams. Text goes out at most every 0.4 s and at least every 20 s;
-/// with a folder only the JSON answer streams (the CLI may talk between reads).
+/// with a folder only the JSON answer streams (the CLI may talk between reads). With `ask` the prompt is one stream-json
+/// message and stdin stays open for the answers to Claude Code's questions until its result line.
 private func runStream<S: RunStream>(cli: String, args: [String], cwd: URL, env: [String: String], prompt: String, folder: Bool,
                                      send: @escaping (String) -> Bool, step: @escaping (String) -> Void, tmp: URL,
-                                     stream: S) throws -> StreamOutcome<S> {
+                                     stream: S, ask: AskSite? = nil) throws -> StreamOutcome<S> {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: cli)
     process.arguments = args
@@ -197,13 +211,37 @@ private func runStream<S: RunStream>(cli: String, args: [String], cwd: URL, env:
     } catch {
         throw ClaudeFailure(message: "\(URL(fileURLWithPath: cli).lastPathComponent) is not installed on this Mac (\(error.localizedDescription))")
     }
+    // stdin: the prompt, then (asks) the answers; one writer at a time, nothing after it's closed
+    let stdin = StdinWriter(input.fileHandleForWriting)
     // The prompt goes in on its own thread: a long one must not hold the reader back.
     DispatchQueue.global(qos: .utility).async {
-        try? input.fileHandleForWriting.write(contentsOf: Data(prompt.utf8))
-        try? input.fileHandleForWriting.close()
+        if ask == nil {
+            stdin.write(Data(prompt.utf8))
+            stdin.close()
+        } else {
+            stdin.write(userMessageLine(prompt))
+        }
     }
 
     let state = RunState(stream: stream)
+    /// One question: asked of the site every 2 s until it's answered, then the answer goes to Claude Code. Its own
+    /// thread, so the output keeps flowing and several questions can wait at once.
+    func answer(_ question: PermissionAsk, _ ask: @escaping AskSite) {
+        Thread {
+            let started = Date()
+            var status = "expired"
+            while Date().timeIntervalSince(started) < askGiveUpSeconds {
+                if state.with({ $0.finished || $0.killed || $0.cancelled.contains(question.id) }) { return }
+                if let got = ask(question), got != "waiting" {
+                    status = got
+                    break
+                }
+                Thread.sleep(forTimeInterval: askEverySeconds)
+            }
+            if state.with({ $0.cancelled.contains(question.id) }) { return }
+            stdin.write(askAnswer(question, status: status))
+        }.start()
+    }
     let stopRun = {
         state.with { $0.killed = true }
         Darwin.kill(process.processIdentifier, SIGKILL)
@@ -238,6 +276,12 @@ private func runStream<S: RunStream>(cli: String, args: [String], cwd: URL, env:
                 switch update {
                 case .step(let label):
                     step(label)
+                case .ask(let question):
+                    if let ask { answer(question, ask) }
+                case .cancelAsk(let id):
+                    state.with { _ = $0.cancelled.insert(id) }
+                case .result:
+                    if ask != nil { stdin.close() }   // nothing more to answer: the CLI ends
                 case .text(let text):
                     let go = state.with { s -> Bool in
                         guard !(folder && !looksLikeJSON(text)), Date().timeIntervalSince(s.lastSend) > sendEverySeconds else { return false }
@@ -253,10 +297,33 @@ private func runStream<S: RunStream>(cli: String, args: [String], cwd: URL, env:
         }
     }
     process.waitUntilExit()
+    stdin.close()
     state.with { $0.finished = true }
     try? errFile.close()
     let err = (try? String(contentsOf: errURL, encoding: .utf8)) ?? ""
     return state.with { s in StreamOutcome(stream: s.stream, killed: s.killed, err: err) }
+}
+
+/// The CLI's stdin, written from several threads (the prompt, each answer), closed once.
+private final class StdinWriter {
+    private let handle: FileHandle
+    private let lock = NSLock()
+    private var closed = false
+
+    init(_ handle: FileHandle) { self.handle = handle }
+
+    func write(_ data: Data) {
+        lock.lock()
+        defer { lock.unlock() }
+        if !closed { try? handle.write(contentsOf: data) }
+    }
+
+    func close() {
+        lock.lock()
+        defer { lock.unlock() }
+        if !closed { try? handle.close() }
+        closed = true
+    }
 }
 
 /// the Mac relay shown(): with a folder, only text that is the JSON answer (or a fenced one) streams.

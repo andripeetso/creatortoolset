@@ -256,6 +256,11 @@ final class RelayRunner {
                 return obj["text"] as? String
             }
             let opts = try requestOptions(req, root: home)
+            if req.asks {   // the assistant works in a folder of its own on this Mac, one per server
+                let folder = assistantFolder(host: [api.base.host, api.base.port.map(String.init)].compactMap { $0 }.joined(separator: "-"), home: home)
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                req.workdir = URL(fileURLWithPath: realPath(folder.path))
+            }
             let cli = binary(opts.driver, home: home) ?? opts.driver
             let answer = try runAnswer(req, opts, cli: cli, work: work, send: { [self] text in
                 // a blip is not a stop: the next post carries the whole text anyway
@@ -263,6 +268,15 @@ final class RelayRunner {
                 return reply.status != 404
             }, step: { [self] label in
                 _ = try? api.call("POST", "\(base)/step", ["label": String(label.prefix(300))])
+            }, ask: { [self] question in
+                // a permission question, shown in the chat until the user answers; 404 = the site no longer waits
+                guard let reply = try? api.call("POST", "\(base)/ask", [
+                    "ask_id": question.id, "tool": question.tool, "description": String(question.description.prefix(300)),
+                    "reason": String(question.reason.prefix(300)), "detail": question.detail,
+                ], timeout: 30) else { return nil }
+                if reply.status == 404 { return "gone" }
+                guard reply.status == 200, let obj = (try? JSONSerialization.jsonObject(with: reply.data)) as? [String: Any] else { return nil }
+                return obj["status"] as? String
             })
             _ = try? api.call("POST", "\(base)/done", [
                 "text": answer.text, "usage": answer.usage, "session_id": answer.session, "session_state": answer.state,

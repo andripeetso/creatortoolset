@@ -181,7 +181,9 @@ final class RelayTests: XCTestCase {
         XCTAssertEqual(label("Grep", ["pattern": "hook"]), "Searched the folder for \"hook\"")
         XCTAssertEqual(label("Glob", ["pattern": "**/*.md"]), "Looked for **/*.md")
         XCTAssertEqual(label("WebFetch", ["url": "https://example.com"]), "Read https://example.com")
-        XCTAssertEqual(label("Bash", ["command": "ls"]), "")
+        XCTAssertEqual(label("Bash", ["command": "ls"]), "Command: ls")
+        XCTAssertEqual(label("Write", ["file_path": cwd + "/note.txt"]), "Write note.txt")
+        XCTAssertEqual(label("Agent", ["prompt": "x"]), "")
     }
 
     // MARK: usage, limits, sessions
@@ -390,7 +392,145 @@ final class RelayTests: XCTestCase {
         XCTAssertTrue(limitFlag("gemini", resultText(got)))
     }
 
+    // MARK: the assistant's permission questions (asks)
+
+    private let jobToken = "ctj_" + String(repeating: "a", count: 48)
+
+    func testOnlyTheAssistantWithMcpAsks() {
+        XCTAssertTrue(request(#"{"id":"a1","asks":true,"mcp":{"url":"https://example.test/api/mcp","token":"\#(jobToken)"}}"#).asks)
+        XCTAssertFalse(request(#"{"id":"a2","asks":true}"#).asks)   // no app MCP: not the assistant
+        XCTAssertFalse(request(#"{"id":"a3","mcp":{"url":"https://example.test/api/mcp","token":"\#(jobToken)"}}"#).asks)   // an automation
+    }
+
+    func testAskingRunHasTheMacToolsAndPreAllowsOnlyWebAndTheApp() {
+        let tools = [macTools, webTools].joined(separator: ",")
+        let args = claudeArguments(model: "claude-opus-5-5", effort: "xhigh", systemFile: "/tmp/s.txt", tools: tools, session: false,
+                                   resume: "", mcpConfigFile: "/tmp/m.json", asks: true)
+        XCTAssertEqual(args[args.firstIndex(of: "--tools")! + 1], "Read,Glob,Grep,Bash,Edit,Write,WebSearch,WebFetch")
+        XCTAssertEqual(args[args.firstIndex(of: "--allowedTools")! + 1], "WebSearch,WebFetch,mcp__creator-toolset__*")
+        XCTAssertEqual(args[args.firstIndex(of: "--permission-mode")! + 1], "manual")
+        XCTAssertEqual(args[args.firstIndex(of: "--permission-prompt-tool")! + 1], "stdio")
+        XCTAssertEqual(args[args.firstIndex(of: "--input-format")! + 1], "stream-json")
+        XCTAssertFalse(args.contains("dontAsk"))
+        XCTAssertFalse(args.contains("--dangerously-skip-permissions"))
+    }
+
+    func testTheStreamReadsAQuestionItsCancelAndTheResult() throws {
+        var stream = ClaudeStream(cwd: "/tmp")
+        let line = #"{"type":"control_request","request_id":"r-1","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"touch made.txt","description":"Make it"},"description":"Make it","decision_reason":"needs approval","permission_suggestions":[{"type":"addRules"}]}}"#
+        let updates = stream.feed(line)
+        guard case .ask(let ask) = try XCTUnwrap(updates.first) else { return XCTFail("no ask in \(updates)") }
+        XCTAssertEqual(ask.id, "r-1")
+        XCTAssertEqual(ask.tool, "Bash")
+        XCTAssertEqual(ask.detail, "touch made.txt")
+        XCTAssertEqual(ask.description, "Make it")
+        XCTAssertEqual(ask.reason, "needs approval")
+        XCTAssertEqual(stream.feed(#"{"type":"control_cancel_request","request_id":"r-1"}"#), [.cancelAsk("r-1")])
+        XCTAssertEqual(stream.feed(#"{"type":"control_request","request_id":"r-2","request":{"subtype":"interrupt"}}"#), [])
+        XCTAssertEqual(stream.feed(#"{"type":"result","result":"ok"}"#), [.result])
+        XCTAssertEqual(askDetail("Glob", ["pattern": "**/*.md", "path": "/Users/x"]), "**/*.md in /Users/x")
+        XCTAssertEqual(askDetail("Read", ["file_path": "/etc/hosts"]), "/etc/hosts")
+        XCTAssertEqual(askDetail("Other", ["b": 1, "a": "x"]), #"{"a":"x","b":1}"#)
+    }
+
+    func testAnswersAreOneLineAndAYesKeepsTheInput() throws {
+        let ask = PermissionAsk(id: "r-9", tool: "Bash", description: "", reason: "", detail: "ls", input: ["command": "ls"])
+        func decoded(_ status: String) throws -> [String: Any] {
+            let data = askAnswer(ask, status: status)
+            XCTAssertEqual(data.last, 0x0A)
+            XCTAssertEqual(data.filter { $0 == 0x0A }.count, 1)
+            let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            XCTAssertEqual(obj["type"] as? String, "control_response")
+            let response = try XCTUnwrap(obj["response"] as? [String: Any])
+            XCTAssertEqual(response["request_id"] as? String, "r-9")
+            return try XCTUnwrap(response["response"] as? [String: Any])
+        }
+        let yes = try decoded("allowed")
+        XCTAssertEqual(yes["behavior"] as? String, "allow")
+        XCTAssertEqual(yes["updatedInput"] as? [String: String], ["command": "ls"])
+        for status in ["denied", "expired", "gone", "anything"] {
+            XCTAssertEqual(try decoded(status)["behavior"] as? String, "deny")
+        }
+        let user = try XCTUnwrap(JSONSerialization.jsonObject(with: userMessageLine("hi")) as? [String: Any])
+        XCTAssertEqual(user["type"] as? String, "user")
+        XCTAssertEqual((user["message"] as? [String: Any])?["content"] as? String, "hi")
+    }
+
+    func testTheAssistantFolderIsPerServerUnderApplicationSupport() throws {
+        let home = URL(fileURLWithPath: "/Users/someone")
+        XCTAssertEqual(assistantFolder(host: "tools.example.com", home: home).path,
+                       "/Users/someone/Library/Application Support/Creator Toolset/assistant/tools_example_com")
+        XCTAssertEqual(assistantFolder(host: "../x", home: home).lastPathComponent, "___x")
+        // its own files stay when a turn's attachments are written
+        let root = temp()
+        try "mine".write(to: root.appendingPathComponent("notes.md"), atomically: true, encoding: .utf8)
+        try syncFolder(root, ["attached/01-a.txt": "x"], prune: false)
+        XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("notes.md"), encoding: .utf8), "mine")
+        XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("attached/01-a.txt"), encoding: .utf8), "x")
+    }
+
+    /// A stand-in CLI: reads the prompt line, asks one question, reads the answer, says what it got as its result.
+    private func stubCLI() throws -> String {
+        let file = temp().appendingPathComponent("claude")
+        let script = #"""
+        #!/bin/sh
+        read -r prompt
+        case "$prompt" in *'"type":"user"'*) kind=user;; *) kind=other;; esac
+        echo '{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"touch made.txt"},"description":"Make a file"}}'
+        read -r answer
+        case "$answer" in *'"behavior":"allow"'*) b=allow;; *) b=deny;; esac
+        printf '{"type":"result","is_error":false,"result":"%s %s","modelUsage":{"claude-opus-5-5":{"inputTokens":1,"outputTokens":1}},"total_cost_usd":0}\n' "$b" "$kind"
+        """#
+        try script.write(to: file, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
+        return file.path
+    }
+
+    func testAQuestionWaitsForTheSiteThenTheAnswerReachesTheCLI() throws {
+        let cli = try stubCLI()
+        var req = request(#"{"id":"a9","user":"make a file","asks":true,"mcp":{"url":"https://example.test/api/mcp","token":"\#(jobToken)"}}"#)
+        req.workdir = temp()
+        let opts = try requestOptions(req)
+        for (site, want) in [("allowed", "allow user"), ("denied", "deny user"), ("gone", "deny user")] {
+            let lock = NSLock()
+            var asked: [String] = []
+            let answer = try claudeAnswer(req, opts, cli: cli, work: temp(), send: { _ in true }, step: { _ in }, ask: { question in
+                lock.lock()
+                defer { lock.unlock() }
+                asked.append(question.detail)
+                return asked.count < 2 ? "waiting" : site   // waits one round first
+            })
+            XCTAssertEqual(answer.text, want)
+            XCTAssertEqual(asked, ["touch made.txt", "touch made.txt"])
+        }
+    }
+
     // MARK: real run, only when asked (costs a few cents of the subscription)
+
+    /// CT_REAL_CLAUDE=1 swift test --filter RealAsk: a real claude run with the Mac tools, asked to `touch` in its folder: yes, then no.
+    func testRealAskTouchAllowThenDeny() throws {
+        guard ProcessInfo.processInfo.environment["CT_REAL_CLAUDE"] == "1" else {
+            throw XCTSkip("set CT_REAL_CLAUDE=1 to run real claude calls")
+        }
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let hub = home.appendingPathComponent(".claude-work").path
+        let cli = binary("claude", home: home) ?? "claude"
+        for allow in [true, false] {
+            let folder = temp()
+            // no MCP server listens there: the run carries on without the app's tools
+            var req = request(#"{"id":"real-ask","system":"Do what the user asks with your tools.","user":"Run exactly this shell command with the Bash tool: touch made.txt. Then say done.","driver":"claude","model":"claude-haiku-5-5","effort":"low","home":"\#(hub)","asks":true,"mcp":{"url":"http://127.0.0.1:9/api/mcp","token":"\#(jobToken)"}}"#)
+            req.workdir = URL(fileURLWithPath: realPath(folder.path))
+            var asked: [PermissionAsk] = []
+            let answer = try claudeAnswer(req, try requestOptions(req), cli: cli, work: temp(), send: { _ in true }, step: { print("STEP", $0) }, ask: { q in
+                asked.append(q)
+                return allow ? "allowed" : "denied"
+            })
+            print("REAL ASK allow=\(allow): asked=\(asked.map { "\($0.tool): \($0.detail)" }) text=\(answer.text)")
+            XCTAssertTrue(asked.contains { $0.tool == "Bash" && $0.detail.contains("touch made.txt") })
+            XCTAssertEqual(FileManager.default.fileExists(atPath: folder.appendingPathComponent("made.txt").path), allow)
+        }
+    }
+
 
     /// CT_REAL_CLAUDE=1 swift test --filter RealRun: one tiny claude run through ~/.claude-work, the way the relay runs it.
     func testRealRunThroughTheHubHome() throws {
