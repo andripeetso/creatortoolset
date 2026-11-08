@@ -61,7 +61,8 @@ final class ProjectTests: XCTestCase {
         XCTAssertEqual(reopened.state, "ready")
         XCTAssertEqual(reopened.durationMs, 12_000)
         XCTAssertEqual(reopened.tracks, ["mic", "system"])
-        XCTAssertEqual(ProjectStore.project(id: project.id, root: root)?.folder, project.folder)
+        // the temp folder is /var/… while the store resolves it to /private/var/…: compare resolved paths
+        XCTAssertEqual(ProjectStore.project(id: project.id, root: root)?.folder.resolvingSymlinksInPath(), project.folder.resolvingSymlinksInPath())
         XCTAssertEqual(ProjectStore.list(root: root).map(\.id), [project.id])
     }
 
