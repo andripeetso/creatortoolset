@@ -61,6 +61,8 @@ export function useThrow(target: RefObject<HTMLElement | null>, canDock: boolean
       if (performance.now() - last.t > 80) v = { x: 0, y: 0 };
       const place = settle(ev.clientX, ev.clientY, v.x, v.y, window.innerWidth, window.innerHeight, canDock);
 
+      // the tilt off first: a tilted box measures wider, and the glide would start oversized
+      el.style.transform = `translate(${ev.clientX - sx}px, ${ev.clientY - sy}px)`;
       glide(el, () => onPlace(place));
     };
 
@@ -97,6 +99,15 @@ function glide(el: HTMLElement, change: () => void) {
   void el.offsetWidth;
   el.style.transition = LAND;
   el.style.transform = "";
-  el.addEventListener("transitionend", done, { once: true });
-  setTimeout(done, 600);
+  // only its own move: a button's or the box's transition inside it bubbles up here too
+  const end = (e: TransitionEvent) => {
+    if (e.target !== el || e.propertyName !== "transform") return;
+    el.removeEventListener("transitionend", end);
+    done();
+  };
+  el.addEventListener("transitionend", end);
+  setTimeout(() => {
+    el.removeEventListener("transitionend", end);
+    done();
+  }, 600);
 }
