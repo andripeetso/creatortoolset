@@ -37,7 +37,7 @@ export default function InstagramAnalysisPage() {
   }, [allowed, currentProjectId]);
 
   return (
-    <div className="relative flex min-h-dvh flex-col items-center bg-[#0b0b10] pb-[max(2.5rem,env(safe-area-inset-bottom))] text-zinc-200">
+    <div className="relative flex min-h-dvh flex-col items-center bg-zinc-950 pb-[max(2.5rem,env(safe-area-inset-bottom))] text-zinc-200">
       <AppBar tool="Content Analyzer" to={base} trail="Analysis" account={!!me}>
         {me ? (
           <ProjectSwitcher />

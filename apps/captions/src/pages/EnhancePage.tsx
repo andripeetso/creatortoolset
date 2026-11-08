@@ -558,7 +558,7 @@ export default function EnhancePage() {
   }, [engine, second]);
 
   return (
-    <div className="relative flex min-h-screen flex-col items-center bg-[#0b0b10] pb-10 text-zinc-200">
+    <div className="relative flex min-h-screen flex-col items-center bg-zinc-950 pb-10 text-zinc-200">
       <AppBar tool="Audio Enhancer" to={current ? "/enhance" : undefined} trail={current?.name} />
 
       <div className="mb-8 mt-10 flex items-center gap-3">

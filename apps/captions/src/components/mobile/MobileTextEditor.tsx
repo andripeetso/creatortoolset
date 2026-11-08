@@ -24,8 +24,8 @@ export function MobileTextEditor({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-[#0b0b10]">
-      <div className="pt-safe flex shrink-0 items-center gap-2 border-b border-zinc-800 bg-[#101014] px-3 pb-2.5">
+    <div className="fixed inset-0 z-50 flex flex-col bg-zinc-950">
+      <div className="pt-safe flex shrink-0 items-center gap-2 border-b border-zinc-800 bg-zinc-925 px-3 pb-2.5">
         <button
           onClick={onClose}
           className="rounded-lg px-3 py-2 text-sm text-zinc-400 active:bg-zinc-800"

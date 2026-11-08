@@ -39,7 +39,7 @@ export function ReviewUploadDialog({
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent
-        className="max-h-[90dvh] overflow-y-auto border-zinc-800 bg-[#0b0b10] text-zinc-200 sm:max-w-xl"
+        className="max-h-[90dvh] overflow-y-auto border-zinc-800 bg-zinc-950 text-zinc-200 sm:max-w-xl"
         // the page behind uploads what's dropped on it: this one's own
         onDragOver={(e) => {
           e.preventDefault();

@@ -62,7 +62,7 @@ export function SessionPosted({
           target="_blank"
           rel="noreferrer"
           title={posted.by === "auto" ? "Matched to this post by its words" : "The link you pasted"}
-          className="flex items-center gap-1 px-1.5 py-1 hover:text-white"
+          className="flex items-center gap-1 px-1.5 py-1 hover:text-zinc-50"
         >
           <ExternalLink className="h-3 w-3" />
           Post
@@ -73,7 +73,7 @@ export function SessionPosted({
           title="Not this post"
           aria-label="Not this post"
           onClick={() => onChange(null)}
-          className="border-l border-violet-500/30 px-1 py-1 text-violet-300/70 hover:text-white disabled:opacity-50"
+          className="border-l border-violet-500/30 px-1 py-1 text-violet-300/70 hover:text-zinc-50 disabled:opacity-50"
         >
           <X className="h-3 w-3" />
         </button>
@@ -92,7 +92,7 @@ export function SessionPosted({
         const url = window.prompt("Paste the post's Instagram link");
         if (url?.trim()) onChange(url.trim());
       }}
-      className="shrink-0 rounded-md border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 hover:bg-zinc-800 hover:text-white disabled:opacity-50"
+      className="shrink-0 rounded-md border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 hover:bg-zinc-800 hover:text-zinc-50 disabled:opacity-50"
     >
       Link post
     </button>

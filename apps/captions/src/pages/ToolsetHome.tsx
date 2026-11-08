@@ -27,6 +27,7 @@ import { listEdits } from "@/lib/editor";
 import { listReviewAssets } from "@/lib/review";
 import { currentProject, PROJECT_COLORS, projectColor, useWorkspace } from "@/lib/workspace";
 import { useAppearance } from "@/lib/settings";
+import { useShareTheme } from "@/components/ShareTheme";
 
 /**
  * Creator Toolset — the landing hub, in two rows of the same width. The work's three steps, left to right in the
@@ -218,7 +219,8 @@ export default function ToolsetHome() {
 
   // the current project's colour (Settings → Appearance can keep it violet), as CSS variables for the tiles and glow
   const c = PROJECT_COLORS[projectTint && project ? projectColor(project) : "violet"];
-  const tintStyle = { "--tint": `rgb(${c.rgb})`, "--tint-text": `rgb(${c.text})`, transition: "--tint 500ms, --tint-text 500ms" } as React.CSSProperties;
+  const { dark } = useShareTheme();
+  const tintStyle = { "--tint": `rgb(${c.rgb})`, "--tint-text": `rgb(${dark ? c.text : c.rgb})`, transition: "--tint 500ms, --tint-text 500ms" } as React.CSSProperties;
 
   // a stage's tools in the project's colour; Tools (quiet) smaller and grey, the colour only on the icon
   const tile = (t: Tool, quiet = false) =>
@@ -235,7 +237,7 @@ export default function ToolsetHome() {
           )}
           {t.can(me) && (t.to === "/workshop" ? showCounts && <WorkshopBadge /> : <Badge n={waiting[t.to] ?? 0} means={BADGE_MEANS[t.to]} />)}
         </span>
-        <span className={`text-xs leading-tight group-hover:text-white ${quiet ? "text-zinc-400" : "text-zinc-300"}`}>
+        <span className={`text-xs leading-tight group-hover:text-zinc-50 ${quiet ? "text-zinc-400" : "text-zinc-300"}`}>
           {t.name}
         </span>
       </>,
@@ -244,7 +246,7 @@ export default function ToolsetHome() {
   return (
     <div
       style={tintStyle}
-      className={`relative isolate flex min-h-dvh flex-col items-center bg-[#0b0b10] pt-safe pb-safe text-zinc-200 ${
+      className={`relative isolate flex min-h-dvh flex-col items-center bg-zinc-950 pt-safe pb-safe text-zinc-200 ${
         phone ? "justify-start py-8" : "justify-center"
       }`}
     >
@@ -378,7 +380,7 @@ function Badge({ n, means }: { n: number; means?: (n: number) => string }) {
     <span
       aria-label={means?.(n) ?? `${n} waiting`}
       title={means?.(n)}
-      className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[11px] font-semibold leading-none text-white ring-2 ring-[#0b0b10]"
+      className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[11px] font-semibold leading-none text-white ring-2 ring-zinc-950"
     >
       {n > 99 ? "99+" : n}
     </span>

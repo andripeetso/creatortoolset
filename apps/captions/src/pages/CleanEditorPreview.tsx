@@ -380,7 +380,7 @@ export function CleanEditorPreview({
             disabled={failed}
             aria-label={playing ? "Pause comparison" : "Play comparison"}
             onClick={toggle}
-            className="rounded-lg bg-zinc-800 p-2 text-white disabled:opacity-30"
+            className="rounded-lg bg-zinc-800 p-2 text-zinc-50 disabled:opacity-30"
           >
             {playing ? (
               <Pause className="h-4 w-4" />

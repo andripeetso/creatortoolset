@@ -82,7 +82,7 @@ export function CleanEditorControls({
                         adjustments: applyCleanPreset(a, p),
                       })
                     }
-                    className={`rounded-full border px-3 py-1 text-xs ${active ? "border-violet-500 bg-violet-500/20 text-white" : "border-zinc-700 text-zinc-300 hover:border-violet-500 hover:text-white"}`}
+                    className={`rounded-full border px-3 py-1 text-xs ${active ? "border-violet-500 bg-violet-500/20 text-zinc-50" : "border-zinc-700 text-zinc-300 hover:border-violet-500 hover:text-zinc-50"}`}
                   >
                     {p.name}
                   </button>
@@ -182,7 +182,7 @@ export function CleanEditorControls({
             onClick={() =>
               onChange({ ...options, adjustments: { ...DEFAULT_ADJUSTMENTS } })
             }
-            className="flex items-center gap-1 text-xs text-zinc-400 hover:text-white"
+            className="flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-50"
           >
             <RotateCcw className="h-3 w-3" /> Reset
           </button>
@@ -201,7 +201,7 @@ export function CleanEditorControls({
                     saturation: p.saturation,
                   })
                 }
-                className="rounded-lg border border-zinc-700 px-2 py-1.5 text-xs text-zinc-300 hover:border-violet-500 hover:text-white"
+                className="rounded-lg border border-zinc-700 px-2 py-1.5 text-xs text-zinc-300 hover:border-violet-500 hover:text-zinc-50"
               >
                 {p.name}
               </button>

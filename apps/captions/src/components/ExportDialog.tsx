@@ -177,7 +177,7 @@ function RecentExports({ jobs }: { jobs: ExportJob[] }) {
                 <button
                   onClick={() => downloadExport(j)}
                   title="Download"
-                  className="shrink-0 rounded p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-white"
+                  className="shrink-0 rounded p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-50"
                 >
                   <Download className="h-3.5 w-3.5" />
                 </button>
@@ -590,14 +590,14 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="w-[520px] max-w-[92vw] rounded-2xl border border-zinc-700 bg-[#141419] p-5 text-zinc-200 shadow-2xl">
+      <div className="w-[520px] max-w-[92vw] rounded-2xl border border-zinc-700 bg-zinc-900 p-5 text-zinc-200 shadow-2xl">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="flex items-center gap-2 text-base font-semibold">
             <Download className="h-4 w-4 text-violet-400" /> Export
           </h2>
           <button
             onClick={onClose}
-            className="rounded p-1 text-zinc-500 hover:bg-zinc-800 hover:text-white"
+            className="rounded p-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-50"
           >
             <X className="h-4 w-4" />
           </button>
@@ -610,7 +610,7 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
               onClick={() => switchTab(t.id)}
               className={`flex items-center justify-center gap-1.5 rounded-md py-1.5 text-xs font-medium transition-colors ${
                 tab === t.id
-                  ? "bg-zinc-700/70 text-white"
+                  ? "bg-zinc-700/70 text-zinc-50"
                   : "text-zinc-400 hover:text-zinc-200"
               }`}
             >
@@ -722,7 +722,7 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
                   }}
                   className={`flex items-center justify-center gap-1.5 rounded-md px-2 py-2 text-xs font-medium transition-colors ${
                     renderLocation === "cloud"
-                      ? "bg-zinc-700/70 text-white"
+                      ? "bg-zinc-700/70 text-zinc-50"
                       : "text-zinc-400 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-35"
                   }`}
                 >
@@ -891,7 +891,7 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
                     title={e.hint}
                     className={`rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
                       engine === e.id
-                        ? "bg-zinc-700/70 text-white"
+                        ? "bg-zinc-700/70 text-zinc-50"
                         : "text-zinc-400 hover:text-zinc-200"
                     }`}
                   >

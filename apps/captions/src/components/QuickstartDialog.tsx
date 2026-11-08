@@ -108,7 +108,7 @@ export function QuickstartDialog() {
       onClick={dismiss}
     >
       <div
-        className="w-[400px] max-w-[94vw] rounded-2xl border border-zinc-700 bg-[#141419] p-5 text-zinc-200 shadow-2xl"
+        className="w-[400px] max-w-[94vw] rounded-2xl border border-zinc-700 bg-zinc-900 p-5 text-zinc-200 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <h2 className="mb-2 flex items-center gap-2 text-sm font-semibold">

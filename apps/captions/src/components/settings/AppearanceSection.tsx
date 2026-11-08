@@ -25,24 +25,24 @@ const OPTIONS: Array<{
     id: "light",
     label: "Light",
     icon: Sun,
-    swatch: "border border-zinc-300 bg-[#fafafa]",
+    swatch: "border border-[#d4d4d8] bg-[#fafafa]",
   },
-  { id: "dark", label: "Dark", icon: Moon, swatch: "bg-[#0b0b10]" },
+  { id: "dark", label: "Dark", icon: Moon, swatch: "border border-[#27272a] bg-[#0b0b10]" },
 ];
 
-/** Settings → Appearance. The theme of public share pages (the app is drawn dark), and the home page's colour. */
+/** Settings → Appearance. The theme (the app and the caption/document links you share), and the home page's colour. */
 export function AppearanceSection() {
   const { choice, setChoice } = useShareTheme();
   const { projectTint, homeGlow } = useAppearance();
   return (
     <>
       <Group
-        title="Shared links"
-        hint="How a caption or document link you send looks to the person who opens it. System follows their device. The app itself is dark."
+        title="Theme"
+        hint="The app, and every link you share (captions, documents, Review, Finals, Workshop). System follows the device."
       >
         <div
           role="radiogroup"
-          aria-label="Shared links theme"
+          aria-label="Theme"
           className="grid max-w-xl grid-cols-3 gap-3"
         >
           {OPTIONS.map((o) => {

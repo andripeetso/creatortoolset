@@ -162,7 +162,7 @@ export function ProjectSetupDialog() {
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-[460px] max-w-[92vw] rounded-2xl border border-zinc-700 bg-[#16161c] p-5 shadow-2xl"
+        className="w-[460px] max-w-[92vw] rounded-2xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl"
       >
         <div className="mb-4 flex items-start gap-3">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-violet-600/20">

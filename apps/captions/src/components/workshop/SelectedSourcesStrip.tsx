@@ -84,13 +84,13 @@ export function SelectedSourcesStrip({
           )}
           <span className="absolute bottom-1 left-1 rounded bg-black/70 px-1 text-[9px] text-zinc-200">{i + 1}</span>
           <div className="absolute inset-x-0 bottom-0 flex justify-between bg-black/70 opacity-0 transition-opacity group-hover:opacity-100">
-            <button type="button" onClick={() => onMove(p.id, -1)} disabled={i === 0} className="p-1 text-zinc-300 hover:text-white disabled:opacity-30" title="Move left">
+            <button type="button" onClick={() => onMove(p.id, -1)} disabled={i === 0} className="p-1 text-zinc-300 hover:text-zinc-50 disabled:opacity-30" title="Move left">
               <ChevronLeft className="h-3 w-3" />
             </button>
             <button type="button" onClick={() => onRemove(p.id)} className="p-1 text-zinc-300 hover:text-red-300" title="Remove from session">
               <X className="h-3 w-3" />
             </button>
-            <button type="button" onClick={() => onMove(p.id, 1)} disabled={i === posts.length - 1} className="p-1 text-zinc-300 hover:text-white disabled:opacity-30" title="Move right">
+            <button type="button" onClick={() => onMove(p.id, 1)} disabled={i === posts.length - 1} className="p-1 text-zinc-300 hover:text-zinc-50 disabled:opacity-30" title="Move right">
               <ChevronRight className="h-3 w-3" />
             </button>
           </div>

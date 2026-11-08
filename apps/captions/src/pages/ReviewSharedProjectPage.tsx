@@ -18,7 +18,7 @@ export default function ReviewSharedProjectPage() {
 
   if (!data) {
     return (
-      <div className="flex h-dvh items-center justify-center bg-[#0b0b10] px-6 text-center text-sm text-zinc-400">
+      <div className="flex h-dvh items-center justify-center bg-zinc-950 px-6 text-center text-sm text-zinc-400">
         {error ? (
           <p>
             This review link is off or doesn't exist.
@@ -35,7 +35,7 @@ export default function ReviewSharedProjectPage() {
   }
 
   return (
-    <div className="min-h-dvh bg-[#0b0b10] text-zinc-200">
+    <div className="min-h-dvh bg-zinc-950 text-zinc-200">
       <header data-titlebar className="flex items-center gap-3 border-b border-zinc-900 px-4 py-3">
         <Folder className="h-5 w-5 shrink-0 text-violet-400" />
         <h1 className="truncate text-lg font-semibold tracking-tight">{data.name}</h1>

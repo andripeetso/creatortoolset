@@ -253,7 +253,7 @@ export default function ReviewPage() {
 
   return (
     <div
-      className="min-h-dvh bg-[#0b0b10] text-zinc-200"
+      className="min-h-dvh bg-zinc-950 text-zinc-200"
       onDragOver={(e) => {
         if (!e.dataTransfer.types.includes("Files")) return;
         e.preventDefault();
@@ -621,7 +621,7 @@ function DeleteProjectDialog({
   };
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="border-zinc-800 bg-[#0b0b10] text-zinc-200 sm:max-w-md">
+      <DialogContent className="border-zinc-800 bg-zinc-950 text-zinc-200 sm:max-w-md">
         <DialogTitle>Delete “{p.name}”?</DialogTitle>
         <DialogDescription className="text-zinc-400">
           {assets.length === 0
@@ -956,7 +956,7 @@ function StackDialog({ asset: a, act, onClose }: { asset?: ReviewAsset; act: Act
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent
         onOpenAutoFocus={(e) => e.preventDefault()}
-        className="max-h-[90dvh] overflow-y-auto border-zinc-800 bg-[#0b0b10] text-zinc-200 sm:max-w-lg"
+        className="max-h-[90dvh] overflow-y-auto border-zinc-800 bg-zinc-950 text-zinc-200 sm:max-w-lg"
       >
         <DialogTitle>Edit stack</DialogTitle>
         <DialogDescription className="text-zinc-500">

@@ -71,7 +71,7 @@ export function HelpDialog({ onClose }: { onClose: () => void }) {
       onClick={onClose}
     >
       <div
-        className="max-h-[88vh] w-[620px] max-w-[94vw] overflow-y-auto rounded-2xl border border-zinc-700 bg-[#141419] p-5 text-zinc-200 shadow-2xl"
+        className="max-h-[88vh] w-[620px] max-w-[94vw] overflow-y-auto rounded-2xl border border-zinc-700 bg-zinc-900 p-5 text-zinc-200 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
@@ -80,7 +80,7 @@ export function HelpDialog({ onClose }: { onClose: () => void }) {
           </h2>
           <button
             onClick={onClose}
-            className="rounded p-1 text-zinc-500 hover:bg-zinc-800 hover:text-white"
+            className="rounded p-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-50"
           >
             <X className="h-4 w-4" />
           </button>

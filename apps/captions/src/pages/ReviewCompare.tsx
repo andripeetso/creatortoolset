@@ -125,7 +125,7 @@ export function ReviewCompare({
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-[#0b0b10] text-zinc-200">
+    <div className="fixed inset-0 z-50 flex flex-col bg-zinc-950 text-zinc-200">
       <header data-titlebar className="flex flex-wrap items-center gap-2 border-b border-zinc-900 px-3 py-2">
         <h2 className="text-sm font-semibold">Compare</h2>
         {picker(left, setLeft, "Left")}
@@ -148,7 +148,7 @@ export function ReviewCompare({
       </header>
 
       <div
-        className={cn("relative min-h-0 flex-1 bg-black", stacked ? "isolate" : "grid grid-rows-2 gap-1 md:grid-cols-2 md:grid-rows-1")}
+        className={cn("relative min-h-0 flex-1 bg-zinc-900 dark:bg-black", stacked ? "isolate" : "grid grid-rows-2 gap-1 md:grid-cols-2 md:grid-rows-1")}
         onPointerDown={(e) => {
           if (mode !== "wipe") return;
           e.currentTarget.setPointerCapture(e.pointerId);

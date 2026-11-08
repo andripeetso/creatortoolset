@@ -121,7 +121,7 @@ export function ProjectSettingsDialog({ onClose }: { onClose: () => void }) {
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="max-h-[90vh] w-[460px] max-w-[92vw] overflow-y-auto rounded-2xl border border-zinc-700 bg-[#16161c] p-5 shadow-2xl"
+        className="max-h-[90vh] w-[460px] max-w-[92vw] overflow-y-auto rounded-2xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl"
       >
         <div className="mb-4 flex items-center justify-between">
           <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-100">
@@ -129,7 +129,7 @@ export function ProjectSettingsDialog({ onClose }: { onClose: () => void }) {
           </h2>
           <button
             onClick={close}
-            className="rounded p-1 text-zinc-500 hover:bg-zinc-800 hover:text-white"
+            className="rounded p-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-50"
           >
             <X className="h-4 w-4" />
           </button>

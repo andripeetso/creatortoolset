@@ -96,7 +96,7 @@ function CopyPlain({ text }: { text: string }) {
             ),
           )
       }
-      className="flex items-center gap-1 rounded-md border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-300 hover:border-zinc-500 hover:text-white"
+      className="flex items-center gap-1 rounded-md border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-300 hover:border-zinc-500 hover:text-zinc-50"
     >
       {done ? (
         <Check className="h-3 w-3 text-emerald-400" />
@@ -258,7 +258,7 @@ export function ShareAnswers({
           {embedded ? null : (
             <Link
               to={`/workshop/sessions/${data.sessionId}`}
-              className="flex items-center gap-1 text-[11px] text-zinc-400 hover:text-white"
+              className="flex items-center gap-1 text-[11px] text-zinc-400 hover:text-zinc-50"
             >
               <ArrowLeft className="h-3 w-3" /> Session
             </Link>
@@ -269,7 +269,7 @@ export function ShareAnswers({
                 href={data.post.url}
                 target="_blank"
                 rel="noreferrer"
-                className="ml-auto flex items-center gap-1 text-[11px] text-zinc-400 hover:text-white"
+                className="ml-auto flex items-center gap-1 text-[11px] text-zinc-400 hover:text-zinc-50"
               >
                 Open post <ExternalLink className="h-3 w-3" />
               </a>
@@ -281,7 +281,7 @@ export function ShareAnswers({
                     setData(await call<Answers>(`${base}/refresh`, {})),
                   )
                 }
-                className="flex items-center gap-1 rounded-md border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-300 hover:border-zinc-500 hover:text-white disabled:opacity-50"
+                className="flex items-center gap-1 rounded-md border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-300 hover:border-zinc-500 hover:text-zinc-50 disabled:opacity-50"
                 title={
                   read
                     ? `Read ${when(data.fetchedAt!)}`

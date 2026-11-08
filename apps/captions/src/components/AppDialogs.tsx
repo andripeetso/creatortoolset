@@ -51,7 +51,7 @@ function Box({ ask, close }: { ask: Ask; close: (v: boolean | string | null) => 
   return (
     <AlertDialog open onOpenChange={(o) => !o && finish(ask.kind === "prompt" ? null : false)}>
       <AlertDialogContent
-        className="border-zinc-800 bg-[#0b0b10] text-zinc-200 sm:max-w-md"
+        className="border-zinc-800 bg-zinc-950 text-zinc-200 sm:max-w-md"
         onOpenAutoFocus={(e) => {
           if (ask.kind !== "prompt") return;
           e.preventDefault();

@@ -170,7 +170,7 @@ export function SharePopover({
         </div>
       ) : null}
       <Dialog open={!!viewing} onOpenChange={(v) => !v && setViewing(null)}>
-        <DialogContent className="block h-[92vh] max-w-[min(1400px,96vw)] overflow-y-auto border-zinc-800 bg-[#0b0b10] p-0 sm:max-w-[min(1400px,96vw)] [&>[data-slot=dialog-close]]:text-zinc-300">
+        <DialogContent className="block h-[92vh] max-w-[min(1400px,96vw)] overflow-y-auto border-zinc-800 bg-zinc-950 p-0 sm:max-w-[min(1400px,96vw)] [&>[data-slot=dialog-close]]:text-zinc-300">
           <DialogTitle className="sr-only">Share page</DialogTitle>
           {viewing ? <WorkshopShareView token={viewing} embedded /> : null}
         </DialogContent>

@@ -41,7 +41,7 @@ export function CleanClipEditorDialog(props: {
       <DialogContent
         showCloseButton={false}
         onInteractOutside={(e) => e.preventDefault()}
-        className="flex h-[94dvh] max-w-[98vw] flex-col gap-0 overflow-hidden border-zinc-700 bg-[#0b0b10] p-0 text-zinc-200 sm:max-w-[1600px]"
+        className="flex h-[94dvh] max-w-[98vw] flex-col gap-0 overflow-hidden border-zinc-700 bg-zinc-950 p-0 text-zinc-200 sm:max-w-[1600px]"
       >
         <DialogTitle className="sr-only">Edit clip: {props.name}</DialogTitle>
         <DialogDescription className="sr-only">

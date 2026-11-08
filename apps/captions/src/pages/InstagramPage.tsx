@@ -119,7 +119,7 @@ import { decayHeightLock, shrinkWouldClamp } from "@/lib/library-scroll";
 const label =
   "mb-2 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-zinc-500";
 const libraryEmptyClass =
-  "sticky top-[var(--library-chrome-h,0px)] z-10 bg-[#0b0b10] py-6 text-center text-sm text-zinc-600";
+  "sticky top-[var(--library-chrome-h,0px)] z-10 bg-zinc-950 py-6 text-center text-sm text-zinc-600";
 
 type LibrarySort = "pulled" | "posted" | "plays" | "account" | "age" | "rank" | "virality";
 type LibraryView = "feed" | "ideas" | "knowhow";
@@ -1546,7 +1546,7 @@ export default function InstagramPage() {
   };
 
   return (
-    <div className="relative flex min-h-dvh flex-col items-center bg-[#0b0b10] pb-[max(2.5rem,env(safe-area-inset-bottom))] text-zinc-200">
+    <div className="relative flex min-h-dvh flex-col items-center bg-zinc-950 pb-[max(2.5rem,env(safe-area-inset-bottom))] text-zinc-200">
       <AppBar tool="Content Analyzer" to={postId ? base : undefined} trail={viewing ? `@${viewing.creator.username}` : undefined} account={!!me}>
         {me ? (
           <>
@@ -1677,7 +1677,7 @@ export default function InstagramPage() {
                     {otherAccounts.slice(0, 5).map((a) => (
                       <span
                         key={a.id}
-                        className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full bg-zinc-800 ring-2 ring-[#0b0b10]"
+                        className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full bg-zinc-800 ring-2 ring-zinc-950"
                       >
                         {a.avatarUrl ? (
                           <img src={`${a.avatarUrl}?t=${a.updatedAt}`} alt="" className="h-full w-full object-cover" />
@@ -1755,7 +1755,7 @@ export default function InstagramPage() {
             <div className={`mt-8 ${selected.size > 0 ? "pb-16" : ""}`}>
               <div
                 ref={chromeRef}
-                className="sticky top-0 z-20 mb-2 flex flex-col gap-3 bg-[#0b0b10] py-2"
+                className="sticky top-0 z-20 mb-2 flex flex-col gap-3 bg-zinc-950 py-2"
               >
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                   <h2 className={`${label} mb-0`}>Library</h2>
@@ -2075,7 +2075,7 @@ export default function InstagramPage() {
             </div>
             {selected.size > 0 && (
               <div className="pointer-events-none fixed inset-x-0 bottom-[max(1rem,env(safe-area-inset-bottom))] z-40 flex justify-center px-4">
-                <div className="pointer-events-auto flex max-w-full flex-wrap items-center justify-center gap-1.5 rounded-xl border border-zinc-800 bg-[#12121a]/95 px-2 py-1.5 text-[11px] shadow-xl backdrop-blur">
+                <div className="pointer-events-auto flex max-w-full flex-wrap items-center justify-center gap-1.5 rounded-xl border border-zinc-800 bg-zinc-925/95 px-2 py-1.5 text-[11px] shadow-xl backdrop-blur">
                   <select
                     defaultValue=""
                     onChange={(e) => {
@@ -2187,7 +2187,7 @@ export default function InstagramPage() {
             )}
             {stackOpen && (
               <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 sm:items-center">
-                <div className="w-full max-w-md rounded-xl border border-zinc-800 bg-[#12121a] p-4">
+                <div className="w-full max-w-md rounded-xl border border-zinc-800 bg-zinc-925 p-4">
                   <h3 className="text-sm font-medium text-zinc-100">Stack as one topic</h3>
                   <p className="mt-1 text-[11px] text-zinc-500">
                     Same idea from different posts — the stack shows the average rank.

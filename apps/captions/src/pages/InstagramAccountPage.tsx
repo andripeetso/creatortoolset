@@ -299,7 +299,7 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
   };
 
   return (
-    <div className={`relative flex flex-col items-center text-zinc-200 ${embedded ? "pb-6" : "min-h-dvh bg-[#0b0b10] pb-[max(2.5rem,env(safe-area-inset-bottom))]"}`}>
+    <div className={`relative flex flex-col items-center text-zinc-200 ${embedded ? "pb-6" : "min-h-dvh bg-zinc-950 pb-[max(2.5rem,env(safe-area-inset-bottom))]"}`}>
       {!embedded && <AppBar tool="Content Analyzer" to={base} trail={account ? `@${account.username}` : undefined} account={!!me}>
         {me ? (
           <>
@@ -476,7 +476,7 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
             <Dialog open={statsOpen} onOpenChange={setStatsOpen}>
               <DialogContent
                 aria-describedby={undefined}
-                className="max-h-[90vh] grid-cols-1 overflow-y-auto border-zinc-800 bg-[#0b0b10] text-zinc-200 sm:max-w-4xl"
+                className="max-h-[90vh] grid-cols-1 overflow-y-auto border-zinc-800 bg-zinc-950 text-zinc-200 sm:max-w-4xl"
               >
                 <div>
                   <DialogTitle className="text-lg">@{account.username}</DialogTitle>
@@ -534,7 +534,7 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
                   onClick={() => setPane(id)}
                   className={`rounded-t-md px-3 py-1.5 text-[11px] ${
                     pane === id
-                      ? "border border-b-transparent border-zinc-700 bg-[#0b0b10] text-zinc-100"
+                      ? "border border-b-transparent border-zinc-700 bg-zinc-950 text-zinc-100"
                       : "border border-transparent text-zinc-500 hover:text-zinc-300"
                   }`}
                 >
@@ -686,7 +686,7 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
 
             {selected.size > 0 && (pane === "catalog" || pane === "public" || pane === "trial") && (
               <div className="pointer-events-none fixed inset-x-0 bottom-4 z-40 flex justify-center px-3">
-                <div className="pointer-events-auto w-full max-w-xl rounded-2xl border border-zinc-700 bg-[#16161f] px-3 py-3">
+                <div className="pointer-events-auto w-full max-w-xl rounded-2xl border border-zinc-700 bg-zinc-900 px-3 py-3">
                   <div className="mb-2 flex items-center justify-between gap-2 text-[11px] text-zinc-400">
                     <span>{selected.size} selected · click a row, shift-click a range</span>
                     <button
@@ -871,7 +871,7 @@ function CatalogRow({
           <span className="block h-12 w-9 rounded bg-zinc-800" />
         )}
         {row.postId ? (
-          <span className="absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-violet-600 text-white ring-2 ring-[#0b0b10]">
+          <span className="absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-violet-600 text-white ring-2 ring-zinc-950">
             <Check className="h-2.5 w-2.5" />
           </span>
         ) : null}

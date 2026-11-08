@@ -32,7 +32,7 @@ function JobCard({ job, library }: { job: ExportJob; library: boolean }) {
     saveExportToLibrary(job.id).then(setSaved, (e: unknown) => setSaved(e instanceof Error ? e.message : String(e)));
   };
   return (
-    <div className="pointer-events-auto rounded-xl border border-zinc-700 bg-[#16161c] p-3 shadow-2xl">
+    <div className="pointer-events-auto rounded-xl border border-zinc-700 bg-zinc-900 p-3 shadow-2xl">
       <div className="flex items-start gap-2.5">
         <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-zinc-800">
           {job.status === "done" ? (
@@ -105,7 +105,7 @@ function JobCard({ job, library }: { job: ExportJob; library: boolean }) {
                   ? "Cancel export"
                   : "Dismiss"
             }
-            className="rounded p-1 text-zinc-500 hover:bg-zinc-800 hover:text-white"
+            className="rounded p-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-50"
           >
             <X className="h-3.5 w-3.5" />
           </button>
@@ -166,7 +166,7 @@ export function ExportTray() {
       <button
         onClick={toggleCollapsed}
         title="Show exports"
-        className="fixed bottom-16 right-4 z-40 flex items-center gap-2 rounded-full border border-zinc-700 bg-[#16161c] px-3 py-1.5 text-[11px] text-zinc-300 shadow-2xl transition-colors hover:border-zinc-500 hover:text-white"
+        className="fixed bottom-16 right-4 z-40 flex items-center gap-2 rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-[11px] text-zinc-300 shadow-2xl transition-colors hover:border-zinc-500 hover:text-zinc-50"
       >
         {active.length ? (
           <>
@@ -193,7 +193,7 @@ export function ExportTray() {
           <button
             onClick={() => downloadExportsZip(visible.filter((j) => j.status === "done"))}
             title="Every finished export here, as one ZIP"
-            className="flex items-center gap-1.5 rounded-full border border-zinc-700 bg-[#16161c] px-2.5 py-1 text-[11px] text-zinc-300 shadow-xl transition-colors hover:border-zinc-500 hover:text-white"
+            className="flex items-center gap-1.5 rounded-full border border-zinc-700 bg-zinc-900 px-2.5 py-1 text-[11px] text-zinc-300 shadow-xl transition-colors hover:border-zinc-500 hover:text-zinc-50"
           >
             <Download className="h-3 w-3" /> Download all {doneCount} as ZIP
           </button>
@@ -201,7 +201,7 @@ export function ExportTray() {
         <button
           onClick={toggleCollapsed}
           title="Minimize exports"
-          className="rounded-full border border-zinc-700 bg-[#16161c] p-1 text-zinc-400 shadow-xl transition-colors hover:border-zinc-500 hover:text-white"
+          className="rounded-full border border-zinc-700 bg-zinc-900 p-1 text-zinc-400 shadow-xl transition-colors hover:border-zinc-500 hover:text-zinc-50"
         >
           <ChevronDown className="h-3.5 w-3.5" />
         </button>

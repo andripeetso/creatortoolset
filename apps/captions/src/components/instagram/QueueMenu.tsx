@@ -142,7 +142,7 @@ export function QueueMenu({
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-2 w-[24rem] max-w-[92vw] rounded-xl border border-zinc-800 bg-[#12121a] shadow-2xl">
+        <div className="absolute right-0 top-full z-50 mt-2 w-[24rem] max-w-[92vw] rounded-xl border border-zinc-800 bg-zinc-925 shadow-2xl">
           <div className="flex items-center justify-between border-b border-zinc-800 px-3 py-2 text-[11px] text-zinc-500">
             <span>
               {view ? `${view.running}/${view.max} workers busy` : "Loading…"}

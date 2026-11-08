@@ -15,7 +15,7 @@ export function Notice({ tone = "error", children, action, onDismiss, className 
       <div className="min-w-0 flex-1">{children}</div>
       {action}
       {onDismiss ? (
-        <button type="button" onClick={onDismiss} className="-mr-1 shrink-0 rounded-md p-0.5 opacity-60 hover:bg-white/10 hover:opacity-100" aria-label="Dismiss">
+        <button type="button" onClick={onDismiss} className="-mr-1 shrink-0 rounded-md p-0.5 opacity-60 hover:bg-zinc-50/10 hover:opacity-100" aria-label="Dismiss">
           <X className="h-3.5 w-3.5" />
         </button>
       ) : null}

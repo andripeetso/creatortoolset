@@ -29,7 +29,7 @@ export function JobsDock({ post }: { post: InstagramPost }) {
 
   return (
     <div className="pointer-events-none fixed inset-x-0 bottom-4 z-40 flex justify-center px-4">
-      <div className="pointer-events-auto w-full max-w-md rounded-xl border border-zinc-800 bg-[#12121a]/95 px-4 py-3 shadow-xl backdrop-blur">
+      <div className="pointer-events-auto w-full max-w-md rounded-xl border border-zinc-800 bg-zinc-925/95 px-4 py-3 shadow-xl backdrop-blur">
         <div className="flex items-center gap-2 text-xs">
           <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-violet-400" />
           <span className="min-w-0 flex-1 truncate text-zinc-100">{detail}</span>

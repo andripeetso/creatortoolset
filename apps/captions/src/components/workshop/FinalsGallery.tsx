@@ -90,7 +90,7 @@ export function FinalsGallery({ token, files, className = "grid-cols-2 sm:grid-c
             <span className="min-w-0 flex-1 truncate" title={d.note ? `${d.name}: ${d.note}` : d.name}>
               {d.name}
             </span>
-            <a href={shareDeliveryUrl(token, d.id, true)} className="shrink-0 rounded p-1 hover:bg-zinc-800 hover:text-white" title="Download this one">
+            <a href={shareDeliveryUrl(token, d.id, true)} className="shrink-0 rounded p-1 hover:bg-zinc-800 hover:text-zinc-50" title="Download this one">
               <Download className="h-3.5 w-3.5" />
             </a>
           </figcaption>

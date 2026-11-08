@@ -527,8 +527,8 @@ function ClipView({
                         <button
                           type="button"
                           onClick={() => seek(w.start)}
-                          className={`rounded-sm px-px hover:bg-violet-500/20 hover:text-white ${
-                            active ? "bg-violet-500/30 text-white" : ""
+                          className={`rounded-sm px-px hover:bg-violet-500/20 hover:text-zinc-50 ${
+                            active ? "bg-violet-500/30 text-zinc-50" : ""
                           }`}
                         >
                           {w.text}

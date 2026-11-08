@@ -17,6 +17,7 @@ import {
   ZoomOut,
 } from "lucide-react";
 import { isEditorBusy, playerRef, useStudio } from "@/lib/store";
+import { useShareTheme } from "@/components/ShareTheme";
 import { fmtTimecode } from "@/lib/ass";
 import {
   DropdownMenu,
@@ -135,7 +136,9 @@ export function Timeline() {
   const posRowTop = RULER_H + PAD;
   const textTop = posRowTop + POS_H + PAD;
 
+  const { dark } = useShareTheme();
   const draw = useCallback(() => {
+    const k = (d: string, l: string) => (dark ? d : l); // the canvas colour for each theme
     const canvas = canvasRef.current;
     if (!canvas || duration <= 0) return;
     const dpr = window.devicePixelRatio || 1;
@@ -152,7 +155,7 @@ export function Timeline() {
     ctx.clearRect(0, 0, W, canvasH);
 
     // background
-    ctx.fillStyle = "#0d0d12";
+    ctx.fillStyle = k("#0d0d12", "#f7f7f8");
     ctx.fillRect(0, 0, W, canvasH);
 
     const t2x = (t: number) => t * pxPerSec;
@@ -163,7 +166,7 @@ export function Timeline() {
     ctx.textBaseline = "middle";
     for (let t = 0; t <= duration + 0.001; t += step) {
       const x = t2x(t);
-      ctx.strokeStyle = "#3f3f46";
+      ctx.strokeStyle = k("#3f3f46", "#d4d4d8");
       ctx.beginPath();
       ctx.moveTo(x + 0.5, RULER_H - 8);
       ctx.lineTo(x + 0.5, RULER_H);
@@ -175,7 +178,7 @@ export function Timeline() {
     }
     // frame ticks between seconds once zoomed in far enough (NLE-style)
     if (pxPerSec / fps >= 5) {
-      ctx.strokeStyle = "#2f2f37";
+      ctx.strokeStyle = k("#2f2f37", "#e4e4e7");
       const frames = Math.floor(duration * fps);
       for (let fr = 1; fr <= frames; fr++) {
         if (fr % fps === 0) continue;
@@ -191,12 +194,12 @@ export function Timeline() {
     if (showLayers) {
       ctx.font = "10px Inter, system-ui, sans-serif";
       if (posSegments.length === 0) {
-        ctx.fillStyle = "#1c1c22";
+        ctx.fillStyle = k("#1c1c22", "#f0f0f2");
         ctx.beginPath();
         ctx.roundRect(1, posRowTop, W - 2, POS_H - 4, 3);
         ctx.fill();
         ctx.setLineDash([4, 3]);
-        ctx.strokeStyle = "#3f3f46";
+        ctx.strokeStyle = k("#3f3f46", "#d4d4d8");
         ctx.stroke();
         ctx.setLineDash([]);
         ctx.fillStyle = "#71717a";
@@ -217,13 +220,13 @@ export function Timeline() {
               ? "#7c3aed"
               : "#5b21b6"
             : active
-              ? "#4b4b55"
-              : "#33333c";
+              ? k("#4b4b55", "#c4c4cc")
+              : k("#33333c", "#e4e4e7");
           ctx.beginPath();
           ctx.roundRect(x + 1, posRowTop, w - 2, POS_H - 4, 3);
           ctx.fill();
           if (s.id === selectedPosId) {
-            ctx.strokeStyle = "#f4f4f5";
+            ctx.strokeStyle = k("#f4f4f5", "#18181b");
             ctx.lineWidth = 1.5;
             ctx.beginPath();
             ctx.roundRect(x + 1.5, posRowTop + 0.75, w - 3, POS_H - 5.5, 3);
@@ -231,7 +234,7 @@ export function Timeline() {
             ctx.lineWidth = 1;
           }
           if (w > 44) {
-            ctx.fillStyle = custom ? "#ffffff" : "#a1a1aa";
+            ctx.fillStyle = custom ? "#ffffff" : k("#a1a1aa", "#52525b");
             const label = custom ? "captions · moved" : "captions";
             ctx.fillText(label, x + 6, posRowTop + (POS_H - 4) / 2, w - 12);
           }
@@ -245,12 +248,12 @@ export function Timeline() {
         const x = t2x(t.start);
         const w = Math.max(2, t2x(t.end) - x);
         const active = currentTime >= t.start && currentTime < t.end;
-        ctx.fillStyle = active ? "#0d9488" : "#134e4a";
+        ctx.fillStyle = active ? "#0d9488" : k("#134e4a", "#99f6e4");
         ctx.beginPath();
         ctx.roundRect(x + 1, ty, w - 2, POS_H - 4, 3);
         ctx.fill();
         if (t.id === selectedTextId) {
-          ctx.strokeStyle = "#f4f4f5";
+          ctx.strokeStyle = k("#f4f4f5", "#18181b");
           ctx.lineWidth = 1.5;
           ctx.beginPath();
           ctx.roundRect(x + 1.5, ty + 0.75, w - 3, POS_H - 5.5, 3);
@@ -258,7 +261,7 @@ export function Timeline() {
           ctx.lineWidth = 1;
         }
         if (w > 30) {
-          ctx.fillStyle = active ? "#ffffff" : "#99f6e4";
+          ctx.fillStyle = active ? "#ffffff" : k("#99f6e4", "#134e4a");
           ctx.fillText(`T ${t.text}`, x + 6, ty + (POS_H - 4) / 2, w - 12);
         }
       }
@@ -268,7 +271,7 @@ export function Timeline() {
     const waveTop = RULER_H + PAD + layersExtra;
     if (peaks && peaks.length > 0) {
       const mid = waveTop + WAVE_H / 2;
-      ctx.fillStyle = "#4c1d95";
+      ctx.fillStyle = k("#4c1d95", "#c4b5fd");
       const perPx = peaks.length / W;
       for (let x = 0; x < W; x++) {
         const i = Math.floor(x * perPx);
@@ -277,7 +280,7 @@ export function Timeline() {
         ctx.fillRect(x, mid - h / 2, 1, h);
       }
     } else {
-      ctx.fillStyle = "#27272a";
+      ctx.fillStyle = k("#27272a", "#e4e4e7");
       ctx.fillRect(0, waveTop + WAVE_H / 2 - 1, W, 2);
     }
 
@@ -289,12 +292,12 @@ export function Timeline() {
       const x = t2x(c.start);
       const w = Math.max(2, t2x(c.end) - x);
       const active = currentTime >= c.start && currentTime < c.end;
-      ctx.fillStyle = active ? "#8b5cf6" : "#3b3b46";
+      ctx.fillStyle = active ? "#8b5cf6" : k("#3b3b46", "#e4e4e7");
       ctx.beginPath();
       ctx.roundRect(x + 1, cueTop, w - 2, CUE_H - 4, 3);
       ctx.fill();
       if (w > 30) {
-        ctx.fillStyle = active ? "#ffffff" : "#a1a1aa";
+        ctx.fillStyle = active ? "#ffffff" : k("#a1a1aa", "#52525b");
         const text = c.words
           .map((ww) => ww.text)
           .join(" ")
@@ -317,20 +320,20 @@ export function Timeline() {
 
     // playhead
     const px = t2x(currentTime);
-    ctx.strokeStyle = "#f4f4f5";
+    ctx.strokeStyle = k("#f4f4f5", "#18181b");
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.moveTo(px, 0);
     ctx.lineTo(px, canvasH);
     ctx.stroke();
-    ctx.fillStyle = "#f4f4f5";
+    ctx.fillStyle = k("#f4f4f5", "#18181b");
     ctx.beginPath();
     ctx.moveTo(px - 5, 0);
     ctx.lineTo(px + 5, 0);
     ctx.lineTo(px, 8);
     ctx.closePath();
     ctx.fill();
-  }, [duration, peaks, cues, currentTime, pxPerSec, width, canvasH, showLayers, layersExtra, posSegments, selectedPosId, texts, textLanes, selectedTextId, posRowTop, textTop, fps, editorBusy, rangeSel]);
+  }, [duration, peaks, cues, currentTime, pxPerSec, width, canvasH, showLayers, layersExtra, posSegments, selectedPosId, texts, textLanes, selectedTextId, posRowTop, textTop, fps, editorBusy, rangeSel, dark]);
 
   useEffect(() => {
     draw();
@@ -801,7 +804,7 @@ export function Timeline() {
 
   return (
     <div
-      className="flex flex-col border-t border-zinc-800 bg-[#0d0d12]"
+      className="flex flex-col border-t border-zinc-800 bg-zinc-925"
       // a clicked button or the zoom slider never keeps the keys, as in
       // Review: Space and the arrows stay the player's
       onPointerUp={() =>
@@ -817,7 +820,7 @@ export function Timeline() {
           onClick={() => seek(currentTime - 5)}
           disabled={editorBusy}
           title="Back 5 s"
-          className="rounded p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
+          className="rounded p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-50 disabled:cursor-not-allowed disabled:opacity-30"
         >
           <SkipBack className="h-4 w-4" />
         </button>
@@ -833,7 +836,7 @@ export function Timeline() {
           onClick={() => seek(currentTime + 5)}
           disabled={editorBusy}
           title="Forward 5 s"
-          className="rounded p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
+          className="rounded p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-50 disabled:cursor-not-allowed disabled:opacity-30"
         >
           <SkipForward className="h-4 w-4" />
         </button>
@@ -853,7 +856,7 @@ export function Timeline() {
           <DropdownMenuTrigger asChild>
             <button
               title="Playback speed · J / K / L shuttle"
-              className="rounded px-1.5 py-1 font-mono text-[11px] tabular-nums text-zinc-400 hover:bg-zinc-800 hover:text-white"
+              className="rounded px-1.5 py-1 font-mono text-[11px] tabular-nums text-zinc-400 hover:bg-zinc-800 hover:text-zinc-50"
             >
               {speed}×
             </button>
@@ -982,7 +985,7 @@ export function Timeline() {
           <button
             onClick={() => applyZoom(pxPerSec / 1.4)}
             title="Zoom out (-) · ⌥ scroll or pinch zooms, \ fits"
-            className="rounded p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-white"
+            className="rounded p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-50"
           >
             <ZoomOut className="h-4 w-4" />
           </button>
@@ -998,7 +1001,7 @@ export function Timeline() {
           <button
             onClick={() => applyZoom(pxPerSec * 1.4)}
             title="Zoom in (=)"
-            className="rounded p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-white"
+            className="rounded p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-50"
           >
             <ZoomIn className="h-4 w-4" />
           </button>

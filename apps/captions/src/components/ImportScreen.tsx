@@ -436,7 +436,7 @@ export function ImportScreen() {
   );
 
   return (
-    <div className="relative flex h-full flex-col overflow-y-auto bg-[#0b0b10] text-zinc-200">
+    <div className="relative flex h-full flex-col overflow-y-auto bg-zinc-950 text-zinc-200">
       <AppBar
         tool="Caption Studio"
         onHome={(event) => {
@@ -593,7 +593,7 @@ export function ImportScreen() {
 
       {/* all-projects overlay */}
       {showAll && (
-        <div className="absolute inset-0 z-10 flex flex-col bg-[#0b0b10]">
+        <div className="absolute inset-0 z-10 flex flex-col bg-zinc-950">
           <div className="flex items-center justify-between border-b border-zinc-800 px-5 py-3">
             <button
               onClick={() => setShowAll(false)}

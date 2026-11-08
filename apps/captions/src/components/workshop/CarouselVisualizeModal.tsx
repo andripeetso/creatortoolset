@@ -212,7 +212,7 @@ export function CarouselVisualizeModal({
           </ul>
         ) : null}
 
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-[#111113] px-4 py-5">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-zinc-925 px-4 py-5">
           {view === "all" ? (
             <div className="flex flex-wrap justify-center gap-5">
               {model.slides.map((s) => {
@@ -308,7 +308,7 @@ function SwipeView({
           type="button"
           disabled={index <= 0}
           onClick={() => onIndex(index - 1)}
-          className="rounded-md p-2 text-zinc-400 hover:bg-white/5 hover:text-white disabled:opacity-20"
+          className="rounded-md p-2 text-zinc-400 hover:bg-zinc-50/5 hover:text-zinc-50 disabled:opacity-20"
           aria-label="Previous slide"
         >
           <ChevronLeft className="h-5 w-5" />
@@ -332,7 +332,7 @@ function SwipeView({
           type="button"
           disabled={index >= slides.length - 1}
           onClick={() => onIndex(index + 1)}
-          className="rounded-md p-2 text-zinc-400 hover:bg-white/5 hover:text-white disabled:opacity-20"
+          className="rounded-md p-2 text-zinc-400 hover:bg-zinc-50/5 hover:text-zinc-50 disabled:opacity-20"
           aria-label="Next slide"
         >
           <ChevronRight className="h-5 w-5" />
@@ -346,7 +346,7 @@ function SwipeView({
           type="button"
           disabled={busy}
           onClick={() => onRedo(slide.blockKey)}
-          className="rounded-md border border-white/15 px-2 py-0.5 text-[11px] text-zinc-300 hover:bg-white/5 disabled:opacity-40"
+          className="rounded-md border border-zinc-50/15 px-2 py-0.5 text-[11px] text-zinc-300 hover:bg-zinc-50/5 disabled:opacity-40"
         >
           {busy ? "Picking…" : "Redo this slide"}
         </button>

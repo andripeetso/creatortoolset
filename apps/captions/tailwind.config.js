@@ -1,3 +1,35 @@
+const colors = require("tailwindcss/colors")
+const plugin = require("tailwindcss/plugin")
+
+/*
+ * Light and dark from one set of classes. The app was drawn dark first (zinc greys, pale accent text, deep tinted
+ * chips), so in light these swap through CSS variables: the zinc scale mirrors (950 <-> 50), accent text 50-400
+ * turns 950-600, accent backgrounds and borders 800-950 turn 200-50. Dark keeps Tailwind's own values. Accents
+ * 500-700 and solid accent fills 50-400 are the same in both. zinc-925 sits between 900 and 950 (old #101014 panels).
+ */
+const themed = (() => {
+  const rgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(" ")
+  const mirror = { 50: 950, 100: 900, 200: 800, 300: 700, 400: 600, 500: 500, 600: 400, 700: 300, 800: 200, 900: 100, 950: 50 }
+  const hues = ["violet", "purple", "fuchsia", "pink", "rose", "red", "orange", "amber", "yellow", "lime", "green", "emerald", "teal", "cyan", "sky", "blue", "indigo"]
+  const light = {}, dark = {}
+  const vary = (name, darkHex, lightHex) => {
+    dark[`--${name}`] = rgb(darkHex)
+    light[`--${name}`] = rgb(lightHex)
+    return `rgb(var(--${name}) / <alpha-value>)`
+  }
+  const zinc = { ...colors.zinc, 950: "#0b0b10" } // the app's page colour
+  const out = { zinc: {}, text: {}, surface: {} }
+  for (const n of Object.keys(mirror)) out.zinc[n] = vary(`zinc-${n}`, zinc[n], colors.zinc[mirror[n]])
+  out.zinc[925] = vary("zinc-925", "#111116", "#f7f7f8")
+  for (const h of hues) {
+    out.text[h] = {}
+    out.surface[h] = {}
+    for (const n of [50, 100, 200, 300, 400]) out.text[h][n] = vary(`t-${h}-${n}`, colors[h][n], colors[h][mirror[n]])
+    for (const n of [800, 900, 950]) out.surface[h][n] = vary(`s-${h}-${n}`, colors[h][n], colors[h][mirror[n]])
+  }
+  return { ...out, base: { ":root": light, ".dark": dark } }
+})()
+
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   darkMode: ["class"],
@@ -5,6 +37,7 @@ module.exports = {
   theme: {
     extend: {
       colors: {
+        zinc: themed.zinc,
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
@@ -56,6 +89,9 @@ module.exports = {
         sm: "calc(var(--radius) - 4px)",
         xs: "calc(var(--radius) - 6px)",
       },
+      textColor: themed.text,
+      backgroundColor: themed.surface,
+      borderColor: themed.surface,
       boxShadow: {
         xs: "0 1px 2px 0 rgb(0 0 0 / 0.05)",
       },
@@ -80,5 +116,5 @@ module.exports = {
       },
     },
   },
-  plugins: [require("tailwindcss-animate")],
+  plugins: [require("tailwindcss-animate"), plugin(({ addBase }) => addBase(themed.base))],
 }

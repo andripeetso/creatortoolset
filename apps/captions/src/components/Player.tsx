@@ -755,7 +755,7 @@ export function Player() {
   return (
     <div
       ref={wrapRef}
-      className="relative flex h-full items-center justify-center overflow-hidden bg-black"
+      className="relative flex h-full items-center justify-center overflow-hidden bg-zinc-900 dark:bg-black"
       onPointerDownCapture={() => {
         // capture phase: overlay drag handlers stopPropagation, and drags
         // finish on window listeners, so release is tracked there too
@@ -909,7 +909,7 @@ export function Player() {
                   <EnginePicker className="rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-xs text-zinc-200 outline-none" />
                   <button
                     onClick={runTranscription}
-                    className="rounded-md bg-zinc-700 px-3 py-1.5 text-xs text-white hover:bg-zinc-600"
+                    className="rounded-md bg-zinc-700 px-3 py-1.5 text-xs text-zinc-50 hover:bg-zinc-600"
                   >
                     Retry
                   </button>

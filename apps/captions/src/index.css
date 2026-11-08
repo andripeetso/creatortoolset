@@ -168,7 +168,7 @@ html:not(.dark) ::-webkit-scrollbar-thumb { background: #d4d4d8; }
 }
 .cue-word.word-active {
   background: rgba(139, 92, 246, 0.45);
-  color: #fff;
+  color: rgb(var(--zinc-50));
 }
 
 /* Word-cursor mode: a real text caret that snaps to word boundaries.

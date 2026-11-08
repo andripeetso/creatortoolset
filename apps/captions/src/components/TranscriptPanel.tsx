@@ -876,7 +876,7 @@ export function TranscriptPanel() {
   const isText = mode === "text";
 
   return (
-    <div className="flex h-full flex-col border-r border-zinc-800 bg-[#101014]">
+    <div className="flex h-full flex-col border-r border-zinc-800 bg-zinc-925">
       <div className="flex items-center gap-2 border-b border-zinc-800 px-4 py-2.5 text-xs font-medium uppercase tracking-wider text-zinc-400">
         <FileText className="h-3.5 w-3.5" /> Transcript
       </div>
@@ -965,7 +965,7 @@ export function TranscriptPanel() {
                 className="fixed inset-0 z-30"
                 onClick={() => setMenuOpen(false)}
               />
-              <div className="absolute right-0 top-full z-40 mt-1 w-44 overflow-hidden rounded-md border border-zinc-700 bg-[#16161c] shadow-xl">
+              <div className="absolute right-0 top-full z-40 mt-1 w-44 overflow-hidden rounded-md border border-zinc-700 bg-zinc-900 shadow-xl">
                 {ai?.available && ai.allowed && (
                   <>
                     <button

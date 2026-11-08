@@ -56,7 +56,7 @@ export function ScriptDialog({ onClose }: { onClose: () => void }) {
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="flex max-h-[90vh] w-[560px] max-w-[92vw] flex-col rounded-2xl border border-zinc-700 bg-[#16161c] p-5 shadow-2xl"
+        className="flex max-h-[90vh] w-[560px] max-w-[92vw] flex-col rounded-2xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl"
       >
         <div className="mb-2 flex items-center justify-between">
           <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-100">
@@ -64,7 +64,7 @@ export function ScriptDialog({ onClose }: { onClose: () => void }) {
           </h2>
           <button
             onClick={onClose}
-            className="rounded p-1 text-zinc-500 hover:bg-zinc-800 hover:text-white"
+            className="rounded p-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-50"
           >
             <X className="h-4 w-4" />
           </button>

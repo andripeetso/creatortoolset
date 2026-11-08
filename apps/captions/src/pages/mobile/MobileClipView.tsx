@@ -266,11 +266,11 @@ function MobilePlayer({
           </button>
         )}
       </div>
-      <div className="flex items-center gap-2 bg-[#101014] px-3 py-1.5">
+      <div className="flex items-center gap-2 bg-zinc-925 px-3 py-1.5">
         <button
           type="button"
           onClick={toggle}
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-white active:bg-white/10"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-zinc-50 active:bg-zinc-50/10"
           aria-label={playing ? "Pause" : "Play"}
         >
           {playing ? (
@@ -306,7 +306,7 @@ function MobilePlayer({
             dragging.current = false;
           }}
         >
-          <div className="relative h-1.5 w-full rounded-full bg-white/20">
+          <div className="relative h-1.5 w-full rounded-full bg-zinc-50/20">
             <div
               className="absolute inset-y-0 left-0 rounded-full bg-violet-400"
               style={{ width: `${pct}%` }}
@@ -321,18 +321,18 @@ function MobilePlayer({
           <ClipCaptionsToggle
             on={captions.on}
             onToggle={captions.toggle}
-            className="flex h-11 w-11 items-center justify-center hover:bg-transparent active:bg-white/10"
+            className="flex h-11 w-11 items-center justify-center hover:bg-transparent active:bg-zinc-50/10"
           />
         )}
         <ClipSpeedControl
           rate={rate}
           onChange={setRate}
-          className="flex h-11 min-w-[2.75rem] items-center justify-center text-[12px] hover:bg-transparent active:bg-white/10"
+          className="flex h-11 min-w-[2.75rem] items-center justify-center text-[12px] hover:bg-transparent active:bg-zinc-50/10"
         />
         <button
           type="button"
           onClick={goFs}
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-white active:bg-white/10"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-zinc-50 active:bg-zinc-50/10"
           aria-label="Full screen"
         >
           <Maximize className="h-5 w-5" />
@@ -831,7 +831,7 @@ export function MobileClipView({
                             type="button"
                             onClick={() => seek(w.start)}
                             className={`rounded-sm ${
-                              on ? "bg-violet-500/30 text-white" : ""
+                              on ? "bg-violet-500/30 text-zinc-50" : ""
                             }`}
                           >
                             {w.text}

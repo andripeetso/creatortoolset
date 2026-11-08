@@ -406,7 +406,7 @@ function TextStylePanel() {
   if (!t) return null;
 
   return (
-    <div className="flex h-full w-64 flex-col border-l border-zinc-800 bg-[#101014]">
+    <div className="flex h-full w-64 flex-col border-l border-zinc-800 bg-zinc-925">
       <div className="flex items-center gap-2 border-b border-zinc-800 px-4 py-2.5 text-xs font-medium uppercase tracking-wider text-teal-300">
         <Type className="h-3.5 w-3.5" /> Text style
       </div>
@@ -672,7 +672,7 @@ export function StylePanel() {
   if (textSelected) return <TextStylePanel />;
 
   return (
-    <div className="flex h-full w-64 flex-col border-l border-zinc-800 bg-[#101014]">
+    <div className="flex h-full w-64 flex-col border-l border-zinc-800 bg-zinc-925">
       <div className="flex items-center gap-2 border-b border-zinc-800 px-4 py-2.5 text-xs font-medium uppercase tracking-wider text-zinc-400">
         <SlidersHorizontal className="h-3.5 w-3.5" /> Caption style
       </div>

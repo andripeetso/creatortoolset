@@ -242,7 +242,7 @@ function PostSheet({ post, running, onRun, onClose }: { post: InstagramPost; run
     comments ? `${fmtCount(comments)} comments` : "",
   ].filter(Boolean);
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-[#0b0b10] px-4 pb-[max(2rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))] text-zinc-200">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-zinc-950 px-4 pb-[max(2rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))] text-zinc-200">
       <div className="mx-auto flex w-full max-w-md flex-col gap-3">
         <div className="flex items-center gap-2">
           <p className="min-w-0 flex-1 truncate font-medium">

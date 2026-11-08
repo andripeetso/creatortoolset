@@ -242,7 +242,7 @@ export default function StorySplitterPage() {
 
   return (
     <div
-      className="flex min-h-dvh flex-col bg-[#0b0b10] text-zinc-200"
+      className="flex min-h-dvh flex-col bg-zinc-950 text-zinc-200"
       onDragOver={(e) => {
         e.preventDefault();
         setDragging(true);
@@ -274,7 +274,7 @@ export default function StorySplitterPage() {
                 {waiting ? (
                   <>
                     <p className="text-base text-zinc-300">
-                      Drop <span className="font-medium text-white">{waiting.name}</span> again to open its split.
+                      Drop <span className="font-medium text-zinc-50">{waiting.name}</span> again to open its split.
                     </p>
                     <p className="text-sm text-zinc-500">Only the cuts were kept, the video stays on your computer.</p>
                     {filePicker("Choose it", "flex cursor-pointer items-center gap-2 rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-500")}

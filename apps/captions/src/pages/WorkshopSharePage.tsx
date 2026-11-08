@@ -56,7 +56,7 @@ function CopyText({ text, label = "Copy", plain = false }: { text: string; label
           window.setTimeout(() => setDone(false), 1500);
         });
       }}
-      className="flex shrink-0 items-center gap-1 rounded-md border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-300 hover:border-zinc-500 hover:text-white"
+      className="flex shrink-0 items-center gap-1 rounded-md border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-300 hover:border-zinc-500 hover:text-zinc-50"
     >
       {done ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />} {done ? "Copied" : label}
     </button>
@@ -106,7 +106,7 @@ function PieceText({ piece, numbered }: { piece: SharedPiece; numbered: boolean 
   return (
     <section className="flex flex-col gap-2.5">
       <div className="flex items-baseline gap-2">
-        {numbered ? <h2 className="text-base font-semibold text-white">{piece.title}</h2> : null}
+        {numbered ? <h2 className="text-base font-semibold text-zinc-50">{piece.title}</h2> : null}
         <span className="text-xs text-zinc-500">{KIND[piece.kind] ?? piece.kind}</span>
         <span className="ml-auto">
           <CopyText text={all} label={piece.kind === "carousel" ? "Copy all slides" : "Copy all"} />
@@ -258,7 +258,7 @@ function Production({ token, data, onChange, list = true }: { token: string; dat
                 </p>
                 {d.note ? <p className="mt-0.5 text-[11px] text-zinc-300">{d.note}</p> : null}
               </div>
-              <a href={shareDeliveryUrl(token, d.id, true)} className="shrink-0 rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-white" title="Download">
+              <a href={shareDeliveryUrl(token, d.id, true)} className="shrink-0 rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-50" title="Download">
                 <Download className="h-3.5 w-3.5" />
               </a>
             </li>
@@ -297,7 +297,7 @@ export function WorkshopShareView({ token, embedded = false }: { token: string; 
 
   if (!data) {
     return (
-      <div className={`flex ${embedded ? "h-64" : "h-dvh"} items-center justify-center bg-[#0b0b10] px-6 text-center text-sm text-zinc-400`}>
+      <div className={`flex ${embedded ? "h-64" : "h-dvh"} items-center justify-center bg-zinc-950 px-6 text-center text-sm text-zinc-400`}>
         {error ? <p>This link is off or doesn't exist.</p> : <Loader2 className="h-6 w-6 animate-spin text-zinc-600" />}
       </div>
     );
@@ -316,7 +316,7 @@ export function WorkshopShareView({ token, embedded = false }: { token: string; 
     : data.status === "production" || data.status === "editing" ? "border-amber-500/50 text-amber-300"
     : "border-zinc-700 text-zinc-300";
   return (
-    <div className={`${embedded ? "" : "min-h-dvh"} bg-[#0b0b10] text-zinc-200`}>
+    <div className={`${embedded ? "" : "min-h-dvh"} bg-zinc-950 text-zinc-200`}>
       <header data-titlebar={embedded ? undefined : ""} className={`border-b border-zinc-900 py-3 ${embedded ? "pl-4 pr-12" : "px-4"}`}>
         <div className="mx-auto flex max-w-6xl items-center gap-3">
           <h1 className="min-w-0 truncate text-lg font-semibold tracking-tight">{data.title}</h1>

@@ -107,7 +107,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <div className="flex h-screen flex-col items-center justify-center bg-[#0b0b10] text-zinc-200">
+    <div className="flex h-screen flex-col items-center justify-center bg-zinc-950 text-zinc-200">
       <div className="mb-6 flex items-center gap-3">
         <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-violet-600">
           <Blocks className="h-6 w-6 text-white" />

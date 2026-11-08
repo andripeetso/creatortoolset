@@ -53,7 +53,7 @@ export function MobileStyleSheet({ onClose }: { onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-40">
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
-      <div className="pb-safe absolute inset-x-0 bottom-0 rounded-t-2xl border-t border-zinc-700/60 bg-[#16161c] px-4 pb-4 pt-2">
+      <div className="pb-safe absolute inset-x-0 bottom-0 rounded-t-2xl border-t border-zinc-700/60 bg-zinc-900 px-4 pb-4 pt-2">
         <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-zinc-700" />
         <p className="mb-3 text-sm font-semibold text-zinc-100">Caption style</p>
 

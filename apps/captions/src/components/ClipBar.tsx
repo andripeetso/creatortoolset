@@ -286,7 +286,7 @@ export function ClipBar() {
         {...fileDropHandlers}
         onClick={toggleCollapsed}
         title="Show the clip bar"
-        className={`flex w-full items-center gap-2 border-t border-dashed bg-[#101014] px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider transition-colors ${
+        className={`flex w-full items-center gap-2 border-t border-dashed bg-zinc-925 px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider transition-colors ${
           fileDrag
             ? "border-sky-400/70 text-sky-300 ring-2 ring-inset ring-sky-400/40"
             : "border-zinc-700 text-zinc-500 hover:border-zinc-500 hover:text-zinc-300"
@@ -327,7 +327,7 @@ export function ClipBar() {
   return (
     <div
       {...fileDropHandlers}
-      className={`border-t bg-[#101014] ${
+      className={`border-t bg-zinc-925 ${
         fileDrag
           ? "border-sky-400/70 ring-2 ring-inset ring-sky-400/40"
           : "border-zinc-800"

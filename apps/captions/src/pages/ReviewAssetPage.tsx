@@ -138,7 +138,7 @@ export default function ReviewAssetPage() {
 
   if (!view) {
     return (
-      <div className="flex h-dvh items-center justify-center bg-[#0b0b10] px-6 text-center text-sm text-zinc-400">
+      <div className="flex h-dvh items-center justify-center bg-zinc-950 px-6 text-center text-sm text-zinc-400">
         {loadError ? (
           <p>
             {token || ptoken ? "This review link is off or doesn't exist." : loadError}
@@ -582,7 +582,7 @@ function Review({
 
   return (
     <div
-      className="flex h-dvh flex-col bg-[#0b0b10] text-zinc-200"
+      className="flex h-dvh flex-col bg-zinc-950 text-zinc-200"
       // a file dropped anywhere on the page (textbox included) attaches to the comment
       // being written; a near miss used to open the image in the tab instead
       onDragOver={(e) => {
@@ -626,14 +626,14 @@ function Review({
 
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
         {/* ---------- player ---------- */}
-        <div ref={player} className="flex min-h-0 min-w-0 flex-col bg-black lg:flex-1">
+        <div ref={player} className="flex min-h-0 min-w-0 flex-col bg-zinc-900 dark:bg-black lg:flex-1">
           <div ref={stage} style={rulers ? { paddingLeft: RULER, paddingTop: RULER } : undefined}
             className="relative flex h-[40dvh] items-center justify-center overflow-hidden lg:h-auto lg:min-h-0 lg:flex-1">
             {version.status === "ready" && !version.removed && (
               // the viewer's tools, top left
               <div className="absolute z-30 hidden items-center gap-1 text-xs text-zinc-300 sm:flex"
                 style={{ left: (rulers ? RULER : 0) + 8, top: (rulers ? RULER : 0) + 8 }}>
-                <div className="flex items-center rounded-md bg-black/70 shadow" title="Zoom into the picture: ⌥ + scroll or pinch over it, drag to move it">
+                <div className="flex items-center rounded-md bg-zinc-950/80 shadow" title="Zoom into the picture: ⌥ + scroll or pinch over it, drag to move it">
                   <button aria-label="Zoom the picture out" title="Zoom out" onClick={() => zoomPic(1 / 1.5)} disabled={pic.z <= 1}
                     className="rounded-l-md px-2 py-1 hover:bg-zinc-800 disabled:opacity-30">−</button>
                   <button onClick={() => setPic({ z: 1, x: 0, y: 0 })} title="Fit the picture"
@@ -647,12 +647,12 @@ function Review({
                 </div>
                 <button aria-pressed={rulers} onClick={() => setRulers((r) => !r)}
                   title={rulers ? "Hide the rulers and guides" : "Rulers: drag out of one for a guide (kept for you)"}
-                  className={cn("rounded-md px-2 py-1.5 shadow", rulers ? "bg-violet-600 text-white" : "bg-black/70 hover:bg-zinc-800")}>
+                  className={cn("rounded-md px-2 py-1.5 shadow", rulers ? "bg-violet-600 text-white" : "bg-zinc-950/80 hover:bg-zinc-800")}>
                   <Ruler className="h-3 w-3" />
                 </button>
                 {rulers && guides.length > 0 && (
                   <button onClick={() => setGuides([])} title="Take every guide away"
-                    className="rounded-md bg-black/70 px-2 py-1 shadow hover:bg-zinc-800">Clear guides</button>
+                    className="rounded-md bg-zinc-950/80 px-2 py-1 shadow hover:bg-zinc-800">Clear guides</button>
                 )}
               </div>
             )}
@@ -898,7 +898,7 @@ function Review({
                     <button
                       aria-label={`Remove ${x.name}`}
                       onClick={() => setRefs((l) => l.filter((y) => y.key !== x.key))}
-                      className="absolute right-0 top-0 rounded-bl bg-black/70 px-1 text-xs leading-4 text-zinc-300 hover:text-white"
+                      className="absolute right-0 top-0 rounded-bl bg-zinc-950/80 px-1 text-xs leading-4 text-zinc-300 hover:text-zinc-50"
                     >
                       ×
                     </button>

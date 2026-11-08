@@ -186,6 +186,7 @@ export function EnhancePlayer({ session, mix, onMix }: {
       const data = peaks[track];
       const bars = Math.floor(w / (BAR_W + BAR_GAP));
       const playedX = duration > 0 ? (time / duration) * w : 0;
+      const rest = `rgb(${getComputedStyle(document.documentElement).getPropertyValue("--zinc-700")})`; // follows the theme
       for (let i = 0; i < bars; i++) {
         const x = i * (BAR_W + BAR_GAP);
         let v = 0.06;
@@ -194,7 +195,7 @@ export function EnhancePlayer({ session, mix, onMix }: {
           v = Math.max(0.06, data[di] * 0.95);
         }
         const bh = v * h;
-        ctx.fillStyle = x <= playedX ? "#8b5cf6" : "#3f3f46";
+        ctx.fillStyle = x <= playedX ? "#8b5cf6" : rest;
         ctx.beginPath();
         ctx.roundRect(x, (h - bh) / 2, BAR_W, bh, 1);
         ctx.fill();
@@ -280,7 +281,7 @@ export function EnhancePlayer({ session, mix, onMix }: {
             onClick={() => toggle("original")}
             className={`rounded-full px-4 py-1.5 text-xs font-medium transition-colors ${
               track === "original"
-                ? "bg-zinc-700 text-white"
+                ? "bg-zinc-700 text-zinc-50"
                 : "text-zinc-400 hover:text-zinc-200"
             }`}
           >

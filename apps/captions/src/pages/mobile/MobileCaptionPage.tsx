@@ -24,7 +24,7 @@ const STEP_LABEL: Record<Step, string> = {
 /** Account without cloud access — mobile has no on-device fallback. */
 function CloudLocked() {
   return (
-    <div className="pt-safe pb-safe flex h-dvh flex-col items-center justify-center bg-[#0b0b10] px-8 text-zinc-200">
+    <div className="pt-safe pb-safe flex h-dvh flex-col items-center justify-center bg-zinc-950 px-8 text-zinc-200">
       <CloudOff className="h-10 w-10 text-zinc-500" />
       <h1 className="mt-4 text-center text-xl font-semibold tracking-tight">
         Cloud transcription is off for this account
@@ -68,7 +68,7 @@ export default function MobileCaptionPage() {
     setStep("transcribe");
   }, []);
 
-  if (me === null) return <div className="h-dvh bg-[#0b0b10]" />;
+  if (me === null) return <div className="h-dvh bg-zinc-950" />;
   if (!canUseCloud(me)) return <CloudLocked />;
 
   const back =
@@ -86,8 +86,8 @@ export default function MobileCaptionPage() {
         : fileName.replace(/\.[^.]+$/, "") || "Caption Studio";
 
   return (
-    <div className="flex h-dvh flex-col bg-[#0b0b10] text-zinc-200">
-      <header className="pt-safe flex h-14 shrink-0 items-center gap-2 border-b border-zinc-800 bg-[#101014] px-2">
+    <div className="flex h-dvh flex-col bg-zinc-950 text-zinc-200">
+      <header className="pt-safe flex h-14 shrink-0 items-center gap-2 border-b border-zinc-800 bg-zinc-925 px-2">
         {back ? (
           <button
             onClick={back}

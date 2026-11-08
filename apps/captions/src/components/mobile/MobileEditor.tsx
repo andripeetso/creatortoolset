@@ -62,7 +62,7 @@ export function MobileEditor({ onExport }: { onExport: () => void }) {
         </div>
       )}
 
-      <div className="pb-safe flex shrink-0 items-center gap-2 border-t border-zinc-800 bg-[#101014] px-3 pb-2 pt-2">
+      <div className="pb-safe flex shrink-0 items-center gap-2 border-t border-zinc-800 bg-zinc-925 px-3 pb-2 pt-2">
         <button
           onClick={() => setStyleOpen(true)}
           disabled={editorBusy}
@@ -118,7 +118,7 @@ export function MobileEditor({ onExport }: { onExport: () => void }) {
       {editorBusy && (
         <div
           aria-hidden="true"
-          className="absolute inset-0 z-30 cursor-wait bg-[#0b0b10]/45"
+          className="absolute inset-0 z-30 cursor-wait bg-zinc-950/45"
         />
       )}
 

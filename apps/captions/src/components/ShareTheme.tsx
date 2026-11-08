@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useLocation } from "react-router";
 import { Moon, Sun } from "lucide-react";
-import { isPublicSharePath } from "@/components/AuthGate";
+import { isPublicLibraryPath, isPublicReviewPath, isPublicSharePath } from "@/components/AuthGate";
 import { applyDocumentTheme, persistShareTheme, storedThemeChoice, systemShareTheme, type ShareTheme } from "@/lib/share-theme";
 import { Switch } from "@/components/ui/switch";
 
@@ -25,12 +25,13 @@ const ShareThemeContext = createContext<ShareThemeContextValue>({
 const isChoiceDark = (c: ThemeChoice) => (c === "system" ? systemShareTheme() === "dark" : c === "dark");
 
 /**
- * The theme: the app's pages are drawn dark, always; a public share page
- * takes the stored choice, else the system's. index.html paints it first.
+ * The theme (Settings → Appearance): every page takes the stored choice; nothing stored = dark in the app, the
+ * system's on a public share page (caption, document, Review, Finals and Workshop links). index.html paints it first.
  */
 export function ShareThemeProvider({ children }: { children: ReactNode }) {
-  const share = isPublicSharePath(useLocation().pathname);
-  const isDark = (c: ThemeChoice) => !share || isChoiceDark(c);
+  const { pathname } = useLocation();
+  const share = isPublicSharePath(pathname) || isPublicReviewPath(pathname) || isPublicLibraryPath(pathname);
+  const isDark = isChoiceDark;
   const [choice, setChoiceState] = useState<ThemeChoice>(() => storedThemeChoice(share));
   const [dark, setDarkState] = useState(() => isDark(storedThemeChoice(share)));
 
@@ -51,13 +52,13 @@ export function ShareThemeProvider({ children }: { children: ReactNode }) {
   const value = useMemo(() => {
     const apply = (next: ThemeChoice) => {
       persistShareTheme(next);
-      const d = !share || isChoiceDark(next);
+      const d = isChoiceDark(next);
       applyDocumentTheme(d);
       setChoiceState(next);
       setDarkState(d);
     };
     return { dark, choice, setDark: (on: boolean) => apply(on ? "dark" : "light"), setChoice: apply };
-  }, [dark, choice, share]);
+  }, [dark, choice]);
 
   return <ShareThemeContext.Provider value={value}>{children}</ShareThemeContext.Provider>;
 }

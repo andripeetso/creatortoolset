@@ -31,7 +31,7 @@ export function RunJobsDialog({
   };
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 sm:items-center">
-      <div className="w-full max-w-md rounded-xl border border-zinc-800 bg-[#12121a] p-4 shadow-xl">
+      <div className="w-full max-w-md rounded-xl border border-zinc-800 bg-zinc-925 p-4 shadow-xl">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h3 className="text-sm font-medium text-zinc-100">{title}</h3>
           <button

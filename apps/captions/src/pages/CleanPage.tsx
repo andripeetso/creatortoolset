@@ -538,8 +538,8 @@ export default function CleanPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0b0b10] text-zinc-200">
-      <AppBar tool="Video Cleaner" className="sticky top-0 z-20 bg-[#0b0b10]/95 backdrop-blur">
+    <div className="min-h-screen bg-zinc-950 text-zinc-200">
+      <AppBar tool="Video Cleaner" className="sticky top-0 z-20 bg-zinc-950/95 backdrop-blur">
           <button
             type="button"
             disabled={restoring}
@@ -790,7 +790,7 @@ export default function CleanPage() {
                       onClick={() => void removeVideo(row)}
                       aria-label="Delete server session"
                       className={
-                        buttonClass + " text-zinc-400 hover:text-white"
+                        buttonClass + " text-zinc-400 hover:text-zinc-50"
                       }
                     >
                       <Trash2 className="h-4 w-4" />

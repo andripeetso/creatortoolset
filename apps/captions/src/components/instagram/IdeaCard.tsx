@@ -81,7 +81,7 @@ export function IdeaCard({
                 key={p.id}
                 type="button"
                 onClick={() => onOpen(p.id)}
-                className={`h-14 w-10 overflow-hidden rounded ring-2 ring-[#0b0b10] ${i > 0 ? "-ml-2" : ""}`}
+                className={`h-14 w-10 overflow-hidden rounded ring-2 ring-zinc-950 ${i > 0 ? "-ml-2" : ""}`}
                 style={{ zIndex: thumbs.length - i }}
               >
                 <img src={thumbUrl(p.id, 0)} alt="" className="h-full w-full object-cover" />

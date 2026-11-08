@@ -253,7 +253,7 @@ export default function WorkshopPage() {
     );
 
   return (
-    <div className="relative flex h-dvh flex-col bg-[#0b0b10] text-zinc-200">
+    <div className="relative flex h-dvh flex-col bg-zinc-950 text-zinc-200">
       <AppBar tool="Content Workshop" account={!!me}>
         {me ? (
           <ProjectSwitcher />
@@ -306,7 +306,7 @@ export default function WorkshopPage() {
               }}
               className={`rounded-t-md px-3 py-1.5 text-[11px] ${
                 tab === id
-                  ? "border border-b-transparent border-zinc-700 bg-[#0b0b10] text-zinc-100"
+                  ? "border border-b-transparent border-zinc-700 bg-zinc-950 text-zinc-100"
                   : "border border-transparent text-zinc-500 hover:text-zinc-300"
               }`}
             >
@@ -467,7 +467,7 @@ export default function WorkshopPage() {
                       {(s.kinds?.length ? s.kinds : [undefined]).map((k, i) => (
                         <KindTile key={k ?? i} kind={k} />
                       ))}
-                      <span className={`truncate text-sm ${live(s).unseen ? "font-semibold text-white" : "text-zinc-300"}`}>{s.title}</span>
+                      <span className={`truncate text-sm ${live(s).unseen ? "font-semibold text-zinc-50" : "text-zinc-300"}`}>{s.title}</span>
                       {live(s).working || s.generating ? (
                         <span className="flex shrink-0 items-center gap-1 text-[11px] text-sky-300">
                           <Loader2 className="h-3 w-3 animate-spin" /> Working
@@ -491,7 +491,7 @@ export default function WorkshopPage() {
                       onStatus={(status) => setSessions((rows) => rows.map((r) => (r.id === s.id ? { ...r, status } : r)))}
                       shared={!!s.shared}
                       onShared={(on) => setSessions((rows) => rows.map((r) => (r.id === s.id ? { ...r, shared: on } : r)))}
-                      className="flex items-center gap-1 rounded-md border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 hover:bg-zinc-800 hover:text-white"
+                      className="flex items-center gap-1 rounded-md border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 hover:bg-zinc-800 hover:text-zinc-50"
                     />
                     {/* no Delete on the row: it's in the right-click menu */}
                   </div>

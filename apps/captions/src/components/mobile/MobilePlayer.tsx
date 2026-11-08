@@ -146,7 +146,7 @@ export function MobilePlayer() {
     <div className="flex h-full flex-col">
       <div
         ref={wrapRef}
-        className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-black"
+        className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-zinc-900 dark:bg-black"
       >
         {videoUrl && (
           <video
@@ -236,7 +236,7 @@ export function MobilePlayer() {
       </div>
 
       {/* scrubber */}
-      <div className="flex shrink-0 items-center gap-2.5 bg-[#101014] px-3.5 py-2.5">
+      <div className="flex shrink-0 items-center gap-2.5 bg-zinc-925 px-3.5 py-2.5">
         <span className="w-10 text-right font-mono text-[11px] tabular-nums text-zinc-400">
           {fmtClock(currentTime)}
         </span>

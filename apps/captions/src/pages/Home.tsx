@@ -83,7 +83,7 @@ function ProjectSwitcher() {
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 top-full z-50 mt-1 w-80 rounded-lg border border-zinc-700 bg-[#16161c] py-1 shadow-2xl">
+          <div className="absolute left-0 top-full z-50 mt-1 w-80 rounded-lg border border-zinc-700 bg-zinc-900 py-1 shadow-2xl">
             <button
               onClick={goHome}
               className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-300 hover:bg-zinc-800"
@@ -339,7 +339,7 @@ export default function Home() {
   return (
     <div
       aria-busy={editorBusy}
-      className="relative isolate flex h-screen flex-col bg-[#0b0b10] text-zinc-200"
+      className="relative isolate flex h-screen flex-col bg-zinc-950 text-zinc-200"
     >
       {/* top bar */}
       <AppBar
@@ -352,19 +352,19 @@ export default function Home() {
             <TabConflictBanner />
           </span>
         }
-        className="bg-[#101014]"
+        className="bg-zinc-925"
       >
           <button
             onClick={() => setSettingsOpen(true)}
             title="Project settings"
-            className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-white"
+            className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-50"
           >
             <Settings2 className="h-4 w-4" />
           </button>
           <button
             onClick={() => setHelpOpen(true)}
             title="Shortcuts & tips (?)"
-            className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-white"
+            className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-50"
           >
             <CircleHelp className="h-4 w-4" />
           </button>
@@ -426,7 +426,7 @@ export default function Home() {
       {editorBusy && (
         <div
           aria-hidden="true"
-          className="absolute inset-0 z-40 cursor-wait bg-[#0b0b10]/45"
+          className="absolute inset-0 z-40 cursor-wait bg-zinc-950/45"
         />
       )}
 

@@ -6,17 +6,14 @@
     <meta name="theme-color" content="#0b0b10" />
     <script>
       (function () {
-        var share = /^\/(clips|documents)\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/?$/i.test(location.pathname);
-        // the app is drawn dark; a share page takes the stored choice (Settings → Appearance), nothing stored = the system's
-        var dark = true;
-        if (share) {
-          try {
-            var stored = localStorage.getItem("share-theme");
-            dark = stored === "light" ? false : stored === "dark" ? true : matchMedia("(prefers-color-scheme: dark)").matches;
-          } catch (e) {
-            dark = matchMedia("(prefers-color-scheme: dark)").matches;
-          }
-        }
+        var path = location.pathname;
+        // a public share page: caption/document links, Review/Finals/Workshop links (AuthGate)
+        var share = /^\/(clips|documents)\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/?$/i.test(path) || /^\/(r|rp|fs|ws|library\/s)\//.test(path);
+        // the stored choice (Settings → Appearance); nothing stored = dark in the app, the system's on a share page
+        var system = matchMedia("(prefers-color-scheme: dark)").matches;
+        var stored = null;
+        try { stored = localStorage.getItem("share-theme"); } catch (e) {}
+        var dark = stored === "light" ? false : stored === "dark" ? true : stored === "system" || share ? system : true;
         document.documentElement.classList.toggle("dark", dark);
         document.documentElement.style.colorScheme = dark ? "dark" : "light";
         var meta = document.querySelector('meta[name="theme-color"]');

@@ -56,7 +56,7 @@ const CommunityPage = lazy(() => import("./pages/CommunityPage"));
 
 function PhoneTool({ children }: { children: ReactNode }) {
   return (
-    <Suspense fallback={<div className="h-dvh bg-[#0b0b10]" />}>{children}</Suspense>
+    <Suspense fallback={<div className="h-dvh bg-zinc-950" />}>{children}</Suspense>
   );
 }
 
@@ -244,7 +244,7 @@ export default function App() {
             path="/m/captions"
             element={
               <AppRoute tool="captions">
-                <Suspense fallback={<div className="h-dvh bg-[#0b0b10]" />}>
+                <Suspense fallback={<div className="h-dvh bg-zinc-950" />}>
                   <MobileCaptionPage />
                 </Suspense>
               </AppRoute>
