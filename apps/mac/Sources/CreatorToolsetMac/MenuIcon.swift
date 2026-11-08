@@ -1,4 +1,4 @@
-// The menu bar item: a small dark pill with the Creator Toolset mark (the logo's one-stroke C and T, ToolsetLogo in
+// The menu bar item: a dark pill as tall as the menu bar's icons with the Creator Toolset mark (the logo's one-stroke C and T, ToolsetLogo in
 // apps/captions) and a status dot. Drawn in code and in colour, not as a template, so the dark pill with its light
 // rim reads on light and dark menu bars alike and stands apart from the monochrome icons around it. A count between the
 // mark and the dot: the things waiting for you (the panel's For you).
@@ -6,11 +6,11 @@ import AppKit
 
 func menuBarImage(_ status: MenuStatus, waiting: Int = 0) -> NSImage {
     let count = waiting > 0 ? NSAttributedString(string: "\(waiting)", attributes: [
-        .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold), .foregroundColor: NSColor.white,
+        .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold), .foregroundColor: NSColor.white,
     ]) : nil
-    let extra = count.map { ceil($0.size().width) + 3 } ?? 0
-    let image = NSImage(size: NSSize(width: 34 + extra, height: 18), flipped: true) { rect in
-        let pill = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: 8.5, yRadius: 8.5)
+    let extra = count.map { ceil($0.size().width) + 4 } ?? 0
+    let image = NSImage(size: NSSize(width: 43 + extra, height: 22), flipped: true) { rect in
+        let pill = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: 10.5, yRadius: 10.5)
         NSColor(srgbRed: 0.09, green: 0.08, blue: 0.14, alpha: 1).setFill()
         pill.fill()
         NSColor(white: 1, alpha: 0.3).setStroke()
@@ -19,9 +19,9 @@ func menuBarImage(_ status: MenuStatus, waiting: Int = 0) -> NSImage {
 
         // The mark in the logo's 1024 box (translated -28 like the logo): the C is an arc around (412, 520), radius
         // 235, 130 wide, from the top round the left to the lower right; the T is a 500×130 bar and a 128×600 stem.
-        // Its box (112…910 × 220…820) is scaled to 11 pt high and set at the pill's left.
-        let s: CGFloat = 11 / 600
-        func p(_ x: CGFloat, _ y: CGFloat) -> NSPoint { NSPoint(x: 6 + (x - 112) * s, y: 3.5 + (y - 220) * s) }
+        // Its box (112…910 × 220…820) is scaled to 14 pt high and set at the pill's left.
+        let s: CGFloat = 14 / 600
+        func p(_ x: CGFloat, _ y: CGFloat) -> NSPoint { NSPoint(x: 8 + (x - 112) * s, y: 4 + (y - 220) * s) }
         NSColor.white.set()
         let c = NSBezierPath()
         for i in 0...48 {
@@ -34,10 +34,10 @@ func menuBarImage(_ status: MenuStatus, waiting: Int = 0) -> NSImage {
         NSBezierPath(rect: NSRect(origin: p(410, 220), size: NSSize(width: 500 * s, height: 130 * s))).fill()
         NSBezierPath(rect: NSRect(origin: p(662, 220), size: NSSize(width: 128 * s, height: 600 * s))).fill()
 
-        if let count { count.draw(at: NSPoint(x: 22, y: (rect.height - count.size().height) / 2)) }
+        if let count { count.draw(at: NSPoint(x: 30, y: (rect.height - count.size().height) / 2)) }
 
         // The status: a filled dot (green up, violet running a job, amber a problem), a hollow ring when idle.
-        let dot = NSBezierPath(ovalIn: NSRect(x: rect.maxX - 10.5, y: rect.midY - 3, width: 6, height: 6))
+        let dot = NSBezierPath(ovalIn: NSRect(x: rect.maxX - 13, y: rect.midY - 3.5, width: 7, height: 7))
         switch status {
         case .idle:
             NSColor(white: 1, alpha: 0.5).setStroke()

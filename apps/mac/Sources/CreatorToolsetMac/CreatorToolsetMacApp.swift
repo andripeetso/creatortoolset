@@ -12,7 +12,7 @@ struct CreatorToolsetMacApp: App {
     /// build-app.sh). A build without a feed (`swift run`) starts no updater.
     private let updater = SPUStandardUpdaterController(
         startingUpdater: Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil,
-        updaterDelegate: nil,
+        updaterDelegate: UpdateWhenIdle.shared,
         userDriverDelegate: nil
     )
 
@@ -78,6 +78,25 @@ struct CreatorToolsetMacApp: App {
             MenuBarLabel(shell: shell)
         }
         .menuBarExtraStyle(.window)
+    }
+}
+
+/// Sparkle installs a downloaded update when the app quits, and this app lives in the menu bar and never quits, so
+/// updates waited forever (a build two days old while newer ones shipped). Instead: install and relaunch as soon as
+/// the app is in the background with no AI job on this Mac and no recording.
+final class UpdateWhenIdle: NSObject, SPUUpdaterDelegate {
+    static let shared = UpdateWhenIdle()
+
+    func updater(_ updater: SPUUpdater, willInstallUpdateOnQuit item: SUAppcastItem,
+                 immediateInstallationBlock install: @escaping () -> Void) -> Bool {
+        Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { timer in
+            MainActor.assumeIsolated {
+                guard let shell = AppDelegate.shell, !NSApp.isActive, shell.ai.running == 0, !shell.recorder.busy else { return }
+                timer.invalidate()
+                install()
+            }
+        }
+        return true
     }
 }
 
