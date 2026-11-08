@@ -268,7 +268,7 @@ home folder (its `settings.json` `env` rides along, the API key is dropped), `--
 the Workshop folder read with Read, Glob and Grep, streamed text posted to `/api/devices/relay/<id>/text`
 (at most every 0.4 s, at least every 20 s), tool calls to `/step`, then `/done` with the answer and its
 usage, or `/fail` with the error (and `limit` / `gone` flags). A text post that answers 404 stops the run.
-Only Claude runs here: a Grok or Codex request fails with "This Mac runs Claude only for now".
+Claude and Gemini run here (Gemini with `gemini -o stream-json` in plan mode, the prompt on stdin, API keys left out of its environment, its own `~/.gemini`): a Grok or Codex request fails with "This Mac runs Claude and Gemini only for now".
 Once at start and hourly the app posts `POST /api/devices/relay/report` (`MacReport.swift`): which
 CLIs are installed (with `--version`) and the Claude and Codex config folders, read only. Nothing is ever
 written there.

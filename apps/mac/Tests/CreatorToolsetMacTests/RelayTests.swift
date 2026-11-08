@@ -31,12 +31,12 @@ final class RelayTests: XCTestCase {
         XCTAssertNil(RelayRequest(json: Data(#"{"system":"S"}"#.utf8)))   // no id: nothing to answer
     }
 
-    func testOnlyClaudeRunsHereAndOthersFailWithTheSameWords() {
+    func testOnlyClaudeAndGeminiRunHereAndOthersFailWithTheSameWords() {
         let root = temp()
         for driver in ["grok", "codex", "cursor"] {
             let r = request(#"{"id":"j","system":"","user":"","driver":"\#(driver)"}"#)
             XCTAssertThrowsError(try requestOptions(r, root: root)) { error in
-                XCTAssertEqual((error as? RelayError)?.message, "This Mac runs Claude only for now")
+                XCTAssertEqual((error as? RelayError)?.message, "This Mac runs Claude and Gemini only for now")
             }
         }
     }
@@ -326,6 +326,68 @@ final class RelayTests: XCTestCase {
         let pair = try JSONDecoder().decode(PairReply.self, from: Data(#"{"device":{"id":"dev_1","owner":"alex","kind":"app"},"token":"ctd_abc"}"#.utf8))
         XCTAssertEqual(pair.device.id, "dev_1")
         XCTAssertEqual(pair.token, "ctd_abc")
+    }
+
+    // MARK: Gemini (the Mac relay GeminiRun and its checks)
+
+    func testGeminiOptionsModelAndHome() throws {
+        let root = temp()
+        let ok = try requestOptions(request(#"{"id":"j","system":"","user":"","driver":"gemini"}"#), root: root)
+        XCTAssertEqual(ok, RelayOptions(model: "", effort: "xhigh", home: "", resume: "", driver: "gemini"))
+        XCTAssertThrowsError(try requestOptions(request(#"{"id":"j","system":"","user":"","driver":"gemini","model":"bad model!"}"#), root: root))
+        let hub = root.appendingPathComponent(".gemini-work")
+        try FileManager.default.createDirectory(at: hub, withIntermediateDirectories: true)
+        XCTAssertThrowsError(try requestOptions(request(#"{"id":"j","system":"","user":"","driver":"gemini","home":"\#(hub.path)"}"#), root: root)) { error in
+            XCTAssertEqual((error as? RelayError)?.message, "Gemini keeps its own folder (~/.gemini): it takes no home")
+        }
+    }
+
+    func testGeminiCommandLineEnvAndLimit() {
+        XCTAssertEqual(geminiArguments(model: "gemini-3.8-flash"),
+                       ["-o", "stream-json", "--approval-mode", "plan", "--skip-trust", "-m", "gemini-3.8-flash"])
+        XCTAssertEqual(geminiArguments(model: ""), ["-o", "stream-json", "--approval-mode", "plan", "--skip-trust"])
+        let env = driverEnv(base: ["GEMINI_API_KEY": "k", "GOOGLE_API_KEY": "g", "PATH": "/bin"])
+        XCTAssertEqual(env, ["PATH": "/bin"])
+        XCTAssertTrue(limitFlag("gemini", "You have exhausted your daily quota on this model."))
+        XCTAssertFalse(limitFlag("gemini", "some other error"))
+        XCTAssertTrue(limitFlag("claude", "Claude AI usage limit reached|1700000000"))
+    }
+
+    func testGeminiStreamReadsTheAnswerAfterItsLastToolCall() {
+        let lines = [
+            #"{"type":"tool_use","tool_name":"read_file","tool_id":"t1","parameters":{"file_path":"a.md"}}"#,
+            #"{"type":"message","role":"assistant","content":"Let me look ","delta":true}"#,
+            #"{"type":"message","role":"assistant","content":"at it.","delta":true}"#,
+            #"{"type":"tool_use","tool_name":"google_web_search","tool_id":"t2","parameters":{"query":"crawling study"}}"#,
+            #"{"type":"message","role":"assistant","content":"{\"reply\": ","delta":true}"#,
+            #"{"type":"message","role":"assistant","content":"\"OK\"}","delta":true}"#,
+            #"{"type":"result","status":"success","stats":{"input_tokens":20,"output_tokens":5,"cached":8,"models":{"gemini-3.8-flash":{"input_tokens":20,"output_tokens":5,"cached":8}}}}"#,
+        ]
+        var stream = GeminiStream(cwd: "/tmp/none")
+        var steps: [String] = []
+        for line in lines {
+            for update in stream.feed(line) {
+                if case .step(let label) = update { steps.append(label) }
+            }
+        }
+        XCTAssertEqual(steps, ["Read a.md", "Searched the web: \"crawling study\""])
+        let got = stream.result(err: "")
+        XCTAssertEqual(got["is_error"] as? Bool, false)
+        XCTAssertEqual(got["result"] as? String, "{\"reply\": \"OK\"}")
+        let row = genericUsageRow(got, model: "gemini-3.8-flash")
+        XCTAssertEqual(row["input"] as? Int, 12)
+        XCTAssertEqual(row["cache_read"] as? Int, 8)
+        XCTAssertEqual(row["output"] as? Int, 5)
+        XCTAssertEqual(row["models"] as? [String], ["gemini-3.8-flash"])
+    }
+
+    func testAGeminiQuotaErrorIsTheFailureAndALimit() {
+        var stream = GeminiStream(cwd: "/tmp")
+        _ = stream.feed(#"{"type":"result","status":"error","error":{"type":"TerminalQuotaError","message":"You have exhausted your daily quota on this model."},"stats":{"input_tokens":3,"output_tokens":0,"cached":0,"models":{}}}"#)
+        let got = stream.result(err: "")
+        XCTAssertEqual(got["is_error"] as? Bool, true)
+        XCTAssertEqual(got["result"] as? String, "You have exhausted your daily quota on this model.")
+        XCTAssertTrue(limitFlag("gemini", resultText(got)))
     }
 
     // MARK: real run, only when asked (costs a few cents of the subscription)

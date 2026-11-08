@@ -255,8 +255,8 @@ final class RelayRunner {
                 return obj["text"] as? String
             }
             let opts = try requestOptions(req, root: home)
-            let cli = binary("claude", home: home) ?? "claude"
-            let answer = try claudeAnswer(req, opts, cli: cli, work: work, send: { [self] text in
+            let cli = binary(opts.driver, home: home) ?? opts.driver
+            let answer = try runAnswer(req, opts, cli: cli, work: work, send: { [self] text in
                 // a blip is not a stop: the next post carries the whole text anyway
                 guard let reply = try? api.call("POST", "\(base)/text", ["text": text]) else { return true }
                 return reply.status != 404
@@ -271,7 +271,7 @@ final class RelayRunner {
             let message = (error as? ClaudeFailure)?.message ?? (error as? RelayError)?.message ?? error.localizedDescription
             var body: [String: Any] = [
                 "error": String(message.prefix(2000)),
-                "limit": isLimitError(message),
+                "limit": limitFlag(req.driver, message),
                 "gone": (error as? ClaudeFailure)?.gone ?? false,
             ]
             if let usage = (error as? ClaudeFailure)?.usage { body["usage"] = usage }
@@ -282,7 +282,8 @@ final class RelayRunner {
 
     private func doneLine(_ opts: RelayOptions, _ answer: ClaudeAnswer) -> String {
         let cost = number(answer.usage["cost_usd"])
-        return "Claude for the site: \(Int(number(answer.usage["output"]))) tokens out, $\(String(format: "%.4f", cost)) API-equivalent"
+        let label = opts.driver == "gemini" ? "Gemini" : "Claude"
+        return "\(label) for the site: \(Int(number(answer.usage["output"]))) tokens out, $\(String(format: "%.4f", cost)) API-equivalent"
     }
 
     /// the Mac relay report_forever / report: at start and then hourly. A site without the route answers 404 and the next hour tries again.

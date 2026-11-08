@@ -4,14 +4,15 @@ import Foundation
 
 /// Every driver the report lists, in contracts/providers.ts order.
 let reportDrivers: [(id: String, label: String)] = [
-    ("codex", "Codex"), ("claude", "Claude"), ("cursor", "Cursor"), ("grok", "Grok"), ("opencode", "OpenCode"),
+    ("codex", "Codex"), ("claude", "Claude"), ("cursor", "Cursor"), ("grok", "Grok"), ("gemini", "Gemini"), ("opencode", "OpenCode"),
     ("antigravity", "Antigravity"), ("muse", "Muse Code"), ("pi", "Pi"),
 ]
 
 /// Where each CLI may be (the Mac relay BINARIES): the official install on PATH or in the usual folders below.
 /// Claude is the `claude` command-line tool its owner installed and signed in to, never a copy inside another app.
 let driverBinaries: [String: [String]] = [
-    "claude": ["claude"], "codex": ["codex", "/opt/homebrew/bin/codex"], "grok": ["grok", "~/.grok/bin/grok"], "cursor": ["cursor-agent"],
+    "claude": ["claude"], "codex": ["codex", "/opt/homebrew/bin/codex"], "grok": ["grok", "~/.grok/bin/grok"], "gemini": ["gemini", "/opt/homebrew/bin/gemini"],
+    "cursor": ["cursor-agent"],
     "opencode": ["opencode", "~/.opencode/bin/opencode"], "antigravity": ["antigravity"], "muse": ["muse"], "pi": ["pi"],
 ]
 

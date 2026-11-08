@@ -19,7 +19,9 @@ let readTools = "Read,Glob,Grep"
 let webTools = "WebSearch,WebFetch"
 let folderNote = "The files this request needs are in the current folder: read them there."
 let piecesNote = "\n- sessions/INDEX.md — every Workshop session that became a post, with the post and its numbers (the app links them)."
-let onlyClaudeMessage = "This Mac runs Claude only for now"
+/// The drivers this Mac runs (Claude and Gemini; Grok, Codex and the rest are answered with the message below).
+let runnableDrivers = ["claude", "gemini"]
+let onlyRunnableMessage = "This Mac runs Claude and Gemini only for now"
 
 /// One job from POST /api/devices/relay/wait (contracts/providers.ts).
 struct RelayRequest {
@@ -74,20 +76,30 @@ struct RelayOptions: Equatable {
     let effort: String
     let home: String
     let resume: String
+    /// the driver the request names: "claude" or "gemini"
+    var driver = "claude"
 }
 
 /// the Mac relay request_options: the driver, model, effort, home and resume, checked. A bad one fails the request.
-/// Only Claude runs on this Mac for now; Grok and Codex fail with the same message.
+/// Claude and Gemini run on this Mac; Grok, Codex and the rest fail with the same message.
 func requestOptions(_ req: RelayRequest, root: URL = FileManager.default.homeDirectoryForCurrentUser) throws -> RelayOptions {
-    guard req.driver == "claude" else { throw RelayError(message: onlyClaudeMessage) }
+    guard runnableDrivers.contains(req.driver) else { throw RelayError(message: onlyRunnableMessage) }
     guard claudeEfforts.contains(req.effort) else { throw RelayError(message: "not an effort: \(req.effort)") }
-    let model = req.model.isEmpty ? defaultModel : req.model
-    guard matches(model, "^claude-[a-z0-9-]+\\z") else { throw RelayError(message: "not a Claude model: \(model)") }
+    let isClaude = req.driver == "claude"
+    let model = req.model.isEmpty ? (isClaude ? defaultModel : "") : req.model
+    if isClaude {
+        guard matches(model, "^claude-[a-z0-9-]+\\z") else { throw RelayError(message: "not a Claude model: \(model)") }
+    } else if !model.isEmpty && !matches(model, "^[A-Za-z0-9._/:-]{1,80}\\z") {
+        throw RelayError(message: "not a Gemini model: \(model)")
+    }
     let home = req.home.isEmpty ? "" : try checkedHome(req.home, root: root)
+    if req.driver == "gemini" && !home.isEmpty {
+        throw RelayError(message: "Gemini keeps its own folder (~/.gemini): it takes no home")
+    }
     if !req.resume.isEmpty && !matches(req.resume, "^[A-Za-z0-9-]{1,80}\\z") {
         throw RelayError(message: "not a Claude session id: \(req.resume)")
     }
-    return RelayOptions(model: model, effort: req.effort, home: home, resume: req.resume)
+    return RelayOptions(model: model, effort: req.effort, home: home, resume: req.resume, driver: req.driver)
 }
 
 private func matches(_ text: String, _ pattern: String) -> Bool {
@@ -173,7 +185,7 @@ enum StreamUpdate: Equatable {
 }
 
 /// the Mac relay stream() reading: `claude -p --output-format stream-json --include-partial-messages`, one line at a time.
-struct ClaudeStream {
+struct ClaudeStream: RunStream {
     let cwd: String
     private(set) var text = ""
     private(set) var result: [String: Any]?
@@ -308,6 +320,113 @@ func number(_ value: Any?) -> Double {
 
 func round4(_ x: Double) -> Double {
     (x * 10_000).rounded() / 10_000
+}
+
+// MARK: Gemini (the Mac relay GeminiRun, gemini_cmd, gemini_usage, limit_flag)
+
+/// gemini's tool names as the step labels read them (the Mac relay GEMINI_TOOLS).
+let geminiTools = ["read_file": "Read", "grep_search": "Grep", "glob": "Glob", "google_web_search": "WebSearch"]
+
+/// the Mac relay gemini_cmd: `gemini -o stream-json`, the prompt on stdin (no -p: the CLI reads a piped prompt). Plan mode
+/// is its read tools only, no edits or shell; --skip-trust for the run's own folder. This CLI has no effort flag.
+func geminiArguments(model: String) -> [String] {
+    var args = ["-o", "stream-json", "--approval-mode", "plan", "--skip-trust"]
+    if !model.isEmpty { args += ["-m", model] }
+    return args
+}
+
+/// the Mac relay driver_env: the environment without API keys (the subscription only, never API billing).
+func driverEnv(base: [String: String]) -> [String: String] {
+    let stripped = ["OPENAI_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"]
+    return base.filter { !stripped.contains($0.key) }
+}
+
+/// the Mac relay limit_flag: the usage-limit flag. Claude's windows (isLimitError) and Gemini's quota errors; the rest have none.
+func limitFlag(_ driver: String, _ text: String) -> Bool {
+    if driver == "claude" { return isLimitError(text) }
+    return driver == "gemini"
+        && text.range(of: "exhausted your (daily )?(quota|capacity)|MODEL_CAPACITY_EXHAUSTED", options: [.regularExpression, .caseInsensitive]) != nil
+}
+
+/// the Mac relay gemini_usage: a stream's result stats in the claude usage shape. The prompt count includes the cached tokens.
+func geminiUsage(_ stats: [String: Any]) -> [String: Any] {
+    let cached = Int(number(stats["cached"]))
+    return ["input_tokens": max(Int(number(stats["input_tokens"])) - cached, 0), "cache_read_input_tokens": cached,
+            "output_tokens": Int(number(stats["output_tokens"])), "reasoning_tokens": 0, "cache_creation_input_tokens": 0]
+}
+
+/// the Mac relay usage_of for a driver other than Claude: its own usage fields, no model check (the CLI names its own models).
+func genericUsageRow(_ result: [String: Any], model: String) -> [String: Any] {
+    let usage = result["usage"] as? [String: Any] ?? [:]
+    let names = (result["modelUsage"] as? [String: Any] ?? [:]).keys.sorted()
+    let models: [String] = names.isEmpty ? (model.isEmpty ? [] : [model]) : names
+    return ["step": "site", "models": models,
+            "input": Int(number(usage["input_tokens"])), "output": Int(number(usage["output_tokens"])),
+            "cache_read": Int(number(usage["cache_read_input_tokens"])), "cache_write": Int(number(usage["cache_creation_input_tokens"])),
+            "thinking": Int(number(usage["reasoning_tokens"])), "cost_usd": round4(number(result["total_cost_usd"])),
+            "ms": Int(number(result["duration_ms"]))]
+}
+
+/// the Mac relay GeminiRun: `gemini -o stream-json` events, one line at a time: the answer's text (the assistant's text since
+/// its last tool call), the result's stats as usage, and the error. A result with status "error" is the failure.
+struct GeminiStream: RunStream {
+    let cwd: String
+    private(set) var text = ""
+    private var error = ""
+    private var status = ""
+    private var models: [String] = []
+    private var usage: [String: Any] = [:]
+
+    init(cwd: String) { self.cwd = cwd }
+
+    var seen: [String: [String: Any]] { usage.isEmpty ? [:] : ["gemini": usage] }
+
+    mutating func feed(_ line: String) -> [StreamUpdate] {
+        guard line.hasPrefix("{"),
+              let obj = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any] else { return [] }
+        var updates: [StreamUpdate] = []
+        switch obj["type"] as? String {
+        case "message" where (obj["role"] as? String) == "assistant":
+            let content = obj["content"] as? String ?? ""
+            text = (obj["delta"] as? Bool) == true ? text + content : content
+            updates.append(.text(text))
+        case "tool_use":
+            text = ""   // what was said before a tool call is not the answer
+            let params = obj["parameters"] as? [String: Any] ?? [:]
+            var input: [String: Any] = [:]
+            if let path = params["file_path"] ?? params["absolute_path"] { input["file_path"] = path }
+            if let pattern = params["pattern"] { input["pattern"] = pattern }
+            if let dir = params["dir_path"] { input["path"] = dir }
+            if let query = params["query"] { input["query"] = query }
+            if let name = geminiTools[obj["tool_name"] as? String ?? ""] {
+                let label = toolStep(["name": name, "input": input], cwd: cwd)
+                if !label.isEmpty { updates.append(.step(label)) }
+            }
+        case "result":
+            let stats = obj["stats"] as? [String: Any] ?? [:]
+            usage = geminiUsage(stats)
+            models = (stats["models"] as? [String: Any] ?? [:]).keys.sorted()
+            status = obj["status"] as? String ?? ""
+            if status == "error" { error = (obj["error"] as? [String: Any])?["message"] as? String ?? error }
+        case "error" where (obj["severity"] as? String) == "error":
+            error = obj["message"] as? String ?? error
+        default:
+            break
+        }
+        return updates
+    }
+
+    /// the Mac relay GeminiRun.result: the answer, or the error (or stderr) as the failure.
+    func result(err: String) -> [String: Any] {
+        var modelUsage: [String: [String: Any]] = [:]
+        for model in models { modelUsage[model] = [:] }
+        if status != "error" && !text.isEmpty {
+            return ["is_error": false, "result": text, "usage": usage, "modelUsage": modelUsage, "total_cost_usd": 0]
+        }
+        let tail = String(err.trimmingCharacters(in: .whitespacesAndNewlines).suffix(500))
+        let message = !error.isEmpty ? error : (tail.isEmpty ? "no answer" : tail)
+        return ["is_error": true, "result": message, "usage": usage, "modelUsage": modelUsage, "total_cost_usd": 0]
+    }
 }
 
 // MARK: the Workshop folder and sessions
