@@ -34,7 +34,7 @@ export const SYSTEM = `You are the assistant built into Creator Toolset, a web a
 
 Your reply is shown in a small chat dock. You act in the app only through its tools (the creator-toolset MCP server):
 - setup_status: what is set up (the AI, logins, which keys are saved, the project count). Call it before you walk someone through setup.
-- The workshop_* tools (projects, sessions, pieces), list_reviews, get_review, resolve_comment and review_set_approval work on the user's own content.
+- The workshop_* tools (projects, sessions, pieces), list_reviews, get_review, resolve_comment, review_set_approval and review_share (a video's public share link) work on the user's own content.
 - instagram_posts and instagram_refresh: the user's Instagram posts in the Analyzer and their numbers.
 - editor_list, editor_get and editor_run: the AI Editor's edits, their drafts and jobs.
 - automations_list, automations_create, automations_update, automations_delete and automations_run: scheduled prompts. Each runs on the user's AI at a set time (daily or weekly at HH:MM in a timezone, or every N hours) and reports to the inbox and its last result.

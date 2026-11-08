@@ -140,6 +140,11 @@ export const TOOLS = [
     inputSchema: { type: "object", properties: { link: str, status: { type: "string", enum: ["none", "in_progress", "needs_review", "changes", "approved"] } }, required: ["link", "status"] },
   },
   {
+    name: "review_share",
+    description: "A Review video's public share link (anyone with it can watch and comment, no account), as the Share button on its page: on (default true) turns the link on and returns it, the same link each time; false turns it off. download lets viewers download the file. Make one only when the user asks for a link to share.",
+    inputSchema: { type: "object", properties: { link: str, on: { type: "boolean" }, download: { type: "boolean" } }, required: ["link"] },
+  },
+  {
     name: "instagram_refresh",
     description: "Start a pull of one of the user's Analyzer accounts (by handle): its catalog of posts, profile, stats or tags. It runs in the background; instagram_posts shows the state.",
     inputSchema: { type: "object", properties: { account: str, types: { type: "array", items: { type: "string", enum: ["profile", "catalog", "stats", "tags"] } } }, required: ["account"] },
@@ -378,6 +383,13 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
       const r = await json(`/api/review/assets/${id}/approval`, "POST", { status: a.status });
       return { id: r.id, name: r.name, approval: (r.approval as Args | undefined)?.status };
     },
+    review_share: async (a) => {
+      const id = ((await json(reviewPath(String(a.link), origin))).asset as Args).id;
+      const share = { enabled: a.on !== false, ...(typeof a.download === "boolean" ? { download: a.download } : {}) };
+      const r = await json(`/api/review/assets/${id}`, "PATCH", { share });
+      const s = r.share as { token: string; enabled: boolean; download: boolean };
+      return s.enabled ? { name: r.name, share_link: `${origin}/r/${s.token}`, download: s.download } : { name: r.name, shared: false };
+    },
     instagram_refresh: async (a) => {
       const id = await accountOf(String(a.account));
       const types = Array.isArray(a.types) && a.types.length ? a.types : ["catalog"];
@@ -483,6 +495,7 @@ const STEPS: Record<string, string> = {
   get_review: "Checking the video in Review",
   resolve_comment: "Resolving a comment",
   review_set_approval: "Setting the approval",
+  review_share: "Getting the share link",
   editor_list: "Looking at the AI Editor's edits",
   editor_get: "Opening the edit",
   editor_run: "Starting an AI Editor job",

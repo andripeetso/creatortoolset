@@ -84,12 +84,25 @@ describe("Creator Toolset as a remote MCP server", () => {
     }
   });
 
+  it("turns a Review video's share link on (the same link each time) and off", async () => {
+    const { addVersion } = await import("./review");
+    const added = await addVersion(undefined, { owner: "mcpowner", name: "TinyReel_A.mp4", mime: "video/mp4", bytes: 1 }, async () => {});
+    const on = (await tool("review_share", { link: added!.meta.id })).value as { share_link: string };
+    expect(on.share_link).toMatch(/\/r\/[0-9a-f-]{36}$/);
+    expect((await tool("review_share", { link: added!.meta.id })).value.share_link).toBe(on.share_link);
+    const token = on.share_link.split("/r/")[1];
+    expect((await app.request(`/api/review/s/${token}`)).status).toBe(200);
+    expect((await tool("review_share", { link: added!.meta.id, on: false })).value).toMatchObject({ shared: false });
+    expect((await app.request(`/api/review/s/${token}`)).status).toBe(404);
+  });
+
   it("keeps its tool list's size on purpose: it goes into every AI session that connects", () => {
     // growth must be deliberate: check what the new words buy, then update this number (never fix it by cutting words)
     // 5814 -> 6925: review_set_approval (approve or send back a Review video from a chat) and instagram_refresh/posts
     // (start an Analyzer account's pull and list its posts); 6925 -> 7071: workshop_update_session links or unlinks a post;
     // 7071 -> 9162: automations_list/create/update/delete/run (scheduled prompts on the user's own AI)
     // 9162 -> 9366: set_work_prefs makes (what they make, from setup; the assistant can change it)
-    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(9366);
+    // 9366 -> 9864: review_share (a Review video's public share link, on or off, as its Share button)
+    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(9864);
   });
 });
