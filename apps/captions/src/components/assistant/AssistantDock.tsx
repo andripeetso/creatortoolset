@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
-import { ArrowUpRight, KeyRound, MessageCircle, PanelRight, PanelRightClose, VolumeX, X } from "lucide-react";
+import { ArrowUpRight, CornerDownLeft, KeyRound, MessageCircle, PanelRight, PanelRightClose, Pencil, VolumeX, X } from "lucide-react";
 import type { AssistantMessage, AssistantView } from "@contracts/assistant";
 import { ReplyText } from "@/components/ReplyText";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,7 @@ import {
   openAssistant,
   saveKey,
   sendTurn,
+  stopTurn,
   useAssistant,
 } from "@/lib/assistant";
 import { cornerOf, storePlace, storedPlace, type Corner, type Place } from "@/lib/dock-place";
@@ -29,6 +30,16 @@ const DOCK_W = 400;
 /** Below the pages' top bars, above the corner buttons bottom left. */
 const AT: Record<Corner, string> = { tl: "left-4 top-16", tr: "right-4 top-16", bl: "left-4 bottom-14", br: "right-4 bottom-4" };
 const ORIGIN: Record<Corner, string> = { tl: "origin-top-left", tr: "origin-top-right", bl: "origin-bottom-left", br: "origin-bottom-right" };
+
+const QUEUE_KEY = "ct-assistant:queue";
+type Queued = { id: string; text: string };
+const storedQueue = (): Queued[] => {
+  try {
+    return JSON.parse(localStorage.getItem(QUEUE_KEY) ?? "[]") as Queued[];
+  } catch {
+    return [];
+  }
+};
 
 /** A few things to ask, for the page you're on; a tap sends it. */
 function suggestionsFor(path: string): string[] {
@@ -134,6 +145,69 @@ export function AssistantDock() {
   const { projectTint } = useAppearance();
   const tint = { "--tint": `rgb(${PROJECT_COLORS[projectTint && project ? projectColor(project) : "violet"].rgb})` } as React.CSSProperties;
 
+  const send = async (text: string): Promise<boolean> => {
+    stopSpeaking();
+    unlockAudio();
+    setBusy(true);
+    setError(null);
+    const r = await sendTurn(text);
+    setBusy(false);
+    if (r.ok) setView(r.data);
+    else {
+      setError(r.error);
+      if (r.code === "NO_PROVIDER") void load();
+    }
+    return r.ok;
+  };
+
+  // The queue, as in the Workshop's chat: Enter while a reply runs adds the message here, and the first one sends
+  // when the reply is done. Steer stops the reply and sends that one now; Edit puts it back in the box.
+  const [draft, setDraft] = useState("");
+  const [queue, setQueue] = useState<Queued[]>(storedQueue);
+  // a queued message the server refused stays first and waits for a click (no retry loop)
+  const [held, setHeld] = useState(false);
+  const sending = useRef(false);
+  useEffect(() => {
+    try {
+      if (queue.length) localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
+      else localStorage.removeItem(QUEUE_KEY);
+    } catch {
+      /* the queue stays until reload */
+    }
+  }, [queue]);
+  const connectedNow = !!view && view.provider !== "none";
+  useEffect(() => {
+    const next = queue[0];
+    if (!next || thinking || held || !connectedNow || sending.current) return;
+    sending.current = true;
+    void send(next.text).then((ok) => {
+      sending.current = false;
+      if (ok) setQueue((q) => q.filter((x) => x.id !== next.id));
+      else setHeld(true);
+    });
+    // send is a fresh function each render; the queue, the reply and the hold decide when to go
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queue, thinking, held, connectedNow]);
+  const submit = (text: string) => {
+    if (thinking || busy || queue.length) setQueue((q) => [...q, { id: `${Date.now()}-${q.length}`, text }]);
+    else void send(text);
+  };
+  const stop = () => void stopTurn().then((r) => r.ok && setView(r.data));
+  const steer = (id: string) => {
+    setQueue((q) => [...q.filter((x) => x.id === id), ...q.filter((x) => x.id !== id)]);
+    setHeld(false);
+    if (thinking) stop();
+  };
+  const editQueued = (it: Queued) => {
+    setQueue((q) => q.filter((x) => x.id !== it.id));
+    if (queue[0]?.id === it.id) setHeld(false);
+    setDraft((cur) => (cur.trim() ? `${cur}\n\n${it.text}` : it.text));
+  };
+  const unqueue = (it: Queued) => {
+    setQueue((q) => q.filter((x) => x.id !== it.id));
+    if (queue[0]?.id === it.id) setHeld(false);
+  };
+
   if (!real) return null;
 
   const corner = cornerOf(place);
@@ -189,20 +263,6 @@ export function AssistantDock() {
       setClosing(false);
       set({ collapsed: true });
     }, 160);
-  };
-
-  const send = async (text: string) => {
-    stopSpeaking();
-    unlockAudio();
-    setBusy(true);
-    setError(null);
-    const r = await sendTurn(text);
-    setBusy(false);
-    if (r.ok) setView(r.data);
-    else {
-      setError(r.error);
-      if (r.code === "NO_PROVIDER") void load();
-    }
   };
 
   const pick = (how: "self" | "chat") => {
@@ -303,7 +363,7 @@ export function AssistantDock() {
                 key={`${pathname}-${s}`}
                 type="button"
                 disabled={busy}
-                onClick={() => void send(s)}
+                onClick={() => submit(s)}
                 style={{ animationDelay: `${i * 60}ms` }}
                 className={cn(
                   "group flex w-fit max-w-full items-center gap-2 rounded-2xl border bg-background px-3.5 py-2 text-left text-sm transition-all duration-200",
@@ -361,7 +421,36 @@ export function AssistantDock() {
 
       {chatting && (
         <div className="shrink-0 px-3 pt-1 pb-3">
-          <Composer onSend={(t) => void send(t)} waiting={busy || thinking} autoFocus />
+          {queue.length > 0 && (
+            <ul className="mb-1.5 flex flex-col gap-1">
+              {queue.map((it, i) => (
+                <li
+                  key={it.id}
+                  className="flex items-center gap-2 rounded-xl border bg-muted/60 px-3 py-1.5 text-[13px] motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1"
+                >
+                  <span className="shrink-0 text-[10px] tracking-wide text-muted-foreground uppercase">{i === 0 && held ? "Not sent" : "Queued"}</span>
+                  <span className="min-w-0 flex-1 truncate" title={it.text}>
+                    {it.text}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => steer(it.id)}
+                    className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-[var(--tint)] hover:bg-[color-mix(in_srgb,var(--tint)_15%,transparent)]"
+                    title={thinking ? "Steer: stop the reply and send this now" : "Send this now"}
+                  >
+                    <CornerDownLeft className="size-3" /> {thinking ? "Steer" : "Send"}
+                  </button>
+                  <button type="button" onClick={() => editQueued(it)} className="shrink-0 rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground" title="Edit: back into the message box" aria-label="Edit queued message">
+                    <Pencil className="size-3" />
+                  </button>
+                  <button type="button" onClick={() => unqueue(it)} className="shrink-0 rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground" title="Remove from the queue" aria-label="Remove queued message">
+                    <X className="size-3" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <Composer text={draft} setText={setDraft} onSend={submit} onStop={stop} waiting={busy || thinking} autoFocus />
         </div>
       )}
     </section>

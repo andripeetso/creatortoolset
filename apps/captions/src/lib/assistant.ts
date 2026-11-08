@@ -41,6 +41,7 @@ async function call<T>(path: string, method = "GET", body?: unknown): Promise<{ 
 
 export const getAssistant = () => call<AssistantView>("");
 export const sendTurn = (text: string) => call<AssistantView>("/turn", "POST", { text });
+export const stopTurn = () => call<AssistantView>("/stop", "POST");
 export const keySaved = (env: string) => call<AssistantView>("/saved", "POST", { env });
 export const cancelSecret = () => call<AssistantView>("/cancel", "POST");
 export const navigated = () => call<AssistantView>("/navigated", "POST");

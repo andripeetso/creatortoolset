@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
-import { ArrowUp, Check, Loader2, Mic, X } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, type KeyboardEvent } from "react";
+import { ArrowUp, Check, Loader2, Mic, Square, X } from "lucide-react";
 import { BARS, useVoiceInput } from "@/lib/voice-input";
 import { cn } from "@/lib/utils";
 
@@ -7,10 +7,25 @@ const MAX_ROWS_PX = 160;
 
 /**
  * The assistant's message box: one rounded bar with the mic and send inside. Enter sends, Shift+Enter is a new
- * line. The mic records, shows your voice as moving bars, and puts the words in the box for you to check.
+ * line; while a reply runs, Enter queues it (the dock) and an empty box offers Stop. The mic records, shows your
+ * voice as moving bars, and puts the words in the box for you to check. The words are the dock's (Edit on a
+ * queued message puts them back here).
  */
-export function Composer({ onSend, waiting, autoFocus }: { onSend: (text: string) => void; waiting: boolean; autoFocus?: boolean }) {
-  const [text, setText] = useState("");
+export function Composer({
+  text,
+  setText,
+  onSend,
+  onStop,
+  waiting,
+  autoFocus,
+}: {
+  text: string;
+  setText: (t: string | ((cur: string) => string)) => void;
+  onSend: (text: string) => void;
+  onStop: () => void;
+  waiting: boolean;
+  autoFocus?: boolean;
+}) {
   const box = useRef<HTMLTextAreaElement>(null);
   const voice = useVoiceInput((said) => {
     setText((t) => (t.trim() ? `${t.trimEnd()} ${said}` : said));
@@ -31,7 +46,7 @@ export function Composer({ onSend, waiting, autoFocus }: { onSend: (text: string
 
   const send = () => {
     const t = text.trim();
-    if (!t || waiting) return;
+    if (!t) return;
     onSend(t);
     setText("");
   };
@@ -122,19 +137,22 @@ export function Composer({ onSend, waiting, autoFocus }: { onSend: (text: string
             >
               <Mic className="size-4" />
             </button>
-            <button
-              type="button"
-              onClick={send}
-              disabled={!text.trim() || waiting || writing}
-              className={cn(
-                iconBtn,
-                text.trim() && !waiting ? "scale-100 bg-[var(--tint)] text-white hover:brightness-110" : "scale-90 bg-muted text-muted-foreground",
-              )}
-              aria-label="Send"
-              title={waiting ? "Wait for the reply" : "Send (Enter)"}
-            >
-              <ArrowUp className="size-4" />
-            </button>
+            {waiting && !text.trim() ? (
+              <button type="button" onClick={onStop} className={cn(iconBtn, "bg-foreground text-background hover:opacity-80")} aria-label="Stop the reply" title="Stop">
+                <Square className="size-3 fill-current" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={send}
+                disabled={!text.trim() || writing}
+                className={cn(iconBtn, text.trim() ? "scale-100 bg-[var(--tint)] text-white hover:brightness-110" : "scale-90 bg-muted text-muted-foreground")}
+                aria-label={waiting ? "Queue" : "Send"}
+                title={waiting ? "Queue: sends when the reply is done (Enter)" : "Send (Enter)"}
+              >
+                <ArrowUp className="size-4" />
+              </button>
+            )}
           </>
         )}
       </div>

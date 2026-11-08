@@ -143,6 +143,19 @@ describe("a turn", () => {
   });
 });
 
+describe("stop", () => {
+  it("stops the running reply: it ends as stopped and the next message can go", async () => {
+    const cookie = await cookieOf("ana");
+    expect((await app.request("/api/assistant/turn", { method: "POST", ...json({ text: "Long one" }, { cookie }) })).status).toBe(202);
+    const r = await app.request("/api/assistant/stop", { method: "POST", headers: { cookie } });
+    expect(r.status).toBe(200);
+    expect(((await r.json()) as { messages: Array<{ text: string; status?: string }> }).messages.at(-1)).toMatchObject({ text: "*Stopped.*", status: "done" });
+    expect((await app.request("/api/assistant/stop", { method: "POST", headers: { cookie } })).status).toBe(404);
+    expect((await app.request("/api/assistant/turn", { method: "POST", ...json({ text: "Next" }, { cookie }) })).status).toBe(202);
+    await app.request("/api/assistant/stop", { method: "POST", headers: { cookie } });
+  });
+});
+
 describe("ask_secret and navigate", () => {
   it("ask_secret never stores or forwards a value; the saved key is recorded as its last four", async () => {
     const token = mintJobToken("ana", "turn-secret");

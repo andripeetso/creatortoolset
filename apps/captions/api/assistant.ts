@@ -170,11 +170,11 @@ export async function answerWithTools(
   route: Route,
   url: string,
   prompt: string,
-  opts: { label: string; turn: string; onDelta?: (text: string) => void; background?: boolean },
+  opts: { label: string; turn: string; onDelta?: (text: string) => void; background?: boolean; cancel?: AbortSignal },
 ): Promise<string> {
   const token = mintJobToken(username, opts.turn);
   try {
-    return await streamMacClaude(SYSTEM, prompt, undefined, (t) => opts.onDelta?.(t), undefined, {
+    return await streamMacClaude(SYSTEM, prompt, opts.cancel, (t) => opts.onDelta?.(t), undefined, {
       label: opts.label,
       background: opts.background,
       provider: { instance: route.instance.id, driver: route.instance.driver, home: route.instance.home, model: route.selection.model, effort: route.selection.effort, device: route.device, scope: route.scope },
@@ -188,12 +188,18 @@ export async function answerWithTools(
   }
 }
 
+/** The turn each account has running, for Stop. */
+const running = new Map<string, AbortController>();
+
 /** One turn of the dock: the reply fills in as it streams, then its status says how it ended. */
 async function runTurn(username: string, replyId: string, route: Route, url: string, prompt: string): Promise<void> {
+  const stop = new AbortController();
+  running.set(username, stop);
   try {
     const text = await answerWithTools(username, route, url, prompt, {
       label: "Assistant",
       turn: replyId,
+      cancel: stop.signal,
       onDelta: (t) => {
         const m = messageOf(username, replyId);
         if (m) m.text = t;
@@ -202,8 +208,12 @@ async function runTurn(username: string, replyId: string, route: Route, url: str
     });
     Object.assign(messageOf(username, replyId) ?? {}, { status: "done", text });
   } catch (e) {
-    Object.assign(messageOf(username, replyId) ?? {}, { status: "error", text: (e instanceof Error ? e.message : String(e)).slice(0, 300) || "The answer failed." });
+    const m = messageOf(username, replyId);
+    // stopped: what it had written stays, marked as stopped
+    if (stop.signal.aborted) Object.assign(m ?? {}, { status: "done", text: m?.text ? `${m.text}\n\n*Stopped.*` : "*Stopped.*" });
+    else Object.assign(m ?? {}, { status: "error", text: (e instanceof Error ? e.message : String(e)).slice(0, 300) || "The answer failed." });
   } finally {
+    if (running.get(username) === stop) running.delete(username);
     const t = pendingSave.get(username);
     if (t) clearTimeout(t);
     pendingSave.delete(username);
@@ -239,6 +249,17 @@ assistantApp.post("/turn", async (c) => {
   save(u.username);
   void runTurn(u.username, reply.id, route, `${publicOrigin(c)}/api/mcp`, promptFor(conv.messages));
   return c.json(view(u.username, u.role === "admin"), 202);
+});
+
+/** Stop the reply that's running (the dock's Stop, or Steer to send a queued message now). */
+assistantApp.post("/stop", async (c) => {
+  const u = c.get("user");
+  const stop = running.get(u.username);
+  if (!stop) return c.json({ error: "Nothing is running" }, 404);
+  stop.abort();
+  // the turn ends on the next tick (the Mac call rejects): answer with the view after it
+  await new Promise((r) => setTimeout(r, 0));
+  return c.json(view(u.username, u.role === "admin"));
 });
 
 /** The dock recorded a key the user saved in its secure box: a note with its last four digits, and the box closes. */
