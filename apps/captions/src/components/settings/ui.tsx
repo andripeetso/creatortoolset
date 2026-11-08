@@ -6,34 +6,42 @@ import { cn } from "@/lib/utils";
 import { selectCls } from "./helpers";
 
 
-/** A titled group of rows (each settings section is a titled block with a hint under the title). */
-export function Group({ title, hint, children, className }: { title: string; hint?: ReactNode; children: ReactNode; className?: string }) {
+/** A titled block of settings: the title (and an action, e.g. "Add") above, a hint under it, then its card. */
+export function Group({ title, hint, action, children, className }: { title: string; hint?: ReactNode; action?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <section className={cn("mt-8 first:mt-0", className)}>
-      <h3 className={cn("text-sm font-medium text-foreground", !hint && "mb-2")}>{title}</h3>
-      {hint && <p className="mb-2 mt-0.5 text-xs text-muted-foreground">{hint}</p>}
+    <section className={cn("mt-8 space-y-2.5 first:mt-0", className)}>
+      <div className="flex items-start justify-between gap-4 px-3 sm:px-4">
+        <div className="min-w-0">
+          <h3 className="flex min-h-7 items-center text-base font-semibold text-foreground">{title}</h3>
+          {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+        </div>
+        {action && <div className="flex min-h-7 shrink-0 items-center">{action}</div>}
+      </div>
       {children}
     </section>
   );
 }
 
-/** A bordered list of rows: label and hint on the left, the control on the right. */
+/** A rounded card of rows with hairlines between them. */
 export function Card({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cn("divide-y divide-border rounded-lg border border-border", className)}>{children}</div>;
-}
-
-export function Row({ label, hint, children }: { label: ReactNode; hint?: ReactNode; children?: ReactNode }) {
   return (
-    <div className="flex flex-wrap items-center gap-3 px-3 py-3">
-      <div className="min-w-0 flex-1">
-        <div className="text-sm text-foreground">{label}</div>
-        {hint && <div className="mt-0.5 text-xs text-muted-foreground">{hint}</div>}
-      </div>
+    <div className={cn("rounded-xl border border-border/60 bg-card/40 text-foreground [&>*+*]:border-t [&>*+*]:border-border/50", className)}>
       {children}
     </div>
   );
 }
 
+export function Row({ label, hint, children }: { label: ReactNode; hint?: ReactNode; children?: ReactNode }) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-8 gap-y-3 px-3 py-3 sm:px-4">
+      <div className="min-w-0 flex-1 space-y-1">
+        <div className="text-sm font-medium text-foreground">{label}</div>
+        {hint && <div className="text-xs text-muted-foreground">{hint}</div>}
+      </div>
+      {children}
+    </div>
+  );
+}
 
 export function ModelSelect({ value, options, onChange, disabled }: { value: string; options: string[]; onChange: (m: string) => void; disabled?: boolean }) {
   const list = options.includes(value) || !value ? options : [value, ...options];
