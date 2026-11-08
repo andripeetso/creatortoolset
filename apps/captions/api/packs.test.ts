@@ -138,7 +138,7 @@ describe("the team's default packs", () => {
     const { readOfficialPacks } = await import("./official-packs");
     const { DEFAULT_PACKS } = await import("./lib/packs");
     const ids = readOfficialPacks().map((o) => o.pack.id);
-    expect(ids).toEqual(expect.arrayContaining([...DEFAULT_PACKS, "storytelling-basics"]));
+    expect(ids).toEqual(expect.arrayContaining(DEFAULT_PACKS));
     expect(readdirSync(path.join(import.meta.dirname, "..", "packs")).length).toBe(ids.length);
   });
 
@@ -156,7 +156,8 @@ describe("the team's default packs", () => {
     expect(await packInstructions("newcreator", "workshop.write", null)).toContain('[Pack "Writing basics"');
 
     const old = await listInstalled("oldcreator");
-    expect(old.every((p) => p.default && p.off.includes("*"))).toBe(true);
+    // instruction packs start off for an older account; Storytelling frameworks has none, so nothing to switch
+    expect(old.filter((p) => Object.keys(p.instructions).length).every((p) => p.default && p.off.includes("*"))).toBe(true);
     expect(await packInstructions("oldcreator", "workshop.write", null)).toBe("");
 
     await removePack("newcreator", "writing-basics");
@@ -198,5 +199,20 @@ describe("which projects a pack reaches", () => {
     const old = { projectId: "brand-a", off: [], instructions: {} } as unknown as Parameters<typeof packOn>[0];
     expect(packOn(old, "brand-a")).toBe(true);
     expect(packOn(old, "brand-b")).toBe(false);
+  });
+});
+
+describe("Storytelling frameworks as a default", () => {
+  it("links the frameworks the person already has by name, copies none, and brings no deleted one back", async () => {
+    const { createUser } = await import("./users");
+    const { ensureDefaults, listInstalled } = await import("./lib/packs");
+    createUser("seeded", "secret-pass");
+    const mine = { id: "aaaaaaaa-0000-4000-8000-000000000001", owner: "seeded", name: "SCQA", role: "argument", summary: "x", steps: ["a"], whenToUse: "y", createdAt: 1, updatedAt: 1 };
+    writeFileSync(path.join(fwDir, `${mine.id}.json`), JSON.stringify(mine));
+    const before = frameworks().length;
+    await ensureDefaults("seeded", ["storytelling-basics"]);
+    const st = (await listInstalled("seeded")).find((p) => p.id === "storytelling-basics")!;
+    expect(st.items.frameworks).toEqual([mine.id]);
+    expect(frameworks().length).toBe(before);
   });
 });

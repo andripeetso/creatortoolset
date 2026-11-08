@@ -22,7 +22,13 @@ import type { Framework } from "./workshop/types";
  */
 
 /** The team's packs every account starts with (files in apps/captions/packs/). */
-export const DEFAULT_PACKS = ["writing-basics", "editing-basics", "analyzer-basics", "caption-styles-basics"];
+export const DEFAULT_PACKS = ["writing-basics", "editing-basics", "analyzer-basics", "caption-styles-basics", "storytelling-basics"];
+/**
+ * Defaults whose frameworks every account already has as the Workshop's starter frameworks (seeds.ts): installing
+ * one only links the person's own frameworks of the same names, never copies, so nothing doubles and a starter
+ * framework they deleted stays deleted.
+ */
+const ADOPT_ONLY = new Set(["storytelling-basics"]);
 /** Accounts created before this get the defaults installed but switched off. */
 const DEFAULTS_ON_FROM = Date.UTC(2026, 10, 7, 20);
 
@@ -87,9 +93,9 @@ export async function ensureDefaults(username: string, ids = DEFAULT_PACKS): Pro
       if (!o) continue;
       done.add(id);
       if (state.packs.some((p) => p.id === id)) continue;
-      const { installed } = await installInto(state, username, o.pack, o.level, {});
+      const { installed } = await installInto(state, username, o.pack, o.level, { adopt: ADOPT_ONLY.has(id) });
       installed.default = true;
-      if (!on) installed.off = ["*"];
+      if (!on && Object.keys(installed.instructions).length) installed.off = ["*"];
     }
     state.defaultsSeen = [...done];
     await saveState(username, state);
@@ -116,6 +122,8 @@ export interface InstallResult {
 export interface InstallOptions {
   /** Only these projects; missing or empty = every project. */
   projectIds?: string[];
+  /** Link the person's frameworks of the same names instead of copying the pack's (ADOPT_ONLY). */
+  adopt?: boolean;
 }
 
 /**
@@ -150,8 +158,14 @@ async function installInto(state: State, username: string, pack: Pack, level: Pa
       else if (f && f.owner === username) { frameworks.push(id); kept++; }
     }
     // a framework the person already has by that name (their own, a starter one, an edited pack copy) stays theirs
-    const have = new Set((await ownFrameworks(username)).map((f) => f.name.toLowerCase()));
+    const own = await ownFrameworks(username);
+    const have = new Set(own.map((f) => f.name.toLowerCase()));
     for (const [i, f] of (pack.frameworks ?? []).entries()) {
+      if (o.adopt) {
+        const mine = own.find((x) => x.name.toLowerCase() === f.name.toLowerCase());
+        if (mine && !frameworks.includes(mine.id)) frameworks.push(mine.id);
+        continue;
+      }
       if (have.has(f.name.toLowerCase())) continue;
       const fw: Framework = { id: randomUUID(), owner: username, ...f, from: origin, createdAt: now - i, updatedAt: now - i };
       await writeJsonAtomic(frameworkFile(fw.id), fw);
