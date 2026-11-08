@@ -1,5 +1,6 @@
-import type { PackFramework, PackSlot } from "@contracts/packs";
-import { packContents } from "./packs-helpers";
+import type { PackFramework } from "@contracts/packs";
+import { Link } from "react-router";
+import { containsOf, destinations, packContents, USED_SLOTS } from "./packs-helpers";
 
 type Contents = Parameters<typeof packContents>[0];
 
@@ -52,30 +53,31 @@ function FrameworkRow({ f }: { f: PackFramework }) {
   );
 }
 
-/** Where each kind of instruction is read, in plain words (the detail page's "What installing does"). */
-const SLOT_EFFECT: Partial<Record<PackSlot, string>> = {
-  "workshop.write": "The Workshop's AI reads this text when it writes and edits your pieces.",
-  "workshop.review": "The Workshop's AI reads it when it does the follower read and the fact check.",
-  "analyzer.ideas": "The Content Analyzer reads it when it names ideas and tags posts.",
-  "captions.lines": "Caption Studio reads it when it decides where captions break into lines.",
-  "editor.script": "The AI Editor reads it when it plans the script.",
-};
-
-/** What installing this does, kind by kind, then how to undo it. */
-export function InstallEffects({ pack }: { pack: Contents }) {
-  const slots = packContents(pack).slots.map((s) => s.slot);
-  const lines = [
-    ...slots.flatMap((s) => SLOT_EFFECT[s] ?? []),
-    ...(slots.length ? ["It goes after the app's own instructions and before your own rules and notes. Where they disagree, yours win."] : []),
-    ...(pack.frameworks?.length ? ["Adds the frameworks to your Workshop, where you pick them for a piece. Each copy is yours to edit or delete. One you already have by the same name is left as it is."] : []),
-    ...(pack.captionStyles?.length ? ["Adds the styles to your style list in Caption Studio."] : []),
-    ...(slots.length ? ["You can switch it off, or keep it to some of your projects, under Installed."] : []),
+/** Where a pack lands in the app, one row per place: stage, tool, the spot in it, what it does there, a link to it. */
+export function WhereItGoes({ pack }: { pack: Contents }) {
+  const c = containsOf(pack);
+  const rows = destinations(c);
+  const notes = [
+    ...(c.instructions.some((s) => USED_SLOTS.includes(s)) ? ["Instructions go after the app's own and before your own rules and notes. Where they disagree, yours win. Switch them off, or keep them to some projects, under Installed."] : []),
     "Removing it deletes the copies you haven't changed and keeps the ones you have.",
   ];
   return (
-    <ul className="list-disc space-y-1 pl-4 text-xs text-muted-foreground">
-      {lines.map((l) => <li key={l}>{l}</li>)}
-    </ul>
+    <div className="space-y-2">
+      {rows.map((r) => (
+        <div key={r.tool + r.spot} className="rounded-lg border border-border p-3">
+          <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs">
+            <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">{r.stage}</span>
+            <Link to={r.to} className="font-medium text-foreground underline-offset-2 hover:underline">{r.tool}</Link>
+            <span className="text-muted-foreground">›</span>
+            <span className="text-foreground">{r.spot}</span>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">{r.does}</p>
+        </div>
+      ))}
+      <ul className="list-disc space-y-1 pl-4 pt-1 text-xs text-muted-foreground">
+        {notes.map((n) => <li key={n}>{n}</li>)}
+      </ul>
+    </div>
   );
 }
 

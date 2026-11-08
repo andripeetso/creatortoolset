@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { countLabel, packContents, packKinds, packProjects, slugify } from "./packs-helpers";
+import { countLabel, destinations, packContents, packKinds, packProjects, slugify, toolLine } from "./packs-helpers";
 
 describe("packContents", () => {
   it("lists instruction slots in the app's slot order, with their labels, and leaves out ones this app doesn't use", () => {
@@ -54,5 +54,17 @@ describe("countLabel and packProjects", () => {
 describe("slugify", () => {
   it("turns a name into a pack id", () => {
     expect(slugify("  Punchy Hooks, LinkedIn!  ")).toBe("punchy-hooks-linkedin");
+  });
+});
+
+describe("where a pack goes", () => {
+  it("maps frameworks, guides and styles to their tool and spot, and leaves out what this app doesn't read", () => {
+    const c = { instructions: ["workshop.write" as const, "editor.cards" as const], frameworks: 3, captionStyles: 2, designSystems: 1 };
+    expect(destinations(c).map((x) => `${x.stage} ${x.tool} › ${x.spot}`)).toEqual([
+      "Plan Content Workshop › A piece's Shape menu",
+      "Plan Content Workshop › Every message to the AI on a piece",
+      "Make Caption Studio › The style list when you caption a video",
+    ]);
+    expect(toolLine(c)).toBe("Plan · Content Workshop, Make · Caption Studio");
   });
 });

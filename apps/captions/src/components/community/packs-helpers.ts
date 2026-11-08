@@ -71,3 +71,54 @@ export function packProjects(p: Pick<InstalledPack, "projectIds" | "projectId">)
 /** The pack id an item gets from its name ("Punchy Hooks" → "punchy-hooks"). */
 export const slugify = (name: string): string =>
   name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
+
+/** Where in the app a pack's contents land: the workflow stage (as on Home), the tool, the spot in it, what it does. */
+export interface Destination {
+  stage: "Plan" | "Make";
+  tool: string;
+  to: string;
+  spot: string;
+  does: string;
+}
+
+/** The places this app reads a pack (design systems and editor.cards are left out, as in USED_SLOTS). */
+export function destinations(c: CatalogEntry["contains"]): Destination[] {
+  const has = (s: PackSlot) => c.instructions.includes(s);
+  const out: Destination[] = [];
+  const workshop = { stage: "Plan", tool: "Content Workshop", to: "/workshop" } as const;
+  const analyzer = { stage: "Plan", tool: "Content Analyzer", to: "/instagram" } as const;
+  const captions = { stage: "Make", tool: "Caption Studio", to: "/captions" } as const;
+  const editor = { stage: "Make", tool: "AI Editor", to: "/editor" } as const;
+  if (c.frameworks)
+    out.push({ ...workshop, spot: "A piece's Shape menu",
+      does: "You pick up to one per role for a piece: Shape sets the order, Persuasion shapes the ask, Argument shapes the reasoning. The AI writes the piece along the steps of the ones you picked; with none picked, it can look through all of them." });
+  if (has("workshop.write"))
+    out.push({ ...workshop, spot: "Every message to the AI on a piece", does: "Added to what the AI is told when it writes and edits your reels, carousels and ads." });
+  if (has("workshop.review"))
+    out.push({ ...workshop, spot: "Follower read and Fact check", does: "Added to what the AI is told when it reads a piece as a follower and checks its claims." });
+  if (has("analyzer.ideas"))
+    out.push({ ...analyzer, spot: "Ideas and tags on each post", does: "Added to what the AI is told when it names a post's idea and tags it." });
+  if (c.captionStyles)
+    out.push({ ...captions, spot: "The style list when you caption a video", does: "New styles to pick from; each is yours to change." });
+  if (has("captions.lines"))
+    out.push({ ...captions, spot: "Where captions break into lines", does: "Added to what the AI is told when it splits a transcript into caption lines." });
+  if (has("editor.script"))
+    out.push({ ...editor, spot: "The script", does: "Added to what the AI is told when it plans an edit's script." });
+  return out;
+}
+
+/** A pack's `contains`, worked out from the pack itself (the detail page has the pack, the cards have `contains`). */
+export function containsOf(p: Partial<Pick<Pack, "instructions" | "frameworks" | "captionStyles" | "designSystems">>): CatalogEntry["contains"] {
+  return {
+    instructions: (Object.keys(p.instructions ?? {}) as PackSlot[]).filter((s) => p.instructions?.[s]),
+    frameworks: p.frameworks?.length ?? 0,
+    captionStyles: p.captionStyles?.length ?? 0,
+    designSystems: p.designSystems?.length ?? 0,
+  };
+}
+
+/** The tools a pack reaches, "Plan · Content Workshop", for the cards. */
+export function toolLine(c: CatalogEntry["contains"]): string {
+  const seen = new Set<string>();
+  return destinations(c).filter((d) => !seen.has(d.tool) && seen.add(d.tool)).map((d) => `${d.stage} · ${d.tool}`).join(", ");
+}

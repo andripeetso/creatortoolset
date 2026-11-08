@@ -7,7 +7,7 @@ import { msg } from "../settings/helpers";
 import { Loading, Notice } from "../settings/ui";
 import { CaptionSample } from "./PackPreview";
 import { PackActions } from "./PackActions";
-import { ContentsSummary, ContentsView, InstallEffects, OfficialBadge } from "./PacksShared";
+import { ContentsSummary, ContentsView, OfficialBadge, WhereItGoes } from "./PacksShared";
 import { countLabel, kindLine, packKinds } from "./packs-helpers";
 const BACK = (
   <Link to="/community/explore" className="-ml-1 text-xs text-muted-foreground hover:text-foreground">
@@ -62,9 +62,9 @@ export function PackDetailView({ id, installed, reload }: { id: string; installe
         <PackActions id={id} name={entry.name} installed={installed} latest={entry.version} reload={reload} />
       </div>
       <section className="mt-5">
-        <h3 className="text-xs font-medium text-foreground">What installing does</h3>
-        <div className="mt-1">
-          <InstallEffects pack={pack} />
+        <h3 className="text-xs font-medium text-foreground">Where it goes</h3>
+        <div className="mt-2">
+          <WhereItGoes pack={pack} />
         </div>
       </section>
       <section className="mt-5 rounded-lg border border-border p-4">

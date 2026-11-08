@@ -4,7 +4,7 @@ import type { CatalogDetail, CatalogEntry, UpdateRow } from "@contracts/pack-cat
 import { compareVersions, type InstalledPack } from "@contracts/packs";
 import { cachedCatalogPack } from "@/lib/pack-catalog";
 import { Notice } from "../settings/ui";
-import { countLabel, kindLine, PACK_KINDS, packKinds, type KindId } from "./packs-helpers";
+import { countLabel, kindLine, PACK_KINDS, packKinds, toolLine, type KindId } from "./packs-helpers";
 import { PackPreview } from "./PackPreview";
 import { OfficialBadge } from "./PacksShared";
 export interface CatalogProps {
@@ -94,6 +94,7 @@ function PackCard({ entry, installed, latest }: { entry: CatalogEntry; installed
           {entry.official && <OfficialBadge />}
         </div>
         <span className="text-[11px] text-muted-foreground">{kindLine(packKinds(entry.contains))}</span>
+        <span className="text-[11px] text-muted-foreground">{toolLine(entry.contains)}</span>
         <span className="text-xs text-muted-foreground">by {entry.author}</span>
         <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{entry.description}</p>
         <div className="mt-auto flex items-center justify-between gap-2 pt-2 text-[11px]">
