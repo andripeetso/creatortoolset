@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { AssistantView } from "@contracts/assistant";
+import type { AssistantTurnInput, AssistantView } from "@contracts/assistant";
 
 /**
  * The dock's client (components/assistant/AssistantDock.tsx) and its server calls (api/assistant.ts). The dock is open
@@ -40,7 +40,7 @@ async function call<T>(path: string, method = "GET", body?: unknown): Promise<{ 
 }
 
 export const getAssistant = () => call<AssistantView>("");
-export const sendTurn = (text: string) => call<AssistantView>("/turn", "POST", { text });
+export const sendTurn = (input: AssistantTurnInput) => call<AssistantView>("/turn", "POST", input);
 export const stopTurn = () => call<AssistantView>("/stop", "POST");
 export const keySaved = (env: string) => call<AssistantView>("/saved", "POST", { env });
 export const cancelSecret = () => call<AssistantView>("/cancel", "POST");

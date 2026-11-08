@@ -156,7 +156,7 @@ export function AssistantDock() {
     unlockAudio();
     setBusy(true);
     setError(null);
-    const r = await sendTurn(text);
+    const r = await sendTurn({ text });
     setBusy(false);
     if (r.ok) setView(r.data);
     else {

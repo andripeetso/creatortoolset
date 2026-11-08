@@ -18,6 +18,11 @@ export interface AssistantMessage {
   status?: "thinking" | "done" | "error";
   /** What the reply did on the way, one line per tool it used ("Looking through Review"), shown as it works. */
   steps?: string[];
+  /** A user message's attachments as shown in the chat: pictures by name (served by GET /api/assistant/images/:id), pastes by name. */
+  images?: Array<{ id: string; name: string }>;
+  pasted?: string[];
+  /** The highlighted text a user message asked about. */
+  quote?: string;
 }
 
 /** A key the assistant asked for (ask_secret): shown as a password box in the dock. */
@@ -25,6 +30,37 @@ export interface AssistantPending {
   env: string;
   name: string;
   why: string;
+}
+
+/** A picture sent with a message (dropped, pasted or a screenshot): PNG, JPEG, WebP or GIF, base64 without the data: prefix. */
+export interface AssistantImage {
+  name: string;
+  type: "image/png" | "image/jpeg" | "image/webp" | "image/gif";
+  data: string;
+}
+
+/** Long text pasted into the box, sent as a file beside the message instead of in it. */
+export interface AssistantPaste {
+  name: string;
+  text: string;
+}
+
+/** What the user is looking at when they send (the dock fills it in): the page, and any text they highlighted. */
+export interface AssistantContext {
+  path: string;
+  title: string;
+  /** Text highlighted on the page and sent to the chat ("Ask about this"). */
+  selection?: string;
+  /** A few lines that say what's on screen: the page's headings and the open item's name. */
+  visible?: string;
+}
+
+/** POST /api/assistant/turn's body. */
+export interface AssistantTurnInput {
+  text: string;
+  images?: AssistantImage[];
+  pasted?: AssistantPaste[];
+  context?: AssistantContext;
 }
 
 /** An earlier conversation, kept when a new one starts (Earlier chats in the dock). */
