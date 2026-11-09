@@ -54,6 +54,7 @@ const pluginRoutes = webPlugins.flatMap((p) => p.routes ?? []);
 // a plug-in's replacement for the editor pages (replaces in web.tsx); the built-in pages when none does
 const EditorScreen = replacementFor(webPlugins, "editor") ?? EditorPage;
 const EditorEditScreen = replacementFor(webPlugins, "editorEdit") ?? EditorEditPage;
+const LibraryScreen = replacementFor(webPlugins, "media") ?? LibraryPage;
 
 const MobileCaptionPage = lazy(
   () => import("./pages/mobile/MobileCaptionPage"),
@@ -346,7 +347,7 @@ export default function App() {
           <Route path="/rp/:ptoken" element={<ReviewSharedProjectPage />} />
           <Route path="/ws/:token" element={<WorkshopSharePage />} />
           <Route path="/library/s/:token" element={<LibrarySharePage />} />
-          <Route path="/library" element={<AppRoute tool="media"><LibraryPage /></AppRoute>} />
+          <Route path="/library" element={<AppRoute tool="media"><LibraryScreen /></AppRoute>} />
           <Route path="/finals" element={<AppRoute tool="media"><FinalsPage /></AppRoute>} />
           <Route path="/finals/:pieceId" element={<AppRoute tool="media"><FinalsPiecePage /></AppRoute>} />
           <Route path="/stories" element={<AppRoute tool="stories"><StorySplitterPage /></AppRoute>} />

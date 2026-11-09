@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { env } from "../lib/env";
@@ -21,6 +22,20 @@ export function homeOf(username: string): string {
     }
   }
   return before[username] ?? username;
+}
+
+/**
+ * The account's own local library, made silently the first time something needs one (Finals, the Home readiness, the
+ * Media Library): "Library". Nothing when it has one already or may not use the Media Library.
+ */
+export function ensureLibrary(username: string): void {
+  const account = findUser(username);
+  if (account && !mayUse(account, "media")) return;
+  const home = homeOf(username);
+  if (libraryDb().prepare("SELECT 1 FROM libraries WHERE workspace_id = ? LIMIT 1").get(home)) return;
+  libraryDb()
+    .prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES (?, ?, 'Library', 'local', ?)")
+    .run(`lib_${randomUUID().replace(/-/g, "").slice(0, 16)}`, home, Date.now());
 }
 
 /**

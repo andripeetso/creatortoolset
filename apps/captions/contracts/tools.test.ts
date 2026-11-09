@@ -49,10 +49,11 @@ describe("TOOL_NEEDS readiness", () => {
 describe("home order and need copy", () => {
   it("TOOL_GROUPS is the home's order and lists every tool once", async () => {
     const { TOOL_GROUPS } = await import("./tools");
-    expect(TOOL_GROUPS.map((g) => g.label)).toEqual(["Plan", "Make", "Extras"]);
+    expect(TOOL_GROUPS.map((g) => g.label)).toEqual(["Plan", "Make", "Distribute", "Extras"]);
     expect(TOOL_GROUPS.map((g) => g.tools)).toEqual([
       ["instagram", "workshop"],
       ["media", "editor", "review"],
+      [],
       ["enhance", "captions", "clean", "stories", "notes", "guides"],
     ]);
     expect(TOOL_GROUPS.flatMap((g) => g.tools).sort()).toEqual([...TOOLS].sort());

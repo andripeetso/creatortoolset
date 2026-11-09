@@ -59,6 +59,8 @@ export interface PluginAccountItem {
 export interface PluginReplacements {
   editor?: ComponentType;
   editorEdit?: ComponentType;
+  // the Media Library (/library): a plug-in's catalog view replaces the storage library and its Home tile
+  media?: ComponentType;
 }
 
 export type ReplaceSlot = keyof PluginReplacements;

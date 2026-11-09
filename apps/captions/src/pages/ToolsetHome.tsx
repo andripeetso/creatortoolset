@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from "react";
 import { Link, Navigate, useLocation } from "react-router";
-import { ArrowRight, ChevronRight, Loader2, Lock, ScreenShare, type LucideIcon } from "lucide-react";
+import { ArrowRight, ChevronRight, Loader2, Lock, ScreenShare, Star, type LucideIcon } from "lucide-react";
 import { canUse, useMe, type Me } from "@/lib/auth";
 import { isPhoneHub } from "@/lib/mobile";
 import { shownTools, useOpenTool, withPluginTiles, type Tool as HomeTool } from "@/lib/tools";
@@ -28,7 +28,7 @@ import { openSetupAt, resumeStep, setupFinished, setupOpen, useSetup } from "@/l
  */
 
 /** A tile on this page: a contracts tool, or the Mac app's Screen Recorder (no tool of its own, so no setup row). */
-type Key = Tool | "record";
+type Key = Tool | "record" | "finals";
 
 /** What a tile links to and says on hover. The tool's name and order come from TOOL_GROUPS and TOOL_NAMES. */
 const PAGE: Record<Key, { to: string; phoneTo?: string; desc: string }> = {
@@ -45,22 +45,24 @@ const PAGE: Record<Key, { to: string; phoneTo?: string; desc: string }> = {
   guides: { to: "/documents", desc: "Turn recordings into SOPs, walkthroughs and guides you can publish." },
   // the Mac app's recorder (apps/mac Recorder.swift); Review and Video Notes start it too
   record: { to: "/record", desc: "Record your screen, a window or an area, with your camera and voice. Zooms where you click." },
+  finals: { to: "/finals", desc: "Your finished reels, carousels and other pieces, with the winner, versions and where each was posted." },
 };
-const NAME: Record<Key, string> = { ...TOOL_NAMES, record: "Screen Recorder" };
-const ICON: Record<Key, LucideIcon> = { ...TOOL_ICONS, record: ScreenShare };
+const NAME: Record<Key, string> = { ...TOOL_NAMES, record: "Screen Recorder", finals: "Finals" };
+const ICON: Record<Key, LucideIcon> = { ...TOOL_ICONS, record: ScreenShare, finals: Star };
 
 /** The plug-in tiles (lib/tools.ts): each joins the box its stage names; a stage with no box here (Distribute) goes to Extras. */
 const plugged = withPluginTiles(webPlugins);
 const pluginTilesFor = (stage: string, me: Me | null): HomeTool[] =>
   shownTools(
     stage === "Extras"
-      ? [...plugged.workflow.filter((s) => s.stage !== "Plan" && s.stage !== "Make").flatMap((s) => s.tools), ...plugged.other]
+      ? [...plugged.workflow.filter((s) => !["Plan", "Make", "Distribute"].includes(s.stage)).flatMap((s) => s.tools), ...plugged.other]
       : plugged.workflow.find((s) => s.stage === stage)?.tools ?? [],
     me,
   ).filter((t) => t.pluginTile);
 
 /** Screen Recorder is open to whoever can use Review or Video Notes, the two places a recording goes. */
-const canUseKey = (me: Me | null, k: Key) => (k === "record" ? canUse(me, "review") || canUse(me, "notes") : canUse(me, k));
+const canUseKey = (me: Me | null, k: Key) =>
+  k === "record" ? canUse(me, "review") || canUse(me, "notes") : canUse(me, k === "finals" ? "media" : k);
 
 export default function ToolsetHome() {
   const location = useLocation();
@@ -97,9 +99,10 @@ export default function ToolsetHome() {
   /** Ready or needs setup for a tile, from the account's setup; null when there is nothing to say (no setup, or off). */
   const statusOf = (k: Key): boolean | null => {
     if (!view || !canUseKey(me, k)) return null;
-    if (k === "record") return readiness("review", view.have).ready; // the recorder needs nothing Review doesn't
-    if (view.tools && !view.tools.includes(k)) return null;
-    return readiness(k, view.have).ready;
+    // the recorder needs nothing Review doesn't; Finals is a view of the Media Library
+    const tool = k === "record" ? "review" : k === "finals" ? "media" : k;
+    if (view.tools && !view.tools.includes(tool)) return null;
+    return readiness(tool, view.have).ready;
   };
   const extrasGroup = TOOL_GROUPS.find((g) => g.id === "tools");
   const extras: Key[] = [...(extrasGroup?.tools ?? []), "record"];
@@ -122,7 +125,7 @@ export default function ToolsetHome() {
           : "relative flex h-12 w-12 items-center justify-center rounded-2xl 2xl:h-14 2xl:w-14 bg-[color-mix(in_srgb,var(--tint)_90%,transparent)] transition-colors duration-200 group-hover:bg-[var(--tint)]"}>
           <Icon className={quiet ? "h-5 w-5 text-[var(--tint-text)]" : "h-6 w-6 text-white"} />
           {!ok && <Lock className="absolute -bottom-1 -right-1 h-4 w-4 rounded-full bg-zinc-900 p-0.5 text-zinc-300" />}
-          {ok && (k === "workshop" ? showCounts && <WorkshopBadge /> : k !== "record" && <Badge n={waiting[k] ?? 0} means={BADGE_MEANS[k]} />)}
+          {ok && (k === "workshop" ? showCounts && <WorkshopBadge /> : k !== "record" && k !== "finals" && <Badge n={waiting[k] ?? 0} means={BADGE_MEANS[k]} />)}
           {ok && running[dest] ? <Running n={running[dest]} verb="writing" /> : null}
           {ok && ready === false && <NeedsSetup />}
         </span>
@@ -194,7 +197,7 @@ export default function ToolsetHome() {
       </AppBar>
       {phone && <div className="h-16 shrink-0" />}
 
-      <div className="flex w-[520px] max-w-[94vw] flex-col gap-3 min-[900px]:w-[900px] min-[900px]:gap-6 2xl:w-[1000px]">
+      <div className="flex w-[520px] max-w-[94vw] flex-col gap-3 min-[900px]:w-[1120px] min-[900px]:gap-6 2xl:w-[1280px]">
         {view && !setupFinished(view) && !setupOpen(view, asked) && (
           <button
             type="button"
@@ -209,13 +212,13 @@ export default function ToolsetHome() {
           </button>
         )}
 
-        {/* the boxed groups (Plan, Make) in a row with arrows between, then Extras: quieter, a centred label */}
-        <div className="flex flex-col gap-1.5 min-[900px]:grid min-[900px]:grid-cols-[1fr_auto_1fr] min-[900px]:gap-2">
+        {/* the boxed groups (Plan, Make, Distribute) in a row with arrows between, then Extras: quieter, a centred label */}
+        <div className="flex flex-col gap-1.5 min-[900px]:grid min-[900px]:grid-cols-[1fr_auto_1fr_auto_1fr] min-[900px]:gap-2">
           {TOOL_GROUPS.filter((g) => g.id !== "tools").map((g, i) => (
             <Fragment key={g.id}>
               {i > 0 && (
-                <div className="flex items-center justify-center gap-2 self-center min-[900px]:w-28 min-[900px]:flex-col min-[900px]:gap-1 min-[900px]:px-3">
-                  {showCounts && <Between />}
+                <div className="flex items-center justify-center gap-2 self-center min-[900px]:w-20 min-[900px]:flex-col min-[900px]:gap-1 min-[900px]:px-2">
+                  {showCounts && i === 1 && <Between />}
                   <ArrowRight className="h-4 w-4 shrink-0 rotate-90 text-zinc-600 min-[900px]:rotate-0" />
                 </div>
               )}
@@ -228,7 +231,7 @@ export default function ToolsetHome() {
               >
                 <h2 className="px-1 pb-2 text-[11px] font-medium uppercase tracking-wider text-zinc-500">{g.label}</h2>
                 <div className="flex items-start justify-center gap-4 min-[900px]:justify-evenly min-[900px]:gap-0">
-                  {[...g.tools.map((t) => tile(t)), ...pluginTilesFor(g.label, me).map((t) => pluginTile(t))].map((node, j) => (
+                  {[...(g.id === "distribute" ? ["finals" as Key] : g.tools).map((t) => tile(t)), ...pluginTilesFor(g.label, me).map((t) => pluginTile(t))].map((node, j) => (
                     <Fragment key={j}>
                       {j > 0 && <ChevronRight className="mt-6 h-4 w-4 shrink-0 text-zinc-700 2xl:mt-7" />}
                       {node}

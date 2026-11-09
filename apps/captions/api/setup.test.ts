@@ -25,7 +25,8 @@ const put = (body: unknown) => app.request("/api/setup", { method: "PUT", body: 
 
 describe("setup: my tools, my plan, what is set up", () => {
   it("starts unasked, keeps the tools in home order and the plan, refuses junk", async () => {
-    expect(await get()).toMatchObject({ tools: null, plan: null, detected: null, done: false, have: [] });
+    // the default library is made the first time setup reads it, so a new account has it (no setup step)
+    expect(await get()).toMatchObject({ tools: null, plan: null, detected: null, done: false, have: ["library"] });
     expect((await put({ tools: ["editor", "workshop"] })).status).toBe(200);
     expect((await put({ tools: ["nope"] })).status).toBe(400);
     expect((await put({ plan: "claude_ultra" })).status).toBe(400);

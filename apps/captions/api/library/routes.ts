@@ -7,7 +7,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { AuthVars } from "../auth";
 import { env } from "../lib/env";
 import { appendBody, freeBytes, sha256File } from "../lib/uploads";
-import { homeOf, libraryRole, mayWrite } from "./access";
+import { ensureLibrary, homeOf, libraryRole, mayWrite } from "./access";
 import { expandCollection } from "./collections";
 import { blobs, libraryDb, libraryStore, meter } from "./db";
 import { sendFile } from "../lib/send-file";
@@ -473,6 +473,7 @@ libraryApp.post("/uploads/:uploadId/finish", async (c) => {
 // GET /api/library → the caller's libraries
 libraryApp.get("/", (c) => {
   const user = c.get("user");
+  ensureLibrary(user.username);
   const rows = db()
     .prepare("SELECT id, name, storage_kind, settings FROM libraries WHERE workspace_id = ? ORDER BY created_at, id")
     .all(homeOf(user.username)) as { id: string; name: string; storage_kind: LibrarySummary["storage"]; settings: string }[];

@@ -9,7 +9,7 @@ import { publicApifyStatus, readApify } from "./lib/instagram/apify";
 import { connectedOwn } from "./lib/providers";
 import { addMcp, connectCli, localAiView, signIn, CLI_IDS, MAC_ONLY } from "./lib/local-ai";
 import { ownedProjects } from "./lib/workshop/workspace";
-import { homeOf } from "./library/access";
+import { ensureLibrary, homeOf } from "./library/access";
 import { libraryDb } from "./library/db";
 import { keyFor } from "./my-keys";
 import {
@@ -86,6 +86,7 @@ export async function haveFor(user: SessionUser): Promise<Have[]> {
   )
     have.push("instagram");
   if (publicApifyStatus(await readApify(u)).configured) have.push("apify");
+  ensureLibrary(u);
   if (
     libraryDb()
       .prepare("SELECT 1 FROM libraries WHERE workspace_id = ? LIMIT 1")

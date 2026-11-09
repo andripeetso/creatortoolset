@@ -60,9 +60,11 @@ export const TOOL_LINES: Record<Tool, string> = {
 };
 
 /** The home page's sections, in its order (the page renders from this, so the two cannot drift). */
-export const TOOL_GROUPS: ReadonlyArray<{ id: "plan" | "make" | "tools"; label: string; tools: Tool[] }> = [
+export const TOOL_GROUPS: ReadonlyArray<{ id: "plan" | "make" | "distribute" | "tools"; label: string; tools: Tool[] }> = [
   { id: "plan", label: "Plan", tools: ["instagram", "workshop"] },
   { id: "make", label: "Make", tools: ["media", "editor", "review"] },
+  // Finals is a view of the library, not a Tool: Home draws it in this box (ToolsetHome)
+  { id: "distribute", label: "Distribute", tools: [] },
   { id: "tools", label: "Extras", tools: ["enhance", "captions", "clean", "stories", "notes", "guides"] },
 ];
 
