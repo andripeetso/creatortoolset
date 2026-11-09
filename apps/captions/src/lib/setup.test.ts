@@ -1,17 +1,31 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { dismissSetup, MAKE_NAMES, resumeStep, SETUP_STEPS, setupDismissed, setupFinished, setupOpensItself, setupStepFromParam, toolForPath, toolsFor } from "./setup";
+import { dismissSetup, MAKE_NAMES, resumeStep, SETUP_STEPS, setupDismissed, setupFinished, setupOpensItself, setupStepFromParam, stageOf, stepsFor, toolForPath, toolsFor } from "./setup";
 import { TOOLS } from "@contracts/tools";
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe("setup steps", () => {
-  it("has the same five steps on every path, in order", () => {
-    expect(SETUP_STEPS).toEqual(["how", "make", "project", "ai", "done"]);
+  it("starts with the mode cards, then Connect, Agents and Folders, and ends on done", () => {
+    expect(SETUP_STEPS).toEqual(["how", "connect", "agents", "folders", "make", "project", "done"]);
+  });
+
+  it("skips Agents for In the app and Folders for In my own AI", () => {
+    expect(stepsFor("app")).not.toContain("agents");
+    expect(stepsFor("app")).toContain("folders");
+    expect(stepsFor("chat")).not.toContain("folders");
+    expect(stepsFor("chat")).toContain("agents");
+    expect(stepsFor("both")).toEqual([...SETUP_STEPS]);
+    expect(stepsFor(null)).toEqual([...SETUP_STEPS]);
+  });
+
+  it("puts each step in one of the three bar stages", () => {
+    expect(SETUP_STEPS.map(stageOf)).toEqual([0, 0, 1, 2, 2, 2, 2]);
   });
 
   it("maps the old step ids to the step they now belong to", () => {
     expect(setupStepFromParam("tools")).toBe("make");
-    expect(setupStepFromParam("connect")).toBe("ai");
+    expect(setupStepFromParam("ai")).toBe("agents");
+    expect(setupStepFromParam("connect")).toBe("connect");
     expect(setupStepFromParam("left")).toBe("done");
     expect(setupStepFromParam("project")).toBe("project");
   });
@@ -34,8 +48,8 @@ describe("setupFinished", () => {
 
 describe("Not now and resume", () => {
   it("reopens at the step Not now was pressed on", () => {
-    vi.stubGlobal("sessionStorage", { getItem: () => "ai", setItem: () => {} });
-    expect(resumeStep()).toBe("ai");
+    vi.stubGlobal("sessionStorage", { getItem: () => "agents", setItem: () => {} });
+    expect(resumeStep()).toBe("agents");
   });
 
   it("starts at the first step when the stored step is not a step", () => {

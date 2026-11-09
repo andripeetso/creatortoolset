@@ -222,7 +222,7 @@ async function call<T>(url: string, method = "GET", body?: unknown): Promise<T> 
   return out;
 }
 const STORAGE_API = "/api/devices/storage";
-const getStorage = () => call<StorageView>(STORAGE_API);
+export const getStorage = () => call<StorageView>(STORAGE_API);
 const makeLibrary = (b: MakeLibraryBody) => call<StorageState>(`${STORAGE_API}/library`, "POST", b);
 const addStorageFolder = (b: AddFolderBody) => call<StorageState>(`${STORAGE_API}/folders`, "POST", b);
 const removeStorageFolder = (id: string) => call<StorageState>(`${STORAGE_API}/folders/${encodeURIComponent(id)}`, "DELETE");
@@ -272,7 +272,7 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-function Storage({ devices, storage, onChanged }: { devices: Device[]; storage: StorageView | null; onChanged: () => void }) {
+export function Storage({ devices, storage, onChanged }: { devices: Device[]; storage: StorageView | null; onChanged: () => void }) {
   if (!storage) return null;
   const folders = storage.folders;
   const sources = sourcesOf(folders);

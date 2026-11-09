@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router";
 import {
   AtSign,
+  Check,
   CheckCircle2,
   CircleEllipsis,
   GalleryHorizontalEnd,
@@ -25,21 +26,26 @@ import { Button } from "@/components/ui/button";
 import { ConnectorsSection } from "@/components/settings/ConnectorsSection";
 import { MyKeysSection } from "@/components/settings/MyKeysSection";
 import { ProjectForm } from "@/components/workshop/ProjectForm";
-import { AiPanel } from "@/components/setup/AiPanel";
+import { AgentsStep } from "@/components/setup/AgentsStep";
 import { Choice } from "@/components/setup/Choice";
+import { ConnectStep } from "@/components/setup/ConnectStep";
+import { FoldersStep } from "@/components/setup/FoldersStep";
 import { HowPicker } from "@/components/setup/HowPicker";
 import { ToolsPicker } from "@/components/setup/ToolNeeds";
 import { canUse, useMe } from "@/lib/auth";
 import { openAssistant } from "@/lib/assistant";
 import {
   MAKE_NAMES,
-  SETUP_STEPS,
+  STAGES,
+  STAGE_NAME,
   dismissSetup,
   openSetupAt,
   rememberLater,
   setupOpen,
   setupOpensItself,
   setupStepFromParam,
+  stageOf,
+  stepsFor,
   toolsFor,
   useSetup,
   useSetupLive,
@@ -62,9 +68,17 @@ const STEP: Record<SetupStep, { title: string; hint: string }> = {
     title: "Your first project",
     hint: "Name it and pick a colour. Add where you post if you like. All optional, and you can add more later.",
   },
-  ai: {
-    title: "Connect your AI",
-    hint: "Creator Toolset uses the AI you already have on this Mac. Nothing connects until you press a button.",
+  connect: {
+    title: "Connect your computers",
+    hint: "This computer is ready. Add your phone or another computer to your account whenever you like. Nothing else is needed to start.",
+  },
+  agents: {
+    title: "Connect your agents",
+    hint: "Creator Toolset uses the AI you already have on each computer. Nothing connects until you press a button. You can add more later.",
+  },
+  folders: {
+    title: "Add your folders",
+    hint: "Say where your footage, music and finished videos are on each computer. You can skip this and add them later in Settings → Devices.",
   },
   done: {
     title: "You're ready to start",
@@ -79,7 +93,6 @@ const MAKE_ICONS: Record<Make, LucideIcon> = {
 
 const PROJECT_FORM = "ct-setup-project";
 const SAVED_NOTE = "Your setup is saved. You'll find the rest on Home.";
-const BAR = SETUP_STEPS.slice(1); // the progress bar's four steps (the welcome has none)
 
 const isKey = (h: Have): h is MyKeyEnv => MY_KEYS.some((k) => k.env === h);
 const joinNames = (xs: string[]) => new Intl.ListFormat("en", { style: "long", type: "conjunction" }).format(xs);
@@ -100,7 +113,7 @@ function MoreRow({ need }: { need: Need }) {
   const inline = need.form === "keys" || need.form === "apify";
   const act = () => {
     if (inline) setOpen(!open);
-    else if (need.form === "ai" || need.form === "project") openSetupAt(need.form === "ai" ? "ai" : "project");
+    else if (need.form === "ai" || need.form === "project") openSetupAt(need.form === "ai" ? "agents" : "project");
     else navigate("/library");
   };
   return (
@@ -179,8 +192,11 @@ export function SetupDialog() {
   const makes = prefs.makes;
   const tools = ticked ?? view.tools ?? toolsFor(makes, mine);
   const step: SetupStep = setupStepFromParam(asked) ?? "how";
-  const at = SETUP_STEPS.indexOf(step);
-  const last = at === SETUP_STEPS.length - 1;
+  // the mode decides which steps there are (In the app: no Agents; In my own AI: no Folders)
+  const order = stepsFor(talk);
+  const at = Math.max(0, order.indexOf(step));
+  const stage = stageOf(step);
+  const last = at === order.length - 1;
   const newProject = step === "project" && !projects.length;
   const to = (s: SetupStep) => setParams((p) => (p.set("setup", s), p), { replace: true });
 
@@ -195,7 +211,7 @@ export function SetupDialog() {
       await useWorkPrefs.getState().put({ makes });
       await save({ tools });
     }
-    to(SETUP_STEPS[at + 1]!);
+    to(order[at + 1] ?? "done");
   };
   const finish = async () => {
     await save({ done: true }).catch(() => {});
@@ -241,29 +257,32 @@ export function SetupDialog() {
         >
           <header className="shrink-0 px-6 pt-5 sm:px-8">
             <div className="flex items-center gap-3">
-              {/* the welcome has no bar; from step 2 the bar counts the four steps after it, a total that never changes */}
+              {/* the welcome has no bar; from step 2 the bar shows the three stages, each one passed stays clickable */}
               {step !== "how" && (
-                <>
-                  <ol className="flex flex-1 gap-1.5" aria-label={`Step ${at} of ${BAR.length}`}>
-                    {BAR.map((s, i) => (
-                      <li key={s} className="flex-1">
-                        <button
-                          type="button"
-                          onClick={() => i + 1 < at && to(s)}
-                          disabled={i + 1 >= at}
-                          aria-label={STEP[s].title}
-                          title={STEP[s].title}
-                          className="block h-1.5 w-full rounded-full bg-muted transition-colors enabled:cursor-pointer enabled:hover:brightness-125"
+                <ol className="flex flex-1 items-center gap-2" aria-label={`Stage ${stage + 1} of ${STAGES.length}`}>
+                  {STAGES.map((s, i) => (
+                    <li key={s} className="flex min-w-0 flex-1 items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => to(s)}
+                        disabled={i >= stage}
+                        aria-current={i === stage ? "step" : undefined}
+                        className={cn("flex min-w-0 items-center gap-2 text-sm enabled:cursor-pointer enabled:hover:text-foreground", i > stage ? "text-muted-foreground" : "text-foreground")}
+                      >
+                        <span
+                          className={cn(
+                            "flex size-6 shrink-0 items-center justify-center rounded-full border text-xs font-medium tabular-nums transition-colors",
+                            i < stage ? "border-[var(--tint)] bg-[var(--tint)] text-white" : i === stage ? "border-[var(--tint)] text-[var(--tint-text)]" : "border-border text-muted-foreground",
+                          )}
                         >
-                          <span className={cn("block h-full rounded-full transition-[width,background-color] duration-300", i + 1 <= at ? "w-full bg-[var(--tint)]" : "w-0")} />
-                        </button>
-                      </li>
-                    ))}
-                  </ol>
-                  <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                    {at} of {BAR.length}
-                  </span>
-                </>
+                          {i < stage ? <Check className="size-3.5" strokeWidth={3} /> : i + 1}
+                        </span>
+                        <span className="truncate">{STAGE_NAME[s]}</span>
+                      </button>
+                      {i < STAGES.length - 1 && <span className="h-px flex-1 bg-border" />}
+                    </li>
+                  ))}
+                </ol>
               )}
               {step === "how" && <span className="flex-1" />}
               <button
@@ -317,9 +336,11 @@ export function SetupDialog() {
                 />
               ))}
 
-            {step === "ai" && (
-              <AiPanel talk={prefs.talk} onConnectedChange={setAiOn} />
-            )}
+            {step === "connect" && <ConnectStep />}
+
+            {step === "agents" && <AgentsStep talk={prefs.talk} onConnectedChange={setAiOn} />}
+
+            {step === "folders" && <FoldersStep />}
 
             {step === "done" && (
               <div className="space-y-4">
@@ -356,15 +377,15 @@ export function SetupDialog() {
               Not now
             </Button>
             <div className="flex items-center gap-2">
-              {step === "ai" && <span className="mr-1 text-xs text-muted-foreground">{aiOn ? "Your AI is connected." : "Nothing is connected yet."}</span>}
+              {step === "agents" && <span className="mr-1 text-xs text-muted-foreground">{aiOn ? "Your AI is connected." : "Nothing is connected yet."}</span>}
               {at > 0 && (
-                <Button variant="ghost" onClick={() => to(SETUP_STEPS[at - 1]!)}>
+                <Button variant="ghost" onClick={() => to(order[at - 1]!)}>
                   Back
                 </Button>
               )}
-              {newProject && (
+              {(newProject || step === "folders") && (
                 <Button variant="ghost" className="text-muted-foreground" onClick={() => void next()}>
-                  Skip
+                  {step === "folders" ? "Do not add folders" : "Skip"}
                 </Button>
               )}
               {last ? (
@@ -377,7 +398,7 @@ export function SetupDialog() {
                   {...(newProject ? { type: "submit" as const, form: PROJECT_FORM, disabled: !named } : { onClick: () => void next() })}
                   className="min-w-28 bg-[var(--tint)] text-white hover:bg-[var(--tint)] hover:brightness-110"
                 >
-                  {step === "ai" && !aiOn ? "Continue without connecting" : newProject ? "Create project" : "Continue"}
+                  {step === "agents" && !aiOn ? "Continue without connecting" : newProject ? "Create project" : "Continue"}
                 </Button>
               )}
             </div>

@@ -91,7 +91,7 @@ export function FirstOpen() {
   };
   const connectAi = () => {
     close();
-    openSetupAt("ai");
+    openSetupAt("agents");
   };
   const later = () => {
     close();

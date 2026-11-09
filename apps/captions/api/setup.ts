@@ -1,9 +1,11 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { hostname } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
 import { anyAiConfigured } from "./ai-complete";
 import { env } from "./lib/env";
-import { listDevices } from "./lib/devices";
+import { isOnline, listDevices } from "./lib/devices";
+import { connectState } from "./connect/state";
 import { readConnectors } from "./lib/connectors/store";
 import { publicApifyStatus, readApify } from "./lib/instagram/apify";
 import { connectedOwn } from "./lib/providers";
@@ -36,6 +38,7 @@ import { isPlan, planFromCli, type PlanId } from "../contracts/plans";
  * readiness rows. $DATA_DIR/setup/<username>.json; accounts only (a share-link visitor has no setup).
  *
  *   GET  /api/setup  → SetupView
+ *   GET  /api/setup/computers → ComputersView  this computer, plus the account's other computers (devices) with online state
  *   PUT  /api/setup  { tools?: Tool[], plan?: PlanId | null, done?: boolean } → SetupView
  *   GET  /api/setup/ai                 → LocalAiView   the AI CLIs found on this Mac (CT_LOCAL=1; else local: false)
  *   POST /api/setup/ai/signin  { id }  → SignInResult  opens Terminal with the tool's own sign-in (CT_LOCAL=1)
@@ -129,6 +132,26 @@ setupApp.use("*", async (c, next) =>
 );
 
 setupApp.get("/", async (c) => c.json(await view(c.get("user"))));
+
+/**
+ * Connect and Agents: this computer (its name, and whether it is on the account through the relay) and the computers
+ * that report to this account (devices, with what each one's CLIs report). The relay's account list needs the account
+ * token, which this server does not keep, so it is not listed here (the Mac app holds it).
+ */
+setupApp.get("/computers", async (c) => {
+  const u = c.get("user").username;
+  const s = connectState();
+  const others = listDevices((d) => d.owner === u).map((d) => ({
+    id: d.id,
+    name: d.name,
+    online: isOnline(d.id),
+    drivers: d.report?.drivers ?? [],
+  }));
+  return c.json({
+    here: { name: s?.name ?? hostname(), linked: !!s, hostname: s?.hostname ?? null },
+    others,
+  });
+});
 
 setupApp.put("/", async (c) => {
   const user = c.get("user");

@@ -7,12 +7,26 @@ import { confirmDialog } from "./dialogs";
 
 export type { SetupView };
 
-/** The five steps, the same on every path. The progress bar counts the last four (from step 2): "n of 4", never changing. */
-export const SETUP_STEPS = ["how", "make", "project", "ai", "done"] as const;
+/**
+ * The steps in order: the mode cards first (how), then Connect (computers), Agents, Folders, then what you make and the
+ * first project, then done. The bar shows three stages over them: Connect, Agents, Folders (make, project and done sit
+ * under Folders).
+ */
+export const SETUP_STEPS = ["how", "connect", "agents", "folders", "make", "project", "done"] as const;
 export type SetupStep = (typeof SETUP_STEPS)[number];
 
+/** The bar's stages, and the first step of each. */
+export const STAGES = ["connect", "agents", "folders"] as const satisfies readonly SetupStep[];
+export const STAGE_NAME: Record<(typeof STAGES)[number], string> = { connect: "Connect", agents: "Agents", folders: "Folders" };
+/** Which stage (0-2) a step is in; the mode card step counts as the first. */
+export const stageOf = (s: SetupStep): number => (s === "how" || s === "connect" ? 0 : s === "agents" ? 1 : 2);
+
+/** The steps a mode shows: "In the app" skips Agents (its AI runs in the app), "In my own AI" skips Folders. */
+export const stepsFor = (talk: WorkPrefs["talk"] | null): SetupStep[] =>
+  SETUP_STEPS.filter((s) => !(talk === "app" && s === "agents") && !(talk === "chat" && s === "folders"));
+
 /** Ids from the older, longer setup still open the step they now belong to. */
-const OLD_STEP: Record<string, SetupStep> = { tools: "make", connect: "ai", left: "done" };
+const OLD_STEP: Record<string, SetupStep> = { tools: "make", ai: "agents", left: "done" };
 
 /** The `?setup=` value as a step, or null when it names none (then setup opens on its first step). */
 export function setupStepFromParam(v: string | null): SetupStep | null {
