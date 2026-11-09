@@ -18,35 +18,40 @@ export interface PhoneCode {
   expiresAt: number;
 }
 
-/** Mints a code on this server and draws it. Null when the server won't mint one (not signed in, or unreachable). */
-export async function mintPhoneCode(base: string): Promise<PhoneCode | null> {
+/**
+ * Mints a code on this server and draws it, at the address the server says a phone can reach (its tunnel, the address
+ * in use, or its network address). "local": it listens on this computer only. Null: no code (not signed in, unreachable).
+ */
+export async function mintPhoneCode(): Promise<PhoneCode | "local" | null> {
   try {
     const r = await fetch("/api/auth/link", { method: "POST" });
     if (!r.ok) return null;
-    const j = (await r.json()) as { path?: unknown; expiresAt?: unknown };
-    if (typeof j.path !== "string" || typeof j.expiresAt !== "number") return null;
-    const url = `${base}${j.path}`;
-    return { url, qr: await QRCode.toDataURL(url, { margin: 1, width: 176 }), expiresAt: j.expiresAt };
+    const j = (await r.json()) as { url?: unknown; path?: unknown; expiresAt?: unknown };
+    if (j.url === null) return "local";
+    if (typeof j.url !== "string") return null;
+    const url = `${j.url}${typeof j.path === "string" ? j.path : ""}`;
+    const expiresAt = typeof j.expiresAt === "number" ? j.expiresAt : Infinity;
+    return { url, qr: await QRCode.toDataURL(url, { margin: 1, width: 176 }), expiresAt };
   } catch {
     return null;
   }
 }
 
 /** The phone's row: a QR code for a fresh one-time link, a new one on request, and the address as text if no code can be made. */
-export function PhoneRow({ base, address }: { base: string; address: string }) {
-  const [code, setCode] = useState<PhoneCode | null | undefined>(undefined); // undefined: making one
+export function PhoneRow({ address }: { address: string }) {
+  const [code, setCode] = useState<PhoneCode | "local" | null | undefined>(undefined); // undefined: making one
   const [now, setNow] = useState(() => Date.now());
   const fresh = useCallback(() => {
     setCode(undefined);
-    void mintPhoneCode(base).then(setCode);
-  }, [base]);
+    void mintPhoneCode().then(setCode);
+  }, []);
   useEffect(fresh, [fresh]);
   useEffect(() => {
-    if (!code) return;
+    if (!code || code === "local" || code.expiresAt === Infinity) return;
     const t = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(t);
   }, [code]);
-  const expired = !!code && code.expiresAt <= now;
+  const expired = !!code && code !== "local" && code.expiresAt <= now;
 
   return (
     <div className={cn(ROW, "items-start")}>
@@ -59,13 +64,11 @@ export function PhoneRow({ base, address }: { base: string; address: string }) {
             Open this address on your phone and sign in: <span className="break-all font-mono text-foreground">{address}</span>
           </p>
         )}
-        {code && !expired && (
+        {code === "local" && <p className="text-xs text-muted-foreground">Turn on Access from other devices in the Mac app's This Mac first.</p>}
+        {code && code !== "local" && !expired && (
           <div className="flex flex-wrap items-center gap-4">
             <img src={code.qr} alt="QR code: scan it with your phone to sign in here" width={176} height={176} className="rounded-md bg-white p-1" />
-            <div className="min-w-0 flex-1 space-y-2">
-              <p className="text-xs text-muted-foreground">Scan this with your phone's camera. It works once, within a minute.</p>
-              <p className="text-xs text-muted-foreground">Away from home, the phone also asks for this computer's password, if one is set.</p>
-            </div>
+            <p className="min-w-0 flex-1 text-xs text-muted-foreground">Scan with your phone's camera or the Creator Toolset app.</p>
           </div>
         )}
         {code && expired && (
@@ -121,7 +124,6 @@ export function ConnectStepView({
           <p className="truncate text-sm font-medium">{here}</p>
           <p className="text-xs text-muted-foreground">This computer</p>
         </div>
-        <span className="text-xs text-muted-foreground">Running</span>
       </div>
 
       {others.length > 0 && (
@@ -130,7 +132,7 @@ export function ConnectStepView({
             <li key={c.id} className={ROW}>
               <Monitor className="size-4 shrink-0 text-muted-foreground" aria-hidden />
               <span className="min-w-0 flex-1 truncate text-sm">{c.name}</span>
-              <span className="text-xs text-muted-foreground">{c.online ? "Connected" : "Not running"}</span>
+              {!c.online && <span className="text-xs text-muted-foreground">Not running</span>}
             </li>
           ))}
         </ul>
@@ -258,12 +260,11 @@ export function ConnectStep() {
     } else setJoinNote({ ok: false, text: j?.message ?? "Couldn't reach this computer. Try again." });
   };
 
-  const base = view?.here.hostname ? `https://${view.here.hostname}` : window.location.origin;
   return (
     <ConnectStepView
       here={view?.here.name ?? "This computer"}
       others={view?.others ?? []}
-      phone={<PhoneRow base={base} address={window.location.origin} />}
+      phone={<PhoneRow address={window.location.origin} />}
       expanded={expanded}
       onExpand={() => setExpanded((v) => !v)}
       server={server}

@@ -3,7 +3,6 @@ import { useLocation, useNavigate, useSearchParams } from "react-router";
 import {
   AtSign,
   Check,
-  CheckCircle2,
   CircleEllipsis,
   GalleryHorizontalEnd,
   GraduationCap,
@@ -18,7 +17,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import { NEED_SENTENCE, NEED_SHORT, TOOL_NAMES, TOOLS, readiness, type Have, type Need, type Tool } from "@contracts/tools";
+import { NEED_SENTENCE, NEED_SHORT, TOOLS, readiness, type Have, type Need, type Tool } from "@contracts/tools";
 import { MY_KEYS, type MyKeyEnv } from "@contracts/service-keys";
 import { MAKES, type Make } from "@contracts/work-prefs";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -71,7 +70,7 @@ const STEP: Record<SetupStep, { title: string; hint: string }> = {
   },
   connect: {
     title: "Connect your computers",
-    hint: "This computer is ready. Add your phone or another computer to your account whenever you like. Nothing else is needed to start.",
+    hint: "Add your phone or another computer now or later.",
   },
   agents: {
     title: "Connect your agents",
@@ -79,11 +78,11 @@ const STEP: Record<SetupStep, { title: string; hint: string }> = {
   },
   folders: {
     title: "Add your folders",
-    hint: "Say where your footage, music and finished videos are on each computer. You can skip this and add them later in Settings → Devices.",
+    hint: "Where your footage, music and finished videos are. Nothing is moved.",
   },
   done: {
     title: "You're ready to start",
-    hint: "You're in a good enough place to start. There's more you can connect: add keys now or later, or the assistant can take it from here.",
+    hint: "Everything else can be added later.",
   },
 };
 
@@ -96,7 +95,6 @@ const PROJECT_FORM = "ct-setup-project";
 const SAVED_NOTE = "Your setup is saved. You'll find the rest on Home.";
 
 const isKey = (h: Have): h is MyKeyEnv => MY_KEYS.some((k) => k.env === h);
-const joinNames = (xs: string[]) => new Intl.ListFormat("en", { style: "long", type: "conjunction" }).format(xs);
 
 /** The optional needs still missing for the ticked tools, one row per need (named by its first key or login). */
 function moreNeeds(tools: Tool[], have: Have[]): Need[] {
@@ -238,7 +236,6 @@ export function SetupDialog() {
     setUnsure(!notSure);
     if (!notSure) setTicked([...mine]);
   };
-  const readyTools = TOOLS.filter((t) => (t === "review" || tools.includes(t)) && readiness(t, view.have).ready);
   const more = moreNeeds(tools, view.have);
   const assistantOn = view.have.includes("ai");
 
@@ -349,13 +346,6 @@ export function SetupDialog() {
 
             {step === "done" && (
               <div className="space-y-4">
-                <p className="flex items-start gap-2 rounded-xl border border-border/60 bg-card/40 px-4 py-3 text-sm">
-                  <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-500" />
-                  <span>
-                    <span className="font-medium">Ready now:</span>{" "}
-                    <span className="text-muted-foreground">{joinNames(readyTools.map((t) => TOOL_NAMES[t]))}.</span>
-                  </span>
-                </p>
                 <div className="grid gap-2 sm:grid-cols-2">
                   <Button variant="outline" className="h-auto justify-start whitespace-normal py-3 text-left" onClick={() => openSetupAt("connect")}>
                     <span>
@@ -396,8 +386,7 @@ export function SetupDialog() {
               Not now
             </Button>
             <div className="flex items-center gap-2">
-              {step === "agents" && <span className="mr-1 text-xs text-muted-foreground">{aiOn ? "Your AI is connected." : "Nothing is connected yet."}</span>}
-              {before && (
+                            {before && (
                 <Button variant="ghost" onClick={() => to(before)}>
                   Back
                 </Button>

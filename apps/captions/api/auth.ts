@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { networkInterfaces } from "node:os";
 import { env, hostedMode } from "./lib/env";
 import { viewAsTarget } from "./lib/view-as";
 import { getConnInfo } from "@hono/node-server/conninfo";
@@ -277,14 +278,29 @@ const remoteRefused = (c: Context, user: UserRecord) => localOnly(c) && !!env.ap
 const NO_PASSWORD_YET = "Set a password on the Mac first: the Mac app's This Mac → Access from other devices";
 
 /**
- * One-time sign-in links, for pairing a phone later (no UI uses them yet). POST mints one for the account
- * signed in here; GET /api/auth/link/<code> signs that browser in and goes home. A code works once, within 60 s, and
+ * One-time sign-in links, for a phone (Setup → Add your phone, as a QR code) or another computer. POST mints one for
+ * the account signed in here, with `url`: the address a phone can open this server at (null: it listens on this
+ * computer only). GET /api/auth/link/<code> signs that browser in and goes home. A code works once, within 60 s, and
  * dies with a password change. Kept in memory only and never logged.
  */
+export function phoneOrigin(c: Context): string | null {
+  const tunnel = tunnelHostname();
+  if (tunnel) return `https://${tunnel}`;
+  const url = new URL(c.req.url);
+  if (!/^(localhost|127\.[\d.]+|\[::1\])$/.test(url.hostname)) {
+    return `${c.req.header("x-forwarded-proto") ?? url.protocol.replace(":", "")}://${url.host}`;
+  }
+  const listen = process.env.HOST;
+  if (listen && listen !== "0.0.0.0" && listen !== "::") return null;
+  const lan = Object.values(networkInterfaces()).flat().find((a) => a?.family === "IPv4" && !a.internal)?.address;
+  return lan ? `http://${lan}:${process.env.PORT || "3000"}` : null;
+}
 const LINK_TTL = 60_000;
 const links = new Map<string, { username: string; hash: string; expiresAt: number }>();
 
 authApp.post("/link", (c) => {
+  // no sign-in on this server: anyone who can reach it is in, so the address alone is the code
+  if (!env.appSecret) return c.json({ url: phoneOrigin(c), path: null, expiresAt: null });
   const me = signedInAccount(c.req.header("cookie"));
   const user = me && findUser(me.username);
   if (!user) return c.json({ error: "Sign in with an account first" }, 401);
@@ -292,7 +308,7 @@ authApp.post("/link", (c) => {
   for (const [k, v] of links) if (v.expiresAt <= now) links.delete(k);
   const code = randomBytes(32).toString("base64url");
   links.set(code, { username: user.username, hash: user.hash, expiresAt: now + LINK_TTL });
-  return c.json({ path: `/api/auth/link/${code}`, expiresAt: now + LINK_TTL });
+  return c.json({ url: phoneOrigin(c), path: `/api/auth/link/${code}`, expiresAt: now + LINK_TTL });
 });
 
 authApp.get("/link/:code", (c) => {

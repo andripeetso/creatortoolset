@@ -20,10 +20,10 @@ const base = {
 };
 const view = (over: Partial<typeof base> = {}) => renderToStaticMarkup(<ConnectStepView {...base} {...over} />);
 
-it("shows this computer as running, the account's other computers and the phone's code", () => {
+it("shows this computer with no status label, the account's other computers and the phone's code", () => {
   const html = view();
   expect(html).toContain("Studio Mac");
-  expect(html).toContain("Running");
+  expect(html).not.toContain("Running");
   expect(html).toContain("Workshop PC");
   expect(html).toContain("Not running");
   expect(html).toContain("PHONE-CODE-HERE");

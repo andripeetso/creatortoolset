@@ -42,6 +42,20 @@ describe("one-time sign-in links", () => {
     expect((await from("127.0.0.1", link)).status).toBe(410);
   });
 
+  it("gives the address a phone can reach: the one in use, never this computer's own loopback", async () => {
+    const cookie = cookieOf(await login("127.0.0.1", "local-sign-in-test-secret"));
+    const mint = (url: string, headers: Record<string, string> = {}) =>
+      Promise.resolve(
+        app.request(url, { method: "POST", headers: { cookie, ...headers } }, { incoming: { socket: { remoteAddress: "127.0.0.1", remotePort: 50000, remoteFamily: "IPv4" } } }),
+      ).then((r: Response) => r.json() as Promise<{ url: string | null }>);
+    expect((await mint("http://studio.example.com/api/auth/link", { "x-forwarded-proto": "https" })).url).toBe("https://studio.example.com");
+    expect((await mint(`http://${LAN}:3000/api/auth/link`)).url).toBe(`http://${LAN}:3000`);
+    vi.stubEnv("HOST", "127.0.0.1"); // the Mac app with Access from other devices off
+    expect((await mint("http://127.0.0.1:3000/api/auth/link")).url).toBeNull();
+    vi.stubEnv("HOST", "0.0.0.0");
+    expect((await mint("http://localhost:3000/api/auth/link")).url ?? "none").not.toMatch(/localhost|127\./);
+  });
+
   it("expires after 60 s, and needs a signed-in account to make one", async () => {
     expect((await post("127.0.0.1", "/api/auth/link", {})).status).toBe(401);
     const cookie = cookieOf(await login("127.0.0.1", "local-sign-in-test-secret"));

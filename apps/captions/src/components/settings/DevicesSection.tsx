@@ -107,8 +107,8 @@ function SignInLinkMint() {
   const mint = () => {
     setFailed(false);
     fetch("/api/auth/link", { method: "POST" })
-      .then((r) => (r.ok ? (r.json() as Promise<{ path: string }>) : Promise.reject(new Error(String(r.status)))))
-      .then((j) => setLink(`${window.location.origin}${j.path}`))
+      .then((r) => (r.ok ? (r.json() as Promise<{ path: string | null }>) : Promise.reject(new Error(String(r.status)))))
+      .then((j) => setLink(`${window.location.origin}${j.path ?? ""}`))
       .catch(() => setFailed(true));
   };
   return (
