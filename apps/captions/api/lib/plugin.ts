@@ -58,6 +58,9 @@ export interface ServerPlugin {
   // The session's own write stays in core; the first plug-in that answers wins. `account` is the project's Instagram account.
   workshop?: {
     checkPosted?: (user: SessionUser, session: { id: string }, account: string | null | undefined, posted: PostedCheckInput) => Promise<PostedCheckResult | null>;
+    // Finals versions a session's piece has that the library does not keep (a plug-in's own Finals link). The picker, the chat's
+    // "which version" context and the post-description tabs read them after the library's (finalsLinkedTo in api/library/finals.ts).
+    finalsVersions?: (sessionId: string, docId: string, mainDocId: string | undefined) => Promise<FinalsVersion[]>;
   };
   // Lets the install's own Meta login (META_ACCESS_TOKEN + INSTAGRAM_USER_ID) read Instagram on a public install
   // that is not hosted. Read by graph.ts (installLoginAllowed). Off by default.
@@ -185,6 +188,26 @@ export interface PostedCheckResult {
   /** true when no version was named, so the version is the catalog's guess */
   guessed?: boolean;
   error?: string;
+}
+
+/** One Finals version of a session's piece: its key (the version's id in its own store), its label and its mechanical facts. */
+export interface FinalsVersion {
+  key: string;
+  label: string;
+  facts: string;
+}
+
+/** The Finals versions every loaded plug-in adds for a session's piece, in load order. A throw is logged and skipped. */
+export async function pluginFinalsVersions(sessionId: string, docId: string, mainDocId: string | undefined): Promise<FinalsVersion[]> {
+  const out: FinalsVersion[] = [];
+  for (const p of loaded) {
+    try {
+      out.push(...((await p.workshop?.finalsVersions?.(sessionId, docId, mainDocId)) ?? []));
+    } catch (e) {
+      console.warn(`[plugin] ${p.id} finals versions failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  return out;
 }
 
 /** Asks the plug-ins to check a pasted post; the first answer wins, null when none does. A throw is logged and skipped. */

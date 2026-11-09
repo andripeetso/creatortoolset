@@ -88,3 +88,31 @@ describe("GET /api/library/workshop (workshopFinalsFor)", () => {
     expect(await workshopFinalsFor("someone-else-entirely")).toEqual({});
   });
 });
+
+describe("Finals pieces from a Workshop share", () => {
+  it("gives the piece its share's link and its files in slide order (Save all)", async () => {
+    session("5b1c0a7e-0000-4000-8000-00000000d1d1", "tiny-owner");
+    linkedPiece("lib_share", "tiny-owner", "pce_share", "5b1c0a7e-0000-4000-8000-00000000d1d1");
+    mkdirSync(path.join(dir, "workshop"), { recursive: true });
+    writeFileSync(
+      path.join(dir, "workshop", "shares.json"),
+      JSON.stringify({
+        tok_share: {
+          owner: "tiny-owner",
+          sessionId: "5b1c0a7e-0000-4000-8000-00000000d1d1",
+          docIds: [],
+          title: "Tiny share",
+          createdAt: 0,
+          progress: { state: "done", at: 0 },
+          deliveries: [
+            { id: "d2", name: "2 slide.jpg", size: 1, type: "image/jpeg", at: 2 },
+            { id: "d1", name: "1 slide.jpg", size: 1, type: "image/jpeg", at: 1 },
+          ],
+          finals: { pieceId: "pce_share", sent: ["d1", "d2"], at: 3 },
+        },
+      }),
+    );
+    const pieces = await workshopFinalsFor("tiny-owner");
+    expect(pieces["pce_share"]).toMatchObject({ token: "tok_share", files: [{ name: "1 slide.jpg" }, { name: "2 slide.jpg" }] });
+  });
+});

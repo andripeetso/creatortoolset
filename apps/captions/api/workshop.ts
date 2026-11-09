@@ -39,7 +39,7 @@ import { setSessionStatus, TURN_STOPPED } from "./lib/workshop/types";
 import { readWorkPrefs } from "./work-prefs";
 import { emitEvent, onEvent } from "./lib/events";
 import { IllegalTransition } from "./lib/transition";
-import { pluginCheckPosted } from "./lib/plugin";
+import { pluginCheckPosted, pluginFinalsVersions } from "./lib/plugin";
 import {
   getWorkspace,
   inProject,
@@ -75,7 +75,8 @@ import { type EditPair, editsFile, mergeLog, pairsOf } from "./lib/workshop/edit
 import { buildLinesPrompt, parseLines } from "./lib/workshop/lines";
 import { buildAsidePrompt } from "./lib/workshop/aside";
 import { clipContext, externalLibraryRef, libraryRef } from "./library/attach";
-import { finalsLinkedTo, linkFinalsPiece } from "./library/finals";
+import { addToFinals, finalsLinkedTo, libraryOf, linkFinalsPiece } from "./library/finals";
+import { probe as probeMedia } from "./library/media/probe";
 import { libraryDb } from "./library/db";
 import { libraryRole } from "./library/access";
 import { resolveCarouselType, visualizeCarousel } from "../src/lib/carousel-visualize";
@@ -538,7 +539,7 @@ function chained<T>(id: string, fn: () => Promise<T>): Promise<T> {
 
 const RESTART_MSG = "Interrupted by a server restart — regenerate.";
 
-async function readSession(id: string): Promise<SessionMeta | null> {
+export async function readSession(id: string): Promise<SessionMeta | null> {
   if (!okId(id)) return null;
   return readJson<SessionMeta>(sessionMetaPath(id));
 }
@@ -755,7 +756,7 @@ async function listDocs(sessionId: string): Promise<Document[]> {
   return out.sort((a, b) => a.createdAt - b.createdAt);
 }
 
-async function readDoc(sessionId: string, docId: string): Promise<Document | null> {
+export async function readDoc(sessionId: string, docId: string): Promise<Document | null> {
   if (!okId(docId)) return null;
   return readJson<Document>(docPath(sessionId, docId));
 }
@@ -764,7 +765,7 @@ async function writeDoc(doc: Document): Promise<void> {
   await writeJsonAtomic(docPath(doc.sessionId, doc.id), doc);
 }
 
-async function updateDoc(
+export async function updateDoc(
   sessionId: string,
   docId: string,
   fn: (doc: Document) => void | Promise<void>,
@@ -2456,7 +2457,7 @@ workshopApp.delete("/sessions/:id", async (c) => {
 });
 
 /** The piece a session is about: the first one with text (its title and kind come from it). */
-async function mainPiece(sessionId: string): Promise<Document | null> {
+export async function mainPiece(sessionId: string): Promise<Document | null> {
   return (await listDocs(sessionId)).find((d) => d.kind !== "notes" && d.blocks.some((b) => b.text.trim())) ?? null;
 }
 
@@ -2626,7 +2627,9 @@ workshopApp.patch("/sessions/:id/docs/:docId", async (c) => {
 workshopApp.get("/sessions/:id/docs/:docId/finals", async (c) => {
   const meta = await ownedSession(c.req.param("id"), c.get("user"));
   if (!meta) return c.json({ error: "Not found" }, 404);
-  return c.json({ versions: finalsLinkedTo(meta.id, c.req.param("docId"), (await mainPiece(meta.id))?.id) });
+  const docId = c.req.param("docId");
+  const mainId = (await mainPiece(meta.id))?.id;
+  return c.json({ versions: [...finalsLinkedTo(meta.id, docId, mainId), ...(await pluginFinalsVersions(meta.id, docId, mainId))] });
 });
 
 /** The piece as a turn for one Finals version sees it: that version's own post description as the piece's (a copy). */
@@ -2640,7 +2643,8 @@ function withVersionCaption(doc: Document, key: string): Document {
 
 /** The Finals versions of the piece with their facts, when `key` is one of them (else no caption version). */
 async function captionVersionFor(sessionId: string, docId: string, key: string) {
-  const all = finalsLinkedTo(sessionId, docId, (await mainPiece(sessionId))?.id);
+  const mainId = (await mainPiece(sessionId))?.id;
+  const all = [...finalsLinkedTo(sessionId, docId, mainId), ...(await pluginFinalsVersions(sessionId, docId, mainId))];
   return all.some((v) => v.key === key) ? { current: key, versions: all } : undefined;
 }
 
@@ -2648,6 +2652,9 @@ async function captionVersionFor(sessionId: string, docId: string, key: string) 
 // each version's own (keyed by the piece item id). Only the pieces of libraries the caller owns. The grid (FinalsPage)
 // reads this at GET /api/library/workshop.
 export interface WorkshopFinal {
+  /** A share link whose files went into this piece (Save all), and those files in slide order. */
+  token?: string;
+  files?: Delivery[];
   description: string;
   versions: Record<string, { text: string; label?: string; author: "ai" | "user" }>;
   sessionId: string;
@@ -2656,6 +2663,7 @@ export interface WorkshopFinal {
 
 export async function workshopFinalsFor(username: string): Promise<Record<string, WorkshopFinal>> {
   const out: Record<string, WorkshopFinal> = {};
+  const shares = Object.entries(await readShares());
   const rows = libraryDb()
     .prepare("SELECT id, library_id, workshop_session AS session, workshop_doc AS doc FROM pieces WHERE workshop_session IS NOT NULL AND trashed_at IS NULL")
     .all() as { id: string; library_id: string; session: string; doc: string | null }[];
@@ -2676,7 +2684,14 @@ export async function workshopFinalsFor(username: string): Promise<Record<string
       const text = it.post_description?.trim() ? it.post_description : own?.text;
       if (text) versions[it.id] = { text, label: it.label ?? own?.label, author: own?.author ?? "user" };
     }
-    out[row.id] = { description: doc?.caption?.text ?? "", versions, sessionId: meta.id, status: meta.status };
+    const share = shares.find(([, s]) => s.finals?.pieceId === row.id);
+    out[row.id] = {
+      description: doc?.caption?.text ?? "",
+      versions,
+      sessionId: meta.id,
+      status: meta.status,
+      ...(share ? { token: share[0], files: inSlideOrder(share[1].deliveries ?? []) } : {}),
+    };
   }
   return out;
 }
@@ -2741,7 +2756,7 @@ async function describeLinkedVersions(): Promise<void> {
 /** One Finals version's post description written as a turn on the session's piece, the way a person asks for it in the
  *  chat: the request says which version and what each version is (mechanical facts), no writing instructions. Its message
  *  is marked `auto`. False when the session is busy with another turn. */
-async function describeVersion(
+export async function describeVersion(
   meta: SessionMeta,
   owner: UserRecord,
   piece: Document,
@@ -3789,9 +3804,11 @@ interface WorkshopShare {
   progress?: { state: "producing" | "done"; by?: string; at: number };
   /** Finals the freelancer uploaded through the link: sessions/<id>/deliveries/<did>/<name>. */
   deliveries?: Delivery[];
+  /** The Finals piece the share's files went into (a library piece linked to the session), and the delivery ids already sent. */
+  finals?: { pieceId?: string; sent: string[]; at: number; error?: string };
 }
 const SHARES_FILE = path.join(WS_ROOT, "shares.json");
-const readShares = async () => (await readJson<Record<string, WorkshopShare>>(SHARES_FILE)) ?? {};
+export const readShares = async () => (await readJson<Record<string, WorkshopShare>>(SHARES_FILE)) ?? {};
 
 workshopApp.get("/sessions/:id/shares", async (c) => {
   const meta = await ownedSession(c.req.param("id"), c.get("user"));
@@ -4049,6 +4066,7 @@ workshopShareApp.post("/:token/progress", async (c) => {
     if (!["published", "shelved"].includes(m.status ?? "draft")) setSessionStatus(m, state === "done" ? "toPost" : "editing", "freelancer progress");
   });
   await notifyWorkshopOwner(share.owner, { kind: state === "done" ? "delivered" : "producing", by: by || "A freelancer", name: meta.title || share.title, href: `/workshop/sessions/${meta.id}`, ref: meta.id });
+  if (state === "done") sendDeliveriesToFinals(token);
   return c.json({ progress: share.progress });
 });
 
@@ -4090,8 +4108,50 @@ workshopShareApp.post("/:token/deliveries", async (c) => {
   live.deliveries = [...(live.deliveries ?? []), item];
   await writeJsonAtomic(SHARES_FILE, shares);
   await notifyWorkshopOwner(share.owner, { kind: "delivered", by: by || "A freelancer", name: meta.title || share.title, text: name, href: `/workshop/sessions/${meta.id}`, ref: meta.id });
+  if (live.progress?.state === "done") sendDeliveriesToFinals(token);
   return c.json(item);
 });
+
+/* ---- Deliveries into Finals (as Send to Finals does, the library's piece): once the freelancer says it is done, the files go
+ *  into one Finals piece of the owner's library and that piece is linked to the session. Later files join it (found by its
+ *  title). Finals is the admins' own. ---- */
+const finalsSends = new Map<string, Promise<void>>();
+function sendDeliveriesToFinals(token: string): void {
+  const run = (finalsSends.get(token) ?? Promise.resolve()).then(() => finalsOfShare(token)).catch((e) => console.error("[workshop] finals", errorMessage(e)));
+  finalsSends.set(token, run);
+}
+
+async function finalsOfShare(token: string): Promise<void> {
+  const share = (await readShares())[token];
+  if (!share || share.progress?.state !== "done" || !share.deliveries?.length) return;
+  if (findUser(share.owner)?.role !== "admin") return;
+  const meta = await readSession(share.sessionId);
+  if (!meta) return;
+  const sent = [...(share.finals?.sent ?? [])];
+  let pieceId = share.finals?.pieceId;
+  let error: string | undefined;
+  try {
+    for (const d of inSlideOrder(share.deliveries)) {
+      if (sent.includes(d.id)) continue;
+      const file = path.join(deliveryDir(meta.id, d.id), d.name);
+      const { width, height } = await probeMedia(file);
+      const out = await addToFinals(
+        { owner: share.owner, libraryId: libraryOf(share.owner), label: meta.title || share.title, item: d.name, kind: "export", width, height },
+        { file, filename: d.name },
+      );
+      if (!out.ok) throw new Error(out.error);
+      pieceId = out.pieceId;
+      sent.push(d.id);
+    }
+    if (pieceId) linkFinalsPiece(pieceId, meta.id, undefined, share.owner);
+  } catch (e) {
+    error = errorMessage(e);
+  }
+  const shares = await readShares();
+  if (!shares[token]) return;
+  shares[token].finals = { pieceId, sent, at: Date.now(), ...(error ? { error } : {}) };
+  await writeJsonAtomic(SHARES_FILE, shares);
+}
 
 /** Every delivered file as one ZIP, in slide order: "Save all to phone" (the iPhone app puts each in Photos). */
 workshopShareApp.get("/:token/deliveries.zip", async (c) => {
