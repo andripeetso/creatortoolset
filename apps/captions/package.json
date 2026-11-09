@@ -3,9 +3,12 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "bin": {
+    "creatortoolset": "./dist/cli.js"
+  },
   "scripts": {
     "dev": "node scripts/plugins.mjs && vite",
-    "build": "node scripts/plugins.mjs && vite build && esbuild api/boot.ts --platform=node --bundle --format=esm --outdir=dist --external:playwright-chromium --external:onnxruntime-node --banner:js=\"import { createRequire } from 'module';const require = createRequire(import.meta.url);\"",
+    "build": "node scripts/plugins.mjs && vite build && esbuild api/boot.ts --platform=node --bundle --format=esm --outdir=dist --external:playwright-chromium --external:onnxruntime-node --banner:js=\"import { createRequire } from 'module';const require = createRequire(import.meta.url);\" && esbuild api/connect/cli-bin.ts --platform=node --bundle --format=esm --outfile=dist/cli.js --banner:js=\"import { createRequire } from 'module';const require = createRequire(import.meta.url);\"",
     "lint": "eslint .",
     "preview": "vite preview",
     "start": "NODE_ENV=production node dist/boot.js",

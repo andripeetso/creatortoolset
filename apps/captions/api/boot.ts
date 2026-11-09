@@ -46,7 +46,8 @@ import { connectorsApp, startConnectorPulls, tiktokVerifyFile } from "./connecto
 import { ownerProfileApp } from "./owner-profile";
 import { devicesApp } from "./devices";
 import { connectApp } from "./connect/routes";
-import { tunnelHostname } from "./connect/state";
+import { connectState, tunnelHostname } from "./connect/state";
+import { startConnector } from "./connect/connector";
 import { deviceForToken } from "./lib/devices";
 import { serviceKeysApp } from "./service-keys";
 import { myKeysApp } from "./my-keys";
@@ -450,6 +451,8 @@ if (env.isProduction) {
     },
     () => {
       console.log(`Server running on http://${host ?? "localhost"}:${port}/`);
+      // a computer linked to the account runs its tunnel while the server runs (api/connect/connector.ts)
+      if (connectState()) startConnector();
     },
   );
   if ("requestTimeout" in server) disableRequestTimeouts(server);

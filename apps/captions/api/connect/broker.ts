@@ -35,6 +35,7 @@ export interface DeviceStart {
   device_code: string;
   user_code: string;
   verification_uri: string;
+  verification_uri_complete?: string;
   interval: number;
   expires_in: number;
 }
