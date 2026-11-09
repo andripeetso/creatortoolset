@@ -56,10 +56,14 @@ storageApp.use("*", async (c, next) => {
   return next();
 });
 
-/** The server's own disks only on a server run on the owner's computer (CT_LOCAL=1); a hosted server reports none. */
+/** The server's own disks only on a server run on the owner's computer (CT_LOCAL=1); a hosted server reports none. The
+ *  Library's disk is read here too when its computer reports no drives (the row then has nothing else to show). */
 storageApp.get("/", async (c) => {
   const st = await readStorage(c.get("user").username);
-  const view: StorageView = { ...st, serverDisks: process.env.CT_LOCAL === "1" ? await localDisks() : [] };
+  const lib = st.folders.find((f) => f.role === "library");
+  const reported = lib ? deviceOf(lib.origin.host)?.report?.machine?.disks ?? [] : [];
+  const libraryPath = lib && !reported.length ? lib.origin.path : undefined;
+  const view: StorageView = { ...st, serverDisks: process.env.CT_LOCAL === "1" ? await localDisks(libraryPath) : [] };
   return c.json(view);
 });
 

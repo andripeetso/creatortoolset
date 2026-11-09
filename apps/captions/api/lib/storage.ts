@@ -1,4 +1,5 @@
 import { statfs } from "node:fs/promises";
+import { homedir } from "node:os";
 import path from "node:path";
 import { LIBRARY_NAME, okFolderPath, sourcesOf, UPLOAD_RELAY_IDS, type Disk, type StorageFolder, type StorageReport, type StorageState, type UploadRelayId, type UploadRelayView } from "../../contracts/storage";
 
@@ -23,14 +24,31 @@ export function parseStorageFile(raw: string): StorageState {
   }
 }
 
-/** The space on the system disk ("/", the one "~" folders sit on) of the machine the server runs on. Empty if unreadable. */
-export async function localDisks(): Promise<Disk[]> {
-  try {
-    const s = await statfs("/");
-    return [{ name: "System disk", path: "/", freeGb: (s.bavail * s.bsize) / 1e9, totalGb: (s.blocks * s.bsize) / 1e9 }];
-  } catch {
-    return [];
+/** The disk a path is on, read by the server (statfs). A path that does not exist yet (a Library not made) is read at its
+ *  nearest parent that does, so `path` is a folder on that drive. "~" is the server's home folder. */
+async function diskAt(p: string): Promise<Disk | null> {
+  let at = p === "~" || p.startsWith("~/") ? path.join(homedir(), p.slice(1)) : p;
+  for (;;) {
+    try {
+      const s = await statfs(at);
+      return { name: at === "/" ? "System disk" : path.basename(at), path: at, freeGb: (s.bavail * s.bsize) / 1e9, totalGb: (s.blocks * s.bsize) / 1e9 };
+    } catch {
+      const up = path.dirname(at);
+      if (up === at) return null;
+      at = up;
+    }
   }
+}
+
+/** The disks of the machine the server runs on: the system disk ("/", the one "~" folders sit on), and the disk
+ *  `libraryPath` sits on when that is another one. Empty if unreadable. */
+export async function localDisks(libraryPath?: string): Promise<Disk[]> {
+  const system = await diskAt("/");
+  if (!system) return [];
+  const lib = libraryPath ? await diskAt(libraryPath) : null;
+  // the same volume as the system disk (a Library on "/" or in "~" on the same container) is one row
+  const other = lib && (lib.freeGb !== system.freeGb || lib.totalGb !== system.totalGb) ? [lib] : [];
+  return [system, ...other];
 }
 
 /** A folder path without trailing slashes ("/" stays "/"). */
