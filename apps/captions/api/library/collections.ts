@@ -20,7 +20,8 @@ import { assetRef, canSee } from "./sources";
 /**
  * Folders and collections (tasks/media-library-plan.md, sections 2, 7 and 9). One table: a folder is a collection with
  * a parent. A manual collection holds asset ids; a smart one keeps a saved SearchQuery and runs it on every read.
- * Members make and edit their own; the owner edits any; every member may add and remove items. Outsiders get 404.
+ * Only the library's owner writes: collections, their items and pieces. A grant (grants.ts) lets an account see one
+ * collection, not change it. Outsiders and granted accounts get 404.
  * Pieces (migration 6, the bottom of this file) sit beside them: a group of versions with one winner, for Finals.
  */
 
