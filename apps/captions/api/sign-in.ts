@@ -3,15 +3,15 @@ import type { Context } from "hono";
 import { createPrivateKey, randomBytes, sign as cryptoSign } from "node:crypto";
 import { getSessionUser, setLoginCookie, type AuthVars } from "./auth";
 import { hostedMode } from "./lib/env";
-import { bumpUsage, findByIdentity, findUser, linkIdentity, type SignInProvider } from "./users";
+import { bumpUsage, findByIdentity, findUser, isSignInProvider, linkIdentity, SIGNIN_NAME, type SignInProvider } from "./users";
 
 /**
- * Sign in with Apple and Google to a site account, and linking one to an account (Settings → Account). A hosted server
- * only (CT_MODE=hosted): on one person's Mac there are no providers to sign in with. The keys live in the server's
- * .env only. The free Mac app's own sign-in is a separate service (a hosted plug-in), with its own state.
+ * Sign in with Apple, Google and GitHub to a site account, and linking one to an account (Settings → Account). A hosted
+ * server only (CT_MODE=hosted): on one person's Mac there are no providers to sign in with. The keys live in the
+ * server's .env only. The free Mac app's own sign-in is a separate service (a hosted plug-in), with its own state.
  *
- * Sign-in start: GET /api/account/login/<apple|google>?for=link|site. Callbacks: /api/auth/<kind>/callback. A callback
- * for a sign-in this module did not start calls next(), so the plug-in that started it can answer.
+ * Sign-in start: GET /api/account/login/<apple|google|github>?for=link|site. Callbacks: /api/auth/<kind>/callback. A
+ * callback for a sign-in this module did not start calls next(), so the plug-in that started it can answer.
  */
 export type Kind = SignInProvider;
 export interface Who {
@@ -29,6 +29,11 @@ interface AppleSignin {
 }
 
 interface GoogleSignin {
+  id: string;
+  secret: string;
+}
+
+interface GithubSignin {
   id: string;
   secret: string;
 }
@@ -61,14 +66,39 @@ export function googleSigninKeys(): GoogleSignin | null {
   return id && secret ? { id, secret } : null;
 }
 
+/** Sign in with GitHub's OAuth app: the server's .env only. */
+export function githubSigninKeys(): GithubSignin | null {
+  const id = (process.env.GITHUB_CLIENT_ID ?? "").trim();
+  const secret = (process.env.GITHUB_CLIENT_SECRET ?? "").trim();
+  return id && secret ? { id, secret } : null;
+}
+
 /**
- * Google and Apple send people back only to the address their sign-in clients were registered with: SIGNIN_ORIGIN,
- * by default the product site. Any other server offers no Google / Apple sign-in, so it never shows a button that
+ * Google, Apple and GitHub send people back only to the address their sign-in clients were registered with:
+ * SIGNIN_ORIGIN, by default the product site. Any other server offers no such sign-in, so it never shows a button that
  * ends on the provider's "redirect mismatch" page.
  */
-export function signinOn(origin: string): { apple: boolean; google: boolean } {
+export function signinOn(origin: string): Record<Kind, boolean> {
   const here = origin === (process.env.SIGNIN_ORIGIN || "https://creatortoolset.com").replace(/\/$/, "");
-  return { apple: here && !!appleSigninKeys(), google: here && !!googleSigninKeys() };
+  return { apple: here && !!appleSigninKeys(), google: here && !!googleSigninKeys(), github: here && !!githubSigninKeys() };
+}
+
+/**
+ * The provider's sign-in page for this state, or null when the server has no keys for that provider. Shared by the
+ * site sign-in here and the Mac app's account service (plugins/hosted/server/account.ts). GitHub has no PKCE: its
+ * `state` is the CSRF guard, and the Mac app's own challenge/verifier (account.ts) covers the app's code.
+ */
+export function signinUrl(kind: Kind, redirect: string, state: string): string | null {
+  if (kind === "apple") {
+    const k = appleSigninKeys();
+    return k && "https://appleid.apple.com/auth/authorize?" + new URLSearchParams({ client_id: k.servicesId, redirect_uri: redirect, response_type: "code", response_mode: "form_post", scope: "name email", state });
+  }
+  if (kind === "google") {
+    const g = googleSigninKeys();
+    return g && "https://accounts.google.com/o/oauth2/v2/auth?" + new URLSearchParams({ client_id: g.id, redirect_uri: redirect, response_type: "code", scope: "openid email profile", state });
+  }
+  const g = githubSigninKeys();
+  return g && "https://github.com/login/oauth/authorize?" + new URLSearchParams({ client_id: g.id, redirect_uri: redirect, scope: "read:user user:email", state });
 }
 
 type Mode = { type: "site" } | { type: "link"; username: string };
@@ -80,7 +110,7 @@ const sweep = () => {
   for (const [k, v] of states) if (now - v.at > STATE_MS) states.delete(k);
 };
 
-const providerName = (p: Kind) => (p === "apple" ? "Apple" : "Google");
+const providerName = (p: Kind) => SIGNIN_NAME[p];
 
 /** Starts a sign-in for a site account (`for=site`) or links one to the signed-in account (`for=link`); others go on. */
 export const signInStartApp = new Hono<{ Variables: AuthVars }>();
@@ -88,7 +118,7 @@ export const signInStartApp = new Hono<{ Variables: AuthVars }>();
 signInStartApp.get("/login/:kind", (c, next) => {
   if (!hostedMode()) return next();
   const kind = c.req.param("kind");
-  if (kind !== "apple" && kind !== "google") return next();
+  if (!isSignInProvider(kind)) return next();
   const forWhat = c.req.query("for");
   let mode: Mode;
   if (forWhat === "link") {
@@ -102,16 +132,8 @@ signInStartApp.get("/login/:kind", (c, next) => {
   const redirect = `${origin}/api/auth/${kind}/callback`;
   if (!signinOn(origin)[kind]) return c.json({ error: NOT_SET }, 501);
   const state = randomBytes(24).toString("base64url");
-  let url: string;
-  if (kind === "apple") {
-    const k = appleSigninKeys();
-    if (!k) return c.json({ error: NOT_SET }, 501);
-    url = "https://appleid.apple.com/auth/authorize?" + new URLSearchParams({ client_id: k.servicesId, redirect_uri: redirect, response_type: "code", response_mode: "form_post", scope: "name email", state });
-  } else {
-    const g = googleSigninKeys();
-    if (!g) return c.json({ error: NOT_SET }, 501);
-    url = "https://accounts.google.com/o/oauth2/v2/auth?" + new URLSearchParams({ client_id: g.id, redirect_uri: redirect, response_type: "code", scope: "openid email profile", state });
-  }
+  const url = signinUrl(kind, redirect, state);
+  if (!url) return c.json({ error: NOT_SET }, 501);
   sweep();
   states.set(state, { kind, mode, at: Date.now() });
   return c.redirect(url);
@@ -135,6 +157,13 @@ signInCallbackApp.get("/google/callback", (c, next) => {
   return callback(c, "google", { code: c.req.query("code") ?? "", state, error: c.req.query("error") });
 });
 
+signInCallbackApp.get("/github/callback", (c, next) => {
+  if (!hostedMode()) return next();
+  const state = c.req.query("state") ?? "";
+  if (!states.has(state)) return next();
+  return callback(c, "github", { code: c.req.query("code") ?? "", state, error: c.req.query("error") });
+});
+
 async function callback(c: Context, kind: Kind, p: { code: string; state: string; error?: string; userJson?: string }) {
   const st = states.get(p.state);
   states.delete(p.state); // single use
@@ -147,11 +176,11 @@ async function callback(c: Context, kind: Kind, p: { code: string; state: string
   if (p.error || !p.code) return fail("Sign-in was cancelled");
   try {
     const redirect = `${originOf(c)}/api/auth/${kind}/callback`;
-    const who = kind === "apple" ? await appleIdentity(p.code, redirect, p.userJson) : await googleIdentity(p.code, redirect);
+    const who = await identityOf(kind, p.code, redirect, p.userJson);
     if (mode.type === "link") {
-      // Google's callback is a same-site GET, so the cookie comes along: the browser finishing it must be the account
-      // that started it (Apple's cross-site POST carries no cookie; its state is single use and 15 min)
-      if (kind === "google" && getSessionUser(c.req.header("cookie"))?.username !== mode.username) return fail("Finish linking in the browser you're signed in on");
+      // Google's and GitHub's callbacks are top-level GETs, so the Lax cookie comes along: the browser finishing it must
+      // be the account that started it (Apple's cross-site POST carries no cookie; its state is single use and 15 min)
+      if ((kind === "google" || kind === "github") && getSessionUser(c.req.header("cookie"))?.username !== mode.username) return fail("Finish linking in the browser you're signed in on");
       const user = findUser(mode.username);
       if (!user) return fail("That account is gone");
       try {
@@ -170,6 +199,13 @@ async function callback(c: Context, kind: Kind, p: { code: string; state: string
     console.error(`[sign-in] ${kind} sign-in failed:`, e instanceof Error ? e.message : e);
     return fail("Sign-in failed");
   }
+}
+
+/** The provider's identity for a returned code: its token exchange and checks. Used by both callers (here and account.ts). */
+export function identityOf(kind: Kind, code: string, redirect: string, userJson?: string): Promise<Who> {
+  if (kind === "apple") return appleIdentity(code, redirect, userJson);
+  if (kind === "google") return googleIdentity(code, redirect);
+  return githubIdentity(code, redirect);
 }
 
 /** Apple's token exchange and id_token check. Used by the site sign-in here and by the Mac app's account service. */
@@ -214,6 +250,40 @@ export async function googleIdentity(code: string, redirect: string): Promise<Wh
   // an address Google hasn't verified isn't kept: the account is the provider + sub either way
   const verified = claims.email_verified === true || claims.email_verified === "true";
   return { provider: "google", sub: claims.sub, email: verified ? str(claims.email) : "", name: str(claims.name) };
+}
+
+/**
+ * GitHub's token exchange (a plain OAuth token, no id_token), then the account: `id` is the stable key (`login` can
+ * change). A sign-in is refused unless GitHub marks an address primary and verified: the account is never kept without
+ * one (fails closed; Google and Apple keep their existing rule for unverified addresses).
+ */
+export async function githubIdentity(code: string, redirect: string): Promise<Who> {
+  const g = githubSigninKeys();
+  if (!g) throw new Error(NOT_SET);
+  const res = await fetch("https://github.com/login/oauth/access_token", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ client_id: g.id, client_secret: g.secret, code, redirect_uri: redirect }),
+    signal: AbortSignal.timeout(20_000),
+  });
+  const tok = (await res.json().catch(() => ({}))) as { access_token?: unknown };
+  const token = str(tok.access_token);
+  if (!res.ok || !token) throw new Error(`GitHub token exchange ${res.status}`);
+  // api.github.com refuses a request without a User-Agent
+  const api = (p: string) =>
+    fetch(`https://api.github.com${p}`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "User-Agent": "creatortoolset" },
+      signal: AbortSignal.timeout(20_000),
+    });
+  const me = await api("/user");
+  const user = (me.ok ? await me.json().catch(() => null) : null) as { id?: unknown; login?: unknown; name?: unknown } | null;
+  if (!user || (typeof user.id !== "number" && typeof user.id !== "string")) throw new Error(`GitHub user ${me.status}`);
+  const mails = await api("/user/emails");
+  const list: unknown = mails.ok ? await mails.json().catch(() => []) : [];
+  const primary = (Array.isArray(list) ? list : []).find((m: { primary?: unknown; verified?: unknown }) => m?.primary === true && m?.verified === true) as { email?: unknown } | undefined;
+  const email = str(primary?.email);
+  if (!email) throw new Error("GitHub has no verified primary email address");
+  return { provider: "github", sub: String(user.id), email, name: str(user.name) || str(user.login) };
 }
 
 /** Apple's client secret: an ES256 JWT signed with the .p8 key (IEEE P1363 r||s, not DER). */

@@ -1,19 +1,36 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
-import { AccountStepView, type AccountState } from "./AccountStep";
+import { AccountStepView, parseProviders, type AccountState, type Provider } from "./AccountStep";
 
-const view = (account: AccountState) =>
-  renderToStaticMarkup(<AccountStepView account={account} busy={false} onSignIn={() => {}} onDone={() => {}} />);
+const all: Provider[] = ["apple", "google", "github"];
+const view = (account: AccountState, providers: Provider[] = all) =>
+  renderToStaticMarkup(<AccountStepView account={account} busy={false} providers={providers} onSignIn={() => {}} onDone={() => {}} />);
 
-it("asks for Apple or Google and can't be passed until signed in", () => {
+it("asks for Apple, Google or GitHub and can't be passed until signed in", () => {
   for (const s of [{ state: "signedOut" }, { state: "cancelled" }, { state: "error", message: "Can't reach the server" }] as AccountState[]) {
     const html = view(s);
     expect(html).toContain("Continue with Apple");
     expect(html).toContain("Continue with Google");
+    expect(html).toContain("Continue with GitHub");
     expect(html).not.toContain(">Continue<");
   }
   expect(view({ state: "error", message: "Can't reach the server" })).toContain("Can&#x27;t reach the server");
   expect(view({ state: "checking" })).not.toContain(">Continue<");
+});
+
+it("shows a button only for the providers the account server has keys for", () => {
+  const html = view({ state: "signedOut" }, ["github"]);
+  expect(html).toContain("Continue with GitHub");
+  expect(html).not.toContain("Continue with Apple");
+  expect(html).not.toContain("Continue with Google");
+  expect(parseProviders("google,github,microsoft")).toEqual(["google", "github"]);
+  expect(parseProviders("")).toEqual([]);
+});
+
+it("shows no sign-in button when the reply names no providers (an older Mac app)", () => {
+  const html = view({ state: "signedOut" }, []);
+  expect(html).not.toContain("Continue with");
+  expect(html).toContain("Sign in to set up your account");
 });
 
 it("goes on once signed in, while the server has no sign-in yet, or with no account step", () => {

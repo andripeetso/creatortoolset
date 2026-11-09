@@ -21,6 +21,8 @@ import {
   newApiKey,
   setDisplayName,
   setPassword,
+  SIGNIN_NAME,
+  isSignInProvider,
   userForApiKey,
   verifyPassword,
 } from "./users";
@@ -215,14 +217,14 @@ authApp.post("/login", async (c) => {
   });
 });
 
-export const providerLabel = (p: SignInProvider) => (p === "apple" ? "Apple" : "Google");
+export const providerLabel = (p: SignInProvider) => SIGNIN_NAME[p];
 
 /**
  * The team's sign-in rule for this account (Settings → Team, `Workspace.signInWith`): the providers it must sign in
  * with, and `missing` = it has none of them linked yet, so boot.ts lets it reach only /api/auth until it links one.
  */
 export function ruleFor(username: string): { allowed: SignInProvider[]; missing: SignInProvider[] | null } | null {
-  const allowed = workspaceOf(username)?.signInWith ?? [];
+  const allowed: SignInProvider[] = workspaceOf(username)?.signInWith ?? [];
   if (!allowed.length) return null;
   const linked = findUser(username)?.identities?.some((i) => allowed.includes(i.provider));
   return { allowed, missing: linked ? null : allowed };
@@ -465,7 +467,7 @@ authApp.delete("/identity/:provider", (c) => {
   const user = session && findUser(session.username);
   if (!user) return c.json({ error: "Sign in with an account first" }, 401);
   const provider = c.req.param("provider");
-  if (provider !== "apple" && provider !== "google") return c.json({ error: "Unknown sign-in" }, 404);
+  if (!isSignInProvider(provider)) return c.json({ error: "Unknown sign-in" }, 404);
   const rule = ruleFor(user.username);
   const left = (user.identities ?? []).filter((i) => i.provider !== provider && rule?.allowed.includes(i.provider));
   if (rule?.allowed.includes(provider) && !left.length) {
