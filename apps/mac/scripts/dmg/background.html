@@ -1,18 +1,37 @@
 <!doctype html>
-<!-- The disk image window's background, 640x400. Remake background.png and background@2x.png from it with any
-     browser screenshot at 1x and 2x (e.g. Playwright, deviceScaleFactor 2) after a change. --><html><head><meta charset="utf-8"><style>
-@font-face{font-family:XB;src:url(../../../captions/public/fonts/Archivo-ExpandedBlack.woff2)}
-@font-face{font-family:AT;src:url(../../../captions/public/fonts/Archivo-Text.woff2)}
-html,body{margin:0;width:640px;height:400px;background:#F5F4F0;overflow:hidden}
-.mark{position:absolute;left:32px;top:28px;font:18px XB;letter-spacing:-.01em;color:#141414}
-.mark span{color:#9a978f}
-.hint{position:absolute;left:0;right:0;top:316px;text-align:center;font:500 13px AT;color:#7a776f;letter-spacing:.01em}
+<!-- The disk image window's background, 640x400 points. Render background.png (1x, 640x400) and background@2x.png
+     (2x, 1280x800) from it with headless Chrome, one at a time, from this folder:
+       chrome --headless=new --hide-scrollbars --allow-file-access-from-files --user-data-dir=<scratch>
+              --window-size=640,400 --force-device-scale-factor=1 --screenshot=background.png file://$PWD/background.html
+     then the same with --force-device-scale-factor=2 --screenshot=background@2x.png. Finder draws the icon names
+     itself, so they are not on the picture. Icon centres and the arrow's ends must match settings.py. -->
+<html><head><meta charset="utf-8"><style>
+html,body{margin:0;width:640px;height:400px;background:#f4f4f5;overflow:hidden}
+body{position:relative;font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;color:#18181b;-webkit-font-smoothing:antialiased}
+.mark{position:absolute;left:30px;top:24px;font-size:17px;font-weight:700;letter-spacing:-.02em;color:#18181b}
+.mark span{font-weight:500;color:#71717a}
+.head{position:absolute;left:0;right:0;top:72px;text-align:center;font-size:25px;font-weight:700;letter-spacing:-.02em;color:#27272a}
+.hint{position:absolute;left:0;right:0;top:358px;line-height:16px;text-align:center;font-size:13px;font-weight:500;color:#71717a}
 svg{position:absolute;left:0;top:0}
-.rule{position:absolute;left:32px;right:32px;top:72px;height:1px;background:#e3e1da}
 </style></head><body>
+<svg width="640" height="400" viewBox="0 0 640 400">
+  <defs>
+    <linearGradient id="far" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ececee"/><stop offset="1" stop-color="#e4e4e7"/>
+    </linearGradient>
+    <linearGradient id="near" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e4e4e7"/><stop offset="1" stop-color="#d8d8dc"/>
+    </linearGradient>
+  </defs>
+  <!-- wave bands across the middle, soft and low-contrast -->
+  <path d="M0 232 C120 196 230 214 340 236 C450 258 540 196 640 214 L640 400 L0 400 Z" fill="url(#far)"/>
+  <path d="M0 278 C110 252 240 262 350 282 C460 302 540 262 640 270 L640 400 L0 400 Z" fill="url(#near)"/>
+  <path d="M0 318 C130 302 250 316 360 328 C470 340 550 312 640 318" fill="none" stroke="#ffffff" stroke-opacity=".7" stroke-width="1.2"/>
+  <!-- a straight arrow from the app icon (centre 175) to Applications (centre 465), level with the icon centres (y 196) -->
+  <path d="M246 196 H380" fill="none" stroke="#27272a" stroke-width="2.4" stroke-linecap="round"/>
+  <path d="M368 186 L380 196 L368 206" fill="none" stroke="#27272a" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
 <div class="mark">Creator <span>Toolset</span></div>
-<div class="rule"></div>
-<svg width="640" height="400"><g fill="none" stroke="#141414" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-<path d="M262 190 H372"/><path d="M362 180 L374 190 L362 200"/></g></svg>
-<div class="hint">Drag Creator Toolset into Applications</div>
+<div class="head">Drag Creator Toolset into Applications</div>
+<div class="hint">Once copied, open it from Applications</div>
 </body></html>

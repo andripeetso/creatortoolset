@@ -54,7 +54,7 @@ build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Contents/Info
 dmg="$work/CreatorToolset-$version.dmg"
 python3 -m venv "$work/dmgbuild" && "$work/dmgbuild/bin/pip" -q install dmgbuild==1.6.7
 dmgdir="$work/src/apps/mac/scripts/dmg"
-"$work/dmgbuild/bin/dmgbuild" -s "$dmgdir/settings.py" -D app="$app" -D here="$dmgdir" "Creator Toolset" "$dmg"
+"$work/dmgbuild/bin/dmgbuild" -s "$dmgdir/settings.py" -D app="$app" -D here="$dmgdir" "Creator Toolset $version Installer" "$dmg"
 codesign --force --sign "$SIGN_IDENTITY" --timestamp "$dmg"
 xcrun notarytool submit "$dmg" --keychain-profile "$NOTARY_PROFILE" --wait
 xcrun stapler staple "$dmg"
