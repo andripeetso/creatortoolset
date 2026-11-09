@@ -29,7 +29,16 @@ git merge-base --is-ancestor "$sha" origin/main || { echo "Push $sha to main fir
 work="${CT_RELEASE_DIR:-$root/apps/mac/build/release}/$tag"
 rm -rf "$work" && mkdir -p "$work"
 git worktree add --detach "$work/src" "$sha"
-trap 'git -C "$root" worktree remove --force "$work/src"' EXIT
+# every built app copy shares the bundle id, and macOS's permission lists get confused by them: on exit, the copies
+# under build/ are unregistered from Launch Services and renamed .app-build (the installed copy in /Applications is untouched)
+retire_copies() {
+  local lsr=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+  while IFS= read -r app; do
+    "$lsr" -u "$app" >/dev/null 2>&1 || true
+    mv "$app" "${app%.app}.app-build"
+  done < <(find "$root/apps/mac/build" -name "*.app" -type d -not -path "*/Contents/*" 2>/dev/null)
+}
+trap 'git -C "$root" worktree remove --force "$work/src"; retire_copies' EXIT
 (cd "$work/src" && pnpm install --frozen-lockfile)
 (cd "$work/src/apps/mac" && swift package resolve)
 sparkle="$work/src/apps/mac/.build/artifacts/sparkle/Sparkle/bin"

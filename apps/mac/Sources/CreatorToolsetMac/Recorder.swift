@@ -234,6 +234,8 @@ final class Recorder: ObservableObject {
     /// The list of recordings on this Mac changed (a stop, a delete): the /record page asks again.
     var onRecordingsChanged: (() -> Void)?
 
+    init() { ScreenPermission.watchActivation() }
+
     static var available: Bool {
         if #available(macOS 15.0, *) { return true }
         return false
@@ -301,13 +303,7 @@ final class Recorder: ObservableObject {
         guard #available(macOS 15.0, *) else { return }
         if phase == .toolbar { return RecordToolbar.window?.orderFrontRegardless() ?? () }
         guard phase == .idle else { return }
-        guard CGPreflightScreenCaptureAccess() else {
-            CGRequestScreenCaptureAccess()
-            alert("Allow screen recording",
-                  "Turn on Creator Toolset in System Settings → Privacy & Security → Screen & System Audio Recording, then start again.",
-                  settings: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
-            return
-        }
+        guard ScreenPermission.check() else { return }
         RecordingPreview.close()
         let screen = screenUnderPointer()
         phase = .toolbar
@@ -465,7 +461,8 @@ final class Recorder: ObservableObject {
             CameraPreview.close()
             closeBar()
             phase = .idle
-            alert("Couldn't start recording", error.localizedDescription)
+            // without the permission, the failure is the permission flow's to show (check() asks or alerts once)
+            if ScreenPermission.check() { alert("Couldn't start recording", error.localizedDescription) }
         }
     }
 
@@ -723,14 +720,11 @@ final class Recorder: ObservableObject {
         panel = nil
     }
 
-    private func alert(_ title: String, _ text: String, settings: String? = nil) {
+    private func alert(_ title: String, _ text: String) {
         let a = NSAlert()
         a.messageText = title
         a.informativeText = text
-        if settings != nil { a.addButton(withTitle: "Open System Settings") }
-        a.addButton(withTitle: "OK")
-        if let settings, a.runModal() == .alertFirstButtonReturn, let url = URL(string: settings) { NSWorkspace.shared.open(url) }
-        else if settings == nil { a.runModal() }
+        a.runModal()
     }
 }
 
