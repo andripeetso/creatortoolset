@@ -194,3 +194,24 @@ describe("Caption Studio link", () => {
     expect(await ensureProjectOriginal("proj-000002", "clip-000001", original)).toBeNull();
   });
 });
+
+describe("Caption Studio from a clip: refused for a clip the caller can't see", () => {
+  const opens = (user: string, assetId: string) => app.request(`/api/library/lib_a/assets/${assetId}/captions`, { method: "POST", headers: { "x-user": user } });
+
+  it("an account outside the library gets a 404, not the clip", async () => {
+    const r = await opens("other-b", "ast-roll-0001");
+    expect(r.status).toBe(404);
+    expect(await r.text()).not.toContain("projectId");
+  });
+
+  it("a trashed clip is a 404 even for the library's owner, and no project is opened", async () => {
+    libraryDb().prepare("UPDATE assets SET trashed_at = 1 WHERE id = 'ast-roll-0001'").run();
+    try {
+      const r = await opens("local", "ast-roll-0001");
+      expect(r.status).toBe(404);
+      expect(await r.text()).not.toContain("projectId");
+    } finally {
+      libraryDb().prepare("UPDATE assets SET trashed_at = NULL WHERE id = 'ast-roll-0001'").run();
+    }
+  });
+});
