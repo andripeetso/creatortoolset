@@ -2681,6 +2681,20 @@ export async function workshopFinalsFor(username: string): Promise<Record<string
   return out;
 }
 
+/** One session's Finals side for a piece a plug-in keeps (its Finals link): the main post description, or the piece `docId`
+ *  names; each version's own by its key. Null unless the session is `owner`'s. */
+export async function workshopSessionFinals(sessionId: string, owner: string, docId?: string): Promise<WorkshopFinal | null> {
+  const meta = await readSession(sessionId);
+  if (!meta || meta.owner !== owner) return null;
+  const piece = (docId && (await readDoc(sessionId, docId))) || (await mainPiece(sessionId));
+  return {
+    description: piece?.caption?.text ?? "",
+    versions: Object.fromEntries(Object.entries(piece?.captions ?? {}).map(([k, c]) => [k, { text: c.text, label: c.label, author: c.author }])),
+    sessionId: meta.id,
+    status: meta.status,
+  };
+}
+
 /** Mounted under /api/library (boot.ts), so it sits behind the Media Library tool gate. */
 export const workshopLibraryApp = new Hono<{ Variables: AuthVars }>();
 workshopLibraryApp.get("/workshop", async (c) => c.json({ pieces: await workshopFinalsFor(c.get("user").username) }));

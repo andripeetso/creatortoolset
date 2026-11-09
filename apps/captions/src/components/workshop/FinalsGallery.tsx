@@ -101,13 +101,13 @@ export function FinalsGallery({ token, files, className = "grid-cols-2 sm:grid-c
 }
 
 /** The post description as Instagram takes it (plain text, the **emphasis** marks dropped), with one big Copy. */
-export function PostDescription({ text }: { text: string }) {
+export function PostDescription({ text, title = "Post description" }: { text: string; title?: string }) {
   const plain = markdownToPlain(text);
   if (!plain) return null;
   return (
     <section className="flex flex-col gap-2 rounded-xl border border-violet-500/40 bg-violet-500/[0.07] p-3">
       <div className="flex items-center gap-2">
-        <span className="text-[11px] font-medium uppercase tracking-wide text-violet-300">Post description</span>
+        <span className="text-[11px] font-medium uppercase tracking-wide text-violet-300">{title}</span>
         <CopyButton
           text={() => plain}
           label="Copy"

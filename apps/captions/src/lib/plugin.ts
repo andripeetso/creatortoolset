@@ -61,6 +61,8 @@ export interface PluginReplacements {
   editorEdit?: ComponentType;
   // the Media Library (/library): a plug-in's catalog view replaces the storage library and its Home tile
   media?: ComponentType;
+  // Finals (/finals): a plug-in's own Finals page (its list, pieces and actions) replaces the built-in one
+  finals?: ComponentType;
 }
 
 export type ReplaceSlot = keyof PluginReplacements;
