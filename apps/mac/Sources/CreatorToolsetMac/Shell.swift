@@ -19,7 +19,7 @@ final class Shell: NSObject, ObservableObject {
     @Published private(set) var pluginMenu: [PluginMenuItem] = []
     /// The Go menu's own tools (GET /api/activity/tools, PluginMenu.swift): the server's list for this account.
     @Published private(set) var appTools: [AppToolItem] = []
-    @Published private(set) var notice: String?
+    @Published internal(set) var notice: String?
     /// This Mac as an AI device (Relay.swift): on = the person turned it on; ai = what the runner reports.
     @Published private(set) var aiOn = false
     @Published private(set) var ai = AIStatus()
@@ -42,6 +42,9 @@ final class Shell: NSObject, ObservableObject {
 
     /// The person's account (Account.swift): first run's sign-in with Apple or Google.
     let account = Account()
+    /// This Mac's tunnel to the account's broker (Connect.swift), and the account's other computers from it (Servers).
+    let tunnel = TunnelRunner()
+    @Published internal(set) var accountComputers: [ServerEntry] = []
 
     private let noteCenter = NoteCenter()
     private var timer: Timer?
@@ -164,7 +167,7 @@ final class Shell: NSObject, ObservableObject {
     // MARK: servers (Servers.swift)
 
     /// This Mac (with the server in this build) and the added servers, in menu order.
-    var listed: [ServerEntry] { listedServers(servers, hasLocal: server != nil) }
+    var listed: [ServerEntry] { listedServers(servers + accountComputers, hasLocal: server != nil) }
 
     var currentName: String? { listed.first { $0.id == current }?.name }
 
@@ -176,7 +179,7 @@ final class Shell: NSObject, ObservableObject {
         let here = id == thisMacID && server != nil
         if runsHere && !here { server?.stop() }
         runsHere = here
-        switchTo(Self.url(of: id, in: servers, local: server))
+        switchTo(Self.url(of: id, in: listed, local: server))
         if here {
             startServer()
         } else if hasServer {
@@ -252,6 +255,7 @@ final class Shell: NSObject, ObservableObject {
     /// The server answers: the window signs in as the owner by itself and leaves the starting (or stopped) page. The AI
     /// comes on here only when it was on before; a first run leaves it off until the person presses Connect (startThisMac).
     private func serverReady() {
+        if let server { tunnel.start(server: LocalServer.folder, dataDir: server.dataDir) }   // a linked Mac's tunnel comes back
         Task {
             await signIn()
             if !(webView.url.map { isSite($0, base) } ?? false) { open("/") }
@@ -665,6 +669,7 @@ final class Shell: NSObject, ObservableObject {
             appTools = []
             return
         }
+        Task { accountComputers = await brokerComputers() }   // a slow or down broker must not hold up the badge and notes
         let client = await client()
         sessions = (try? await client.get("/api/workshop/sessions/summary")) ?? []
         pluginRows = (try? await client.get("/api/activity")) ?? []
