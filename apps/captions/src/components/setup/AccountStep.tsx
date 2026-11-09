@@ -2,8 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 
 /**
- * The person's Creator Toolset account, signed in with Apple or Google: optional, in setup's What's left and Settings → Setup. The Mac app does the sign-in
- * (its `account` message handler, Account.swift) and answers each message with the state below. Required: Continue
+ * The person's Creator Toolset account, signed in with Apple, Google or GitHub: optional, in setup's What's left and Settings → Setup. The Mac app does the sign-in
+ * (its `account` message handler, Account.swift) and answers each message with the state below. The signed-out reply
+ * names the providers the account server has keys for (`providers`, "apple,google,github"): a provider without keys has no button. Required: Continue
  * shows only once signed in, or while the account server says sign-in isn't set up yet or can't be reached (offline:
  * it asks again next time), or with no account step at all (no Mac app, or Mac settings left the account server empty). Each mount asks again, so the step becomes
  * required by itself once the server has sign-in.
@@ -16,7 +17,13 @@ export type AccountState =
   | { state: "unreachable"; server?: string; message?: string }
   | { state: "error"; message?: string };
 
-type Bridge = { postMessage: (m: string) => Promise<AccountState> };
+export type Provider = "apple" | "google" | "github";
+const PROVIDERS: Provider[] = ["apple", "google", "github"];
+const PROVIDER_NAME: Record<Provider, string> = { apple: "Apple", google: "Google", github: "GitHub" };
+/** The providers a reply names, in the order above; unknown names are dropped. */
+export const parseProviders = (list: string) => PROVIDERS.filter((p) => list.split(",").includes(p));
+
+type Bridge = { postMessage: (m: string) => Promise<AccountState & { providers?: string }> };
 const bridge = (): Bridge | undefined =>
   (window as unknown as { webkit?: { messageHandlers?: { account?: Bridge } } }).webkit?.messageHandlers?.account;
 
@@ -26,7 +33,7 @@ export const hasAccountBridge = () => !!bridge();
 /** Whether the person may go on from this step. */
 export const accountDone = (s: AccountState) => s.state === "signedIn" || s.state === "notSetUp" || s.state === "unreachable" || s.state === "off";
 
-export function AccountStepView({ account, busy, onSignIn, onDone }: { account: AccountState; busy: boolean; onSignIn: (provider: "apple" | "google") => void; onDone?: () => void }) {
+export function AccountStepView({ account, busy, providers = PROVIDERS, onSignIn, onDone }: { account: AccountState; busy: boolean; providers?: Provider[]; onSignIn: (provider: Provider) => void; onDone?: () => void }) {
   return (
     <div className="max-w-xl space-y-4 text-sm text-muted-foreground">
       {account.state === "checking" && <p>Checking your account…</p>}
@@ -45,16 +52,15 @@ export function AccountStepView({ account, busy, onSignIn, onDone }: { account: 
       {account.state === "off" && <p>No account is needed here.</p>}
       {(account.state === "signedOut" || account.state === "cancelled" || account.state === "error") && (
         <>
-          <p className="text-foreground">Sign in to set up your account. Your Apple or Google account gives your name and email, nothing else.</p>
+          <p className="text-foreground">Sign in to set up your account. Your Apple, Google or GitHub account gives your name and email, nothing else.</p>
           {account.state === "cancelled" && <p>The sign-in was closed before it finished.</p>}
           {account.state === "error" && <p className="text-destructive">{account.message || "The sign-in didn't work."}</p>}
           <div className="flex flex-col gap-2 sm:w-72">
-            <Button disabled={busy} onClick={() => onSignIn("apple")}>
-              Continue with Apple
-            </Button>
-            <Button variant="outline" disabled={busy} onClick={() => onSignIn("google")}>
-              Continue with Google
-            </Button>
+            {providers.map((p, i) => (
+              <Button key={p} variant={i === 0 ? "default" : "outline"} disabled={busy} onClick={() => onSignIn(p)}>
+                Continue with {PROVIDER_NAME[p]}
+              </Button>
+            ))}
           </div>
         </>
       )}
@@ -70,12 +76,15 @@ export function AccountStepView({ account, busy, onSignIn, onDone }: { account: 
 /** Without `onDone` (What's left, Settings → Setup) it is an optional row: no Continue button. */
 export function AccountStep({ onDone }: { onDone?: () => void }) {
   const [account, setAccount] = useState<AccountState>({ state: "checking" });
+  const [providers, setProviders] = useState<Provider[]>(PROVIDERS);
   const [busy, setBusy] = useState(false);
   const ask = useCallback(async (m: string) => {
     const b = bridge();
     if (!b) return setAccount({ state: "off" });
     try {
-      setAccount(await b.postMessage(m));
+      const reply = await b.postMessage(m);
+      if (reply.providers !== undefined) setProviders(parseProviders(reply.providers));
+      setAccount(reply);
     } catch (e) {
       setAccount({ state: "error", message: e instanceof Error ? e.message : String(e) });
     }
@@ -87,9 +96,9 @@ export function AccountStep({ onDone }: { onDone?: () => void }) {
     window.addEventListener("ct-account", again);
     return () => window.removeEventListener("ct-account", again);
   }, [ask]);
-  const signIn = (provider: "apple" | "google") => {
+  const signIn = (provider: Provider) => {
     setBusy(true);
     void ask(provider).finally(() => setBusy(false));
   };
-  return <AccountStepView account={account} busy={busy} onSignIn={signIn} onDone={onDone} />;
+  return <AccountStepView account={account} busy={busy} providers={providers} onSignIn={signIn} onDone={onDone} />;
 }

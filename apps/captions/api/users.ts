@@ -31,7 +31,11 @@ export interface UserUsage {
   lastActiveAt: number; // epoch ms, 0 = never
 }
 
-export type SignInProvider = "apple" | "google";
+export type SignInProvider = "apple" | "google" | "github";
+/** A sign-in provider's name as people see it. */
+export const SIGNIN_NAME: Record<SignInProvider, string> = { apple: "Apple", google: "Google", github: "GitHub" };
+/** Whether a value names a provider this server knows (a route's :kind, a request body). */
+export const isSignInProvider = (v: unknown): v is SignInProvider => typeof v === "string" && Object.hasOwn(SIGNIN_NAME, v);
 export interface Identity {
   provider: SignInProvider;
   sub: string;
@@ -174,7 +178,7 @@ export function findByIdentity(provider: SignInProvider, sub: string): UserRecor
 /** Links a Google / Apple account for signing in; one per provider per account, and never to two accounts. */
 export function linkIdentity(user: UserRecord, who: { provider: SignInProvider; sub: string; email: string }): void {
   const other = findByIdentity(who.provider, who.sub);
-  if (other && other !== user) throw new Error(`That ${who.provider === "apple" ? "Apple" : "Google"} account already signs in to another account here`);
+  if (other && other !== user) throw new Error(`That ${SIGNIN_NAME[who.provider]} account already signs in to another account here`);
   user.identities = [...(user.identities ?? []).filter((i) => i.provider !== who.provider), { ...who, linkedAt: Date.now() }];
   persist();
 }
