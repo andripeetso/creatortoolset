@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import { createHash, randomUUID } from "node:crypto";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { DRIVERS, parseMachine, type Driver, type Effort, type MacReport, type Scope } from "../../contracts/providers";
+import { DRIVERS, parseMachine, type AcpCommand, type Driver, type Effort, type MacReport, type Scope } from "../../contracts/providers";
 import { limitMessage } from "../../contracts/plans";
 import { env } from "./env";
 import { deviceName, isOnline, saveReport, touchDevice } from "./devices";
@@ -48,7 +48,15 @@ export interface MacOpts {
   /** Another Claude than the provider's model, e.g. Fable for a reader's review. */
   model?: string;
   /** The provider instance that answers (contracts/providers.ts): its CLI, identity folder, model and effort, the device it runs on and whose settings it is. */
-  provider?: { instance: string; driver: Driver; home?: string; model: string; effort: Effort; device?: string; scope?: Scope };
+  provider?: { instance: string; driver: Driver; home?: string; model: string; effort: Effort; device?: string; scope?: Scope;
+    /** the endpoint a plug-in instance sends its Claude requests to (ANTHROPIC_BASE_URL on the Mac); none = the CLI's own */
+    baseUrl?: string;
+    /** the names of the instance's environment variables; the Mac sends each its value from its own Keychain */
+    envNames?: string[];
+    /** ACP kinds: the launch arguments, the local command for driver "acp", and the program a manual setup gave */
+    launchArgs?: string[];
+    acp?: AcpCommand;
+    binaryPath?: string; };
   /** Each tool call as Claude makes it ("Searched the web: …", "Read my-posts/INDEX.md"). */
   onStep?: (label: string) => void;
   /** A Workshop session's folder, kept on the Mac with its Claude session. resume = that session's id from the last turn
@@ -157,7 +165,10 @@ interface Req {
   mcp?: MacOpts["mcp"];
   onAsk?: MacOpts["onAsk"];
   claimed: boolean;
+  /** when the 20-minute clock started; moved on by the time a permission question waits for a person (/:id/ask) */
   claimedAt: number;
+  /** the last post was an ask answered "waiting" at this time */
+  waitedAt?: number;
   text: string;
   seen: number;
   /** deltas run one after another, like a stream's */
@@ -372,7 +383,8 @@ export function relayRoutes(deviceOf: (c: Context) => string | null) {
   app.post("/:id/ask", async (c) => {
     const r = mine(c);
     if (!r) return c.json({ error: "Not found" }, 404);
-    r.seen = Date.now();
+    const prev = r.seen;
+    const now = (r.seen = Date.now());
     const b = await body(c);
     const text = (k: string, max: number) => (typeof b[k] === "string" ? (b[k] as string).slice(0, max) : "");
     const id = text("ask_id", 100);
@@ -383,6 +395,11 @@ export function relayRoutes(deviceOf: (c: Context) => string | null) {
       if (r.onAsk) status = r.onAsk(ask);
     } catch (e) {
       console.warn(`[mac-claude] ask: ${e instanceof Error ? e.message : e}`);
+    }
+    // the clock stops while a person decides: the time since the last "waiting" answer doesn't count toward TOTAL_MS
+    if (status === "waiting") {
+      if (r.waitedAt === prev) r.claimedAt += now - prev;
+      r.waitedAt = now;
     }
     return c.json({ status });
   });
@@ -470,7 +487,7 @@ const pack = (r: Req) => ({
   user: r.user,
   web: r.web,
   ...(r.files ? { files: r.files } : {}),
-  ...(r.provider ? { instance: r.provider.instance, driver: r.provider.driver, effort: r.provider.effort, ...(r.provider.home ? { home: r.provider.home } : {}), ...(r.provider.scope ? { scope: r.provider.scope } : {}) } : {}),
+  ...(r.provider ? { instance: r.provider.instance, driver: r.provider.driver, effort: r.provider.effort, ...(r.provider.home ? { home: r.provider.home } : {}), ...(r.provider.scope ? { scope: r.provider.scope } : {}), ...(r.provider.baseUrl ? { baseUrl: r.provider.baseUrl } : {}), ...(r.provider.envNames?.length ? { envNames: r.provider.envNames } : {}), ...(r.provider.launchArgs?.length ? { launchArgs: r.provider.launchArgs } : {}), ...(r.provider.acp ? { acp: r.provider.acp } : {}), ...(r.provider.binaryPath ? { binaryPath: r.provider.binaryPath } : {}) } : {}),
   ...(r.model || r.provider ? { model: r.model ?? r.provider!.model } : {}),
   ...(r.session ? { session: r.session.key, ...(r.session.resume ? { resume: r.session.resume } : {}) } : {}),
   ...(r.mcp ? { mcp: r.mcp } : {}),

@@ -212,13 +212,13 @@ export default function ReviewPage() {
   const queue = useRef(Promise.resolve());
   const upload = useCallback(
     (items: UploadItem[], to: { assetId?: string; projectId?: string }) => {
-      for (const { video: file } of items) {
+      for (const { video: file, timeline } of items) {
         const key = crypto.randomUUID();
         const set = (patch: Partial<Upload>) =>
           setUploads((u) => u.map((x) => (x.key === key ? { ...x, ...patch } : x)));
         setUploads((u) => [...u, { key, name: file.name, pct: 0, waiting: true, assetId: to.assetId }]);
         queue.current = queue.current.then(() =>
-          uploadReviewFile(file, (pct) => set({ pct, waiting: false }), to)
+          uploadReviewFile(file, (pct) => set({ pct, waiting: false }), to, timeline)
             .then(() => {
               setUploads((u) => u.filter((x) => x.key !== key));
               void load();

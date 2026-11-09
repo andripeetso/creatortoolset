@@ -4,7 +4,7 @@
  * (`postedFromUrl`) covers the rest.
  */
 import type { OwnPost } from "./folder";
-import type { SessionMeta } from "./types";
+import type { Posting, SessionMeta } from "./types";
 
 const MATCH = 0.4; // cosine of the pieces' words against the post's, as the Mac relay
 const MARGIN = 0.08; // ahead of the next post by this much, or it's a tie
@@ -56,6 +56,32 @@ export function matchPosted(candidates: Candidate[], posts: OwnPost[], taken = n
     }
   }
   return out;
+}
+
+/** A session's postings: its list, or (saved before the list existed) the one `posted`. */
+export function postingsOf(m: Pick<SessionMeta, "postings" | "posted">): Posting[] {
+  return m.postings ?? (m.posted ? [m.posted] : []);
+}
+
+/** Sets the list and keeps `posted` the first of it (readers that know one post still work). */
+export function setPostings(m: Pick<SessionMeta, "postings" | "posted">, postings: Posting[]): void {
+  if (postings.length) {
+    m.postings = postings;
+    m.posted = postings[0];
+  } else {
+    delete m.postings;
+    delete m.posted;
+  }
+}
+
+/**
+ * The sessions a shared own-post link could be, for the phone to pick from: not shelved, not one the author marked "not this
+ * post", and not already holding this post. A session that already has other posts stays a candidate, on purpose: one session
+ * can be several posts (one per version), so a second post can be linked to it. The auto-matcher (matchPosted) is stricter and
+ * only offers sessions with no post yet.
+ */
+export function linkCandidates(metas: SessionMeta[], shortcode: string): SessionMeta[] {
+  return metas.filter((m) => m.status !== "shelved" && !m.postedNot?.includes(shortcode) && !postingsOf(m).some((p) => p.shortcode === shortcode));
 }
 
 /** The post a pasted Instagram link points at, as the link the session keeps. */

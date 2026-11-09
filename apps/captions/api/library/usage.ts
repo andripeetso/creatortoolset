@@ -9,6 +9,7 @@ import type { LibraryStorage, LibraryStorageInput } from "../../contracts/librar
 import { libraryRole } from "./access";
 import { libraryDb, placeOf, serverBucket, type StorageConfig } from "./db";
 import { s3Blobs, s3Client } from "./storage/s3";
+import { limitsFor } from "../lib/workspace-limits";
 
 /**
  * Where a library keeps its files, and how much its bucket holds (tasks/media-library-plan.md, sections 3 and 7).
@@ -22,7 +23,7 @@ export const storageApp = new Hono<{ Variables: AuthVars }>();
 const db = () => libraryDb();
 
 interface Row {
-  storage_kind: "local" | "s3";
+  storage_kind: "local" | "s3" | "bunny";
   storage_config: string | null;
   settings: string;
 }
@@ -45,6 +46,21 @@ function view(libraryId: string): LibraryStorage {
     .all(libraryId) as { day: string; storedBytes: number }[];
   const own = c.mode === "own" ? { endpoint: c.endpoint ?? "", region: c.region ?? "", bucket: c.bucket ?? "", pathStyle: !!c.pathStyle } : {};
   return { ...base, mode: c.mode, ...own, keysSet: c.mode === "own" && !!c.accessKey && !!c.secretKey, storedBytes: days[0]?.storedBytes ?? 0, days };
+}
+
+/**
+ * Bytes a library's workspace may still store, or null when no cap applies. Counts the bytes usage_daily meters
+ * (bucket libraries only; a local-disk library reads as zero stored). No route calls it yet: an upload route asks
+ * before it takes a file, once a build sets a cap through setLimitsHook().
+ */
+export function storageRoom(libraryId: string): number | null {
+  const lib = db().prepare("SELECT workspace_id FROM libraries WHERE id = ?").get(libraryId) as { workspace_id: string } | undefined;
+  const cap = lib ? limitsFor(lib.workspace_id).storageBytes : null;
+  if (cap === null) return null;
+  const stored = db().prepare("SELECT stored_bytes FROM usage_daily WHERE library_id = ? ORDER BY day DESC LIMIT 1").get(libraryId) as
+    | { stored_bytes: number }
+    | undefined;
+  return Math.max(0, cap - (stored?.stored_bytes ?? 0));
 }
 
 // addresses a hosted server must not be pointed at: its own machine and private networks (the URL parser has already

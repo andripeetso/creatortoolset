@@ -7,7 +7,7 @@ const ai = "Fine for the bus. It's the whole trip in one that adds up.";
 const his = "They're fine a short bus ride but not for the whole afternoon (that adds up)";
 
 describe("the author's rewrites of the AI's text", () => {
-  const doc = { id: "d1", kind: "carousel" as const, title: "Kids strength", userEdits: [
+  const doc = { id: "d1", kind: "carousel" as const, title: "Strength training", userEdits: [
     { blockId: "caption", from: ai, fromAuthor: "ai" as const, to: his, at: 5 },
     { blockId: "b3", from: "Chest, back, side", fromAuthor: "ai" as const, to: "Chest, back, sides", at: 6 }, // a typo fix
     { blockId: "b4", from: "My own line", fromAuthor: "user" as const, to: "My own line, again", at: 7 }, // the author's own text
@@ -15,7 +15,7 @@ describe("the author's rewrites of the AI's text", () => {
 
   it("keeps the AI text and the author's version word for word, nothing else", () => {
     const pairs = pairsOf(doc);
-    expect(pairs).toEqual([{ key: `d1:caption:${ai.slice(0, 60)}`, kind: "description", docKind: "carousel", docTitle: "Kids strength", from: ai, to: his, at: 5 }]);
+    expect(pairs).toEqual([{ key: `d1:caption:${ai.slice(0, 60)}`, kind: "description", docKind: "carousel", docTitle: "Strength training", from: ai, to: his, at: 5 }]);
   });
 
   it("keeps what the author cut out of the AI's text as a cut, and never the author's own removed text", () => {

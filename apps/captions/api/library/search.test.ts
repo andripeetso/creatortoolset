@@ -158,9 +158,9 @@ describe("transcribe job", () => {
 
 describe("Workshop attachment", () => {
   it("gives the AI the transcript excerpt and the title, never to an outsider", async () => {
-    expect(libraryRef("other-b", "ast-roll-0001", "ver-ast-roll-0001")).toBeNull();
+    expect(await libraryRef("other-b", "ast-roll-0001", "ver-ast-roll-0001")).toBeNull();
     expect(await clipContext("other-b", { assetId: "ast-roll-0001", versionId: "ver-ast-roll-0001" })).toBeNull();
-    expect(libraryRef("local", "ast-roll-0001", "ver-ast-other")).toBeNull(); // not a version of this asset
+    expect(await libraryRef("local", "ast-roll-0001", "ver-ast-other")).toBeNull(); // not a version of this asset
     const clip = await clipContext("local", { assetId: "ast-roll-0001", versionId: "ver-ast-roll-0001" });
     expect(clip).toEqual({ title: "Forward roll practice", transcript: "[0:00] Today we practise the forward roll.\n[0:12] A balance beam needs soft knees." });
   });

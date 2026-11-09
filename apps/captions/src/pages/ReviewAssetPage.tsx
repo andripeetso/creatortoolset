@@ -73,17 +73,29 @@ import {
   uploadReviewFile,
   type Approval,
   type ReviewAsset,
+  attachTimeline,
   type ReviewComment,
   type ReviewRef,
   type ReviewView,
   type Stroke,
 } from "@/lib/review";
+import { TIMELINE_ACCEPT } from "@contracts/timeline-import";
 import { cn } from "@/lib/utils";
 import { useCachedLoad } from "@/lib/local-cache";
 import { fmtBytes } from "@/lib/exports";
 import { ReviewCompare } from "./ReviewCompare";
+import { VoiceMix } from "@/components/VoiceMix";
+import { saveVoiceMix } from "@/lib/editor";
 import { ScreenRecordingEditor } from "@/components/ScreenRecordingEditor";
 import { reviewSource } from "@/lib/screen-source";
+import { reviewSlotsFor, type ReviewActionEntry } from "@/lib/plugin";
+import { ReviewActionButtons, ReviewPanelSlots, type ReviewBaseContext, type ReviewBind } from "@/components/ReviewSlots";
+import { ReviewSlotBridge } from "@/lib/review-slots";
+import { mutedAt, usePlanFollow } from "@/lib/review-play";
+import { PlanOverlay } from "@/components/PlanOverlay";
+import { payloadError } from "@contracts/review-payload";
+import { useMe } from "@/lib/auth";
+import { webPlugins } from "@/plugins.gen";
 
 const COLORS = ["#ff3b30", "#ffcc00", "#34c759", "#0a84ff", "#ffffff"];
 const AVATARS = ["bg-violet-600", "bg-sky-600", "bg-emerald-600", "bg-amber-600", "bg-rose-600", "bg-fuchsia-600", "bg-teal-600"];
@@ -206,6 +218,8 @@ function Review({
   const [duration, setDuration] = useState(version.duration);
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(false);
+  // the voice controls play the version's sound parts; the video is muted while they do
+  const [voiceLive, setVoiceLive] = useState(false);
   const [speed, setSpeed] = useState(1);
   const [natural, setNatural] = useState<number | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
@@ -220,9 +234,26 @@ function Review({
   }, [flash]);
   const [name, setName] = useState(reviewerName);
   const guest = !view.user;
+  const me = useMe();
+  const slots = useMemo(() => reviewSlotsFor(me, webPlugins), [me]);
+  // plug-in slots: their chips above the box, their data for the next comment, their ⌘Z (see lib/review-slots.ts)
+  const [, setSlotTick] = useState(0);
+  const bridge = useMemo(() => new ReviewSlotBridge(() => setSlotTick((t) => t + 1)), []);
+  const slotCtx = { asset, version, manage, api, reload, player: { video: () => video.current, seek: (t: number) => seek(t), pause: () => pause() } };
+  // each plug-in's slot functions, plus what its open comments on this version already sent (its panel shows them)
+  const bindSlot = (pluginId: string) => ({
+    ...bridge.bind(pluginId),
+    sent: view.comments
+      .filter((c) => c.version === version.n && !c.parentId && !c.resolved && c.plugins?.[pluginId] !== undefined)
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .map((c) => ({ id: c.id, data: c.plugins![pluginId] })),
+  });
 
   // ---- composer ----
   const [text, setText] = useState("");
+  // a plug-in that writes a placeholder's words reads what is typed here
+  useEffect(() => bridge.setComposerText(text), [bridge, text]);
+  const plugged = bridge.payload() !== undefined;
   const [withTime, setWithTime] = useState(true);
   const [rangeIn, setRangeIn] = useState<number | null>(null);
   // a range's end: set (drawn on the timeline, or O), else wherever the playhead is when you post
@@ -264,11 +295,18 @@ function Review({
 
   // ---- playback ----
   const pause = () => video.current?.pause();
+  // a plug-in's preview (ReviewPlayPlan, lib/review-play.ts): the player skips, holds and follows it while it plays
+  const plan = bridge.plan();
+  const { holding, endHold } = usePlanFollow(video, plan, time, playing);
+  const pf = time * fps;
+  const frameNow = plan?.frames.find((r) => pf >= r.from && pf < r.to);
+  const lookNow = plan?.looks?.find((r) => pf >= r.from && pf < r.to);
   // J / K / L as in Resolve, and 1 / 2 / 3 the same ("JKL123"): L plays fast at once
   // (Space is the 1×; one press of J should already speed it up), again for 4×, 8×; J the same
   // backwards (the page steps the picture back: a video can't play in reverse); K stops
   const [shuttle, setShuttle] = useState(0);
   const shuttleTo = (n: number) => {
+    endHold();
     const el = video.current;
     if (!el || version.status !== "ready") return;
     setShuttle(n);
@@ -296,6 +334,7 @@ function Review({
     return () => clearInterval(id);
   }, [shuttle]);
   const toggle = () => {
+    endHold();
     const el = video.current;
     if (!el || version.status !== "ready") return;
     if (shuttle) {
@@ -311,6 +350,7 @@ function Review({
   };
   const seek = useCallback(
     (t: number) => {
+      endHold();
       const el = video.current;
       if (!el) return;
       const clamped = Math.max(0, Math.min(t, (duration || el.duration || 0) - 0.001));
@@ -321,6 +361,7 @@ function Review({
     [duration],
   );
   const step = (frames: number) => {
+    endHold();
     const el = video.current;
     if (!el) return;
     el.pause();
@@ -406,6 +447,18 @@ function Review({
     return () => window.removeEventListener("keydown", onKey);
   });
 
+  // ⌘Z / ⇧⌘Z: a plug-in's own edits (its undo history registers on the bridge)
+  useEffect(() => {
+    const onUndo = (e: KeyboardEvent) => {
+      const z = e.key.toLowerCase();
+      if (comparing || typing(e) || !(e.metaKey || e.ctrlKey) || e.altKey || (z !== "z" && z !== "y")) return;
+      if (bridge.history(z === "y" || e.shiftKey)) e.preventDefault();
+    };
+    window.addEventListener("keydown", onUndo);
+    return () => window.removeEventListener("keydown", onUndo);
+  }, [bridge, comparing]);
+
+  // a sent comment clears the plug-ins' chips and data
   const fullscreen = async () => {
     if (document.fullscreenElement) await document.exitFullscreen();
     else await player.current?.requestFullscreen().catch(() => {});
@@ -455,7 +508,18 @@ function Review({
   };
 
   const post = async () => {
-    if (posting || uploadingRefs || (!text.trim() && !draft.length && !refIds.length) || needName()) return;
+    if (posting || uploadingRefs || (!text.trim() && !draft.length && !refIds.length && !plugged) || needName()) return;
+    const plugins = bridge.payload();
+    const pluginsWhy = payloadError(plugins);
+    if (pluginsWhy) {
+      setPostError(pluginsWhy);
+      return;
+    }
+    const need = bridge.textNeeded();
+    if (need && !text.trim()) {
+      setPostError(need);
+      return;
+    }
     const at = video.current?.currentTime ?? time;
     const timed = withTime || draft.length > 0;
     const [a, b] = rangeIn === null ? [at, undefined] : [Math.min(rangeIn, rangeOut ?? at), Math.max(rangeIn, rangeOut ?? at)];
@@ -470,6 +534,7 @@ function Review({
         ...(draft.length ? { drawing: draft } : {}),
         ...(guest ? { author: name.trim() } : {}),
         ...(refIds.length ? { refs: refIds } : {}),
+        ...(plugins ? { plugins } : {}),
       });
       patchComments((l) => [...l, c]);
       setText("");
@@ -477,6 +542,7 @@ function Review({
       setDraft([]);
       setDrawMode(false);
       clearRange();
+      bridge.sent();
       setSelected(c.id);
       setFilter((f) => (f === "done" ? "all" : f));
       setFlash(c.id);
@@ -622,7 +688,11 @@ function Review({
           pause();
           setScreenEditor(true);
         }}
+        actions={slots.actions}
+        slotCtx={slotCtx}
+        bind={bindSlot}
       />
+      <ReviewPanelSlots slots={slots.panels} ctx={slotCtx} bind={bindSlot} />
       {comparing && (
         <ReviewCompare
           versions={asset.versions.filter((v) => v.status === "ready" && !v.removed)}
@@ -722,7 +792,14 @@ function Review({
                   className="h-full w-full"
                   playsInline
                   preload="auto"
-                  muted={muted}
+                  muted={muted || voiceLive || mutedAt(plan, time)}
+                  style={frameNow || lookNow ? {
+                    ...(frameNow && {
+                      transform: `scale(${1 / frameNow.box.k}) translate(${-frameNow.box.x * 100}%, ${-frameNow.box.y * 100}%)`,
+                      transformOrigin: "0 0",
+                    }),
+                    ...(lookNow && { filter: lookNow.filter }),
+                  } : undefined}
                   onClick={() => (panned.current ? (panned.current = false) : toggle())}
                   onLoadedMetadata={(e) => {
                     const el = e.currentTarget;
@@ -736,6 +813,7 @@ function Review({
                   onPause={() => setPlaying(false)}
                   onEnded={() => setPlaying(false)}
                 />
+                {plan && <PlanOverlay cards={plan.cards} fps={fps} time={time} holding={holding} playing={playing} rate={speed} />}
                 <svg
                   viewBox="0 0 1 1"
                   preserveAspectRatio="none"
@@ -847,6 +925,18 @@ function Review({
             </div>
           </div>
 
+          {version.stems && version.status === "ready" && !version.removed && (
+            <VoiceMix
+              key={`${version.n}-${version.createdAt}`}
+              video={video}
+              stems={version.stems}
+              url={(f) => api.stem(version, f)}
+              muted={muted}
+              onLive={setVoiceLive}
+              save={version.edit ? (mix, voice) => saveVoiceMix(version.edit!.project, version.edit!.draft, mix, voice).then(
+                () => "Kept for this edit: the AI Editor cuts it again with this voice, back here as the next version.") : undefined}
+            />
+          )}
         </div>
 
         {/* ---------- comments ---------- */}
@@ -1026,12 +1116,19 @@ function Review({
               <Button
                 size="sm"
                 className="ml-auto h-8 rounded-md px-3 text-sm font-medium bg-violet-600 text-white hover:bg-violet-500"
-                disabled={posting || uploadingRefs || (!text.trim() && !draft.length && !refIds.length)}
+                disabled={posting || uploadingRefs || (!text.trim() && !draft.length && !refIds.length && !plugged)}
                 onClick={() => void post()}
               >
                 {posting ? <Loader2 className="animate-spin" /> : <Send />} Send
               </Button>
             </div>
+            {bridge.pendingLabels().length > 0 && (
+              <ul className="mt-1.5 flex flex-wrap gap-1 text-[11px] text-violet-300">
+                {bridge.pendingLabels().map((l, i) => (
+                  <li key={i} className="rounded bg-violet-950/60 px-1.5 py-0.5">{l}</li>
+                ))}
+              </ul>
+            )}
             {postError && <p className="mt-1.5 text-xs text-red-400">{postError}</p>}
             <p className="mt-1.5 hidden text-[11px] text-zinc-600 lg:block">
               Space play · J/K/L or 1/2/3 shuttle · ←/→ frame · Shift ←/→ second · C comment
@@ -1056,6 +1153,9 @@ function Header({
   comments,
   onCompare,
   onZoom,
+  actions,
+  slotCtx,
+  bind,
 }: {
   view: ReviewView;
   setView: React.Dispatch<React.SetStateAction<ReviewView | null>>;
@@ -1068,6 +1168,10 @@ function Header({
   onCompare: () => void;
   /** A screen recording: open Zoom & pointer. */
   onZoom: () => void;
+  /** Toolbar buttons plug-ins add (shown to managers on a ready version). */
+  actions: ReviewActionEntry[];
+  slotCtx: ReviewBaseContext;
+  bind: ReviewBind;
 }) {
   const [error, setError] = useState("");
   const { asset, manage } = view;
@@ -1076,6 +1180,13 @@ function Header({
   const [renaming, setRenaming] = useState(false);
   const [uploadPct, setUploadPct] = useState<number | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  // the editing app's timeline file for this version (owners): added or replaced, then reloaded
+  const timelineInput = useRef<HTMLInputElement>(null);
+  const [timelineError, setTimelineError] = useState("");
+  const addTimeline = (file: File) => {
+    setTimelineError("");
+    attachTimeline(asset.id, n, file).then(reload, (e: Error) => setTimelineError(e.message));
+  };
   const version = asset.versions.find((v) => v.n === n)!;
   const setAsset = (a: ReviewAsset) => setView((v) => (v ? { ...v, asset: { ...v.asset, ...a } } : v));
   const libraryPath = asset.projectId ? `/review?p=${asset.projectId}` : "/review";
@@ -1211,6 +1322,36 @@ function Header({
           Zoom & pointer
         </button>
       )}
+      {manage && version.source && (
+        <Link to={version.source.href} title={`Made in ${version.source.label}`} className="truncate text-xs text-violet-300 hover:text-violet-200">
+          {version.source.label}
+        </Link>
+      )}
+      {/* an AI Editor version has its own timeline (the editor's), so no file is added here */}
+      {manage && version.status === "ready" && !version.removed && !version.edit && (
+        <>
+          {version.timelineFile && <span className="truncate text-xs text-zinc-500">Timeline from {version.timelineFile}</span>}
+          <button
+            onClick={() => timelineInput.current?.click()}
+            title="OTIO, FCP 7 XML, FCPXML or EDL. Resolve: File → Export → Timeline. Premiere: File → Export → Final Cut Pro XML. Final Cut: File → Export XML (pick Info.fcpxml inside the .fcpxmld)."
+            className="rounded px-1 text-xs text-violet-300 hover:bg-zinc-900 hover:text-violet-200"
+          >
+            {version.timelineFile ? "Replace timeline" : "Add timeline file"}
+          </button>
+          {timelineError && <span className="text-xs text-red-400">{timelineError}</span>}
+          <input
+            ref={timelineInput}
+            type="file"
+            accept={TIMELINE_ACCEPT}
+            hidden
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              e.target.value = "";
+              if (f) addTimeline(f);
+            }}
+          />
+        </>
+      )}
       <input
         ref={fileInput}
         type="file"
@@ -1255,6 +1396,7 @@ function Header({
             update={async (share) => setAsset(await patchReviewAsset(asset.id, { share }))}
           />
         )}
+        <ReviewActionButtons actions={actions} ctx={slotCtx} bind={bind} />
         {manage && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

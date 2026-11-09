@@ -1,9 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync } from "node:fs";
-import { mkdir, rm } from "node:fs/promises";
+import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { mkdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
-import { MAX_VERSIONS, type Edit, type Timeline, type EditBrief, type EditJob, type EditSummary, type Line, type ReviewPreview, type Sentence, type VersionPlan } from "../../contracts/editor";
+import { BUILT_IN_BUNDLE, EDIT_SLOTS, MAX_VERSIONS, type Edit, type EditBundle, type EditItem, type EditorDefaults, type EditSlot, type Timeline, type EditBrief, type EditJob, type EditSummary, type Line, type ReviewPreview, type Sentence, type VersionPlan } from "../../contracts/editor";
 import { env } from "../lib/env";
+import { listInstalled, packOn } from "../lib/packs";
+import { pluginEditFlags } from "../lib/plugin";
+import type { Cdl } from "./grade";
 import { libraryRole } from "../library/access";
 import { libraryDb } from "../library/db";
 import { writeJsonAtomic } from "../library/media/run";
@@ -23,8 +26,13 @@ export interface EditMeta extends EditBrief {
   sources: string[];
   /** per source version, set on the edit page (PUT eyeline) */
   eyeline?: Record<string, number>;
+  /** the items the edit was made with, recorded by createEdit and never changed by a later default */
+  bundle: EditBundle;
   trashedAt?: number;
 }
+
+/** Each per-edit flag a loaded plug-in declares, at its default (off when it has none). */
+export const defaultFlags = (): Record<string, boolean> => Object.fromEntries(pluginEditFlags().map((f) => [f.id, f.default === true]));
 
 const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const root = () => path.join(env.dataDir, "editor");
@@ -36,7 +44,9 @@ const MAX_SOURCES = 50;
 export function readEdit(id: string): EditMeta | null {
   if (!ID.test(id)) return null;
   try {
-    return JSON.parse(readFileSync(fileOf(id), "utf8")) as EditMeta;
+    const e = JSON.parse(readFileSync(fileOf(id), "utf8")) as EditMeta;
+    // edits saved before the recorded set or the flags read as built-in, and with each flag at its default
+    return { ...e, bundle: { ...BUILT_IN_BUNDLE, ...e.bundle }, flags: { ...defaultFlags(), ...e.flags } };
   } catch {
     return null;
   }
@@ -79,9 +89,19 @@ export function readDraft(id: string, name: string): DraftFile | null {
   }
 }
 
+/**
+ * Saves a version's draft. A draft already there is kept, not overwritten: it moves to the next revision (`<name>.r<n>.json`,
+ * which draftNames and readDraft do not list), so a re-run's result is a new revision and the one it replaced survives.
+ */
 export async function saveDraft(id: string, name: string, d: DraftFile): Promise<void> {
-  await mkdir(path.join(editDir(id), "drafts"), { recursive: true });
-  await writeJsonAtomic(path.join(editDir(id), "drafts", `${name}.json`), d);
+  const dir = path.join(editDir(id), "drafts");
+  await mkdir(dir, { recursive: true });
+  const cur = path.join(dir, `${name}.json`);
+  if (existsSync(cur)) {
+    const n = readdirSync(dir).filter((f) => f.startsWith(`${name}.r`)).length + 1;
+    await rename(cur, path.join(dir, `${name}.r${n}.json`));
+  }
+  await writeJsonAtomic(cur, d);
 }
 
 /** The names of the edit's drafts, in order. */
@@ -130,6 +150,80 @@ export function sourcesWorkspace(username: string, versionIds: string[]): string
   return ws;
 }
 
+const BUILT_IN_ITEMS: Record<EditSlot, EditItem[]> = {
+  designSystem: [{ id: "plain", title: "Plain", from: null }],
+  grade: [{ id: "none", title: "No grade", from: null }],
+  voiceMix: [{ id: "level", title: "Level only", from: null }],
+  sfxSet: [{ id: "none", title: "No sound effects", from: null }],
+};
+
+/** One person's default choices, one file per account: $DATA_DIR/editor-defaults/<username>.json. */
+const defaultsFile = (username: string) => path.join(env.dataDir, "editor-defaults", `${username}.json`);
+const USER = /^[a-zA-Z0-9._-]{1,64}$/;
+
+export function chosenDefaults(username: string): Partial<EditBundle> {
+  if (!USER.test(username)) return {};
+  try {
+    return JSON.parse(readFileSync(defaultsFile(username), "utf8")) as Partial<EditBundle>;
+  } catch {
+    return {};
+  }
+}
+
+/** Sets the person's default for one slot to an item, or clears it (null) back to the pack's or the built-in one. */
+export async function setChosenDefault(username: string, slot: EditSlot, id: string | null): Promise<void> {
+  if (!USER.test(username)) throw new Error("Bad account name");
+  const chosen = chosenDefaults(username);
+  if (id === null) delete chosen[slot];
+  else chosen[slot] = id;
+  await mkdir(path.dirname(defaultsFile(username)), { recursive: true });
+  await writeJsonAtomic(defaultsFile(username), chosen);
+}
+
+/**
+ * The installed packs an edit may use: switched on and not delisted. The editor is not per project, so a pack limited
+ * to some projects still counts; its project scope is cleared before packOn checks it.
+ */
+const usablePacks = async (username: string) => (await listInstalled(username)).filter((p) => packOn({ ...p, projectId: undefined, projectIds: undefined }));
+
+/**
+ * The editor defaults of one person: the items each slot can take (built-in, then their installed packs'), their own
+ * choices, and the set a new edit gets. For each slot that set is the person's choice, else the first installed pack's
+ * default for it, else the built-in item; a choice or default naming an item no longer installed is skipped.
+ */
+export async function editorDefaults(username: string): Promise<EditorDefaults> {
+  const items = structuredClone(BUILT_IN_ITEMS);
+  const packs = await usablePacks(username);
+  for (const p of packs) {
+    const add = (slot: EditSlot, list?: { name: string; title: string }[]) => {
+      for (const i of list ?? []) if (!items[slot].some((x) => x.id === i.name)) items[slot].push({ id: i.name, title: i.title, from: p.name });
+    };
+    add("grade", p.grades);
+    add("voiceMix", p.voiceMixes);
+    add("sfxSet", p.sfxSets);
+  }
+  const chosen = chosenDefaults(username);
+  const bundle = { ...BUILT_IN_BUNDLE };
+  for (const slot of EDIT_SLOTS) {
+    const candidates = [chosen[slot], ...packs.map((p) => p.editorDefaults?.[slot])];
+    bundle[slot] = candidates.find((id): id is string => !!id && items[slot].some((i) => i.id === id)) ?? BUILT_IN_BUNDLE[slot];
+  }
+  return { bundle, chosen, items };
+}
+
+/**
+ * The colour grade an edit was made with, as CDL maths for the preview and the OTIO. The built-in "none" and a grade
+ * the creator no longer has installed both give undefined (no grade).
+ */
+export async function gradeOf(username: string, bundle: EditBundle): Promise<Cdl | undefined> {
+  if (bundle.grade === BUILT_IN_BUNDLE.grade) return undefined;
+  for (const p of await usablePacks(username)) {
+    const g = p.grades?.find((x) => x.name === bundle.grade);
+    if (g) return g.cdl;
+  }
+  return undefined;
+}
+
 /** A B-roll collection that is not the user's to read: the routes answer 404. */
 export class NoCollection extends Error {}
 
@@ -164,6 +258,11 @@ export function cleanBrief(body: Record<string, unknown>, username: string, ws: 
   }
   const punch = num((body.framing as { punch?: unknown } | undefined)?.punch, 1, 2);
   if (punch !== undefined) out.framing = { punch };
+  // only the flags a loaded plug-in declares, each one a boolean; the others are ignored
+  if (body.flags && typeof body.flags === "object" && !Array.isArray(body.flags)) {
+    const given = body.flags as Record<string, unknown>;
+    out.flags = Object.fromEntries(pluginEditFlags().flatMap((f) => (typeof given[f.id] === "boolean" ? [[f.id, given[f.id] as boolean]] : [])));
+  }
   return out;
 }
 
@@ -174,6 +273,7 @@ export async function createEdit(username: string, body: Record<string, unknown>
   const ws = sourcesWorkspace(username, sources);
   if (!ws) return null;
   const now = Date.now();
+  const brief = cleanBrief(body, username, ws);
   const e: EditMeta = {
     id: randomUUID(),
     workspaceId: ws,
@@ -188,7 +288,9 @@ export async function createEdit(username: string, body: Record<string, unknown>
     targetS: 0,
     brollCollectionId: null,
     framing: { punch: 1.15 },
-    ...cleanBrief(body, username, ws),
+    bundle: (await editorDefaults(username)).bundle,
+    ...brief,
+    flags: { ...defaultFlags(), ...brief.flags },
   };
   mkdirSync(path.dirname(fileOf(e.id)), { recursive: true });
   await saveEdit(e);
@@ -229,6 +331,7 @@ export function viewOf(e: EditMeta): Edit {
     plans: p?.plans ?? [],
     notes: [...(a?.notes ?? []), ...(p?.notes ?? [])],
     previews: readStep(e.id, "review") ?? {},
+    flagDefs: pluginEditFlags(),
   };
 }
 

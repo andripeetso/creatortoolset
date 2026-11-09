@@ -11,7 +11,7 @@ const { workshopApp, workshopShareApp } = await import("./workshop");
 const session = "aaaaaaaa-0000-4000-8000-000000000001";
 const sdir = path.join(dataDir, "workshop", "sessions", session);
 mkdirSync(path.join(sdir, "docs"), { recursive: true });
-writeFileSync(path.join(sdir, "meta.json"), JSON.stringify({ id: session, owner: "alex", title: "Kids strength", query: "", sources: [], drafts: [], createdAt: 1, updatedAt: 1 }));
+writeFileSync(path.join(sdir, "meta.json"), JSON.stringify({ id: session, owner: "alex", title: "Strength training", query: "", sources: [], drafts: [], createdAt: 1, updatedAt: 1 }));
 const doc = (id: string, kind: string, title: string, blocks: string[], extra = {}) =>
   writeFileSync(
     path.join(sdir, "docs", `${id}.json`),
@@ -39,7 +39,7 @@ describe("Workshop share links", () => {
     expect(made.status).toBe(200);
     const link = (await made.json()) as { token: string; docIds: string[]; title: string };
     expect(link.docIds).toEqual(["cccccccc-0000-4000-8000-000000000001", "cccccccc-0000-4000-8000-000000000002"]);
-    expect(link.title).toBe("Kids strength");
+    expect(link.title).toBe("Strength training");
 
     const listed = (await (await call("GET", `/api/workshop/sessions/${session}/shares`)).json()) as { shares: Array<{ token: string }> };
     expect(listed.shares.map((s) => s.token)).toEqual([link.token]);
@@ -68,7 +68,7 @@ describe("the whole project, like Frame.io", () => {
     expect(again.token).toBe(made.token); // the same link every time
 
     const view = (await (await call("GET", `/api/workshop-share/${made.token}`)).json()) as { title: string; status: string; pieces: Array<{ kind: string }>; deliveries: unknown[] };
-    expect(view.title).toBe("Kids strength");
+    expect(view.title).toBe("Strength training");
     expect(view.pieces.map((p) => p.kind)).toEqual(["carousel", "reel"]);
     expect(view.deliveries).toEqual([]);
 
@@ -113,5 +113,24 @@ describe("answering comments on the share link", () => {
     expect((await as(undefined).request(`/api/workshop-share/${token}/answers`)).status).toBe(404);
     // the link itself stays public
     expect((await stranger.request(`/api/workshop-share/${token}`)).status).toBe(200);
+  });
+});
+
+describe("comments on a session with several posts", () => {
+  it("the share's answers name every post the session became, the first one as the Open post link", async () => {
+    const { token } = (await (await call("POST", `/api/workshop/sessions/${session}/shares`, { all: true })).json()) as { token: string };
+    const postings = [
+      { shortcode: "DfdJozjPjT2", url: "https://www.instagram.com/p/DfdJozjPjT2/", by: "you", at: 1, version: "2294" },
+      { shortcode: "DfdJu8-v6tq", url: "https://www.instagram.com/p/DfdJu8-v6tq/", by: "you", at: 2, version: "2296" },
+    ];
+    const meta = JSON.parse(await (await import("node:fs/promises")).readFile(path.join(sdir, "meta.json"), "utf8"));
+    writeFileSync(path.join(sdir, "meta.json"), JSON.stringify({ ...meta, postings, posted: postings[0] }));
+    try {
+      const got = (await (await call("GET", `/api/workshop-share/${token}/answers`)).json()) as { post: { shortcode: string }; posts: Array<{ shortcode: string }> };
+      expect(got.posts.map((p) => p.shortcode)).toEqual(["DfdJozjPjT2", "DfdJu8-v6tq"]);
+      expect(got.post.shortcode).toBe("DfdJozjPjT2");
+    } finally {
+      writeFileSync(path.join(sdir, "meta.json"), JSON.stringify(meta));
+    }
   });
 });

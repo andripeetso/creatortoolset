@@ -3,8 +3,10 @@
  * backend, so a library moves between backends by copying keys. Backends: local.ts (default) and s3.ts.
  */
 export interface BlobStore {
-  readonly kind: "local" | "s3";
+  readonly kind: "local" | "s3" | "bunny";
   readonly caps: { signedUrls: boolean; localPaths: boolean };
+  /** Stores that take the bytes straight from the browser (S3): see DirectUpload. Local and Bunny leave it out. */
+  direct?: DirectUpload;
   /** Stores the file under the key and takes it: local moves it (same disk), s3 uploads it and removes it. */
   put(key: string, file: string, opts?: { contentType?: string }): Promise<{ bytes: number }>;
   stat(key: string): Promise<{ bytes: number } | null>;
@@ -17,6 +19,17 @@ export interface BlobStore {
     ttlSeconds: number,
     opts?: { contentType?: string; download?: string },
   ): Promise<{ kind: "path"; path: string } | { kind: "url"; url: string }>;
+}
+
+/**
+ * A multipart upload the browser fills itself: `start` opens it and presigns one PUT URL per part (part n is
+ * urls[n - 1]), each part is PUT straight to the bucket, and `complete` joins them from the ETags the bucket returned.
+ * `abort` drops the parts of an upload that was never finished.
+ */
+export interface DirectUpload {
+  start(key: string, size: number, opts?: { contentType?: string }): Promise<{ uploadId: string; partSize: number; urls: string[] }>;
+  complete(key: string, uploadId: string, parts: { number: number; etag: string }[]): Promise<void>;
+  abort(key: string, uploadId: string): Promise<void>;
 }
 
 /** A key's parts: slash-separated plain names, no empty, `.` or `..` part, no absolute path. Throws on any other key. */

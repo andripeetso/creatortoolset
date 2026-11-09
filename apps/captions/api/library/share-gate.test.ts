@@ -20,7 +20,8 @@ const TOKEN = "Tiny_Acrobatics_link22"; // 22 characters, base64url: the shape t
 // one library, one asset and one view link, straight into the database
 {
   const d = libraryDb();
-  d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_g', 'ws_g', 'G', 'local', 0)").run();
+  // the creator owns the library: a link shows only what its creator may still see (shares.ts)
+  d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_g', 'owner-g', 'G', 'local', 0)").run();
   d.prepare(
     "INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at) VALUES ('g1', 'lib_g', 'video', 'Shared clip', 'g1-v1', 'owner-g', 1)",
   ).run();
@@ -37,6 +38,13 @@ describe("library share links through the account gate", () => {
     const res = await app.request(`/api/library/s/${TOKEN}`);
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ locked: false, name: "Shared clip", items: [{ id: "g1" }] });
+  });
+
+  it("the old /fs/<token> link redirects to the same link page, token unchanged", async () => {
+    const res = await app.request(`/fs/${TOKEN}`, { redirect: "manual" });
+    expect(res.status).toBe(308);
+    expect(res.headers.get("location")).toBe(`/library/s/${TOKEN}`);
+    expect((await app.request("/fs/not-a-token")).status).toBe(404);
   });
 
   it("an unknown link is a 404 from the share route, not a sign-in prompt", async () => {

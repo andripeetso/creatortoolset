@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { copyFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -166,6 +166,29 @@ describe("history", () => {
     const gone = await get(app.request(`/api/assistant/past/${again.past[0]!.id}`, { method: "DELETE", headers: { cookie } }));
     expect(gone.past.length).toBe(again.past.length - 1);
     expect((await app.request(`/api/assistant/past/${again.past[0]!.id}`, { method: "DELETE", headers: { cookie } })).status).toBe(404);
+  });
+});
+
+describe("the chats kept", () => {
+  it("a chat pushed past the ones kept goes with its pictures; the kept ones keep theirs", async () => {
+    const { PAST_KEPT } = await import("./assistant");
+    createUser("lea", "password1");
+    const dir = path.join(process.env.DATA_DIR!, "assistant");
+    const pics = path.join(dir, "images", "lea");
+    mkdirSync(pics, { recursive: true });
+    const oldest = "00000000-0000-4000-8000-000000000001";
+    const kept = "00000000-0000-4000-8000-000000000002";
+    const chat = (n: number, image?: string) => ({
+      id: `chat-${n}`,
+      messages: [{ id: `m-${n}`, role: "user", text: `Tiny Acrobatics plan ${n}`, at: n, ...(image ? { images: [{ id: image, name: "board.png" }] } : {}) }],
+    });
+    const past = Array.from({ length: PAST_KEPT }, (_, i) => chat(i, i === PAST_KEPT - 1 ? oldest : i === PAST_KEPT - 2 ? kept : undefined));
+    writeFileSync(path.join(dir, "lea.json"), JSON.stringify({ messages: chat(999).messages, past }));
+    for (const id of [oldest, kept]) writeFileSync(path.join(pics, `${id}.png`), "png");
+    const r = await app.request("/api/assistant", { method: "DELETE", headers: { cookie: await cookieOf("lea") } });
+    expect(((await r.json()) as { past: unknown[] }).past.length).toBe(PAST_KEPT);
+    expect(existsSync(path.join(pics, `${oldest}.png`))).toBe(false);
+    expect(existsSync(path.join(pics, `${kept}.png`))).toBe(true);
   });
 });
 

@@ -2,7 +2,7 @@ import { ask, choice } from "../jev";
 import type { PostIdea } from "./types";
 
 export const IDEA_SYSTEM = `You file one Instagram post into a private research library. Return JSON only:
-{"title":"Bedtime routines for toddlers","takeaway":"A fixed bedtime in the first 1,000 days cuts later sleep trouble."}
+{"title":"Watering routines for seedlings","takeaway":"A fixed watering schedule in the first month cuts later root trouble."}
 
 This is filing, not naming in isolation. The library already has folders. Your job is to put this post in the right pile.
 
@@ -11,11 +11,11 @@ If the user message lists existing folders, and this post is the same TOPIC as o
 takeaway: one sentence, the specific claim THIS post makes. No hashtags.
 
 Examples:
-- On-screen "Why Some Kids Stay Short?" about early growth → {"title":"Raising tall kids","takeaway":"Most adult height is decided early; missed growth windows stay short."}
-- A reel that kids who swam before five later read earlier → {"title":"Swimming for kids","takeaway":"Kids who swam before five were about 11 months ahead in reading."}
-- Carousel "children don't become geniuses because of books" → {"title":"Raising geniuses","takeaway":"Genius comes from a handful of parental habits, not more books."}
-- Study: a fixed bedtime in the first 1,000 days cuts later sleep trouble → {"title":"Bedtime routines for toddlers","takeaway":"A fixed bedtime in the first 1,000 days cuts the risk of up to 30 later sleep problems."}
-- Limit screens before age two for later sleep, and the library already has "Bedtime routines for toddlers" → {"title":"Bedtime routines for toddlers","takeaway":"Keeping screens low before age two supports better sleep for years."}`;
+- On-screen "Why Some Sunflowers Stay Short?" about early growth → {"title":"Growing tall sunflowers","takeaway":"Most final height is set early; missed growth windows stay short."}
+- A reel that seedlings started indoors before May flower earlier → {"title":"Starting seedlings indoors","takeaway":"Seedlings started indoors before May were about three weeks ahead at flowering."}
+- Carousel "pots don't make plants grow faster" → {"title":"Pot size and growth","takeaway":"Root space matters less than light and water for early growth."}
+- Study: a fixed watering schedule in the first month cuts later root trouble → {"title":"Watering routines for seedlings","takeaway":"A fixed watering schedule in the first month cuts the risk of up to 30 later root problems."}
+- Limit fertiliser before week two for later growth, and the library already has "Watering routines for seedlings" → {"title":"Watering routines for seedlings","takeaway":"Keeping fertiliser low in week one supports healthier roots for longer."}`;
 
 export type IdeaFolder = { title: string; takeaway: string };
 
@@ -81,8 +81,8 @@ const NEW_TOPIC = "new topic";
 
 /**
  * Same topic as a folder that already exists? The writer names folders
- * well but only reuses one on an exact title match, so "Bedtime routines for
- * toddlers" and "Naps before age two" became two piles. Jev picks the
+ * well but only reuses one on an exact title match, so "Watering routines for
+ * seedlings" and "Fertiliser before week two" became two piles. Jev picks the
  * existing folder (or "new topic"); returns its title, or null to keep
  * the writer's.
  */

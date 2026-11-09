@@ -58,7 +58,7 @@ function seed(blocks: string[], opts: { locked?: string[]; messages?: Msg[]; tit
   const docId = uuid();
   const sdir = path.join(dataDir, "workshop", "sessions", id);
   mkdirSync(path.join(sdir, "docs"), { recursive: true });
-  writeFileSync(path.join(sdir, "meta.json"), JSON.stringify({ id, owner: "alex", title: opts.title ?? "Kids strength", query: "", sources: [], drafts: [], createdAt: 1, updatedAt: 1 }));
+  writeFileSync(path.join(sdir, "meta.json"), JSON.stringify({ id, owner: "alex", title: opts.title ?? "Strength training", query: "", sources: [], drafts: [], createdAt: 1, updatedAt: 1 }));
   writeFileSync(
     path.join(sdir, "docs", `${docId}.json`),
     JSON.stringify({
@@ -226,14 +226,14 @@ describe("one turn at a time", () => {
 
 describe("audit fixes", () => {
   const claims = [
-    { id: "c1", where: "b1", claim: "The study of 7000 kids", verdict: "partly", confidence: 0.6, evidence: "", sources: [], fix: "The study of 700 kids" },
+    { id: "c1", where: "b1", claim: "The study of 7000 adults", verdict: "partly", confidence: 0.6, evidence: "", sources: [], fix: "The study of 700 adults" },
     { id: "c2", where: "b2", claim: "Other slide", verdict: "partly", confidence: 0.6, evidence: "", sources: [], fix: "Another slide" },
   ];
   const auditMessage = (docId: string): Msg =>
     ({ id: uuid(), role: "assistant", text: "Accuracy audit", status: "done", docId, audit: { target: { type: "document", id: docId, title: "Carousel" }, depth: "quick", result: { score: 60, summary: "", claims, citations: [] } } }) as unknown as Msg;
 
   it("a fix on a locked slide is refused and not marked applied; the others land and the refusal is named", async () => {
-    const seeded = seed(["The study of 7000 kids", "Other slide"], { locked: ["b1"] });
+    const seeded = seed(["The study of 7000 adults", "Other slide"], { locked: ["b1"] });
     const audit = auditMessage(seeded.docId);
     const messages = [audit];
     writeFileSync(path.join(dataDir, "workshop", "sessions", seeded.id, "chat.json"), JSON.stringify({ messages }));
@@ -248,12 +248,12 @@ describe("audit fixes", () => {
     const body = (await all.json()) as { applied: string[]; locked: string[] };
     expect(body.applied).toEqual(["c2"]);
     expect(body.locked).toEqual(["Slide 1"]);
-    expect((await docOf(id, docId)).blocks.map((b) => b.text)).toEqual(["The study of 7000 kids", "Another slide"]);
+    expect((await docOf(id, docId)).blocks.map((b) => b.text)).toEqual(["The study of 7000 adults", "Another slide"]);
     expect((await chatOf(id)).find((m) => m.id === audit.id)?.audit?.applied).toEqual(["c2"]);
   });
 
   it("when only locked slides are asked for, nothing is applied and the error says the slide is locked", async () => {
-    const seeded = seed(["The study of 7000 kids"], { locked: ["b1"] });
+    const seeded = seed(["The study of 7000 adults"], { locked: ["b1"] });
     const audit = auditMessage(seeded.docId);
     writeFileSync(path.join(dataDir, "workshop", "sessions", seeded.id, "chat.json"), JSON.stringify({ messages: [audit] }));
     const r = await call("POST", `/api/workshop/sessions/${seeded.id}/chat/${audit.id}/apply-fixes`, { claimIds: ["c1"] });
@@ -325,7 +325,7 @@ describe("stop and the Mac fallback", () => {
         /* not written yet */
       }
     }
-    expect(items[0]).toMatchObject({ kind: "workshop", text: "Reply ready: Kids strength", href: `/workshop/sessions/${id}` });
+    expect(items[0]).toMatchObject({ kind: "workshop", text: "Reply ready: Strength training", href: `/workshop/sessions/${id}` });
   });
 });
 
@@ -395,8 +395,8 @@ describe("an untitled session", () => {
     const { completeWithFallback } = await import("./ai-complete");
     const named = vi.mocked(completeWithFallback);
     named.mockImplementation((async (_s: string, user: string, _sig: unknown, parse: (t: string) => unknown) => {
-      expect(user).toContain("- Kids strength");
-      return parse('"RiskyPlayForKids"\n');
+      expect(user).toContain("- Strength training");
+      return parse('"RiskyPlayForAdults"\n');
     }) as never);
     seed(["Another"]); // a named session of the author's: an example
     const { id, docId } = seed(["Old"], { title: "Untitled session" });
@@ -404,10 +404,10 @@ describe("an untitled session", () => {
     const { body } = await send(id, docId, "Write it.");
     await settled(id, body.reply!.id);
     let title = "";
-    for (let i = 0; i < 100 && title !== "RiskyPlayForKids"; i++) {
+    for (let i = 0; i < 100 && title !== "RiskyPlayForAdults"; i++) {
       title = (JSON.parse(readFileSync(path.join(dataDir, "workshop", "sessions", id, "meta.json"), "utf-8")) as { title: string }).title;
       await new Promise((r) => setTimeout(r, 10));
     }
-    expect(title).toBe("RiskyPlayForKids");
+    expect(title).toBe("RiskyPlayForAdults");
   });
 });

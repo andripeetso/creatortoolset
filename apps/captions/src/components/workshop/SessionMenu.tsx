@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router";
 import { Archive, ArchiveRestore, ChevronRight, CircleDot, Copy, CopyPlus, Link2, Pencil, Pin, PinOff, Repeat2, Sparkles, Trash2 } from "lucide-react";
-import { createDocument, deleteSession, DOC_KINDS, docKindLabel, duplicateSession, listDocuments, patchSession, regenerateSessionTitle, sendTurn, sessionPath, WORKSHOP_HOME, type PieceKind, type SessionPatch, type SessionStatus } from "@/lib/workshop";
+import { createDocument, deleteSession, docKindLabel, duplicateSession, listDocuments, patchSession, regenerateSessionTitle, sendTurn, sessionPath, useDocKinds, WORKSHOP_HOME, type PieceKind, type SessionPatch, type SessionStatus } from "@/lib/workshop";
 import { markUnread, patchSummary, refreshSummaries, useSessionSummaries, type SessionSummary } from "@/lib/workshop-summary";
 
 /** A row that opens its own menu beside it on hover, like a Mac submenu; a click works too, for touch. */
@@ -25,7 +25,7 @@ function Sub({ icon, label, item, flip, children }: { icon: React.ReactNode; lab
 }
 
 /** How a converted copy is named: its title and the new format, the way Obsidian notes are named (TinyStory-Reel). */
-const CONVERT_SUFFIX: Record<PieceKind, string> = { reel: "Reel", carousel: "Carousel", ad: "Ad", free: "Free", youtube: "YouTube" };
+const CONVERT_SUFFIX: Record<PieceKind, string> = { reel: "Reel", carousel: "Carousel", ad: "Ad", free: "Free", youtube: "YouTube", newsletter: "Newsletter", thread: "Thread", article: "Article" };
 
 /**
  * The right-click menu on a session: Pin, Rename,
@@ -56,6 +56,7 @@ export function SessionMenu({
   /** after a change the list page reloads its own rows */
   onChanged?: () => void;
 }) {
+  const kinds = useDocKinds();
   const ref = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
   const summary = useSessionSummaries()?.find((r: SessionSummary) => r.id === id);
@@ -199,7 +200,7 @@ export function SessionMenu({
         <CopyPlus className="h-3.5 w-3.5" /> Duplicate
       </button>
       <Sub icon={<Repeat2 className="h-3.5 w-3.5" />} label="Convert to" item={item} flip={flip}>
-        {DOC_KINDS.map((k) => (
+        {kinds.map((k) => (
           <button key={k.id} type="button" role="menuitem" className={item} onClick={() => convert(k.id)}>
             {k.label}
           </button>

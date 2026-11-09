@@ -3,6 +3,7 @@ import path from "node:path";
 import { env } from "../lib/env";
 import { findUser, mayUse } from "../users";
 import { blobs, libraryDb } from "./db";
+import { assetRef, canSee } from "./sources";
 
 let before: Record<string, string> | null = null;
 /**
@@ -37,13 +38,24 @@ export function libraryRole(username: string, libraryId: string): "owner" | null
 }
 
 /**
+ * Whether the account may change this version of the library: its library role, and the policies may see the asset
+ * (sources.ts). Writes to assets, collection membership and pieces ask here, so a narrowing policy holds for writes too,
+ * not only for reads. A share link's creation asks visibleCards instead (shares.ts).
+ */
+export async function mayWrite(username: string, libraryId: string, assetId: string, versionId: string): Promise<boolean> {
+  const role = libraryRole(username, libraryId);
+  return !!role && (await canSee({ username, role }, assetRef(libraryId, assetId, versionId)));
+}
+
+/**
  * A version's original as a local file, for an account that may still read its library, while the asset is out of the
  * trash. Null otherwise. Caption Studio reads a clip's source through this when the clip came from the library.
  */
 export async function versionSource(username: string, versionId: string): Promise<string | null> {
   const v = libraryDb()
-    .prepare("SELECT a.library_id, v.source_key FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.trashed_at IS NULL")
-    .get(versionId) as { library_id: string; source_key: string } | undefined;
-  if (!v || !libraryRole(username, v.library_id)) return null;
+    .prepare("SELECT a.id AS asset_id, a.library_id, v.source_key FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.trashed_at IS NULL")
+    .get(versionId) as { asset_id: string; library_id: string; source_key: string } | undefined;
+  const role = v ? libraryRole(username, v.library_id) : null;
+  if (!v || !role || !(await canSee({ username, role }, assetRef(v.library_id, v.asset_id, versionId)))) return null;
   return blobs.localCopy(v.source_key).catch(() => null);
 }

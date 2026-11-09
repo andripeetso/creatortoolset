@@ -29,6 +29,14 @@ func migratedServers(site: String?, runsHere: Bool?, hasLocal: Bool, newID: () -
     return (servers, servers.first?.id)
 }
 
+/// The build's DEFAULT_SERVER (build.env, Info.plist CTDefaultServer) added to the list once: `seeded` is what the app
+/// saved after the first launch, so a server the person removes later stays removed. Nothing to add = the list as it was.
+func seedingDefaultServer(_ defaultServer: String?, into list: [ServerEntry], seeded: Bool,
+                          newID: () -> String = { UUID().uuidString }) -> (servers: [ServerEntry], seeded: Bool) {
+    guard !seeded, let text = defaultServer, let input = serverInput(text) else { return (list, seeded) }
+    return (addingServer(input.url, name: "", to: list, newID: newID).servers, true)
+}
+
 /// What "Add server" was given: the server's address, and a one-time sign-in link's path when one was pasted
 /// (…/api/auth/link/<code>, from a server signed in elsewhere). A bare name gets https://.
 struct ServerInput: Equatable {

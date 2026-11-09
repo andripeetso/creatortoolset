@@ -34,7 +34,7 @@ packsApp.post("/install", async (c) => {
   const r = checkPack(b?.pack);
   if (!r.ok) return c.json({ error: "This pack didn't pass the checks", problems: r.problems }, 400);
   const user = c.get("user");
-  const out = await installPack(user.username, r.pack!, r.level!, { projectIds: parseProjectIds(b) });
+  const out = await installPack(user.username, r.pack!, r.level!, { projectIds: parseProjectIds(b), admin: user.role === "admin" });
   return c.json(out, 201);
 });
 

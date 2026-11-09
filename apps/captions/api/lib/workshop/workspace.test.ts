@@ -8,12 +8,12 @@ describe("inProject", () => {
   });
 
   it("keeps unassigned records visible in every project", () => {
-    expect(inProject({}, "baby")).toBe(true);
-    expect(inProject({ projectId: undefined }, "baby")).toBe(true);
+    expect(inProject({}, "puppy")).toBe(true);
+    expect(inProject({ projectId: undefined }, "puppy")).toBe(true);
   });
 
   it("hides records stamped with a different project", () => {
-    expect(inProject({ projectId: "baby" }, "baby")).toBe(true);
-    expect(inProject({ projectId: "other" }, "baby")).toBe(false);
+    expect(inProject({ projectId: "puppy" }, "puppy")).toBe(true);
+    expect(inProject({ projectId: "other" }, "puppy")).toBe(false);
   });
 });

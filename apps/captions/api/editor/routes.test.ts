@@ -8,8 +8,10 @@ const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "edito
 process.env.DATA_DIR = dir;
 process.env.APP_SECRET = "editor-routes-test-secret";
 
-const { createUser, findUser } = await import("../users");
+const { createUser, findUser, setOff } = await import("../users");
 const app = (await import("../boot")).default;
+// A loaded plug-in that replaces /api/editor answers the root itself, so these tests (which drive the built-in root) run only without one.
+const rootReplaced = (await import("../lib/plugin")).pluginReplaces("/api/editor");
 const { libraryDb } = await import("../library/db");
 const { enqueueJob } = await import("../library/jobs");
 const { NeedsKey } = await import("../library/transcribe");
@@ -18,7 +20,7 @@ const { readStep, saveDraft, saveStep } = await import("./store");
 
 const cookies: Record<string, string> = {};
 async function login(username: string) {
-  createUser(username, "password1", { role: "user" });
+  setOff(createUser(username, "password1", { role: "user" }), []);
   const res = await app.request("/api/auth/login", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -55,7 +57,7 @@ beforeAll(async () => {
 });
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
-describe("AI Editor: edits and who sees them", () => {
+describe.skipIf(rootReplaced)("AI Editor: edits and who sees them", () => {
   it("refuses footage the creator can't read, from another account, or across two: 404 like a missing one", async () => {
     expect((await create("maker", ["ver_t"])).status).toBe(404); // in the trash
     expect((await create("maker", ["ver_b"])).status).toBe(404); // another account's library
@@ -157,8 +159,8 @@ describe("AI Editor: edits and who sees them", () => {
   });
 });
 
-describe("AI Editor: the worker", () => {
-  it("parks a step that names no account, and fails a step that isn't built yet", async () => {
+describe.skipIf(rootReplaced)("AI Editor: the worker", () => {
+  it("parks a step that names no account, and a whole-edit B-roll step (no draft) does nothing and is done", async () => {
     const { id } = await json<{ id: string }>(create("maker", ["ver_a1"]));
     enqueueJob(libraryDb(), "maker", `${id}:`, "broll", null, false, "edit_jobs");
     await drain();
@@ -167,7 +169,7 @@ describe("AI Editor: the worker", () => {
 
     await call("maker", "POST", `/api/editor/${id}/run`, { from: "broll" }); // as the creator now
     await drain();
-    expect(jobState(job!.id)).toEqual({ state: "failed", error: "No broll step yet" });
+    expect(jobState(job!.id)).toEqual({ state: "done", error: null });
   });
 
   it("runs a step as the creator, queues the next one, parks on a missing key, and Retry queues it again", async () => {

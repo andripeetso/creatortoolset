@@ -20,7 +20,7 @@ describe("renderDraft", () => {
         plan: {
           title: "Pool day",
           hook: { spoken: "Stop", onScreen: "STOP" },
-          beats: [{ label: "Problem", spoken: "kids sink", onScreen: "sink", visual: "pool", seconds: 6 }],
+          beats: [{ label: "Problem", spoken: "adults sink", onScreen: "sink", visual: "pool", seconds: 6 }],
           cta: "Save it",
           caption: "cap",
           hashtags: ["pool"],

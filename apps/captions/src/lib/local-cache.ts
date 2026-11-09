@@ -146,11 +146,48 @@ export function useCachedList<T>(url: string | null, load: () => Promise<T[]>) {
   return { items: data ?? [], setItems, refresh, error };
 }
 
+/** How much this account keeps here: its saved lists and their size (characters, about bytes). For Settings → Cache. */
+export function cachedUsage(user: string | null | undefined): { bytes: number; items: number } {
+  const base = user ? `${PREFIX}${encodeURIComponent(user)}|` : null;
+  let bytes = 0;
+  let items = 0;
+  for (const k of base ? storageKeys() : []) {
+    if (!k.startsWith(base!)) continue;
+    items++;
+    try {
+      bytes += (localStorage.getItem(k) ?? "").length;
+    } catch {
+      /* storage off: nothing saved */
+    }
+  }
+  return { bytes, items };
+}
+
 /** Drops what this account has saved under keys starting with `prefix` (a deleted item's page, say). */
 export function forgetCached(prefix: string) {
   const user = useAuth.getState().me?.username;
   if (!user) return;
   const base = keyOf(user, prefix);
+  for (const k of [...mem.keys(), ...storageKeys()]) {
+    if (!k.startsWith(base)) continue;
+    mem.delete(k);
+    touch(k);
+    try {
+      localStorage.removeItem(k);
+    } catch {
+      /* storage off: nothing saved */
+    }
+  }
+}
+
+/**
+ * Settings → Cache's Clear: drops only this account's saved lists; other accounts on this computer keep theirs. The epoch
+ * bump stops a fetch still in flight from saving into the cleared store (any account's; it just skips that one save).
+ */
+export function clearAccountCache(user: string | null | undefined) {
+  if (!user) return;
+  epoch++;
+  const base = `${PREFIX}${encodeURIComponent(user)}|`;
   for (const k of [...mem.keys(), ...storageKeys()]) {
     if (!k.startsWith(base)) continue;
     mem.delete(k);

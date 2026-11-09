@@ -27,7 +27,7 @@ import { speak, stopSpeaking, unlockAudio, useReadAloud } from "@/lib/read-aloud
 import { cn } from "@/lib/utils";
 import { Composer, PictureOverlay } from "./Composer";
 import { EMPTY_DRAFT, MAX_PICTURES, isLongPaste, isMediaFile, isPicture, toPicture, type Draft } from "./draft";
-import { chunkedUpload } from "@/lib/clips";
+import { chunkedUpload } from "@/lib/uploads";
 import { useThrow } from "./useThrow";
 import { Elapsed, WorkCards } from "./WorkCards";
 import { VideoCards } from "./VideoCard";
@@ -373,8 +373,9 @@ export function AssistantDock() {
           aria-label={asking ? "Open the assistant: it asks to do something on your Mac" : unread ? "Open the assistant: a new reply" : "Open the assistant"}
           style={tint}
           title="Assistant · drag to move"
+          data-assistant-dock
           className={cn(
-            "group fixed z-40 size-14 touch-none rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--tint)] focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+            "group pointer-events-auto fixed z-[55] size-14 touch-none rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--tint)] focus-visible:ring-offset-2 focus-visible:ring-offset-background",
             "motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-50 motion-safe:duration-300",
             AT[corner],
           )}
@@ -406,8 +407,10 @@ export function AssistantDock() {
     <section
       ref={cardRef}
       aria-label="Assistant"
+      data-assistant-dock
       className={cn(
-        "fixed z-40 flex flex-col overflow-hidden bg-popover text-popover-foreground",
+        // above page dialogs (z-50, Settings among them), under confirms (z-[60], alert-dialog.tsx)
+        "pointer-events-auto fixed z-[55] flex flex-col overflow-hidden bg-popover text-popover-foreground",
         place.mode === "dock"
           ? "inset-y-0 right-0 border-l shadow-2xl"
           : cn("h-[min(600px,calc(100dvh-6rem))] w-[min(400px,calc(100vw-2rem))] rounded-2xl border shadow-2xl shadow-black/30", AT[place.corner], ORIGIN[place.corner]),

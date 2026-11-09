@@ -18,6 +18,8 @@ export interface StorySplit {
   owner: string;
   /** The video's file name (a local file is asked for again by it). */
   name: string;
+  /** The library version it was opened from (a local file has none). */
+  clip?: string;
   /** Seconds, in order. */
   cuts: number[];
   /** The page's story length. */
@@ -90,8 +92,9 @@ storiesApp.get("/:id", async (c) => {
 
 storiesApp.post("/", async (c) => {
   const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
-  const { duration } = body ?? {};
+  const { duration, clip } = body ?? {};
   if (!body || !num(duration) || duration <= 0 || duration > 86_400) return c.json({ error: "The video's length is off" }, 400);
+  if (clip !== undefined && (typeof clip !== "string" || !clip || clip.length > 80)) return c.json({ error: "Bad library clip" }, 400);
   const f = fields(body, duration);
   if (typeof f === "string") return c.json({ error: f }, 400);
   if (!f.name || !f.cuts || f.target === undefined) return c.json({ error: "A split needs a name, its cuts and the story length" }, 400);
@@ -100,6 +103,7 @@ storiesApp.post("/", async (c) => {
     id: randomUUID(),
     owner: c.get("user").username,
     name: f.name,
+    ...(clip !== undefined ? { clip: clip as string } : {}),
     cuts: f.cuts,
     target: f.target,
     duration,

@@ -1,7 +1,18 @@
 // The pure parts of the plugin: no Obsidian or Node APIs, so node:test can run them directly.
 
-/** Statuses that go to the site on their own (the site creates a session for them). Others only once linked. */
-export const SYNC_STATUSES = new Set(["🎥 Filming", "✂️ Editing", "👍 Ready"]);
+/** The default "Statuses that sync on their own" setting: the site's generic labels for Filming, Editing and Ready. */
+export const DEFAULT_SYNC_STATUSES = "Filming, Editing, Ready";
+
+/** A comma-separated list of status labels, trimmed, with the empty items dropped. */
+export function statusList(text: string): Set<string> {
+  return new Set(text.split(",").map((s) => s.trim()).filter((s) => s !== ""));
+}
+
+/** The status a note gets on Send when it has none: the site's generic draft label. The site reads it as a draft. */
+export const DEFAULT_STATUS = "Idea";
+
+/** Statuses that go to the site on their own under the default setting. Others only once linked. */
+export const SYNC_STATUSES = statusList(DEFAULT_SYNC_STATUSES);
 
 export type NoteKeys = { status: string; media: string };
 
@@ -22,8 +33,8 @@ export function inFolder(path: string, folder: string): boolean {
 }
 
 /** Does this note go to the site: its status syncs by itself, or it is already linked to a session. */
-export function isSynced(status: string | undefined, linked: boolean): boolean {
-  return linked || (status !== undefined && SYNC_STATUSES.has(status));
+export function isSynced(status: string | undefined, linked: boolean, synced: Set<string> = SYNC_STATUSES): boolean {
+  return linked || (status !== undefined && synced.has(status));
 }
 
 /**

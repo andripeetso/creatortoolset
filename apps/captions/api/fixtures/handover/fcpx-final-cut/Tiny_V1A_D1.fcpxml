@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE fcpxml>
+<fcpxml version="1.8">
+    <resources>
+        <format id="r1" frameDuration="1/25s" name="" />
+        <asset name="talk.mp4" src="media/talk.mp4" format="r1" id="r2" duration="20/1s" start="0s" hasAudio="1" hasVideo="1" />
+        <asset name="bro.mov" src="media/bro.mov" format="r1" id="r3" duration="12/1s" start="0s" hasAudio="0" hasVideo="1" />
+        <asset name="card.mov" src="media/card.mov" format="r1" id="r4" duration="12/1s" start="0s" hasAudio="0" hasVideo="1" />
+        <asset name="g_%05d.png" src="media/G/g_%05d.png" format="r1" id="r5" duration="3/25s" start="0s" hasAudio="0" hasVideo="1" />
+        <asset name="L01.mov" src="media/L01.mov" format="r1" id="r6" duration="2/1s" start="0s" hasAudio="0" hasVideo="1" />
+    </resources>
+    <project name="Tiny Proto" uid="">
+        <sequence duration="8/1s" format="r1">
+            <spine>
+                <clip name="talk.mp4" offset="0s" duration="4/1s" start="2/5s">
+                    <adjust-transform position="0.0 -30.0" scale="1.2 1.2" /><video offset="0s" ref="r2" duration="20/1s" />
+                    <clip name="card.mov" offset="6/5s" duration="6/5s" lane="2">
+                        <adjust-transform position="40.0 0.0" scale="1.0 1.0" /><video offset="0s" ref="r4" duration="12/1s" />
+                    </clip>
+                    <clip name="g_%05d.png" offset="14/5s" duration="3/25s" lane="2">
+                        <video offset="0s" ref="r5" duration="3/25s" />
+                    </clip>
+                    <clip name="L01.mov" offset="2/5s" duration="2/1s" lane="3" enabled="0">
+                        <video offset="0s" ref="r6" duration="2/1s" />
+                    </clip>
+                    <audio name="talk.mp4" offset="2/5s" start="2/5s" duration="4/1s" lane="-1" ref="r2"><adjust-volume amount="2.0dB" /></audio></clip>
+                <clip name="talk.mp4" offset="4s" duration="4/1s" start="22/5s">
+                    <video offset="0s" ref="r2" duration="20/1s" />
+                    <clip name="bro.mov" offset="22/5s" duration="2/1s" lane="1">
+                        <video offset="0s" ref="r3" duration="12/1s" />
+                    </clip>
+                </clip>
+            </spine>
+        </sequence>
+    </project>
+</fcpxml>

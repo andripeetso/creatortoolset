@@ -212,7 +212,7 @@ export function soundsAlike(heard: string, fixed: string): number {
 const startsUpper = (s: string) => /^\p{Lu}/u.test(s);
 
 /**
- * Words the script capitalizes mid-sentence: names and brands ("at Baby
+ * Words the script capitalizes mid-sentence: names and brands ("at Tiny
  * Acrobatics we"), as opposed to ordinary words that only start a
  * sentence or a line there.
  */

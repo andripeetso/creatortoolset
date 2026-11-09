@@ -1,4 +1,4 @@
-import { CreateBucketCommand, S3Client } from "@aws-sdk/client-s3";
+import { CreateBucketCommand, S3Client, UploadPartCommand } from "@aws-sdk/client-s3";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -91,6 +91,33 @@ describe("s3 BlobStore", () => {
     expect(await blobs.put("libraries/lib_1/v/ver_1/source", file)).toEqual({ bytes: 23 });
     expect(log.filter((c) => c === "UploadPartCommand")).toHaveLength(3);
     expect(objects.get("libraries/lib_1/v/ver_1/source")?.toString()).toBe("abcdefghij0123456789xyz");
+  });
+
+  it("a direct upload presigns one PUT per part, and complete joins the parts the bucket stored", async () => {
+    const { client, objects, log } = memoryClient();
+    const blobs = s3Blobs(client, place.bucket, path.join(fresh("direct"), "cache"), { cacheBytes: 1024, partBytes: 10 });
+    const key = "libraries/lib_1/v/ver_1/source";
+    const started = await blobs.direct!.start(key, 23, { contentType: "video/mp4" });
+    expect(started.partSize).toBe(10);
+    expect(started.urls).toHaveLength(3);
+    const first = new URL(started.urls[0]!);
+    expect(first.pathname).toBe(`/tiny-acrobatics/${key}`);
+    expect(first.searchParams.get("uploadId")).toBe(started.uploadId);
+    expect(first.searchParams.get("partNumber")).toBe("1");
+    expect(new URL(started.urls[2]!).searchParams.get("partNumber")).toBe("3");
+    expect(objects.has(key)).toBe(false); // nothing lands until the parts are joined
+
+    // the browser's PUTs, played here against the bucket
+    const etags: { number: number; etag: string }[] = [];
+    for (const [i, body] of ["abcdefghij", "0123456789", "xyz"].entries()) {
+      const r = (await client.send(
+        new UploadPartCommand({ Bucket: place.bucket, Key: key, UploadId: started.uploadId, PartNumber: i + 1, Body: Buffer.from(body) }),
+      )) as { ETag: string };
+      etags.push({ number: i + 1, etag: r.ETag });
+    }
+    await blobs.direct!.complete(key, started.uploadId, etags);
+    expect(log).toContain("CompleteMultipartUploadCommand");
+    expect(objects.get(key)?.toString()).toBe("abcdefghij0123456789xyz");
   });
 
   it("the download cache keeps the newest copies under its cap", async () => {

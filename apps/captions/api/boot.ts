@@ -14,8 +14,8 @@ import { exportApp, resolveFontsDir } from "./export";
 import { exportsApp } from "./exports";
 import { hfApp } from "./hfproxy";
 import { instagramApp } from "./instagram";
-import { workshopApp, workshopShareApp } from "./workshop";
-import { reviewApp } from "./review";
+import { workshopApp, workshopLibraryApp, workshopShareApp } from "./workshop";
+import { reviewApp, uploadRelayApp } from "./review";
 import { libraryApp } from "./library/routes";
 import { collectionApp } from "./library/collections";
 import { searchApp } from "./library/search";
@@ -31,13 +31,18 @@ import { packCatalogApp } from "./pack-catalog";
 import { packsApp } from "./packs";
 import { projectsApp } from "./projects";
 import { storiesApp } from "./stories";
+import { accountProfileApp } from "./account-profile";
 import { transcribeApp } from "./transcribe";
-import { authApp, getApiKeyUser, getSessionUser, innerCall, jobTokenUser, type AuthVars } from "./auth";
+import { authApp, getApiKeyUser, getSessionUser, innerCall, inviteApp, jobTokenUser, ruleFor, sessionOf, type AuthVars } from "./auth";
+import { adminApp } from "./admin";
+import { workspaceApp } from "./workspace";
+import { viewAsTarget } from "./lib/view-as";
+import { grantsApp } from "./library/grants";
 import { assistantApp } from "./assistant";
 import { automationsApp, startAutomations } from "./automations";
 import { providersApp } from "./providers";
 import { mcpApp } from "./mcp";
-import { connectorsApp, startConnectorPulls } from "./connectors";
+import { connectorsApp, startConnectorPulls, tiktokVerifyFile } from "./connectors";
 import { ownerProfileApp } from "./owner-profile";
 import { devicesApp } from "./devices";
 import { deviceForToken } from "./lib/devices";
@@ -46,8 +51,12 @@ import { myKeysApp } from "./my-keys";
 import { setupApp } from "./setup";
 import { workPrefsApp } from "./work-prefs";
 import { captionLayoutApp } from "./caption-layout";
+import { mountAdminRoutes, mountAnsweredRoutes, mountGatedRoutes, mountLibraryRoutes, mountOpenRoutes, mountPlugins, mountPublicRoutes, mountReplacedRoutes, pluginBodyLimitExempt, replacedLargeBody, startPlugins } from "./lib/plugin";
+import { serverPlugins } from "./plugins.gen";
+import { signInCallbackApp, signInStartApp } from "./sign-in";
+import { activityApp } from "./activity";
 import { VISITOR, mayUse, touchActive, type Tool } from "./users";
-import { env } from "./lib/env";
+import { env, hostedMode } from "./lib/env";
 import { disableRequestTimeouts } from "./lib/incoming";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -113,8 +122,12 @@ app.use(async (c, next) => {
     c.req.path.startsWith("/api/clean") ||
     c.req.path.startsWith("/api/clips") ||
     c.req.path.startsWith("/api/review/uploads") ||
+    c.req.path.startsWith("/api/uploads/relay") ||
     c.req.path.startsWith("/api/library/uploads/") ||
-    (c.req.method === "POST" && /^\/api\/workshop-share\/[^/]+\/deliveries$/.test(c.req.path))
+    (c.req.method === "POST" && /^\/api\/workshop-share\/[^/]+\/deliveries$/.test(c.req.path)) ||
+    replacedLargeBody(c.req.path) ||
+    // a plug-in route that takes a large upload (plugin.ts bodyLimitExempt); the route checks its own access first
+    pluginBodyLimitExempt(serverPlugins, c.req.method, c.req.path)
   ) {
     return next();
   }
@@ -147,17 +160,20 @@ const PUBLIC_WORKSHOP = new RegExp(`^/api/workshop-share/${PUBLIC_UUID}(?:/deliv
 // …and what a freelancer does on it: mark progress, upload the finals (2 GB each, streamed)
 const PUBLIC_WORKSHOP_WRITE = new RegExp(`^/api/workshop-share/${PUBLIC_UUID}/(?:progress|deliveries)$`, "i");
 // review share links (a video or a project): reviewers read, comment and approve without an account
-const PUBLIC_REVIEW = new RegExp(`^/api/review/[sp]/${PUBLIC_UUID}(?:/|$)`, "i");
+export const PUBLIC_REVIEW = new RegExp(`^/api/review/[sp]/${PUBLIC_UUID}(?:/|$)`, "i");
 // Media Library share links (api/library/shares.ts): the shared view and its media, and the password unlock
 const PUBLIC_LIBRARY_SHARE = /^\/api\/library\/s\/[A-Za-z0-9_-]{22}(?:\/|$)/;
 const PUBLIC_LIBRARY_SHARE_WRITE = /^\/api\/library\/s\/[A-Za-z0-9_-]{22}\/unlock$/;
 const REVIEW = /^\/api\/review(?:\/|$)/;
 const REVIEW_COMMENT = new RegExp(`^/api/review/assets/${PUBLIC_UUID}/comments/[^/]+$`, "i");
-const REVIEW_UPLOAD = new RegExp(`^/api/review/uploads(?:/${PUBLIC_UUID}/(?:parts/\\d+|complete))?$`, "i");
+export const REVIEW_UPLOAD = new RegExp(`^/api/review/uploads(?:/${PUBLIC_UUID}/(?:parts/\\d+|complete))?$`, "i");
+// the upload relay (review.ts uploadRelayApp): the same calls as REVIEW_UPLOAD, on the route the relay setting names. Login
+// is required (not exempt); an AI key may upload the same way it uploads a video. Golden test: review-exempt.test.ts.
+export const UPLOAD_RELAY = new RegExp(`^/api/uploads/relay(?:/${PUBLIC_UUID}/(?:parts/\\d+|complete))?$`, "i");
 // what an AI access key may call, route by route: Review reads, resolving a comment and uploading a
 // video or a new version (a final cut) for any account.
-const KEY_ROUTES: [string, RegExp][] = [["GET", REVIEW], ["PATCH", REVIEW_COMMENT], ["POST", REVIEW_UPLOAD]];
-const FULL_KEY_NEVER = /^\/api\/(?:providers|devices|service-keys|my-keys)(?:\/|$)/;
+const KEY_ROUTES: [string, RegExp][] = [["GET", REVIEW], ["PATCH", REVIEW_COMMENT], ["POST", REVIEW_UPLOAD], ["POST", UPLOAD_RELAY]];
+const FULL_KEY_NEVER = /^\/api\/(?:admin|workspace|providers|devices|service-keys|my-keys)(?:\/|$)/;
 const keyRoute = (routes: [string, RegExp][], method: string, p: string) =>
   routes.some(([m, r]) => m === method && r.test(p));
 
@@ -200,6 +216,16 @@ app.get("/api/health", (c) =>
   }),
 );
 
+// plug-ins' open routes (machine callers with their own check): before the account gate, as the health check is
+mountOpenRoutes(app, serverPlugins);
+// hosted mode only: Apple / Google sign-in to a site account and linking one (sign-in.ts). A sign-in a plug-in started falls through.
+if (hostedMode()) {
+  app.route("/api/account", signInStartApp);
+  app.route("/api/auth", signInCallbackApp);
+}
+// plug-ins' public routes (plugins/<id>/plugin.ts publicRoutes): before the account gate, each checks its own access
+mountPublicRoutes(app, serverPlugins);
+
 // account gate (active only when APP_SECRET is set — see api/auth.ts)
 app.use("/api/*", async (c, next) => {
   if (c.req.path.startsWith("/api/auth")) return next();
@@ -212,12 +238,22 @@ app.use("/api/*", async (c, next) => {
   // except AI settings, paired Macs and keys; /api/auth reads only cookies, so a key never makes keys
   // The assistant's job token (auth.ts) opens /api/mcp only; the tools' own calls run as its account (innerCall), and
   // FULL_KEY_NEVER still refuses them the provider, device and key routes.
-  const user = getSessionUser(c.req.header("cookie")) ??
+  const signedIn = getSessionUser(c.req.header("cookie")) ??
     (FULL_KEY_NEVER.test(c.req.path)
       ? null
       : getApiKeyUser(c.req.header("authorization"), "full") ??
         (c.req.path === "/api/mcp" ? jobTokenUser(c.req.header("authorization")) : null) ??
         innerCall.getStore() ?? null);
+  // view-as (hosted): a platform admin reads the app as another account, read-only. The admin's own routes and the
+  // sign-in routes stay the admin's; any write while viewing is refused.
+  const viewed =
+    hostedMode() && signedIn?.role === "admin" && !/^\/api\/(?:admin|auth)(?:\/|$)/.test(c.req.path)
+      ? viewAsTarget(c.req.header("cookie"))
+      : null;
+  if (viewed && c.req.method !== "GET" && c.req.method !== "HEAD") {
+    return c.json({ error: `Viewing as ${viewed.username}: read-only`, code: "VIEW_AS" }, 403);
+  }
+  const user = viewed ? sessionOf(viewed) : signedIn;
   if (
     c.req.method === "GET" &&
     (PUBLIC_CLIP_GET.test(c.req.path) ||
@@ -244,15 +280,23 @@ app.use("/api/*", async (c, next) => {
       ? getApiKeyUser(c.req.header("authorization"))
       : null;
     if (!keyUser) return c.json({ error: "Unauthorized" }, 401);
+    // same rule as a signed-in user below: an unlinked member's AI key doesn't get past the team's sign-in
+    if (ruleFor(keyUser.username)?.missing) {
+      return c.json({ error: "Your team signs in with Google or Apple: link one in Settings → Account", code: "LINK_SIGNIN" }, 403);
+    }
     c.set("user", keyUser);
     return next();
+  }
+  // the team signs in with Google / Apple and this account has neither linked: only /api/auth until it links one
+  if (ruleFor(user.username)?.missing) {
+    return c.json({ error: "Your team signs in with Google or Apple: link one in Settings → Account", code: "LINK_SIGNIN" }, 403);
   }
   const gate = TOOL_GATES.find(([p]) => c.req.path === p || c.req.path.startsWith(p + "/"));
   if (gate && !gate[1].some((t) => mayUse(user, t))) {
     return c.json({ error: "This app isn't switched on for your account", code: "TOOL_ACCESS" }, 403);
   }
   c.set("user", user);
-  touchActive(user.username);
+  if (!viewed) touchActive(user.username);
   return next();
 });
 app.route("/api/auth", authApp);
@@ -266,14 +310,21 @@ app.route("/api/setup", setupApp);
 app.route("/api/work-prefs", workPrefsApp);
 app.route("/api/providers", providersApp);
 // Creator Toolset as a remote MCP server (Full key only: not on the key routes): its tools call these same routes
-app.route("/api/mcp", mcpApp((path, init) => Promise.resolve(app.request(path, init))));
+app.route("/api/mcp", mcpApp((path, init) => Promise.resolve(app.request(path, init)), serverPlugins));
 app.route("/api/assistant", assistantApp);
 // automations (automations.ts): scheduled prompts for the account's own assistant; REST here, and the MCP tools in mcp.ts
 app.route("/api/automations", automationsApp);
 startAutomations();
 app.route("/api/connectors", connectorsApp);
+// TikTok's site check (TIKTOK_VERIFY_FILE / TIKTOK_VERIFY_CONTENT in .env): a public file at the root while the app is registered
+app.get("/:file{tiktok[\\w-]*\\.txt}", (c) => {
+  const text = tiktokVerifyFile(c.req.param("file"));
+  return text === null ? c.notFound() : c.text(text);
+});
 startConnectorPulls();
 app.route("/api/devices", devicesApp);
+// the menu bar panel's rows from plug-ins (activity.ts)
+app.route("/api/activity", activityApp(serverPlugins));
 // the Mac app's signed-in account as this server's owner (owner-profile.ts)
 app.route("/api/owner-profile", ownerProfileApp);
 app.use("/api/trpc/*", async (c) => {
@@ -286,6 +337,9 @@ app.use("/api/trpc/*", async (c) => {
 });
 app.route("/api/ai", aiApp);
 app.route("/api/captions", captionLayoutApp);
+// a plug-in that answers old or plug-in paths first (the Analyzer, the old /api/media, /api/enhance and /api/review routes):
+// before the built-in routers of those paths take them, and after the account gate above
+mountAnsweredRoutes(app, serverPlugins);
 app.route("/api/exports", exportsApp);
 app.route("/api/export", exportApp);
 app.route("/api/hf", hfApp);
@@ -303,14 +357,30 @@ app.route("/api/instagram", instagramApp);
 app.route("/api/workshop", workshopApp);
 app.route("/api/workshop-share", workshopShareApp);
 app.route("/api/review", reviewApp);
+// the upload relay (review.ts): the server picks chunked or direct (CT_UPLOAD_RELAY), and the browser asks it
+app.route("/api/uploads/relay", uploadRelayApp);
 // the public share routes first: their /s/:token must not be read as another library route
+// Finals share links kept from the old app (/fs/<token>): the same token, so the same link page (/library/s/<token>)
+app.get("/fs/:token", (c, next) => {
+  const token = c.req.param("token");
+  // the old app's links are UUIDs (finals-shares.json): those fall through to the app's page for the link, which reads
+  // /api/finals-share/:token; a 22-character Media Library token is redirected as before
+  if (!/^[A-Za-z0-9_-]{22}$/.test(token)) return next();
+  return c.redirect(`/library/s/${token}`, 308);
+});
+// plug-ins' Media Library routes first: a plug-in can answer an old path the core library also serves
+mountLibraryRoutes(app, serverPlugins);
 app.route("/api/library", publicShareApp);
 app.route("/api/library", libraryApp);
+app.route("/api/library", workshopLibraryApp);
 app.route("/api/library", shareApp);
 app.route("/api/library", collectionApp);
 app.route("/api/library", searchApp);
 app.route("/api/library", watchApp);
 app.route("/api/library", storageApp);
+app.route("/api/library", grantsApp);
+// a plug-in that replaces the AI Editor answers its root paths first (the old URLs the Mac worker posts to)
+mountReplacedRoutes(app, serverPlugins);
 app.route("/api/editor", editorApp);
 // the library's worker: probes, thumbs and proxies queued uploads; and the trash purge (not under tests, which call them)
 if (process.env.NODE_ENV !== "test") {
@@ -318,8 +388,24 @@ if (process.env.NODE_ENV !== "test") {
   startEditorWorker();
   startTrashPurge();
   startWatchFolders();
+  startPlugins(serverPlugins);
 }
 app.route("/api/stories", storiesApp);
+app.route("/api/account-profile", accountProfileApp);
+// plug-ins (plugins/<id>/plugin.ts, generated into api/plugins.gen.ts) mount under /api/x/<id>, behind the same login
+mountPlugins(app, serverPlugins);
+mountGatedRoutes(app, serverPlugins);
+// hosted mode only (CT_MODE=hosted): the platform admin, the team and invite links. On one person's Mac they don't exist.
+if (hostedMode()) {
+  // Unset, the pack catalog proxies to creatortoolset.com, which may be this server calling itself. A warning, not a refusal.
+  if (process.env.PACK_CATALOG_URL === undefined && process.env.NODE_ENV !== "test") {
+    console.warn("CT_MODE=hosted but PACK_CATALOG_URL is unset: set it empty on a server that serves the pack catalog itself");
+  }
+  mountAdminRoutes(app, serverPlugins);
+  app.route("/api/admin", adminApp);
+  app.route("/api/workspace", workspaceApp);
+  app.route("/api/auth", inviteApp);
+}
 app.all("/api/*", (c) => c.json({ error: "Not Found" }, 404));
 
 export default app;

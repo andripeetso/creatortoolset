@@ -1,11 +1,13 @@
 import { Hono, type Context } from "hono";
 import type { AuthVars } from "../auth";
 import type { AssetDetail, SearchHit } from "../../contracts/library";
-import { libraryRole, versionSource } from "./access";
+import { libraryRole, mayWrite, versionSource } from "./access";
 import { libraryDb } from "./db";
 import { hitKey, rrf, semanticHits } from "./embed";
 import { enqueueJob } from "./jobs";
-import { CARD, ftsQuery, indexAsset, toCard, type CardRow } from "./query";
+import { CARD, ftsQuery, indexAsset, parseSearch, toCard, type CardRow } from "./query";
+import { viewerOf, visibleCards } from "./routes";
+import { assetRef, canSee, facetClauses } from "./sources";
 import { segmentsOf } from "./transcribe";
 
 /**
@@ -23,24 +25,28 @@ const notFound = (c: Ctx) => c.json({ error: "Not found", code: "not_found" }, 4
 const LIMIT = 50;
 
 /** Asset hits first (title weighs most), then the lines said in clips, each with the second it starts at. */
-export function searchLibrary(libraryId: string, q: string, limit = LIMIT): SearchHit[] {
+export function searchLibrary(libraryId: string, q: string, limit = LIMIT, facets: Record<string, string[]> = {}): SearchHit[] {
   const fts = ftsQuery(q);
   if (!fts) return [];
+  // the plug-in facets narrow both lists the same way the asset list does (sources.ts)
+  const fx = facetClauses(facets);
+  const fsql = fx.map((f) => ` AND ${f.sql}`).join("");
+  const fparams = fx.flatMap((f) => f.params);
   const assets = db()
     .prepare(
       `SELECT ${CARD} FROM search_assets s JOIN assets a ON a.id = s.asset_id JOIN asset_versions v ON v.id = a.current_version_id
-       WHERE search_assets MATCH ? AND a.library_id = ? AND a.trashed_at IS NULL
+       WHERE search_assets MATCH ? AND a.library_id = ? AND a.trashed_at IS NULL${fsql}
        ORDER BY bm25(search_assets, 0, 0, 5, 2, 1) LIMIT ?`,
     )
-    .all(fts, libraryId, limit) as unknown as CardRow[];
+    .all(fts, libraryId, ...fparams, limit) as unknown as CardRow[];
   const said = db()
     .prepare(
       `SELECT ${CARD}, s.seg AS seg, snippet(search_segments, 2, '', '', '…', 16) AS snippet
        FROM search_segments s JOIN asset_versions v ON v.id = s.version_id JOIN assets a ON a.current_version_id = v.id
-       WHERE search_segments MATCH ? AND a.library_id = ? AND a.trashed_at IS NULL
+       WHERE search_segments MATCH ? AND a.library_id = ? AND a.trashed_at IS NULL${fsql}
        ORDER BY bm25(search_segments) LIMIT ?`,
     )
-    .all(fts, libraryId, limit) as unknown as (CardRow & { seg: number; snippet: string })[];
+    .all(fts, libraryId, ...fparams, limit) as unknown as (CardRow & { seg: number; snippet: string })[];
   const segs = new Map<string, ReturnType<typeof segmentsOf>>();
   const startOf = (versionId: string, seg: number) => {
     if (!segs.has(versionId)) segs.set(versionId, segmentsOf(db(), versionId));
@@ -81,24 +87,32 @@ export function assetDetail(libraryId: string, assetId: string): AssetDetail | n
   };
 }
 
-// GET /api/library/:id/search?q → SearchHit[]: full text, fused with the closest chunks by meaning when semantic search is on
+// GET /api/library/:id/search?q&f.<key> → SearchHit[]: full text, fused with the closest chunks by meaning when semantic
+// search is on. Hits the viewer may not see are left out.
 searchApp.get("/:id/search", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
-  if (!libraryRole(user.username, libraryId)) return notFound(c);
+  const viewer = viewerOf(user.username, libraryId);
+  if (!viewer) return notFound(c);
   const q = (c.req.query("q") ?? "").trim().slice(0, 200);
   if (!q) return c.json({ error: "Type something to search for", code: "invalid" }, 400);
-  const text = searchLibrary(libraryId, q);
+  const facets = parseSearch(c.req.query()).facets ?? {};
+  const text = searchLibrary(libraryId, q, LIMIT, facets);
   const meaning = await semanticHits(libraryId, q, user.username).catch(() => null);
-  return c.json(meaning ? rrf([text, meaning], hitKey).slice(0, 2 * LIMIT) : text);
+  const hits = meaning ? rrf([text, meaning], hitKey).slice(0, 2 * LIMIT) : text;
+  const seen = await visibleCards(viewer, libraryId, hits.map((h) => h.asset));
+  const shown = new Set(seen.map((a) => a.id));
+  return c.json(hits.filter((h) => shown.has(h.asset.id)));
 });
 
-// GET /api/library/:id/assets/:assetId → AssetDetail
-searchApp.get("/:id/assets/:assetId", (c) => {
+// GET /api/library/:id/assets/:assetId → AssetDetail (404 for a viewer the policies refuse)
+searchApp.get("/:id/assets/:assetId", async (c) => {
   const libraryId = c.req.param("id");
-  if (!libraryRole(c.get("user").username, libraryId)) return notFound(c);
+  const viewer = viewerOf(c.get("user").username, libraryId);
+  if (!viewer) return notFound(c);
   const detail = assetDetail(libraryId, c.req.param("assetId"));
-  return detail ? c.json(detail) : notFound(c);
+  if (!detail || !(await canSee(viewer, assetRef(libraryId, detail.id, detail.versionId)))) return notFound(c);
+  return c.json(detail);
 });
 
 const RERUN = new Set(["transcribe", "describe", "fingerprint", "embed"]);
@@ -113,7 +127,7 @@ searchApp.post("/:id/assets/:assetId/jobs", async (c) => {
         | { created_by: string; current_version_id: string | null }
         | undefined)
     : undefined;
-  if (!a?.current_version_id) return notFound(c);
+  if (!a?.current_version_id || !(await mayWrite(user.username, libraryId, c.req.param("assetId"), a.current_version_id))) return notFound(c);
   const body = (await c.req.json().catch(() => null)) as { kinds?: unknown } | null;
   const kinds = Array.isArray(body?.kinds) ? body.kinds.filter((k): k is string => typeof k === "string" && RERUN.has(k)) : [];
   if (!kinds.length) return c.json({ error: `Nothing to run: kinds may be ${[...RERUN].join(", ")}`, code: "invalid" }, 400);
@@ -136,7 +150,7 @@ searchApp.patch("/:id/assets/:assetId", async (c) => {
         | { created_by: string; current_version_id: string | null }
         | undefined)
     : undefined;
-  if (!a?.current_version_id) return notFound(c);
+  if (!a?.current_version_id || !(await mayWrite(user.username, libraryId, assetId, a.current_version_id))) return notFound(c);
   const b = (await c.req.json().catch(() => null)) as { title?: unknown; tags?: unknown; description?: unknown } | null;
   const title = typeof b?.title === "string" ? b.title.trim().slice(0, 160) : undefined;
   const tags = Array.isArray(b?.tags)
@@ -177,7 +191,8 @@ const opening = new Map<string, Promise<string>>();
 searchApp.post("/:id/assets/:assetId/captions", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
-  if (!libraryRole(user.username, libraryId)) return notFound(c);
+  const viewer = viewerOf(user.username, libraryId);
+  if (!viewer) return notFound(c);
   const row = db()
     .prepare(
       `SELECT a.title, a.kind, v.id AS version_id, v.probe FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
@@ -185,6 +200,7 @@ searchApp.post("/:id/assets/:assetId/captions", async (c) => {
     )
     .get(c.req.param("assetId"), libraryId) as { title: string; kind: string; version_id: string; probe: string | null } | undefined;
   if (!row) return notFound(c);
+  if (!(await canSee(viewer, assetRef(libraryId, c.req.param("assetId"), row.version_id)))) return notFound(c);
   if (row.kind !== "video") return c.json({ error: "Caption Studio opens videos", code: "conflict" }, 409);
   const file = await versionSource(user.username, row.version_id);
   if (!file) return c.json({ error: "The file is not ready", code: "conflict" }, 409);

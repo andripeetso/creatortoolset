@@ -1,7 +1,10 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { LoginKind, SocialPlatform, SocialPost, SocialStats } from "../../../contracts/connectors";
 import { apifyRun } from "../instagram/apify";
-import type { StoredAccount } from "./store";
+import { nextAccountDaily } from "../instagram/account-insights";
+import { businessDiscoveryOn, fetchBusinessDiscovery, fetchMineAccountStats, fetchMineCatalog, fetchMineProfile, META_VERSION, withGraphCreds } from "../instagram/graph";
+import { readerFor, registerReader } from "./provider";
+import { mergeSnapshots, type AccountDay, type StoredAccount, type VideoSnapshot } from "./store";
 
 /**
  * The logins and the pulls.
@@ -11,7 +14,9 @@ import type { StoredAccount } from "./store";
  * and the platform is still readable by handle through the user's own Apify token.
  */
 
-const META = "https://graph.facebook.com/v27.0";
+/** The Meta Graph API version every Meta call uses (connector logins, pulls and the Instagram Graph reader). */
+export { META_VERSION };
+const META = `https://graph.facebook.com/${META_VERSION}`;
 const TIMEOUT = 60_000;
 
 type Rec = Record<string, unknown>;
@@ -31,7 +36,7 @@ export function appFor(kind: LoginKind): { id: string; secret: string; configId?
     kind === "meta" ? [process.env.META_APP_ID, process.env.META_APP_SECRET] : kind === "google" ? [process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET] : [process.env.TIKTOK_CLIENT_KEY, process.env.TIKTOK_CLIENT_SECRET];
   if (!id?.trim() || !secret?.trim()) return null;
   // a Business-type Meta app names its permissions in a configuration (META_CONFIG_ID) instead of scopes
-  const configId = kind === "meta" ? process.env.META_CONFIG_ID?.trim() : "";
+  const configId = kind === "meta" ? (process.env.META_CONFIG_ID?.trim() || process.env.META_LOGIN_CONFIG_ID?.trim()) : "";
   return { id: id.trim(), secret: secret.trim(), ...(configId ? { configId } : {}) };
 }
 
@@ -62,7 +67,7 @@ export function loginUrl(kind: LoginKind, redirect: string, state: string): { ur
   const app = appFor(kind);
   if (!app) throw new Error("This login isn't set up on the server yet");
   if (kind === "meta") {
-    const u = new URL("https://www.facebook.com/v27.0/dialog/oauth");
+    const u = new URL(`https://www.facebook.com/${META_VERSION}/dialog/oauth`);
     // a Business-type app's "Facebook Login for Business" names its permissions in a configuration (config_id), not scope
     const which = app.configId ? { config_id: app.configId } : { scope: META_SCOPES.join(",") };
     Object.entries({ client_id: app.id, redirect_uri: redirect, state, ...which, response_type: "code" }).forEach(([k, v]) => u.searchParams.set(k, v));
@@ -153,10 +158,27 @@ export interface Pulled {
   posts: SocialPost[];
   name?: string;
   avatar?: string;
+  /** A login's full report set, rows keyed by each report's dimension and metric names (YouTube). A report the platform withholds is absent. */
+  reports?: Partial<Record<YtReportId, Rec[]>>;
+  /** The account's snapshot history with this pull's day added (TikTok). Replaces the stored history as a whole. */
+  snapshots?: VideoSnapshot[];
+  /** The account's daily insights with this pull's days added (Instagram login). Replaces the stored history as a whole. */
+  daily?: AccountDay[];
 }
 
 const isoDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 const DAYS = 28;
+
+/**
+ * The Page's daily series: Meta metric name → the key it fills in `SocialStats.days`. Each one is its own call, and a
+ * series Meta refuses (retired) or has no values for is left out, so its key is missing on the days, never 0.
+ */
+const PAGE_SERIES = [
+  ["page_media_view", "views"],
+  ["page_follows", "followersGained"],
+  ["page_post_engagements", "engagements"],
+  ["page_video_views", "videoViews"],
+] as const;
 
 async function tiktokUser(token: string) {
   const fields = "open_id,avatar_url,display_name,username,follower_count,following_count,likes_count,video_count";
@@ -178,12 +200,14 @@ async function pullFacebook(a: StoredAccount): Promise<Pulled> {
   const until = Math.floor(Date.now() / 1000);
   const days = new Map<string, NonNullable<SocialStats["days"]>[number]>();
   // one metric at a time: Meta retires Page metrics often, and one gone must not lose the others
-  for (const [metric, key] of [["page_media_view", "views"], ["page_follows", "followersGained"]] as const) {
+  for (const [metric, key] of PAGE_SERIES) {
     const r = await getJson(`${META}/${a.platformId}/insights?${q({ metric, period: "day", since: String(until - DAYS * 86400), until: String(until) })}`).catch(() => null);
     for (const row of r && Array.isArray(r.data) ? r.data.filter(isRec) : [])
       for (const v of Array.isArray(row.values) ? row.values.filter(isRec) : []) {
+        const n = num(v.value);
+        if (n === undefined) continue;
         const day = isoDay(time(v.end_time));
-        days.set(day, { ...(days.get(day) ?? { day }), [key]: num(v.value) });
+        days.set(day, { ...(days.get(day) ?? { day }), [key]: n });
       }
   }
   const total = (v: unknown) => (isRec(v) && isRec(v.summary) ? num(v.summary.total_count) : undefined);
@@ -207,6 +231,51 @@ const isoDuration = (v: string) => {
   const m = /PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/.exec(v);
   return m ? Number(m[1] ?? 0) * 3600 + Number(m[2] ?? 0) * 60 + Number(m[3] ?? 0) : undefined;
 };
+
+/** One YouTube Analytics report: the API's dimension and metric names, its sort, and its row limit. */
+export interface YtReport {
+  dimensions: string[];
+  metrics: string[];
+  /** A metric or dimension name; a leading "-" sorts descending. */
+  sort: string;
+  /** Row limit for a ranked report (the API takes up to 200). */
+  maxResults?: number;
+}
+
+/**
+ * The channel's own report set (`ids=channel==MINE`). Each one is a combination the Analytics API takes for channel
+ * reports: a day series sorted by day, or a ranked list with a row limit. Revenue metrics need the monetary scope, so
+ * they are not here.
+ */
+export const YT_REPORTS = {
+  day: { dimensions: ["day"], metrics: ["views", "estimatedMinutesWatched", "subscribersGained", "subscribersLost", "likes", "dislikes", "comments", "shares", "averageViewDuration", "averageViewPercentage"], sort: "day" },
+  videos: { dimensions: ["video"], metrics: ["views", "estimatedMinutesWatched", "averageViewDuration", "averageViewPercentage", "likes", "comments", "shares", "subscribersGained"], sort: "-views", maxResults: 25 },
+  traffic: { dimensions: ["insightTrafficSourceType"], metrics: ["views", "estimatedMinutesWatched"], sort: "-views", maxResults: 25 },
+  countries: { dimensions: ["country"], metrics: ["views", "estimatedMinutesWatched", "averageViewDuration", "subscribersGained"], sort: "-views", maxResults: 25 },
+  devices: { dimensions: ["deviceType"], metrics: ["views", "estimatedMinutesWatched"], sort: "-views", maxResults: 25 },
+  subscribed: { dimensions: ["subscribedStatus"], metrics: ["views", "estimatedMinutesWatched", "averageViewDuration"], sort: "-views", maxResults: 25 },
+  audience: { dimensions: ["ageGroup", "gender"], metrics: ["viewerPercentage"], sort: "-viewerPercentage", maxResults: 50 },
+} satisfies Record<string, YtReport>;
+export type YtReportId = keyof typeof YT_REPORTS;
+
+/** The query for one report over [start, end] (YYYY-MM-DD). */
+export function ytReportParams(r: YtReport, start: string, end: string): URLSearchParams {
+  return new URLSearchParams({
+    ids: "channel==MINE",
+    startDate: start,
+    endDate: end,
+    dimensions: r.dimensions.join(","),
+    metrics: r.metrics.join(","),
+    sort: r.sort,
+    ...(r.maxResults ? { maxResults: String(r.maxResults) } : {}),
+  });
+}
+
+/** A report's rows keyed by name: the API returns each row's dimensions, then its metrics, in the order asked. */
+function ytRows(r: YtReport, rep: Rec): Rec[] {
+  const cols = [...r.dimensions, ...r.metrics];
+  return (Array.isArray(rep.rows) ? rep.rows : []).filter(Array.isArray).map((row) => Object.fromEntries(cols.map((c, i) => [c, row[i]])));
+}
 
 async function pullYoutube(a: StoredAccount): Promise<Pulled> {
   const h = { headers: { Authorization: `Bearer ${a.token}` } };
@@ -238,9 +307,16 @@ async function pullYoutube(a: StoredAccount): Promise<Pulled> {
   }
   const end = isoDay(Date.now());
   const start = isoDay(Date.now() - DAYS * 86_400_000);
-  const rep = await getJson(`https://youtubeanalytics.googleapis.com/v2/reports?${new URLSearchParams({ ids: "channel==MINE", startDate: start, endDate: end, metrics: "views,estimatedMinutesWatched,subscribersGained", dimensions: "day", sort: "day" })}`, h).catch(() => null);
-  const days = (rep && Array.isArray(rep.rows) ? rep.rows : []).filter(Array.isArray).map((r) => ({ day: str(r[0]), views: num(r[1]), watchMinutes: num(r[2]), followersGained: num(r[3]) }));
-  return { stats: { followers: num(st.subscriberCount), views: num(st.viewCount), posts: num(st.videoCount), days }, posts };
+  const reports: Partial<Record<YtReportId, Rec[]>> = {};
+  // each report on its own: one the channel can't run is left out (absent, not zero) and the others still come
+  await Promise.all(
+    (Object.keys(YT_REPORTS) as YtReportId[]).map(async (id) => {
+      const rep = await getJson(`https://youtubeanalytics.googleapis.com/v2/reports?${ytReportParams(YT_REPORTS[id], start, end)}`, h).catch(() => null);
+      if (rep) reports[id] = ytRows(YT_REPORTS[id], rep);
+    }),
+  );
+  const days = (reports.day ?? []).map((r) => ({ day: str(r.day), views: num(r.views), watchMinutes: num(r.estimatedMinutesWatched), followersGained: num(r.subscribersGained) }));
+  return { stats: { followers: num(st.subscriberCount), views: num(st.viewCount), posts: num(st.videoCount), days }, posts, reports };
 }
 
 async function pullTiktok(a: StoredAccount): Promise<Pulled> {
@@ -260,7 +336,10 @@ async function pullTiktok(a: StoredAccount): Promise<Pulled> {
     if (!d.has_more) break;
     cursor = num(d.cursor);
   }
-  return { name: me.name, avatar: me.avatar, stats: me.stats, posts };
+  // today's counts for each post, added to the history the stored account already has
+  const day = isoDay(Date.now());
+  const rows = posts.filter((p) => p.id).map((p) => ({ day, id: p.id, views: p.views, likes: p.likes, comments: p.comments, shares: p.shares }));
+  return { name: me.name, avatar: me.avatar, stats: me.stats, posts, snapshots: mergeSnapshots(a.snapshots, day, rows) };
 }
 
 /* ---- by handle, on the user's own Apify token (public numbers) ---- */
@@ -308,11 +387,77 @@ async function pullApify(a: StoredAccount, username: string): Promise<Pulled> {
   return { ...apifyStats(platform, items), posts: items.map((i) => apifyPost(platform, i)).filter((p): p is SocialPost => !!p && !!p.id) };
 }
 
-/** Read an account's numbers and recent posts: its login when it has one, else Apify on the user's token. */
-export async function pullAccount(a: StoredAccount, username: string): Promise<Pulled> {
-  if (a.via === "apify") return pullApify(a, username);
-  if (a.platform === "facebook") return pullFacebook(a);
-  if (a.platform === "youtube") return pullYoutube(a);
-  if (a.platform === "tiktok") return pullTiktok(a);
-  throw new Error("Instagram is read by the Content Analyzer");
+const IG_LOGIN_MSG = "Connect this Instagram account with its login to read it";
+
+/**
+ * An Instagram professional account through its Facebook login: recent posts with their insights, the account's numbers
+ * and its last 30 days of reach and new follows. The Graph login is the account's own token (never the install's), so
+ * no Apify key is needed. Numbers Meta withholds are left out, not zero.
+ */
+async function pullInstagram(a: StoredAccount): Promise<Pulled> {
+  if (!a.token) throw new Error(IG_LOGIN_MSG);
+  return withGraphCreds({ token: a.token, userId: a.platformId }, async () => {
+    const [profile, media, account] = await Promise.all([fetchMineProfile(), fetchMineCatalog({ cap: 100 }), fetchMineAccountStats()]);
+    return {
+      name: profile.fullName,
+      avatar: profile.profilePic,
+      stats: {
+        followers: profile.followers,
+        following: profile.following,
+        posts: profile.posts,
+        views: account.totals?.views,
+        likes: account.totals?.likes,
+        days: account.days.map((d) => ({ day: d.date, reach: d.reach, followersGained: d.newFollows })),
+      },
+      daily: nextAccountDaily(a.daily, account.days, a.key, Date.now()),
+      posts: media.items.map((i) => ({
+        id: i.graphId ?? i.shortcode,
+        url: i.url,
+        at: i.takenAt,
+        text: i.caption ?? "",
+        kind: i.kind,
+        views: i.insights?.views,
+        likes: i.counts?.likes,
+        comments: i.counts?.comments,
+        shares: i.insights?.shares,
+        saves: i.insights?.saved,
+        // only videos: Instagram also gives a still photo's image URL, which is not a video to compare
+        mediaUrl: i.graph?.mediaType?.toUpperCase() === "VIDEO" ? i.graph.mediaUrl : undefined,
+      })),
+    };
+  });
 }
+
+/** Another public account by handle through Business Discovery. Registered only while INSTAGRAM_BUSINESS_DISCOVERY=1. */
+async function pullInstagramDiscovery(a: StoredAccount): Promise<Pulled> {
+  const { profile, items } = await fetchBusinessDiscovery(a.handle);
+  return {
+    name: profile.fullName,
+    avatar: profile.profilePic,
+    stats: { followers: profile.followers, following: profile.following, posts: profile.posts },
+    posts: items.map((i) => ({
+      id: i.graphId ?? i.shortcode,
+      url: i.url,
+      at: i.takenAt,
+      text: i.caption ?? "",
+      kind: i.kind,
+      likes: i.counts?.likes,
+      comments: i.counts?.comments,
+    })),
+  };
+}
+
+/** Read an account's numbers and recent posts through the first reader in the registry that can read it. */
+export async function pullAccount(a: StoredAccount, username: string): Promise<Pulled> {
+  const reader = readerFor(a);
+  if (reader) return reader.pull(a, username);
+  throw new Error(a.platform === "instagram" ? IG_LOGIN_MSG : `Nothing can read ${a.platform} for this account`);
+}
+
+/* The built-in readers: each login platform through its own login, and every other platform by handle on Apify. */
+registerReader({ canRead: (a) => a.via === "apify" && a.platform !== "instagram", pull: pullApify });
+registerReader({ canRead: (a) => a.via === "login" && a.platform === "instagram", pull: pullInstagram });
+registerReader({ canRead: (a) => a.via === "login" && a.platform === "facebook", pull: pullFacebook });
+registerReader({ canRead: (a) => a.via === "login" && a.platform === "youtube", pull: pullYoutube });
+registerReader({ canRead: (a) => a.via === "login" && a.platform === "tiktok", pull: pullTiktok });
+registerReader({ canRead: (a) => a.via === "apify" && a.platform === "instagram" && businessDiscoveryOn(), pull: pullInstagramDiscovery });

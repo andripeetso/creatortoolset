@@ -11,6 +11,7 @@ type App = Hono<{ Bindings: HttpBindings; Variables: any }>;
 export function serveStaticFiles(app: App) {
   const distPath = path.resolve(import.meta.dirname, "../dist/public");
 
+  app.get("/favicon.ico", (c) => c.redirect("/icons/icon-192.png", 301));
   app.use("*", serveStatic({ root: "./dist/public" }));
 
   app.notFound(async (c) => {

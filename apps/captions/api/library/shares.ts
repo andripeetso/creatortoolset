@@ -8,7 +8,7 @@ import type { AssetCard, ShareCreated, ShareInput, ShareRow, SharedItem, SharedV
 import { libraryRole } from "./access";
 import { libraryDb } from "./db";
 import { savedQuery } from "./collections";
-import { mediaFile, serveBlob } from "./routes";
+import { mediaFile, serveBlob, viewerOf, visibleCards } from "./routes";
 import { buildAssetQuery, CARD, MAX_LIMIT, pageOf, toCard, type CardRow } from "./query";
 
 /**
@@ -47,7 +47,7 @@ async function checkPassword(pw: string, stored: string): Promise<boolean> {
 interface ShareDb {
   token_hash: string;
   library_id: string;
-  target_kind: "asset" | "version" | "collection";
+  target_kind: "asset" | "version" | "collection" | "piece";
   target_id: string;
   scope: "view" | "download" | "comment";
   password_hash: string | null;
@@ -56,14 +56,16 @@ interface ShareDb {
   views: number;
 }
 
-/** The target is still there for the library: an asset not in the trash, a version of one, a collection. */
+/** The target is still there for the library: an asset not in the trash, a version of one, a piece, a collection. */
 function targetExists(libraryId: string, kind: string, id: string): boolean {
   const sql =
     kind === "asset"
       ? "SELECT 1 FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL"
       : kind === "version"
         ? "SELECT 1 FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.library_id = ? AND a.trashed_at IS NULL"
-        : "SELECT 1 FROM collections WHERE id = ? AND library_id = ?";
+        : kind === "piece"
+          ? "SELECT 1 FROM pieces WHERE id = ? AND library_id = ?"
+          : "SELECT 1 FROM collections WHERE id = ? AND library_id = ?";
   return !!db().prepare(sql).get(id, libraryId);
 }
 
@@ -81,29 +83,50 @@ function shareName(s: ShareDb): string {
       ? "SELECT title FROM assets WHERE id = ?"
       : s.target_kind === "version"
         ? "SELECT a.title AS title FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?"
-        : "SELECT name AS title FROM collections WHERE id = ?";
+        : s.target_kind === "piece"
+          ? "SELECT label AS title FROM pieces WHERE id = ?"
+          : "SELECT name AS title FROM collections WHERE id = ?";
   return (db().prepare(sql).get(s.target_id) as { title: string } | undefined)?.title ?? "";
 }
 
-/** The cards a link shows, read from the database each time: a collection's current members, or the smart query. */
-function sharedCards(s: ShareDb): AssetCard[] {
+/**
+ * The cards a link shows, read from the database each time, and only those its creator may still see (the policies
+ * are asked on every view, so a link stops showing what its creator lost access to).
+ */
+async function sharedCards(s: ShareDb): Promise<AssetCard[]> {
+  return visibleCards(viewerOf(s.created_by, s.library_id), s.library_id, targetCards(s.library_id, s.target_kind, s.target_id));
+}
+
+/**
+ * A link target's cards before the policies: an asset's current version, a version, a piece's versions in order, a
+ * collection's current members, or a smart collection's query.
+ */
+function targetCards(libraryId: string, kind: ShareDb["target_kind"], id: string): AssetCard[] {
   const d = db();
-  if (s.target_kind === "asset") {
-    return (d.prepare(`SELECT ${CARD} FROM assets a JOIN asset_versions v ON v.id = a.current_version_id WHERE a.id = ? AND a.trashed_at IS NULL`).all(s.target_id) as unknown as CardRow[]).map(toCard);
+  if (kind === "asset") {
+    return (d.prepare(`SELECT ${CARD} FROM assets a JOIN asset_versions v ON v.id = a.current_version_id WHERE a.id = ? AND a.trashed_at IS NULL`).all(id) as unknown as CardRow[]).map(toCard);
   }
-  if (s.target_kind === "version") {
-    return (d.prepare(`SELECT ${CARD} FROM assets a JOIN asset_versions v ON v.asset_id = a.id WHERE v.id = ? AND a.trashed_at IS NULL`).all(s.target_id) as unknown as CardRow[]).map(toCard);
+  if (kind === "version") {
+    return (d.prepare(`SELECT ${CARD} FROM assets a JOIN asset_versions v ON v.asset_id = a.id WHERE v.id = ? AND a.trashed_at IS NULL`).all(id) as unknown as CardRow[]).map(toCard);
   }
-  const col = d.prepare("SELECT kind, query FROM collections WHERE id = ?").get(s.target_id) as { kind: string; query: string | null };
+  if (kind === "piece") {
+    return (
+      d.prepare(
+        `SELECT ${CARD} FROM piece_items pi JOIN asset_versions v ON v.id = pi.version_id JOIN assets a ON a.id = v.asset_id
+         WHERE pi.piece_id = ? AND a.trashed_at IS NULL ORDER BY pi.position LIMIT ?`,
+      ).all(id, MAX_LIMIT) as unknown as CardRow[]
+    ).map(toCard);
+  }
+  const col = d.prepare("SELECT kind, query FROM collections WHERE id = ?").get(id) as { kind: string; query: string | null };
   if (col.kind === "smart") {
-    const { sql, params, limit } = buildAssetQuery(s.library_id, { ...savedQuery(JSON.parse(col.query ?? "{}")), limit: MAX_LIMIT });
+    const { sql, params, limit } = buildAssetQuery(libraryId, { ...savedQuery(JSON.parse(col.query ?? "{}")), limit: MAX_LIMIT });
     return pageOf(d.prepare(sql).all(...params) as unknown as CardRow[], limit).items;
   }
   return (
     d.prepare(
       `SELECT ${CARD} FROM collection_items ci JOIN assets a ON a.id = ci.asset_id JOIN asset_versions v ON v.id = a.current_version_id
        WHERE ci.collection_id = ? AND a.trashed_at IS NULL ORDER BY ci.position LIMIT ?`,
-    ).all(s.target_id, MAX_LIMIT) as unknown as CardRow[]
+    ).all(id, MAX_LIMIT) as unknown as CardRow[]
   ).map(toCard);
 }
 
@@ -137,7 +160,7 @@ shareApp.post("/:id/shares", async (c) => {
   if (!libraryRole(user.username, libraryId)) return notFound(c);
   const body = (await c.req.json().catch(() => null)) as Partial<ShareInput> | null;
   const target = body?.target;
-  if (!target || !["asset", "version", "collection"].includes(target.kind) || typeof target.id !== "string") {
+  if (!target || !["asset", "version", "collection", "piece"].includes(target.kind) || typeof target.id !== "string") {
     return c.json({ error: "Say what to share", code: "invalid" }, 400);
   }
   if (body?.scope !== "view" && body?.scope !== "download") {
@@ -148,6 +171,10 @@ shareApp.post("/:id/shares", async (c) => {
   const password = typeof body.password === "string" && body.password !== "" ? body.password : null;
   if (password && password.length > 200) return c.json({ error: "Password is too long", code: "invalid" }, 400);
   if (!targetExists(libraryId, target.kind, target.id)) return notFound(c);
+  // the creator may share only what the policies let them see: a link to one hidden asset is refused, and a collection
+  // or piece with cards, all hidden from the creator, is refused too (a partly visible one shares what is visible)
+  const cards = targetCards(libraryId, target.kind, target.id);
+  if (cards.length && !(await visibleCards(viewerOf(user.username, libraryId), libraryId, cards)).length) return notFound(c);
 
   const token = randomBytes(16).toString("base64url");
   const tokenHash = sha256(token);
@@ -198,7 +225,7 @@ shareApp.delete("/shares/:tokenHash", (c) => {
 // ---------- the link holder (no account) ----------
 
 // GET /api/library/s/:token → the shared view; locked (no items) until the password is given
-publicShareApp.get("/s/:token", (c) => {
+publicShareApp.get("/s/:token", async (c) => {
   const token = c.req.param("token");
   const s = liveShare(token);
   if (!s) return notFound(c);
@@ -208,7 +235,7 @@ publicShareApp.get("/s/:token", (c) => {
     locked: false,
     name: shareName(s),
     scope: s.scope,
-    items: sharedCards(s).map((card) => sharedItem(card, token, s.scope === "download")),
+    items: (await sharedCards(s)).map((card) => sharedItem(card, token, s.scope === "download")),
   };
   return c.json(view);
 });
@@ -257,7 +284,7 @@ publicShareApp.get("/s/:token/media/:versionId/:kind", async (c) => {
   const kind = c.req.param("kind");
   if (kind === "source" && s.scope !== "download") return notFound(c);
   // ponytail: the link's items are read per request; a direct membership query when a collection grows large
-  if (!sharedCards(s).some((card) => card.versionId === versionId)) return notFound(c);
+  if (!(await sharedCards(s)).some((card) => card.versionId === versionId)) return notFound(c);
   const file = mediaFile(versionId, kind);
   if (!file) return notFound(c);
   if (!file.key) return c.json({ error: "Not ready", code: "conflict" }, 409);

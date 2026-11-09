@@ -15,6 +15,21 @@ export const TOOLS = [
 export type Tool = (typeof TOOLS)[number];
 export const isTool = (t: unknown): t is Tool => TOOLS.includes(t as Tool);
 
+/**
+ * A plug-in's access gate, kept in the same `off` list as the apps (users.json). Plug-ins declare their ids
+ * (api/lib/plugin.ts). Lowercase words and dashes; a built-in app id is never a gate.
+ */
+export type PluginGateId = string;
+/**
+ * App ids an earlier build of this app had (the studio's private build had `finals`) that a users.json `off` list may
+ * still hold. No plug-in can declare one as a gate, and an account keeps its entry (users.ts load, setOff), so an app
+ * switched off stays off until the app comes back under that id.
+ */
+export const RETIRED_APP_IDS = ["finals"] as const;
+export const isRetiredAppId = (g: unknown): boolean => RETIRED_APP_IDS.includes(g as (typeof RETIRED_APP_IDS)[number]);
+export const isPluginGateId = (g: unknown): g is PluginGateId =>
+  typeof g === "string" && /^[a-z][a-z0-9-]*$/.test(g) && !isTool(g) && !isRetiredAppId(g);
+
 export const TOOL_NAMES: Record<Tool, string> = {
   instagram: "Content Analyzer",
   workshop: "Content Workshop",

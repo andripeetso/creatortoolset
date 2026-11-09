@@ -18,7 +18,7 @@ describe("wordDiff", () => {
   });
 
   it("reads back to both texts", () => {
-    const before = "Slide one says hello to the baby.";
+    const before = "Slide one says hello to the puppy.";
     const after = "Slide one says hi to the little friend, twice.";
     expect(sides(wordDiff(before, after))).toEqual({ before, after });
   });

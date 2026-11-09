@@ -48,6 +48,9 @@ function persist(): void {
     .catch((e: unknown) => console.warn(`[devices] not saved: ${e instanceof Error ? e.message : e}`));
 }
 
+/** Resolves once every queued write has landed (a test waits on it before it removes its data dir). */
+export const devicesSaved = (): Promise<void> => saving;
+
 /** The record without its token hash. */
 const strip = (d: Stored): Device => {
   const copy: Stored = { ...d };
@@ -130,13 +133,32 @@ export function revokeDevice(id: string): boolean {
   return true;
 }
 
+/** The editor step kinds a device declares (its claim). Written only when they change. */
+export function setDeviceKinds(id: string, kinds: string[]): void {
+  const d = find(id);
+  if (!d || JSON.stringify(d.kinds ?? []) === JSON.stringify(kinds)) return;
+  d.kinds = kinds;
+  persist();
+}
+
 /** A device's report (the Mac relay `report`). */
 export function saveReport(id: string, r: MacReport, version?: string): void {
   const d = find(id);
   if (!d) return;
+  // Two reporters post for one Mac (the Mac app and the editor worker, same token), and one may send no disk list.
+  // ponytail: an empty list from the only reporter keeps the old disks; add an explicit clear when a Mac really loses them all.
+  const kept = d.report?.machine?.disks;
+  if (r.machine && kept && !r.machine.disks) r.machine = { ...r.machine, disks: kept };
   d.report = r;
   if (version) d.version = version;
   persist();
+}
+
+/** The device as `viewer` may see it: a Mac it does not own (an admin sees the workspace's and other admins' Macs) shows no disks. */
+export function forViewer(viewer: string, d: Device): Device {
+  const r = d.report;
+  if (d.owner === viewer || !r?.machine?.disks) return d;
+  return { ...d, report: { ...r, machine: { ...r.machine, disks: undefined } } };
 }
 
 /** What the device reported last. */

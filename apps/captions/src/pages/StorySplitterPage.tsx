@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router";
 import { Download, Eraser, Loader2, Play, Scissors, Upload, UploadCloud, WandSparkles, X } from "lucide-react";
 import { AppBar, ToolIntro } from "@/components/AppBar";
 import { dropZoneClass } from "@/components/DropZone";
@@ -22,13 +23,13 @@ import {
  * Story Splitter (/stories): a video in, stories of about 20 s out, as one
  * ZIP. The cuts land on the edit's own cuts, pauses and beats; the owner can
  * drop, add ("about here", snapped) and re-plan around the ones the author added.
- * A download keeps the split (api/stories.ts); a
- * saved one is listed, and its video is dropped again to open it.
+ * Opened from a library piece with ?clip=<version id>&name=<file> (&split=<id> for a saved split). A download keeps
+ * the split (api/stories.ts); a saved one is listed, and its video is dropped again to open it.
  */
 
 type Cut = { t: number; mine: boolean };
-type Source = { blob: Blob; name: string; url: string };
-type Split = { id: string; name: string; cuts: number[]; target: number; duration: number; updatedAt: number };
+type Source = { blob: Blob; name: string; url: string; clip?: string };
+type Split = { id: string; name: string; clip?: string; cuts: number[]; target: number; duration: number; updatedAt: number };
 
 const clock = (t: number) => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, "0")}`;
 const baseName = (name: string) =>
@@ -41,6 +42,7 @@ const plan = (a: Analysis, target: number, cuts: Cut[]) => {
 };
 
 export default function StorySplitterPage() {
+  const [params, setParams] = useSearchParams();
   const me = useMe();
   const lists = !!me; // an account keeps its splits
   const [splits, setSplits] = useState<Split[]>([]);
@@ -61,7 +63,7 @@ export default function StorySplitterPage() {
   const run = useRef(0);
   const targetRef = useRef(target);
 
-  const open = useCallback(async (blob: Blob, name: string, split?: Split) => {
+  const open = useCallback(async (blob: Blob, name: string, clip?: string, split?: Split) => {
     const my = ++run.current;
     setError("");
     setAnalysis(null);
@@ -69,7 +71,7 @@ export default function StorySplitterPage() {
     setSaved(split ?? null);
     setSource((old) => {
       if (old) URL.revokeObjectURL(old.url);
-      return { blob, name, url: URL.createObjectURL(blob) };
+      return { blob, name, url: URL.createObjectURL(blob), clip };
     });
     const label = "Finding cuts, pauses and beats";
     setBusy({ label, p: 0 });
@@ -102,6 +104,48 @@ export default function StorySplitterPage() {
       .then((r) => (r.ok ? r.json() : []))
       .then(setSplits, () => {});
   }, [lists]);
+
+  // From a library piece: the master, read on this origin (and a saved split's cuts).
+  const clip = params.get("clip");
+  const clipName = params.get("name");
+  const splitId = params.get("split");
+  useEffect(() => {
+    if (!clip) return;
+    let stop = false;
+    void (async () => {
+      const label = "Loading from the library";
+      setBusy({ label, p: 0 });
+      try {
+        const split = splitId
+          ? await fetch(`/api/stories/${splitId}`).then((r) => (r.ok ? (r.json() as Promise<Split>) : undefined))
+          : undefined;
+        const res = await fetch(`/api/library/media/${encodeURIComponent(clip)}/source`);
+        if (!res.ok || !res.body)
+          throw new Error((await res.json().catch(() => null))?.error || `Couldn't load it from the library (${res.status})`);
+        const total = Number(res.headers.get("content-length")) || 0;
+        const reader = res.body.getReader();
+        const parts: BlobPart[] = [];
+        let got = 0;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (stop) return void reader.cancel();
+          if (done) break;
+          parts.push(value);
+          got += value.length;
+          if (total) setBusy({ label, p: got / total });
+        }
+        const blob = new Blob(parts, { type: res.headers.get("content-type") || "video/mp4" });
+        void open(blob, clipName || `clip-${clip.slice(0, 8)}.mp4`, clip, split);
+      } catch (e) {
+        if (stop) return;
+        setError(message(e));
+        setBusy(null);
+      }
+    })();
+    return () => {
+      stop = true;
+    };
+  }, [clip, clipName, splitId, open]);
 
 
   // Playhead, and stop at the end of a story played on its own.
@@ -204,7 +248,7 @@ export default function StorySplitterPage() {
           body: JSON.stringify(
             saved
               ? { cuts: ts, target }
-              : { name: source.name.slice(0, 160), cuts: ts, target, duration: analysis.duration },
+              : { name: source.name.slice(0, 160), clip: source.clip, cuts: ts, target, duration: analysis.duration },
           ),
         });
         const j = (await res.json().catch(() => null)) as (Split & { error?: string }) | null;
@@ -221,7 +265,8 @@ export default function StorySplitterPage() {
 
   const reopen = (s: Split) => {
     setError("");
-    setWaiting(s);
+    if (s.clip) setParams({ clip: s.clip, name: s.name, split: s.id });
+    else setWaiting(s);
   };
   const remove = async (s: Split) => {
     const res = await fetch(`/api/stories/${s.id}`, { method: "DELETE" }).catch(() => null);
@@ -231,7 +276,7 @@ export default function StorySplitterPage() {
 
   const pick = (files: FileList | null) => {
     const f = files?.[0];
-    if (f) void open(f, f.name, waiting ?? undefined);
+    if (f) void open(f, f.name, undefined, waiting ?? undefined);
     setWaiting(null);
   };
   const filePicker = (label: string, className: string) => (
@@ -303,7 +348,7 @@ export default function StorySplitterPage() {
                           type="button"
                           onClick={() => reopen(s)}
                           className="flex min-w-0 flex-1 items-baseline gap-3 px-2.5 py-2 text-left"
-                          title="Drop the video again to open it"
+                          title={s.clip ? "Open it again from the library" : "Drop the video again to open it"}
                         >
                           <span className="min-w-0 flex-1 truncate text-sm">{s.name}</span>
                           <span className="shrink-0 text-xs tabular-nums text-zinc-500">

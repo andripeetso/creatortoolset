@@ -31,13 +31,48 @@ final class RelayTests: XCTestCase {
         XCTAssertNil(RelayRequest(json: Data(#"{"system":"S"}"#.utf8)))   // no id: nothing to answer
     }
 
-    func testOnlyClaudeAndGeminiRunHereAndOthersFailWithTheSameWords() {
+    func testClaudeGeminiCodexAndTheAcpKindsRunHereAndOthersFailWithTheSameWords() throws {
         let root = temp()
-        for driver in ["grok", "codex", "cursor"] {
+        for driver in ["musecode", "muse", "wat"] {
             let r = request(#"{"id":"j","system":"","user":"","driver":"\#(driver)"}"#)
             XCTAssertThrowsError(try requestOptions(r, root: root)) { error in
-                XCTAssertEqual((error as? RelayError)?.message, "This Mac runs Claude and Gemini only for now")
+                XCTAssertEqual((error as? RelayError)?.message, onlyRunnableMessage)
             }
+        }
+        for driver in ["claude", "gemini", "codex", "grok", "cursor", "opencode", "antigravity", "pi"] {
+            XCTAssertEqual(try requestOptions(request(#"{"id":"j","system":"","user":"","driver":"\#(driver)"}"#), root: root).driver, driver)
+        }
+    }
+
+    func testAcpKindsStartTheirCommandWithTheirLaunchArguments() throws {
+        let root = temp()
+        XCTAssertEqual(try requestOptions(request(#"{"id":"j","system":"","user":"","driver":"pi"}"#), root: root).acp,
+                       AcpLaunch(command: "npx", args: ["-y", "pi-acp@0.0.34"]))
+        XCTAssertEqual(try requestOptions(request(#"{"id":"j","system":"","user":"","driver":"cursor","launchArgs":["--model","m"]}"#), root: root).acp,
+                       AcpLaunch(command: "cursor-agent", args: ["acp", "--model", "m"]))
+        // a manual setup's program replaces the default command; its launch arguments follow
+        XCTAssertEqual(try requestOptions(request(#"{"id":"j","system":"","user":"","driver":"pi","binaryPath":"/opt/pi/pi-acp","launchArgs":["--v"]}"#), root: root).acp,
+                       AcpLaunch(command: "/opt/pi/pi-acp", args: ["--v"]))
+        // a local command takes its own program and arguments
+        XCTAssertEqual(try requestOptions(request(#"{"id":"j","system":"","user":"","driver":"acp","acp":{"command":"my-agent","args":["acp"]}}"#), root: root).acp,
+                       AcpLaunch(command: "my-agent", args: ["acp"]))
+        XCTAssertThrowsError(try requestOptions(request(#"{"id":"j","system":"","user":"","driver":"acp"}"#), root: root))
+        XCTAssertNil(try requestOptions(request(#"{"id":"j","system":"","user":"","driver":"claude"}"#), root: root).acp)
+    }
+
+    /// The fake ACP agent (AcpRunTests.fakeAgent) answers a request as pi and as opencode: the prompt goes out with the
+    /// instructions in front, the agent's permission question is denied, and the text comes back as the answer.
+    func testAcpAnswerRunsTheFakeAgentAsPiAndAsOpencode() throws {
+        let dir = temp()
+        let script = dir.appendingPathComponent("fake_agent.py")
+        try AcpRunTests.fakeAgent.write(to: script, atomically: true, encoding: .utf8)
+        for driver in ["pi", "opencode"] {
+            let req = request(#"{"id":"j","system":"Be brief.","user":"hi","driver":"\#(driver)"}"#)
+            let opts = RelayOptions(model: "", effort: "xhigh", home: "", resume: "", driver: driver,
+                                    acp: AcpLaunch(command: "/usr/bin/python3", args: [script.path]))
+            let answer = try runAnswer(req, opts, cli: driver, work: dir, send: { _ in true }, step: { _ in })
+            XCTAssertEqual(answer.text, "Hello: <instructions>\nBe brief.\n</instructions>\n\nhi[no]")
+            XCTAssertEqual(answer.state, "")
         }
     }
 
@@ -122,6 +157,44 @@ final class RelayTests: XCTestCase {
         XCTAssertEqual(env["CLAUDE_CONFIG_DIR"], home.path)
         XCTAssertEqual(env["PATH"], "/usr/bin")
         XCTAssertEqual(env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"], "1")
+    }
+
+    func testPlugInEndpointReachesTheClaudeEnvAndWinsOverTheHome() throws {
+        let r = request(#"{"id":"j4","system":"","user":"","baseUrl":"https://proxy.example.test/v1"}"#)
+        XCTAssertEqual(try requestOptions(r).baseUrl, "https://proxy.example.test/v1")
+        XCTAssertThrowsError(try requestOptions(request(#"{"id":"j5","system":"","user":"","baseUrl":"file:///etc/passwd"}"#)))
+        XCTAssertEqual(try requestOptions(request(#"{"id":"j6","system":"","user":""}"#)).baseUrl, "")
+        let home = temp()
+        try #"{"env":{"ANTHROPIC_BASE_URL":"https://home.example"}}"#.write(to: home.appendingPathComponent("settings.json"), atomically: true, encoding: .utf8)
+        XCTAssertEqual(claudeEnv(base: [:], home: home.path, baseUrl: "https://proxy.example.test/v1")["ANTHROPIC_BASE_URL"], "https://proxy.example.test/v1")
+        XCTAssertEqual(claudeEnv(base: [:], home: home.path)["ANTHROPIC_BASE_URL"], "https://home.example")
+        XCTAssertNil(claudeEnv(base: ["ANTHROPIC_BASE_URL": "https://base"], home: "")["ANTHROPIC_BASE_URL"])
+    }
+
+    func testProviderValuesComeFromTheMacKeychainOnlyForNamedVariables() throws {
+        let kept = ["claude_hub/CURSOR_API_KEY": "k-1", "claude_hub/BAD NAME": "x"]
+        XCTAssertEqual(providerEnv(instance: "claude_hub", names: ["CURSOR_API_KEY", "MISSING", "BAD NAME"], read: { kept[$0] }), ["CURSOR_API_KEY": "k-1"])
+        XCTAssertEqual(providerEnv(instance: "", names: ["CURSOR_API_KEY"], read: { kept[$0] }), [:])
+        // the request carries the names; the values come from the reader, and only for Claude
+        let r = request(#"{"id":"j7","system":"","user":"","instance":"claude_hub","envNames":["CURSOR_API_KEY"]}"#)
+        XCTAssertEqual(try requestOptions(r, read: { kept[$0] }).env, ["CURSOR_API_KEY": "k-1"])
+        let codex = request(#"{"id":"j8","system":"","user":"","driver":"codex","instance":"claude_hub","envNames":["CURSOR_API_KEY"]}"#)
+        XCTAssertEqual(try requestOptions(codex, read: { kept[$0] }).env, [:])
+    }
+
+    func testProviderValuesNeverReplaceTheSubscriptionKeysOrTheFolder() throws {
+        let home = temp()
+        let env = claudeEnv(base: [:], home: home.path, extra: ["ANTHROPIC_API_KEY": "sk", "ANTHROPIC_BASE_URL": "u", "CLAUDE_CONFIG_DIR": "/x", "CURSOR_API_KEY": "k-1"])
+        XCTAssertNil(env["ANTHROPIC_API_KEY"])
+        XCTAssertNil(env["ANTHROPIC_BASE_URL"])
+        XCTAssertEqual(env["CLAUDE_CONFIG_DIR"], home.path)
+        XCTAssertEqual(env["CURSOR_API_KEY"], "k-1")
+    }
+
+    func testMacReportNamesMuseCodeAsTheSiteDoes() {
+        let ids = reportDrivers.map { $0.id }
+        XCTAssertTrue(ids.contains("musecode"))
+        XCTAssertFalse(ids.contains("muse"))
     }
 
     func testNoHomeIsTheSubscriptionEnvAsBefore() {
@@ -297,12 +370,32 @@ final class RelayTests: XCTestCase {
         XCTAssertEqual(rows, ["claude .claude", "claude .claude-work", "codex .codex"])
     }
 
+    func testACustomEndpointIsAFlagAndTheURLAndTokenStayOnTheMac() throws {
+        let home = temp()
+        let fm = FileManager.default
+        let hub = home.appendingPathComponent(".claude-hub")
+        try fm.createDirectory(at: hub, withIntermediateDirectories: true)
+        try #"{"env":{"ANTHROPIC_BASE_URL":"https://gateway.tinyacrobatics.example","ANTHROPIC_AUTH_TOKEN":"sk-test-token-123"}}"#
+            .write(to: hub.appendingPathComponent("settings.json"), atomically: true, encoding: .utf8)
+        try fm.createDirectory(at: home.appendingPathComponent(".claude"), withIntermediateDirectories: true)
+        try "{}".write(to: home.appendingPathComponent(".claude/settings.json"), atomically: true, encoding: .utf8)
+        let flags = Dictionary(uniqueKeysWithValues: homeReport(home: home).map {
+            (URL(fileURLWithPath: $0["home"] as! String).lastPathComponent, $0["customEndpoint"] as? Bool)
+        })
+        XCTAssertEqual(flags[".claude-hub"], true)
+        XCTAssertEqual(flags[".claude"], false)
+        let sent = String(decoding: try JSONSerialization.data(withJSONObject: homeReport(home: home)), as: UTF8.self)
+        XCTAssertFalse(sent.contains("gateway.tinyacrobatics"))
+        XCTAssertFalse(sent.contains("sk-test-token-123"))
+    }
+
     func testTheReportHasEveryDriverAndTheTimestamp() {
         let report = macReport(home: temp(), now: Date(timeIntervalSince1970: 1_700_000_000))
         XCTAssertEqual(report["at"] as? Int, 1_700_000_000_000)
         XCTAssertEqual((report["drivers"] as? [[String: Any]])?.count, reportDrivers.count)
         XCTAssertEqual((report["drivers"] as? [[String: Any]])?.first?["driver"] as? String, "codex")
         XCTAssertNotNil(report["homes"])
+        XCTAssertTrue(reportDrivers.contains { $0.id == "musecode" } && !reportDrivers.contains { $0.id == "muse" })   // the id providers.ts uses
         let machine = report["machine"] as? [String: Any]
         XCTAssertEqual(machine?["os"] as? String, "mac")
         XCTAssertGreaterThan(machine?["cpus"] as? Int ?? 0, 0)
@@ -328,6 +421,224 @@ final class RelayTests: XCTestCase {
         let pair = try JSONDecoder().decode(PairReply.self, from: Data(#"{"device":{"id":"dev_1","owner":"alex","kind":"app"},"token":"ctd_abc"}"#.utf8))
         XCTAssertEqual(pair.device.id, "dev_1")
         XCTAssertEqual(pair.token, "ctd_abc")
+    }
+
+    // MARK: Codex and Grok (the Mac relay codex_cmd, grok_cmd, CodexRun and their checks)
+
+    /// Lines captured from codex-cli 0.39 (`codex exec --json`) on this Mac: the MCP error, the model refused by the
+    /// account (the retries, then the error), and a full answer with its usage.
+    private let codexRefusedLines = [
+        #"{"id":"","msg":{"type":"error","message":"MCP client for `computer-use` failed to start: No such file or directory (os error 2)"}}"#,
+        #"{"id":"0","msg":{"type":"task_started","model_context_window":null}}"#,
+        #"{"id":"0","msg":{"type":"stream_error","message":"stream error: unexpected status 400 Bad Request: {\"detail\":\"The 'gpt-6-astra' model is not supported when using Codex with a ChatGPT account.\"}; retrying 1/5 in 194ms…"}}"#,
+        #"{"id":"0","msg":{"type":"error","message":"unexpected status 400 Bad Request: {\"detail\":\"The 'gpt-6-astra' model is not supported when using Codex with a ChatGPT account.\",\"error\":{\"type\":\"invalid_request_error\",\"code\":\"model_not_found\"}}"}}"#,
+    ]
+    private let codexAnswerLines = [
+        #"{"provider":"openai","sandbox":"read-only","model":"gpt-x"}"#,
+        #"{"id":"","msg":{"type":"error","message":"MCP client for `computer-use` failed to start"}}"#,
+        #"{"id":"0","msg":{"type":"task_started"}}"#,
+        #"{"id":"0","msg":{"type":"agent_message_delta","delta":"Let me look "}}"#,
+        #"{"id":"0","msg":{"type":"agent_message_delta","delta":"at the posts."}}"#,
+        #"{"id":"0","msg":{"type":"agent_message","message":"Let me look at the posts."}}"#,
+        #"{"id":"0","msg":{"type":"agent_message_delta","delta":"{\"reply\": "}}"#,
+        #"{"id":"0","msg":{"type":"agent_message_delta","delta":"\"OK\"}"}}"#,
+        #"{"id":"0","msg":{"type":"agent_message","message":"{\"reply\": \"OK\"}"}}"#,
+        #"{"id":"0","msg":{"type":"token_count","info":{"total_token_usage":{"input_tokens":120,"cached_input_tokens":100,"output_tokens":7,"reasoning_output_tokens":3,"total_tokens":127}}}}"#,
+        #"{"id":"0","msg":{"type":"task_complete","last_agent_message":"{\"reply\": \"OK\"}"}}"#,
+    ]
+
+    private func feedCodex(_ lines: [String]) -> CodexStream {
+        var stream = CodexStream()
+        for line in lines { _ = stream.feed(line) }
+        return stream
+    }
+
+    func testCodexAnswerIsTheLastMessageWithUncachedInputUsage() {
+        let stream = feedCodex(codexAnswerLines)
+        let result = stream.result(err: "")
+        XCTAssertEqual(result["is_error"] as? Bool, false)
+        XCTAssertEqual(result["result"] as? String, #"{"reply": "OK"}"#)
+        let usage = result["usage"] as? [String: Any] ?? [:]
+        XCTAssertEqual(usage["input_tokens"] as? Int, 20)                 // 120 in, 100 of them cached
+        XCTAssertEqual(usage["cache_read_input_tokens"] as? Int, 100)
+        XCTAssertEqual(usage["output_tokens"] as? Int, 7)
+        XCTAssertEqual(usage["reasoning_tokens"] as? Int, 3)
+        XCTAssertEqual(stream.seen["codex"]?["output_tokens"] as? Int, 7)
+    }
+
+    func testCodexStreamShowsTheAnswerAsItWrites() {
+        var stream = CodexStream()
+        var shown: [String] = []
+        for line in codexAnswerLines {
+            for update in stream.feed(line) {
+                if case .text(let text) = update { shown.append(text) }
+            }
+        }
+        XCTAssertEqual(shown.first, "Let me look ")
+        XCTAssertEqual(shown.last, #"{"reply": "OK"}"#)
+        XCTAssertTrue(shown.contains("Let me look at the posts."))   // a message that ended is kept until a new one starts
+    }
+
+    func testCodexRefusedModelIsTheFailureWithTheCLIsWords() {
+        let result = feedCodex(codexRefusedLines).result(err: "")
+        XCTAssertEqual(result["is_error"] as? Bool, true)
+        XCTAssertTrue((result["result"] as? String ?? "").hasPrefix("unexpected status 400 Bad Request"))
+        XCTAssertTrue((result["result"] as? String ?? "").contains("The 'gpt-6-astra' model is not supported when using Codex with a ChatGPT account."))
+    }
+
+    func testCodexErrorBeforeAnAnswerIsNotTheFailureAndNoAnswerUsesStderr() {
+        XCTAssertFalse(feedCodex(Array(codexAnswerLines[1...1]) + Array(codexAnswerLines[8...])).result(err: "")["is_error"] as? Bool ?? true)
+        let none = feedCodex([#"{"id":"0","msg":{"type":"task_started"}}"#]).result(err: "ERROR: something on stderr")
+        XCTAssertEqual(none["result"] as? String, "ERROR: something on stderr")
+    }
+
+    func testCodexCommandLineIsReadOnlyInTheFolderWithThePromptOnStdin() {
+        let args = codexArguments(cwd: "/tmp/run", model: "gpt-x", effort: "low")
+        XCTAssertEqual(args.prefix(2), ["exec", "--json"])
+        XCTAssertEqual(args[args.firstIndex(of: "-s")! + 1], "read-only")
+        XCTAssertEqual(args[args.firstIndex(of: "-C")! + 1], "/tmp/run")
+        XCTAssertEqual(args[args.firstIndex(of: "-m")! + 1], "gpt-x")
+        XCTAssertTrue(args.contains("model_reasoning_effort=low"))
+        XCTAssertEqual(args.last, "-")
+        XCTAssertFalse(codexArguments(cwd: "/tmp/run", model: "", effort: "low").contains("-m"))
+    }
+
+    func testCodexAndGrokOptionsAndHomes() throws {
+        let root = temp()
+        let codexHome = root.appendingPathComponent(".codex-work")
+        try FileManager.default.createDirectory(at: codexHome, withIntermediateDirectories: true)
+        let codex = try requestOptions(request(#"{"id":"j","system":"","user":"","driver":"codex","model":"gpt-x","effort":"low","home":"\#(codexHome.path)"}"#), root: root)
+        XCTAssertEqual(codex, RelayOptions(model: "gpt-x", effort: "low", home: realPath(codexHome.path), resume: "", driver: "codex"))
+        XCTAssertEqual(try requestOptions(request(#"{"id":"j","system":"","user":"","driver":"codex"}"#), root: root).model, "")
+        XCTAssertThrowsError(try requestOptions(request(#"{"id":"j","system":"","user":"","driver":"codex","model":"bad model!"}"#), root: root)) { error in
+            XCTAssertEqual((error as? RelayError)?.message, "not a Codex model: bad model!")
+        }
+        XCTAssertThrowsError(try requestOptions(request(#"{"id":"j","system":"","user":"","driver":"grok","home":"\#(codexHome.path)"}"#), root: root)) { error in
+            XCTAssertEqual((error as? RelayError)?.message, "Grok keeps its own folder (~/.grok): it takes no home")
+        }
+        XCTAssertEqual(try requestOptions(request(#"{"id":"j","system":"","user":"","driver":"grok","model":"grok-4"}"#), root: root).model, "grok-4")
+    }
+
+    func testCodexHomeGoesToTheEnvironmentOnlyWhenNamed() {
+        let base = ["PATH": "/usr/bin", "OPENAI_API_KEY": "sk-1", "CODEX_HOME": "/old"]
+        XCTAssertEqual(driverEnv(base: base, home: "/Users/x/.codex-work")["CODEX_HOME"], "/Users/x/.codex-work")
+        XCTAssertEqual(driverEnv(base: base)["CODEX_HOME"], "/old")
+        XCTAssertNil(driverEnv(base: base)["OPENAI_API_KEY"])
+    }
+
+    func testGrokCommandLineHasTheReadToolsOnlyInAFolder() {
+        let prompt = "/tmp/p.txt"
+        let folder = grokArguments(cwd: "/tmp/run", model: "", effort: "low", system: "S", web: false, folder: true, promptFile: prompt)
+        XCTAssertEqual(folder[folder.firstIndex(of: "--prompt-file")! + 1], prompt)
+        XCTAssertEqual(folder[folder.firstIndex(of: "--tools")! + 1], "read_file,grep,list_dir")
+        XCTAssertTrue(folder.contains("--disable-web-search"))
+        XCTAssertEqual(folder[folder.firstIndex(of: "--permission-mode")! + 1], "dontAsk")
+        XCTAssertEqual(folder[folder.firstIndex(of: "--disallowed-tools")! + 1], "run_terminal_cmd,search_replace,Agent")
+        let web = grokArguments(cwd: "/tmp/run", model: "grok-4", effort: "high", system: "S", web: true, folder: true, promptFile: prompt)
+        XCTAssertEqual(web[web.firstIndex(of: "--tools")! + 1], "read_file,grep,list_dir,web_search,web_fetch")
+        XCTAssertFalse(web.contains("--disable-web-search"))
+        XCTAssertEqual(web[web.firstIndex(of: "-m")! + 1], "grok-4")
+        let plain = grokArguments(cwd: "/tmp/run", model: "", effort: "low", system: "S", web: false, folder: false, promptFile: prompt)
+        XCTAssertEqual(plain[plain.firstIndex(of: "--tools")! + 1], "")   // no folder, no web: no built-in tools at all
+    }
+
+    /// Lines captured from grok on this Mac when it was not signed in: an init line, then the error result.
+    func testGrokErrorResultIsTheFailureWithItsErrorsList() {
+        let lines = [
+            #"{"type":"system","subtype":"init","session_id":"","apiKeySource":"user","model":"unknown","cwd":"","permissionMode":"default","tools":[],"slash_commands":[],"mcp_servers":[],"skills":[]}"#,
+            #"{"type":"result","subtype":"error_during_execution","is_error":true,"duration_ms":0,"duration_api_ms":0,"num_turns":0,"total_cost_usd":0.0,"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"modelUsage":{},"errors":["Not signed in. To authenticate without a browser, run:\n  grok login --device-code"],"session_id":""}"#,
+        ]
+        var stream = ClaudeStream(cwd: "/tmp/none")
+        for line in lines { XCTAssertEqual(stream.feed(line), line.contains(#""type":"result""#) ? [.result] : []) }
+        let result = stream.result
+        XCTAssertEqual(result?["is_error"] as? Bool, true)
+        XCTAssertEqual(resultText(result ?? [:]), "Not signed in. To authenticate without a browser, run:\n  grok login --device-code")
+        let row = genericUsageRow(result ?? [:], model: "grok-4")
+        XCTAssertEqual(row["models"] as? [String], ["grok-4"])
+        XCTAssertEqual(row["input"] as? Int, 0)
+    }
+
+    /// A stand-in CLI that ignores its arguments and prints `lines` (one per line) after reading its prompt.
+    private func stubStreamCLI(_ name: String, _ lines: [String]) throws -> String {
+        let file = temp().appendingPathComponent(name)
+        let script = "#!/bin/sh\ncat > /dev/null\ncat <<'STUBEOF'\n" + lines.joined(separator: "\n") + "\nSTUBEOF\n"
+        try script.write(to: file, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
+        return file.path
+    }
+
+    func testCodexRunThroughTheRelayGivesTheAnswerAndItsUsage() throws {
+        let cli = try stubStreamCLI("codex", codexAnswerLines)
+        let req = request(#"{"id":"c1","system":"Reply in JSON.","user":"say OK","driver":"codex","effort":"low"}"#)
+        let answer = try runAnswer(req, try requestOptions(req), cli: cli, work: temp(), send: { _ in true }, step: { _ in })
+        XCTAssertEqual(answer.text, #"{"reply": "OK"}"#)
+        XCTAssertEqual(answer.usage["models"] as? [String], [])            // the CLI named no model; the request's is empty too
+        XCTAssertEqual(answer.usage["output"] as? Int, 7)
+        XCTAssertEqual(answer.state, "")
+    }
+
+    func testCodexWithNoFolderStartsInItsOwnEmptyFolderUnderApplicationSupport() throws {
+        // A stand-in codex that answers with its working folder, so the test can see where the run started.
+        let file = temp().appendingPathComponent("codex")
+        let script = "#!/bin/sh\ncat > /dev/null\nprintf '{\"id\":\"0\",\"msg\":{\"type\":\"agent_message\",\"message\":\"%s\"}}\\n' \"$(pwd -P)\"\n"
+        try script.write(to: file, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
+        let req = request(#"{"id":"c3","system":"","user":"where","driver":"codex","effort":"low"}"#)
+        let answer = try runAnswer(req, try requestOptions(req), cli: file.path, work: temp(), send: { _ in true }, step: { _ in })
+        let runs = realPath(appSupport.appendingPathComponent("codex-runs").path)
+        XCTAssertTrue(answer.text.hasPrefix(runs + "/"), "ran in \(answer.text), not under \(runs)")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: answer.text), "the run folder is removed after the run")
+    }
+
+    func testCodexRefusalThroughTheRelayIsAFailureWithItsUsageRow() throws {
+        let cli = try stubStreamCLI("codex", codexRefusedLines)
+        let req = request(#"{"id":"c2","system":"","user":"x","driver":"codex","model":"gpt-6-astra"}"#)
+        XCTAssertThrowsError(try runAnswer(req, try requestOptions(req), cli: cli, work: temp(), send: { _ in true }, step: { _ in })) { error in
+            XCTAssertTrue((error as? ClaudeFailure)?.message.hasPrefix("Codex: unexpected status 400") == true)
+        }
+    }
+
+    func testGrokRunThroughTheRelayGivesTheAnswerOrItsError() throws {
+        let answerLines = [
+            #"{"type":"stream_event","event":{"type":"message_start"}}"#,
+            #"{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"OK"}}}"#,
+            #"{"type":"result","is_error":false,"result":"OK","usage":{"input_tokens":3,"output_tokens":1},"modelUsage":{"grok-4":{"inputTokens":3,"outputTokens":1}},"total_cost_usd":0.0,"duration_ms":40,"session_id":"g-1"}"#,
+        ]
+        let req = request(#"{"id":"g1","system":"Reply briefly.","user":"say OK","driver":"grok","model":"grok-4","effort":"low"}"#)
+        let ok = try runAnswer(req, try requestOptions(req), cli: try stubStreamCLI("grok", answerLines), work: temp(), send: { _ in true }, step: { _ in })
+        XCTAssertEqual(ok.text, "OK")
+        XCTAssertEqual(ok.usage["models"] as? [String], ["grok-4"])
+        XCTAssertEqual(ok.usage["output"] as? Int, 1)
+        XCTAssertEqual(ok.state, "")
+        let failing = request(#"{"id":"g2","system":"","user":"x","driver":"grok"}"#)
+        let cli = try stubStreamCLI("grok", [#"{"type":"result","is_error":true,"result":"","errors":["Not signed in"],"usage":{}}"#])
+        XCTAssertThrowsError(try runAnswer(failing, try requestOptions(failing), cli: cli, work: temp(), send: { _ in true }, step: { _ in })) { error in
+            XCTAssertEqual((error as? ClaudeFailure)?.message, "Grok: Not signed in")
+        }
+    }
+
+    /// CT_REAL_CODEX=1 swift test --filter RealCodex: one tiny codex run through the codex on this Mac, the way the relay runs it.
+    func testRealCodexRun() throws {
+        guard ProcessInfo.processInfo.environment["CT_REAL_CODEX"] == "1" else {
+            throw XCTSkip("set CT_REAL_CODEX=1 to run one real codex call")
+        }
+        let cli = binary("codex", home: FileManager.default.homeDirectoryForCurrentUser) ?? "codex"
+        let req = request(#"{"id":"real-codex","system":"Reply with just OK.","user":"Reply with just OK.","driver":"codex","effort":"low"}"#)
+        let answer = try runAnswer(req, try requestOptions(req), cli: cli, work: temp(), send: { _ in true }, step: { _ in })
+        print("REAL CODEX: text=\(answer.text) usage=\(answer.usage)")
+        XCTAssertTrue(answer.text.localizedCaseInsensitiveContains("OK"))
+    }
+
+    /// CT_REAL_GROK=1 swift test --filter RealGrok: one tiny grok run through the grok on this Mac, the way the relay runs it.
+    func testRealGrokRun() throws {
+        guard ProcessInfo.processInfo.environment["CT_REAL_GROK"] == "1" else {
+            throw XCTSkip("set CT_REAL_GROK=1 to run one real grok call")
+        }
+        let cli = binary("grok", home: FileManager.default.homeDirectoryForCurrentUser) ?? "grok"
+        let req = request(#"{"id":"real-grok","system":"Reply with just OK.","user":"Reply with just OK.","driver":"grok","effort":"low"}"#)
+        let answer = try runAnswer(req, try requestOptions(req), cli: cli, work: temp(), send: { _ in true }, step: { _ in })
+        print("REAL GROK: text=\(answer.text) usage=\(answer.usage)")
+        XCTAssertTrue(answer.text.localizedCaseInsensitiveContains("OK"))
     }
 
     // MARK: Gemini (the Mac relay GeminiRun and its checks)

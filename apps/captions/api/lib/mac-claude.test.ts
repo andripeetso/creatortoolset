@@ -161,6 +161,36 @@ describe("Claude on the Mac", () => {
     await expect(streamOnMac("sys", "x", undefined, () => {})).rejects.toMatchObject({ kind: "unclaimed" });
   });
 
+  it("the 20 minutes count Claude's work, not the time a permission question waits for a person", async () => {
+    vi.useFakeTimers();
+    try {
+      let status: "waiting" | "allowed" = "waiting";
+      let settled = false;
+      const answer = streamMacClaude("sys", "tidy", undefined, () => {}, undefined, { onAsk: () => status })
+        .catch((e: unknown) => e)
+        .finally(() => (settled = true));
+      const req = (await (await post("/wait")).json()) as { id: string };
+      // posts every 20 s, as the Mac does (an ask again every few seconds while it waits, text while it works)
+      const run = async (minutes: number, send: () => Promise<Response>) => {
+        for (let t = 0; t < minutes * 3; t++) {
+          await vi.advanceTimersByTimeAsync(20_000);
+          await send();
+        }
+      };
+      const ask = () => post(`/${req.id}/ask`, { ask_id: "a1", tool: "Bash", detail: "mv a b" });
+      const write = () => post(`/${req.id}/text`, { text: "working" });
+      await run(15, ask); // the owner thinks it over for 15 minutes
+      status = "allowed";
+      await ask();
+      await run(16, write); // 16 minutes of work: 31 in all, under 20 of them Claude's
+      expect(settled).toBe(false);
+      await run(5, write);
+      expect(await answer).toMatchObject({ kind: "timeout" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("an unclaimed request gives up after its patience, as unclaimed", async () => {
     vi.useFakeTimers();
     try {

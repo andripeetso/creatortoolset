@@ -4,7 +4,7 @@ import { Download, ExternalLink, Loader2, Play, RotateCcw, Square, Trash2 } from
 import { DEFAULT_EYELINE, type Draft, type Edit, type Sentence } from "@contracts/editor";
 import { AppBar } from "@/components/AppBar";
 import { Button } from "@/components/ui/button";
-import { deleteEdit, exportUrl, getEdit, getSentences, putLines, retryJob, reviewDraft, runEdit, setEyeline, stopEdit, swapTake, takeSpan } from "@/lib/editor";
+import { deleteEdit, exportUrl, getEdit, getSentences, patchEdit, putLines, retryJob, reviewDraft, runEdit, setEyeline, stopEdit, swapTake, takeSpan } from "@/lib/editor";
 import { confirmHeavy } from "@/lib/setup";
 import { StateBadge, thumb } from "./EditorPage";
 
@@ -103,6 +103,19 @@ export default function EditorEditPage() {
 
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-4 py-4 sm:px-6">
         {error && <p className="text-sm text-red-400">{error}</p>}
+
+        {edit.flagDefs.length > 0 && (
+          <section aria-label="Flags" className="flex flex-wrap items-center gap-2">
+            {edit.flagDefs.map((f) => {
+              const on = !!edit.flags[f.id];
+              return (
+                <Button key={f.id} size="sm" variant={on ? "default" : "outline"} aria-pressed={on} onClick={() => void act(patchEdit(id, { flags: { [f.id]: !on } }))}>
+                  {f.label}
+                </Button>
+              );
+            })}
+          </section>
+        )}
 
         <section aria-label="Steps" className="flex flex-col gap-2">
           <h2 className="text-sm font-semibold">Steps</h2>

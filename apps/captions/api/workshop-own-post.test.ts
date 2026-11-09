@@ -11,7 +11,7 @@ vi.mock("./instagram", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./instagram")>()),
   findOwnPost: vi.fn(async (_u: unknown, shortcode: string) =>
     shortcode === "OWN123"
-      ? { handle: "tinyacrobatics", post: { item: { shortcode, caption: "Babies hanging upside down build grip and calm", takenAt: Date.now() } } }
+      ? { handle: "tinyacrobatics", post: { item: { shortcode, caption: "Puppies hanging upside down build grip and calm", takenAt: Date.now() } } }
       : null,
   ),
 }));
@@ -38,9 +38,9 @@ function seed(title: string, status: string, words: string) {
 
 describe("own post shared back", () => {
   it("lists the sessions closest in words first, skips shelved ones; someone else's post is not own", async () => {
-    const hanging = seed("HangingBabies", "toPost", "Hanging upside down builds grip and calm in babies");
-    seed("Teeth", "editing", "Naps and mood in toddlers");
-    seed("Old", "shelved", "Hanging upside down babies grip");
+    const hanging = seed("HangingPuppies", "toPost", "Hanging upside down builds grip and calm in puppies");
+    seed("Teeth", "editing", "Naps and mood in puppies");
+    seed("Old", "shelved", "Hanging upside down puppies grip");
     const res = (await (await post("look https://www.instagram.com/reel/OWN123/?igsh=x")).json()) as { own: boolean; url: string; candidates: Array<{ id: string; title: string }> };
     expect(res.own).toBe(true);
     expect(res.url).toBe("https://www.instagram.com/p/OWN123/");

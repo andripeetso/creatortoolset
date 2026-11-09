@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { copyName, inFolder, isSynced, readNote, safeVaultPath, shouldWriteBack, ymd } from "./lib.ts";
+import { copyName, DEFAULT_STATUS, inFolder, isSynced, readNote, safeVaultPath, SYNC_STATUSES, shouldWriteBack, statusList, ymd } from "./lib.ts";
 
 const keys = { status: "selector.Status", media: "selector.Media" };
 
@@ -20,12 +20,32 @@ test("inFolder matches the folder and its subfolders only", () => {
 });
 
 test("isSynced: the synced statuses go, the rest only when linked", () => {
-  assert.equal(isSynced("🎥 Filming", false), true);
-  assert.equal(isSynced("✅ Published", false), false);
-  assert.equal(isSynced("✅ Published", true), true);
-  assert.equal(isSynced("💡 Idea", false), false);
-  assert.equal(isSynced("💡 Idea", true), true);
+  assert.equal(isSynced("Filming", false), true);
+  assert.equal(isSynced("Editing", false), true);
+  assert.equal(isSynced("Ready", false), true);
+  assert.equal(isSynced("Published", false), false);
+  assert.equal(isSynced("Published", true), true);
+  assert.equal(isSynced("Idea", false), false);
+  assert.equal(isSynced("Idea", true), true);
   assert.equal(isSynced(undefined, false), false);
+});
+
+test("the default sync list is the site's generic labels; the vault's own labels come from the setting", () => {
+  assert.deepEqual([...SYNC_STATUSES].sort(), ["Editing", "Filming", "Ready"]);
+  assert.equal(isSynced("🎥 Filming", false), false);
+  const own = statusList(" 🎥 Filming, ✂️ Editing ,, 👍 Ready ");
+  assert.equal(isSynced("🎥 Filming", false, own), true);
+  assert.equal(isSynced("✂️ Editing", false, own), true);
+  assert.equal(isSynced("Filming", false, own), false);
+});
+
+test("a note with no status gets the generic Idea, the label the site reads as a draft", () => {
+  assert.equal(DEFAULT_STATUS, "Idea");
+});
+
+test("statusList trims and drops empty items", () => {
+  assert.deepEqual([...statusList("")], []);
+  assert.deepEqual([...statusList("Filming,, Ready ,")], ["Filming", "Ready"]);
 });
 
 test("last change wins: the site's newer status comes back, an older one does not", () => {

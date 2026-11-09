@@ -11,7 +11,7 @@ import {
 } from "../../contracts/clean-inspection";
 import { metadataItems, probe, type Probe } from "./clean-media";
 
-// Adobe XMP UUID; C2PA specification 2.2, appendix A.5 (BMFF embedding).
+// XMP UUID box; C2PA specification 2.2, appendix A.5 (BMFF embedding).
 const XMP_UUID = "be7acfcb97a942e89c71999491e3afac";
 const C2PA_UUID = "d8fec3d61b0e483c92975828877ec481";
 const CONTAINERS = new Set([

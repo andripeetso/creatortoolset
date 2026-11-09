@@ -2,8 +2,8 @@ import { Hono } from "hono";
 import type { ProviderCheck, ProviderInstance, ProviderSettings, ProvidersView, Scope } from "../contracts/providers";
 import type { AuthVars } from "./auth";
 import { streamMacClaude, macUsageSince } from "./lib/mac-claude";
-import { isOnline, listDevices } from "./lib/devices";
-import { deviceIdOf, dropOwnSettings, instanceIn, modelsFor, ownSettings, parseSettings, providerChecks, providerSettings, recordCheck, routeFor, saveSettings } from "./lib/providers";
+import { forViewer, isOnline, listDevices } from "./lib/devices";
+import { deviceIdOf, driverCatalog, dropOwnSettings, instanceIn, modelsFor, ownSettings, parseSettings, providerChecks, providerSettings, recordCheck, routeFor, runFields, saveSettings } from "./lib/providers";
 import { limitsFor, type LimitRef } from "./lib/limits";
 import { findUser, type SessionUser } from "./users";
 
@@ -32,11 +32,17 @@ const splitKey = (key: string): { scope: Scope; instance?: string } => {
   return at < 0 ? { scope: "workspace", instance: key } : { scope: key.slice(0, at), instance: key.slice(at + 1) };
 };
 
+/** The Macs an account sees: its own; an admin also the workspace's and the other admins' (what its providers may run on). Disks only for the owner (forViewer). */
+const visibleDevices = (u: SessionUser) => listDevices((d) => d.owner === u.username || (u.role === "admin" && (d.owner === "workspace" || findAdmin(d.owner)))).map((d) => forViewer(u.username, d));
+
+/** Settings for the page: a plug-in instance's endpoint (baseUrl) stays on the server and the Mac, never in the page. */
+const forPage = (s: ProviderSettings): ProviderSettings => ({ ...s, instances: s.instances.map((i) => ({ ...i, baseUrl: undefined })) });
+
 async function viewFor(u: SessionUser): Promise<ProvidersView> {
   const admin = u.role === "admin";
   const ws = providerSettings();
   const own = ownSettings(u.username);
-  const workspace = admin ? { settings: ws, editable: true } : null;
+  const workspace = admin ? { settings: forPage(ws), editable: true } : null;
   const route = routeFor(u.username, admin, "workshop");
   const using: ProvidersView["using"] = !route ? "none" : route.scope === "workspace" ? "workspace" : "own";
 
@@ -65,8 +71,7 @@ async function viewFor(u: SessionUser): Promise<ProvidersView> {
     }
   }
 
-  const keep = (d: { owner: string }) => d.owner === u.username || (admin && (d.owner === "workspace" || findAdmin(d.owner)));
-  const devices = listDevices(keep).map((d) => ({ ...d, online: isOnline(d.id) }));
+  const devices = visibleDevices(u).map((d) => ({ ...d, online: isOnline(d.id) }));
 
   // plan limits: the identities behind this account's own providers; the workspace's for admins only
   const refs: LimitRef[] = [
@@ -77,12 +82,15 @@ async function viewFor(u: SessionUser): Promise<ProvidersView> {
     .map(({ scope, i }) => ({ key: `${scope}:${i.id}`, driver: i.driver, device: deviceIdOf(i), home: i.home }));
   const limits = limitsFor(refs, isOnline);
 
-  return { workspace, own, using, devices, checks, models, usage, limits };
+  return { workspace, own: own && forPage(own), using, devices, checks, models, usage, limits };
 }
 
 const findAdmin = (owner: string) => findUser(owner)?.role === "admin";
 
 providersApp.get("/", async (c) => c.json(await viewFor(c.get("user"))));
+
+/** The Add provider wizard's catalog: each driver's featured and runs (with the reason when it can't run), and per Mac what it found. */
+providersApp.get("/drivers", (c) => c.json(driverCatalog(visibleDevices(c.get("user")).map((d) => ({ ...d, online: isOnline(d.id) })))));
 
 providersApp.put("/workspace", async (c) => {
   const u = c.get("user");
@@ -123,7 +131,7 @@ export async function checkInstance(scope: Scope, inst: ProviderInstance, s: Pro
   try {
     const text = await streamMacClaude("Answer with one word.", "Reply with just: ready", undefined, () => {}, undefined, {
       label: "Provider check",
-      provider: { instance: inst.id, driver: inst.driver, home: inst.home, model, effort: "low", device, scope },
+      provider: { instance: inst.id, driver: inst.driver, home: inst.home, model, effort: "low", device, scope, ...runFields(inst) },
     });
     check = { ok: true, ms: Date.now() - started, model, text: text.trim().slice(0, 80), at: Date.now() };
   } catch (e) {

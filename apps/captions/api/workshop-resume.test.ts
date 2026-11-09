@@ -54,7 +54,7 @@ function seed(blocks: string[]) {
   const docId = uuid();
   const sdir = path.join(dataDir, "workshop", "sessions", id);
   mkdirSync(path.join(sdir, "docs"), { recursive: true });
-  writeFileSync(path.join(sdir, "meta.json"), JSON.stringify({ id, owner: "alex", title: "Kids strength", query: "", sources: [], drafts: [], createdAt: 1, updatedAt: 1 }));
+  writeFileSync(path.join(sdir, "meta.json"), JSON.stringify({ id, owner: "alex", title: "Strength training", query: "", sources: [], drafts: [], createdAt: 1, updatedAt: 1 }));
   writeFileSync(
     path.join(sdir, "docs", `${docId}.json`),
     JSON.stringify({

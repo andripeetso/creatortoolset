@@ -1,7 +1,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 // the Obsidian link: the plugin's note sync (PUT/GET /notes) and the account's custom exports (lib/workshop/notes.ts)
 const dataDir = mkdtempSync(path.join(tmpdir(), "ws-notes-"));
@@ -9,6 +9,10 @@ process.env.DATA_DIR = dataDir;
 const { Hono } = await import("hono");
 const { workshopApp } = await import("./workshop");
 const { OBSIDIAN_TEMPLATE } = await import("../src/lib/workshop-markdown");
+const { installTestPlugin } = await import("./lib/workshop/export-test-plugin");
+
+// the vault's status values and format come from a plug-in (the public default is generic)
+beforeAll(() => installTestPlugin());
 
 const app = new Hono<{ Variables: { user: unknown } }>();
 app.use("*", async (c, next) => {

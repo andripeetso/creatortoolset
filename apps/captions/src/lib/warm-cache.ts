@@ -12,13 +12,16 @@ import { listSessions as listProjects } from "./persist";
 /**
  * Fills the saved lists of every screen this account can open (lib/local-cache), so even a first visit paints at once.
  * Run after sign-in and when the project changes. Keys must match the pages' own keys. A list that fails is skipped:
- * its screen fetches as before.
+ * its screen fetches as before. Resolves when every list has been tried (Settings → Cache's Warm now waits for it).
  */
-export function warmScreens(): void {
+export async function warmScreens(): Promise<void> {
   const me = useAuth.getState().me;
   if (!me) return;
   const pid = useWorkspace.getState().currentProjectId ?? "";
-  const job = (url: string, load: () => Promise<unknown>) => void warmCached(url, load).catch(() => {});
+  const jobs: Promise<void>[] = [];
+  const job = (url: string, load: () => Promise<unknown>) => {
+    jobs.push(warmCached(url, load).catch(() => {}));
+  };
 
   if (canUse(me, "review")) {
     job("/api/review", listReviewAssets);
@@ -35,4 +38,5 @@ export function warmScreens(): void {
   if (canUse(me, "notes")) job("/api/clips", listClips);
   if (canUse(me, "guides")) job("/api/documents", listDocuments);
   if (canUse(me, "enhance")) job("/api/enhance", listEnhance);
+  await Promise.all(jobs);
 }

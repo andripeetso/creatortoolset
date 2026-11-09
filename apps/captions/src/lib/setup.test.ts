@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MAKE_NAMES, SETUP_STEPS, dismissSetup, resumeStep, setupDismissed, setupFinished, setupStepFromParam, toolForPath, toolsFor } from "./setup";
+import { dismissSetup, MAKE_NAMES, resumeStep, SETUP_STEPS, setupDismissed, setupFinished, setupOpensItself, setupStepFromParam, toolForPath, toolsFor } from "./setup";
 import { TOOLS } from "@contracts/tools";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -104,4 +104,17 @@ it("Video Cleaner and Story Splitter are never switched on by an answer", () => 
 
 it("names all eleven makes", () => {
   expect(Object.keys(MAKE_NAMES)).toHaveLength(11);
+});
+
+describe("setup opens by itself only on a first sign-in", () => {
+  it("an existing account never gets it, even with no projects", () => {
+    expect(setupOpensItself({ logins: 57, loaded: true, projects: 0 })).toBe(false);
+  });
+  it("waits for the projects to load: a failed load is not a brand-new account", () => {
+    expect(setupOpensItself({ logins: 1, loaded: false, projects: 0 })).toBe(false);
+  });
+  it("a first sign-in with no project opens it; a project closes it", () => {
+    expect(setupOpensItself({ logins: 1, loaded: true, projects: 0 })).toBe(true);
+    expect(setupOpensItself({ logins: 1, loaded: true, projects: 2 })).toBe(false);
+  });
 });

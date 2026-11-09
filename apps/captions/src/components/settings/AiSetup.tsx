@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router";
 import { Check, CheckCircle2, Circle, Copy } from "lucide-react";
-import { runsOn, type ProviderCheck, type ProviderInstance, type ProvidersView } from "@contracts/providers";
+import { type Driver, runsOn, type ProviderCheck, type ProviderInstance, type ProvidersView } from "@contracts/providers";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -12,9 +12,9 @@ type Device = ProvidersView["devices"][number];
  * code.claude.com/docs/en/setup, geminicli.com): the tools the Mac app runs (`runsOn`). The site never installs anything on a Mac
  * itself: that would make the relay a way to run commands there.
  */
-const TOOLS = [
-  { name: "Claude Code", install: "curl -fsSL https://claude.ai/install.sh | bash", signIn: "claude" },
-  { name: "Gemini CLI", install: "npm install -g @google/gemini-cli", signIn: "gemini" },
+const TOOLS: Array<{ driver: Driver; name: string; install: string; signIn: string }> = [
+  { driver: "claude", name: "Claude Code", install: "curl -fsSL https://claude.ai/install.sh | bash", signIn: "claude" },
+  { driver: "gemini", name: "Gemini CLI", install: "npm install -g @google/gemini-cli", signIn: "gemini" },
 ];
 
 /**
@@ -158,6 +158,21 @@ function Command({ text }: { text: string }) {
       >
         {copied ? <Check /> : <Copy />}
       </Button>
+    </div>
+  );
+}
+
+/** The install and sign-in lines for one tool, shown in the Add provider wizard when the Mac doesn't have it. Nothing for a tool not in TOOLS. */
+export function InstallHelp({ driver }: { driver: Driver }) {
+  const tool = TOOLS.find((t) => t.driver === driver);
+  if (!tool) return null;
+  return (
+    <div className="mt-3 space-y-1.5 rounded-lg border border-border p-3 text-xs text-muted-foreground">
+      <p className="text-foreground">Not installed on this Mac. Install {tool.name} in Terminal there:</p>
+      <Command text={tool.install} />
+      <p>
+        Sign in: run <code>{tool.signIn}</code> once.
+      </p>
     </div>
   );
 }

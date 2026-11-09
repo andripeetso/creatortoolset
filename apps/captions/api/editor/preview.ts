@@ -6,9 +6,10 @@ import { blobs, libraryDb } from "../library/db";
 import { libraryRole } from "../library/access";
 import { ffmpeg, ffmpegTo } from "../library/media/run";
 import { Waiting } from "./analyze";
+import { type Cdl, cdlFilter } from "./grade";
 import { frameDuration } from "./fcpxml";
 import { fitted } from "./framing";
-import { editDir, readDraft, readStep, saveStep } from "./store";
+import { editDir, gradeOf, readDraft, readStep, saveStep } from "./store";
 import type { StepContext } from "./worker";
 
 /**
@@ -31,9 +32,9 @@ export function previewSize(tl: Pick<Timeline, "width" | "height">): { w: number
 
 /**
  * The video filter for one speaker shot: the source fitted into the frame, scaled by its zoom, moved up by its tilt
- * (timeline px), cut to what shows and padded black to the preview's size, at the timeline's rate.
+ * (timeline px), cut to what shows and padded black to the preview's size, at the timeline's rate, then graded (if a grade is set).
  */
-export function shotFilter(tl: Timeline, item: Item): string {
+export function shotFilter(tl: Timeline, item: Item, grade?: Cdl): string {
   const src = tl.sources[item.src]!;
   const { w: PW, h: PH, k } = previewSize(tl);
   const f = fitted(src, tl.width, tl.height);
@@ -47,18 +48,51 @@ export function shotFilter(tl: Timeline, item: Item): string {
   const cw = Math.min(sw - cx, PW - Math.max(0, x));
   const ch = Math.min(sh - cy, PH - Math.max(0, y));
   const [num, den] = frameDuration(tl.fps);
+  const colour = cdlFilter(grade);
   return [
     `scale=${sw}:${sh}`,
     `crop=${cw}:${ch}:${cx}:${cy}`,
     `pad=${PW}:${PH}:${Math.max(0, x)}:${Math.max(0, y)}:black`,
     "setsar=1",
     `fps=${den}/${num}`,
+    ...(colour ? [colour] : []),
     "format=yuv420p",
   ].join(",");
 }
 
-/** Renders the speaker track V1 with its linked voice from A1 into `out` (an .mp4). `files`: source key → a local file. */
-export async function renderPreview(tl: Timeline, files: Record<string, string>, out: string, signal?: AbortSignal): Promise<void> {
+/** One stretch of a speaker shot: from timeline frame `at`, `frames` long; `cut` is the B-roll cutaway over it, if any. */
+export interface Piece {
+  at: number;
+  frames: number;
+  cut?: Item;
+}
+
+/**
+ * The stretches of one speaker shot: his picture where no cutaway lies over it, the cutaway's where one does. The
+ * cutaways are V2 items in timeline order; one that starts before the shot or runs past it is cut to the shot.
+ */
+export function piecesOf(shot: Item, cutaways: Item[]): Piece[] {
+  const end = shot.rec + shot.len;
+  const out: Piece[] = [];
+  let at = shot.rec;
+  for (const c of cutaways) {
+    const s = Math.max(c.rec, at);
+    const e = Math.min(c.rec + c.len, end);
+    if (e <= s) continue;
+    if (s > at) out.push({ at, frames: s - at });
+    out.push({ at: s, frames: e - s, cut: c });
+    at = e;
+  }
+  if (at < end) out.push({ at, frames: end - at });
+  return out;
+}
+
+/**
+ * Renders the speaker track V1 with its linked voice from A1, and the B-roll cutaways (V2) laid over it, into `out`
+ * (an .mp4). A cutaway shows its own clip's picture and keeps his voice underneath, as the timeline does. `files`:
+ * source key → a local file. `grade` (optional) colours his shots, not the cutaways (the Resolve grade is on V1 only).
+ */
+export async function renderPreview(tl: Timeline, files: Record<string, string>, out: string, signal?: AbortSignal, grade?: Cdl): Promise<void> {
   const [num, den] = frameDuration(tl.fps);
   const secs = (frames: number) => ((frames * num) / den).toFixed(6);
   const parts = `${out}.parts`;
@@ -68,27 +102,37 @@ export async function renderPreview(tl: Timeline, files: Record<string, string>,
     const list: string[] = [];
     // ponytail: shots are joined end to end, a gap on V1 is closed up; a draft has none (QA notes one), black fill when edits make them
     const shots = [...tl.tracks.V1.items].sort((a, b) => a.rec - b.rec);
-    for (const [i, v] of shots.entries()) {
-      if (signal?.aborted) throw new Error("Stopped");
+    const cutaways = [...tl.tracks.V2.items].sort((a, b) => a.rec - b.rec);
+    for (const v of shots) {
       const a = tl.tracks.A1.items.find((x) => v.link && x.link === v.link);
       const vs = tl.sources[v.src]!;
-      const seg = path.join(parts, `${String(i).padStart(4, "0")}.mov`);
-      const voice = a
-        ? ["-ss", (a.in / tl.sources[a.src]!.fps).toFixed(6), "-i", files[a.src]!]
-        : ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"];
-      // ponytail: a linked voice from a file with no sound stream fails the render; the editor's sources are transcribed, so they have one
-      await ffmpeg([
-        "-ss", (v.in / vs.fps).toFixed(6), "-i", files[v.src]!,
-        ...voice,
-        "-map", "0:v:0", "-map", "1:a:0",
-        "-vf", shotFilter(tl, v),
-        "-af", "aresample=48000,aformat=channel_layouts=stereo",
-        "-frames:v", String(v.len), "-t", secs(v.len),
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-        "-c:a", "pcm_s16le",
-        seg,
-      ]);
-      list.push(`file '${seg.replace(/'/g, "'\\''")}'`);
+      for (const p of piecesOf(v, cutaways)) {
+        if (signal?.aborted) throw new Error("Stopped");
+        const seg = path.join(parts, `${String(list.length).padStart(4, "0")}.mov`);
+        // seconds into the shot, which the voice and the picture both advance by
+        const off = (p.at - v.rec) / tl.fps;
+        const voice = a
+          ? ["-ss", (a.in / tl.sources[a.src]!.fps + off).toFixed(6), "-i", files[a.src]!]
+          : ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"];
+        const c = p.cut;
+        // a cutaway's picture: its own clip from its in point, framed at zoom 1 and ungraded
+        const pic = c
+          ? { file: files[c.src]!, at: c.in / tl.sources[c.src]!.fps + (p.at - c.rec) / tl.fps, filter: shotFilter(tl, { ...c, zoom: 1, tilt: 0 }) }
+          : { file: files[v.src]!, at: v.in / vs.fps + off, filter: shotFilter(tl, v, grade) };
+        // ponytail: a linked voice from a file with no sound stream fails the render; the editor's sources are transcribed, so they have one
+        await ffmpeg([
+          "-ss", pic.at.toFixed(6), "-i", pic.file,
+          ...voice,
+          "-map", "0:v:0", "-map", "1:a:0",
+          "-vf", pic.filter,
+          "-af", "aresample=48000,aformat=channel_layouts=stereo",
+          "-frames:v", String(p.frames), "-t", secs(p.frames),
+          "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+          "-c:a", "pcm_s16le",
+          seg,
+        ]);
+        list.push(`file '${seg.replace(/'/g, "'\\''")}'`);
+      }
     }
     if (!list.length) throw new Error("The draft has no speaker shots");
     const listFile = path.join(parts, "list.txt");
@@ -123,7 +167,7 @@ export async function previewStep({ edit, variant, signal }: StepContext): Promi
   if (!d) throw new Error(`Draft ${variant || "the versions"} first`);
   const out = path.join(editDir(edit.id), "previews", `${variant}.mp4`);
   await mkdir(path.dirname(out), { recursive: true });
-  await renderPreview(d.timeline, await localFiles(d.timeline), out, signal);
+  await renderPreview(d.timeline, await localFiles(d.timeline), out, signal, await gradeOf(edit.createdBy, edit.bundle));
   if (signal.aborted) return;
   const v = { owner: edit.createdBy, name: `${edit.name} ${variant}.mp4`, mime: "video/mp4", bytes: (await stat(out)).size };
   const place = (dest: string) => rename(out, dest);

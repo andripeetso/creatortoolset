@@ -8,6 +8,7 @@ struct ThisMacView: View {
     @ObservedObject var shell: Shell
     @Environment(\.openWindow) private var openWindow
     @State private var port = ""
+    @AppStorage(limitsReadingKey) private var readLimits = false
     @State private var password = ""
     @State private var again = ""
     @State private var askPassword = false
@@ -39,6 +40,11 @@ struct ThisMacView: View {
                 if shell.pairedHere {
                     Button("Remove this Mac from my account", role: .destructive) { shell.forgetThisMac() }
                 }
+            }
+            Section("Plan limits") {
+                Toggle("Read this Mac's Claude and Codex limits", isOn: $readLimits)
+                Text("Undocumented: reads each CLI's login on this Mac (the Claude login from the Keychain, Codex's auth.json) and asks the CLI's usage page every five minutes. Off by default; off sends nothing and reads nothing.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             if shell.server != nil {
                 Section("Server on this Mac") {

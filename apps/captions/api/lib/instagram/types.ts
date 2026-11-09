@@ -201,7 +201,7 @@ export interface PostIdea {
 export type CatalogVisibility = "public" | "trial";
 
 /** Which evidence decided `visibility` (see classifyVisibility). */
-export type VisibilityBasis = "shared_to_feed" | "not_shared_to_feed" | "kind";
+export type VisibilityBasis = "grid" | "grid_complete" | "shared_to_feed" | "not_shared_to_feed" | "kind";
 
 /** Raw Graph values from the last fetch that returned the post. CDN URLs expire. */
 export interface CatalogGraph {
@@ -234,6 +234,10 @@ export interface CatalogItem {
     views?: number;
     interactions?: number;
     avgWatchMs?: number;
+    /** Reels only. */
+    follows?: number;
+    /** Reels only. */
+    profileVisits?: number;
   };
   counts: { likes?: number; comments?: number; plays?: number };
   /** Counts from the previous stats/catalog fetch, when they changed. */

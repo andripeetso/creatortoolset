@@ -1,7 +1,11 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// Plug-ins can switch gates off for new role-"user" accounts (api/lib/plugin.ts). This file is about the app's own
+// switches, so it runs with no plug-ins loaded, whichever ones plugins/ holds.
+vi.mock("./plugins.gen", () => ({ serverPlugins: [] }));
 
 process.env.DATA_DIR = mkdtempSync(path.join(tmpdir(), "roles-"));
 process.env.APP_SECRET = "roles-test-secret";
@@ -34,7 +38,8 @@ const setOff = (username: string, off: string[]) => void (findUser(username)!.of
 
 describe("app switches", () => {
   it("keeps only the switches that still exist, and drops the rest of old accounts", () => {
-    expect(findUser("old")).toMatchObject({ role: "user", cloud: true, off: ["clean"] });
+    // ids of removed apps are kept too: the reader cannot tell them from a plug-in gate that is not loaded this boot
+    expect(findUser("old")).toMatchObject({ role: "user", cloud: true, off: ["library", "finals", "clean", "bogus"] });
     expect(findUser("plain")).toMatchObject({ role: "user", cloud: true, off: [] });
     expect(findUser("plain")).not.toHaveProperty("enhance");
   });

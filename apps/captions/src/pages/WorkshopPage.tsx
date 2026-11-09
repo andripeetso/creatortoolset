@@ -35,6 +35,7 @@ import {
   listFrameworks,
   listRules,
   listSessions,
+  postingsOfSession,
   patchFramework,
   patchRule,
   patchSession,
@@ -43,6 +44,7 @@ import {
   workshopShareUrl,
   type RuleFields,
   type PieceKind,
+  type SessionPatch,
   type SessionRow,
   type SessionStatus,
   type WorkshopFramework,
@@ -199,9 +201,9 @@ export default function WorkshopPage() {
       navigate(sessionPath(s.id));
     });
 
-  const setPosted = (id: string, posted: string | null) =>
+  const setPosted = (id: string, posted: SessionPatch["posted"]) =>
     patchSession(id, { posted })
-      .then((m) => setSessions((rows) => rows.map((s) => (s.id === id ? { ...s, status: m.status, posted: m.posted } : s))))
+      .then((m) => setSessions((rows) => rows.map((s) => (s.id === id ? { ...s, status: m.status, postings: m.postings, posted: m.posted } : s))))
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
 
   const setStatus = (id: string, status: SessionStatus) => {
@@ -472,7 +474,7 @@ export default function WorkshopPage() {
                       ) : null}
                       <span className="ml-auto shrink-0 pl-2 text-[11px] tabular-nums text-zinc-500">{timeAgo(s.updatedAt)}</span>
                     </Link>
-                    <SessionPosted posted={s.posted} status={s.status} disabled={busy !== null} onChange={(url) => void setPosted(s.id, url)} />
+                    <SessionPosted postings={postingsOfSession(s)} status={s.status} disabled={busy !== null} onChange={(posted) => void setPosted(s.id, posted)} />
                     <SessionStatusSelect
                       value={s.status}
                       disabled={busy !== null}

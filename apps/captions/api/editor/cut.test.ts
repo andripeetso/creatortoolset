@@ -28,11 +28,11 @@ const covers = (segs: [number, number][], s: number) => segs.some(([a, b]) => a 
 
 describe("AI Editor cut", () => {
   it("a restart 'so this is | so this is for' keeps the second reading; 'very very' stays", () => {
-    const w = say("so", "this", "is", 0.3, "so", "this", "is", "for", "babies");
+    const w = say("so", "this", "is", 0.3, "so", "this", "is", "for", "puppies");
     expect(restarts(w)).toEqual([[0, 3]]);
     expect(restarts(say("so", "this", "progr", "so", "this", "program", "is"))).toEqual([[0, 3]]); // a cut-off word
     expect(restarts(say("very", "very", "good"))).toEqual([]);
-    const { segments, removed } = cutTake(w, 0, w.length, "so this is for babies", loudness(w), fps);
+    const { segments, removed } = cutTake(w, 0, w.length, "so this is for puppies", loudness(w), fps);
     expect(covers(segments, w[0]!.s + 0.1)).toBe(false);
     expect(covers(segments, w[3]!.s + 0.1)).toBe(true);
     expect(covers(segments, w[7]!.s + 0.1)).toBe(true);
@@ -50,11 +50,11 @@ describe("AI Editor cut", () => {
   });
 
   it("trim drops a previous take's tail before the line", () => {
-    const w = say("for", "babies.", 0.5, "so", "this", "program", "is", "for", "babies");
-    expect(trim(w, "So this program is for babies")).toEqual([2, 8]);
-    const { segments, removed } = cutTake(w, 0, w.length, "So this program is for babies", loudness(w), fps);
+    const w = say("for", "puppies.", 0.5, "so", "this", "program", "is", "for", "puppies");
+    expect(trim(w, "So this program is for puppies")).toEqual([2, 8]);
+    const { segments, removed } = cutTake(w, 0, w.length, "So this program is for puppies", loudness(w), fps);
     expect(segments[0]![0]).toBeGreaterThanOrEqual(frame(w[1]!.e));
-    expect(removed).toContain("before the line: for babies.");
+    expect(removed).toContain("before the line: for puppies.");
   });
 
   it("keeps the whole take when the line's text is not what was said", () => {

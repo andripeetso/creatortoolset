@@ -20,7 +20,7 @@ export interface IdeaBoard {
 }
 
 export const IDEA_BOARD_SYSTEM = `You pick the strongest remakeable ideas from a private Instagram research library. Return JSON only:
-{"ideas":[{"title":"Bedtime routines for toddlers","description":"Keep a fixed bedtime through the first 1,000 days. Disease risk and later brain health are the same subject.","postIds":["uuid-1","uuid-2"]}]}
+{"ideas":[{"title":"Watering routines for seedlings","description":"Keep a fixed watering schedule through the first month. Root health and later growth are the same subject.","postIds":["uuid-1","uuid-2"]}]}
 
 Rules:
 - At most ${MAX_LIBRARY_IDEAS} ideas. Fewer is better. A handful of strong piles beats a long list of weak ones.

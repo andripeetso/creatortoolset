@@ -19,6 +19,8 @@ import { SourceResultCard } from "@/components/workshop/SourceResultCard";
 import { SourceSearch, type BrowseOrder } from "@/components/workshop/SourceSearch";
 import { workshopUsesByPost } from "@/components/instagram/PostCard";
 import { canUse, useMe } from "@/lib/auth";
+import { itemActionsFor } from "@/lib/plugin";
+import { webPlugins } from "@/plugins.gen";
 import { accountPathFor, addAccount, analyzerHome, findPosts, getPost, ingestPosts, recipeFromPreset, isOwnPost, listAccounts, listPosts, mediaUrl, mineAccount, patchPostResearch, type FindHit, type FindResult, type InstagramAccount, type InstagramPost, type PostKind, type SavedFor } from "@/lib/instagram";
 import {
   MAX_SESSION_SOURCES,
@@ -43,6 +45,7 @@ import {
   listProjects,
   docKindLabel,
   listRules,
+  listFinalsForDoc,
   listSessions,
   moveId,
   patchDocument,
@@ -67,6 +70,8 @@ import {
   usageTally,
   tokensLabel,
   type DocKind,
+  type SessionPatch,
+  postingsOfSession,
   type SessionRecord,
   type SessionRow,
   type SessionStatus,
@@ -103,6 +108,8 @@ const pickActive = (docs: WorkshopDocument[], cur: string | null) =>
 export default function WorkshopSessionPage() {
   const { sessionId = "" } = useParams();
   const me = useMe();
+  // buttons a plug-in puts on a session (itemActions.session in its web.tsx), gated per account
+  const sessionActions = useMemo(() => itemActionsFor(me, webPlugins, "session"), [me]);
   const allowed = canUse(me, "workshop");
   const selectProject = useWorkspace((s) => s.select);
 
@@ -444,6 +451,28 @@ export default function WorkshopSessionPage() {
   const activeDoc = docs.find((d) => d.id === activeDocId) ?? null;
   const auditOpen = messages.find((m) => m.id === auditMessageId) ?? null;
   const replaceDoc = (doc: WorkshopDocument) => setDocs((ds) => (ds.some((d) => d.id === doc.id) ? ds.map((d) => (d.id === doc.id ? doc : d)) : [...ds, doc]));
+  // the Finals versions linked to the active piece: one post-description tab each (Finals → Workshop session link)
+  const [finalsTabs, setFinalsTabs] = useState<{ docId: string; versions: { key: string; label: string }[] } | null>(null);
+  useEffect(() => {
+    if (!session || !activeDoc) return;
+    let live = true;
+    listFinalsForDoc(session.id, activeDoc.id).then(
+      (versions) => live && setFinalsTabs({ docId: activeDoc.id, versions }),
+      () => live && setFinalsTabs(null),
+    );
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the session and the piece id are the keys
+  }, [session?.id, activeDoc?.id]);
+  const saveVersionCaption = async (key: string, text: string) => {
+    if (!session || !activeDoc) return;
+    try {
+      replaceDoc(await patchDocument(session.id, activeDoc.id, { captions: { [key]: text } }));
+    } catch (e) {
+      fail(e);
+    }
+  };
 
   const selectDoc = (id: string) => {
     void flushBlocks();
@@ -549,10 +578,10 @@ export default function WorkshopSessionPage() {
     patchSummary(session.id, { status });
     patchSession(session.id, { status }).catch(fail);
   };
-  const setPosted = (posted: string | null) => {
+  const setPosted = (posted: SessionPatch["posted"]) => {
     if (!session) return;
     patchSession(session.id, { posted })
-      .then((m) => setSession((s) => (s ? { ...s, status: m.status, posted: m.posted } : s)))
+      .then((m) => setSession((s) => (s ? { ...s, status: m.status, postings: m.postings, posted: m.posted } : s)))
       .catch(fail);
   };
 
@@ -980,7 +1009,7 @@ export default function WorkshopSessionPage() {
         </span>
         }
       >
-        {session ? <SessionPosted posted={session.posted} status={session.status} onChange={setPosted} /> : null}
+        {session ? <SessionPosted postings={postingsOfSession(session)} status={session.status} onChange={setPosted} /> : null}
         {session ? <SessionStatusSelect value={session.status} onChange={setStatus} /> : null}
         {/* no project picker here: the session works in the project chosen up top, whose
             instructions and context live in Projects */}
@@ -1011,6 +1040,18 @@ export default function WorkshopSessionPage() {
             className="flex h-7 items-center gap-1 rounded-md border border-border px-2 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
           />
         ) : null}
+        {session
+          ? sessionActions.map((a) => (
+              <button
+                key={a.label}
+                type="button"
+                onClick={() => void a.onRun(session.id)}
+                className="flex h-7 items-center gap-1 rounded-md border border-border px-2 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                {a.icon ? <a.icon className="h-3.5 w-3.5" /> : null} {a.label}
+              </button>
+            ))
+          : null}
         <ProjectSwitcher onSelect={setProject} />
       </AppBar>
 
@@ -1150,6 +1191,8 @@ export default function WorkshopSessionPage() {
                       aiAvailable={aiAvailable}
                       onChange={(b, c) => onBlocks(activeDoc.id, b, c)}
                       onGenerateCaption={generateCaption}
+                      finalsVersions={finalsTabs?.docId === activeDoc.id && finalsTabs.versions.length ? finalsTabs.versions : undefined}
+                      onVersionCaption={saveVersionCaption}
                       onCarouselType={(id) => void patchSettings({ carouselType: id })}
                       onLayouts={async (opts) => {
                         await flushBlocks();

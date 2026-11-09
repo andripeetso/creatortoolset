@@ -39,6 +39,22 @@ function mergeGraph(old: CatalogGraph | undefined, next: CatalogGraph | undefine
   return { ...next, insightsAt: old.insightsAt };
 }
 
+/** A listing row carries feed metrics only; reel metrics (watch time, follows, profile visits) keep from the stored row. */
+function carryInsights(old: CatalogItem["insights"], next: CatalogItem["insights"]): CatalogItem["insights"] {
+  if (!next) return old;
+  return old ? { ...old, ...next } : next;
+}
+
+/** Days after which a row's insights are read again. A reel read inside this window is not re-read on each pull. */
+export const INSIGHT_REREAD_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Graph ids whose insights need a read: never read, or last read over INSIGHT_REREAD_MS ago. mergeGraph keeps a stored row's read time, so known reels are skipped while fresh. */
+export function insightIdsToRead(items: CatalogItem[], now = Date.now()): string[] {
+  return items
+    .filter((row) => row.graphId && row.graph && (!row.graph.insightsAt || now - row.graph.insightsAt > INSIGHT_REREAD_MS))
+    .map((row) => row.graphId!);
+}
+
 function keepMarks(old: CatalogItem | undefined, row: CatalogItem): CatalogItem {
   if (!old) return row;
   return {
@@ -52,7 +68,7 @@ function keepMarks(old: CatalogItem | undefined, row: CatalogItem): CatalogItem 
     visibility: row.visibility ?? old.visibility,
     visibilityBasis: row.visibility ? row.visibilityBasis : old.visibilityBasis,
     isSharedToFeed: row.isSharedToFeed ?? old.isSharedToFeed,
-    insights: row.insights ?? old.insights,
+    insights: carryInsights(old.insights, row.insights),
     caption: row.caption ?? old.caption,
     prevCounts: countsChanged(old.counts, row.counts) ? old.counts : old.prevCounts,
   };
@@ -84,7 +100,7 @@ export function mergeCatalogCounts(prev: CatalogItem[], next: CatalogItem[]): Ca
       visibility: row.visibility ?? old.visibility,
       visibilityBasis: row.visibility ? row.visibilityBasis : old.visibilityBasis,
       isSharedToFeed: row.isSharedToFeed ?? old.isSharedToFeed,
-      insights: row.insights ?? old.insights,
+      insights: carryInsights(old.insights, row.insights),
       counts: row.counts,
     });
   });

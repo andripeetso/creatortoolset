@@ -16,6 +16,7 @@ import {
   listAssets,
   listCollections,
   listLibraries,
+  listSources,
   changeFolderItems,
   openInCaptions,
   rerunJobs,
@@ -26,6 +27,8 @@ import {
   uploadFile,
 } from "@/lib/library";
 import { cn } from "@/lib/utils";
+import { LibraryFacetBar } from "@/components/LibraryFacetBar";
+import { libraryBadges, libraryFacets } from "@/lib/library-slots";
 import { LibraryStorageSettings } from "./LibraryStorage";
 import { LibraryWatchFolders } from "./LibraryWatchFolders";
 
@@ -73,6 +76,7 @@ export default function LibraryPage() {
   const [q, setQ] = useState("");
   const [term, setTerm] = useState("");
   const [kind, setKind] = useState<AssetKind | "all">("all");
+  const [facets, setFacets] = useState<Record<string, string[]>>({}); // plug-in sidebar filters picked so far
   const [items, setItems] = useState<AssetCard[]>([]);
   const [next, setNext] = useState<string | undefined>();
   const [uploads, setUploads] = useState<Upload[]>([]);
@@ -82,6 +86,8 @@ export default function LibraryPage() {
   const [error, setError] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
   const [scope, setScope] = useState("all"); // "all", "trash", or a collection id
+  const [source, setSource] = useState(""); // "" = this library, else a plug-in source's id (its cards only)
+  const [sources, setSources] = useState<{ id: string; label: string }[]>([]);
   const [collections, setCollections] = useState<Collection[]>([]);
   const [folders, setFolders] = useState(0); // counts folder changes, so the list is read again
   const [folderName, setFolderName] = useState("");
@@ -119,7 +125,7 @@ export default function LibraryPage() {
   useEffect(() => {
     if (!libId) return;
     const mine = ++seq.current;
-    listAssets(libId, { q: term || undefined, kind: kind === "all" ? undefined : [kind], ...folder })
+    listAssets(libId, { q: term || undefined, kind: kind === "all" ? undefined : [kind], facets, ...folder, source: source || undefined })
       .then((page) => {
         if (mine !== seq.current) return;
         setItems(page.items);
@@ -130,19 +136,29 @@ export default function LibraryPage() {
         if (mine === seq.current) setError(message(e));
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [libId, term, kind, scope, refresh]);
+  }, [libId, term, kind, facets, scope, refresh, source]);
+
+  // the plug-in sources this account may browse here (none unless a plug-in brings one)
+  useEffect(() => {
+    if (!libId) return;
+    listSources(libId)
+      .then(setSources)
+      .catch(() => setSources([]));
+  }, [libId]);
 
   // lines said in the clips that match the search
   useEffect(() => {
     if (!libId || !term || scope === "trash") return setSaid([]);
     let live = true;
-    searchLibrary(libId, term)
+    searchLibrary(libId, term, facets)
       .then((hits) => live && setSaid(hits.filter((h) => h.seconds !== undefined)))
       .catch(() => live && setSaid([]));
     return () => void (live = false);
-  }, [libId, term, scope]);
+  }, [libId, term, scope, facets]);
 
   const open = (a: AssetCard, at = 0) => {
+    // a plug-in source's item (external ref) has no library asset to open here yet: its own page holds it
+    if (a.id.startsWith("ext_")) return;
     setStartAt(at);
     setPreview(a);
   };
@@ -157,7 +173,7 @@ export default function LibraryPage() {
   const loadMore = () => {
     if (!libId || !next) return;
     const mine = ++seq.current;
-    listAssets(libId, { q: term || undefined, kind: kind === "all" ? undefined : [kind], ...folder, cursor: next })
+    listAssets(libId, { q: term || undefined, kind: kind === "all" ? undefined : [kind], facets, ...folder, cursor: next })
       .then((page) => {
         if (mine !== seq.current) return;
         setItems((prev) => [...prev, ...page.items]);
@@ -357,7 +373,21 @@ export default function LibraryPage() {
                   </Button>
                 ))}
               </div>
+              <LibraryFacetBar facets={libraryFacets("library")} value={facets} onChange={setFacets} />
             </div>
+
+            {sources.length > 0 && (
+              <div role="group" aria-label="Sources" className="flex flex-wrap items-center gap-1.5">
+                <Button size="sm" variant={!source ? "default" : "outline"} aria-pressed={!source} onClick={() => setSource("")}>
+                  Library
+                </Button>
+                {sources.map((s) => (
+                  <Button key={s.id} size="sm" variant={source === s.id ? "default" : "outline"} aria-pressed={source === s.id} onClick={() => setSource(s.id)}>
+                    {s.label}
+                  </Button>
+                ))}
+              </div>
+            )}
 
             <div role="group" aria-label="Folders" className="flex flex-wrap items-center gap-1.5">
               <Button size="sm" variant={scope === "all" ? "default" : "outline"} aria-pressed={scope === "all"} onClick={() => setScope("all")}>
@@ -462,7 +492,7 @@ export default function LibraryPage() {
             ) : (
               libraries !== null && (
                 <p className="py-16 text-center text-sm text-zinc-500">
-                  {term || kind !== "all" ? "No matches." : "Nothing here yet. Upload a file to start."}
+                  {term || kind !== "all" || Object.values(facets).some((v) => v.length) ? "No matches." : "Nothing here yet. Upload a file to start."}
                 </p>
               )
             )}
@@ -591,6 +621,11 @@ function AssetTile({ asset: a, onOpen }: { asset: AssetCard; onOpen: () => void 
         {dot && <span title={a.state} className={cn("absolute left-2 top-2 h-2.5 w-2.5 rounded-full ring-2 ring-black/40", dot)} />}
       </div>
       <span className="truncate text-sm font-medium">{a.title}</span>
+      {libraryBadges(a).map((b) => (
+        <span key={b.label} className="w-fit rounded bg-zinc-500/20 px-1 py-px text-[10px] font-medium text-zinc-400">
+          {b.label}
+        </span>
+      ))}
       {a.description && (
         <span className="line-clamp-2 text-xs text-zinc-500">
           {a.description.source === "ai" && <AiBadge />}

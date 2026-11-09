@@ -1,0 +1,9 @@
+TITLE: Tiny Proto
+
+001  card     V     C        00:00:00:00 00:00:01:05 00:00:00:20 00:00:02:00
+* FROM CLIP NAME:  card.mov
+* FROM CLIP: media/card.mov
+* OTIO TRUNCATED REEL NAME FROM: card.mov
+002  g05d     V     C        00:00:00:00 00:00:00:03 00:00:02:10 00:00:02:13
+* FROM CLIP NAME:  g_%05d.png
+* OTIO TRUNCATED REEL NAME FROM: g_%05d.png

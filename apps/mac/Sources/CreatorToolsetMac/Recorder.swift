@@ -779,12 +779,16 @@ struct RecorderBar: View {
 
 extension Site {
     /// A recording's original file to Review (with its pointer log), Video Notes, or a new guide (a Video Notes clip the
-    /// guide is made from), through the site's resumable upload (api/lib/uploads.ts: 16 MB parts, four at a time).
+    /// guide is made from), through the upload relay the server names (Review only), or the site's resumable upload (api/lib/uploads.ts: 16 MB parts, four at a time).
     /// Returns the page to open.
     func uploadRecording(_ project: LocalProject, to destination: ShareDestination, progress: @escaping @Sendable (Double) -> Void) async throws -> String {
         let file = project.screenURL
         let size = (try FileManager.default.attributesOfItem(atPath: file.path)[.size] as? NSNumber)?.intValue ?? 0
-        let finished = try await direct(file, name: "\(project.name).mp4", size: size, review: destination == .review, progress: progress)
+        let name = "\(project.name).mp4"
+        let review = destination == .review
+        var done = review ? try await viaRelay(file, name: name, size: size, progress: progress) : nil
+        if done == nil { done = try await direct(file, name: name, size: size, review: review, progress: progress) }
+        let finished = done ?? [:]
         guard let asset = finished["id"] as? String else { throw SiteError.status(0) }
         switch destination {
         case .notes: return "/clips/\(asset)"
@@ -806,12 +810,88 @@ extension Site {
         return "/review/\(asset)?v=\(n)"
     }
 
+    /// Review through the upload relay the server names (GET /api/uploads/relay, when it is not chunked or direct): tus
+    /// straight to the relay in parts, then the server takes the file over and only the finish call is retried.
+    /// nil = no such relay here, or it would not start: go direct.
+    private func viaRelay(_ file: URL, name: String, size: Int, progress: @escaping @Sendable (Double) -> Void) async throws -> [String: Any]? {
+        let view = try? await URLSession.shared.data(for: request("GET", "/api/uploads/relay"))
+        let active = view.flatMap { (try? JSONSerialization.jsonObject(with: $0.0)) as? [String: Any] }?["active"] as? String
+        guard let active, active != "chunked", active != "direct" else { return nil }
+        var mint = request("POST", "/api/uploads/relay?relay=tus")
+        mint.httpBody = try JSONSerialization.data(withJSONObject: ["name": name, "mime": "video/mp4", "size": size])
+        mint.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        guard let minted = try? await URLSession.shared.data(for: mint),
+              (minted.1 as? HTTPURLResponse)?.statusCode == 200,
+              let start = (try? JSONSerialization.jsonObject(with: minted.0)) as? [String: Any],
+              let uid = start["id"] as? String,
+              let tus = start["tus"] as? [String: Any],
+              let createURL = (tus["createUrl"] as? String).flatMap(URL.init(string:)),
+              let tusHeaders = tus["headers"] as? [String: String],
+              let metadata = tus["metadata"] as? String else { return nil }
+        var create = URLRequest(url: createURL)
+        create.httpMethod = "POST"
+        tusHeaders.forEach { create.setValue($1, forHTTPHeaderField: $0) }
+        create.setValue(String(size), forHTTPHeaderField: "Upload-Length")
+        create.setValue(metadata, forHTTPHeaderField: "Upload-Metadata")
+        guard let made = try? await URLSession.shared.data(for: create), (made.1 as? HTTPURLResponse)?.statusCode == 201,
+              let location = (made.1 as? HTTPURLResponse)?.value(forHTTPHeaderField: "Location"),
+              let url = URL(string: location, relativeTo: createURL) else { return nil }
+        let chunk = (tus["partSize"] as? Int) ?? 16 * 1024 * 1024
+        let handle = try FileHandle(forReadingFrom: file)
+        defer { try? handle.close() }
+        var offset = 0
+        var failures = 0
+        while offset < size {
+            do {
+                try handle.seek(toOffset: UInt64(offset))
+                let body = try handle.read(upToCount: chunk) ?? Data()
+                var patch = URLRequest(url: url)
+                patch.httpMethod = "PATCH"
+                tusHeaders.forEach { patch.setValue($1, forHTTPHeaderField: $0) }
+                patch.setValue(String(offset), forHTTPHeaderField: "Upload-Offset")
+                patch.setValue("application/offset+octet-stream", forHTTPHeaderField: "Content-Type")
+                let (_, r) = try await URLSession.shared.upload(for: patch, from: body)
+                guard let http = r as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { throw SiteError.status((r as? HTTPURLResponse)?.statusCode ?? 0) }
+                offset = Int(http.value(forHTTPHeaderField: "Upload-Offset") ?? "") ?? offset + body.count
+                failures = 0
+                progress(Double(offset) / Double(max(1, size)))
+            } catch {
+                failures += 1
+                if offset == 0 && failures >= 3 { return nil }   // this network can't reach the relay: go direct
+                if failures >= 10 { throw error }
+                try await Task.sleep(for: .seconds(min(30, 1 << failures)))
+                var head = URLRequest(url: url)
+                head.httpMethod = "HEAD"
+                tusHeaders.forEach { head.setValue($1, forHTTPHeaderField: $0) }
+                if let (_, r) = try? await URLSession.shared.data(for: head), let http = r as? HTTPURLResponse, http.statusCode < 300 {
+                    offset = Int(http.value(forHTTPHeaderField: "Upload-Offset") ?? "") ?? offset
+                }
+            }
+        }
+        // the bytes are at the relay: from here on only finish, never start over
+        for attempt in 0..<6 {
+            var finish = request("POST", "/api/uploads/relay/\(uid)/complete")
+            finish.httpBody = Data("{}".utf8)
+            finish.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            if let (data, r) = try? await URLSession.shared.data(for: finish), let http = r as? HTTPURLResponse {
+                if (200..<300).contains(http.statusCode) { return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:] }
+                if http.statusCode < 500 { throw SiteError.status(http.statusCode) }
+            }
+            try await Task.sleep(for: .seconds(2 * (attempt + 1)))   // the server restarting
+        }
+        throw SiteError.status(503)
+    }
+
     /// The site's own resumable upload; returns the finishing call's JSON.
     private func direct(_ file: URL, name: String, size: Int, review: Bool, progress: @escaping @Sendable (Double) -> Void) async throws -> [String: Any] {
-        let started = try await json("POST", review ? "/api/review/uploads" : "/api/clips/init",
+        // Review: the server picks the relay (api/uploads/relay). "direct" sends the parts straight to its bucket.
+        if review, await uploadRelay() == "direct" {
+            return try await directToBucket(file, name: name, size: size, progress: progress)
+        }
+        let started = try await json("POST", review ? "/api/uploads/relay" : "/api/clips/init",
                                      ["name": name, "mime": "video/mp4", "size": size])
         guard let id = started["id"] as? String, let partSize = started["partSize"] as? Int, partSize > 0 else { throw SiteError.status(0) }
-        let root = review ? "/api/review/uploads/\(id)" : "/api/clips/\(id)"
+        let root = review ? "/api/uploads/relay/\(id)" : "/api/clips/\(id)"
         let count = (size + partSize - 1) / partSize
         let tally = Tally()
         try await withThrowingTaskGroup(of: Void.self) { group in
@@ -825,6 +905,68 @@ extension Site {
             try await group.waitForAll()
         }
         return try await json("POST", "\(root)/complete", [:])
+    }
+
+    /// The relay the server picks for Review uploads (GET /api/uploads/relay): "chunked" or "direct". Unreachable = chunked.
+    private func uploadRelay() async -> String {
+        guard let got = try? await URLSession.shared.data(for: request("GET", "/api/uploads/relay")),
+              (got.1 as? HTTPURLResponse)?.statusCode == 200,
+              let view = (try? JSONSerialization.jsonObject(with: got.0)) as? [String: Any],
+              let active = view["active"] as? String else { return "chunked" }
+        return active
+    }
+
+    /// Review's direct relay: presigned part URLs from the server, 4 parts at a time straight to the bucket, then the
+    /// server's complete call with the ETags. Nothing about the bucket is kept here.
+    private func directToBucket(_ file: URL, name: String, size: Int, progress: @escaping @Sendable (Double) -> Void) async throws -> [String: Any] {
+        let started = try await json("POST", "/api/uploads/relay", ["name": name, "mime": "video/mp4", "size": size])
+        guard let id = started["id"] as? String, let partSize = started["partSize"] as? Int, partSize > 0,
+              let urls = started["urls"] as? [String], !urls.isEmpty else { throw SiteError.status(0) }
+        let etags = try await withThrowingTaskGroup(of: (Int, String).self) { group -> [(Int, String)] in
+            var done: [(Int, String)] = []
+            for (i, url) in urls.enumerated() {
+                if i >= 4, let finished = try await group.next() {
+                    done.append(finished)
+                    progress(Double(done.count) / Double(urls.count))
+                }
+                group.addTask { try await self.bucketPart(file, index: i, partSize: partSize, url: url) }
+            }
+            while let finished = try await group.next() {
+                done.append(finished)
+                progress(Double(done.count) / Double(urls.count))
+            }
+            return done
+        }
+        // the bucket wants the parts in order, whatever order they finished in
+        let parts = etags.sorted { $0.0 < $1.0 }.map { ["number": $0.0 + 1, "etag": $0.1] as [String: Any] }
+        return try await json("POST", "/api/uploads/relay/\(id)/complete", ["parts": parts])
+    }
+
+    /// One part PUT to its presigned URL (the bucket, no cookies), retried like the server's parts. Returns its number and ETag.
+    private func bucketPart(_ file: URL, index: Int, partSize: Int, url: String) async throws -> (Int, String) {
+        guard let target = URL(string: url) else { throw SiteError.status(0) }
+        let handle = try FileHandle(forReadingFrom: file)
+        defer { try? handle.close() }
+        try handle.seek(toOffset: UInt64(index * partSize))
+        let data = try handle.read(upToCount: partSize) ?? Data()
+        var req = URLRequest(url: target)
+        req.httpMethod = "PUT"
+        req.httpShouldHandleCookies = false
+        for attempt in 0..<4 {
+            do {
+                let (_, response) = try await URLSession.shared.upload(for: req, from: data)
+                let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+                guard (200..<300).contains(code), let etag = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "ETag") else {
+                    throw SiteError.status(code)
+                }
+                return (index, etag)
+            } catch SiteError.status(let code) where code >= 400 && code < 500 && code != 408 && code != 429 {
+                throw SiteError.status(code)
+            } catch where attempt < 3 {
+                try await Task.sleep(for: .seconds(2 << attempt))
+            }
+        }
+        throw SiteError.status(0)
     }
 
     private func part(_ file: URL, n: Int, partSize: Int, total: Int, root: String) async throws {

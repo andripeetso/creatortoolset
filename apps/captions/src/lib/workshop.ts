@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import type { FindHit } from "@/lib/instagram";
 import type { SocialPlatform } from "@contracts/connectors";
 import type { Selection } from "@contracts/providers";
@@ -169,13 +170,28 @@ export interface SessionMeta {
   ai?: Selection;
   /** Parts of sources the AI pulled into the conversation; slide text is always in. */
   loaded?: LoadedSource[];
-  /** The post this session became: matched by its words, or a link the author pasted. */
-  posted?: { shortcode: string; url: string; by: "auto" | "you"; at: number };
+  /** The posts this session became: matched by their words, or links the author pasted. `posted` is the first of them. */
+  postings?: SessionPosting[];
+  /** The first of `postings`, kept for readers that know one post. */
+  posted?: SessionPosting;
   /** Pinned to the top (sidebar "Pinned" group, first in the list). */
   pinned?: boolean;
   createdAt: number;
   updatedAt: number;
 }
+
+export interface SessionPosting {
+  shortcode: string;
+  url: string;
+  by: "auto" | "you";
+  at: number;
+  /** The version this post is, by its key (a Finals version); none = not named. */
+  version?: string;
+}
+
+/** A session's postings: its list, or (saved before the list existed) the one `posted`. */
+export const postingsOfSession = (s: { postings?: SessionPosting[]; posted?: SessionPosting }): SessionPosting[] =>
+  s.postings ?? (s.posted ? [s.posted] : []);
 
 export interface SessionRecord extends SessionMeta {
   notes: string;
@@ -242,8 +258,9 @@ export interface SessionPatch {
   loaded?: [];
   /** null clears the session's pick back to the default. */
   ai?: Selection | null;
-  /** a post's Instagram link, or null for "not this post" */
-  posted?: string | null;
+  /** a post's Instagram link (added, or its version changed with `version`), `{ remove }` for "not this post" on one post, or
+   *  null for "not this post" on all of them */
+  posted?: string | null | { url: string; version?: string } | { remove: string };
   pinned?: boolean;
 }
 
@@ -261,7 +278,7 @@ export const DRAFT_KINDS: { id: DraftKind; label: string; hint: string }[] = [
   { id: "reel", label: "Reel script", hint: "Hook variations and a spoken script, caption" },
   { id: "carousel", label: "Carousel", hint: "Slide-by-slide headline and body, hook slide, CTA slide" },
   { id: "ad", label: "Ad copy", hint: "Three angles: primary text, headline, description, CTA" },
-  { id: "free", label: "Free-form", hint: "Whatever the brief asks for" },
+  { id: "free", label: "Anything else", hint: "Whatever the brief asks for" },
 ];
 
 export const MAX_GENERATE_SOURCES = 12;
@@ -382,7 +399,7 @@ export const fetchExportMarkdown = (id: string) =>
     return r.text();
   });
 
-/** A custom export (Settings → Exports). The built-in Obsidian Markdown comes first, with id "obsidian". */
+/** A custom export (the Workshop's Export menu → Edit exports…). The built-in Obsidian Markdown comes first, with id "obsidian". */
 export interface WorkshopExport {
   id: string;
   name: string;
@@ -415,7 +432,7 @@ export const draftKindLabel = (kind: DraftKind) => DRAFT_KINDS.find((k) => k.id 
 
 /* ---- co-writing: documents and chat ---- */
 
-export type DocKind = DraftKind | "youtube" | "notes";
+export type DocKind = DraftKind | "youtube" | "newsletter" | "thread" | "article" | "notes";
 /** A piece's kind: every document kind but the notes. */
 export type PieceKind = Exclude<DocKind, "notes">;
 
@@ -458,6 +475,8 @@ export interface WorkshopDocument {
   hooks?: Block[];
   /** Written together with the content: the caption under the post, and the comment pinned on top. */
   caption?: Companion;
+  /** One post description per version, by the version's key; `caption` is the main one. */
+  captions?: Record<string, Companion>;
   pinned?: Companion;
   versions: VersionInfo[];
   dirty?: boolean;
@@ -537,7 +556,7 @@ export interface ChatMessage {
   /** Files sent with it (PDFs), after the pictures. */
   files?: FileRef[];
   /** Media Library clips sent with the message (the AI reads their thumbnail, description and transcript). */
-  library?: Array<{ kind: "library"; assetId: string; versionId: string; title: string }>;
+  library?: Array<{ kind: "library"; assetId: string; versionId: string; title: string } | { kind: "external"; refId: string; title: string }>;
   status?: "thinking" | "done" | "error";
   error?: string;
   /** While thinking: what is happening, and who is answering. */
@@ -826,7 +845,7 @@ export interface TurnInput {
   /** A retry: files the server already keeps. */
   fileRefs?: FileRef[];
   /** Media Library clips, by id. */
-  library?: Array<{ assetId: string; versionId: string }>;
+  library?: Array<{ assetId: string; versionId: string } | { refId: string }>;
   /** A retry of a web search you approved. */
   web?: string;
   /** A retry: the server removes these messages in the same write that appends the new pair. */
@@ -837,9 +856,26 @@ export const DOC_KINDS: { id: Exclude<DocKind, "notes">; label: string }[] = [
   { id: "reel", label: "Reel" },
   { id: "carousel", label: "Carousel" },
   { id: "ad", label: "Ad copy" },
-  { id: "free", label: "Free-form" },
+  { id: "free", label: "Anything else" },
   { id: "youtube", label: "YouTube script" },
+  { id: "newsletter", label: "Newsletter / email" },
+  { id: "thread", label: "X post / thread" },
+  { id: "article", label: "Article / blog" },
 ];
+
+let makesOnce: Promise<string[]> | null = null;
+/** DOC_KINDS with the kinds the person makes (work-prefs `makes`, setup's "What will you make?") first, for the new-piece menus. */
+export function useDocKinds(): typeof DOC_KINDS {
+  const [makes, setMakes] = useState<string[]>([]);
+  useEffect(() => {
+    makesOnce ??= fetch("/api/work-prefs")
+      .then((r) => (r.ok ? (r.json() as Promise<{ makes?: string[] }>) : { makes: [] }))
+      .then((w) => w.makes ?? [])
+      .catch(() => []);
+    void makesOnce.then(setMakes);
+  }, []);
+  return makes.length ? [...DOC_KINDS].sort((a, b) => Number(!makes.includes(a.id)) - Number(!makes.includes(b.id))) : DOC_KINDS;
+}
 
 export const KIND_STOCK_TITLE: Record<Exclude<DocKind, "notes">, string> = {
   reel: "Reel",
@@ -847,9 +883,12 @@ export const KIND_STOCK_TITLE: Record<Exclude<DocKind, "notes">, string> = {
   ad: "Ad copy",
   free: "Draft",
   youtube: "YouTube script",
+  newsletter: "Newsletter",
+  thread: "Thread",
+  article: "Article",
 };
 
-const STOCK_TITLES = ["Script", "Reel", "Reel script", "Carousel", "Ad copy", "Draft", "Free-form", "Free form", "YouTube script", "YouTube", "Notes"];
+const STOCK_TITLES = ["Script", "Reel", "Reel script", "Carousel", "Ad copy", "Draft", "Free-form", "Free form", "YouTube script", "YouTube", "Newsletter", "Thread", "Article", "Anything else", "Notes"];
 
 /** True when the title is still the kind's default (or the old "Script N" names). */
 export function isStockDocTitle(title: string): boolean {
@@ -867,7 +906,8 @@ export function docUnit(kind: DocKind): { one: string; many: string } {
   if (kind === "carousel") return { one: "slide", many: "slides" };
   if (kind === "reel") return { one: "script", many: "script" };
   if (kind === "ad") return { one: "line", many: "lines" };
-  if (kind === "free" || kind === "youtube") return { one: "section", many: "sections" };
+  if (kind === "thread") return { one: "post", many: "posts" };
+  if (kind === "free" || kind === "youtube" || kind === "newsletter" || kind === "article") return { one: "section", many: "sections" };
   return { one: "note", many: "notes" };
 }
 
@@ -891,18 +931,21 @@ export function editSummary(kind: DocKind, blockIds: string[]): string {
   return bits.join(" and ") || countUnits(kind, 0);
 }
 
-export const docKindLabel = (kind: DocKind) => (kind === "notes" ? "Notes" : kind === "youtube" ? "YouTube script" : draftKindLabel(kind));
+export const docKindLabel = (kind: DocKind) => (kind === "notes" ? "Notes" : kind === "reel" || kind === "carousel" || kind === "ad" || kind === "free" ? draftKindLabel(kind) : DOC_KINDS.find((k) => k.id === kind)!.label);
 
 export const listDocuments = (sessionId: string) =>
   fetch(`/api/workshop/sessions/${sessionId}/docs`).then((r) => json<WorkshopDocument[]>(r));
 export const createDocument = (sessionId: string, input: { kind: Exclude<DocKind, "notes">; title?: string; frameworkIds?: string[]; ruleIds?: string[]; text?: string }) =>
   fetch(`/api/workshop/sessions/${sessionId}/docs`, jsonInit(input)).then((r) => json<WorkshopDocument>(r));
+/** The Finals versions linked to this piece of the session (Finals' link): one post-description tab each. */
+export const listFinalsForDoc = (sessionId: string, docId: string) =>
+  fetch(`/api/workshop/sessions/${sessionId}/docs/${docId}/finals`).then((r) => json<{ versions: { key: string; label: string }[] }>(r)).then((x) => x.versions);
 export const getDocument = (sessionId: string, docId: string) =>
   fetch(`/api/workshop/sessions/${sessionId}/docs/${docId}`).then((r) => json<WorkshopDocument>(r));
 export const patchDocument = (
   sessionId: string,
   docId: string,
-  patch: { title?: string; kind?: DocKind; frameworkIds?: string[]; ruleIds?: string[] | null; carouselType?: string | null; carouselLayouts?: CarouselLayoutSet | null; blocks?: Array<{ id?: string; text: string }>; hooks?: Array<{ id?: string; text: string }>; caption?: string; pinned?: string; locked?: string[] },
+  patch: { title?: string; kind?: DocKind; frameworkIds?: string[]; ruleIds?: string[] | null; carouselType?: string | null; carouselLayouts?: CarouselLayoutSet | null; blocks?: Array<{ id?: string; text: string }>; hooks?: Array<{ id?: string; text: string }>; caption?: string; captions?: Record<string, string>; pinned?: string; locked?: string[] },
 ) => fetch(`/api/workshop/sessions/${sessionId}/docs/${docId}`, jsonInit(patch, "PATCH")).then((r) => json<WorkshopDocument>(r));
 export const generateCarouselLayouts = (
   sessionId: string,

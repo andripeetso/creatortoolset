@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Item, Timeline } from "../../contracts/editor";
-import { qaOf, sharedVoice } from "./qa";
+import { brollMinFrames, loudnessNotes, qaOf, sharedVoice } from "./qa";
 import { emptyTracks } from "./timeline";
 
 /** A 30 fps timeline of linked speaker shots [src, in, len], laid end to end from `rec` 0 unless given. */
@@ -50,6 +50,28 @@ describe("AI Editor QA", () => {
     expect(r.shared).toEqual([{ with: "v2", pct: 61.9, longestS: 3.33 }]);
     expect(r.notes).toEqual(["Shares 61.9 % of its voice with v2 (over 20 %)"]);
     expect(sharedVoice(v1, tl([["A", 500, 100]])).pct).toBe(0);
+  });
+
+  it("flags a B-roll shot under 1.2 s, the same at 25, 30 and 60 fps", () => {
+    for (const [fps, min] of [[25, 30], [30, 36], [60, 72]] as const) {
+      const short = tl([["A", 0, 40]]);
+      short.fps = fps;
+      short.tracks.V2.items.push({ src: "A", in: 0, len: min - 1, rec: 0 });
+      expect(qaOf(short).notes).toEqual([`V2: a ${min - 1}-frame B-roll shot at 0 (under ${min} frames, 1.2 s)`]);
+      const ok = tl([["A", 0, 40]]);
+      ok.fps = fps;
+      ok.tracks.V2.items.push({ src: "A", in: 0, len: min, rec: 0 });
+      expect(qaOf(ok)).toEqual({ ok: true, notes: [], shared: [] });
+    }
+    expect(brollMinFrames(26)).toBe(32); // 1.2 s at 26 fps is 31.2 frames: a cut of 31 is short
+  });
+
+  it("holds the voice to -15 LUFS within 1 LU and a -1.5 dBFS true peak", () => {
+    expect(loudnessNotes({ lufs: -15, truePeak: -2 })).toEqual([]);
+    expect(loudnessNotes({ lufs: -16, truePeak: -1.5 })).toEqual([]);
+    expect(loudnessNotes({ lufs: -16.2, truePeak: -2 })).toEqual(["Voice is -16.2 LUFS (target -15 ± 1)"]);
+    expect(loudnessNotes({ lufs: -15, truePeak: -1.2 })).toEqual(["Voice true peak is -1.2 dBFS (over -1.5)"]);
+    expect(loudnessNotes({ lufs: NaN, truePeak: NaN })).toHaveLength(2);
   });
 
   it("notes sound running on past the picture", () => {

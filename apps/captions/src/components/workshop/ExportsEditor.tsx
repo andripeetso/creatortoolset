@@ -9,7 +9,7 @@ import { Card, Loading, Notice } from "@/components/settings/ui";
 import { msg } from "@/components/settings/helpers";
 
 const BUILTIN_ID = "obsidian";
-const PLACEHOLDERS = "{{title}} {{status}} {{media}} {{body}} {{caption}} {{date}}";
+const PLACEHOLDERS = "{{title}} {{status}} {{media}} {{frontmatter}} {{body}} {{caption}} {{date}}";
 const selectCls = "h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground disabled:opacity-50";
 
 const newExport = (): WorkshopExport => ({

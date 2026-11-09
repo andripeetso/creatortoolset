@@ -3,10 +3,12 @@ import { Link, Navigate, useLocation } from "react-router";
 import { ArrowRight, ChevronRight, Loader2, Lock, ScreenShare, type LucideIcon } from "lucide-react";
 import { canUse, useMe, type Me } from "@/lib/auth";
 import { isPhoneHub } from "@/lib/mobile";
-import { useOpenTool } from "@/lib/tools";
+import { shownTools, useOpenTool, withPluginTiles, type Tool as HomeTool } from "@/lib/tools";
 import { AppBar } from "@/components/AppBar";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
+import { HomeTodo } from "@/components/HomeTodo";
 import { TOOL_ICONS } from "@/components/setup/ToolNeeds";
+import { webPlugins } from "@/plugins.gen";
 import { useSessionSummaries } from "@/lib/workshop-summary";
 import { listEdits } from "@/lib/editor";
 import { listReviewAssets } from "@/lib/review";
@@ -46,6 +48,16 @@ const PAGE: Record<Key, { to: string; phoneTo?: string; desc: string }> = {
 };
 const NAME: Record<Key, string> = { ...TOOL_NAMES, record: "Screen Recorder" };
 const ICON: Record<Key, LucideIcon> = { ...TOOL_ICONS, record: ScreenShare };
+
+/** The plug-in tiles (lib/tools.ts): each joins the box its stage names; a stage with no box here (Distribute) goes to Extras. */
+const plugged = withPluginTiles(webPlugins);
+const pluginTilesFor = (stage: string, me: Me | null): HomeTool[] =>
+  shownTools(
+    stage === "Extras"
+      ? [...plugged.workflow.filter((s) => s.stage !== "Plan" && s.stage !== "Make").flatMap((s) => s.tools), ...plugged.other]
+      : plugged.workflow.find((s) => s.stage === stage)?.tools ?? [],
+    me,
+  ).filter((t) => t.pluginTile);
 
 /** Screen Recorder is open to whoever can use Review or Video Notes, the two places a recording goes. */
 const canUseKey = (me: Me | null, k: Key) => (k === "record" ? canUse(me, "review") || canUse(me, "notes") : canUse(me, k));
@@ -107,18 +119,19 @@ export default function ToolsetHome() {
     const body = (
       <>
         <span className={quiet
-          ? "relative flex h-10 w-10 items-center justify-center rounded-xl bg-zinc-800/80"
-          : "relative flex h-12 w-12 items-center justify-center rounded-2xl 2xl:h-14 2xl:w-14 bg-[color-mix(in_srgb,var(--tint)_90%,transparent)]"}>
+          ? "relative flex h-10 w-10 items-center justify-center rounded-xl bg-zinc-800/80 transition-colors duration-200 group-hover:bg-zinc-700"
+          : "relative flex h-12 w-12 items-center justify-center rounded-2xl 2xl:h-14 2xl:w-14 bg-[color-mix(in_srgb,var(--tint)_90%,transparent)] transition-colors duration-200 group-hover:bg-[var(--tint)]"}>
           <Icon className={quiet ? "h-5 w-5 text-[var(--tint-text)]" : "h-6 w-6 text-white"} />
           {!ok && <Lock className="absolute -bottom-1 -right-1 h-4 w-4 rounded-full bg-zinc-900 p-0.5 text-zinc-300" />}
           {ok && (k === "workshop" ? showCounts && <WorkshopBadge /> : k !== "record" && <Badge n={waiting[k] ?? 0} means={BADGE_MEANS[k]} />)}
           {ok && running[dest] ? <Running n={running[dest]} verb="writing" /> : null}
         </span>
-        <span className={`text-xs leading-tight ${quiet ? "text-zinc-400" : "text-zinc-300"}`}>{NAME[k]}</span>
+        <span className={`text-xs leading-tight transition-colors duration-200 group-hover:text-zinc-50 ${quiet ? "text-zinc-400" : "text-zinc-300"}`}>{NAME[k]}</span>
         {ready !== null && <Status ready={ready} />}
       </>
     );
-    const className = "flex w-[88px] flex-col items-center gap-2 rounded-xl px-1 py-2 text-center 2xl:w-[104px]";
+    // a light hover: the icon and the name brighten a little, faded, never moving (owner, 2026-11-08)
+    const className = "group flex w-[88px] flex-col items-center gap-2 rounded-xl px-1 py-2 text-center 2xl:w-[104px]";
     if (!ok) {
       return (
         <div key={k} aria-disabled="true" title="Switched off for this account" className={`${className} cursor-not-allowed opacity-40`}>
@@ -134,6 +147,28 @@ export default function ToolsetHome() {
       <Link key={k} to={dest} title={p.desc} onClick={(e) => openTool(e, dest)} className={className}>
         {body}
       </Link>
+    );
+  };
+
+  // a plug-in's tile (lib/tools.ts withPluginTiles): its own icon, name and link; no status or badge
+  const pluginTile = (t: HomeTool, quiet = false) => {
+    const dest = phone && t.phoneTo ? t.phoneTo : t.to;
+    const Icon = t.icon;
+    const className = "group flex w-[88px] flex-col items-center gap-2 rounded-xl px-1 py-2 text-center 2xl:w-[104px]";
+    const body = (
+      <>
+        <span className={quiet
+          ? "relative flex h-10 w-10 items-center justify-center rounded-xl bg-zinc-800/80 transition-colors duration-200 group-hover:bg-zinc-700"
+          : "relative flex h-12 w-12 items-center justify-center rounded-2xl 2xl:h-14 2xl:w-14 bg-[color-mix(in_srgb,var(--tint)_90%,transparent)] transition-colors duration-200 group-hover:bg-[var(--tint)]"}>
+          <Icon className={quiet ? "h-5 w-5 text-[var(--tint-text)]" : "h-6 w-6 text-white"} />
+        </span>
+        <span className={`text-xs leading-tight transition-colors duration-200 group-hover:text-zinc-50 ${quiet ? "text-zinc-400" : "text-zinc-300"}`}>{t.name}</span>
+      </>
+    );
+    return dest.startsWith("https://") ? (
+      <a key={t.to} href={dest} title={t.desc} className={className}>{body}</a>
+    ) : (
+      <Link key={t.to} to={dest} title={t.desc} onClick={(e) => openTool(e, dest)} className={className}>{body}</Link>
     );
   };
 
@@ -156,6 +191,7 @@ export default function ToolsetHome() {
           the account sit exactly where they do on every tool page and never move between them */}
       <AppBar className="absolute inset-x-0 top-0 mt-[env(safe-area-inset-top)] border-transparent">
         {canUse(me, "instagram") || canUse(me, "workshop") ? <ProjectSwitcher /> : null}
+        <HomeTodo />
       </AppBar>
       {phone && <div className="h-16 shrink-0" />}
 
@@ -193,10 +229,10 @@ export default function ToolsetHome() {
               >
                 <h2 className="px-1 pb-2 text-[11px] font-medium uppercase tracking-wider text-zinc-500">{g.label}</h2>
                 <div className="flex items-start justify-center gap-4 min-[900px]:justify-evenly min-[900px]:gap-0">
-                  {g.tools.map((t, j) => (
-                    <Fragment key={t}>
+                  {[...g.tools.map((t) => tile(t)), ...pluginTilesFor(g.label, me).map((t) => pluginTile(t))].map((node, j) => (
+                    <Fragment key={j}>
                       {j > 0 && <ChevronRight className="mt-6 h-4 w-4 shrink-0 text-zinc-700 2xl:mt-7" />}
-                      {tile(t)}
+                      {node}
                     </Fragment>
                   ))}
                 </div>
@@ -220,7 +256,7 @@ export default function ToolsetHome() {
             <span className="h-px flex-1 bg-zinc-800/80" />
           </h2>
           <div className="flex flex-wrap justify-center gap-x-2 gap-y-1 min-[900px]:grid min-[900px]:auto-cols-fr min-[900px]:grid-flow-col min-[900px]:justify-items-center min-[900px]:gap-0">
-            {extras.map((k) => tile(k, true))}
+            {[...extras.map((k) => tile(k, true)), ...pluginTilesFor("Extras", me).map((t) => pluginTile(t, true))]}
           </div>
         </section>
       </div>
@@ -326,7 +362,7 @@ function Between() {
     <Link
       to="/workshop"
       title="Workshop sessions Ready or In Production: scripts waiting to be filmed and made"
-      className="flex flex-col items-center whitespace-nowrap text-center text-[11px] leading-tight text-[var(--tint-text)] max-[899px]:flex-row max-[899px]:gap-1.5"
+      className="flex flex-col items-center whitespace-nowrap text-center text-[11px] leading-tight text-[var(--tint-text)] transition-[filter] duration-200 hover:brightness-125 max-[899px]:flex-row max-[899px]:gap-1.5"
     >
       {parts.map((p) => <span key={p}>{p}</span>)}
     </Link>

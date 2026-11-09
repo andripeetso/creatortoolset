@@ -21,7 +21,9 @@ export interface AnswerMessage {
 export interface AnswersFile {
   comments: Comment[];
   fetchedAt?: number;
-  /** The post they were read from; a different one is read again. */
+  /** The posts they were read from, in the session's order; a different set is read again. */
+  shortcodes?: string[];
+  /** Files saved before a session could have several posts: the one post they were read from. Read as `shortcodes`. */
   shortcode?: string;
   thread: AnswerMessage[];
 }

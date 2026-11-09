@@ -2,11 +2,14 @@ import { Hono, type Context } from "hono";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createWriteStream, existsSync } from "node:fs";
-import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import type { AuthVars } from "./auth";
+import type { Expired } from "./retention";
 import { sendFile } from "./lib/send-file";
+import { uploadRelayView } from "./lib/storage";
+import { pluginUploadRelays, type UploadRelay } from "./lib/plugin";
 
 import { ffmpegCommand } from "./ffmpeg-runtime";
 import {
@@ -24,12 +27,16 @@ import {
 import { env } from "./lib/env";
 import { clipReadyToEdit, createProjectFromFile, linkOrCopy } from "./projects";
 import { findUser, USERNAME_RE, type SessionUser } from "./users";
-import { homeOf } from "./library/access";
-import { blobs, libraryDb } from "./library/db";
+import { canMove, type Moves } from "./lib/transition";
+import { addToFinals, belowHd, libraryOf as libraryFor } from "./library/finals";
+import { blobs, libraryDb, serverBucket, serverStore } from "./library/db";
 import { enqueueJob } from "./library/jobs";
 import { probe as probeSummary } from "./library/media/probe";
 import { indexAsset } from "./library/query";
 import { deleteAssets } from "./library/trash";
+import { emitEvent } from "./lib/events";
+import { importTimeline, MAX_TIMELINE_BYTES, TimelineError, type TimelineView } from "../contracts/timeline-import";
+import { payloadError } from "../contracts/review-payload";
 
 export { sendFile };
 
@@ -73,7 +80,7 @@ const refsDir = (id: string, n: number) => path.join(versionDir(id, n), "refs");
  *  Zoom & pointer editor (src/lib/screen-recording.ts): `screen-events.json`, `screen-look.json`. */
 const screenPath = (id: string, n: number, part: "events" | "look") => path.join(versionDir(id, n), `screen-${part}.json`);
 const MAX_SCREEN_BYTES = { events: 32 * 1024 * 1024, look: 256 * 1024 };
-const uploadDir = (uid: string) => path.join(ROOT, "uploads", uid);
+export const uploadDir = (uid: string) => path.join(ROOT, "uploads", uid);
 const linkPath = (token: string) => path.join(ROOT, "links", token);
 const projectsPath = path.join(ROOT, "projects.json");
 const trashDir = (id: string) => path.join(ROOT, "trash", id);
@@ -84,6 +91,14 @@ const UPLOAD_DAYS = 7;
 
 export const APPROVALS = ["none", "in_progress", "needs_review", "changes", "approved"] as const;
 type Approval = (typeof APPROVALS)[number];
+/** The approval moves: filing → needs_review, a new round → in_progress, a failed or cancelled job → needs_review again. */
+export const APPROVAL_MOVES: Moves<Approval> = {
+  none: ["needs_review", "changes", "approved"],
+  in_progress: ["needs_review", "changes", "approved", "none"],
+  needs_review: ["in_progress", "changes", "approved", "none"],
+  changes: ["needs_review", "approved", "none"],
+  approved: ["needs_review", "changes", "none"],
+};
 /** What a reviewer on the share link may set. */
 const REVIEWER_APPROVALS: Approval[] = ["changes", "approved"];
 
@@ -101,6 +116,8 @@ interface Version {
   status: "processing" | "ready" | "error";
   progress: number;
   error?: string;
+  /** A relay upload whose file is not in yet: the relay and its video, so a restart copies the file again. */
+  relay?: { id: string; vid: string; bytes: number };
   proxy?: boolean;
   captions?: CaptionsLink;
   /** Captions are burned into this file (it skipped Caption Studio). */
@@ -109,6 +126,14 @@ interface Version {
   madeFrom?: number;
   /** A screen recording with its pointer log (screen-events.json): Review's Zoom & pointer editor opens on it. */
   screen?: boolean;
+  /** The timeline file from the editing app, kept as sent (v<n>/timeline); shows under the player. */
+  timelineFile?: string;
+  /** The AI Editor draft it previews, filed by a plug-in: managers see it; the draft's files come from the editor. */
+  edit?: { project: string; draft: string };
+  /** A link back to whatever made this version (a plug-in sets it: its edit, say). Managers see it, as a link. */
+  source?: VersionSource;
+  /** Its sound in parts (v<n>/stems/, see attachStems): the player's voice controls. */
+  stems?: StemSet;
   /** When its video files were deleted to save space (a later version went on
    *  to Caption Studio); its comments and thumbnail stay. */
   removed?: number;
@@ -116,6 +141,12 @@ interface Version {
 }
 
 type Share = { token: string; enabled: boolean; download: boolean };
+
+/** A version's link back to what made it: a plug-in's own page (href), shown to managers. */
+export type VersionSource = { kind: string; id: string; label: string; href: string };
+
+/** An AI Editor preview's sound in parts (its voice groups, the enhancers they were made with, the voice picked). */
+export type StemSet = { groups: { key: string; label: string; mix: number }[]; fx: string[]; voice: string; duration: number };
 
 interface Meta {
   id: string;
@@ -157,6 +188,10 @@ interface Comment {
   drawing?: Stroke[];
   /** Images and videos attached to show what's meant. */
   refs?: Ref[];
+  /** Plug-in data (plug-in id → JSON), see contracts/review-payload.ts. */
+  plugins?: Record<string, unknown>;
+  /** A timeline item it is about (a version with a timeline: an AI Editor draft's shot, say). */
+  anchor?: Anchor;
   resolved?: boolean;
   createdAt: number;
   editedAt?: number;
@@ -168,7 +203,8 @@ interface Comment {
 type Ref = { id: string; name: string; mime: string; bytes: number; kind: "image" | "video" };
 const REFS_PER_VERSION = 100;
 
-type UploadInit = UploadState & { assetId?: string; projectId?: string };
+/** `direct`: the upload's object in the server's bucket (the upload relay's "direct" kind), finished by complete. */
+export type UploadInit = UploadState & { assetId?: string; projectId?: string; direct?: { key: string; uploadId: string }; relay?: { id: string; vid: string } };
 
 interface Project {
   id: string;
@@ -460,6 +496,36 @@ function enqueue(id: string, n: number): void {
   chain = chain.then(() => processVersion(id, n).finally(() => queued.delete(key)));
 }
 
+/** A relay's file is placed in the background: processing starts when it is in; a failure marks the version. */
+function placeInBackground(id: string, n: number, placed: Promise<void>, onPlaced?: () => void): void {
+  placed
+    .then(
+      () => {
+        enqueue(id, n);
+        onPlaced?.();
+      },
+      (e) => {
+        console.error(`[review] relay ${id}/${n}:`, e);
+        return setVersion(id, n, { status: "error", error: "Couldn't fetch the upload from its relay. Upload it again." });
+      },
+    )
+    .catch((e) => console.error(`[review] relay ${id}/${n}:`, e));
+}
+
+/** A restart while a relay's file was being copied: copy it again, unless the copy had already landed. */
+async function resumeRelay(id: string, n: number, relay: NonNullable<Version["relay"]>): Promise<void> {
+  if (await stat(sourcePath(id, n)).then((s) => s.size === relay.bytes, () => false)) {
+    enqueue(id, n);
+    return;
+  }
+  const plugged = pluginRelay(relay.id);
+  placeInBackground(
+    id,
+    n,
+    plugged ? plugged.place(relay.vid, sourcePath(id, n), relay.bytes) : Promise.reject(new Error("That upload relay is no longer set up")),
+  );
+}
+
 /** A restart mid-transcode leaves versions "processing": pick them up again. */
 async function resumePending(): Promise<void> {
   const ids = await readdir(ROOT).catch(() => [] as string[]);
@@ -467,7 +533,8 @@ async function resumePending(): Promise<void> {
     const meta = await readMeta(id);
     for (const v of meta?.versions ?? []) {
       if (v.status === "processing") {
-        enqueue(id, v.n);
+        if (v.relay) void resumeRelay(id, v.n, v.relay);
+        else enqueue(id, v.n);
       }
     }
   }
@@ -482,17 +549,6 @@ async function resumePending(): Promise<void> {
  * keyed by version. No AI runs on the way in: transcribe and describe
  * wait until someone asks for them in the library (they spend that person's key).
  */
-
-/** The library a Review owner's videos go in: their first, made when there is none. */
-function libraryFor(owner: string): string | null {
-  const home = homeOf(owner);
-  const d = libraryDb();
-  const found = d.prepare("SELECT id FROM libraries WHERE workspace_id = ? ORDER BY created_at, id LIMIT 1").get(home) as { id: string } | undefined;
-  if (found) return found.id;
-  const id = `lib_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
-  d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES (?, ?, 'Library', 'local', ?)").run(id, home, Date.now());
-  return id;
-}
 
 /**
  * The video as Review has it, live or in the trash, read under one lock (a restore in between would read as gone).
@@ -718,6 +774,18 @@ async function cleanRefs(assetId: string, n: number, raw: unknown): Promise<Ref[
 const cleanText = (raw: unknown, max: number) =>
   typeof raw === "string" ? raw.replace(/\r\n/g, "\n").trim().slice(0, max) : "";
 
+/** A timeline item a comment points at (track V1..A3, record frame, length in frames). */
+type Anchor = { track: string; rec: number; len: number; label: string };
+
+function cleanAnchor(v: unknown): Anchor | undefined {
+  const a = v as Record<string, unknown> | null;
+  if (!a || typeof a.track !== "string" || !/^[VA][1-9]$/.test(a.track)) return undefined;
+  const rec = Number(a.rec);
+  const len = Number(a.len);
+  if (!Number.isInteger(rec) || rec < 0 || !Number.isInteger(len) || len <= 0) return undefined;
+  return { track: a.track, rec, len, label: cleanText(a.label, 120) || a.track };
+}
+
 const cleanTime = (raw: unknown, duration: number) => {
   const t = Number(raw);
   if (raw == null || raw === "" || !Number.isFinite(t) || t < 0) return undefined;
@@ -739,7 +807,8 @@ interface Viewer {
 const realUser = (u: SessionUser | undefined) =>
   u && u.role !== "visitor" ? u.username : undefined;
 
-async function viewer(c: Context<{ Variables: AuthVars }>): Promise<Viewer | null> {
+/** Who may see a Review version on an owner, share or public-page route (null = not theirs). For a plug-in's routes too. */
+export async function viewer(c: Context<{ Variables: AuthVars }>): Promise<Viewer | null> {
   const user = c.get("user");
   const token = c.req.param("token");
   const guestKey = c.req.header("x-review-key")?.slice(0, 80) || undefined;
@@ -806,6 +875,11 @@ function publicAsset(m: Meta, manage: boolean, download = manage || !!m.share?.d
       error: v.error,
       captioned: !!v.captioned,
       madeFrom: v.madeFrom,
+      timeline: !!v.timelineFile,
+      ...(manage && v.timelineFile ? { timelineFile: v.timelineFile } : {}),
+      ...(manage && v.edit ? { edit: v.edit } : {}),
+      ...(manage && v.source ? { source: v.source } : {}),
+      ...(v.stems && !v.removed ? { stems: v.stems } : {}),
       ...(manage && v.screen && !v.removed ? { screen: true } : {}),
       bytes: v.bytes,
       removed: !!v.removed,
@@ -820,7 +894,11 @@ function publicAsset(m: Meta, manage: boolean, download = manage || !!m.share?.d
 }
 
 // guestKey: undefined drops the secret from the JSON
-const publicComment = (v: Viewer, cm: Comment) => ({ ...cm, guestKey: undefined, mine: isAuthor(v, cm) });
+// plug-in data (edit timelines, labels, placeholder text) is for the managers who make edits: other viewers never get it
+const publicComment = (v: Viewer, cm: Comment) => {
+  const { plugins, ...rest } = cm;
+  return { ...rest, guestKey: undefined, mine: isAuthor(v, cm), ...(v.manage && plugins ? { plugins } : {}) };
+};
 
 const safeName = (s: string) => s.replace(/[^\w.\- ]+/g, "").trim() || "video";
 /** A new video is named after its file. */
@@ -851,7 +929,7 @@ reviewApp.get("/", async (c) => {
 
 /** What an upload will be and where it goes, checked for both ways in
   *  (/uploads through this server). */
-async function uploadInit(c: Context<{ Variables: AuthVars }>): Promise<Response | UploadInit> {
+export async function uploadInit(c: Context<{ Variables: AuthVars }>): Promise<Response | UploadInit> {
   const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   const size = Number(body?.size);
   if (!Number.isSafeInteger(size) || size <= 0 || size > MAX_UPLOAD_BYTES) {
@@ -879,6 +957,9 @@ async function uploadInit(c: Context<{ Variables: AuthVars }>): Promise<Response
     projectId: projectId as string | undefined,
   };
 }
+
+// The Mac app before the one-codebase build asks for a relay here: no relay on this server, so it sends parts (501 = go chunked).
+reviewApp.post("/relay", (c) => c.json({ error: "No upload relay here: send the file in parts" }, 501));
 
 reviewApp.post("/uploads", async (c) => {
   const init = await uploadInit(c);
@@ -918,8 +999,9 @@ export function fileVideo(id: string, projectId: string): Promise<Meta | null> {
 
 export async function addVersion(
   assetId: string | undefined,
-  v: { owner: string; name: string; mime: string; bytes: number; projectId?: string },
+  v: { owner: string; name: string; mime: string; bytes: number; projectId?: string; edit?: { project: string; draft: string }; source?: VersionSource },
   place: (dest: string) => Promise<void>,
+  options: { relay?: { id: string; vid: string } } = {},
 ): Promise<{ meta: Meta; n: number } | null> {
   const id = assetId ?? randomUUID();
   const now = Date.now();
@@ -954,18 +1036,27 @@ export async function addVersion(
       height: 0,
       status: "processing",
       progress: 0.02,
+      ...(options.relay ? { relay: { ...options.relay, bytes: v.bytes } } : {}),
+      ...(v.edit ? { edit: v.edit } : {}),
+      ...(v.source ? { source: v.source } : {}),
       createdAt: now,
     });
   });
   if (!reserved) return null;
+  const emitAdded = () => emitEvent("review.version.added", { asset: id, n, owner: v.owner });
   try {
     await mkdir(versionDir(id, n), { recursive: true });
-    await place(sourcePath(id, n));
+    // A relay's file arrives later: it is placed in the background, and processing and the added event follow it in.
+    if (options.relay) placeInBackground(id, n, place(sourcePath(id, n)), emitAdded);
+    else await place(sourcePath(id, n));
   } catch (e) {
     await setVersion(id, n, { status: "error", error: "Upload incomplete — upload it again" });
     throw e;
   }
-  enqueue(id, n);
+  if (!options.relay) {
+    enqueue(id, n);
+    emitAdded();
+  }
   const meta = await readMeta(id);
   return meta ? { meta, n } : null;
 }
@@ -978,10 +1069,11 @@ reviewApp.post("/uploads/:uid/complete", async (c) => {
 });
 
 /** The upload is in: a new video, or the next version of one (with a notice). */
-async function finishUpload(
+export async function finishUpload(
   c: Context<{ Variables: AuthVars }>,
   state: UploadInit,
   place: (dest: string) => Promise<void>,
+  options: { relay?: { id: string; vid: string } } = {},
 ) {
   const user = c.get("user");
   if (state.owner !== user.username && user.role !== "admin") {
@@ -998,6 +1090,7 @@ async function finishUpload(
         projectId: state.projectId,
       },
       place,
+      options,
     );
     if (!added) return c.json({ error: "Not found" }, 404);
     if (state.assetId) {
@@ -1012,6 +1105,218 @@ async function finishUpload(
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
   }
 }
+
+/**
+ * The upload relay (api/uploads/relay, mounted in boot.ts): the same three calls as /api/review/uploads, on the route
+ * the server's relay setting names (uploadRelayView). "chunked" is parts through this server. "direct": start hands
+ * the browser presigned part URLs for the server's bucket, and complete copies the finished object in as the source.
+ * The bucket is only a hop, so the file is local for processing as it is for every video.
+ */
+export const uploadRelayApp = new Hono<{ Variables: AuthVars }>();
+const relayView = () => uploadRelayView(process.env.CT_UPLOAD_RELAY, !!serverBucket(), pluginUploadRelays().map((r) => ({ id: r.id, label: r.label, available: r.available() })));
+const pluginRelay = (id: string): UploadRelay | undefined => pluginUploadRelays().find((r) => r.id === id);
+
+uploadRelayApp.get("/", (c) => c.json(relayView()));
+
+uploadRelayApp.post("/", async (c) => {
+  const init = await uploadInit(c);
+  if (init instanceof Response) return init;
+  const uid = randomUUID();
+  const view = relayView();
+  // A plug-in relay only for a client that speaks its protocol (?relay=tus); any other client gets chunked parts.
+  const plugged = c.req.query("relay") === "tus" ? pluginRelay(view.active) : undefined;
+  if (plugged) {
+    const started = await plugged.start({ name: init.name, mime: init.mime, total: init.total }).catch(() => null);
+    if (!started) return c.json({ error: "The upload relay isn't answering: try again" }, 502);
+    await startUpload<UploadInit>(uploadDir(uid), { ...init, relay: { id: plugged.id, vid: started.vid } });
+    return c.json({ id: uid, relay: plugged.id, partSize: started.tus.partSize, tus: started.tus });
+  }
+  const store = view.active === "direct" ? serverStore() : null;
+  if (store?.direct) {
+    const key = `review-uploads/${uid}/source`;
+    // ponytail: a browser that never completes leaves the bucket's multipart upload open; the bucket's lifecycle rule must clear it
+    const started = await store.direct.start(key, init.total, { contentType: init.mime });
+    await startUpload<UploadInit>(uploadDir(uid), { ...init, partSize: started.partSize, direct: { key, uploadId: started.uploadId } });
+    return c.json({ id: uid, relay: "direct", partSize: started.partSize, urls: started.urls });
+  }
+  await startUpload<UploadInit>(uploadDir(uid), init);
+  return c.json({ id: uid, relay: "chunked", partSize: PART_SIZE });
+});
+
+uploadRelayApp.get("/:uid/parts", async (c) => {
+  const uid = c.req.param("uid");
+  const user = c.get("user");
+  const state = UUID.test(uid) ? await readUploadState<UploadInit>(uploadDir(uid)) : null;
+  if (!state || state.direct || state.relay || (state.owner !== user.username && user.role !== "admin")) {
+    return c.json({ error: "Not found" }, 404);
+  }
+  return c.json({ partSize: state.partSize, parts: await receivedParts(uploadDir(uid), state) });
+});
+
+uploadRelayApp.post("/:uid/parts/:partNumber", async (c) => {
+  const uid = c.req.param("uid");
+  if (!UUID.test(uid)) return c.json({ error: "Invalid part" }, 400);
+  const state = await readUploadState<UploadInit>(uploadDir(uid));
+  if (state?.direct) return c.json({ error: "This upload goes straight to the bucket: send its parts there" }, 409);
+  if (state?.relay) return c.json({ error: "This upload goes to its relay: send its parts there" }, 409);
+  return receivePart(c, uploadDir(uid), c.get("user"));
+});
+
+uploadRelayApp.post("/:uid/complete", async (c) => {
+  const uid = c.req.param("uid");
+  const state = UUID.test(uid) ? await readUploadState<UploadInit>(uploadDir(uid)) : null;
+  if (!state) return c.json({ error: "No upload in progress" }, 409);
+  const direct = state.direct;
+  if (!direct) {
+    if (state.relay) {
+      const { id: relayId, vid } = state.relay;
+      const plugged = pluginRelay(relayId);
+      if (!plugged) return c.json({ error: "That upload relay is no longer set up" }, 409);
+      const res = await finishUpload(c, state, (dest) => plugged.place(vid, dest, state.total), { relay: { id: relayId, vid } });
+      if (res.status === 200) await rm(uploadDir(uid), { recursive: true, force: true }).catch(() => {});
+      return res;
+    }
+    return finishUpload(c, state, (dest) => assembleParts(uploadDir(uid), dest, state));
+  }
+  const user = c.get("user");
+  if (state.owner !== user.username && user.role !== "admin") return c.json({ error: "Not found" }, 404);
+  const body = (await c.req.json().catch(() => null)) as { parts?: unknown } | null;
+  const parts = (Array.isArray(body?.parts) ? body.parts : []).map((p: { number?: unknown; etag?: unknown }) => ({
+    number: Number(p?.number),
+    etag: typeof p?.etag === "string" ? p.etag : "",
+  }));
+  if (!parts.length || parts.some((p) => !Number.isSafeInteger(p.number) || p.number < 1 || !p.etag || p.etag.length > 200)) {
+    return c.json({ error: "Invalid parts" }, 400);
+  }
+  const store = serverStore();
+  if (!store?.direct) return c.json({ error: "The server's bucket is not set up" }, 409);
+  try {
+    await store.direct.complete(direct.key, direct.uploadId, parts);
+  } catch (e) {
+    return c.json({ error: `The bucket did not finish the upload: ${e instanceof Error ? e.message : String(e)}` }, 400);
+  }
+  return finishUpload(c, state, async (dest) => {
+    // ponytail: the object is copied from the bucket cache, so a large video takes its size twice on this disk for a moment
+    await copyFile(await store.localCopy(direct.key), dest);
+    await store.delete(direct.key);
+    await rm(uploadDir(uid), { recursive: true, force: true });
+  });
+});
+
+/** Send a version to Finals (Review's own button): the library's version is linked, never copied. Owners and admins;
+ *  a ready version of 1080p or more. The piece is named after the Review project, its item after the version. */
+reviewApp.post("/assets/:id/v/:n/finals", async (c) => {
+  const v = await viewer(c);
+  const ver = v?.manage ? v.meta.versions.find((x) => x.n === Number(c.req.param("n"))) : undefined;
+  if (!v || !ver) return c.json({ error: "Not found" }, 404);
+  if (ver.status !== "ready" || !ver.width) return c.json({ error: "Wait until this version is ready" }, 409);
+  const small = belowHd(ver.width, ver.height);
+  if (small) return c.json({ error: small }, 409);
+  if (!ver.versionId) return c.json({ error: "This version isn't in the library yet" }, 409);
+  const project = v.meta.projectId ? (await readProjects()).find((p) => p.id === v.meta.projectId) : undefined;
+  const out = await addToFinals(
+    {
+      owner: v.meta.owner,
+      libraryId: libraryFor(v.meta.owner),
+      label: project?.name || v.meta.name,
+      item: ver.name || null,
+      kind: "review",
+      width: ver.width,
+      height: ver.height,
+    },
+    { versionId: ver.versionId },
+  );
+  if (!out.ok) return c.json({ error: out.error }, out.code === "no_access" || out.code === "not_found" ? 404 : 409);
+  return c.json({ pieceId: out.pieceId });
+});
+
+/** Save to Content, an older path kept for older clients. A captioned version and the version it
+ *  was made from go to Finals as one piece named after the project, each as its own item, as two Send to Finals calls. Never
+ *  below 1080p; the library holds each file once. */
+reviewApp.post("/assets/:id/v/:n/content", async (c) => {
+  const v = await viewer(c);
+  const ver = v?.manage ? v.meta.versions.find((x) => x.n === Number(c.req.param("n"))) : undefined;
+  if (!v || !ver) return c.json({ error: "Not found" }, 404);
+  if (c.get("user").role !== "admin") return c.json({ error: "Only admins can save to Content" }, 403);
+  const master = ver.captioned && ver.madeFrom ? v.meta.versions.find((x) => x.n === ver.madeFrom) : undefined;
+  if (!master) return c.json({ error: "Mark it captioned and pick its version without captions first" }, 409);
+  for (const x of [ver, master]) {
+    if (x.status !== "ready" || !x.width) return c.json({ error: "Wait until both are ready" }, 409);
+    if (!x.versionId) return c.json({ error: "This version isn't in the library yet" }, 409);
+    const small = belowHd(x.width, x.height);
+    if (small) return c.json({ error: small }, 409);
+  }
+  const project = v.meta.projectId ? (await readProjects()).find((p) => p.id === v.meta.projectId) : undefined;
+  let pieceId: string | undefined;
+  for (const x of [ver, master]) {
+    const out = await addToFinals(
+      { owner: v.meta.owner, libraryId: libraryFor(v.meta.owner), label: project?.name || v.meta.name, item: x.name || null, kind: "review", width: x.width!, height: x.height! },
+      { versionId: x.versionId! },
+    );
+    if (!out.ok) return c.json({ error: out.error }, out.code === "no_access" || out.code === "not_found" ? 404 : 409);
+    pieceId = out.pieceId;
+  }
+  return c.json({ pieceId }, 201);
+});
+
+const timelinePath = (id: string, n: number) => path.join(versionDir(id, n), "timeline");
+
+/** A timeline a plug-in built itself (its view, see fileTimelineView): kept as a view, not parsed again. */
+const VIEW_FILE = /\.view\.json$/;
+
+async function fileTimeline(id: string, version: Version): Promise<TimelineView | null> {
+  try {
+    const text = await readFile(timelinePath(id, version.n), "utf-8");
+    if (VIEW_FILE.test(version.timelineFile!)) return JSON.parse(text) as TimelineView;
+    return importTimeline(version.timelineFile!, text, version.fps || undefined);
+  } catch {
+    return null;
+  }
+}
+
+/** Links a version's stems in: `place` fills the folder, then the manifest (stems.json) marks the set as there. */
+export async function attachStems(id: string, n: number, set: StemSet, place: (dir: string) => Promise<void>): Promise<void> {
+  const dir = path.join(versionDir(id, n), "stems");
+  await mkdir(dir, { recursive: true });
+  await place(dir);
+  await writeFile(path.join(dir, "stems.json"), JSON.stringify(set));
+  await setVersion(id, n, { stems: set });
+}
+
+/** A plug-in files its own timeline view for a version (the AI Editor's draft): path-free, served as it is. */
+export async function fileTimelineView(id: string, n: number, name: string, view: TimelineView): Promise<void> {
+  const tmp = `${timelinePath(id, n)}.tmp-${randomUUID()}`;
+  await writeFile(tmp, JSON.stringify(view));
+  await rename(tmp, timelinePath(id, n));
+  await setVersion(id, n, { timelineFile: name });
+}
+
+/** A version's timeline from the editing app (OTIO, FCP 7 XML, FCPXML or EDL), owners only.
+ *  The file is kept as sent and read on each GET: an EDL needs the video's frame rate. */
+reviewApp.put("/assets/:id/v/:n/timeline", async (c) => {
+  const v = await viewer(c);
+  const n = Number(c.req.param("n"));
+  const version = v?.manage ? v.meta.versions.find((x) => x.n === n) : undefined;
+  if (!v || !version) return c.json({ error: "Not found" }, 404);
+  if (version.edit) return c.json({ error: "An AI edit has its own timeline" }, 409);
+  const name = cleanText(c.req.query("name"), 160) || "timeline";
+  // refuse on the declared length before any of the body is read
+  if (Number(c.req.header("content-length") ?? 0) > MAX_TIMELINE_BYTES) {
+    return c.json({ error: "That timeline file is too big" }, 413);
+  }
+  const text = await c.req.text();
+  if (Buffer.byteLength(text) > MAX_TIMELINE_BYTES) return c.json({ error: "That timeline file is too big" }, 413);
+  try {
+    importTimeline(name, text, version.fps || undefined);
+  } catch (e) {
+    return c.json({ error: e instanceof TimelineError ? e.message : `Couldn't read ${name}` }, 400);
+  }
+  const tmp = `${timelinePath(v.meta.id, n)}.tmp-${randomUUID()}`;
+  await writeFile(tmp, text);
+  await rename(tmp, timelinePath(v.meta.id, n));
+  const meta = await setVersion(v.meta.id, n, { timelineFile: name });
+  return meta ? c.json(publicAsset(meta, true)) : c.json({ error: "Not found" }, 404);
+});
 
 /** A screen recording's pointer log (`events`, once, from the Mac app) or the look picked for it (`look`, on every change). */
 reviewApp.put("/assets/:id/v/:n/screen/:part{events|look}", async (c) => {
@@ -1224,11 +1529,46 @@ async function purgeTrash(): Promise<void> {
   const stale = Date.now() - UPLOAD_DAYS * 86_400_000;
   for (const uid of await readdir(path.join(ROOT, "uploads")).catch(() => [] as string[])) {
     const st = await stat(uploadDir(uid)).catch(() => null);
-    if (UUID.test(uid) && st && st.mtimeMs < stale) await rm(uploadDir(uid), { recursive: true, force: true });
+    if (UUID.test(uid) && st && st.mtimeMs < stale) {
+      const relay = (await readUploadState<UploadInit>(uploadDir(uid)))?.relay;
+      if (relay) await pluginRelay(relay.id)?.abandon(relay.vid).catch(() => {});
+      await rm(uploadDir(uid), { recursive: true, force: true });
+    }
   }
 }
 void purgeTrash().catch(() => {});
 setInterval(() => void purgeTrash().catch(() => {}), 6 * 3600_000).unref();
+
+/** Retention (api/retention.ts): delete the videos it picks (a comment counts as a change), trash included, then
+ *  their owners' folders left empty. The library drops each one (syncLibrary). */
+export async function purgeExpiredReview(expired: Expired): Promise<void> {
+  for (const m of await allMetas()) {
+    const commented = (await stat(commentsPath(m.id)).catch(() => null))?.mtimeMs ?? 0;
+    if (!expired(m.owner, Math.max(m.updatedAt, commented))) continue;
+    for (const [key, child] of children) if (key.startsWith(`${m.id}/`)) child.kill("SIGKILL");
+    await withLock(m.id, async () => {
+      if (m.share) await rm(linkPath(m.share.token), { force: true });
+      await rm(assetDir(m.id), { recursive: true, force: true });
+    });
+    await syncLibrary(m.id);
+  }
+  for (const id of await readdir(path.join(ROOT, "trash")).catch(() => [] as string[])) {
+    const m = await readTrashed(id);
+    if (m && expired(m.owner, m.deletedAt ?? m.updatedAt)) {
+      await withLock(id, () => rm(trashDir(id), { recursive: true, force: true }));
+      await syncLibrary(id);
+    }
+  }
+  const filed = new Set((await allMetas()).map((m) => m.projectId));
+  const gone = (p: Project) => !filed.has(p.id) && expired(p.owner, p.createdAt);
+  if (!(await readProjects()).some(gone)) return;
+  const removed = await updateProjects((list) => {
+    const out = list.filter(gone);
+    list.splice(0, list.length, ...list.filter((p) => !gone(p)));
+    return out;
+  });
+  for (const p of removed) if (p.share) await rm(linkPath(p.share.token), { force: true });
+}
 
 // ---------- stacks: drop a video on another, or break one apart ----------
 
@@ -1429,7 +1769,7 @@ reviewApp.patch("/assets/:id/v/:n", async (c) => {
   return c.json(publicAsset(meta, true));
 });
 
-const REMOVED = { error: "This version's video was deleted to save space" } as const;
+export const REMOVED = { error: "This version's video was deleted to save space" } as const;
 
 /** Versions before n whose files can go once n is the one being captioned:
  *  not the version without captions a kept version was made from, not still
@@ -1458,6 +1798,7 @@ reviewApp.post("/assets/:id/v/:n/clear-earlier", async (c) => {
         if (st?.nlink === 1) freed += st.size;
         await rm(f, { force: true });
       }
+      await rm(path.join(versionDir(m.id, x.n), "stems"), { recursive: true, force: true });
       x.removed = Date.now();
     }
     m.updatedAt = Date.now();
@@ -1526,7 +1867,7 @@ reviewApp.delete("/projects/:pid", async (c) => {
 interface Note {
   id: string;
   /** producing / delivered: a freelancer on a Workshop share link; workshop: a Content Workshop reply finished */
-  kind: "comment" | "reply" | "approved" | "changes" | "version" | "producing" | "delivered" | "workshop" | "failed";
+  kind: "comment" | "reply" | "approved" | "changes" | "version" | "producing" | "delivered" | "workshop" | "failed" | "ready";
   /** Who did it, as shown. */
   by: string;
   assetId: string;
@@ -1603,6 +1944,82 @@ export async function notifyWorkshopOwner(owner: string, note: { kind: "producin
   }).catch(() => {});
 }
 
+/** Sets a video's approval. With `only`, the move happens only when the video is in that status now. */
+export function setApproval(id: string, status: Approval, by: string, only?: Approval): Promise<Meta | null> {
+  return updateMeta(id, (m) => {
+    if (only && m.approval.status !== only) return;
+    if (!canMove(APPROVAL_MOVES, m.approval.status, status)) return;
+    m.approval = { status, by, at: Date.now() };
+  });
+}
+
+/** The user's project with this name, made when missing. Spaces, case and punctuation don't count. */
+export function projectNamed(owner: string, name: string): Promise<string> {
+  const key = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+  return updateProjects((list) => {
+    const found = list.find((p) => p.owner === owner && key(p.name) === key(name));
+    if (found) return found.id;
+    const project: Project = { id: randomUUID(), name, owner, createdAt: Date.now() };
+    list.push(project);
+    return project.id;
+  });
+}
+
+/** Adds the reply and resolve marks to a version's comments. Returns how many were resolved. */
+export function answerComments(
+  assetId: string,
+  version: number,
+  author: string,
+  answers: { id: string; reply: string; resolve: boolean }[],
+): Promise<number> {
+  return updateComments(assetId, (list) => {
+    let done = 0;
+    for (const a of answers) {
+      const cm = list.find((x) => x.id === a.id && !x.parentId);
+      if (!cm) continue;
+      if (a.reply.trim()) {
+        list.push({ id: randomUUID(), version, parentId: cm.id, text: a.reply.trim().slice(0, 4000), author, createdAt: Date.now() });
+      }
+      if (a.resolve && !cm.resolved) {
+        cm.resolved = true;
+        done++;
+      }
+    }
+    return done;
+  });
+}
+
+/** The reference looks a comment names: the ones uploaded to this version, as base64 JPEGs. */
+export async function refLooks(assetId: string, n: number, refs: Ref[] = []) {
+  const looks = await Promise.all(
+    refs.map(async (r) => {
+      const jpeg = await readFile(path.join(refsDir(assetId, n), `${r.id}.jpg`)).catch(() => null);
+      return jpeg ? [{ name: r.name, kind: r.kind, image: jpeg.toString("base64") }] : [];
+    }),
+  );
+  return looks.flat();
+}
+
+/** Tells the owner a version is ready for review (only the owner: nobody else has seen it yet). */
+export async function notifyReady(id: string, by: string, text: string): Promise<void> {
+  const m = await readMeta(id);
+  if (!m || !USERNAME_RE.test(m.owner)) return;
+  await updateInbox(m.owner, (list) => {
+    list.unshift({ id: randomUUID(), kind: "ready", by, assetId: m.id, name: m.name, text: text.slice(0, 140),
+      href: `/review/${m.id}`, at: Date.now() });
+  }).catch(() => {});
+}
+
+/** The owner's videos marked Needs review: the home page's to-do list. */
+export async function waitingFor(owner: string): Promise<{ asset: string; name: string; project?: string; at: number }[]> {
+  const projects = new Map((await readProjects()).map((p) => [p.id, p.name]));
+  return (await allMetas())
+    .filter((m) => m.owner === owner && !m.deletedAt && m.approval.status === "needs_review")
+    .sort((a, b) => (b.approval.at ?? b.updatedAt) - (a.approval.at ?? a.updatedAt))
+    .map((m) => ({ asset: m.id, name: m.name, ...(m.projectId && projects.get(m.projectId) ? { project: projects.get(m.projectId) } : {}),
+      at: m.approval.at ?? m.updatedAt }));
+}
+
 reviewApp.get("/notifications", async (c) => {
   const list = await readInbox(c.get("user").username);
   return c.json(
@@ -1662,6 +2079,14 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
       200,
       { "Cache-Control": "no-store" },
     );
+  });
+
+  // a version's timeline, for the strip under the player (the same visibility as its video)
+  reviewApp.get(`${base}/v/:n/timeline`, async (c) => {
+    const v = await viewer(c);
+    const version = v?.meta.versions.find((x) => x.n === Number(c.req.param("n")));
+    const view = version?.timelineFile && (await fileTimeline(v!.meta.id, version));
+    return view ? c.json(view) : c.json({ error: "Not found" }, 404);
   });
 
   reviewApp.get(`${base}/v/:n/:file{play|thumb|download}`, async (c) => {
@@ -1762,17 +2187,25 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
     const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
     const text = cleanText(body?.text, 4000);
     const drawing = cleanDrawing(body?.drawing);
+    // data a plug-in attaches (e.g. timeline edits): kept as sent, for managers only
+    const plugins = body?.plugins as Record<string, unknown> | undefined;
+    const pluginsWhy = payloadError(plugins);
+    if (pluginsWhy) return c.json({ error: pluginsWhy }, 400);
+    if (plugins !== undefined && !v.manage) return c.json({ error: "Only a manager can send that" }, 403);
     const parentId = typeof body?.parentId === "string" ? body.parentId : undefined;
     const version = v.meta.versions.find((x) => x.n === Number(body?.version));
     if (!version) return c.json({ error: "Unknown version" }, 400);
     const refs = parentId ? [] : await cleanRefs(v.meta.id, version.n, body?.refs);
-    if (!text && !drawing && !refs.length) return c.json({ error: "Write a comment first" }, 400);
+    // plug-in data rides only on a top-level comment (a reply keeps none of it), so it doesn't count as a reply's text
+    if (!text && !drawing && !refs.length && !(plugins && !parentId)) return c.json({ error: "Write a comment first" }, 400);
     const author = v.user ?? cleanText(body?.author, 60);
     if (!author) return c.json({ error: "Add your name first" }, 400);
     if (!v.user && (!v.guestKey || v.guestKey.length < 16)) {
       return c.json({ error: "Missing reviewer key" }, 400);
     }
     const t = parentId ? undefined : cleanTime(body?.t, version.duration);
+    // a timeline item: only on a top-level comment of a version that has a timeline
+    const anchor = parentId || !(version.edit || version.timelineFile) ? undefined : cleanAnchor(body?.anchor);
     const tEnd = t === undefined ? undefined : cleanTime(body?.tEnd, version.duration);
     const cm: Comment = {
       id: randomUUID(),
@@ -1785,6 +2218,8 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
       ...(v.user ? { user: v.user } : { guestKey: v.guestKey }),
       ...(drawing && !parentId ? { drawing } : {}),
       ...(refs.length ? { refs } : {}),
+      ...(plugins && !parentId ? { plugins } : {}),
+      ...(anchor ? { anchor } : {}),
       createdAt: Date.now(),
     };
     const error = await updateComments(v.meta.id, (list) => {
@@ -1798,7 +2233,7 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
     if (error) return c.json({ error }, 400);
     await notify(v.meta, { name: author, user: v.user }, {
       kind: parentId ? "reply" : "comment",
-      text: text || (drawing ? "Drew on the frame" : "Added a reference"),
+      text: text || (drawing ? "Drew on the frame" : plugins ? "Sent changes to the edit" : "Added a reference"),
       query: `?v=${version.n}&c=${parentId ?? cm.id}`,
     });
     return c.json(publicComment(v, cm));

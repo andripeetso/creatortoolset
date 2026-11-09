@@ -56,7 +56,7 @@ function seed(opts: { title?: string; blocks?: string[]; status?: string; messag
   mkdirSync(path.join(sdir, "docs"), { recursive: true });
   writeFileSync(
     path.join(sdir, "meta.json"),
-    JSON.stringify({ id, owner: "alex", title: opts.title ?? "Kids strength", query: "", status: opts.status, sources: [], drafts: [], createdAt: 1, updatedAt: 1 }),
+    JSON.stringify({ id, owner: "alex", title: opts.title ?? "Strength training", query: "", status: opts.status, sources: [], drafts: [], createdAt: 1, updatedAt: 1 }),
   );
   writeFileSync(
     path.join(sdir, "docs", `${docId}.json`),
@@ -156,7 +156,7 @@ describe("no dot for finished stages", () => {
 describe("duplicate", () => {
   it("copies the pieces, the notes, the sources and the chat under a new id, not the post it became", async () => {
     const { id } = seed({
-      title: "Kids strength",
+      title: "Strength training",
       blocks: ["First slide text here"],
       notes: "My notes",
       status: "published",
@@ -166,7 +166,7 @@ describe("duplicate", () => {
     expect(res.status).toBe(201);
     const copy = (await res.json()) as { id: string; title: string; status: string; notes: string; posted?: unknown; docs?: unknown };
     expect(copy.id).not.toBe(id);
-    expect(copy.title).toBe("Kids strength copy");
+    expect(copy.title).toBe("Strength training copy");
     expect(copy.status).toBe("writing");
     expect(copy.notes).toBe("My notes");
     expect(copy.posted).toBeUndefined();
@@ -198,7 +198,7 @@ describe("list order", () => {
     const { id } = seed();
     const at = async () => (await summaryOf(id)).updatedAt;
     const before = await at();
-    for (const body of [{ query: "kids" }, { status: "ready" }, { pinned: true }, { title: "Renamed" }]) {
+    for (const body of [{ query: "adults" }, { status: "ready" }, { pinned: true }, { title: "Renamed" }]) {
       expect((await call("PATCH", `/api/workshop/sessions/${id}`, body)).status).toBe(200);
     }
     expect(await at()).toBe(before);

@@ -3,6 +3,8 @@ import type { Context } from "hono";
 import { sessionOf, type AuthVars } from "./auth";
 import { LOGINS, PLATFORMS, type ConnectorsView, type LoginKind, type SocialPlatform } from "../contracts/connectors";
 import { appFor, finishLogin, freshToken, loginUrl, pullAccount } from "./lib/connectors/platforms";
+import { sessionSources } from "./lib/connectors/provider";
+import { printPosts } from "./lib/connectors/prints";
 import { findAccount, newState, patchAccount, publicAccount, readConnectors, removeAccount, saveAccounts, type StoredAccount } from "./lib/connectors/store";
 import { publicApifyStatus, readApify } from "./lib/instagram/apify";
 import { addLoginAccount } from "./instagram";
@@ -38,10 +40,21 @@ async function view(c: Context<{ Variables: AuthVars }>): Promise<ConnectorsView
     redirects: Object.fromEntries(KINDS.map((k) => [k, redirectFor(c, k)])) as ConnectorsView["redirects"],
     apify: { configured: apify.configured, valid: apify.valid },
     accounts: readConnectors(user.username).accounts.map(publicAccount),
+    extras: { sessions: sessionSources() },
   };
 }
 
 connectorsApp.get("/", async (c) => c.json(await view(c)));
+
+/** Which logins this server is set up for, by name only (from .env; the keys never leave the server). */
+connectorsApp.get("/apps", (c) => c.json({ set: Object.fromEntries(KINDS.map((k) => [k, !!appFor(k)])) }));
+
+/** TikTok's "verify URL ownership" file, at the site's root (boot.ts mounts this before the app). .env: TIKTOK_VERIFY_FILE + TIKTOK_VERIFY_CONTENT. */
+export function tiktokVerifyFile(name: string): string | null {
+  const file = process.env.TIKTOK_VERIFY_FILE?.trim();
+  const content = process.env.TIKTOK_VERIFY_CONTENT?.trim();
+  return file && content && file === name ? content : null;
+}
 
 /** Start a login: the page to open (the browser goes there and comes back to /callback). */
 connectorsApp.get("/login/:kind", (c) => {
@@ -112,19 +125,21 @@ connectorsApp.delete("/accounts/:key", (c) => (removeAccount(c.get("user").usern
 
 const pulling = new Set<string>();
 
-/** Read one account now; an Instagram login is handed to the Analyzer, which pulls it on that login. */
+/**
+ * Read one account now. An Instagram login is also handed to the Analyzer once (its deep view: catalog, comments);
+ * the numbers and posts come from the login itself, through the reader registry, with or without the Analyzer.
+ */
 async function pullOne(user: SessionUser | string, key: string): Promise<void> {
   const name = typeof user === "string" ? user : user.username;
   const a = findAccount(name, key);
   if (!a || pulling.has(`${name}/${key}`)) return;
   pulling.add(`${name}/${key}`);
   try {
-    if (a.platform === "instagram") {
+    if (a.platform === "instagram" && !a.analyzerId) {
       const rec = typeof user === "string" ? findUser(user) : null;
       const who = typeof user !== "string" ? user : rec ? sessionOf(rec) : user === LOCAL_USER.username ? LOCAL_USER : null;
       const analyzerId = who ? await addLoginAccount(who, a.handle, a.projectId) : undefined;
-      patchAccount(name, key, { analyzerId, pulledAt: Date.now(), pullError: analyzerId ? undefined : "The Analyzer could not add it" });
-      return;
+      if (analyzerId) patchAccount(name, key, { analyzerId });
     }
     if (a.via === "login" && a.expiresAt && a.expiresAt <= Date.now() && !a.refresh) {
       patchAccount(name, key, { loginStatus: "needs_reconnect", pullError: "The login expired. Connect it again.", pulledAt: Date.now() });
@@ -133,7 +148,9 @@ async function pullOne(user: SessionUser | string, key: string): Promise<void> {
     const fresh = a.via === "login" ? await freshToken(a) : {};
     if (fresh.token !== a.token) patchAccount(name, key, fresh); // TikTok's refresh token changes on every refresh: keep the new one at once
     const got = await pullAccount({ ...a, ...fresh } as StoredAccount, name);
-    patchAccount(name, key, { stats: got.stats, posts: got.posts.sort((x, y) => y.at - x.at).slice(0, 100), name: got.name || a.name, avatar: got.avatar || a.avatar, pulledAt: Date.now(), pullError: undefined, loginStatus: "connected" });
+    patchAccount(name, key, { stats: got.stats, posts: got.posts.sort((x, y) => y.at - x.at).slice(0, 100), ...(got.snapshots ? { snapshots: got.snapshots } : {}), ...(got.daily ? { daily: got.daily } : {}), name: got.name || a.name, avatar: got.avatar || a.avatar, pulledAt: Date.now(), pullError: undefined, loginStatus: "connected" });
+    // the posts' videos are fingerprinted while their media URLs are fresh (in the background, like the Analyzer hand-off)
+    void printPosts(name, key);
   } catch (e) {
     patchAccount(name, key, { pullError: (e instanceof Error ? e.message : String(e)).slice(0, 300), pulledAt: Date.now(), loginStatus: "error" });
   } finally {
@@ -148,7 +165,7 @@ export function startConnectorPulls(): void {
   setInterval(() => {
     for (const u of listUsers())
       for (const a of readConnectors(u.username).accounts)
-        if (a.via === "login" && a.platform !== "instagram" && a.loginStatus !== "needs_reconnect" && Date.now() - (a.pulledAt ?? 0) > EVERY_MS) void pullOne(u.username, a.key);
+        if (a.via === "login" && a.loginStatus !== "needs_reconnect" && Date.now() - (a.pulledAt ?? 0) > EVERY_MS) void pullOne(u.username, a.key);
   }, 60 * 60_000).unref();
 }
 

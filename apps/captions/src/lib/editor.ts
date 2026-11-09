@@ -1,4 +1,4 @@
-import type { Edit, EditStep, EditSummary, NewEdit, PlansPatch, Sentence, Take, VersionPlan } from "@contracts/editor";
+import type { Edit, EditPatch, EditSlot, EditStep, EditSummary, EditorDefaults, NewEdit, PlansPatch, Sentence, Take, VersionPlan } from "@contracts/editor";
 
 /** The AI Editor's calls to api/editor/routes.ts. */
 
@@ -22,6 +22,10 @@ export const runEdit = (id: string, from?: EditStep) => send<Edit>(`${base(id)}/
 export const retryJob = (id: string, jobId: number) => send<Edit>(`${base(id)}/jobs/${jobId}/retry`, "POST");
 export const stopEdit = (id: string) => send<Edit>(`${base(id)}/stop`, "POST");
 export const deleteEdit = (id: string) => send<{ ok: true }>(base(id), "DELETE");
+export const patchEdit = (id: string, body: EditPatch) => send<Edit>(base(id), "PATCH", body);
+export const getEditorDefaults = () => send<EditorDefaults>("/api/editor/defaults");
+/** Sets one slot's default to an item, or back to the pack's or built-in one with null. */
+export const setEditorDefault = (slot: EditSlot, id: string | null) => send<EditorDefaults>(`/api/editor/defaults/${slot}`, "PUT", { id });
 export const setEyeline = (id: string, versionId: string, y: number) => send<Edit>(`${base(id)}/eyeline/${versionId}`, "PUT", { y });
 export const getSentences = (id: string) => send<Sentence[]>(`${base(id)}/sentences`);
 export const putLines = (id: string, body: PlansPatch) => send<Edit>(`${base(id)}/lines`, "PUT", body);
@@ -46,3 +50,8 @@ export function takeSpan(take: Pick<Take, "first" | "last">, sentences: Sentence
   const b = sentences.find((x) => x.n === take.last);
   return a && b ? { src: a.src, s: a.s, e: b.e } : null;
 }
+
+/** Keeps a preview's voice mix for its edit: the next draft is cut again with it (a voice job). */
+export const saveVoiceMix = (id: string, name: string, mix: Record<string, number>, voice: string) =>
+  send<{ job: { id: number }; voiceMix: Record<string, number>; voice: string }>(
+    `${base(id)}/drafts/${encodeURIComponent(name)}/voice`, "POST", { mix, voice });

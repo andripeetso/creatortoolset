@@ -88,7 +88,10 @@ export const packCatalogApp = new Hono<{ Variables: AuthVars }>()
     if ("delisted" in r) return c.json({ error: "This pack was removed from the catalog", reason: r.delisted }, 410);
     const check = checkPack(r.listed.pack);
     if (!check.ok || !check.pack) return c.json({ error: "This pack didn't pass the checks", problems: check.problems }, 400);
-    const out = await installPack(user.username, check.pack, check.level ?? 0, { projectIds: parseProjectIds(await c.req.json().catch(() => null)) });
+    const out = await installPack(user.username, check.pack, check.level ?? 0, {
+      projectIds: parseProjectIds(await c.req.json().catch(() => null)),
+      admin: user.role === "admin",
+    });
     const result: CatalogInstallResult = { installed: out.installed, kept: out.kept };
     return c.json(result, 201);
   })
@@ -96,4 +99,10 @@ export const packCatalogApp = new Hono<{ Variables: AuthVars }>()
   .post("/submit", (c) => {
     if (cantSave(c.get("user"))) return c.json({ error: "Sign in to publish packs" }, 403);
     return c.json({ error: "This server only reads the community catalog. Publish on the catalog's site.", publishAt: base() || "https://creatortoolset.com" }, 409);
+  })
+  /** The author's own submissions are kept on the catalog's site (where they're published and reviewed): answer with where. */
+  .get("/mine", (c) => {
+    if (!env.packCatalogUrl) return c.json(OFF, 404);
+    if (cantSave(c.get("user"))) return c.json({ error: "Sign in to see your packs" }, 403);
+    return c.json({ error: "Your submissions are on the catalog's site.", publishAt: base() || "https://creatortoolset.com" }, 409);
   });

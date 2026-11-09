@@ -1,11 +1,12 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { PACK_SLOTS, type InstalledPack, type Pack, type PackLevel, type PackOrigin, type PackSlot } from "../../contracts/packs";
+import { PACK_SLOTS, type InstalledPack, type Pack, type PackEditorItems, type PackLevel, type PackOrigin, type PackSlot } from "../../contracts/packs";
 import { readOfficialPacks } from "../official-packs";
 import { packPresetStore, type PresetRecord } from "../presets";
 import { findUser } from "../users";
 import { env } from "./env";
+import { packItemInstaller } from "./plugin";
 import type { Framework } from "./workshop/types";
 
 /**
@@ -75,6 +76,15 @@ export async function listInstalled(username: string): Promise<InstalledPack[]> 
   return (await readState(username)).packs;
 }
 
+/**
+ * Whether the account has a Resolve pack installed (not delisted): its devices may then take the resolve step. Called on
+ * every device claim (about every 15 s), so it reads the installed list through listInstalled, which also ensures the
+ * default packs; that is the only reason a device poll touches packs state.
+ */
+export async function resolveGranted(username: string): Promise<boolean> {
+  return (await listInstalled(username)).some((p) => !p.delisted && !!p.resolve?.length);
+}
+
 /** Install the default packs this account hasn't been given yet. Real accounts only (not share-link visitors). */
 export async function ensureDefaults(username: string, ids = DEFAULT_PACKS): Promise<void> {
   const seen = new Set((await readState(username)).defaultsSeen ?? []);
@@ -110,6 +120,13 @@ async function ownFrameworks(username: string): Promise<Framework[]> {
   return all.filter((f): f is Framework => f?.owner === username);
 }
 
+/** The editor items a pack carries, kept on its installed record: the record is the person's copy, so it is what they see and change. */
+const editorItemsOf = (p: PackEditorItems): PackEditorItems => ({
+  ...(p.grades ? { grades: p.grades } : {}), ...(p.voiceMixes ? { voiceMixes: p.voiceMixes } : {}),
+  ...(p.sfxSets ? { sfxSets: p.sfxSets } : {}), ...(p.resolve ? { resolve: p.resolve } : {}),
+  ...(p.editorDefaults ? { editorDefaults: p.editorDefaults } : {}),
+});
+
 const untouched = (f: Framework | null, pack: string): boolean => !!f && f.from?.pack === pack && f.updatedAt === f.createdAt;
 const presetMatches = (p: PresetRecord, pack: string) => p.from?.pack === pack;
 
@@ -124,6 +141,8 @@ export interface InstallOptions {
   projectIds?: string[];
   /** Link the person's frameworks of the same names instead of copying the pack's (ADOPT_ONLY). */
   adopt?: boolean;
+  /** An admin's install: the items only an admin may put in place (design systems) go in. */
+  admin?: boolean;
 }
 
 /**
@@ -190,9 +209,30 @@ async function installInto(state: State, username: string, pack: Pack, level: Pa
     }
     packPresetStore.save();
 
+    // design systems: a plug-in puts them in place (an admin's install only, where it says so). Without one, or for a
+    // install that may not run it, the pack's copies stay on the record as held, so nothing the pack carries is dropped.
+    const ds = packItemInstaller("designSystems");
+    const dsItems = pack.designSystems ?? [];
+    const designSystems: string[] = [];
+    let held: InstalledPack["held"];
+    if (dsItems.length) {
+      if (ds && (o.admin || !ds.adminOnly)) {
+        for (const d of dsItems) designSystems.push(await ds.install(d, origin));
+      } else {
+        held = { designSystems: { needs: ds ? "admin" : "plug-in", items: dsItems } };
+      }
+    }
+    for (const name of prev?.items.designSystems ?? []) {
+      if (designSystems.includes(name)) continue;
+      if (ds && (await ds.remove(name, pack.id))) continue;
+      designSystems.push(name);
+      kept++;
+    }
+
     const installed: InstalledPack = {
       id: pack.id, name: pack.name, version: pack.version, author: pack.author, license: pack.license, description: pack.description,
       ...(pack.niche ? { niche: pack.niche } : {}), ...(pack.homepage ? { homepage: pack.homepage } : {}),
+      ...(pack.permissions ? { permissions: pack.permissions } : {}), ...editorItemsOf(pack),
       installedAt: prev?.installedAt ?? now, updatedAt: now, level,
       ...(() => {
         const ids = o.projectIds ?? (prev ? projectsOf(prev) : undefined);
@@ -200,7 +240,8 @@ async function installInto(state: State, username: string, pack: Pack, level: Pa
       })(),
       off: prev?.off ?? [],
       instructions: pack.instructions ?? {},
-      items: { frameworks, presets },
+      items: { frameworks, presets, designSystems },
+      ...(held ? { held } : {}),
       ...(prev?.default ? { default: true } : {}),
     };
     state.packs = [...all.filter((p) => p.id !== pack.id), installed];
@@ -229,6 +270,11 @@ export function removePack(username: string, id: string): Promise<{ removed: boo
       else kept++;
     }
     packPresetStore.save();
+    const ds = packItemInstaller("designSystems");
+    for (const name of pack.items.designSystems ?? []) {
+      if (ds && (await ds.remove(name, id))) continue;
+      kept++;
+    }
     state.packs = all.filter((p) => p.id !== id);
     await saveState(username, state);
     return { removed: true, kept };

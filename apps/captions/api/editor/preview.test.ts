@@ -17,7 +17,7 @@ const { enqueueJob } = await import("../library/jobs");
 const { readMeta } = await import("../review");
 const { emptyTracks } = await import("./timeline");
 const { createEdit, readStep, saveDraft } = await import("./store");
-const { previewSize, renderPreview, shotFilter } = await import("./preview");
+const { piecesOf, previewSize, renderPreview, shotFilter } = await import("./preview");
 const { tick } = await import("./worker");
 
 const fixture = path.join(dir, "Tiny Acrobatics take.mp4");
@@ -46,6 +46,9 @@ const timeline = (): Timeline => {
   return t;
 };
 
+/** A solid blue clip: a B-roll cutaway over his shot shows as one colour, his picture never does. */
+const blue = path.join(dir, "Tiny Acrobatics cover.mp4");
+
 beforeAll(async () => {
   execFileSync(ffmpegCommand(), [
     "-v", "error", "-y",
@@ -53,16 +56,27 @@ beforeAll(async () => {
     "-f", "lavfi", "-i", "sine=frequency=440:duration=3",
     "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", fixture,
   ]);
+  execFileSync(ffmpegCommand(), [
+    "-v", "error", "-y",
+    "-f", "lavfi", "-i", "color=c=blue:s=360x640:r=30:d=3",
+    "-c:v", "libx264", "-pix_fmt", "yuv420p", blue,
+  ]);
   const d = libraryDb();
   d.exec(`
     INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_a', 'mem-a', 'A', 'local', 0);
     INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES ('ast_a', 'lib_a', 'video', 'Take', 'mem-a', 0);
     INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at)
       VALUES ('ver_a', 'ast_a', 1, 'libraries/lib_a/v/ver_a/source', 1, 'sha-a', 'ready', 'mem-a', 0);
+    INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES ('ast_b', 'lib_a', 'video', 'Cover', 'mem-a', 0);
+    INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at)
+      VALUES ('ver_b', 'ast_b', 1, 'libraries/lib_a/v/ver_b/source', 1, 'sha-b', 'ready', 'mem-a', 0);
   `);
   const copy = path.join(dir, "copy.mp4");
   execFileSync("cp", [fixture, copy]);
   await blobs.put("libraries/lib_a/v/ver_a/source", copy);
+  const copyB = path.join(dir, "copy-b.mp4");
+  execFileSync("cp", [blue, copyB]);
+  await blobs.put("libraries/lib_a/v/ver_b/source", copyB);
 }, 60_000);
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -81,6 +95,31 @@ describe("AI Editor preview", () => {
     const audioS = Number(ffprobe(out, "-select_streams", "a:0", "-show_entries", "stream=duration", "-of", "csv=p=0"));
     expect(Math.abs(audioS - 1)).toBeLessThanOrEqual(1 / 30 + 0.025); // an AAC frame of padding at most
     expect(frame(out, 5).equals(frame(out, 20))).toBe(false);
+  }, 60_000);
+
+  it("splits a shot where a cutaway lies over it, and trims a cutaway to the shot", () => {
+    const shot = { src: "A", in: 0, len: 30, rec: 0 };
+    expect(piecesOf(shot, [])).toEqual([{ at: 0, frames: 30 }]);
+    const cut = { src: "B", in: 0, len: 10, rec: 10 };
+    expect(piecesOf(shot, [cut])).toEqual([{ at: 0, frames: 10 }, { at: 10, frames: 10, cut }, { at: 20, frames: 10 }]);
+    const late = { src: "B", in: 0, len: 50, rec: 25 };
+    expect(piecesOf(shot, [late])).toEqual([{ at: 0, frames: 25 }, { at: 25, frames: 5, cut: late }]);
+  });
+
+  it("draws a cutaway from its own clip over his shot, and his voice runs under it", async () => {
+    const t = timeline();
+    t.sources.ver_b = { versionId: "ver_b", name: "Cover", fps: 30, tc: 0, dur: 90, w: 360, h: 640 };
+    t.tracks.V2.items = [{ src: "ver_b", in: 0, len: 10, rec: 20 }];
+    const out = path.join(dir, "cutaway.mp4");
+    await renderPreview(t, { ver_a: fixture, ver_b: blue }, out);
+    expect(Number(ffprobe(out, "-count_frames", "-select_streams", "v:0", "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0"))).toBe(30);
+    // one colour is the blue clip: the picture of his take (a test pattern) is never one colour
+    const uniform = (b: Buffer) => new Set(b).size === 1;
+    expect(uniform(frame(out, 25))).toBe(true);
+    expect(uniform(frame(out, 5))).toBe(false);
+    expect(uniform(frame(out, 19))).toBe(false);
+    const audioS = Number(ffprobe(out, "-select_streams", "a:0", "-show_entries", "stream=duration", "-of", "csv=p=0"));
+    expect(Math.abs(audioS - 1)).toBeLessThanOrEqual(1 / 30 + 0.025);
   }, 60_000);
 
   it("files the preview in Review, marks it made from the footage, and a re-run is the same video's next version", async () => {

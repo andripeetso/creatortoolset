@@ -4,8 +4,10 @@ import {
 } from "./credits";
 import type { JobId, Selection } from "../contracts/providers";
 import { MAC_MISS, MacClaudeError, recordUsage, streamMacClaude, type MacOpts, type MacUsage } from "./lib/mac-claude";
-import { instanceIn, limitFallbacks, routeFor } from "./lib/providers";
+import { instanceIn, limitFallbacks, routeFor, runFields } from "./lib/providers";
 import { completeLocal } from "./lib/local-claude";
+import { hostedMode } from "./lib/env";
+import { addSpend, budgetLeft } from "./lib/workspaces";
 import { keyFor } from "./my-keys";
 import { findUser, type SessionUser } from "./users";
 
@@ -59,6 +61,8 @@ export type ProviderOpts = {
   model?: string;
   /** The Anthropic API key this call runs on (keyFor's: the caller's own, or the server's where it serves them). */
   apiKey?: string;
+  /** A workspace member on an API budget (hosted only): the API answer's cost goes on their month. */
+  bill?: string;
   /** Why there is no provider for this caller: the call fails with it. */
   off?: string;
   /** Pictures before the text (Anthropic only; pass `only: ["anthropic"]`, the others would never see them). */
@@ -71,7 +75,8 @@ type Who = Pick<SessionUser, "username" | "role"> | string | undefined;
 /**
  * Where one AI call goes. Accounts: the job's provider (the session's own pick first), with the label for the
  * usage tally. Its scope (lib/providers.ts routeFor): the account's own providers when it has a runnable one on its
- * own Macs, else the workspace's (a platform admin). Nobody named: no AI.
+ * own Macs, else, for an admin, the workspace's providers on the admin's own Macs. A member with neither gets its own
+ * Anthropic key or no AI. Nobody named: no AI.
  */
 export function aiFor(who: Who, job: JobId, label: string, own?: Selection): ProviderOpts {
   const name = typeof who === "string" ? who : who?.username;
@@ -79,11 +84,11 @@ export function aiFor(who: Who, job: JobId, label: string, own?: Selection): Pro
   // nobody named: never the server's providers (background work names whose work it is)
   if (!name || role === "visitor") return { only: [], off: "This AI call names no account" };
   const r = routeFor(name, role === "admin", job, own);
-  if (!r) return (name && onApiKey(name, job, label)) || { only: [], off: "No AI for your account: add one in Settings → Your AI, or your Anthropic key in Settings → My API keys" };
+  if (!r) return onApiKey(name, job, label) || onBudget(name, job, label) || { only: [], off: "No AI for your account: add one in Settings → Your AI, or your Anthropic key in Settings → My API keys" };
   const { selection, instance } = r;
   return {
     only: ["mac"],
-    mac: { label, provider: { instance: instance.id, driver: instance.driver, home: instance.home, model: selection.model, effort: selection.effort, device: r.device, scope: r.scope } },
+    mac: { label, provider: { instance: instance.id, driver: instance.driver, home: instance.home, model: selection.model, effort: selection.effort, device: r.device, scope: r.scope, ...runFields(instance) } },
   };
 }
 
@@ -97,6 +102,22 @@ function onApiKey(name: string, job: JobId, label: string): ProviderOpts | null 
   if (!k.key) return null;
   if (job === "workshop") return { only: [], off: "Content Workshop runs on your own AI (it reads the whole project folder): connect yours in Settings → Your AI" };
   return { only: ["anthropic"], retries: 1, apiKey: k.key, mac: { label } };
+}
+
+/**
+ * A member on a monthly API budget (hosted only, Settings → Team), with no provider or key of their own: the server's
+ * Anthropic key, billed to them. Never the Workshop: a Workshop turn reads the session's folder, which a plain API call
+ * can't (it needs their own AI).
+ */
+function onBudget(name: string, job: JobId, label: string): ProviderOpts | null {
+  if (!hostedMode()) return null;
+  const left = budgetLeft(name);
+  if (left === null) return null;
+  if (job === "workshop") return { only: [], off: "Content Workshop runs on your own AI (it reads the whole project folder): connect yours in Settings → Your AI" };
+  if (left <= 0) return { only: [], off: "Your AI budget for this month is used up: ask your workspace's owner or an admin for more" };
+  const apiKey = process.env.ANTHROPIC_API_KEY || "";
+  if (!apiKey) return { only: [], off: "The workspace's API key isn't set up: ask the owner" };
+  return { only: ["anthropic"], retries: 1, apiKey, bill: name, mac: { label } };
 }
 
 /** Order the configured providers: exactly `only`, in its order. */
@@ -156,8 +177,9 @@ export function apiUsage(u: AnthropicUsage, model: string): MacUsage {
 }
 
 /** An API answer's usage: the same hourly tally as the Mac's, under "<label> (API)" so the two stay apart. */
-function reportApi(label: string | undefined, usage: MacUsage, onUsage?: (u: MacUsage) => void) {
+function reportApi(label: string | undefined, usage: MacUsage, onUsage?: (u: MacUsage) => void, bill?: string) {
   void recordUsage(`${label ?? "other"} (API)`, usage);
+  if (bill) addSpend(bill, usage.costUsd);
   onUsage?.(usage);
 }
 
@@ -208,7 +230,7 @@ async function streamMac(system: string, user: string, cancel: AbortSignal | und
           ...mac,
           session: undefined, // another CLI can't resume this one's session
           onSession: undefined, // nor is its new session kept: the next turn starts over on the picked provider
-          provider: { instance: next.instance.id, driver: next.instance.driver, home: next.instance.home, model: next.model, effort: p.effort, device: next.device, scope },
+          provider: { instance: next.instance.id, driver: next.instance.driver, home: next.instance.home, model: next.model, effort: p.effort, device: next.device, scope, ...runFields(next.instance) },
         });
       } catch (e2) {
         if (!(e2 instanceof MacClaudeError) || e2.kind !== "limit") throw e2;
@@ -305,7 +327,7 @@ async function completeAnthropic(
   }
   const body = await readBody(resp);
   if (!resp.ok) throw classifyHttpError(resp.status, body, "Anthropic");
-  return contentFromAnthropic(body, (u) => reportApi(opts.mac?.label, apiUsage(u, params.model), opts.onUsage));
+  return contentFromAnthropic(body, (u) => reportApi(opts.mac?.label, apiUsage(u, params.model), opts.onUsage, opts.bill));
 }
 
 export function contentFromAnthropic(body: string, onUsage?: (u: AnthropicUsage) => void): string {
@@ -503,7 +525,7 @@ async function streamAnthropic(system: string, user: string, cancelSignal: Abort
   } catch (e: unknown) {
     wrapFetchError(e, cancelSignal);
   } finally {
-    if (Object.keys(usage).length) reportApi(opts.mac?.label, apiUsage(usage, params.model), onUsage);
+    if (Object.keys(usage).length) reportApi(opts.mac?.label, apiUsage(usage, params.model), onUsage, opts.bill);
   }
   if (!text.trim()) throw new AiProviderError("The model returned an empty answer", "FAILED", true);
   return text;

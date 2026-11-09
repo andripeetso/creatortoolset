@@ -20,14 +20,24 @@ export interface LocalUsage {
   ms: number;
 }
 
-/** The environment for `claude`: the subscription, never API billing, and not inside another Claude Code session. */
-export function localEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+/**
+ * The environment for `claude`: the subscription, never API billing, and not inside another Claude Code session.
+ * ANTHROPIC_BASE_URL is stripped from the process environment; only a plug-in instance's `baseUrl` (http or https) sets it.
+ */
+export function localEnv(env: NodeJS.ProcessEnv = process.env, baseUrl?: string): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
   for (const [k, v] of Object.entries(env)) {
     if (/^(ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|ANTHROPIC_BASE_URL|CLAUDECODE|CLAUDE_CODE_ENTRYPOINT)$/.test(k)) continue;
     out[k] = v;
   }
-  return { ...out, CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1", CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" };
+  const endpoint = baseUrl && /^https?:\/\//.test(baseUrl) ? baseUrl : undefined;
+  return {
+    ...out,
+    ...(endpoint ? { ANTHROPIC_BASE_URL: endpoint } : {}),
+    CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1",
+    CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+  };
 }
 
 export function localArgs(system: string): string[] {
@@ -35,12 +45,14 @@ export function localArgs(system: string): string[] {
     "--tools", "", "--strict-mcp-config", "--setting-sources", "", "--no-session-persistence"];
 }
 
-export async function completeLocal(system: string, user: string, cancel?: AbortSignal): Promise<{ text: string; usage: LocalUsage }> {
-  const bin = process.env.CT_CLAUDE || "claude";
+/** `baseUrl`: the endpoint of the plug-in instance that asks (see localEnv); none = the default endpoint. */
+export async function completeLocal(system: string, user: string, cancel?: AbortSignal, baseUrl?: string): Promise<{ text: string; usage: LocalUsage }> {
+  // EDITOR_CLAUDE: the name an older install used before CT_CLAUDE; still read so that install keeps its binary.
+  const bin = process.env.CT_CLAUDE || process.env.EDITOR_CLAUDE || "claude";
   const cwd = mkdtempSync(path.join(tmpdir(), "ct-local-"));
   try {
     const { code, stdout, stderr } = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
-      const child = spawn(bin, localArgs(system), { cwd, env: localEnv(), stdio: ["pipe", "pipe", "pipe"] });
+      const child = spawn(bin, localArgs(system), { cwd, env: localEnv(process.env, baseUrl), stdio: ["pipe", "pipe", "pipe"] });
       let out = "", err = "";
       child.stdout.on("data", (d) => (out += d));
       child.stderr.on("data", (d) => (err += d));

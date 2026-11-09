@@ -23,7 +23,7 @@ describe("stem / termsOf", () => {
       ["gardening", "garden"],
       ["running", "run"],
       ["sleeping", "sleep"],
-      ["babies", "baby"],
+      ["puppies", "puppy"],
       ["classes", "class"],
       ["boxes", "box"],
       ["walked", "walk"],
@@ -33,7 +33,7 @@ describe("stem / termsOf", () => {
       ["yes", "yes"],
       ["thing", "thing"],
       ["falling", "fall"],
-      ["kid's", "kid"],
+      ["adult's", "adult"],
     ];
     for (const [input, want] of table) expect(stem(input), input).toBe(want);
   });
@@ -93,7 +93,7 @@ describe("rankFind", () => {
   });
 
   it("keeps a semantic-only hit when the text is nearly identical", () => {
-    const text = "sleep training tips for toddlers who fight bedtime";
+    const text = "sleep training tips for puppies who fight bedtime";
     const twin = doc({ id: "twin", vector: makeEmbedding(text).vector });
     const hits = rankFind(text, [twin, unrelated]);
     expect(hits.some((h) => h.id === "twin")).toBe(true);
@@ -122,15 +122,15 @@ describe("rankFind", () => {
 
   it("ranks idea before on-screen before speech before caption", () => {
     const cap = doc({ id: "cap", caption: ["garden"], virality: 99 });
-    const talk = doc({ id: "talk", transcript: "kids who garden", virality: 99 });
+    const talk = doc({ id: "talk", transcript: "adults who garden", virality: 99 });
     const screen = doc({ id: "screen", slides: ["garden"], virality: 1 });
-    const idea = doc({ id: "idea", idea: ["Gardening for kids"], virality: 1 });
+    const idea = doc({ id: "idea", idea: ["Gardening for adults"], virality: 1 });
     expect(rankFind("garden", [cap, talk, screen, idea]).map((h) => h.id)).toEqual(["idea", "screen", "talk", "cap"]);
   });
 
-  it("finds 'risk' in 'Risky Play for Kids' first, and a post with both words beats one-word idea matches", () => {
-    const risky = doc({ id: "risky", idea: ["Risky Play for Kids", "Let kids take risks"], caption: ["Why risky play matters"], virality: 1 });
-    const playDates = doc({ id: "play-dates", idea: ["Play dates for toddlers"], virality: 500 });
+  it("finds 'risk' in 'Risky Play for Adults' first, and a post with both words beats one-word idea matches", () => {
+    const risky = doc({ id: "risky", idea: ["Risky Play for Adults", "Let adults take risks"], caption: ["Why risky play matters"], virality: 1 });
+    const playDates = doc({ id: "play-dates", idea: ["Play dates for puppies"], virality: 500 });
     const playBox = doc({ id: "play-box", idea: ["Play with a cardboard box"], virality: 500 });
     const captionOnly = doc({ id: "caption-only", caption: ["risky play at the park"], virality: 1 });
     expect(rankFind("risk", [playDates, risky, playBox]).map((h) => h.id)).toEqual(["risky"]);

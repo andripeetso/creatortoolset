@@ -4,7 +4,7 @@ import { copyFile, mkdir, readdir, realpath, rm, stat, symlink } from "node:fs/p
 import path from "node:path";
 import type { AuthVars } from "../auth";
 import type { WatchFolder, WatchStatus } from "../../contracts/library";
-import { env } from "../lib/env";
+import { env, hostedMode } from "../lib/env";
 import { freeBytes, sha256File } from "../lib/uploads";
 import { libraryRole } from "./access";
 import { blobs, libraryDb } from "./db";
@@ -33,10 +33,10 @@ const GiB = 1024 ** 3;
 const db = () => libraryDb();
 const stagingDir = () => path.join(env.dataDir, "library", "staging");
 
-/** Whether this server may watch folders: LIBRARY_WATCH_FOLDERS=1 or 0, else only an open server (no APP_SECRET), one person's own machine. */
+/** Whether this server may watch folders: LIBRARY_WATCH_FOLDERS=1 or 0, else only a local server (not hosted) with no APP_SECRET, one person's own machine. */
 export function watchAllowed(): boolean {
   const v = process.env.LIBRARY_WATCH_FOLDERS?.trim();
-  return v === "1" ? true : v === "0" ? false : !process.env.APP_SECRET;
+  return v === "1" ? true : v === "0" ? false : !hostedMode() && !process.env.APP_SECRET;
 }
 
 const foldersOf = (libraryId: string): WatchFolder[] => {

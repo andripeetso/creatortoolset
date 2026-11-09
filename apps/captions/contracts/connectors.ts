@@ -35,6 +35,8 @@ export interface SocialPost {
   saves?: number;
   /** Seconds, for videos. */
   duration?: number;
+  /** The video's own URL, when the login gives one (Instagram). Server only: read once for the duplicate check, never sent to the browser. */
+  mediaUrl?: string;
 }
 
 export interface SocialStats {
@@ -44,7 +46,7 @@ export interface SocialStats {
   views?: number;
   likes?: number;
   /** Daily numbers the login's analytics give (YouTube Analytics, Page insights), newest last. */
-  days?: Array<{ day: string; views?: number; watchMinutes?: number; followersGained?: number; reach?: number }>;
+  days?: Array<{ day: string; views?: number; watchMinutes?: number; followersGained?: number; reach?: number; engagements?: number; videoViews?: number }>;
 }
 
 /** A login's state. Written only by the pull (api/connectors.ts `pullOne`); missing on rows from before it existed = connected. */
@@ -73,6 +75,13 @@ export interface ConnectedAccount {
   analyzerId?: string;
 }
 
+/** A source a server plug-in reads through a session login. Its words are the plug-in's own, shown under "Turn on extra things". */
+export interface SessionSource {
+  id: string;
+  label: string;
+  hint: string;
+}
+
 export interface ConnectorsView {
   /** Which logins this server has an app registered for. */
   logins: Record<LoginKind, boolean>;
@@ -80,4 +89,6 @@ export interface ConnectorsView {
   redirects: Record<LoginKind, string>;
   apify: { configured: boolean; valid: boolean | null };
   accounts: ConnectedAccount[];
+  /** Session sources registered on this server. Empty in the public build, so the section stays hidden. */
+  extras: { sessions: SessionSource[] };
 }

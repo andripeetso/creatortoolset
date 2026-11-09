@@ -7,13 +7,28 @@
 
 import type { EnhanceStatus } from "@contracts/enhance";
 
-/** The engines (api/enhance.ts ENGINES), every result at the same loudness. */
-export const ENGINES = [
-  { key: "nvidia", label: "NVIDIA", name: "NVIDIA Studio Voice", hint: "Rebuilds a full, studio-quality voice" },
+/** An engine's card on the Enhance page. A plug-in adds its own with addEnhanceEngine (its web.tsx). */
+export interface EngineCard {
+  key: string;
+  label: string;
+  name: string;
+  hint: string;
+  /** The progress line while this engine works (the built-in default otherwise). */
+  working?: (s: EnhanceSession, avail: EnhanceAvailability | null) => string;
+  /** A note under the picker while it can't run now (its worker offline, say). */
+  note?: (avail: EnhanceAvailability) => string | null;
+}
 
+/** The engines (api/enhance.ts ENGINES), every result at the same loudness. */
+export const ENGINES: EngineCard[] = [
+  { key: "nvidia", label: "NVIDIA", name: "NVIDIA Studio Voice", hint: "Rebuilds a full, studio-quality voice" },
   { key: "elevenlabs", label: "ElevenLabs", name: "ElevenLabs Voice Isolator", hint: "Strips noise and music, keeps the voice as it is" },
-] as const;
-export type Engine = (typeof ENGINES)[number]["key"];
+];
+export type Engine = string;
+/** Adds an engine card (once per key). */
+export function addEnhanceEngine(card: EngineCard): void {
+  if (!ENGINES.some((e) => e.key === card.key)) ENGINES.push(card);
+}
 export const engineLabel = (e?: string) => ENGINES.find((x) => x.key === e)?.label ?? e ?? "";
 /** "ElevenLabs → NVIDIA" for a session run in two passes. */
 export const chainLabel = (s: Pick<EnhanceSession, "engine" | "chain">) =>
@@ -29,6 +44,8 @@ export interface EnhanceSession {
   status: EnhanceStatus;
   engine?: string;
 
+  /** a plug-in engine's run waiting for, or claimed by, its outside worker */
+  remote?: { state: "waiting" | "claimed"; at: number };
   /** the passes in order (admins: a second one); step = the one running */
   chain?: Engine[];
   step?: number;
@@ -43,6 +60,8 @@ export interface EnhanceSession {
 }
 
 export interface EnhanceAvailability {
+  /** each engine's availability by key (plug-in engines too) */
+  [engine: string]: unknown;
   /** A key serves this account for the engine (their own from Settings → My API keys, or the server's)? */
   nvidia: boolean;
   elevenlabs: boolean;

@@ -4,6 +4,10 @@ import { Lock, UserRound } from "lucide-react";
 import { ToolsetLogo } from "@/components/HomeLink";
 import { returnTo, useAuth, type Me } from "@/lib/auth";
 import { useWorkspace } from "@/lib/workspace";
+import { JoinPage } from "@/pages/JoinPage";
+import { joinToken } from "@/lib/workspaces";
+import { siteFrameFor } from "@/lib/plugin";
+import { webPlugins } from "@/plugins.gen";
 
 const PUBLIC_UUID =
   "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
@@ -44,37 +48,63 @@ export function isPublicReviewPath(pathname: string): boolean {
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const { pathname } = useLocation();
   const publicShare = isPublicSharePath(pathname) || isPublicReviewPath(pathname) || isPublicLibraryPath(pathname);
-  const [state, setState] = useState<"checking" | "login" | "ok">("checking");
+  const [state, setState] = useState<"checking" | "login" | "link" | "ok">("checking");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // a team that signs in with Google / Apple: the providers this account must link first (auth.ts ruleFor)
+  const [mustLink, setMustLink] = useState<("apple" | "google")[]>([]);
   const setAuth = useAuth((s) => s.setAuth);
+  const hosted = useAuth((s) => s.hosted);
+  // /join/<token> is an invite to a team: hosted servers only (elsewhere the path is just an unknown page)
+  const invite = joinToken(pathname);
 
   useEffect(() => {
     fetch("/api/auth/check")
       .then((r) => r.json())
-      .then((d: { required: boolean; authed: boolean; user: Me | null }) => {
+      .then((d: { required: boolean; authed: boolean; user: Me | null; hosted?: boolean; viewedBy?: string | null; mustLink?: ("apple" | "google")[] | null }) => {
         // Signed in with an account and sent here to sign in (?next=): go back.
         const back = returnTo(window.location.search, window.location.origin);
         if (back && d.authed) {
           window.location.replace(back);
           return;
         }
-        setAuth(d.required, d.user);
+        setAuth(d.required, d.user, { hosted: !!d.hosted, viewedBy: d.viewedBy ?? null });
         if (d.user) void useWorkspace.getState().load();
         else useWorkspace.getState().reset();
+        setMustLink(d.mustLink ?? []);
         setState(
           d.required && !d.authed && !publicShare
             ? "login"
-            : "ok",
+            : d.mustLink?.length && !publicShare
+              ? "link"
+              : "ok",
         );
       })
       .catch(() => setState("ok")); // server unreachable — let the app surface it
   }, [setAuth, pathname, publicShare]);
 
-  if (state === "ok") return <>{children}</>;
+  // a plug-in's product site on its own host (the hosted front page): shown signed in or not
+  const site = siteFrameFor(window.location.hostname, pathname, window.location.search, webPlugins);
+  if (site) return <>{site.element}</>;
   if (state === "checking") return <div className="h-screen bg-background" />;
+  if (invite && hosted) return <JoinPage token={invite} />;
+  if (state === "ok") return <>{children}</>;
+  if (state === "link") {
+    return (
+      <div className="flex h-screen flex-col items-center justify-center gap-3 bg-zinc-950 px-4 text-center text-zinc-200">
+        <p className="max-w-sm text-sm">
+          Your team signs in with {mustLink.map((p) => (p === "apple" ? "Apple" : "Google")).join(" or ")}. Link yours once, and use it to sign in from now on.
+        </p>
+        {mustLink.map((p) => (
+          <a key={p} href={`/api/account/login/${p}?for=link`} className="w-72 rounded-lg bg-violet-600 py-2 text-sm font-medium text-white hover:bg-violet-500">
+            Link {p === "apple" ? "Apple" : "Google"}
+          </a>
+        ))}
+      </div>
+    );
+  }
   if (publicShare) return <>{children}</>;
 
   const submit = async (e: React.FormEvent) => {

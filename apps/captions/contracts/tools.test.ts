@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { readiness, toolsUsing, TOOLS, TOOL_NEEDS, usesAi } from "./tools";
+import { isPluginGateId, readiness, toolsUsing, TOOLS, TOOL_NEEDS, usesAi } from "./tools";
+
+describe("plug-in gate ids", () => {
+  it("accepts a plug-in's own id, and refuses an app id, a retired app id and a malformed id", () => {
+    expect(isPluginGateId("tiny-footage")).toBe(true);
+    expect(isPluginGateId("media")).toBe(false);
+    expect(isPluginGateId("finals")).toBe(false);
+    expect(isPluginGateId("Tiny Footage")).toBe(false);
+  });
+});
 
 describe("TOOL_NEEDS readiness", () => {
   it("tools that need nothing are ready with nothing set up", () => {

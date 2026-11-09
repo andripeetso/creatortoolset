@@ -10,4 +10,19 @@ describe("parseMachine", () => {
     expect(parseMachine("nope")).toBeUndefined();
     expect(parseMachine(null)).toBeUndefined();
   });
+  it("keeps good disks, drops bad ones, and keeps a network share's server", () => {
+    const m = parseMachine({ cpus: 8, memGb: 16, disks: [
+      { path: "/", name: "System disk", freeGb: 50, totalGb: 460 },
+      { path: "/Volumes/TEAM", name: "TEAM", freeGb: 2800, network: true, server: "nas-1" },
+      { path: "/Volumes/Card", name: "Card", freeGb: 5 },
+      { path: "", name: "x", freeGb: 1 },
+      { path: "/Volumes/y", name: "y", freeGb: -1 },
+    ] });
+    expect(m?.disks).toEqual([
+      { path: "/", name: "System disk", freeGb: 50, totalGb: 460 },
+      { path: "/Volumes/TEAM", name: "TEAM", freeGb: 2800, network: true, server: "nas-1" },
+      { path: "/Volumes/Card", name: "Card", freeGb: 5 },
+    ]);
+    expect(m?.disks?.[2]).not.toHaveProperty("totalGb");
+  });
 });

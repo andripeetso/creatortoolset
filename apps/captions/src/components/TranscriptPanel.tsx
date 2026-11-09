@@ -132,8 +132,8 @@ function adjacentChar(
     flat += offset;
   } else {
     // element-boundary caret: resolve to the child position
-    const kids = Array.from(container.childNodes).slice(0, offset);
-    for (const k of kids) flat += (k.textContent ?? "").length;
+    const before = Array.from(container.childNodes).slice(0, offset);
+    for (const k of before) flat += (k.textContent ?? "").length;
   }
   const target = dir < 0 ? flat - 1 : flat;
   if (target < 0) return null;

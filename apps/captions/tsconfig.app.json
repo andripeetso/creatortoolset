@@ -40,6 +40,8 @@
     "noUncheckedSideEffectImports": true
   },
   "include": [
-    "src"
+    "src",
+    "plugins/**/web.tsx",
+    "plugin-examples/**/web.tsx"
   ]
 }

@@ -78,7 +78,7 @@ export interface PendingExport {
 }
 
 /**
- * The Workshop piece a note becomes, from its text (frontmatter dropped) and its selector.Media: 🎞️ Reel is a reel (its
+ * The Workshop piece a note becomes, from its text (frontmatter dropped) and its media property: 🎞️ Reel is a reel (its
  * leading `// hook` lines are hooks, the rest the script), 🎪 Carousel a carousel (slides apart by `---`), anything else a
  * free piece (paragraphs). `blocks` are the texts as they go in.
  */

@@ -21,9 +21,24 @@ let webTools = "WebSearch,WebFetch"
 let macTools = "Read,Glob,Grep,Bash,Edit,Write"
 let folderNote = "The files this request needs are in the current folder: read them there."
 let piecesNote = "\n- sessions/INDEX.md — every Workshop session that became a post, with the post and its numbers (the app links them)."
-/// The drivers this Mac runs (Claude and Gemini; Grok, Codex and the rest are answered with the message below).
-let runnableDrivers = ["claude", "gemini"]
-let onlyRunnableMessage = "This Mac runs Claude and Gemini only for now"
+/// The drivers this Mac runs (Claude, Gemini, Codex and Grok natively; the ACP kinds over stdio). The rest get the message below.
+let runnableDrivers = ["claude", "gemini", "codex", "grok", "cursor", "opencode", "antigravity", "pi", "acp"]
+let onlyRunnableMessage = "This Mac runs Claude, Gemini, Codex, Grok, Cursor, OpenCode, Antigravity, Pi and local ACP commands only for now"
+/// The ACP kinds (contracts/providers.ts isAcpDriver): each starts its agent over stdio (AcpRun.swift). "acp" is the local command
+/// from the setup; the others start the command below, plus the launch arguments. Versions are a snapshot from 2026-11-08: re-check before shipping.
+let acpDrivers = ["cursor", "opencode", "antigravity", "pi", "acp"]
+let acpDefaults: [String: AcpLaunch] = [
+    "cursor": AcpLaunch(command: "cursor-agent", args: ["acp"]),
+    "opencode": AcpLaunch(command: "opencode", args: ["acp"]),
+    "antigravity": AcpLaunch(command: "antigravity-acp", args: []),
+    "pi": AcpLaunch(command: "npx", args: ["-y", "pi-acp@0.0.34"]),
+]
+
+/// An ACP agent's program and its arguments, as the job carries them.
+struct AcpLaunch: Equatable {
+    let command: String
+    let args: [String]
+}
 
 /// One job from POST /api/devices/relay/wait (contracts/providers.ts).
 struct RelayRequest {
@@ -39,6 +54,16 @@ struct RelayRequest {
     let home: String
     let session: String
     let resume: String
+    /// The endpoint a plug-in instance sends its Claude requests to (ANTHROPIC_BASE_URL); "" = the CLI's own. Checked in requestOptions.
+    let baseUrl: String
+    /// The provider instance's id and the names of its environment variables. The values never come from the server:
+    /// the Mac reads each from its own Keychain (providerEnv).
+    let instance: String
+    let envNames: [String]
+    /// The ACP kinds: the local command ("acp" driver), the launch arguments, and the program a manual setup gave ("" = none).
+    let acp: AcpLaunch?
+    let launchArgs: [String]
+    let binaryPath: String
     /// The app's own MCP server for this run (the assistant): its /api/mcp and a job token for one turn. Never logged.
     let mcp: (url: String, token: String)?
     /// The assistant with someone there to answer: this Mac's tools, and each permission question goes to the site
@@ -61,6 +86,14 @@ struct RelayRequest {
         home = obj["home"] as? String ?? ""
         session = obj["session"] as? String ?? ""
         resume = obj["resume"] as? String ?? ""
+        baseUrl = obj["baseUrl"] as? String ?? ""
+        instance = obj["instance"] as? String ?? ""
+        envNames = obj["envNames"] as? [String] ?? []
+        acp = (obj["acp"] as? [String: Any]).flatMap { a in
+            (a["command"] as? String).map { AcpLaunch(command: $0, args: a["args"] as? [String] ?? []) }
+        }
+        launchArgs = obj["launchArgs"] as? [String] ?? []
+        binaryPath = obj["binaryPath"] as? String ?? ""
         if let m = obj["mcp"] as? [String: Any], let url = m["url"] as? String, let token = m["token"] as? String,
            matches(url, "^https?://[^\\s]+/api/mcp\\z"), matches(token, "^ctj_[a-f0-9]{48}\\z") {
             mcp = (url, token)
@@ -84,13 +117,40 @@ struct RelayOptions: Equatable {
     let effort: String
     let home: String
     let resume: String
-    /// the driver the request names: "claude" or "gemini"
+    /// the driver the request names: "claude", "gemini", "codex" or "grok"
     var driver = "claude"
+    /// the plug-in instance's endpoint for the Claude CLI ("" = none)
+    var baseUrl = ""
+    /// the instance's environment variables and their values from this Mac's Keychain (providerEnv); none for the other drivers
+    var env: [String: String] = [:]
+    /// the ACP kinds: the program and its arguments, launch arguments included (nil for the other drivers)
+    var acp: AcpLaunch? = nil
+}
+
+/// The Keychain service that keeps provider environment values, one item per instance and variable. Its account is
+/// "<instance id>/<NAME>". The values are written from this Mac only, never sent to the server.
+let providerEnvService = "com.creatortoolset.mac.env"
+
+/// The Keychain value of one provider environment variable, or nil when none is kept here.
+func providerEnvValue(_ account: String) -> String? {
+    DeviceVault.token(for: account, service: providerEnvService)
+}
+
+/// The values of an instance's environment variables from `read` (the Keychain by default). A name that is not a
+/// variable name, or has no value here, is left out; no instance id means none.
+func providerEnv(instance: String, names: [String], read: (String) -> String?) -> [String: String] {
+    guard !instance.isEmpty else { return [:] }
+    var env: [String: String] = [:]
+    for name in names where matches(name, "^[A-Za-z_][A-Za-z0-9_]{0,63}\\z") {
+        if let value = read("\(instance)/\(name)"), !value.isEmpty { env[name] = value }
+    }
+    return env
 }
 
 /// the Mac relay request_options: the driver, model, effort, home and resume, checked. A bad one fails the request.
-/// Claude and Gemini run on this Mac; Grok, Codex and the rest fail with the same message.
-func requestOptions(_ req: RelayRequest, root: URL = FileManager.default.homeDirectoryForCurrentUser) throws -> RelayOptions {
+/// Claude, Gemini, Codex and Grok run on this Mac; any other driver fails with the message above.
+func requestOptions(_ req: RelayRequest, root: URL = FileManager.default.homeDirectoryForCurrentUser,
+                    read: (String) -> String? = providerEnvValue) throws -> RelayOptions {
     guard runnableDrivers.contains(req.driver) else { throw RelayError(message: onlyRunnableMessage) }
     guard claudeEfforts.contains(req.effort) else { throw RelayError(message: "not an effort: \(req.effort)") }
     let isClaude = req.driver == "claude"
@@ -98,16 +158,42 @@ func requestOptions(_ req: RelayRequest, root: URL = FileManager.default.homeDir
     if isClaude {
         guard matches(model, "^claude-[a-z0-9-]+\\z") else { throw RelayError(message: "not a Claude model: \(model)") }
     } else if !model.isEmpty && !matches(model, "^[A-Za-z0-9._/:-]{1,80}\\z") {
-        throw RelayError(message: "not a Gemini model: \(model)")
+        throw RelayError(message: "not a \(driverLabel(req.driver)) model: \(model)")
     }
     let home = req.home.isEmpty ? "" : try checkedHome(req.home, root: root)
+    var acp: AcpLaunch? = nil
+    if acpDrivers.contains(req.driver) {
+        guard home.isEmpty else { throw RelayError(message: "\(driverLabel(req.driver)) keeps its own setup: it takes no home") }
+        let base: AcpLaunch?
+        if req.driver == "acp" {
+            base = req.acp
+        } else if !req.binaryPath.isEmpty {
+            base = AcpLaunch(command: req.binaryPath, args: [])   // a manual setup's program replaces the default command
+        } else {
+            base = acpDefaults[req.driver]
+        }
+        guard let base else { throw RelayError(message: "\(driverLabel(req.driver)) has no command to start") }
+        acp = AcpLaunch(command: base.command, args: base.args + req.launchArgs)
+    }
     if req.driver == "gemini" && !home.isEmpty {
         throw RelayError(message: "Gemini keeps its own folder (~/.gemini): it takes no home")
+    }
+    if req.driver == "grok" && !home.isEmpty {
+        throw RelayError(message: "Grok keeps its own folder (~/.grok): it takes no home")
     }
     if !req.resume.isEmpty && !matches(req.resume, "^[A-Za-z0-9-]{1,80}\\z") {
         throw RelayError(message: "not a Claude session id: \(req.resume)")
     }
-    return RelayOptions(model: model, effort: req.effort, home: home, resume: req.resume, driver: req.driver)
+    if !req.baseUrl.isEmpty && !matches(req.baseUrl, "^https?://[^\\s]{1,300}\\z") {
+        throw RelayError(message: "not an endpoint address: \(req.baseUrl)")
+    }
+    let env = isClaude || acp != nil ? providerEnv(instance: req.instance, names: req.envNames, read: read) : [:]
+    return RelayOptions(model: model, effort: req.effort, home: home, resume: req.resume, driver: req.driver, baseUrl: isClaude ? req.baseUrl : "", env: env, acp: acp)
+}
+
+/// The name a driver shows in messages and the Mac report ("Codex"); the id itself when unknown.
+func driverLabel(_ driver: String) -> String {
+    reportDrivers.first { $0.id == driver }?.label ?? driver
 }
 
 private func matches(_ text: String, _ pattern: String) -> Bool {
@@ -136,8 +222,10 @@ func realPath(_ path: String) -> String {
 
 /// the Mac relay claude_run_env: the environment for `claude` without an API key or a proxy, the three
 /// disable flags, and with a home: CLAUDE_CONFIG_DIR = the home plus its settings.json `env` (string values).
-/// The home's API key is dropped too (the subscription only); nothing printed or posted here.
-func claudeEnv(base: [String: String], home: String) -> [String: String] {
+/// The home's API key is dropped too (the subscription only); nothing printed or posted here. A plug-in instance's
+/// `extra` (the instance's Keychain values) goes after the home, never over the subscription keys or the folder.
+/// `baseUrl` (checked) is set last, so it wins over the home's own ANTHROPIC_BASE_URL.
+func claudeEnv(base: [String: String], home: String, baseUrl: String = "", extra: [String: String] = [:]) -> [String: String] {
     let stripped = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"]
     var env = base.filter { !stripped.contains($0.key) }
     env["CLAUDE_CODE_DISABLE_CLAUDE_MDS"] = "1"
@@ -148,6 +236,8 @@ func claudeEnv(base: [String: String], home: String) -> [String: String] {
         for (key, value) in homeEnv(home) where key != "ANTHROPIC_API_KEY" { env[key] = value }
         env["CLAUDE_CONFIG_DIR"] = home
     }
+    for (key, value) in extra where !stripped.contains(key) && key != "CLAUDE_CONFIG_DIR" { env[key] = value }
+    if !baseUrl.isEmpty { env["ANTHROPIC_BASE_URL"] = baseUrl }
     return env
 }
 
@@ -434,10 +524,55 @@ func geminiArguments(model: String) -> [String] {
     return args
 }
 
-/// the Mac relay driver_env: the environment without API keys (the subscription only, never API billing).
-func driverEnv(base: [String: String]) -> [String: String] {
+/// A new empty folder for one Codex run with no folder of its own, under Application Support (created here, removed by the
+/// caller). Codex starts in it, so nothing in the user's own folders is its working root.
+func codexRunFolder() -> URL {
+    let folder = appSupport.appendingPathComponent("codex-runs").appendingPathComponent(UUID().uuidString)
+    try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    return folder
+}
+
+/// the Mac relay codex_cmd: `codex exec --json` (codex-cli 0.39) in a read-only sandbox in the run's folder, the prompt on
+/// stdin ("-"). The effort goes in as its config key; the model only when one is named.
+/// What Codex can still do (measured with `codex debug seatbelt` from codex-cli 0.39 on this Mac). Its read-only sandbox
+/// (`-s read-only`, the most restrictive mode `exec` offers; it has no approval flag) still lets its shell read any file the
+/// Mac user can read, by absolute path: codex-cli 0.39 has no flag that limits reads. That is the same as running Codex in
+/// the user's own terminal. It runs in an empty folder of its own per run (removed after the run), so no project files sit in
+/// its working root. Writes are off too (a write inside the run folder was refused in the probe), and network access is off
+/// (direct connections and DNS both failed in the sandbox). Its use of CODEX_HOME was not measured. Runs only ever carry the device owner's own prompts:
+/// unnamed calls are refused and no one else's login is used (providers-routing).
+/// ponytail: read access is not limited here; add a read allowlist when codex exposes one.
+func codexArguments(cwd: String, model: String, effort: String) -> [String] {
+    var args = ["exec", "--json", "--skip-git-repo-check", "-C", cwd, "-s", "read-only", "-c", "model_reasoning_effort=" + effort]
+    if !model.isEmpty { args += ["-m", model] }
+    return args + ["-"]
+}
+
+/// grok's tool ids for its read tools and its web tools (the Mac relay GROK_READ, GROK_WEB).
+let grokReadTools = "read_file,grep,list_dir"
+let grokWebTools = "web_search,web_fetch"
+
+/// the Mac relay grok_cmd: `grok -p`'s headless stream, the prompt in `promptFile`. Tools are only the read tools of a folder
+/// (plus web when asked); with no folder there is no shell, no editing and no subagents. It never asks (dontAsk).
+func grokArguments(cwd: String, model: String, effort: String, system: String, web: Bool, folder: Bool, promptFile: String) -> [String] {
+    var args = ["--prompt-file", promptFile, "--verbatim",
+                "--output-format", "streaming-messages-json", "--include-partial-messages", "--no-memory", "--no-subagents",
+                "--cwd", cwd, "--reasoning-effort", effort, "--permission-mode", "dontAsk",
+                "--system-prompt-override", system, "--disallowed-tools", "run_terminal_cmd,search_replace,Agent"]
+    if !model.isEmpty { args += ["-m", model] }
+    // Always passed: without a folder the list is empty (grok's default built-ins would read any file on this Mac).
+    args += ["--tools", ((folder ? [grokReadTools] : []) + (web ? [grokWebTools] : [])).joined(separator: ",")]
+    if !web { args.append("--disable-web-search") }
+    return args
+}
+
+/// the Mac relay driver_env: the environment without API keys (the subscription only, never API billing), and
+/// CODEX_HOME for a Codex home (the folder codex keeps its sign-in in).
+func driverEnv(base: [String: String], home: String = "") -> [String: String] {
     let stripped = ["OPENAI_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"]
-    return base.filter { !stripped.contains($0.key) }
+    var env = base.filter { !stripped.contains($0.key) }
+    if !home.isEmpty { env["CODEX_HOME"] = home }
+    return env
 }
 
 /// the Mac relay limit_flag: the usage-limit flag. Claude's windows (isLimitError) and Gemini's quota errors; the rest have none.
@@ -525,6 +660,69 @@ struct GeminiStream: RunStream {
         let tail = String(err.trimmingCharacters(in: .whitespacesAndNewlines).suffix(500))
         let message = !error.isEmpty ? error : (tail.isEmpty ? "no answer" : tail)
         return ["is_error": true, "result": message, "usage": usage, "modelUsage": modelUsage, "total_cost_usd": 0]
+    }
+}
+
+// MARK: Codex (the Mac relay CodexRun, codex_usage)
+
+/// codex's total usage in the usage shape the rest reads. Its input counts the cached tokens; here input is the uncached part.
+func codexUsage(_ total: [String: Any]) -> [String: Any] {
+    let cached = Int(number(total["cached_input_tokens"]))
+    return ["input_tokens": max(Int(number(total["input_tokens"])) - cached, 0), "cache_read_input_tokens": cached,
+            "output_tokens": Int(number(total["output_tokens"])), "reasoning_tokens": Int(number(total["reasoning_output_tokens"])),
+            "cache_creation_input_tokens": 0]
+}
+
+/// `codex exec --json` events (codex-cli 0.39), one line at a time: the answer's text (the last message), its total usage
+/// (token_count) and its last error. Codex exits 0 when a model refuses, so an answer is what counts.
+struct CodexStream: RunStream {
+    private(set) var text = ""
+    private var done = false   // the last message is complete: a new message starts a new text
+    private var error = ""
+    private var total: [String: Any] = [:]
+
+    var seen: [String: [String: Any]] { total.isEmpty ? [:] : ["codex": codexUsage(total)] }
+
+    mutating func feed(_ line: String) -> [StreamUpdate] {
+        guard line.hasPrefix("{"),
+              let obj = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any] else { return [] }
+        let msg = obj["msg"] as? [String: Any] ?? [:]
+        switch msg["type"] as? String {
+        case "agent_message_delta":
+            if done { text = "" }
+            done = false
+            text += msg["delta"] as? String ?? ""
+            return [.text(text)]
+        case "agent_message":
+            text = nonEmpty(msg["message"] as? String) ?? text
+            done = true
+            return [.text(text)]
+        case "task_complete":
+            text = nonEmpty(msg["last_agent_message"] as? String) ?? text
+            done = true
+            return [.text(text)]
+        case "token_count":
+            total = ((msg["info"] as? [String: Any])?["total_token_usage"] as? [String: Any]) ?? total
+        case "error", "stream_error":   // retries come as stream_error; the last one is what failed
+            error = nonEmpty(msg["message"] as? String) ?? error
+        default:
+            break
+        }
+        return []
+    }
+
+    /// The run's result line, as the claude stream's: the answer, or the last error (or stderr) as the failure.
+    func result(err: String) -> [String: Any] {
+        let usage = codexUsage(total)
+        if !text.isEmpty { return ["is_error": false, "result": text, "usage": usage, "total_cost_usd": 0] }
+        let tail = String(err.trimmingCharacters(in: .whitespacesAndNewlines).suffix(500))
+        let message = !error.isEmpty ? error : (tail.isEmpty ? "no answer" : tail)
+        return ["is_error": true, "result": message, "usage": usage, "total_cost_usd": 0]
+    }
+
+    private func nonEmpty(_ value: String?) -> String? {
+        guard let value, !value.isEmpty else { return nil }
+        return value
     }
 }
 

@@ -41,6 +41,7 @@ export function AccountSection() {
       <Group title="Profile" hint={`Your files stay filed under "${me.username}" whatever you call yourself.`}>
         <Card>
           <NameRow />
+          {required && <LoginRow />}
           {required && <PasswordRow />}
         </Card>
       </Group>
@@ -120,6 +121,35 @@ function NameRow() {
     <Row label="Name" hint={note ?? "What the app calls you."}>
       <form onSubmit={(e) => void save(e)} className="flex gap-2">
         <Input name="name" defaultValue={name} placeholder={me.username} maxLength={60} className="h-8 w-44 text-sm" aria-label="Name" />
+        <Button type="submit" variant="outline" size="sm">Save</Button>
+      </form>
+    </Row>
+  );
+}
+
+/** The name typed at sign-in (GET/PATCH /api/account-profile): a new one moves no files, the username stays the id. */
+function LoginRow() {
+  const [login, setLogin] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  useEffect(() => {
+    void fetch("/api/account-profile")
+      .then((r) => (r.ok ? (r.json() as Promise<{ login: string }>) : null))
+      .then((d) => setLogin(d?.login ?? ""))
+      .catch(() => setLogin(""));
+  }, []);
+  if (login === null) return null;
+  const save = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const value = String(new FormData(e.currentTarget).get("login") ?? "");
+    const r = await fetch("/api/account-profile", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ login: value }) });
+    const d = (await r.json().catch(() => ({}))) as { error?: string; login?: string };
+    if (r.ok && d.login) setLogin(d.login);
+    setNote(r.ok ? `You sign in as "${d.login}" now.` : (d.error ?? "Could not save it"));
+  };
+  return (
+    <Row label="Sign-in name" hint={note ?? "Lowercase letters, digits, - and _."}>
+      <form onSubmit={(e) => void save(e)} className="flex gap-2">
+        <Input name="login" defaultValue={login} autoCapitalize="none" maxLength={24} className="h-8 w-44 text-sm" aria-label="Sign-in name" />
         <Button type="submit" variant="outline" size="sm">Save</Button>
       </form>
     </Row>

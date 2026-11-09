@@ -13,15 +13,22 @@ import type { Comment, CommentJudgment } from "./types";
 export const COMMENT_KINDS = {
   question: "Asks the creator something they could answer (advice, how, why, what about my situation).",
   pushback: "Disagrees, doubts or challenges the post or the creator.",
-  story: "Shares the commenter's own experience or their child's.",
+  story: "Shares the commenter's own experience or a story about someone they know.",
   praise: "Thanks, agrees or compliments, without much else.",
-  keyword: "Just a word or two replying to a call to action to get something sent to them (a guide, a link, a program) — e.g. \"Guide\", \"Blueprint\", \"Recipe\".",
+  keyword: "Just a word or two replying to a call to action to get something sent to them (a guide, a link, a program) — e.g. \"Guide\", \"Checklist\", \"Recipe\".",
   other: "Tags a friend, jokes, emoji or a short reaction.",
   spam: "Promotion, bots, scams or unrelated links.",
 } as const;
 
 export type CommentKind = keyof typeof COMMENT_KINDS;
 export type { CommentJudgment };
+
+// A plug-in sets its own wording for a kind (setCommentKinds); the keys stay the same.
+let kindOverrides: Partial<Record<CommentKind, string>> | null = null;
+/** Replace the wording of some comment kinds (null restores the defaults). Called by a plug-in at load. */
+export function setCommentKinds(next: Partial<Record<CommentKind, string>> | null): void {
+  kindOverrides = next;
+}
 
 /**
  * Under this "worth reading" probability a judged comment is hidden (one
@@ -38,7 +45,7 @@ const BATCH = 20;
 /** Who posted it: the post's own handle (a library post is someone else's), never one fixed creator. */
 const creatorLine = (handle?: string) => (handle ? `@${handle}, the creator who posted this.` : "The creator who posted this.");
 
-/** Words the caption asks people to comment ("Comment BABY MOVEMENT and…"). */
+/** Words the caption asks people to comment ("Comment PLANT CARE and…"). */
 export function captionKeywords(caption: string | undefined): string[] {
   const out: string[] = [];
   const re = /comment\s+["“']?([A-Za-z][A-Za-z ]{0,24}?)["”']?(?=\s+(?:and|to|for|below|if|&)|[,.!:\n]|$)/gi;
@@ -64,7 +71,7 @@ export async function judgeComments(
       const quoted = `Comment ${k + 1}: "${c.text.slice(0, 600)}"`;
       questions[`kind${k}`] = choice(
         `${quoted}\nWhat kind of comment is this?`,
-        COMMENT_KINDS,
+        { ...COMMENT_KINDS, ...kindOverrides },
       );
       questions[`worth${k}`] = noul(
         `${quoted}\nIs this comment worth the creator's time to read — a real question, a thoughtful story, useful pushback or specific feedback — rather than a generic reaction, tag, emoji or spam?`,

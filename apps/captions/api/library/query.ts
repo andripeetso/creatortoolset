@@ -2,6 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { AssetCard, AssetKind, AssetPage, SearchQuery } from "../../contracts/library";
 import type { ProbeSummary } from "./media/probe";
 import { inReview } from "./trash";
+import { facetClauses } from "./sources";
 
 /**
  * Asset listing for the library (tasks/media-library-plan.md, sections 6 and 8): one SQL statement from a
@@ -47,6 +48,13 @@ export function parseSearch(p: Record<string, string | undefined>): SearchQuery 
   const num = (v: string | undefined) => (v !== undefined && v.trim() !== "" && Number.isFinite(Number(v)) ? Number(v) : undefined);
   const kind = (p.kind ?? "").split(",").filter((k): k is AssetKind => KINDS.includes(k as AssetKind));
   const limit = num(p.limit);
+  // plug-in facets: f.<key>=a,b (values only ever compared by the facet's own SQL)
+  const picked = Object.fromEntries(
+    Object.entries(p)
+      .filter(([k]) => k.startsWith("f."))
+      .map(([k, v]) => [k.slice(2, 80), (v ?? "").split(",").map((s) => s.slice(0, 80)).filter(Boolean).slice(0, 20)] as const)
+      .filter(([, vs]) => vs.length),
+  );
   return {
     ...(p.q?.trim() ? { q: p.q.trim().slice(0, 200) } : {}),
     ...(kind.length ? { kind } : {}),
@@ -56,6 +64,7 @@ export function parseSearch(p: Record<string, string | undefined>): SearchQuery 
     ...(p.cursor ? { cursor: p.cursor } : {}),
     ...(p.collectionId ? { collectionId: p.collectionId.slice(0, 64) } : {}),
     ...(p.trashed === "1" ? { trashed: true } : {}),
+    ...(Object.keys(picked).length ? { facets: picked } : {}),
     limit: Math.min(MAX_LIMIT, Math.max(1, Math.floor(limit ?? DEFAULT_LIMIT))),
   };
 }
@@ -112,6 +121,10 @@ export function buildAssetQuery(libraryId: string, query: SearchQuery = {}): { s
   if (query.collectionId) {
     where.push("a.id IN (SELECT asset_id FROM collection_items WHERE collection_id = ?)");
     params.push(query.collectionId);
+  }
+  for (const f of facetClauses(query.facets ?? {})) {
+    where.push(f.sql);
+    params.push(...f.params);
   }
   const at = query.cursor ? cursorOf(query.cursor) : null;
   if (at) {

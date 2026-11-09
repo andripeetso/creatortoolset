@@ -156,6 +156,16 @@ export function setSessionStatus(
   return true;
 }
 
+/** One of the author's posts that a session became: its Instagram shortcode and link, who added it and when. `version` is the
+ *  version it is (a Finals version's key), when one is named. */
+export interface Posting {
+  shortcode: string;
+  url: string;
+  by: "auto" | "you";
+  at: number;
+  version?: string;
+}
+
 export interface SessionMeta {
   id: string;
   owner: string;
@@ -174,8 +184,11 @@ export interface SessionMeta {
   loaded?: LoadedSource[];
   /** The Claude session on the Mac that holds this conversation: the next Mac turn resumes it when it can (see resumableClaude). */
   claudeSession?: ClaudeSession;
-  /** The post this session became: matched from the author's posts (`posted.ts`) or a link the author pasted. */
-  posted?: { shortcode: string; url: string; by: "auto" | "you"; at: number };
+  /** The posts this session became, one per post (matched from the author's posts or pasted as links). `postings[0]` is also `posted`,
+   *  which older readers still use; a session saved before `postings` existed has only `posted` (see `postingsOf`). */
+  postings?: Posting[];
+  /** The first of `postings`, kept for readers that know one post. */
+  posted?: Posting;
   /** Pinned to the top of the sidebar and the list (right-click, Pin). */
   pinned?: boolean;
   /** Posts the author marked as not this session's, so the matcher never picks them again. */
@@ -227,7 +240,7 @@ export interface GenerateInput {
 
 /* ---- co-writing: documents and chat ---- */
 
-export type DocKind = DraftKind | "youtube" | "notes";
+export type DocKind = DraftKind | "youtube" | "newsletter" | "thread" | "article" | "notes";
 
 export interface Block {
   /** b1, b2… stable within a document. */
@@ -243,6 +256,11 @@ export interface Companion {
   text: string;
   author: "ai" | "user";
   at: number;
+}
+
+/** A version's own post description: a companion plus the name it goes by in Finals ("A · Haidt 12 s"). */
+export interface VersionCaption extends Companion {
+  label?: string;
 }
 
 export interface Version {
@@ -275,6 +293,8 @@ export interface Document {
   hooks?: Block[];
   /** Optional companions: post description (caption) and pinned comment. */
   caption?: Companion;
+  /** One post description per version, by the version's key; `caption` stays the main one, which a version without its own uses. */
+  captions?: Record<string, VersionCaption>;
   pinned?: Companion;
   /** Oldest first. Auto snapshots are capped; kept named ones stay. */
   versions: Version[];
@@ -367,6 +387,26 @@ export interface LibraryRef {
   title: string;
 }
 
+/** A Media Library clip from a library source (a plug-in's clip), kept by its external ref id (api/library/refs.ts). */
+export interface ExternalLibraryRef {
+  kind: "external";
+  refId: string;
+  title: string;
+}
+
+/** A clip a message keeps: a version of the library, or a source's clip. */
+export type ClipRef = LibraryRef | ExternalLibraryRef;
+
+/** A source's clip named by its source, kind and id, as a link made before the move carries it (the id is the source's own). */
+export interface ExternalClipLink {
+  source: string;
+  kind: string;
+  externalId: string;
+}
+
+/** A clip a message sends, before the server checks it: a version of the library, an external ref, or a source's clip. */
+export type LibraryPick = { assetId: string; versionId: string } | { refId: string } | ExternalClipLink;
+
 /** A file sent with a message (a PDF the AI reads from the Mac folder), kept in sessions/<id>/files/<id>.<ext>. */
 export interface FileRef {
   id: string;
@@ -398,9 +438,14 @@ export interface ChatMessage {
   /** Other files sent with the message (PDFs), in the order they go after the pictures. */
   files?: FileRef[];
   /** Media Library clips sent with the message. */
-  library?: LibraryRef[];
+  library?: ClipRef[];
   /** A web search the author approved for this turn. */
   web?: string;
+  /** The turn writes this Finals version's own post description (its key in `captions`): the writer sees and sets
+   *  it as the piece's post description. */
+  captionFor?: string;
+  /** Sent by Creator Toolset itself (a Finals version's description when the finals arrived), not typed by him. */
+  auto?: boolean;
   status?: "thinking" | "done" | "error";
   error?: string;
   /** While thinking: what is happening, and who is answering. */
@@ -520,9 +565,11 @@ export interface TurnInput {
   /** A retry: files this session already keeps. */
   fileRefs?: FileRef[];
   /** Media Library clips, by id: the server checks the author may read each and fills in its title. */
-  library?: Array<{ assetId: string; versionId: string }>;
+  library?: LibraryPick[];
   /** A retry of an approved web search. */
   web?: string;
+  /** The turn writes this Finals version's own post description (its key in `captions`). */
+  captionFor?: string;
   /** A retry: the failed question and reply, removed in the same write that starts this turn. */
   retryOf?: string[];
 }

@@ -3,6 +3,7 @@
  * (the last 30 days, totals, demographics) and graph-daily.json (every day
  * of reach / new follows ever read). Pure — graph.ts does the fetching.
  */
+import { mergeSnapshots, type AccountDay } from "../connectors/store";
 
 /** Meta's account-insight days are Pacific days: each ends at midnight in Los Angeles. */
 export const INSIGHTS_TIMEZONE = "America/Los_Angeles";
@@ -133,4 +134,27 @@ export function mergeAccountStats(
     ages: next.ages ?? prev.ages,
     genders: next.genders ?? prev.genders,
   };
+}
+
+/** How long one account day stays in the stored history. Each pull reads 30 days, so the rest comes from earlier pulls. */
+export const DAILY_HISTORY_DAYS = 90;
+
+/**
+ * Adds a pull's account days to the account's stored daily history (store.ts `daily`). A day replaces its own row,
+ * but a value the pull lacks keeps the stored one, and a day with neither value is not stored (absent, not zero).
+ * Rows older than 90 days, measured from `now`, are dropped.
+ */
+export function nextAccountDaily(prev: AccountDay[] | undefined, days: InsightDay[], key: string, now: number): AccountDay[] {
+  let out = prev ?? [];
+  for (const d of [...days].sort((x, y) => x.date.localeCompare(y.date))) {
+    const old = out.find((r) => r.day === d.date && r.id === key);
+    const reach = d.reach ?? old?.reach;
+    const newFollows = d.newFollows ?? old?.newFollows;
+    if (reach === undefined && newFollows === undefined) continue;
+    const row: AccountDay = { day: d.date, id: key };
+    if (reach !== undefined) row.reach = reach;
+    if (newFollows !== undefined) row.newFollows = newFollows;
+    out = mergeSnapshots(out, d.date, [row], DAILY_HISTORY_DAYS);
+  }
+  return mergeSnapshots(out, new Date(now).toISOString().slice(0, 10), [], DAILY_HISTORY_DAYS);
 }

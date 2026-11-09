@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { HardDrive } from "lucide-react";
-import type { LibraryStorage, LibraryStorageInput } from "@contracts/library";
+import { applyS3Preset, S3_PRESETS, type LibraryStorage, type LibraryStorageInput, type S3PresetId } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { getLibraryStorage, setLibraryStorage } from "@/lib/library";
@@ -20,6 +20,8 @@ export function LibraryStorageSettings({ libraryId, onSaved }: { libraryId: stri
   const [busy, setBusy] = useState(false);
   const [choice, setChoice] = useState<Choice>("local");
   const [form, setForm] = useState({ endpoint: "", region: "", bucket: "", pathStyle: false, accessKey: "", secretKey: "" });
+  /** The chosen preset's endpoint example, shown as the endpoint field's placeholder (never as its value). */
+  const [endpointHint, setEndpointHint] = useState("");
 
   const show = (v: LibraryStorage) => {
     setS(v);
@@ -71,6 +73,11 @@ export function LibraryStorageSettings({ libraryId, onSaved }: { libraryId: stri
     </label>
   );
   const ownLocked = !!s?.locked; // a library with files keeps its bucket; only the keys and region can change
+  const pick = (id: string) => {
+    if (!id) return;
+    setForm((f) => applyS3Preset(f, id as S3PresetId));
+    setEndpointHint(S3_PRESETS.find((p) => p.id === id)?.endpointHint ?? "");
+  };
 
   return (
     <details className="rounded-xl border border-zinc-500/20 p-3 text-sm">
@@ -87,7 +94,24 @@ export function LibraryStorageSettings({ libraryId, onSaved }: { libraryId: stri
         </div>
         {choice === "own" && (
           <div className="grid gap-2 sm:grid-cols-2">
-            {field("endpoint", "Endpoint", "https://s3.example.com (empty: AWS)", ownLocked)}
+            <label className="flex flex-col gap-1 sm:col-span-2">
+              <span className="text-zinc-500">Provider preset</span>
+              <select
+                aria-label="Provider preset"
+                value=""
+                disabled={ownLocked}
+                onChange={(e) => pick(e.target.value)}
+                className="h-9 rounded-md border border-zinc-500/30 bg-transparent px-3"
+              >
+                <option value="">Fill in the endpoint for a provider…</option>
+                {S3_PRESETS.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {field("endpoint", "Endpoint", endpointHint || "https://s3.example.com (empty: AWS)", ownLocked)}
             {field("bucket", "Bucket", "tiny-acrobatics-footage", ownLocked)}
             {field("region", "Region", "us-east-1")}
             <label className="flex items-center gap-2 self-end pb-2">

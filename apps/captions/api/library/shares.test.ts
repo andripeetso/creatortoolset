@@ -15,6 +15,7 @@ const { libraryApp } = await import("./routes");
 const { collectionApp } = await import("./collections");
 const { publicShareApp, shareApp } = await import("./shares");
 const { indexAsset } = await import("./query");
+const { registerLibrarySlot, resetLibrarySlots } = await import("./sources");
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -163,6 +164,57 @@ describe("library share links", () => {
     ];
     for (const [method, url, body] of routes) {
       expect([method, url, (await call("owner-b", method, url, body)).status]).toEqual([method, url, 404]);
+    }
+  });
+});
+
+describe("piece shares and the policies on writes", () => {
+  it("a link stops showing an asset the policies hide after the link was made", async () => {
+    seed("late1", "Late", "owner-a");
+    const made = await data(call("owner-a", "POST", "/api/library/lib_a/shares", { target: { kind: "asset", id: "late1" }, scope: "view" }));
+    expect((await data(call("", "GET", `/api/library/s/${made.token}`))).items.map((i: any) => i.id)).toEqual(["late1"]);
+    registerLibrarySlot("test-late", { policies: [{ sourceId: "library", canSee: (_viewer, asset) => asset.assetId !== "late1" }] });
+    try {
+      expect((await data(call("", "GET", `/api/library/s/${made.token}`))).items).toEqual([]);
+    } finally {
+      resetLibrarySlots();
+    }
+  });
+
+  it("a piece link shows the piece's versions in order, under the piece's label", async () => {
+    seed("p1", "Piece one", "owner-a");
+    seed("p2", "Piece two", "owner-a");
+    const p = await data(call("owner-a", "POST", "/api/library/lib_a/pieces", { label: "Roll reel" }));
+    await call("owner-a", "POST", `/api/library/lib_a/pieces/${p.id}/items`, { versionId: "p2-v1" });
+    await call("owner-a", "POST", `/api/library/lib_a/pieces/${p.id}/items`, { versionId: "p1-v1" });
+    const share = await data(call("owner-a", "POST", "/api/library/lib_a/shares", { target: { kind: "piece", id: p.id }, scope: "view" }));
+    const view = await data(call("", "GET", `/api/library/s/${share.token}`));
+    expect(view).toMatchObject({ name: "Roll reel", locked: false, items: [{ id: "p2" }, { id: "p1" }] });
+  });
+
+  it("the policies hold for writes: a hidden asset cannot be shared, filed, trashed or edited, and a piece holding one is refused", async () => {
+    seed("hid1", "Hidden", "owner-a");
+    seed("pub1", "Public", "owner-a");
+    const hiddenPiece = await data(call("owner-a", "POST", "/api/library/lib_a/pieces", { label: "Has hidden" }));
+    await call("owner-a", "POST", `/api/library/lib_a/pieces/${hiddenPiece.id}/items`, { versionId: "hid1-v1" });
+    const piece = await data(call("owner-a", "POST", "/api/library/lib_a/pieces", { label: "Public only" }));
+    await call("owner-a", "POST", `/api/library/lib_a/pieces/${piece.id}/items`, { versionId: "pub1-v1" });
+    const col = await data(call("owner-a", "POST", "/api/library/lib_a/collections", { name: "Mixed set" }));
+
+    registerLibrarySlot("test-hide", { policies: [{ sourceId: "library", canSee: (_viewer, asset) => asset.assetId !== "hid1" }] });
+    try {
+      expect((await call("owner-a", "POST", "/api/library/lib_a/shares", { target: { kind: "asset", id: "hid1" }, scope: "view" })).status).toBe(404);
+      expect((await call("owner-a", "POST", "/api/library/lib_a/shares", { target: { kind: "piece", id: hiddenPiece.id }, scope: "view" })).status).toBe(404);
+      expect((await call("owner-a", "POST", `/api/library/lib_a/pieces/${piece.id}/items`, { versionId: "hid1-v1" })).status).toBe(404);
+      expect((await call("owner-a", "PATCH", `/api/library/lib_a/pieces/${hiddenPiece.id}`, { label: "Renamed" })).status).toBe(404);
+      expect((await call("owner-a", "PATCH", `/api/library/lib_a/pieces/${piece.id}`, { label: "Renamed" })).status).toBe(200);
+      expect((await call("owner-a", "DELETE", "/api/library/lib_a/assets/hid1")).status).toBe(404);
+      expect(await data(call("owner-a", "POST", `/api/library/lib_a/collections/${col.id}/items`, { assetIds: ["hid1", "pub1"] }))).toEqual({ added: 1 });
+
+      const share = await data(call("owner-a", "POST", "/api/library/lib_a/shares", { target: { kind: "collection", id: col.id }, scope: "view" }));
+      expect((await data(call("", "GET", `/api/library/s/${share.token}`))).items.map((i: any) => i.id)).toEqual(["pub1"]);
+    } finally {
+      resetLibrarySlots();
     }
   });
 });

@@ -13,6 +13,12 @@ final class Shell: NSObject, ObservableObject {
     @Published private(set) var unread = 0
     /// The menu bar panel's Workshop rows (Activity.swift), from the open server.
     @Published private(set) var sessions: [SessionRow] = []
+    /// The rows the server's plug-ins add (GET /api/activity), shown with the sessions.
+    @Published private(set) var pluginRows: [PluginRow] = []
+    /// The menu items the server's plug-ins add (GET /api/activity/menu): the Go and gear menus (PluginMenu.swift).
+    @Published private(set) var pluginMenu: [PluginMenuItem] = []
+    /// The Go menu's own tools (GET /api/activity/tools, PluginMenu.swift): the server's list for this account.
+    @Published private(set) var appTools: [AppToolItem] = []
     @Published private(set) var notice: String?
     /// This Mac as an AI device (Relay.swift): on = the person turned it on; ai = what the runner reports.
     @Published private(set) var aiOn = false
@@ -62,7 +68,13 @@ final class Shell: NSObject, ObservableObject {
             defaults.set(old.current, forKey: currentKey)
             defaults.set(true, forKey: "serversMigrated")
         }
-        let list = defaults.data(forKey: serversKey).flatMap { try? JSONDecoder().decode([ServerEntry].self, from: $0) } ?? []
+        var list = defaults.data(forKey: serversKey).flatMap { try? JSONDecoder().decode([ServerEntry].self, from: $0) } ?? []
+        // the build's DEFAULT_SERVER, once: added to the list the first time this copy runs
+        let seeded = seedingDefaultServer(Bundle.main.object(forInfoDictionaryKey: "CTDefaultServer") as? String, into: list,
+                                          seeded: defaults.bool(forKey: "defaultServerSeeded"))
+        if seeded.servers != list { defaults.set(try? JSONEncoder().encode(seeded.servers), forKey: serversKey) }
+        defaults.set(seeded.seeded, forKey: "defaultServerSeeded")
+        list = seeded.servers
         let picked = validCurrent(defaults.string(forKey: currentKey), in: list, hasLocal: hasLocal)
         servers = list
         current = picked
@@ -82,6 +94,7 @@ final class Shell: NSObject, ObservableObject {
         }
         view.onThisMac = { [weak self] in self?.openWindowID?("this-mac") }
         view.onRecord = { [weak self] in self?.recorderCommand($0) }
+        view.onSignIn = { [weak self] driver, home in self?.signIn(driver: driver, home: home) }
         recorderWatch = recorder.$phase.sink { [weak self] phase in
             DispatchQueue.main.async { self?.pushRecorderState(phase) }
         }
@@ -92,6 +105,7 @@ final class Shell: NSObject, ObservableObject {
         recorder.onRecordingsChanged = { [weak self] in self?.pushRecordings() }
         if Recorder.available { RecordShortcut.shared.install(recorder) }
         recorder.openPage = { [weak self] in self?.showWindow(href: $0) }
+        view.onThisMacCommand = { [weak self] in self?.thisMacCommand($0) }
         view.onThisMacAsk = { [weak self] ask, done in
             guard let self else { return done(["aiOn": false, "paired": false]) }
             if ask == "state" {
@@ -100,7 +114,6 @@ final class Shell: NSObject, ObservableObject {
                 Task { done(await self.startThisMac()) }
             }
         }
-        view.pickerMenu = { [weak self] in self?.pickerItems() ?? [] }
         account.window = { [weak self] in self?.webView.window }
         account.signedIn = { [weak self] profile in self?.ownerProfile(profile) }
         view.onAccount = { [weak self] ask, done in
@@ -199,23 +212,13 @@ final class Shell: NSObject, ObservableObject {
     private func saveServers(_ list: [ServerEntry]) {
         servers = list
         UserDefaults.standard.set(try? JSONEncoder().encode(list), forKey: serversKey)
-        markDevice()   // the picker's tooltip carries the name
+        markDevice()
     }
 
-    /// The picker's menu right of the window buttons (TitleBar.swift).
-    private func pickerItems() -> [NSMenuItem] {
-        var items: [NSMenuItem] = listed.map { s in ActionItem(s.name, checked: s.id == current) { [weak self] in self?.select(s.id) } }
-        items.append(.separator())
-        items.append(ActionItem("Add server…") { [weak self] in self?.openWindowID?("this-mac") })
-        items.append(ActionItem("Run your own server…") { [weak self] in self?.openWindowID?("guide") })
-        items.append(ActionItem("This Mac…") { [weak self] in self?.openWindowID?("this-mac") })
-        return items
-    }
-
+    /// This Mac is a Settings section in the page (Settings → This Mac, ThisMacBridge.swift); the window keeps the rest.
     /// The page learns this Mac's device id on the open server (html data-mac-device), for its AI line.
     private func markDevice() {
         (webView as? AppWebView)?.macDevice = hasServer ? DeviceVault.deviceID(for: base.host ?? "") : nil
-        (webView as? AppWebView)?.picker.toolTip = "Server: \(currentName ?? "none picked")"
     }
 
     /// The guide's two network checks for https://<domain>: HTTPS valid, the app answers (GET /api/health).
@@ -383,7 +386,7 @@ final class Shell: NSObject, ObservableObject {
     }
 
     var rows: (active: [ActivityRow], forYou: [ActivityRow]) {
-        activityRows(sessions: sessions, aiRunning: aiOn ? ai.running : 0)
+        activityRows(sessions: sessions, aiRunning: aiOn ? ai.running : 0, plugin: pluginRows)
     }
 
     var aiLine: String {
@@ -455,6 +458,18 @@ final class Shell: NSObject, ObservableObject {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    /// A pill row's button (LaunchAgent.swift): start, stop or restart the agent, off the main thread; a failure shows in
+    /// the panel's notice, and the rows load again.
+    func runAgent(_ action: PluginAction) {
+        Task.detached {
+            let problem = LaunchAgent.run(verb: action.run, label: action.label)
+            await MainActor.run { [weak self] in
+                self?.notice = problem
+                Task { await self?.refresh() }
+            }
+        }
+    }
+
     /// "Settings…": the server's Settings in the window; with no server picked, This Mac (Servers is there).
     func openSettings() {
         if hasServer { showWindow(href: "/settings") } else { openWindowID?("this-mac"); NSApp.activate(ignoringOtherApps: true) }
@@ -474,6 +489,29 @@ final class Shell: NSObject, ObservableObject {
     func openAppLog() {
         if !FileManager.default.fileExists(atPath: AppLog.path) { AppLog.write("log started") }
         NSWorkspace.shared.open(URL(fileURLWithPath: AppLog.path))
+    }
+
+    /// The provider page's Sign in button: writes the CLI's login as a .command file under Application Support and opens
+    /// it, so Terminal runs it. Only the CLIs in signInCommands; the home must be a folder under the user's home.
+    /// Terminal needs no Apple Events permission for this. Coming back to the app re-reports this Mac's sign-ins (init's
+    /// didBecomeActive observer), which the page reads while it waits.
+    func signIn(driver: String, home: String) {
+        let userHome = FileManager.default.homeDirectoryForCurrentUser
+        do {
+            let folder = home.isEmpty ? "" : try checkedHome(home, root: userHome)
+            guard let path = binary(driver, home: userHome),
+                  let script = signInScript(driver: driver, home: folder, binary: path) else {
+                return AppLog.write("sign in: \(driver) has no sign-in on this Mac")
+            }
+            let dir = appSupport.appendingPathComponent("sign-in", isDirectory: true)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let file = dir.appendingPathComponent("\(driver).command")
+            try script.write(to: file, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
+            NSWorkspace.shared.open(file)
+        } catch {
+            AppLog.write("sign in: \(error.localizedDescription)")
+        }
     }
 
     /// The site's cookies from the web view's store, for the requests below.
@@ -534,8 +572,6 @@ final class Shell: NSObject, ObservableObject {
         return thisMacState()
     }
 
-    /// The page's view of this Mac (bridge "thisMac" state): whether the AI is on, and whether it is paired with the open site.
-    func thisMacState() -> [String: Any] { ["aiOn": aiOn, "paired": pairedHere] }
 
     /// POST /api/devices with the window's cookies: the site makes the device and returns its token once.
     private func pairThisMac() async throws {
@@ -622,9 +658,19 @@ final class Shell: NSObject, ObservableObject {
         } else {
             spaceLine = nil
         }
-        guard hasServer else { return sessions = [] }
+        guard hasServer else {
+            sessions = []
+            pluginRows = []
+            pluginMenu = []
+            appTools = []
+            return
+        }
         let client = await client()
         sessions = (try? await client.get("/api/workshop/sessions/summary")) ?? []
+        pluginRows = (try? await client.get("/api/activity")) ?? []
+        let items: [PluginMenuItem] = (try? await client.get("/api/activity/menu")) ?? []
+        pluginMenu = pluginMenuItems(items)
+        appTools = appToolItems((try? await client.get("/api/activity/tools")) ?? [])
         do {
             let notes: NotesResponse = try await client.get("/api/review/notifications")
             unread = notes.unread

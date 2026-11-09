@@ -11,6 +11,11 @@
 #   NOTARY_PROFILE=…      a notarytool keychain profile: with SIGN_IDENTITY, notarizes and staples the app
 #   SSCD_CACHE=…          a verified SSCD model folder (see install-sscd-runtime.mjs); unset = no duplicate check model
 #   CT_BUILD_CACHE=…      where downloads are kept between builds (default build/cache)
+#   BUNDLE_ID=…           the bundle id (default com.creatortoolset.mac); an installed build keeps its id to keep updating
+#   APP_NAME=…            the name in the menu bar and Dock (default Creator Toolset)
+#   DEFAULT_SERVER=…      a server added to the Servers list on first launch (https, or localhost); default none
+#   apps/mac/build.env    the same settings in a git-ignored file (see build.env.example); the file is read first and
+#                         any setting already in the environment wins, so release.sh's FEED_URL still applies
 # Without both Sparkle settings, the app is built with no updater: it never checks for or installs updates.
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
@@ -22,6 +27,15 @@ mkdir -p "$cache"
 # the install scripts make temp folders: keep them next to the build, not in the system temp folder
 export TMPDIR="$here/build/tmp"
 mkdir -p "$TMPDIR"
+
+# this build's own settings (build.env): read it, then put back what the environment already set
+given="$(env | grep -E '^(BUNDLE_ID|APP_NAME|DEFAULT_SERVER|SPARKLE_PUBLIC_KEY|FEED_URL|VERSION)=' || true)"
+if [ -f "$here/build.env" ]; then set -a; . "$here/build.env"; set +a; fi
+while IFS= read -r kv; do [ -z "$kv" ] || export "$kv"; done <<< "$given"
+# values go into the XML Info.plist, so & and < are escaped
+xml_escape() { printf "%s" "$1" | sed -e "s/&/\\&amp;/g" -e "s/</\\&lt;/g" -e "s/>/\\&gt;/g"; }
+bundle_id="$(xml_escape "${BUNDLE_ID:-com.creatortoolset.mac}")"
+app_name="$(xml_escape "${APP_NAME:-Creator Toolset}")"
 
 swift build -c release
 bin="$(swift build -c release --show-bin-path)/CreatorToolsetMac"
@@ -49,19 +63,24 @@ fi
 channel=""
 [ -z "${SIGN_IDENTITY:-}" ] || channel="  <key>CTChannel</key><string>release</string>"
 
+# the server the Servers list gets once on first launch (Shell.swift reads CTDefaultServer)
+default_server=""
+[ -z "${DEFAULT_SERVER:-}" ] || default_server="  <key>CTDefaultServer</key><string>$(xml_escape "$DEFAULT_SERVER")</string>"
+
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>CFBundleIdentifier</key><string>com.creatortoolset.mac</string>
-  <key>CFBundleName</key><string>Creator Toolset</string>
-  <key>CFBundleDisplayName</key><string>Creator Toolset</string>
+  <key>CFBundleIdentifier</key><string>$bundle_id</string>
+  <key>CFBundleName</key><string>$app_name</string>
+  <key>CFBundleDisplayName</key><string>$app_name</string>
   <key>CFBundleExecutable</key><string>CreatorToolsetMac</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>${VERSION:-1.0.$build}</string>
   <key>CFBundleVersion</key><string>$build</string>
 $sparkle
 $channel
+$default_server
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundleURLTypes</key><array><dict>
     <key>CFBundleURLName</key><string>Creator Toolset link</string>

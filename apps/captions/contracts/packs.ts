@@ -60,9 +60,98 @@ export interface PackManifest {
   /** Who it's for: "fitness", "B2B", "parenting"… free text, for search. */
   niche?: string;
   homepage?: string;
+  /** What the pack's items need the app to allow (PACK_PERMISSIONS). Declared here, shown before install. */
+  permissions?: PackPermission[];
 }
 
-export interface Pack extends PackManifest {
+/** A colour grade in ASC CDL form. The AI editor applies it in the preview and writes it into the OTIO for Resolve. */
+export interface PackGrade {
+  name: string;
+  title: string;
+  cdl: {
+    slope: [number, number, number];
+    offset: [number, number, number];
+    power: [number, number, number];
+    saturation: number;
+  };
+}
+
+/** Enhancers a voice mix may name. The public app runs them with the person's own key; a plug-in can add more. */
+export const VOICE_ENHANCERS = ["off", "nvidia", "elevenlabs"] as const;
+export type VoiceEnhancer = (typeof VOICE_ENHANCERS)[number];
+
+/** Loudness targets for the edit: the voice, and optionally a music bed under it. No bed = level only. */
+export interface PackVoiceMix {
+  name: string;
+  title: string;
+  voiceLufs: number;
+  bedLufs?: number;
+  enhancer: VoiceEnhancer;
+}
+
+/**
+ * A sound-effects library. The file bytes are not in the pack; each sound is listed by id, category and title, and
+ * the set's licence applies to all of them. Fetching the files is a later install step.
+ */
+export interface PackSfxSet {
+  name: string;
+  title: string;
+  license: string;
+  source?: string;
+  sounds: { id: string; category: string; title: string }[];
+}
+
+/**
+ * A DaVinci Resolve bridge a device may switch on. While an installed pack has one, the account's Macs may take the
+ * resolve step (api/devices.ts claim, contracts/devices.ts RESOLVE_KIND); without it the helper stays off.
+ */
+export interface PackResolve {
+  name: string;
+  title: string;
+  /** Lowest Resolve version the bridge is tested with, "major.minor". */
+  minVersion: string;
+  platform: "macos";
+}
+
+/**
+ * Pack items the core cannot install itself. A plug-in installs each kind through its installer (api/lib/plugin.ts
+ * packItems); without one, the pack's copies are held on the installed record (`held`) and shown as needing a plug-in.
+ */
+export const PACK_ITEM_KINDS = ["designSystems"] as const;
+export type PackItemKind = (typeof PACK_ITEM_KINDS)[number];
+
+/** Design systems an install kept but did not put in place: `needs` says what would install them. */
+export interface HeldDesignSystems {
+  /** "plug-in": this server has no installer for them. "admin": an installer exists and only an admin's install runs it. */
+  needs: "plug-in" | "admin";
+  items: PackDesignSystem[];
+}
+
+/** Each slot names one item of this pack; the editor uses it when the person chooses nothing. */
+export interface PackEditorDefaults {
+  designSystem?: string;
+  grade?: string;
+  voiceMix?: string;
+  sfxSet?: string;
+}
+
+/** The editor items a pack can carry (all level 0 except a design system's motion kit). */
+export interface PackEditorItems {
+  grades?: PackGrade[];
+  voiceMixes?: PackVoiceMix[];
+  sfxSets?: PackSfxSet[];
+  resolve?: PackResolve[];
+  editorDefaults?: PackEditorDefaults;
+}
+
+/**
+ * What a pack's items need the app to allow. A pack declares them in its manifest; checkPack refuses a pack whose
+ * items need one it did not declare. motion-kit is the drawing code of a design system (level 1).
+ */
+export const PACK_PERMISSIONS = ["grade", "voice", "sfx", "resolve", "motion-kit"] as const;
+export type PackPermission = (typeof PACK_PERMISSIONS)[number];
+
+export interface Pack extends PackManifest, PackEditorItems {
   format: 1;
   instructions?: Partial<Record<PackSlot, string>>;
   frameworks?: PackFramework[];
@@ -77,7 +166,7 @@ export interface Pack extends PackManifest {
 export type PackLevel = 0 | 1;
 
 /** One installed pack in a person's account (api/lib/packs.ts). */
-export interface InstalledPack extends PackManifest {
+export interface InstalledPack extends PackManifest, PackEditorItems {
   installedAt: number;
   updatedAt: number;
   level: PackLevel;
@@ -89,7 +178,9 @@ export interface InstalledPack extends PackManifest {
   off: string[];
   instructions: Partial<Record<PackSlot, string>>;
   /** What install copied into the account, so update and remove find it again. */
-  items: { frameworks: string[]; presets: string[] };
+  items: { frameworks: string[]; presets: string[]; designSystems?: string[] };
+  /** Items the pack carries that this install did not put in place (see HeldDesignSystems). */
+  held?: { designSystems?: HeldDesignSystems };
   /** Set when the community catalog pulled this pack; the app warns and stops using its instructions. */
   delisted?: string;
   /** One of the team's default packs (api/lib/packs.ts DEFAULT_PACKS), installed for the account automatically. */
@@ -111,6 +202,8 @@ export const PACK_LIMITS = {
   designSystems: 5,
   guideChars: 20_000,
   kitChars: 300_000,
+  editorItems: 40,
+  sounds: 300,
 } as const;
 
 const ID = /^[a-z0-9][a-z0-9-]{1,47}$/;
@@ -136,6 +229,28 @@ const str = (v: unknown, max: number): string | null =>
 const opt = (v: unknown, max: number): string | undefined | null =>
   v === undefined || v === null || v === "" ? undefined : str(v, max);
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+const itemName = (v: unknown): string | null => (typeof v === "string" && SYSTEM_NAME.test(v) ? v : null);
+const inRange = (v: unknown, lo: number, hi: number): number | null => (typeof v === "number" && v >= lo && v <= hi ? v : null);
+const triple = (v: unknown, lo: number, hi: number): [number, number, number] | null =>
+  Array.isArray(v) && v.length === 3 && v.every((n) => inRange(n, lo, hi) !== null) ? (v as [number, number, number]) : null;
+
+/** Each entry of a list field goes through `fn`; a field that isn't a list, or is too long, is one problem. */
+function eachItem<T>(raw: Record<string, unknown>, key: string, problems: string[], fn: (item: Record<string, unknown>, at: string) => T | null): T[] {
+  const out: T[] = [];
+  const list = raw[key];
+  if (list === undefined) return out;
+  if (!Array.isArray(list) || list.length > PACK_LIMITS.editorItems) {
+    problems.push(`"${key}": a list of up to ${PACK_LIMITS.editorItems}`);
+    return out;
+  }
+  list.forEach((item, i) => {
+    const at = `${key}[${i}]`;
+    if (!isObj(item)) { problems.push(`${at}: an object`); return; }
+    const v = fn(item, at);
+    if (v) out.push(v);
+  });
+  return out;
+}
 
 /** Problems in one piece of instruction text; empty = fine. */
 export function instructionProblems(text: string): string[] {
@@ -262,17 +377,123 @@ export function checkPack(raw: unknown): PackCheck {
       });
   }
 
-  if (!Object.keys(instructions).length && !frameworks.length && !captionStyles.length && !designSystems.length)
-    problems.push("Empty: a pack needs instructions, frameworks, caption styles or design systems");
+  // editor items: each list is checked on its own, then the editor defaults must name items this pack carries
+  const grades = eachItem(raw, "grades", problems, (g, at) => {
+    const name = itemName(g.name), title = str(g.title, 60);
+    const cdl = isObj(g.cdl) ? g.cdl : null;
+    const slope = triple(cdl?.slope, 0, 4), offset = triple(cdl?.offset, -1, 1), power = triple(cdl?.power, 0.1, 4);
+    const saturation = inRange(cdl?.saturation, 0, 4);
+    if (!name) problems.push(`${at}.name: lowercase letters, digits and dashes, 2–30 long`);
+    if (!title) problems.push(`${at}.title: required, up to 60 characters`);
+    if (!slope || !offset || !power || saturation === null)
+      problems.push(`${at}.cdl: slope 0–4, offset −1 to 1, power 0.1–4 (three numbers each) and saturation 0–4`);
+    return name && title && slope && offset && power && saturation !== null
+      ? { name, title, cdl: { slope, offset, power, saturation } } : null;
+  });
+
+  const voiceMixes = eachItem(raw, "voiceMixes", problems, (v, at) => {
+    const name = itemName(v.name), title = str(v.title, 60);
+    const voiceLufs = inRange(v.voiceLufs, -40, -10);
+    const bedLufs = v.bedLufs === undefined ? undefined : inRange(v.bedLufs, -60, -10);
+    const enhancer = VOICE_ENHANCERS.find((e) => e === v.enhancer) ?? null;
+    if (!name) problems.push(`${at}.name: lowercase letters, digits and dashes, 2–30 long`);
+    if (!title) problems.push(`${at}.title: required, up to 60 characters`);
+    if (voiceLufs === null) problems.push(`${at}.voiceLufs: a number from −40 to −10`);
+    if (bedLufs === null) problems.push(`${at}.bedLufs: a number from −60 to −10, or leave it out for no bed`);
+    if (!enhancer) problems.push(`${at}.enhancer: one of ${VOICE_ENHANCERS.join(", ")}`);
+    return name && title && voiceLufs !== null && bedLufs !== null && enhancer
+      ? { name, title, voiceLufs, ...(bedLufs !== undefined ? { bedLufs } : {}), enhancer } : null;
+  });
+
+  const sfxSets = eachItem(raw, "sfxSets", problems, (s, at) => {
+    const name = itemName(s.name), title = str(s.title, 60);
+    const license = str(s.license, 60);
+    const source = opt(s.source, 200);
+    const sounds: PackSfxSet["sounds"] = [];
+    if (!Array.isArray(s.sounds) || !s.sounds.length || s.sounds.length > PACK_LIMITS.sounds)
+      problems.push(`${at}.sounds: 1–${PACK_LIMITS.sounds} sounds`);
+    else
+      s.sounds.forEach((x, j) => {
+        const id = isObj(x) ? str(x.id, 60) : null, category = isObj(x) ? str(x.category, 30) : null;
+        const soundTitle = isObj(x) ? str(x.title, 80) : null;
+        if (!id || !category || !soundTitle) problems.push(`${at}.sounds[${j}]: id, category and title`);
+        else sounds.push({ id, category, title: soundTitle });
+      });
+    if (!name) problems.push(`${at}.name: lowercase letters, digits and dashes, 2–30 long`);
+    if (!title) problems.push(`${at}.title: required, up to 60 characters`);
+    if (!license) problems.push(`${at}.license: required (the licence every sound in the set is under)`);
+    if (source === null || (source && !/^https:\/\//.test(source))) problems.push(`${at}.source: an https:// address`);
+    return name && title && license && sounds.length && source !== null
+      ? { name, title, license, ...(source ? { source } : {}), sounds } : null;
+  });
+
+  const resolve = eachItem(raw, "resolve", problems, (r, at) => {
+    const name = itemName(r.name), title = str(r.title, 60);
+    const minVersion = typeof r.minVersion === "string" && /^\d{1,3}\.\d{1,2}$/.test(r.minVersion) ? r.minVersion : null;
+    const platform = r.platform === "macos" ? "macos" as const : null;
+    if (!name) problems.push(`${at}.name: lowercase letters, digits and dashes, 2–30 long`);
+    if (!title) problems.push(`${at}.title: required, up to 60 characters`);
+    if (!minVersion) problems.push(`${at}.minVersion: "major.minor", like 19.1`);
+    if (!platform) problems.push(`${at}.platform: "macos"`);
+    return name && title && minVersion && platform ? { name, title, minVersion, platform } : null;
+  });
+
+  let editorDefaults: PackEditorDefaults | undefined;
+  if (raw.editorDefaults !== undefined) {
+    const d = isObj(raw.editorDefaults) ? raw.editorDefaults : null;
+    const slots: Record<keyof PackEditorDefaults, string[]> = {
+      designSystem: designSystems.map((x) => x.name), grade: grades.map((x) => x.name),
+      voiceMix: voiceMixes.map((x) => x.name), sfxSet: sfxSets.map((x) => x.name),
+    };
+    if (!d) problems.push(`"editorDefaults": an object of slot → item name`);
+    else {
+      const out: PackEditorDefaults = {};
+      for (const [slot, value] of Object.entries(d)) {
+        if (!Object.hasOwn(slots, slot)) { problems.push(`editorDefaults: unknown slot "${slot}" (known: ${Object.keys(slots).join(", ")})`); continue; }
+        const key = slot as keyof PackEditorDefaults;
+        if (typeof value !== "string" || !slots[key].includes(value)) { problems.push(`editorDefaults.${slot}: no item named "${String(value)}" in this pack`); continue; }
+        out[key] = value;
+      }
+      editorDefaults = Object.keys(out).length ? out : undefined;
+    }
+  }
+
+  // permissions: what the items need is worked out from them; a declared list must cover it
+  const implied: PackPermission[] = [];
+  if (grades.length) implied.push("grade");
+  if (voiceMixes.length) implied.push("voice");
+  if (sfxSets.length) implied.push("sfx");
+  if (resolve.length) implied.push("resolve");
+  if (designSystems.some((d) => d.kit !== undefined)) implied.push("motion-kit");
+  let permissions = implied;
+  if (raw.permissions !== undefined) {
+    const declared = Array.isArray(raw.permissions) && raw.permissions.every((p) => (PACK_PERMISSIONS as readonly unknown[]).includes(p))
+      ? [...new Set(raw.permissions as PackPermission[])] : null;
+    if (!declared) problems.push(`"permissions": a list of ${PACK_PERMISSIONS.join(", ")}`);
+    else {
+      for (const p of implied) if (!declared.includes(p)) problems.push(`"permissions": the items need "${p}", declare it`);
+      permissions = declared;
+    }
+  }
+
+  if (!Object.keys(instructions).length && !frameworks.length && !captionStyles.length && !designSystems.length
+    && !grades.length && !voiceMixes.length && !sfxSets.length && !resolve.length)
+    problems.push("Empty: a pack needs instructions, frameworks, caption styles, design systems or editor items");
 
   if (problems.length) return { ok: false, problems };
   const pack: Pack = {
     format: 1, id: id!, name: name!, version: version!, author: author!, license: license!, description: description!,
     ...(niche ? { niche } : {}), ...(homepage ? { homepage } : {}),
+    ...(permissions.length ? { permissions } : {}),
     ...(Object.keys(instructions).length ? { instructions } : {}),
     ...(frameworks.length ? { frameworks } : {}),
     ...(captionStyles.length ? { captionStyles } : {}),
     ...(designSystems.length ? { designSystems } : {}),
+    ...(grades.length ? { grades } : {}),
+    ...(voiceMixes.length ? { voiceMixes } : {}),
+    ...(sfxSets.length ? { sfxSets } : {}),
+    ...(resolve.length ? { resolve } : {}),
+    ...(editorDefaults ? { editorDefaults } : {}),
   };
   return { ok: true, pack, level, problems: [] };
 }

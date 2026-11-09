@@ -1,5 +1,5 @@
 import { pieceMarkdown } from "../../../src/lib/workshop-markdown";
-import type { Block, Companion, DocKind, Document, UserEdit, Version } from "./types";
+import type { Block, Companion, DocKind, Document, UserEdit, Version, VersionCaption } from "./types";
 
 /**
  * The shared script document: blocks with an author, edit operations the
@@ -433,4 +433,27 @@ export function markEditsSeen(doc: Document): void {
   if (!doc.userEdits?.length) return;
   for (const e of doc.userEdits) e.seen = true;
   doc.userEdits = doc.userEdits.slice(-KEEP_SEEN_EDITS);
+}
+
+/**
+ * Run `fn` with one Finals version's own post description standing in as the piece's: what `fn` reads as `caption` is
+ * that version's, and what it sets lands there; the main one is left as it was.
+ */
+export function onVersion<T>(doc: Document, key: string | undefined, fn: () => T): T {
+  if (!key) return fn();
+  const mine = doc.captions?.[key];
+  if (mine) doc.caption = { text: mine.text, author: mine.author, at: mine.at };
+  else delete doc.caption;
+  try {
+    return fn();
+  } finally {
+    const set = doc.caption;
+    if (set && (set.text !== mine?.text || set.author !== mine?.author)) {
+      doc.captions = { ...doc.captions, [key]: { ...set, ...(mine?.label ? { label: mine.label } : {}) } as VersionCaption };
+    } else if (!set && mine) {
+      const { [key]: _gone, ...rest } = doc.captions!;
+      if (Object.keys(rest).length) doc.captions = rest;
+      else delete doc.captions;
+    }
+  }
 }

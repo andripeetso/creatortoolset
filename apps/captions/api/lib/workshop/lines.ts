@@ -24,7 +24,7 @@ export function buildLinesPrompt(input: LinesInput): { system: string; user: str
   const piece = input.doc.blocks
     .map((b, i) => `${unit} ${i + 1}${i === at ? " (the one with the selection)" : ""}\n${i === at ? marked : b.text}`)
     .join("\n\n");
-  const system = `The author selected words in one ${unit.toLowerCase()} of their piece, marked «like this». Give three other ways to say just those words, each one fitting where the selection sits, between the text before and after it. Say the concrete thing the way the author talks: the baby or the parent does it, not a position, a seat or a brain, and the actual case, not a summary of it. Keep their meaning. Return exactly {"options": [string, string, string]}: the replacement words only, no quote marks around them.`;
+  const system = `The author selected words in one ${unit.toLowerCase()} of their piece, marked «like this». Give three other ways to say just those words, each one fitting where the selection sits, between the text before and after it. Say the concrete thing the way the author talks: the puppy or the owner does it, not a position, a seat or a brain, and the actual case, not a summary of it. Keep their meaning. Return exactly {"options": [string, string, string]}: the replacement words only, no quote marks around them.`;
   const notes = input.notes.length ? `\n\nWhat the author has said about this piece:\n${input.notes.map((n) => `- ${n.replace(/\n+/g, " ")}`).join("\n")}` : "";
   return { system, user: `${piece}${notes}` };
 }

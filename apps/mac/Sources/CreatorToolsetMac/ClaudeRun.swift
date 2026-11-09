@@ -1,5 +1,5 @@
-// One Claude or Gemini run on this Mac: the Mac relay answer() and stream(). The folder, the session and the
-// command line come from ClaudeRequest.swift; this file starts the process, follows its output,
+// One run of a CLI on this Mac (Claude, Gemini, Codex or Grok): the Mac relay answer() and stream(). The folder, the
+// session and the command line come from ClaudeRequest.swift; this file starts the process, follows its output,
 // and says how it ended. Blocking code: it runs on the relay's own threads, never on the main thread.
 import Foundation
 
@@ -64,13 +64,75 @@ let askGiveUpSeconds: TimeInterval = 11 * 60
 /// The site's answer to a permission question: "waiting", "allowed", "denied", "expired", "gone" (nobody waits), or nil (unreachable: ask again).
 typealias AskSite = (PermissionAsk) -> String?
 
-/// the Mac relay answer() for the request's driver: Gemini, or Claude (the default).
+/// the Mac relay answer() for the request's driver: Gemini, Codex, Grok, or Claude (the default).
 func runAnswer(_ req: RelayRequest, _ opts: RelayOptions, cli: String, work: URL,
                send: @escaping (String) -> Bool, step: @escaping (String) -> Void, ask: AskSite? = nil) throws -> ClaudeAnswer {
-    if opts.driver == "gemini" {
-        return try geminiAnswer(req, opts, cli: cli, work: work, send: send, step: step)
+    switch opts.driver {
+    case "gemini": return try geminiAnswer(req, opts, cli: cli, work: work, send: send, step: step)
+    case "codex": return try codexAnswer(req, opts, cli: cli, work: work, send: send, step: step)
+    case "grok": return try grokAnswer(req, opts, cli: cli, work: work, send: send, step: step)
+    case "cursor", "opencode", "antigravity", "pi", "acp": return try acpAnswer(req, opts, work: work, send: send)
+    default: return try claudeAnswer(req, opts, cli: cli, work: work, send: send, step: step, ask: ask)
     }
-    return try claudeAnswer(req, opts, cli: cli, work: work, send: send, step: step, ask: ask)
+}
+
+/// The text of an ACP prompt in progress, shared between the reader thread (which adds each chunk) and the caller, and the
+/// run it belongs to (set once the run starts, so a stop can cancel it).
+private final class AcpSpeech {
+    let lock = NSLock()
+    var text = ""
+    var lastSend = Date.distantPast
+    var stopped = false
+    var run: AcpRun?
+}
+
+/// the Mac relay answer() for an ACP agent (Cursor, OpenCode, Antigravity, Pi, or a local command): one session in a fresh folder
+/// or the Workshop session's, one prompt. Its text goes out through `send` at most every 0.4 s; a `send` that returns false stops
+/// the prompt. The prompt has no system slot, so the instructions go in front of the request text, as for Gemini. Permission
+/// questions are denied (AcpRun's default). No session is kept (state "").
+func acpAnswer(_ req: RelayRequest, _ opts: RelayOptions, work: URL, send: @escaping (String) -> Bool) throws -> ClaudeAnswer {
+    guard let launch = opts.acp else { throw RelayError(message: "\(driverLabel(opts.driver)) has no command to start") }
+    guard let program = which(launch.command) else {
+        throw RelayError(message: "\(launch.command) is not installed on this Mac")
+    }
+    let fm = FileManager.default
+    let folder = !req.files.isEmpty || !req.session.isEmpty
+    let tmp = fm.temporaryDirectory.appendingPathComponent("relay-\(UUID().uuidString)")
+    try fm.createDirectory(at: tmp, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: tmp) }
+
+    let (cwd, system) = try prepareFolder(req, work: work, tmp: tmp)
+    let prompt = "<instructions>\n\(system)\n</instructions>\n\n" + requestText(req.user, folder: folder)
+    let environment = driverEnv(base: ProcessInfo.processInfo.environment).merging(opts.env) { _, value in value }
+    let speech = AcpSpeech()
+    let run: AcpRun
+    do {
+        run = try AcpRun(command: AcpCommand(executable: program, arguments: launch.args, cwd: cwd, environment: environment), onText: { chunk in
+            speech.lock.lock()
+            defer { speech.lock.unlock() }
+            speech.text += chunk
+            guard Date().timeIntervalSince(speech.lastSend) >= sendEverySeconds else { return }
+            speech.lastSend = Date()
+            if !send(speech.text) {
+                speech.stopped = true
+                speech.run?.cancel()
+            }
+        })
+    } catch let error as AcpError {
+        throw ClaudeFailure(message: error.message)
+    }
+    speech.run = run
+    defer { run.close() }
+    let answer: AcpAnswer
+    do {
+        answer = try run.prompt(prompt)
+    } catch let error as AcpError {
+        throw ClaudeFailure(message: error.message)
+    }
+    if speech.stopped {
+        throw ClaudeFailure(message: "the site stopped waiting", usage: stoppedRow([:]), stopped: true)
+    }
+    return ClaudeAnswer(text: answer.text, usage: genericUsageRow([:], model: ""), session: "", state: "")
 }
 
 /// the Mac relay answer() for Claude: one `claude -p` run for a request. `send(text)` returns false when the site no longer
@@ -102,7 +164,7 @@ func claudeAnswer(_ req: RelayRequest, _ opts: RelayOptions, cli: String, work: 
     let args = claudeArguments(model: opts.model, effort: opts.effort, systemFile: systemFile.path,
                                tools: tools, session: !req.session.isEmpty, resume: resume, mcpConfigFile: mcpFile, asks: req.asks)
     // asks: the chat's text streams as it comes (only a Workshop folder waits for its JSON answer)
-    let outcome = try runStream(cli: cli, args: args, cwd: cwd, env: claudeEnv(base: ProcessInfo.processInfo.environment, home: opts.home),
+    let outcome = try runStream(cli: cli, args: args, cwd: cwd, env: claudeEnv(base: ProcessInfo.processInfo.environment, home: opts.home, baseUrl: opts.baseUrl, extra: opts.env),
                                 prompt: requestText(req.user, folder: folder), folder: folder && !req.asks, send: send, step: step, tmp: tmp,
                                 stream: ClaudeStream(cwd: cwd.path), ask: req.asks ? (ask ?? { _ in "denied" }) : nil)
     let stream = outcome.stream
@@ -158,9 +220,69 @@ func geminiAnswer(_ req: RelayRequest, _ opts: RelayOptions, cli: String, work: 
     return ClaudeAnswer(text: result["result"] as? String ?? "", usage: usage, session: "", state: "")
 }
 
+/// the Mac relay answer() for Codex: one `codex exec --json` run, read-only, in a fresh folder or the Workshop session's; the
+/// last message is the answer. Codex keeps no session here (state ""), and its home is CODEX_HOME.
+func codexAnswer(_ req: RelayRequest, _ opts: RelayOptions, cli: String, work: URL,
+                 send: @escaping (String) -> Bool, step: @escaping (String) -> Void) throws -> ClaudeAnswer {
+    let fm = FileManager.default
+    let folder = !req.files.isEmpty || !req.session.isEmpty
+    let tmp = fm.temporaryDirectory.appendingPathComponent("relay-\(UUID().uuidString)")
+    try fm.createDirectory(at: tmp, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: tmp) }
+    // A run with no folder starts in an empty folder of its own under Application Support, removed after the run.
+    let emptyFolder = codexRunFolder()
+    defer { try? fm.removeItem(at: emptyFolder) }
+
+    let (cwd, system) = try prepareFolder(req, work: work, tmp: tmp, emptyFolder: emptyFolder)
+    let prompt = "<instructions>\n\(system)\n</instructions>\n\n" + requestText(req.user, folder: folder)
+    let outcome = try runStream(cli: cli, args: codexArguments(cwd: cwd.path, model: opts.model, effort: opts.effort), cwd: cwd,
+                                env: driverEnv(base: ProcessInfo.processInfo.environment, home: opts.home), prompt: prompt, folder: folder,
+                                send: send, step: step, tmp: tmp, stream: CodexStream())
+    if outcome.killed {
+        throw ClaudeFailure(message: "the site stopped waiting", usage: stoppedRow(outcome.stream.seen), stopped: true)
+    }
+    let result = outcome.stream.result(err: outcome.err)
+    let usage = genericUsageRow(result, model: opts.model)
+    if result["is_error"] as? Bool == true {
+        throw ClaudeFailure(message: "Codex: \(resultText(result))", usage: usage)
+    }
+    return ClaudeAnswer(text: result["result"] as? String ?? "", usage: usage, session: "", state: "")
+}
+
+/// the Mac relay answer() for Grok: one `grok -p` run, its stream read as Claude's (the same JSON lines). Grok keeps no session
+/// (state ""). The prompt goes in a file in the run's temp folder; the system text is an override flag.
+func grokAnswer(_ req: RelayRequest, _ opts: RelayOptions, cli: String, work: URL,
+                send: @escaping (String) -> Bool, step: @escaping (String) -> Void) throws -> ClaudeAnswer {
+    let fm = FileManager.default
+    let folder = !req.files.isEmpty || !req.session.isEmpty
+    let tmp = fm.temporaryDirectory.appendingPathComponent("relay-\(UUID().uuidString)")
+    try fm.createDirectory(at: tmp, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: tmp) }
+
+    let (cwd, system) = try prepareFolder(req, work: work, tmp: tmp)
+    let promptFile = tmp.appendingPathComponent("prompt.txt")
+    try requestText(req.user, folder: folder).write(to: promptFile, atomically: true, encoding: .utf8)
+    let args = grokArguments(cwd: cwd.path, model: opts.model, effort: opts.effort, system: system, web: req.web, folder: folder,
+                             promptFile: promptFile.path)
+    let outcome = try runStream(cli: cli, args: args, cwd: cwd, env: driverEnv(base: ProcessInfo.processInfo.environment),
+                                prompt: "", folder: folder, send: send, step: step, tmp: tmp, stream: ClaudeStream(cwd: cwd.path))
+    if outcome.killed {
+        throw ClaudeFailure(message: "the site stopped waiting", usage: stoppedRow(outcome.stream.seen), stopped: true)
+    }
+    guard let result = outcome.stream.result else {
+        throw ClaudeFailure(message: "Grok gave no result: \(String(outcome.err.suffix(500)))")
+    }
+    let usage = genericUsageRow(result, model: opts.model)
+    if result["is_error"] as? Bool == true {
+        throw ClaudeFailure(message: "Grok: \(resultText(result))", usage: usage)
+    }
+    let text = (result["result"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? outcome.stream.text
+    return ClaudeAnswer(text: text, usage: usage, session: "", state: "")
+}
+
 /// the Mac relay answer()'s folder: a Workshop session keeps one folder (the same path every turn, under `work`); else a
 /// fresh one in `tmp`. With a folder, the request's files are written into it. Returns the folder and the system text.
-func prepareFolder(_ req: RelayRequest, work: URL, tmp: URL) throws -> (cwd: URL, system: String) {
+func prepareFolder(_ req: RelayRequest, work: URL, tmp: URL, emptyFolder: URL? = nil) throws -> (cwd: URL, system: String) {
     let fm = FileManager.default
     let folder = !req.files.isEmpty || !req.session.isEmpty
     var system = req.system
@@ -175,7 +297,7 @@ func prepareFolder(_ req: RelayRequest, work: URL, tmp: URL) throws -> (cwd: URL
         try fm.createDirectory(at: cwd.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? fm.setAttributes([.modificationDate: Date()], ofItemAtPath: cwd.deletingLastPathComponent().path)   // in use now
     } else {
-        cwd = tmp.appendingPathComponent("folder")
+        cwd = emptyFolder ?? tmp.appendingPathComponent("folder")
     }
     try fm.createDirectory(at: cwd, withIntermediateDirectories: true)
     if folder {

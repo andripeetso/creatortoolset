@@ -7,7 +7,14 @@ import {
   DRIVERS,
   EFFORTS,
   JOBS,
+  isAcpDriver,
+  launchArgsAllowed,
+  runsOn,
+  type Device,
   type Driver,
+  type DriverCatalog,
+  type DriverDevice,
+  type DriverEntry,
   type Effort,
   type JobId,
   type ProviderCheck,
@@ -19,6 +26,7 @@ import {
 import { env } from "./env";
 import { deviceExists, deviceOf } from "./devices";
 import { USERNAME_RE, findUser } from "../users";
+import { driverKinds, providerPresets } from "./plugin";
 
 /**
  * The AI providers (contracts/providers.ts): which coding-agent CLI on a Mac answers each job, signed in as which
@@ -60,7 +68,19 @@ const validScope = (scope: Scope) => scope === "workspace" || USERNAME_RE.test(s
 function savedFor(scope: Scope): ProviderSettings | null {
   if (!validScope(scope)) return null;
   if (!saved.has(scope)) saved.set(scope, readJson<ProviderSettings>(FILE(scope)));
-  return saved.get(scope) ?? null;
+  const s = saved.get(scope) ?? null;
+  return s && withPresetEndpoints(s);
+}
+
+/** Each instance added from a plug-in preset gets that preset's endpoint now (a preset's endpoint is never saved). */
+function withPresetEndpoints(s: ProviderSettings): ProviderSettings {
+  return {
+    ...s,
+    instances: s.instances.map((i) => {
+      const endpoint = i.preset ? providerPresets().find((p) => p.id === i.preset)?.baseUrl : undefined;
+      return endpoint ? { ...i, baseUrl: endpoint } : i;
+    }),
+  };
 }
 
 /** The workspace's settings (what the admins set, and what the accounts they share them with use). */
@@ -77,17 +97,20 @@ export const ownSettings = (username: string): ProviderSettings | null => savedF
  */
 export async function saveSettings(s: ProviderSettings, scope: Scope = "workspace"): Promise<void> {
   if (!validScope(scope)) throw new Error("Not a provider scope");
+  // an instance keeps its last check across saves while it is the same CLI on the same Mac in the same folder
+  // (parseSettings drops lastCheck from the page, so a Settings save would lose it otherwise)
   const prev = savedFor(scope)?.instances ?? [];
-  const next: ProviderSettings = {
+  // a preset's endpoint lives in the plug-in: strip it from the instances before they reach the file
+  const stored: ProviderSettings = {
     ...s,
     instances: s.instances.map((i) => {
-      if (i.lastCheck) return i;
-      const was = prev.find((p) => p.id === i.id && p.driver === i.driver && p.device === i.device && p.home === i.home);
-      return was?.lastCheck ? { ...i, lastCheck: was.lastCheck } : i;
+      const was = i.lastCheck ? undefined : prev.find((p) => p.id === i.id && p.driver === i.driver && p.device === i.device && p.home === i.home);
+      const kept = was?.lastCheck ? { ...i, lastCheck: was.lastCheck } : i;
+      return kept.preset ? { ...kept, baseUrl: undefined } : kept;
     }),
   };
-  await writeAtomic(FILE(scope), next);
-  saved.set(scope, next);
+  await writeAtomic(FILE(scope), stored);
+  saved.set(scope, stored);
 }
 
 /** Setup's "Connected": an enabled instance of this account's own whose last check passed. Survives a restart. */
@@ -112,7 +135,8 @@ export async function recordCheck(key: string, c: ProviderCheck): Promise<void> 
   await saveSettings({ ...s, instances }, scope);
 }
 
-const DRIVER_IDS = new Set(DRIVERS.map((d) => d.id));
+/** A driver id the server knows: a built-in, or a kind a plug-in adds. */
+const knownDriver = (id: unknown): boolean => DRIVERS.some((d) => d.id === id) || driverKinds().some((k) => k.id === id);
 const runs = (driver: Driver) => DRIVERS.find((d) => d.id === driver)?.runs ?? false;
 const isEffort = (e: unknown): e is Effort => EFFORTS.includes(e as Effort);
 const ID_RE = /^[A-Za-z0-9_-]{1,60}$/;
@@ -145,6 +169,56 @@ function parseSelection(raw: unknown, instances: ProviderInstance[], what: strin
   return { instance: inst.id, model: s.model, effort: s.effort };
 }
 
+const HOME_RE = /^\/Users\/[^/]+\/[^\0]{1,200}$/;
+const ABS_PATH_RE = /^\/[^\0]{1,300}$/;
+const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
+const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+
+/**
+ * The optional fields of a provider instance (binary, shadow folder, launch arguments, environment names, colour,
+ * featured, ACP command), checked. Absent or blank fields are left out, so an old file parses unchanged.
+ */
+function parseExtras(i: Record<string, unknown>, driver: Driver, name: string): Partial<ProviderInstance> {
+  const out: Partial<ProviderInstance> = {};
+  const binaryPath = typeof i.binaryPath === "string" ? i.binaryPath.trim() : "";
+  if (binaryPath) {
+    if (!ABS_PATH_RE.test(binaryPath)) throw new Error(`${name}: the program's path must be a full path`);
+    out.binaryPath = binaryPath;
+  }
+  const shadow = typeof i.shadowHomePath === "string" ? i.shadowHomePath.trim() : "";
+  if (shadow) {
+    if (!HOME_RE.test(shadow)) throw new Error("A provider's folder must be in the Mac user's home folder");
+    out.shadowHomePath = shadow;
+  }
+  // launch arguments only for a local ACP command; other kinds drop them (like baseUrl) so an old file still loads
+  if (i.launchArgs !== undefined && launchArgsAllowed(driver)) {
+    const args = i.launchArgs as unknown;
+    if (!Array.isArray(args) || args.some((a) => typeof a !== "string" || a.length > 500) || args.length > 32) throw new Error(`${name}: each launch argument is one piece of text, up to 32`);
+    out.launchArgs = [...(args as string[])];
+  }
+  if (i.envNames !== undefined) {
+    const names = i.envNames as unknown;
+    if (!Array.isArray(names) || names.some((n) => typeof n !== "string" || !ENV_NAME_RE.test(n)) || names.length > 32) throw new Error(`${name}: environment names are letters, digits and _, up to 32`);
+    out.envNames = [...(names as string[])];
+  }
+  if (typeof i.accentColor === "string" && i.accentColor.trim()) {
+    if (!COLOR_RE.test(i.accentColor.trim())) throw new Error(`${name}: the colour is #rrggbb`);
+    out.accentColor = i.accentColor.trim();
+  }
+  if (i.featured !== undefined) {
+    if (typeof i.featured !== "boolean") throw new Error(`${name}: featured is yes or no`);
+    out.featured = i.featured;
+  }
+  if (driver === "acp") {
+    const acp = i.acp && typeof i.acp === "object" ? (i.acp as Record<string, unknown>) : null;
+    const args = acp?.args ?? [];
+    if (!acp || typeof acp.command !== "string" || !acp.command.trim() || acp.command.length > 300 || !Array.isArray(args) || args.some((a) => typeof a !== "string"))
+      throw new Error(`${name}: a local ACP command needs its program and text arguments`);
+    out.acp = { command: acp.command.trim(), args: [...(args as string[])] };
+  } else if (i.acp !== undefined && i.acp !== null) throw new Error(`${name}: only a local ACP command has a program to start`);
+  return out;
+}
+
 /**
  * A settings body from the page, checked for `scope`. Throws a sentence the page shows. Every instance's device must
  * exist and belong to the scope (the workspace: an admin's Mac; an account: its own Macs).
@@ -157,14 +231,17 @@ export function parseSettings(raw: unknown, scope: Scope = "workspace"): Provide
   for (const x of list) {
     const i = x && typeof x === "object" ? (x as Record<string, unknown>) : {};
     if (typeof i.id !== "string" || !ID_RE.test(i.id) || instances.some((y) => y.id === i.id)) throw new Error("Each provider needs its own id");
-    if (!DRIVER_IDS.has(i.driver as Driver)) throw new Error(`Unknown provider: ${String(i.driver)}`);
+    if (!knownDriver(i.driver)) throw new Error(`Unknown provider: ${String(i.driver)}`);
     const name = typeof i.name === "string" && i.name.trim() ? i.name.trim().slice(0, 60) : i.id;
+    // a plug-in preset (an unknown one is dropped: the provider stays an ordinary one, with no endpoint)
+    const preset = typeof i.preset === "string" ? providerPresets().find((p) => p.id === i.preset) : undefined;
+    if (preset && preset.driver !== i.driver) throw new Error(`${name}: that preset is for ${preset.driver}`);
     const device = typeof i.device === "string" && i.device.trim() ? i.device.trim() : "";
     if (!device || !ID_RE.test(device)) throw new Error(`${name}: pick one of your Macs`);
     if (!deviceExists(device)) throw new Error(`${name}: its Mac is gone: pick another`);
     if (!belongsTo(scope, device)) throw new Error(scope === "workspace" ? `${name}: the workspace's providers run on an admin's Mac` : `${name}: your providers run on your own Macs`);
     const home = typeof i.home === "string" ? i.home.trim() : "";
-    if (home && !/^\/Users\/[^/]+\/[^\0]{1,200}$/.test(home)) throw new Error("A provider's folder must be in the Mac user's home folder");
+    if (home && !HOME_RE.test(home)) throw new Error("A provider's folder must be in the Mac user's home folder");
     instances.push({
       id: i.id,
       driver: i.driver as Driver,
@@ -172,6 +249,8 @@ export function parseSettings(raw: unknown, scope: Scope = "workspace"): Provide
       enabled: i.enabled !== false,
       ...(home ? { home } : {}),
       device,
+      ...(preset ? { preset: preset.id } : {}),
+      ...parseExtras(i, i.driver as Driver, name),
     });
   }
   if (!instances.some((i) => i.enabled && runs(i.driver))) throw new Error("Keep at least one provider on that the Mac can run");
@@ -196,11 +275,15 @@ export interface Route {
   device: string;
 }
 
-/** An instance can run for a scope: on, a CLI that runs, and a Mac that exists and belongs to that scope. */
-const usable = (scope: Scope, i: ProviderInstance): boolean => i.enabled && runs(i.driver) && !!deviceIdOf(i) && belongsTo(scope, deviceIdOf(i));
+/**
+ * An instance can run for a scope: on, a CLI that runs, and a Mac that exists and belongs to that scope. With `owner`,
+ * only a Mac that account paired (an admin's workspace providers on its own Macs, never another admin's).
+ */
+const usable = (scope: Scope, i: ProviderInstance, owner?: string): boolean =>
+  i.enabled && runs(i.driver) && !!deviceIdOf(i) && belongsTo(scope, deviceIdOf(i)) && (owner === undefined || deviceOf(deviceIdOf(i))?.owner === owner);
 
-function pick(scope: Scope, s: ProviderSettings, job: JobId, own?: Selection): Route | null {
-  const runnable = s.instances.filter((i) => usable(scope, i));
+function pick(scope: Scope, s: ProviderSettings, job: JobId, own?: Selection, owner?: string): Route | null {
+  const runnable = s.instances.filter((i) => usable(scope, i, owner));
   if (!runnable.length) return null;
   for (const sel of [own, s.jobs[job], s.default]) {
     const instance = sel && runnable.find((i) => i.id === sel.instance);
@@ -213,28 +296,34 @@ function pick(scope: Scope, s: ProviderSettings, job: JobId, own?: Selection): R
 }
 
 /**
- * Who answers an account's job (aiFor): its own providers when it has a runnable one on its own Macs; else the
- * workspace's when it is an admin (aiFor never asks for nobody). Never another person's: the workspace's
- * are the owner's own Claude / ChatGPT logins, which serve only them (Anthropic's terms). Anyone else without their own runs on their own API key (aiFor) or not at all.
+ * Who answers an account's job (aiFor): its own providers when it has a runnable one on its own Macs; else, for an
+ * admin only, the workspace's providers that run on the admin's own Macs. Nobody named = null: background work always
+ * names whose work it is. Never another person's logins: a member gets null here and runs on its own key or not at all
+ * (aiFor), since a subscription login serves only the person who signed in to it (Anthropic's terms).
  * Null = no provider for this account.
  */
 export function routeFor(name: string | undefined, admin: boolean, job: JobId, own?: Selection): Route | null {
-  if (name) {
-    const mine = ownSettings(name);
-    const r = mine && pick(name, mine, job, own);
-    if (r) return r;
-  }
-  if (name && !admin) return null;
-  return pick("workspace", providerSettings(), job, own);
+  if (!name) return null;
+  const mine = ownSettings(name);
+  const r = mine && pick(name, mine, job, own);
+  if (r) return r;
+  if (!admin) return null;
+  return pick("workspace", providerSettings(), job, own, name);
 }
 
-/** The other instances in the same scope a job may move to when its own hits a usage limit (only an exhausted usage window falls back). */
+/**
+ * The other instances a job may move to when its own hits a usage limit (only an exhausted usage window falls back).
+ * They stay on the same Mac owner's logins as the instance that hit the limit, so a workspace call never moves to
+ * another admin's subscription.
+ */
 export function limitFallbacks(scope: Scope, after: ProviderInstance, model: string): Array<{ instance: ProviderInstance; model: string; device: string }> {
   const s = scope === "workspace" ? providerSettings() : ownSettings(scope);
   if (!s) return [];
+  const owner = deviceOf(deviceIdOf(after))?.owner;
+  if (!owner) return [];
   const picked = (id: string) => [s.default, ...Object.values(s.jobs)].find((x) => x?.instance === id)?.model;
   return s.instances
-    .filter((i) => i.id !== after.id && usable(scope, i))
+    .filter((i) => i.id !== after.id && usable(scope, i, owner))
     .map((i) => {
       const device = deviceIdOf(i);
       return { instance: i, device, model: i.driver === after.driver ? model : (picked(i.id) ?? modelsFor(i)[0] ?? "") };
@@ -244,3 +333,63 @@ export function limitFallbacks(scope: Scope, after: ProviderInstance, model: str
 
 /** The instance of a scope's settings a check runs on (admins: any scope; others: their own). */
 export const instanceIn = (scope: Scope, id: string): ProviderInstance | undefined => (scope === "workspace" ? providerSettings() : ownSettings(scope))?.instances.find((i) => i.id === id);
+
+/** Why a driver the Mac app can't run yet is shown disabled; the rest share the general line. */
+const NOT_RUN_REASON: Partial<Record<Driver, string>> = {
+  musecode: "No command-line tool on this Mac yet.",
+};
+
+/**
+ * The instance fields a job carries to its Mac, each only when set: the plug-in endpoint, the environment names, the
+ * launch arguments, and the ACP command (or the program a manual setup gave, for an ACP kind).
+ */
+export const runFields = (i: ProviderInstance) => ({
+  ...(i.baseUrl ? { baseUrl: i.baseUrl } : {}),
+  ...(i.envNames?.length ? { envNames: i.envNames } : {}),
+  ...(i.launchArgs?.length ? { launchArgs: i.launchArgs } : {}),
+  ...(i.acp ? { acp: i.acp } : {}),
+  ...(i.binaryPath && isAcpDriver(i.driver) ? { binaryPath: i.binaryPath } : {}),
+});
+
+/**
+ * The driver catalog (GET /api/providers/drivers): every driver in DRIVERS order, whether it is featured and runs, why
+ * not when it doesn't, and what each given Mac's report found of it. A Mac with no report yet is left out.
+ */
+export function driverCatalog(devices: Array<Device & { online: boolean }>): DriverCatalog {
+  const reported = devices.filter((d) => d.report);
+  const perDevice = (driver: Driver): DriverDevice[] =>
+    reported.map((dev) => {
+      const row = dev.report?.drivers.find((r) => r.driver === driver);
+      return {
+        device: dev.id,
+        name: dev.name,
+        online: dev.online,
+        installed: !!row?.installed,
+        ...(row?.signedIn !== undefined ? { signedIn: row.signedIn } : {}),
+        ...(row?.version ? { version: row.version } : {}),
+      };
+    });
+  const builtin = DRIVERS.map((d): DriverEntry => {
+    const runs = runsOn(d.id);
+    return {
+      id: d.id,
+      label: d.label,
+      featured: d.featured,
+      runs,
+      ...(runs ? {} : { reason: NOT_RUN_REASON[d.id] ?? "The Creator Toolset Mac app can't run this CLI yet." }),
+      devices: perDevice(d.id),
+    };
+  });
+  // a plug-in's driver kind: listed, but no Mac runs it yet
+  const kinds = driverKinds().map((k): DriverEntry => ({
+    id: k.id,
+    label: k.label,
+    featured: k.featured,
+    runs: false,
+    reason: "The Creator Toolset Mac app can't run this CLI yet.",
+    devices: perDevice(k.id),
+  }));
+  // a preset's view leaves out its endpoint
+  const presets = providerPresets().map((p) => ({ id: p.id, name: p.name, driver: p.driver, badge: p.badge, ...(p.home ? { home: p.home } : {}) }));
+  return { drivers: [...builtin, ...kinds], presets };
+}

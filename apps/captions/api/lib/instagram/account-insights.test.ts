@@ -4,6 +4,7 @@ import {
   insightDayCovered,
   mergeAccountStats,
   mergeInsightDays,
+  nextAccountDaily,
   nextGraphDaily,
   type GraphDaily,
   type InsightDay,
@@ -26,6 +27,37 @@ describe("insightDayCovered", () => {
     expect(insightDayCovered(end("2026-11-02T08:00:00Z"))).toBe("2026-11-01");
     expect(insightDayCovered(end("2026-03-08T08:00:00Z"))).toBe("2026-03-07");
     expect(insightDayCovered(end("2026-03-09T07:00:00Z"))).toBe("2026-03-08");
+  });
+});
+
+describe("nextAccountDaily", () => {
+  const key = "instagram:1784";
+  const day = (date: string, extra: Partial<InsightDay> = {}): InsightDay => ({ date, endTime: end(`${date}T00:00:00Z`) + DAY_MS, ...extra });
+  const now = Date.parse("2026-11-02T12:00:00Z");
+
+  it("keeps a day's reach and new follows, and a later pull fills only what it has", () => {
+    const first = nextAccountDaily(undefined, [day("2026-11-01", { reach: 40, newFollows: 3 })], key, now);
+    expect(first).toEqual([{ day: "2026-11-01", id: key, reach: 40, newFollows: 3 }]);
+    const later = nextAccountDaily(first, [day("2026-11-01", { newFollows: 4 }), day("2026-11-02")], key, now);
+    expect(later).toEqual([{ day: "2026-11-01", id: key, reach: 40, newFollows: 4 }]);
+  });
+
+  it("drops days older than 90 days from the pull's day and keeps the cutoff day itself", () => {
+    // 2026-11-02 minus 90 days is 2026-08-04
+    const prev = [
+      { day: "2026-08-03", id: key, reach: 5 },
+      { day: "2026-08-04", id: key, reach: 6 },
+    ];
+    const out = nextAccountDaily(prev, [day("2026-11-02", { reach: 9 })], key, now);
+    expect(out).toEqual([
+      { day: "2026-08-04", id: key, reach: 6 },
+      { day: "2026-11-02", id: key, reach: 9 },
+    ]);
+  });
+
+  it("applies the cutoff even when a pull brings no days", () => {
+    const prev = [{ day: "2026-07-01", id: key, reach: 5 }];
+    expect(nextAccountDaily(prev, [], key, now)).toEqual([]);
   });
 });
 

@@ -354,7 +354,7 @@ export and Caption Studio transfer.
 ## Deeper inspection and cleanup verification
 
 Upload inspection lists native tags and checks supported MP4/M4V/MOV container
-headers for Adobe XMP UUID boxes, QuickTime `XMP_` boxes, C2PA BMFF UUID boxes and
+headers for XMP UUID boxes, QuickTime `XMP_` boxes, C2PA BMFF UUID boxes and
 unknown UUID boxes. Metadata lists expand with the page, without an inner
 scrollbar.
 

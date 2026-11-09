@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mergeCatalog, mergeCatalogCounts, parseCatalogCount, catalogNewestAt, catalogCrossedSince } from "./catalog";
+import { mergeCatalog, mergeCatalogCounts, parseCatalogCount, catalogNewestAt, catalogCrossedSince, insightIdsToRead, INSIGHT_REREAD_MS } from "./catalog";
 import type { CatalogItem } from "./types";
 
 const row = (shortcode: string, extra: Partial<CatalogItem> = {}): CatalogItem => ({
@@ -136,5 +136,52 @@ describe("mergeCatalogCounts", () => {
       insights: { reach: 9, saved: 2 },
       graphId: "1",
     });
+  });
+});
+
+describe("reel insights across pulls", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const NOW = 100 * DAY;
+
+  it("keeps the stored reel-only metrics when a listing row carries only feed metrics", () => {
+    const prev = [
+      row("reel", {
+        graphId: "g1",
+        graph: { permalink: "https://www.instagram.com/reel/reel/", seenAt: 1, insightsAt: NOW - DAY },
+        insights: { views: 10, reach: 8, avgWatchMs: 4200, follows: 2, profileVisits: 5 },
+      }),
+    ];
+    const listing = [
+      row("reel", {
+        graphId: "g1",
+        graph: { permalink: "https://www.instagram.com/reel/reel/", seenAt: NOW },
+        insights: { views: 12, reach: 9 },
+      }),
+    ];
+    expect(mergeCatalog(prev, listing)[0]?.insights).toEqual({
+      views: 12,
+      reach: 9,
+      avgWatchMs: 4200,
+      follows: 2,
+      profileVisits: 5,
+    });
+    expect(mergeCatalogCounts(prev, listing)[0]?.insights).toEqual({
+      views: 12,
+      reach: 9,
+      avgWatchMs: 4200,
+      follows: 2,
+      profileVisits: 5,
+    });
+  });
+
+  it("re-reads only new reels and reels whose insights are over seven days old", () => {
+    const items = [
+      row("new", { graphId: "g-new", graph: { permalink: "x", seenAt: NOW } }),
+      row("fresh", { graphId: "g-fresh", graph: { permalink: "x", seenAt: NOW, insightsAt: NOW - DAY } }),
+      row("stale", { graphId: "g-stale", graph: { permalink: "x", seenAt: NOW, insightsAt: NOW - 8 * DAY } }),
+      row("nograph", { graphId: "g-nograph" }),
+    ];
+    expect(insightIdsToRead(items, NOW)).toEqual(["g-new", "g-stale"]);
+    expect(INSIGHT_REREAD_MS).toBe(7 * DAY);
   });
 });

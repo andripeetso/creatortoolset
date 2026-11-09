@@ -65,14 +65,14 @@ describe("a web search waits for the author", () => {
   });
 
   it("runs the one search the author approved, for this turn", () => {
-    const { user } = buildTurnPrompt({ ...base, folder: { contextFiles: [] }, web: "Did babies with less tummy time crawl later?" });
-    expect(user).toContain("The author approved one web search for this turn: «Did babies with less tummy time crawl later?»");
+    const { user } = buildTurnPrompt({ ...base, folder: { contextFiles: [] }, web: "Did puppies with less tummy time crawl later?" });
+    expect(user).toContain("The author approved one web search for this turn: «Did puppies with less tummy time crawl later?»");
     expect(parseTurnInput({ docId, text: "Search the web: x", web: " x " }).web).toBe("x");
   });
 });
 
 describe("a paste of the piece into an empty tab", () => {
-  const slides = "**Slide 1**\nChildren who swim before age five are ahead\n\n**Slide 2**\n7,000 children";
+  const slides = "**Slide 1**\nSwimmers who train before work are ahead\n\n**Slide 2**\n7,000 adults";
   const base = { frameworks: [], rules: [], pinned: [], sources: [], history: [], message: "Read what I pasted.", pasted: [{ name: "Pasted text 1", text: slides }] };
 
   it("goes in first, as written", () => {

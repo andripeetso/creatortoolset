@@ -33,7 +33,7 @@ describe("parseSlideText", () => {
 
   it("flags a long unsplit teaching block as body-only", () => {
     const p = parseSlideText(
-      "The average advantage grows for children who begin lessons in the first years of life exactly when their brain is at its most plastic and that is a long sentence.",
+      "The average advantage grows for people who begin lessons in the first years of life exactly when their brain is at its most plastic and that is a long sentence.",
     );
     expect(p.hasHeading).toBe(false);
     expect(p.headline).toBe("");
@@ -42,7 +42,7 @@ describe("parseSlideText", () => {
 
   it("keeps a long first paragraph as the headline when a blank line follows", () => {
     const head =
-      "Children who swim before age five are 6 to 15 months ahead of typical developmental norms -- in reading-related skills, mathematical reasoning, and physical milestones";
+      "People who swim before age five are 6 to 15 months ahead of typical developmental norms -- in reading-related skills, mathematical reasoning, and physical milestones";
     const p = parseSlideText(`${head}\n\nBut the testing also found an advantage somewhere no one expected...`);
     expect(p.headline).toBe(head);
     expect(p.body).toMatch(/^But the testing/);
@@ -51,7 +51,7 @@ describe("parseSlideText", () => {
 
   it("treats a long unsplit cover as the headline", () => {
     const head =
-      "Children who swim before age five are 6 to 15 months ahead of typical developmental norms -- in reading-related skills, mathematical reasoning, and physical milestones";
+      "People who swim before age five are 6 to 15 months ahead of typical developmental norms -- in reading-related skills, mathematical reasoning, and physical milestones";
     const p = parseSlideText(head, "cover");
     expect(p.headline).toBe(head);
     expect(p.body).toBe("");
@@ -60,11 +60,11 @@ describe("parseSlideText", () => {
 
   it("maps three blank-line areas on a cover to headline, support, and kicker", () => {
     const p = parseSlideText(
-      "Children who swim before age five are 6 to 15 months ahead of typical developmental norms\n\nThings like reading-related skills, mathematical reasoning, *and* physical milestones\n\nBut the testing also found an advantage somewhere no one expected...",
+      "People who swim before age five are 6 to 15 months ahead of typical developmental norms\n\nThings like reading-related skills, mathematical reasoning, *and* physical milestones\n\nBut the testing also found an advantage somewhere no one expected...",
       "cover",
     );
     expect(p.areas).toHaveLength(3);
-    expect(p.headline).toMatch(/^Children who swim/);
+    expect(p.headline).toMatch(/^People who swim/);
     expect(p.body).toMatch(/^Things like/);
     expect(p.body).not.toMatch(/But the testing/);
     expect(p.kicker).toMatch(/^But the testing/);
@@ -98,10 +98,10 @@ describe("visualizeCarousel", () => {
   const swim = [
     b("b1", "Most families booked lessons so their child would be safe around water"),
     b("b2", "A Merrow study followed thousands of children\n\nThey tested motor skills, language, and early maths — not whether the child could swim."),
-    b("b3", "They were months ahead\n\nChildren who had lessons before five were ahead of their peers on motor tasks"),
+    b("b3", "They were months ahead\n\nPeople who had lessons before five were ahead of their peers on motor tasks"),
     b("b4", "Eyes and hands work together\n\nThe swimmers scored better on visual-motor tasks like cutting paper."),
     b("b5", "The swimmers were ahead in math\n\nThe testing found advantages in early mathematical reasoning without extra counting."),
-    b("b6", "Earlier start gives a bigger shift\n\nThe average advantage grows for children who begin in the first years of life."),
+    b("b6", "Earlier start gives a bigger shift\n\nThe average advantage grows for people who begin in the first years of life."),
     b("b7", "For a child under five years old...\n\nOne weekly swimming lesson is the most demanding full-body coordination task at that age."),
     b("b8", "Movement of all kinds is what a young brain demands\n\nFollow @tinyacrobatics for what the research actually says"),
   ];
@@ -112,14 +112,14 @@ describe("visualizeCarousel", () => {
       blocks: [
         b(
           "b1",
-          "Children who swim before age five are 6 to 15 months ahead of typical developmental norms -- in reading-related skills, mathematical reasoning, and physical milestones\n\nBut the testing also found an advantage somewhere no one expected...",
+          "People who swim before age five are 6 to 15 months ahead of typical developmental norms -- in reading-related skills, mathematical reasoning, and physical milestones\n\nBut the testing also found an advantage somewhere no one expected...",
         ),
         b("b2", "What they tested\n\nVisual-motor tasks, language, and early maths."),
         b("b3", "Follow @coach"),
       ],
       caption: "x",
     });
-    expect(m.slides[0]!.parsed.headline).toMatch(/^Children who swim/);
+    expect(m.slides[0]!.parsed.headline).toMatch(/^People who swim/);
     expect(m.slides[0]!.parsed.kicker).toMatch(/^But the testing/);
     expect(m.slides[0]!.missing).toEqual([]);
     expect(m.gaps.some((g) => g.text.includes("Slide 1"))).toBe(false);
@@ -215,8 +215,8 @@ describe("visualizeCarousel", () => {
     const m = visualizeCarousel({
       typeId: "cases",
       blocks: [
-        b("b1", "Babies hung out of windows"),
-        b("b2", "London, 1920s\n\nBabies hung outside windows for fresh air\n\nDoctors prescribed sunlight."),
+        b("b1", "Puppies hung out of windows"),
+        b("b2", "London, 1920s\n\nPuppies hung outside windows for fresh air\n\nDoctors prescribed sunlight."),
         b("b3", "the window cage"),
         b("b4", "What the cases share"),
       ],

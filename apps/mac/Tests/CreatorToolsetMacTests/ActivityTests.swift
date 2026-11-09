@@ -14,6 +14,15 @@ final class ActivityTests: XCTestCase {
         XCTAssertEqual(rows.forYou.map(\.state), [.ready])
         XCTAssertEqual(rows.forYou[0].href, "/workshop/sessions/s2")
 
+        // plug-in rows: working ones under Active after the sessions, ready ones under For you; the href opens as given
+        let plugin = [PluginRow(id: "x", title: "Tiny render", detail: "Editor", state: "working", href: "/editor"),
+                      PluginRow(id: "y", title: "Tiny cut", detail: "Editor · ready", state: "ready", href: "/editor/y")]
+        let withPlugin = activityRows(sessions: sessions, aiRunning: 0, plugin: plugin)
+        XCTAssertEqual(withPlugin.active.map(\.title), ["Hook ideas", "Tiny render"])
+        XCTAssertEqual(withPlugin.active[1].href, "/editor")
+        XCTAssertEqual(withPlugin.forYou.map(\.title), ["Carousel", "Tiny cut"])
+        XCTAssertEqual(withPlugin.forYou[1].state, .ready)
+
         let empty = activityRows(sessions: [], aiRunning: 0)
         XCTAssertTrue(empty.active.isEmpty && empty.forYou.isEmpty)
         XCTAssertEqual(menuStatusLabel(.up, waiting: 2), "Creator Toolset, running, 2 waiting for you")

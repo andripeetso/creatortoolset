@@ -23,3 +23,12 @@ export const env = {
   // the shared community catalog, read like a plugin directory; an empty value turns it off
   packCatalogUrl: (process.env.PACK_CATALOG_URL ?? "https://creatortoolset.com").trim(),
 };
+
+/**
+ * Hosted mode (CT_MODE=hosted): this server is a hosted one, rented as a cloud or run for other people. Hosted-only
+ * features (teams, admin, view-as) are meant for it. Local (the default) is one person's own machine.
+ * CT_LOCAL is a transport rule (which hosts answer) and does not change this.
+ */
+export function hostedMode(): boolean {
+  return process.env.CT_MODE?.trim() === "hosted";
+}

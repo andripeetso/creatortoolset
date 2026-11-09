@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cardsFrontmatter, camelStem, exportFilename, exportStem, joinParts, obsidianFilename, pieceMarkdown, rangesIn, reelObsidianMarkdown, splitPictures } from "./workshop-markdown";
+import { cardsFrontmatter, camelStem, exportFilename, exportStem, frontmatterBlock, joinParts, obsidianFilename, pieceMarkdown, rangesIn, reelObsidianMarkdown, splitPictures } from "./workshop-markdown";
 
 describe("obsidian reel note", () => {
   it("keeps the session title as the filename, replacing only / and :", () => {
@@ -8,22 +8,17 @@ describe("obsidian reel note", () => {
     expect(obsidianFilename("  ", "Untitled")).toBe("Untitled.md");
   });
 
-  it("writes frontmatter, hook lines, then the script paragraphs and nothing else", () => {
+  it("writes the frontmatter block, hook lines, then the script paragraphs and nothing else", () => {
     const md = reelObsidianMarkdown({
-      day: "2026-11-05",
-      status: "✍️ Writing",
+      head: frontmatterBlock([["status", "Writing"], ["details", ""], ["media", "reel"]]),
       hooks: [{ text: "First hook?" }, { text: "Second\n  hook" }, { text: " " }],
       blocks: [{ text: "Para one.\n" }, { text: "Para two." }, { text: "Para three\n\nand more" }],
     });
-    expect(md).toBe(
-      "---\nchange: 2026-11-05\ndetails:\nselector.Status: ✍️ Writing\nselector.Media: 🎞️ Reel\n---\n// First hook?\n// Second hook\n\nPara one.\n\nPara two.\n\nPara three\n\nand more\n",
-    );
+    expect(md).toBe("---\nstatus: Writing\ndetails:\nmedia: reel\n---\n// First hook?\n// Second hook\n\nPara one.\n\nPara two.\n\nPara three\n\nand more\n");
   });
 
   it("omits the hook block when there are no hooks", () => {
-    expect(reelObsidianMarkdown({ day: "2026-11-05", status: "💡 Idea", blocks: [{ text: "Only" }] })).toBe(
-      "---\nchange: 2026-11-05\ndetails:\nselector.Status: 💡 Idea\nselector.Media: 🎞️ Reel\n---\nOnly\n",
-    );
+    expect(reelObsidianMarkdown({ head: frontmatterBlock([["status", "Idea"]]), blocks: [{ text: "Only" }] })).toBe("---\nstatus: Idea\n---\nOnly\n");
   });
 });
 

@@ -57,8 +57,9 @@ export function DeskControls({
     overIdRef.current = id;
     setOverId(id);
   };
+  // wraps on a phone: the chips in the bar's action row must not set the row's width (408 px on a 390 px screen)
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex max-w-full flex-wrap items-center gap-1 sm:flex-nowrap">
       <button type="button" className={btn(layout.geometry === "stacked" && !layout.focus)} onClick={() => onChange((d) => setGeometry(d, "stacked"))} aria-pressed={layout.geometry === "stacked" && !layout.focus}>
         <Rows2 className="mr-1 inline h-3 w-3" /> Stacked
       </button>
@@ -70,7 +71,7 @@ export function DeskControls({
       </button>
       <span className="mx-0.5 h-4 w-px bg-border" />
       <div
-        className="flex items-center gap-1"
+        className="flex flex-wrap items-center gap-1 sm:flex-nowrap"
         onDragOver={(e) => {
           if (!dragIdRef.current || !dragging) return;
           e.preventDefault();

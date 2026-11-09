@@ -27,7 +27,7 @@ interface ShareData {
   pieces: SharedPiece[];
 }
 
-const KIND: Record<string, string> = { carousel: "Carousel", reel: "Reel", ad: "Ad", free: "Draft" };
+const KIND: Record<string, string> = { carousel: "Carousel", reel: "Reel", ad: "Ad", free: "Draft", youtube: "YouTube script", newsletter: "Newsletter", thread: "Thread", article: "Article" };
 const day = (ms: number) => new Date(ms).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 const when = (ms: number) => new Date(ms).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 const size = (n: number) => (n > 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n > 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1e3))} KB`);

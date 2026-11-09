@@ -127,3 +127,10 @@ func fittedSize(width: Int, height: Int, longest: Int = 2000) -> (width: Int, he
     let scale = Double(longest) / Double(side)
     return (max(1, Int((Double(width) * scale).rounded())), max(1, Int((Double(height) * scale).rounded())))
 }
+
+/// Where DaVinci Resolve's own script runner (fuscript, no Python) is, or nil when Resolve isn't installed: the helper
+/// stays off then. `exists` is the file check (FileManager in the app, a fake in the tests).
+func resolveScriptRunner(exists: (String) -> Bool) -> String? {
+    let runner = "/Applications/DaVinci Resolve/DaVinci Resolve.app/Contents/Libraries/Fusion/fuscript"
+    return exists(runner) ? runner : nil
+}

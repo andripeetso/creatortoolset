@@ -87,6 +87,14 @@ export function openSetupAt(step: SetupStep): void {
   window.dispatchEvent(new PopStateEvent("popstate", { state: window.history.state }));
 }
 
+/**
+ * Whether setup opens by itself: only on an account's first sign-in (an account with more than one login never gets it,
+ * whatever this browser remembers: a new address has no memory of it), and only once its projects have really loaded
+ * and it has none. Recomputed on every change, so a project arriving closes it. Settings → Setup and ?setup= always open it.
+ */
+export const setupOpensItself = (a: { logins: number | null | undefined; loaded: boolean; projects: number }): boolean =>
+  (a.logins ?? 0) <= 1 && a.loaded && a.projects === 0;
+
 /** The tool a page belongs to, by its path (App.tsx's routes), for the first-open checklist. */
 export function toolForPath(p: string): Tool | null {
   const first = p.split("/")[1] ?? "";

@@ -48,9 +48,9 @@ describe("parseTurn", () => {
   });
 
   it("takes fetch requests, a search, research and an audit proposal", () => {
-    const t = parseTurn('{"reply":"Pulling.","fetch":[{"source":"S2","parts":["transcript","comments","poem"]},{"source":"","parts":["caption"]},{"source":"S1","parts":[]}],"search":"toddler pool"}');
+    const t = parseTurn('{"reply":"Pulling.","fetch":[{"source":"S2","parts":["transcript","comments","poem"]},{"source":"","parts":["caption"]},{"source":"S1","parts":[]}],"search":"puppy pool"}');
     expect(t.fetch).toEqual([{ source: "S2", parts: ["transcript", "comments"] }]);
-    expect(t.search).toBe("toddler pool");
+    expect(t.search).toBe("puppy pool");
     expect(parseTurn('{"needComments":true}')).toMatchObject({ reply: "Pulling that in.", fetch: [{ source: "*", parts: ["comments"] }] });
     expect(parseTurn('{"reply":"Reading voice.","fetch":[{"source":"K1"}]}')).toMatchObject({
       reply: "Reading voice.",
@@ -101,7 +101,7 @@ describe("gateCompanionEdits", () => {
     expect(
       gateCompanionEdits([slide, pin("How old was yours when they first got in the water?")], ctx({
         message: "that question is tryhard, nobody will answer",
-        pinned: "What age did your child first get in the water — and did you notice anything change outside the pool?",
+        pinned: "What age did your dog first get in the water — and did you notice anything change outside the pool?",
       })),
     ).toEqual([slide, pin("")]);
   });

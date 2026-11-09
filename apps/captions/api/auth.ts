@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { env } from "./lib/env";
+import { env, hostedMode } from "./lib/env";
+import { viewAsTarget } from "./lib/view-as";
 import { getConnInfo } from "@hono/node-server/conninfo";
 import type { Context } from "hono";
 import {
@@ -9,8 +10,12 @@ import {
   type SessionUser,
   type KeyLevel,
   type UserRecord,
+  type SignInProvider,
   bumpUsage,
+  createUser,
+  findByLogin,
   findUser,
+  unlinkIdentity,
   apiKeysOf,
   dropApiKey,
   newApiKey,
@@ -19,6 +24,8 @@ import {
   userForApiKey,
   verifyPassword,
 } from "./users";
+import { INVITE_TOKEN_RE, type InviteInfo } from "../contracts/workspaces";
+import { acceptInvite, inviteByToken, memberIn, workspaceOf } from "./lib/workspaces";
 
 /**
  * Account login for public hosting. When APP_SECRET is set, every /api
@@ -104,6 +111,12 @@ export const revokeJobToken = (token: string): void => {
   jobs.delete(token);
 };
 
+/** A turn waiting for its person (an approval) keeps its token: JOB_TOKEN_MS from now. */
+export const touchJobToken = (token: string): void => {
+  const job = jobs.get(token);
+  if (job) job.expires = Math.max(job.expires, Date.now() + JOB_TOKEN_MS);
+};
+
 /** The turn a job token was made for (the assistant's reply id, or an automation's). */
 export const jobTurn = (authorization: string | undefined): string | null =>
   jobs.get(/^Bearer (ctj_[a-f0-9]{48})$/.exec(authorization ?? "")?.[1] ?? "")?.turn ?? null;
@@ -144,12 +157,20 @@ const withLogins = (u: SessionUser) => ({
   logins: findUser(u.username)?.usage.logins ?? null,
 });
 
+// hosted: says whether this server is a hosted one (the web shows team, admin and join screens only then). While a
+// platform admin is viewing as an account (view-as, admin.ts), `user` is that account and `viewedBy` the admin.
 authApp.get("/check", (c) => {
-  const user = getSessionUser(c.req.header("cookie"));
+  const session = getSessionUser(c.req.header("cookie"));
+  const viewed = hostedMode() && session?.role === "admin" ? viewAsTarget(c.req.header("cookie")) : null;
+  const user = viewed ? sessionOf(viewed) : session;
   return c.json({
     required: !!env.appSecret,
     authed: !!user,
     user: user ? withLogins(user) : null,
+    hosted: hostedMode(),
+    viewedBy: viewed && session ? session.username : null,
+    // a team that signs in with Google / Apple, and this account has neither linked yet: link one before anything else
+    mustLink: user ? (ruleFor(user.username)?.missing ?? null) : null,
   });
 });
 
@@ -170,7 +191,7 @@ authApp.post("/login", async (c) => {
     /* fall through to failed compare */
   }
   username = username.trim().toLowerCase();
-  const user = username ? findUser(username) : null;
+  const user = username ? findByLogin(username) : null;
   if (!user || !password || !verifyPassword(user, password)) {
     const fails = (failures.get(username) ?? 0) + 1;
     failures.set(username, fails);
@@ -180,6 +201,9 @@ authApp.post("/login", async (c) => {
   failures.delete(username);
   // after the password: a wrong guess from the LAN costs its delay and says nothing about the account
   if (password === env.appSecret && localOnly(c)) return c.json({ error: NO_PASSWORD_YET }, 403);
+  // checked after the password too, so a wrong guess learns nothing about the team
+  const rule = ruleFor(user.username);
+  if (rule && !rule.missing) return c.json({ error: `Your team signs in with ${rule.allowed.map(providerLabel).join(" or ")}: use that button`, code: "SIGNIN_RULE" }, 403);
   bumpUsage(user.username, { logins: 1 });
   setLoginCookie(c, user);
   return c.json({
@@ -187,6 +211,19 @@ authApp.post("/login", async (c) => {
     user: withLogins(sessionOf(user)),
   });
 });
+
+export const providerLabel = (p: SignInProvider) => (p === "apple" ? "Apple" : "Google");
+
+/**
+ * The team's sign-in rule for this account (Settings → Team, `Workspace.signInWith`): the providers it must sign in
+ * with, and `missing` = it has none of them linked yet, so boot.ts lets it reach only /api/auth until it links one.
+ */
+export function ruleFor(username: string): { allowed: SignInProvider[]; missing: SignInProvider[] | null } | null {
+  const allowed = workspaceOf(username)?.signInWith ?? [];
+  if (!allowed.length) return null;
+  const linked = findUser(username)?.identities?.some((i) => allowed.includes(i.provider));
+  return { allowed, missing: linked ? null : allowed };
+}
 
 /**
  * The cookie's Secure flag: when the request came in over HTTPS (the URL, or X-Forwarded-Proto from a proxy in
@@ -197,7 +234,7 @@ export const secureAttr = (c: Context) => {
   return proto.toLowerCase() === "https" ? "; Secure" : "";
 };
 
-const setLoginCookie = (c: Context, user: UserRecord) => {
+export const setLoginCookie = (c: Context, user: UserRecord) => {
   const secure = secureAttr(c);
   c.header(
     "Set-Cookie",
@@ -295,7 +332,58 @@ authApp.patch("/account", async (c) => {
   return c.json({ ok: true, user: withLogins(sessionOf(user)) });
 });
 
-/** A new AI access key for this account (body `{ level: "full" }` for the Full key); the old one of that level stops working. */
+/**
+ * Invite links, /join/<token> (contracts/workspaces.ts). Hosted mode only: boot.ts mounts this app under /api/auth
+ * there. Public, the token is the key. GET says which team; POST joins as the account signed in here, or makes a new
+ * account (username + password), signs it in and joins it. A new account starts with the plug-ins' default-off gates
+ * (createUser), so a member never gets a plug-in's default-off gate by joining.
+ */
+export const inviteApp = new Hono();
+
+inviteApp.get("/invite/:token", (c) => {
+  const token = c.req.param("token");
+  const found = INVITE_TOKEN_RE.test(token) ? inviteByToken(token) : null;
+  if (!found) return c.json({ error: "This invite link doesn't work any more" }, 404);
+  const me = signedInAccount(c.req.header("cookie"));
+  const info: InviteInfo = {
+    workspace: found.workspace.name,
+    invitedBy: found.invite.createdBy,
+    expired: found.invite.expiresAt <= Date.now(),
+    signedInAs: me?.username ?? null,
+    member: !!me && !!memberIn(found.workspace, me.username),
+  };
+  return c.json(info);
+});
+
+inviteApp.post("/invite/:token", async (c) => {
+  const token = c.req.param("token");
+  const me = signedInAccount(c.req.header("cookie"));
+  let user: UserRecord | null = me ? findUser(me.username) : null;
+  // the only await is the body: the invite is checked after it, and nothing awaits between that check and the join,
+  // so a revoke or expiry can't land in between and leave a new account signed in that never joins
+  const b: { username?: unknown; password?: unknown } = user ? {} : await c.req.json<{ username?: unknown; password?: unknown }>().catch(() => ({}));
+  const found = INVITE_TOKEN_RE.test(token) ? inviteByToken(token) : null;
+  if (!found) return c.json({ error: "This invite link doesn't work any more" }, 404);
+  if (found.invite.expiresAt <= Date.now()) return c.json({ error: "This invite link has expired: ask for a new one" }, 410);
+  if (!user) {
+    const username = typeof b.username === "string" ? b.username.trim().toLowerCase() : "";
+    const password = typeof b.password === "string" ? b.password : "";
+    try {
+      user = createUser(username, password, { role: found.workspace.plan === "team" ? "team" : "user" });
+    } catch (e) {
+      return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+    }
+    setLoginCookie(c, user);
+    bumpUsage(user.username, { logins: 1 });
+  }
+  try {
+    acceptInvite(token, user.username);
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : String(e) }, 410);
+  }
+  return c.json({ ok: true, username: user.username });
+});
+
 /** This account's AI access keys: which are on, when each was made and last used, its last 4 characters. */
 authApp.get("/api-key", (c) => {
   const session = getSessionUser(c.req.header("cookie"));
@@ -313,6 +401,24 @@ authApp.delete("/api-key", (c) => {
   return c.json(apiKeysOf(user));
 });
 
+/** Settings → Account: unlinks a Google or Apple sign-in (hosted only; a team's required provider can't be removed). */
+authApp.delete("/identity/:provider", (c) => {
+  if (!hostedMode()) return c.json({ error: "Not Found" }, 404);
+  const session = getSessionUser(c.req.header("cookie"));
+  const user = session && findUser(session.username);
+  if (!user) return c.json({ error: "Sign in with an account first" }, 401);
+  const provider = c.req.param("provider");
+  if (provider !== "apple" && provider !== "google") return c.json({ error: "Unknown sign-in" }, 404);
+  const rule = ruleFor(user.username);
+  const left = (user.identities ?? []).filter((i) => i.provider !== provider && rule?.allowed.includes(i.provider));
+  if (rule?.allowed.includes(provider) && !left.length) {
+    return c.json({ error: `Your team signs in with ${rule.allowed.map(providerLabel).join(" or ")}: link another one first` }, 400);
+  }
+  unlinkIdentity(user, provider);
+  return c.json({ ok: true });
+});
+
+/** A new AI access key for this account (body `{ level: "full" }` for the Full key); the old one of that level stops working. */
 authApp.post("/api-key", async (c) => {
   const session = getSessionUser(c.req.header("cookie"));
   const user = session && findUser(session.username);

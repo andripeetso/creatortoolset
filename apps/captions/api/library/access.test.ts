@@ -42,11 +42,11 @@ describe("libraryRole", () => {
     expect(libraryRole("mem", "lib_old")).toBeNull();
   });
 
-  it("is null with the Media Library switched off, so the Workshop and the Video Cleaner read nothing of it", () => {
+  it("is null with the Media Library switched off, so the Workshop and the Video Cleaner read nothing of it", async () => {
     expect(libraryRole("off-a", "lib_off")).toBeNull();
-    expect(libraryRef("off-a", "ast_off", "v_off")).toBeNull();
+    expect(await libraryRef("off-a", "ast_off", "v_off")).toBeNull();
     expect(similarTo("off-a", ["0000000000000000"]).matches).toEqual([]);
-    expect(libraryRef("ana", "ast_a", "v_a")).not.toBeNull();
+    expect(await libraryRef("ana", "ast_a", "v_a")).not.toBeNull();
     expect(similarTo("ana", ["0000000000000000"]).matches.map((m) => m.assetId)).toEqual(["ast_a"]);
   });
 });

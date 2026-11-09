@@ -1,17 +1,21 @@
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 const dataDir = mkdtempSync(path.join(tmpdir(), "ws-media-"));
 process.env.DATA_DIR = dataDir;
 const { Hono } = await import("hono");
 const { workshopApp } = await import("./workshop");
+const { installTestPlugin } = await import("./lib/workshop/export-test-plugin");
+
+// the vault's status values and format come from a plug-in (the public default is generic)
+beforeAll(() => installTestPlugin());
 
 const session = "aaaaaaaa-0000-4000-8000-000000000002";
 const sdir = path.join(dataDir, "workshop", "sessions", session);
 mkdirSync(path.join(sdir, "docs"), { recursive: true });
-writeFileSync(path.join(sdir, "meta.json"), JSON.stringify({ id: session, owner: "alex", title: "Kids strength", query: "", sources: [], drafts: [], createdAt: 1, updatedAt: 1 }));
+writeFileSync(path.join(sdir, "meta.json"), JSON.stringify({ id: session, owner: "alex", title: "Strength training", query: "", sources: [], drafts: [], createdAt: 1, updatedAt: 1 }));
 const reelId = "cccccccc-0000-4000-8000-000000000011";
 const plainId = "cccccccc-0000-4000-8000-000000000012";
 const picId = "dddddddd-0000-4000-8000-000000000001";
@@ -59,10 +63,10 @@ describe("Workshop piece pictures", () => {
     const res = await call("GET", `/api/workshop/sessions/${session}/obsidian.md?day=2026-11-05`);
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toBe("application/zip");
-    expect(res.headers.get("Content-Disposition")).toContain("Kids strength.zip");
+    expect(res.headers.get("Content-Disposition")).toContain("Strength training.zip");
     const zip = Buffer.from(await res.arrayBuffer()).toString("latin1");
-    expect(zip).toContain("Kids strength/Kids strength.md");
-    expect(zip).toContain("Kids strength/Kids strength 1.png");
+    expect(zip).toContain("Strength training/Strength training.md");
+    expect(zip).toContain("Strength training/Strength training 1.png");
   });
 
   it("keeps a plain export a plain .md when the reel has no pictures", async () => {

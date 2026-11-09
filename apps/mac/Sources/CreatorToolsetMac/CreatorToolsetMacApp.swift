@@ -53,13 +53,12 @@ struct CreatorToolsetMacApp: App {
                 ServersMenu(shell: shell)
             }
             CommandMenu("Go") {
-                Button("Home") { shell.open("/") }.keyboardShortcut("1", modifiers: .command)
-                Button("Workshop") { shell.open("/workshop") }.keyboardShortcut("2", modifiers: .command)
-                Button("Analyzer") { shell.open("/analyzer") }.keyboardShortcut("3", modifiers: .command)
+                AppToolItems(shell: shell)
                 Divider()
                 Button("Back") { shell.webView.goBack() }.keyboardShortcut("[", modifiers: .command)
                 Button("Forward") { shell.webView.goForward() }.keyboardShortcut("]", modifiers: .command)
                 Button("Reload") { shell.webView.reload() }.keyboardShortcut("r", modifiers: .command)
+                PluginMenuItems(shell: shell)
             }
         }
 

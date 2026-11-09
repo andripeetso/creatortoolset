@@ -2,7 +2,7 @@ import { App, Notice, Plugin, PluginSettingTab, Setting, TFile, requestUrl } fro
 import { readFileSync } from "fs";
 import { homedir } from "os";
 import { createHash } from "crypto";
-import { copyName, inFolder, isSynced, readNote, safeVaultPath, shouldWriteBack, ymd } from "./lib.ts";
+import { copyName, DEFAULT_STATUS, DEFAULT_SYNC_STATUSES, inFolder, isSynced, readNote, safeVaultPath, shouldWriteBack, statusList, ymd } from "./lib.ts";
 
 interface Settings {
   siteUrl: string;
@@ -10,6 +10,8 @@ interface Settings {
   folder: string;
   statusProperty: string;
   mediaProperty: string;
+  /** The status values that sync on their own, comma-separated (a vault's own labels go here). */
+  syncStatuses: string;
   projectId: string;
   syncMinutes: number;
   autoSync: boolean;
@@ -21,8 +23,9 @@ const DEFAULTS: Settings = {
   siteUrl: "http://127.0.0.1:43128",
   keyPath: "~/.config/creator-toolset/key",
   folder: "Scripts",
-  statusProperty: "selector.Status",
-  mediaProperty: "selector.Media",
+  statusProperty: "status",
+  mediaProperty: "media",
+  syncStatuses: DEFAULT_SYNC_STATUSES,
   projectId: "",
   syncMinutes: 5,
   autoSync: true,
@@ -50,7 +53,7 @@ interface LocalState {
 }
 
 const LOCAL_KEY = "creator-toolset-state";
-const TEXT_SETTINGS = ["siteUrl", "keyPath", "folder", "statusProperty", "mediaProperty", "projectId"] as const;
+const TEXT_SETTINGS = ["siteUrl", "keyPath", "folder", "statusProperty", "mediaProperty", "syncStatuses", "projectId"] as const;
 
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 
@@ -103,6 +106,11 @@ export default class CreatorToolsetPlugin extends Plugin {
 
   private keys() {
     return { status: this.settings.statusProperty, media: this.settings.mediaProperty };
+  }
+
+  /** The statuses that sync on their own, from the settings. */
+  syncSet() {
+    return statusList(this.settings.syncStatuses);
   }
 
   private frontmatter(file: TFile) {
@@ -188,7 +196,7 @@ export default class CreatorToolsetPlugin extends Plugin {
       if (!inFolder(file.path, this.settings.folder)) continue;
       const note = readNote(this.frontmatter(file), this.keys());
       const prev = this.state.notes[file.path];
-      if (!note.status || !isSynced(note.status, !!prev?.id)) continue;
+      if (!note.status || !isSynced(note.status, !!prev?.id, this.syncSet())) continue;
       if (prev && prev.mtime === file.stat.mtime && prev.status === note.status) continue;
       try {
         const res = await this.api(key, "PUT", "/api/workshop/notes", {
@@ -309,7 +317,7 @@ export default class CreatorToolsetPlugin extends Plugin {
       const res = await this.api(key, "PUT", "/api/workshop/notes", {
         path: file.path,
         title: file.basename,
-        status: note.status ?? "💡 Idea",
+        status: note.status ?? DEFAULT_STATUS,
         media: note.media,
         details: note.details,
         markdown: await this.app.vault.cachedRead(file),
@@ -369,6 +377,7 @@ class SettingsTab extends PluginSettingTab {
     text("Folder to sync", "Notes in this vault folder (and its subfolders) sync.", "folder");
     text("Status property", "Frontmatter property with the status.", "statusProperty");
     text("Media property", "Frontmatter property with the format (Reel, Carousel…).", "mediaProperty");
+    text("Statuses that sync on their own", "Comma-separated status values. A note with one of them is sent without being linked first.", "syncStatuses");
     text("Project ID", "Optional: the Workshop project new sessions go to.", "projectId");
     new Setting(containerEl)
       .setName("Sync every (minutes)")

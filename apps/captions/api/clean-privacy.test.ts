@@ -78,7 +78,7 @@ beforeAll(() => {
     readFileSync(file),
     packet(
       "be7acfcb97a942e89c71999491e3afac",
-      '<x:xmpmeta xmlns:x="adobe:ns:meta/">private-xmp-secret</x:xmpmeta>',
+      '<x:xmpmeta xmlns:x="urn:tiny:xmpmeta">private-xmp-secret</x:xmpmeta>',
     ),
     packet("d8fec3d61b0e483c92975828877ec481", "synthetic-c2pa-presence-only"),
   ]);

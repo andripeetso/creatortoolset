@@ -3,7 +3,9 @@ import { instagramLogin } from "../connectors/store";
 import { parseInstagramUrl } from "./url";
 import type { CatalogItem, CatalogPage, CatalogVisibility, Comment, ProfileInfo, VisibilityBasis } from "./types";
 import { InstagramError } from "./base";
-import { env } from "../env";
+import { env, hostedMode } from "../env";
+import { pluginInstallMetaLogin } from "../plugin";
+import { publicGridReader, type PublicGridOptions } from "../connectors/provider";
 import {
   DAY_MS,
   insightDayCovered,
@@ -18,16 +20,32 @@ export type { MineAccountStats } from "./account-insights";
  * Official Instagram Graph API for the Toolset user's own professional
  * account (Analyzer `mine` only). Other creators stay on the user's own Apify key.
  * Credentials are install-wide: META_ACCESS_TOKEN + INSTAGRAM_USER_ID,
- * read from the .env. They read one Instagram account, so only the
+ * read from the .env, and used only on a hosted server (CT_MODE=hosted) or when a plug-in turns them on
+ * (installLoginAllowed). They read one Instagram account, so only the
  * owner's (SOCIAL_FEED_OWNER) Mine account uses them. Never persist paging.next — it embeds the token.
  */
 
-const BASE = "https://graph.facebook.com/v21.0";
+/** The Meta Graph API version every Meta call uses. Defined here (not in connectors/platforms.ts, which imports this file). */
+export const META_VERSION = "v27.0";
+const BASE = `https://graph.facebook.com/${META_VERSION}`;
 const TIMEOUT_MS = 90_000;
 const PROFILE_FIELDS =
   "id,username,name,biography,followers_count,follows_count,media_count,profile_picture_url";
+/**
+ * Metrics per media type. Graph refuses a metric the type doesn't support, so
+ * a feed post is never asked for a reel-only one. `impressions` is not in
+ * either set: Meta deprecated it for media created after 2024-07-02.
+ */
+export const FEED_INSIGHT_METRICS = ["views", "reach", "saved", "shares", "total_interactions"] as const;
+export const REEL_INSIGHT_METRICS = [
+  ...FEED_INSIGHT_METRICS,
+  "ig_reels_avg_watch_time",
+  "follows",
+  "profile_visits",
+] as const;
+// The /media listing nests only the metrics every type accepts; reel extras come from fetchMineInsights.
 const MEDIA_FIELDS =
-  "id,media_type,media_product_type,caption,timestamp,permalink,media_url,thumbnail_url,like_count,comments_count,is_shared_to_feed,insights.metric(views,reach,saved,shares,total_interactions,ig_reels_avg_watch_time)";
+  `id,media_type,media_product_type,caption,timestamp,permalink,media_url,thumbnail_url,like_count,comments_count,is_shared_to_feed,insights.metric(${FEED_INSIGHT_METRICS.join(",")})`;
 // Instagram silently leaves a post out of a /media page when it can't return
 // that post's nested insights (seen 2026-09-24: 235 of 236). The plain
 // listing is the complete one.
@@ -35,7 +53,7 @@ const PLAIN_MEDIA_FIELDS = MEDIA_FIELDS.split(",insights")[0]!;
 const COMMENT_FIELDS =
   "id,text,username,like_count,timestamp,replies.limit(25){id,text,username,like_count,timestamp}";
 export const GRAPH_MISSING_MSG =
-  "Meta Graph is not configured — set META_ACCESS_TOKEN and INSTAGRAM_USER_ID";
+  "Connect your Instagram account (Settings → Connectors) with its login to read it";
 export const MINE_CATALOG_CAP = Math.max(1, Math.floor(Number(process.env.INSTAGRAM_MINE_CATALOG_CAP) || 500));
 
 type Rec = Record<string, unknown>;
@@ -56,8 +74,18 @@ function parseGraphTime(raw: string): number {
 type GraphCreds = { token: string; userId: string };
 const scoped = new AsyncLocalStorage<GraphCreds>();
 
+/**
+ * May the install's own login read Instagram for every account? Only on a hosted server (CT_MODE=hosted, the owner's
+ * studio) or when a loaded plug-in turns it on. A public install with no login of its own never reads through the
+ * token that happens to sit in its .env.
+ */
+function installLoginAllowed(): boolean {
+  return hostedMode() || pluginInstallMetaLogin();
+}
+
 /** The install's own login (META_ACCESS_TOKEN + INSTAGRAM_USER_ID): the owner's account and the social feed. */
 function envCreds(): GraphCreds | null {
+  if (!installLoginAllowed()) return null;
   const token = (process.env.META_ACCESS_TOKEN ?? "").trim();
   const userId = (process.env.INSTAGRAM_USER_ID ?? "").trim();
   if (!token || !userId) return null;
@@ -111,6 +139,8 @@ export function insightsFromGraph(raw: unknown): CatalogItem["insights"] {
     else if (name === "shares") out.shares = value;
     else if (name === "total_interactions") out.interactions = value;
     else if (name === "ig_reels_avg_watch_time") out.avgWatchMs = value;
+    else if (name === "follows") out.follows = value;
+    else if (name === "profile_visits") out.profileVisits = value;
   }
   return Object.keys(out).length ? out : undefined;
 }
@@ -171,7 +201,8 @@ export function catalogItemFromGraph(raw: Rec, now = Date.now()): CatalogItem | 
       mediaUrl: str(raw.media_url) || undefined,
       thumbnailUrl: str(raw.thumbnail_url) || undefined,
       seenAt: now,
-      insightsAt: insights ? now : undefined,
+      // A reel's listing lacks its reel-only metrics, so it stays unread until fetchMineInsights adds them.
+      insightsAt: insights && !isReel ? now : undefined,
     },
     isSharedToFeed: typeof shared === "boolean" ? shared : undefined,
     insights,
@@ -183,26 +214,53 @@ export function catalogItemFromGraph(raw: Rec, now = Date.now()): CatalogItem | 
   };
 }
 
-type VisibilityInput = Pick<CatalogItem, "kind" | "isSharedToFeed">;
+type VisibilityInput = Pick<CatalogItem, "kind" | "isSharedToFeed"> & Partial<Pick<CatalogItem, "shortcode" | "graphId">>;
 
 /**
  * Trial or public from the official login only: a reel's is_shared_to_feed, and every other kind is public. Nothing
  * else (no read of Instagram's web pages): a reel without the flag stays unknown. Returns the evidence it used too.
  */
-export function classifyVisibilityWithBasis(item: VisibilityInput): { visibility?: CatalogVisibility; basis?: VisibilityBasis } {
+export function classifyVisibilityWithBasis(
+  item: VisibilityInput,
+  publicGrid?: PublicGridKeys | null,
+): { visibility?: CatalogVisibility; basis?: VisibilityBasis } {
+  const onPublicGrid =
+    publicGrid?.ok &&
+    ((item.shortcode !== undefined && publicGrid.shortcodes.has(item.shortcode)) ||
+      Boolean(item.graphId && publicGrid.ids.has(item.graphId)));
+  if (onPublicGrid) return { visibility: "public", basis: "grid" };
+  if (publicGrid?.ok && publicGrid.complete) return { visibility: "trial", basis: "grid_complete" };
   if (item.isSharedToFeed === true) return { visibility: "public", basis: "shared_to_feed" };
   if (item.isSharedToFeed === false) return { visibility: "trial", basis: "not_shared_to_feed" };
   if (item.kind !== "reel") return { visibility: "public", basis: "kind" };
   return {};
 }
 
-export const classifyVisibility = (item: VisibilityInput): CatalogVisibility | undefined => classifyVisibilityWithBasis(item).visibility;
+export const classifyVisibility = (item: VisibilityInput, publicGrid?: PublicGridKeys | null): CatalogVisibility | undefined =>
+  classifyVisibilityWithBasis(item, publicGrid).visibility;
 
-export function applyMineVisibility(items: CatalogItem[], shared: Map<string, boolean>): CatalogItem[] {
+/** Visitor grid only. Graph media_count / Apify reels include trial, so those never count as public. */
+export function publicGridFromCatalog(items: CatalogItem[], opts: { more?: boolean; expected?: number } = {}): PublicGridKeys {
+  const shortcodes = new Set<string>();
+  const ids = new Set<string>();
+  for (const row of items) {
+    if (row.shortcode) shortcodes.add(row.shortcode);
+    if (row.graphId) ids.add(row.graphId);
+  }
+  if (!shortcodes.size) return { ok: false, complete: false, shortcodes, ids, expected: opts.expected };
+  const complete = opts.expected !== undefined ? shortcodes.size >= opts.expected : opts.more !== true;
+  return { ok: true, complete, shortcodes, ids, expected: opts.expected };
+}
+
+export function applyMineVisibility(
+  items: CatalogItem[],
+  shared: Map<string, boolean>,
+  publicGrid?: PublicGridKeys | null,
+): CatalogItem[] {
   return items.map((item) => {
     const isSharedToFeed = item.graphId && shared.has(item.graphId) ? shared.get(item.graphId) : item.isSharedToFeed;
     const next = { ...item, isSharedToFeed };
-    const { visibility, basis } = classifyVisibilityWithBasis(next);
+    const { visibility, basis } = classifyVisibilityWithBasis(next, publicGrid);
     return { ...next, visibility, visibilityBasis: basis };
   });
 }
@@ -339,22 +397,41 @@ export async function fetchMineSharedToFeed(
   return out;
 }
 
+/** Lifetime insights per media. Ids in `reelIds` get the reel metric set; every other id gets the feed set. */
 export async function fetchMineInsights(
   graphIds: string[],
-  opts: { signal?: AbortSignal; fetchImpl?: typeof fetch } = {},
+  opts: { signal?: AbortSignal; fetchImpl?: typeof fetch; reelIds?: ReadonlySet<string> } = {},
 ): Promise<Map<string, NonNullable<CatalogItem["insights"]>>> {
   const out = new Map<string, NonNullable<CatalogItem["insights"]>>();
   const ids = [...new Set(graphIds.filter(Boolean))];
+  const insightUrl = (id: string, metrics: readonly string[]) => `${id}/insights?metric=${metrics.join(",")}&period=lifetime`;
+  const hasData = (row: Rec | undefined) => !!row && Array.isArray(row.data);
   for (let i = 0; i < ids.length; i += 20) {
     const chunk = ids.slice(i, i + 20);
     try {
       const rows = await graphBatch(
         chunk.map((id) => ({
           method: "GET",
-          relative_url: `${id}/insights?metric=views,reach,saved,shares,total_interactions&period=lifetime`,
+          relative_url: insightUrl(id, opts.reelIds?.has(id) ? REEL_INSIGHT_METRICS : FEED_INSIGHT_METRICS),
         })),
         opts,
       );
+      // Meta refuses a whole reel item when one reel-only metric (follows, profile_visits) is not valid for it.
+      // Retry only those items with the feed set, so their views and reach still come back.
+      const refused = chunk.filter((id, index) => opts.reelIds?.has(id) && !hasData(rows[index]));
+      if (refused.length) {
+        try {
+          const retry = await graphBatch(
+            refused.map((id) => ({ method: "GET", relative_url: insightUrl(id, FEED_INSIGHT_METRICS) })),
+            opts,
+          );
+          refused.forEach((id, j) => {
+            rows[chunk.indexOf(id)] = retry[j] ?? {};
+          });
+        } catch {
+          /* the chunk's other items still count */
+        }
+      }
       chunk.forEach((id, index) => {
         const insights = insightsFromGraph(rows[index]);
         if (insights) out.set(id, insights);
@@ -622,6 +699,47 @@ export async function fetchMineAccountStats(
   return out;
 }
 
+/* ---- Business Discovery: another Professional account by handle. Off unless INSTAGRAM_BUSINESS_DISCOVERY=1 ---- */
+
+const BD_OFF_MSG =
+  "Business Discovery is off on this install (set INSTAGRAM_BUSINESS_DISCOVERY=1 once Meta grants Advanced Access)";
+
+/** Off unless the install sets INSTAGRAM_BUSINESS_DISCOVERY=1: Meta reads other accounts only with Advanced Access. */
+export function businessDiscoveryOn(): boolean {
+  return process.env.INSTAGRAM_BUSINESS_DISCOVERY === "1";
+}
+
+const bdFields = (handle: string) =>
+  `business_discovery.username(${handle}){id,username,name,biography,followers_count,media_count,profile_picture_url,media.limit(25){id,caption,comments_count,like_count,media_type,permalink,timestamp,media_url,thumbnail_url}}`;
+
+/** Business Discovery's reply → the profile and its public media, shaped like the own-account reads. */
+export function businessDiscoveryFromGraph(raw: unknown, now = Date.now()): { profile: ProfileInfo; items: CatalogItem[] } | null {
+  const bd = isRec(raw) && isRec(raw.business_discovery) ? raw.business_discovery : null;
+  const profile = bd ? profileFromGraph(bd) : null;
+  if (!bd || !profile) return null;
+  const media = isRec(bd.media) && Array.isArray(bd.media.data) ? bd.media.data : [];
+  const items = media.filter(isRec).map((m) => catalogItemFromGraph(m, now)).filter((i): i is CatalogItem => !!i);
+  return { profile, items };
+}
+
+/**
+ * Another account's profile and public recent media by handle, through the Graph login the install or hosted server
+ * holds. Refuses before any call when the switch is off or there is no login. Numbers Meta leaves out are absent, not zero.
+ */
+export async function fetchBusinessDiscovery(
+  handle: string,
+  opts: { signal?: AbortSignal; fetchImpl?: typeof fetch } = {},
+): Promise<{ profile: ProfileInfo; items: CatalogItem[] }> {
+  if (!businessDiscoveryOn()) throw new InstagramError(BD_OFF_MSG, "GRAPH", false);
+  const name = handle.trim().replace(/^@/, "");
+  if (!/^[A-Za-z0-9._]{1,30}$/.test(name)) throw new InstagramError("That is not an Instagram handle", "FAILED", false);
+  const creds = requireCreds();
+  const raw = await graphGet(creds.userId, { fields: bdFields(name) }, opts);
+  const out = businessDiscoveryFromGraph(raw);
+  if (!out) throw new InstagramError("Business Discovery returned no profile for this handle", "GRAPH", false);
+  return out;
+}
+
 function requireCreds(): { token: string; userId: string } {
   const creds = graphCreds();
   if (!creds) throw new InstagramError(GRAPH_MISSING_MSG, "GRAPH", false);
@@ -732,4 +850,23 @@ function graphErrorMessage(body: string, status: number): string {
     /* fall through */
   }
   return `Graph request failed (HTTP ${status})`;
+}
+
+/** What an anonymous grid read found: the shortcodes and ids on the public grid, and whether that is every post. */
+export interface PublicGridKeys {
+  ok: boolean;
+  complete: boolean;
+  shortcodes: Set<string>;
+  ids: Set<string>;
+  expected?: number;
+}
+
+/**
+ * The public grid of an account, read logged out. The read itself is the plug-in's (connectors.publicGrid); with no
+ * plug-in it answers empty, so callers treat the grid as unknown.
+ */
+export async function fetchPublicGridKeys(username: string, opts: PublicGridOptions = {}): Promise<PublicGridKeys> {
+  const read = publicGridReader();
+  if (!read) return { ok: false, complete: false, shortcodes: new Set(), ids: new Set() };
+  return read(username, opts);
 }

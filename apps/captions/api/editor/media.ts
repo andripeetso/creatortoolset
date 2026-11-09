@@ -34,7 +34,7 @@ interface Row {
   source_key: string;
   source_path: string | null;
   mime: string | null;
-  storage_kind: "local" | "s3";
+  storage_kind: "local" | "s3" | "bunny";
 }
 
 /** A title as a file name: no path separators or control characters, no leading dot. */

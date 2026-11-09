@@ -18,8 +18,12 @@ import type {
 /**
  * Reading other creators' public posts, profiles and comment threads: Apify actors on the user's own Apify token,
  * billed by Apify to them. The token lives per user at $DATA_DIR/instagram/users/<username>/apify.json (mode 0600)
- * and is never returned. APIFY_TOKEN in .env is a fallback only for the `local` user when APP_SECRET is unset (one
- * person's own machine). There is no other way in: no session cookies, no server-wide token.
+ * and is never returned.
+ *
+ * Local-only fallback: APIFY_TOKEN in .env is read only by `fromEnv` below, and only for the `local` user while
+ * APP_SECRET is unset (one person's own machine). With APP_SECRET set, or for any other user, it is ignored, so a
+ * multi-user server never shares one key between accounts. There is no other way in: no session cookies, no
+ * server-wide token.
  */
 const POST_ACTOR = "apify~instagram-scraper";
 const COMMENT_ACTOR = "apify~instagram-comment-scraper";

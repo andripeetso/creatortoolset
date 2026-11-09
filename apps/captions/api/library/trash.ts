@@ -11,6 +11,8 @@ import { blobs, libraryDb } from "./db";
 
 const DAY = 86_400_000;
 const HOUR = 3_600_000;
+/** Finals pieces stay in the trash this long (owner default, 2026-11-08). */
+const PIECE_TRASH_DAYS = 5;
 
 /** Read per call (AGENTS: process.env at the point of use). */
 export function trashDays(): number {
@@ -44,7 +46,22 @@ export async function purgeTrash(now = Date.now()): Promise<number> {
     .filter((id) => !inReview(id))
     .slice(0, 500); // ponytail: 500 a pass keeps the IN lists short; the next hour takes the rest
   await deleteAssets(assets);
+  await purgeTrashedPieces(now);
   return assets.length;
+}
+
+/** Finals pieces in the trash longer than PIECE_TRASH_DAYS go for good: the piece, its items and postings (the versions
+ *  stay in the library) and its cover file. Returns how many went. */
+export async function purgeTrashedPieces(now = Date.now()): Promise<number> {
+  const d = libraryDb();
+  const pieces = d
+    .prepare("SELECT id, cover_key FROM pieces WHERE trashed_at IS NOT NULL AND trashed_at < ? LIMIT 500")
+    .all(now - PIECE_TRASH_DAYS * DAY) as { id: string; cover_key: string | null }[];
+  if (!pieces.length) return 0;
+  // ponytail: one DELETE per piece id; a piece in the trash is rare, so no batching
+  for (const p of pieces) d.prepare("DELETE FROM pieces WHERE id = ?").run(p.id);
+  for (const p of pieces) if (p.cover_key) await blobs.delete(p.cover_key).catch((e) => console.error("[library] piece purge:", p.cover_key, e));
+  return pieces.length;
 }
 
 /** Deletes assets for good: every version, derivative, share and file. Review uses it when one of its videos is gone. */

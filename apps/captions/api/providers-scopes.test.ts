@@ -260,3 +260,80 @@ describe("a Mac's report", () => {
     expect(reportOf(alex.device.id)).toMatchObject({ drivers: [], homes: [] });
   });
 });
+
+describe("provider instance fields", () => {
+  const body = (inst: Record<string, unknown>) => ({ instances: [{ ...inst, device: alex.device.id }], default: { instance: inst.id, model: "m", effort: "low" }, jobs: {} });
+
+  it("an old ai-providers.json parses unchanged", () => {
+    const old = workspace();
+    expect(parseSettings(JSON.parse(JSON.stringify(old)), "workspace")).toEqual(old);
+  });
+
+  it("the new fields round-trip through a save and a re-read", () => {
+    const rich = body({
+      id: "codex_work",
+      driver: "codex",
+      name: "Codex (work)",
+      enabled: true,
+      home: "/Users/me/.codex-work",
+      binaryPath: "/opt/homebrew/bin/codex",
+      shadowHomePath: "/Users/me/.codex-shared",
+      envNames: ["OPENAI_ORG", "CODEX_TRACE"],
+      accentColor: "#1f8a70",
+      featured: false,
+    });
+    const once = parseSettings(rich, "workspace");
+    expect(once.instances[0]).toMatchObject({
+      binaryPath: "/opt/homebrew/bin/codex",
+      shadowHomePath: "/Users/me/.codex-shared",
+      envNames: ["OPENAI_ORG", "CODEX_TRACE"],
+      accentColor: "#1f8a70",
+      featured: false,
+    });
+    expect(once.instances[0]).not.toHaveProperty("launchArgs");
+    expect(parseSettings(JSON.parse(JSON.stringify(once)), "workspace")).toEqual(once);
+  });
+
+  it("keeps launch arguments only for a local ACP command, and refuses one that is not text", () => {
+    const acpInst = { id: "acp_local", driver: "acp", name: "Local", enabled: true, acp: { command: "/usr/local/bin/my-agent", args: [] } };
+    const withHub = (inst: Record<string, unknown>) => ({ ...body(inst), instances: [{ ...hub, device: alex.device.id }, { ...inst, device: alex.device.id }] });
+    expect(parseSettings(withHub({ ...acpInst, launchArgs: ["--verbose"] }), "workspace").instances[1]).toMatchObject({ launchArgs: ["--verbose"] });
+    expect(() => parseSettings(withHub({ ...acpInst, launchArgs: ["--x", 3] }), "workspace")).toThrow(/launch argument/);
+    expect(() => parseSettings(withHub({ ...acpInst, launchArgs: "--x" }), "workspace")).toThrow(/launch argument/);
+  });
+
+  it("drops launch arguments sent for any other kind, so an old file still loads", () => {
+    const codex = parseSettings(body({ id: "codex", driver: "codex", name: "Codex", enabled: true, launchArgs: ["--profile", "work"] }), "workspace");
+    expect(codex.instances[0]).not.toHaveProperty("launchArgs");
+    expect(() => parseSettings(body({ id: "codex", driver: "codex", name: "Codex", enabled: true, launchArgs: ["--x", 3] }), "workspace")).not.toThrow();
+  });
+
+  it("never keeps an environment value: only the names, and a name with a value in it is refused", () => {
+    const base = { id: "codex", driver: "codex", name: "Codex", enabled: true };
+    const kept = parseSettings(body({ ...base, envNames: ["OPENAI_ORG"], envValues: { OPENAI_ORG: "sk-secret" }, env: { OPENAI_ORG: "sk-secret" } }), "workspace");
+    expect(kept.instances[0]).toEqual({ id: "codex", driver: "codex", name: "Codex", enabled: true, device: alex.device.id, envNames: ["OPENAI_ORG"] });
+    expect(JSON.stringify(kept)).not.toContain("sk-secret");
+    expect(() => parseSettings(body({ ...base, envNames: ["OPENAI_ORG=sk-secret"] }), "workspace")).toThrow(/environment names/);
+  });
+
+  it("a local ACP command needs its program; other drivers can't carry one", () => {
+    // a runnable Claude provider alongside, since the ACP kind is listed but not run yet
+    const withHub = (inst: Record<string, unknown>) => ({ ...body(inst), instances: [{ ...hub, device: alex.device.id }, { ...inst, device: alex.device.id }] });
+    const acp = { id: "acp_local", driver: "acp", name: "Local", enabled: true, acp: { command: "/usr/local/bin/my-agent", args: ["acp"] } };
+    expect(parseSettings(withHub(acp), "workspace").instances[1]).toMatchObject({ acp: { command: "/usr/local/bin/my-agent", args: ["acp"] } });
+    expect(() => parseSettings(withHub({ ...acp, acp: undefined }), "workspace")).toThrow(/ACP command needs/);
+    expect(() => parseSettings(withHub({ id: "codex", driver: "codex", name: "Codex", enabled: true, acp: { command: "x", args: [] } }), "workspace")).toThrow(/only a local ACP command/);
+  });
+
+  it("refuses a bad colour, an environment name that is not a name, and a relative binary path", () => {
+    const base = { id: "codex", driver: "codex", name: "Codex", enabled: true };
+    expect(() => parseSettings(body({ ...base, accentColor: "teal" }), "workspace")).toThrow(/#rrggbb/);
+    expect(() => parseSettings(body({ ...base, envNames: ["BAD NAME"] }), "workspace")).toThrow(/environment names/);
+    expect(() => parseSettings(body({ ...base, binaryPath: "codex" }), "workspace")).toThrow(/full path/);
+  });
+
+  it("drops a base URL sent from the settings page: only a plug-in's instance may set one", () => {
+    const parsed = parseSettings(body({ id: "codex", driver: "codex", name: "Codex", enabled: true, baseUrl: "https://evil.example" }), "workspace");
+    expect(parsed.instances[0]).not.toHaveProperty("baseUrl");
+  });
+});

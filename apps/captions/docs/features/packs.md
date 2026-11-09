@@ -35,11 +35,27 @@ side). Official packs live in `packs/`.
   catalog lists a newer version.
 - `license` is required. The pack must be yours to share: no quoted books, no fonts, sounds or images you
   don't have the rights to.
-- Everything else is optional, but a pack needs at least one of instructions, frameworks or caption styles.
+- Everything else is optional, but a pack needs at least one of instructions, frameworks, caption styles or editor
+  items.
 - The format also has `designSystems` and an `editor.cards` slot, for apps that draw animated cards. This app
   accepts files that have them and leaves those parts out.
 
 Check a file before you share it: `pnpm --filter @creator-toolset/captions pack:check my-pack.ctpack.json`.
+
+## Editor items
+
+A pack can carry items the AI editor uses. All are data only (level 0):
+
+- `grades`: ASC CDL colour grades (`slope`, `offset`, `power`, `saturation`), one per name.
+- `voiceMixes`: loudness targets for the voice (`voiceLufs`, and `bedLufs` for a music bed under it) and the
+  enhancer (`off`, `nvidia` or `elevenlabs`, run with the person's own key).
+- `sfxSets`: a sound library listed by id, category and title. Each set needs its `license`. The files are not in
+  the pack.
+- `resolve`: a DaVinci Resolve bridge a device may switch on. Recorded only for now.
+- `editorDefaults`: per slot (`designSystem`, `grade`, `voiceMix`, `sfxSet`), the name of one item in this pack that
+  the editor uses when the person chooses nothing.
+- `permissions`: what the items need (`grade`, `voice`, `sfx`, `resolve`, `motion-kit`). It is worked out from the
+  items; a list you write must include each one the pack uses.
 
 ## Instructions and slots
 
@@ -91,7 +107,7 @@ own. Set `PACK_CATALOG_URL` to an empty value to turn the catalog off.
 - Your own words. Name a framework's originator, but write the summary, steps and example yourself.
 - Nothing from books, courses or other people's posts, and nothing from your Knowledge.
 - Trademarked names only as a description, never as the pack's id or author.
-- No fonts, images or sounds yet. Those need a licence check per file.
+- No fonts, images or sound files yet. Those need a licence check per file. A sound set names its sounds and licence only.
 
 ## Publishing
 

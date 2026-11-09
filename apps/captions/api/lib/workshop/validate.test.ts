@@ -167,7 +167,8 @@ describe("slugFilename", () => {
 describe("co-writing inputs", () => {
   it("creates documents with a default title and validates patches", () => {
     expect(parseDocCreate({ kind: "carousel", frameworkIds: [id(1), "bad"] })).toEqual({ kind: "carousel", title: "Carousel", frameworkIds: [id(1)], ruleIds: undefined, text: "" });
-    expect(() => parseDocCreate({ kind: "notes" })).toThrow(/reel, carousel, ad, free or youtube/);
+    expect(parseDocCreate({ kind: "newsletter" }).title).toBe("Newsletter");
+    expect(() => parseDocCreate({ kind: "notes" })).toThrow(/reel, carousel, ad, free, youtube, newsletter, thread or article/);
     expect(parseDocPatch({ blocks: [{ id: "b2", text: "x" }, { id: "nope", text: "y" }, "junk"], ruleIds: null })).toEqual({ blocks: [{ id: "b2", text: "x" }, { text: "y" }], ruleIds: null });
     expect(parseDocPatch({ blocks: [{ text: "x".repeat(5000) }] }).blocks?.[0]?.text).toHaveLength(4000);
     expect(parseDocPatch({ blocks: [{ text: "x".repeat(5000) }, { text: "y" }] }, "notes").blocks).toEqual([{ text: "x".repeat(5000) }]);

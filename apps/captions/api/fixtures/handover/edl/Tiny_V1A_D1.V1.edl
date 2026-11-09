@@ -1,0 +1,10 @@
+TITLE: Tiny Proto
+
+001  talkmp4  V     C        00:00:00:10 00:00:04:10 00:00:00:00 00:00:04:00
+* FROM CLIP NAME:  talk.mp4
+* FROM CLIP: media/talk.mp4
+* OTIO TRUNCATED REEL NAME FROM: talk.mp4
+002  talkmp4  V     C        00:00:04:10 00:00:08:10 00:00:04:00 00:00:08:00
+* FROM CLIP NAME:  talk.mp4
+* FROM CLIP: media/talk.mp4
+* OTIO TRUNCATED REEL NAME FROM: talk.mp4

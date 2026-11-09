@@ -4,7 +4,7 @@
  * imports, DOM, and locale-dependent formatting.
  */
 
-export type ExportDocKind = "reel" | "carousel" | "ad" | "free" | "youtube" | "notes";
+export type ExportDocKind = "reel" | "carousel" | "ad" | "free" | "youtube" | "newsletter" | "thread" | "article" | "notes";
 
 const KIND_SUFFIX: Record<ExportDocKind, string> = {
   reel: "Reel",
@@ -12,11 +12,14 @@ const KIND_SUFFIX: Record<ExportDocKind, string> = {
   ad: "Ad",
   free: "Draft",
   youtube: "YouTube",
+  newsletter: "Newsletter",
+  thread: "Thread",
+  article: "Article",
   notes: "Notes",
 };
 
 const SKIP_STEM = new Set(["", "untitled", "untitled session", "workshop session"]);
-const STOCK_STEM = /^(script|reel|reel script|carousel|ad copy|draft|free-form|free form|notes)(\s+\d+)?$/i;
+const STOCK_STEM = /^(script|reel|reel script|carousel|ad copy|draft|free-form|free form|anything else|newsletter|thread|article|notes)(\s+\d+)?$/i;
 
 /** Letters and digits only, case kept — TinyStory stays TinyStory. */
 export function camelStem(name: string | undefined): string {
@@ -133,37 +136,34 @@ export function obsidianFilename(title: string | undefined, fallback = "Untitled
   return `${name}.md`;
 }
 
-/** A custom export's default template: the built-in note's shape (its frontmatter, then the body). */
-export const OBSIDIAN_TEMPLATE = "---\nchange: {{date}}\ndetails:\nselector.Status: {{status}}\nselector.Media: {{media}}\n---\n{{body}}\n";
+/** A custom export's default template: the note's frontmatter (the vault's format, {{frontmatter}}), then the body. */
+export const OBSIDIAN_TEMPLATE = "{{frontmatter}}{{body}}\n";
+
+/** Frontmatter from [property, value] lines, in order: `---`, the lines, `---`. A value of "" writes the property alone (`key:`). */
+export function frontmatterBlock(lines: Array<[string, string]>): string {
+  return `---\n${lines.map(([key, value]) => (value ? `${key}: ${value}` : `${key}:`)).join("\n")}\n---\n`;
+}
 
 /**
- * An Obsidian script note: frontmatter (selector.Media = the author's vault's custom-selectors option), the hook lines (// each), then the
- * script's paragraphs. Nothing else. `day` is YYYY-MM-DD.
+ * An Obsidian script note: the frontmatter block `head` (see frontmatterBlock), the hook lines (// each), then the script's
+ * paragraphs. Nothing else.
  */
-export function reelObsidianMarkdown(input: {
-  day: string;
-  status: string;
-  hooks?: Array<{ text: string }> | null;
-  blocks: Array<{ text: string }>;
-}): string {
-  const head = `---\nchange: ${input.day}\ndetails:\nselector.Status: ${input.status}\nselector.Media: 🎞️ Reel\n---\n`;
+export function reelObsidianMarkdown(input: { head: string; hooks?: Array<{ text: string }> | null; blocks: Array<{ text: string }> }): string {
   const hooks = (input.hooks ?? []).map((h) => oneLine(h.text)).filter(Boolean).map((t) => `// ${t}`).join("\n");
   const script = input.blocks
     .flatMap((b) => b.text.split(/\n\s*\n/))
     .map((p) => p.trim())
     .filter(Boolean)
     .join("\n\n");
-  return `${head}${[hooks, script].filter(Boolean).join("\n\n")}\n`;
+  return `${input.head}${[hooks, script].filter(Boolean).join("\n\n")}\n`;
 }
 
 /**
- * A carousel as one of the author's Obsidian notes (SampleTexts.md: `details: CAROUSEL`): the same frontmatter, then each
- * slide's text, slides apart by a `---` line.
+ * A carousel as an Obsidian note: the frontmatter block `head`, then each slide's text, slides apart by a `---` line.
  */
-export function carouselObsidianMarkdown(input: { day: string; status: string; blocks: Array<{ text: string }> }): string {
-  const head = `---\nchange: ${input.day}\ndetails: CAROUSEL\nselector.Status: ${input.status}\nselector.Media: 🎪 Carousel\n---\n`;
+export function carouselObsidianMarkdown(input: { head: string; blocks: Array<{ text: string }> }): string {
   const slides = input.blocks.map((b) => b.text.trim()).filter(Boolean).join("\n\n---\n\n");
-  return `${head}${slides}\n`;
+  return `${input.head}${slides}\n`;
 }
 
 /** The spoken script as written. Legacy multi-block reels join with a blank line. */

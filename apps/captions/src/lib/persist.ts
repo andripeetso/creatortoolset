@@ -369,6 +369,19 @@ export async function loadSession(
   return true;
 }
 
+/** Duplicate a project on the server into the signed-in user's library (hosted admins only; the server refuses others). */
+export async function copySessionToLibrary(id: string): Promise<{ id: string; name: string } | null> {
+  try {
+    const res = await fetch(`/api/projects/${id}/copy`, { method: "POST" });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { id?: unknown; name?: unknown };
+    if (typeof body.id !== "string" || !body.id) return null;
+    return { id: body.id, name: typeof body.name === "string" ? body.name : "copy" };
+  } catch {
+    return null;
+  }
+}
+
 type StudioSnapshot = ReturnType<typeof useStudio.getState>;
 
 function buildPayload(s: StudioSnapshot): string {

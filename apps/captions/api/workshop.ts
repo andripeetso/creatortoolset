@@ -9,16 +9,16 @@ import { pipeline } from "node:stream/promises";
 import { notifyWorkshopOwner, sendFile } from "./review";
 import { inSlideOrder, storedZip, type Delivery } from "./lib/workshop/deliveries";
 import path from "node:path";
-import type { AuthVars } from "./auth";
+import { sessionOf, type AuthVars } from "./auth";
 import { AiProviderError, aiFor as route, completeWithFallback, streamWithFallback, type ProviderOpts, type StreamHooks } from "./ai-complete";
 import type { Selection } from "../contracts/providers";
 import { MAC_MISS, MacClaudeError, streamMacClaude, type MacErrorKind, type MacOpts, type MacSession, type MacUsage } from "./lib/mac-claude";
 import { env } from "./lib/env";
-import type { SessionUser } from "./users";
+import type { SessionUser, UserRecord } from "./users";
 import { findOwnPost, findPostsForUser, libraryCountFor, libraryForWorkshop, mineAccountId, scopeOldAnalyzer, ownAccountContextFor, ownPostComments, ownPostsForWorkshop, packPostsForUser, postsForUser, sourceIndexForUser, transcribeForUser } from "./instagram";
 import { liveEnd, listen, liveText } from "./lib/workshop/live";
 import { type Folder, frameworkFiles, libraryFiles, outsideWords, keptPer1k, ownPostFiles, pastedFile, postFile, pastedWords, sessionFile, sessionsIndex, sessionText, slug, sourceFile } from "./lib/workshop/folder";
-import { matchPosted, postWords, postedFromUrl, tfidf } from "./lib/workshop/posted";
+import { linkCandidates, matchPosted, postingsOf, postWords, postedFromUrl, setPostings, tfidf } from "./lib/workshop/posted";
 import { finished, keptByWeek, keptShare } from "./lib/workshop/kept";
 import { closestPairs, closestPosts } from "./lib/workshop/closest";
 import { providerSettings, routeFor } from "./lib/providers";
@@ -31,12 +31,15 @@ import { keyFor } from "./my-keys";
 import { AUDIT_JSON_SCHEMA, AUDIT_SYSTEM, MAC_RESEARCH, MAX_AUDIT_CHARS, RESEARCH_QUESTION_SYSTEM, auditEdits, auditSummaryText, documentAudit, parseAuditResult, postAuditText, splitSources } from "./lib/workshop/audit";
 import { partialTurn } from "./lib/workshop/stream-json";
 import { bumpUsage, findUser } from "./users";
-import type { ClaudeSession, FileRef, ImageRef, LibraryRef, PastedRef, TurnStep } from "./lib/workshop/types";
+import type { ClaudeSession, ClipRef, FileRef, ImageRef, PastedRef, TurnStep } from "./lib/workshop/types";
 import { ATTACH_EXT, attachedFile } from "./lib/workshop/attached";
-import type { AuditMeta, AuditTarget, Chat, ChatMessage, Document, DraftKind, DraftMeta, Framework, KnowledgeFile, KnowledgeSource, LoadedSource, Project, Proposal, ResearchNote, Rule, SessionMeta, SessionStatus, SourcePart } from "./lib/workshop/types";
+import type { AuditMeta, AuditTarget, Chat, ChatMessage, DocKind, Document, DraftKind, DraftMeta, Framework, KnowledgeFile, KnowledgeSource, LoadedSource, Posting, Project, Proposal, ResearchNote, Rule, SessionMeta, SessionStatus, SourcePart } from "./lib/workshop/types";
 import { type AuditInput, LIMITS, okId, parseAuditInput, parseDocCreate, parseDocPatch, parseFrameworkInput, parseGenerateInput, parseLayoutRequest, parseProjectInput, PROJECT_COLORS, parseRuleInput, parseSessionPatch, parseSources, parseTurnInput } from "./lib/workshop/validate";
 import { setSessionStatus, TURN_STOPPED } from "./lib/workshop/types";
+import { readWorkPrefs } from "./work-prefs";
+import { emitEvent, onEvent } from "./lib/events";
 import { IllegalTransition } from "./lib/transition";
+import { pluginCheckPosted } from "./lib/plugin";
 import {
   getWorkspace,
   inProject,
@@ -49,7 +52,7 @@ import {
 } from "./lib/workshop/workspace";
 import { ORIGINAL_SEED_KEYS, RETIRED_SEED_KEYS, SEED_FRAMEWORKS, extraFrameworkCopyIds, missingSeeds, planRuleSeedSync, ruleSeedAt } from "./lib/workshop/seeds";
 import { attachment, buildExportMarkdown, demoteHeadings, KIND_TITLE, obsidianExports, obsidianPieces, obsidianStatus, sessionStatusOf, type ObsidianPiece } from "./lib/workshop/export";
-import { exportFile, listExports, parseExports, pieceFromNote, renderTemplate, SYNCED_STATUSES, type PendingExport, type WorkshopExport } from "./lib/workshop/notes";
+import { BUILTIN_EXPORT, exportFile, listExports, parseExports, pieceFromNote, renderTemplate, SYNCED_STATUSES, type PendingExport, type WorkshopExport } from "./lib/workshop/notes";
 import { cardsFrontmatter, exportFilename, exportStem, pictureIds, PICTURE_TOKEN, pieceMarkdown } from "../src/lib/workshop-markdown";
 import { PICTURE_EXT, PICTURE_TYPES, parsePictureUpload } from "./lib/workshop/pictures";
 import { ZipFile } from "yazl";
@@ -61,7 +64,7 @@ import { channelFiles } from "./connectors";
 import { fetchYoutubeViaApify } from "./lib/youtube/fetch";
 import { PLAN_PARSERS } from "./lib/workshop/plans";
 import { renderDraft } from "./lib/workshop/render";
-import { applyEdits, docToMarkdown, keep, markEditsSeen, newDocument, revert, setVersionKept, snapshot, userEdit } from "./lib/workshop/doc";
+import { applyEdits, docToMarkdown, keep, markEditsSeen, newDocument, onVersion, revert, setVersionKept, snapshot, userEdit } from "./lib/workshop/doc";
 import { captionExamplesFor } from "./lib/workshop/caption-examples";
 import { askedForCaption, askedOnlyForCaption, editsForNewDocument, isAccountFetchSource, gateCompanionEdits, parseTurn, type TurnPlan } from "./lib/workshop/chat-plans";
 import { packInstructions } from "./lib/packs";
@@ -71,7 +74,10 @@ import { readThrough } from "./lib/workshop/readthrough";
 import { type EditPair, editsFile, mergeLog, pairsOf } from "./lib/workshop/edit-log";
 import { buildLinesPrompt, parseLines } from "./lib/workshop/lines";
 import { buildAsidePrompt } from "./lib/workshop/aside";
-import { clipContext, libraryRef } from "./library/attach";
+import { clipContext, externalLibraryRef, libraryRef } from "./library/attach";
+import { finalsLinkedTo, linkFinalsPiece } from "./library/finals";
+import { libraryDb } from "./library/db";
+import { libraryRole } from "./library/access";
 import { resolveCarouselType, visualizeCarousel } from "../src/lib/carousel-visualize";
 import {
   buildLayoutPrompt,
@@ -593,9 +599,16 @@ async function updateSession(
   return chained(id, async () => {
     const meta = await readSession(id);
     if (!meta) return null;
+    const from = meta.status ?? "draft";
     await fn(meta);
     if (touch) meta.updatedAt = Date.now();
     await writeJsonAtomic(sessionMetaPath(id), meta);
+    // events fire after the write; only a real change of status emits, so a publish is announced once
+    const to = meta.status ?? "draft";
+    if (to !== from) {
+      emitEvent("session.status", { id, owner: meta.owner, from, to });
+      if (to === "published") emitEvent("session.published", { id, owner: meta.owner, from });
+    }
     return meta;
   });
 }
@@ -774,7 +787,7 @@ async function updateDoc(
 async function ensureDocuments(meta: SessionMeta): Promise<Document[]> {
   return chained(meta.id, async () => {
     let docs = await listDocs(meta.id);
-    if (docs.some((d) => d.kind === "notes")) return withWorkingDoc(meta.id, docs);
+    if (docs.some((d) => d.kind === "notes")) return withWorkingDoc(meta, docs);
     const now = Date.now();
     const notes = newDocument(randomUUID(), meta.id, "notes", "Notes", { text: await readNotes(meta.id), author: "user", now });
     await writeDoc(notes);
@@ -797,14 +810,19 @@ async function ensureDocuments(meta: SessionMeta): Promise<Document[]> {
     }
     // pieces made before the session was first opened (an AI on the Full key) stay listed
     docs = [...docs, ...created].sort((a, b) => a.createdAt - b.createdAt);
-    return withWorkingDoc(meta.id, docs);
+    return withWorkingDoc(meta, docs);
   });
 }
 
-/** A session always has a document to write in besides Notes; the kind is switched in the editor. */
-async function withWorkingDoc(sessionId: string, docs: Document[]): Promise<Document[]> {
+/** The answers to "What will you make?" that are also a Workshop piece. */
+type PieceKind = Exclude<DocKind, "notes" | "free">;
+const PIECE_KINDS = new Set<string>(["reel", "carousel", "ad", "youtube", "newsletter", "thread", "article"] satisfies PieceKind[]);
+
+/** A session always has a document to write in besides Notes: the first kind its owner makes (setup's "What will you make?"), else a reel; the kind is switched in the editor. */
+async function withWorkingDoc(meta: SessionMeta, docs: Document[]): Promise<Document[]> {
   if (docs.some((d) => d.kind !== "notes")) return docs;
-  const doc = newDocument(randomUUID(), sessionId, "reel", "Reel");
+  const kind = readWorkPrefs(meta.owner).makes.find((m): m is PieceKind => PIECE_KINDS.has(m)) ?? "reel";
+  const doc = newDocument(randomUUID(), meta.id, kind, KIND_TITLE[kind]);
   await writeDoc(doc);
   return [...docs, doc];
 }
@@ -1007,8 +1025,10 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
     blockIds = [];
   };
   try {
-    const doc = await readDoc(session.id, ask.docId);
-    if (!doc) throw new Error("That document is gone");
+    const read = await readDoc(session.id, ask.docId);
+    if (!read) throw new Error("That document is gone");
+    // a turn for one Finals version: the writer reads and writes that version's post description as the piece's
+    const doc = ask.captionFor ? withVersionCaption(read, ask.captionFor) : read;
     await progress({ stage: "packing" }, true);
     const [project, ...frameworkHits] = await Promise.all([
       projectForAi(session.projectId, user),
@@ -1104,6 +1124,12 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
     // Media Library clips: read now, as the author; each thumbnail goes with the pictures, the words into the prompt
     const askLibrary: Array<{ title: string; description?: { text: string; source: "user" | "ai" }; transcript?: string }> = [];
     for (const ref of ask.library ?? []) {
+      if (ref.kind === "external") {
+        // a source's clip: its title only until the source serves its description and thumbnail (external refs have no file here)
+        const kept = await externalLibraryRef(user.username, { refId: ref.refId });
+        if (kept) askLibrary.push({ title: kept.title });
+        continue;
+      }
       const clip = await clipContext(user.username, ref);
       if (!clip) continue;
       const { thumb, ...words } = clip;
@@ -1125,6 +1151,8 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
     const own = await ownPostsForWorkshop(user, projectAccount(project)).catch(() => null);
     // asked for the post description: the author's newest reel captions and the captions saved on this session's
     // other pieces (caption-examples.ts), so the writer doesn't copy research footnotes it was shown
+    // a turn for one Finals version: every version of the piece with its facts, the one this description is for marked
+    const captionVersion = ask.captionFor ? await captionVersionFor(session.id, doc.id, ask.captionFor) : undefined;
     const captionExamples = askedForCaption(ask.text)
       ? captionExamplesFor(own?.posts ?? [], (await listDocs(session.id)).filter((d) => d.id !== doc.id && d.caption?.text.trim()).map((d) => d.caption!.text))
       : undefined;
@@ -1220,6 +1248,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
         message: ask.text,
         mine: ask.mine,
         scope: ask.scope,
+        captionVersion,
         captionExamples,
         rewrites: captionExamples ? rewrites : { descriptions: [], pieces: rewrites.pieces },
         closestPosts: nearPosts.map((p) => ({
@@ -1255,7 +1284,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
           const fresh = part.edits.slice(applied);
           await updateDoc(session.id, doc.id, (d) => {
             if (!versionBefore) versionBefore = d.headVersion ?? snapshot(d, `${d.dirty ? "your edits " : ""}before: ${ask.text.slice(0, 80)}`).id;
-            const r = applyEdits(d, gateCompanionEdits(fresh, { message: ask.text, caption: d.caption?.text ?? "", pinned: d.pinned?.text ?? "" }));
+            const r = onVersion(d, ask.captionFor, () => applyEdits(d, gateCompanionEdits(fresh, { message: ask.text, caption: d.caption?.text ?? "", pinned: d.pinned?.text ?? "" })));
             blockIds.push(...r.blockIds);
             for (const x of r.skipped) if (x.reason === "locked" && "id" in x.op) refused.add(x.op.id);
           });
@@ -1413,7 +1442,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
       await progress({ stage: "applying" }, true);
       await updateDoc(session.id, target.id, (d) => {
         if (!created && !versionBefore) versionBefore = d.headVersion ?? snapshot(d, `${d.dirty ? "your edits " : ""}before: ${ask.text.slice(0, 80)}`).id;
-        const r = applyEdits(d, gateCompanionEdits(rest, { message: ask.text, caption: d.caption?.text ?? "", pinned: d.pinned?.text ?? "" }));
+        const r = onVersion(d, ask.captionFor, () => applyEdits(d, gateCompanionEdits(rest, { message: ask.text, caption: d.caption?.text ?? "", pinned: d.pinned?.text ?? "" })));
         blockIds.push(...r.blockIds);
         for (const x of r.skipped) if (x.reason === "locked" && "id" in x.op) refused.add(x.op.id);
       });
@@ -2090,8 +2119,8 @@ async function linkPosted(user: SessionUser): Promise<void> {
   for (const id of await readdir(DIRS.sessions).catch(() => [] as string[])) {
     const meta = await readSession(id);
     if (meta?.owner !== user.username) continue;
-    if (meta.posted) taken.add(meta.posted.shortcode);
-    else if (meta.status !== "shelved") open.push(meta); // shelved: never moved on by itself
+    for (const p of postingsOf(meta)) taken.add(p.shortcode);
+    if (!postingsOf(meta).length && meta.status !== "shelved") open.push(meta); // shelved: never moved on by itself
   }
   // a project can point at another account: match each account's sessions against its own posts
   const byAccount = new Map<string | null | undefined, SessionMeta[]>();
@@ -2112,8 +2141,8 @@ async function linkPosted(user: SessionUser): Promise<void> {
     }
     for (const [id, post] of matchPosted(candidates, own.posts, taken)) {
       await updateSession(id, (m) => {
-        if (m.posted) return;
-        m.posted = { shortcode: post.item.shortcode, url: post.item.url, by: "auto", at: Date.now() };
+        if (postingsOf(m).length) return;
+        setPostings(m, [{ shortcode: post.item.shortcode, url: post.item.url, by: "auto", at: Date.now() }]);
         setSessionStatus(m, "published", "matched post", { skipIllegal: true }); // a shelved session stays shelved
       });
       console.log(`workshop: session ${id} became post ${post.item.shortcode} (matched by its words)`);
@@ -2148,8 +2177,9 @@ workshopApp.post("/own-post", async (c) => {
     const meta = await readSession(id);
     if (meta?.owner === user.username && inProject(meta, project?.id)) metas.push(meta);
   }
-  const linked = metas.find((m) => m.posted?.shortcode === link.shortcode);
-  const open = metas.filter((m) => !m.posted && m.status !== "shelved" && !m.postedNot?.includes(link.shortcode));
+  const linked = metas.find((m) => postingsOf(m).some((p) => p.shortcode === link.shortcode));
+  // a session that already has another post is still offered (linkCandidates explains why)
+  const open = linkCandidates(metas, link.shortcode);
   const texts = await Promise.all(
     open.map(async (m) => (await listDocs(m.id)).filter((d) => d.kind !== "notes").flatMap((d) => [...d.blocks.map((b) => b.text), d.caption?.text ?? "", d.pinned?.text ?? ""]).join("\n")),
   );
@@ -2360,12 +2390,22 @@ workshopApp.patch("/sessions/:id", async (c) => {
       if (patch.status) setSessionStatus(m, patch.status, "session"); // a refused move throws: 409 below
       if (patch.pinned === true) m.pinned = true;
       else if (patch.pinned === false) delete m.pinned;
-      if (patch.posted === null && m.posted) {
-        // "not this post": never matched to it again
-        m.postedNot = [...new Set([...(m.postedNot ?? []), m.posted.shortcode])];
-        delete m.posted;
-      } else if (patch.posted) {
-        m.posted = { ...patch.posted, by: "you", at: Date.now() };
+      const posted = patch.posted;
+      if (posted === null && postingsOf(m).length) {
+        // "not this post" on all of them: never matched to them again
+        m.postedNot = [...new Set([...(m.postedNot ?? []), ...postingsOf(m).map((p) => p.shortcode)])];
+        setPostings(m, []);
+      } else if (posted && "remove" in posted) {
+        // "not this post" on one: never matched to it again
+        m.postedNot = [...new Set([...(m.postedNot ?? []), posted.remove])];
+        setPostings(m, postingsOf(m).filter((p) => p.shortcode !== posted.remove));
+      } else if (posted) {
+        // a pasted link: added, or changed in place when it is already one of the session's posts (its version kept unless named)
+        const list = postingsOf(m);
+        const old = list.find((p) => p.shortcode === posted.shortcode);
+        const version = posted.version ?? old?.version;
+        const entry: Posting = { shortcode: posted.shortcode, url: posted.url, by: "you", at: Date.now(), ...(version ? { version } : {}) };
+        setPostings(m, old ? list.map((p) => (p.shortcode === posted.shortcode ? entry : p)) : [...list, entry]);
         setSessionStatus(m, "published", "posted", { skipIllegal: true }); // a shelved session stays shelved
       }
       if (patch.sources) {
@@ -2382,6 +2422,22 @@ workshopApp.patch("/sessions/:id", async (c) => {
     // a video just added starts its transcript now, so it's there by the time a reply reads the folder
     const added = (patch.sources ?? []).map((x) => x.postId).filter((id) => !meta.sources.some((x) => x.postId === id));
     if (added.length) void transcribeForUser(added, user, 0).catch(() => {});
+    // a post pasted or shared: checked now, not at the feed's next run (a plug-in answers; see pluginCheckPosted)
+    const posted = patch.posted;
+    if (posted && "shortcode" in posted) {
+      const project = meta.projectId ? await readProject(meta.projectId, user) : null;
+      const check = await pluginCheckPosted(user, meta, projectAccount(project), posted);
+      if (check) {
+        const { guessed, ...result } = check;
+        if (result.version) {
+          // the version Finals keys it by: the catalog's match, else his named one, else its guess (then the posting says so)
+          await updateSession(meta.id, (m) => {
+            setPostings(m, postingsOf(m).map((x) => (x.shortcode === posted.shortcode ? { ...x, version: result.version, guessed: guessed ? true : undefined } : x)));
+          });
+        }
+        return c.json({ ...(await sessionRecord((await readSession(meta.id)) ?? meta, user)), check: result });
+      }
+    }
     return c.json(next);
   } catch (e) {
     if (e instanceof IllegalTransition) return c.json({ error: e.message }, 409);
@@ -2540,6 +2596,16 @@ workshopApp.patch("/sessions/:id/docs/:docId", async (c) => {
         if (ids.length) d.locked = ids;
         else delete d.locked;
       }
+      if (patch.captions) {
+        // a version's own post description, typed here; "" clears it, so the main one shows again
+        const next = { ...(d.captions ?? {}) };
+        for (const [key, text] of Object.entries(patch.captions)) {
+          if (text.trim()) next[key] = { text, author: byKey ? "ai" : "user", at: Date.now() };
+          else delete next[key];
+        }
+        if (Object.keys(next).length) d.captions = next;
+        else delete d.captions;
+      }
       if (patch.blocks || patch.caption !== undefined || patch.pinned !== undefined || patch.hooks !== undefined) {
         userEdit(d, patch.blocks ?? d.blocks.map((b) => ({ id: b.id, text: b.text })), Date.now(), {
           caption: patch.caption,
@@ -2554,6 +2620,139 @@ workshopApp.patch("/sessions/:id/docs/:docId", async (c) => {
   } catch (e) {
     return c.json({ error: errorMessage(e) }, 400);
   }
+});
+
+/** The Finals versions linked to this piece of the session: a post description is written per version. */
+workshopApp.get("/sessions/:id/docs/:docId/finals", async (c) => {
+  const meta = await ownedSession(c.req.param("id"), c.get("user"));
+  if (!meta) return c.json({ error: "Not found" }, 404);
+  return c.json({ versions: finalsLinkedTo(meta.id, c.req.param("docId"), (await mainPiece(meta.id))?.id) });
+});
+
+/** The piece as a turn for one Finals version sees it: that version's own post description as the piece's (a copy). */
+function withVersionCaption(doc: Document, key: string): Document {
+  const copy: Document = { ...doc };
+  const mine = doc.captions?.[key];
+  if (mine) copy.caption = { text: mine.text, author: mine.author, at: mine.at };
+  else delete copy.caption;
+  return copy;
+}
+
+/** The Finals versions of the piece with their facts, when `key` is one of them (else no caption version). */
+async function captionVersionFor(sessionId: string, docId: string, key: string) {
+  const all = finalsLinkedTo(sessionId, docId, (await mainPiece(sessionId))?.id);
+  return all.some((v) => v.key === key) ? { current: key, versions: all } : undefined;
+}
+
+// ---- Finals pieces linked to a session, for the library grid: the session status, the piece's post description and
+// each version's own (keyed by the piece item id). Only the pieces of libraries the caller owns. The grid (FinalsPage)
+// reads this at GET /api/library/workshop.
+export interface WorkshopFinal {
+  description: string;
+  versions: Record<string, { text: string; label?: string; author: "ai" | "user" }>;
+  sessionId: string;
+  status?: SessionStatus;
+}
+
+export async function workshopFinalsFor(username: string): Promise<Record<string, WorkshopFinal>> {
+  const out: Record<string, WorkshopFinal> = {};
+  const rows = libraryDb()
+    .prepare("SELECT id, library_id, workshop_session AS session, workshop_doc AS doc FROM pieces WHERE workshop_session IS NOT NULL AND trashed_at IS NULL")
+    .all() as { id: string; library_id: string; session: string; doc: string | null }[];
+  for (const row of rows) {
+    if (libraryRole(username, row.library_id) !== "owner") continue;
+    const meta = await readSession(row.session);
+    if (!meta) continue;
+    const main = await mainPiece(row.session);
+    const doc = (row.doc && (await readDoc(row.session, row.doc))) || main;
+    const items = libraryDb().prepare("SELECT id, label, post_description FROM piece_items WHERE piece_id = ? ORDER BY position, id").all(row.id) as {
+      id: string;
+      label: string | null;
+      post_description: string | null;
+    }[];
+    const versions: WorkshopFinal["versions"] = {};
+    for (const it of items) {
+      const own = doc?.captions?.[it.id];
+      const text = it.post_description?.trim() ? it.post_description : own?.text;
+      if (text) versions[it.id] = { text, label: it.label ?? own?.label, author: own?.author ?? "user" };
+    }
+    out[row.id] = { description: doc?.caption?.text ?? "", versions, sessionId: meta.id, status: meta.status };
+  }
+  return out;
+}
+
+/** Mounted under /api/library (boot.ts), so it sits behind the Media Library tool gate. */
+export const workshopLibraryApp = new Hono<{ Variables: AuthVars }>();
+workshopLibraryApp.get("/workshop", async (c) => c.json({ pieces: await workshopFinalsFor(c.get("user").username) }));
+
+// ---- Finals → Workshop: one AI post description per linked version. Off unless FINALS_AUTO_DESCRIBE=1 (the owner
+// approves a sample first); an asked-once ledger (piece_items.describe_asked_at) keeps each version to one turn.
+let finalsDescribeTimer: NodeJS.Timeout | undefined;
+let finalsDescribeRun: Promise<void> = Promise.resolve();
+// the library tells us a piece changed or was linked: in a moment, the versions without a description get one
+onEvent("library.changed", () => {
+  if (process.env.FINALS_AUTO_DESCRIBE !== "1") return;
+  clearTimeout(finalsDescribeTimer);
+  finalsDescribeTimer = setTimeout(() => {
+    // ponytail: one run at a time, in order; a busy session is retried on the next library change
+    finalsDescribeRun = finalsDescribeRun.then(describeLinkedVersions).catch((e) => console.error("[workshop] finals describe", e));
+  }, 2000);
+  finalsDescribeTimer.unref?.();
+});
+
+async function describeLinkedVersions(): Promise<void> {
+  const links = libraryDb()
+    .prepare("SELECT DISTINCT workshop_session AS session, workshop_doc AS doc FROM pieces WHERE workshop_session IS NOT NULL AND trashed_at IS NULL")
+    .all() as { session: string; doc: string | null }[];
+  const seen = new Set<string>();
+  for (const link of links) {
+    const meta = await readSession(link.session);
+    const owner = meta ? findUser(meta.owner) : null;
+    const main = await mainPiece(link.session);
+    const piece = (link.doc && (await readDoc(link.session, link.doc))) || main;
+    if (!meta || !owner || !piece) continue;
+    for (const v of finalsLinkedTo(meta.id, piece.id, main?.id)) {
+      if (seen.has(v.key)) continue;
+      seen.add(v.key);
+      const now = (await readDoc(meta.id, piece.id)) ?? piece;
+      const asked = libraryDb().prepare("SELECT describe_asked_at AS t FROM piece_items WHERE id = ?").get(v.key) as { t: number | null } | undefined;
+      if (now.captions?.[v.key]?.text || asked?.t) continue;
+      // the session is busy with another turn: stop here, the next library change tries again
+      if (!(await describeVersion(meta, owner, now, v, finalsLinkedTo(meta.id, piece.id, main?.id)))) break;
+      libraryDb().prepare("UPDATE piece_items SET describe_asked_at = ? WHERE id = ?").run(Date.now(), v.key);
+    }
+  }
+}
+
+/** One Finals version's post description written as a turn on the session's piece, the way a person asks for it in the
+ *  chat: the request says which version and what each version is (mechanical facts), no writing instructions. Its message
+ *  is marked `auto`. False when the session is busy with another turn. */
+async function describeVersion(
+  meta: SessionMeta,
+  owner: UserRecord,
+  piece: Document,
+  v: { key: string; label: string },
+  all: Array<{ key: string; label: string; facts: string }>,
+): Promise<boolean> {
+  const text = [`Write the post description for version ${v.label} in Finals.`, "", "The versions in Finals:", ...all.map((x) => `- ${x.label}: ${x.facts}`)].join("\n");
+  const now = Date.now();
+  const ask: ChatMessage = { id: randomUUID(), role: "user", text, at: now, docId: piece.id, captionFor: v.key, auto: true, status: "done" };
+  const reply: ChatMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, docId: piece.id, status: "thinking" };
+  if (!(await startTurn(meta.id, [ask, reply]))) return false;
+  await runTurn(meta, sessionOf(owner), ask, reply.id);
+  return true;
+}
+
+/** Link a Media Library Finals piece to this session (Finals' "Workshop session" link). The account must own both. */
+workshopApp.post("/sessions/:id/finals", async (c) => {
+  const user = c.get("user");
+  const meta = await ownedSession(c.req.param("id"), user);
+  if (!meta) return c.json({ error: "Not found" }, 404);
+  const body = (await c.req.json().catch(() => null)) as { pieceId?: unknown; docId?: unknown } | null;
+  if (typeof body?.pieceId !== "string" || !body.pieceId) return c.json({ error: "Send the Finals piece's id" }, 400);
+  const docId = typeof body.docId === "string" ? body.docId : undefined;
+  if (docId && !(await readDoc(meta.id, docId))) return c.json({ error: "No such piece of this session" }, 404);
+  return linkFinalsPiece(body.pieceId, meta.id, docId, user.username) ? c.json({ linked: true }) : c.json({ error: "No such Finals piece of yours" }, 404);
 });
 
 workshopApp.post("/sessions/:id/docs/:docId/layouts", async (c) => {
@@ -2778,9 +2977,9 @@ workshopApp.post("/sessions/:id/chat", async (c) => {
     return c.json({ error: errorMessage(e) }, 400);
   }
   if (!(await readDoc(meta.id, input.docId))) return c.json({ error: "That document is gone" }, 404);
-  const library: LibraryRef[] = [];
+  const library: ClipRef[] = [];
   for (const r of input.library ?? []) {
-    const ref = libraryRef(user.username, r.assetId, r.versionId);
+    const ref = "assetId" in r ? await libraryRef(user.username, r.assetId, r.versionId) : await externalLibraryRef(user.username, r);
     if (!ref) return c.json({ error: "A library clip is gone, or not in your library" }, 404);
     library.push(ref);
   }
@@ -2834,6 +3033,7 @@ workshopApp.post("/sessions/:id/chat", async (c) => {
     files: files.length ? files : undefined,
     library: library.length ? library : undefined,
     web: input.web,
+    captionFor: input.captionFor,
     status: "done",
   };
   const reply: ChatMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, docId: input.docId, status: "thinking" };
@@ -3254,8 +3454,9 @@ function exportVars(piece: ObsidianPiece, status: SessionStatus, day: string): R
   return {
     title: piece.filename.replace(/\.md$/, ""),
     status: obsidianStatus(status),
-    media: piece.kind === "reel" ? "🎞️ Reel" : "🎪 Carousel",
+    media: piece.media,
     body: piece.body.trim(),
+    frontmatter: piece.frontmatter,
     caption: piece.caption,
     date: day,
   };
@@ -3329,7 +3530,7 @@ workshopApp.put("/notes", async (c) => {
   return c.json({ id: meta.id, status: meta.status ?? "draft", updatedAt: meta.updatedAt, statusAt: meta.statusAt ?? null, url: `/workshop/sessions/${meta.id}` });
 });
 
-/** Status changes since `since` (ms) on the account's linked sessions, in the notes' Selector.Status values, for the plugin to write back. */
+/** Status changes since `since` (ms) on the account's linked sessions, in the notes' status values (setObsidianStatusLabels), for the plugin to write back. */
 workshopApp.get("/notes", async (c) => {
   const since = Number(c.req.query("since")) || 0;
   const rows = (await ownSessions(c.get("user").username))
@@ -3386,7 +3587,9 @@ workshopApp.post("/sessions/:id/export/:exportId", async (c) => {
   const files = obsidianPieces({ ...meta, status }, docs, day, types).map((piece) => {
     const vars = exportVars(piece, status, day);
     const name = exportFile(exp, vars);
-    return { name, markdown: `${renderTemplate(exp.template, vars).replace(/\n*$/, "")}\n` };
+    // the built-in is the note itself (its frontmatter comes from the vault's format); a custom export fills its template
+    const markdown = exp.id === BUILTIN_EXPORT.id ? piece.markdown : `${renderTemplate(exp.template, vars).replace(/\n*$/, "")}\n`;
+    return { name, markdown };
   });
   if (exp.target === "download") {
     const part = Number(c.req.query("part") ?? (files.length > 1 ? NaN : 0));
@@ -3690,12 +3893,19 @@ async function answerSession(c: Context<{ Variables: AuthVars }>): Promise<{ met
 }
 
 /**
- * The post's comments as last read. Nothing is fetched or scraped until the author asks: `fresh` (Refresh) reads them, keeps judgments already made and judges the new ones; before that the
- * list is empty. Without `fresh`, ownPostComments only reads files (the author's handle, the author's earlier replies).
+ * The comments on every post the session became, as last read (one session can be several posts). Nothing is fetched or scraped until the author asks: `fresh` (Refresh) reads them, keeps judgments already made and judges the new ones; before that the
+ * list is empty. Without `fresh`, ownPostComments only reads files (the author's handle, the author's earlier replies). The posts are read one after another and their comments listed together.
  */
 async function loadPostComments(meta: SessionMeta, user: SessionUser, fresh: boolean) {
   const project = meta.projectId ? await readProject(meta.projectId, user) : null;
-  const got = meta.posted ? await ownPostComments(user, meta.posted.shortcode, fresh, projectAccount(project)) : { comments: [], replies: [] };
+  const shortcodes = postingsOf(meta).map((p) => p.shortcode);
+  const reads: Awaited<ReturnType<typeof ownPostComments>>[] = [];
+  for (const shortcode of shortcodes) reads.push(await ownPostComments(user, shortcode, fresh, projectAccount(project)));
+  const got = {
+    handle: reads.find((r) => r.handle)?.handle,
+    comments: reads.flatMap((r) => r.comments),
+    replies: reads.flatMap((r) => r.replies),
+  };
   return chained(`answers:${meta.id}`, async () => {
     const file = await readAnswers(meta.id);
     if (fresh) {
@@ -3704,14 +3914,16 @@ async function loadPostComments(meta: SessionMeta, user: SessionUser, fresh: boo
       walk(file.comments);
       const carry = (list: Comment[]) => list.forEach((x) => (judged.has(x.id) && !x.judged && (x.judged = judged.get(x.id)), carry(x.replies ?? [])));
       carry(got.comments);
-      if (got.comments.length) await annotateComments(keyFor(user, "TYPESAFE_API_KEY").key, got.comments, { caption: got.caption, handle: got.handle }).catch(() => null);
+      // each post's comments are judged with that post's own caption
+      for (const r of reads) if (r.comments.length) await annotateComments(keyFor(user, "TYPESAFE_API_KEY").key, r.comments, { caption: r.caption, handle: r.handle }).catch(() => null);
       file.comments = got.comments;
       file.fetchedAt = Date.now();
-      file.shortcode = meta.posted?.shortcode;
+      file.shortcodes = shortcodes;
+      delete file.shortcode; // the one-post field of files saved before several posts
       await mkdir(sessionDir(meta.id), { recursive: true });
       await writeJsonAtomic(answersPath(meta.id), file);
-    } else if (file.shortcode !== meta.posted?.shortcode) {
-      // never read, or read from a post this session isn't linked to any more
+    } else if (readFrom(file).join() !== shortcodes.join()) {
+      // never read, or read from posts this session isn't linked to any more
       file.comments = [];
       delete file.fetchedAt;
     }
@@ -3719,9 +3931,14 @@ async function loadPostComments(meta: SessionMeta, user: SessionUser, fresh: boo
   });
 }
 
+/** The posts the saved comments were read from: `shortcodes`, or the one `shortcode` of a file saved before several posts. */
+const readFrom = (file: AnswersFile): string[] => file.shortcodes ?? (file.shortcode ? [file.shortcode] : []);
+
 const answersBody = (meta: SessionMeta, file: AnswersFile, handle?: string) => ({
   sessionId: meta.id,
-  post: meta.posted ?? null,
+  // the first post (the share page's Open post link); `posts` is every post whose comments are listed
+  post: postingsOf(meta)[0] ?? null,
+  posts: postingsOf(meta),
   fetchedAt: file.fetchedAt ?? null,
   comments: listComments(file.comments, handle),
   thread: file.thread,

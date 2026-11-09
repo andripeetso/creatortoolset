@@ -1,13 +1,15 @@
 import type { DatabaseSync } from "node:sqlite";
+import type { DeviceJob } from "../../contracts/devices";
+import { isOnline } from "../lib/devices";
 import { libraryDb } from "../library/db";
-import { claimJob, defer, enqueueJob, extendLease, finishJob, parkJob, requeueExpired, type JobRow } from "../library/jobs";
+import { defer, enqueueJob, extendLease, finishJob, type JobRow, parkJob, requeueExpired } from "../library/jobs";
 import { NeedsKey } from "../library/transcribe";
 import { trashDays } from "../library/trash";
-import { analyzeStep, Waiting } from "./analyze";
-import { fileStep, previewStep } from "./preview";
-import { scriptStep } from "./script";
-import { draftStep } from "./timeline";
+import { Waiting } from "./analyze";
+import { claimableBy, claimStep, coreSteps, nextKinds, releaseQuietDevices, type StepRun } from "./engine";
 import { purgeEdits, readEdit, sourcesWorkspace, type EditMeta } from "./store";
+
+export type { StepContext } from "./engine";
 
 /**
  * The AI Editor's worker: its own loop over `edit_jobs`, one step at a time, so a minutes-long AI step never holds up
@@ -21,19 +23,11 @@ const LEASE_S = 300;
 const BEAT_MS = 60_000;
 const IDLE_MS = 2000;
 
-export interface StepContext {
-  edit: EditMeta;
-  job: JobRow;
-  /** "" for a whole-edit step, else the version's name */
-  variant: string;
-  signal: AbortSignal;
-}
-
-/** The steps by kind; B-roll comes with its slice. */
-export const STEPS: Record<string, (ctx: StepContext) => Promise<void>> = { analyze: analyzeStep, script: scriptStep, draft: draftStep, preview: previewStep, file: fileStep };
+/** The server's handler per core kind, from the step registry (engine.ts). */
+export const STEPS: Record<string, StepRun> = coreSteps();
 
 /** What a finished step queues next, for the same edit and variant (a whole-edit draft queues one per version itself). */
-export const NEXT: Record<string, string[]> = { analyze: ["script"], script: ["draft"], draft: ["preview"], preview: ["file"] };
+export const NEXT: Record<string, string[]> = nextKinds();
 
 const running = new Map<number, { edit: string; ctl: AbortController }>();
 
@@ -46,11 +40,24 @@ export function stopEdit(editId: string): void {
   for (const r of running.values()) if (r.edit === editId) r.ctl.abort();
 }
 
+/** Queues what a finished step queues next (a whole-edit draft has queued one per version itself, so only those queue previews). */
+function queueNext(db: DatabaseSync, job: JobRow, edit: EditMeta, variant: string): void {
+  if (variant || job.kind !== "draft") for (const kind of NEXT[job.kind] ?? []) enqueueJob(db, edit.workspaceId, job.version_id ?? "", kind, job.actor, true, T);
+}
+
+/** "<editId>:<variant>" split: the variant is "" for a whole-edit step. */
+function splitVersion(job: JobRow): { editId: string; variant: string } {
+  const vid = job.version_id ?? "";
+  const cut = vid.indexOf(":");
+  return { editId: vid.slice(0, cut), variant: vid.slice(cut + 1) };
+}
+
 /** Runs one queued step, if there is one. Returns false when the queue is empty. */
 export async function tick(now = Date.now()): Promise<boolean> {
   const db = libraryDb();
   requeueExpired(db, now, T);
-  const job = claimJob(db, LEASE_S, now, T);
+  releaseQuietDevices(db, isOnline);
+  const job = claimStep(db, "server", LEASE_S, now, T);
   if (!job) return false;
   const vid = job.version_id ?? "";
   const cut = vid.indexOf(":");
@@ -74,8 +81,7 @@ export async function tick(now = Date.now()): Promise<boolean> {
     await step({ edit, job, variant, signal: ctl.signal });
     if (ctl.signal.aborted) return true; // stopped: stopEdit already marked it
     finishJob(db, job.id, true, undefined, Date.now(), T);
-    // a whole-edit draft has queued one per version: each of those queues its own preview
-    if (variant || job.kind !== "draft") for (const kind of NEXT[job.kind] ?? []) enqueueJob(db, edit.workspaceId, vid, kind, job.actor, true, T);
+    queueNext(db, job, edit, variant);
   } catch (e) {
     if (ctl.signal.aborted) return true;
     if (e instanceof Waiting) defer(db, job.id, e.seconds, now, T);
@@ -85,6 +91,57 @@ export async function tick(now = Date.now()): Promise<boolean> {
     clearInterval(beat);
     running.delete(job.id);
   }
+  return true;
+}
+
+/**
+ * A device's claim (POST /api/devices/relay/editor/claim): the oldest queued step of the kinds it can run, for an edit
+ * its own account made, and only while that account can still read the footage. A step whose edit is gone or no longer
+ * readable fails here, as tick fails it. Null when there is nothing for this device.
+ */
+export function claimForDevice(device: { id: string; owner: string }, kinds: string[], now = Date.now()): DeviceJob | null {
+  const db = libraryDb();
+  releaseQuietDevices(db, isOnline);
+  const job = claimStep(db, claimableBy(kinds), LEASE_S, now, T, { actor: device.owner, device: device.id });
+  if (!job) return null;
+  const { editId, variant } = splitVersion(job);
+  const edit = readEdit(editId);
+  if (!edit || edit.trashedAt) return fail(db, job.id, "The edit is gone"), null;
+  if (sourcesWorkspace(job.actor ?? "", edit.sources) !== edit.workspaceId) return fail(db, job.id, "Some footage is gone or no longer yours to read"), null;
+  return { id: job.id, kind: job.kind, editId, variant };
+}
+
+/** The job row this device holds (claimed by it and still running), or undefined. */
+const heldBy = (db: DatabaseSync, id: number, device: string): JobRow | undefined =>
+  db.prepare("SELECT * FROM edit_jobs WHERE id = ? AND device = ? AND state = 'running'").get(id, device) as JobRow | undefined;
+
+/** A device's heartbeat for a step it runs: renews the lease. False when it does not hold the step. */
+export function beatForDevice(device: string, id: number, now = Date.now()): boolean {
+  const db = libraryDb();
+  if (!heldBy(db, id, device)) return false;
+  extendLease(db, id, LEASE_S, now, T);
+  return true;
+}
+
+/** The device finished its step: done, and the next steps queue as tick would. False when it does not hold the step. */
+export function doneForDevice(device: string, id: number): boolean {
+  const db = libraryDb();
+  const job = heldBy(db, id, device);
+  if (!job) return false;
+  db.prepare("UPDATE edit_jobs SET device = NULL WHERE id = ?").run(id);
+  finishJob(db, id, true, undefined, Date.now(), T);
+  const { editId, variant } = splitVersion(job);
+  const edit = readEdit(editId);
+  if (edit) queueNext(db, job, edit, variant);
+  return true;
+}
+
+/** The device could not run its step: retried after a backoff, or failed after MAX_ATTEMPTS. False when it does not hold the step. */
+export function failForDevice(device: string, id: number, why: string): boolean {
+  const db = libraryDb();
+  if (!heldBy(db, id, device)) return false;
+  db.prepare("UPDATE edit_jobs SET device = NULL WHERE id = ?").run(id);
+  finishJob(db, id, false, why.slice(0, 500), Date.now(), T);
   return true;
 }
 

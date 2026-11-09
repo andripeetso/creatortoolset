@@ -21,7 +21,7 @@ export function igUserFile(username: string, name: string): string {
 export const DESKTOP_UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36";
 
-export type InstagramErrorCode = "APIFY" | "GRAPH" | "RATE_LIMIT" | "NOT_FOUND" | "BLOCKED" | "CANCELLED" | "FAILED";
+export type InstagramErrorCode = "SESSION" | "APIFY" | "GRAPH" | "RATE_LIMIT" | "NOT_FOUND" | "BLOCKED" | "CANCELLED" | "FAILED";
 
 export class InstagramError extends Error {
   constructor(

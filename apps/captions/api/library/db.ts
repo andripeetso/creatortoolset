@@ -3,6 +3,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { env } from "../lib/env";
 import { MIGRATIONS } from "./schema";
+import { bunnyBlobs, type BunnyPlace } from "./storage/bunny";
 import { localBlobs } from "./storage/local";
 import { s3Blobs, s3Client, type S3Place } from "./storage/s3";
 import type { BlobStore } from "./storage/types";
@@ -73,20 +74,49 @@ export function placeOf(c: StorageConfig): S3Place | null {
   return { endpoint: c.endpoint ?? "", region: c.region ?? "", bucket: c.bucket, pathStyle: !!c.pathStyle, accessKey: c.accessKey, secretKey: c.secretKey };
 }
 
+/** A Bunny library's zone, as its saved config names it (the same shape as BunnyPlace without the test origin). */
+export type BunnyConfig = Omit<BunnyPlace, "origin">;
+
 /** The store a library keeps its files in: local unless its owner chose a bucket. */
 export function libraryStore(libraryId: string): BlobStore {
   const r = libraryDb().prepare("SELECT storage_kind, storage_config FROM libraries WHERE id = ?").get(libraryId) as
-    | { storage_kind: "local" | "s3"; storage_config: string | null }
+    | { storage_kind: "local" | "s3" | "bunny"; storage_config: string | null }
     | undefined;
   if (!r || r.storage_kind === "local") return local;
+  const gb = Number(process.env.LIBRARY_CACHE_GB?.trim() || 20);
+  const cacheBytes = (Number.isFinite(gb) && gb > 0 ? gb : 20) * 1024 ** 3;
+  const cacheDir = path.join(env.dataDir, "library", "cache");
+  if (r.storage_kind === "bunny") {
+    const zone = JSON.parse(r.storage_config ?? "{}") as BunnyConfig;
+    if (!zone.zone || !zone.accessKey) throw new Error("This library's bucket is not set up");
+    const id = JSON.stringify(["bunny", zone]);
+    let store = remotes.get(id);
+    if (!store) {
+      store = bunnyBlobs(zone, cacheDir, { cacheBytes });
+      remotes.set(id, store);
+    }
+    return store;
+  }
   const place = placeOf(JSON.parse(r.storage_config ?? "{}") as StorageConfig);
   if (!place) throw new Error("This library's bucket is not set up");
+  return s3For(place);
+}
+
+/** The server's own bucket as a store (the upload relay's hop), or null when LIBRARY_S3_* is not set up. */
+export function serverStore(): BlobStore | null {
+  const place = serverBucket();
+  return place ? s3For(place) : null;
+}
+
+/** One store per bucket, shared by every library that uses it. */
+function s3For(place: S3Place): BlobStore {
+  const gb = Number(process.env.LIBRARY_CACHE_GB?.trim() || 20);
+  const cacheBytes = (Number.isFinite(gb) && gb > 0 ? gb : 20) * 1024 ** 3;
+  const cacheDir = path.join(env.dataDir, "library", "cache");
   const id = JSON.stringify(place);
   let store = remotes.get(id);
   if (!store) {
-    const gb = Number(process.env.LIBRARY_CACHE_GB?.trim() || 20);
-    const cacheBytes = (Number.isFinite(gb) && gb > 0 ? gb : 20) * 1024 ** 3;
-    store = s3Blobs(s3Client(place), place.bucket, path.join(env.dataDir, "library", "cache"), { cacheBytes });
+    store = s3Blobs(s3Client(place), place.bucket, cacheDir, { cacheBytes });
     remotes.set(id, store);
   }
   return store;

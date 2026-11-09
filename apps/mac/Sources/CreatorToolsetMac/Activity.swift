@@ -1,6 +1,6 @@
 // The menu bar panel: what is working right now and what waits for you, one row each, the state on the right in
-// colour. Rows come from the open server's Workshop sessions (GET /api/workshop/sessions/summary) and this app's AI
-// runner; the rest of the old menu sits behind a gear.
+// colour. Rows come from the open server's Workshop sessions (GET /api/workshop/sessions/summary), the plug-in rows
+// it adds (GET /api/activity, no Swift in a plug-in) and this app's AI runner; the rest of the old menu sits behind a gear.
 import ServiceManagement
 import SwiftUI
 
@@ -18,6 +18,25 @@ enum RowState: Equatable {
     var word: String { self == .working ? "Working" : "Ready" }
 }
 
+/// GET /api/activity, one row a plug-in (or the core app) adds. `state` is "working" or "ready"; `href` an app path.
+struct PluginRow: Decodable, Equatable {
+    let id: String
+    let title: String
+    let detail: String
+    let state: String
+    let href: String
+    /// buttons on the row: start, stop or restart a LaunchAgent on this Mac (LaunchAgent.swift)
+    var actions: [PluginAction]? = nil
+}
+
+/// One button of a plug-in row. `run` is "start", "stop" or "restart"; `label` the LaunchAgent it runs.
+struct PluginAction: Decodable, Equatable, Identifiable {
+    let id: String
+    let title: String
+    let run: String
+    let label: String
+}
+
 struct ActivityRow: Identifiable, Equatable {
     let id: String
     let title: String
@@ -25,21 +44,32 @@ struct ActivityRow: Identifiable, Equatable {
     let state: RowState
     /// the page it opens in the window; nil = This Mac
     let href: String?
+    var actions: [PluginAction] = []
 }
 
-/// Active (replies being written, this Mac's AI) and For you (new replies), in that order.
-func activityRows(sessions: [SessionRow], aiRunning: Int) -> (active: [ActivityRow], forYou: [ActivityRow]) {
+/// Active (replies being written, plug-in work, this Mac's AI) and For you (new replies, plug-in items waiting), in that order.
+func activityRows(sessions: [SessionRow], aiRunning: Int, plugin: [PluginRow] = []) -> (active: [ActivityRow], forYou: [ActivityRow]) {
     var active = sessions.filter(\.working).map {
         ActivityRow(id: "s:\($0.id)", title: $0.title, detail: "Workshop", state: .working, href: "/workshop/sessions/\($0.id)")
     }
+    active += plugin.filter { $0.state == "working" }.map(\.row)
     if aiRunning > 0 {
         active.append(ActivityRow(id: "mac", title: "This Mac", detail: "\(aiRunning) AI request\(aiRunning == 1 ? "" : "s")",
                                   state: .working, href: nil))
     }
-    let forYou = sessions.filter { $0.ready && !$0.working }.map {
+    var forYou = sessions.filter { $0.ready && !$0.working }.map {
         ActivityRow(id: "r:\($0.id)", title: $0.title, detail: "Workshop · new reply", state: .ready, href: "/workshop/sessions/\($0.id)")
     }
+    forYou += plugin.filter { $0.state == "ready" }.map(\.row)
     return (active, forYou)
+}
+
+extension PluginRow {
+    /// The panel's row; the id is prefixed so a plug-in's row never shares an id with a session's.
+    var row: ActivityRow {
+        ActivityRow(id: "p:\(id)", title: title, detail: detail, state: state == "working" ? .working : .ready, href: href,
+                    actions: (actions ?? []).filter { LaunchAgent.verbs.contains($0.run) && LaunchAgent.isValid($0.label) })
+    }
 }
 
 struct ActivityPanel: View {
@@ -99,21 +129,28 @@ private struct RowView: View {
     @State private var hover = false
 
     var body: some View {
-        Button {
-            if let href = row.href { shell.showWindow(href: href) } else { shell.openThisMac() }
-        } label: {
-            HStack(spacing: 8) {
-                Text(row.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                Text(row.detail).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
-                Spacer(minLength: 8)
-                Text(row.state.word).font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(row.state == .working ? Color(red: 0.45, green: 0.72, blue: 1) : Color(red: 0.20, green: 0.83, blue: 0.60))
+        HStack(spacing: 8) {
+            Button {
+                if let href = row.href { shell.showWindow(href: href) } else { shell.openThisMac() }
+            } label: {
+                HStack(spacing: 8) {
+                    Text(row.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                    Text(row.detail).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                    Spacer(minLength: 8)
+                    Text(row.state.word).font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(row.state == .working ? Color(red: 0.45, green: 0.72, blue: 1) : Color(red: 0.20, green: 0.83, blue: 0.60))
+                }
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 8).padding(.vertical, 5)
-            .background(hover ? Color.primary.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 6))
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            // a plug-in's buttons (LaunchAgent.swift): run in the background, the panel says what failed
+            ForEach(row.actions) { action in
+                Button(action.title) { shell.runAgent(action) }
+                    .controlSize(.small)
+            }
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 8).padding(.vertical, 5)
+        .background(hover ? Color.primary.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 6))
         .onHover { hover = $0 }
         .padding(.horizontal, 6)
     }
@@ -134,6 +171,7 @@ private struct MoreMenu: View {
         Divider()
         Menu("Servers") { ServersMenu(shell: shell) }
         Button("This Mac…") { shell.openThisMac() }
+        PluginMenuItems(shell: shell)
         Button("Settings…") { shell.openSettings() }
         Toggle("Open at login", isOn: Binding(get: { LoginItem.isOn }, set: { LoginItem.set($0) }))
         Divider()

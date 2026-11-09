@@ -10,12 +10,11 @@ import {
   UploadPartCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { createReadStream, createWriteStream } from "node:fs";
-import { mkdir, open, readdir, rename, rm, stat, utimes } from "node:fs/promises";
-import path from "node:path";
+import { createReadStream } from "node:fs";
+import { open, rm, stat, utimes } from "node:fs/promises";
 import type { Readable } from "node:stream";
-import { pipeline } from "node:stream/promises";
-import { keyParts, type BlobStore } from "./types";
+import { cachedPath, saveToCache } from "./cache";
+import { keyParts, type BlobStore, type DirectUpload } from "./types";
 
 /** Where an S3-compatible bucket is and how to sign in to it (any provider that speaks S3). */
 export interface S3Place {
@@ -36,6 +35,10 @@ export const s3Client = (p: S3Place) =>
   });
 
 const MiB = 1024 ** 2;
+/** S3's limit on parts in one multipart upload. */
+const MAX_PARTS = 10_000;
+/** How long a presigned part URL works. A large upload on a slow link runs for hours; SigV4 allows up to 7 days. */
+const DIRECT_URL_SECONDS = 6 * 3600;
 const notFound = (e: unknown) => {
   const x = e as { name?: string; $metadata?: { httpStatusCode?: number } };
   return x?.name === "NotFound" || x?.name === "NoSuchKey" || x?.$metadata?.httpStatusCode === 404;
@@ -53,7 +56,7 @@ export function s3Blobs(
   opts: { cacheBytes: number; partBytes?: number },
 ): BlobStore {
   const partBytes = opts.partBytes ?? 64 * MiB; // a single PUT tops out at 5 GB; anything over a part goes multipart
-  const cached = (key: string) => path.join(cacheDir, ...keyParts(key));
+  const cached = (key: string) => cachedPath(cacheDir, key);
 
   async function multipart(key: string, file: string, size: number, contentType?: string): Promise<void> {
     const { UploadId } = await client.send(new CreateMultipartUploadCommand({ Bucket: bucket, Key: key, ContentType: contentType }));
@@ -76,30 +79,40 @@ export function s3Blobs(
     }
   }
 
-  // ponytail: walks the whole cache after each download (an index if it holds many thousands of files), and may drop
-  // a copy another job was handed a moment ago but has not opened yet (only once the cap is reached); a pin per job then
-  async function evict(keep: string): Promise<void> {
-    const files = await Promise.all(
-      (await readdir(cacheDir, { recursive: true, withFileTypes: true }).catch(() => []))
-        .filter((e) => e.isFile() && !e.name.startsWith(".dl-"))
-        .map(async (e) => {
-          const p = path.join(e.parentPath, e.name);
-          const s = await stat(p).catch(() => null);
-          return { p, bytes: s?.size ?? 0, used: s?.mtimeMs ?? 0 };
-        }),
-    );
-    let total = files.reduce((n, f) => n + f.bytes, 0);
-    for (const f of files.sort((a, b) => a.used - b.used)) {
-      if (total <= opts.cacheBytes) break;
-      if (f.p === keep) continue;
-      await rm(f.p, { force: true });
-      total -= f.bytes;
-    }
-  }
-
   return {
     kind: "s3",
     caps: { signedUrls: true, localPaths: false },
+    direct: {
+      // the browser PUTs each part to its presigned URL; complete and abort are the server's two calls after that
+      async start(key, size, o) {
+        keyParts(key);
+        const { UploadId } = await client.send(new CreateMultipartUploadCommand({ Bucket: bucket, Key: key, ContentType: o?.contentType }));
+        if (!UploadId) throw new Error("The bucket did not start the upload");
+        const partSize = Math.max(partBytes, Math.ceil(size / MAX_PARTS));
+        const count = Math.max(1, Math.ceil(size / partSize));
+        const urls = await Promise.all(
+          Array.from({ length: count }, (_, i) =>
+            getSignedUrl(client, new UploadPartCommand({ Bucket: bucket, Key: key, UploadId, PartNumber: i + 1 }), { expiresIn: DIRECT_URL_SECONDS }),
+          ),
+        );
+        return { uploadId: UploadId, partSize, urls };
+      },
+      async complete(key, uploadId, parts) {
+        keyParts(key);
+        await client.send(
+          new CompleteMultipartUploadCommand({
+            Bucket: bucket,
+            Key: key,
+            UploadId: uploadId,
+            MultipartUpload: { Parts: parts.map((p) => ({ PartNumber: p.number, ETag: p.etag })) },
+          }),
+        );
+      },
+      async abort(key, uploadId) {
+        keyParts(key);
+        await client.send(new AbortMultipartUploadCommand({ Bucket: bucket, Key: key, UploadId: uploadId })).catch(() => {});
+      },
+    } satisfies DirectUpload,
     async put(key, file, o) {
       keyParts(key);
       const { size } = await stat(file);
@@ -134,15 +147,7 @@ export function s3Blobs(
       if (await utimes(p, now, now).then(() => true, () => false)) return p; // a hit counts as a use
       const r = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
       if (!r.Body) throw new Error(`Empty blob: ${key}`);
-      await mkdir(path.dirname(p), { recursive: true });
-      const tmp = path.join(path.dirname(p), `.dl-${process.pid}-${Date.now()}-${path.basename(p)}`);
-      try {
-        await pipeline(r.Body as Readable, createWriteStream(tmp));
-        await rename(tmp, p);
-      } finally {
-        await rm(tmp, { force: true });
-      }
-      await evict(p);
+      await saveToCache(cacheDir, p, r.Body as Readable, opts.cacheBytes);
       return p;
     },
     async locate(key, ttlSeconds, o) {

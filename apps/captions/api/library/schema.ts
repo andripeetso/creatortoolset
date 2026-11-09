@@ -218,4 +218,128 @@ export const MIGRATIONS: string[] = [
   );
   CREATE INDEX edit_jobs_edit ON edit_jobs(edit_id);
   `,
+  // 5: storage may also be a Bunny Storage zone. Same table rebuild as migration 3 (foreign keys are off while migrations run)
+  `
+  CREATE TABLE libraries_new (
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    storage_kind TEXT NOT NULL CHECK (storage_kind IN ('local','s3','bunny')),
+    storage_config TEXT,
+    settings TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL
+  );
+  INSERT INTO libraries_new SELECT id, workspace_id, name, storage_kind, storage_config, settings, created_at FROM libraries;
+  DROP TABLE libraries;
+  ALTER TABLE libraries_new RENAME TO libraries;
+  `,
+  // 6: pieces. A piece groups versions (or, later, external refs such as catalog clips) with one winner, one post
+  // description and any number of postings per item. Finals is the pieces of a collection. Deleting a version (the trash
+  // purge) takes its piece items and their postings with it; deleting a collection leaves its pieces without one.
+  // The winner is one row per piece (the partial unique index); a version is in a piece once.
+  `
+  CREATE TABLE pieces (
+    id TEXT PRIMARY KEY,
+    library_id TEXT NOT NULL REFERENCES libraries(id),
+    collection_id TEXT REFERENCES collections(id) ON DELETE SET NULL,
+    label TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX pieces_library ON pieces(library_id, created_at);
+
+  CREATE TABLE piece_items (
+    id TEXT PRIMARY KEY,
+    piece_id TEXT NOT NULL REFERENCES pieces(id) ON DELETE CASCADE,
+    version_id TEXT REFERENCES asset_versions(id) ON DELETE CASCADE,
+    external_ref TEXT,
+    label TEXT,
+    position REAL NOT NULL,
+    winner INTEGER NOT NULL DEFAULT 0 CHECK (winner IN (0, 1)),
+    post_description TEXT,
+    CHECK ((version_id IS NULL) <> (external_ref IS NULL))
+  );
+  CREATE UNIQUE INDEX piece_items_version ON piece_items(piece_id, version_id) WHERE version_id IS NOT NULL;
+  CREATE UNIQUE INDEX piece_items_winner ON piece_items(piece_id) WHERE winner = 1;
+
+  CREATE TABLE postings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    piece_item_id TEXT NOT NULL REFERENCES piece_items(id) ON DELETE CASCADE,
+    platform TEXT NOT NULL,
+    url TEXT,
+    posted_at INTEGER NOT NULL,
+    created_by TEXT NOT NULL
+  );
+  CREATE INDEX postings_item ON postings(piece_item_id);
+  `,
+  // 7: the device that holds an AI Editor step (edit_jobs only; NULL = the server or nobody). A device that goes quiet
+  // loses the steps it holds (engine.ts releaseQuietDevices), and its beats, done and fail are checked against it.
+  `
+  ALTER TABLE edit_jobs ADD COLUMN device TEXT;
+  `,
+  // 8: per-collection grants (grants.ts): the library's owner shares a collection with an account. No row, no access.
+  `
+  CREATE TABLE library_grants (
+    collection_id TEXT NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+    username TEXT NOT NULL,
+    granted_by TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (collection_id, username)
+  );
+  CREATE INDEX library_grants_user ON library_grants(username);
+  `,
+  // 9: a direct upload (routes.ts, bucket libraries) has no staged file; this is its multipart upload id in the bucket
+  `
+  ALTER TABLE uploads ADD COLUMN direct_upload_id TEXT;
+  `,
+  // 10: a share can point at a piece (Finals). SQLite cannot change a CHECK: the shares table is rebuilt, as in migration 3
+  `
+  CREATE TABLE shares_new (
+    token_hash TEXT PRIMARY KEY,
+    library_id TEXT NOT NULL REFERENCES libraries(id),
+    target_kind TEXT NOT NULL CHECK (target_kind IN ('asset','version','collection','piece')),
+    target_id TEXT NOT NULL,
+    scope TEXT NOT NULL CHECK (scope IN ('view','download','comment')),
+    password_hash TEXT,
+    created_by TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    views INTEGER NOT NULL DEFAULT 0
+  );
+  INSERT INTO shares_new SELECT token_hash, library_id, target_kind, target_id, scope, password_hash, created_by, expires_at, views FROM shares;
+  DROP TABLE shares;
+  ALTER TABLE shares_new RENAME TO shares;
+  `,
+  // 11: external refs (refs.ts). A clip or group a library source holds (a source's integer ids, for one) gets one public id
+  // that pieces and Workshop links keep, so a link made before a move still opens after it. The source's own id stays here,
+  // never in a URL; there is no version and no file, so the source serves its media and the policies decide who sees it.
+  `
+  CREATE TABLE external_refs (
+    id TEXT PRIMARY KEY,
+    source TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    external_id TEXT NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    UNIQUE (source, kind, external_id)
+  );
+  `,
+  // 12: a piece's cover (Finals). The owner picks a frame of one of its versions (or a still): cover_key is the JPEG it
+  // became, cover_version_id the version it came from (that version's visibility decides who sees the cover), cover_at
+  // the stamp in its URL, so a new pick is a new address. NULL = the automatic cover (the winner's thumbnail).
+  `
+  ALTER TABLE pieces ADD COLUMN cover_key TEXT;
+  ALTER TABLE pieces ADD COLUMN cover_version_id TEXT;
+  ALTER TABLE pieces ADD COLUMN cover_at INTEGER;
+  `,
+  // 13: a Finals piece in the Workshop (its versions get post descriptions in the linked session's piece, or its
+  // main piece when no docId), and the piece's trash (trashed_at set = in the trash; restore clears it).
+  `
+  ALTER TABLE pieces ADD COLUMN workshop_session TEXT;
+  ALTER TABLE pieces ADD COLUMN workshop_doc TEXT;
+  ALTER TABLE pieces ADD COLUMN trashed_at INTEGER;
+  `,
+  // 14: the asked-once ledger for a Finals version's AI post description (FINALS_AUTO_DESCRIBE): set once the turn ran.
+  `
+  ALTER TABLE piece_items ADD COLUMN describe_asked_at INTEGER;
+  `,
 ];

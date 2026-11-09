@@ -101,7 +101,7 @@ the user's production requests or evaluate their original audio.
   hear the audio, pitch, stress, or delivery.
 - After the AI answers, `cuesFromBreaks` greedily splits groups that exceed box
   capacity. This can create an orphan even if the proposed phrase was sensible:
-  at 15 characters, `looking at your phone?` becomes `looking at your / child?`.
+  at 15 characters, `looking at your phone?` becomes `looking at your / desk?`.
 - Model requests are chunked at up to 500 words. Every chunk introduces a
   boundary, without a subsequent check of whether its neighbors read well.
 - Capacity is an estimated character budget derived from average glyph width,

@@ -1,6 +1,6 @@
 // This Mac as a device (contracts/providers.ts): it pairs with the signed-in account once, keeps its
 // device token in the Keychain, long-polls the site for jobs whose provider runs here, runs each
-// with `claude` (ClaudeRun.swift) and posts the answer back. The same bodies as the Mac relay, on
+// with the CLI for its driver (ClaudeRun.swift) and posts the answer back. The same bodies as the Mac relay, on
 // /api/devices/relay/* with `Authorization: Bearer <device token>`.
 import Foundation
 import Security
@@ -297,8 +297,7 @@ final class RelayRunner {
 
     private func doneLine(_ opts: RelayOptions, _ answer: ClaudeAnswer) -> String {
         let cost = number(answer.usage["cost_usd"])
-        let label = opts.driver == "gemini" ? "Gemini" : "Claude"
-        return "\(label) for the site: \(Int(number(answer.usage["output"]))) tokens out, $\(String(format: "%.4f", cost)) API-equivalent"
+        return "\(driverLabel(opts.driver)) for the site: \(Int(number(answer.usage["output"]))) tokens out, $\(String(format: "%.4f", cost)) API-equivalent"
     }
 
     /// the Mac relay report_forever / report: at start and then hourly. A site without the route answers 404 and the next hour tries again.
@@ -314,4 +313,32 @@ final class RelayRunner {
             Thread.sleep(forTimeInterval: 1)
         }
     }
+}
+
+// MARK: Sign in (the provider page's Sign in button)
+
+/// The sign-in command of each CLI the page can open in Terminal, and the variable its runs read the login folder from
+/// (the same as claudeEnv / driverEnv). Grok keeps its own folder and takes none.
+let signInCommands: [String: (args: [String], homeEnv: String?)] = [
+    "claude": (["auth", "login"], "CLAUDE_CONFIG_DIR"),
+    "codex": (["login"], "CODEX_HOME"),
+    "grok": (["login"], nil),
+]
+
+/// The shell script Terminal runs for one sign-in: the home variable, then the CLI's login by its full path. The caller
+/// has checked `home` (checkedHome) and `binary` (binary()). nil for a driver with no sign-in, or a home it would not take.
+func signInScript(driver: String, home: String, binary: String) -> String? {
+    guard let command = signInCommands[driver], binary.hasPrefix("/") else { return nil }
+    var lines = ["#!/bin/zsh"]
+    if !home.isEmpty {
+        guard let homeEnv = command.homeEnv else { return nil }
+        lines.append("export \(homeEnv)=\(shellQuote(home))")
+    }
+    lines.append((["exec", shellQuote(binary)] + command.args).joined(separator: " "))
+    return lines.joined(separator: "\n") + "\n"
+}
+
+/// One word for a POSIX shell, in single quotes (an embedded quote is closed, escaped and reopened).
+func shellQuote(_ text: String) -> String {
+    "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'"
 }

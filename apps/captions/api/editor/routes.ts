@@ -1,5 +1,5 @@
 import { Hono, type Context } from "hono";
-import { EDIT_STEPS, type EditStep, type VersionPlan } from "../../contracts/editor";
+import { EDIT_SLOTS, EDIT_STEPS, type EditSlot, type EditStep, type VersionPlan } from "../../contracts/editor";
 import type { AuthVars } from "../auth";
 import { libraryDb } from "../library/db";
 import { enqueueJob } from "../library/jobs";
@@ -8,7 +8,7 @@ import { toFcpxml } from "./fcpxml";
 import { LINK_TTL_S, mediaPaths } from "./media";
 import { toOtio } from "./otio";
 import { qaOf } from "./qa";
-import { allEdits, cleanBrief, createEdit, draftNames, editRole, NoCollection, readDraft, readEdit, readStep, saveEdit, saveStep, sourcesWorkspace, summaryOf, viewOf, type EditMeta } from "./store";
+import { allEdits, cleanBrief, createEdit, draftNames, editorDefaults, editRole, gradeOf, NoCollection, readDraft, readEdit, readStep, saveEdit, saveStep, setChosenDefault, sourcesWorkspace, summaryOf, viewOf, type EditMeta } from "./store";
 import { stopEdit } from "./worker";
 
 /**
@@ -51,6 +51,21 @@ editorApp.get("/", (c) => {
   return c.json(list.map(summaryOf));
 });
 
+// the defaults are registered before /:id, so "defaults" is never read as an edit id
+editorApp.get("/defaults", async (c) => c.json(await editorDefaults(c.get("user").username)));
+
+/** One slot's default: an item id the person can choose from, or null for back to the pack's or the built-in one. */
+editorApp.put("/defaults/:slot", async (c) => {
+  const user = c.get("user").username;
+  const slot = c.req.param("slot") as EditSlot;
+  if (!EDIT_SLOTS.includes(slot)) return c.json({ error: "Unknown slot", code: "invalid" }, 400);
+  const id = (await body(c)).id ?? null;
+  const defaults = await editorDefaults(user);
+  if (id !== null && (typeof id !== "string" || !defaults.items[slot].some((i) => i.id === id))) return c.json({ error: "No such item for this slot", code: "invalid" }, 400);
+  await setChosenDefault(user, slot, id);
+  return c.json(await editorDefaults(user));
+});
+
 editorApp.get("/:id", (c) => {
   const r = load(c);
   return r ? c.json(viewOf(r.e)) : notFound(c);
@@ -67,7 +82,8 @@ editorApp.patch("/:id", async (c) => {
     throw e;
   }
   delete patch.framing; // set per source in a later step
-  const e = { ...r.e, ...patch };
+  // a flag the patch leaves out keeps its state
+  const e = { ...r.e, ...patch, flags: { ...r.e.flags, ...patch.flags } };
   await saveEdit(e);
   return c.json(viewOf(readEdit(e.id)!));
 });
@@ -186,14 +202,14 @@ editorApp.get("/:id/drafts/:name/export", async (c) => {
   if (sourcesWorkspace(c.get("user").username, Object.keys(tl.sources)) !== r.e.workspaceId) return notFound(c);
   const m = await mediaPaths(r.e, Object.keys(tl.sources));
   const base = `${r.e.name} ${name}`.replace(/[^\w .-]+/g, "_").trim() || name;
-  const otio = () => JSON.stringify(toOtio(tl, m.files), null, 2);
+  const otio = async () => JSON.stringify(toOtio(tl, m.files, await gradeOf(r.e.createdBy, r.e.bundle)), null, 2);
   const send = (body: string | Buffer, file: string, type: string) =>
     new Response(body, { headers: { "Content-Type": type, "Content-Disposition": `attachment; filename="${file}"`, "Cache-Control": "no-store" } });
-  if (format === "otio") return send(otio(), `${base}.otio`, "application/json");
+  if (format === "otio") return send(await otio(), `${base}.otio`, "application/json");
   if (format === "fcpxml") return send(toFcpxml(tl, m.files), `${base}.fcpxml`, "application/xml");
   const zip = new ZipFile();
   const at = { mtime: new Date("2000-01-01T00:00:00Z") };
-  zip.addBuffer(Buffer.from(otio()), `${base}/${base}.otio`, at);
+  zip.addBuffer(Buffer.from(await otio()), `${base}/${base}.otio`, at);
   zip.addBuffer(Buffer.from(toFcpxml(tl, m.files)), `${base}/${base}.fcpxml`, at);
   if (m.downloads.length) {
     const hours = LINK_TTL_S / 3600;

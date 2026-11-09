@@ -3,7 +3,8 @@ import { readFileSync } from "node:fs";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { env } from "./lib/env";
-import { TOOLS, isTool, type Tool } from "../contracts/tools";
+import { TOOLS, isPluginGateId, isRetiredAppId, isTool, type PluginGateId, type Tool } from "../contracts/tools";
+import { pluginDefaultOff } from "./lib/plugin";
 
 export { isTool, type Tool };
 
@@ -30,22 +31,34 @@ export interface UserUsage {
   lastActiveAt: number; // epoch ms, 0 = never
 }
 
+export type SignInProvider = "apple" | "google";
+export interface Identity {
+  provider: SignInProvider;
+  sub: string;
+  email: string;
+  linkedAt: number;
+}
+
 export interface UserRecord {
   username: string;
   salt: string;
   hash: string;
   role: Role;
   cloud: boolean; // cloud transcription and AI in Caption Studio (every account)
-  /** Apps switched off for this account (none unless users.json says so). */
-  off: Tool[];
+  /** Apps and plug-in gates switched off for this account (users.json; a new user account starts with the plug-ins' defaults). */
+  off: (Tool | PluginGateId)[];
   /** sha256 of the Review key: a script or AI reads Review and resolves comments as this user. */
   apiKeyHash?: string;
   /** sha256 of the Full key: a script or AI does what this account does on the site, except Admin, AI settings and paired Macs (boot.ts). */
   fullKeyHash?: string;
+  /** Google / Apple accounts that sign in to this account; linked by the hosted site's sign-in routes (a team's rule reads them). */
+  identities?: Identity[];
   /** What the Settings page shows of each key it can't show again: when it was made, its last 4 characters, when it was last used. */
   keyInfo?: Partial<Record<KeyLevel, { at: number; last4: string; usedAt?: number }>>;
   /** What the app calls the person (Settings → Account); unset = the username. */
   displayName?: string;
+  /** The name typed at sign-in once the person changed it. `username` stays the id that files are filed under, so a new sign-in name moves nothing. */
+  login?: string;
   createdAt: number;
   usage: UserUsage;
 }
@@ -71,10 +84,11 @@ export interface SessionUser {
   name?: string;
   role: Role | "visitor";
   cloud: boolean;
-  off: Tool[];
+  off: (Tool | PluginGateId)[];
 }
 
-export const mayUse = (user: SessionUser, tool: Tool): boolean =>
+/** An app or a plug-in gate is on unless the account's `off` list has it; admins are never refused. */
+export const mayUse = (user: SessionUser, tool: Tool | PluginGateId): boolean =>
   user.role === "admin" || !user.off.includes(tool);
 
 /** Stand-in identity when auth is disabled (no APP_SECRET, local use). */
@@ -116,7 +130,8 @@ function load(): UserRecord[] {
     const parsed = JSON.parse(readFileSync(USERS_FILE, "utf-8"));
     if (!Array.isArray(parsed.users)) return [];
     return parsed.users.map((u: UserRecord & { enhance?: boolean }) => {
-      const user = { ...u, off: (u.off ?? []).filter(isTool), usage: { ...emptyUsage(), ...(u.usage ?? {}) } };
+      // unknown ids stay: a plug-in's gate keeps its switch while the plug-in is not loaded, and a retired app id keeps its switch
+      const user = { ...u, off: (u.off ?? []).filter((t) => isTool(t) || isPluginGateId(t) || isRetiredAppId(t)), usage: { ...emptyUsage(), ...(u.usage ?? {}) } };
       delete user.enhance; // the flag the app switches replaced
       return applyRole(user, u.role);
     });
@@ -152,12 +167,48 @@ export function findUser(username: string): UserRecord | null {
   return users.find((u) => u.username === name) ?? null;
 }
 
+export function findByIdentity(provider: SignInProvider, sub: string): UserRecord | null {
+  return users.find((u) => u.identities?.some((i) => i.provider === provider && i.sub === sub)) ?? null;
+}
+
+/** Links a Google / Apple account for signing in; one per provider per account, and never to two accounts. */
+export function linkIdentity(user: UserRecord, who: { provider: SignInProvider; sub: string; email: string }): void {
+  const other = findByIdentity(who.provider, who.sub);
+  if (other && other !== user) throw new Error(`That ${who.provider === "apple" ? "Apple" : "Google"} account already signs in to another account here`);
+  user.identities = [...(user.identities ?? []).filter((i) => i.provider !== who.provider), { ...who, linkedAt: Date.now() }];
+  persist();
+}
+
+export function unlinkIdentity(user: UserRecord, provider: SignInProvider): void {
+  user.identities = (user.identities ?? []).filter((i) => i.provider !== provider);
+  if (!user.identities.length) delete user.identities;
+  persist();
+}
+
+/** The account a sign-in name opens: its chosen sign-in name, else the username of an account that never chose one. */
+export function findByLogin(name: string): UserRecord | null {
+  const n = name.trim().toLowerCase();
+  return users.find((u) => (u.login ?? u.username) === n) ?? null;
+}
+
 /** Settings → Account: what the app calls the person. Empty = the username again. */
 export function setDisplayName(user: UserRecord, name: string): void {
   // eslint-disable-next-line no-control-regex
   const n = name.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 60);
   if (n) user.displayName = n;
   else delete user.displayName;
+  persist();
+}
+
+/** Settings → Account: a new sign-in name. The username underneath stays, so nothing filed under it moves. */
+export function setLogin(user: UserRecord, name: string): void {
+  const n = name.trim().toLowerCase();
+  if (n === (user.login ?? user.username)) return;
+  if (!USERNAME_RE.test(n)) throw new Error("2–24 characters: lowercase letters, digits, - and _");
+  if (n === "workspace" || n === VISITOR.username) throw new Error(`"${n}" is reserved`);
+  if (users.some((u) => u !== user && (u.username === n || (u.login ?? u.username) === n))) throw new Error("That name is taken");
+  if (n === user.username) delete user.login;
+  else user.login = n;
   persist();
 }
 
@@ -176,12 +227,13 @@ export function createUser(
   if (!USERNAME_RE.test(name)) throw new Error("Invalid username");
   // "workspace" names the admins' AI providers and their devices (contracts/providers.ts); "visitor" the share-link visitor
   if (name === "workspace" || name === VISITOR.username) throw new Error(`"${name}" is reserved`);
-  if (findUser(name)) throw new Error("Username already taken");
+  if (findUser(name) || users.some((u) => u.login === name)) throw new Error("Username already taken");
   // bootstrap must never lock the deployment out over a short APP_SECRET
   if (!opts.bootstrap && password.length < 6) {
     throw new Error("Password must be at least 6 characters");
   }
   const salt = randomBytes(16).toString("hex");
+  const role = opts.role ?? "user";
   const user = applyRole(
     {
       username: name,
@@ -189,11 +241,12 @@ export function createUser(
       hash: hashPassword(password, salt),
       role: "user",
       cloud: false,
-      off: [],
+      // a plug-in's default-off gates start switched off for every account but an admin's, team invites included (plugin.ts gates.defaultOff)
+      off: role === "admin" ? [] : pluginDefaultOff(),
       createdAt: Date.now(),
       usage: emptyUsage(),
     },
-    opts.role ?? "user",
+    role,
   );
   users.push(user);
   persist();
@@ -209,6 +262,28 @@ export function setPassword(user: UserRecord, password: string): void {
 }
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
+
+/** Changes an account's role. The last admin can't be demoted. */
+export function setRole(user: UserRecord, role: Role): void {
+  if (user.role === "admin" && role !== "admin" && adminCount() <= 1) throw new Error("Can't demote the last admin");
+  applyRole(user, role);
+  persist();
+}
+
+/** Switches apps and plug-in gates off for an account (Admin → Users, or the team owner for a member). */
+export function setOff(user: UserRecord, off: (Tool | PluginGateId)[]): void {
+  user.off = [...new Set(off)].filter((t) => isTool(t) || isPluginGateId(t) || isRetiredAppId(t));
+  persist();
+}
+
+/** Removes an account from users.json. Its other data goes with it at the caller (admin.ts). */
+export function deleteUser(username: string): boolean {
+  const i = users.findIndex((u) => u.username === username);
+  if (i < 0) return false;
+  users.splice(i, 1);
+  persist();
+  return true;
+}
 
 /** AI access keys come in two levels: "review" (Review) and "full" (headless: everything the account does). */
 export type KeyLevel = "review" | "full";

@@ -97,7 +97,7 @@ describe("AI Editor script: takes", () => {
 describe("AI Editor script: the prompt", () => {
   it("carries the user's brief and script verbatim, and no built-in style rules", () => {
     const brief = "Warm and slow. Open on the question parents ask most.";
-    const script = "Do babies need tummy time?\nYes, a little every day.";
+    const script = "Do puppies need tummy time?\nYes, a little every day.";
     const { system, user } = scriptPrompt({ sentences, titles: { ver_a: "Take A", ver_b: "Take B" }, brief, script, versions: 2, targetS: 45 });
     expect(user).toContain(brief);
     expect(user).toContain(script);

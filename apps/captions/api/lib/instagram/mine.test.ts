@@ -24,20 +24,20 @@ describe("nextMineFlags", () => {
 describe("postInProject", () => {
   const mine = { id: "mine", username: "TinyAcrobatics" };
   const own = { accountId: "mine", creator: { username: "tinyacrobatics" }, projectId: "other" };
-  const competitor = { accountId: "comp", creator: { username: "coach" }, projectId: "baby" };
+  const competitor = { accountId: "comp", creator: { username: "coach" }, projectId: "puppy" };
 
   it("keeps own posts visible in every project", () => {
-    expect(postInProject(own, "baby", { mine })).toBe(true);
+    expect(postInProject(own, "puppy", { mine })).toBe(true);
     expect(postInProject(own, "other", { mine })).toBe(true);
   });
 
   it("hides competitor posts from other projects", () => {
-    expect(postInProject(competitor, "baby", { mine })).toBe(true);
+    expect(postInProject(competitor, "puppy", { mine })).toBe(true);
     expect(postInProject(competitor, "other", { mine })).toBe(false);
   });
 
   it("when focusing mine, shows own posts regardless of stamp", () => {
-    expect(postInProject(own, "baby", { focus: { ...mine, mine: true } })).toBe(true);
+    expect(postInProject(own, "puppy", { focus: { ...mine, mine: true } })).toBe(true);
   });
 
   it("when focusing a competitor, stays project-scoped", () => {

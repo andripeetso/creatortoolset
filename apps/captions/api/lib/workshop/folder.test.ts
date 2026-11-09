@@ -86,12 +86,12 @@ describe("sessionText", () => {
     const doc = newDocument("d1", "s1", "carousel", "Carousel", { text: "Slide one", now: 1 });
     doc.userEdits = [{ blockId: "b1", from: "This is why", fromAuthor: "ai", to: "Slide one", at: 2 }];
     const long = "z".repeat(5000);
-    const text = sessionText({ title: "Kids Strength Training", createdAt: Date.UTC(2026, 10, 3), updatedAt: Date.UTC(2026, 10, 4) }, "Tiny Acrobatics", [doc], [
+    const text = sessionText({ title: "Strength Training", createdAt: Date.UTC(2026, 10, 3), updatedAt: Date.UTC(2026, 10, 4) }, "Tiny Acrobatics", [doc], [
       { id: "m1", role: "user", text: `the hook sucks ${long}`, at: Date.UTC(2026, 10, 3), docId: "d1" },
       { id: "m2", role: "assistant", text: "Agreed.", at: Date.UTC(2026, 10, 3), docId: "d1" },
       { id: "m3", role: "assistant", text: "broken", at: 3, docId: "d1", status: "error" },
     ], true);
-    expect(text).toContain("# THIS SESSION: Kids Strength Training (project Tiny Acrobatics)");
+    expect(text).toContain("# THIS SESSION: Strength Training (project Tiny Acrobatics)");
     expect(text).toContain("Slide one");
     expect(text).toContain("«This is why» → «Slide one»");
     expect(text).toContain(`the hook sucks ${long}`);
@@ -99,8 +99,28 @@ describe("sessionText", () => {
     expect(text).not.toContain("broken");
   });
 
+  it("says every post the session became, not just the first", () => {
+    const doc = newDocument("d1", "s1", "reel", "Reel", { text: "Words", now: 1 });
+    const text = sessionText(
+      {
+        title: "Two versions",
+        createdAt: Date.UTC(2026, 10, 3),
+        updatedAt: Date.UTC(2026, 10, 4),
+        postings: [
+          { shortcode: "AAA111", url: "https://www.instagram.com/p/AAA111/", by: "auto", at: 1 },
+          { shortcode: "BBB222", url: "https://www.instagram.com/p/BBB222/", by: "you", at: 2 },
+        ],
+        posted: { shortcode: "AAA111", url: "https://www.instagram.com/p/AAA111/", by: "auto", at: 1 },
+      },
+      undefined,
+      [doc],
+      [],
+    );
+    expect(text).toContain("Posted as https://www.instagram.com/p/AAA111/, https://www.instagram.com/p/BBB222/");
+  });
+
   it("names files safely", () => {
-    expect(sessionFile({ id: "7eba52a1-x", title: "Kids / Strength!", createdAt: Date.UTC(2026, 10, 3) })).toBe("sessions/2026-11-03-kids-strength-7eba52.md");
+    expect(sessionFile({ id: "7eba52a1-x", title: "Strength / Training!", createdAt: Date.UTC(2026, 10, 3) })).toBe("sessions/2026-11-03-strength-training-7eba52.md");
     expect(sourceFile("S2", "@ready.set")).toBe("sources/S2-ready-set.md");
     expect(slug("")).toBe("untitled");
   });

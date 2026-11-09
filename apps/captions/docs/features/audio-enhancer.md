@@ -5,7 +5,9 @@
 Each run picks an engine (`?engine=` on upload and re-run, stored as `meta.engine`). Every result is levelled by the same loudnorm to -15 LUFS.
 
 - `nvidia`: NVIDIA Studio Voice on NVIDIA's hosted API (`NVIDIA_API_KEY`; `api/lib/nvidia-voice.ts` speaks gRPC over node:http2 with no generated code, in 5-minute pieces, and shifts out the model's ~145 ms delay per piece). It runs in this server process.
-- `elevenlabs`: the ElevenLabs Voice Isolator (`ELEVENLABS_API_KEY`), keeps the voice as it is and strips noise and music. Admins only.
+- `elevenlabs`: the ElevenLabs Voice Isolator (`ELEVENLABS_API_KEY`), keeps the voice as it is and strips noise and music.
+
+Both engines run on the session owner's own key (Settings → My API keys); the server's key is used only for the platform admin. A run with no key for its engine is parked as `needs_key` with the key to add, not refused: the session keeps its audio, and "Try again" runs it once the key is saved.
 
 Who gets what: everyone starts on NVIDIA (the default); admins can add a second pass. The picker shows every engine by its name. What a user can't run is locked, with the reason (the key to add). The last pick is remembered (`enhance.engine`).
 

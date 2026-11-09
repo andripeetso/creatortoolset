@@ -1,4 +1,5 @@
 import { Hono, type Context } from "hono";
+import { streamSSE } from "hono/streaming";
 import { randomUUID } from "node:crypto";
 import { copyFile, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -6,14 +7,18 @@ import type { DatabaseSync } from "node:sqlite";
 import type { AuthVars } from "../auth";
 import { env } from "../lib/env";
 import { appendBody, freeBytes, sha256File } from "../lib/uploads";
-import { homeOf, libraryRole } from "./access";
+import { homeOf, libraryRole, mayWrite } from "./access";
 import { expandCollection } from "./collections";
-import { blobs, libraryDb } from "./db";
+import { blobs, libraryDb, libraryStore, meter } from "./db";
 import { sendFile } from "../lib/send-file";
-import type { LibrarySettings, LibrarySummary } from "../../contracts/library";
+import { notifyLibraryChanges, onEvent } from "../lib/events";
+import type { AssetCard, LibrarySettings, LibrarySummary } from "../../contracts/library";
+import type { LibraryViewer } from "../../contracts/library-source";
 import { enqueueJob } from "./jobs";
 import { inReview } from "./trash";
 import { similar } from "./similar";
+import { assetRef, canSee, sourceById, sourcesVisibleTo } from "./sources";
+import { externalAssetRef, externalRefById } from "./refs";
 import { buildAssetQuery, indexAsset, pageOf, parseSearch, type CardRow } from "./query";
 
 /**
@@ -24,6 +29,24 @@ import { buildAssetQuery, indexAsset, pageOf, parseSearch, type CardRow } from "
  */
 
 export const libraryApp = new Hono<{ Variables: AuthVars }>();
+libraryApp.use("*", notifyLibraryChanges);
+
+/** Server-sent events: one "changed" per library change (any account's, this server's), a ping every 15 s so proxies keep the line open. */
+libraryApp.get("/events", (c) => {
+  c.header("Cache-Control", "no-store");
+  c.header("X-Accel-Buffering", "no"); // nginx passes each event on at once
+  return streamSSE(c, async (stream) => {
+    await new Promise<void>((done) => {
+      const ping = setInterval(() => void stream.writeSSE({ event: "ping", data: "" }), 15_000);
+      const stop = onEvent("library.changed", () => void stream.writeSSE({ event: "changed", data: "" }));
+      stream.onAbort(() => {
+        clearInterval(ping);
+        stop();
+        done();
+      });
+    });
+  });
+});
 
 const CHUNK_BYTES = 32 * 1024 * 1024;
 const STAGE_DAYS = 7;
@@ -179,6 +202,7 @@ interface UploadRow {
   replaces_asset_id: string | null;
   collection_id: string | null;
   state: string;
+  direct_upload_id: string | null;
 }
 
 const db = () => libraryDb();
@@ -199,13 +223,93 @@ const stagedBytes = (file: string) => stat(file).then((s) => s.size, () => -1);
 /** Uploads nobody resumed within STAGE_DAYS: staging file removed, row marked failed. Runs when a new upload starts. */
 async function sweepStale(): Promise<void> {
   const stale = db()
-    .prepare("SELECT id, staging_path FROM uploads WHERE state = 'open' AND expires_at < ?")
-    .all(Date.now()) as { id: string; staging_path: string }[];
+    .prepare("SELECT id, library_id, staging_path, direct_upload_id FROM uploads WHERE state = 'open' AND expires_at < ?")
+    .all(Date.now()) as { id: string; library_id: string; staging_path: string; direct_upload_id: string | null }[];
   for (const r of stale) {
     if (busy.has(r.id)) continue;
-    await rm(r.staging_path, { force: true });
+    if (r.direct_upload_id) {
+      // a bucket that is no longer set up must not stop every new upload: its parts are left for the bucket to expire
+      try {
+        await libraryStore(r.library_id).direct?.abort(sourceKeyOf(r.library_id, r.id), r.direct_upload_id);
+      } catch {}
+    } else await rm(r.staging_path, { force: true });
     db().prepare("UPDATE uploads SET state = 'failed' WHERE id = ?").run(r.id);
   }
+}
+
+/** The bucket key of a library's file for one version (the same key the local store uses). */
+function sourceKeyOf(libraryId: string, versionId: string): string {
+  return `libraries/${libraryId}/v/${versionId}/source`;
+}
+
+/** The parts a browser reports from the bucket: part numbers 1 to 10 000 and their ETags. Null when any is malformed. */
+function partsFrom(body: unknown): { number: number; etag: string }[] | null {
+  const list = (body as { parts?: unknown } | null)?.parts;
+  if (!Array.isArray(list) || !list.length) return null;
+  const parts = (list as { number?: unknown; etag?: unknown }[]).map((p) => ({
+    number: Number(p?.number),
+    etag: typeof p?.etag === "string" ? p.etag : "",
+  }));
+  return parts.every((p) => Number.isSafeInteger(p.number) && p.number >= 1 && p.number <= 10_000 && p.etag) ? parts : null;
+}
+
+/**
+ * Finishes a direct upload: the bucket joins the parts the browser PUT to their presigned URLs. The server checks the
+ * size and hashes the object (for duplicates) before the version is recorded. A duplicate's object is removed.
+ */
+async function finishDirect(c: Context<{ Variables: AuthVars }>, row: UploadRow): Promise<Response> {
+  const parts = partsFrom(await c.req.json().catch(() => null));
+  if (!parts || !row.direct_upload_id) return c.json({ error: "Send the part ETags the bucket returned", code: "invalid" }, 400);
+  const store = libraryStore(row.library_id);
+  const key = sourceKeyOf(row.library_id, row.id);
+  try {
+    await store.direct!.complete(key, row.direct_upload_id, parts);
+  } catch (e) {
+    await store.direct!.abort(key, row.direct_upload_id);
+    throw e;
+  }
+  if ((await store.stat(key))?.bytes !== row.size) {
+    await store.delete(key);
+    throw new Error("The bucket's copy is not the size that was declared");
+  }
+  const sha256 = await sha256File(await store.localCopy(key));
+  if (!row.replaces_asset_id) {
+    const dup = db()
+      .prepare(
+        `SELECT a.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id
+         WHERE a.library_id = ? AND v.sha256 = ? AND a.trashed_at IS NULL LIMIT 1`,
+      )
+      .get(row.library_id, sha256) as { id: string } | undefined;
+    if (dup) {
+      await store.delete(key); // not metered yet, so no usage to take back
+      db().prepare("UPDATE uploads SET state = 'done' WHERE id = ?").run(row.id);
+      return c.json({ duplicateOf: dup.id });
+    }
+  }
+  meter(row.library_id, row.size); // the bytes went to the bucket around blobs.put, so the usage is counted here
+  const d = db();
+  d.exec("BEGIN");
+  let assetId: string;
+  try {
+    assetId = recordVersion(d, {
+      libraryId: row.library_id,
+      assetId: row.replaces_asset_id,
+      versionId: row.id,
+      sourceKey: key,
+      filename: row.filename,
+      size: row.size,
+      sha256,
+      by: row.created_by,
+      collectionId: row.collection_id,
+    });
+    d.prepare("UPDATE uploads SET state = 'done', received = size WHERE id = ?").run(row.id);
+    d.exec("COMMIT");
+  } catch (e) {
+    d.exec("ROLLBACK");
+    await blobs.delete(key); // metered above, so the delete takes the usage back
+    throw e;
+  }
+  return c.json({ assetId, versionId: row.id });
 }
 
 // POST /api/library/:id/uploads: { filename, size, replacesAssetId?, collectionId? } → 201 { id, offset, chunkSize }
@@ -220,10 +324,10 @@ libraryApp.post("/:id/uploads", async (c) => {
   if (size > gbSetting("LIBRARY_MAX_UPLOAD_GB", 8) * GiB) return c.json({ error: "Too large", code: "too_large" }, 413);
   const replaces = typeof body?.replacesAssetId === "string" ? body.replacesAssetId : null;
   if (replaces) {
-    const target = db().prepare("SELECT created_by FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL").get(replaces, libraryId) as
-      | { created_by: string }
+    const target = db().prepare("SELECT created_by, current_version_id FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL").get(replaces, libraryId) as
+      | { created_by: string; current_version_id: string }
       | undefined;
-    if (!target) return c.json({ error: "Not found", code: "not_found" }, 404);
+    if (!target || !(await mayWrite(user.username, libraryId, replaces, target.current_version_id))) return c.json({ error: "Not found", code: "not_found" }, 404);
     if (inReview(replaces)) return c.json(IN_REVIEW, 409);
   }
   const collection = typeof body?.collectionId === "string" ? body.collectionId : null;
@@ -233,31 +337,39 @@ libraryApp.post("/:id/uploads", async (c) => {
     if (col.kind !== "manual") return c.json({ error: "A smart collection takes its items from its query", code: "conflict" }, 409);
   }
   await sweepStale();
-  await mkdir(stagingDir(), { recursive: true });
-  // bytes the open uploads may still write count too, or several large uploads would each pass alone
-  const pending = (db().prepare("SELECT COALESCE(SUM(size - received), 0) AS n FROM uploads WHERE state = 'open'").get() as { n: number }).n;
-  if ((await freeBytes(stagingDir())) - pending - size < gbSetting("LIBRARY_DISK_RESERVE_GB", 20) * GiB) {
-    return c.json({ error: "Not enough free disk space for this upload", code: "disk_reserve" }, 507);
-  }
   const id = randomUUID();
+  const filename = String(body?.filename ?? "").trim().slice(0, 255) || "Untitled";
   const staging = path.join(stagingDir(), id);
-  await writeFile(staging, "");
+  // a bucket library takes the bytes straight from the browser (presigned part PUTs); the server only starts and finishes
+  const direct = libraryStore(libraryId).direct;
+  const started = direct ? await direct.start(sourceKeyOf(libraryId, id), size, { contentType: mimeOf(filename) }) : null;
+  if (!started) {
+    await mkdir(stagingDir(), { recursive: true });
+    // bytes the open uploads may still write count too, or several large uploads would each pass alone
+    const pending = (db().prepare("SELECT COALESCE(SUM(size - received), 0) AS n FROM uploads WHERE state = 'open' AND direct_upload_id IS NULL").get() as { n: number }).n;
+    if ((await freeBytes(stagingDir())) - pending - size < gbSetting("LIBRARY_DISK_RESERVE_GB", 20) * GiB) {
+      return c.json({ error: "Not enough free disk space for this upload", code: "disk_reserve" }, 507);
+    }
+    await writeFile(staging, "");
+  }
   db()
     .prepare(
-      `INSERT INTO uploads (id, library_id, created_by, filename, size, received, staging_path, replaces_asset_id, collection_id, expires_at, state)
-       VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 'open')`,
+      `INSERT INTO uploads (id, library_id, created_by, filename, size, received, staging_path, replaces_asset_id, collection_id, expires_at, state, direct_upload_id)
+       VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 'open', ?)`,
     )
     .run(
       id,
       libraryId,
       user.username,
-      String(body?.filename ?? "").trim().slice(0, 255) || "Untitled",
+      filename,
       size,
-      staging,
+      started ? "" : staging,
       replaces,
       collection,
       Date.now() + STAGE_DAYS * 86_400_000,
+      started?.uploadId ?? null,
     );
+  if (started) return c.json({ id, offset: 0, chunkSize: started.partSize, direct: { partSize: started.partSize, urls: started.urls } }, 201);
   return c.json({ id, offset: 0, chunkSize: CHUNK_BYTES }, 201);
 });
 
@@ -275,6 +387,7 @@ libraryApp.get("/uploads/:uploadId", async (c) => {
 libraryApp.patch("/uploads/:uploadId", async (c) => {
   const row = ownUpload(c);
   if (!row || row.state !== "open") return c.json({ error: "Not found", code: "not_found" }, 404);
+  if (row.direct_upload_id) return c.json({ error: "This upload goes straight to the bucket", code: "conflict" }, 409);
   if (busy.has(row.id)) return c.json({ error: "Upload in progress", code: "conflict", offset: await stagedBytes(row.staging_path) }, 409);
   const offset = Number(c.req.header("upload-offset"));
   const length = Number(c.req.header("content-length"));
@@ -307,6 +420,7 @@ libraryApp.post("/uploads/:uploadId/finish", async (c) => {
   if (busy.has(row.id)) return c.json({ error: "Upload in progress", code: "conflict", offset: await stagedBytes(row.staging_path) }, 409);
   busy.add(row.id);
   try {
+    if (row.direct_upload_id) return await finishDirect(c, row);
     const got = await stagedBytes(row.staging_path);
     if (got !== row.size) return c.json({ error: "The upload is incomplete", code: "conflict", offset: got }, 409);
     const sha256 = await sha256File(row.staging_path);
@@ -406,15 +520,55 @@ libraryApp.post("/", async (c) => {
   return c.json(created, 201);
 });
 
-// GET /api/library/:id/assets?q&kind&tag&from&to&cursor&limit → one page of AssetCards (query.ts)
-libraryApp.get("/:id/assets", (c) => {
+/** Who is asking about a library: its role there (owner, or null for no access), for the policies in sources.ts. */
+export function viewerOf(username: string, libraryId: string): LibraryViewer | null {
+  const role = libraryRole(username, libraryId);
+  return role ? { username, role } : null;
+}
+
+/** The cards the viewer may see, in order. Every read path that lists cards filters through here. */
+export async function visibleCards(viewer: LibraryViewer | null, libraryId: string, cards: AssetCard[]): Promise<AssetCard[]> {
+  if (!viewer) return [];
+  const out: AssetCard[] = [];
+  for (const card of cards) if (await canSee(viewer, assetRef(libraryId, card.id, card.versionId))) out.push(card);
+  return out;
+}
+
+// GET /api/library/:id/assets?q&kind&tag&from&to&cursor&limit&f.<key> → one page of AssetCards (query.ts). A card the
+// viewer may not see is left out (the page keeps its cursor, so it can come back shorter than the limit).
+// GET /api/library/:id/sources → the plug-in sources this viewer may see (the Source picker; the built-in library is not listed)
+libraryApp.get("/:id/sources", async (c) => {
+  const user = c.get("user");
+  const viewer = viewerOf(user.username, c.req.param("id"));
+  if (!viewer) return c.json({ error: "Not found", code: "not_found" }, 404);
+  const sources = await sourcesVisibleTo(viewer);
+  return c.json({ sources: sources.map((s) => ({ id: s.id, label: s.label })) });
+});
+
+libraryApp.get("/:id/assets", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
-  if (!libraryRole(user.username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
+  const viewer = viewerOf(user.username, libraryId);
+  if (!viewer) return c.json({ error: "Not found", code: "not_found" }, 404);
+  // a plug-in source's cards (the Source picker): each card is an external ref, and each must pass its own policy
+  const sourceId = c.req.query("source");
+  if (sourceId) {
+    const source = sourceById(sourceId);
+    if (!source?.list || !(await sourcesVisibleTo(viewer)).some((s) => s.id === sourceId)) return c.json({ items: [] });
+    const cards = (await source.list(viewer, c.req.raw).catch(() => [] as AssetCard[])).slice(0, 200);
+    const items: AssetCard[] = [];
+    for (const card of cards) {
+      const ref = externalRefById(card.id);
+      if (!ref || ref.source !== sourceId || !(await canSee(viewer, externalAssetRef(ref, libraryId)))) continue;
+      items.push({ ...card, libraryId });
+    }
+    return c.json({ items });
+  }
   const query = expandCollection(libraryId, parseSearch(c.req.query()));
   if (!query) return c.json({ error: "Not found", code: "not_found" }, 404);
   const { sql, params, limit } = buildAssetQuery(libraryId, query);
-  return c.json(pageOf(db().prepare(sql).all(...params) as unknown as CardRow[], limit));
+  const page = pageOf(db().prepare(sql).all(...params) as unknown as CardRow[], limit);
+  return c.json({ ...page, items: await visibleCards(viewer, libraryId, page.items) });
 });
 
 /** The blob a media URL serves: thumb, play (the proxy when there is one, else the source) or source. Null: no such kind. */
@@ -448,37 +602,67 @@ export async function serveBlob(c: Context, key: string, type: string, download?
 }
 
 // GET /api/library/media/:versionId/:kind: thumb | play (the proxy when there is one, else the source) | source
-libraryApp.get("/media/:versionId/:kind", async (c) => {
-  const user = c.get("user");
-  const versionId = c.req.param("versionId");
+libraryApp.get("/media/:versionId/:kind", (c) => libraryMedia(c, c.get("user").username, c.req.param("versionId"), c.req.param("kind")));
+
+/**
+ * One item's picture or file for an account: a version the account may see, or an external ref whose source's policies
+ * allow it (its own stream answers). Every route that serves library media goes through here, the Finals old-path
+ * router included, so the policies are checked in one place.
+ */
+export async function libraryMedia(c: Context, username: string, versionId: string, kind: string): Promise<Response> {
+  // an external ref (a plug-in source's item): its source's policies decide, then its own stream answers
+  if (versionId.startsWith("ext_")) {
+    const ref = externalRefById(versionId);
+    const source = ref ? sourceById(ref.source) : undefined;
+    const home = (db().prepare("SELECT id FROM libraries WHERE workspace_id = ? ORDER BY created_at, id LIMIT 1").get(homeOf(username)) as { id: string } | undefined)?.id;
+    const viewer = home ? viewerOf(username, home) : null;
+    if (!ref || !source?.stream || !home || !viewer || !(await canSee(viewer, externalAssetRef(ref, home)))) {
+      return c.json({ error: "Not found", code: "not_found" }, 404);
+    }
+    if (kind !== "thumb" && kind !== "play" && kind !== "source") return c.json({ error: "Not found", code: "not_found" }, 404);
+    const res = await source.stream(viewer, c.req.raw, ref.externalId, kind).catch(() => null);
+    return res ?? c.json({ error: "Not found", code: "not_found" }, 404);
+  }
   const v = db()
-    .prepare("SELECT a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?")
-    .get(versionId) as { library_id: string } | undefined;
-  if (!v || !libraryRole(user.username, v.library_id)) return c.json({ error: "Not found", code: "not_found" }, 404);
-  const file = mediaFile(versionId, c.req.param("kind"));
+    .prepare("SELECT a.library_id, a.id AS asset_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?")
+    .get(versionId) as { library_id: string; asset_id: string } | undefined;
+  const viewer = v ? viewerOf(username, v.library_id) : null;
+  if (!v || !viewer || !(await canSee(viewer, assetRef(v.library_id, v.asset_id, versionId)))) {
+    return c.json({ error: "Not found", code: "not_found" }, 404);
+  }
+  const file = mediaFile(versionId, kind);
   if (!file) return c.json({ error: "Not found", code: "not_found" }, 404);
   if (!file.key) return c.json({ error: "Not ready", code: "conflict" }, 409);
   return serveBlob(c, file.key, file.type);
-});
+}
 
 // GET /api/library/versions/:versionId/similar → the videos in the caller's libraries that share its pictures
-libraryApp.get("/versions/:versionId/similar", (c) => {
-  const found = similar(c.get("user").username, c.req.param("versionId"));
-  return found ? c.json(found) : c.json({ error: "Not fingerprinted yet", code: "not_found" }, 404);
+libraryApp.get("/versions/:versionId/similar", async (c) => {
+  const username = c.get("user").username;
+  const found = similar(username, c.req.param("versionId"));
+  if (!found) return c.json({ error: "Not fingerprinted yet", code: "not_found" }, 404);
+  const matches = [];
+  for (const m of found.matches) {
+    const viewer = viewerOf(username, m.libraryId);
+    if (viewer && (await canSee(viewer, assetRef(m.libraryId, m.assetId, m.versionId)))) matches.push(m);
+  }
+  return c.json({ ...found, matches });
 });
 
 /** Into the trash, or back out of it: the uploader or the owner. Other members of the library get 403; outsiders 404. */
-function setTrashed(c: Context<{ Variables: AuthVars }>, trash: boolean) {
+async function setTrashed(c: Context<{ Variables: AuthVars }>, trash: boolean) {
   const user = c.get("user");
   const libraryId = c.req.param("id") ?? "";
   const assetId = c.req.param("assetId") ?? "";
   const role = libraryRole(user.username, libraryId);
   const a = role
-    ? (db().prepare("SELECT created_by, trashed_at FROM assets WHERE id = ? AND library_id = ?").get(assetId, libraryId) as
-        | { created_by: string; trashed_at: number | null }
+    ? (db().prepare("SELECT created_by, trashed_at, current_version_id FROM assets WHERE id = ? AND library_id = ?").get(assetId, libraryId) as
+        | { created_by: string; trashed_at: number | null; current_version_id: string }
         | undefined)
     : undefined;
-  if (!a || (trash ? a.trashed_at !== null : a.trashed_at === null)) return c.json({ error: "Not found", code: "not_found" }, 404);
+  if (!a || (trash ? a.trashed_at !== null : a.trashed_at === null) || !(await mayWrite(user.username, libraryId, assetId, a.current_version_id))) {
+    return c.json({ error: "Not found", code: "not_found" }, 404);
+  }
   if (inReview(assetId)) return c.json(IN_REVIEW, 409);
   db().prepare("UPDATE assets SET trashed_at = ? WHERE id = ?").run(trash ? Date.now() : null, assetId);
   return c.json({ ok: true });

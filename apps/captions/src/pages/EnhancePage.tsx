@@ -135,6 +135,8 @@ function EnginePicker({ avail, value, onChange, then, onThen, compact = false }:
     </Chip>
   ));
   const hint = <span className="text-zinc-600">best: ElevenLabs first, then NVIDIA</span>;
+  const noteText = ENGINES.filter((e) => e.key === value || e.key === then).map((e) => e.note?.(avail)).find(Boolean);
+  const macNote = noteText ? <p className="mt-2 text-[11px] text-amber-400/80">{noteText}</p> : null;
 
   if (compact) {
     return (
@@ -196,6 +198,7 @@ function EnginePicker({ avail, value, onChange, then, onThen, compact = false }:
           );
         })}
       </div>
+      {macNote}
       {avail.admin && thens.length > 0 && (
         <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-500">
           <span>Second pass:</span>
@@ -208,9 +211,11 @@ function EnginePicker({ avail, value, onChange, then, onThen, compact = false }:
 }
 
 /** What the progress card says while an engine works. */
-function workingNote(s: EnhanceSession): string {
+function workingNote(s: EnhanceSession, avail: EnhanceAvailability | null): string {
   const now = s.chain?.[s.step ?? 0] ?? s.engine;
   const pass = (s.chain?.length ?? 1) > 1 ? `Pass ${(s.step ?? 0) + 1} of ${s.chain!.length}, ${engineLabel(now)}. ` : "";
+  const working = ENGINES.find((e) => e.key === now)?.working;
+  if (working) return pass + working(s, avail);
 
   if (now === "nvidia") return pass + "About half a minute a minute of audio — you can already listen to the original below.";
   return pass + "Usually seconds — you can already listen to the original below.";
@@ -227,6 +232,9 @@ function StatusChip({ s }: { s: EnhanceSession }) {
         {Math.round(s.progress * 100)}%
       </span>
     );
+  }
+  if (s.status === "needs_key") {
+    return <span className="text-[11px] text-amber-400">Needs key</span>;
   }
   if (s.status === "error") {
     return <span className="text-[11px] text-red-400">Failed</span>;
@@ -299,7 +307,9 @@ function SessionView({
   const retry = async () => {
     setError(null);
     try {
-      onChange(await runEnhance(session.id, engine, second));
+      // a parked run (needs_key) runs the engines it was queued with: the key it waits for is theirs, not the picker's
+      const parked = session.status === "needs_key" && session.chain?.length ? session.chain : null;
+      onChange(parked ? await runEnhance(session.id, parked[0]!, parked[1] ?? null) : await runEnhance(session.id, engine, second));
       setEditing(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -397,7 +407,7 @@ function SessionView({
           </div>
           <div className="mt-2.5 flex items-center justify-between">
             <span className="text-[11px] text-zinc-500">
-              {workingNote(session)}
+              {workingNote(session, avail)}
             </span>
             <button
               onClick={stop}
@@ -409,7 +419,7 @@ function SessionView({
         </div>
       )}
 
-      {session.status === "error" && (
+      {(session.status === "error" || session.status === "needs_key") && (
         <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2.5">
           <span className="min-w-0 text-xs text-red-300">
             {session.error || "Enhancement failed"}

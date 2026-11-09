@@ -22,6 +22,23 @@ final class ServersTests: XCTestCase {
         XCTAssertEqual(migratedServers(site: "http://tools.example.com", runsHere: false, hasLocal: true).servers, [])
     }
 
+    func testTheBuildsDefaultServerIsAddedOnce() {
+        let added = [ServerEntry(id: "a", name: "Office", url: "https://office.example.com")]
+        // first launch: the default joins the list after what was there
+        let first = seedingDefaultServer("https://tools.example.com/", into: added, seeded: false, newID: ids())
+        XCTAssertEqual(first.servers.map(\.url), ["https://office.example.com", "https://tools.example.com"])
+        XCTAssertTrue(first.seeded)
+        // later launches, and a removed default, add nothing
+        XCTAssertEqual(seedingDefaultServer("https://tools.example.com", into: first.servers, seeded: true, newID: ids()).servers, first.servers)
+        XCTAssertEqual(seedingDefaultServer("https://tools.example.com", into: added, seeded: true, newID: ids()).servers, added)
+        // no default in the build, or an unusable one: nothing added, not marked seeded
+        XCTAssertEqual(seedingDefaultServer(nil, into: added, seeded: false).servers, added)
+        XCTAssertFalse(seedingDefaultServer(nil, into: added, seeded: false).seeded)
+        XCTAssertEqual(seedingDefaultServer("http://tools.example.com", into: added, seeded: false).servers, added)
+        // a default that is already in the list is not listed twice
+        XCTAssertEqual(seedingDefaultServer("https://office.example.com", into: added, seeded: false, newID: ids()).servers, added)
+    }
+
     func testThisMacIsListedOnlyWithTheServerInTheBuild() {
         let added = [ServerEntry(id: "a", name: "Office", url: "https://office.example.com")]
         XCTAssertEqual(listedServers(added, hasLocal: true).map(\.id), [thisMacID, "a"])

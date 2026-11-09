@@ -1,24 +1,34 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { Hono } from "hono";
 import { env } from "../../lib/env";
 
 process.env.META_ACCESS_TOKEN = "test-meta-token";
 process.env.INSTAGRAM_USER_ID = "17841000000000001";
 process.env.INSTAGRAM_MINE_CATALOG_CAP = "700";
+// The install's own login is read only on a hosted server (or when a plug-in turns it on); these tests run as hosted.
+process.env.CT_MODE = "hosted";
 
 const {
   applyMineVisibility,
+  businessDiscoveryFromGraph,
+  businessDiscoveryOn,
   catalogItemFromGraph,
   classifyVisibility,
   classifyVisibilityWithBasis,
+  fetchBusinessDiscovery,
   fetchMineAccountStats,
   fetchMineCatalog,
   fetchMineCatalogAll,
   fetchMineDailyInsights,
+  fetchMineInsights,
   fetchMineProfile,
+  FEED_INSIGHT_METRICS,
+  GRAPH_MISSING_MSG,
   graphConfigured,
   insightDays,
   insightsFromGraph,
   MINE_CATALOG_CAP,
+  REEL_INSIGHT_METRICS,
   mineUsesGraph,
   profileFromGraph,
 } = await import("./graph");
@@ -42,7 +52,37 @@ describe("MINE_CATALOG_CAP", () => {
 });
 
 describe("graphConfigured", () => {
-  it("is true when both env vars are set", () => {
+  it("is true when both env vars are set on a hosted server", () => {
+    expect(graphConfigured()).toBe(true);
+  });
+});
+
+describe("install-wide Meta login is off on a public install", () => {
+  afterEach(async () => {
+    vi.unstubAllEnvs();
+    const { mountPlugins } = await import("../plugin");
+    mountPlugins(new Hono(), []);
+  });
+
+  it("a public install with no login of its own never reads through the .env token", async () => {
+    vi.stubEnv("CT_MODE", "");
+    expect(graphConfigured()).toBe(false);
+    const fetchImpl = vi.fn();
+    await expect(fetchMineProfile({ fetchImpl: fetchImpl as unknown as typeof fetch })).rejects.toThrow(GRAPH_MISSING_MSG);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("a hosted server keeps the install's login", () => {
+    vi.stubEnv("CT_MODE", "hosted");
+    expect(graphConfigured()).toBe(true);
+  });
+
+  it("a plug-in that turns the install login on keeps it on a public install, and one that does not leaves it off", async () => {
+    vi.stubEnv("CT_MODE", "");
+    const { definePlugin, mountPlugins } = await import("../plugin");
+    mountPlugins(new Hono(), [definePlugin({ id: "tiny-acrobatics" })]);
+    expect(graphConfigured()).toBe(false);
+    mountPlugins(new Hono(), [definePlugin({ id: "tiny-acrobatics", installMetaLogin: true })]);
     expect(graphConfigured()).toBe(true);
   });
 });
@@ -158,7 +198,8 @@ describe("catalogItemFromGraph", () => {
       mediaUrl: "https://scontent.cdninstagram.com/v/t50/clip.mp4?oe=1",
       thumbnailUrl: "https://scontent.cdninstagram.com/v/t51/thumb.jpg?oe=1",
       seenAt: 1234,
-      insightsAt: 1234,
+      // A reel is not marked insight-read until its reel metrics arrive.
+      insightsAt: undefined,
     });
     const bare = catalogItemFromGraph(
       { id: "182", media_type: "IMAGE", permalink: "https://www.instagram.com/p/TestPost001/" },
@@ -221,7 +262,7 @@ describe("fetchMineCatalog", () => {
           ],
           paging: {
             cursors: { after: "CURSOR1" },
-            next: "https://graph.facebook.com/v21.0/17841000000000001/media?access_token=secret&after=CURSOR1",
+            next: "https://graph.facebook.com/v27.0/17841000000000001/media?access_token=secret&after=CURSOR1",
           },
         });
       }
@@ -262,7 +303,7 @@ describe("fetchMineCatalog", () => {
         paging: after
           ? {
               cursors: { after },
-              next: `https://graph.facebook.com/v21.0/17841000000000001/media?access_token=secret&after=${after}`,
+              next: `https://graph.facebook.com/v27.0/17841000000000001/media?access_token=secret&after=${after}`,
             }
           : { cursors: { after: "UNUSED" } },
       });
@@ -323,6 +364,19 @@ describe("fetchMineCatalogAll", () => {
   });
 });
 
+describe("classifyVisibility with the public grid", () => {
+  const grid = { ok: true, complete: false, shortcodes: new Set(["ABC"]), ids: new Set<string>() };
+  it("a post on the public grid is public, on the grid's own evidence", () => {
+    expect(classifyVisibilityWithBasis({ kind: "reel", isSharedToFeed: false, shortcode: "ABC" }, grid)).toEqual({ visibility: "public", basis: "grid" });
+  });
+  it("a complete grid makes a post off it trial", () => {
+    expect(classifyVisibilityWithBasis({ kind: "reel", shortcode: "XYZ" }, { ...grid, complete: true })).toEqual({ visibility: "trial", basis: "grid_complete" });
+  });
+  it("with no grid read the official-login rules decide", () => {
+    expect(classifyVisibilityWithBasis({ kind: "reel", isSharedToFeed: true, shortcode: "XYZ" }, null)).toEqual({ visibility: "public", basis: "shared_to_feed" });
+  });
+});
+
 describe("classifyVisibility", () => {
   it("reads is_shared_to_feed from the official login only; a reel without it stays unknown", () => {
     expect(classifyVisibility({ kind: "reel", isSharedToFeed: true })).toBe("public");
@@ -361,6 +415,80 @@ describe("insightsFromGraph", () => {
         data: [{ name: "total_interactions", values: [{ value: 12 }] }],
       }),
     ).toEqual({ interactions: 12 });
+  });
+
+  it("reads the reel-only follows and profile visits", () => {
+    expect(
+      insightsFromGraph({
+        data: [
+          { name: "follows", values: [{ value: 3 }] },
+          { name: "profile_visits", values: [{ value: 7 }] },
+        ],
+      }),
+    ).toEqual({ follows: 3, profileVisits: 7 });
+  });
+});
+
+describe("insight metric sets per media type", () => {
+  const noImpressions = (list: readonly string[]) => expect(list).not.toContain("impressions");
+
+  it("feed posts get only the metrics every type accepts", () => {
+    expect([...FEED_INSIGHT_METRICS]).toEqual(["views", "reach", "saved", "shares", "total_interactions"]);
+    noImpressions(FEED_INSIGHT_METRICS);
+  });
+
+  it("reels add their own metrics and keep the feed set", () => {
+    expect(REEL_INSIGHT_METRICS).toEqual(expect.arrayContaining([...FEED_INSIGHT_METRICS]));
+    expect(REEL_INSIGHT_METRICS).toEqual(expect.arrayContaining(["ig_reels_avg_watch_time", "follows", "profile_visits"]));
+    noImpressions(REEL_INSIGHT_METRICS);
+  });
+
+  it("the /media listing asks for no reel-only metric and no impressions", async () => {
+    const fetchImpl = vi.fn(async (_input: string | URL) => jsonRes(200, { data: [] }));
+    await fetchMineCatalog({ cap: 5, fetchImpl: fetchImpl as unknown as typeof fetch });
+    const fields = new URL(String(fetchImpl.mock.calls[0]![0])).searchParams.get("fields") ?? "";
+    expect(fields).toContain("insights.metric(views,reach,saved,shares,total_interactions)");
+    expect(fields).not.toContain("ig_reels_avg_watch_time");
+    expect(fields).not.toContain("impressions");
+  });
+
+  it("a reel's listing row is not marked insight-read, so its reel metrics are still fetched", () => {
+    const reel = catalogItemFromGraph({
+      media_type: "VIDEO",
+      media_product_type: "REELS",
+      permalink: "https://www.instagram.com/reel/ReElAaAaAaA/",
+      timestamp: "2026-01-01T00:00:00+0000",
+      insights: { data: [{ name: "views", values: [{ value: 5 }] }] },
+    });
+    expect(reel?.kind).toBe("reel");
+    expect(reel?.graph?.insightsAt).toBeUndefined();
+    const feed = catalogItemFromGraph({
+      media_type: "IMAGE",
+      media_product_type: "FEED",
+      permalink: "https://www.instagram.com/p/FeEdAaAaAaA/",
+      timestamp: "2026-01-01T00:00:00+0000",
+      insights: { data: [{ name: "views", values: [{ value: 5 }] }] },
+    });
+    expect(feed?.graph?.insightsAt).toBeGreaterThan(0);
+  });
+
+  it("fetchMineInsights asks reels for reel metrics and feed posts for feed metrics", async () => {
+    const batches: Array<Array<{ relative_url: string }>> = [];
+    const fetchImpl = vi.fn(async (_input: string | URL, init?: RequestInit) => {
+      const batch = JSON.parse(new URLSearchParams(String(init?.body)).get("batch") ?? "[]") as Array<{ relative_url: string }>;
+      batches.push(batch);
+      return jsonRes(200, batch.map(() => ({ code: 200, body: JSON.stringify({ data: [] }) })));
+    });
+    await fetchMineInsights(["REEL1", "FEED1"], {
+      reelIds: new Set(["REEL1"]),
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const metricsOf = (rel: string) => new URL(rel, "https://graph.test/").searchParams.get("metric")!.split(",");
+    const sent = batches.flat();
+    expect(sent).toHaveLength(2);
+    expect(metricsOf(sent[0]!.relative_url).sort()).toEqual([...REEL_INSIGHT_METRICS].sort());
+    expect(metricsOf(sent[1]!.relative_url).sort()).toEqual([...FEED_INSIGHT_METRICS].sort());
+    for (const { relative_url } of sent) expect(relative_url).not.toContain("impressions");
   });
 });
 
@@ -645,5 +773,125 @@ describe("fetchMineAccountStats totals", () => {
       expect(relative_url).toMatch(/metric_type=total_value&period=day&since=\d+&until=\d+/);
       expect(relative_url).not.toContain("access_token");
     }
+  });
+});
+
+describe("Business Discovery", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  const bdReply = {
+    id: "17841000000000001",
+    business_discovery: {
+      id: "17841999999999999",
+      username: "tinyacrobatics",
+      name: "Tiny Acrobatics",
+      biography: "Circus for tots",
+      followers_count: 5400,
+      media_count: 2,
+      profile_picture_url: "https://scontent.cdninstagram.com/v/t51/pic.jpg",
+      media: {
+        data: [
+          {
+            id: "18000000000000001",
+            caption: "Spot the kick",
+            media_type: "VIDEO",
+            permalink: "https://www.instagram.com/reel/TestReel001/",
+            timestamp: "2026-06-22T01:19:46+0000",
+            like_count: 40,
+            comments_count: 3,
+          },
+          {
+            id: "18000000000000002",
+            caption: "Tuck jump",
+            media_type: "IMAGE",
+            timestamp: "2026-06-20T10:00:00+0000",
+            like_count: 9,
+          },
+        ],
+      },
+    },
+  };
+
+  it("is off by default: refuses before any call", async () => {
+    vi.stubEnv("INSTAGRAM_BUSINESS_DISCOVERY", "");
+    const fetchImpl = vi.fn();
+    await expect(fetchBusinessDiscovery("tinyacrobatics", { fetchImpl: fetchImpl as unknown as typeof fetch })).rejects.toThrow(
+      /Business Discovery is off/,
+    );
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(businessDiscoveryOn()).toBe(false);
+  });
+
+  it("maps a discovered account and its public media, dropping an item with no permalink", () => {
+    const out = businessDiscoveryFromGraph(bdReply, 1_000);
+    expect(out?.profile).toMatchObject({ igUserId: "17841999999999999", username: "tinyacrobatics", followers: 5400, posts: 2 });
+    expect(out?.items).toHaveLength(1);
+    expect(out?.items[0]).toMatchObject({ shortcode: "TestReel001", kind: "reel", caption: "Spot the kick", counts: { likes: 40, comments: 3 } });
+    expect(businessDiscoveryFromGraph({ id: "1" })).toBeNull();
+  });
+
+  it("asks Graph for the handle's fields through the login's own account when on", async () => {
+    vi.stubEnv("INSTAGRAM_BUSINESS_DISCOVERY", "1");
+    const fetchImpl = vi.fn(async (input: string | URL) => {
+      const url = new URL(String(input));
+      expect(url.pathname).toMatch(/\/17841000000000001$/);
+      expect(url.searchParams.get("fields")).toContain("business_discovery.username(tinyacrobatics)");
+      return jsonRes(200, bdReply);
+    });
+    const out = await fetchBusinessDiscovery("@tinyacrobatics", { fetchImpl: fetchImpl as unknown as typeof fetch });
+    expect(out.items).toHaveLength(1);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a handle with characters that could change the field list", async () => {
+    vi.stubEnv("INSTAGRAM_BUSINESS_DISCOVERY", "1");
+    const fetchImpl = vi.fn();
+    await expect(fetchBusinessDiscovery("tiny),me{x", { fetchImpl: fetchImpl as unknown as typeof fetch })).rejects.toThrow(
+      /not an Instagram handle/,
+    );
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+});
+
+describe("fetchMineInsights refused reel metrics", () => {
+  it("retries a reel Meta refuses for its reel-only metrics with the feed set, so its views and reach still come back", async () => {
+    const batches: Array<Array<{ relative_url: string }>> = [];
+    const fetchImpl = vi.fn(async (_input: string | URL, init?: RequestInit) => {
+      const batch = JSON.parse(new URLSearchParams(String(init?.body)).get("batch") ?? "[]") as Array<{ relative_url: string }>;
+      batches.push(batch);
+      const metricsOf = (rel: string) => new URL(rel, "https://graph.test/").searchParams.get("metric")!.split(",");
+      return jsonRes(
+        200,
+        batch.map(({ relative_url }) => {
+          const metrics = metricsOf(relative_url);
+          if (relative_url.startsWith("REEL1/") && metrics.includes("follows")) {
+            return { code: 400, body: JSON.stringify({ error: { message: "(#100) follows is not valid for this media" } }) };
+          }
+          return { code: 200, body: JSON.stringify({ data: metrics.map((name) => ({ name, values: [{ value: name === "views" ? 50 : 7 }] })) }) };
+        }),
+      );
+    });
+    const out = await fetchMineInsights(["REEL1", "FEED1"], {
+      reelIds: new Set(["REEL1"]),
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    // second batch carries only the refused reel, on the feed set
+    expect(batches).toHaveLength(2);
+    expect(batches[1]).toHaveLength(1);
+    const retryMetrics = new URL(batches[1]![0]!.relative_url, "https://graph.test/").searchParams.get("metric")!.split(",");
+    expect(batches[1]![0]!.relative_url.startsWith("REEL1/")).toBe(true);
+    expect([...retryMetrics].sort()).toEqual([...FEED_INSIGHT_METRICS].sort());
+    expect(out.get("REEL1")).toMatchObject({ views: 50, reach: 7 });
+    expect(out.get("REEL1")?.follows).toBeUndefined();
+    expect(out.get("FEED1")).toMatchObject({ views: 50, reach: 7 });
+  });
+
+  it("does not retry when every reel is accepted", async () => {
+    const fetchImpl = vi.fn(async (_input: string | URL, init?: RequestInit) => {
+      const batch = JSON.parse(new URLSearchParams(String(init?.body)).get("batch") ?? "[]") as Array<{ relative_url: string }>;
+      return jsonRes(200, batch.map(() => ({ code: 200, body: JSON.stringify({ data: [{ name: "views", values: [{ value: 3 }] }] }) })));
+    });
+    await fetchMineInsights(["REEL1"], { reelIds: new Set(["REEL1"]), fetchImpl: fetchImpl as unknown as typeof fetch });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 });

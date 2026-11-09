@@ -1,5 +1,6 @@
 import { SESSION_WAITING, type ChatMessage, type Document, type Framework, type SessionMeta, type UserEdit } from "./types";
 import type { CatalogItem } from "../instagram/types";
+import { postingsOf } from "./posted";
 
 /**
  * The Workshop's working folder:
@@ -136,26 +137,27 @@ export function ownPostFiles(handle: string, posts: OwnPost[], asOf: { fetchedAt
   return files;
 }
 
-/** sessions/INDEX.md: every session that became a post, with the post and its numbers, then those in production or published with no post yet. */
-export function sessionsIndex(sessions: Array<Pick<SessionMeta, "id" | "title" | "createdAt" | "status" | "posted">>, posts: OwnPost[]): string | undefined {
+/** sessions/INDEX.md: every post a session became (one row per post), with its numbers, then those in production or published with no post yet. */
+export function sessionsIndex(sessions: Array<Pick<SessionMeta, "id" | "title" | "createdAt" | "status" | "posted" | "postings">>, posts: OwnPost[]): string | undefined {
   const byCode = new Map(posts.map((p) => [p.item.shortcode, p]));
-  const posted = sessions.filter((s) => s.posted);
-  const waiting = sessions.filter((s) => !s.posted && SESSION_WAITING.includes(s.status ?? "draft"));
-  if (!posted.length && !waiting.length) return undefined;
+  const posted = sessions.filter((s) => postingsOf(s).length);
+  const rows = posted.flatMap((s) => postingsOf(s).map((post) => ({ s, post })));
+  const waiting = sessions.filter((s) => !postingsOf(s).length && SESSION_WAITING.includes(s.status ?? "draft"));
+  if (!rows.length && !waiting.length) return undefined;
   const name = (s: Pick<SessionMeta, "id" | "title" | "createdAt">) => sessionFile(s).slice("sessions/".length);
-  const row = (s: (typeof posted)[number]) => {
-    const p = byCode.get(s.posted!.shortcode);
+  const row = ({ s, post }: (typeof rows)[number]) => {
+    const p = byCode.get(post.shortcode);
     const k = p ? keptPer1k(p.item) : undefined;
-    return `| ${name(s)} | ${s.title.replace(/\|/g, "/")} | ${p ? (hasFile(p) ? postFile(p.item) : `${day(p.item.takenAt)} in my-posts/INDEX.md`) : s.posted!.url} | ${p && viewsOf(p.item) ? num(viewsOf(p.item)) : ""} | ${k === undefined ? "" : k.toFixed(1)} |`;
+    return `| ${name(s)} | ${s.title.replace(/\|/g, "/")} | ${p ? (hasFile(p) ? postFile(p.item) : `${day(p.item.takenAt)} in my-posts/INDEX.md`) : post.url} | ${p && viewsOf(p.item) ? num(viewsOf(p.item)) : ""} | ${k === undefined ? "" : k.toFixed(1)} |`;
   };
   return [
-    `# Workshop sessions and the posts they became (${posted.length})`,
+    `# Workshop sessions and the posts they became (${rows.length})`,
     "",
     "Linked by the app when a post's words clearly match a session's pieces, or by the author pasting the link.",
     "",
     "| session | title | the post it became | views | saves+shares per 1,000 views |",
     "|---|---|---|---|---|",
-    ...posted.map(row),
+    ...rows.map(row),
     ...(waiting.length ? ["", "## In production or published, no post linked yet", "", ...waiting.map((s) => `- ${name(s)} (${s.title})`)] : []),
   ].join("\n");
 }
@@ -252,7 +254,7 @@ export const sessionFile = (s: Pick<SessionMeta, "id" | "title" | "createdAt">) 
  * sessions/<…>.md: one Workshop session, its pieces as they stand, the author's edits, and the whole conversation.
  */
 export function sessionText(
-  s: Pick<SessionMeta, "title" | "createdAt" | "updatedAt" | "status" | "posted">,
+  s: Pick<SessionMeta, "title" | "createdAt" | "updatedAt" | "status" | "posted" | "postings">,
   project: string | undefined,
   docs: Document[],
   messages: ChatMessage[],
@@ -262,7 +264,7 @@ export function sessionText(
   return [
     `# ${current ? "THIS SESSION: " : ""}${s.title}${project ? ` (project ${project})` : ""}`,
     "",
-    `Started ${day(s.createdAt)}, last change ${day(s.updatedAt)}.${s.status ? ` Status: ${s.status}.` : ""}${s.posted ? ` Posted as ${s.posted.url}` : ""}`,
+    `Started ${day(s.createdAt)}, last change ${day(s.updatedAt)}.${s.status ? ` Status: ${s.status}.` : ""}${postingsOf(s).length ? ` Posted as ${postingsOf(s).map((p) => p.url).join(", ")}` : ""}`,
     "",
     "## The pieces",
     "",

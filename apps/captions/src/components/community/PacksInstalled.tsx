@@ -60,6 +60,14 @@ function PackRow({ pack: p, latest, reload }: { pack: InstalledPack; latest?: st
       <div className="mt-1 text-xs text-muted-foreground">
         Adds: <ContentsSummary pack={p} />
       </div>
+      {p.held?.designSystems && (
+        <div className="mt-2">
+          <Notice>
+            {p.held.designSystems.items.length} design {p.held.designSystems.items.length === 1 ? "system" : "systems"} from this pack{" "}
+            {p.held.designSystems.needs === "plug-in" ? "need a plug-in on this server to install" : "need an admin to install"}. They are kept with the pack.
+          </Notice>
+        </div>
+      )}
       {p.delisted && (
         <div className="mt-2">
           <Notice tone="error">Pulled from the community: {p.delisted}. Its instructions are off.</Notice>

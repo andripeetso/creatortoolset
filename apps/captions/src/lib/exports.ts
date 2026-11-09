@@ -180,6 +180,8 @@ export async function startExport(payload: {
   height?: number;
   fps?: number;
   renderSpec?: CaptionRenderSpec;
+  /** burn only: the server sends the render to the owner's Finals when it is done */
+  finals?: boolean;
 }): Promise<ExportJob> {
   const res = await fetch("/api/exports", {
     method: "POST",

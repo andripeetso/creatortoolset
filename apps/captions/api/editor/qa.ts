@@ -5,12 +5,21 @@ import { fitted, tiltLimit } from "./framing";
 export const QA = {
   /** a speaker shot shorter than this (timeline frames) reads as a flash */
   minSpeakerFrames: 13,
-  minBrollFrames: 6,
+  /** a B-roll cutaway shorter than this many seconds reads as a flash; broll.ts never places a shorter one */
+  minBrollS: 1.2,
   /** versions may share this much of a version's voice frames, in percent */
   maxSharedPct: 20,
   /** and no run of shared voice longer than this */
   maxSharedRunS: 5,
+  /** integrated loudness the cut voice is held to, LUFS, and how far it may sit from it */
+  lufs: -15,
+  lufsTol: 1,
+  /** true peak ceiling, dBFS */
+  truePeakMaxDb: -1.5,
 };
+
+/** The shortest B-roll cutaway at `fps`, in frames: QA.minBrollS rounded up, so a cutaway at this length is never under it. */
+export const brollMinFrames = (fps: number) => Math.ceil(QA.minBrollS * fps - 1e-9);
 
 const end = (i: Item) => i.rec + i.len;
 const fmt = (n: number) => String(Math.round(n * 10) / 10);
@@ -74,7 +83,8 @@ function breaks(tl: Timeline, t: TrackId): string[] {
 export function qaOf(tl: Timeline, others: Record<string, Timeline> = {}): QaReport {
   const notes = [...breaks(tl, "V1"), ...breaks(tl, "A1")];
   for (const i of tl.tracks.V1.items) if (i.len < QA.minSpeakerFrames) notes.push(`V1: a ${i.len}-frame speaker shot at ${i.rec} (under ${QA.minSpeakerFrames})`);
-  for (const i of tl.tracks.V2.items) if (i.len < QA.minBrollFrames) notes.push(`V2: a ${i.len}-frame B-roll shot at ${i.rec} (under ${QA.minBrollFrames})`);
+  const minB = brollMinFrames(tl.fps);
+  for (const i of tl.tracks.V2.items) if (i.len < minB) notes.push(`V2: a ${i.len}-frame B-roll shot at ${i.rec} (under ${minB} frames, ${QA.minBrollS} s)`);
   for (const t of ["V1", "V2"] as const) {
     for (const i of tl.tracks[t].items) {
       const src = tl.sources[i.src];
@@ -94,4 +104,13 @@ export function qaOf(tl: Timeline, others: Record<string, Timeline> = {}): QaRep
     if (s.longestS > QA.maxSharedRunS) notes.push(`Shares a ${fmt(s.longestS)} s run of voice with ${name} (over ${QA.maxSharedRunS} s)`);
   }
   return { ok: !notes.length, notes, shared };
+}
+
+/** Loudness of the rendered voice (integrated LUFS and true peak, dBFS), measured by the caller: the check is the numbers. */
+export function loudnessNotes(m: { lufs: number; truePeak: number }): string[] {
+  const notes: string[] = [];
+  // written as "not within" so a missing measurement (NaN) is flagged, not passed
+  if (!(Math.abs(m.lufs - QA.lufs) <= QA.lufsTol)) notes.push(`Voice is ${m.lufs.toFixed(1)} LUFS (target ${QA.lufs} ± ${QA.lufsTol})`);
+  if (!(m.truePeak <= QA.truePeakMaxDb)) notes.push(`Voice true peak is ${m.truePeak.toFixed(1)} dBFS (over ${QA.truePeakMaxDb})`);
+  return notes;
 }

@@ -9,11 +9,37 @@ import type { ConnectedAccount, SocialPlatform } from "../../../contracts/connec
  * tokens never leave the server. Read synchronously and cached: Graph calls ask for a token on every request.
  */
 
+/** One post's counts as a pull saw them on one day. Platforms give running totals, so a day's gain is the difference from the day before. */
+export interface VideoSnapshot {
+  day: string;
+  id: string;
+  views?: number;
+  likes?: number;
+  comments?: number;
+  shares?: number;
+}
+
+/** One account-level day as a pull saw it (Instagram's reach and new follows). `id` is the account's key, so one row per account and day. */
+export interface AccountDay {
+  day: string;
+  id: string;
+  reach?: number;
+  newFollows?: number;
+}
+
 export interface StoredAccount extends ConnectedAccount {
   /** The login's token for this account (a Facebook Page's own token, an Instagram account's user token…). */
   token?: string;
   refresh?: string;
   expiresAt?: number;
+  /** Per-day counts kept across pulls (TikTok). Never sent to the browser, see publicAccount. */
+  snapshots?: VideoSnapshot[];
+  /** Each posted video's per-second pHashes by post id (an empty list = it could not be read). Never sent to the browser. */
+  prints?: Record<string, string[]>;
+  /** Each posted video's speech (lower case words, see similar.ts speechWords) by post id; [] = no speech or it could not be read. Never sent to the browser. */
+  voices?: Record<string, string[]>;
+  /** Per-day account insights kept across pulls (Instagram login), 90 days. Never sent to the browser, see publicAccount. */
+  daily?: AccountDay[];
 }
 
 interface UserConnectors {
@@ -94,10 +120,23 @@ export function instagramLogin(user: string, username: string): { token: string;
   return { token: a.token, userId: a.platformId };
 }
 
-/** Public view: no tokens. */
+/** Public view: no tokens, no snapshot history, no fingerprints, no speech, no post media URLs, no daily history. */
 export function publicAccount(a: StoredAccount): ConnectedAccount {
-  const { token: _t, refresh: _r, expiresAt, ...rest } = a;
-  return { ...rest, ...(expiresAt ? { loginExpiresAt: expiresAt } : {}) };
+  const { token: _t, refresh: _r, expiresAt, snapshots: _s, prints: _p, voices: _v, daily: _d, ...rest } = a;
+  const posts = rest.posts?.map(({ mediaUrl: _m, ...p }) => p);
+  return { ...rest, ...(posts ? { posts } : {}), ...(expiresAt ? { loginExpiresAt: expiresAt } : {}) };
+}
+
+/**
+ * Adds one day's pull to the history: that day's rows replace any earlier rows for the same posts (or the same
+ * account, for AccountDay rows), and rows older than keepDays go, so the history stays bounded however often the
+ * account is pulled.
+ */
+export function mergeSnapshots<T extends { day: string; id: string }>(prev: T[] | undefined, day: string, rows: T[], keepDays = 90): T[] {
+  const cutoff = new Date(Date.parse(day) - keepDays * 86_400_000).toISOString().slice(0, 10);
+  const pulled = new Set(rows.map((r) => r.id));
+  const kept = (prev ?? []).filter((r) => r.day >= cutoff && !(r.day === day && pulled.has(r.id)));
+  return [...kept, ...rows].sort((x, y) => x.day.localeCompare(y.day) || x.id.localeCompare(y.id));
 }
 
 export const newState = () => randomUUID();

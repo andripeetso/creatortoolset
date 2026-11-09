@@ -56,8 +56,34 @@ const MAX_CONCURRENT = Math.max(1, Number(process.env.ENHANCE_CONCURRENCY || 2))
 const KEEP_DAYS = Number(process.env.ENHANCE_KEEP_DAYS || 0);
 /** The engines, the default first. */
 export const ENGINES = ["nvidia", "elevenlabs"] as const;
-export type Engine = (typeof ENGINES)[number];
-const isEngine = (v: unknown): v is Engine => ENGINES.includes(v as Engine);
+/** Every engine id: the built-in ones above, plus the ones a plug-in registers (registerEnhanceEngine). */
+export type Engine = string;
+type BuiltinEngine = (typeof ENGINES)[number];
+/** An engine a plug-in adds. It runs its own passes and hands each result back through `enhanceHost`. */
+export interface EnhanceEngine {
+  id: string;
+  /** Why this account can't run it now (its key, its role), or null. */
+  refusal?: (user: SessionUser) => string | null;
+  /** True for an account whose default engine this is (checked before NVIDIA). */
+  preferred?: (user: SessionUser) => boolean;
+  /** Extra fields for GET /availability. */
+  availability?: (user: SessionUser) => Record<string, unknown> | Promise<Record<string, unknown>>;
+  /** Starts this engine's pass for `meta`; its input is `enhanceHost.stepInput(meta)`. Must not reject. */
+  start: (host: EnhanceHost, meta: Meta) => Promise<void>;
+  /** Routes, mounted under /api/enhance/engine/<id> (the body limit and the tool gate of /api/enhance apply). */
+  routes?: Hono<any, any, any>;
+}
+const engines = new Map<string, EnhanceEngine>();
+/** Called by a plug-in at module load, before boot mounts /api/enhance (Hono copies a sub-app's routes at mount time). */
+export function registerEnhanceEngine(e: EnhanceEngine): void {
+  if (!/^[a-z][a-z0-9]{1,20}$/.test(e.id)) throw new Error(`enhance engine "${e.id}": lowercase letters and digits only`);
+  if ((ENGINES as readonly string[]).includes(e.id) || engines.has(e.id)) throw new Error(`enhance engine "${e.id}" is declared twice`);
+  engines.set(e.id, e);
+  if (e.routes) enhanceApp.route(`/engine/${e.id}`, e.routes);
+}
+const isEngine = (v: unknown): v is Engine =>
+  typeof v === "string" && ((ENGINES as readonly string[]).includes(v) || engines.has(v));
+const allEngines = (): string[] => [...ENGINES, ...engines.keys()];
 
 const okId = (id: string) => /^[a-z0-9-]{6,40}$/.test(id);
 const sesDir = (id: string) => path.join(ENHANCE_DIR, id);
@@ -74,19 +100,23 @@ const LOUDNESS = "loudnorm=I=-15:TP=-1.5:LRA=9";
 
 /** A session's status moves. A run is queued, then running (here or on the Mac), then done or error; a cancel gives back ready or done. */
 export const ENHANCE_MOVES: Moves<EnhanceStatus> = {
-  ready: ["queued"],
+  ready: ["queued", "needs_key"],
   queued: ["running", "ready", "done", "error"],
-  running: ["queued", "ready", "done", "error"],
-  done: ["queued"],
-  error: ["queued"],
+  running: ["queued", "ready", "done", "error", "needs_key"],
+  done: ["queued", "needs_key"],
+  error: ["queued", "needs_key"],
+  needs_key: ["queued", "needs_key"],
 };
+
+/** An engine's key is missing for the session's owner: the run waits (needs_key) instead of failing. */
+class NeedsKey extends Error {}
 
 /** Every status change goes through here; an illegal move throws (routes answer 409). */
 function setStatus(meta: Meta, to: EnhanceStatus): void {
   meta.status = move(ENHANCE_MOVES, meta.status, to, `enhance ${meta.id}`);
 }
 
-interface Meta {
+export interface Meta {
   id: string;
   name: string;
   owner?: string;
@@ -97,6 +127,8 @@ interface Meta {
   /** What processes (processed) the run: an Engine; older sessions may
    *  carry legacy names, display-only. */
   engine?: string;
+  /** A plug-in engine's run waiting for, or claimed by, its outside worker (`at`: when). */
+  remote?: { state: "waiting" | "claimed"; at: number };
   /** The passes, in order (admins: up to two); `engine` = the first. */
   chain?: Engine[];
   /** The pass running (or next). */
@@ -117,6 +149,8 @@ const active = new Map<string, Meta>();
 const children = new Map<string, ChildProcess>();
 /** In-flight engine requests (ElevenLabs, NVIDIA), so cancel() can abort them. */
 const apiCalls = new Map<string, AbortController>();
+/** Sessions cancelled while no job of theirs was in memory: a plug-in engine's answer that raced the cancel is refused. */
+export const cancelled = new Set<string>();
 const queue: string[] = [];
 let running = 0;
 
@@ -147,6 +181,7 @@ async function reconcileInterrupted(): Promise<void> {
     if (active.has(id)) continue;
     const meta = await readMeta(id);
     if (!meta || (meta.status !== "queued" && meta.status !== "running")) continue;
+    if (meta.remote) continue; // a plug-in engine's run: its own sweep decides
     setStatus(meta, "error");
     meta.error = "Interrupted by a server restart — try again.";
     await persist(meta);
@@ -275,17 +310,19 @@ function runStep(
 
 const KEY = { nvidia: "NVIDIA_API_KEY", elevenlabs: "ELEVENLABS_API_KEY" } as const;
 /** The engine's key for whoever the session belongs to; throws the "add your key" message when none serves them. */
-function engineKey(engine: Engine, owner: Actor): string {
+function engineKey(engine: BuiltinEngine, owner: Actor): string {
   const r = keyFor(owner, KEY[engine]);
-  if (r.missing) throw new Error(r.missing);
+  if (r.missing) throw new NeedsKey(r.missing);
   return r.key;
 }
-/** The default engine: NVIDIA for everyone. */
-const defaultEngine = (): Engine => "nvidia";
+/** The default engine: a plug-in engine that prefers this account, else NVIDIA for everyone. */
+const defaultEngine = (user: SessionUser): Engine => [...engines.values()].find((e) => e.preferred?.(user))?.id ?? "nvidia";
 
 /** Why `user` can't run `engine`, or null. */
 function refusal(engine: Engine, user: SessionUser): string | null {
-  return keyFor(user, KEY[engine]).missing ?? null;
+  const plugged = engines.get(engine);
+  if (plugged) return plugged.refusal?.(user) ?? null;
+  return keyFor(user, KEY[engine as BuiltinEngine]).missing ?? null;
 }
 
 /** NVIDIA Studio Voice on the extracted 48 kHz WAV -> enhance-nv.wav, lined up with it. */
@@ -377,12 +414,39 @@ async function runElevenLabs(id: string, owner: string | undefined, wavPath: str
 
 /* ---- pipeline ---- */
 
-function enqueue(meta: Meta): void {
-  setStatus(meta, "queued");
+/** Queues the run; true when it is queued, false when it parked as needs_key. */
+function enqueue(meta: Meta, user: SessionUser): boolean {
   meta.progress = 0;
   meta.error = undefined;
   meta.chain = meta.chain?.length ? meta.chain : [isEngine(meta.engine) ? meta.engine : "nvidia"];
   meta.step = 0;
+  // a pass whose engine has no key for this user parks the session; it runs once they add one and run again
+  const missing = meta.chain.map((e) => refusal(e, user)).find(Boolean);
+  if (missing) {
+    setStatus(meta, "needs_key");
+    meta.error = missing;
+    return false;
+  }
+  setStatus(meta, "queued");
+  cancelled.delete(meta.id);
+  meta.remote = undefined;
+  startStep(meta);
+  return true;
+}
+
+/** The current pass: a plug-in engine's (it hands the result back itself), or the server's queue. */
+function startStep(meta: Meta): void {
+  const plugged = engines.get(meta.chain![meta.step ?? 0]);
+  if (plugged) {
+    void plugged.start(enhanceHost, meta).catch(async (e) => {
+      if (active.get(meta.id) !== meta) return;
+      setStatus(meta, "error");
+      meta.error = e instanceof Error ? e.message : String(e);
+      meta.remote = undefined;
+      await persist(meta);
+    });
+    return;
+  }
   active.set(meta.id, meta);
   queue.push(meta.id);
   pump();
@@ -474,6 +538,12 @@ async function runJob(id: string): Promise<void> {
     for (let step = meta.step ?? 0; step < chain.length; step++) {
       meta.step = step;
       const engine = chain[step];
+      const plugged = engines.get(engine);
+      if (plugged) {  // a plug-in engine's pass: it takes this input and answers later
+        active.delete(id);
+        await plugged.start(enhanceHost, meta);
+        return;
+      }
       const [lo, hi] = band(step, chain.length);
       // 1) mono PCM WAV for the engine: 48 kHz for NVIDIA, 44.1 kHz for ElevenLabs
       await runStep(id, meta, "ffmpeg", [
@@ -511,7 +581,7 @@ async function runJob(id: string): Promise<void> {
     await finish(id, meta, clean!, duration, () => active.get(id) === meta);
   } catch (e) {
     if (active.get(id) !== meta) return; // cancelled — don't resurrect
-    setStatus(meta, "error");
+    setStatus(meta, e instanceof NeedsKey ? "needs_key" : "error");
     meta.error = e instanceof Error ? e.message : String(e);
     await persist(meta);
   } finally {
@@ -542,6 +612,7 @@ function pump(): void {
 /** Kill a queued/running job, the Mac's included (files stay). */
 function cancel(id: string): void {
   active.delete(id); // runJob checks this before writing results
+  cancelled.add(id);
   const qi = queue.indexOf(id);
   if (qi >= 0) queue.splice(qi, 1);
   children.get(id)?.kill("SIGKILL");
@@ -608,11 +679,22 @@ async function streamFile(
    matches as an id */
 enhanceApp.get("/availability", async (c) => {
   const user = c.get("user");
+  const why: Record<string, string | undefined> = {
+    nvidia: refusal("nvidia", user) ?? undefined,
+    elevenlabs: refusal("elevenlabs", user) ?? undefined,
+  };
+  const plugged: Record<string, unknown> = {};
+  for (const e of engines.values()) {
+    plugged[e.id] = !refusal(e.id, user);
+    why[e.id] = refusal(e.id, user) ?? undefined;
+    Object.assign(plugged, await e.availability?.(user));
+  }
   return c.json({
     nvidia: !refusal("nvidia", user),
     elevenlabs: !refusal("elevenlabs", user),
-    why: { nvidia: refusal("nvidia", user) ?? undefined, elevenlabs: refusal("elevenlabs", user) ?? undefined },
-    default: defaultEngine(),
+    ...plugged,
+    why,
+    default: defaultEngine(user),
     admin: user.role === "admin", // a second pass
   });
 });
@@ -632,11 +714,10 @@ enhanceApp.get("/", async (c) => {
 function pickChain(c: Context<{ Variables: AuthVars }>): Engine[] | { error: string } {
   const user = c.get("user");
   const [q, then] = [c.req.query("engine"), c.req.query("then") || undefined];
-  for (const e of [q, then]) if (e !== undefined && !isEngine(e)) return { error: `Engine is one of ${ENGINES.join(", ")}` };
-  const chain = [(q as Engine | undefined) ?? defaultEngine(), ...(then ? [then as Engine] : [])];
+  for (const e of [q, then]) if (e !== undefined && !isEngine(e)) return { error: `Engine is one of ${allEngines().join(", ")}` };
+  const chain = [(q as Engine | undefined) ?? defaultEngine(user), ...(then ? [then as Engine] : [])];
   if (then && user.role !== "admin") return { error: "A second pass is for admins." };
   if (then && then === chain[0]) return { error: "The second pass needs another engine." };
-  for (const e of chain) if (refusal(e, user)) return { error: refusal(e, user)! };
   return chain;
 }
 
@@ -687,9 +768,9 @@ enhanceApp.post("/", async (c) => {
     ]);
     active.delete(id);
     // enhanced in the same go — no separate "run" click
-    enqueue(meta);
+    const queued = enqueue(meta, user);
     await persist(meta);
-    bumpUsage(user.username, { enhanceRuns: 1 });
+    if (queued) bumpUsage(user.username, { enhanceRuns: 1 });
     return c.json(publicMeta(meta));
   } catch (e) {
     active.delete(id);
@@ -717,9 +798,9 @@ enhanceApp.post("/:id/run", async (c) => {
   if (!Array.isArray(chain)) return c.json(chain, 400);
   meta.engine = chain[0];
   meta.chain = chain;
-  enqueue(meta);
+  const queued = enqueue(meta, user);
   await persist(meta);
-  bumpUsage(user.username, { enhanceRuns: 1 });
+  if (queued) bumpUsage(user.username, { enhanceRuns: 1 });
   return c.json(publicMeta(meta));
 });
 
@@ -856,3 +937,27 @@ enhanceApp.delete("/:id", async (c) => {
   await rm(sesDir(id), { recursive: true, force: true });
   return c.json({ ok: true });
 });
+
+/** What a plug-in engine may use from this module: its passes take their input and hand each result back through these. */
+export type EnhanceHost = {
+  readMeta: typeof readMeta;
+  sessionIds: typeof sessionIds;
+  persist: typeof persist;
+  setStatus: typeof setStatus;
+  finish: typeof finish;
+  startStep: typeof startStep;
+  band: typeof band;
+  stepInput: typeof stepInput;
+  passOut: typeof passOut;
+  runStep: typeof runStep;
+  sesDir: typeof sesDir;
+  active: typeof active;
+  cancelled: typeof cancelled;
+  streamFile: typeof streamFile;
+  /** The sample rate the engines take (NVIDIA's). */
+  sampleRate: number;
+};
+export const enhanceHost: EnhanceHost = {
+  readMeta, sessionIds, persist, setStatus, finish, startStep, band, stepInput, passOut, runStep, sesDir, active, cancelled,
+  streamFile, sampleRate: NV_SR,
+};

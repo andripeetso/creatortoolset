@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Tool } from "@contracts/tools";
+import type { PluginGateId, Tool } from "@contracts/tools";
 import { clearLocalCache } from "./local-cache";
 
 /**
@@ -15,28 +15,36 @@ export interface Me {
   name?: string;
   role: "admin" | "team" | "user";
   cloud: boolean;
-  /** Apps switched off for this account (see canUse). */
-  off: Tool[];
+  /** Apps and plug-in gates switched off for this account (see canUse). */
+  off: (Tool | PluginGateId)[];
   logins?: number | null; // real accounts only — used to spot a first login
 }
 
 /** Cloud transcription and AI in Caption Studio. */
 export const canUseCloud = (me: Me | null): boolean => !!me;
-/** An app is on unless switched off for this account; admins have every one. The server enforces the same for the
- *  apps boot.ts gates. */
-export const canUse = (me: Me | null, tool: Tool): boolean =>
+/** An app or a plug-in gate is on unless switched off for this account; admins have every one. The server enforces
+ *  the same for the apps boot.ts gates and for a plug-in's requireGate routes. */
+export const canUse = (me: Me | null, tool: Tool | PluginGateId): boolean =>
   !!me && (me.role === "admin" || !me.off.includes(tool));
 
 interface AuthState {
   required: boolean;
   me: Me | null;
-  setAuth: (required: boolean, me: Me | null) => void;
+  /** The server runs in hosted mode (CT_MODE=hosted): teams, admin, view-as and invite links exist. */
+  hosted: boolean;
+  /** Set while a platform admin reads the app as `me` (view-as): that admin's username. */
+  viewedBy: string | null;
+  /** `server` comes from /api/auth/check; a sign-in leaves `hosted` as it was. */
+  setAuth: (required: boolean, me: Me | null, server?: { hosted: boolean; viewedBy: string | null }) => void;
 }
 
 export const useAuth = create<AuthState>((set) => ({
   required: false,
   me: null,
-  setAuth: (required, me) => set({ required, me }),
+  hosted: false,
+  viewedBy: null,
+  setAuth: (required, me, server) =>
+    set((s) => ({ required, me, hosted: server?.hosted ?? s.hosted, viewedBy: server?.viewedBy ?? null })),
 }));
 
 /** The signed-in account, reactive. */

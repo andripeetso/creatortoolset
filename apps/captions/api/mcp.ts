@@ -12,6 +12,7 @@ import { FILE_USES, type AssistantMedia, type AssistantWork } from "../contracts
 import { SESSION_STATUSES } from "./lib/workshop/types";
 import { innerCall, jobTurn, type AuthVars } from "./auth";
 import type { SessionUser } from "./users";
+import type { ServerPlugin } from "./lib/plugin";
 
 /**
  * Creator Toolset as a remote MCP server: POST /api/mcp, MCP's Streamable HTTP answered as plain JSON, no sessions. Only a Full AI key gets here
@@ -50,7 +51,7 @@ const INSTRUCTIONS = `Creator Toolset, as the signed-in user's account.
 Content Workshop: the same projects, sessions, pieces and chat the user sees on the site and the iPhone app, so whatever
 you do here shows there at once. A project is one brand (audience, voice, CTA). A session is one idea: its sources,
 notes, pieces and chat, with a status (draft, writing, production, editing, toPost = ready to post, published,
-shelved). A piece is one reel, carousel, ad, free or youtube script: blocks (lines or slides, each with an id), hook
+shelved). A piece is one reel, carousel, ad, free, youtube script, newsletter, X thread or article: blocks (lines or slides, each with an id), hook
 variations, a caption (post description) and a pinned comment. Two ways to write: workshop_chat asks the Workshop's
 own writer, which reads the project, the user's posts and past rewrites (it runs on a paired Mac and can take minutes), or
 change the text yourself with workshop_edit_piece. Locked blocks are ones the user approved: leave them as they are.
@@ -102,7 +103,7 @@ export const TOOLS = [
   {
     name: "workshop_new_piece",
     description: "Add another piece to a session; text becomes its first block (split it with workshop_edit_piece).",
-    inputSchema: { type: "object", properties: { session: str, kind: { type: "string", enum: ["reel", "carousel", "ad", "free", "youtube"] }, title: str, text: str }, required: ["session", "kind"] },
+    inputSchema: { type: "object", properties: { session: str, kind: { type: "string", enum: ["reel", "carousel", "ad", "free", "youtube", "newsletter", "thread", "article"] }, title: str, text: str }, required: ["session", "kind"] },
   },
   {
     name: "workshop_edit_piece",
@@ -125,6 +126,11 @@ export const TOOLS = [
     },
   },
   { name: "workshop_wait", description: "Keep waiting for a workshop_chat reply.", inputSchema: { type: "object", properties: { session: str, reply: str, wait_s: { type: "integer" } }, required: ["session", "reply"] } },
+  {
+    name: "finals_link_session",
+    description: "Link a Finals piece (its id) to the Workshop session, and optionally one of its pieces (workshop_piece), so Finals shows a post description per version there.",
+    inputSchema: { type: "object", properties: { piece: str, session: str, workshop_piece: str }, required: ["piece", "session"] },
+  },
   { name: "list_reviews", description: "His videos in Review: approval, versions, latest file, comment counts, link.", inputSchema: { type: "object", properties: {} } },
   {
     name: "get_review",
@@ -220,6 +226,47 @@ const ASSISTANT_DEFS = [
   },
 ];
 
+/** A plug-in's MCP tool: its listing (the shape of TOOLS) and the handler that answers it. */
+export type PluginToolDef = { name: string; description: string; inputSchema: Args };
+/** What a plug-in tool handler gets besides its arguments: the account it runs as, this server's address, and the site's routes as that account. */
+export type PluginToolContext = { user: SessionUser; origin: string; api: ReturnType<typeof apiOf> };
+export type PluginToolHandler = (args: Args, ctx: PluginToolContext) => Promise<unknown>;
+export type PluginTools = { defs: PluginToolDef[]; handlers: Map<string, PluginToolHandler>; replaced: Set<string> };
+
+/**
+ * The plug-ins' MCP tools (a plugin's `tools: { defs, handlers, replaces }`), gathered once when the server boots. A tool whose name a
+ * built-in or assistant tool already has throws, unless the same plug-in lists that built-in in `replaces`: its tool then answers the
+ * name, and the built-in is left out of the list. `replaces` takes only TOOLS names, each by one plug-in, and the plug-in must serve a
+ * tool of that name. A def with no handler throws. The boot refuses rather than shadowing a tool by accident.
+ */
+export function pluginToolsOf(plugins: ServerPlugin[]): PluginTools {
+  const builtIn = new Set(TOOLS.map((t) => t.name));
+  const taken = new Set<string>([...builtIn, ...ASSISTANT_DEFS.map((t) => t.name)]);
+  const out: PluginTools = { defs: [], handlers: new Map(), replaced: new Set() };
+  for (const plugin of plugins) {
+    const { defs = [], handlers = {}, replaces = [] } = (plugin.tools ?? {}) as {
+      defs?: PluginToolDef[];
+      handlers?: Record<string, PluginToolHandler>;
+      replaces?: string[];
+    };
+    const over = new Set(replaces);
+    for (const name of over) {
+      if (!builtIn.has(name)) throw new Error(`plug-in ${plugin.id}: ${name} is not a built-in tool it can replace`);
+      if (out.replaced.has(name)) throw new Error(`plug-in ${plugin.id}: ${name} is already replaced by another plug-in`);
+      if (!defs.some((d) => d.name === name)) throw new Error(`plug-in ${plugin.id}: replaces tool ${name} but serves no tool of that name`);
+    }
+    for (const def of defs) {
+      if (out.handlers.has(def.name) || (taken.has(def.name) && !over.has(def.name))) throw new Error(`plug-in ${plugin.id}: tool ${def.name} is already served`);
+      if (!Object.hasOwn(handlers, def.name)) throw new Error(`plug-in ${plugin.id}: tool ${def.name} has no handler`);
+      if (over.has(def.name)) out.replaced.add(def.name);
+      taken.add(def.name);
+      out.defs.push(def);
+      out.handlers.set(def.name, handlers[def.name]!);
+    }
+  }
+  return out;
+}
+
 const pick = (row: Args, keys: string[]) => Object.fromEntries(keys.filter((k) => row[k] != null && row[k] !== "" && !(Array.isArray(row[k]) && !(row[k] as unknown[]).length)).map((k) => [k, row[k]]));
 const linesOf = (blocks: unknown) => ((blocks as Args[] | undefined) ?? []).map((b) => ({ id: b.id, text: b.text }));
 const piece = (d: Args) => ({
@@ -256,9 +303,9 @@ function reviewPath(link: string, origin: string): string {
   throw new ToolError(`That isn't a review link: expected ${origin}/review/<id>, /r/<token> or /rp/<token>/<id>.`);
 }
 
-/** The tools, each a thin client of the site's own routes with the caller's credentials. */
-function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
-  const api = async (path: string, method = "GET", body?: unknown): Promise<Response> => {
+/** The site's own routes, called with the caller's credentials: every tool's calls go through here, so each route's checks stay the only checks. */
+function apiOf(call: Call, auth: Headers) {
+  return async (path: string, method = "GET", body?: unknown): Promise<Response> => {
     const headers = new Headers();
     for (const h of ["authorization", "cookie"]) if (auth.get(h)) headers.set(h, auth.get(h)!);
     if (body !== undefined) headers.set("content-type", "application/json");
@@ -270,6 +317,11 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
     }
     return r;
   };
+}
+
+/** The tools, each a thin client of the site's own routes with the caller's credentials. */
+function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
+  const api = apiOf(call, auth);
   const json = async <T = Args>(path: string, method = "GET", body?: unknown) => (await (await api(path, method, body)).json()) as T;
   const ws = <T = Args>(path: string, method = "GET", body?: unknown) => json<T>(`/api/workshop${path}`, method, body);
   /** An Analyzer account of the user's by handle → its id (the account routes take the id). */
@@ -336,6 +388,8 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
       return wait({ session: a.session, reply: started.reply.id, wait_s: a.wait_s });
     },
     workshop_wait: wait,
+    finals_link_session: async (a) =>
+      ws(`/sessions/${a.session}/finals`, "POST", { pieceId: a.piece, ...(a.workshop_piece ? { docId: a.workshop_piece } : {}) }),
     list_reviews: async () => ({
       reviews: (await json<Args[]>("/api/review")).map((r) => {
         const versions = (r.versions as Args[] | undefined) ?? [];
@@ -575,6 +629,7 @@ const STEPS: Record<string, string> = {
   workshop_projects: "Looking at your projects",
   workshop_sessions: "Looking through the Workshop",
   workshop_session: "Reading a Workshop session",
+  finals_link_session: "Linking the session",
   workshop_new_session: "Starting a Workshop session",
   workshop_update_session: "Updating a Workshop session",
   workshop_new_piece: "Adding a piece",
@@ -670,8 +725,9 @@ export function workFor(name: string, a: Args, r: Args): { card: AssistantWork; 
   }
 }
 
-async function callTool(call: Call, auth: Headers, origin: string, user: SessionUser, name: string, args: Args) {
-  const handler = tools(call, auth, origin, user)[name];
+async function callTool(call: Call, auth: Headers, origin: string, user: SessionUser, name: string, args: Args, plugged: PluginTools) {
+  const plug = plugged.handlers.get(name);
+  const handler = plug ? (a: Args) => plug(a, { user, origin, api: apiOf(call, auth) }) : tools(call, auth, origin, user)[name];
   const turn = jobTurn(auth.get("authorization") ?? undefined);
   if (turn) noteStep(user.username, turn, stepFor(name, args ?? {}));
   try {
@@ -687,7 +743,7 @@ async function callTool(call: Call, auth: Headers, origin: string, user: Session
 }
 
 /** One JSON-RPC message in, its answer out (null for a notification). `origin` starts the links the tools hand back. */
-export async function handle(call: Call, auth: Headers, msg: Args, origin: string, user: SessionUser): Promise<Args | null> {
+export async function handle(call: Call, auth: Headers, msg: Args, origin: string, user: SessionUser, plugged: PluginTools = pluginToolsOf([])): Promise<Args | null> {
   if (msg.id === undefined) return null;
   const params = (msg.params ?? {}) as Args;
   const ok = (result: unknown) => ({ jsonrpc: "2.0", id: msg.id, result });
@@ -701,17 +757,21 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
       });
     case "ping":
       return ok({});
-    case "tools/list":
-      return ok({ tools: isJob(auth) ? [...TOOLS, ...ASSISTANT_DEFS] : TOOLS });
+    case "tools/list": {
+      const listed = isJob(auth) ? [...TOOLS, ...ASSISTANT_DEFS] : TOOLS;
+      return ok({ tools: [...listed.filter((t) => !plugged.replaced.has(t.name)), ...plugged.defs] });
+    }
     case "tools/call":
-      return ok(await callTool(call, auth, origin, user, String(params.name), (params.arguments ?? {}) as Args));
+      return ok(await callTool(call, auth, origin, user, String(params.name), (params.arguments ?? {}) as Args, plugged));
     default:
       return { jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: `Method not found: ${String(msg.method)}` } };
   }
 }
 
-export function mcpApp(call: Call) {
+/** The MCP route. `plugins` (the server's plug-ins, boot.ts) add their tools to the list and the calls; checked here, once. */
+export function mcpApp(call: Call, plugins: ServerPlugin[] = []) {
   const app = new Hono<{ Variables: AuthVars }>();
+  const plugged = pluginToolsOf(plugins);
   app.post("/", async (c) => {
     const body = (await c.req.json().catch(() => null)) as Args | Args[] | null;
     if (!body) return c.json({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } }, 400);
@@ -723,10 +783,10 @@ export function mcpApp(call: Call) {
     const url = new URL(c.req.url);
     const origin = process.env.PUBLIC_ORIGIN?.replace(/\/$/, "") || `${c.req.header("x-forwarded-proto") ?? url.protocol.replace(":", "")}://${url.host}`;
     if (Array.isArray(body)) {
-      const out = (await Promise.all(body.map((m) => handle(inner, auth, m, origin, user)))).filter(Boolean);
+      const out = (await Promise.all(body.map((m) => handle(inner, auth, m, origin, user, plugged)))).filter(Boolean);
       return out.length ? c.json(out) : c.body(null, 202);
     }
-    const out = await handle(inner, auth, body, origin, user);
+    const out = await handle(inner, auth, body, origin, user, plugged);
     return out ? c.json(out) : c.body(null, 202);
   });
   // no server-sent stream: everything is answered in the POST

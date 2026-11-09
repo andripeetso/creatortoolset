@@ -10,6 +10,7 @@ import { ffmpegSlot } from "../library/media/run";
 import type { ProbeSummary } from "../library/media/probe";
 import { transcribeRoute, wordsOf, type TimedWord } from "../library/transcribe";
 import { saveStep } from "./store";
+import { voiceChannel } from "./sync";
 import type { StepContext } from "./worker";
 
 /**
@@ -57,12 +58,17 @@ export function sentencesOf(words: TimedWord[], src: string, first: number): Sen
 // ponytail: kept by version id, never purged (about 1.4 MB an hour of footage); drop it with the version when that matters
 export const energyFile = (versionId: string) => path.join(env.dataDir, "editor", "cache", `${versionId}.energy.f32`);
 
-/** RMS loudness 0..1 of the first audio stream, ENERGY_PER_SECOND reads a second. Runs in the server's ffmpeg limit. */
-export function readEnergy(src: string, signal?: AbortSignal): Promise<Float32Array> {
+/**
+ * RMS loudness 0..1 of the first audio stream, ENERGY_PER_SECOND reads a second. A two-channel recorder file reads
+ * its voice channel alone (sync.voiceChannel), never the mix of two mics. Runs in the server's ffmpeg limit.
+ */
+export async function readEnergy(src: string, signal?: AbortSignal): Promise<Float32Array> {
+  const channel = await voiceChannel(src, signal);
+  const mono = channel === null ? ["-ac", "1"] : ["-af", `pan=mono|c0=c${channel}`];
   return ffmpegSlot(
     () =>
       new Promise((resolve, reject) => {
-        const p = spawn(ffmpegCommand(), ["-hide_banner", "-loglevel", "error", "-nostdin", "-i", src, "-vn", "-ac", "1", "-ar", String(RATE), "-f", "s16le", "pipe:1"], {
+        const p = spawn(ffmpegCommand(), ["-hide_banner", "-loglevel", "error", "-nostdin", "-i", src, "-vn", ...mono, "-ar", String(RATE), "-f", "s16le", "pipe:1"], {
           signal,
         });
         const out: number[] = [];

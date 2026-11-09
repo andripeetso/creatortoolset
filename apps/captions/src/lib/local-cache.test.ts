@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { useAuth, type Me } from "./auth";
-import { clearLocalCache, putCached, readCached, warmCached } from "./local-cache";
+import { cachedUsage, clearAccountCache, clearLocalCache, putCached, readCached, warmCached } from "./local-cache";
 
 // a stand-in for the browser's localStorage (the test runs in node)
 const store = new Map<string, string>();
@@ -48,6 +48,39 @@ describe("local-cache", () => {
     expect(readCached("tinyacrobatics", "/api/clips")).toBeNull();
     expect(readCached("ben", "/api/clips")).toBeNull();
     expect([...store.keys()].some((k) => k.startsWith("ct-swr:"))).toBe(false);
+  });
+
+  it("Settings → Cache counts only this account's saved lists", () => {
+    putCached("tinyacrobatics", "/api/clips", ["a", "b"]);
+    putCached("tinyacrobatics", "/api/review", [1]);
+    putCached("ben", "/api/clips", ["c"]);
+    const mine = cachedUsage("tinyacrobatics");
+    expect(mine.items).toBe(2);
+    expect(mine.bytes).toBe('["a","b"]'.length + "[1]".length);
+    expect(cachedUsage("ben").items).toBe(1);
+    expect(cachedUsage(null)).toEqual({ bytes: 0, items: 0 });
+  });
+
+  it("Settings → Cache Clear drops only the signed-in account's lists", () => {
+    putCached("tinyacrobatics", "/api/clips", ["a"]);
+    putCached("tinyacrobatics", "/api/review", [1]);
+    putCached("ben", "/api/clips", ["b"]);
+    clearAccountCache("tinyacrobatics");
+    expect(readCached("tinyacrobatics", "/api/clips")).toBeNull();
+    expect(cachedUsage("tinyacrobatics").items).toBe(0);
+    expect(readCached("ben", "/api/clips")).toEqual(["b"]);
+    clearAccountCache(null);
+    expect(readCached("ben", "/api/clips")).toEqual(["b"]);
+  });
+
+  it("a warm-up still in flight during Clear does not save its list back", async () => {
+    putCached("tinyacrobatics", "/api/clips", ["old"]);
+    let finish!: (v: string[]) => void;
+    const pending = warmCached("/api/clips", () => new Promise<string[]>((r) => (finish = r)));
+    clearAccountCache("tinyacrobatics");
+    finish(["late"]);
+    await pending;
+    expect(readCached("tinyacrobatics", "/api/clips")).toBeNull();
   });
 
   it("a failed warm-up keeps the saved copy", async () => {

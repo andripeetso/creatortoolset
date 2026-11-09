@@ -3,9 +3,9 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { AuthVars } from "./auth";
-import { mintJobToken, revokeJobToken } from "./auth";
+import { mintJobToken, revokeJobToken, touchJobToken } from "./auth";
 import { env } from "./lib/env";
-import { routeFor, type Route } from "./lib/providers";
+import { routeFor, runFields, type Route } from "./lib/providers";
 import { streamMacClaude, type MacAsk, type MacAskStatus } from "./lib/mac-claude";
 import { slug } from "./lib/workshop/folder";
 import { myKeys } from "./my-keys";
@@ -65,16 +65,20 @@ interface Conv {
 }
 
 /** How many earlier conversations an account keeps; the oldest goes past this. */
-const PAST_KEPT = 100;
+export const PAST_KEPT = 100;
 
 const titleOf = (messages: AssistantMessage[]) => {
   const first = (messages.find((m) => m.role === "user")?.text || "Conversation").replace(/\s+/g, " ").trim();
   return first.length > 70 ? `${first.slice(0, 69)}…` : first;
 };
 
-/** The conversation on screen goes into the history (when it has anything) and a fresh one starts. */
-function archive(conv: Conv): void {
-  if (conv.messages.length) conv.past = [{ id: randomUUID(), messages: conv.messages }, ...(conv.past ?? [])].slice(0, PAST_KEPT);
+/** The conversation on screen goes into the history (when it has anything) and a fresh one starts; one pushed past PAST_KEPT goes with its pictures. */
+function archive(username: string, conv: Conv): void {
+  if (conv.messages.length) {
+    const all = [{ id: randomUUID(), messages: conv.messages }, ...(conv.past ?? [])];
+    conv.past = all.slice(0, PAST_KEPT);
+    for (const p of all.slice(PAST_KEPT)) dropImages(username, p.messages);
+  }
   conv.messages = [];
   conv.navigate = undefined;
 }
@@ -448,10 +452,15 @@ export async function answerWithTools(
       label: opts.label,
       background: opts.background,
       web: true, // the assistant may search and read the web, as the Workshop's writer does
-      provider: { instance: route.instance.id, driver: route.instance.driver, home: route.instance.home, model: route.selection.model, effort: route.selection.effort, device: route.device, scope: route.scope },
+      provider: { instance: route.instance.id, driver: route.instance.driver, home: route.instance.home, model: route.selection.model, effort: route.selection.effort, device: route.device, scope: route.scope, ...runFields(route.instance) },
       mcp: { url, token },
       files: opts.files,
-      onAsk: opts.onAsk,
+      // a turn waiting for an approval isn't counted toward its time limit (mac-claude.ts), so its token waits too
+      onAsk: opts.onAsk && ((ask) => {
+        const status = opts.onAsk!(ask);
+        if (status === "waiting") touchJobToken(token);
+        return status;
+      }),
       // Claude's own reads and searches; its MCP calls are noted by mcp.ts already, and "Thinking" is the reply's own status
       onStep: (label) => {
         if (label !== "Thinking" && !label.startsWith("mcp__")) noteStep(username, opts.turn, label);
@@ -591,7 +600,7 @@ assistantApp.delete("/", (c) => {
   const u = c.get("user");
   const conv = load(u.username);
   if (conv.messages.at(-1)?.status === "thinking") return c.json({ error: "Still answering: wait for it" }, 409);
-  archive(conv);
+  archive(u.username, conv);
   save(u.username);
   return c.json(view(u.username, u.role === "admin"));
 });
@@ -604,7 +613,7 @@ assistantApp.post("/past/:id/open", (c) => {
   const found = conv.past?.find((p) => p.id === c.req.param("id"));
   if (!found) return c.json({ error: "That conversation is gone" }, 404);
   conv.past = conv.past!.filter((p) => p !== found);
-  archive(conv);
+  archive(u.username, conv);
   conv.messages = found.messages;
   save(u.username);
   return c.json(view(u.username, u.role === "admin"));

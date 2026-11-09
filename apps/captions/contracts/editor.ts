@@ -16,6 +16,8 @@
  *   GET    /api/editor/:id/sentences       → Sentence[] (what analyze found, for playing a take)
  *   PUT    /api/editor/:id/lines           PlansPatch (the creator): takes swapped or lines reordered → Edit; redrafts what changed
  *   DELETE /api/editor/:id                 to the trash (kept LIBRARY_TRASH_DAYS)
+ *   GET    /api/editor/defaults            → EditorDefaults (the set a new edit gets, and the items each slot can take)
+ *   PUT    /api/editor/defaults/:slot      { id: string | null } (null = back to the built-in one) → EditorDefaults
  * Every step runs as the edit's creator, on their own keys and AI: a workspace owner sees, stops and deletes, never runs.
  */
 
@@ -38,6 +40,39 @@ export interface EditBrief {
   brollCollectionId: string | null;
   /** punch-in zoom on jump cuts */
   framing: { punch: number };
+  /** the per-edit flags a plug-in declared (EditFlag), by id: on or off. A new edit records every declared flag. */
+  flags: Record<string, boolean>;
+}
+
+/** A per-edit flag a plug-in declares (plug-in `editFlags`): a chip on the edit, saved with it. Shows nothing else. */
+export interface EditFlag {
+  id: string;
+  label: string;
+  /** the chip's state on a new edit; off when absent */
+  default?: boolean;
+}
+
+/** What an edit is made with: one item per slot, by id (the built-in ids are in BUILT_IN_BUNDLE). */
+export const EDIT_SLOTS = ["designSystem", "grade", "voiceMix", "sfxSet"] as const;
+export type EditSlot = (typeof EDIT_SLOTS)[number];
+export const EDIT_SLOT_NAME: Record<EditSlot, string> = { designSystem: "Design", grade: "Grade", voiceMix: "Voice mix", sfxSet: "Sound effects" };
+export type EditBundle = Record<EditSlot, string>;
+
+/** The set every edit starts with when no default is chosen: plain design, no grade, voice levelled only, no sound effects. */
+export const BUILT_IN_BUNDLE: EditBundle = { designSystem: "plain", grade: "none", voiceMix: "level", sfxSet: "none" };
+
+/** One item a slot can use. `from` is the pack it came from, null for the built-in ones. */
+export interface EditItem {
+  id: string;
+  title: string;
+  from: string | null;
+}
+
+/** The editor defaults of one person: the set a new edit gets (`bundle`), their own choices, and what each slot can take. */
+export interface EditorDefaults {
+  bundle: EditBundle;
+  chosen: Partial<EditBundle>;
+  items: Record<EditSlot, EditItem[]>;
 }
 
 export type NewEdit = Partial<EditBrief> & { sources: string[] };
@@ -105,6 +140,8 @@ export interface VersionPlan {
 
 export interface Edit extends EditSummary, EditBrief {
   workspaceId: string;
+  /** the items the edit was made with, recorded when it was created: changing the default later does not change it */
+  bundle: EditBundle;
   /** per source version: the speaker's eye line, a fraction of the picture's height from the top (punch-ins keep it in place) */
   eyeline: Record<string, number>;
   /** the versions with a draft timeline, by name */
@@ -118,6 +155,8 @@ export interface Edit extends EditSummary, EditBrief {
   notes: string[];
   /** each draft's preview as filed in Review: /review/<assetId>?v=<n> */
   previews: Record<string, ReviewPreview>;
+  /** the flags the loaded plug-ins declare, shown as chips; `flags` above holds this edit's state for each */
+  flagDefs: EditFlag[];
 }
 
 /** A preview video in Review: its asset and version number. */
@@ -177,7 +216,7 @@ export interface Timeline {
   width: number;
   height: number;
   sources: Record<string, TimelineSource>;
-  /** V1 speaker, V2 B-roll, A1 voice, A2 music, A3 sound effects */
+  /** V1 speaker, V2 B-roll (cutaways over the speaker, which keeps running under them), A1 voice, A2 music, A3 sound effects */
   tracks: Record<TrackId, { name: string; items: Item[] }>;
   /** one per script line, at the line's first frame; colour is an OTIO marker colour (RED, BLUE, …) */
   markers: { rec: number; name: string; color: string; note: string }[];

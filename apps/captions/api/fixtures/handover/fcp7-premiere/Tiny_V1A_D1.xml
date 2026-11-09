@@ -1,0 +1,265 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xmeml version="4">
+    <project>
+        <name>Tiny Proto</name>
+        <children>
+            <sequence id="sequence-1">
+                <name>Tiny Proto</name>
+                <duration>200</duration>
+                <rate>
+                    <timebase>25</timebase>
+                    <ntsc>FALSE</ntsc>
+                </rate>
+                <media>
+                    <video>
+                        <format />
+                        <track>
+                            <clipitem frameBlend="FALSE" id="clipitem-1">
+                                <file id="file-1">
+                                    <pathurl>media/talk.mp4</pathurl>
+                                    <name>talk.mp4</name>
+                                    <rate>
+                                        <timebase>25</timebase>
+                                        <ntsc>FALSE</ntsc>
+                                    </rate>
+                                    <duration>500</duration>
+                                    <timecode>
+                                        <rate>
+                                            <timebase>25</timebase>
+                                            <ntsc>FALSE</ntsc>
+                                        </rate>
+                                        <string>00:00:00:00</string>
+                                        <frame>0</frame>
+                                        <displayformat>NDF</displayformat>
+                                    </timecode>
+                                    <media>
+                                        <video />
+                                        <audio />
+                                    </media>
+                                </file>
+                                <name>talk.mp4</name>
+                                <rate>
+                                    <timebase>25</timebase>
+                                    <ntsc>FALSE</ntsc>
+                                </rate>
+                                <rate>
+                                    <timebase>25</timebase>
+                                    <ntsc>FALSE</ntsc>
+                                </rate>
+                                <duration>100</duration>
+                                <start>0</start>
+                                <end>100</end>
+                                <in>10</in>
+                                <out>110</out>
+                            <filter><effect><name>Basic Motion</name><effectid>basic</effectid><effectcategory>motion</effectcategory><effecttype>motion</effecttype><mediatype>video</mediatype><parameter authoringApp="PremierePro"><parameterid>scale</parameterid><name>Scale</name><valuemin>0</valuemin><valuemax>1000</valuemax><value>120.0</value></parameter><parameter authoringApp="PremierePro"><parameterid>center</parameterid><name>Center</name><value><horiz>0.5</horiz><vert>0.515625</vert></value></parameter></effect></filter></clipitem>
+                            <clipitem frameBlend="FALSE" id="clipitem-2">
+                                <file id="file-1" />
+                                <name>talk.mp4</name>
+                                <rate>
+                                    <timebase>25</timebase>
+                                    <ntsc>FALSE</ntsc>
+                                </rate>
+                                <rate>
+                                    <timebase>25</timebase>
+                                    <ntsc>FALSE</ntsc>
+                                </rate>
+                                <duration>100</duration>
+                                <start>100</start>
+                                <end>200</end>
+                                <in>110</in>
+                                <out>210</out>
+                            </clipitem>
+                        </track>
+                        <track>
+                            <clipitem frameBlend="FALSE" id="clipitem-3">
+                                <file id="file-2">
+                                    <pathurl>media/bro.mov</pathurl>
+                                    <name>bro.mov</name>
+                                    <rate>
+                                        <timebase>25</timebase>
+                                        <ntsc>FALSE</ntsc>
+                                    </rate>
+                                    <duration>300</duration>
+                                    <timecode>
+                                        <rate>
+                                            <timebase>25</timebase>
+                                            <ntsc>FALSE</ntsc>
+                                        </rate>
+                                        <string>00:00:00:00</string>
+                                        <frame>0</frame>
+                                        <displayformat>NDF</displayformat>
+                                    </timecode>
+                                    <media>
+                                        <video />
+                                        <audio />
+                                    </media>
+                                </file>
+                                <name>bro.mov</name>
+                                <rate>
+                                    <timebase>25</timebase>
+                                    <ntsc>FALSE</ntsc>
+                                </rate>
+                                <rate>
+                                    <timebase>25</timebase>
+                                    <ntsc>FALSE</ntsc>
+                                </rate>
+                                <duration>50</duration>
+                                <start>100</start>
+                                <end>150</end>
+                                <in>0</in>
+                                <out>50</out>
+                            </clipitem>
+                        </track>
+                        <track>
+                            <clipitem frameBlend="FALSE" id="clipitem-4">
+                                <file id="file-3">
+                                    <pathurl>media/card.mov</pathurl>
+                                    <name>card.mov</name>
+                                    <rate>
+                                        <timebase>25</timebase>
+                                        <ntsc>FALSE</ntsc>
+                                    </rate>
+                                    <duration>300</duration>
+                                    <timecode>
+                                        <rate>
+                                            <timebase>25</timebase>
+                                            <ntsc>FALSE</ntsc>
+                                        </rate>
+                                        <string>00:00:00:00</string>
+                                        <frame>0</frame>
+                                        <displayformat>NDF</displayformat>
+                                    </timecode>
+                                    <media>
+                                        <video />
+                                        <audio />
+                                    </media>
+                                </file>
+                                <name>card.mov</name>
+                                <rate>
+                                    <timebase>25</timebase>
+                                    <ntsc>FALSE</ntsc>
+                                </rate>
+                                <rate>
+                                    <timebase>25</timebase>
+                                    <ntsc>FALSE</ntsc>
+                                </rate>
+                                <duration>30</duration>
+                                <start>20</start>
+                                <end>50</end>
+                                <in>0</in>
+                                <out>30</out>
+                            <filter><effect><name>Basic Motion</name><effectid>basic</effectid><effectcategory>motion</effectcategory><effecttype>motion</effecttype><mediatype>video</mediatype><parameter authoringApp="PremierePro"><parameterid>scale</parameterid><name>Scale</name><valuemin>0</valuemin><valuemax>1000</valuemax><value>100.0</value></parameter><parameter authoringApp="PremierePro"><parameterid>center</parameterid><name>Center</name><value><horiz>0.537037</horiz><vert>0.5</vert></value></parameter></effect></filter></clipitem>
+                            <clipitem frameBlend="FALSE" id="clipitem-5">
+                                <name>g_%05d.png</name>
+                                <file id="file-4">
+                                    <name>g_%05d.png</name>
+                                    <pathurl>media/G/g_%05d.png</pathurl><rate>
+                                        <timebase>25</timebase>
+                                        <ntsc>FALSE</ntsc>
+                                    </rate>
+                                    <duration>3</duration>
+                                    <timecode>
+                                        <rate>
+                                            <timebase>25</timebase>
+                                            <ntsc>FALSE</ntsc>
+                                        </rate>
+                                        <string>00:00:00:00</string>
+                                        <frame>0</frame>
+                                        <displayformat>NDF</displayformat>
+                                    </timecode>
+                                    <media>
+                                        <video />
+                                    </media>
+                                </file>
+                                <rate>
+                                    <timebase>25</timebase>
+                                    <ntsc>FALSE</ntsc>
+                                </rate>
+                                <duration>3</duration>
+                                <start>60</start>
+                                <end>63</end>
+                                <in>0</in>
+                                <out>3</out>
+                            </clipitem>
+                        </track>
+                        <track>
+                            <clipitem frameBlend="FALSE" id="clipitem-6">
+                                <file id="file-5">
+                                    <pathurl>media/L01.mov</pathurl>
+                                    <name>L01.mov</name>
+                                    <rate>
+                                        <timebase>25</timebase>
+                                        <ntsc>FALSE</ntsc>
+                                    </rate>
+                                    <duration>50</duration>
+                                    <timecode>
+                                        <rate>
+                                            <timebase>25</timebase>
+                                            <ntsc>FALSE</ntsc>
+                                        </rate>
+                                        <string>00:00:00:00</string>
+                                        <frame>0</frame>
+                                        <displayformat>NDF</displayformat>
+                                    </timecode>
+                                    <media>
+                                        <video />
+                                        <audio />
+                                    </media>
+                                </file>
+                                <enabled>FALSE</enabled><name>L01.mov</name>
+                                <rate>
+                                    <timebase>25</timebase>
+                                    <ntsc>FALSE</ntsc>
+                                </rate>
+                                <rate>
+                                    <timebase>25</timebase>
+                                    <ntsc>FALSE</ntsc>
+                                </rate>
+                                <duration>50</duration>
+                                <start>0</start>
+                                <end>50</end>
+                                <in>0</in>
+                                <out>50</out>
+                            </clipitem>
+                        </track>
+                    </video>
+                    <audio>
+                        <track>
+                            <clipitem frameBlend="FALSE" id="clipitem-7">
+                                <file id="file-1" />
+                                <name>talk.mp4</name>
+                                <rate>
+                                    <timebase>25</timebase>
+                                    <ntsc>FALSE</ntsc>
+                                </rate>
+                                <rate>
+                                    <timebase>25</timebase>
+                                    <ntsc>FALSE</ntsc>
+                                </rate>
+                                <duration>100</duration>
+                                <start>0</start>
+                                <end>100</end>
+                                <in>10</in>
+                                <out>110</out>
+                            <filter><effect><name>Audio Levels</name><effectid>audiolevels</effectid><effectcategory>audiolevels</effectcategory><effecttype>audiolevels</effecttype><mediatype>audio</mediatype><parameter authoringApp="PremierePro"><parameterid>level</parameterid><name>Level</name><valuemin>0</valuemin><valuemax>3.5</valuemax><value>1.258925</value></parameter></effect></filter></clipitem>
+                        </track>
+                    </audio>
+                </media>
+                <marker>
+                    <name>HOOK</name>
+                    <in>0</in>
+                    <out>1</out>
+                </marker>
+                <timecode>
+                    <rate>
+                        <timebase>25</timebase>
+                        <ntsc>FALSE</ntsc>
+                    </rate>
+                    <string>01:00:00:00</string>
+                    <frame>90000</frame>
+                    <displayformat>NDF</displayformat>
+                </timecode>
+            </sequence>
+        </children>
+    </project>
+</xmeml>

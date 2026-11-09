@@ -1,5 +1,7 @@
-import { chunkedUpload } from "@/lib/clips";
+import { chunkedUpload, json, putDirect, xhrSend } from "@/lib/uploads";
 import type { ScreenEvents, ScreenLook } from "./screen-recording";
+import type { TimelineView } from "@contracts/timeline-import";
+import type { UploadRelayTus, UploadRelayView } from "@contracts/storage";
 
 /** Review — Frame.io-style video review. Server: api/review.ts. */
 
@@ -12,6 +14,9 @@ export const APPROVAL: Record<Approval, { label: string; dot: string }> = {
   changes: { label: "Changes requested", dot: "bg-rose-500" },
   approved: { label: "Approved", dot: "bg-emerald-400" },
 };
+
+/** An AI Editor preview's sound in parts (the player's voice controls play them). */
+export type StemSet = { groups: { key: string; label: string; mix: number }[]; fx: string[]; voice: string; duration: number };
 
 export interface ReviewVersion {
   n: number;
@@ -32,6 +37,16 @@ export interface ReviewVersion {
   removed?: boolean;
   /** (owners) a screen recording from the Mac app with its pointer log: the Zoom & pointer editor opens on it. */
   screen?: boolean;
+  /** The timeline file from the editing app it came with (OTIO, XML, EDL); shows under the player. */
+  timelineFile?: string;
+  /** It has a timeline to show under the player. */
+  timeline?: boolean;
+  /** (managers) the AI Editor draft it previews: its timeline, camera view and grade come from the editor. */
+  edit?: { project: string; draft: string };
+  /** (managers) a link back to what made it (a plug-in's own page). */
+  source?: { kind: string; id: string; label: string; href: string };
+  /** Its sound in parts (v<n>/stems/): the player's voice controls. */
+  stems?: StemSet;
   createdAt: number;
 }
 
@@ -100,6 +115,8 @@ export interface ReviewComment {
   drawing?: Stroke[];
   /** Images and videos attached to show what's meant; an AI reads them too. */
   refs?: ReviewRef[];
+  /** Plug-in data sent with the comment, keyed by plug-in id (e.g. timeline edits). */
+  plugins?: Record<string, unknown>;
   resolved?: boolean;
   createdAt: number;
   editedAt?: number;
@@ -170,24 +187,166 @@ export const getScreenRecording = (assetId: string, n: number) =>
 export const saveScreenLook = (assetId: string, n: number, look: ScreenLook) =>
   call<{ ok: true }>(`/api/review/assets/${assetId}/v/${n}/screen/look`, send("PUT", look));
 
+/** Sends a video (chunked, resumable). With its timeline file, that file is attached to
+ *  the new version once the video is in; if the timeline is refused the video still stays,
+ *  and the timeline can be added under the player. */
 export async function uploadReviewFile(
   file: File,
   onProgress: (pct: number) => void,
   to: { assetId?: string; projectId?: string } = {},
+  timeline?: File,
 ): Promise<ReviewAsset> {
   const target: Record<string, string> = to.assetId
     ? { assetId: to.assetId }
     : to.projectId
       ? { projectId: to.projectId }
       : {};
-  return chunkedUpload<ReviewAsset>(
-    "/api/review/uploads",
-    "/api/review/uploads",
-    file,
-    { name: file.name, mime: file.type || "video/mp4", ...target },
-    onProgress,
-  );
+  const fields = { name: file.name, mime: file.type || "video/mp4", ...target };
+  // the server picks the relay (api/uploads/relay): parts through this server, or straight to its bucket
+  const relay = await fetch("/api/uploads/relay").then((r) => json<UploadRelayView>(r));
+  const plugged = relay.active !== "direct" && relay.active !== "chunked";
+  const asset =
+    relay.active === "direct"
+      ? await directUpload<ReviewAsset>(file, fields, onProgress)
+      : (plugged ? await tusRelayUpload<ReviewAsset>(file, fields, onProgress) : null) ??
+        (await chunkedUpload<ReviewAsset>("/api/uploads/relay", "/api/uploads/relay", file, fields, onProgress));
+  if (!timeline) return asset;
+  const n = Math.max(...asset.versions.map((v) => v.n));
+  return attachTimeline(asset.id, n, timeline).catch(() => asset);
 }
+
+type TusSaved = { id: string; url: string; tus: UploadRelayTus };
+const isVideoFile = (f: File) =>
+  f.type.startsWith("video/") || /\.(mov|mp4|m4v|mkv|webm|avi|mxf|mts)$/i.test(f.name);
+const tusPause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** How much of this upload the relay has (TUS HEAD); null = gone, start over. */
+async function tusOffset(s: TusSaved): Promise<number | null> {
+  const res = await fetch(s.url, { method: "HEAD", headers: s.tus.headers }).catch(() => null);
+  return res?.ok ? Number(res.headers.get("Upload-Offset")) || 0 : null;
+}
+
+/** A plug-in relay (its TUS settings come from the server, api/uploads/relay?relay=tus): the file goes to the relay in
+ *  parts, resumes where the relay has it, then the server takes it over. null = the relay can't take this file (not a
+ *  video, or it refused the first part three times): the caller sends it through this server. */
+async function tusRelayUpload<T>(
+  file: File,
+  fields: Record<string, string>,
+  onProgress: (pct: number) => void,
+): Promise<T | null> {
+  if (!isVideoFile(file)) return null;
+  const key = `upload-relay:${file.name}:${file.size}:${file.lastModified}:${JSON.stringify(fields)}`;
+  const forget = () => {
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // private window: nothing saved
+    }
+  };
+  let s: TusSaved | null = null;
+  try {
+    s = JSON.parse(localStorage.getItem(key) ?? "null") as TusSaved | null;
+  } catch {
+    // nothing saved
+  }
+  let offset = s ? await tusOffset(s) : null;
+  if (!s || offset === null) {
+    const init = await fetch("/api/uploads/relay?relay=tus", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...fields, size: file.size }),
+    }).then((r) => json<{ id: string; tus?: UploadRelayTus }>(r));
+    if (!init.tus) throw new Error("The upload relay changed while this started: try again");
+    const made = await fetch(init.tus.createUrl, {
+      method: "POST",
+      headers: { ...init.tus.headers, "Upload-Length": String(file.size), "Upload-Metadata": init.tus.metadata },
+    }).catch(() => null);
+    const location = made?.status === 201 ? made.headers.get("Location") : null;
+    if (!location) return null;
+    s = { id: init.id, url: new URL(location, init.tus.createUrl).href, tus: init.tus };
+    offset = 0;
+    try {
+      localStorage.setItem(key, JSON.stringify(s));
+    } catch {
+      // private window: no resume, the upload still works
+    }
+  }
+  const saved = s;
+  const partSize = saved.tus.partSize;
+  let failures = 0;
+  while (offset < file.size) {
+    const at: number = offset;
+    try {
+      const xhr = await xhrSend(
+        "PATCH",
+        saved.url,
+        { ...saved.tus.headers, "Upload-Offset": String(at), "Content-Type": "application/offset+octet-stream" },
+        file.slice(at, Math.min(file.size, at + partSize)),
+        (loaded) => onProgress(Math.min(99, Math.round(((at + loaded) / file.size) * 100))),
+      );
+      offset = Number(xhr.getResponseHeader("Upload-Offset")) || Math.min(file.size, at + partSize);
+      failures = 0;
+    } catch (e) {
+      failures++;
+      // never reached the relay at all: this network can't, send it through this server
+      if (at === 0 && failures >= 3) return null;
+      if (failures >= 10) throw e;
+      await tusPause(Math.min(1000 * 2 ** failures, 30_000));
+      const now = await tusOffset(saved);
+      if (now === null) {
+        forget();
+        throw e;
+      }
+      offset = now;
+    }
+  }
+  // the bytes are at the relay: from here on only finish, never start over
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(`/api/uploads/relay/${saved.id}/complete`, { method: "POST" }).catch(() => null);
+    if (res?.ok) {
+      forget();
+      onProgress(100);
+      return (await res.json()) as T;
+    }
+    if ((res && res.status < 500) || attempt >= 5) {
+      const j = (await res?.json().catch(() => null)) as { error?: string } | null;
+      throw new Error(j?.error || "Couldn't finish the upload");
+    }
+    await tusPause(2000 * (attempt + 1)); // this server restarting
+  }
+}
+
+/** The direct relay: the server hands presigned part URLs, the parts go straight to its bucket, and complete takes the ETags.
+ *  No resume after a closed tab (chunked uploads have it): a retry starts the upload again. */
+async function directUpload<T>(
+  file: File,
+  fields: Record<string, string>,
+  onProgress: (pct: number) => void,
+): Promise<T> {
+  const init = await fetch("/api/uploads/relay", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...fields, size: file.size }),
+  }).then((r) => json<{ id: string; partSize: number; urls?: string[] }>(r));
+  if (!init.urls) throw new Error("The upload relay changed while this started: try again");
+  const parts = await putDirect(file, { partSize: init.partSize, urls: init.urls }, (sent) =>
+    onProgress(Math.min(99, Math.round((sent / file.size) * 100))),
+  );
+  const done = await fetch(`/api/uploads/relay/${init.id}/complete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ parts }),
+  }).then((r) => json<T>(r));
+  onProgress(100);
+  return done;
+}
+
+/** Its timeline from the editing app (OTIO, FCP 7 XML, FCPXML, EDL), shown under the player. */
+export const attachTimeline = (assetId: string, n: number, file: File) =>
+  call<ReviewAsset>(`/api/review/assets/${assetId}/v/${n}/timeline?name=${encodeURIComponent(file.name)}`, {
+    method: "PUT",
+    body: file,
+  });
 
 export const patchReviewAsset = (
   id: string,
@@ -261,6 +420,9 @@ export function reviewApi(base: string) {
   return {
     get: () => call<ReviewView>(base),
     media: (v: FileRef, file: "play" | "thumb" | "download") => mediaUrl(base, v, file),
+    stem: (v: FileRef, file: string) => mediaUrl(base, v, `stems/${file}`),
+    /** The version's timeline (tracks, clips, markers), or 404 when it has none. */
+    timeline: (n: number) => call<TimelineView>(`${base}/v/${n}/timeline`),
     comment: (body: {
       version: number;
       text: string;
@@ -271,6 +433,8 @@ export function reviewApi(base: string) {
       author?: string;
       /** Ids from uploadRef on this version. */
       refs?: string[];
+      /** Plug-in data (see ReviewComment.plugins); the server accepts it from managers only. */
+      plugins?: Record<string, unknown>;
     }) => call<ReviewComment>(`${base}/comments`, send("POST", body)),
     /** An image or video for the comment being written; send its id with it. */
     uploadRef: async (n: number, file: File) => {

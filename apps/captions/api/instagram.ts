@@ -41,7 +41,7 @@ import {
   type StoredApify,
   updateApify,
 } from "./lib/instagram/apify";
-import { applyMineVisibility, fetchMineAccountStats, fetchMineCatalog, fetchMineCatalogAll, fetchMineComments, fetchMineDailyInsights, fetchMineInsights, fetchMineProfile, fetchMineSharedToFeed, graphConfigured, graphCredsFor, mineUsesGraph, MINE_CATALOG_CAP, withGraphCreds, type MineAccountStats } from "./lib/instagram/graph";
+import { applyMineVisibility, fetchMineAccountStats, fetchPublicGridKeys, publicGridFromCatalog, type PublicGridKeys, fetchMineCatalog, fetchMineCatalogAll, fetchMineComments, fetchMineDailyInsights, fetchMineInsights, fetchMineProfile, fetchMineSharedToFeed, graphConfigured, graphCredsFor, mineUsesGraph, MINE_CATALOG_CAP, withGraphCreds, type MineAccountStats } from "./lib/instagram/graph";
 import { mergeAccountStats, nextGraphDaily, type GraphDaily, type InsightDay } from "./lib/instagram/account-insights";
 import { annotateComments, QUESTION_MIN } from "./lib/instagram/comment-judge";
 import {
@@ -50,7 +50,7 @@ import {
   performanceBy,
   type PostLabel,
 } from "./lib/instagram/post-labels";
-import { countReplies, mergeComments } from "./lib/instagram/comments";
+import { countReplies, mergeComments } from "./lib/instagram/comment-filter";
 import {
   DownloadError,
   downloadToFile,
@@ -98,7 +98,8 @@ import {
 } from "./lib/instagram/research";
 import { accountOwnsPost, nextMineFlags, postInProject } from "./lib/instagram/mine";
 import { accountProjects, inProject, resolveProjectId } from "./lib/workshop/workspace";
-import { catalogNewestAt, mergeCatalog, mergeCatalogCounts, parseCatalogCount } from "./lib/instagram/catalog";
+import { catalogNewestAt, insightIdsToRead, mergeCatalog, mergeCatalogCounts, parseCatalogCount } from "./lib/instagram/catalog";
+import { publicGridReader } from "./lib/connectors/provider";
 import { IG_ROOT, InstagramError, igCredsDir, igUserFile } from "./lib/instagram/base";
 import type {
   AccountContext,
@@ -215,7 +216,7 @@ const accountDir = (id: string) => path.join(ACCOUNTS_ROOT, id);
 const accountMetaPath = (id: string) => path.join(accountDir(id), "meta.json");
 const accountCatalogPath = (id: string) => path.join(accountDir(id), "catalog.json");
 const accountGraphCommentsPath = (id: string) => path.join(accountDir(id), "graph-comments.json");
-const accountSnapshotsPath = (id: string) => path.join(accountDir(id), "snapshots.json");
+export const accountSnapshotsPath = (id: string) => path.join(accountDir(id), "snapshots.json");
 const accountGraphStatsPath = (id: string) => path.join(accountDir(id), "graph-stats.json");
 const accountGraphDailyPath = (id: string) => path.join(accountDir(id), "graph-daily.json");
 const accountLabelsPath = (id: string) => path.join(accountDir(id), "labels.json");
@@ -299,7 +300,7 @@ interface TranscriptWord {
 }
 
 const active = new Map<string, PostMeta>();
-const accountActive = new Map<string, AccountMeta>();
+export const accountActive = new Map<string, AccountMeta>();
 const children = new Map<string, Set<ChildProcess>>();
 const aborts = new Map<string, AbortController>();
 const jobUsers = new Map<string, SessionUser>();
@@ -370,7 +371,7 @@ function afterWrite<T>(id: string, fn: () => Promise<T>): Promise<T> {
   return next;
 }
 
-async function persistAccount(meta: AccountMeta): Promise<void> {
+export async function persistAccount(meta: AccountMeta): Promise<void> {
   meta.updatedAt = Date.now();
   await afterWrite(`a:${meta.id}`, async () => {
     try {
@@ -382,7 +383,7 @@ async function persistAccount(meta: AccountMeta): Promise<void> {
   });
 }
 
-async function readAccount(id: string): Promise<AccountMeta | null> {
+export async function readAccount(id: string): Promise<AccountMeta | null> {
   const mem = accountActive.get(id);
   if (mem) return mem;
   try {
@@ -403,12 +404,12 @@ async function allAccountIds(): Promise<string[]> {
   }
 }
 
-async function allAccounts(): Promise<AccountMeta[]> {
+export async function allAccounts(): Promise<AccountMeta[]> {
   const metas = await Promise.all((await allAccountIds()).map(readAccount));
   return metas.filter((m): m is AccountMeta => !!m);
 }
 
-const listedAccount = (m: AccountMeta, user: SessionUser) =>
+export const listedAccount = (m: AccountMeta, user: SessionUser) =>
   m.owner === user.username || user.role === "admin";
 
 async function ownedAccount(id: string, user: SessionUser): Promise<AccountMeta | null> {
@@ -575,7 +576,7 @@ async function applyResearch(
   return null;
 }
 
-async function loadCatalog(id: string): Promise<CatalogItem[]> {
+export async function loadCatalog(id: string): Promise<CatalogItem[]> {
   try {
     const raw = JSON.parse(await readFile(accountCatalogPath(id), "utf-8")) as unknown;
     return Array.isArray(raw) ? (raw as CatalogItem[]) : [];
@@ -596,7 +597,7 @@ async function writeJsonAtomic(file: string, data: unknown): Promise<void> {
   }
 }
 
-async function saveCatalog(id: string, items: CatalogItem[]): Promise<void> {
+export async function saveCatalog(id: string, items: CatalogItem[]): Promise<void> {
   await mkdir(accountDir(id), { recursive: true });
   await writeJsonAtomic(accountCatalogPath(id), items);
 }
@@ -618,7 +619,7 @@ async function saveGraphStats(id: string, stats: MineAccountStats): Promise<void
   await writeJsonAtomic(accountGraphStatsPath(id), stats);
 }
 
-async function loadGraphStats(id: string): Promise<MineAccountStats | undefined> {
+export async function loadGraphStats(id: string): Promise<MineAccountStats | undefined> {
   try {
     const raw = JSON.parse(await readFile(accountGraphStatsPath(id), "utf-8")) as MineAccountStats;
     return raw && typeof raw.fetchedAt === "number" ? raw : undefined;
@@ -627,7 +628,7 @@ async function loadGraphStats(id: string): Promise<MineAccountStats | undefined>
   }
 }
 
-async function loadGraphDaily(id: string): Promise<GraphDaily | undefined> {
+export async function loadGraphDaily(id: string): Promise<GraphDaily | undefined> {
   try {
     const raw = JSON.parse(await readFile(accountGraphDailyPath(id), "utf-8")) as GraphDaily;
     return raw && typeof raw.fetchedAt === "number" && Array.isArray(raw.days) ? raw : undefined;
@@ -903,6 +904,30 @@ export async function postsForUser(ids: string[], user: SessionUser): Promise<Re
     if (m && canSee(m, user)) out.push(publicMeta(m));
   }
   return out;
+}
+
+const slideMime = (s: Slide) => s.mime || (s.kind === "video" ? "video/mp4" : "image/jpeg");
+
+/** Every ready file of the posts this user can see, for a Workshop session's sources (the AI Editor fetches them to the Mac). */
+export async function sourceFilesFor(postIds: string[], user: SessionUser): Promise<{ postId: string; index: number; name: string; mime: string; durationS?: number }[]> {
+  const out = [];
+  for (const id of postIds) {
+    const m = okId(id) ? await readMeta(id) : null;
+    if (!m || !canSee(m, user)) continue;
+    for (const s of m.slides) {
+      if (!s.file || !existsSync(abs(m.id, s.file))) continue;
+      out.push({ postId: m.id, index: s.index, name: `${m.shortcode}-${s.index}${path.extname(s.file)}`, mime: slideMime(s), ...(s.durationS ? { durationS: s.durationS } : {}) });
+    }
+  }
+  return out;
+}
+
+/** One ready slide file of a post this user can see: its path and type (null when not theirs or not there). */
+export async function sourceFileOf(postId: string, index: number, user: SessionUser): Promise<{ path: string; mime: string } | null> {
+  const m = okId(postId) ? await readMeta(postId) : null;
+  const s = m && canSee(m, user) ? m.slides.find((x) => x.index === index) : undefined;
+  if (!m || !s?.file || !existsSync(abs(m.id, s.file))) return null;
+  return { path: abs(m.id, s.file), mime: slideMime(s) };
 }
 
 export async function libraryCountFor(user: SessionUser): Promise<number> {
@@ -1380,7 +1405,7 @@ function crawlProgress(meta: PostMeta, hi: number): () => void {
   return () => clearInterval(t);
 }
 
-const errorMessage = (e: unknown): string =>
+export const errorMessage = (e: unknown): string =>
   e instanceof Error ? e.message : String(e);
 
 function pushWarning(meta: PostMeta, text: string): void {
@@ -1895,6 +1920,41 @@ async function accountPullMode(user: string, acc: { mine?: boolean; owner?: stri
   return gate.mode;
 }
 
+type PublicGridScrape = PublicGridKeys & { items: CatalogItem[] };
+
+function packPublicGrid(items: CatalogItem[], more: boolean, expected?: number): PublicGridScrape {
+  return { ...publicGridFromCatalog(items, { more, expected }), items };
+}
+
+/**
+ * The account's public grid, read logged out by the plug-in's reader (connectors.publicGrid). With no reader the
+ * answer is empty and nothing is requested, so a public install never pays for a grid it cannot read.
+ */
+async function scrapeMinePublicGrid(acc: AccountMeta, user: string, signal?: AbortSignal): Promise<PublicGridScrape> {
+  const empty: PublicGridScrape = { ok: false, complete: false, shortcodes: new Set(), ids: new Set(), items: [] };
+  if (!publicGridReader()) return empty;
+  // free logged-out crawl first; the paid Apify scrape only when it came back short
+  const free = await fetchPublicGridKeys(acc.username, { signal });
+  if (free.ok && free.complete) return { ...free, items: [] };
+  const expected = free.expected;
+  const apify = await readApify(user);
+  if (apify && apify.valid !== false) {
+    try {
+      const url = canonicalProfileUrl(acc.username);
+      const page = await fetchCatalogViaApify(url, { username: user, cap: MINE_CATALOG_CAP, signal, reels: false });
+      const grid = packPublicGrid(page.items, page.more, expected);
+      if (grid.ok) {
+        for (const code of free.shortcodes) grid.shortcodes.add(code);
+        if (expected !== undefined) grid.complete = grid.shortcodes.size >= expected;
+        return grid;
+      }
+    } catch {
+      /* the partial free grid below: never the account's own cookies, they can see trial reels */
+    }
+  }
+  return { ...free, items: [] };
+}
+
 async function enrichMineCatalog(
   items: CatalogItem[],
   acc: AccountMeta,
@@ -1908,15 +1968,18 @@ async function enrichMineCatalog(
     .filter((row) => row.graphId && typeof row.isSharedToFeed !== "boolean")
     .map((row) => row.graphId!);
   // trial or public from the official login's is_shared_to_feed only: no crawl of Instagram's web pages, no paid scrape
-  const shared = await fetchMineSharedToFeed(needShared, { signal });
-  let classified = applyMineVisibility(items, shared);
-  // returned by this fetch without insights read in it (nested insights can fail) — else they freeze
-  const insightIds = classified
-    .filter((row) => row.graphId && row.graph && row.graph.seenAt > (row.graph.insightsAt ?? 0))
-    .map((row) => row.graphId!);
+  const [shared, publicGrid] = await Promise.all([
+    fetchMineSharedToFeed(needShared, { signal }),
+    scrapeMinePublicGrid(acc, user, signal),
+  ]);
+  const combined = mergeCatalog(publicGrid.items, items);
+  let classified = applyMineVisibility(combined, shared, publicGrid);
+  // new rows (never read) and known rows whose insights are over a week old; mergeGraph keeps a known row's read time, so a fresh one is skipped
+  const insightIds = insightIdsToRead(classified);
   if (insightIds.length) {
     try {
-      const extra = await fetchMineInsights(insightIds, { signal });
+      const reelIds = new Set(classified.filter((row) => row.kind === "reel" && row.graphId).map((row) => row.graphId!));
+      const extra = await fetchMineInsights(insightIds, { signal, reelIds });
       const readAt = Date.now();
       classified = classified.map((row) => {
         const insights = row.graphId ? extra.get(row.graphId) : undefined;
@@ -2609,7 +2672,7 @@ function enqueue(
   pump();
 }
 
-function enqueueAccount(
+export function enqueueAccount(
   meta: AccountMeta,
   user: SessionUser,
   jobs: AccountJobType[],
@@ -2721,6 +2784,18 @@ function cancel(id: string): void {
   jobOpts.delete(id);
   followUps.delete(id);
   infoPrefetch.delete(id);
+}
+
+/** What a plug-in hears when an account run ends, ready or failed (the social feed writer listens here). A throw is logged. */
+export type AccountRunListener = (meta: AccountMeta, jobs: AccountJobType[], error?: string) => Promise<void>;
+const accountRunListeners: AccountRunListener[] = [];
+export function onAccountRunDone(listener: AccountRunListener): void {
+  accountRunListeners.push(listener);
+}
+async function notifyAccountRunDone(meta: AccountMeta, jobs: AccountJobType[], error?: string): Promise<void> {
+  for (const listener of accountRunListeners) {
+    await listener(meta, jobs, error).catch((e) => console.warn(`[instagram] run listener failed: ${errorMessage(e)}`));
+  }
 }
 
 async function processAccount(id: string): Promise<void> {
@@ -2854,6 +2929,7 @@ async function processAccountWith(id: string, meta: NonNullable<ReturnType<typeo
     meta.progress = 1;
     meta.error = undefined;
     await persistAccount(meta);
+    await notifyAccountRunDone(meta, jobs);
   } catch (e) {
     if (accountActive.get(id) !== meta) return;
     meta.status = "error";
@@ -2861,6 +2937,7 @@ async function processAccountWith(id: string, meta: NonNullable<ReturnType<typeo
     meta.error = errorMessage(e);
     await persistAccount(meta);
     console.warn(`[instagram] account @${meta.username} failed: ${meta.error}`);
+    await notifyAccountRunDone(meta, jobs, meta.error);
   } finally {
     accountActive.delete(id);
     aborts.delete(`a:${id}`);
@@ -2914,7 +2991,7 @@ setInterval(() => void sweep(), 6 * 3600 * 1000).unref();
 
 /* ---- resume after a restart ---- */
 
-function sessionUserFor(owner: string | undefined): SessionUser | null {
+export function sessionUserFor(owner: string | undefined): SessionUser | null {
   if (!env.appSecret) return LOCAL_USER;
   if (!owner) return null;
   const rec = findUser(owner);
@@ -3039,6 +3116,25 @@ async function mergeDuplicateAccounts(): Promise<void> {
   if (merged) console.log(`[instagram] merged ${merged} duplicate account(s)`);
 }
 setTimeout(() => void mergeDuplicateAccounts().catch(() => {}), 4000).unref();
+
+/** True once nothing is queued or running for the account (follow-ups included), false on timeout. */
+export function whenAccountIdle(id: string, timeoutMs: number): Promise<boolean> {
+  if (!accountActive.has(id)) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const waiters = idleWaiters.get(id) ?? new Set<() => void>();
+    idleWaiters.set(id, waiters);
+    const timer = setTimeout(() => {
+      waiters.delete(onIdle);
+      resolve(false);
+    }, timeoutMs);
+    timer.unref();
+    const onIdle = () => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+    waiters.add(onIdle);
+  });
+}
 
 function settleIdle(id: string): void {
   const waiters = idleWaiters.get(id);

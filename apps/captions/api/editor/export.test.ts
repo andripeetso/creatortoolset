@@ -10,8 +10,10 @@ const dir = mkdtempSync(path.join(scratch, "editor-export-"));
 process.env.DATA_DIR = dir;
 process.env.APP_SECRET = "editor-export-test-secret";
 
-const { createUser } = await import("../users");
+const { createUser, setOff } = await import("../users");
 const app = (await import("../boot")).default;
+// A loaded plug-in that replaces /api/editor answers the root itself, so these tests (which drive the built-in root) run only without one.
+const rootReplaced = (await import("../lib/plugin")).pluginReplaces("/api/editor");
 const { blobs, libraryDb } = await import("../library/db");
 const { createEdit, editDir, saveDraft } = await import("./store");
 const { frameDuration, time, toFcpxml } = await import("./fcpxml");
@@ -54,7 +56,7 @@ function twoCuts(): Timeline {
 const files = { ver_a: "/Users/tiny/Footage/Take A.mov", ver_b: "/Users/tiny/Footage/Take B.mov" };
 
 beforeAll(() => {
-  createUser("mem-a", "password1", { role: "user" });
+  setOff(createUser("mem-a", "password1", { role: "user" }), []);
   libraryDb().exec(`
     INSERT INTO libraries (id, workspace_id, name, storage_kind, storage_config, created_at) VALUES
       ('lib_a', 'mem-a', 'A', 'local', NULL, 0),
@@ -74,7 +76,7 @@ beforeAll(() => {
 });
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
-describe("AI Editor export", () => {
+describe.skipIf(rootReplaced)("AI Editor export", () => {
   it("writes exact frame times: 1001-based for 29.97 and 59.94, whole for 25", () => {
     expect(frameDuration(29.97)).toEqual([1001, 30000]);
     expect(frameDuration(59.94)).toEqual([1001, 60000]);

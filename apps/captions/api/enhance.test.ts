@@ -51,15 +51,36 @@ describe("Audio Enhancer engines", () => {
     expect(await read(app.request("/availability", as("jordan")))).toMatchObject({ elevenlabs: false, default: "nvidia" });
     // a member without a key: told which key to add, the server's key never used for them
     expect((await read(app.request("/availability", as("jordan")))).why).toMatchObject({ elevenlabs: "Add your ElevenLabs key in Settings → My API keys" });
-    expect((await read(app.request("/?engine=elevenlabs", as("jordan", "POST", tone(1))))).error).toBe("Add your ElevenLabs key in Settings → My API keys");
+    // no key: the session is parked as needs_key with the key to add, not refused
+    expect(await read(app.request("/?engine=elevenlabs&name=b.wav", as("jordan", "POST", tone(1))))).toMatchObject({
+      status: "needs_key",
+      error: "Add your ElevenLabs key in Settings → My API keys",
+    });
     saveMyKey("jordan", "ELEVENLABS_API_KEY", "jordans-own");
     expect(await read(app.request("/availability", as("jordan")))).toMatchObject({ elevenlabs: true });
     saveMyKey("jordan", "ELEVENLABS_API_KEY", null);
     process.env.ELEVENLABS_API_KEY = "";
-    expect((await read(app.request("/?engine=nvidia&name=a.wav", as("local", "POST", tone(1))))).error).toMatch(/Add your NVIDIA key/);
+    expect(await read(app.request("/?engine=nvidia&name=a.wav", as("local", "POST", tone(1))))).toMatchObject({
+      status: "needs_key",
+      error: expect.stringMatching(/Add your NVIDIA key/),
+    });
     expect((await read(app.request("/?engine=kestrel", as("local", "POST", tone(1))))).error).toMatch(/Engine is one of/);
   });
 
+  it("a parked session runs once its owner adds the key and runs again", async () => {
+    process.env.NVIDIA_API_KEY = "";
+    const parked = await read(app.request("/?engine=nvidia&name=resume.wav", as("jordan", "POST", tone(1))));
+    expect(parked.status).toBe("needs_key");
+    saveMyKey("jordan", "NVIDIA_API_KEY", "jordans-nvidia");
+    const s = await read(app.request(`/${parked.id}/run?engine=nvidia`, as("jordan", "POST")));
+    expect(["queued", "running"]).toContain(s.status); // the pump may start it before the reply
+    const m = await until(async () => {
+      const cur = await read(app.request(`/${parked.id}`, as("jordan")));
+      return cur.status === "done" || cur.status === "error" ? cur : null;
+    });
+    expect(m.status).toBe("done");
+    saveMyKey("jordan", "NVIDIA_API_KEY", null);
+  });
 });
 
 describe("Audio Enhancer status moves", () => {
@@ -84,7 +105,7 @@ describe("Audio Enhancer passes and strength", () => {
     expect(await read(app.request("/availability", as("jordan")))).toMatchObject({ admin: false });
     expect((await read(app.request("/?engine=nvidia&then=elevenlabs", as("jordan", "POST", tone(1))))).error).toMatch(/for admins/);
     expect((await read(app.request("/?engine=nvidia&then=nvidia", as("local", "POST", tone(1))))).error).toMatch(/another engine/);
-    expect((await read(app.request("/?engine=nvidia&then=elevenlabs", as("local", "POST", tone(1))))).error).toMatch(/Add your ElevenLabs key/);
+    expect(await read(app.request("/?engine=nvidia&then=elevenlabs", as("local", "POST", tone(1))))).toMatchObject({ status: "needs_key", error: expect.stringMatching(/Add your ElevenLabs key/) });
     process.env.NVIDIA_API_KEY = "";
   });
 

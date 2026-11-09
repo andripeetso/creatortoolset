@@ -18,6 +18,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import type { CaptionRenderSpec } from "../src/lib/types";
 import type { AuthVars } from "./auth";
+import { emitEvent } from "./lib/events";
 import { assertMovHasTransparency } from "./alpha-video";
 import { createCaptionFrameRenderer } from "./caption-frames";
 import { filterEscape, requireFontsDir } from "./export";
@@ -25,6 +26,7 @@ import { ffmpegCommand } from "./ffmpeg-runtime";
 import { env } from "./lib/env";
 import { ensureProjectOriginal, projectOriginalExists, readProjectClip } from "./media-store";
 import { saveToLibrary } from "./library/routes";
+import { addToFinals, belowHd, libraryOf, type FinalsOutcome } from "./library/finals";
 import { type SessionUser, bumpUsage } from "./users";
 import type { ExportStatus } from "../contracts/exports";
 import { type Moves, canMove, move } from "./lib/transition";
@@ -67,6 +69,9 @@ interface JobParams {
   fps?: number;
   duration: number;
   crf?: number;
+  /** burn only: send the render to the owner's Finals when it is done */
+  finals?: boolean;
+  finalsLabel?: string;
 }
 
 interface Job {
@@ -90,6 +95,8 @@ interface Job {
   createdAt: number;
   finishedAt?: number;
   owner?: string; // account username; absent on pre-account jobs
+  /** One-click Send to Finals: where it is (the tray shows it; a closed tab doesn't matter). */
+  finals?: { status: "waiting" | "sending" | "sent" | "refused" | "error"; pieceId?: string; error?: string };
   params: JobParams;
 }
 
@@ -646,6 +653,9 @@ async function runJob(job: Job): Promise<void> {
     await rm(path.join(dir, "render.json"), { force: true }).catch(() => {});
     await rm(path.join(dir, "captions.ass"), { force: true }).catch(() => {});
     await persist(job);
+    // success only: an error, a cancel and the restart recovery (which marks jobs as failed) do not emit
+    emitEvent("export.finished", { id: job.id, owner: job.owner, kind: job.kind, format: job.format, bytes: st.size });
+    if (job.params.finals && job.owner) await sendToFinals(job);
   } catch (e) {
     // cancelled — dir is gone, don't resurrect; a job already done keeps its file
     if (!jobs.has(job.id) || !canMove(EXPORT_MOVES, job.status, "error")) return;
@@ -654,6 +664,32 @@ async function runJob(job: Job): Promise<void> {
     job.finishedAt = Date.now();
     await persist(job);
   }
+}
+
+/** One-click Send to Finals: the finished render goes into the owner's library and its Finals piece. Never throws; the outcome is on the job. */
+async function sendToFinals(job: Job): Promise<void> {
+  job.finals = { status: "sending" };
+  let out: FinalsOutcome;
+  try {
+    out = await addToFinals(
+      {
+        owner: job.owner!,
+        libraryId: libraryOf(job.owner!),
+        label: job.params.finalsLabel ?? job.filename,
+        item: null,
+        kind: "export",
+        width: job.params.width ?? 0,
+        height: job.params.height ?? 0,
+      },
+      { file: outPath(job), filename: job.filename },
+    );
+  } catch (e) {
+    out = { ok: false, code: "failed", error: e instanceof Error ? e.message : String(e) };
+  }
+  job.finals = out.ok
+    ? { status: "sent", pieceId: out.pieceId }
+    : { status: out.code === "refused" ? "refused" : "error", error: out.error };
+  await persist(job);
 }
 
 /* ---- routes ---- */
@@ -673,6 +709,8 @@ interface CreateBody {
   width?: number;
   height?: number;
   fps?: number;
+  /** burn only: send the render to the owner's Finals when it is done */
+  finals?: boolean;
 }
 
 const OVERLAY_FORMATS: Record<string, string> = {
@@ -765,6 +803,8 @@ exportsApp.post("/", async (c) => {
     );
   }
   const base = sanitizeName(body.name);
+  // Finals is 1080p or more, checked here and again on the file's size when it is in
+  if (body.finals && kind === "burn" && belowHd(W, H)) return c.json({ error: belowHd(W, H) }, 409);
 
   let job: Job;
   if (kind === "burn") {
@@ -822,6 +862,7 @@ exportsApp.post("/", async (c) => {
         fps: FPS,
         duration,
         crf: body.crf,
+        ...(body.finals ? { finals: true, finalsLabel: base } : {}),
       },
     };
   } else if (kind === "overlay") {
@@ -853,6 +894,7 @@ exportsApp.post("/", async (c) => {
 
   try {
     job.owner = c.get("user")?.username;
+    if (job.params.finals) job.finals = { status: "waiting" };
     if (job.owner) bumpUsage(job.owner, { renders: 1 });
     await mkdir(jobDir(job.id), { recursive: true });
     if (engine === "native") {
@@ -989,6 +1031,22 @@ exportsApp.post("/:id/library", async (c) => {
   if (!saved) return c.json({ error: "There is no Media Library to save into", code: "not_found" }, 404);
   if ("error" in saved) return c.json(saved, 507);
   return c.json(saved);
+});
+
+/* Save to Content, an older path kept for older clients: a finished captioned export goes to
+   Finals, exactly as a Send to Finals does (sendToFinals). Never below 1080p. */
+exportsApp.post("/:id/content", async (c) => {
+  await loaded;
+  const user = c.get("user");
+  const job = jobs.get(c.req.param("id"));
+  if (!job || !canSee(job, user)) return c.json({ error: "Not found" }, 404);
+  if (user.role !== "admin") return c.json({ error: "Only admins can save to Content" }, 403);
+  if (job.kind !== "burn" || job.status !== "done" || !job.owner) return c.json({ error: "Only a finished captioned export can be saved" }, 409);
+  if (!existsSync(outPath(job))) return c.json({ error: "File expired" }, 410);
+  const small = belowHd(job.params.width, job.params.height);
+  if (small) return c.json({ error: small }, 409);
+  await sendToFinals(job);
+  return c.json({ finals: job.finals }, job.finals?.status === "sent" ? 201 : 409);
 });
 
 /* cancel a running job, or delete a finished one */

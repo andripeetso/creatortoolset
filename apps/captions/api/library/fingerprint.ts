@@ -61,8 +61,10 @@ export function phashDistance(a: string, b: string): number {
 /** One pHash per second of the first video track: ffmpeg streams 32×32 grey frames, each hashed as it arrives. */
 export function phashPerSecond(src: string): Promise<string[]> {
   return new Promise((resolve, reject) => {
+    // a remote video (a posted reel's URL) gets a read timeout, so a stalled download cannot hang the check
+    const remote = /^https?:\/\//.test(src) ? ["-rw_timeout", "30000000"] : [];
     const p = spawn(ffmpegCommand(), [
-      "-hide_banner", "-loglevel", "error", "-nostdin", "-i", src, "-map", "0:V:0", "-an",
+      "-hide_banner", "-loglevel", "error", "-nostdin", ...remote, "-i", src, "-map", "0:V:0", "-an",
       "-vf", `fps=1,scale=${N}:${N}:flags=area,format=gray`, "-f", "rawvideo", "pipe:1",
     ]);
     const out: string[] = [];

@@ -41,12 +41,12 @@ describe("applyScriptEdits", () => {
       ids(),
     );
     expect(texts(groups)).toEqual(["at Tiny Acrobatics, we"]);
-    const [baby, acro] = [groups[0][1], groups[0][2]];
-    expect(baby.start).toBe(words[1].start);
+    const [puppy, acro] = [groups[0][1], groups[0][2]];
+    expect(puppy.start).toBe(words[1].start);
     expect(acro.end).toBe(words[3].end);
-    expect(baby.end).toBe(acro.start);
-    // "Acrobatics" is longer than "Baby", so it gets more of the time
-    expect(acro.end - acro.start).toBeGreaterThan(baby.end - baby.start);
+    expect(puppy.end).toBe(acro.start);
+    // "Acrobatics" is longer than "Tiny", so it gets more of the time
+    expect(acro.end - acro.start).toBeGreaterThan(puppy.end - puppy.start);
     expect(fixes[0]).toEqual({ ids: [100, 101], before: "tiny acro batics,", after: "Tiny Acrobatics," });
   });
 

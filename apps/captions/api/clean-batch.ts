@@ -280,17 +280,21 @@ export function createCleanBatchApp(deps: {
         );
         job.public.bytes = (await stat(path.join(job.dir, "videos.zip"))).size;
         job.public.expiresAt = Date.now() + KEEP_MS;
+        // Release source locks before the terminal state is visible, so a client that sees "ready" can act on the sources at once.
+        release();
         job.public.state = "ready";
       } catch (error) {
+        // Remove temporary files and release source locks before publishing "failed" or "cancelled": pollers that see the state must find nothing left behind.
+        await rm(job.dir, { recursive: true, force: true }).catch(
+          () => undefined,
+        );
+        release();
         job.public.state = signal.aborted ? "cancelled" : "failed";
         job.public.error = signal.aborted
           ? "Batch cancelled. Originals are unchanged."
           : error instanceof Error
             ? error.message
             : "Batch export failed.";
-        await rm(job.dir, { recursive: true, force: true }).catch(
-          () => undefined,
-        );
       } finally {
         clearTimeout(deadline);
         release();

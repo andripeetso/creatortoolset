@@ -4,7 +4,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 process.env.DATA_DIR = mkdtempSync(path.join(tmpdir(), "devices-"));
-const { deviceForToken, listDevices, pairDevice } = await import("./devices");
+const { deviceForToken, forViewer, listDevices, pairDevice, reportOf, saveReport } = await import("./devices");
+import type { Device, MacReport } from "../../contracts/providers";
 
 // Re-pairing the same Mac (same owner, same name) replaces its row and revokes the old token.
 describe("pairDevice", () => {
@@ -23,5 +24,29 @@ describe("pairDevice", () => {
     const mine = listDevices((d) => d.owner === "tinyacrobatics").map((d) => d.name).sort();
     expect(mine).toEqual(["Tiny Mac", "Tiny Studio"]);
     expect(listDevices((d) => d.owner === "otheruser")).toHaveLength(1);
+  });
+});
+
+// A report can come from two reporters for one Mac; a report with no disk list keeps the last one.
+describe("saveReport disks", () => {
+  it("keeps the last disk list when a report comes without one, and takes an empty list when it is sent", () => {
+    const { device } = pairDevice("tinyacrobatics", "Tiny Disks");
+    const machine = (disks?: unknown[]) => ({ os: "mac", host: "tiny", cpus: 8, ...(disks ? { disks } : {}) }) as unknown as MacReport["machine"];
+    const report = (at: number, disks?: unknown[]): MacReport => ({ at, drivers: [], homes: [], machine: machine(disks) });
+    saveReport(device.id, report(1, [{ name: "footage", path: "/Volumes/footage", freeGb: 3 }]));
+    saveReport(device.id, report(2));
+    expect(reportOf(device.id)?.machine?.disks?.map((x) => x.name)).toEqual(["footage"]);
+    saveReport(device.id, report(3, []));
+    expect(reportOf(device.id)?.machine?.disks).toEqual([]);
+  });
+});
+
+// Disks are the owner's: another account that sees the Mac (an admin, for a workspace or another admin's Mac) gets none.
+describe("forViewer", () => {
+  it("shows a Mac's disks only to its owner", () => {
+    const d = { id: "x", owner: "tinyacrobatics", report: { at: 1, drivers: [], homes: [], machine: { os: "mac", host: "h", cpus: 1, disks: [{ name: "footage", path: "/Volumes/footage", freeGb: 3 }] } } } as unknown as Device;
+    expect(forViewer("tinyacrobatics", d).report?.machine?.disks).toHaveLength(1);
+    expect(forViewer("someadmin", d).report?.machine?.disks).toBeUndefined();
+    expect(forViewer("someadmin", d).report?.machine?.host).toBe("h");
   });
 });

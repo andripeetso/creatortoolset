@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -66,13 +66,11 @@ describe("Creator Toolset as a remote MCP server", () => {
     expect((await tool("workshop_sessions")).value.sessions.map((x: { id: string }) => x.id)).toContain(s.id);
     expect(await tool("workshop_session", { session: "00000000-0000-4000-8000-000000000000" })).toEqual({ error: true, value: "Not found, or not this account's." });
     expect((await tool("list_reviews")).value).toEqual({ reviews: [] });
-    expect((await tool("editor_list")).value).toEqual({ edits: [] });
     expect(await tool("review_set_approval", { link: "not a link", status: "approved" })).toEqual({ error: true, value: expect.stringContaining("That isn't a review link") });
     expect(await tool("review_set_approval", { link: "00000000-0000-4000-8000-000000000000", status: "changes" })).toEqual({ error: true, value: "Not found, or not this account's." });
     expect(await tool("instagram_refresh", { account: "nobody" })).toEqual({ error: true, value: "No account of yours is called @nobody: add it in the Analyzer first." });
     expect(await tool("instagram_posts", { account: "nobody" })).toEqual({ error: true, value: "No account of yours is called @nobody: add it in the Analyzer first." });
     expect((await tool("instagram_posts", { account: "nobody", since: "not a date" })).error).toBe(true);
-    expect((await tool("editor_run", { edit: "x", kind: "send_to_review" })).value).toContain("needs the draft");
     expect((await tool("get_review", { link: "not a link" })).error).toBe(true);
     // links start with this server's address: PUBLIC_ORIGIN, else the one the request came in on
     expect((await tool("get_review", { link: "not a link" })).value).toContain("http://localhost/review/<id>");
@@ -96,6 +94,126 @@ describe("Creator Toolset as a remote MCP server", () => {
     expect((await app.request(`/api/review/s/${token}`)).status).toBe(404);
   });
 
+  it("lists a plug-in's tools after the built-in ones and calls its handler with the account and the site's routes", async () => {
+    const { handle, pluginToolsOf } = await import("./mcp");
+    const seen: string[] = [];
+    const call = async (path: string) => {
+      seen.push(path);
+      return new Response(JSON.stringify({ ok: true }), { headers: { "content-type": "application/json" } });
+    };
+    const plugged = pluginToolsOf([
+      {
+        id: "tiny",
+        tools: {
+          defs: [{ name: "tiny_echo", description: "Echo a line for the Tiny Acrobatics test plug-in.", inputSchema: { type: "object", properties: {} } }],
+          handlers: {
+            tiny_echo: async (args: Record<string, unknown>, ctx: { user: { username: string }; origin: string; api: (p: string) => Promise<Response> }) => {
+              const r = (await (await ctx.api("/api/workshop/projects")).json()) as { ok: boolean };
+              return { text: args.text, as: ctx.user.username, origin: ctx.origin, routed: r.ok };
+            },
+          },
+        },
+      },
+    ]);
+    const headers = new Headers({ authorization: full });
+    const list = (await handle(call, headers, { jsonrpc: "2.0", id: 1, method: "tools/list" }, "https://tools.example.com", user, plugged)) as {
+      result: { tools: Array<{ name: string }> };
+    };
+    const names = list.result.tools.map((t) => t.name);
+    expect(names.at(-1)).toBe("tiny_echo");
+    expect(names).not.toContain("setup_status");
+    const res = (await handle(
+      call,
+      headers,
+      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "tiny_echo", arguments: { text: "hi" } } },
+      "https://tools.example.com",
+      user,
+      plugged,
+    )) as { result: { content: Array<{ text: string }>; isError?: boolean } };
+    expect(res.result.isError).toBeUndefined();
+    expect(JSON.parse(res.result.content[0]!.text)).toEqual({ text: "hi", as: "mcpowner", origin: "https://tools.example.com", routed: true });
+    expect(seen).toEqual(["/api/workshop/projects"]);
+  });
+
+  it("refuses at boot a plug-in tool that shadows a built-in or has no handler", async () => {
+    const { pluginToolsOf } = await import("./mcp");
+    const def = (name: string) => ({ name, description: "x", inputSchema: { type: "object", properties: {} } });
+    expect(() => pluginToolsOf([{ id: "tiny", tools: { defs: [def("workshop_projects")], handlers: { workshop_projects: async () => ({}) } } }])).toThrow(
+      "plug-in tiny: tool workshop_projects is already served",
+    );
+    expect(() => pluginToolsOf([{ id: "tiny", tools: { defs: [def("setup_status")], handlers: { setup_status: async () => ({}) } } }])).toThrow(
+      "plug-in tiny: tool setup_status is already served",
+    );
+    expect(() => pluginToolsOf([{ id: "tiny", tools: { defs: [def("tiny_only")], handlers: {} } }])).toThrow("plug-in tiny: tool tiny_only has no handler");
+    expect(pluginToolsOf([{ id: "tiny" }]).defs).toEqual([]);
+  });
+
+  // With the owner's plug-in folder present it answers editor_list and editor_run instead, so the built-ins are checked only without it.
+  it.skipIf(existsSync(new URL("../plugins/baby-acrobatics", import.meta.url)))("the built-in AI Editor tools answer with no plug-in", async () => {
+    expect((await tool("editor_list")).value).toEqual({ edits: [] });
+    expect((await tool("editor_run", { edit: "x", kind: "send_to_review" })).value).toContain("needs the draft");
+  });
+
+  it("lets a plug-in replace a built-in tool by name: its version is listed once and its handler answers the call", async () => {
+    const { handle, pluginToolsOf } = await import("./mcp");
+    const def = (name: string, description: string) => ({ name, description, inputSchema: { type: "object", properties: {} } });
+    const plugged = pluginToolsOf([
+      {
+        id: "tiny",
+        tools: {
+          defs: [def("editor_list", "Tiny Acrobatics edits.")],
+          handlers: { editor_list: async () => ({ edits: ["tiny-edit"] }) },
+          replaces: ["editor_list"],
+        },
+      },
+    ]);
+    const headers = new Headers({ authorization: full });
+    const call = async () => new Response("{}");
+    const list = (await handle(call, headers, { jsonrpc: "2.0", id: 1, method: "tools/list" }, "https://tools.example.com", user, plugged)) as {
+      result: { tools: Array<{ name: string; description: string }> };
+    };
+    const hits = list.result.tools.filter((t) => t.name === "editor_list");
+    expect(hits).toHaveLength(1);
+    expect(hits[0]!.description).toBe("Tiny Acrobatics edits.");
+    const res = (await handle(
+      call,
+      headers,
+      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "editor_list", arguments: {} } },
+      "https://tools.example.com",
+      user,
+      plugged,
+    )) as { result: { content: Array<{ text: string }>; isError?: boolean } };
+    expect(res.result.isError).toBeUndefined();
+    expect(JSON.parse(res.result.content[0]!.text)).toEqual({ edits: ["tiny-edit"] });
+  });
+
+  it("refuses a replace that names no built-in, a built-in twice, or a name the plug-in does not serve", async () => {
+    const { pluginToolsOf } = await import("./mcp");
+    const def = (name: string) => ({ name, description: "x", inputSchema: { type: "object", properties: {} } });
+    const handler = async () => ({});
+    expect(() => pluginToolsOf([{ id: "tiny", tools: { defs: [def("tiny_only")], handlers: { tiny_only: handler }, replaces: ["tiny_only"] } }])).toThrow(
+      "plug-in tiny: tiny_only is not a built-in tool it can replace",
+    );
+    expect(() => pluginToolsOf([{ id: "tiny", tools: { defs: [def("setup_status")], handlers: { setup_status: handler }, replaces: ["setup_status"] } }])).toThrow(
+      "plug-in tiny: setup_status is not a built-in tool it can replace",
+    );
+    expect(() => pluginToolsOf([{ id: "tiny", tools: { defs: [], handlers: {}, replaces: ["editor_list"] } }])).toThrow(
+      "plug-in tiny: replaces tool editor_list but serves no tool of that name",
+    );
+    expect(() =>
+      pluginToolsOf([
+        { id: "tiny", tools: { defs: [def("editor_list")], handlers: { editor_list: handler }, replaces: ["editor_list"] } },
+        { id: "tinier", tools: { defs: [def("editor_list")], handlers: { editor_list: handler }, replaces: ["editor_list"] } },
+      ]),
+    ).toThrow("plug-in tinier: editor_list is already replaced by another plug-in");
+    expect(() =>
+      pluginToolsOf([
+        { id: "tiny", tools: { defs: [def("editor_list")], handlers: { editor_list: handler }, replaces: ["editor_list"] } },
+        { id: "tinier", tools: { defs: [def("editor_list")], handlers: { editor_list: handler } } },
+      ]),
+    ).toThrow("plug-in tinier: tool editor_list is already served");
+  });
+
   it("keeps its tool list's size on purpose: it goes into every AI session that connects", () => {
     // growth must be deliberate: check what the new words buy, then update this number (never fix it by cutting words)
     // 5814 -> 6925: review_set_approval (approve or send back a Review video from a chat) and instagram_refresh/posts
@@ -104,6 +222,8 @@ describe("Creator Toolset as a remote MCP server", () => {
     // 9162 -> 9366: set_work_prefs makes (what they make, from setup; the assistant can change it)
     // 9366 -> 9864: review_share (a Review video's public share link, on or off, as its Share button)
     // 9864 -> 9872: "ready" in workshop_update_session's status enum (every SessionStatus)
-    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(9872);
+    // 9872 -> 9904: newsletter, X thread and article pieces in the kind list
+    // 9904 -> 10277: finals_link_session (link a Finals piece to the Workshop session it was made for, so its versions get post descriptions)
+    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(10277);
   });
 });

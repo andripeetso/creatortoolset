@@ -44,7 +44,8 @@ import { createCleanBatchApp } from "./clean-batch";
 import { cleanupAudit, inspectMetadata } from "./lib/clean-inspection";
 import { timelineDuration } from "../contracts/clean-timeline";
 import { phashPerSecond } from "./library/fingerprint";
-import { similarTo } from "./library/similar";
+import { similarTo, similarToPosted, type ClipSpeech } from "./library/similar";
+import { NeedsKey, transcribeFile } from "./library/transcribe";
 
 export const cleanWorkspaceApp = new Hono<{ Variables: AuthVars }>();
 const ROOT = path.join(env.dataDir, "clean", "sources");
@@ -80,7 +81,7 @@ interface StoredSource extends CleanSource {
   transfers?: Record<string, { projectId: string; clipId: string }>;
 }
 const folder = (id: string) => path.join(ROOT, id);
-const originalPath = (source: CleanSource) =>
+export const originalPath = (source: CleanSource) =>
   path.join(folder(source.id), `original.${source.ext}`);
 const versionPath = (source: CleanSource, id: string) =>
   path.join(folder(source.id), `${id}.${source.ext}`);
@@ -130,7 +131,7 @@ async function readSource(id: string): Promise<StoredSource | null> {
 }
 
 const sourceWrites = new Map<string, Promise<void>>();
-async function saveSource(source: StoredSource, touchOnly = false) {
+export async function saveSource(source: StoredSource, touchOnly = false) {
   const previous = sourceWrites.get(source.id) ?? Promise.resolve();
   const task = previous
     .catch(() => undefined)
@@ -153,7 +154,7 @@ async function saveSource(source: StoredSource, touchOnly = false) {
   }
 }
 
-async function ownedSource(
+export async function ownedSource(
   c: Context<{ Variables: AuthVars }>,
   id = c.req.param("id") || "",
 ) {
@@ -181,7 +182,13 @@ function reserveSources(ids: string[]) {
         "This video is already being processed. Wait for the current run to finish.",
     });
   ids.forEach((value) => busy.add(value));
-  return () => ids.forEach((value) => busy.delete(value));
+  // Idempotent: a batch releases early before publishing its end state, then again in its finally block.
+  let held = true;
+  return () => {
+    if (!held) return;
+    held = false;
+    ids.forEach((value) => busy.delete(value));
+  };
 }
 async function exclusively<T>(id: string | string[], work: () => Promise<T>) {
   const release = reserveSources(Array.isArray(id) ? id : [id]);
@@ -394,15 +401,39 @@ cleanWorkspaceApp.post("/:id/compare", async (c) => {
   });
 });
 
-// Duplicate check: this upload's pictures against the videos in the caller's Media Library (library/similar.ts).
+// Duplicate check: this upload's pictures against the videos in the caller's Media Library (library/similar.ts),
+// and against the caller's own posted reels (`posted`, from the connected accounts' logins).
 cleanWorkspaceApp.post("/:id/duplicates", async (c) => {
   const source = await ownedSource(c);
   const hashes = await exclusively(source.id, () =>
     phashPerSecond(originalPath(source)),
   );
   await saveSource(source, true);
-  return c.json(similarTo(c.get("user").username, hashes));
+  const username = c.get("user").username;
+  const speech = await clipSpeech(source, username);
+  return c.json({ ...similarTo(username, hashes), posted: similarToPosted(username, hashes, speech) });
 });
+
+/** The upload's words for the posted reels' voice check. Kept in the upload's folder (never sent to the browser); a failure is not kept. */
+async function clipSpeech(source: StoredSource, username: string): Promise<ClipSpeech> {
+  const file = path.join(folder(source.id), "speech.json");
+  try {
+    return { words: JSON.parse(await readFile(file, "utf8")) };
+  } catch {
+    // not transcribed yet
+  }
+  try {
+    const { words } = await transcribeFile(originalPath(source), username, path.join(env.dataDir, "clean", "scratch"));
+    await writeFile(file, JSON.stringify(words));
+    return { words };
+  } catch (e) {
+    return {
+      why: e instanceof NeedsKey
+        ? "Pictures only: add your Deepgram key in Settings → My API keys to compare voices too."
+        : "Pictures only: this upload's speech could not be transcribed.",
+    };
+  }
+}
 
 cleanWorkspaceApp.post("/:id/versions", async (c) => {
   const initial = await ownedSource(c);

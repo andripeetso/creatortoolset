@@ -14,10 +14,10 @@ describe("a follower's read", () => {
     const { system, user } = buildReviewPrompt({
       doc: carousel(),
       handle: "tinyacrobatics",
-      audience: audienceOf({ notes: "You write as Alex.\n\nAudience: parents 25–40, babies 0–24 months.\n\nHard rules: …" }),
+      audience: audienceOf({ notes: "You write as Alex.\n\nAudience: parents 25–40, puppies 0–24 months.\n\nHard rules: …" }),
       best: [{ date: "2025-12-08", views: 1_234_567, keptPer1k: 92, text: "Sample review of the app. Very happy, 10/10." }],
     });
-    expect(system).toContain("You're one of the people this account posts for: parents 25–40, babies 0–24 months.");
+    expect(system).toContain("You're one of the people this account posts for: parents 25–40, puppies 0–24 months.");
     expect(system).toContain("@tinyacrobatics");
     expect(system).toContain("one slide at a time");
     expect(system).toContain("opening on slide 2");

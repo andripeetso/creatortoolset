@@ -8,3 +8,5 @@
 podcast\.adobe
 # Instagram's private web endpoints (session or anonymous cookies) are never read by the public app: official logins and the user's own Apify key only
 instagram\.com/api/v1|[Xx]-IG-App-ID|INSTAGRAM_COOKIE
+# Apple's system typeface (the San Francisco family) cannot be redistributed; the public app uses its own fonts (see the font files under public/)
+SF[ ]Pro

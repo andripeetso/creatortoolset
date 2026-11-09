@@ -147,7 +147,7 @@ Read [AGENTS.md](AGENTS.md) first. Turn on the repository hooks once per clone w
 
 ## License
 
-[MIT](LICENSE). Copyright (c) 2026 Andri Peetso.
+[MIT](LICENSE). Copyright (c) 2026 Creator Toolset contributors.
 
 The fonts in `apps/captions/public/fonts/` are Google Fonts under the SIL Open Font License 1.1 (see `OFL.txt`
 there). Other third-party parts, including the GPL FFmpeg build that the Docker image downloads, are listed in

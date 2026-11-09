@@ -1,11 +1,11 @@
 // What this Mac reports to the site (the Mac relay report; MacReport in apps/captions/contracts/providers.ts):
-// the coding CLIs it finds and their versions, and its Claude and Codex config folders. Read only. Every function takes the home folder so the tests can use a temp one.
+// the coding CLIs it finds and their versions, its Claude and Codex config folders, and its disks. Read only. Every function takes the home folder so the tests can use a temp one.
 import Foundation
 
 /// Every driver the report lists, in contracts/providers.ts order.
 let reportDrivers: [(id: String, label: String)] = [
     ("codex", "Codex"), ("claude", "Claude"), ("cursor", "Cursor"), ("grok", "Grok"), ("gemini", "Gemini"), ("opencode", "OpenCode"),
-    ("antigravity", "Antigravity"), ("muse", "Muse Code"), ("pi", "Pi"),
+    ("antigravity", "Antigravity"), ("musecode", "Muse Code"), ("pi", "Pi"),
 ]
 
 /// Where each CLI may be (the Mac relay BINARIES): the official install on PATH or in the usual folders below.
@@ -13,7 +13,7 @@ let reportDrivers: [(id: String, label: String)] = [
 let driverBinaries: [String: [String]] = [
     "claude": ["claude"], "codex": ["codex", "/opt/homebrew/bin/codex"], "grok": ["grok", "~/.grok/bin/grok"], "gemini": ["gemini", "/opt/homebrew/bin/gemini"],
     "cursor": ["cursor-agent"],
-    "opencode": ["opencode", "~/.opencode/bin/opencode"], "antigravity": ["antigravity"], "muse": ["muse"], "pi": ["pi"],
+    "opencode": ["opencode", "~/.opencode/bin/opencode"], "antigravity": ["antigravity-acp"], "musecode": ["muse"], "pi": ["pi"],
 ]
 
 /// The folders a GUI app's PATH leaves out (launchd's PATH is short).
@@ -121,14 +121,16 @@ func signInFrom(driver: String, output: String) -> (signedIn: Bool, plan: String
 private let signInArgs: [String: [String]] = ["claude": ["auth", "status", "--json"], "codex": ["login", "status"]]
 
 /// the Mac relay drivers(): each driver's CLI, installed, its version and path.
-func driverReport(home: URL) -> [[String: Any]] {
+/// The sign-in probe reads each CLI's login (Claude's from the keychain), so it runs only with the plan-limits opt-in on
+/// (Limits.swift). Off, a row has no signedIn or plan: the contract leaves both optional.
+func driverReport(home: URL, signIn: Bool = limitsReadingOn()) -> [[String: Any]] {
     reportDrivers.map { driver in
         var row: [String: Any] = ["driver": driver.id, "installed": false]
         if let path = binary(driver.id, home: home) {
             row["installed"] = true
             row["path"] = path
             if let version = cliVersion(path) { row["version"] = version }
-            if let args = signInArgs[driver.id], let out = runQuick(path, args, seconds: 5),
+            if signIn, let args = signInArgs[driver.id], let out = runQuick(path, args, seconds: 5),
                let status = signInFrom(driver: driver.id, output: out) {
                 row["signedIn"] = status.signedIn
                 if let plan = status.plan { row["plan"] = plan }
@@ -136,6 +138,12 @@ func driverReport(home: URL) -> [[String: Any]] {
         }
         return row
     }
+}
+
+/// A Claude home for the report. `customEndpoint` says whether its settings.json env sets ANTHROPIC_BASE_URL (a custom
+/// API endpoint, e.g. a gateway). Only that yes or no is reported: the URL and any token stay on this Mac.
+func claudeHome(_ dir: URL) -> [String: Any] {
+    ["driver": "claude", "home": dir.path, "customEndpoint": !(homeEnv(dir.path)["ANTHROPIC_BASE_URL"] ?? "").isEmpty]
 }
 
 /// the Mac relay homes(): ~/.claude, every ~/.claude-* with a settings.json or .credentials.json, and ~/.codex.
@@ -147,13 +155,13 @@ func homeReport(home: URL) -> [[String: Any]] {
     }
     var out: [[String: Any]] = []
     if isDir(home.appendingPathComponent(".claude")) {
-        out.append(["driver": "claude", "home": home.appendingPathComponent(".claude").path])
+        out.append(claudeHome(home.appendingPathComponent(".claude")))
     }
     let names = ((try? fm.contentsOfDirectory(atPath: home.path)) ?? []).filter { $0.hasPrefix(".claude-") }
     for name in names.sorted() {
         let dir = home.appendingPathComponent(name)
         let hasLogin = ["settings.json", ".credentials.json"].contains { fm.fileExists(atPath: dir.appendingPathComponent($0).path) }
-        if isDir(dir) && hasLogin { out.append(["driver": "claude", "home": dir.path]) }
+        if isDir(dir) && hasLogin { out.append(claudeHome(dir)) }
     }
     if isDir(home.appendingPathComponent(".codex")) {
         out.append(["driver": "codex", "home": home.appendingPathComponent(".codex").path])
@@ -168,16 +176,121 @@ func jsonObject(_ url: URL) -> [String: Any]? {
 }
 
 /// The whole MacReport body (`POST /api/devices/relay/report`).
-func macReport(home: URL = FileManager.default.homeDirectoryForCurrentUser, now: Date = Date()) -> [String: Any] {
+func macReport(home: URL = FileManager.default.homeDirectoryForCurrentUser, now: Date = Date(), signIn: Bool = limitsReadingOn()) -> [String: Any] {
     [
         "at": Int(now.timeIntervalSince1970 * 1000),
-        "drivers": driverReport(home: home),
+        "drivers": driverReport(home: home, signIn: signIn),
         "homes": homeReport(home: home),
         "machine": machineReport(),
     ]
 }
 
-/// This Mac for the site's Devices page (`Machine` in apps/captions/contracts/providers.ts): chip, cores, memory, load.
+/// The filesystem types a network share mounts as.
+private let networkFilesystems: Set<String> = ["smbfs", "cifs", "smb3", "nfs", "nfs4", "afpfs", "webdav", "fuse.sshfs"]
+
+/// What the disk report needs to know about one mounted volume (read with statfs and the volume's URL keys).
+struct VolumeFacts {
+    var path: String
+    var freeBytes: Int64
+    var totalBytes: Int64
+    var fstype: String
+    var source: String
+    var readOnly: Bool
+    var browsable: Bool
+}
+
+/// The machine a share lives on, from its mount source ("//user@NAS-1._smb._tcp.local/TEAM" → "nas-1"); nil for a
+/// source that is not a share.
+func shareServer(_ source: String) -> String? {
+    guard source.hasPrefix("//"), source.dropFirst(2).contains("/") else { return nil }
+    var host = source.dropFirst(2).prefix { $0 != "/" }
+    if let at = host.lastIndex(of: "@") { host = host[host.index(after: at)...] }
+    var name = (String(host).removingPercentEncoding ?? String(host)).lowercased()
+    for suffix in ["._smb._tcp.local", ".local"] where name.hasSuffix(suffix) {
+        name.removeLast(suffix.count)
+        break
+    }
+    return name.isEmpty ? nil : name
+}
+
+/// One disk for the report (`Disk` in apps/captions/contracts/storage.ts), or nil for a volume nobody keeps files on:
+/// an installer image, a hidden volume, a tiny helper volume. The rules are the Python editor's `_mounts` and `_disks`.
+func diskReport(_ v: VolumeFacts) -> [String: Any]? {
+    guard v.path == "/" || v.path.hasPrefix("/Volumes/"), !v.readOnly, v.browsable else { return nil }
+    let gigabyte: Int64 = 1_073_741_824
+    guard v.totalBytes >= gigabyte else { return nil }
+    let gb = { (bytes: Int64) in (Double(bytes) / Double(gigabyte) * 10).rounded() / 10 }
+    var d: [String: Any] = [
+        "path": v.path,
+        "name": v.path == "/" ? "System disk" : (v.path as NSString).lastPathComponent,
+        "freeGb": gb(v.freeBytes),
+    ]
+    // A share's quota can make the total smaller than the free space: then the total is left out.
+    if v.totalBytes >= v.freeBytes { d["totalGb"] = gb(v.totalBytes) }
+    if networkFilesystems.contains(v.fstype) {
+        d["network"] = true
+        if let server = shareServer(v.source) { d["server"] = server }
+    }
+    return d
+}
+
+/// The C string in a fixed-size tuple field of statfs (f_fstypename, f_mntfromname).
+private func cField<T>(_ field: T) -> String {
+    withUnsafeBytes(of: field) { raw in String(cString: raw.bindMemory(to: CChar.self).baseAddress!) }
+}
+
+/// Every mounted volume's disk report. A dead network share can hang a statfs call for minutes, so this runs only on
+/// DiskCache's background queue, never on the report path.
+func readDisks() -> [[String: Any]] {
+    let urls = FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: [.volumeIsBrowsableKey], options: []) ?? []
+    return urls.compactMap { url -> [String: Any]? in
+        var st = statfs()
+        guard statfs(url.path, &st) == 0 else { return nil }
+        let browsable = (try? url.resourceValues(forKeys: [.volumeIsBrowsableKey]))?.volumeIsBrowsable ?? true
+        let block = Int64(st.f_bsize)
+        return diskReport(VolumeFacts(
+            path: url.path,
+            freeBytes: Int64(st.f_bavail) * block,
+            totalBytes: Int64(st.f_blocks) * block,
+            fstype: cField(st.f_fstypename),
+            source: cField(st.f_mntfromname),
+            readOnly: st.f_flags & UInt32(MNT_RDONLY) != 0,
+            browsable: browsable))
+    }
+}
+
+/// The disks for the report, read once a minute on a background queue. The first call starts the reading, so the first
+/// report can go out without them; after that the report sends the last good list and never waits for a read.
+final class DiskCache {
+    static let shared = DiskCache()
+    private let lock = NSLock()
+    private var disks: [[String: Any]] = []
+    private var started = false
+    private let queue = DispatchQueue(label: "creatortoolset.disks", qos: .utility)
+
+    func current() -> [[String: Any]] {
+        lock.lock()
+        let start = !started
+        started = true
+        let list = disks
+        lock.unlock()
+        if start { refresh() }
+        return list
+    }
+
+    private func refresh() {
+        queue.async { [self] in
+            let fresh = readDisks()
+            lock.lock()
+            disks = fresh
+            lock.unlock()
+            queue.asyncAfter(deadline: .now() + 60) { [self] in refresh() }
+        }
+    }
+}
+
+/// This Mac for the site's Devices page (`Machine` in apps/captions/contracts/providers.ts): chip, cores, memory, load,
+/// and the disks it keeps files on.
 func machineReport() -> [String: Any] {
     let info = ProcessInfo.processInfo
     var out: [String: Any] = [
@@ -193,5 +306,6 @@ func machineReport() -> [String: Any] {
     }
     var load = [Double](repeating: 0, count: 3)
     if getloadavg(&load, 3) > 0 { out["load"] = min(1, (load[0] / Double(max(1, info.processorCount)) * 1000).rounded() / 1000) }
+    out["disks"] = DiskCache.shared.current()
     return out
 }

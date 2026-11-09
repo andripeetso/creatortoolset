@@ -1,12 +1,12 @@
 {
-  "reel:fetch": 5312,
-  "reel:folder": 5976,
-  "carousel:fetch": 5356,
-  "carousel:folder": 6020,
-  "ad:fetch": 4661,
-  "ad:folder": 5325,
-  "free:fetch": 4441,
-  "free:folder": 5105,
-  "notes:fetch": 4326,
-  "notes:folder": 4990
+  "reel:fetch": 5344,
+  "reel:folder": 6008,
+  "carousel:fetch": 5388,
+  "carousel:folder": 6052,
+  "ad:fetch": 4693,
+  "ad:folder": 5357,
+  "free:fetch": 4473,
+  "free:folder": 5137,
+  "notes:fetch": 4358,
+  "notes:folder": 5022
 }

@@ -70,7 +70,10 @@ describe("connectors", () => {
   });
 
   it("the apps come from the env only; a Business Meta app logs in by its configuration", async () => {
-    expect((await app.request("/api/connectors/apps")).status).toBe(404);
+    // names only: which logins this server is set up for, never the keys
+    const apps = (await (await app.request("/api/connectors/apps")).json()) as { set: Record<string, boolean> };
+    expect(apps).toEqual({ set: { meta: true, google: false, tiktok: false } });
+    expect(JSON.stringify(apps)).not.toContain("secret");
     vi.stubEnv("META_CONFIG_ID", "cfg7");
     try {
       const login = new URL((await app.request("/api/connectors/login/meta")).headers.get("location")!);
@@ -80,6 +83,38 @@ describe("connectors", () => {
     } finally {
       vi.unstubAllEnvs();
     }
+  });
+
+  it("a Business Meta app set with META_LOGIN_CONFIG_ID logs in by the same configuration; META_CONFIG_ID wins when both are set", async () => {
+    vi.stubEnv("META_CONFIG_ID", "");
+    vi.stubEnv("META_LOGIN_CONFIG_ID", "cfg8");
+    try {
+      const login = new URL((await app.request("/api/connectors/login/meta")).headers.get("location")!);
+      expect(login.searchParams.get("config_id")).toBe("cfg8");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    vi.stubEnv("META_CONFIG_ID", "cfg7");
+    vi.stubEnv("META_LOGIN_CONFIG_ID", "cfg8");
+    try {
+      const login = new URL((await app.request("/api/connectors/login/meta")).headers.get("location")!);
+      expect(login.searchParams.get("config_id")).toBe("cfg7");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("serves the TikTok verify file only under the name and content in .env", async () => {
+    const { tiktokVerifyFile } = await import("./connectors");
+    vi.stubEnv("TIKTOK_VERIFY_FILE", "tiktokAbC.txt");
+    vi.stubEnv("TIKTOK_VERIFY_CONTENT", "tiktok-developers-site-verification=abc");
+    try {
+      expect(tiktokVerifyFile("tiktokAbC.txt")).toBe("tiktok-developers-site-verification=abc");
+      expect(tiktokVerifyFile("tiktokOther.txt")).toBeNull();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    expect(tiktokVerifyFile("tiktokAbC.txt")).toBeNull();
   });
 });
 

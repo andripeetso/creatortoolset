@@ -17,6 +17,7 @@ import {
   pullAccountNow,
   type ConnectedAccount,
   type ConnectorsView,
+  type SessionSource,
   type SocialPlatform,
 } from "@/lib/connectors";
 import { Card, Dot, Footnote, Group, Loading, Notice, Row } from "./ui";
@@ -192,6 +193,7 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
           </Card>
         </Group>
       )}
+      <ExtraSources sources={view.extras.sessions} />
       {admin && !compact && unset.length > 0 && (
         <div className="mt-8">
           <Footnote>
@@ -204,6 +206,20 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
         </div>
       )}
     </>
+  );
+}
+
+/** "Turn on extra things": the session sources a server plug-in reads. Its words come from the plug-in; with none, nothing renders. */
+export function ExtraSources({ sources }: { sources: SessionSource[] }) {
+  if (sources.length === 0) return null;
+  return (
+    <Group title="Turn on extra things" hint="Read through a session you set up on this server.">
+      <Card>
+        {sources.map((s) => (
+          <Row key={s.id} label={s.label} hint={s.hint} />
+        ))}
+      </Card>
+    </Group>
   );
 }
 

@@ -1,5 +1,6 @@
 import path from "node:path";
 import { TRACKS, type Item, type Timeline, type TimelineSource } from "../../contracts/editor";
+import { type Cdl, cdlMeta } from "./grade";
 import { fitted } from "./framing";
 
 /**
@@ -30,7 +31,7 @@ const effect = (name: string, type: number, params: object[], display = name) =>
   metadata: { Resolve_OTIO: { "Display Type": 1, "Effect Name": name, Enabled: true, Name: display, Parameters: params, Type: type } },
 });
 
-function clip(tl: Timeline, i: Item, src: TimelineSource, file: string, video: boolean, linkIds: Map<string, number>) {
+function clip(tl: Timeline, i: Item, src: TimelineSource, file: string, video: boolean, linkIds: Map<string, number>, grade?: Cdl) {
   const effects: object[] = [];
   const meta: Record<string, unknown> = {};
   if (video && ((i.zoom ?? 1) !== 1 || i.tilt)) {
@@ -50,6 +51,8 @@ function clip(tl: Timeline, i: Item, src: TimelineSource, file: string, video: b
     meta.Channels = [0, 1].map((c) => ({ "Source Channel ID": c, "Source Track ID": 0 }));
     if (i.gainDb) effects.push(effect("Fairlight Clip Volume and Fades", 62, [param("volume", i.gainDb, 0, -100, 30)], "Volume"));
   }
+  // the grade is metadata for Resolve to apply on node 1 (the same values SetCDL takes); the picture is not changed here
+  if (video && grade) meta.CDL = cdlMeta(grade);
   if (i.link) {
     if (!linkIds.has(i.link)) linkIds.set(i.link, linkIds.size + 1);
     meta["Link Group ID"] = linkIds.get(i.link);
@@ -78,8 +81,11 @@ function clip(tl: Timeline, i: Item, src: TimelineSource, file: string, video: b
 
 const gap = (frames: number, fps: number) => ({ OTIO_SCHEMA: "Gap.1", metadata: {}, name: "", source_range: range(0, frames, fps), effects: [], markers: [], enabled: true });
 
-/** The draft as an OTIO object (JSON.stringify it to a .otio file); `files` maps each source key to its media path. */
-export function toOtio(tl: Timeline, files: Record<string, string>): object {
+/**
+ * The draft as an OTIO object (JSON.stringify it to a .otio file); `files` maps each source key to its media path.
+ * `grade` (optional) puts the CDL on each V1 clip, as the preview grades V1; no grade = no CDL metadata.
+ */
+export function toOtio(tl: Timeline, files: Record<string, string>, grade?: Cdl): object {
   const linkIds = new Map<string, number>();
   const tracks = TRACKS.map((id) => {
     const video = id.startsWith("V");
@@ -91,7 +97,7 @@ export function toOtio(tl: Timeline, files: Record<string, string>): object {
       const src = tl.sources[i.src];
       const file = files[i.src];
       if (!src || !file) throw new Error(`${id}: no media for ${i.src}`);
-      children.push(clip(tl, i, src, file, video, linkIds));
+      children.push(clip(tl, i, src, file, video, linkIds, id === "V1" ? grade : undefined));
       at = i.rec + i.len;
     }
     return {

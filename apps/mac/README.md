@@ -32,6 +32,12 @@ Build settings are environment variables, read by `scripts/build-app.sh` at buil
 | `NOTARY_PROFILE` | none | A `notarytool store-credentials` keychain profile. With `SIGN_IDENTITY`, the script notarizes and staples the app |
 | `SSCD_CACHE` | none | A verified SSCD model folder (`apps/captions/scripts/install-sscd-runtime.mjs`). Unset: the app ships without it and the Video Cleaner's duplicate check skips that score |
 | `CT_BUILD_CACHE` | `build/cache` | Where the Node, FFmpeg and fingerprint source downloads are kept between builds |
+| `BUNDLE_ID` | `com.creatortoolset.mac` | Bundle id. An installed build keeps its own id, or it can't receive its updates |
+| `APP_NAME` | `Creator Toolset` | The name in the menu bar and the Dock |
+| `DEFAULT_SERVER` | none | A server added to the Servers list once, on first launch (https, or localhost) |
+
+These can also live in `apps/mac/build.env` (git-ignored; copy `build.env.example`). The file is read first, and a
+setting already in the environment wins over it, so `release.sh`'s public feed and key are never overridden by it.
 
 With no signing identity the app is ad-hoc signed: it runs on the Mac that built it, but other Macs
 refuse it. With no `SPARKLE_PUBLIC_KEY` and `FEED_URL` the app has no updater; Check for Updates does nothing.
@@ -47,7 +53,7 @@ it is signed before the app; with `SIGN_IDENTITY` they get the hardened runtime,
 entitlement (`scripts/node.entitlements`). Chromium for caption exports is downloaded on the first export.
 
 A build with the server opens the server on this Mac (next section). Other servers are added by address (see
-"Servers"); there is no default remote site. A build without the server (`swift run`) has no "This Mac" entry and
+"Servers"); a build has no default remote site unless its `build.env` sets `DEFAULT_SERVER`. A build without the server (`swift run`) has no "This Mac" entry and
 opens the servers you added, or asks for one.
 
 ## Servers

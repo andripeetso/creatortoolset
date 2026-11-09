@@ -2,9 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { Plus } from "lucide-react";
 import {
-  DRIVERS,
   JOBS,
-  TOOL_NAMES,
   type Driver,
   type ProviderCheck,
   type ProviderInstance,
@@ -14,9 +12,7 @@ import {
   type Selection,
   runsOn,
 } from "@contracts/providers";
-import { ConfirmButton } from "@/components/instagram/ConfirmButton";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
 import { useAuth } from "@/lib/auth";
 import { useWorkTalk } from "@/lib/setup";
 import {
@@ -24,27 +20,30 @@ import {
   checkProvider,
   deviceOf,
   getProviders,
-  modelName,
   modelsOf,
   saveOwn,
   saveWorkspace,
   selectionLabel,
   thisMacDevice,
 } from "@/lib/providers";
-import { cn } from "@/lib/utils";
 import { AddProviderDialog } from "./AddProviderDialog";
 import { AiSetup } from "./AiSetup";
 import { OwnAiMcpSection } from "./OwnAiMcpSection";
-import { Card, Dot, EffortSelect, Group, Loading, ModelSelect, Notice } from "./ui";
-import { fmtAgo, msg, selectCls } from "./helpers";
+import { ProviderDetail } from "./ProviderDetail";
+import { ProviderInstanceCard, hasCustomEndpoint, providerStatus, withInstance } from "./ProviderInstanceCard";
+import { ScopeSentence } from "./ScopeSentence";
+import { Card, EffortSelect, Group, Loading, ModelSelect, Notice } from "./ui";
+import { msg, selectCls } from "./helpers";
 
-type Device = ProvidersView["devices"][number];
+/** The CLIs the Mac app can open a sign-in for (signInCommands in apps/mac Relay.swift). */
+const SIGN_IN_DRIVERS: string[] = ["claude", "codex", "grok"];
 
 /**
- * Settings → Your AI: the Macs the account has (admins also the workspace's) as tabs, the AI on the selected Mac, who
- * does which job, and for admins whether the team shares it. Admins edit the workspace's set (PUT /api/providers/workspace);
- * anyone else edits their own (PUT /api/providers/own) and sees the workspace's while they have none.
- * In chat or both, it also holds the "Use Creator Toolset from your own AI" section (OwnAiMcpSection).
+ * Settings → Your AI: "Applying settings for All projects on <Mac>", the AI on that Mac as rows (name, version, status
+ * line, on/off switch), the selected AI's detail below, then who does which job. Admins edit the workspace's set
+ * (PUT /api/providers/workspace); anyone else edits their own (PUT /api/providers/own) and sees the workspace's while they
+ * have none. In chat or both, it also holds the "Use Creator Toolset from your own AI" section (OwnAiMcpSection).
+ * `sub` is the Mac picked on the page (its device id).
  */
 export function ProvidersSection({ sub }: { sub?: string }) {
   const { talk } = useWorkTalk();
@@ -52,15 +51,36 @@ export function ProvidersSection({ sub }: { sub?: string }) {
   const isAdmin = me?.role === "admin";
   const [view, setView] = useState<ProvidersView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(sub ?? null);
+  const [deviceChoice, setDeviceChoice] = useState<string | null>(sub ?? null);
+  const [instanceId, setInstanceId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  // The driver whose sign-in is open in Terminal on this Mac: the page re-reads the Mac's report until it says signed in.
+  const [signingIn, setSigningIn] = useState<string | null>(null);
 
   useEffect(() => {
     getProviders().then(setView).catch((e) => setLoadError(msg(e)));
   }, []);
+  useEffect(() => {
+    if (!signingIn) return;
+    const t = window.setInterval(() => {
+      getProviders()
+        .then((v) => {
+          setView((prev) => (prev ? { ...prev, devices: v.devices } : v));
+          const mac = thisMacDevice();
+          const found = v.devices.find((d) => d.id === mac)?.report?.drivers.find((d) => d.driver === signingIn);
+          if (found?.signedIn) setSigningIn(null);
+        })
+        .catch(() => {});
+    }, 3000);
+    const stop = window.setTimeout(() => setSigningIn(null), 180000);
+    return () => {
+      window.clearInterval(t);
+      window.clearTimeout(stop);
+    };
+  }, [signingIn]);
   // until a Mac reports a coding tool, look again every 5 s: installing one shows up without a reload
   const waiting = !!view && !view.devices.some((d) => d.online && d.report?.drivers.some((x) => x.installed));
   useEffect(() => {
@@ -75,10 +95,12 @@ export function ProvidersSection({ sub }: { sub?: string }) {
   if (!view || !me) return <Loading />;
 
   const devices = view.devices;
-  const device: Device | null = devices.find((d) => d.id === selectedId) ?? devices[0] ?? null;
+  const device = devices.find((d) => d.id === deviceChoice) ?? devices[0] ?? null;
   // A member does not see the workspace's Mac in `devices`; its providers still say where they run.
   const deviceName = (id: string) => devices.find((d) => d.id === id)?.name ?? (id || "no Mac picked");
   const reportOf = (inst: ProviderInstance) => devices.find((d) => d.id === deviceOf(inst))?.report ?? null;
+  // Unknown Macs (a member's view of the workspace's) count as reachable: only a Mac listed as offline is.
+  const reachable = (inst: ProviderInstance) => devices.find((d) => d.id === deviceOf(inst))?.online ?? true;
   const online = (inst: ProviderInstance) => devices.find((d) => d.id === deviceOf(inst))?.online ?? false;
 
   // What this page edits: the workspace's set for admins, this account's own for anyone else.
@@ -89,6 +111,8 @@ export function ProvidersSection({ sub }: { sub?: string }) {
   const listed = readOnly
     ? (shown?.instances ?? [])
     : (editing?.instances ?? []).filter((i) => device !== null && deviceOf(i) === device.id);
+  // the provider whose detail pane is open (editors only; members see the rows)
+  const detail = readOnly || !editing ? undefined : listed.find((i) => i.id === instanceId);
 
   // Saves the whole set. Shows the change at once, undoes it on error.
   const save = async (next: ProviderSettings) => {
@@ -109,6 +133,11 @@ export function ProvidersSection({ sub }: { sub?: string }) {
     } finally {
       setSaving(false);
     }
+  };
+
+  // Changes one provider's fields (its switch, its detail pane) and saves the set.
+  const patch = (inst: ProviderInstance, p: Partial<ProviderInstance>) => {
+    if (editing) void save(withInstance(editing, inst.id, p));
   };
 
   const dropOwn = async () => {
@@ -160,85 +189,37 @@ export function ProvidersSection({ sub }: { sub?: string }) {
         )
       : [];
 
-  const driverLabel = (d: Driver) => DRIVERS.find((x) => x.id === d)?.label ?? d;
+  // The Mac's report of this provider's CLI (its version, signed-in state) and the status line built from it.
+  const foundOf = (inst: ProviderInstance) => reportOf(inst)?.drivers.find((d) => d.driver === inst.driver);
+  const statusOf = (inst: ProviderInstance) =>
+    providerStatus({
+      enabled: inst.enabled,
+      runs: runsOn(inst.driver),
+      online: reachable(inst),
+      report: !!reportOf(inst),
+      found: foundOf(inst),
+      check: view.checks[`${scope}:${inst.id}`],
+    });
 
-  const renderInstance = (inst: ProviderInstance) => {
-    const info = DRIVERS.find((x) => x.id === inst.driver);
-    const report = reportOf(inst);
-    const found = report?.drivers.find((d) => d.driver === inst.driver);
-    const check = view.checks[`${scope}:${inst.id}`];
-    const key = `${scope}:${inst.id}`;
-    const used = jobsUsing(inst.id);
-    const isOnline = online(inst);
-    const toolName = TOOL_NAMES[inst.driver] ?? driverLabel(inst.driver);
-    return (
-      <div key={inst.id} className="flex items-start gap-3 px-3 py-3">
-        <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-[11px] font-semibold text-violet-600 dark:text-violet-300">
-          {(info?.label ?? inst.driver).slice(0, 2)}
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-baseline gap-x-2 text-sm">
-            <span className="text-foreground">{inst.name}</span>
-            <span className="text-xs text-muted-foreground" title={inst.home || undefined}>
-              {toolName} · {inst.home ? "own folder" : "default folder"}
-              {found?.installed && found.version ? ` · v${found.version}` : ""}
-            </span>
-            {info && !runsOn(inst.driver) && <span className="text-[11px] text-muted-foreground">The Mac app doesn't run it</span>}
-            {report && runsOn(inst.driver) && !found?.installed && <span className="text-[11px] text-amber-600 dark:text-amber-400">Not installed on this Mac</span>}
-            {!inst.enabled && <span className="text-[11px] text-muted-foreground">Off</span>}
-            {readOnly && <span className="text-[11px] text-muted-foreground">on {deviceName(deviceOf(inst))}</span>}
-          </div>
-          <div className="mt-1 text-[11px]">
-            {checking === key ? (
-              <span className="text-muted-foreground">Checking… up to a minute</span>
-            ) : !check ? (
-              isOnline && <span className="text-muted-foreground">Not checked: press Check</span>
-            ) : check.ok ? (
-              <span className="text-emerald-600 dark:text-emerald-400">
-                Ready{check.model ? ` · ${modelName(check.model)}` : ""} · {(check.ms / 1000).toFixed(1)} s · checked {fmtAgo(check.at)}
-              </span>
-            ) : (
-              <span className="text-red-600 dark:text-red-400">{check.error || "The check failed"}</span>
-            )}
-          </div>
-        </div>
-        {!readOnly && (
-          <div className="flex shrink-0 items-center gap-2 pt-0.5">
-            <Switch
-              checked={inst.enabled}
-              aria-label={`Turn ${inst.name} ${inst.enabled ? "off" : "on"}`}
-              onCheckedChange={(on) =>
-                void save({ ...editing!, instances: editing!.instances.map((i) => (i.id === inst.id ? { ...i, enabled: on } : i)) })
-              }
-            />
-            {!isOnline && <span className="text-[11px] text-muted-foreground">Mac offline</span>}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => void runCheck(inst, scope)}
-              disabled={!isOnline || checking !== null}
-              title={isOnline ? "Send one short question to this AI" : "The Mac is offline"}
-            >
-              Check
-            </Button>
-            <ConfirmButton
-              label="Remove"
-              confirmLabel="Click again"
-              disabled={used.length > 0}
-              title={used.length ? `Used by ${used.join(", ")}. Pick another there first.` : "Remove this AI"}
-              className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:border-red-500/50 hover:text-red-600 disabled:opacity-40 dark:hover:text-red-300"
-              armedClassName="border-red-500/60 text-red-600 dark:text-red-300"
-              onConfirm={() => void save({ ...editing!, instances: editing!.instances.filter((i) => i.id !== inst.id) })}
-            />
-          </div>
-        )}
-      </div>
-    );
+  // Sign in shows only in the Mac app, for a provider on this Mac whose CLI says it is not signed in (or whose check failed).
+  const canSignIn = (inst: ProviderInstance) => {
+    const mac = thisMacDevice();
+    const failed = !!view.checks[`${scope}:${inst.id}`] && !view.checks[`${scope}:${inst.id}`].ok;
+    return !!mac && deviceOf(inst) === mac && SIGN_IN_DRIVERS.includes(inst.driver) && (statusOf(inst).text === "Not signed in" || failed);
+  };
+  // The Mac app's bridge (TitleBar.swift, handler "signIn"): it opens the CLI's sign-in in Terminal, then re-reports.
+  const signIn = (inst: ProviderInstance) => {
+    (window as unknown as { webkit?: { messageHandlers?: { signIn?: { postMessage: (m: unknown) => void } } } }).webkit?.messageHandlers?.signIn?.postMessage({
+      driver: inst.driver,
+      home: inst.home ?? "",
+    });
+    setSigningIn(inst.driver);
   };
 
   return (
     <>
-      <p className="text-sm text-muted-foreground">
+      <ScopeSentence devices={devices} device={device} readOnly={readOnly} onPick={setDeviceChoice} />
+      <p className="mt-3 text-sm text-muted-foreground">
         Your AI runs on a Mac, through the coding tools signed in there. Each one belongs to one Mac.
       </p>
       <p className="mt-2 text-sm">{aiAnswerer(view, thisMacDevice())}</p>
@@ -275,58 +256,60 @@ export function ProvidersSection({ sub }: { sub?: string }) {
         </div>
       )}
 
-      {/* no Mac yet: the setup steps above say what to do, so the empty Mac and Your AI groups would only repeat it */}
-      {(readOnly || devices.length > 0) && <Group
-        title="Mac"
-        hint={readOnly ? "Where your own AI runs. The dot shows whether it is online." : "The dot shows whether it is online. Your AI on an offline Mac can't answer."}
-      >
-        {devices.length === 0 ? (
-          <Notice>No Mac connected yet.</Notice>
-        ) : (
-          <>
-            <div role="tablist" aria-label="Macs" className="flex flex-wrap gap-1.5">
-              {devices.map((d) => (
-                <button
-                  key={d.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={device?.id === d.id}
-                  onClick={() => setSelectedId(d.id)}
-                  className={cn(
-                    "flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs transition-colors",
-                    device?.id === d.id ? "border-violet-500/60 bg-violet-500/10 text-foreground" : "border-border text-muted-foreground hover:bg-accent hover:text-foreground",
-                  )}
-                >
-                  <Dot on={d.online} />
-                  {d.name}
-                  {d.owner === "workspace" && <span className="text-[10px] uppercase tracking-wider text-muted-foreground">workspace</span>}
-                </button>
-              ))}
-            </div>
-            {device && !device.online && <p className="mt-2 text-[11px] text-muted-foreground">Offline. Its AI can't answer until it is back.</p>}
-          </>
-        )}
-      </Group>}
+      {(readOnly || devices.length > 0) && (
+        <Group
+          title="Your AI"
+          hint={readOnly ? "The workspace's AI, on whichever Mac runs it." : "One coding tool signed in as one account on this Mac. Off keeps it out of every job."}
+        >
+          {listed.length === 0 ? (
+            <Notice>{readOnly ? "The workspace has no AI yet." : device ? "No AI on this Mac yet." : "Connect a Mac to add your AI."}</Notice>
+          ) : (
+            <Card>
+              {listed.map((inst) => {
+                const found = foundOf(inst);
+                return (
+                  <ProviderInstanceCard
+                    key={inst.id}
+                    inst={inst}
+                    status={statusOf(inst)}
+                    version={found?.installed ? found.version : undefined}
+                    customEndpoint={hasCustomEndpoint(reportOf(inst), inst)}
+                    selected={detail?.id === inst.id}
+                    readOnly={readOnly}
+                    where={readOnly ? deviceName(deviceOf(inst)) : undefined}
+                    onSelect={() => setInstanceId(inst.id)}
+                    onToggle={(on) => patch(inst, { enabled: on })}
+                  />
+                );
+              })}
+            </Card>
+          )}
+          <div>
+            <Button variant="outline" size="sm" disabled={!device} onClick={() => setAdding(true)}>
+              <Plus className="h-3.5 w-3.5" /> {readOnly && listed.length > 0 ? `Add my own on ${device ? device.name : "a Mac"}` : "Add one"}
+            </Button>
+          </div>
+        </Group>
+      )}
 
-      {(readOnly || devices.length > 0) && <Group
-        title="Your AI"
-        hint={
-          readOnly
-            ? "The workspace's AI, on whichever Mac runs it."
-            : "One coding tool signed in as one account on this Mac. Off keeps it out of every job."
-        }
-      >
-        {listed.length === 0 ? (
-          <Notice>{readOnly ? "The workspace has no AI yet." : device ? "No AI on this Mac yet." : "Connect a Mac to add your AI."}</Notice>
-        ) : (
-          <Card>{listed.map(renderInstance)}</Card>
-        )}
-        <div>
-          <Button variant="outline" size="sm" disabled={!device} onClick={() => setAdding(true)}>
-            <Plus className="h-3.5 w-3.5" /> {readOnly && listed.length > 0 ? `Add my own on ${device ? device.name : "a Mac"}` : "Add one"}
-          </Button>
-        </div>
-      </Group>}
+      {detail && device && (
+        <ProviderDetail
+          inst={detail}
+          status={statusOf(detail)}
+          version={foundOf(detail)?.installed ? foundOf(detail)?.version : undefined}
+          check={view.checks[`${scope}:${detail.id}`]}
+          checking={checking === `${scope}:${detail.id}`}
+          canCheck={online(detail) && checking === null}
+          used={jobsUsing(detail.id)}
+          onChange={(p) => patch(detail, p)}
+          onCheck={() => void runCheck(detail, scope)}
+          onSignIn={canSignIn(detail) ? () => signIn(detail) : undefined}
+          onRemove={() => {
+            setInstanceId(null);
+            if (editing) void save({ ...editing, instances: editing.instances.filter((i) => i.id !== detail.id) });
+          }}
+        />
+      )}
 
       {shown && (
         <Group
@@ -340,7 +323,7 @@ export function ProvidersSection({ sub }: { sub?: string }) {
               listModels={(i) => modelsOf(view, i)}
               value={shown.default}
               disabled={readOnly || saving}
-              onChange={(v) => v && void save({ ...editing!, default: v })}
+              onChange={(v) => v && editing && void save({ ...editing, default: v })}
             />
             {JOBS.map((j) => (
               <JobRow
@@ -352,10 +335,11 @@ export function ProvidersSection({ sub }: { sub?: string }) {
                 fallback={shown.default}
                 disabled={readOnly || saving}
                 onChange={(v) => {
+                  if (!editing) return;
                   const jobs = { ...shown.jobs };
                   if (v) jobs[j.id] = v;
                   else delete jobs[j.id];
-                  void save({ ...editing!, jobs });
+                  void save({ ...editing, jobs });
                 }}
               />
             ))}
@@ -364,7 +348,7 @@ export function ProvidersSection({ sub }: { sub?: string }) {
       )}
 
       {isAdmin && editing && (
-        <p className="text-xs text-muted-foreground">
+        <p className="mt-8 text-xs text-muted-foreground">
           This is the workspace's AI. Who else may use it:{" "}
           <Link to="/settings/admin/ai" className="underline underline-offset-2 hover:text-foreground">
             Admin → AI access

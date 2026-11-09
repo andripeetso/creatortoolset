@@ -1,26 +1,63 @@
 import type { DocKind, DraftKind, DraftMeta, Document, ImageRef, SessionMeta, SessionStatus } from "./types";
-import { PICTURE_TOKEN, carouselObsidianMarkdown, obsidianFilename, pictureIds, reelObsidianMarkdown } from "../../../src/lib/workshop-markdown";
+import { PICTURE_TOKEN, carouselObsidianMarkdown, frontmatterBlock, obsidianFilename, pictureIds, reelObsidianMarkdown } from "../../../src/lib/workshop-markdown";
 import { PICTURE_EXT } from "./pictures";
 
-/** Workshop status → the author's Obsidian Selector.Status values. Missing = draft. */
-const OBSIDIAN_STATUS = new Map<string, string>([
-  ["draft", "💡 Idea"],
-  ["writing", "✍️ Writing"],
-  ["ready", "👍 Ready"],
-  ["production", "🎥 Filming"],
-  ["editing", "✂️ Editing"],
-  ["toPost", "📤 Ready to post"],
-  ["published", "✅ Published"],
-  ["shelved", "📁 Shelved"],
-]);
-
-export function obsidianStatus(status: string | undefined): string {
-  return OBSIDIAN_STATUS.get(status ?? "draft") ?? OBSIDIAN_STATUS.get("draft")!;
+/**
+ * The note's frontmatter: the vault's property names, the values the media property takes, and the lines in their order.
+ * The public default is generic; a plug-in sets its vault's format through setObsidianFormat.
+ */
+export interface ObsidianFormat {
+  /** The media property's value for each kind of piece. */
+  media: Record<"reel" | "carousel", string>;
+  /** A piece's frontmatter lines in order, [property, value]; "" writes the property alone. `media` is the value for its kind. */
+  frontmatter: (piece: { kind: "reel" | "carousel"; day: string; status: string; media: string }) => Array<[string, string]>;
 }
 
-/** A note's Selector.Status value back to the Workshop's status; undefined for a value the Workshop has no word for. */
+const GENERIC_FORMAT: ObsidianFormat = {
+  media: { reel: "reel", carousel: "carousel" },
+  frontmatter: ({ day, status, media }) => [
+    ["change", day],
+    ["status", status],
+    ["media", media],
+  ],
+};
+
+let format: ObsidianFormat = GENERIC_FORMAT;
+
+/** The hook a plug-in uses to set the frontmatter its vault reads. `null` puts the generic format back. */
+export function setObsidianFormat(next: ObsidianFormat | null): void {
+  format = next ?? GENERIC_FORMAT;
+}
+
+/** The public default: each Workshop status under its plain name. Missing = draft. */
+const GENERIC_STATUS: Record<string, string> = {
+  draft: "Idea",
+  writing: "Writing",
+  ready: "Ready",
+  production: "Filming",
+  editing: "Editing",
+  toPost: "Ready to post",
+  published: "Published",
+  shelved: "Shelved",
+};
+
+let statusLabels = new Map(Object.entries(GENERIC_STATUS));
+
+/**
+ * The hook a plug-in uses to set the Obsidian status values its vault reads (a status property list, say): one label per
+ * Workshop status it names, the rest keep their generic label. `null` puts the generic labels back.
+ */
+export function setObsidianStatusLabels(labels: Record<string, string> | null): void {
+  statusLabels = new Map(Object.entries(labels ? { ...GENERIC_STATUS, ...labels } : GENERIC_STATUS));
+}
+
+export function obsidianStatus(status: string | undefined): string {
+  return statusLabels.get(status ?? "draft") ?? statusLabels.get("draft")!;
+}
+
+/** A note's status value back to the Workshop's status; undefined for a value the Workshop has no word for. */
 export function sessionStatusOf(obsidian: string): SessionStatus | undefined {
-  for (const [status, value] of OBSIDIAN_STATUS) if (value === obsidian) return status as SessionStatus;
+  for (const [status, value] of statusLabels) if (value === obsidian) return status as SessionStatus;
   return undefined;
 }
 
@@ -34,8 +71,7 @@ type ObsidianNote = { filename: string; markdown: string; pictures: Array<{ id: 
 
 /**
  * The session's pieces as the author's Obsidian notes, one file each: the first reel
- * and the first carousel with words. One piece: `<title>.md`. Both: `<title>-Reel.md` and `<title>-Carousel.md`, the
- * way the author's vault names them (Example-Reel.md).
+ * and the first carousel with words. One piece: `<title>.md`. Both: `<title>-Reel.md` and `<title>-Carousel.md`.
  */
 export function obsidianExports(
   session: Pick<SessionMeta, "title" | "status">,
@@ -46,8 +82,8 @@ export function obsidianExports(
   return obsidianPieces(session, docs, day, types).map(({ filename, markdown, pictures }) => ({ filename, markdown, pictures }));
 }
 
-/** A piece as its note, plus what a custom export's template can name: its kind, post description and body (no frontmatter). */
-export type ObsidianPiece = ObsidianNote & { kind: "reel" | "carousel"; caption: string; body: string };
+/** A piece as its note, plus what a custom export's template can name: its kind, its media value, post description and body (no frontmatter). */
+export type ObsidianPiece = ObsidianNote & { kind: "reel" | "carousel"; media: string; caption: string; body: string; frontmatter: string };
 
 const FRONTMATTER = /^---\n[\s\S]*?\n---\n/;
 
@@ -75,14 +111,15 @@ export function obsidianPieces(
     }
     // a picture that is gone leaves nothing behind
     const swap = (text: string) => text.replace(PICTURE_TOKEN, (_all, _alt: string, id: string) => (embed.has(id) ? `![[${embed.get(id)}]]` : ""));
-    const status = obsidianStatus(session.status);
+    const kind = doc.kind as "reel" | "carousel";
+    const media = format.media[kind];
+    const head = frontmatterBlock(format.frontmatter({ kind, day, status: obsidianStatus(session.status), media }));
     const blocks = doc.blocks.map((b) => ({ text: swap(b.text) }));
     const markdown =
-      doc.kind === "reel"
-        ? reelObsidianMarkdown({ day, status, hooks: doc.hooks ? doc.hooks.map((h) => ({ text: swap(h.text) })) : null, blocks })
-        : carouselObsidianMarkdown({ day, status, blocks });
-    const kind = doc.kind as "reel" | "carousel";
-    return { filename: `${stem}.md`, markdown, pictures, kind, caption: doc.caption?.text.trim() ?? "", body: markdown.replace(FRONTMATTER, "") };
+      kind === "reel"
+        ? reelObsidianMarkdown({ head, hooks: doc.hooks ? doc.hooks.map((h) => ({ text: swap(h.text) })) : null, blocks })
+        : carouselObsidianMarkdown({ head, blocks });
+    return { filename: `${stem}.md`, markdown, pictures, kind, media, caption: doc.caption?.text.trim() ?? "", body: markdown.replace(FRONTMATTER, ""), frontmatter: head };
   });
 }
 
@@ -108,6 +145,9 @@ export const KIND_TITLE: Record<Exclude<DocKind, "notes">, string> = {
   ad: "Ad copy",
   free: "Draft",
   youtube: "YouTube script",
+  newsletter: "Newsletter",
+  thread: "X post / thread",
+  article: "Article",
 };
 
 /** Push every heading one level down so a draft nests under the session. */

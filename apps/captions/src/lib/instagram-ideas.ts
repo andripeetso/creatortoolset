@@ -1,7 +1,7 @@
 /**
  * Group library posts by folder name. Distill files a post into a library
  * folder (reuse an existing title when the topic matches). This helper only
- * merges near-duplicate names ("Swimming for kids" / "Kids swimming").
+ * merges near-duplicate names ("Yoga for beginners" / "Beginner yoga").
  * Same topic with different names is the distill/reconcile job.
  */
 

@@ -6,7 +6,7 @@ import { afterAll, describe, expect, it } from "vitest";
 const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "library-trash-"));
 process.env.DATA_DIR = dir;
 const { libraryDb } = await import("./db");
-const { purgeTrash } = await import("./trash");
+const { purgeTrash, purgeTrashedPieces } = await import("./trash");
 
 afterAll(() => {
   delete process.env.LIBRARY_TRASH_DAYS;
@@ -72,5 +72,20 @@ describe("library trash purge", () => {
     trashed("ast_plain", 20, now);
     expect(await purgeTrash(now)).toBe(1);
     expect(libraryDb().prepare("SELECT id FROM assets").all()).toEqual([{ id: "ast_review" }]);
+  });
+  it("takes Finals pieces out of the trash after five days; a fresh trashed piece and its versions stay", async () => {
+    const d = libraryDb();
+    const now = Date.now();
+    trashed("ast_piece", 0, now); // a version of its own (the earlier cases remove theirs)
+    d.prepare("INSERT INTO pieces (id, library_id, collection_id, label, created_by, created_at, trashed_at) VALUES ('pce_old', 'lib_t', 'col_t', 'Old', 'owner', 0, ?)").run(now - 6 * DAY);
+    d.prepare("INSERT INTO pieces (id, library_id, collection_id, label, created_by, created_at, trashed_at) VALUES ('pce_new', 'lib_t', 'col_t', 'New', 'owner', 0, ?)").run(now - 4 * DAY);
+    d.prepare("INSERT INTO piece_items (id, piece_id, version_id, position) VALUES ('pci_old', 'pce_old', 'v_ast_piece', 1)").run();
+    d.prepare("INSERT INTO postings (piece_item_id, platform, posted_at, created_by) VALUES ('pci_old', 'instagram', 0, 'owner')").run();
+    expect(await purgeTrashedPieces(now)).toBe(1);
+    const ids = (d.prepare("SELECT id FROM pieces ORDER BY id").all() as { id: string }[]).map((r) => r.id);
+    expect(ids).toEqual(["pce_new"]);
+    expect((d.prepare("SELECT COUNT(*) AS n FROM piece_items WHERE piece_id = 'pce_old'").get() as { n: number }).n).toBe(0);
+    expect((d.prepare("SELECT COUNT(*) AS n FROM postings WHERE piece_item_id = 'pci_old'").get() as { n: number }).n).toBe(0);
+    expect((d.prepare("SELECT COUNT(*) AS n FROM asset_versions WHERE id = 'v_ast_piece'").get() as { n: number }).n).toBe(1);
   });
 });

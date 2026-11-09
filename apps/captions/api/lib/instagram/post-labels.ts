@@ -11,7 +11,7 @@ export const HOOKS = {
   question: "Opens with a question to the viewer.",
   "bold claim": "Opens with a strong or surprising statement presented as fact.",
   "myth or mistake": "Opens by calling out a common belief, mistake or warning.",
-  story: "Opens with a personal story or moment (\"My kid…\", \"When we…\").",
+  story: "Opens with a personal story or moment (\"My week…\", \"When we…\").",
   "how-to promise": "Promises to show how to do something or what to do.",
   "result or proof": "Opens with a result, milestone, study or before-and-after.",
   "relatable moment": "Opens with a situation the audience recognises from their own life.",

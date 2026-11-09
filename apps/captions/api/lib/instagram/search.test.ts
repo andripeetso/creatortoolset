@@ -13,9 +13,9 @@ describe("search", () => {
   });
 
   it("requires every token", () => {
-    const hay = buildSearchText(["@creator", "caption about baby sleep", "on-screen: 3 tips"]);
-    expect(matchesQuery("baby tips", hay)).toBe(true);
-    expect(matchesQuery("baby walrus", hay)).toBe(false);
+    const hay = buildSearchText(["@creator", "caption about puppy sleep", "on-screen: 3 tips"]);
+    expect(matchesQuery("puppy tips", hay)).toBe(true);
+    expect(matchesQuery("puppy walrus", hay)).toBe(false);
     expect(matchesQuery("", hay)).toBe(true);
   });
 });

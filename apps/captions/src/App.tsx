@@ -19,6 +19,8 @@ import ReviewSharedProjectPage from "./pages/ReviewSharedProjectPage";
 import WorkshopSharePage from "./pages/WorkshopSharePage";
 import StorySplitterPage from "./pages/StorySplitterPage";
 import LibraryPage from "./pages/LibraryPage";
+import FinalsPage from "./pages/FinalsPage";
+import FinalsPiecePage from "./pages/FinalsPiece";
 import ScreenRecorderPage from "./pages/ScreenRecorderPage";
 import ScreenProjectPage from "./pages/ScreenProjectPage";
 import LibrarySharePage from "./pages/LibrarySharePage";
@@ -34,6 +36,7 @@ import { FirstOpen } from "@/components/setup/FirstOpen";
 import { AssistantDock } from "@/components/assistant/AssistantDock";
 import { AskAboutSelection } from "@/components/assistant/AskAboutSelection";
 import { AppDialogs } from "@/components/AppDialogs";
+import { ViewAsBanner } from "@/components/ViewAsBanner";
 import { canUse, useAuth, useMe } from "@/lib/auth";
 import { initTabGuard } from "@/lib/tabs";
 import { useStudio } from "@/lib/store";
@@ -43,6 +46,14 @@ import { warmScreens } from "@/lib/warm-cache";
 import { useAppearance } from "@/lib/settings";
 import { historyDepth } from "@/lib/history-depth";
 import { setupOpen, useSetup, useWorkTalk } from "@/lib/setup";
+import { replacementFor } from "@/lib/plugin";
+import { webPlugins } from "./plugins.gen";
+
+// pages from plug-ins (plugins/<id>/web.tsx), routed like the built-in pages above
+const pluginRoutes = webPlugins.flatMap((p) => p.routes ?? []);
+// a plug-in's replacement for the editor pages (replaces in web.tsx); the built-in pages when none does
+const EditorScreen = replacementFor(webPlugins, "editor") ?? EditorPage;
+const EditorEditScreen = replacementFor(webPlugins, "editorEdit") ?? EditorEditPage;
 
 const MobileCaptionPage = lazy(
   () => import("./pages/mobile/MobileCaptionPage"),
@@ -290,6 +301,7 @@ export default function App() {
       <WarmCaches />
       <SettingsShortcut />
       <AppDialogs />
+      <ViewAsBanner />
       <main className="contents">
         <Routes location={page}>
           <Route path="/" element={<ToolsetHome />} />
@@ -335,10 +347,13 @@ export default function App() {
           <Route path="/ws/:token" element={<WorkshopSharePage />} />
           <Route path="/library/s/:token" element={<LibrarySharePage />} />
           <Route path="/library" element={<AppRoute tool="media"><LibraryPage /></AppRoute>} />
+          <Route path="/finals" element={<AppRoute tool="media"><FinalsPage /></AppRoute>} />
+          <Route path="/finals/:pieceId" element={<AppRoute tool="media"><FinalsPiecePage /></AppRoute>} />
           <Route path="/stories" element={<AppRoute tool="stories"><StorySplitterPage /></AppRoute>} />
-          <Route path="/editor" element={<AppRoute tool="editor"><EditorPage /></AppRoute>} />
-          <Route path="/editor/:id" element={<AppRoute tool="editor"><EditorEditPage /></AppRoute>} />
+          <Route path="/editor" element={<AppRoute tool="editor"><EditorScreen /></AppRoute>} />
+          <Route path="/editor/:id" element={<AppRoute tool="editor"><EditorEditScreen /></AppRoute>} />
           <Route path="/rp/:ptoken/:assetId" element={<ReviewAssetPage />} />
+          {pluginRoutes.map((r) => <Route key={r.path} path={r.path} element={r.element} />)}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>

@@ -9,6 +9,8 @@ import {
 } from "lucide-react";
 import { logout, useAuth } from "@/lib/auth";
 import { isPhoneHub } from "@/lib/mobile";
+import { accountItemsFor } from "@/lib/plugin";
+import { webPlugins } from "@/plugins.gen";
 import { isPublicReviewPath, isPublicSharePath } from "./AuthGate";
 import {
   DropdownMenu,
@@ -30,13 +32,14 @@ export function useAccountInCorner(): boolean {
   );
 }
 
-/** The account menu, top right beside the project switcher: Settings, Community, Usage, the Mac app, sign out. */
+/** The account menu, top right beside the project switcher: Settings, Community, Usage, the plug-ins' items, sign out. */
 export function UserMenu() {
   const required = useAuth((s) => s.required);
   const me = useAuth((s) => s.me);
   const navigate = useNavigate();
 
   if (!me) return null;
+  const pluginItems = accountItemsFor(me, webPlugins);
 
   return (
     <span className="flex items-center gap-0.5">
@@ -70,6 +73,11 @@ export function UserMenu() {
           <DropdownMenuItem onSelect={() => navigate("/settings/usage")} className="text-xs">
             <BarChart3 /> Usage
           </DropdownMenuItem>
+          {pluginItems.map((item) => (
+            <DropdownMenuItem key={item.to} onSelect={() => navigate(item.to)} className="text-xs">
+              <item.icon /> {item.label}
+            </DropdownMenuItem>
+          ))}
 
           {required && (
             <>

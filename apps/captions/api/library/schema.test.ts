@@ -26,6 +26,14 @@ describe("library schema", () => {
     again.close();
   });
 
+  it("migration 5 allows bunny storage, and still refuses unknown kinds", () => {
+    const db = openLibraryDb(path.join(dir, "bunny.db"));
+    const insert = db.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES (?, ?, ?, ?, ?)");
+    expect(() => insert.run("lib_b", "ws_1", "Library", "bunny", 1)).not.toThrow();
+    expect(() => insert.run("lib_f", "ws_1", "Library", "ftp", 1)).toThrow();
+    db.close();
+  });
+
   it("migration 3 allows only local and s3 storage and keeps the libraries and the rows that point at them", () => {
     const file = path.join(dir, "old.db");
     const old = new DatabaseSync(file); // a database from before migration 3

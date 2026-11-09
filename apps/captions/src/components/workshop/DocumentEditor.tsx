@@ -326,6 +326,8 @@ export function DocumentEditor({
   preview = false,
   visualize = false,
   onCloseVisualize,
+  finalsVersions,
+  onVersionCaption,
   mine,
   onLock,
   onLines,
@@ -357,13 +359,15 @@ export function DocumentEditor({
     companions: { caption: string; pinned: string; hooks?: Array<{ id?: string; text: string }> },
   ) => void;
   /** Caption-only turn: Generate when empty, Another when a caption is already saved. */
-  onGenerateCaption?: (another: boolean) => void;
+  onGenerateCaption?: (another: boolean, version?: string) => void;
   /** Persist the visual carousel recipe (explainer, conversation, …). */
   onCarouselType?: (id: CarouselTypeId) => void;
   onLayouts?: (opts: LayoutPass) => Promise<void>;
   preview?: boolean;
   visualize?: boolean;
   onCloseVisualize?: () => void;
+  finalsVersions?: Array<{ key: string; label: string }>;
+  onVersionCaption?: (key: string, text: string) => void;
 }) {
   if (doc.kind === "notes") {
     return <NotesEditor doc={doc} locked={locked} quiet={quiet} saving={saving} preview={preview} onChange={onChange} />;
@@ -382,6 +386,8 @@ export function DocumentEditor({
       preview={preview}
       visualize={visualize}
       onCloseVisualize={onCloseVisualize}
+      finalsVersions={finalsVersions}
+      onVersionCaption={onVersionCaption}
       mine={mine}
       onLock={onLock}
       onLines={onLines}
@@ -401,6 +407,88 @@ function notesBody(doc: WorkshopDocument) {
 /** Legacy reels stored one spoken line per block; join them for the one script field. */
 function reelBody(blocks: Array<{ text: string }>) {
   return blocks.map((b) => b.text).filter(Boolean).join("\n\n");
+}
+
+/**
+ * One version's own post description: typed here it is the author's, saved on its own; "Write" asks the writer for this
+ * version's (the chat turn writes into this tab). Empty = the main one is used for it.
+ */
+function VersionCaption({
+  doc,
+  version,
+  disabled,
+  canWrite,
+  onSave,
+  onWrite,
+}: {
+  doc: WorkshopDocument;
+  version: { key: string; label: string };
+  disabled: boolean;
+  canWrite: boolean;
+  onSave: (text: string) => void;
+  onWrite: (another: boolean) => void;
+}) {
+  const saved = doc.captions?.[version.key];
+  const [text, setText] = useState(saved?.text ?? "");
+  const [seen, setSeen] = useState(saved?.text ?? "");
+  if (seen !== (saved?.text ?? "")) {
+    setSeen(saved?.text ?? "");
+    setText(saved?.text ?? "");
+  }
+  // typing saves after a pause; anything not yet saved goes when the tab closes
+  const pending = useRef<string | null>(null);
+  const timer = useRef<number | undefined>(undefined);
+  const save = useRef(onSave);
+  save.current = onSave;
+  const flush = () => {
+    window.clearTimeout(timer.current);
+    if (pending.current !== null) save.current(pending.current);
+    pending.current = null;
+  };
+  useEffect(() => flush, []);
+  const change = (t: string) => {
+    setText(t);
+    pending.current = t;
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(flush, 700);
+  };
+  const author = text && text === saved?.text ? saved.author : text ? "user" : null;
+  const shown = text || doc.caption?.text || "";
+  return (
+    <>
+      <div className="mb-1.5 flex items-center gap-2">
+        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${author === "user" ? "bg-amber-400/70" : author === "ai" ? "bg-violet-400/50" : "bg-transparent"}`} />
+        <p className="min-w-0 truncate text-[11px] text-muted-foreground">Post description · {version.label}</p>
+        {shown.trim() ? (
+          <CopyButton
+            text={() => markdownToPlain(shown)}
+            label="Copy"
+            title="Copy this version's post description as Instagram takes it"
+            className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+          />
+        ) : null}
+        <button
+          type="button"
+          disabled={disabled || !canWrite}
+          onClick={() => {
+            flush();
+            onWrite(!!text.trim());
+          }}
+          className="text-[11px] text-muted-foreground hover:text-foreground disabled:opacity-40"
+          title={text.trim() ? "Another take of this version's description" : "Write this version's description"}
+        >
+          {text.trim() ? "Another" : "Write"}
+        </button>
+      </div>
+      <AutoTextarea
+        value={text}
+        disabled={disabled}
+        onChange={change}
+        sessionId={doc.sessionId}
+        placeholder={doc.caption?.text ? "Uses the main description until this version has its own" : "This version's post description"}
+      />
+    </>
+  );
 }
 
 /** Scratch page: one field, no beats, no caption. */
@@ -477,6 +565,8 @@ function PieceEditor({
   preview,
   visualize,
   onCloseVisualize,
+  finalsVersions,
+  onVersionCaption,
   mine,
   onLock,
   onLines,
@@ -500,17 +590,23 @@ function PieceEditor({
     blocks: Array<{ id?: string; text: string }>,
     companions: { caption: string; pinned: string; hooks?: Array<{ id?: string; text: string }> },
   ) => void;
-  onGenerateCaption?: (another: boolean) => void;
+  onGenerateCaption?: (another: boolean, version?: string) => void;
   onCarouselType?: (id: CarouselTypeId) => void;
   onLayouts?: (opts: LayoutPass) => Promise<void>;
   preview: boolean;
   visualize: boolean;
   onCloseVisualize?: () => void;
+  /** Its versions (Finals): a post description tab each. */
+  finalsVersions?: Array<{ key: string; label: string }>;
+  onVersionCaption?: (key: string, text: string) => void;
 }) {
   const [blocks, setBlocks] = useState<EditorBlock[]>(() => fromBlocks(doc.blocks));
   const [hooks, setHooks] = useState<EditorBlock[]>(() => fromBlocks(doc.hooks ?? []));
   const [caption, setCaption] = useState(doc.caption?.text ?? "");
   const [pinned, setPinned] = useState(doc.pinned?.text ?? "");
+  // which post description shows: the main one, or a Finals version's own
+  const [captionTab, setCaptionTab] = useState("main");
+  const tabVersion = finalsVersions?.find((v) => v.key === captionTab);
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [overKey, setOverKey] = useState<string | null>(null);
   const unit = docUnit(doc.kind);
@@ -918,6 +1014,35 @@ function PieceEditor({
             {!["notes", "newsletter", "thread", "article"].includes(doc.kind) && (
               <div className={`mt-8 grid gap-6 border-t border-border pt-6 sm:grid-cols-2 ${isReel ? "px-3" : ""}`}>
                 <div className="group">
+                  {finalsVersions?.length ? (
+                    <div className="mb-2 flex flex-wrap gap-1" role="tablist" aria-label="Post description per version">
+                      {[{ key: "main", label: "Main" }, ...finalsVersions].map((v) => (
+                        <button
+                          key={v.key}
+                          type="button"
+                          role="tab"
+                          aria-selected={captionTab === v.key}
+                          onClick={() => setCaptionTab(v.key)}
+                          title={v.key === "main" ? "The piece's post description: a version without its own uses this" : `Version ${v.label}`}
+                          className={`max-w-[10rem] truncate rounded-md px-2 py-0.5 text-[11px] ${captionTab === v.key ? "bg-foreground/10 text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                        >
+                          {v.label}
+                          {v.key !== "main" && !doc.captions?.[v.key]?.text ? <span className="text-muted-foreground/60"> · main</span> : null}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                  {tabVersion ? (
+                    <VersionCaption
+                      doc={doc}
+                      version={tabVersion}
+                      disabled={locked}
+                      canWrite={!!onGenerateCaption && aiAvailable && hasPiece}
+                      onSave={(text) => onVersionCaption?.(tabVersion.key, text)}
+                      onWrite={(another) => onGenerateCaption?.(another, tabVersion.key)}
+                    />
+                  ) : (
+                  <>
                   <div className="mb-1.5 flex items-center gap-2">
                     <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${tick(captionAuthor)}`} title={captionAuthor === "user" ? "Yours" : captionAuthor === "ai" ? "Written by the AI" : undefined} />
                     <p className="text-[11px] text-muted-foreground" title="Shown under the Instagram post — an extra finding or context the slides don't carry, plus search terms. Not a recap.">
@@ -971,6 +1096,8 @@ function PieceEditor({
                       {caption.length.toLocaleString("en-US")} / 2,200{caption.length > 2200 ? " · too long for Instagram" : ""}
                     </p>
                   ) : null}
+                  </>
+                  )}
                 </div>
                 <div>
                   <p className="mb-1.5 text-[11px] text-muted-foreground" title="Usually empty. Use only to sell something or to occupy a comment you know is coming. Never a question hoping people will reply.">

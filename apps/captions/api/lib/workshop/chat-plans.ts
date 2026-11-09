@@ -30,7 +30,7 @@ export const isAccountFetchSource = (source: string): boolean => {
   return /^account$/i.test(s) || /^instagram$/i.test(s) || /^@[\w.]+$/i.test(s);
 };
 
-const NEW_KINDS = new Set<string>(["reel", "carousel", "ad", "free", "youtube"]);
+const NEW_KINDS = new Set<string>(["reel", "carousel", "ad", "free", "youtube", "newsletter", "thread", "article"]);
 const isRec = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const str = (v: unknown, max: number) => (typeof v === "string" ? v.replace(/\r\n/g, "\n").trim().slice(0, max) : "");
 const BLOCK_ID = /^b\d{1,5}$/;

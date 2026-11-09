@@ -1,0 +1,459 @@
+[
+  {
+    "id": "auth.login",
+    "method": "POST",
+    "path": "/api/auth/login",
+    "probe": "route"
+  },
+  {
+    "id": "workshop.sessions",
+    "method": "GET",
+    "path": "/api/workshop/sessions",
+    "probe": "list",
+    "shape": {
+      "type": "array"
+    }
+  },
+  {
+    "id": "workshop.session-docs",
+    "method": "GET",
+    "path": "/api/workshop/sessions/:id/docs",
+    "probe": "route"
+  },
+  {
+    "id": "workshop.session-shares-get",
+    "method": "GET",
+    "path": "/api/workshop/sessions/:id/shares",
+    "probe": "route"
+  },
+  {
+    "id": "workshop.session-shares-post",
+    "method": "POST",
+    "path": "/api/workshop/sessions/:id/shares",
+    "probe": "route"
+  },
+  {
+    "id": "workshop.session-patch",
+    "method": "PATCH",
+    "path": "/api/workshop/sessions/:id",
+    "probe": "route"
+  },
+  {
+    "id": "workshop.workspace",
+    "method": "GET",
+    "path": "/api/workshop/workspace",
+    "probe": "list",
+    "shape": {
+      "type": "object"
+    }
+  },
+  {
+    "id": "workshop.own-post",
+    "method": "POST",
+    "path": "/api/workshop/own-post",
+    "probe": "route"
+  },
+  {
+    "id": "workshop-share.delivery",
+    "method": "GET",
+    "path": "/api/workshop-share/:id/deliveries/:id",
+    "probe": "route"
+  },
+  {
+    "id": "projects.list",
+    "method": "GET",
+    "path": "/api/projects",
+    "probe": "list",
+    "shape": {
+      "type": "array"
+    }
+  },
+  {
+    "id": "projects.get",
+    "method": "GET",
+    "path": "/api/projects/:id",
+    "probe": "route"
+  },
+  {
+    "id": "projects.clip-thumb",
+    "method": "GET",
+    "path": "/api/projects/:id/clips/:id/thumb",
+    "probe": "route"
+  },
+  {
+    "id": "projects.clip-video",
+    "method": "GET",
+    "path": "/api/projects/:id/clips/:id/video",
+    "probe": "route"
+  },
+  {
+    "id": "projects.original-parts",
+    "method": "GET",
+    "path": "/api/projects/:id/clips/:id/original/parts",
+    "probe": "route"
+  },
+  {
+    "id": "projects.original-part-post",
+    "method": "POST",
+    "path": "/api/projects/:id/clips/:id/original/parts/:n",
+    "probe": "route"
+  },
+  {
+    "id": "projects.original-complete",
+    "method": "POST",
+    "path": "/api/projects/:id/clips/:id/original/complete",
+    "probe": "route"
+  },
+  {
+    "id": "projects.sync",
+    "method": "PUT",
+    "path": "/api/projects/:id/sync",
+    "probe": "route"
+  },
+  {
+    "id": "projects.draft",
+    "method": "PUT",
+    "path": "/api/projects/:id/draft",
+    "probe": "route"
+  },
+  {
+    "id": "captions.presets",
+    "method": "GET",
+    "path": "/api/captions/presets",
+    "probe": "list",
+    "shape": {
+      "type": "object"
+    }
+  },
+  {
+    "id": "presets.list",
+    "method": "GET",
+    "path": "/api/presets",
+    "probe": "list",
+    "shape": {
+      "type": "array"
+    }
+  },
+  {
+    "id": "presets.create",
+    "method": "POST",
+    "path": "/api/presets",
+    "probe": "route"
+  },
+  {
+    "id": "presets.delete",
+    "method": "DELETE",
+    "path": "/api/presets/:id",
+    "probe": "route"
+  },
+  {
+    "id": "transcribe.create",
+    "method": "POST",
+    "path": "/api/transcribe",
+    "probe": "route"
+  },
+  {
+    "id": "captions.auto",
+    "method": "POST",
+    "path": "/api/captions/auto",
+    "probe": "route"
+  },
+  {
+    "id": "captions.layout",
+    "method": "POST",
+    "path": "/api/captions/layout",
+    "probe": "route"
+  },
+  {
+    "id": "exports.create",
+    "method": "POST",
+    "path": "/api/exports",
+    "probe": "route"
+  },
+  {
+    "id": "exports.get",
+    "method": "GET",
+    "path": "/api/exports/:id",
+    "probe": "route"
+  },
+  {
+    "id": "exports.file",
+    "method": "GET",
+    "path": "/api/exports/:id/file",
+    "probe": "route"
+  },
+  {
+    "id": "clean.presets",
+    "method": "GET",
+    "path": "/api/clean/presets",
+    "probe": "list",
+    "shape": {
+      "type": "array"
+    }
+  },
+  {
+    "id": "editor.list",
+    "method": "GET",
+    "path": "/api/editor",
+    "probe": "list",
+    "shape": {
+      "type": "array"
+    }
+  },
+  {
+    "id": "editor.worker",
+    "method": "GET",
+    "path": "/api/editor/worker",
+    "probe": "list",
+    "shape": {
+      "type": "object"
+    }
+  },
+  {
+    "id": "editor.get",
+    "method": "GET",
+    "path": "/api/editor/:id",
+    "probe": "route"
+  },
+  {
+    "id": "editor.draft-preview",
+    "method": "GET",
+    "path": "/api/editor/:id/drafts/:name/preview",
+    "probe": "route"
+  },
+  {
+    "id": "editor.draft-review",
+    "method": "POST",
+    "path": "/api/editor/:id/drafts/:name/review",
+    "probe": "route"
+  },
+  {
+    "id": "editor.draft-revise",
+    "method": "POST",
+    "path": "/api/editor/:id/drafts/:name/revise",
+    "probe": "route"
+  },
+  {
+    "id": "editor.jobs",
+    "method": "POST",
+    "path": "/api/editor/:id/jobs",
+    "probe": "route"
+  },
+  {
+    "id": "editor.chat-get",
+    "method": "GET",
+    "path": "/api/editor/chat",
+    "probe": "list",
+    "shape": {
+      "type": "object"
+    }
+  },
+  {
+    "id": "editor.chat-post",
+    "method": "POST",
+    "path": "/api/editor/chat",
+    "probe": "route"
+  },
+  {
+    "id": "editor.chat-delete",
+    "method": "DELETE",
+    "path": "/api/editor/chat",
+    "probe": "route"
+  },
+  {
+    "id": "review.list",
+    "method": "GET",
+    "path": "/api/review",
+    "probe": "list",
+    "shape": {
+      "type": "array"
+    }
+  },
+  {
+    "id": "review.projects",
+    "method": "GET",
+    "path": "/api/review/projects",
+    "probe": "list",
+    "shape": {
+      "type": "array"
+    }
+  },
+  {
+    "id": "review.asset",
+    "method": "GET",
+    "path": "/api/review/assets/:id",
+    "probe": "route"
+  },
+  {
+    "id": "review.asset-media",
+    "method": "GET",
+    "path": "/api/review/assets/:id/v/:n/:file",
+    "probe": "route"
+  },
+  {
+    "id": "review.comments-post",
+    "method": "POST",
+    "path": "/api/review/assets/:id/comments",
+    "probe": "route"
+  },
+  {
+    "id": "review.comment-patch",
+    "method": "PATCH",
+    "path": "/api/review/assets/:id/comments/:id",
+    "probe": "route"
+  },
+  {
+    "id": "review.approval",
+    "method": "POST",
+    "path": "/api/review/assets/:id/approval",
+    "probe": "route"
+  },
+  {
+    "id": "finals.list",
+    "method": "GET",
+    "path": "/api/library?trash=0",
+    "probe": "list",
+    "shape": {
+      "type": "object",
+      "keys": [
+        "folders",
+        "stacks"
+      ]
+    }
+  },
+  {
+    "id": "finals.media-thumb",
+    "method": "GET",
+    "path": "/api/library/media/:id/thumb",
+    "probe": "route"
+  },
+  {
+    "id": "finals.media-play",
+    "method": "GET",
+    "path": "/api/library/media/:id/play",
+    "probe": "route"
+  },
+  {
+    "id": "finals.media-download",
+    "method": "GET",
+    "path": "/api/library/media/:id/download",
+    "probe": "route"
+  },
+  {
+    "id": "finals.stack-cover",
+    "method": "GET",
+    "path": "/api/library/stacks/:id/cover",
+    "probe": "route"
+  },
+  {
+    "id": "catalog.clips",
+    "method": "GET",
+    "path": "/catalog/api/clips",
+    "probe": "list",
+    "shape": {
+      "type": "array"
+    }
+  },
+  {
+    "id": "catalog.clip-thumbnail",
+    "method": "GET",
+    "path": "/catalog/api/clips/:id/thumbnail",
+    "probe": "route"
+  },
+  {
+    "id": "catalog.clip-image-preview",
+    "method": "GET",
+    "path": "/catalog/api/clips/:id/image-preview",
+    "probe": "route"
+  },
+  {
+    "id": "catalog.clip-download-url",
+    "method": "GET",
+    "path": "/catalog/api/clips/:id/download-url",
+    "probe": "route"
+  },
+  {
+    "id": "catalog.download",
+    "method": "GET",
+    "path": "/catalog/download/:id",
+    "probe": "route"
+  },
+  {
+    "id": "fonts.file",
+    "method": "GET",
+    "path": "/fonts/:file",
+    "probe": "static"
+  },
+  {
+    "id": "auth.check",
+    "method": "GET",
+    "path": "/api/auth/check",
+    "probe": "route"
+  },
+  {
+    "id": "instagram.share",
+    "method": "POST",
+    "path": "/api/instagram/share",
+    "probe": "route"
+  },
+  {
+    "id": "catalog.login",
+    "method": "POST",
+    "path": "/catalog/api/auth/login",
+    "probe": "route"
+  },
+  {
+    "id": "catalog.uploads-known",
+    "method": "POST",
+    "path": "/catalog/api/uploads/known",
+    "probe": "route"
+  },
+  {
+    "id": "catalog.uploads-dupe-check",
+    "method": "POST",
+    "path": "/catalog/api/uploads/dupe-check",
+    "probe": "route"
+  },
+  {
+    "id": "catalog.uploads-status",
+    "method": "POST",
+    "path": "/catalog/api/uploads/status",
+    "probe": "route"
+  },
+  {
+    "id": "catalog.uploads-create",
+    "method": "POST",
+    "path": "/catalog/api/uploads",
+    "probe": "route"
+  },
+  {
+    "id": "catalog.uploads-relay-create",
+    "method": "POST",
+    "path": "/catalog/api/uploads/relay",
+    "probe": "route"
+  },
+  {
+    "id": "catalog.uploads-head",
+    "method": "HEAD",
+    "path": "/catalog/api/uploads/:id",
+    "probe": "route"
+  },
+  {
+    "id": "catalog.uploads-complete",
+    "method": "POST",
+    "path": "/catalog/api/uploads/:id/complete",
+    "probe": "route"
+  },
+  {
+    "id": "catalog.uploads-relay-complete",
+    "method": "POST",
+    "path": "/catalog/api/uploads/relay/:id/complete",
+    "probe": "route"
+  },
+  {
+    "id": "catalog.uploads-patch",
+    "method": "PATCH",
+    "path": "/catalog/api/uploads/:id",
+    "probe": "route"
+  }
+]

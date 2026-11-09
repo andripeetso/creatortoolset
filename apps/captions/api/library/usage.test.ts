@@ -1,4 +1,4 @@
-import { S3Client } from "@aws-sdk/client-s3";
+import { S3Client, UploadPartCommand } from "@aws-sdk/client-s3";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -92,15 +92,19 @@ describe("library storage choice", () => {
 
   it("an upload lands in the bucket, usage counts its bytes, playback is a signed redirect, and where it lives is locked", async () => {
     const data = Buffer.from("tiny acrobatics clip bytes");
-    const init = (await (await call("owner-a", "POST", "/api/library/lib_a/uploads", { filename: "Roll.mp4", size: data.length })).json()) as { id: string };
-    const sent = await app.request(`/api/library/uploads/${init.id}`, {
-      method: "PATCH",
-      headers: { "x-user": "owner-a", "upload-offset": "0", "content-length": String(data.length) },
-      body: data,
-    });
-    expect(sent.status).toBe(204);
-    const done = (await (await call("owner-a", "POST", `/api/library/uploads/${init.id}/finish`)).json()) as { versionId: string };
-    const key = `libraries/lib_a/v/${done.versionId}/source`;
+    // a bucket library takes the bytes by presigned PUT: the browser's part goes to the bucket, played here
+    const init = (await (await call("owner-a", "POST", "/api/library/lib_a/uploads", { filename: "Roll.mp4", size: data.length })).json()) as {
+      id: string;
+      direct: { urls: string[] };
+    };
+    const key = `libraries/lib_a/v/${init.id}/source`;
+    const uploadId = new URL(init.direct.urls[0]!).searchParams.get("uploadId")!;
+    const part = (await new S3Client({ region: "eu-1" }).send(
+      new UploadPartCommand({ Bucket: "tiny-acrobatics", Key: key, UploadId: uploadId, PartNumber: 1, Body: data }),
+    )) as { ETag: string };
+    const done = (await (await call("owner-a", "POST", `/api/library/uploads/${init.id}/finish`, { parts: [{ number: 1, etag: part.ETag }] })).json()) as {
+      versionId: string;
+    };
     expect(s3.objects.get(key)?.equals(data)).toBe(true);
 
     const usage = await (await call("owner-a", "GET", "/api/library/lib_a/usage")).json();

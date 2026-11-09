@@ -11,7 +11,8 @@ process.env.DATA_DIR = dataDir;
 const { Hono } = await import("hono");
 const { packsApp } = await import("./packs");
 const { checkPack, instructionProblems } = await import("../contracts/packs");
-const { packInstructions } = await import("./lib/packs");
+const { packInstructions, installPack, listInstalled, removePack } = await import("./lib/packs");
+const { mountPlugins } = await import("./lib/plugin");
 
 let me: Record<string, unknown> = { username: "tinyacrobatics", role: "user", cloud: true, off: [] };
 const app = new Hono<{ Variables: { user: unknown } }>();
@@ -50,7 +51,7 @@ describe("checkPack", () => {
     expect(r.problems.join("\n")).toMatch(/version/);
     expect(r.problems.join("\n")).toMatch(/unknown slot "editor.censor"/);
     expect(checkPack({ format: 1, id: "x-y", name: "E", version: "1.0.0", author: "a", license: "MIT", description: "d" }).problems)
-      .toContain("Empty: a pack needs instructions, frameworks, caption styles or design systems");
+      .toContain("Empty: a pack needs instructions, frameworks, caption styles, design systems or editor items");
   });
 
   it("flags links and takeover phrasing in instructions, not ordinary writing advice", () => {
@@ -64,6 +65,80 @@ describe("checkPack", () => {
     const r = checkPack(pack("1.0.0", { designSystems: [{ name: "gym", title: "Gym", tokens: {}, guide: "", kit: "export default {}" }] }));
     expect(r.ok).toBe(true);
     expect(r.level).toBe(1);
+  });
+});
+
+// Editor items: grades, voice mixes, sound sets, Resolve bridges and the default set. All level 0 (data only).
+const editorPack = (extra: Record<string, unknown> = {}) => ({
+  format: 1, id: "tiny-grades", name: "Tiny Grades", version: "1.0.0", author: "Tiny Acrobatics", license: "CC0-1.0",
+  description: "Grades, voice levels and sound sets for the editor.",
+  grades: [{ name: "warm-soft", title: "Warm soft", cdl: { slope: [1.05, 1, 0.95], offset: [0.01, 0, -0.01], power: [1, 1, 1], saturation: 0.95 } }],
+  voiceMixes: [
+    { name: "level-only", title: "Level only", voiceLufs: -16, enhancer: "off" },
+    { name: "bed-under", title: "Bed under voice", voiceLufs: -16, bedLufs: -30, enhancer: "nvidia" },
+  ],
+  sfxSets: [{ name: "tiny-whooshes", title: "Tiny whooshes", license: "CC0-1.0", source: "https://example.com/sfx", sounds: [{ id: "whoosh-01", category: "transition", title: "Soft whoosh" }] }],
+  resolve: [{ name: "resolve-19", title: "Resolve 19 on macOS", minVersion: "19.1", platform: "macos" }],
+  editorDefaults: { grade: "warm-soft", voiceMix: "level-only", sfxSet: "tiny-whooshes" },
+  ...extra,
+});
+
+describe("editor items in packs", () => {
+  it("accepts grades, voice mixes, sound sets, a Resolve bridge and defaults at level 0, and lists what they need", () => {
+    const r = checkPack(editorPack());
+    expect(r.ok).toBe(true);
+    expect(r.level).toBe(0);
+    expect(r.pack?.permissions).toEqual(["grade", "voice", "sfx", "resolve"]);
+    expect(r.pack?.grades?.[0].cdl.saturation).toBe(0.95);
+    expect(r.pack?.editorDefaults).toEqual({ grade: "warm-soft", voiceMix: "level-only", sfxSet: "tiny-whooshes" });
+  });
+
+  it("refuses a sound set with no licence", () => {
+    const sfx = editorPack().sfxSets[0];
+    const r = checkPack(editorPack({ sfxSets: [{ ...sfx, license: "" }] }));
+    expect(r.ok).toBe(false);
+    expect(r.problems.join("\n")).toMatch(/sfxSets\[0\]\.license/);
+  });
+
+  it("a declared permission list must cover what the items need; unknown permissions are refused", () => {
+    expect(checkPack(editorPack({ permissions: ["grade"] })).problems.join("\n")).toMatch(/the items need "voice"/);
+    expect(checkPack(editorPack({ permissions: ["grade", "voice", "sfx", "resolve", "shell"] })).problems.join("\n")).toMatch(/"permissions"/);
+    expect(checkPack(editorPack({ permissions: ["grade", "voice", "sfx", "resolve", "extra-room"] })).ok).toBe(false);
+    const declared = checkPack(editorPack({ permissions: ["grade", "voice", "sfx", "resolve"] }));
+    expect(declared.ok).toBe(true);
+    expect(declared.pack?.permissions).toEqual(["grade", "voice", "sfx", "resolve"]);
+  });
+
+  it("editor defaults must name items this pack carries", () => {
+    expect(checkPack(editorPack({ editorDefaults: { grade: "not-here" } })).problems.join("\n")).toMatch(/editorDefaults\.grade/);
+    expect(checkPack(editorPack({ editorDefaults: { lights: "warm-soft" } })).problems.join("\n")).toMatch(/unknown slot "lights"/);
+    expect(checkPack(editorPack({ grades: undefined, editorDefaults: { grade: "warm-soft" } })).ok).toBe(false);
+  });
+
+  it("refuses a grade outside the ASC CDL ranges and a voice mix with an unknown enhancer", () => {
+    const grade = editorPack().grades[0];
+    expect(checkPack(editorPack({ grades: [{ ...grade, cdl: { ...grade.cdl, slope: [9, 1, 1] } }] })).problems.join("\n")).toMatch(/cdl/);
+    expect(checkPack(editorPack({ voiceMixes: [{ name: "x-mix", title: "X", voiceLufs: -16, enhancer: "other-engine" }] })).problems.join("\n"))
+      .toMatch(/enhancer/);
+  });
+
+  it("a motion kit alone declares motion-kit, and a pack with no items declares nothing", () => {
+    const kit = checkPack(pack("1.0.0", { designSystems: [{ name: "gym", title: "Gym", tokens: {}, guide: "", kit: "export default {}" }] }));
+    expect(kit.pack?.permissions).toEqual(["motion-kit"]);
+    expect(checkPack(pack("1.0.0")).pack).not.toHaveProperty("permissions");
+  });
+
+  it("installing keeps the items on the installed record", async () => {
+    const r = checkPack(editorPack({ id: "tiny-editor-kit" }));
+    if (!r.pack) throw new Error(r.problems.join("; "));
+    await installPack("tiny-editor", r.pack, 0);
+    const got = (await listInstalled("tiny-editor")).find((p) => p.id === "tiny-editor-kit");
+    expect(got?.grades?.[0].name).toBe("warm-soft");
+    expect(got?.voiceMixes).toHaveLength(2);
+    expect(got?.sfxSets?.[0].license).toBe("CC0-1.0");
+    expect(got?.resolve?.[0].minVersion).toBe("19.1");
+    expect(got?.editorDefaults?.voiceMix).toBe("level-only");
+    expect(got?.permissions).toEqual(["grade", "voice", "sfx", "resolve"]);
   });
 });
 
@@ -214,5 +289,50 @@ describe("Storytelling frameworks as a default", () => {
     const st = (await listInstalled("seeded")).find((p) => p.id === "storytelling-basics")!;
     expect(st.items.frameworks).toEqual([mine.id]);
     expect(frameworks().length).toBe(before);
+  });
+});
+
+describe("design systems in a pack", () => {
+  const ds = { name: "tiny-cards", title: "Tiny cards", tokens: { color: "#ffffff" }, guide: "Soft, round, lots of air." };
+  const dsPack = (version: string) => checkPack({ ...pack(version), id: "design-pack", designSystems: [ds] }).pack!;
+  const installs: string[] = [];
+  const withInstaller = (adminOnly: boolean) =>
+    mountPlugins(new Hono(), [{
+      id: "fake-design",
+      packItems: [{
+        kind: "designSystems" as const,
+        adminOnly,
+        install: async (d: { name: string }, o: { pack: string }) => { installs.push(`install ${o.pack} ${d.name}`); return d.name; },
+        remove: async (name: string) => { installs.push(`remove ${name}`); return true; },
+      }],
+    }]);
+
+  it("without a plug-in the design systems are kept on the install as held, not dropped", async () => {
+    withInstaller(true);
+    mountPlugins(new Hono(), []);
+    const out = await installPack("tinyacrobatics", dsPack("1.0.0"), 0, { admin: true });
+    expect(out.installed.held?.designSystems).toEqual({ needs: "plug-in", items: [ds] });
+    expect(out.installed.items.designSystems ?? []).toEqual([]);
+  });
+
+  it("a plug-in puts them in place for an admin's install only; anyone else's install holds them", async () => {
+    withInstaller(true);
+    installs.length = 0;
+    const user = await installPack("someone", dsPack("1.0.0"), 0, {});
+    expect(installs).toEqual([]);
+    expect(user.installed.held?.designSystems?.needs).toBe("admin");
+    const admin = await installPack("boss", dsPack("1.0.0"), 0, { admin: true });
+    expect(installs).toEqual(["install design-pack tiny-cards"]);
+    expect(admin.installed.items.designSystems).toEqual(["tiny-cards"]);
+    expect(admin.installed.held).toBeUndefined();
+  });
+
+  it("removing the pack takes its design systems out again through the plug-in", async () => {
+    withInstaller(false);
+    await installPack("crew", dsPack("1.0.0"), 0, { admin: true });
+    installs.length = 0;
+    expect(await removePack("crew", "design-pack")).toEqual({ removed: true, kept: 0 });
+    expect(installs).toEqual(["remove tiny-cards"]);
+    mountPlugins(new Hono(), []);
   });
 });

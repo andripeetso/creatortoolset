@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { SESSION_STATUSES, type ContextField, type ContextSnippet, type DocKind, type DraftKind, type FileRef, type Framework, type FrameworkRole, type GenerateInput, type ImageRef, type KnowledgeFile, type LoadedSource, type PieceQuote, type Project, type ProviderChoice, type Rule, type SessionSource, type SessionStatus, type TurnInput } from "./types";
+import { SESSION_STATUSES, type ContextField, type ContextSnippet, type DocKind, type DraftKind, type FileRef, type Framework, type FrameworkRole, type GenerateInput, type ImageRef, type KnowledgeFile, type LibraryPick, type LoadedSource, type PieceQuote, type Project, type ProviderChoice, type Rule, type SessionSource, type SessionStatus, type TurnInput } from "./types";
 import { isCarouselTypeId } from "../../../src/lib/carousel-visualize";
 import { postedFromUrl } from "./posted";
 import { EFFORTS, type Effort, type Selection } from "../../../contracts/providers";
@@ -68,6 +68,17 @@ export function parseSessionStatus(raw: unknown): SessionStatus | undefined {
 
 export const okId = (id: unknown): id is string =>
   typeof id === "string" && /^[a-z0-9-]{6,40}$/.test(id);
+
+/** A clip a message names: a version (assetId, versionId), a ref (refId) or a source's item (source, kind, externalId); else null. */
+function libraryPick(r: Record<string, unknown>): LibraryPick | null {
+  if (okId(r.assetId) && okId(r.versionId)) return { assetId: r.assetId, versionId: r.versionId };
+  if (typeof r.refId === "string" && /^ext_[a-f0-9]{16}$/.test(r.refId)) return { refId: r.refId };
+  const externalId = typeof r.externalId === "number" ? String(r.externalId) : r.externalId;
+  if (typeof r.source === "string" && typeof r.kind === "string" && typeof externalId === "string" && r.source && r.kind && externalId) {
+    return { source: r.source, kind: r.kind, externalId };
+  }
+  return null;
+}
 
 const isRec = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === "object" && !Array.isArray(v);
@@ -242,8 +253,9 @@ export interface SessionPatch {
   pinned?: boolean;
   sources?: SessionSource[];
   notes?: string;
-  /** a pasted post link, or null for "not this post" */
-  posted?: { shortcode: string; url: string } | null;
+  /** a pasted post link (added to the session's posts, or its version changed), `{ remove }` for "not this post" on one of them,
+   *  or null for none of them */
+  posted?: { shortcode: string; url: string; version?: string; publication?: "published" | "trial" } | { remove: string } | null;
 }
 
 export function parseSessionPatch(raw: unknown): SessionPatch {
@@ -267,10 +279,16 @@ export function parseSessionPatch(raw: unknown): SessionPatch {
   }
   if ("posted" in body) {
     if (body.posted === null) out.posted = null;
+    else if (isRec(body.posted) && typeof body.posted.remove === "string" && /^[\w-]{5,}$/.test(body.posted.remove)) out.posted = { remove: body.posted.remove };
     else {
-      const posted = typeof body.posted === "string" ? postedFromUrl(body.posted) : null;
+      const raw = isRec(body.posted) ? body.posted.url : body.posted;
+      const posted = typeof raw === "string" ? postedFromUrl(raw) : null;
       if (!posted) throw new Error("Paste the post's Instagram link (instagram.com/p/… or /reel/…)");
-      out.posted = posted;
+      const version = isRec(body.posted) ? body.posted.version : undefined;
+      if (version !== undefined && (typeof version !== "string" || !VERSION_KEY.test(version))) throw new Error("Unknown version");
+      const pub = isRec(body.posted) ? body.posted.publication : undefined;
+      if (pub !== undefined && pub !== "published" && pub !== "trial") throw new Error("publication: published or trial");
+      out.posted = { ...posted, ...(version ? { version } : {}), ...(pub ? { publication: pub } : {}) };
     }
   }
   if ("sources" in body) out.sources = parseSources(body.sources);
@@ -331,7 +349,7 @@ export function slugFilename(title: string, ext = "md"): string {
 
 /* ---- co-writing ---- */
 
-const DOC_KINDS: DocKind[] = ["reel", "carousel", "ad", "free", "youtube", "notes"];
+const DOC_KINDS: DocKind[] = ["reel", "carousel", "ad", "free", "youtube", "newsletter", "thread", "article", "notes"];
 const CONTEXT_FIELDS: ContextField[] = ["slides", "transcript", "caption", "comments", "description", "source"];
 
 export interface DocCreate {
@@ -342,12 +360,12 @@ export interface DocCreate {
   text: string;
 }
 
-const KIND_TITLE: Record<DocKind, string> = { reel: "Reel", carousel: "Carousel", ad: "Ad copy", free: "Draft", youtube: "YouTube script", notes: "Notes" };
+const KIND_TITLE: Record<DocKind, string> = { reel: "Reel", carousel: "Carousel", ad: "Ad copy", free: "Draft", youtube: "YouTube script", newsletter: "Newsletter", thread: "Thread", article: "Article", notes: "Notes" };
 
 export function parseDocCreate(raw: unknown): DocCreate {
   const body = isRec(raw) ? raw : {};
   const kind = DOC_KINDS.find((k) => k === body.kind && k !== "notes") as DocCreate["kind"] | undefined;
-  if (!kind) throw new Error("Pick what the document is: reel, carousel, ad, free or youtube");
+  if (!kind) throw new Error("Pick what the document is: reel, carousel, ad, free, youtube, newsletter, thread or article");
   return {
     kind,
     title: str(body.title, LIMITS.docTitle) || KIND_TITLE[kind],
@@ -357,8 +375,13 @@ export function parseDocCreate(raw: unknown): DocCreate {
   };
 }
 
+/** A version's key in a document's `captions` and a posting's `version`: a Finals version's id. */
+export const VERSION_KEY = /^[\w-]{1,40}$/;
+
 export interface DocPatch {
   caption?: string;
+  /** Versions' own post descriptions by key; "" clears one, so the main one shows again. */
+  captions?: Record<string, string>;
   pinned?: string;
   title?: string;
   kind?: DocKind;
@@ -396,6 +419,14 @@ export function parseDocPatch(raw: unknown, kind?: DocKind): DocPatch {
   if ("locked" in body) out.locked = Array.isArray(body.locked) ? [...new Set(body.locked.filter((x): x is string => typeof x === "string" && /^b\d{1,5}$/.test(x)))].slice(0, LIMITS.blocks) : [];
   if ("caption" in body) out.caption = typeof body.caption === "string" ? body.caption.slice(0, LIMITS.companion) : "";
   if ("pinned" in body) out.pinned = typeof body.pinned === "string" ? body.pinned.slice(0, LIMITS.companion) : "";
+  if (isRec(body.captions)) {
+    out.captions = Object.fromEntries(
+      Object.entries(body.captions)
+        .filter(([k]) => VERSION_KEY.test(k))
+        .slice(0, 26)
+        .map(([k, v]) => [k, typeof v === "string" ? v.slice(0, LIMITS.companion) : ""]),
+    );
+  }
   if ("hooks" in body) {
     if (!Array.isArray(body.hooks)) throw new Error("Hooks must be a list");
     out.hooks = body.hooks
@@ -550,9 +581,9 @@ export function parseTurnInput(raw: unknown): TurnInput {
   const quotes = parseQuotes(body.quotes);
   const library = (Array.isArray(body.library) ? body.library : [])
     .filter(isRec)
-    .filter((r) => okId(r.assetId) && okId(r.versionId))
-    .slice(0, LIMITS.libraryClips)
-    .map((r) => ({ assetId: r.assetId as string, versionId: r.versionId as string }));
+    .map(libraryPick)
+    .filter((r): r is LibraryPick => r !== null)
+    .slice(0, LIMITS.libraryClips);
   // Only citation chips (⟦1⟧…) is not a message: it gets the words a pictures-only one gets
   const typed = str(body.text, LIMITS.turnText);
   const words = typed.replace(/⟦\d+⟧/g, "").trim();

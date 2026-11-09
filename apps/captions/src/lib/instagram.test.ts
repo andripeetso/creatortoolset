@@ -243,8 +243,8 @@ describe("usefulAltText", () => {
     expect(
       usefulAltText({ accessibilityCaption: "Photo by Parenting Support on August 25, 2026." }),
     ).toBeUndefined();
-    expect(usefulAltText({ accessibilityCaption: "A toddler kicking a ball" })).toBe(
-      "A toddler kicking a ball",
+    expect(usefulAltText({ accessibilityCaption: "A puppy kicking a ball" })).toBe(
+      "A puppy kicking a ball",
     );
     expect(usefulAltText({})).toBeUndefined();
   });

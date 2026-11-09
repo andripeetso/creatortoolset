@@ -472,3 +472,81 @@ describe("resumable uploads", () => {
     expect((await app.request("/uploads/00000000-0000-4000-8000-000000000000/parts")).status).toBe(404);
   });
 });
+
+describe("timeline file on a version", () => {
+  const EDL = "TITLE: Tiny Proto\n\n001  talkmp4  V     C        00:00:00:10 00:00:04:10 00:00:00:00 00:00:04:00\n";
+  const putTimeline = (id: string, body: string | Buffer, name = "Tiny.edl") =>
+    app.request(`/assets/${id}/v/1/timeline?name=${name}`, { method: "PUT", headers: { "content-type": "text/plain" }, body });
+
+  it("keeps the owner's timeline, shows it to share-link viewers, and names the file only to people who can manage", async () => {
+    const asset = await up("Tiny cut.mp4");
+    const put = await read(putTimeline(asset.id, EDL));
+    expect(put.versions[0]).toMatchObject({ timeline: true, timelineFile: "Tiny.edl" });
+
+    expect((await read(app.request(`/assets/${asset.id}`))).asset.versions[0].timelineFile).toBe("Tiny.edl");
+
+    const { share } = await read(app.request(`/assets/${asset.id}`, patch({ share: { enabled: true } })));
+    const shared = await read(app.request(`/s/${share.token}`));
+    expect(shared.asset.versions[0]).toMatchObject({ timeline: true });
+    expect(shared.asset.versions[0]).not.toHaveProperty("timelineFile");
+    expect((await app.request(`/s/${share.token}/v/1/timeline`)).status).toBe(200);
+  });
+
+  it("refuses an oversized timeline from its declared length, before reading the body", async () => {
+    const asset = await up("Tiny big.mp4");
+    const { MAX_TIMELINE_BYTES } = await import("../contracts/timeline-import");
+    const res = await putTimeline(asset.id, Buffer.alloc(MAX_TIMELINE_BYTES + 1, 0x20));
+    expect(res.status).toBe(413);
+    expect((await read(app.request(`/assets/${asset.id}`))).asset.versions[0].timeline).toBe(false);
+  });
+});
+
+describe("plug-in data and edit references", () => {
+  const payload = { "tiny-edits": { edits: [{ key: "shot-1", label: "Shot 1", zoom: 1.2 }] } };
+  const count = async (id: string) => (await read(app.request(`/assets/${id}`))).comments.length;
+
+  it("stores a manager's plug-in data on the comment and returns it to the manager", async () => {
+    const asset = await up("Plugin cut.mp4");
+    const cm = await read(app.request(`/assets/${asset.id}/comments`, json({ version: 1, text: "Tighter", plugins: payload })));
+    expect(cm.plugins).toEqual(payload);
+    expect((await read(app.request(`/assets/${asset.id}`))).comments).toMatchObject([{ id: cm.id, plugins: payload }]);
+  });
+
+  it("does not show plug-in data to a viewer who can only read (the share link)", async () => {
+    const asset = await up("Plugin read.mp4");
+    await app.request(`/assets/${asset.id}/comments`, json({ version: 1, text: "Tighter", plugins: payload }));
+    const token = (await read(app.request(`/assets/${asset.id}`, patch({ share: { enabled: true } })))).share.token;
+    const [seen] = (await read(app.request(`/s/${token}`))).comments;
+    expect(seen).toMatchObject({ text: "Tighter" });
+    expect(seen.plugins).toBeUndefined();
+  });
+
+  it("refuses plug-in data from a share-link reviewer with 403, and stores nothing", async () => {
+    const asset = await up("Plugin shared.mp4");
+    const token = (await read(app.request(`/assets/${asset.id}`, patch({ share: { enabled: true } })))).share.token;
+    const guest = { "x-review-key": "k".repeat(24) };
+    const res = await app.request(`/s/${token}/comments`, json({ version: 1, text: "Tighter", author: "Client", plugins: payload }, guest));
+    expect(res.status).toBe(403);
+    expect(await count(asset.id)).toBe(0);
+  });
+
+  it("refuses a reply that carries only plug-in data, since the data would be dropped", async () => {
+    const asset = await up("Plugin reply.mp4");
+    const parent = await read(app.request(`/assets/${asset.id}/comments`, json({ version: 1, text: "Parent" })));
+    const res = await app.request(`/assets/${asset.id}/comments`, json({ version: 1, parentId: parent.id, plugins: payload }));
+    expect(res.status).toBe(400);
+    expect(await count(asset.id)).toBe(1);
+  });
+
+  it("keeps a version's AI Editor draft reference for managers and hides it from share links", async () => {
+    const place = async () => {};
+    const added = await addVersion(undefined, {
+      owner: "owner", name: "Draft.mp4", mime: "video/mp4", bytes: 1, edit: { project: "tiny-proj", draft: "Main" },
+    }, place);
+    const id = added!.meta.id;
+    expect((await read(app.request(`/assets/${id}`))).asset.versions[0].edit).toEqual({ project: "tiny-proj", draft: "Main" });
+    const token = (await read(app.request(`/assets/${id}`, patch({ share: { enabled: true } })))).share.token;
+    const shared = await read(app.request(`/s/${token}`));
+    expect(shared.asset.versions[0]).not.toHaveProperty("edit");
+  });
+});

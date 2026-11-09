@@ -4,11 +4,11 @@ import { applyEdits, newDocument } from "./doc";
 
 describe("documentAudit", () => {
   it("marks every block with its id", () => {
-    const doc = newDocument("d1", "s1", "carousel", "Sample", { text: "Hook\n\nA study of 7000 kids", author: "ai", now: 1 });
+    const doc = newDocument("d1", "s1", "carousel", "Sample", { text: "Hook\n\nA study of 7000 adults", author: "ai", now: 1 });
     const t = documentAudit(doc).text;
     expect(t).toContain('Piece: "Sample" (carousel)');
     expect(t).toContain("[b1] Hook");
-    expect(t).toContain("[b2] A study of 7000 kids");
+    expect(t).toContain("[b2] A study of 7000 adults");
   });
 
   it("marks reel hook variations so fixes can land on a card", () => {
@@ -43,7 +43,7 @@ describe("parseAuditResult", () => {
           summary: "The study exists but was about swimming.",
           claims: [
             { id: "c1", where: "b2", claim: "Merrow ran a study of early movement", verdict: "contradicted", confidence: 0.9, evidence: "The 2012 Merrow study was about swimming lessons [2].", sources: [{ title: "Merrow", url: "https://merrow.example.org/study" }], fix: "Merrow Institute studied early swimmers." },
-            { claim: "7000 children took part", verdict: "supported", evidence: "Merrow surveyed 7000 parents [1]", sources: ["https://example.org/x", "not a url"] },
+            { claim: "7000 adults took part", verdict: "supported", evidence: "Merrow surveyed 7000 parents [1]", sources: ["https://example.org/x", "not a url"] },
             { claim: "bad verdict", verdict: "maybe", evidence: "" },
             "junk",
           ],
@@ -81,7 +81,7 @@ describe("auditSummaryText", () => {
 
 describe("applyAuditWording", () => {
   it("replaces an exact span and leaves the rest", () => {
-    const next = applyAuditWording("Alpha. Babies make 31,000 kicks a day. Omega.", "Babies make 31,000 kicks a day.", "Wearable sensors count tens of thousands of kicks a day.");
+    const next = applyAuditWording("Alpha. Puppies make 31,000 kicks a day. Omega.", "Puppies make 31,000 kicks a day.", "Wearable sensors count tens of thousands of kicks a day.");
     expect(next).toBe("Alpha. Wearable sensors count tens of thousands of kicks a day. Omega.");
   });
 
@@ -91,15 +91,15 @@ describe("applyAuditWording", () => {
   });
 
   it("returns null when the claim is not in the text", () => {
-    expect(applyAuditWording("A short script about sleep.", "Babies who swim before five are months ahead.", "Swimming is one of many movement experiences.")).toBeNull();
+    expect(applyAuditWording("A short script about sleep.", "Puppies who swim before five are months ahead.", "Swimming is one of many movement experiences.")).toBeNull();
   });
 });
 
 describe("auditEdits", () => {
   it("does not replace a reel page with the last fix", () => {
     const script = [
-      "There's a window in your baby's brain development that closes at around 9 months.",
-      "That's why I built Tiny Acrobatics. Short, research-backed movement routines that give your baby the varied movement experiences their brain actually needs.",
+      "There's a window in your puppy's brain development that closes at around 9 months.",
+      "That's why I built Tiny Acrobatics. Short, research-backed movement routines that give your puppy the varied movement experiences their brain actually needs.",
     ].join("\n\n");
     const doc = newDocument("d1", "s1", "reel", "Reel", { text: script, author: "ai", now: 1 });
     doc.caption = {
@@ -111,13 +111,13 @@ describe("auditEdits", () => {
       {
         id: "c1",
         where: "b1",
-        claim: "There's a window in your baby's brain development that starts closing at around nine months.",
-        fix: "There's a critical early period when your baby's brain is building movement repertoires.",
+        claim: "There's a window in your puppy's brain development that starts closing at around nine months.",
+        fix: "There's a critical early period when your puppy's brain is building movement repertoires.",
       },
       {
         id: "c2",
         where: "b1",
-        claim: "Tiny Acrobatics consists of short, research-backed movement routines that give your baby the varied movement their brain needs during this exact window.",
+        claim: "Tiny Acrobatics consists of short, research-backed movement routines that give your puppy the varied movement their brain needs during this exact window.",
         fix: "That's why I built Tiny Acrobatics: short movement routines inspired by research.",
       },
       {
@@ -145,8 +145,8 @@ describe("auditEdits", () => {
 
 describe("splitSources", () => {
   it("takes the Sources list off the answer, URLs in [n] order", () => {
-    const r = splitSources("Babies who crawl [1] ... [3].\n\n**Sources:**\n[1] https://a.org/study.\n- [3] Title — https://c.org/x\n[2] (https://b.org/y)");
-    expect(r.content).toBe("Babies who crawl [1] ... [3].");
+    const r = splitSources("Puppies who crawl [1] ... [3].\n\n**Sources:**\n[1] https://a.org/study.\n- [3] Title — https://c.org/x\n[2] (https://b.org/y)");
+    expect(r.content).toBe("Puppies who crawl [1] ... [3].");
     expect(r.citations).toEqual(["https://a.org/study", "https://b.org/y", "https://c.org/x"]);
   });
 

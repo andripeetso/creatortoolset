@@ -2288,7 +2288,7 @@ function IdeaFields({
         onKeyDown={(e) => {
           if (e.key === "Enter") e.currentTarget.blur();
         }}
-        placeholder="Raising tall kids"
+        placeholder="Growing tall sunflowers"
         className="w-full rounded-md border border-zinc-800 bg-transparent px-2 py-1 text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-violet-500"
       />
       <textarea

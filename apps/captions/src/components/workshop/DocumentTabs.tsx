@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { Bookmark, Check, ChevronDown, History, Plus, X } from "lucide-react";
 import { ConfirmButton } from "@/components/instagram/ConfirmButton";
-import { DOC_KINDS, countUnits, docKindLabel, docTabLabel, type DocKind, type WorkshopDocument } from "@/lib/workshop";
+import { countUnits, useDocKinds, docKindLabel, docTabLabel, type DocKind, type WorkshopDocument } from "@/lib/workshop";
 
 export const KIND_DOT: Record<DocKind, string> = {
   reel: "bg-rose-400",
@@ -9,6 +9,9 @@ export const KIND_DOT: Record<DocKind, string> = {
   ad: "bg-emerald-400",
   free: "bg-zinc-400",
   youtube: "bg-red-500",
+  newsletter: "bg-amber-500",
+  thread: "bg-zinc-200",
+  article: "bg-indigo-400",
   notes: "bg-amber-400",
 };
 
@@ -38,6 +41,7 @@ export function DocumentTabs({
   onDelete: (docId: string) => void;
   tools?: ReactNode;
 }) {
+  const kinds = useDocKinds();
   const [menu, setMenu] = useState<"new" | "history" | "kind" | null>(null);
   const [keepName, setKeepName] = useState("");
   const active = docs.find((d) => d.id === activeId) ?? null;
@@ -92,7 +96,7 @@ export function DocumentTabs({
         </div>
         {active && menu === "kind" && active.kind !== "notes" && onKind ? (
           <span className="absolute left-0 top-full z-40 mt-1 flex w-40 flex-col rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-xl">
-            {DOC_KINDS.map((k) => (
+            {kinds.map((k) => (
               <button
                 key={k.id}
                 type="button"
@@ -121,7 +125,7 @@ export function DocumentTabs({
           </button>
           {menu === "new" && (
             <span className="absolute left-0 top-full z-30 mt-1 flex w-40 flex-col rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-xl">
-              {DOC_KINDS.map((k) => (
+              {kinds.map((k) => (
                 <button
                   key={k.id}
                   type="button"

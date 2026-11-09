@@ -38,6 +38,7 @@ import {
   openSetupAt,
   rememberLater,
   setupOpen,
+  setupOpensItself,
   setupStepFromParam,
   toolsFor,
   useSetup,
@@ -145,7 +146,9 @@ export function SetupDialog() {
   const [named, setNamed] = useState(false); // the project form reports when it has a name: Create stays off until then
   const [unsure, setUnsure] = useState<boolean | null>(null); // "Not sure yet" ticked here; null = read it from the saved answers
   const asked = params.get("setup");
-  const open = real && !!prefs && setupOpen(view, asked);
+  // by itself only on a first sign-in (setupOpensItself); Settings → Setup and ?setup= always open it
+  const firstRun = setupOpensItself({ logins: me?.logins, loaded, projects: projects.length });
+  const open = real && !!prefs && setupOpen(view, asked) && (asked !== null || firstRun);
 
   useEffect(() => {
     if (real) void load();
@@ -154,8 +157,8 @@ export function SetupDialog() {
     if (real) void loadPrefs();
   }, [real, loadPrefs]);
   useEffect(() => {
-    if (open && !loaded) void loadProjects();
-  }, [open, loaded, loadProjects]);
+    if (real && !loaded) void loadProjects();
+  }, [real, loaded, loadProjects]);
   useEffect(() => {
     if (!note) return;
     const t = window.setTimeout(() => setNote(false), 4000);

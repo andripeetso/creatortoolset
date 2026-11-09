@@ -8,12 +8,12 @@ describe("parseIdeaBoard", () => {
       JSON.stringify({
         ideas: [
           {
-            title: "Bedtime routines for toddlers",
+            title: "Bedtime routines for puppies",
             description: "Keep a fixed bedtime through the first 1,000 days.",
             postIds: ["a", "b"],
           },
           {
-            title: "Limiting kids' screen time",
+            title: "Limiting adults' screen time",
             description: "A second name for the same posts should not steal them.",
             postIds: ["b", "c"],
           },
@@ -28,7 +28,7 @@ describe("parseIdeaBoard", () => {
     );
     expect(ideas).toHaveLength(2);
     expect(ideas[0]!.postIds).toEqual(["a", "b"]);
-    expect(ideas[1]!.title).toBe("Limiting kids' screen time");
+    expect(ideas[1]!.title).toBe("Limiting adults' screen time");
     expect(ideas[1]!.postIds).toEqual(["c"]);
   });
 
@@ -45,7 +45,7 @@ describe("parseIdeaBoard", () => {
       JSON.stringify({
         ideas: [
           {
-            title: "Bedtime routines for toddlers",
+            title: "Bedtime routines for puppies",
             description: "Keep a fixed bedtime through the first 1,000 days.",
             postIds: ["ghost", "a"],
           },
@@ -65,13 +65,13 @@ describe("omitWorkshopPiles", () => {
       omitWorkshopPiles(
         [
           { title: "Swimming boosts early milestones", postIds: ["swim-a", "swim-b"] },
-          { title: "Bedtime routines for toddlers", postIds: ["nap-a", "nap-b"] },
+          { title: "Bedtime routines for puppies", postIds: ["nap-a", "nap-b"] },
           { title: "Mixed", postIds: ["swim-a", "nap-a"] },
         ],
         taken,
       ),
     ).toEqual([
-      { title: "Bedtime routines for toddlers", postIds: ["nap-a", "nap-b"] },
+      { title: "Bedtime routines for puppies", postIds: ["nap-a", "nap-b"] },
       { title: "Mixed", postIds: ["nap-a"] },
     ]);
   });

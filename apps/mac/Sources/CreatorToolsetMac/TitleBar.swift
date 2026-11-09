@@ -1,7 +1,7 @@
 // The window draws no title bar of its own: the page's top bar runs to the window's
 // top edge, the window buttons sit inside it, and its empty parts move the window. The page makes
-// room for the buttons on its [data-titlebar] rows when <html> has .mac-app (apps/captions/src/index.css). Right of the
-// window buttons sits the server picker: the servers, Add server, Run your own server, This Mac.
+// room for the buttons on its [data-titlebar] rows when <html> has .mac-app (apps/captions/src/index.css). Servers and
+// the rest of this Mac live in the page's Settings → This Mac (ThisMacBridge.swift).
 import AppKit
 import WebKit
 
@@ -23,21 +23,22 @@ func titleBarScript(fullScreen: Bool) -> String {
     """
 }
 
-final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandlerWithReply, NSMenuDelegate {
+final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandlerWithReply {
     private var lastMouseDown: NSEvent?
     private var observers: [NSObjectProtocol] = []
     private var fullScreen = false
-    /// The server picker right of the window buttons; its menu is built each time it opens.
-    let picker = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 34, height: 22), pullsDown: true)
-    var pickerMenu: (() -> [NSMenuItem])?
     /// This Mac's device id on the open server, for the page's AI line (html data-mac-device); nil when not paired.
     var macDevice: String? {
         didSet { if macDevice != oldValue { installScripts() } }
     }
     /// A page that posts `this-mac` (older servers' Settings → This Mac): opens the native panel.
     var onThisMac: (() -> Void)?
+    /// The page's Settings → This Mac (`thismac-<what>`): servers, the AI on this Mac (ThisMacBridge.swift).
+    var onThisMacCommand: ((String) -> Void)?
     /// The page's recorder messages (`record-<what>`, src/lib/mac-record.ts): the native recorder (Recorder.swift).
     var onRecord: ((String) -> Void)?
+    /// The provider page's Sign in button (ProviderDetail.tsx): the CLI's driver and its home folder ("" = the default).
+    var onSignIn: ((String, String) -> Void)?
 
     init() {
         let config = WKWebViewConfiguration()
@@ -52,40 +53,13 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
         configuration.userContentController.add(self, name: "window")
         configuration.userContentController.add(self, name: "appLog")
         configuration.userContentController.add(self, name: "badge")
+        configuration.userContentController.add(self, name: "signIn")
         configuration.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "account")
         // This Mac's AI (src/lib/thisMac.ts): "state" and "start", answered with { aiOn, paired }
         configuration.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "thisMac")
         // A picture of the page for the assistant (src/lib/page-context.ts snapshot()): replies with a PNG in base64
         configuration.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "snapshot")
         installScripts()
-        picker.isBordered = false
-        picker.toolTip = "Servers"
-        picker.setAccessibilityLabel("Servers")
-        picker.menu?.delegate = self
-        picker.addItem(withTitle: "")
-        picker.item(at: 0)?.image = NSImage(systemSymbolName: "server.rack", accessibilityDescription: "Servers")
-        addSubview(picker)
-    }
-
-    /// The picker's menu, fresh each time: item 0 is the button's own face.
-    func menuNeedsUpdate(_ menu: NSMenu) {
-        let face = menu.item(at: 0)
-        menu.removeAllItems()
-        if let face { menu.addItem(face) }
-        for item in pickerMenu?() ?? [] { menu.addItem(item) }
-    }
-
-    override func layout() {
-        super.layout()
-        placePicker()
-    }
-
-    /// Right of the window buttons, centred in the top bar; hidden in full screen (no buttons, no room kept).
-    private func placePicker() {
-        picker.isHidden = fullScreen
-        let x = window?.standardWindowButton(.zoomButton).map { $0.convert($0.bounds, to: nil).maxX + 6 } ?? 80
-        let top = ((titleBarHeight - picker.frame.height) / 2).rounded()
-        picker.setFrameOrigin(NSPoint(x: x, y: isFlipped ? top : bounds.height - top - picker.frame.height))
     }
 
     @available(*, unavailable)
@@ -130,12 +104,21 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
             NSApp.dockTile.badgeLabel = count.isEmpty ? nil : count
             return
         }
+        // The provider page's sign-in button: {driver, home}, from the site's own main frame only
+        if message.name == "signIn" {
+            if message.frameInfo.isMainFrame, let body = message.body as? [String: String],
+               let driver = body["driver"], let home = body["home"] { onSignIn?(driver, home) }
+            return
+        }
         guard let window else { return }
         switch message.body as? String {
         case "drag":
             if let event = lastMouseDown { window.performDrag(with: event) }
         case "this-mac":
             onThisMac?()
+        case let m? where m.hasPrefix("thismac-"):
+            // only the site's own page, never a frame inside it (ThisMacBridge.swift)
+            if message.frameInfo.isMainFrame { onThisMacCommand?(String(m.dropFirst(8))) }
         case let m? where m.hasPrefix("record-"):
             // only the site's own page, never a frame inside it
             if message.frameInfo.isMainFrame { onRecord?(String(m.dropFirst(7))) }
@@ -204,14 +187,12 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
         for (i, button) in [close, mini, zoom].enumerated() {
             button.setFrameOrigin(NSPoint(x: inset + CGFloat(i) * gap, y: 0))
         }
-        placePicker()
     }
 
     /// Full screen hides the buttons, so the page drops the room it kept for them.
     private func setFullScreen(_ on: Bool) {
         fullScreen = on
         installScripts()
-        placePicker()
         evaluateJavaScript("document.documentElement.classList.toggle('mac-full', \(on))")
     }
 
@@ -220,6 +201,8 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
         scripts.removeAllUserScripts()
         scripts.addUserScript(WKUserScript(source: titleBarScript(fullScreen: fullScreen), injectionTime: .atDocumentStart, forMainFrameOnly: true))
         scripts.addUserScript(WKUserScript(source: pageLogScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        // the page shows Settings → This Mac only inside this app (ThisMacSection.tsx)
+        scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macThisMac = '1';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         // the page shows its Record screen buttons only where this app can record (macOS 15+)
         if Recorder.available {
             scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macRecord = '1';", injectionTime: .atDocumentStart, forMainFrameOnly: true))

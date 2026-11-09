@@ -43,11 +43,16 @@ const DOC_KIND_RULES: Record<DocKind, string> = {
   ad: "Paid social ad copy: one block per variant — the primary text (hook first, CTA last, 60–150 words), then the headline (≤ 40 characters) as its own last line. Three variants with different angles.",
   free: "Whatever the author asks for: one idea per block, the text itself only.",
   youtube: "A long-form YouTube video script, the words said to camera: one block per section of the video. Markdown is fine. Do not write the video description or the pinned comment unless this message asks for them.",
+  newsletter: "An email newsletter: one block per section, the subject line first as its own block. Markdown is fine.",
+  thread: "An X post or thread: one block per post, each under 280 characters. The first post has to work on its own.",
+  article: "An article or blog post: the title first as its own block, then one block per section. Markdown is fine.",
   notes: "Working notes: one freeform page, not the piece. Headings and lists are fine. Write here only when they ask you to note something down. Prefer a single replace of the existing notes (or one append if empty).",
 };
 
 const JSON_ENVELOPE = `Return exactly one JSON object and nothing else, keys in exactly this order (the author watches the reply and the edits arrive as you write them, so the reply comes first and newDocument / revertTo are written — as null when unused — before the edits):
-{"reply": string, "newDocument": {"kind": "reel"|"carousel"|"ad"|"free"|"youtube", "title": string} | null, "revertTo": "v3" | null, "edits": [op, ...], "fetch": [{"source": "S2", "parts": ["transcript","comments"]}] | null, "search": string | null, "research": {"question": string, "depth": "quick"|"deep"} | null, "audit": "quick"|"deep"|null}`;
+{"reply": string, "newDocument": {"kind": "reel"|"carousel"|"ad"|"free"|"youtube"|"newsletter"|"thread"|"article", "title": string} | null, "revertTo": "v3" | null, "edits": [op, ...], "fetch": [{"source": "S2", "parts": ["transcript","comments"]}] | null, "search": string | null, "research": {"question": string, "depth": "quick"|"deep"} | null, "audit": "quick"|"deep"|null}`;
+
+const TEXT_OPS = `Ops: {"op":"replace","id":"b3","text":"…"} · {"op":"insert_after","id":"b3","text":"…"} · {"op":"insert_before","id":"b3","text":"…"} · {"op":"append","text":"…"} · {"op":"delete","id":"b3"}`;
 
 const OPS_BLOCK: Record<DocKind, string> = {
   reel: `Ops: {"op":"replace","id":"b3","text":"…"} · {"op":"insert_after","id":"b3","text":"…"} · {"op":"insert_before","id":"b3","text":"…"} · {"op":"append","text":"…"} · {"op":"delete","id":"b3"} · {"op":"add_hook","text":"…"} · {"op":"replace","id":"h1","text":"…"} · {"op":"delete","id":"h1"} · {"op":"set_caption","text":"…"} · {"op":"set_pinned","text":"…"} (an empty text clears caption/pinned)`,
@@ -55,6 +60,9 @@ const OPS_BLOCK: Record<DocKind, string> = {
   ad: `Ops: {"op":"replace","id":"b3","text":"…"} · {"op":"insert_after","id":"b3","text":"…"} · {"op":"insert_before","id":"b3","text":"…"} · {"op":"append","text":"…"} · {"op":"delete","id":"b3"} · {"op":"set_caption","text":"…"} · {"op":"set_pinned","text":"…"} (an empty text clears caption/pinned)`,
   free: `Ops: {"op":"replace","id":"b3","text":"…"} · {"op":"insert_after","id":"b3","text":"…"} · {"op":"insert_before","id":"b3","text":"…"} · {"op":"append","text":"…"} · {"op":"delete","id":"b3"} · {"op":"set_caption","text":"…"} · {"op":"set_pinned","text":"…"} (an empty text clears caption/pinned)`,
   youtube: `Ops: {"op":"replace","id":"b3","text":"…"} · {"op":"insert_after","id":"b3","text":"…"} · {"op":"insert_before","id":"b3","text":"…"} · {"op":"append","text":"…"} · {"op":"delete","id":"b3"} · {"op":"set_caption","text":"…"} · {"op":"set_pinned","text":"…"} (an empty text clears caption/pinned)`,
+  newsletter: TEXT_OPS,
+  thread: TEXT_OPS,
+  article: TEXT_OPS,
   notes: `Ops: {"op":"replace","id":"b3","text":"…"} · {"op":"append","text":"…"} · {"op":"delete","id":"b3"}`,
 };
 
@@ -79,6 +87,9 @@ ${DESCRIPTION_RULES}`,
 - Post description and pinned comment only if this message asks for them.`,
   youtube: `This tab is a long-form YouTube video script: the words said to camera, one block per section of the video. Keep ids exactly as given. Prefer replace / insert over rewriting everything.
 - Video description (set_caption) and pinned comment only if this message asks for them.`,
+  newsletter: `This tab is an email newsletter: the subject line as the first block, then one section per block. Keep ids exactly as given. Prefer replace / insert over rewriting everything. Do not call set_caption or set_pinned.`,
+  thread: `This tab is an X post or thread: one post per block, each under 280 characters, the first one working on its own. Keep ids exactly as given. Do not call set_caption or set_pinned.`,
+  article: `This tab is an article or blog post: the title as the first block, then one section per block. Keep ids exactly as given. Prefer replace / insert over rewriting everything. Do not call set_caption or set_pinned.`,
   notes: `This tab is working notes: one freeform page, not the piece. Headings and lists are fine. Write here only when they ask you to note something down. Prefer a single replace of the existing notes (or one append if empty). Do not call set_caption or set_pinned.`,
 };
 
@@ -156,6 +167,8 @@ export interface TurnPromptInput {
   /** The author's own posts closest to this piece in words, most saved and shared first (closest.ts). */
   closestPosts?: Array<{ date: string; keptPer1k?: number; file?: string; text: string }>;
   /** Asked for the post description: the author's own posted captions, most saved first, and how long theirs run. */
+  /** A turn for one Finals version (captionFor): every version of the piece with its facts (finals.ts); `current` is the one this turn writes. */
+  captionVersion?: { current: string; versions: Array<{ key: string; label: string; facts: string }> };
   captionExamples?: { examples: Array<{ text: string; keptPer1k: number }>; saved?: string[]; median: number; p90: number };
   /** A web search the author approved for this turn: the Mac session has WebSearch/WebFetch for it. */
   web?: string;
@@ -328,6 +341,14 @@ export function buildTurnPrompt(input: TurnPromptInput): { system: string; user:
   // a caption turn reads the whole piece: its script is what the description has to follow
   if (captionOnly) blocks.push(`The piece this description is for, in full (the video's own words, block by block):\n${renderDocument(input.doc)}`);
   else blocks.push(folder ? renderDocument(input.doc) : cut(renderDocument(input.doc), TURN_BUDGET.document));
+  if (input.captionVersion) {
+    const cv = input.captionVersion;
+    blocks.push(
+      `The post description this turn writes is for version ${cv.versions.find((v) => v.key === cv.current)?.label ?? cv.current} of this piece in Finals. The piece's versions in Finals:\n${cv.versions
+        .map((v) => `- ${v.label}: ${v.facts}${v.key === cv.current ? " (this one)" : ""}`)
+        .join("\n")}`,
+    );
+  }
   if (input.doc.userEdits?.length) blocks.push(renderUserEdits(input.doc.userEdits));
   if (input.pinned.length) {
     let used = 0;

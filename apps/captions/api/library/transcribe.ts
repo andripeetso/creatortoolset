@@ -1,4 +1,4 @@
-import { readFile, rm } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
@@ -96,7 +96,7 @@ export function wordsOf(db: DatabaseSync, versionId: string): TimedWord[] | null
   return row?.words ? (JSON.parse(row.words) as TimedWord[]) : null;
 }
 
-type Transcribed = { segments: Segment[]; words: TimedWord[]; language: string | null };
+export type Transcribed = { segments: Segment[]; words: TimedWord[]; language: string | null };
 
 async function deepgram(file: string, actor: string): Promise<Transcribed> {
   const role = isAdminActor(actor) ? "admin" : (findUser(actor)?.role ?? "user");
@@ -132,16 +132,23 @@ async function openai(file: string, key: string): Promise<Transcribed> {
   return { segments, words, language: data.language ?? null };
 }
 
-/** Transcribes one version's audio as its job's actor: the route first (no audio is cut without one), then the provider. */
-export async function transcribeVersion(db: DatabaseSync, versionId: string, src: string, actor: string | null, scratch: string): Promise<void> {
+/** A file's transcript as its actor's key gives it: the route first (no audio is cut without one), then the provider. Throws NeedsKey without a key. */
+export async function transcribeFile(src: string, actor: string | null, scratch: string): Promise<Transcribed & { provider: "deepgram" | "openai" }> {
   const route = transcribeRoute(actor);
+  await mkdir(scratch, { recursive: true });
   const out = path.join(scratch, `transcribe-${randomUUID()}.${route.provider === "deepgram" ? "wav" : "m4a"}`);
   try {
     const codec = route.provider === "deepgram" ? ["-c:a", "pcm_s16le"] : ["-c:a", "aac", "-b:a", "32k"];
     await ffmpegTo(out, ["-i", src, "-vn", "-ac", "1", "-ar", "16000", ...codec]);
-    const { segments, words, language } = route.provider === "deepgram" ? await deepgram(out, actor ?? "") : await openai(out, route.key);
-    saveTranscript(db, versionId, route.provider, language, segments, words);
+    const t = route.provider === "deepgram" ? await deepgram(out, actor ?? "") : await openai(out, route.key);
+    return { ...t, provider: route.provider };
   } finally {
     await rm(out, { force: true });
   }
+}
+
+/** Transcribes one version's audio as its job's actor, and stores it. */
+export async function transcribeVersion(db: DatabaseSync, versionId: string, src: string, actor: string | null, scratch: string): Promise<void> {
+  const { provider, segments, words, language } = await transcribeFile(src, actor, scratch);
+  saveTranscript(db, versionId, provider, language, segments, words);
 }

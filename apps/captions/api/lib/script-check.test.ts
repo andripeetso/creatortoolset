@@ -58,7 +58,7 @@ describe("vetScriptEdits", () => {
   });
 
   it("changes the word count only for a phrase the script has", () => {
-    const apart = "Baby steps first. Then Acrobatics.";
+    const apart = "Tiny steps first. Then Acrobatics.";
     expect(
       vetScriptEdits([{ from: 1, to: 3, text: "Tiny Acrobatics" }], words("at tiny acro batics, we"), apart),
     ).toEqual([]);
@@ -169,7 +169,7 @@ describe("vetScriptEdits", () => {
   it("caps how many words one edit may replace", () => {
     const heard = words("a b c d e f g");
     expect(
-      vetScriptEdits([{ from: 0, to: 6, text: "Baby" }], heard, SCRIPT),
+      vetScriptEdits([{ from: 0, to: 6, text: "Tiny" }], heard, SCRIPT),
     ).toEqual([]);
   });
 });

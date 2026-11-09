@@ -85,6 +85,13 @@ describe("community catalog", () => {
     expect((await call("POST", "/api/pack-catalog/submit", { pack: pack("2.0.0") })).status).toBe(403);
   });
 
+  it("the author's own submissions are on the catalog's site, with its address", async () => {
+    me = { username: "tinyacrobatics", role: "user", cloud: true, off: [] };
+    const res = await call("GET", "/api/pack-catalog/mine");
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { publishAt: string }).publishAt).toBe("https://catalog.example");
+  });
+
   it("an empty PACK_CATALOG_URL turns it off and asks nothing", async () => {
     env.packCatalogUrl = "";
     seen.length = 0;

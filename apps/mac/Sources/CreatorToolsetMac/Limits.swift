@@ -11,6 +11,11 @@ let codexUsageURL = "https://chatgpt.com/backend-api/wham/usage"
 /// The limits at start and then this often (seconds).
 let limitsInterval = 300
 
+/// The opt-in per Mac (UserDefaults): off by default. Reading the limits uses the Claude login in the keychain and the
+/// undocumented usage pages, so nothing is read or called until the owner of this Mac turns it on (Settings → This Mac).
+let limitsReadingKey = "limitsReading"
+func limitsReadingOn(_ defaults: UserDefaults = .standard) -> Bool { defaults.bool(forKey: limitsReadingKey) }
+
 /// Codex window names by seconds.
 let codexLabels: [Double: String] = [18000: "Session", 604800: "Weekly", 2592000: "Monthly"]
 
@@ -201,8 +206,10 @@ private func codexReading(home: String) -> LimitReading {
 }
 
 /// The identities for the limits post: each Claude and Codex folder from homeReport, with its label and reading.
-func limitsReport(home: URL, now: Date = Date()) -> [[String: Any]] {
+/// With the opt-in off this returns none, and no keychain item or usage page is touched.
+func limitsReport(home: URL, now: Date = Date(), enabled: Bool = limitsReadingOn()) -> [[String: Any]] {
     _ = now   // the pass's time is stamped by limitsForever (`at`)
+    guard enabled else { return [] }
     var out: [[String: Any]] = []
     for row in homeReport(home: home) {
         guard let driver = row["driver"] as? String, let path = row["home"] as? String else { continue }
@@ -223,12 +230,13 @@ func limitsReport(home: URL, now: Date = Date()) -> [[String: Any]] {
 
 /// The limits now and then every 5 minutes, until `stopped` says so. A failed pass is logged
 /// (no tokens) and the loop goes on. A site without the route answers 404, which is ignored.
-func limitsForever(api: DeviceAPI, home: URL, stopped: () -> Bool) {
+/// With the opt-in off each pass posts an empty list, so readings sent before the switch-off leave the site too.
+func limitsForever(api: DeviceAPI, home: URL, stopped: () -> Bool, enabled: () -> Bool = { limitsReadingOn() }) {
     while !stopped() {
         do {
             let now = Date()
             let reply = try api.call("POST", "/api/devices/relay/limits",
-                                     ["at": Int(now.timeIntervalSince1970 * 1000), "identities": limitsReport(home: home, now: now)], tries: 2)
+                                     ["at": Int(now.timeIntervalSince1970 * 1000), "identities": limitsReport(home: home, now: now, enabled: enabled())], tries: 2)
             if !(200..<300).contains(reply.status) && reply.status != 404 {
                 AppLog.write("relay limits: HTTP \(reply.status)")
             }

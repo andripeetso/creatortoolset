@@ -45,6 +45,8 @@ export interface SearchQuery {
   from?: number;
   to?: number;
   hasTranscript?: boolean;
+  /** plug-in sidebar filters: facet key → chosen values (api/library/sources.ts) */
+  facets?: Record<string, string[]>;
   trashed?: boolean; // the trash instead of the library
   cursor?: string;
   limit?: number; // limit ≤ 200
@@ -57,7 +59,7 @@ export interface SearchHit {
 }
 
 export interface ShareInput {
-  target: { kind: "asset" | "version" | "collection"; id: string };
+  target: { kind: "asset" | "version" | "collection" | "piece"; id: string };
   scope: "view" | "download" | "comment";
   expiresInDays: number; // default 7, max 90
   password?: string;
@@ -73,7 +75,7 @@ export interface LibrarySettings {
 export interface LibrarySummary {
   id: string;
   name: string;
-  storage: "local" | "s3";
+  storage: "local" | "s3" | "bunny";
   settings: LibrarySettings;
 }
 
@@ -89,7 +91,7 @@ export type LibraryStorageInput =
 
 /** GET /api/library/:id/usage, the owner only. */
 export interface LibraryStorage {
-  kind: "local" | "s3";
+  kind: "local" | "s3" | "bunny";
   mode?: "server" | "own";
   endpoint?: string; // own bucket only
   region?: string;
@@ -180,4 +182,64 @@ export interface SimilarMatch {
   title: string;
   thumbUrl: string;
   overlap: number; // 0..1
+}
+
+/**
+ * A piece: library versions grouped with one winner (the Finals list is the pieces of its collection). Items are
+ * versions; `externalRef` is for items from another source (a catalog clip), set by the source, never by a request.
+ */
+export interface Piece {
+  id: string;
+  label: string;
+  collectionId: string | null;
+  createdBy: string;
+  items: PieceItem[];
+  /** The owner's picked frame (`?v=` stamped); absent or null = the automatic cover (the winner's thumbnail). */
+  coverUrl?: string | null;
+  /** Whether the viewer may change it: every item is theirs to change. Set on the single-piece read only. */
+  writable?: boolean;
+}
+
+export interface PieceItem {
+  id: string;
+  label: string | null;
+  position: number;
+  winner: boolean; // at most one per piece
+  versionId: string | null;
+  externalRef: string | null; // exactly one of versionId and externalRef is set
+  postDescription: string | null; // the text under a post, for this version
+  postings: Posting[];
+}
+
+/** Where an item was posted (one version can be posted to several platforms, or several times). */
+export interface Posting {
+  id: number;
+  platform: string;
+  url: string | null;
+  postedAt: number;
+  createdBy: string;
+}
+
+/**
+ * Own-bucket presets for the storage form: the endpoint, region and URL style each S3-compatible provider wants. A preset
+ * whose endpoint is per account or per server (R2, MinIO) sets `endpoint` to "" and `endpointHint`, shown as the field's
+ * placeholder: the owner types the real address (the server rejects `<…>` text in it). Path-style URLs work on all four,
+ * and MinIO needs them.
+ */
+export const S3_PRESETS = [
+  { id: "r2", name: "Cloudflare R2", endpoint: "", endpointHint: "https://<account-id>.r2.cloudflarestorage.com", region: "auto", pathStyle: true },
+  { id: "b2", name: "Backblaze B2", endpoint: "https://s3.us-west-004.backblazeb2.com", endpointHint: "", region: "us-west-004", pathStyle: true },
+  { id: "wasabi", name: "Wasabi", endpoint: "https://s3.us-east-1.wasabisys.com", endpointHint: "", region: "us-east-1", pathStyle: true },
+  { id: "minio", name: "MinIO", endpoint: "", endpointHint: "https://your-minio-host:9000", region: "us-east-1", pathStyle: true },
+] as const;
+
+export type S3PresetId = (typeof S3_PRESETS)[number]["id"];
+
+/**
+ * The form with a preset's region and path-style set, and its endpoint when the preset has a fixed one (an empty preset
+ * endpoint keeps what the field holds); the bucket and the keys are left as they are.
+ */
+export function applyS3Preset<T extends { endpoint: string; region: string; pathStyle: boolean }>(form: T, id: S3PresetId): T {
+  const p = S3_PRESETS.find((x) => x.id === id);
+  return p ? { ...form, endpoint: p.endpoint || form.endpoint, region: p.region, pathStyle: p.pathStyle } : form;
 }

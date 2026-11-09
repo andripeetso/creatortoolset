@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { sessionsIndex, type OwnPost } from "./folder";
-import { matchPosted, postedFromUrl } from "./posted";
+import { linkCandidates, matchPosted, postedFromUrl } from "./posted";
 
 const DAY = 86_400_000;
 const post = (shortcode: string, takenAt: number, caption: string, extra: Partial<OwnPost> = {}): OwnPost =>
@@ -59,5 +59,45 @@ describe("sessionsIndex", () => {
     expect(out).toContain("- 1970-01-06-knife-bbbbbb.md (Knife)");
     expect(out).not.toContain("Draft");
     expect(sessionsIndex([{ id: "cccccc33", title: "Draft", createdAt: 1, status: "writing" }], [])).toBeUndefined();
+  });
+
+  it("gives every post of a session its own row, and counts each post", () => {
+    const out = sessionsIndex(
+      [
+        {
+          id: "aaaaaa11",
+          title: "TinyAcrobatics",
+          createdAt: 5 * DAY,
+          status: "published",
+          postings: [
+            { shortcode: "BEANS1", url: "https://www.instagram.com/p/BEANS1/", by: "auto", at: 1, version: "2294" },
+            { shortcode: "TOOLS1", url: "https://www.instagram.com/p/TOOLS1/", by: "you", at: 2, version: "2296" },
+          ],
+          posted: { shortcode: "BEANS1", url: "https://www.instagram.com/p/BEANS1/", by: "auto", at: 1 },
+        },
+      ],
+      [post("BEANS1", 10 * DAY, BEANS), post("TOOLS1", 11 * DAY, TOOLS)],
+    )!;
+    expect(out).toContain("# Workshop sessions and the posts they became (2)");
+    expect(out).toContain("| 1970-01-06-tinyacrobatics-aaaaaa.md | TinyAcrobatics | my-posts/1970-01-11-BEANS1.md | 20,000 | 20.0 |");
+    expect(out).toContain("| 1970-01-06-tinyacrobatics-aaaaaa.md | TinyAcrobatics | my-posts/1970-01-12-TOOLS1.md | 20,000 | 20.0 |");
+  });
+});
+
+describe("linkCandidates", () => {
+  const meta = (id: string, extra: Record<string, unknown> = {}) => ({ id, createdAt: 5 * DAY, status: "editing", ...extra }) as never;
+
+  it("offers a session that already has another post, since one session can be several posts", () => {
+    const withPost = meta("a", { postings: [{ shortcode: "BEANS1", url: "u", by: "auto", at: 1 }] });
+    const plain = meta("b");
+    expect(linkCandidates([withPost, plain] as never, "TOOLS1").map((m) => (m as { id: string }).id)).toEqual(["a", "b"]);
+  });
+
+  it("leaves out a shelved session, one the author said is not this post, and a session that holds this post already", () => {
+    const shelved = meta("s", { status: "shelved" });
+    const notThis = meta("n", { postedNot: ["TOOLS1"] });
+    const holds = meta("h", { posted: { shortcode: "TOOLS1", url: "u", by: "you", at: 1 } });
+    const open = meta("o");
+    expect(linkCandidates([shelved, notThis, holds, open] as never, "TOOLS1").map((m) => (m as { id: string }).id)).toEqual(["o"]);
   });
 });
