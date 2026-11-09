@@ -169,6 +169,27 @@ describe("GitHub sign-in (hosted mode, GitHub's endpoints faked)", () => {
     expect((await githubIdentity("good-code", CALLBACK)).email).toBe("cy@tinyacrobatics.com");
   });
 
+  it("finishes a GitHub link only in the browser that started it, as Google's does", async () => {
+    const login = await app.request("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "cy", password: "cypass123" }),
+    });
+    const cookie = cookieOf(login);
+    const start = await app.request("/api/account/login/github?for=link", { headers: { cookie } });
+    const state = new URL(start.headers.get("location")!).searchParams.get("state")!;
+    // the same callback from a browser that is not signed in: refused, and nothing is linked
+    const other = await app.request(`/api/auth/github/callback?code=good-code&state=${state}`);
+    expect(other.headers.get("location")).toContain("/settings/account?signin=");
+    expect(other.headers.get("set-cookie")).toBeNull();
+    // the browser that started it: linked
+    const again = await app.request("/api/account/login/github?for=link", { headers: { cookie } });
+    const state2 = new URL(again.headers.get("location")!).searchParams.get("state")!;
+    const back = await app.request(`/api/auth/github/callback?code=good-code&state=${state2}`, { headers: { cookie } });
+    expect(back.headers.get("location")).toBe("/settings/account?linked=github");
+    expect(findByIdentity("github", "4242")?.username).toBe("cy");
+  });
+
   it("unlinks a GitHub sign-in for the signed-in account", async () => {
     const login = await app.request("/api/auth/login", {
       method: "POST",

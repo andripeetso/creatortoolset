@@ -178,9 +178,9 @@ async function callback(c: Context, kind: Kind, p: { code: string; state: string
     const redirect = `${originOf(c)}/api/auth/${kind}/callback`;
     const who = await identityOf(kind, p.code, redirect, p.userJson);
     if (mode.type === "link") {
-      // Google's callback is a same-site GET, so the cookie comes along: the browser finishing it must be the account
-      // that started it (Apple's cross-site POST carries no cookie; its state is single use and 15 min)
-      if (kind === "google" && getSessionUser(c.req.header("cookie"))?.username !== mode.username) return fail("Finish linking in the browser you're signed in on");
+      // Google's and GitHub's callbacks are top-level GETs, so the Lax cookie comes along: the browser finishing it must
+      // be the account that started it (Apple's cross-site POST carries no cookie; its state is single use and 15 min)
+      if ((kind === "google" || kind === "github") && getSessionUser(c.req.header("cookie"))?.username !== mode.username) return fail("Finish linking in the browser you're signed in on");
       const user = findUser(mode.username);
       if (!user) return fail("That account is gone");
       try {
