@@ -148,7 +148,7 @@ private final class NoRedirects: NSObject, URLSessionTaskDelegate {
 /// The page's account message: "status", "apple" or "google", and only from the window's own page, never from a frame
 /// inside it (an embed would read the name and email, or open a sign-in).
 func accountAsk(_ body: Any, mainFrame: Bool) -> String? {
-    guard mainFrame, let ask = body as? String, ["status", "apple", "google"].contains(ask) else { return nil }
+    guard mainFrame, let ask = body as? String, ["status", "apple", "google", "github"].contains(ask) else { return nil }
     return ask
 }
 
@@ -218,11 +218,11 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
         }
     }
 
-    /// "Continue with Apple" / "Continue with Google": the server's sign-in in the system sheet, then the code exchange.
-    /// `done` is called exactly once.
+    /// "Continue with Apple" / "Google" / "GitHub": the server's sign-in in the system sheet, then the code exchange.
+    /// `done` is called exactly once. A provider the server has no sign-in for yet answers notSetUp (isSetUp).
     func signIn(_ provider: String, done: @escaping (AccountReply) -> Void) {
         guard let server else { return done(["state": "off"]) }
-        guard provider == "apple" || provider == "google" else { return done(["state": "error", "message": "Unknown sign-in."]) }
+        guard ["apple", "google", "github"].contains(provider) else { return done(["state": "error", "message": "Unknown sign-in."]) }
         session?.cancel()
         pending?(["state": "cancelled"])
         pending = done
