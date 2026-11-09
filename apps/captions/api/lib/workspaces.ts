@@ -12,6 +12,10 @@ import { findUser, listUsers } from "../users";
  *
  * First load on a server that has accounts but no file: one workspace from them, the first admin (ADMIN_USERNAME
  * first) its owner, everyone else a member on their own AI (`own`). Comped: it is the server owner's own team.
+ *
+ * Decision: owning a team grants nothing on the platform. The platform role (users.ts) alone decides admin routes,
+ * the server's keys, and who may use the server's providers; canManage() here is the workspace role only. The
+ * migration picks an admin as the first owner because that install's admin runs the team, not the other way round.
  */
 
 const FILE = () => path.join(env.dataDir, "workspaces.json");
