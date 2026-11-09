@@ -22,6 +22,8 @@ export const env = {
   adminUsername: (process.env.ADMIN_USERNAME || "admin").toLowerCase(),
   // the shared community catalog, read like a plugin directory; an empty value turns it off
   packCatalogUrl: (process.env.PACK_CATALOG_URL ?? "https://creatortoolset.com").trim(),
+  // the connect broker this computer links to (api/connect); empty = linking is off
+  connectUrl: process.env.CT_CONNECT_URL ?? "",
 };
 
 /**

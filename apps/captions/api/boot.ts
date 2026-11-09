@@ -45,6 +45,8 @@ import { mcpApp } from "./mcp";
 import { connectorsApp, startConnectorPulls, tiktokVerifyFile } from "./connectors";
 import { ownerProfileApp } from "./owner-profile";
 import { devicesApp } from "./devices";
+import { connectApp } from "./connect/routes";
+import { tunnelHostname } from "./connect/state";
 import { deviceForToken } from "./lib/devices";
 import { serviceKeysApp } from "./service-keys";
 import { myKeysApp } from "./my-keys";
@@ -85,6 +87,9 @@ export function localHostAllowed(host: string): boolean {
   try {
     if (process.env.PUBLIC_ORIGIN) allowed.add(new URL(process.env.PUBLIC_ORIGIN).hostname.toLowerCase().replace(/^\[|\]$/g, ""));
   } catch { /* not a URL: nothing more allowed */ }
+  // a linked computer answers on its own tunnel name (api/connect); requests on it are remote (api/auth.ts viaTunnel)
+  const tunnel = tunnelHostname();
+  if (tunnel) allowed.add(tunnel.toLowerCase());
   return allowed.has(h);
 }
 /**
@@ -102,7 +107,8 @@ export function crossOriginWrite(method: string, url: string, origin: string | u
   }
 }
 app.use(async (c, next) => {
-  if (process.env.CT_LOCAL !== "1") return next();
+  // on for a Mac server (CT_LOCAL=1) and for any computer linked to the connect broker: its tunnel must not answer other names
+  if (process.env.CT_LOCAL !== "1" && !tunnelHostname()) return next();
   if (!localHostAllowed(new URL(c.req.url).hostname)) return c.json({ error: "Unknown host" }, 400);
   if (crossOriginWrite(c.req.method, c.req.url, c.req.header("origin"), c.req.header("authorization"))) {
     return c.json({ error: "Sent from another site" }, 403);
@@ -323,6 +329,8 @@ app.get("/:file{tiktok[\\w-]*\\.txt}", (c) => {
 });
 startConnectorPulls();
 app.route("/api/devices", devicesApp);
+// Settings → Connect: link this computer to the account on the connect broker (api/connect/routes.ts)
+app.route("/api/connect", connectApp);
 // the menu bar panel's rows from plug-ins (activity.ts)
 app.route("/api/activity", activityApp(serverPlugins));
 // the Mac app's signed-in account as this server's owner (owner-profile.ts)
