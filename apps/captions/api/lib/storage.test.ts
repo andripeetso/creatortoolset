@@ -1,7 +1,42 @@
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { sourcesOf, type StorageFolder } from "../../contracts/storage";
-import { canReach, folderFor, libraryPath, parseStorageFile, parseStorageReport, storageFilePath, uploadRelayView } from "./storage";
+import { canReach, folderFor, libraryPath, localDisks, parseStorageFile, parseStorageReport, storageFilePath, uploadRelayView } from "./storage";
+
+// Two fake volumes: "/" (100 GB free of 200) and an external drive at /Volumes/EXT (5 of 20). Other paths do not exist.
+vi.mock("node:fs/promises", async (orig) => {
+  const real = await orig<typeof import("node:fs/promises")>();
+  const volumes: Record<string, { bavail: number; blocks: number }> = {
+    "/": { bavail: 1e8, blocks: 2e8 },
+    "/Volumes/EXT": { bavail: 5e6, blocks: 2e7 },
+  };
+  return {
+    ...real,
+    statfs: async (p: string) => {
+      const v = volumes[p];
+      if (!v) throw Object.assign(new Error(`ENOENT: ${p}`), { code: "ENOENT" });
+      return { bsize: 1000, ...v };
+    },
+  };
+});
+
+describe("local disks: the server reads the Library's disk (statfs), not only the system disk", () => {
+  it("system disk only when no library path is given, or it is on the system disk", async () => {
+    expect((await localDisks()).map((d) => d.path)).toEqual(["/"]);
+    expect((await localDisks("/Users/tiny/Creator Toolset")).map((d) => d.path)).toEqual(["/"]);
+    expect((await localDisks("~/Creator Toolset")).map((d) => d.path)).toEqual(["/"]);
+  });
+
+  it("adds the library's own disk with its free and total space when it is another volume", async () => {
+    const disks = await localDisks("/Volumes/EXT/Creator Toolset");
+    expect(disks.map((d) => [d.path, d.freeGb, d.totalGb])).toEqual([["/", 100, 200], ["/Volumes/EXT", 5, 20]]);
+  });
+
+  it("reads a library that does not exist yet at its nearest folder that does", async () => {
+    const disks = await localDisks("/Volumes/EXT/not/made/yet");
+    expect(disks.at(-1)?.path).toBe("/Volumes/EXT");
+  });
+});
 
 describe("upload relay choice (the server's, never the browser's)", () => {
   it("direct when a bucket is set up, chunked otherwise", () => {
