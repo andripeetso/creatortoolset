@@ -28,3 +28,19 @@ it("shows only this computer's panel when there are no other computers", () => {
   expect(html).toContain("MINE-PANEL");
   expect(html).not.toContain("Install and sign-in");
 });
+
+it("shows the vendor's install line for a computer where Claude is not found, and nothing for one where it is Ready", () => {
+  const html = renderToStaticMarkup(
+    <AgentsStepView
+      here="Studio Mac"
+      mine={mine}
+      others={[
+        { id: "a", name: "Workshop PC", online: true, drivers: [{ driver: "claude", installed: false }] },
+        { id: "b", name: "Mac Studio", online: true, drivers: [{ driver: "claude", installed: true, signedIn: true }] },
+      ]}
+    />,
+  );
+  expect(html).toContain("paste this line into a Terminal on Workshop PC");
+  expect(html).toContain("curl -fsSL https://claude.ai/install.sh | bash");
+  expect(html).not.toContain("paste this line into a Terminal on Mac Studio");
+});

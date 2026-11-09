@@ -11,7 +11,7 @@ const NAME: Record<string, string> = { claude: "Claude", codex: "Codex", gemini:
  * Install and sign-in for a computer that is not this one are run in that computer's own Terminal, so the line is shown to paste.
  */
 function remoteRows(c: ComputerInfo) {
-  if (!c.drivers.length) return <p className="px-1 text-sm text-muted-foreground">Nothing reported yet. The app reports its agents when it runs on that computer.</p>;
+  if (!c.drivers.length) return <p className="px-1 text-sm text-muted-foreground">Nothing reported yet. The Creator Toolset app there reports its agents while its AI is on.</p>;
   const missing = c.drivers.filter((d) => !d.installed && INSTALL_LINE[d.driver as keyof typeof INSTALL_LINE]);
   return (
     <div className="space-y-2">
