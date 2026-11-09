@@ -2,7 +2,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
 import { AccountStepView, parseProviders, type AccountState, type Provider } from "./AccountStep";
 
-const view = (account: AccountState, providers?: Provider[]) =>
+const all: Provider[] = ["apple", "google", "github"];
+const view = (account: AccountState, providers: Provider[] = all) =>
   renderToStaticMarkup(<AccountStepView account={account} busy={false} providers={providers} onSignIn={() => {}} onDone={() => {}} />);
 
 it("asks for Apple, Google or GitHub and can't be passed until signed in", () => {
@@ -24,6 +25,12 @@ it("shows a button only for the providers the account server has keys for", () =
   expect(html).not.toContain("Continue with Google");
   expect(parseProviders("google,github,microsoft")).toEqual(["google", "github"]);
   expect(parseProviders("")).toEqual([]);
+});
+
+it("shows no sign-in button when the reply names no providers (an older Mac app)", () => {
+  const html = view({ state: "signedOut" }, []);
+  expect(html).not.toContain("Continue with");
+  expect(html).toContain("Sign in to set up your account");
 });
 
 it("goes on once signed in, while the server has no sign-in yet, or with no account step", () => {

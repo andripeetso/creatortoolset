@@ -254,8 +254,8 @@ export async function googleIdentity(code: string, redirect: string): Promise<Wh
 
 /**
  * GitHub's token exchange (a plain OAuth token, no id_token), then the account: `id` is the stable key (`login` can
- * change). The email is kept only when GitHub marks it primary and verified; otherwise it is "" and the account stays
- * keyed by `id`, the same as an unverified Google address.
+ * change). A sign-in is refused unless GitHub marks an address primary and verified: the account is never kept without
+ * one (fails closed; Google and Apple keep their existing rule for unverified addresses).
  */
 export async function githubIdentity(code: string, redirect: string): Promise<Who> {
   const g = githubSigninKeys();
@@ -281,7 +281,9 @@ export async function githubIdentity(code: string, redirect: string): Promise<Wh
   const mails = await api("/user/emails");
   const list: unknown = mails.ok ? await mails.json().catch(() => []) : [];
   const primary = (Array.isArray(list) ? list : []).find((m: { primary?: unknown; verified?: unknown }) => m?.primary === true && m?.verified === true) as { email?: unknown } | undefined;
-  return { provider: "github", sub: String(user.id), email: str(primary?.email), name: str(user.name) || str(user.login) };
+  const email = str(primary?.email);
+  if (!email) throw new Error("GitHub has no verified primary email address");
+  return { provider: "github", sub: String(user.id), email, name: str(user.name) || str(user.login) };
 }
 
 /** Apple's client secret: an ES256 JWT signed with the .p8 key (IEEE P1363 r||s, not DER). */

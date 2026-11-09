@@ -33,7 +33,7 @@ export const hasAccountBridge = () => !!bridge();
 /** Whether the person may go on from this step. */
 export const accountDone = (s: AccountState) => s.state === "signedIn" || s.state === "notSetUp" || s.state === "unreachable" || s.state === "off";
 
-export function AccountStepView({ account, busy, providers = PROVIDERS, onSignIn, onDone }: { account: AccountState; busy: boolean; providers?: Provider[]; onSignIn: (provider: Provider) => void; onDone?: () => void }) {
+export function AccountStepView({ account, busy, providers = [], onSignIn, onDone }: { account: AccountState; busy: boolean; providers?: Provider[]; onSignIn: (provider: Provider) => void; onDone?: () => void }) {
   return (
     <div className="max-w-xl space-y-4 text-sm text-muted-foreground">
       {account.state === "checking" && <p>Checking your account…</p>}
@@ -76,14 +76,15 @@ export function AccountStepView({ account, busy, providers = PROVIDERS, onSignIn
 /** Without `onDone` (What's left, Settings → Setup) it is an optional row: no Continue button. */
 export function AccountStep({ onDone }: { onDone?: () => void }) {
   const [account, setAccount] = useState<AccountState>({ state: "checking" });
-  const [providers, setProviders] = useState<Provider[]>(PROVIDERS);
+  const [providers, setProviders] = useState<Provider[]>([]);
   const [busy, setBusy] = useState(false);
   const ask = useCallback(async (m: string) => {
     const b = bridge();
     if (!b) return setAccount({ state: "off" });
     try {
       const reply = await b.postMessage(m);
-      if (reply.providers !== undefined) setProviders(parseProviders(reply.providers));
+      // no `providers` field (an older Mac app) means no buttons: a provider is offered only when the server names it
+      setProviders(parseProviders(reply.providers ?? ""));
       setAccount(reply);
     } catch (e) {
       setAccount({ state: "error", message: e instanceof Error ? e.message : String(e) });

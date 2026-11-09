@@ -160,11 +160,17 @@ describe("GitHub sign-in (hosted mode, GitHub's endpoints faked)", () => {
     expect(res.headers.get("set-cookie")).toBeNull();
   });
 
-  it("keeps an address GitHub has not verified as primary out of the account, and keeps the account by its id", async () => {
+  it("refuses a GitHub sign-in with no verified primary address, and signs no one in", async () => {
     emails = [{ email: "cy@tinyacrobatics.com", primary: true, verified: false }];
-    expect(await githubIdentity("good-code", CALLBACK)).toEqual({ provider: "github", sub: "4242", email: "", name: "Cy Tiny" });
+    await expect(githubIdentity("good-code", CALLBACK)).rejects.toThrow(/verified primary/);
     emails = [{ email: "other@tinyacrobatics.com", primary: false, verified: true }];
-    expect((await githubIdentity("good-code", CALLBACK)).email).toBe("");
+    await expect(githubIdentity("good-code", CALLBACK)).rejects.toThrow(/verified primary/);
+    const start = await app.request("/api/account/login/github?for=site");
+    const state = new URL(start.headers.get("location")!).searchParams.get("state")!;
+    const res = await app.request(`/api/auth/github/callback?code=good-code&state=${state}`);
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toContain("/login?error=");
+    expect(res.headers.get("set-cookie")).toBeNull();
     emails = [{ email: "cy@tinyacrobatics.com", primary: true, verified: true }];
     expect((await githubIdentity("good-code", CALLBACK)).email).toBe("cy@tinyacrobatics.com");
   });
