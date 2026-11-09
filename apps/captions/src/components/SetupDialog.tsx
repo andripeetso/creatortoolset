@@ -36,6 +36,7 @@ import { canUse, useMe } from "@/lib/auth";
 import { openAssistant } from "@/lib/assistant";
 import {
   MAKE_NAMES,
+  SETUP_STEPS,
   STAGES,
   STAGE_NAME,
   dismissSetup,
@@ -193,10 +194,12 @@ export function SetupDialog() {
   const tools = ticked ?? view.tools ?? toolsFor(makes, mine);
   const step: SetupStep = setupStepFromParam(asked) ?? "how";
   // the mode decides which steps there are (In the app: no Agents; In my own AI: no Folders)
+  // from a step the mode skips (Agents opened from the assistant in In the app), Back and Continue still go the right way
   const order = stepsFor(talk);
-  const at = Math.max(0, order.indexOf(step));
   const stage = stageOf(step);
-  const last = at === order.length - 1;
+  const last = step === "done";
+  const before = [...SETUP_STEPS.slice(0, SETUP_STEPS.indexOf(step))].reverse().find((s) => order.includes(s));
+  const after = SETUP_STEPS.slice(SETUP_STEPS.indexOf(step) + 1).find((s) => order.includes(s)) ?? "done";
   const newProject = step === "project" && !projects.length;
   const to = (s: SetupStep) => setParams((p) => (p.set("setup", s), p), { replace: true });
 
@@ -211,7 +214,7 @@ export function SetupDialog() {
       await useWorkPrefs.getState().put({ makes });
       await save({ tools });
     }
-    to(order[at + 1] ?? "done");
+    to(after);
   };
   const finish = async () => {
     await save({ done: true }).catch(() => {});
@@ -378,8 +381,8 @@ export function SetupDialog() {
             </Button>
             <div className="flex items-center gap-2">
               {step === "agents" && <span className="mr-1 text-xs text-muted-foreground">{aiOn ? "Your AI is connected." : "Nothing is connected yet."}</span>}
-              {at > 0 && (
-                <Button variant="ghost" onClick={() => to(order[at - 1]!)}>
+              {before && (
+                <Button variant="ghost" onClick={() => to(before)}>
                   Back
                 </Button>
               )}
