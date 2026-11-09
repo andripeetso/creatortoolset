@@ -388,6 +388,20 @@ test('reaper: a tunnel Cloudflare no longer has is removed at once', async () =>
   assert.equal(fake.records.size, 0);
 });
 
+test('reaper: a link cut short before its tunnel was saved is removed after the window, not before', async () => {
+  // a row reserved by a link that died with no tunnel yet (tunnel_id '')
+  deps.db.prepare(`INSERT INTO computers (id, account_id, name, origin, hostname, tunnel_id, dns_id, idle_since, created_at)
+                   VALUES ('stranded', 'acct-1', 'Stuck', 'http://127.0.0.1:43128', 'stranded.${ZONE}', '', '', NULL, ?)`).run(clock);
+  const young = await reap(deps, { afterSeconds: 1800, dryRun: false });
+  assert.equal(young.find((o) => o.id === 'stranded')!.action, 'kept');
+  clock += 1800;
+  const dry = await reap(deps, { afterSeconds: 1800, dryRun: true });
+  assert.equal(dry.find((o) => o.id === 'stranded')!.action, 'would-remove');
+  const out = await reap(deps, { afterSeconds: 1800, dryRun: false });
+  assert.equal(out.find((o) => o.id === 'stranded')!.action, 'removed');
+  assert.equal((await api('GET', '/v1/computers', { token: acct() })).json.computers.length, 0);
+});
+
 test('reaper: a tunnel that comes back healthy resets its clock', async () => {
   const { id } = await linkOne();
   const tid = [...fake.tunnels.keys()][0];

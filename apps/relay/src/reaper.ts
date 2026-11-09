@@ -14,17 +14,34 @@ export async function reap(
   opts: ReapOptions,
 ): Promise<{ id: string; action: 'kept' | 'would-remove' | 'removed' | 'failed' }[]> {
   const now = d.now();
-  const rows = d.db.prepare('SELECT id, tunnel_id, dns_id, idle_since FROM computers').all() as unknown as {
+  const rows = d.db.prepare('SELECT id, tunnel_id, dns_id, idle_since, created_at FROM computers').all() as unknown as {
     id: string;
     tunnel_id: string;
     dns_id: string;
     idle_since: number | null;
+    created_at: number;
   }[];
   const out: { id: string; action: 'kept' | 'would-remove' | 'removed' | 'failed' }[] = [];
   for (const row of rows) {
-    // A row with no tunnel yet is a link in progress (link.ts reserves it first): not ours to judge.
+    // A row with no tunnel yet is a link in progress (link.ts reserves it first). Past the window, the link was cut
+    // short (a crash before the tunnel was saved), so the row goes; it would otherwise count against the limit forever.
     if (!row.tunnel_id) {
-      out.push({ id: row.id, action: 'kept' });
+      if (now - row.created_at < opts.afterSeconds) {
+        out.push({ id: row.id, action: 'kept' });
+        continue;
+      }
+      if (opts.dryRun) {
+        console.log('reap (dry run): would remove', row.id, 'unfinished');
+        out.push({ id: row.id, action: 'would-remove' });
+        continue;
+      }
+      try {
+        await removeComputer(d, row);
+        out.push({ id: row.id, action: 'removed' });
+      } catch (e) {
+        console.error('reap: remove failed', row.id, (e as Error).message);
+        out.push({ id: row.id, action: 'failed' });
+      }
       continue;
     }
     let status: string | null;

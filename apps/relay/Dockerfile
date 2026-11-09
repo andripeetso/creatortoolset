@@ -12,6 +12,7 @@ WORKDIR /app
 COPY apps/relay/package.json apps/relay/
 COPY apps/relay/src apps/relay/src
 ENV NODE_ENV=production RELAY_DATA_DIR=/data PORT=44610 RELAY_LISTEN_HOST=0.0.0.0
+RUN mkdir /data && chown node:node /data
 VOLUME ["/data"]
 EXPOSE 44610
 USER node
