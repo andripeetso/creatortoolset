@@ -26,6 +26,9 @@ import {
 } from "./users";
 import { INVITE_TOKEN_RE, type InviteInfo } from "../contracts/workspaces";
 import { acceptInvite, inviteByToken, memberIn, workspaceOf } from "./lib/workspaces";
+import { parseRelayKey } from "./connect/keys";
+import { consumeJti, connectState, tunnelHostname } from "./connect/state";
+import { TicketError, verifyTicket } from "./connect/ticket";
 
 /**
  * Account login for public hosting. When APP_SECRET is set, every /api
@@ -256,7 +259,18 @@ const isLoopback = (c: Context) => {
   }
   return a === "::1" || /^(::ffff:)?127\./.test(a);
 };
-const localOnly = (c: Context) => process.env.CT_LOCAL === "1" && !isLoopback(c);
+/**
+ * A request that came through this computer's tunnel (api/connect). cloudflared dials this server from loopback, so the
+ * socket says "local"; the tunnel's own headers and its hostname say otherwise. A LAN client can write these headers
+ * too, which only makes it count as remote: fail closed.
+ */
+export const viaTunnel = (c: Context) => {
+  const tunnel = tunnelHostname();
+  return !!c.req.header("cf-connecting-ip") || !!c.req.header("cf-ray") || (!!tunnel && hostOf(c) === tunnel.toLowerCase());
+};
+/** The Host the request was addressed to, without port (the request URL is built from it). */
+const hostOf = (c: Context) => new URL(c.req.url).hostname.toLowerCase();
+const localOnly = (c: Context) => (process.env.CT_LOCAL === "1" && !isLoopback(c)) || viaTunnel(c);
 const remoteRefused = (c: Context, user: UserRecord) => localOnly(c) && !!env.appSecret && verifyPassword(user, env.appSecret);
 const NO_PASSWORD_YET = "Set a password on the Mac first: the Mac app's This Mac → Access from other devices";
 
@@ -291,6 +305,49 @@ authApp.get("/link/:code", (c) => {
   bumpUsage(user.username, { logins: 1 });
   setLoginCookie(c, user);
   return c.redirect("/", 302);
+});
+
+/**
+ * Ticket sign-in through this computer's tunnel (POST /api/auth/ticket, body { ticket, password }). The broker's ticket
+ * proves the account and the computer; the computer's own password is still asked, once per browser. A ticket
+ * works once: it is spent before the password is checked, so a wrong password needs a new ticket.
+ */
+authApp.post("/ticket", async (c) => {
+  const s = connectState();
+  if (!s || hostOf(c) !== s.hostname.toLowerCase()) {
+    return c.json({ error: "Not a tunnel address for this computer" }, 404);
+  }
+  const b = await c.req.json<{ ticket?: unknown; password?: unknown }>().catch(() => ({}) as { ticket?: unknown; password?: unknown });
+  const ticket = typeof b.ticket === "string" ? b.ticket : "";
+  const password = typeof b.password === "string" ? b.password : "";
+  const now = Math.floor(Date.now() / 1000);
+  try {
+    verifyTicket(ticket, {
+      relayPublicKey: parseRelayKey(s.relayPublicKey),
+      hostname: s.hostname,
+      computerId: s.computerId,
+      owner: s.owner,
+      now,
+      consume: (jti, exp) => consumeJti(jti, exp, now),
+    });
+  } catch (e) {
+    if (e instanceof TicketError) return c.json({ error: "This ticket doesn't work here. Ask for a new one." }, 401);
+    throw e;
+  }
+  const user = findUser(s.localUser);
+  if (!user) return c.json({ error: "This ticket doesn't work here. Ask for a new one." }, 403);
+  // the computer's password must be set first: while it is APP_SECRET, only this Mac can sign in
+  if (password === env.appSecret) return c.json({ error: NO_PASSWORD_YET }, 403);
+  if (!password || !verifyPassword(user, password)) {
+    const fails = (failures.get(user.username) ?? 0) + 1;
+    failures.set(user.username, fails);
+    await sleep(Math.min(fails * 250, 2000));
+    return c.json({ error: "Wrong password" }, 401);
+  }
+  failures.delete(user.username);
+  bumpUsage(user.username, { logins: 1 });
+  setLoginCookie(c, user);
+  return c.json({ ok: true, user: withLogins(sessionOf(user)) });
 });
 
 /**
