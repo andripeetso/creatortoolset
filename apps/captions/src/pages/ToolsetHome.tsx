@@ -268,7 +268,7 @@ function NeedsSetup() {
       role="img"
       aria-label="Needs setup"
       title="Needs setup"
-      className="absolute -left-1 -top-1 h-2.5 w-2.5 rounded-full bg-amber-400"
+      className="absolute left-0.5 top-0.5 h-2.5 w-2.5 rounded-full bg-amber-400"
     />
   );
 }
