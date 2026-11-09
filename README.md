@@ -130,6 +130,10 @@ choosing a server and a domain, starting the Docker kit (the app plus Caddy for 
 backups and updates. On the server, `apps/captions/scripts/setup-server.sh <your domain>` writes `.env` with a random
 `APP_SECRET` and starts the kit in one go. `pnpm run doctor` checks a running install and lists what's missing.
 
+To let your own computers join one account through Cloudflare Tunnel, run the Connect broker in
+[apps/relay/](apps/relay/) with your own Cloudflare zone. [docs/operations/self-host-relay.md](docs/operations/self-host-relay.md)
+is the step-by-step guide.
+
 ## Repository
 
 | Path | What |
@@ -138,6 +142,7 @@ backups and updates. On the server, `apps/captions/scripts/setup-server.sh <your
 | [`apps/mac/`](apps/mac/README.md) | The Mac app (SwiftUI) |
 | [`apps/obsidian/`](apps/obsidian/README.md) | The Obsidian plugin |
 | [`SELF_HOSTING.md`](SELF_HOSTING.md) | Running it on your own server |
+| [`docs/operations/self-host-relay.md`](docs/operations/self-host-relay.md) | Running the Connect broker on your own server |
 | [`AGENTS.md`](AGENTS.md) | Rules and commands for contributors and their coding agents |
 
 ## Contributing
