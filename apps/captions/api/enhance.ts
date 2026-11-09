@@ -412,6 +412,21 @@ async function runElevenLabs(id: string, owner: string | undefined, wavPath: str
   return out;
 }
 
+/** A LAME-style MP3 opens with 1105 samples of encoder delay that a decoder without the LAME tag plays, so the track runs past the input (~37 ms here). Decode it to WAV without the delay, at the input's length. */
+const MP3_ENCODER_DELAY = 1105;
+async function trimEncoderDelay(id: string, meta: Meta, mp3: string, inputSeconds: number): Promise<string> {
+  if (!mp3.endsWith(".mp3") || (await probeDuration(mp3)) <= inputSeconds + 0.01) return mp3;
+  const wav = mp3.replace(/\.mp3$/, ".wav");
+  await runStep(id, meta, "ffmpeg", [
+    "-i", mp3,
+    "-af", `atrim=start_sample=${MP3_ENCODER_DELAY},asetpts=PTS-STARTPTS`,
+    "-t", String(inputSeconds),
+    "-c:a", "pcm_s16le", wav,
+  ]);
+  await rm(mp3, { force: true });
+  return wav;
+}
+
 /* ---- pipeline ---- */
 
 /** Queues the run; true when it is queued, false when it parked as needs_key. */
@@ -568,6 +583,7 @@ async function runJob(id: string): Promise<void> {
         clean = await runElevenLabs(id, meta.owner, wav, dir);
         clearInterval(crawl);
         crawl = null;
+        clean = await trimEncoderDelay(id, meta, clean, await probeDuration(wav));
       }
       if (active.get(id) !== meta) return; // cancelled mid-run
       if (step + 1 < chain.length) {       // the next pass starts from this one

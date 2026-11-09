@@ -100,6 +100,14 @@ export const runEnhance = (id: string, engine: Engine, then?: Engine | null) =>
     method: "POST",
   }).then((r) => json<EnhanceSession>(r));
 
+/** The passes a retry posts: a parked run (needs_key) keeps the engines it was queued with, since the key it waits for is its owner's; otherwise the picker's. */
+export const retryPasses = (
+  s: Pick<EnhanceSession, "status" | "chain">,
+  picked: Engine,
+  pickedThen: Engine | null,
+): [Engine, Engine | null] =>
+  s.status === "needs_key" && s.chain?.length ? [s.chain[0]!, s.chain[1] ?? null] : [picked, pickedThen];
+
 export const cancelEnhance = (id: string) =>
   fetch(`/api/enhance/${id}/cancel`, { method: "POST" }).then((r) =>
     json<EnhanceSession>(r),

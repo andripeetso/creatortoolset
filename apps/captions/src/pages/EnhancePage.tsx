@@ -25,6 +25,7 @@ import {
   getEnhance,
   isEnhancing,
   listEnhance,
+  retryPasses,
   runEnhance,
   setEnhanceMix,
   uploadEnhance,
@@ -307,9 +308,8 @@ function SessionView({
   const retry = async () => {
     setError(null);
     try {
-      // a parked run (needs_key) runs the engines it was queued with: the key it waits for is theirs, not the picker's
-      const parked = session.status === "needs_key" && session.chain?.length ? session.chain : null;
-      onChange(parked ? await runEnhance(session.id, parked[0]!, parked[1] ?? null) : await runEnhance(session.id, engine, second));
+      const [e, then] = retryPasses(session, engine, second);
+      onChange(await runEnhance(session.id, e, then));
       setEditing(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

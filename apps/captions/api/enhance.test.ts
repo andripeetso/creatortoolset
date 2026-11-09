@@ -83,6 +83,36 @@ describe("Audio Enhancer engines", () => {
   });
 });
 
+describe("Audio Enhancer ElevenLabs length", () => {
+  it("the clean track is the input's length, not the MP3's encoder delay on top", async () => {
+    process.env.ELEVENLABS_API_KEY = "not-used";
+    tone(2);
+    const src = path.join(process.env.DATA_DIR!, "tone2.wav");
+    const mp3 = path.join(process.env.DATA_DIR!, "el2.mp3");
+    // what the Voice Isolator's MP3 looks like to a decoder: a LAME-style file without the gapless tag
+    execFileSync("ffmpeg", ["-v", "error", "-y", "-i", src, "-c:a", "libmp3lame", "-b:a", "128k", "-write_xing", "0", "-f", "mp3", mp3]);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      if (!String(url).startsWith("https://api.elevenlabs.io/")) throw new Error(`unexpected fetch ${url}`);
+      return new Response(readFileSync(mp3), { headers: { "content-type": "audio/mpeg" } });
+    });
+    try {
+      const s = await read(app.request("/?engine=elevenlabs&name=len.wav", as("local", "POST", tone(2))));
+      const m = await until(async () => {
+        const cur = await read(app.request(`/${s.id}`, as("local")));
+        if (cur.status === "error") throw new Error(cur.error);
+        return cur.status === "done" ? cur : null;
+      });
+      const out = path.join(process.env.DATA_DIR!, "enhance", s.id, "enhanced.m4a");
+      const seconds = Number(execFileSync("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", out]).toString());
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(Math.abs(seconds - m.duration)).toBeLessThanOrEqual(0.01);
+    } finally {
+      fetchSpy.mockRestore();
+      process.env.ELEVENLABS_API_KEY = "";
+    }
+  });
+});
+
 describe("Audio Enhancer status moves", () => {
   it("a finished session only starts a new run; a failed one can too; nothing goes done → running", () => {
     expect(() => move(ENHANCE_MOVES, "done", "running", "t")).toThrow(IllegalTransition);
