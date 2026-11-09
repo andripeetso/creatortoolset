@@ -36,10 +36,10 @@ import { canUse, useMe } from "@/lib/auth";
 import { openAssistant } from "@/lib/assistant";
 import {
   MAKE_NAMES,
-  SETUP_STEPS,
   STAGES,
   STAGE_NAME,
   dismissSetup,
+  neighbours,
   openSetupAt,
   rememberLater,
   setupOpen,
@@ -198,8 +198,7 @@ export function SetupDialog() {
   const order = stepsFor(talk);
   const stage = stageOf(step);
   const last = step === "done";
-  const before = [...SETUP_STEPS.slice(0, SETUP_STEPS.indexOf(step))].reverse().find((s) => order.includes(s));
-  const after = SETUP_STEPS.slice(SETUP_STEPS.indexOf(step) + 1).find((s) => order.includes(s)) ?? "done";
+  const { before, after } = neighbours(step, talk);
   const newProject = step === "project" && !projects.length;
   const to = (s: SetupStep) => setParams((p) => (p.set("setup", s), p), { replace: true });
 
@@ -260,10 +259,12 @@ export function SetupDialog() {
         >
           <header className="shrink-0 px-6 pt-5 sm:px-8">
             <div className="flex items-center gap-3">
-              {/* the welcome has no bar; from step 2 the bar shows the three stages, each one passed stays clickable */}
-              {step !== "how" && (
+              {/* the welcome has no bar; the bar shows the three stages on the steps that belong to one. A stage passed on this path is ticked */}
+              {stage >= 0 && (
                 <ol className="flex flex-1 items-center gap-2" aria-label={`Stage ${stage + 1} of ${STAGES.length}`}>
-                  {STAGES.map((s, i) => (
+                  {STAGES.map((s, i) => {
+                    const passed = i < stage && order.includes(s);
+                    return (
                     <li key={s} className="flex min-w-0 flex-1 items-center gap-2">
                       <button
                         type="button"
@@ -275,19 +276,20 @@ export function SetupDialog() {
                         <span
                           className={cn(
                             "flex size-6 shrink-0 items-center justify-center rounded-full border text-xs font-medium tabular-nums transition-colors",
-                            i < stage ? "border-[var(--tint)] bg-[var(--tint)] text-white" : i === stage ? "border-[var(--tint)] text-[var(--tint-text)]" : "border-border text-muted-foreground",
+                            passed ? "border-[var(--tint)] bg-[var(--tint)] text-white" : i === stage ? "border-[var(--tint)] text-[var(--tint-text)]" : "border-border text-muted-foreground",
                           )}
                         >
-                          {i < stage ? <Check className="size-3.5" strokeWidth={3} /> : i + 1}
+                          {passed ? <Check className="size-3.5" strokeWidth={3} /> : i + 1}
                         </span>
                         <span className="truncate">{STAGE_NAME[s]}</span>
                       </button>
                       {i < STAGES.length - 1 && <span className="h-px flex-1 bg-border" />}
                     </li>
-                  ))}
+                    );
+                  })}
                 </ol>
               )}
-              {step === "how" && <span className="flex-1" />}
+              {stage < 0 && <span className="flex-1" />}
               <button
                 type="button"
                 onClick={close}
@@ -354,6 +356,20 @@ export function SetupDialog() {
                     <span className="text-muted-foreground">{joinNames(readyTools.map((t) => TOOL_NAMES[t]))}.</span>
                   </span>
                 </p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <Button variant="outline" className="h-auto justify-start whitespace-normal py-3 text-left" onClick={() => openSetupAt("connect")}>
+                    <span>
+                      <span className="block font-medium">Add your phone or another computer</span>
+                      <span className="block text-xs font-normal text-muted-foreground">A QR code for your phone, or a computer on your account</span>
+                    </span>
+                  </Button>
+                  <Button variant="outline" className="h-auto justify-start whitespace-normal py-3 text-left" onClick={() => openSetupAt("folders")}>
+                    <span>
+                      <span className="block font-medium">Add your folders</span>
+                      <span className="block text-xs font-normal text-muted-foreground">Where your footage, music and finished videos are</span>
+                    </span>
+                  </Button>
+                </div>
                 {prefs.talk !== "chat" && (
                   <p className="px-1 text-sm text-muted-foreground">
                     {assistantOn

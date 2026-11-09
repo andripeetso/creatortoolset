@@ -1,25 +1,36 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { dismissSetup, MAKE_NAMES, resumeStep, SETUP_STEPS, setupDismissed, setupFinished, setupOpensItself, setupStepFromParam, stageOf, stepsFor, toolForPath, toolsFor } from "./setup";
+import { dismissSetup, MAKE_NAMES, neighbours, resumeStep, SETUP_STEPS, setupDismissed, setupFinished, setupOpensItself, setupStepFromParam, stageOf, stepsFor, toolForPath, toolsFor } from "./setup";
 import { TOOLS } from "@contracts/tools";
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe("setup steps", () => {
-  it("starts with the mode cards, then Connect, Agents and Folders, and ends on done", () => {
-    expect(SETUP_STEPS).toEqual(["how", "connect", "agents", "folders", "make", "project", "done"]);
+  it("keeps the click path as before (mode, make, project, agents, done) and puts Connect and Folders beside it", () => {
+    expect(SETUP_STEPS).toEqual(["how", "make", "project", "agents", "connect", "folders", "done"]);
+    expect(stepsFor("both")).toEqual(["how", "make", "project", "agents", "done"]);
+    expect(stepsFor(null)).toEqual(["how", "make", "project", "agents", "done"]);
   });
 
-  it("skips Agents for In the app and Folders for In my own AI", () => {
-    expect(stepsFor("app")).not.toContain("agents");
-    expect(stepsFor("app")).toContain("folders");
-    expect(stepsFor("chat")).not.toContain("folders");
+  it("skips Agents on the In the app path, and never puts Connect or Folders on the click path", () => {
+    expect(stepsFor("app")).toEqual(["how", "make", "project", "done"]);
     expect(stepsFor("chat")).toContain("agents");
-    expect(stepsFor("both")).toEqual([...SETUP_STEPS]);
-    expect(stepsFor(null)).toEqual([...SETUP_STEPS]);
+    for (const t of ["app", "chat", "both", null] as const) {
+      expect(stepsFor(t)).not.toContain("connect");
+      expect(stepsFor(t)).not.toContain("folders");
+    }
   });
 
-  it("puts each step in one of the three bar stages", () => {
-    expect(SETUP_STEPS.map(stageOf)).toEqual([0, 0, 1, 2, 2, 2, 2]);
+  it("gives the three bar stages to Connect, Agents and Folders, and none to the other steps", () => {
+    expect(SETUP_STEPS.map(stageOf)).toEqual([-1, -1, -1, 1, 0, 2, -1]);
+  });
+
+  it("goes Back and Continue along the mode's path, and a side step returns to done", () => {
+    expect(neighbours("make", "both")).toEqual({ before: "how", after: "project" });
+    expect(neighbours("agents", "both")).toEqual({ before: "project", after: "done" });
+    expect(neighbours("done", "both")).toEqual({ before: "agents", after: "done" });
+    expect(neighbours("done", "app")).toEqual({ before: "project", after: "done" });
+    expect(neighbours("connect", "both")).toEqual({ before: "done", after: "done" });
+    expect(neighbours("folders", "chat")).toEqual({ before: "done", after: "done" });
   });
 
   it("maps the old step ids to the step they now belong to", () => {

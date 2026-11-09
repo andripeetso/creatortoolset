@@ -3,13 +3,14 @@ import { hostname } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
 import { anyAiConfigured } from "./ai-complete";
-import { env } from "./lib/env";
+import { env, hostedMode } from "./lib/env";
 import { isOnline, listDevices } from "./lib/devices";
 import { connectState } from "./connect/state";
+import { joinServer, saveJoin } from "./lib/server-join";
 import { readConnectors } from "./lib/connectors/store";
 import { publicApifyStatus, readApify } from "./lib/instagram/apify";
 import { connectedOwn } from "./lib/providers";
-import { addMcp, connectCli, localAiView, signIn, CLI_IDS, MAC_ONLY } from "./lib/local-ai";
+import { addMcp, connectCli, installCli, localAiView, signIn, CLI_IDS, MAC_ONLY } from "./lib/local-ai";
 import { ownedProjects } from "./lib/workshop/workspace";
 import { ensureLibrary, homeOf } from "./library/access";
 import { libraryDb } from "./library/db";
@@ -20,7 +21,7 @@ import {
   USERNAME_RE,
   type SessionUser,
 } from "./users";
-import type { AuthVars } from "./auth";
+import { viaTunnel, type AuthVars } from "./auth";
 import { MY_KEYS } from "../contracts/service-keys";
 import type { CliId, LocalAiView } from "../contracts/local-ai";
 import {
@@ -44,6 +45,8 @@ import { isPlan, planFromCli, type PlanId } from "../contracts/plans";
  *   POST /api/setup/ai/signin  { id }  → SignInResult  opens Terminal with the tool's own sign-in (CT_LOCAL=1)
  *   POST /api/setup/ai/connect { id }  → ConnectResult connects it as this account's AI after a real check (always 200)
  *   POST /api/setup/ai/mcp     { id }  → McpResult     adds Creator Toolset to it, with one new Full key (CT_LOCAL=1)
+ *   POST /api/setup/ai/install { id }  → SignInResult  opens Terminal with the vendor's install line (CT_LOCAL=1)
+ *   POST /api/setup/join { link }      → { ok, server, device } joins another server behind its one-time link (not hosted)
  */
 
 interface Saved {
@@ -147,10 +150,24 @@ setupApp.get("/computers", async (c) => {
     online: isOnline(d.id),
     drivers: d.report?.drivers ?? [],
   }));
+  // a hosted server is shared: only its admin sees the machine's own name and address
+  const hide = hostedMode() && c.get("user").role !== "admin";
   return c.json({
-    here: { name: s?.name ?? hostname(), linked: !!s, hostname: s?.hostname ?? null },
+    here: hide ? { name: "This server", linked: !!s, hostname: null } : { name: s?.name ?? hostname(), linked: !!s, hostname: s?.hostname ?? null },
     others,
   });
+});
+
+/** "I already have a server": joins another server behind a one-time link it showed (lib/server-join.ts). */
+setupApp.post("/join", async (c) => {
+  // a hosted server must not fetch addresses on a visitor's say-so, and a request through a tunnel is refused the same way
+  if (hostedMode() || viaTunnel(c)) return c.json({ ok: false, message: "Joining a server is done from this computer's own app." }, 403);
+  const user = c.get("user");
+  const b = (await c.req.json().catch(() => null)) as { link?: unknown } | null;
+  const r = await joinServer(b?.link);
+  if (!r.ok) return c.json(r, 400);
+  saveJoin(user.username, { server: r.server, device: r.device, token: r.token, at: Date.now() });
+  return c.json({ ok: true, server: r.server, device: r.device });
 });
 
 setupApp.put("/", async (c) => {
@@ -204,6 +221,13 @@ setupApp.post("/ai/connect", async (c) => {
   const id = cliOf(((await c.req.json().catch(() => null)) as { id?: unknown } | null)?.id);
   if (!id) return c.json({ error: "Pick Claude Code, Codex or Gemini CLI" }, 400);
   return c.json(await connectCli(c.get("user").username, id));
+});
+
+setupApp.post("/ai/install", async (c) => {
+  if (!localOn()) return c.json({ ok: false, message: MAC_ONLY }, 403);
+  const id = cliOf(((await c.req.json().catch(() => null)) as { id?: unknown } | null)?.id);
+  if (!id) return c.json({ error: "Pick Claude Code or Codex" }, 400);
+  return c.json(await installCli(id));
 });
 
 setupApp.post("/ai/mcp", async (c) => {

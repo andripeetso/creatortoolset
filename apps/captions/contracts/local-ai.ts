@@ -7,6 +7,12 @@ import type { PlanId } from "./plans";
  */
 
 export type CliId = "claude" | "codex" | "gemini";
+
+/** The vendors' own install lines, pasted into a Terminal: fixed text, nothing typed in. */
+export const INSTALL_LINE: Partial<Record<CliId, string>> = {
+  claude: "curl -fsSL https://claude.ai/install.sh | bash",
+  codex: "npm install -g @openai/codex",
+};
 export type LocalAiId = CliId | "claude-desktop" | "chatgpt-desktop";
 
 export interface LocalAiRow {

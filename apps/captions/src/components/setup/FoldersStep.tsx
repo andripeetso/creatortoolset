@@ -22,11 +22,18 @@ export function FoldersStep() {
   const me = useMe();
   const [view, setView] = useState<ProvidersView | null>(null);
   const [storage, setStorage] = useState<StorageView | null>(null);
+  const [failed, setFailed] = useState(false);
   const reload = () => {
-    getProviders().then(setView).catch(() => setView(null));
+    getProviders()
+      .then((v) => {
+        setView(v);
+        setFailed(false);
+      })
+      .catch(() => setFailed(true));
     getStorage().then(setStorage).catch(() => setStorage(null));
   };
   useEffect(reload, []);
+  if (failed) return <p className="text-sm text-muted-foreground">Couldn't load your computers. Check the connection, then reopen this step.</p>;
   if (!view || !me) return <p className="text-sm text-muted-foreground">Looking for your computers…</p>;
   // storage is this account's own: only its own computers can hold its folders
   const own = view.devices.filter((d) => d.owner === me.username);

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { CliId, ConnectResult, LocalAiId, LocalAiRow, LocalAiView, McpResult, SignInResult } from "@contracts/local-ai";
+import { INSTALL_LINE, type CliId, type ConnectResult, type LocalAiId, type LocalAiRow, type LocalAiView, type McpResult, type SignInResult } from "@contracts/local-ai";
 import { PLANS } from "@contracts/plans";
 import type { WorkPrefs } from "@contracts/work-prefs";
 import { Button } from "@/components/ui/button";
@@ -20,8 +20,6 @@ type Action = "connect" | "signin" | "check";
 
 const WAIT_MS = 3 * 60_000;
 const POLL_MS = 3_000;
-const INSTALL = "curl -fsSL https://claude.ai/install.sh | bash";
-const CODEX_INSTALL = "npm install -g @openai/codex";
 /** Said once under the list (not on every row): sign-in opens a Terminal window. */
 const TERMINAL_HINT = "A Terminal window opens. That's normal: sign in there with your browser, then come back.";
 
@@ -109,7 +107,7 @@ export function rowView(row: LocalAiRow, result: ConnectResult | undefined, phas
 export function codexRowView(row: LocalAiRow, talk: Talk): RowView {
   if (talk === "app") return { line: "", button: null, ticks: {} };
   if (row.signedIn === true) return { line: "Signed in.", button: null, ticks: { signedIn: true } };
-  return { line: "Not signed in yet.", hint: TERMINAL_HINT, button: { label: "Sign in", action: "signin" }, ticks: {} };
+  return { line: "Not signed in yet.", hint: TERMINAL_HINT, button: { label: "Continue with ChatGPT", action: "signin" }, ticks: {} };
 }
 
 /** The row's view for this path: Codex has its own, every other tool is checked as before. */
@@ -231,7 +229,9 @@ function AiRow({
   );
 }
 
-function NotFound({ onRefresh, talk }: { onRefresh: () => void; talk: Talk }) {
+function NotFound({ onRefresh, onInstall, talk }: { onRefresh: () => void; onInstall?: (id: CliId) => void; talk: Talk }) {
+  const claude = INSTALL_LINE.claude!;
+  const codex = INSTALL_LINE.codex!;
   return (
     <div className="space-y-3 rounded-xl border border-border/60 bg-card/40 p-4">
       <p className="text-sm">
@@ -239,15 +239,27 @@ function NotFound({ onRefresh, talk }: { onRefresh: () => void; talk: Talk }) {
           ? "Creator Toolset's own AI runs on Claude Code. Claude Code isn't on this Mac yet."
           : "Creator Toolset needs Claude Code or Codex on this Mac. Neither is installed yet."}
       </p>
+      <div className="flex flex-wrap gap-2">
+        {onInstall && (
+          <Button size="sm" onClick={() => onInstall("claude")}>
+            Install Claude Code
+          </Button>
+        )}
+        {onInstall && talk !== "app" && (
+          <Button size="sm" variant="outline" onClick={() => onInstall("codex")}>
+            Install Codex
+          </Button>
+        )}
+      </div>
       <details>
-        <summary className="cursor-pointer text-sm font-medium">How to get Claude Code</summary>
+        <summary className="cursor-pointer text-sm font-medium">Install it yourself</summary>
         <ol className="mt-2 list-decimal space-y-2 pl-5 text-sm">
           <li>Open Terminal (press Command and Space, type Terminal, press Return).</li>
           <li className="space-y-1">
             <span>Paste this line and press Return:</span>
             <span className="flex items-center gap-2">
-              <code className="min-w-0 truncate font-mono text-xs">{INSTALL}</code>
-              <CopyButton text={() => INSTALL} title="Copy the line" label="Copy" className="flex shrink-0 items-center gap-1 rounded border px-2 py-0.5 text-xs" />
+              <code className="min-w-0 truncate font-mono text-xs">{claude}</code>
+              <CopyButton text={() => claude} title="Copy the line" label="Copy" className="flex shrink-0 items-center gap-1 rounded border px-2 py-0.5 text-xs" />
             </span>
           </li>
           <li>Come back here and press Check again.</li>
@@ -255,7 +267,7 @@ function NotFound({ onRefresh, talk }: { onRefresh: () => void; talk: Talk }) {
         <p className="mt-2 text-xs text-muted-foreground">
           {talk !== "app" && (
             <>
-              Or Codex from OpenAI: install Node.js, then paste <code className="font-mono">{CODEX_INSTALL}</code>.
+              Or Codex from OpenAI: install Node.js, then paste <code className="font-mono">{codex}</code>.
             </>
           )}
         </p>
@@ -287,11 +299,12 @@ export interface AiPanelViewProps {
   mcp: McpStates;
   onAction: (id: CliId, action: Action) => void;
   onAdd: (id: CliId) => void;
+  onInstall?: (id: CliId) => void;
   onRefresh: () => void;
 }
 
 /** Step 4's body, from the probe's view: the rows the Mac has, nothing connected until a press (pure, for tests). */
-export function AiPanelView({ view, talk, results, phases, mcp, onAction, onAdd, onRefresh }: AiPanelViewProps) {
+export function AiPanelView({ view, talk, results, phases, mcp, onAction, onAdd, onInstall, onRefresh }: AiPanelViewProps) {
   if (!view) return <p className="text-sm text-muted-foreground">Looking for your AI on this Mac…</p>;
   const found = view.rows.filter((r) => r.found);
   const clis = found.filter((r) => r.kind === "cli");
@@ -327,7 +340,7 @@ export function AiPanelView({ view, talk, results, phases, mcp, onAction, onAdd,
           {clis.some((r) => viewOf(r, talk, results[r.id], phases[r.id]).hint) && <p className="text-xs text-muted-foreground">{TERMINAL_HINT}</p>}
         </section>
       )}
-      {needsInstall && <NotFound talk={talk} onRefresh={onRefresh} />}
+      {needsInstall && <NotFound talk={talk} onInstall={onInstall} onRefresh={onRefresh} />}
       <details className="group rounded-xl border border-border/60 bg-card/40">
         <summary className="cursor-pointer list-none px-4 py-3 text-sm text-muted-foreground hover:text-foreground">Other options</summary>
         <div className="space-y-3 px-4 pb-4">
@@ -376,6 +389,7 @@ export function AiPanel({ talk, onConnectedChange }: { talk: Talk; onConnectedCh
   const [results, setResults] = useState<Results>({});
   const [phases, setPhases] = useState<Phases>({});
   const [mcp, setMcp] = useState<McpStates>({});
+  const [installMsg, setInstallMsg] = useState<string | null>(null);
   const timers = useRef<number[]>([]);
 
   const refresh = useCallback(async () => {
@@ -421,6 +435,12 @@ export function AiPanel({ talk, onConnectedChange }: { talk: Talk; onConnectedCh
     waitForSignIn(id);
   };
 
+  const install = async (id: CliId) => {
+    const r = await postJson<SignInResult>("/api/setup/ai/install", { id });
+    if (!r?.ok) setInstallMsg(r?.message ?? "Couldn't reach this computer. Try again.");
+    else setInstallMsg("A Terminal window opened. Let the install finish there, then press Check again.");
+  };
+
   const addMcp = async (id: CliId) => {
     setMcp((s) => ({ ...s, [id]: { busy: true } }));
     const r = await postJson<McpResult>("/api/setup/ai/mcp", { id });
@@ -440,15 +460,19 @@ export function AiPanel({ talk, onConnectedChange }: { talk: Talk; onConnectedCh
   }, [view, results, onConnectedChange]);
 
   return (
-    <AiPanelView
-      view={view}
-      talk={talk}
-      results={results}
-      phases={phases}
-      mcp={mcp}
-      onAction={(id, action) => (action === "signin" ? void signIn(id) : void connect(id))}
-      onAdd={(id) => void addMcp(id)}
-      onRefresh={() => void refresh()}
-    />
+    <>
+      {installMsg && <p role="status" className="mb-2 text-xs text-muted-foreground">{installMsg}</p>}
+      <AiPanelView
+        view={view}
+        talk={talk}
+        results={results}
+        phases={phases}
+        mcp={mcp}
+        onAction={(id, action) => (action === "signin" ? void signIn(id) : void connect(id))}
+        onAdd={(id) => void addMcp(id)}
+        onInstall={(id) => void install(id)}
+        onRefresh={() => void refresh()}
+      />
+    </>
   );
 }
