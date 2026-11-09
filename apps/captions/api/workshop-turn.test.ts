@@ -411,3 +411,23 @@ describe("an untitled session", () => {
     expect(title).toBe("RiskyPlayForAdults");
   });
 });
+
+describe("attached library clips the caller can't see", () => {
+  it("a turn is refused with a 404 for a clip in someone else's library, and for an external clip with no library of its own", async () => {
+    const { libraryDb } = await import("./library/db");
+    const d = libraryDb();
+    d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_bo', 'bo', 'Bo', 'local', 0)").run();
+    d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at) VALUES ('ast-bo-0001', 'lib_bo', 'video', 'Bo roll', 'v-bo-0001', 'bo', 0)").run();
+    d.prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at) VALUES ('v-bo-0001', 'ast-bo-0001', 1, 'k', 1, 'h', 'ready', 'bo', 0)").run();
+    const { id, docId } = seed(["Hook for the piece"]);
+
+    const clip = await send(id, docId, "", { library: [{ assetId: "ast-bo-0001", versionId: "v-bo-0001" }] });
+    expect(clip.status).toBe(404);
+    expect(clip.body.error).toBe("A library clip is gone, or not in your library");
+
+    const external = await send(id, docId, "", { library: [{ refId: "ext_0123456789abcdef" }] });
+    expect(external.status).toBe(404);
+    expect(external.body.error).toBe("A library clip is gone, or not in your library");
+    expect(mocked).not.toHaveBeenCalled(); // refused before any model call
+  });
+});
