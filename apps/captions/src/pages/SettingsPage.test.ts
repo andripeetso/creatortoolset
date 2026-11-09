@@ -20,10 +20,18 @@ describe("Settings sections by server mode", () => {
     expect(ids(true, admin)).toEqual(expect.arrayContaining(["team", "admin"]));
   });
 
-  it("keeps the built-in sections in place, with the server keys pinned last", () => {
+  it("keeps the built-in sections in place, with the admin block pinned last", () => {
     const all = ids(true, admin);
     expect(all.indexOf("general")).toBe(0);
     expect(all.at(-1)).toBe("admin");
-    expect(all.at(-2)).toBe("keys");
+    expect(all.indexOf("keys")).toBeLessThan(all.indexOf("cache"));
+  });
+
+  it("shows one keys page, to everyone, and no separate setup, this-mac or my-keys sections", () => {
+    const all = ids(false, member);
+    expect(all).toContain("keys");
+    expect(all).not.toContain("setup");
+    expect(all).not.toContain("this-mac");
+    expect(all).not.toContain("my-keys");
   });
 });

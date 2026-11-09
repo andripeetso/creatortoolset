@@ -16,8 +16,8 @@ const putKey = (name: MyKeyEnv, value: string | null) =>
 const SERVER = { admin: "The server's key serves you (platform admin)" } as const;
 
 /**
- * Settings → My API keys: this account's own keys for the paid services. Each one is billed by its provider to the
- * person whose key it is; the tools that need one say which to add here.
+ * Settings → API keys, your part: this account's own keys for the paid services. Each one is billed by its provider to
+ * the person whose key it is; the tools that need one say which to add here.
  */
 export function MyKeysSection({ only }: { only?: MyKeyEnv[] } = {}) {
   const [keys, setKeys] = useState<MyKeyView[] | null>(null);
@@ -52,7 +52,7 @@ export function MyKeysSection({ only }: { only?: MyKeyEnv[] } = {}) {
     );
   return (
     <Group
-      title="My API keys"
+      title="Your keys"
       hint="Your own keys for the services the tools call. The cost is yours, paid to that service: this site never pays for them and never shares a key with anyone else. A tool without the key it needs says which one to add."
     >
       {rows}
@@ -63,7 +63,7 @@ export function MyKeysSection({ only }: { only?: MyKeyEnv[] } = {}) {
         </Link>
         . AI runs on your own Claude or ChatGPT login in{" "}
         <Link to="/settings/providers" replace className="underline">
-          Settings → Your AI
+          Settings → Providers
         </Link>
         ; the Anthropic key here is for when you have none.
       </p>

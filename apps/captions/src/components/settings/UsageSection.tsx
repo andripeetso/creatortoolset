@@ -84,7 +84,7 @@ function LimitsView({ view }: { view: ProvidersView }) {
       <Group title="Limits" hint="How much of each plan is left, read from each Mac every five minutes.">
         <Notice>
           Nothing to show yet. Once a Claude or Codex AI runs on a Mac, its limits appear here within five minutes.{" "}
-          <Link to="/settings/providers" className="underline underline-offset-2">Open Your AI</Link>
+          <Link to="/settings/providers" className="underline underline-offset-2">Open Providers</Link>
         </Notice>
       </Group>
     );

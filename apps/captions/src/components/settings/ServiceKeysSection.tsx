@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { ExternalLink } from "lucide-react";
 import type { ServiceKeyEnv, ServiceKeyView } from "@contracts/service-keys";
 import { Button } from "@/components/ui/button";
-import { Card, Loading, Notice, Row } from "./ui";
+import { Card, Group, Loading, Notice, Row } from "./ui";
 
 async function json<T>(res: Response): Promise<T> {
   const j = (await res.json().catch(() => null)) as { error?: string } | null;
@@ -14,8 +14,8 @@ const putKey = (name: ServiceKeyEnv, value: string | null) =>
   fetch(`/api/service-keys/${name}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value }) }).then((r) => json(r));
 
 /**
- * Settings → API keys: every outside service the
- * tools call, what it unlocks, where to get a key. A pasted key wins over the server's .env; Forget puts the .env's back.
+ * Settings → API keys, the server's part (admins): every outside service the tools call, what it unlocks, where to get
+ * a key. A pasted key wins over the server's .env; Forget puts the .env's back.
  */
 export function ServiceKeysSection() {
   const [keys, setKeys] = useState<ServiceKeyView[] | null>(null);
@@ -25,7 +25,7 @@ export function ServiceKeysSection() {
   const run = (p: Promise<unknown>) => p.then(load).catch((e) => setError(String(e.message ?? e)));
   if (!keys) return error ? <Notice tone="error">{error}</Notice> : <Loading />;
   return (
-    <>
+    <Group title="The server's keys" hint="The server's own keys. They serve you, never your AI; other accounts use their own (Your keys).">
       <Card>
         {keys.map((k) => (
           <KeyRow
@@ -39,7 +39,7 @@ export function ServiceKeysSection() {
         ))}
       </Card>
       {error && <div className="mt-2"><Notice tone="error">{error}</Notice></div>}
-    </>
+    </Group>
   );
 }
 

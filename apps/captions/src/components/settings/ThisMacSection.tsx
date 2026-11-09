@@ -52,7 +52,7 @@ export function ThisMacSection() {
 
   return (
     <>
-      <Group title="Your AI">
+      <Group title="This Mac" hint="Use this Mac for your AI, and the servers this app opens. The one with the dot is open now.">
         <Card>
           <Row label="Use this Mac for my AI" hint={s.answer}>
             <Switch checked={s.aiOn} aria-label="Use this Mac for my AI" onCheckedChange={(on) => tell(on ? "ai:on" : "ai:off")} />

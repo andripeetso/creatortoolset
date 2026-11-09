@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
+import { Check, ChevronDown } from "lucide-react";
+import { hasProviderLogo, ProviderLogo } from "./ProviderLogos";
 import { InstallHelp } from "./AiSetup";
 
 /** The server's rules (api/lib/providers.ts ID_RE, ENV_NAME_RE, ABS_PATH_RE): the dialog never offers what the server refuses. */
@@ -33,7 +35,6 @@ export function validateInstanceId(id: string, taken: string[]): string | null {
  */
 export function DriverGrid({
   catalog,
-  report,
   driver,
   showMore,
   onPick,
@@ -41,7 +42,6 @@ export function DriverGrid({
   onToggleMore,
 }: {
   catalog: DriverCatalog | null;
-  report: MacReport | null;
   driver: Driver | null;
   showMore: boolean;
   onPick: (d: Driver) => void;
@@ -56,66 +56,88 @@ export function DriverGrid({
   ];
   const tile = (d: { id: Driver; label: string; featured: boolean }) => {
     const entry = catalog?.drivers.find((x) => x.id === d.id);
-    const found = report?.drivers.find((x) => x.driver === d.id);
     const runs = !!entry?.runs;
-    const note = !runs
-      ? (entry?.reason ?? "Checking what this app can run…")
-      : !report
-        ? "This Mac has not reported yet"
-        : found?.installed
-          ? `Installed${found.version ? ` · v${found.version}` : ""}`
-          : "Not installed";
     return (
-      <button
+      <Tile
         key={d.id}
-        type="button"
+        driverId={d.id}
+        label={d.label}
+        selected={driver === d.id}
         disabled={!runs}
-        aria-pressed={driver === d.id}
+        reason={catalog && !runs ? (entry?.reason ?? "Not available here") : undefined}
         onClick={() => onPick(d.id)}
-        className={cn(
-          "rounded-lg border px-3 py-2.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60",
-          driver === d.id ? "border-violet-500 bg-violet-500/10" : "border-border hover:bg-accent",
-        )}
-      >
-        <div className="text-sm text-foreground">{d.label}</div>
-        <div className={cn("mt-0.5 text-xs", runs && found?.installed ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground")}>{note}</div>
-      </button>
+      />
     );
   };
   const presetRow = (p: PresetView) => {
     const runs = !!catalog?.drivers.find((d) => d.id === p.driver)?.runs;
-    return (
-      <button
-        key={`preset-${p.id}`}
-        type="button"
-        disabled={!runs || !onPreset}
-        onClick={() => onPreset?.(p)}
-        className="col-span-2 rounded-lg border border-border px-3 py-2.5 text-left transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
-      >
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-sm text-foreground">{p.name}</span>
-          <span className="shrink-0 rounded-full border border-violet-500/40 bg-violet-500/10 px-2 py-0.5 text-[11px] text-violet-700 dark:text-violet-300">{p.badge}</span>
-        </div>
-        <div className="mt-0.5 text-xs text-muted-foreground">{DRIVERS.find((d) => d.id === p.driver)?.label ?? p.driver}{p.home ? ` · ${p.home}` : ""}</div>
-      </button>
-    );
+    return <Tile key={`preset-${p.id}`} driverId={p.driver} label={p.name} selected={false} disabled={!runs || !onPreset} onClick={() => onPreset?.(p)} />;
   };
   return (
-    <div className="grid grid-cols-2 gap-2">
-      {(catalog?.presets ?? []).map(presetRow)}
-      {all.filter((d) => d.featured).map(tile)}
-      <button
-        type="button"
-        aria-expanded={showMore}
-        onClick={onToggleMore}
-        className="col-span-2 rounded-lg border border-dashed border-border px-3 py-2 text-left text-sm text-muted-foreground hover:bg-accent"
-      >
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-2">
+        {(catalog?.presets ?? []).map(presetRow)}
+        {all.filter((d) => d.featured).map(tile)}
+        {showMore && all.filter((d) => !d.featured).map(tile)}
+      </div>
+      <button type="button" aria-expanded={showMore} onClick={onToggleMore} className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
         {showMore ? "Show less" : "Show more"}
+        <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", showMore && "rotate-180")} />
       </button>
-      {showMore && all.filter((d) => !d.featured).map(tile)}
     </div>
   );
 }
+
+/** One provider in the grid: its logo and name; selected = blue border and a check. `reason` shows only where it can't be picked. */
+function Tile({
+  driverId,
+  label,
+  selected,
+  disabled,
+  reason,
+  onClick,
+}: {
+  driverId: Driver;
+  label: string;
+  selected: boolean;
+  disabled: boolean;
+  reason?: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      aria-pressed={selected}
+      onClick={onClick}
+      className={cn(
+        "flex items-center gap-2.5 rounded-lg border px-3 py-2.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60",
+        selected ? "border-blue-600 bg-blue-500/10 ring-1 ring-blue-600" : "border-border hover:bg-accent",
+      )}
+    >
+      {hasProviderLogo(driverId) ? (
+        <ProviderLogo driver={driverId} className="h-5 w-5 shrink-0" />
+      ) : (
+        <span aria-hidden className="flex h-5 w-5 shrink-0 items-center justify-center rounded border border-border bg-muted text-[9px] font-semibold">
+          {(DRIVERS.find((d) => d.id === driverId)?.label ?? driverId).slice(0, 2)}
+        </span>
+      )}
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm text-foreground">{label}</span>
+        {reason && <span className="mt-0.5 block text-xs text-muted-foreground">{reason}</span>}
+      </span>
+      {selected && (
+        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white">
+          <Check className="h-3 w-3" />
+        </span>
+      )}
+    </button>
+  );
+}
+
+/** The primary button of the dialog: blue, like the sign-in it continues with. */
+const PRIMARY = "bg-blue-600 text-white hover:bg-blue-700 disabled:bg-blue-600/50";
+const STEPS = ["Provider", "Identity", "Config"] as const;
 
 /**
  * Settings → Your AI → Add your AI. Three steps: Provider (the grid), Identity (config folder, name, id), Config
@@ -233,33 +255,46 @@ export function AddProviderDialog({
     }
   };
 
-  const stepLabel = (n: 1 | 2 | 3, text: string) => (
-    <span className={cn("text-xs", step === n ? "text-foreground" : "text-muted-foreground/60")}>
-      {n} {text}
-    </span>
-  );
-
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="gap-4 sm:max-w-[40rem]">
         <DialogHeader>
-          <DialogTitle>Add your AI</DialogTitle>
-          <DialogDescription>Add an account or set up your AI on {deviceName}.</DialogDescription>
+          <DialogTitle>Add provider</DialogTitle>
+          <DialogDescription>Add an account or configure a provider on {deviceName}.</DialogDescription>
         </DialogHeader>
 
-        <div className="flex gap-3">
-          {stepLabel(1, "Provider")}
-          <span className="text-muted-foreground/40">›</span>
-          {stepLabel(2, "Identity")}
-          <span className="text-muted-foreground/40">›</span>
-          {stepLabel(3, "Config")}
+        <div role="group" aria-label="Steps" className="flex gap-1 rounded-xl bg-muted p-1">
+          {STEPS.map((text, i) => {
+            const n = i + 1;
+            const on = step === n;
+            return (
+              <div
+                key={text}
+                aria-current={on ? "step" : undefined}
+                className={cn(
+                  "flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg px-2 py-1.5 text-sm",
+                  on ? "bg-background font-medium text-foreground shadow-sm" : "text-muted-foreground",
+                )}
+              >
+                <span
+                  className={cn(
+                    "flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[11px]",
+                    on ? "border-blue-600 text-blue-600" : "border-muted-foreground/40",
+                  )}
+                >
+                  {n}
+                </span>
+                {text}
+              </div>
+            );
+          })}
         </div>
 
         {step === 1 && (
           <>
+            <p className="text-sm font-medium text-foreground">Provider</p>
             <DriverGrid
               catalog={catalog}
-              report={report}
               driver={driver}
               showMore={showMore}
               onPick={pick}
@@ -278,7 +313,7 @@ export function AddProviderDialog({
               <button
                 type="button"
                 onClick={() => setHome("")}
-                className={cn("rounded-lg border px-3 py-2 text-left text-sm", home === "" ? "border-violet-500 bg-violet-500/10" : "border-border hover:bg-accent")}
+                className={cn("rounded-lg border px-3 py-2 text-left text-sm", home === "" ? "border-blue-600 bg-blue-500/10" : "border-border hover:bg-accent")}
               >
                 Default
               </button>
@@ -287,7 +322,7 @@ export function AddProviderDialog({
                   key={h}
                   type="button"
                   onClick={() => setHome(h)}
-                  className={cn("rounded-lg border px-3 py-2 text-left font-mono text-xs", home === h ? "border-violet-500 bg-violet-500/10" : "border-border text-muted-foreground hover:bg-accent")}
+                  className={cn("rounded-lg border px-3 py-2 text-left font-mono text-xs", home === h ? "border-blue-600 bg-blue-500/10" : "border-border text-muted-foreground hover:bg-accent")}
                 >
                   {h}
                 </button>
@@ -300,7 +335,7 @@ export function AddProviderDialog({
                 value={home}
                 onChange={(e) => setHome(e.target.value)}
                 placeholder="/Users/you/.claude-work"
-                className="mt-1 h-8 w-full rounded-md border border-input bg-background px-2.5 font-mono text-xs text-foreground placeholder:text-muted-foreground/60 focus:border-violet-500 focus:outline-none"
+                className="mt-1 h-8 w-full rounded-md border border-input bg-background px-2.5 font-mono text-xs text-foreground placeholder:text-muted-foreground/60 focus:border-blue-500 focus:outline-none"
               />
             </label>
             <label className="block text-xs text-muted-foreground">
@@ -308,7 +343,7 @@ export function AddProviderDialog({
               <input
                 value={label}
                 onChange={(e) => setNameDraft(e.target.value)}
-                className="mt-1 h-8 w-full rounded-md border border-input bg-background px-2.5 text-xs text-foreground focus:border-violet-500 focus:outline-none"
+                className="mt-1 h-8 w-full rounded-md border border-input bg-background px-2.5 text-xs text-foreground focus:border-blue-500 focus:outline-none"
               />
             </label>
             <label className="block text-xs text-muted-foreground">
@@ -316,7 +351,7 @@ export function AddProviderDialog({
               <input
                 value={id}
                 onChange={(e) => setIdDraft(e.target.value)}
-                className="mt-1 h-8 w-full rounded-md border border-input bg-background px-2.5 font-mono text-xs text-foreground focus:border-violet-500 focus:outline-none"
+                className="mt-1 h-8 w-full rounded-md border border-input bg-background px-2.5 font-mono text-xs text-foreground focus:border-blue-500 focus:outline-none"
               />
             </label>
             {idError && <p className="text-xs text-amber-600 dark:text-amber-400">{idError}</p>}
@@ -339,7 +374,7 @@ export function AddProviderDialog({
                     value={program}
                     onChange={(e) => setProgram(e.target.value)}
                     placeholder={driver === "acp" ? "npx some-agent acp" : "Leave empty to use the CLI on the Mac's PATH"}
-                    className="mt-1 h-8 w-full rounded-md border border-input bg-background px-2.5 font-mono text-xs text-foreground placeholder:text-muted-foreground/60 focus:border-violet-500 focus:outline-none"
+                    className="mt-1 h-8 w-full rounded-md border border-input bg-background px-2.5 font-mono text-xs text-foreground placeholder:text-muted-foreground/60 focus:border-blue-500 focus:outline-none"
                   />
                 </label>
                 {driver === "acp" && (
@@ -349,7 +384,7 @@ export function AddProviderDialog({
                       rows={2}
                       value={argsText}
                       onChange={(e) => setArgsText(e.target.value)}
-                      className="mt-1 w-full rounded-md border border-input bg-background px-2.5 py-1.5 font-mono text-xs text-foreground focus:border-violet-500 focus:outline-none"
+                      className="mt-1 w-full rounded-md border border-input bg-background px-2.5 py-1.5 font-mono text-xs text-foreground focus:border-blue-500 focus:outline-none"
                     />
                   </label>
                 )}
@@ -359,7 +394,7 @@ export function AddProviderDialog({
                     rows={2}
                     value={envText}
                     onChange={(e) => setEnvText(e.target.value)}
-                    className="mt-1 w-full rounded-md border border-input bg-background px-2.5 py-1.5 font-mono text-xs text-foreground focus:border-violet-500 focus:outline-none"
+                    className="mt-1 w-full rounded-md border border-input bg-background px-2.5 py-1.5 font-mono text-xs text-foreground focus:border-blue-500 focus:outline-none"
                   />
                   <span className="mt-1 block">Names only: their values are not stored here.</span>
                 </label>
@@ -376,47 +411,47 @@ export function AddProviderDialog({
           </>
         )}
 
-        <DialogFooter className="sm:justify-between">
+        <DialogFooter className="gap-2 sm:justify-end">
           {step === 1 ? (
             <>
-              <Button variant="outline" size="sm" onClick={onClose}>
+              <Button variant="ghost" size="sm" onClick={onClose}>
                 Cancel
               </Button>
-              <div className="flex flex-wrap justify-end gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={!driver}
-                  onClick={() => {
-                    setManual(true);
-                    setStep(2);
-                  }}
-                >
-                  Configure manually
-                </Button>
-                <Button
-                  size="sm"
-                  disabled={!runs}
-                  onClick={() => {
-                    setManual(false);
-                    setStep(2);
-                  }}
-                >
-                  {login ? `Continue with ${login.label}` : "Next"}
-                </Button>
-              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!driver}
+                onClick={() => {
+                  setManual(true);
+                  setStep(2);
+                }}
+              >
+                Configure manually
+              </Button>
+              <Button
+                size="sm"
+                className={PRIMARY}
+                disabled={!runs}
+                onClick={() => {
+                  setManual(false);
+                  setStep(2);
+                }}
+              >
+                {login && driver && hasProviderLogo(driver) && <ProviderLogo driver={driver} inherit className="h-4 w-4" />}
+                {login ? `Continue with ${login.label}` : "Next"}
+              </Button>
             </>
           ) : (
             <>
-              <Button variant="outline" size="sm" onClick={() => setStep((s) => (s - 1) as 1 | 2)}>
+              <Button variant="ghost" size="sm" onClick={() => setStep((s) => (s - 1) as 1 | 2)}>
                 Back
               </Button>
               {step === 2 ? (
-                <Button size="sm" disabled={!label.trim() || !!idError || duplicate} onClick={() => setStep(3)}>
+                <Button size="sm" className={PRIMARY} disabled={!label.trim() || !!idError || duplicate} onClick={() => setStep(3)}>
                   Next
                 </Button>
               ) : (
-                <Button size="sm" disabled={busy || duplicate || !!configError || !label.trim() || !!idError} onClick={() => void add()}>
+                <Button size="sm" className={PRIMARY} disabled={busy || duplicate || !!configError || !label.trim() || !!idError} onClick={() => void add()}>
                   {busy ? "Adding…" : "Add"}
                 </Button>
               )}

@@ -1,122 +1,136 @@
 import { useEffect, useState } from "react";
-import { Plus, X } from "lucide-react";
-import { DRIVERS, launchArgsAllowed, TOOL_NAMES, type ProviderCheck, type ProviderInstance } from "@contracts/providers";
+import { Plus, RotateCcw, X } from "lucide-react";
+import { DRIVERS, launchArgsAllowed, type ProviderCheck, type ProviderInstance } from "@contracts/providers";
 import { ConfirmButton } from "@/components/instagram/ConfirmButton";
 import { Button } from "@/components/ui/button";
 import { modelName } from "@/lib/providers";
 import { cn } from "@/lib/utils";
 import { fmtAgo, inputCls } from "./helpers";
 import { ProviderMark, type ProviderStatus, StatusText } from "./ProviderInstanceCard";
-import { Card, Group, Row } from "./ui";
+import { Row } from "./ui";
 
 const NONE: string[] = [];
 
 /**
- * The selected provider's settings, in order: Status (with Check), Display name, Runtime (binary path, home
- * folder, shadow home folder, launch arguments), Environment (variable names; their values stay on the Mac), Remove.
- * Text fields save when they lose focus or on Enter; each save goes through `onChange`.
+ * The selected provider, inside its list card (no card of its own): the header with its logo, name and a reset of its
+ * runtime overrides; then Status (with Check), Display name, Runtime (binary path, home folder, shadow home folder,
+ * launch arguments), Environment (variable names; their values stay on the Mac), and Remove. Text fields save when they
+ * lose focus or on Enter; each save goes through `onChange`.
  */
 export function ProviderDetail({
   inst,
   status,
-  version,
   check,
   checking,
   canCheck,
   used,
+  runHere,
   onChange,
   onCheck,
   onSignIn,
+  onRunHere,
   onRemove,
 }: {
   inst: ProviderInstance;
   status: ProviderStatus;
-  version?: string;
   check?: ProviderCheck;
   checking: boolean;
   /** a check can run now: the Mac is online and no check is running */
   canCheck: boolean;
   /** what uses this provider ("the default", job names): Remove waits until another is picked */
   used: string[];
+  /** the name of the Mac this page is on, when the provider runs nowhere yet (its Mac was never picked) */
+  runHere?: string;
   onChange: (patch: Partial<ProviderInstance>) => void;
   onCheck: () => void;
   /** set only where the Mac app shows this page and the provider is on it: opens the CLI's sign-in in Terminal */
   onSignIn?: () => void;
+  /** a provider with no Mac: runs it on the Mac this page is on */
+  onRunHere?: () => void;
   onRemove: () => void;
 }) {
   const driver = DRIVERS.find((d) => d.id === inst.driver);
+  const hasRuntime = !!(inst.binaryPath || inst.shadowHomePath || inst.launchArgs?.length || inst.envNames?.length);
   return (
-    <section aria-label={`${inst.name} settings`} className="mt-8 space-y-2">
-      <div className="flex flex-wrap items-center gap-2">
-        <ProviderMark inst={inst} />
-        <h2 className="text-sm font-semibold text-foreground">{inst.name}</h2>
-        {version && <span className="text-xs text-muted-foreground">v{version}</span>}
-        <span className="text-xs text-muted-foreground">· {TOOL_NAMES[inst.driver] ?? driver?.label}</span>
+    <section aria-label={`${inst.name} settings`} className="min-w-0">
+      <div className="flex items-center gap-3 px-4 py-3">
+        <ProviderMark inst={inst} className="h-6 w-6" />
+        <h2 className="min-w-0 flex-1 text-base font-semibold text-foreground">{inst.name}</h2>
+        <button
+          type="button"
+          aria-label="Reset runtime settings"
+          title="Clear the binary path, shadow home, launch arguments and variable names"
+          disabled={!hasRuntime}
+          onClick={() => onChange({ binaryPath: undefined, shadowHomePath: undefined, launchArgs: undefined, envNames: undefined })}
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"
+        >
+          <RotateCcw className="h-3.5 w-3.5" />
+        </button>
       </div>
 
-      <Card>
-        <Row
-          label="Status"
-          hint={
-            checking ? "Checking… up to a minute" : check?.ok ? `Checked ${fmtAgo(check.at)}${check.model ? ` · ${modelName(check.model)}` : ""} · ${(check.ms / 1000).toFixed(1)} s` : undefined
-          }
-        >
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <StatusText status={status} />
+      <Row
+        label="Status"
+        hint={
+          checking ? "Checking… up to a minute" : check?.ok ? `Checked ${fmtAgo(check.at)}${check.model ? ` · ${modelName(check.model)}` : ""} · ${(check.ms / 1000).toFixed(1)} s` : undefined
+        }
+      >
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <StatusText status={status} />
+          {onRunHere && runHere && (
+            <Button variant="outline" size="sm" onClick={onRunHere}>
+              Run on {runHere}
+            </Button>
+          )}
+          {!onRunHere && (
             <Button variant="outline" size="sm" onClick={onCheck} disabled={!canCheck}>
               Check
             </Button>
-            {onSignIn && (
-              <Button variant="outline" size="sm" onClick={onSignIn}>
-                Sign in
-              </Button>
-            )}
-          </div>
-        </Row>
-        <Row label="Display name">
-          <TextField label="Display name" value={inst.name} placeholder={driver?.label} onCommit={(v) => onChange({ name: v.trim() || inst.name })} />
-        </Row>
-      </Card>
-
-      <Group title="Runtime" hint="Where the Mac finds the program and its folders. Blank uses the usual ones.">
-        <Card>
-          <Row label="Binary path" hint="The full path to the program on this Mac.">
-            <TextField label="Binary path" value={inst.binaryPath ?? ""} placeholder="Default: the program on the Mac's PATH" onCommit={(v) => onChange({ binaryPath: v.trim() || undefined })} />
-          </Row>
-          <Row label="Home path" hint={driver?.homeEnv ? `Sent as ${driver.homeEnv}.` : "The folder the program keeps its settings in."}>
-            <TextField label="Home path" value={inst.home ?? ""} placeholder="Default folder" onCommit={(v) => onChange({ home: v.trim() || undefined })} />
-          </Row>
-          <Row label="Shadow home path" hint="A second folder for the same program, sharing its history.">
-            <TextField label="Shadow home path" value={inst.shadowHomePath ?? ""} placeholder="Not set" onCommit={(v) => onChange({ shadowHomePath: v.trim() || undefined })} />
-          </Row>
-          {launchArgsAllowed(inst.driver) && (
-            <Row label="Launch arguments" hint="Only for a local ACP command: one literal argument per row, in launch order.">
-              <ListEditor
-                label="Launch argument"
-                addLabel="Add argument"
-                items={inst.launchArgs}
-                onCommit={(list) => onChange({ launchArgs: list.length ? list : undefined })}
-              />
-            </Row>
           )}
-        </Card>
-      </Group>
+          {!onRunHere && onSignIn && (
+            <Button variant="outline" size="sm" onClick={onSignIn}>
+              Sign in
+            </Button>
+          )}
+        </div>
+      </Row>
+      <Row label="Display name">
+        <TextField label="Display name" value={inst.name} placeholder={driver?.label} onCommit={(v) => onChange({ name: v.trim() || inst.name })} />
+      </Row>
 
-      <Group title="Environment" hint="Variable names only. Each value is kept in this Mac's Keychain, never on the server.">
-        <Card>
-          <div className="px-3 py-3 sm:px-4">
-            <ListEditor
-              label="Variable"
-              addLabel="Add variable"
-              placeholder="CURSOR_API_KEY"
-              items={inst.envNames}
-              onCommit={(list) => onChange({ envNames: list.length ? list : undefined })}
-            />
-          </div>
-        </Card>
-      </Group>
+      <div className="px-4 pb-1 pt-6">
+        <h3 className="text-sm font-semibold text-foreground">Runtime</h3>
+        <p className="mt-0.5 text-xs text-muted-foreground">Where the Mac finds the program and its folders. Blank uses the usual ones.</p>
+      </div>
+      <Row label="Binary path" hint="The full path to the program on this Mac.">
+        <TextField label="Binary path" value={inst.binaryPath ?? ""} placeholder="Default: the program on the Mac's PATH" onCommit={(v) => onChange({ binaryPath: v.trim() || undefined })} />
+      </Row>
+      <Row label="Home path" hint={driver?.homeEnv ? `Sent as ${driver.homeEnv}.` : "The folder the program keeps its settings in."}>
+        <TextField label="Home path" value={inst.home ?? ""} placeholder="Default folder" onCommit={(v) => onChange({ home: v.trim() || undefined })} />
+      </Row>
+      <Row label="Shadow home path" hint="A second folder for the same program, sharing its history.">
+        <TextField label="Shadow home path" value={inst.shadowHomePath ?? ""} placeholder="Not set" onCommit={(v) => onChange({ shadowHomePath: v.trim() || undefined })} />
+      </Row>
+      {launchArgsAllowed(inst.driver) && (
+        <Row label="Launch arguments" hint="Only for a local ACP command: one literal argument per row, in launch order.">
+          <ListEditor label="Launch argument" addLabel="Add argument" items={inst.launchArgs} onCommit={(list) => onChange({ launchArgs: list.length ? list : undefined })} />
+        </Row>
+      )}
 
-      <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+      <div className="px-4 pb-1 pt-6">
+        <h3 className="text-sm font-semibold text-foreground">Environment</h3>
+        <p className="mt-0.5 text-xs text-muted-foreground">Variable names only. Each value is kept in this Mac's Keychain, never on the server.</p>
+      </div>
+      <div className="px-4 py-3">
+        <ListEditor
+          label="Variable"
+          addLabel="Add variable"
+          placeholder="CURSOR_API_KEY"
+          items={inst.envNames}
+          onCommit={(list) => onChange({ envNames: list.length ? list : undefined })}
+        />
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
         <span className="text-xs text-muted-foreground">{used.length ? `Used by ${used.join(", ")}.` : ""}</span>
         <ConfirmButton
           label="Remove"
@@ -218,7 +232,7 @@ function ListEditor({
           </button>
         </div>
       ))}
-      <Button variant="outline" size="sm" onClick={() => setDraft((d) => [...d, ""])}>
+      <Button variant="ghost" size="sm" className="-ml-2.5 text-muted-foreground" onClick={() => setDraft((d) => [...d, ""])}>
         <Plus className="h-3.5 w-3.5" /> {addLabel}
       </Button>
     </div>

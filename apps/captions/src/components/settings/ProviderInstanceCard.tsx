@@ -2,6 +2,7 @@ import type { CSSProperties } from "react";
 import { DRIVERS, type MacReport, type ProviderCheck, type ProviderInstance, type ProviderSettings } from "@contracts/providers";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
+import { hasProviderLogo, ProviderLogo } from "./ProviderLogos";
 
 export type StatusTone = "ready" | "warning" | "error" | "neutral" | "disabled";
 
@@ -9,14 +10,6 @@ export interface ProviderStatus {
   tone: StatusTone;
   text: string;
 }
-
-const TONE_DOT: Record<StatusTone, string> = {
-  ready: "bg-emerald-500",
-  warning: "bg-amber-500",
-  error: "bg-red-500",
-  neutral: "bg-muted-foreground/40",
-  disabled: "bg-muted-foreground/20",
-};
 
 const TONE_TEXT: Record<StatusTone, string> = {
   ready: "text-emerald-600 dark:text-emerald-400",
@@ -66,8 +59,9 @@ export function hasCustomEndpoint(report: MacReport | null, inst: ProviderInstan
   return report.homes.some((h) => h.driver === "claude" && h.customEndpoint === true && folderName(h.home) === want);
 }
 
-/** The provider's mark: its driver's two letters, in its accent colour when it has one. */
-export function ProviderMark({ inst }: { inst: ProviderInstance }) {
+/** The provider's logo. A driver with no logo gets its two letters, in its accent colour when it has one. */
+export function ProviderMark({ inst, className }: { inst: ProviderInstance; className?: string }) {
+  if (hasProviderLogo(inst.driver)) return <ProviderLogo driver={inst.driver} className={cn("h-5 w-5", className)} />;
   const label = DRIVERS.find((x) => x.id === inst.driver)?.label ?? inst.driver;
   const style: CSSProperties | undefined = inst.accentColor ? { color: inst.accentColor, borderColor: inst.accentColor } : undefined;
   return (
@@ -75,8 +69,9 @@ export function ProviderMark({ inst }: { inst: ProviderInstance }) {
       aria-hidden
       style={style}
       className={cn(
-        "flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-[11px] font-semibold",
+        "flex h-5 w-5 shrink-0 items-center justify-center rounded border border-border bg-muted text-[9px] font-semibold",
         !inst.accentColor && "text-violet-600 dark:text-violet-300",
+        className,
       )}
     >
       {label.slice(0, 2)}
@@ -84,19 +79,14 @@ export function ProviderMark({ inst }: { inst: ProviderInstance }) {
   );
 }
 
-/** A status line: a coloured dot and its text. */
-export function StatusText({ status }: { status: ProviderStatus }) {
-  return (
-    <span className="inline-flex items-center gap-1.5">
-      <span aria-hidden className={cn("h-1.5 w-1.5 shrink-0 rounded-full", TONE_DOT[status.tone])} />
-      <span className={TONE_TEXT[status.tone]}>{status.text}</span>
-    </span>
-  );
+/** A status line: its text, coloured by tone. */
+export function StatusText({ status, className }: { status: ProviderStatus; className?: string }) {
+  return <span className={cn(TONE_TEXT[status.tone], className)}>{status.text}</span>;
 }
 
 /**
- * A provider's row in the list: the name with its version, the status line, and an on/off switch. The row's
- * text selects the provider for the detail pane below. Members (`readOnly`) see the row without the switch.
+ * A provider's row in the list: logo, name, version (mono), a status line with the custom endpoint after it, and an
+ * on/off switch. The row selects the provider for the detail below. Members (`readOnly`) see the row without the switch.
  */
 export function ProviderInstanceCard({
   inst,
@@ -122,29 +112,28 @@ export function ProviderInstanceCard({
   onToggle: (on: boolean) => void;
 }) {
   return (
-    <div className={cn("flex items-center gap-3 px-3 py-3", selected && "bg-accent/40")}>
+    <div className={cn("flex items-center gap-3 px-4 py-3", selected && "bg-muted/70 dark:bg-muted/40")}>
       <button
         type="button"
         aria-pressed={selected}
         onClick={onSelect}
-        className="flex min-w-0 flex-1 items-start gap-3 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
+        className="flex min-w-0 flex-1 items-center gap-3 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60"
       >
         <ProviderMark inst={inst} />
         <span className="min-w-0 flex-1">
-          <span className="flex flex-wrap items-baseline gap-x-2 text-sm">
-            <span className="break-words text-foreground">{inst.name}</span>
-            {version && <span className="text-xs text-muted-foreground">v{version}</span>}
-            {customEndpoint && <span className="rounded border border-border px-1.5 text-[10px] text-muted-foreground">Custom API endpoint</span>}
+          <span className="flex flex-wrap items-baseline gap-x-2">
+            <span className="break-words text-sm text-foreground">{inst.name}</span>
+            {version && <span className="font-mono text-xs text-muted-foreground">v{version}</span>}
           </span>
-          <span className="mt-0.5 block text-[11px]">
-            <StatusText status={status} />
+          <span className="mt-0.5 block text-xs">
+            {/* the row says "Authenticated"; the plan is in the detail's Status */}
+            <StatusText status={status.tone === "ready" && status.text.startsWith("Authenticated") ? { ...status, text: "Authenticated" } : status} />
+            {customEndpoint && <span className="text-muted-foreground"> · Custom API endpoint</span>}
             {where && <span className="text-muted-foreground"> · on {where}</span>}
           </span>
         </span>
       </button>
-      {!readOnly && (
-        <Switch checked={inst.enabled} aria-label={`Turn ${inst.name} ${inst.enabled ? "off" : "on"}`} onCheckedChange={onToggle} />
-      )}
+      {!readOnly && <Switch checked={inst.enabled} aria-label={`Turn ${inst.name} ${inst.enabled ? "off" : "on"}`} onCheckedChange={onToggle} />}
     </div>
   );
 }

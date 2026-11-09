@@ -43,7 +43,8 @@ export function Card({ children, className }: { children: ReactNode; className?:
 export function Row({ label, hint, children }: { label: ReactNode; hint?: ReactNode; children?: ReactNode }) {
   return (
     <div className="flex flex-wrap items-center gap-x-8 gap-y-3 px-3 py-3 sm:px-4">
-      <div className="min-w-0 flex-1 space-y-0.5">
+      {/* a label keeps a readable width: a control that doesn't fit beside it wraps under it */}
+      <div className="min-w-[9rem] flex-1 space-y-0.5">
         <div className="text-sm font-medium text-foreground">{label}</div>
         {hint && <div className="text-xs text-muted-foreground">{hint}</div>}
       </div>

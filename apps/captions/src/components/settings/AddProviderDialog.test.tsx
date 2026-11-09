@@ -19,7 +19,7 @@ const catalog: DriverCatalog = {
 };
 
 const grid = (showMore: boolean) =>
-  renderToStaticMarkup(<DriverGrid catalog={catalog} report={null} driver={null} showMore={showMore} onPick={() => {}} onToggleMore={() => {}} />);
+  renderToStaticMarkup(<DriverGrid catalog={catalog} driver={null} showMore={showMore} onPick={() => {}} onToggleMore={() => {}} />);
 
 describe("Add provider grid", () => {
   it("lists the owner's featured drivers in order, then Show more, and hides Gemini until it is opened", () => {
@@ -63,15 +63,14 @@ describe("validateInstanceId", () => {
 });
 
 describe("plug-in providers in the grid", () => {
-  it("shows a plug-in preset as a row with its badge, and a plug-in driver kind as a disabled tile with the server's reason", () => {
+  it("shows a plug-in preset as a row, and a plug-in driver kind as a disabled tile with the server's reason", () => {
     const withPlugin: DriverCatalog = {
       ...catalog,
       drivers: [...catalog.drivers, { id: "tinycli", label: "Tiny CLI", featured: false, runs: false, reason: "The Creator Toolset Mac app can't run this CLI yet.", devices: [] }],
       presets: [{ id: "tiny-hub", name: "Tiny (hub)", driver: "claude", badge: "Custom API endpoint" }],
     };
-    const html = renderToStaticMarkup(<DriverGrid catalog={withPlugin} report={null} driver={null} showMore={true} onPick={() => {}} onToggleMore={() => {}} />);
+    const html = renderToStaticMarkup(<DriverGrid catalog={withPlugin} driver={null} showMore={true} onPick={() => {}} onToggleMore={() => {}} />);
     expect(html).toContain("Tiny (hub)");
-    expect(html).toContain("Custom API endpoint");
     expect(html).toContain("Tiny CLI");
     expect(html).toContain("The Creator Toolset Mac app can&#x27;t run this CLI yet.");
   });

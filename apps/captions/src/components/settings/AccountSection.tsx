@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AiKeyDialog } from "@/components/AiKeyDialog";
+import { AccountStep, hasAccountBridge } from "@/components/setup/AccountStep";
 import { Card, Group, Row } from "./ui";
 import { fmtAgo } from "./helpers";
 
@@ -73,6 +74,12 @@ export function AccountSection() {
           </Row>
         </Card>
       </Group>
+
+      {hasAccountBridge() && (
+        <Group title="Apple or Google" hint="Optional: sign in with Apple or Google. Your work runs on this Mac either way.">
+          <AccountStep />
+        </Group>
+      )}
 
       <Group title="Session">
         <Card>

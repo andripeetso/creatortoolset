@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
-import { Plus } from "lucide-react";
+import { Plus, RefreshCw } from "lucide-react";
+import { cn } from "@/lib/utils";
 import {
   JOBS,
   type Driver,
@@ -12,11 +13,9 @@ import {
   type Selection,
   runsOn,
 } from "@contracts/providers";
-import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
 import { useWorkTalk } from "@/lib/setup";
 import {
-  aiAnswerer,
   checkProvider,
   deviceOf,
   getProviders,
@@ -27,19 +26,18 @@ import {
   thisMacDevice,
 } from "@/lib/providers";
 import { AddProviderDialog } from "./AddProviderDialog";
-import { AiSetup } from "./AiSetup";
 import { OwnAiMcpSection } from "./OwnAiMcpSection";
 import { ProviderDetail } from "./ProviderDetail";
-import { ProviderInstanceCard, hasCustomEndpoint, providerStatus, withInstance } from "./ProviderInstanceCard";
+import { ProviderInstanceCard, hasCustomEndpoint, providerStatus, withInstance, type ProviderStatus } from "./ProviderInstanceCard";
 import { ScopeSentence } from "./ScopeSentence";
 import { Card, EffortSelect, Group, Loading, ModelSelect, Notice } from "./ui";
-import { msg, selectCls } from "./helpers";
+import { fmtAgo, msg, selectCls } from "./helpers";
 
 /** The CLIs the Mac app can open a sign-in for (signInCommands in apps/mac Relay.swift). */
 const SIGN_IN_DRIVERS: string[] = ["claude", "codex", "grok"];
 
 /**
- * Settings → Your AI: "Applying settings for All projects on <Mac>", the AI on that Mac as rows (name, version, status
+ * Settings → Providers: "Applying settings for All projects on <Mac>", the AI on that Mac as rows (name, version, status
  * line, on/off switch), the selected AI's detail below, then who does which job. Admins edit the workspace's set
  * (PUT /api/providers/workspace); anyone else edits their own (PUT /api/providers/own) and sees the workspace's while they
  * have none. In chat or both, it also holds the "Use Creator Toolset from your own AI" section (OwnAiMcpSection).
@@ -59,10 +57,26 @@ export function ProvidersSection({ sub }: { sub?: string }) {
   const [adding, setAdding] = useState(false);
   // The driver whose sign-in is open in Terminal on this Mac: the page re-reads the Mac's report until it says signed in.
   const [signingIn, setSigningIn] = useState<string | null>(null);
+  // when the Macs' reports were last read (the page's "Checked …")
+  const [readAt, setReadAt] = useState(() => Date.now());
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
-    getProviders().then(setView).catch((e) => setLoadError(msg(e)));
+    getProviders().then((v) => {
+      setView(v);
+      setReadAt(Date.now());
+    }).catch((e) => setLoadError(msg(e)));
   }, []);
+  const refresh = () => {
+    setRefreshing(true);
+    getProviders()
+      .then((v) => {
+        setView((prev) => (prev ? { ...prev, devices: v.devices } : v));
+        setReadAt(Date.now());
+      })
+      .catch((e) => setError(msg(e)))
+      .finally(() => setRefreshing(false));
+  };
   useEffect(() => {
     if (!signingIn) return;
     const t = window.setInterval(() => {
@@ -110,9 +124,10 @@ export function ProvidersSection({ sub }: { sub?: string }) {
   const shown: ProviderSettings | null = editing ?? (readOnly ? (view.workspace?.settings ?? null) : null);
   const listed = readOnly
     ? (shown?.instances ?? [])
-    : (editing?.instances ?? []).filter((i) => device !== null && deviceOf(i) === device.id);
+    : (editing?.instances ?? []).filter((i) => device !== null && (deviceOf(i) === device.id || !deviceOf(i)));
   // the provider whose detail pane is open (editors only; members see the rows)
-  const detail = readOnly || !editing ? undefined : listed.find((i) => i.id === instanceId);
+  // the first provider is shown until one is picked, so the settings pane is never empty
+  const detail = readOnly || !editing ? undefined : (listed.find((i) => i.id === instanceId) ?? listed[0]);
 
   // Saves the whole set. Shows the change at once, undoes it on error.
   const save = async (next: ProviderSettings) => {
@@ -191,8 +206,10 @@ export function ProvidersSection({ sub }: { sub?: string }) {
 
   // The Mac's report of this provider's CLI (its version, signed-in state) and the status line built from it.
   const foundOf = (inst: ProviderInstance) => reportOf(inst)?.drivers.find((d) => d.driver === inst.driver);
-  const statusOf = (inst: ProviderInstance) =>
-    providerStatus({
+  const statusOf = (inst: ProviderInstance): ProviderStatus =>
+    !deviceOf(inst)
+      ? { tone: "warning", text: "Not on a Mac yet" }
+      : providerStatus({
       enabled: inst.enabled,
       runs: runsOn(inst.driver),
       online: reachable(inst),
@@ -219,28 +236,11 @@ export function ProvidersSection({ sub }: { sub?: string }) {
   return (
     <>
       <ScopeSentence devices={devices} device={device} readOnly={readOnly} onPick={setDeviceChoice} />
-      <p className="mt-3 text-sm text-muted-foreground">
-        Your AI runs on a Mac, through the coding tools signed in there. Each one belongs to one Mac.
-      </p>
-      <p className="mt-2 text-sm">{aiAnswerer(view, thisMacDevice())}</p>
       {saving && <p className="mt-2 text-xs text-muted-foreground">Saving…</p>}
       {error && <Notice tone="error">{error}</Notice>}
 
-      {!readOnly && (
-        <AiSetup
-          devices={devices}
-          device={device}
-          providers={listed}
-          checks={Object.fromEntries(listed.map((i) => [i.id, view.checks[`${scope}:${i.id}`]]))}
-          onAdd={() => setAdding(true)}
-          onCheck={(inst) => void runCheck(inst, scope)}
-        />
-      )}
-
-      {(talk === "chat" || talk === "both") && <OwnAiMcpSection />}
-
       {!isAdmin && (
-        <div className="mt-8 space-y-2">
+        <div className="mt-6 space-y-2">
           {view.using === "own" && (
             <Notice>
               Your own AI answers your jobs.{" "}
@@ -257,15 +257,38 @@ export function ProvidersSection({ sub }: { sub?: string }) {
       )}
 
       {(readOnly || devices.length > 0) && (
-        <Group
-          title="Your AI"
-          hint={readOnly ? "The workspace's AI, on whichever Mac runs it." : "One coding tool signed in as one account on this Mac. Off keeps it out of every job."}
-        >
-          {listed.length === 0 ? (
-            <Notice>{readOnly ? "The workspace has no AI yet." : device ? "No AI on this Mac yet." : "Connect a Mac to add your AI."}</Notice>
-          ) : (
-            <Card>
-              {listed.map((inst) => {
+        // one column: the list of providers, "Add provider" last in the same card, then the selected provider's settings
+        <div className="mt-6">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <h2 className="text-base font-semibold text-foreground">Providers</h2>
+              <button
+                type="button"
+                aria-label="Add provider"
+                disabled={!device}
+                onClick={() => setAdding(true)}
+                className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={refresh}
+              disabled={refreshing}
+              className="flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-60"
+            >
+              <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
+              {refreshing ? "Checking…" : readAt > Date.now() - 60_000 ? "Checked just now" : `Checked ${fmtAgo(readAt)}`}
+            </button>
+          </div>
+          <Card className="mt-3">
+            {listed.length === 0 ? (
+              <div className="px-4 py-3">
+                <Notice>{readOnly ? "The workspace has no AI yet." : device ? "No AI on this Mac yet." : "Connect a Mac to add your AI."}</Notice>
+              </div>
+            ) : (
+              listed.map((inst) => {
                 const found = foundOf(inst);
                 return (
                   <ProviderInstanceCard
@@ -281,35 +304,41 @@ export function ProvidersSection({ sub }: { sub?: string }) {
                     onToggle={(on) => patch(inst, { enabled: on })}
                   />
                 );
-              })}
-            </Card>
-          )}
-          <div>
-            <Button variant="outline" size="sm" disabled={!device} onClick={() => setAdding(true)}>
-              <Plus className="h-3.5 w-3.5" /> {readOnly && listed.length > 0 ? `Add my own on ${device ? device.name : "a Mac"}` : "Add one"}
-            </Button>
-          </div>
-        </Group>
+              })
+            )}
+            <button
+              type="button"
+              disabled={!device}
+              onClick={() => setAdding(true)}
+              className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground disabled:opacity-40"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              {readOnly && listed.length > 0 ? `Add my own on ${device ? device.name : "a Mac"}` : "Add provider"}
+            </button>
+            {detail && device && (
+              <ProviderDetail
+                inst={detail}
+                status={statusOf(detail)}
+                check={view.checks[`${scope}:${detail.id}`]}
+                checking={checking === `${scope}:${detail.id}`}
+                canCheck={online(detail) && checking === null}
+                used={jobsUsing(detail.id)}
+                runHere={!deviceOf(detail) ? device.name : undefined}
+                onChange={(p) => patch(detail, p)}
+                onCheck={() => void runCheck(detail, scope)}
+                onSignIn={canSignIn(detail) ? () => signIn(detail) : undefined}
+                onRunHere={!deviceOf(detail) ? () => patch(detail, { device: device.id }) : undefined}
+                onRemove={() => {
+                  setInstanceId(null);
+                  if (editing) void save({ ...editing, instances: editing.instances.filter((i) => i.id !== detail.id) });
+                }}
+              />
+            )}
+          </Card>
+        </div>
       )}
 
-      {detail && device && (
-        <ProviderDetail
-          inst={detail}
-          status={statusOf(detail)}
-          version={foundOf(detail)?.installed ? foundOf(detail)?.version : undefined}
-          check={view.checks[`${scope}:${detail.id}`]}
-          checking={checking === `${scope}:${detail.id}`}
-          canCheck={online(detail) && checking === null}
-          used={jobsUsing(detail.id)}
-          onChange={(p) => patch(detail, p)}
-          onCheck={() => void runCheck(detail, scope)}
-          onSignIn={canSignIn(detail) ? () => signIn(detail) : undefined}
-          onRemove={() => {
-            setInstanceId(null);
-            if (editing) void save({ ...editing, instances: editing.instances.filter((i) => i.id !== detail.id) });
-          }}
-        />
-      )}
+      {(talk === "chat" || talk === "both") && <OwnAiMcpSection />}
 
       {shown && (
         <Group

@@ -1,6 +1,6 @@
-import { Fragment } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { Link, Navigate, useLocation } from "react-router";
-import { Cable, CalendarClock, Clapperboard, Cpu, Gauge, HardDrive, KeyRound, Laptop, ListChecks, Monitor, Palette, ShieldCheck, SlidersHorizontal, UserRound, Users, X } from "lucide-react";
+import { Cable, CalendarClock, Clapperboard, Cpu, Gauge, HardDrive, KeyRound, Monitor, Palette, Search, ShieldCheck, SlidersHorizontal, UserRound, Users, X } from "lucide-react";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogPortal, DialogTitle } from "@/components/ui/dialog";
 import { AccountSection } from "@/components/settings/AccountSection";
 import { AdminSection } from "@/components/settings/AdminSection";
@@ -15,7 +15,7 @@ import { ProvidersSection } from "@/components/settings/ProvidersSection";
 import { ConnectorsSection } from "@/components/settings/ConnectorsSection";
 import { ServiceKeysSection } from "@/components/settings/ServiceKeysSection";
 import { MyKeysSection } from "@/components/settings/MyKeysSection";
-import { SetupSection } from "@/components/settings/SetupSection";
+import { KeyReadiness, SetupSection } from "@/components/settings/SetupSection";
 import { ThisMacSection, hasThisMac } from "@/components/settings/ThisMacSection";
 import { UsageSection } from "@/components/settings/UsageSection";
 import { useAuth, useMe } from "@/lib/auth";
@@ -26,36 +26,39 @@ import { cn } from "@/lib/utils";
 const inDock = (t: EventTarget | null) => t instanceof Element && !!t.closest("[data-assistant-dock]");
 
 /**
- * The sections, in the order the sidebar shows them. `group` starts a labelled block; the "Server" block (the server's
- * own API keys, admins only) is pinned to the bottom. `blurb` is the one line under the title: only what the title
- * doesn't say. This Mac is not here: the Mac app's Servers menu opens it.
+ * The sections, in the order the sidebar shows them, in blocks: the top block has no heading, then
+ * the labelled blocks (Agents, Connections), then the rest with no heading, and the server's block (admins only) is
+ * pinned to the bottom. `blurb` is the one line under the title: only what the title doesn't say.
+ * Retired ids (setup, this-mac, my-keys) redirect, see RETIRED_SECTIONS.
  */
 const BUILTIN_SECTIONS: ReadonlyArray<SettingsEntry> = [
-  { id: "general", title: "General", blurb: "How the app behaves on this device.", icon: SlidersHorizontal },
-  { id: "setup", title: "Setup", blurb: "Your AI, accounts, a first project and your knowledge, one step at a time.", icon: ListChecks },
+  { id: "general", title: "General", blurb: "How the app behaves on this device, and setup.", icon: SlidersHorizontal },
   { id: "appearance", title: "Appearance", icon: Palette },
-  { id: "account", title: "Account", blurb: "Your name, password and AI access key.", icon: UserRound },
-  { id: "this-mac", title: "This Mac", blurb: "Your AI on this Mac, and the servers this app opens.", icon: Laptop, macOnly: true },
-  { id: "providers", title: "Your AI", blurb: "The coding tools on your Macs that answer your AI.", icon: Cpu, group: "AI" },
-  { id: "devices", title: "Devices", blurb: "The computers that run your AI.", icon: Monitor },
   { id: "editor", title: "Editor", blurb: "The design, grade, voice mix and sound effects every new edit starts with.", icon: Clapperboard },
+  { id: "account", title: "Account", blurb: "Your name, password and AI access key.", icon: UserRound },
+  { id: "providers", title: "Providers", blurb: "The coding tools on your Macs that answer your AI.", icon: Cpu, group: "Agents" },
+  { id: "devices", title: "Devices", blurb: "The computers that run your AI, and the servers this app opens.", icon: Monitor, group: "Agents" },
+  { id: "automations", title: "Automations", blurb: "Prompts the assistant runs on a schedule. Results go to your inbox.", icon: CalendarClock, group: "Agents" },
+  { id: "usage", title: "Usage", blurb: "How much of each AI plan is left, and what the app used.", icon: Gauge, group: "Agents" },
+  { id: "connectors", title: "Connectors", blurb: "Your accounts, and the Apify key that reads the rest.", icon: Cable, group: "Connections" },
+  { id: "keys", title: "API keys", blurb: "Your own keys for the paid services the tools call.", icon: KeyRound, group: "Connections" },
+  // hosted servers only (HOSTED_ONLY): the team, and the platform admin's accounts and projects
+  { id: "team", title: "Team", blurb: "Your team: invite links, members and the apps each one gets.", icon: Users, group: "Connections" },
   { id: "cache", title: "Cache", blurb: "What this computer keeps so screens open at once.", icon: HardDrive },
-  { id: "usage", title: "Usage", blurb: "How much of each AI plan is left, and what the app used.", icon: Gauge },
-  { id: "automations", title: "Automations", blurb: "Prompts the assistant runs on a schedule. Results go to your inbox.", icon: CalendarClock },
-  { id: "connectors", title: "Connectors", blurb: "Your accounts, and the Apify key that reads the rest.", icon: Cable, group: "Data" },
-  { id: "my-keys", title: "My API keys", blurb: "Your own keys for the paid services the tools call.", icon: KeyRound },
-  { id: "keys", title: "API keys", blurb: "The server's own keys. They serve you, never your AI; other accounts use their own (My API keys).", icon: KeyRound, adminOnly: true, group: "Server" },
-];
-
-/** Hosted servers only (CT_MODE=hosted, from /api/auth/check): the team, and the platform admin's accounts and projects. */
-const HOSTED_SECTIONS: ReadonlyArray<SettingsEntry> = [
-  { id: "team", title: "Team", blurb: "Your team: invite links, members and the apps each one gets.", icon: Users, group: "Team" },
   { id: "admin", title: "Admin", blurb: "Accounts on this server, the apps each one gets, and every project.", icon: ShieldCheck, adminOnly: true, group: "Server" },
 ];
 
+const HOSTED_ONLY = ["team", "admin"];
+
+/** Old section ids and where they went. Links from the Mac app and older pages keep working. */
+const RETIRED_SECTIONS: Readonly<Record<string, string>> = { setup: "general", "this-mac": "devices", "my-keys": "keys" };
+
 /** The sections this server shows; the hosted ones are added only on a hosted server. */
 export const settingsSectionsFor = (hosted: boolean): SettingsEntry[] =>
-  settingsWithPlugins(hosted ? [...BUILTIN_SECTIONS, ...HOSTED_SECTIONS] : BUILTIN_SECTIONS, webPlugins);
+  settingsWithPlugins(
+    BUILTIN_SECTIONS.filter((s) => hosted || !HOSTED_ONLY.includes(s.id)),
+    webPlugins,
+  );
 
 /**
  * Settings: a modal over the page you were on, `/settings/:section/:sub?`. App keeps the page behind it and `onClose`
@@ -65,29 +68,58 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
   const [, , section = "general", sub] = useLocation().pathname.split("/");
   const me = useMe();
   const hosted = useAuth((s) => s.hosted);
+  const [query, setQuery] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
+  // "/" jumps to the search field, unless a field already has the keyboard
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (e.key !== "/" || t?.closest("input, textarea, select, [contenteditable='true']")) return;
+      e.preventDefault();
+      searchRef.current?.focus();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   // Packs moved to Community, a window of its own; old links land on what's installed
   if (section === "packs") return <Navigate to="/community/installed" replace />;
-  // This Mac is the Mac app's own: a browser never lists it (ThisMacSection.tsx)
-  const visible = visibleSettings(settingsSectionsFor(hosted), me).filter((s) => !s.macOnly || hasThisMac());
+  if (RETIRED_SECTIONS[section]) return <Navigate to={`/settings/${RETIRED_SECTIONS[section]}`} replace />;
+  const visible = visibleSettings(settingsSectionsFor(hosted), me);
   const current = visible.find((s) => s.id === section);
   if (!current) return <Navigate to="/settings/general" replace />;
+  const needle = query.trim().toLowerCase();
+  const listed = needle ? visible.filter((s) => s.title.toLowerCase().includes(needle)) : visible;
 
   const body = current.body ?? {
-    general: <GeneralSection />,
-    setup: <SetupSection />,
+    general: (
+      <>
+        <GeneralSection />
+        <SetupSection />
+      </>
+    ),
     appearance: <AppearanceSection />,
-    "this-mac": <ThisMacSection />,
-    providers: <ProvidersSection sub={sub} />,
-    connectors: <ConnectorsSection />,
-    "my-keys": <MyKeysSection />,
-    usage: <UsageSection />,
-    devices: <DevicesSection />,
     editor: <EditorSection />,
-    cache: <StorageSection />,
-    automations: <AutomationsSection />,
     account: <AccountSection />,
-    keys: <ServiceKeysSection />,
+    providers: <ProvidersSection sub={sub} />,
+    // This Mac is the Mac app's own: a browser never shows it (ThisMacSection.tsx)
+    devices: (
+      <>
+        {hasThisMac() && <ThisMacSection />}
+        <DevicesSection />
+      </>
+    ),
+    automations: <AutomationsSection />,
+    usage: <UsageSection />,
+    connectors: <ConnectorsSection />,
+    keys: (
+      <>
+        <MyKeysSection />
+        <KeyReadiness />
+        {me?.role === "admin" && <ServiceKeysSection />}
+      </>
+    ),
     team: <WorkspaceSection />,
+    cache: <StorageSection />,
     admin: <AdminSection sub={sub} />,
   }[current.id];
 
@@ -111,15 +143,31 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
         }}
         className="flex h-[min(860px,calc(100dvh-2rem))] w-[min(1100px,calc(100vw-2rem))] max-w-none flex-col gap-0 overflow-hidden p-0 sm:max-w-none md:flex-row">
         <nav aria-label="Settings sections" className="flex shrink-0 gap-1 overflow-x-auto border-b border-border p-3 md:w-60 md:flex-col md:overflow-y-auto md:border-b-0 md:border-r">
-          <span className="hidden px-2 pb-2 pt-1 text-sm font-semibold md:block">Settings</span>
-          {visible.map((s, i) => {
+          <label className="relative mb-2 hidden shrink-0 md:block">
+            <Search aria-hidden className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              ref={searchRef}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => e.key === "Escape" && (setQuery(""), e.currentTarget.blur())}
+              placeholder="Search"
+              aria-label="Search settings"
+              className="h-8 w-full rounded-md bg-transparent pl-8 pr-7 text-sm outline-none placeholder:text-muted-foreground focus:bg-accent/60"
+            />
+            <kbd className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded border border-border px-1 text-[11px] text-muted-foreground">/</kbd>
+          </label>
+          {listed.map((s, i) => {
             const Icon = s.icon;
             const on = s.id === current.id;
-            const heading = s.group && s.group !== visible[i - 1]?.group;
+            const prev = listed[i - 1];
+            const heading = s.group && s.group !== prev?.group;
+            // a gap between blocks, so the heading-less top block and the others read apart
+            const gap = i > 0 && (s.group ?? "") !== (prev?.group ?? "");
             return (
               <Fragment key={s.id}>
+                {gap && <span aria-hidden className="hidden h-3 md:block" />}
                 {heading && (
-                  <span className={cn("hidden px-2 pb-1 pt-4 text-xs font-medium text-muted-foreground/80 md:block", s.group === "Server" && "md:mt-auto")}>
+                  <span className="hidden px-2 pb-1 pt-4 text-[11px] font-medium text-muted-foreground md:block">
                     {s.group}
                   </span>
                 )}
@@ -138,14 +186,21 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
               </Fragment>
             );
           })}
+          <span aria-hidden className="mt-auto hidden shrink-0 pt-3 md:block">
+            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-muted text-xs font-medium uppercase text-muted-foreground">
+              {me?.username?.[0] ?? "?"}
+            </span>
+          </span>
         </nav>
         <main className="flex min-h-0 min-w-0 flex-1 flex-col">
           <header className="flex shrink-0 items-start gap-4 px-6 pb-4 pt-6">
             <div className="min-w-0 flex-1">
-              <DialogTitle className="text-lg font-semibold tracking-tight">{current.title}</DialogTitle>
-              <DialogDescription className={cn("mt-1 text-sm text-muted-foreground", !current.blurb && "sr-only")}>
-                {current.blurb ?? `${current.title} settings`}
-              </DialogDescription>
+              <DialogTitle className="flex items-center gap-2 text-sm font-normal">
+                <span className="text-muted-foreground">Settings</span>
+                <span className="text-muted-foreground/60">/</span>
+                <span className="font-medium text-foreground">{current.title}</span>
+              </DialogTitle>
+              <DialogDescription className="sr-only">{current.blurb ?? `${current.title} settings`}</DialogDescription>
             </div>
             <DialogClose className="-mr-2 -mt-1 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
               <X className="h-4 w-4" />
