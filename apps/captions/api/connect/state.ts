@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { env } from "../lib/env";
 
@@ -34,7 +34,9 @@ export function connectState(): ConnectState | null {
 
 export function saveConnectState(next: ConnectState | null): void {
   if (next === null) {
+    // unlink: the tunnel token must not stay on disk
     cache = null;
+    rmSync(file(), { force: true });
     return;
   }
   mkdirSync(env.dataDir, { recursive: true });
