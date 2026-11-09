@@ -91,8 +91,51 @@ function AddComputer() {
           <li>Sign in with this account.</li>
           <li>When it asks, allow it to run your AI there. It shows up under Computers within a minute.</li>
         </ol>
+        <SignInLinkMint />
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * The link another server's "I already have a server" step pastes: a one-time sign-in for this account, 60 s, single use.
+ * Shown here on request only; a new one replaces it.
+ */
+function SignInLinkMint() {
+  const [link, setLink] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const mint = () => {
+    setFailed(false);
+    fetch("/api/auth/link", { method: "POST" })
+      .then((r) => (r.ok ? (r.json() as Promise<{ path: string }>) : Promise.reject(new Error(String(r.status)))))
+      .then((j) => setLink(`${window.location.origin}${j.path}`))
+      .catch(() => setFailed(true));
+  };
+  return (
+    <div className="space-y-2 border-t border-border/60 pt-4 text-sm">
+      <p className="font-medium">Sign in another computer</p>
+      <p className="text-muted-foreground">
+        For a computer that runs its own Creator Toolset and says "I already have a server". Paste this link there. It works once, within 60 seconds.
+      </p>
+      {link ? (
+        <div className="flex items-center gap-2">
+          <code className="min-w-0 flex-1 truncate rounded-md bg-muted/60 px-2 py-1.5 font-mono text-xs">{link}</code>
+          <Button size="sm" variant="outline" onClick={() => void navigator.clipboard?.writeText(link)}>
+            Copy
+          </Button>
+        </div>
+      ) : (
+        <Button size="sm" variant="outline" onClick={mint}>
+          Make a link
+        </Button>
+      )}
+      {link && (
+        <Button size="sm" variant="ghost" onClick={mint}>
+          New link
+        </Button>
+      )}
+      {failed && <p className="text-xs text-destructive">Couldn't make a link. Sign in again and try.</p>}
+    </div>
   );
 }
 
@@ -222,7 +265,7 @@ async function call<T>(url: string, method = "GET", body?: unknown): Promise<T> 
   return out;
 }
 const STORAGE_API = "/api/devices/storage";
-const getStorage = () => call<StorageView>(STORAGE_API);
+export const getStorage = () => call<StorageView>(STORAGE_API);
 const makeLibrary = (b: MakeLibraryBody) => call<StorageState>(`${STORAGE_API}/library`, "POST", b);
 const addStorageFolder = (b: AddFolderBody) => call<StorageState>(`${STORAGE_API}/folders`, "POST", b);
 const removeStorageFolder = (id: string) => call<StorageState>(`${STORAGE_API}/folders/${encodeURIComponent(id)}`, "DELETE");
@@ -272,7 +315,7 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-function Storage({ devices, storage, onChanged }: { devices: Device[]; storage: StorageView | null; onChanged: () => void }) {
+export function Storage({ devices, storage, onChanged }: { devices: Device[]; storage: StorageView | null; onChanged: () => void }) {
   if (!storage) return null;
   const folders = storage.folders;
   const sources = sourcesOf(folders);

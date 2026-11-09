@@ -93,3 +93,13 @@ describe("your AI on this Mac: only on the owner's Mac (CT_LOCAL=1)", () => {
     expect(await get()).toMatchObject({ mcpTo: [] });
   });
 });
+
+it("refuses to join a server through a tunnel, and a link that is not a sign-in link, before anything is fetched", async () => {
+  who = { username: "sam", role: "user", cloud: true, off: [] };
+  const link = `https://studio.example.com/api/auth/link/${"a".repeat(30)}`;
+  const json = { "content-type": "application/json" };
+  const tunnel = await app.request("/api/setup/join", { method: "POST", headers: { ...json, "cf-ray": "1-SIN" }, body: JSON.stringify({ link }) });
+  expect(tunnel.status).toBe(403);
+  const junk = await app.request("/api/setup/join", { method: "POST", headers: json, body: JSON.stringify({ link: "ftp://studio.example.com/api/auth/link/x" }) });
+  expect(junk.status).toBe(400);
+});

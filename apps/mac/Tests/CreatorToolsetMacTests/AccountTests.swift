@@ -122,6 +122,7 @@ final class AccountTests: XCTestCase {
         XCTAssertTrue(on)
         XCTAssertFalse(StubServer.seen.contains { $0.url?.host == "appleid.example.com" })
         XCTAssertEqual(client.loginURL("google", challenge: "c1").absoluteString, "https://accounts.example.com/api/account/login/google?app=1&challenge=c1")
+        XCTAssertEqual(client.loginURL("github", challenge: "c1").absoluteString, "https://accounts.example.com/api/account/login/github?app=1&challenge=c1")
         // the probe also carries a challenge (the server refuses an app sign-in start without one)
         XCTAssertTrue(StubServer.seen.contains { ($0.url?.query ?? "").contains("challenge=") })
         // past the sign-in page a 404 is a code it doesn't know: never a way around the account
@@ -144,9 +145,25 @@ final class AccountTests: XCTestCase {
         XCTAssertTrue(reply["message"]?.contains("didn't come from this app") == true)
     }
 
+    func testOfferedProvidersAreOnlyTheOnesWithKeys() async throws {
+        // a provider the server has no keys for answers 404 or 501: no button for it
+        StubServer.routes["/api/account/login/apple"] = (501, "")
+        StubServer.routes["/api/account/login/google"] = (302, "")
+        StubServer.routes["/api/account/login/github"] = (302, "")
+        let up = try await client.offeredProviders()
+        XCTAssertEqual(up, ["google", "github"])
+        StubServer.routes["/api/account/login/google"] = (404, "")
+        StubServer.routes["/api/account/login/github"] = (404, "")
+        let none = try await client.offeredProviders()
+        XCTAssertEqual(none, [])
+    }
+
     func testAccountMessagesOnlyFromTheWindowsOwnPage() {
         XCTAssertEqual(accountAsk("status", mainFrame: true), "status")
         XCTAssertEqual(accountAsk("google", mainFrame: true), "google")
+        XCTAssertEqual(accountAsk("github", mainFrame: true), "github")
+        XCTAssertNil(accountAsk("microsoft", mainFrame: true))   // not a provider here
+        XCTAssertNil(accountAsk("github", mainFrame: false))
         XCTAssertNil(accountAsk("status", mainFrame: false))   // an embed inside the page
         XCTAssertNil(accountAsk("apple", mainFrame: false))
         XCTAssertNil(accountAsk("delete", mainFrame: true))

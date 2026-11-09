@@ -1,5 +1,5 @@
-// The person's Creator Toolset account, asked for on the first run. The app opens the account server's Apple or
-// Google sign-in in the system's sign-in sheet; the server ends on creatortoolset://account?code=<one-time code>, the
+// The person's Creator Toolset account, asked for on the first run. The app opens the account server's Apple, Google or
+// GitHub sign-in in the system's sign-in sheet; the server ends on creatortoolset://account?code=<one-time code>, the
 // app swaps the code for a token (POST /api/account/token) and keeps it in the Keychain. The account's name and email
 // go to the server on this Mac as its owner's profile. An empty account server (This Mac) means no account step.
 import AppKit
@@ -10,6 +10,10 @@ import Foundation
 /// The optional account server for the first run's Apple or Google sign-in, when none is set. It has nothing to do with
 /// which server the window opens (Servers.swift has no default).
 let defaultAccountServer = URL(string: "https://creatortoolset.com")!
+
+/// The sign-in providers the account server can offer, in the order the first run shows them. A provider the server has
+/// no keys for is not offered (its sign-in page answers 404 or 501), so its button is not shown.
+let accountProviders = ["apple", "google", "github"]
 
 /// The account server from This Mac → Account: never set = defaultAccountServer; "" = none (forks, own servers).
 func accountServerURL(_ saved: String?) -> URL? {
@@ -92,7 +96,16 @@ struct AccountClient {
         URL(string: "/api/account/login/\(provider)?app=1&challenge=\(challenge)", relativeTo: server)!.absoluteURL
     }
 
-    /// Whether the server's sign-in is set up: only its redirect to Apple or Google says yes. Anything else (404, 501, a
+    /// The providers whose sign-in the server has set up, in `accountProviders` order.
+    func offeredProviders() async throws -> [String] {
+        var up: [String] = []
+        for p in accountProviders {
+            if try await isSetUp(p) { up.append(p) }
+        }
+        return up
+    }
+
+    /// Whether the server's sign-in is set up: only its redirect to Apple, Google or GitHub says yes. Anything else (404, 501, a
     /// sign-in page that wants a site login, a fork's app page) = not yet, so the step lets the person go on.
     func isSetUp(_ provider: String) async throws -> Bool {
         // the server refuses a sign-in start without a challenge, so the probe sends a throwaway one
@@ -145,10 +158,10 @@ private final class NoRedirects: NSObject, URLSessionTaskDelegate {
                     newRequest request: URLRequest) async -> URLRequest? { nil }
 }
 
-/// The page's account message: "status", "apple" or "google", and only from the window's own page, never from a frame
-/// inside it (an embed would read the name and email, or open a sign-in).
+/// The page's account message: "status", "apple", "google" or "github", and only from the window's own page, never from a
+/// frame inside it (an embed would read the name and email, or open a sign-in).
 func accountAsk(_ body: Any, mainFrame: Bool) -> String? {
-    guard mainFrame, let ask = body as? String, ["status", "apple", "google", "github"].contains(ask) else { return nil }
+    guard mainFrame, let ask = body as? String, ["status"].contains(ask) || accountProviders.contains(ask) else { return nil }
     return ask
 }
 
@@ -212,17 +225,18 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
             }
         }
         do {
-            return try await client.isSetUp("apple") ? ["state": "signedOut"] : ["state": "notSetUp", "server": host]
+            let up = try await client.offeredProviders()
+            return up.isEmpty ? ["state": "notSetUp", "server": host] : ["state": "signedOut", "providers": up.joined(separator: ",")]
         } catch {
             return unreachable(error)
         }
     }
 
     /// "Continue with Apple" / "Google" / "GitHub": the server's sign-in in the system sheet, then the code exchange.
-    /// `done` is called exactly once. A provider the server has no sign-in for yet answers notSetUp (isSetUp).
+    /// `done` is called exactly once.
     func signIn(_ provider: String, done: @escaping (AccountReply) -> Void) {
         guard let server else { return done(["state": "off"]) }
-        guard ["apple", "google", "github"].contains(provider) else { return done(["state": "error", "message": "Unknown sign-in."]) }
+        guard accountProviders.contains(provider) else { return done(["state": "error", "message": "Unknown sign-in."]) }
         session?.cancel()
         pending?(["state": "cancelled"])
         pending = done

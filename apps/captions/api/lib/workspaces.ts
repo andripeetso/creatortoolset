@@ -129,7 +129,7 @@ export function renameWorkspace(w: Workspace, name: string): void {
  */
 export function setSignInWith(w: Workspace, owner: string, list: unknown[]): void {
   const want = (["google", "apple"] as const).filter((p) => list.includes(p));
-  if (want.length && !findUser(owner)?.identities?.some((i) => want.includes(i.provider))) {
+  if (want.length && !findUser(owner)?.identities?.some((i) => want.some((p) => p === i.provider))) {
     throw new Error(`Link your own ${want.map((p) => (p === "apple" ? "Apple" : "Google")).join(" or ")} account first (Settings → Account)`);
   }
   if (want.length) w.signInWith = [...want];

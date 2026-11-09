@@ -3,7 +3,7 @@ import { accessSync, constants, existsSync, readFileSync, readdirSync, realpathS
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import type { CliId, ConnectResult, LocalAiRow, LocalAiView, McpResult, SignInResult } from "../../contracts/local-ai";
+import { INSTALL_LINE, type CliId, type ConnectResult, type LocalAiRow, type LocalAiView, type McpResult, type SignInResult } from "../../contracts/local-ai";
 import { planFromCli, type PlanId } from "../../contracts/plans";
 import { DEFAULT_SETTINGS, DRIVER_MODELS, type ProviderInstance, type ProviderSettings } from "../../contracts/providers";
 import { checkInstance } from "../providers";
@@ -301,6 +301,14 @@ export async function signIn(id: CliId): Promise<SignInResult> {
   const line = `export PATH=${shq(path.dirname(bin))}:"$PATH"; ${shq(bin)} ${id === "claude" ? "auth login" : "login"}`;
   const r = await run("/usr/bin/osascript", ["-e", 'tell application "Terminal"', "-e", "activate", "-e", `do script ${appleStr(line)}`, "-e", "end tell"], { timeout: 10_000 });
   return r.code === 0 ? { ok: true } : { ok: false, message: "Couldn't open Terminal. Sign in there yourself, then press Check." };
+}
+
+/** Opens Terminal with the vendor's own install line (INSTALL_LINE): a fixed command, nothing from the request. */
+export async function installCli(id: CliId): Promise<SignInResult> {
+  const line = INSTALL_LINE[id];
+  if (!line) return { ok: false, message: "Gemini CLI installs on its own. Install it there, then press Check." };
+  const r = await run("/usr/bin/osascript", ["-e", 'tell application "Terminal"', "-e", "activate", "-e", `do script ${appleStr(line)}`, "-e", "end tell"], { timeout: 10_000 });
+  return r.code === 0 ? { ok: true } : { ok: false, message: "Couldn't open Terminal. Paste the install line there yourself, then press Check." };
 }
 
 /* ---- connect ---- */

@@ -37,7 +37,7 @@ const failed = (raw?: string): ConnectResult => ({
 describe("step 4 rows", () => {
   it("lists nothing and shows how to get Claude Code when no CLI is on this Mac", () => {
     const h = html(view([row({ found: false })]));
-    expect(h).toContain("How to get Claude Code");
+    expect(h).toContain("Install it yourself");
     expect(h).not.toContain("Found on this Mac");
     expect(h).not.toContain(">Connect<");
   });
@@ -158,12 +158,12 @@ describe("Codex is never the app's AI", () => {
   it("own-AI paths: signed out gets Sign in (never Connect); signed in gets the Creator Toolset action", () => {
     const out = html(view([codex({ signedIn: false })]), { talk: "both" });
     expect(out).toContain(LINE);
-    expect(out).toContain(">Sign in<");
+    expect(out).toContain(">Continue with ChatGPT<");
     expect(out).not.toContain(">Connect<");
     const signed = html(view([codex({ signedIn: true })]), { talk: "chat" });
     expect(signed).toContain("Let Codex use Creator Toolset");
     expect(signed).not.toContain(">Connect<");
-    expect(signed).not.toContain(">Sign in<");
+    expect(signed).not.toContain(">Continue with ChatGPT<");
   });
 
   it("a saved connection never shows Codex as connected", () => {
@@ -174,7 +174,7 @@ describe("Codex is never the app's AI", () => {
   it("app path with only Codex found: says Claude Code runs the app's AI, with the install steps", () => {
     const h = html(view([codex({ signedIn: true })]), { talk: "app" });
     expect(h).toContain("Creator Toolset's own AI runs on Claude Code. Claude Code isn't on this Mac yet.");
-    expect(h).toContain("How to get Claude Code");
+    expect(h).toContain("Install it yourself");
     expect(h).not.toContain(">Connect<");
   });
 

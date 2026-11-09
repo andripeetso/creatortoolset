@@ -1,17 +1,42 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { dismissSetup, MAKE_NAMES, resumeStep, SETUP_STEPS, setupDismissed, setupFinished, setupOpensItself, setupStepFromParam, toolForPath, toolsFor } from "./setup";
+import { dismissSetup, MAKE_NAMES, neighbours, resumeStep, SETUP_STEPS, setupDismissed, setupFinished, setupOpensItself, setupStepFromParam, stageOf, stepsFor, toolForPath, toolsFor } from "./setup";
 import { TOOLS } from "@contracts/tools";
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe("setup steps", () => {
-  it("has the same five steps on every path, in order", () => {
-    expect(SETUP_STEPS).toEqual(["how", "make", "project", "ai", "done"]);
+  it("keeps the click path as before (mode, make, project, agents, done) and puts Connect and Folders beside it", () => {
+    expect(SETUP_STEPS).toEqual(["how", "make", "project", "agents", "connect", "folders", "done"]);
+    expect(stepsFor("both")).toEqual(["how", "make", "project", "agents", "done"]);
+    expect(stepsFor(null)).toEqual(["how", "make", "project", "agents", "done"]);
+  });
+
+  it("skips Agents on the In the app path, and never puts Connect or Folders on the click path", () => {
+    expect(stepsFor("app")).toEqual(["how", "make", "project", "done"]);
+    expect(stepsFor("chat")).toContain("agents");
+    for (const t of ["app", "chat", "both", null] as const) {
+      expect(stepsFor(t)).not.toContain("connect");
+      expect(stepsFor(t)).not.toContain("folders");
+    }
+  });
+
+  it("gives the three bar stages to Connect, Agents and Folders, and none to the other steps", () => {
+    expect(SETUP_STEPS.map(stageOf)).toEqual([-1, -1, -1, 1, 0, 2, -1]);
+  });
+
+  it("goes Back and Continue along the mode's path, and a side step returns to done", () => {
+    expect(neighbours("make", "both")).toEqual({ before: "how", after: "project" });
+    expect(neighbours("agents", "both")).toEqual({ before: "project", after: "done" });
+    expect(neighbours("done", "both")).toEqual({ before: "agents", after: "done" });
+    expect(neighbours("done", "app")).toEqual({ before: "project", after: "done" });
+    expect(neighbours("connect", "both")).toEqual({ before: "done", after: "done" });
+    expect(neighbours("folders", "chat")).toEqual({ before: "done", after: "done" });
   });
 
   it("maps the old step ids to the step they now belong to", () => {
     expect(setupStepFromParam("tools")).toBe("make");
-    expect(setupStepFromParam("connect")).toBe("ai");
+    expect(setupStepFromParam("ai")).toBe("agents");
+    expect(setupStepFromParam("connect")).toBe("connect");
     expect(setupStepFromParam("left")).toBe("done");
     expect(setupStepFromParam("project")).toBe("project");
   });
@@ -34,8 +59,8 @@ describe("setupFinished", () => {
 
 describe("Not now and resume", () => {
   it("reopens at the step Not now was pressed on", () => {
-    vi.stubGlobal("sessionStorage", { getItem: () => "ai", setItem: () => {} });
-    expect(resumeStep()).toBe("ai");
+    vi.stubGlobal("sessionStorage", { getItem: () => "agents", setItem: () => {} });
+    expect(resumeStep()).toBe("agents");
   });
 
   it("starts at the first step when the stored step is not a step", () => {
