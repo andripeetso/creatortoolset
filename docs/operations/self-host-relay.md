@@ -10,7 +10,7 @@ to bottom. Each step ends with a check. If a check fails, fix it before going on
 
 ## 0. What you need
 
-- A Linux server with a public address, Docker Engine and Docker Compose, or Node.js 22.13 or newer if you run it
+- A Linux server with a public address and Docker Engine, or Node.js 22.13 or newer if you run it
   without Docker. The broker is light: it keeps a SQLite file and makes a few Cloudflare calls per link.
 - A domain on Cloudflare, with its DNS managed by Cloudflare. Example below: `example.com`.
 - A public HTTPS name for the broker, for example `connect.example.com`, reaching the server on port 443. A reverse
@@ -62,7 +62,7 @@ Fill in `apps/relay/.env`:
 | `RELAY_FREE_LIMIT` | computers linked per account; the default is 3 |
 | `RELAY_REAP_DRY_RUN` | keep `1` for now (see §6) |
 
-Never commit `.env`. The repository's `.gitignore` already lists it.
+Never commit `.env`. `apps/relay/.gitignore` already lists it.
 
 **Running in Docker:** the image sets `RELAY_DATA_DIR=/data` and `RELAY_LISTEN_HOST=0.0.0.0` itself. Delete the
 `RELAY_DATA_DIR` and `RELAY_LISTEN_HOST` lines from `.env` before the next step. If they stay, the container uses
@@ -180,8 +180,8 @@ origin.
 
 ## 7. What to keep, and what to back up
 
-The broker keeps account ids, computer ids and public keys, hostnames, tunnel ids, limit counts, and device codes as
-hashes. It keeps no content and no sessions.
+The broker keeps account ids, computer ids and public keys, computer names and local ports, hostnames, Cloudflare
+tunnel and DNS ids, the short device codes, and a hash of each device secret. It keeps no content and no sessions.
 
 Back up the `relay-data` volume (`/data` in the container): `relay.sqlite` and the signing key file. Use
 `sqlite3 relay.sqlite ".backup backup.sqlite"` for a consistent copy while it runs. Keep the copy somewhere that is
