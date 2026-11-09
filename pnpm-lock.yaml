@@ -304,6 +304,8 @@ importers:
 
   apps/mac: {}
 
+  apps/relay: {}
+
 packages:
 
   '@alloc/quick-lru@5.2.0':
