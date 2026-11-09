@@ -33,7 +33,7 @@ import { projectsApp } from "./projects";
 import { storiesApp } from "./stories";
 import { accountProfileApp } from "./account-profile";
 import { transcribeApp } from "./transcribe";
-import { authApp, getApiKeyUser, getSessionUser, innerCall, inviteApp, jobTokenUser, ruleFor, sessionOf, type AuthVars } from "./auth";
+import { authApp, getApiKeyUser, getSessionUser, innerCall, inviteApp, jobTokenUser, ruleFor, sessionOf, viaTunnel, type AuthVars } from "./auth";
 import { adminApp } from "./admin";
 import { workspaceApp } from "./workspace";
 import { viewAsTarget } from "./lib/view-as";
@@ -110,6 +110,8 @@ app.use(async (c, next) => {
   // on for a Mac server (CT_LOCAL=1) and for any computer linked to the connect broker: its tunnel must not answer other names
   if (process.env.CT_LOCAL !== "1" && !tunnelHostname()) return next();
   if (!localHostAllowed(new URL(c.req.url).hostname)) return c.json({ error: "Unknown host" }, 400);
+  // without APP_SECRET every request is the admin (getSessionUser): a tunnel must never serve that to the internet
+  if (!env.appSecret && viaTunnel(c)) return c.json({ error: "Set APP_SECRET on this computer before it answers on the tunnel" }, 403);
   if (crossOriginWrite(c.req.method, c.req.url, c.req.header("origin"), c.req.header("authorization"))) {
     return c.json({ error: "Sent from another site" }, 403);
   }
