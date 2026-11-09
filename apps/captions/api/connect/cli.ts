@@ -26,7 +26,7 @@ const REASONS: Record<string, string> = {
 export async function connectCli(argv: string[], io: CliIo): Promise<number> {
   const [cmd, ...rest] = argv;
   const flag = rest.indexOf("--broker");
-  if (cmd !== "connect" || (flag !== -1 && !rest[flag + 1]) || (flag === -1 && rest.length)) {
+  if (cmd !== "connect" || rest.length !== (flag === -1 ? 0 : 2) || (flag !== -1 && !rest[flag + 1])) {
     io.err("usage: creatortoolset connect [--broker <url>]");
     return 2;
   }

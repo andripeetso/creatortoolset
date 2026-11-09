@@ -107,6 +107,7 @@ describe("creatortoolset connect: refusals leave nothing linked", () => {
     expect((await run(["link"])).code).toBe(2);
     expect((await run(["connect", "--broker"])).code).toBe(2);
     expect((await run(["connect", "extra"])).code).toBe(2);
+    expect((await run(["connect", "--broker", "https://broker.test", "extra"])).code).toBe(2);
     expect(calls).toEqual([]);
   });
 
