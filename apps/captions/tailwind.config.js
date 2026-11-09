@@ -49,7 +49,8 @@ const themed = (() => {
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   darkMode: ["class"],
-  content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
+  // plug-ins (plugins/<id>) bring their own pages: their classes have to be generated too
+  content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}', './plugins/**/*.{js,ts,jsx,tsx}', '!./plugins/**/node_modules/**'],
   theme: {
     extend: {
       colors: {
