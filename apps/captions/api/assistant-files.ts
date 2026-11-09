@@ -4,7 +4,7 @@ import { readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AuthVars } from "./auth";
 import { env } from "./lib/env";
-import { assembleParts, MAX_UPLOAD_BYTES, PART_SIZE, readUploadState, receivePart, startUpload } from "./lib/uploads";
+import { assembleParts, MAX_UPLOAD_BYTES, PART_SIZE, partsStatus, readUploadState, receivePart, startUpload } from "./lib/uploads";
 import { mayUse, type SessionUser } from "./users";
 import { notesFromFile, probeDuration } from "./clips";
 import { addVersion } from "./review";
@@ -61,6 +61,12 @@ assistantFilesApp.post("/", async (c) => {
   const id = randomUUID();
   await startUpload(path.join(dirOf(user.username, id), "parts"), { total: size, partSize: PART_SIZE, name, mime: mime || "video/mp4", owner: user.username });
   return c.json({ id, partSize: PART_SIZE });
+});
+
+assistantFilesApp.get("/:id/parts", (c) => {
+  const id = c.req.param("id");
+  if (!UUID.test(id)) return c.json({ error: "Not found" }, 404);
+  return partsStatus(c, path.join(dirOf(c.get("user").username, id), "parts"), c.get("user"));
 });
 
 assistantFilesApp.post("/:id/parts/:partNumber", (c) => {
