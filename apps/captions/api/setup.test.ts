@@ -43,6 +43,17 @@ describe("setup: my tools, my plan, what is set up", () => {
     expect(v.detected).toBe("claude_max20");
   });
 
+  it("lists this account's other computers with what each reports, never another account's", async () => {
+    who = { username: "sam", role: "user", cloud: true, off: [] };
+    const pc = pairDevice("sam", "Workshop PC").device;
+    saveReport(pc.id, { at: Date.now(), drivers: [{ driver: "codex", installed: false }], homes: [] });
+    const foreign = pairDevice("mina", "Mina's Mac").device;
+    saveReport(foreign.id, { at: Date.now(), drivers: [{ driver: "claude", installed: true }], homes: [] });
+    const r = (await (await app.request("/api/setup/computers")).json()) as { others: Array<{ name: string; drivers: unknown[] }> };
+    expect(r.others.find((o) => o.name === "Workshop PC")?.drivers).toEqual([{ driver: "codex", installed: false }]);
+    expect(r.others.map((o) => o.name)).not.toContain("Mina's Mac");
+  });
+
   it("is for accounts only", async () => {
     who = { username: "visitor", role: "visitor", cloud: false, off: [] };
     expect((await app.request("/api/setup")).status).toBe(403);
