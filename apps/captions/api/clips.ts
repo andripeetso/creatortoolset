@@ -10,6 +10,7 @@ import {
   assembleParts,
   MAX_UPLOAD_BYTES,
   PART_SIZE,
+  partsStatus,
   readUploadState,
   receivePart,
   startUpload,
@@ -903,6 +904,12 @@ clipsApp.post("/init", async (c) => {
     await rm(sesDir(id), { recursive: true, force: true }).catch(() => {});
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
   }
+});
+
+clipsApp.get("/:id/parts", async (c) => {
+  const id = c.req.param("id");
+  if (!okId(id)) return c.json({ error: "Not found" }, 404);
+  return partsStatus(c, partsDir(id), c.get("user"));
 });
 
 clipsApp.post("/:id/parts/:partNumber", async (c) => {

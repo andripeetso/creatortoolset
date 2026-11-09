@@ -71,6 +71,19 @@ export async function receivedParts(dir: string, state: UploadState): Promise<nu
   );
 }
 
+/** GET <dir>/parts: what a browser resuming this upload can skip. Same owner rule as receivePart. */
+export async function partsStatus(
+  c: Context,
+  dir: string,
+  user: { username: string; role: string },
+): Promise<Response> {
+  const state = await readUploadState(dir);
+  if (!state || (state.owner !== user.username && user.role !== "admin")) {
+    return c.json({ error: "Not found" }, 404);
+  }
+  return c.json({ partSize: state.partSize, parts: await receivedParts(dir, state) });
+}
+
 export async function writeBody(c: Context, dest: string) {
   await pipeline(
     requestBodyStream(c),

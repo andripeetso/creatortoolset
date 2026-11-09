@@ -465,6 +465,31 @@ describe("a video dropped in the chat", () => {
     return { status: done.status, ...((await done.json()) as { id: string }) };
   };
 
+  it("an interrupted drop resumes from its last part; only its owner can ask which parts are there", async () => {
+    const cookie = await cookieOf("ana");
+    const size = 16 * 1024 * 1024 + 10;
+    const init = await app.request("/api/assistant/files", { method: "POST", ...json({ name: "Long.mp4", mime: "video/mp4", size }, { cookie }) });
+    const { id, partSize } = (await init.json()) as { id: string; partSize: number };
+    const sendPart = (n: number, bytes: Buffer) =>
+      app.request(`/api/assistant/files/${id}/parts/${n}`, {
+        method: "POST",
+        headers: { cookie, "upload-length": String(size), "upload-part-size": String(partSize), "content-length": String(bytes.length), "content-type": "application/octet-stream" },
+        body: bytes,
+      });
+    // the connection drops after part 1
+    expect((await sendPart(1, Buffer.alloc(partSize, 1))).status).toBe(200);
+    const status = async () => app.request(`/api/assistant/files/${id}/parts`, { headers: { cookie } });
+    expect(await status().then((r) => r.json())).toEqual({ partSize, parts: [1] });
+    expect((await app.request(`/api/assistant/files/${id}/complete`, { method: "POST", headers: { cookie } })).status).toBe(400);
+    // the browser comes back: it sends only what is missing
+    expect((await sendPart(2, Buffer.alloc(10, 2))).status).toBe(200);
+    expect(await status().then((r) => r.json())).toEqual({ partSize, parts: [1, 2] });
+    // another account, a made-up id and a bad id learn nothing
+    expect((await app.request(`/api/assistant/files/${id}/parts`, { headers: { cookie: await cookieOf("nico") } })).status).toBe(404);
+    expect((await app.request("/api/assistant/files/00000000-0000-4000-8000-000000000000/parts", { headers: { cookie } })).status).toBe(404);
+    expect((await app.request("/api/assistant/files/not-an-id/parts", { headers: { cookie } })).status).toBe(404);
+  });
+
   it("uploads, goes with the message as a fact, and use_file hands it to Review; nobody else can use it", async () => {
     const cookie = await cookieOf("ana");
     expect((await upload(cookie, "notes.txt", "text/plain", Buffer.from("hi"))).status).toBe(400);
