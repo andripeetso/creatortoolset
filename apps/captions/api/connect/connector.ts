@@ -147,9 +147,9 @@ export async function stopConnector(): Promise<void> {
     await gone;
     clearTimeout(killer);
   }
-  const r = run;
-  run = null;
-  await r;
+  // run clears itself when the supervisor has returned. Clearing it here would let a start during a stop (say, while a
+  // download is still pending) run a second supervisor, and a child nobody tracks would outlive unlink.
+  await run;
 }
 
 /** Unlink on this computer: stop the tunnel and forget the link. The broker's record is removed by its own unlink route. */
