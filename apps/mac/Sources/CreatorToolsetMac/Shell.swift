@@ -669,7 +669,7 @@ final class Shell: NSObject, ObservableObject {
             appTools = []
             return
         }
-        accountComputers = await brokerComputers()
+        Task { accountComputers = await brokerComputers() }   // a slow or down broker must not hold up the badge and notes
         let client = await client()
         sessions = (try? await client.get("/api/workshop/sessions/summary")) ?? []
         pluginRows = (try? await client.get("/api/activity")) ?? []
