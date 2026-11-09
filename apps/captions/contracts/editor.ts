@@ -236,3 +236,9 @@ export interface Draft {
   notes: string[];
   qa: QaReport;
 }
+
+/** Where footage picked from this computer goes in the Media Library (the A-roll folder unless a plug-in says otherwise). */
+export interface FootageTarget {
+  libraryId: string;
+  collectionId: string;
+}

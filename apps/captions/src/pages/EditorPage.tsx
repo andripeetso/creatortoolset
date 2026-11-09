@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { Check, Folder, Loader2, Plus } from "lucide-react";
 import type { EditSummary } from "@contracts/editor";
@@ -11,8 +11,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
-import { createEdit, listEdits, runEdit } from "@/lib/editor";
-import { listAssets, listCollections, listLibraries } from "@/lib/library";
+import { createEdit, footageTarget, listEdits, runEdit } from "@/lib/editor";
+import { changeFolderItems, getAsset, listAssets, listCollections, listLibraries, uploadFile } from "@/lib/library";
 import { cn } from "@/lib/utils";
 import { confirmHeavy, openToolSetup } from "@/lib/setup";
 import { ToolSetupLine } from "@/components/setup/ToolSetupLine";
@@ -123,6 +123,7 @@ function NewEditSheet({ open, onClose }: { open: boolean; onClose: () => void })
   const [targetS, setTargetS] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -191,6 +192,28 @@ function NewEditSheet({ open, onClose }: { open: boolean; onClose: () => void })
     }
   };
 
+  /** Files from this computer: filed in the library (the A-roll folder, or a plug-in\'s), then picked for this edit. */
+  const fromComputer = async (files: FileList | null) => {
+    if (!files?.length) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const target = await footageTarget();
+      for (const file of Array.from(files)) {
+        const up = await uploadFile(target.libraryId, file, () => {}, target.collectionId);
+        const assetId = up.assetId ?? up.duplicateOf;
+        if (!assetId) throw new Error(`${file.name} was not filed in the library`);
+        await changeFolderItems(target.libraryId, target.collectionId, [assetId], true);
+        const asset = await getAsset(target.libraryId, assetId);
+        setPicked((m) => new Map(m).set(asset.versionId, asset.title));
+      }
+    } catch (e) {
+      setError(message(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const create = async () => {
     if (!(await confirmHeavy("editor"))) return;
     setBusy(true);
@@ -249,6 +272,25 @@ function NewEditSheet({ open, onClose }: { open: boolean; onClose: () => void })
                 </select>
               )}
               <Input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search the library" aria-label="Search footage" className="min-w-0 flex-1" />
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                ref={fileRef}
+                type="file"
+                multiple
+                accept="video/*,audio/*"
+                className="hidden"
+                aria-label="Footage files from this computer"
+                onChange={(e) => {
+                  void fromComputer(e.target.files);
+                  e.target.value = "";
+                }}
+              />
+              <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => fileRef.current?.click()}>
+                <Plus className="h-3.5 w-3.5" />
+                Add files from this computer
+              </Button>
+              <span className="text-xs text-zinc-500">Filed in your Media Library as A-roll</span>
             </div>
             {folders.length > 0 && (
               <div role="group" aria-label="Folders" className="flex flex-wrap gap-1.5">

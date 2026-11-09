@@ -5,6 +5,7 @@ import { libraryDb } from "../library/db";
 import { enqueueJob } from "../library/jobs";
 import { ZipFile } from "yazl";
 import { toFcpxml } from "./fcpxml";
+import { footageTargetFor } from "./ingest";
 import { LINK_TTL_S, mediaPaths } from "./media";
 import { toOtio } from "./otio";
 import { qaOf } from "./qa";
@@ -49,6 +50,12 @@ editorApp.get("/", (c) => {
     .filter((e) => !e.trashedAt && e.createdBy === user)
     .sort((a, b) => b.updatedAt - a.updatedAt);
   return c.json(list.map(summaryOf));
+});
+
+// where footage picked from this computer is filed (api/editor/ingest.ts); registered before /:id
+editorApp.get("/footage-target", async (c) => {
+  const t = await footageTargetFor(c.get("user").username);
+  return t ? c.json(t) : notFound(c);
 });
 
 // the defaults are registered before /:id, so "defaults" is never read as an edit id

@@ -1,7 +1,7 @@
 import type { Hono, MiddlewareHandler } from "hono";
 import { isPluginGateId, isTool, type PluginGateId, type Tool } from "../../contracts/tools";
 import type { LibrarySlot } from "../../contracts/library-source";
-import type { EditFlag } from "../../contracts/editor";
+import type { EditFlag, FootageTarget } from "../../contracts/editor";
 import { DRIVERS, type DriverKind, type ProviderPreset } from "../../contracts/providers";
 import { registerLibrarySlot } from "../library/sources";
 import type { ActivityFn, MenuFn } from "../activity";
@@ -54,6 +54,9 @@ export interface ServerPlugin {
     beforeAdd?: (input: FinalsAdd) => string | null | Promise<string | null>;
     onAdded?: (input: FinalsAdd, source: FinalsSource, outcome: FinalsOutcome) => unknown;
   };
+  // editor.ingest: where footage an account adds to an AI Editor edit from its computer is filed (api/editor/ingest.ts).
+  // The first plug-in that answers wins; null or absent = the account's own library's A-roll folder. A throw refuses (fails closed).
+  editor?: { footageTarget?: (username: string) => FootageTarget | null | Promise<FootageTarget | null> };
   // Workshop "check now" for a post he pasted or shared (PATCH /sessions/:id with posted): reads it and matches it to a version.
   // The session's own write stays in core; the first plug-in that answers wins. `account` is the project's Instagram account.
   workshop?: {
@@ -456,4 +459,13 @@ export function mountAnsweredRoutes(app: Hono<any, any, any>, plugins: ServerPlu
     }
   }
   for (const plugin of plugins) for (const a of plugin.answers ?? []) app.route(a.path, a.routes);
+}
+
+/** The first loaded plug-in's footage target for this account (editor.ingest), or null for the default. */
+export async function pluginFootageTarget(username: string): Promise<FootageTarget | null> {
+  for (const p of loaded) {
+    const target = await p.editor?.footageTarget?.(username);
+    if (target) return target;
+  }
+  return null;
 }

@@ -1,4 +1,4 @@
-import type { Edit, EditPatch, EditSlot, EditStep, EditSummary, EditorDefaults, NewEdit, PlansPatch, Sentence, Take, VersionPlan } from "@contracts/editor";
+import type { Edit, EditPatch, EditSlot, EditStep, EditSummary, EditorDefaults, FootageTarget, NewEdit, PlansPatch, Sentence, Take, VersionPlan } from "@contracts/editor";
 
 /** The AI Editor's calls to api/editor/routes.ts. */
 
@@ -16,6 +16,7 @@ async function send<T>(url: string, method = "GET", body?: unknown): Promise<T> 
 const base = (id: string) => `/api/editor/${id}`;
 
 export const listEdits = () => send<EditSummary[]>("/api/editor");
+export const footageTarget = () => send<FootageTarget>("/api/editor/footage-target", "GET");
 export const createEdit = (e: NewEdit) => send<{ id: string }>("/api/editor", "POST", e);
 export const getEdit = (id: string) => send<Edit>(base(id));
 export const runEdit = (id: string, from?: EditStep) => send<Edit>(`${base(id)}/run`, "POST", from ? { from } : {});
