@@ -103,7 +103,6 @@ export default function ToolsetHome() {
   };
   const extrasGroup = TOOL_GROUPS.find((g) => g.id === "tools");
   const extras: Key[] = [...(extrasGroup?.tools ?? []), "record"];
-  const anyStatus = [...TOOL_GROUPS.flatMap((g) => g.tools), "record" as Key].some((k) => statusOf(k) !== null);
 
   // the current project's colour (Settings → Appearance can keep it violet), as CSS variables for the tiles and glow
   const c = PROJECT_COLORS[projectTint && project ? projectColor(project) : "violet"];
@@ -125,9 +124,9 @@ export default function ToolsetHome() {
           {!ok && <Lock className="absolute -bottom-1 -right-1 h-4 w-4 rounded-full bg-zinc-900 p-0.5 text-zinc-300" />}
           {ok && (k === "workshop" ? showCounts && <WorkshopBadge /> : k !== "record" && <Badge n={waiting[k] ?? 0} means={BADGE_MEANS[k]} />)}
           {ok && running[dest] ? <Running n={running[dest]} verb="writing" /> : null}
+          {ok && ready === false && <NeedsSetup />}
         </span>
         <span className={`text-xs leading-tight transition-colors duration-200 group-hover:text-zinc-50 ${quiet ? "text-zinc-400" : "text-zinc-300"}`}>{NAME[k]}</span>
-        {ready !== null && <Status ready={ready} />}
       </>
     );
     // a light hover: the icon and the name brighten a little, faded, never moving (owner, 2026-11-08)
@@ -140,11 +139,11 @@ export default function ToolsetHome() {
       );
     }
     return dest.startsWith("https://") ? (
-      <a key={k} href={dest} title={p.desc} className={className}>
+      <a key={k} href={dest} title={ready === false ? `${p.desc} · Needs setup` : p.desc} className={className}>
         {body}
       </a>
     ) : (
-      <Link key={k} to={dest} title={p.desc} onClick={(e) => openTool(e, dest)} className={className}>
+      <Link key={k} to={dest} title={ready === false ? `${p.desc} · Needs setup` : p.desc} onClick={(e) => openTool(e, dest)} className={className}>
         {body}
       </Link>
     );
@@ -241,12 +240,6 @@ export default function ToolsetHome() {
           ))}
         </div>
 
-        {anyStatus && (
-          <p className="flex items-center justify-center gap-4 text-[11px] text-zinc-500">
-            <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-emerald-500" aria-hidden />Ready</span>
-            <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-amber-500" aria-hidden />Needs setup</span>
-          </p>
-        )}
 
         {/* one row whatever the number: the tools spread across the width from 900 px, wrapping below */}
         <section>
@@ -265,15 +258,15 @@ export default function ToolsetHome() {
   );
 }
 
-/** The status under a tile's name: a dot and "Ready", or amber "Needs setup" (text, so touch and screen readers get it too). */
-function Status({ ready }: { ready: boolean }) {
-  return ready ? (
-    <span className="flex items-center gap-1 text-[10px] leading-tight text-emerald-600 dark:text-emerald-400">
-      <span className="h-2 w-2 rounded-full bg-emerald-500" aria-hidden />
-      Ready
-    </span>
-  ) : (
-    <span className="text-[10px] leading-tight text-amber-700 dark:text-amber-400">Needs setup</span>
+/** A tool that needs setup: a small amber dot on its icon, nothing for one that is ready (owner, 2026-11-09). */
+function NeedsSetup() {
+  return (
+    <span
+      role="img"
+      aria-label="Needs setup"
+      title="Needs setup"
+      className="absolute -left-1 -top-1 h-2.5 w-2.5 rounded-full bg-amber-400 ring-2 ring-[#0b0b10]"
+    />
   );
 }
 
