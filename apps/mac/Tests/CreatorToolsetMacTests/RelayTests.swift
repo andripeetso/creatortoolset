@@ -777,7 +777,9 @@ final class RelayTests: XCTestCase {
         let device = DeviceAPI(base: site, token: lines[1])
         let name = "Tiny Acrobatics " + UUID().uuidString.prefix(6)
         XCTAssertLessThan(try account.call("POST", "/api/workshop/projects", ["name": name]).status, 300)
-        XCTAssertEqual(try account.call("POST", "/api/assistant/turn", ["text": "What is my newest Workshop project called?"]).status, 202)
+        // CT_REAL_ASK: another thing to ask (one that changes something); the caller then checks what changed on the server
+        let ask = env["CT_REAL_ASK"] ?? "What is my newest Workshop project called?"
+        XCTAssertEqual(try account.call("POST", "/api/assistant/turn", ["text": ask]).status, 202)
         let req = try XCTUnwrap(RelayRequest(json: try device.call("POST", "/api/devices/relay/wait", ["blobs": true]).data))
         XCTAssertEqual(req.driver, "codex")
         XCTAssertNotNil(req.mcp)
@@ -789,7 +791,7 @@ final class RelayTests: XCTestCase {
         }, step: { label in _ = try? device.call("POST", "\(base)/step", ["label": label]) })
         _ = try device.call("POST", "\(base)/done", ["text": answer.text, "usage": answer.usage, "session_id": "", "session_state": ""])
         print("REAL CODEX TOOLS: \(cliVersion(cli) ?? cli) asked for \(name), answered: \(answer.text) usage=\(answer.usage)")
-        XCTAssertTrue(answer.text.contains(name))
+        if env["CT_REAL_ASK"] == nil { XCTAssertTrue(answer.text.contains(name)) } else { XCTAssertFalse(answer.text.isEmpty) }
     }
 
     /// CT_REAL_GROK=1 swift test --filter RealGrok: one tiny grok run through the grok on this Mac, the way the relay runs it.
