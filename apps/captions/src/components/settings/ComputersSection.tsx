@@ -92,7 +92,7 @@ export function ComputersSection() {
         <Row
           id="add-phone"
           title="Phone"
-          description="Scan a code to open the app in the phone's browser."
+          description="Scan a code with the Creator Toolset iPhone app, or with the phone's camera."
           control={
             <Button size="sm" variant="outline" onClick={() => setPhoning(true)}>
               Add phone
@@ -465,9 +465,9 @@ function AddPhoneDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
     body = (
       <div className="flex flex-col items-center gap-3 text-center">
         <img src={code.qr} alt="QR code: scan it with your phone's camera" className="size-52 rounded-lg bg-white p-2" />
-        <p className="text-sm">{wifi ? "On the same Wi-Fi as this computer, scan it with the phone's camera." : `Scan it with the phone's camera. It opens ${host}.`}</p>
+        <p className="text-sm">{wifi ? "On the same Wi-Fi as this computer, scan it in the iPhone app or with the phone's camera." : `Scan it in the iPhone app or with the phone's camera. It opens ${host}.`}</p>
         {code.expiresAt !== Infinity && (
-          <p className="text-xs text-muted-foreground">Scanning signs the phone's browser in as you. The code works once; when it runs out, a new one appears here.</p>
+          <p className="text-xs text-muted-foreground">Scanning signs the phone in as you. The code works once; when it runs out, a new one appears here.</p>
         )}
       </div>
     );
