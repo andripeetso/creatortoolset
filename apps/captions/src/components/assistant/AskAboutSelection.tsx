@@ -117,9 +117,10 @@ export function AskAboutSelection() {
       title="Ask the assistant about this (⌘⇧A)"
       style={{ left: at.x, top: at.y }}
       className={
-        "pointer-events-auto fixed z-[70] flex -translate-x-1/2 items-center gap-1.5 rounded-full border bg-popover px-3 py-1.5 text-xs font-medium text-popover-foreground shadow-lg shadow-black/20 " +
+        "pointer-events-auto fixed z-[70] flex items-center gap-1.5 rounded-full border bg-popover px-3 py-1.5 text-xs font-medium text-popover-foreground shadow-lg shadow-black/20 " +
         "transition-colors hover:bg-muted motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95 motion-safe:duration-150 " +
-        (at.below ? "origin-top" : "origin-bottom -translate-y-full")
+        // placed with `translate`, not `transform`: the enter keyframe sets `transform`, and the pill then slid into place
+        (at.below ? "origin-top [translate:-50%_0]" : "origin-bottom [translate:-50%_-100%]")
       }
     >
       <MessageCircle className="size-3.5" aria-hidden />

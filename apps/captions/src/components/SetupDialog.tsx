@@ -151,7 +151,7 @@ export function SetupDialog() {
   const onConnected = useCallback((on: boolean) => void (on && load()), [load]);
 
   const savedNote = note ? (
-    <p role="status" className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-full border border-border bg-popover px-4 py-2 text-xs text-popover-foreground shadow-lg motion-safe:animate-in motion-safe:fade-in">
+    <p role="status" className="fixed bottom-4 left-1/2 z-50 [translate:-50%_0] rounded-full border border-border bg-popover px-4 py-2 text-xs text-popover-foreground shadow-lg motion-safe:animate-in motion-safe:fade-in">
       {SAVED_NOTE}
     </p>
   ) : null;

@@ -69,8 +69,8 @@ const STATIC_ROWS = [
   { section: "own-ai", id: "connect-ai", title: "Use Creator Toolset from Claude Code or Codex", keywords: ["headless", "install", "claude code", "chatgpt", "codex", "mcp", "script", "connector", "ai access", "use from your ai", "terminal", "command"] },
   { section: "own-ai", id: "access-keys", title: "Access keys", keywords: ["key", "api key", "mcp", "script", "review", "full access", "claude"] },
   // Servers (Mac app)
-  { section: "servers", id: "servers-list", title: "Servers", keywords: ["server", "open", "rename", "remove", "address"] },
-  { section: "servers", id: "sign-in-another", title: "Open this server on another computer", description: "Make a sign-in link here and paste it into Add server there", keywords: ["server", "link", "sign in", "pair", "computer", "another computer"] },
+  { section: "servers", id: "servers-list", title: "Servers", keywords: ["server", "open", "rename", "remove", "address", "cloud", "own server", "self-host", "vps"] },
+  { section: "servers", id: "sign-in-another", title: "Sign-in link for another computer", description: "Signs another computer into this server as you", keywords: ["server", "link", "sign in", "pair", "computer", "another computer"] },
   // Team (hosted)
   { section: "team", id: "team-name", title: "Team name", keywords: ["team", "rename", "name"] },
   { section: "team", id: "team-members", title: "Members", keywords: ["member", "people", "role", "tools", "remove", "team"] },

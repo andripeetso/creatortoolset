@@ -44,8 +44,6 @@ function DialogOverlay({
   )
 }
 
-// Dialogs only fade and sit centred by margins, not a transform: the enter animation sets transform, so a
-// transform-centred dialog swept in from a corner.
 function DialogContent({
   className,
   children,
@@ -57,10 +55,12 @@ function DialogContent({
   return (
     <DialogPortal data-slot="dialog-portal">
       <DialogOverlay />
+      {/* centred with the `translate` property, not `transform`: the fade-in keyframe sets `transform`, and a
+          transform-centred dialog then slides in from the bottom right */}
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-          "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed top-1/2 left-1/2 z-50 grid w-full -translate-x-1/2 -translate-y-1/2 max-w-[calc(100%-2rem)] gap-4 rounded-lg border p-6 shadow-lg duration-200 outline-none sm:max-w-lg",
+          "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed top-1/2 left-1/2 z-50 grid w-full [translate:-50%_-50%] max-w-[calc(100%-2rem)] gap-4 rounded-lg border p-6 shadow-lg duration-200 outline-none sm:max-w-lg",
           className
         )}
         {...props}
