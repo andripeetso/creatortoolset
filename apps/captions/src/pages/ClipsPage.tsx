@@ -670,7 +670,7 @@ export default function ClipsPage() {
   }
 
   return (
-    <div className="relative flex min-h-screen flex-col items-center bg-background pb-10 text-foreground">
+    <div className="relative flex min-h-screen flex-col items-center bg-background pb-10 text-foreground [--bar-bg:hsl(var(--background))]">
       <AppBar tool="Video Notes" to={clipId ? "/clips" : undefined} trail={current?.name} account={!!me} className="mb-6">
         {isPublicSharePath(location.pathname) ? <ShareThemeSwitch /> : null}
         {!me && required ? (

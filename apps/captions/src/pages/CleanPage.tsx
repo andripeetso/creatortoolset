@@ -539,7 +539,7 @@ export default function CleanPage() {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-200">
-      <AppBar tool="Video Cleaner" className="sticky top-0 z-20 bg-zinc-950/95 backdrop-blur">
+      <AppBar tool="Video Cleaner">
           <button
             type="button"
             disabled={restoring}

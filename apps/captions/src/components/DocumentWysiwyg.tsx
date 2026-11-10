@@ -64,7 +64,7 @@ export function DocumentWysiwyg({
   return (
     <div>
       <div
-        className="sticky top-0 z-10 -mx-1 mb-3 flex flex-wrap gap-1 rounded-lg border border-border bg-background/95 p-1 backdrop-blur-sm"
+        className="sticky top-[calc(var(--bar-h)+0.5rem)] z-10 -mx-1 mb-3 flex flex-wrap gap-1 rounded-lg border border-border bg-background/95 p-1 backdrop-blur-sm"
         onMouseDown={(e) => e.preventDefault()}
       >
         <button

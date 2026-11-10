@@ -125,7 +125,7 @@ const AVAILABILITY_LIVE = { topic: ["connectors", "my-keys", "service-keys"], ow
 const label =
   "mb-2 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-zinc-500";
 const libraryEmptyClass =
-  "sticky top-[var(--library-chrome-h,0px)] z-10 bg-zinc-950 py-6 text-center text-sm text-zinc-600";
+  "sticky top-[calc(var(--bar-h)+var(--library-chrome-h,0px))] z-10 bg-zinc-950 py-6 text-center text-sm text-zinc-600";
 
 type LibrarySort = "pulled" | "posted" | "plays" | "account" | "age" | "rank" | "virality";
 type LibraryView = "feed" | "ideas" | "knowhow";
@@ -1732,7 +1732,7 @@ export default function InstagramPage() {
             {/* filters appear with the first post */}
             {hasPosts ? (
             <div className={selected.size > 0 ? "pb-16" : ""}>
-              <div ref={chromeRef} className="sticky top-0 z-20 flex flex-wrap items-center gap-2 bg-zinc-950 pb-4 pt-5">
+              <div ref={chromeRef} data-sticks className="sticky top-[var(--bar-h)] z-20 flex flex-wrap items-center gap-2 bg-zinc-950 pb-4 pt-5">
                 {knowhowView ? null : (
                   <>
                     <div role="radiogroup" aria-label="Status" className={cn(segmentList, "shrink-0")}>

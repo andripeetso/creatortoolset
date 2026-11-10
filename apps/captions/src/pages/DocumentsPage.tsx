@@ -821,7 +821,7 @@ export default function DocumentsPage() {
   const wide = Boolean(current && !composing);
 
   return (
-    <div className="flex min-h-screen flex-col bg-background pb-12 text-foreground">
+    <div className="flex min-h-screen flex-col bg-background pb-12 text-foreground [--bar-bg:hsl(var(--background))]">
       <AppBar tool="Guide Builder" to={docId ? "/documents" : undefined} trail={current?.name} account={!!me}>
         {isPublicSharePath(pathname) ? <ShareThemeSwitch /> : null}
         {!me && required ? (

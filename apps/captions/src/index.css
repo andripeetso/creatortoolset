@@ -144,6 +144,38 @@ html:not(.dark) body { background: #fafafa; }
 /* The Mac app (apps/mac) has no title bar: its window buttons sit at the left of the page's top bar. */
 html.mac-app:not(.mac-full) [data-titlebar] { padding-left: 92px; }
 
+/* The top bar (components/AppBar.tsx) stays where it is while a page scrolls under it, from tablet width up (a phone's
+   bar can wrap to two rows, so there it scrolls away as before). --bar-h is its height, for whatever else sticks below
+   it. Once the page has moved (data-scrolled, set by AppBar) the bar takes the page's colour, its hairline goes, and the
+   page fades out under it instead of meeting a hard edge. A row that sticks below the bar ([data-sticks]) gets the same
+   fade while it is stuck ([data-stuck], set by AppBar too). --bar-bg is the colour of the page they sit on. */
+:root { --bar-h: 0px; --fade-h: 1.5rem; }
+@media (min-width: 640px) { :root { --bar-h: 3.5rem; } }
+html { scroll-padding-top: var(--bar-h); }
+[data-appbar] { transition: background-color 150ms, border-color 150ms; }
+[data-appbar][data-scrolled] { background-color: var(--bar-bg, rgb(var(--zinc-950))); border-bottom-color: transparent; }
+[data-appbar-fade], [data-sticks]::after {
+  --c: var(--bar-bg, rgb(var(--zinc-950)));
+  height: var(--fade-h);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 150ms;
+  /* eased, not a straight ramp: most of the page is back within half the height */
+  background: linear-gradient(
+    to bottom,
+    var(--c) 0%,
+    color-mix(in srgb, var(--c) 90%, transparent) 10%,
+    color-mix(in srgb, var(--c) 70%, transparent) 24%,
+    color-mix(in srgb, var(--c) 42%, transparent) 42%,
+    color-mix(in srgb, var(--c) 18%, transparent) 62%,
+    color-mix(in srgb, var(--c) 4%, transparent) 82%,
+    transparent 100%
+  );
+}
+[data-sticks]::after { content: ""; position: absolute; inset: 100% 0 auto 0; }
+[data-appbar][data-scrolled] + [data-appbar-fade], [data-sticks][data-stuck]::after { opacity: 1; }
+[data-sticks][data-stuck] { border-bottom-color: transparent; }
+
 /* mobile PWA: no rubber-band scroll past the app, no flash on taps */
 body { overscroll-behavior-y: none; }
 * { -webkit-tap-highlight-color: transparent; }
