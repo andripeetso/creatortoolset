@@ -14,6 +14,7 @@ import { cleanExportOptions } from "../contracts/clean-edit";
 import { renderEdit } from "./lib/clean-edit";
 import { md5 } from "./lib/clean-media";
 import { cleanupAudit, inspectMetadata } from "./lib/clean-inspection";
+import { announceSoon } from "./lib/announce-soon";
 
 type Ctx = Context<{ Variables: AuthVars }>;
 const KEEP_MS = 60 * 60_000;
@@ -202,11 +203,13 @@ export function createCleanBatchApp(deps: {
               "Rendered batch exceeds 20 GB. Export fewer or shorter videos together.",
             );
           job.public.completed++;
+          announceSoon(owner, "clean");
           await deps.touch(source);
         }
         signal.throwIfAborted();
         job.public.state = "packing";
         delete job.public.currentName;
+        announceSoon(owner, "clean");
         const report = {
           version: 1,
           scope:
@@ -298,6 +301,7 @@ export function createCleanBatchApp(deps: {
       } finally {
         clearTimeout(deadline);
         release();
+        announceSoon(owner, "clean"); // ready, failed or cancelled
       }
     })();
     return c.json(job.public, 202);
