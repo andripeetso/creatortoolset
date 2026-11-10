@@ -130,6 +130,11 @@ func binary(_ driver: String, home: URL) -> String? {
 
 /// `<bin> <args>`'s output (stdout, else stderr), or nil when it can't start or runs past `seconds`.
 func runQuick(_ path: String, _ args: [String], seconds: Double) -> String? {
+    runResult(path, args, seconds: seconds)?.text
+}
+
+/// The same, with how it ended: status 0 is success (installInAI needs to know a command worked, not only what it said).
+func runResult(_ path: String, _ args: [String], seconds: Double) -> (status: Int32, text: String)? {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: path)
     process.arguments = args
@@ -147,7 +152,7 @@ func runQuick(_ path: String, _ args: [String], seconds: Double) -> String? {
         return nil
     }
     let text = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-    return text.isEmpty ? String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self) : text
+    return (process.terminationStatus, text.isEmpty ? String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self) : text)
 }
 
 /// The first line of `<bin> --version`, 2 s at most (the Mac relay version()).

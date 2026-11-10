@@ -114,6 +114,16 @@ final class Shell: NSObject, ObservableObject {
         view.onThisMacCommand = { [weak self] in self?.thisMacCommand($0) }
         view.onThisMacAsk = { [weak self] ask, done in
             guard let self else { return done(["aiOn": false, "paired": false]) }
+            // Headless access → Install: the open server into Claude Code or Codex on this Mac (off the main thread: a
+            // command-line tool runs). The reply is { ok } or { ok: false, problem }.
+            if let install = installAsk(ask) {
+                let url = self.base.appendingPathComponent("api/mcp").absoluteString
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let problem = installInAI(app: install.app, url: url, key: install.key)
+                    DispatchQueue.main.async { done(problem.map { ["ok": false, "problem": $0] } ?? ["ok": true]) }
+                }
+                return
+            }
             switch ask {
             case "state": done(self.thisMacState())
             case "access": Task { done(await self.accessFromOtherDevices()) }

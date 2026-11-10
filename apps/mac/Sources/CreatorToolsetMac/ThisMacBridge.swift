@@ -5,7 +5,59 @@ import AppKit
 import Foundation
 
 /// The questions the page may ask over the "thisMac" handler (TitleBar.swift); any other is answered as off.
+/// One more has parts of its own: "install:<claude|codex>:<key>" (installAsk).
 let thisMacAsks = ["state", "start", "access", "folder"]
+
+/// "install:<claude|codex>:<key>" from Settings → Headless access, as its parts; nil for anything else. The key is the
+/// one the page just made for that AI app (ctk_ and letters or digits), so nothing else can be put on a command line.
+func installAsk(_ ask: String) -> (app: String, key: String)? {
+    let parts = ask.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
+    guard parts.count == 3, parts[0] == "install", ["claude", "codex"].contains(parts[1]),
+          parts[2].range(of: "^ctk_[A-Za-z0-9]{16,}$", options: .regularExpression) != nil else { return nil }
+    return (parts[1], parts[2])
+}
+
+/// Codex's config.toml with one MCP server's table set to this address and key, and every other line as it was. Codex
+/// has no flag for the header, so the table is written here: the same lines the page's own command writes.
+func codexConfig(_ text: String, name: String, url: String, key: String) -> String {
+    var kept: [Substring] = []
+    var skipping = false
+    for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+        let t = line.trimmingCharacters(in: .whitespaces)
+        if t.hasPrefix("[") { skipping = t == "[mcp_servers.\(name)]" || t.hasPrefix("[mcp_servers.\(name).") }
+        if !skipping { kept.append(line) }
+    }
+    var out = kept.joined(separator: "\n")
+    while out.hasSuffix("\n") { out.removeLast() }
+    return (out.isEmpty ? "" : out + "\n\n") + "[mcp_servers.\(name)]\nurl = \"\(url)\"\nhttp_headers = { Authorization = \"Bearer \(key)\" }\n"
+}
+
+/// Installs the open server (its /api/mcp address, with the key the page just made) in Claude Code or Codex on this Mac:
+/// what the page's Install does on a server that is not this computer. nil when it is done, else one sentence.
+func installInAI(app: String, name: String = "creator-toolset", url: String, key: String,
+                 home: URL = FileManager.default.homeDirectoryForCurrentUser) -> String? {
+    let label = app == "claude" ? "Claude Code" : "Codex"
+    guard let bin = binary(app, home: home) else { return "\(label) isn't on this Mac." }
+    if app == "claude" {
+        _ = runResult(bin, ["mcp", "remove", "--scope", "user", name], seconds: 20)
+        guard let added = runResult(bin, ["mcp", "add", "--transport", "http", "--scope", "user", name, url, "--header", "Authorization: Bearer \(key)"], seconds: 30) else {
+            return "Claude Code did not answer. Try again."
+        }
+        if added.status == 0 { return nil }
+        // its own words, without the key it may repeat
+        let said = added.text.split(separator: "\n").first.map(String.init)?.replacingOccurrences(of: key, with: "…") ?? ""
+        return said.isEmpty ? "Claude Code could not add it." : String(said.prefix(200))
+    }
+    let file = home.appendingPathComponent(".codex/config.toml")
+    let old = (try? String(contentsOf: file, encoding: .utf8)) ?? ""
+    do {
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try codexConfig(old, name: name, url: url, key: key).write(to: file, atomically: true, encoding: .utf8)
+        return nil
+    } catch {
+        return "Could not write Codex's settings at ~/.codex/config.toml."
+    }
+}
 
 extension Shell {
     /// One `thismac-<what>` message: state, ai:on|off, select:<id>, add:<text>, rename:<id>:<name>, remove:<id>, forget,
