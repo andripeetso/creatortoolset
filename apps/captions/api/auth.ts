@@ -275,7 +275,13 @@ export const viaTunnel = (c: Context) => {
 };
 /** The Host the request was addressed to, without port (the request URL is built from it). */
 const hostOf = (c: Context) => new URL(c.req.url).hostname.toLowerCase();
-const localOnly = (c: Context) => (process.env.CT_LOCAL === "1" && !isLoopback(c)) || viaTunnel(c);
+/**
+ * Whether this request is held to the "own computer" password rule: a server on someone's own computer (CT_LOCAL=1, or
+ * one that runs its own tunnel) reached from anywhere but itself. A hosted server is never: there APP_SECRET is the
+ * operator's own password, and a CDN in front of it (Cloudflare) puts the same headers on every request as our tunnel.
+ */
+const ownComputer = () => process.env.CT_LOCAL === "1" || !!tunnelHostname();
+const localOnly = (c: Context) => (process.env.CT_LOCAL === "1" && !isLoopback(c)) || (ownComputer() && viaTunnel(c));
 const remoteRefused = (c: Context, user: UserRecord) => localOnly(c) && !!env.appSecret && verifyPassword(user, env.appSecret);
 const NO_PASSWORD_YET = "This computer's password isn't set yet. In Creator Toolset on this computer, turn on Access from other devices and choose it, then try again.";
 
