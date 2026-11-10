@@ -124,10 +124,10 @@ const RESUME_MAX_TOKENS = 100_000;
 const onMac = (user: SessionUser, own?: Selection) => !!workshopAi(user, own).only?.includes("mac");
 /** The asker's Perplexity key (their own, or the server's for the platform admin), or "" */
 const perplexityFor = (user: SessionUser) => keyFor(user, "PERPLEXITY_API_KEY").key;
-/** Claude on the Mac searches the web; Codex's sandbox has no network, so research never runs on it. */
-const onWebMac = (user: SessionUser, own?: Selection) => onMac(user, own) && workshopAi(user, own).mac?.provider?.driver === "claude";
+/** A Mac CLI that can search the web (Codex's read-only sandbox has no network, so research never runs on it). */
+const onWebMac = (user: SessionUser, own?: Selection) => onMac(user, own) && (workshopAi(user, own).mac?.provider?.driver ?? "claude") !== "codex";
 const researchFor = (user: SessionUser) => !!perplexityFor(user) || onWebMac(user);
-const RESEARCH_OFF = "Research needs Claude Code on your Mac (it searches the web) or your Perplexity key in Settings → My API keys";
+const RESEARCH_OFF = "Research needs an AI on your Mac that can search the web (Claude Code, Gemini CLI or Grok) or your Perplexity key in Settings → My API keys";
 const researchLabel = (user: SessionUser) => (onWebMac(user) ? "Claude (Mac)" : "Perplexity");
 const macLabel = (u?: MacUsage) => (u ? `Claude (Mac) · ${(u.tokens / 1000).toFixed(1)}k tokens · $${u.costUsd.toFixed(2)} API-equivalent` : "Claude (Mac)");
 
@@ -1481,7 +1481,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
       );
     }
     // Codex's sandbox has no network: an approved search runs only on Claude Code on the Mac (or Perplexity), say so otherwise
-    if ((approvedWeb && !research && (!folder || !onWebMac(user, session.ai))) || (ask.deep && !research)) notes.push("Web search isn't set up for this AI, so I could not check that on the web. Claude Code on your Mac can, or add a Perplexity key.");
+    if ((approvedWeb && !research && (!folder || !onWebMac(user, session.ai))) || (ask.deep && !research)) notes.push("Web search isn't set up for this AI, so I could not check that on the web. An AI on your Mac that can search can, or add a Perplexity key.");
     // a web search the model ran itself is said in the answer, in code (the model may not)
     const searched = steps.filter((x) => x.label.startsWith("Searched the web: ")).map((x) => x.label.slice("Searched the web: ".length));
     if (searched.length) notes.push(`Searched the web for ${searched.join(", ")}.`);
