@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router";
-import { onTopic, whenVisible } from "@/lib/sync";
+import { useCachedList, useCachedLoad } from "@/lib/local-cache";
 import {
   ArrowLeft,
   ScanSearch,
@@ -27,7 +27,6 @@ import {
   ingestPosts,
   instagramProfilesFromText,
   instagramUrlsFromText,
-  isProcessing,
   listAccounts,
   listPosts,
   shareSheetText,
@@ -39,6 +38,13 @@ import {
   type RunWhen,
   type SavedFor,
 } from "@/lib/instagram";
+
+/** Everything in the Analyzer, whatever it was kept for. */
+const ALL = { shelf: "all" } as const;
+/** The lists are read again when the Analyzer changes and each time a running job saves (a crawl's progress and its end). */
+const LISTS_LIVE = { topic: ["instagram", "instagram-jobs"] };
+/** What the Analyzer can read with changes when a login or a key does: the same topics as the desktop page's copy. */
+const AVAILABILITY_LIVE = { topic: ["connectors", "my-keys", "service-keys"], own: true };
 
 /** Survives React Strict Mode remount so a share-sheet handoff isn't ingested twice. */
 const ingestedShares = new Set<string>();
@@ -59,38 +65,40 @@ export default function MobileInstagramPage() {
     return text;
   });
   const [value, setValue] = useState(sharePrefill);
-  const [posts, setPosts] = useState<InstagramPost[]>([]);
-  const [accounts, setAccounts] = useState<InstagramAccount[]>([]);
-  const [avail, setAvail] = useState<InstagramAvailability | null>(null);
+  // saved copies (lib/local-cache): the page paints from them at once and they stay live. The accounts and what the
+  // Analyzer can read with are the desktop page's own copies; the posts are this page's (every shelf, per project).
+  const pid = currentProjectId ?? "";
+  const { items: posts, setItems: setPosts, refresh: loadPosts } = useCachedList<InstagramPost>(
+    allowed ? `instagram/posts?${JSON.stringify(ALL)}|p=${pid}` : null,
+    () => listPosts(ALL),
+    LISTS_LIVE,
+  );
+  const { items: allAccounts, setItems: setAccounts, refresh: loadAccounts } = useCachedList<InstagramAccount>(
+    allowed ? `instagram/accounts?p=${pid}` : null,
+    () => listAccounts(),
+    LISTS_LIVE,
+  );
+  const accounts = allAccounts.slice(0, 8);
+  const { data: avail, refresh: loadAvail } = useCachedLoad<InstagramAvailability>(
+    allowed ? "instagram/availability" : null,
+    getInstagramAvailability,
+    AVAILABILITY_LIVE,
+  );
   const [busy, setBusy] = useState<RunWhen | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [savedFor, setSavedFor] = useState<SavedFor[]>(["content"]);
   const [knowhow, setKnowhow] = useState(false);
 
   const refresh = useCallback(() => {
-    listPosts({ shelf: "all" })
-      .then(setPosts)
-      .catch(() => {});
-    listAccounts()
-      .then((list) => setAccounts(list.slice(0, 8)))
-      .catch(() => {});
-  }, []);
+    void loadPosts().catch(() => {});
+    void loadAccounts().catch(() => {});
+  }, [loadPosts, loadAccounts]);
 
+  // a link shared to the app is filed on this visit's own answer (crawl now or later), never on the saved one
+  const [availFresh, setAvailFresh] = useState(false);
   useEffect(() => {
-    if (!allowed) return;
-    refresh();
-    getInstagramAvailability()
-      .then(setAvail)
-      .catch(() => {});
-  }, [allowed, currentProjectId, refresh]);
-
-  const anyProcessing =
-    posts.some(isProcessing) || accounts.some((a) => a.status === "processing");
-  // while something runs: read again each time its job saves (lib/sync.ts)
-  useEffect(() => {
-    if (!allowed || !anyProcessing) return;
-    return onTopic("instagram-jobs", () => whenVisible("instagram-mobile", refresh));
-  }, [allowed, anyProcessing, refresh]);
+    if (allowed && sharePrefill) void loadAvail().then(() => setAvailFresh(true), () => {});
+  }, [allowed, sharePrefill, loadAvail]);
 
   const crawlNow = Boolean(avail?.available);
   const urls = instagramUrlsFromText(value);
@@ -113,7 +121,7 @@ export default function MobileInstagramPage() {
       for (const profile of handles) {
         try {
           const acc = await addAccount(profile, { run });
-          setAccounts((cur) => [acc, ...cur.filter((a) => a.id !== acc.id)].slice(0, 8));
+          setAccounts((cur) => [acc, ...cur.filter((a) => a.id !== acc.id)]);
         } catch (e) {
           notes.push(e instanceof Error ? e.message : String(e));
         }
@@ -144,7 +152,7 @@ export default function MobileInstagramPage() {
   };
 
   useEffect(() => {
-    if (!sharePrefill || !avail) return;
+    if (!sharePrefill || !avail || !availFresh) return;
     if (ingestedShares.has(sharePrefill)) return;
     const has =
       instagramUrlsFromText(sharePrefill).length +
@@ -154,7 +162,7 @@ export default function MobileInstagramPage() {
     void submit(sharePrefill, avail.available ? "now" : "later");
     // submit is recreated each render; the Set is the guard
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sharePrefill, avail]);
+  }, [sharePrefill, avail, availFresh]);
 
   const run: RunWhen = crawlNow ? "now" : "later";
 
@@ -297,7 +305,10 @@ export default function MobileInstagramPage() {
         {accounts
           .filter((a) => a.mine)
           .map((a) => (
-            <AccountStatsCard key={a.id} id={a.id} />
+            // the card reads its account itself and shows a moment later: its closed height is held for it
+            <div key={a.id} className="min-h-[42px]">
+              <AccountStatsCard id={a.id} />
+            </div>
           ))}
 
         <MobileAnalyzerLibrary posts={posts} onChanged={refresh} />
