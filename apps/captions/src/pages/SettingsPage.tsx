@@ -216,8 +216,9 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
               )}
             </label>
 
+            {/* both lists always keep their scrollbar's 8px, in the rail's own right padding (-me-2): nothing moves when one starts to scroll */}
             {needle ? (
-              <ul id="settings-results" role="listbox" aria-label="Results" className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
+              <ul id="settings-results" role="listbox" aria-label="Results" className="-me-2 flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-scroll">
                 {hits.map((hit, i) => (
                   <li
                     key={`${hit.section}#${hit.id ?? ""}`}
@@ -239,7 +240,7 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
                 )}
               </ul>
             ) : (
-              <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
+              <div className="-me-2 flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-scroll">
                 {navBlocks(navList).map((block, bi) => (
                   <div key={bi} className={cn("flex flex-col gap-0.5", bi > 0 && "mt-4")}>
                     {block.heading && (
@@ -335,7 +336,7 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
               </Tooltip>
             </header>
             <PageActionContext.Provider value={actionEl}>
-              <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
+              <div className="min-h-0 flex-1 overflow-y-scroll">
                 <div className="mx-auto max-w-4xl space-y-8 px-5 pt-6 pb-24 sm:px-6 sm:pb-12">{body}</div>
               </div>
             </PageActionContext.Provider>
