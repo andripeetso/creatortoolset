@@ -41,7 +41,7 @@ import {
   type StoredApify,
   updateApify,
 } from "./lib/instagram/apify";
-import { applyMineVisibility, fetchMineAccountStats, fetchPublicGridKeys, publicGridFromCatalog, type PublicGridKeys, fetchMineCatalog, fetchMineCatalogAll, fetchMineComments, fetchMineDailyInsights, fetchMineInsights, fetchMineProfile, fetchMineSharedToFeed, graphConfigured, graphCredsFor, mineUsesGraph, MINE_CATALOG_CAP, withGraphCreds, type MineAccountStats } from "./lib/instagram/graph";
+import { applyMineVisibility, fetchMineAccountStats, fetchPublicGridKeys, publicGridFromCatalog, type PublicGridKeys, fetchMineCatalog, fetchMineCatalogAll, fetchMineComments, fetchMineDailyInsights, fetchMineInsights, fetchMineProfile, fetchMineSharedToFeed, graphConfigured, graphCredsFor, discoveryCredsFor, fetchBusinessDiscovery, mineUsesGraph, MINE_CATALOG_CAP, withGraphCreds, type MineAccountStats } from "./lib/instagram/graph";
 import { mergeAccountStats, nextGraphDaily, type GraphDaily, type InsightDay } from "./lib/instagram/account-insights";
 import { annotateComments, QUESTION_MIN } from "./lib/instagram/comment-judge";
 import {
@@ -1901,7 +1901,8 @@ async function snapshotAccount(acc: AccountMeta, source: Snapshot["source"]): Pr
   });
 }
 
-type AccountPullMode = IngestMode | "graph";
+/** graph = the account's own login; discovery = another professional account through Meta's Business Discovery; apify = by handle. */
+type AccountPullMode = IngestMode | "graph" | "discovery";
 
 async function refreshProfile(
   acc: AccountMeta,
@@ -1913,7 +1914,8 @@ async function refreshProfile(
   const info = await loadProfile(acc.username, url, mode, user, signal);
   applyProfile(acc, info);
   await cacheAvatar(acc, info.profilePic, signal);
-  await snapshotAccount(acc, mode);
+  // Business Discovery is Meta's Graph API too
+  await snapshotAccount(acc, mode === "discovery" ? "graph" : mode);
 }
 
 async function loadProfile(
@@ -1924,6 +1926,10 @@ async function loadProfile(
   signal?: AbortSignal,
 ): Promise<ProfileInfo> {
   if (mode === "graph") return fetchMineProfile({ signal });
+  if (mode === "discovery") {
+    const bd = await discovered(username, user, signal);
+    if (bd) return bd.profile;
+  }
   return fetchProfileViaApify(url, { username: user, signal });
 }
 
@@ -1941,11 +1947,30 @@ async function fetchAccountFeed(
     if (!after) return fetchMineCatalogAll({ signal, since });
     return fetchMineCatalog({ cap, after, signal });
   }
+  if (mode === "discovery") {
+    const bd = await discovered(acc.username, user, signal);
+    if (bd) return { items: bd.items, more: false };
+  }
   return fetchCatalogViaApify(url, { username: user, cap, signal });
+}
+
+/**
+ * Another account through Meta's Business Discovery on the person's own Instagram login: its profile and 25 newest
+ * posts, free and official. Null when Meta cannot read it (a personal account, a handle it does not know) and the
+ * person has an Apify key to read it instead; with no key the reason is the error.
+ */
+async function discovered(handle: string, user: string, signal?: AbortSignal): Promise<{ profile: ProfileInfo; items: CatalogItem[] } | null> {
+  try {
+    return await withGraphCreds(discoveryCredsFor(user), () => fetchBusinessDiscovery(handle, { signal }));
+  } catch (e) {
+    if (signal?.aborted || !(await ingestGate(user)).ok) throw e;
+    return null;
+  }
 }
 
 async function accountPullMode(user: string, acc: { mine?: boolean; owner?: string }): Promise<AccountPullMode> {
   if (mineUsesGraph(acc)) return "graph";
+  if (discoveryCredsFor(user)) return "discovery";
   const gate = await ingestGate(user);
   if (!gate.ok) throw new InstagramError(gate.error, "APIFY", false);
   return gate.mode;
@@ -4269,7 +4294,8 @@ async function addAccountFor(
   const existing = await findAccount(user, "", username);
   if (run === "now") {
     const pullingMine = mine || existing?.mine === true;
-    if (!mineUsesGraph({ mine: pullingMine, owner: existing?.owner ?? user.username, username })) {
+    // read through its own login, or through Business Discovery on the person's: no Apify key needed
+    if (!mineUsesGraph({ mine: pullingMine, owner: existing?.owner ?? user.username, username }) && !discoveryCredsFor(user.username)) {
       const gate = await ingestGate(user.username);
       if (!gate.ok) return { ok: false, error: gate.error, code: gate.code, status: 409 };
     }
@@ -4430,7 +4456,7 @@ instagramApp.post("/accounts/:id/jobs", async (c) => {
       )
     : ["catalog"];
   if (!types.length) return c.json({ error: "Pick at least one job" }, 400);
-  if (!mineUsesGraph(meta)) {
+  if (!mineUsesGraph(meta) && !discoveryCredsFor(user.username)) {
     const gate = await ingestGate(user.username);
     if (!gate.ok) return c.json({ error: gate.error, code: gate.code }, 409);
   }

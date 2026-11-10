@@ -122,6 +122,12 @@ export function instagramLogin(user: string, username: string): { token: string;
   return { token: a.token, userId: a.platformId };
 }
 
+/** Any working Instagram login of this person (their own professional account), for Business Discovery reads of others. */
+export function anyInstagramLogin(user: string): { token: string; userId: string } | null {
+  const a = readConnectors(user).accounts.find((x) => x.platform === "instagram" && x.via === "login" && x.token && x.loginStatus !== "needs_reconnect" && !(x.expiresAt && x.expiresAt <= Date.now() && !x.refresh));
+  return a?.token ? { token: a.token, userId: a.platformId } : null;
+}
+
 /** Public view: no tokens, no snapshot history, no fingerprints, no speech, no post media URLs, no daily history. */
 export function publicAccount(a: StoredAccount): ConnectedAccount {
   const { token: _t, refresh: _r, expiresAt, snapshots: _s, prints: _p, voices: _v, daily: _d, ...rest } = a;

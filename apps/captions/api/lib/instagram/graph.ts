@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { instagramLogin } from "../connectors/store";
+import { anyInstagramLogin, instagramLogin } from "../connectors/store";
 import { parseInstagramUrl } from "./url";
 import type { CatalogItem, CatalogPage, CatalogVisibility, Comment, ProfileInfo, VisibilityBasis } from "./types";
 import { InstagramError } from "./base";
@@ -112,6 +112,15 @@ export function graphCredsFor(account?: { mine?: boolean; owner?: string; userna
   if (own) return own;
   if (!account.mine) return null;
   return (account.owner ?? "").toLowerCase() === (env.appSecret ? env.adminUsername : "local") ? envCreds() : null;
+}
+
+/**
+ * The login another account is read through by Business Discovery: the person's own Instagram login (Settings →
+ * Social accounts), else the install's own (the admin's, as for their account marked Mine). Null when the switch is off.
+ */
+export function discoveryCredsFor(owner?: string): GraphCreds | null {
+  if (!businessDiscoveryOn() || !owner) return null;
+  return anyInstagramLogin(owner) ?? graphCredsFor({ mine: true, owner });
 }
 
 /** Run a pull with one account's Graph login: every Graph call inside it uses that login. */
