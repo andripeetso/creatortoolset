@@ -8,7 +8,7 @@ import { planFromCli, type PlanId } from "../../contracts/plans";
 import { DEFAULT_SETTINGS, DRIVER_MODELS, type ProviderInstance, type ProviderSettings } from "../../contracts/providers";
 import { checkInstance } from "../providers";
 import { connectedOwn, ownSettings, saveSettings } from "./providers";
-import { isOnline, listDevices } from "./devices";
+import { deviceOf, isOnline } from "./devices";
 import { findUser, newApiKey, type UserRecord } from "../users";
 
 /**
@@ -327,14 +327,17 @@ export async function installCli(id: CliId): Promise<SignInResult> {
 
 /**
  * Connects one CLI as this account's AI: its sign-in is checked (a signed-in folder is used when the default one is
- * signed out), its instance is saved on this Mac, and a real check runs through the Mac. Mints no key.
+ * signed out), a real check runs through `mac` (this server's own Mac, the device the Mac app paired here), and only a
+ * passing check saves the instance. The first AI that connects becomes the default; a later one never takes it over
+ * (the AI step's picker does that). Mints no key.
  */
-export async function connectCli(username: string, id: CliId, home = os.homedir()): Promise<ConnectResult> {
+export async function connectCli(username: string, id: CliId, home = os.homedir(), mac?: string): Promise<ConnectResult> {
   const p = await probe(id, true, home);
   if (!p.found) return { state: "missing", signedIn: null, answered: null, message: MISSING };
   if (p.signedIn === false) return { state: "signin", signedIn: false, answered: null, message: "Not signed in yet." };
-  const device = listDevices((d) => d.owner === username).find((d) => isOnline(d.id));
-  if (!device) return { state: "mac", signedIn: p.signedIn, answered: null, message: MAC_ONLY };
+  // this server's own Mac: a device of this account that is answering now, never the first online one of its Macs
+  const device = mac ? deviceOf(mac) : undefined;
+  if (!device || device.owner !== username || !isOnline(device.id)) return { state: "mac", signedIn: p.signedIn, answered: null, message: MAC_ONLY };
 
   const cur = ownSettings(username) ?? structuredClone(DEFAULT_SETTINGS);
   const instId = `local-${id}`;
@@ -342,13 +345,16 @@ export async function connectCli(username: string, id: CliId, home = os.homedir(
   const instances = cur.instances.some((i) => i.id === instId) ? cur.instances.map((i) => (i.id === instId ? inst : i)) : [...cur.instances, inst];
   const def = cur.default.instance ? cur.default : { instance: instId, model: DRIVER_MODELS[id]?.[0] ?? "", effort: "xhigh" as const };
   const next: ProviderSettings = { ...cur, instances, default: def };
-  await saveSettings(next, username);
 
+  // the check runs before anything is saved: a failed check leaves the saved set, its default included, as it was
   const check = await checkInstance(username, inst, next);
-  if (check.ok) return { state: "ready", signedIn: p.signedIn, answered: true, ms: check.ms };
-  const plain = plainError(check.error ?? "");
-  if (plain.state === "signin") return { state: "signin", signedIn: false, answered: false, message: plain.message, raw: check.error };
-  return { state: "failed", signedIn: p.signedIn, answered: false, ms: check.ms, message: plain.message, raw: check.error };
+  if (!check.ok) {
+    const plain = plainError(check.error ?? "");
+    if (plain.state === "signin") return { state: "signin", signedIn: false, answered: false, message: plain.message, raw: check.error };
+    return { state: "failed", signedIn: p.signedIn, answered: false, ms: check.ms, message: plain.message, raw: check.error };
+  }
+  await saveSettings({ ...next, instances: next.instances.map((i) => (i.id === instId ? { ...i, lastCheck: { ok: true, at: check.at, ms: check.ms } } : i)) }, username);
+  return { state: "ready", signedIn: p.signedIn, answered: true, ms: check.ms };
 }
 
 /* ---- Creator Toolset in each CLI ---- */

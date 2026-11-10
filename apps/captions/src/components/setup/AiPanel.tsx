@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check } from "lucide-react";
 import { INSTALL_LINE, type CliId, type ConnectResult, type LocalAiId, type LocalAiRow, type LocalAiView, type SignInResult } from "@contracts/local-ai";
+import type { ProviderSettings, ProvidersView } from "@contracts/providers";
 import { Button } from "@/components/ui/button";
 import { ProviderLogo } from "@/components/settings/ProviderLogos";
+import { getProviders, modelsOf, saveOwn, thisMacDevice } from "@/lib/providers";
+import { startThisMac, thisMacBridge } from "@/lib/thisMac";
 
 export type Phase = "connecting" | "signingIn" | "timedOut";
 export type Results = Partial<Record<LocalAiId, ConnectResult>>;
@@ -88,8 +91,10 @@ function AgentRow({
   result,
   phase,
   installing,
+  usedByApp,
   onAction,
   onInstall,
+  onUseForApp,
 }: {
   id: CliId;
   found: boolean;
@@ -97,8 +102,11 @@ function AgentRow({
   result?: ConnectResult;
   phase?: Phase;
   installing: boolean;
+  /** this agent is the one that answers in the app (its default) */
+  usedByApp: boolean;
   onAction: (a: Action) => void;
   onInstall?: (id: CliId) => void;
+  onUseForApp?: (id: CliId) => void;
 }) {
   const v = row ? viewOf(row, result, phase) : null;
   const b = v?.button ?? null;
@@ -141,6 +149,11 @@ function AgentRow({
             {label}
           </Button>
         )}
+        {v?.connected && !usedByApp && onUseForApp && (
+          <Button size="sm" variant="outline" onClick={() => onUseForApp(id)}>
+            Use for the app
+          </Button>
+        )}
         {canInstall && (
           <Button size="sm" variant="outline" disabled={installing} onClick={() => onInstall?.(id)}>
             <span aria-hidden className="font-mono">›_</span> Install
@@ -151,19 +164,63 @@ function AgentRow({
   );
 }
 
+/**
+ * Which AI answers in the app and with which model (the default of the account's providers, as Settings → Your AI sets
+ * it). Only the AIs this account has connected are offered. Pure: `onPick` gets the whole new set to save.
+ */
+export function AnswerPicker({ view, onPick }: { view: ProvidersView; onPick: (s: ProviderSettings) => void }) {
+  const own = view.own;
+  const options = own?.instances.filter((i) => i.enabled) ?? [];
+  if (!own || !options.length) return null;
+  const cur = own.default;
+  const current = options.find((i) => i.id === cur.instance);
+  const models = current ? modelsOf(view, current) : [];
+  const pick = (instance: string, model: string) => onPick({ ...own, default: { instance, model, effort: cur.effort } });
+  const pickAi = (id: string) => {
+    const inst = options.find((i) => i.id === id);
+    if (inst) pick(inst.id, modelsOf(view, inst)[0] ?? cur.model);
+  };
+  const selectCls = "h-8 rounded-md border border-input bg-background px-2 text-sm";
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-sm">Answers in the app</span>
+      <select aria-label="AI that answers in the app" className={selectCls} value={current ? cur.instance : ""} onChange={(e) => pickAi(e.target.value)}>
+        {!current && <option value="">Pick one</option>}
+        {options.map((i) => (
+          <option key={i.id} value={i.id}>
+            {i.name}
+          </option>
+        ))}
+      </select>
+      {current && (
+        <select aria-label="Model" className={selectCls} value={cur.model} onChange={(e) => pick(cur.instance, e.target.value)}>
+          {(models.includes(cur.model) ? models : [cur.model, ...models]).map((m) => (
+            <option key={m} value={m}>
+              {m}
+            </option>
+          ))}
+        </select>
+      )}
+    </div>
+  );
+}
+
 export interface AiPanelViewProps {
   view: LocalAiView | null;
   results: Results;
   phases: Phases;
   installing?: boolean;
   installMsg?: string | null;
+  /** the instance id that answers in the app ("local-claude"…), so its row says so */
+  appAi?: string;
   onAction: (id: CliId, action: Action) => void;
   onInstall?: (id: CliId) => void;
+  onUseForApp?: (id: CliId) => void;
   onRefresh: () => void;
 }
 
 /** The agents on this computer: one row each, found or not, and the desktop apps it can see. Pure, for tests. */
-export function AiPanelView({ view, results, phases, installing = false, installMsg, onAction, onInstall, onRefresh }: AiPanelViewProps) {
+export function AiPanelView({ view, results, phases, installing = false, installMsg, appAi, onAction, onInstall, onUseForApp, onRefresh }: AiPanelViewProps) {
   if (!view) return <p className="text-sm text-muted-foreground">Looking for your AI on this computer…</p>;
   if (!view.local)
     return <p className="text-sm text-muted-foreground">Ask the owner of this server to connect the AI it runs on.</p>;
@@ -182,8 +239,10 @@ export function AiPanelView({ view, results, phases, installing = false, install
               result={results[id]}
               phase={phases[id]}
               installing={installing}
+              usedByApp={appAi === `local-${id}`}
               onAction={(a) => onAction(id, a)}
               onInstall={onInstall}
+              onUseForApp={onUseForApp}
             />
           );
         })}
@@ -204,6 +263,16 @@ export function AiPanelView({ view, results, phases, installing = false, install
       </div>
     </div>
   );
+}
+
+/**
+ * This Mac's device on this server. In the Mac app, Connect first turns this Mac's AI on and pairs it (the app does both
+ * and answers with the device); in a browser there is no Mac to pair, so the page's own device id is used.
+ */
+async function thisMacFor(): Promise<string | undefined> {
+  if (!thisMacBridge()) return thisMacDevice();
+  const state = await startThisMac();
+  return state?.device ?? thisMacDevice();
 }
 
 /** One request, bounded: no answer in time (or no server) is null, which the caller turns into a plain message. */
@@ -234,6 +303,7 @@ export function AiPanel({ onConnectedChange }: { onConnectedChange?: (on: boolea
   const [phases, setPhases] = useState<Phases>({});
   const [installing, setInstalling] = useState(false);
   const [installMsg, setInstallMsg] = useState<string | null>(null);
+  const [providers, setProviders] = useState<ProvidersView | null>(null);
   const timers = useRef<number[]>([]);
 
   // fresh: Check again. The server re-reads PATH and the sign-in; a plain read may answer from its last look.
@@ -242,18 +312,30 @@ export function AiPanel({ onConnectedChange }: { onConnectedChange?: (on: boolea
     if (v) setView(v);
     return v;
   }, []);
+  const loadProviders = useCallback(() => getProviders().then(setProviders, () => {}), []);
   const setPhase = (id: LocalAiId, p: Phase | undefined) => setPhases((s) => ({ ...s, [id]: p }));
 
   const connect = useCallback(
     async (id: CliId) => {
       setPhase(id, "connecting");
-      const r = await postJson<ConnectResult>("/api/setup/ai/connect", { id });
+      const device = await thisMacFor();
+      const r = await postJson<ConnectResult>("/api/setup/ai/connect", { id, device });
       setResults((s) => ({ ...s, [id]: r ?? { state: "failed", signedIn: null, answered: null, message: "it took too long or couldn't be reached, so try again" } }));
       setPhase(id, undefined);
       await refresh(true);
+      await loadProviders();
     },
-    [refresh],
+    [refresh, loadProviders],
   );
+
+  /** Saves the account's providers with a new default (the picker, or "Use for the app"); a failed save says so. */
+  const pickDefault = (s: ProviderSettings) => saveOwn(s).then(setProviders, () => setInstallMsg("Couldn't save that. Try again."));
+  const useForApp = (id: CliId) => {
+    const own = providers?.own;
+    const inst = own?.instances.find((i) => i.id === `local-${id}`);
+    if (!own || !providers || !inst) return;
+    void pickDefault({ ...own, default: { instance: inst.id, model: modelsOf(providers, inst)[0] ?? own.default.model, effort: own.default.effort } });
+  };
 
   const waitForSignIn = (id: CliId) => {
     setPhase(id, "signingIn");
@@ -290,24 +372,30 @@ export function AiPanel({ onConnectedChange }: { onConnectedChange?: (on: boolea
 
   useEffect(() => {
     void refresh();
+    void loadProviders();
     const list = timers.current;
     return () => list.forEach((t) => window.clearInterval(t));
-  }, [refresh]);
+  }, [refresh, loadProviders]);
 
   useEffect(() => {
     onConnectedChange?.(anyConnected(view, results));
   }, [view, results, onConnectedChange]);
 
   return (
-    <AiPanelView
-      view={view}
-      results={results}
-      phases={phases}
-      installing={installing}
-      installMsg={installMsg}
-      onAction={(id, action) => (action === "signin" ? void signIn(id) : void connect(id))}
-      onInstall={(id) => void install(id)}
-      onRefresh={() => void refresh(true)}
-    />
+    <div className="space-y-3">
+      {providers && <AnswerPicker view={providers} onPick={(s) => void pickDefault(s)} />}
+      <AiPanelView
+        view={view}
+        results={results}
+        phases={phases}
+        installing={installing}
+        installMsg={installMsg}
+        appAi={providers?.own?.default.instance}
+        onAction={(id, action) => (action === "signin" ? void signIn(id) : void connect(id))}
+        onInstall={(id) => void install(id)}
+        onUseForApp={useForApp}
+        onRefresh={() => void refresh(true)}
+      />
+    </div>
   );
 }

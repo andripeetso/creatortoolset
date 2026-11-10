@@ -46,7 +46,7 @@ import { isPlan, planFromCli, type PlanId } from "../contracts/plans";
  *   PUT  /api/setup  { tools?: Tool[], plan?: PlanId | null, done?: boolean } → SetupView
  *   GET  /api/setup/ai[?fresh=1]       → LocalAiView   the AI CLIs found on this computer (owner only; fresh reads them again)
  *   POST /api/setup/ai/signin  { id }  → SignInResult  opens Terminal with the tool's own sign-in (CT_LOCAL=1)
- *   POST /api/setup/ai/connect { id }  → ConnectResult connects it as this account's AI after a real check (always 200)
+ *   POST /api/setup/ai/connect { id, device } → ConnectResult connects it as this account's AI after a real check (always 200)
  *   POST /api/setup/ai/mcp     { id }  → McpResult     adds Creator Toolset to it, with one new Full key (CT_LOCAL=1)
  *   POST /api/setup/ai/install { id }  → SignInResult  opens Terminal with the vendor's install line (CT_LOCAL=1)
  *   POST /api/setup/join { link }      → { ok, server, device } joins another server behind its one-time link (not hosted)
@@ -231,9 +231,11 @@ setupApp.post("/ai/signin", async (c) => {
 
 setupApp.post("/ai/connect", async (c) => {
   if (!ownComputer(c.get("user"))) return c.json({ state: "mac", signedIn: null, answered: null, message: MAC_ONLY });
-  const id = cliOf(((await c.req.json().catch(() => null)) as { id?: unknown } | null)?.id);
+  const b = (await c.req.json().catch(() => null)) as { id?: unknown; device?: unknown } | null;
+  const id = cliOf(b?.id);
   if (!id) return c.json({ error: "Pick Claude Code, Codex or Gemini CLI" }, 400);
-  return c.json(await connectCli(c.get("user").username, id));
+  // device: this Mac's own id on this server (the Mac app's page reports it); the check runs through that Mac only
+  return c.json(await connectCli(c.get("user").username, id, undefined, typeof b?.device === "string" ? b.device : undefined));
 });
 
 setupApp.post("/ai/install", async (c) => {
