@@ -2785,7 +2785,7 @@ export async function describeVersion(
   const ask: ChatMessage = { id: randomUUID(), role: "user", text, at: now, docId: piece.id, captionFor: v.key, auto: true, status: "done" };
   const reply: ChatMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, docId: piece.id, status: "thinking" };
   if (!(await startTurn(meta.id, [ask, reply]))) return false;
-  await inJob([meta.owner], () => runTurn(meta, sessionOf(owner), ask, reply.id));
+  await inJob([meta.owner], () => runTurn(meta, sessionOf(owner), ask, reply.id), meta.id);
   return true;
 }
 
@@ -3084,7 +3084,7 @@ workshopApp.post("/sessions/:id/chat", async (c) => {
   };
   const reply: ChatMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, docId: input.docId, status: "thinking" };
   if (!(await startTurn(meta.id, [ask, reply], input.retryOf))) return c.json({ error: "Still thinking about the last message — wait for it" }, 409);
-  void inJob([meta.owner, user.username], () => runTurn(meta, user, ask, reply.id));
+  void inJob([meta.owner, user.username], () => runTurn(meta, user, ask, reply.id), meta.id);
   return c.json({ ask, reply }, 202);
 });
 
@@ -3126,7 +3126,7 @@ async function beginAudit(meta: SessionMeta, user: SessionUser, input: AuditInpu
   };
   const reply: ChatMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, docId: input.docId, status: "thinking", audit: { target, depth: input.depth } };
   if (!(await startTurn(meta.id, [ask, reply]))) return { error: "Still working on the last message — wait for it", status: 409 };
-  void inJob([meta.owner, user.username], () => runAudit(meta, user, reply.id, input, target));
+  void inJob([meta.owner, user.username], () => runAudit(meta, user, reply.id, input, target), meta.id);
   return { ask, reply };
 }
 
@@ -3257,7 +3257,7 @@ workshopApp.post("/sessions/:id/reviews", async (c) => {
   const ask: ChatMessage = { id: randomUUID(), role: "user", text: "Read it as a follower would.", at: now, docId: doc.id, status: "done" };
   const reply: ChatMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, docId: doc.id, status: "thinking", stage: "thinking", provider: readerName(fableProvider(user)), review: { model: REVIEW_MODEL } };
   if (!(await startTurn(meta.id, [ask, reply]))) return c.json({ error: "Still working on the last message — wait for it" }, 409);
-  void inJob([meta.owner, user.username], () => runReview(meta, user, reply.id, doc.id));
+  void inJob([meta.owner, user.username], () => runReview(meta, user, reply.id, doc.id), meta.id);
   return c.json({ ask, reply }, 202);
 });
 
@@ -3295,7 +3295,7 @@ workshopApp.post("/sessions/:id/chat/:messageId/proposal", async (c) => {
     const ask: ChatMessage = { id: randomUUID(), role: "user", text: `Search the web: ${question}`, at: now, docId: m.docId, status: "done", web: question };
     const reply: ChatMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, docId: m.docId, status: "thinking" };
     if (!(await startTurn(meta.id, [ask, reply]))) return c.json({ error: "Still working on the last message — wait for it" }, 409);
-    void inJob([meta.owner, user.username], () => runTurn(meta, user, ask, reply.id));
+    void inJob([meta.owner, user.username], () => runTurn(meta, user, ask, reply.id), meta.id);
     const proposal: Proposal = { ...m.proposal, status: "accepted", depth, question };
     await patchMessage(meta.id, m.id, { proposal });
     return c.json({ message: { ...m, proposal }, ask, reply }, 202);
@@ -3303,7 +3303,7 @@ workshopApp.post("/sessions/:id/chat/:messageId/proposal", async (c) => {
   const ask: ChatMessage = { id: randomUUID(), role: "user", text: `Run deep research: ${question}`, at: now, docId: m.docId, status: "done" };
   const reply: ChatMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, docId: m.docId, status: "thinking", research: { question, depth: "deep", status: "running" } };
   if (!(await startTurn(meta.id, [ask, reply]))) return c.json({ error: "Still working on the last message — wait for it" }, 409);
-  void inJob([meta.owner, user.username], () => runResearch(meta, user, reply.id, question));
+  void inJob([meta.owner, user.username], () => runResearch(meta, user, reply.id, question), meta.id);
   return c.json({ message: await settle("accepted"), ask, reply }, 202);
 });
 
@@ -3769,7 +3769,7 @@ workshopApp.post("/sessions/:id/generate", async (c) => {
     generating.delete(draft.id);
     return c.json({ error: "Not found" }, 404);
   }
-  void inJob([next.owner, user.username], () => runDraft(next, draft, user));
+  void inJob([next.owner, user.username], () => runDraft(next, draft, user), next.id);
   return c.json({ draft }, 202);
 });
 

@@ -8,25 +8,32 @@ import { announce } from "../sync";
  * and once more the moment the work ends if it saved anything. Saves outside a job (a request's own write) are
  * announced by the request. Callbacks someone else calls (a Mac's answer arrives on the Mac's own request) are wrapped
  * in keepJob where they are made, so their saves still count.
+ * A job about one session (`session`) announces only that session ("workshop/s/<id>": its own page refetches, not every
+ * Workshop list) while it runs, and the whole Workshop once at the end (lists, the summary, Home's badges).
  */
-type Job = { owners: string[]; saved: boolean };
+type Job = { owners: string[]; saved: boolean; session?: string };
 const job = new AsyncLocalStorage<Job>();
 export const THROTTLE = 1000;
 const last = new Map<string, number>();
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
-function fire(owner: string) {
-  const t = timers.get(owner);
+const topicOf = (j: Job) => (j.session ? `workshop/s/${j.session}` : "workshop");
+
+function fire(owner: string, j: Job, end = false) {
+  const topic = topicOf(j);
+  const id = `${owner}|${topic}`;
+  const t = timers.get(id);
   if (t) clearTimeout(t);
-  timers.delete(owner);
-  last.set(owner, Date.now());
-  announce(owner, "workshop");
+  timers.delete(id);
+  last.set(id, Date.now());
+  announce(owner, topic);
+  if (end && j.session) announce(owner, "workshop");
 }
 
-export function inJob<T>(owners: Array<string | undefined>, fn: () => Promise<T>): Promise<T> {
-  const j: Job = { owners: [...new Set(owners.filter((o): o is string => !!o))], saved: false };
+export function inJob<T>(owners: Array<string | undefined>, fn: () => Promise<T>, session?: string): Promise<T> {
+  const j: Job = { owners: [...new Set(owners.filter((o): o is string => !!o))], saved: false, session };
   // the end: what it saved last shows at once, not a throttle later
-  return job.run(j, fn).finally(() => j.saved && j.owners.forEach(fire));
+  return job.run(j, fn).finally(() => j.saved && j.owners.forEach((o) => fire(o, j, true)));
 }
 
 /** A function, or an object of them, that keeps the job it was made in when someone else calls it. */
@@ -44,13 +51,14 @@ export function saved(): void {
   if (!j) return;
   j.saved = true;
   for (const owner of j.owners) {
-    if (timers.has(owner)) continue;
-    const wait = THROTTLE - (Date.now() - (last.get(owner) ?? 0));
-    if (wait <= 0) fire(owner);
+    const id = `${owner}|${topicOf(j)}`;
+    if (timers.has(id)) continue;
+    const wait = THROTTLE - (Date.now() - (last.get(id) ?? 0));
+    if (wait <= 0) fire(owner, j);
     else {
-      const t = setTimeout(() => fire(owner), wait);
+      const t = setTimeout(() => fire(owner, j), wait);
       t.unref?.();
-      timers.set(owner, t);
+      timers.set(id, t);
     }
   }
 }

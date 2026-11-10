@@ -124,9 +124,9 @@ export default function WorkshopSessionPage() {
   // paints its layout with placeholders.
   const keys = sessionKeys(sessionId);
   const on = allowed && !!sessionId;
-  const sessionLoad = useCachedLoad<SessionRecord>(on ? keys.session : null, () => getSession(sessionId));
-  const docsLoad = useCachedLoad<WorkshopDocument[]>(on ? keys.docs : null, () => listDocuments(sessionId));
-  const chatLoad = useCachedLoad<ChatMessage[]>(on ? keys.chat : null, () => listChat(sessionId));
+  const sessionLoad = useCachedLoad<SessionRecord>(on ? keys.session : null, () => getSession(sessionId), keys.live);
+  const docsLoad = useCachedLoad<WorkshopDocument[]>(on ? keys.docs : null, () => listDocuments(sessionId), keys.live);
+  const chatLoad = useCachedLoad<ChatMessage[]>(on ? keys.chat : null, () => listChat(sessionId), keys.live);
   const session = sessionLoad.data;
   const setSession = sessionLoad.set;
   // a failed refresh keeps the saved copy on screen (offline, a restart); without one the error shows

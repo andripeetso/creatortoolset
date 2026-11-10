@@ -133,11 +133,13 @@ describe("a turn's saves reach open windows", () => {
     await new Promise((r) => setTimeout(r, 1100)); // past the throttle
     heard.mockClear();
     await hooks!.onDelta!(answer({ reply: "Half way" }).slice(0, -2)); // called here, outside the turn's own chain
-    await vi.waitFor(() => expect(heard).toHaveBeenCalledWith("alex", "workshop"), { timeout: 2500 }); // a throttle later at most
+    // only this session's own page refetches while the reply is written, a throttle later at most
+    await vi.waitFor(() => expect(heard).toHaveBeenCalledWith("alex", `workshop/s/${id}`), { timeout: 2500 });
+    expect(heard).not.toHaveBeenCalledWith("alex", "workshop");
     heard.mockClear();
     finish();
     await settled(id, body.reply!.id);
-    await vi.waitFor(() => expect(heard).toHaveBeenCalledWith("alex", "workshop"));
+    await vi.waitFor(() => expect(heard).toHaveBeenCalledWith("alex", "workshop")); // the end: every Workshop list
   });
 });
 

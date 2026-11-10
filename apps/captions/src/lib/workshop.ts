@@ -1125,7 +1125,13 @@ export const shareDeliveryUrl = (token: string, id: string, download = false) =>
 export const shareDeliveriesZipUrl = (token: string) => `/api/workshop-share/${token}/deliveries.zip`;
 
 // ---- a session's saved copies (lib/local-cache): the session, its pieces and its chat, each painted at once and live
-export const sessionKeys = (id: string) => ({ session: `workshop/s/${id}`, docs: `workshop/s/${id}/docs`, chat: `workshop/s/${id}/chat` });
+/** A session's saved copies, and the topics that refetch them: any Workshop change, and its own (a reply while it runs: api/lib/workshop/job.ts). */
+export const sessionKeys = (id: string) => ({
+  session: `workshop/s/${id}`,
+  docs: `workshop/s/${id}/docs`,
+  chat: `workshop/s/${id}/chat`,
+  live: { topic: ["workshop", `workshop/s/${id}`] },
+});
 /** The sessions kept with their contents, most recently opened or warmed first; older ones are dropped (every saved copy is read into memory at start). */
 export const SAVED_SESSIONS = 30;
 const SAVED_INDEX = "workshop/saved";

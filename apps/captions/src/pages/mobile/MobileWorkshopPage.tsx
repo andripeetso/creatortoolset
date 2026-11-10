@@ -156,9 +156,9 @@ export function MobileWorkshopSessionPage() {
   // the same saved copies as the desktop page (lib/local-cache): they paint at once and stay live
   const keys = sessionKeys(sessionId);
   const on = allowed && !!sessionId;
-  const sessionLoad = useCachedLoad(on ? keys.session : null, () => getSession(sessionId));
-  const docsLoad = useCachedLoad<WorkshopDocument[]>(on ? keys.docs : null, () => listDocuments(sessionId));
-  const chatLoad = useCachedLoad<ChatMessage[]>(on ? keys.chat : null, () => listChat(sessionId));
+  const sessionLoad = useCachedLoad(on ? keys.session : null, () => getSession(sessionId), keys.live);
+  const docsLoad = useCachedLoad<WorkshopDocument[]>(on ? keys.docs : null, () => listDocuments(sessionId), keys.live);
+  const chatLoad = useCachedLoad<ChatMessage[]>(on ? keys.chat : null, () => listChat(sessionId), keys.live);
   const title = sessionLoad.data?.title ?? "Session";
   const docs = docsLoad.data ?? [];
   const messages = chatLoad.data ?? [];

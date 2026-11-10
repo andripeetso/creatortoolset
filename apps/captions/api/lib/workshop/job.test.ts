@@ -50,6 +50,27 @@ describe("inJob / saved", () => {
     expect(heard).toEqual([["tiny", "workshop"]]);
   });
 
+  it("a job about one session announces only that session while it runs, and the whole Workshop at the end", async () => {
+    vi.useFakeTimers();
+    vi.advanceTimersByTime(THROTTLE * 2);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const done = inJob(["tiny"], async () => {
+      saved();
+      await gate;
+      saved();
+    }, "s1");
+    await Promise.resolve();
+    expect(heard).toEqual([["tiny", "workshop/s/s1"]]);
+    heard.length = 0;
+    release();
+    await done;
+    expect(heard).toEqual([
+      ["tiny", "workshop/s/s1"],
+      ["tiny", "workshop"],
+    ]);
+  });
+
   it("is quiet outside a job", () => {
     saved();
     expect(heard).toEqual([]);
