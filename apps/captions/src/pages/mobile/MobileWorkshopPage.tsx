@@ -331,6 +331,7 @@ export function MobileWorkshopSessionPage() {
               placeholder={`Ask about ${docTabLabel(active)}…`}
               className="w-full resize-none bg-transparent px-1.5 py-1 text-[16px] text-zinc-100 outline-none placeholder:text-zinc-600"
             />
+            {/* Send stays on the right when the model chip has nothing to show (no AI connected yet) */}
             <div className="flex items-center justify-between gap-2">
               {me?.role === "admin" ? (
                 <ModelChip
@@ -348,7 +349,7 @@ export function MobileWorkshopSessionPage() {
                   type="button"
                   aria-label="Stop"
                   onClick={() => void stopTurn(sessionId, thinking.id).catch(() => {})}
-                  className="flex h-9 w-9 items-center justify-center rounded-full bg-zinc-800 text-zinc-200"
+                  className="ml-auto flex h-9 w-9 items-center justify-center rounded-full bg-zinc-800 text-zinc-200"
                 >
                   <Square className="h-3.5 w-3.5" />
                 </button>
@@ -358,7 +359,7 @@ export function MobileWorkshopSessionPage() {
                   aria-label="Send"
                   disabled={!draft.trim() || sending}
                   onClick={() => void send()}
-                  className="flex h-9 w-9 items-center justify-center rounded-full bg-violet-600 text-white disabled:opacity-40"
+                  className="ml-auto flex h-9 w-9 items-center justify-center rounded-full bg-violet-600 text-white disabled:opacity-40"
                 >
                   {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" />}
                 </button>
