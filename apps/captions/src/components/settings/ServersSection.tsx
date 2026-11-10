@@ -1,11 +1,11 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router";
-import { Check, Cloud, Globe, Laptop, Link2, Plus, Server } from "lucide-react";
+import { Cloud, Globe, Laptop, Link2, Plus, Server } from "lucide-react";
 import { confirmDialog, promptDialog } from "@/lib/dialogs";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, RowMenu, Section, Status } from "./ui";
+import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, RowMenu, Section, Status, StatusDot } from "./ui";
 import { tell, useThisMac } from "./ThisMacSection";
 
 /** The server built into the Mac app (Servers.swift `thisMacID`). */
@@ -14,8 +14,8 @@ const THIS_MAC = "this-mac";
 const GUIDE = "https://creatortoolset.com/api/landing/github";
 
 /**
- * Settings → Servers (the Mac app only): the servers this app opens, one at a time. The active one says Active, every
- * other one has a Switch button in the same place. Every change goes to the app, which holds the list; this page only shows it.
+ * Settings → Servers (the Mac app only): the servers this app opens, one at a time. The active one has a green dot and
+ * Active, every other one has a Switch button in the same place. Every change goes to the app, which holds the list; this page only shows it.
  */
 export function ServersSection() {
   const s = useThisMac(true);
@@ -43,6 +43,7 @@ export function ServersSection() {
   }, [s]);
 
   const open = s?.servers.find((v) => v.current);
+  const added = s?.servers.some((v) => v.id !== THIS_MAC);
   // switching swaps the whole window for another server's data: say so once, at the click, not on the row
   const switchTo = async (v: { id: string; name: string }) => {
     const ok = await confirmDialog({
@@ -86,8 +87,22 @@ export function ServersSection() {
                 }
                 actions={
                   <>
-                    {/* This Mac is never stored in the app's list: Rename and Remove would do nothing there */}
-                    {v.id !== THIS_MAC && (
+                    <End className="w-[4.5rem]">
+                      {v.current ? (
+                        // the kit's green dot, with the word itself green and as large as the row's title: this is
+                        // the server the window is on, not a quiet "fine"
+                        <span className="inline-flex items-center gap-1.5 text-sm font-medium text-emerald-700 dark:text-emerald-400">
+                          <StatusDot tone="ok" /> Active
+                        </span>
+                      ) : (
+                        <Button size="sm" variant="outline" onClick={() => void switchTo(v)}>
+                          Switch
+                        </Button>
+                      )}
+                    </End>
+                    {/* the menu is last, as on every Settings row. This Mac is never stored in the app's list, so Rename
+                        and Remove would do nothing there: it keeps the menu's place, so Switch and Active stay in one column */}
+                    {v.id !== THIS_MAC ? (
                       <RowMenu
                         label={`${v.name} actions`}
                         items={[
@@ -106,16 +121,9 @@ export function ServersSection() {
                           },
                         ]}
                       />
+                    ) : (
+                      added && <span aria-hidden className="size-7" />
                     )}
-                    <End className="w-[4.5rem]">
-                      {v.current ? (
-                        <State active><Check className="size-3.5" /> Active</State>
-                      ) : (
-                        <Button size="sm" variant="outline" onClick={() => void switchTo(v)}>
-                          Switch
-                        </Button>
-                      )}
-                    </End>
                   </>
                 }
               />
@@ -131,7 +139,7 @@ export function ServersSection() {
 
       <Section title="Get a server">
         <Card>
-          <ListRow icon={<Cloud />} title="Creator Toolset Cloud" actions={<End><State>Coming soon</State></End>} />
+          <ListRow icon={<Cloud />} title="Creator Toolset Cloud" actions={<End><Status>Coming soon</Status></End>} />
           <ListRow
             icon={<Server />}
             title="Your own server"
@@ -169,15 +177,11 @@ export function ServersSection() {
 }
 
 /**
- * The right end of every row on this page: an action is a button, a state is plain text in the same box, so they end
- * on one line down the page and every row is the same height. A server row gives it one width, which keeps the `…`
- * menus left of it in one column too.
+ * The right end of a row on this page: a button for something to do, or the kit's Status for a state, in the same box,
+ * so every row is the same height. A server row gives it one width, so Switch and Active end on one line.
  */
 function End({ className, children }: { className?: string; children: ReactNode }) {
   return <span data-row-end className={cn("flex h-8 items-center justify-end", className)}>{children}</span>;
-}
-function State({ active, children }: { active?: boolean; children: ReactNode }) {
-  return <span className={cn("inline-flex items-center gap-1 text-sm", active ? "font-medium text-foreground" : "text-muted-foreground")}>{children}</span>;
 }
 
 /**
