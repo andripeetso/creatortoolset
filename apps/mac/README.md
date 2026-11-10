@@ -237,7 +237,7 @@ one at most once a minute). A crash of the app itself is macOS's report in
   the account server; the page's Settings has no entry for it. A page that posts `this-mac` to the `window` message
   handler opens it too. `ThisMac.swift`.
 - The page learns this Mac's device id on the open server as `<html data-mac-device>` (a user script, renewed on
-  each switch and pairing), so Settings → AI providers can say "This Mac (*name*) answers your AI" rather than
+  each switch and pairing), so Settings → Providers can say "This Mac (*name*) answers your AI" rather than
   another Mac's name.
 - File inputs open the Mac's own open panel. Downloads land in `~/Downloads` (a name taken
   gets ` (2)`). `target=_blank`, `window.open` and links to other sites open in the default

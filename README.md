@@ -30,7 +30,9 @@ The home screen follows how a video gets made: **Plan → Make → Distribute**,
 
 <img src="docs/screenshots/captions.webp" alt="Caption Studio: transcript on the left, the video with word-highlighted captions in the middle, caption style on the right, caption blocks on the timeline" />
 
-Drop in a video and Whisper transcribes it in your browser, so nothing is uploaded. Each line of the transcript
+Drop in a video and Whisper transcribes the speech in your browser. The audio is sent to a transcription service
+only if you set up cloud transcription with your own key. The video itself is saved on the server the app runs on,
+which in the Mac app is your own Mac. Each line of the transcript
 becomes a caption you can edit, restyle and move on the timeline. The export is a transparent overlay (ProRes 4444,
 VP9 WebM or a PNG sequence) that goes on top of your edit, plus SRT, WebVTT and ASS files.
 
@@ -39,7 +41,10 @@ VP9 WebM or a PNG sequence) that goes on top of your edit, plus SRT, WebVTT and 
 <img src="docs/screenshots/review.webp" alt="Review: a video with three frame-stamped comments in the side panel and their markers on the timeline" />
 
 Upload a cut and share one link. Reviewers comment on the exact frame, draw on the picture, and approve or ask
-for changes, all without an account. Each new version stacks on the same video, so you can compare V1 with V2.
+for changes, all without an account. Reviewers have to be able to reach the server the link came
+from: a link from the Mac app opens on that Mac, and on your own network once **Access from other devices** is on
+and you put the Mac's address in the link in place of `127.0.0.1`, so for a reviewer on the internet you need
+[your own server](SELF_HOSTING.md). Each new version stacks on the same video, so you can compare V1 with V2.
 Upload the timeline file too (OTIO, XML, FCPXML or EDL) and its tracks show under the player.
 
 ### Content Workshop
@@ -79,8 +84,8 @@ is, so you keep getting updates. [PLUGINS.md](PLUGINS.md) tells your AI how.
 Creator Toolset doesn't come with an AI account. You bring your own, in one of two ways:
 
 1. **Your subscription, on your Mac.** Install Claude Code or Codex and sign in with your own plan. The Mac app
-   passes your requests to it, and only yours. Settings → AI providers walks you through it.
-2. **Your API key.** Add an Anthropic key in Settings → My API keys. Anthropic bills you directly.
+   passes your requests to it, and only yours. Settings → Providers walks you through it.
+2. **Your API key.** Add an Anthropic key in Settings → API keys. Anthropic bills you directly.
 
 Every other paid service works the same way: cloud transcription, audio engines, research and Apify each run on
 a key you add, and that provider bills you. Instagram is read only through the official login (for your own posts)

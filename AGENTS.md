@@ -43,7 +43,8 @@ For one person's own copy, work down this list and stop at the first that does t
    needs no change to the app.
 4. **A plug-in**: a folder in `apps/captions/plugins/<id>/`. It adds pages, Home tiles, Settings sections, API
    routes, tools for their AI and buttons on items, and it can take the place of some built-in pages.
-   [PLUGINS.md](PLUGINS.md) is the guide, and `apps/captions/plugin-examples/hello` is the one to copy.
+   [PLUGINS.md](PLUGINS.md) is the guide, and `apps/captions/plugin-examples/hello` is the one to copy. On a fresh
+   clone run `pnpm install` first: `apps/captions/scripts/plugins.mjs`, which loads the plug-ins, imports `dotenv`.
 5. **A plug-in plus one new slot**, when no slot fits: the smallest slot in the app (PLUGINS.md, "When no slot
    fits"), everything else in the plug-in.
 6. **A fork** is the last choice. Tell the person before you start.
@@ -77,7 +78,7 @@ let a request from one account reach another account's provider.
 
 **Whose keys pay.** Every paid service call (AI on an API key, transcription, audio engines, research, Apify)
 gets its key from `keyFor` in `apps/captions/api/my-keys.ts`; never read a service key from `process.env` in a
-feature. Each user adds their own keys in Settings → My API keys (Apify in Settings → Connectors) and pays their
+feature. Each user adds their own keys, Apify included, in Settings → API keys and pays their
 provider. The server's keys serve only the admin's own work, never their AI (an admin's AI is their own provider or
 own key). AI with no provider and no own key fails with a message saying what to add; the Workshop has no
 API-key path at all.
