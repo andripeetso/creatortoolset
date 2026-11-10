@@ -51,8 +51,17 @@ describe("watchAllowed", () => {
     expect(watchAllowed()).toBe(false);
   });
 
-  it("is off for a local server that has an APP_SECRET, as before", () => {
+  it("is off for a local server that has an APP_SECRET and is not the Mac app's", () => {
     process.env.APP_SECRET = "x";
+    expect(watchAllowed()).toBe(false);
+  });
+
+  it("is on for the Mac app's server (CT_LOCAL=1 with an APP_SECRET), never for an account that is not its admin", () => {
+    process.env.APP_SECRET = "x";
+    process.env.CT_LOCAL = "1";
+    expect(watchAllowed()).toBe(true);
+    expect(watchAllowed("someone-else")).toBe(false);
+    process.env.CT_MODE = "hosted";
     expect(watchAllowed()).toBe(false);
   });
 

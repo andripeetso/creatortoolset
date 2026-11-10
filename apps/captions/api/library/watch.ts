@@ -11,6 +11,7 @@ import { ensureLibrary, homeOf, libraryRole } from "./access";
 import { blobs, libraryDb } from "./db";
 import { enqueueJob } from "./jobs";
 import { kindOf, recordVersion } from "./routes";
+import { findUser } from "../users";
 
 /**
  * Watch folders (tasks/media-library-plan.md, section 4): folders on the server's own disk whose new files join a
@@ -34,10 +35,18 @@ const GiB = 1024 ** 3;
 const db = () => libraryDb();
 const stagingDir = () => path.join(env.dataDir, "library", "staging");
 
-/** Whether this server may watch folders: LIBRARY_WATCH_FOLDERS=1 or 0, else only a local server (not hosted) with no APP_SECRET, one person's own machine. */
-export function watchAllowed(): boolean {
+/**
+ * Whether this server may watch folders: LIBRARY_WATCH_FOLDERS=1 or 0, else only on one person's own machine, never
+ * hosted: a local server with no APP_SECRET, or the Mac app's server (CT_LOCAL=1, which always has an APP_SECRET) for
+ * the computer's own account (its admin). Another account on that Mac never reads its disk. No `username`: the
+ * machine-level answer, for display.
+ */
+export function watchAllowed(username?: string): boolean {
   const v = process.env.LIBRARY_WATCH_FOLDERS?.trim();
-  return v === "1" ? true : v === "0" ? false : !hostedMode() && !process.env.APP_SECRET;
+  if (v === "1" || v === "0") return v === "1";
+  if (hostedMode()) return false;
+  if (!process.env.APP_SECRET) return true;
+  return process.env.CT_LOCAL === "1" && (username === undefined || findUser(username)?.role === "admin");
 }
 
 const foldersOf = (libraryId: string): WatchFolder[] => {
@@ -109,7 +118,7 @@ watchApp.put("/:id/watch", async (c) => {
   const libraryId = c.req.param("id");
   const role = libraryRole(user.username, libraryId);
   if (!role) return c.json({ error: "Not found", code: "not_found" }, 404);
-  if (!watchAllowed()) {
+  if (!watchAllowed(user.username)) {
     return c.json({ error: "This server is not on your computer, so it cannot watch your folders. Upload the files instead.", code: "forbidden" }, 403);
   }
   const body = (await c.req.json().catch(() => null)) as { folders?: unknown } | null;
@@ -139,7 +148,7 @@ const homeLibrary = (username: string) =>
  * in the list (already there counts as added).
  */
 export async function addWatchFolder(username: string, folderPath: string): Promise<string | null> {
-  if (!watchAllowed()) return "This server is not on your computer, so it cannot read your folders. Upload the files instead.";
+  if (!watchAllowed(username)) return "This server is not on your computer, so it cannot read your folders. Upload the files instead.";
   ensureLibrary(username);
   const libraryId = homeLibrary(username);
   if (!libraryId) return "The Library is not made yet. Try again.";
