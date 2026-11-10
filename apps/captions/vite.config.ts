@@ -1,5 +1,6 @@
 import devServer from "@hono/vite-dev-server"
 import type { IncomingMessage } from "node:http"
+import { createRequire } from "node:module"
 import path from "path"
 const __dirname = import.meta.dirname
 import react from "@vitejs/plugin-react"
@@ -69,7 +70,8 @@ export default defineConfig({
     // invalidation aborts the worker's module import mid-flight (workers
     // can't do Vite's full-reload recovery), and esbuild mangles the
     // library's wasm asset URLs. Serve it as native ESM instead.
-    exclude: ["@huggingface/transformers"],
+    // "ort-dist": its files are copied as they are (?url), never bundled.
+    exclude: ["@huggingface/transformers", "ort-dist"],
   },
   resolve: {
     alias: {
@@ -77,6 +79,11 @@ export default defineConfig({
       "@contracts": path.resolve(__dirname, "./contracts"),
       "@db": path.resolve(__dirname, "./db"),
       "db": path.resolve(__dirname, "./db"),
+      // The speech runtime's own files, at the version the speech library bundles: the transcription worker
+      // imports them with ?url, so the build copies them and the app serves them itself (no CDN).
+      "ort-dist": path.dirname(
+        createRequire(createRequire(import.meta.url).resolve("@huggingface/transformers")).resolve("onnxruntime-web"),
+      ),
     },
   },
   envDir: path.resolve(__dirname),

@@ -124,7 +124,7 @@ function ProcessPanel({ session }: { session: ClipSession }) {
                       : "text-muted-foreground/60"
                 }
               >
-                {s.label}
+                {(active && s.id === "transcribe" && session.note) || s.label}
               </span>
             </li>
           );

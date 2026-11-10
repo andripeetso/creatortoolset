@@ -88,6 +88,7 @@ function ClipStatus({ clip, applyCov }: { clip: ClipInfo; applyCov?: number }) {
   const st = clip.status;
   if (
     st.phase === "extracting" ||
+    st.phase === "loading" ||
     st.phase === "transcribing" ||
     st.phase === "checking" ||
     st.phase === "matching"
@@ -99,19 +100,13 @@ function ClipStatus({ clip, applyCov }: { clip: ClipInfo; applyCov?: number }) {
           ? st.detail?.startsWith("Uploading")
             ? "Uploading source"
             : "Preparing audio"
+          : st.phase === "loading"
+            ? "Getting ready"
           : st.phase === "matching"
             ? "Matching"
             : st.phase === "checking"
               ? "Checking script"
               : "Transcribing"}
-      </span>
-    );
-  }
-  if (st.phase === "loading") {
-    return (
-      <span className="flex items-center gap-1 text-violet-400">
-        <Loader2 className="h-3 w-3 shrink-0 animate-spin" /> Model{" "}
-        {st.progress}%
       </span>
     );
   }

@@ -1202,40 +1202,12 @@ export function TranscriptPanel() {
           </div>
         )}
 
-        {empty && (
+        {/* while it works the player's status card says so, in one place */}
+        {empty && !transcribing && (
           <p className="pointer-events-none absolute inset-x-0 top-8 px-6 text-center text-xs leading-5 text-zinc-600">
-            {status.phase === "extracting" ? (
-              <>
-                <span className="text-zinc-400">
-                  Step 1 of 2 —{" "}
-                  {status.detail?.startsWith("Uploading")
-                    ? "Uploading source…"
-                    : "Preparing audio…"}
-                </span>
-                <br />
-                The old transcript was cleared; a fresh one is on the way.
-              </>
-            ) : status.phase === "loading" ? (
-              <>
-                <span className="text-zinc-400">
-                  Step 1 of 2 — Loading the model… {status.progress}%
-                </span>
-                <br />
-                The old transcript was cleared; a fresh one is on the way.
-              </>
-            ) : status.phase === "transcribing" ? (
-              <>
-                <span className="text-zinc-400">
-                  Step 2 of 2 — Transcribing {clipName || "the clip"} with{" "}
-                  {engineLabel}…
-                </span>
-                <br />
-                New captions will appear here when it finishes.
-              </>
-            ) : status.phase === "error" ? (
+            {status.phase === "error" ? (
               <span className="text-red-400/80">
-                Transcription failed — {status.message}. Any previous transcript
-                was restored.
+                Transcription failed — {status.message.replace(/\.+$/, "")}
               </span>
             ) : (
               "Transcribe the video to get an editable transcript — every line is one caption."

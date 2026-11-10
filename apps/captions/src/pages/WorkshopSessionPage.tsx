@@ -1283,7 +1283,7 @@ export default function WorkshopSessionPage() {
                             type="button"
                             onClick={() => void review()}
                             disabled={thinking}
-                            title="Claude Fable reads only the piece, as one of your followers would: where they'd stop, what they'd take away, whether they'd save or send it. Its read lands here and the writer sees it next turn."
+                            title="A reader reads only the piece, as one of your followers would: where they'd stop, what they'd take away, whether they'd save or send it. Its read lands here and the writer sees it next turn."
                             className="flex items-center gap-1 rounded-md border border-border bg-background/80 px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
                           >
                             <Eye className="h-3.5 w-3.5" /> Read as a follower

@@ -89,28 +89,27 @@ export async function transcribeCloud(pcm: Float32Array, name = ""): Promise<Wor
   }));
 }
 
+/**
+ * The on-device models. `mb` is what the browser really downloads the first time: the encoder and the merged decoder
+ * at full precision (the worker's dtype), summed from the published file sizes.
+ */
+const local = (id: string, name: string, mb: number, webgpuOnly = false) => ({
+  id,
+  label: `Local · ${name} (${mb} MB)`,
+  mb,
+  webgpuOnly,
+});
 export const MODELS = [
-  {
-    id: "Xenova/whisper-base.en",
-    label: "Local · Base · English (recommended) (~145 MB)",
-    webgpuOnly: false,
-  },
-  {
-    id: "Xenova/whisper-tiny.en",
-    label: "Local · Tiny · English (fastest) (~75 MB)",
-    webgpuOnly: false,
-  },
-  {
-    id: "Xenova/whisper-small.en",
-    label: "Local · Small · English (best quality) (~470 MB)",
-    webgpuOnly: true,
-  },
-  {
-    id: "Xenova/whisper-base",
-    label: "Local · Base · Multilingual (auto-detect) (~145 MB)",
-    webgpuOnly: false,
-  },
+  // first = the default with no saved choice and no cloud: it hears every language, and it is the first job's model,
+  // so a second job downloads nothing more
+  local("Xenova/whisper-base", "Base · Any language (recommended)", 291),
+  local("Xenova/whisper-base.en", "Base · English", 291),
+  local("Xenova/whisper-tiny.en", "Tiny · English (fastest)", 152),
+  local("Xenova/whisper-small.en", "Small · English (best quality)", 968, true),
 ];
+
+/** A first job's model (`captionThisVideo`): nothing says which language she speaks, so the one that hears them all. */
+export const FIRST_JOB_MODEL = MODELS[0].id;
 
 /**
  * The user's engine choice, persisted across reloads and new projects.
@@ -156,9 +155,15 @@ export async function detectDevice(): Promise<"webgpu" | "wasm"> {
 }
 
 export interface TranscribeCallbacks {
-  onLoadProgress?: (progress: number, detail: string) => void;
+  onLoadProgress?: (progress: number) => void;
   onTranscribeStart?: () => void;
 }
+
+/**
+ * A graphics-card run that has started and then says nothing for this long has stalled: seen in WebKit, where such a
+ * run sometimes never returns. It is stopped and fails, and the caller runs it again on the processor.
+ */
+export const STALL_MS = 60_000;
 
 export function transcribeAudio(
   pcm: Float32Array,
@@ -172,11 +177,20 @@ export function transcribeAudio(
     { type: "module" },
   );
 
+  let quiet: ReturnType<typeof setTimeout> | undefined;
   const promise = new Promise<Word[]>((resolve, reject) => {
     worker.onmessage = (ev) => {
       const m = ev.data;
+      clearTimeout(quiet);
+      // the worker reports each word it writes ("alive"), so silence after the start is a stall, not a long video
+      if (device === "webgpu" && (m.type === "transcribe-start" || m.type === "alive")) {
+        quiet = setTimeout(() => {
+          worker.terminate();
+          reject(new Error("The graphics card stopped answering"));
+        }, STALL_MS);
+      }
       if (m.type === "load-progress") {
-        cb.onLoadProgress?.(m.progress, m.detail);
+        cb.onLoadProgress?.(m.progress);
       } else if (m.type === "transcribe-start") {
         cb.onTranscribeStart?.();
       } else if (m.type === "done") {
@@ -208,5 +222,11 @@ export function transcribeAudio(
     [pcmCopy.buffer],
   );
 
-  return { promise, cancel: () => worker.terminate() };
+  return {
+    promise,
+    cancel: () => {
+      clearTimeout(quiet);
+      worker.terminate();
+    },
+  };
 }

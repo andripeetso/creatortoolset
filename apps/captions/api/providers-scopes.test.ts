@@ -86,7 +86,7 @@ describe("routing: whose providers answer an account's job", () => {
     // old settings that shared the workspace's AI with the team are ignored
     await saveSettings(parseSettings({ ...workspace(), shareWithTeam: true, sharedWith: ["casey"] }, "workspace"));
     expect(providerSettings()).not.toHaveProperty("sharedWith");
-    expect(aiFor({ username: "casey", role: "team" }, "workshop", "Workshop")).toEqual({ only: [], off: "No AI for your account: add one in Settings → Your own AI, or your Anthropic key in Settings → API keys" });
+    expect(aiFor({ username: "casey", role: "team" }, "workshop", "Workshop")).toEqual({ only: [], off: "No AI for your account: add one in Settings → Providers, or your Anthropic key in Settings → API keys" });
     expect(aiFor({ username: "alex", role: "admin" }, "workshop", "Workshop").mac?.provider).toMatchObject({ scope: "workspace" });
     expect(aiFor(undefined, "notes", "Video Notes").off).toBe("This AI call names no account"); // nobody named: nobody's providers
     expect(aiFor({ username: "jordan", role: "team" }, "captions", "Caption Studio").mac?.provider).toMatchObject({ scope: "jordan" }); // own still answers

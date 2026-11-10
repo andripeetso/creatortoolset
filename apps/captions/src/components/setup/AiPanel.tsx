@@ -14,6 +14,8 @@ type Action = "connect" | "signin" | "check";
 
 const WAIT_MS = 3 * 60_000;
 const POLL_MS = 3_000;
+/** How often the list looks again by itself while it is on screen (each look runs the CLIs' status commands). */
+const RECHECK_MS = 20_000;
 /** How long a request may take before it gives up with a plain message (no wait spins forever). */
 const TIMEOUT_MS = 90_000;
 /** An install runs the vendor's installer here: a few minutes on a slow connection. */
@@ -78,7 +80,7 @@ export function rowView(row: LocalAiRow, result: ConnectResult | undefined, phas
   if (phase === "signingIn")
     return { line: "Waiting for you to finish in your browser. This page checks by itself.", button: { label: "Waiting…", action: "none", disabled: true } };
   if (phase === "timedOut")
-    return { line: "Still not signed in. Finish in your browser, then press Check again.", button: { label: "Check again", action: "check" } };
+    return { line: "Still not signed in. Finish in your browser, or sign in again.", button: { label: "Sign in", action: "signin" } };
   if (result?.state === "failed")
     return { line: `It didn't answer: ${plain(result.message ?? "Try again")}.`, button: { label: "Try again", action: "connect" }, raw: result.raw };
   if (result?.state === "mac" || result?.state === "unsupported")
@@ -171,7 +173,7 @@ function AgentRow({
   const line = !found
     ? installing
       ? `Installing ${HELPER[id]}. This can take a few minutes.`
-      : `Install ${HELPER[id]} on this Mac, then sign in with your ${ACCOUNT[id]} account.`
+      : `Install ${HELPER[id]} on this Mac, then sign in with your ${ACCOUNT[id]} account.${PLAN[id] ? ` Needs ${PLAN[id]} or higher.` : ""}`
     : v?.line ?? "";
   const button: RowButton | null = !found
     ? installing
@@ -228,11 +230,10 @@ export interface AiPanelViewProps {
   onAction: (id: CliId, action: Action) => void;
   onInstall?: (id: CliId) => void;
   onUseForApp?: (id: CliId) => void;
-  onRefresh: () => void;
 }
 
 /** The AIs on this computer: one row each (ChatGPT, Claude, Gemini once installed), and the desktop apps installed. Pure, for tests. */
-export function AiPanelView({ view, results, phases, installing = null, installMsg, appAi, onAction, onInstall, onUseForApp, onRefresh }: AiPanelViewProps) {
+export function AiPanelView({ view, results, phases, installing = null, installMsg, appAi, onAction, onInstall, onUseForApp }: AiPanelViewProps) {
   if (!view) return <p className="text-sm text-muted-foreground">Looking for your AI on this computer…</p>;
   if (!view.local)
     return <p className="text-sm text-muted-foreground">Ask the owner of this server to connect the AI it runs on.</p>;
@@ -287,11 +288,6 @@ export function AiPanelView({ view, results, phases, installing = null, installM
           )}
         </div>
       )}
-      <div className="flex justify-end">
-        <Button size="sm" variant="ghost" onClick={onRefresh}>
-          Check again
-        </Button>
-      </div>
     </div>
   );
 }
@@ -325,8 +321,9 @@ const postJson = <T,>(url: string, body: unknown, ms?: number) =>
 
 /**
  * The AIs on this computer, with the server behind them: reads what the computer has, and runs Connect, Sign in and
- * Install only when the person presses them. "Check again" re-reads the computer (no cached answer). After Sign in it
- * checks by itself every few seconds for up to three minutes.
+ * Install only when the person presses them. It looks again by itself, never behind a button (owner: no Check button to
+ * learn if it works): when the window comes back to the front, every RECHECK_MS while it is on screen, and after an
+ * install. After Sign in it checks every few seconds for up to three minutes.
  */
 export function AiPanel({ onConnectedChange }: { onConnectedChange?: (on: boolean) => void }) {
   const [view, setView] = useState<LocalAiView | null>(null);
@@ -337,7 +334,7 @@ export function AiPanel({ onConnectedChange }: { onConnectedChange?: (on: boolea
   const [providers, setProviders] = useState<ProvidersView | null>(null);
   const timers = useRef<number[]>([]);
 
-  // fresh: Check again. The server re-reads PATH and the sign-in; a plain read may answer from its last look.
+  // fresh: the server re-reads PATH and the sign-in; a plain read may answer from its last look.
   const refresh = useCallback(async (fresh = false) => {
     const v = await getJson<LocalAiView>(fresh ? "/api/setup/ai?fresh=1" : "/api/setup/ai");
     if (v) setView(v);
@@ -413,6 +410,19 @@ export function AiPanel({ onConnectedChange }: { onConnectedChange?: (on: boolea
     return () => list.forEach((t) => window.clearInterval(t));
   }, [refresh, loadProviders]);
 
+  // looks again by itself: the window back in front (an install or sign-in finished elsewhere), and a slow timer while visible
+  useEffect(() => {
+    const again = () => {
+      if (document.visibilityState === "visible") void refresh(true);
+    };
+    window.addEventListener("focus", again);
+    const t = window.setInterval(again, RECHECK_MS);
+    return () => {
+      window.removeEventListener("focus", again);
+      window.clearInterval(t);
+    };
+  }, [refresh]);
+
   useEffect(() => {
     onConnectedChange?.(anyConnected(view, results));
   }, [view, results, onConnectedChange]);
@@ -430,7 +440,6 @@ export function AiPanel({ onConnectedChange }: { onConnectedChange?: (on: boolea
         onAction={(id, action) => (action === "signin" ? void signIn(id) : void connect(id))}
         onInstall={(id) => void install(id)}
         onUseForApp={useForApp}
-        onRefresh={() => void refresh(true)}
       />
     </div>
   );

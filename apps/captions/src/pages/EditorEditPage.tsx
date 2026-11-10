@@ -18,7 +18,7 @@ import { StateBadge, thumb } from "./EditorPage";
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const STEP_NAME: Record<string, string> = { analyze: "Analyze", script: "Script", draft: "Draft", preview: "Preview", file: "File in Review", broll: "B-roll" };
 /** The setting a needs-key message names: a key in API keys, else (a provider, a Mac that is off) AI providers. */
-const settingFor = (why: string) => (/Settings → API keys/.test(why) && !/Settings → Your own AI/.test(why) ? "/settings/keys" : "/settings/providers");
+const settingFor = (why: string) => (/Settings → API keys/.test(why) && !/Settings → Providers/.test(why) ? "/settings/keys" : "/settings/providers");
 
 export default function EditorEditPage() {
   const { id = "" } = useParams();

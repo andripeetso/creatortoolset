@@ -46,7 +46,7 @@ export function ModelChip({ ai, onChange }: { ai?: Selection; onChange: (ai: Sel
         onClick={() => setOpen((o) => !o)}
         className={chipIdle}
         aria-expanded={open}
-        title="Which AI answers this session: its own AI, model and effort. Default is set in Settings → Your own AI."
+        title="Which AI answers this session: its own AI, model and effort. Default is set in Settings → Providers."
       >
         {ai ? selectionLabel(ai) : `Default: ${selectionLabel(settings.default)}`}
         <ChevronDown className="h-3 w-3" />

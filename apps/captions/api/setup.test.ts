@@ -34,6 +34,19 @@ describe("setup: my tools, my plan, what is set up", () => {
     expect(await get()).toMatchObject({ tools: ["workshop", "editor"], plan: "claude_pro", done: true });
   });
 
+  it("says transcripts work without a key only when the server is on the person's own computer", async () => {
+    expect((await get()).have).not.toContain("deviceTranscripts");
+    process.env.CT_LOCAL = "1";
+    try {
+      expect((await get()).have).toContain("deviceTranscripts");
+      process.env.CT_MODE = "hosted";
+      expect((await get()).have).not.toContain("deviceTranscripts");
+    } finally {
+      delete process.env.CT_LOCAL;
+      delete process.env.CT_MODE;
+    }
+  });
+
   it("sees a key the person added, and the plan their Mac's CLI reports", async () => {
     saveMyKey("sam", "NVIDIA_API_KEY", "nv-test-1234");
     const { device } = pairDevice("sam", "Studio Mac");
@@ -104,15 +117,17 @@ describe("your AI on this computer: only the owner's account, on a server that r
     process.env.CT_MODE = "hosted";
     try {
       expect(await (await app.request("/api/setup/ai")).json()).toEqual({ local: false, rows: [] });
-      expect((await app.request("/api/setup/folders/scan")).status).toBe(403);
+      expect((await app.request("/api/setup/folders/scan")).status).toBe(404); // no folder scan exists at all
     } finally {
       delete process.env.CT_MODE;
     }
   });
 
-  it("scans folders for the owner only: another account gets 403 and no listing", async () => {
-    who = { username: "sam", role: "user", cloud: true, off: [] };
-    expect((await app.request("/api/setup/folders/scan")).status).toBe(403);
+  it("never scans folders: the route is gone, folders are only ever picked by the person", async () => {
+    for (const w of [{ username: "owner", role: "admin" as const }, { username: "sam", role: "user" as const }]) {
+      who = { ...w, cloud: true, off: [] };
+      expect((await app.request("/api/setup/folders/scan")).status).toBe(404);
+    }
   });
 
   it("the setup view carries the CLIs Creator Toolset is in (empty to start)", async () => {

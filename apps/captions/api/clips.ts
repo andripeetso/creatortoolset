@@ -23,6 +23,7 @@ import {
   aiFor,
 } from "./ai-complete";
 import { ffmpegCommand } from "./ffmpeg-runtime";
+import { deviceStatus, deviceTranscribes, DEVICE_AUDIO, transcribeOnDevice } from "./lib/device-transcribe";
 import { env } from "./lib/env";
 import {
   applyTranscriptCleanup,
@@ -322,6 +323,8 @@ const publicMeta = (m: Meta) => {
     ...(errors ? { blockErrors: errors } : {}),
     hasTranscript: existsSync(transcriptPath(m.id)),
     hasThumb: existsSync(thumbPath(m.id)),
+    // a transcript being made on this computer says what it is doing (the speech model's first download, listening)
+    ...(deviceStatus(m.id) ? { note: deviceStatus(m.id) } : {}),
   };
 };
 
@@ -677,7 +680,9 @@ async function processClip(id: string, user: SessionUser): Promise<void> {
       thumbPath(id),
     ]).catch(() => {});
 
-    const canTranscribe = !cloudTranscribeBlock(user);
+    // no key: a server on its owner's computer transcribes by itself (lib/device-transcribe.ts); a lock stays a lock
+    const onDevice = userMayCloudTranscribe(user) && !!cloudTranscribeBlock(user) && deviceTranscribes();
+    const canTranscribe = onDevice || !cloudTranscribeBlock(user);
     let words: Word[] = [];
     if (canTranscribe && (await probeHasAudio(src))) {
       meta.step = "audio";
@@ -686,21 +691,14 @@ async function processClip(id: string, user: SessionUser): Promise<void> {
       await runFfmpeg(id, [
         "-i",
         src,
-        "-vn",
-        "-ac",
-        "1",
-        "-ar",
-        "16000",
-        "-f",
-        "wav",
+        ...(onDevice ? DEVICE_AUDIO : ["-vn", "-ac", "1", "-ar", "16000", "-f", "wav"]),
         wavPath(id),
       ]);
       meta.step = "transcribe";
       meta.progress = 0.38;
       await persist(meta);
       stopCrawl = crawlProgress(meta, 0.72);
-      const wav = await readFile(wavPath(id));
-      const result = await transcribeWav(wav, user);
+      const result = onDevice ? await transcribeOnDevice(wavPath(id), id) : await transcribeWav(await readFile(wavPath(id)), user);
       stopCrawl();
       await rm(wavPath(id), { force: true }).catch(() => {});
       if ("error" in result) throw new Error(result.error);

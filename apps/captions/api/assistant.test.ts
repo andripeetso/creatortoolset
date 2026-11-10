@@ -104,10 +104,13 @@ describe("before an AI is connected", () => {
     const r = await app.request("/api/assistant/turn", { method: "POST", ...json({ text: "hello" }, { cookie }) });
     expect(r.status).toBe(202);
     const device = { authorization: `Bearer ${nicoMac.token}` };
-    const job = (await (await app.request("/api/devices/relay/wait", { method: "POST", ...json({}, device) })).json()) as { id: string; driver?: string; mcp?: unknown; asks?: boolean };
+    const job = (await (await app.request("/api/devices/relay/wait", { method: "POST", ...json({}, device) })).json()) as { id: string; driver?: string; model?: string; mcp?: unknown; asks?: boolean };
     expect(job.driver).toBe("codex");
+    expect(job.model).toBe("gpt-x");
     expect(job.mcp).toBeUndefined();
     expect(job.asks).toBeUndefined();
+    // the dock says Codex answers without the app's tools (AssistantDock: "· no app tools")
+    expect(((await (await app.request("/api/assistant", { headers: { cookie } })).json()) as { aiName: string; tools: boolean })).toMatchObject({ aiName: "Codex", tools: false });
     await app.request(`/api/devices/relay/${job.id}/done`, { method: "POST", ...json({ text: "Hi from Codex." }, device) });
     // the turn's reply is written once its promise settles, a tick after the Mac's answer
     let last: { role: string; text: string; status?: string } | undefined;
@@ -546,11 +549,17 @@ describe("a file on this computer, by its path", () => {
     const made = JSON.parse((await toolOf(token, "use_file", { path: clip, to: "review" })).text) as { href: string; name: string };
     expect(made).toMatchObject({ name: "Call recording.mov" });
     expect(made.href).toMatch(/^\/review\//);
-    // Video Notes transcribes on the user's own Deepgram key: without it, the answer is what to set up
+    // Video Notes with no transcription key: a hosted server still answers with the key to add; on this computer the
+    // server transcribes by itself, so the file is taken
     const nico = mintJobToken("nico", "turn-nico-path");
-    const notes = JSON.parse((await toolOf(nico, "use_file", { path: clip, to: "notes" })).text) as { needs?: Array<{ ask_secret?: string[] }> };
+    const toNotes = async () => JSON.parse((await toolOf(nico, "use_file", { path: clip, to: "notes" })).text) as { needs?: Array<{ ask_secret?: string[] }>; href?: string };
+    process.env.CT_MODE = "hosted";
+    expect((await toNotes()).needs?.some((n) => n.ask_secret?.join() === "DEEPGRAM_API_KEY")).toBe(true);
+    delete process.env.CT_MODE;
+    const taken = await toNotes();
     revokeJobToken(nico);
-    expect(notes.needs?.some((n) => n.ask_secret?.includes("DEEPGRAM_API_KEY"))).toBe(true);
+    expect(taken.needs).toBeUndefined();
+    expect(taken.href).toMatch(/^\//);
     delete process.env.CT_LOCAL;
     revokeJobToken(token);
   });

@@ -35,7 +35,7 @@ describe("keyFor: whose key pays", () => {
     vi.stubEnv("ANTHROPIC_API_KEY", "server-ai");
     const admin = { username: "admin", role: "admin" as const };
     // no provider of their own: no AI, and it says where to add one
-    expect(aiFor(admin, "captions", "Caption Studio")).toEqual({ only: [], off: expect.stringMatching(/^No AI for your account: add one in Settings → Your own AI/) });
+    expect(aiFor(admin, "captions", "Caption Studio")).toEqual({ only: [], off: expect.stringMatching(/^No AI for your account: add one in Settings → Providers/) });
     expect(keyFor(admin, "ANTHROPIC_API_KEY").key).toBe("");
     // their own key is their choice
     saveMyKey("admin", "ANTHROPIC_API_KEY", "admin-own-1234");

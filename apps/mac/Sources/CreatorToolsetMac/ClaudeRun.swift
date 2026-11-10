@@ -235,7 +235,8 @@ func codexAnswer(_ req: RelayRequest, _ opts: RelayOptions, cli: String, work: U
 
     let (cwd, system) = try prepareFolder(req, work: work, tmp: tmp, emptyFolder: emptyFolder)
     let prompt = "<instructions>\n\(system)\n</instructions>\n\n" + requestText(req.user, folder: folder)
-    let outcome = try runStream(cli: cli, args: codexArguments(cwd: cwd.path, model: opts.model, effort: opts.effort), cwd: cwd,
+    let pictures = codexPictures(req.files, cwd: cwd)
+    let outcome = try runStream(cli: cli, args: codexArguments(cwd: cwd.path, model: opts.model, effort: opts.effort, pictures: pictures), cwd: cwd,
                                 env: driverEnv(base: ProcessInfo.processInfo.environment, home: opts.home), prompt: prompt, folder: folder,
                                 send: send, step: step, tmp: tmp, stream: CodexStream())
     if outcome.killed {

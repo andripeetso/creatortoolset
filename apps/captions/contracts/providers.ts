@@ -307,6 +307,9 @@ export const DRIVER_MODELS: Partial<Record<Driver, string[]>> = {
   claude: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"],
   // the current GA flash and lite models, and the pro one that is still preview-only
   gemini: ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.1-pro-preview"],
+  // fallback for Codex: the models a ChatGPT login listed in codex-cli 0.39. On the owner's Mac the server reads the
+  // login's own list (api/lib/providers.ts codexLoginModels), so this only answers where Codex's cache can't be read.
+  codex: ["gpt-6-luna", "gpt-5.6-terra", "gpt-5.6-luna"],
 };
 
 /** Nothing is added, connected or signed in before a person presses Connect (setup, api/lib/local-ai.ts). */

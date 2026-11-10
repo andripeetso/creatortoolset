@@ -577,6 +577,31 @@ final class RelayTests: XCTestCase {
         XCTAssertEqual(answer.state, "")
     }
 
+    func testCodexPicturesAreImageFlagsBeforeThePromptMarker() {
+        let args = codexArguments(cwd: "/tmp/run", model: "gpt-6-luna", effort: "xhigh", pictures: ["/tmp/run/attached/1.jpg", "/tmp/run/attached/2.png"])
+        XCTAssertEqual(Array(args.suffix(3)), ["--image=/tmp/run/attached/1.jpg", "--image=/tmp/run/attached/2.png", "-"])
+        XCTAssertEqual(codexPictures(["attached/2.png": "base64:AA==", "attached/1.jpg": "base64:AA==", "notes.md": "x"], cwd: URL(fileURLWithPath: "/tmp/run")),
+                       ["/tmp/run/attached/1.jpg", "/tmp/run/attached/2.png"])
+    }
+
+    func testCodexRunThroughTheRelayGetsItsModelAndPicturesAsFlags() throws {
+        // A stand-in codex that writes its argv to a file and echoes the prompt it was given on stdin as its answer.
+        let dir = temp()
+        let file = dir.appendingPathComponent("codex")
+        let argv = dir.appendingPathComponent("argv.txt").path
+        let script = "#!/bin/sh\nprintf '%s\\n' \"$@\" > \(argv)\nprompt=$(cat)\nprintf '{\"id\":\"0\",\"msg\":{\"type\":\"agent_message\",\"message\":\"ok\"}}\\n'\n"
+        try script.write(to: file, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
+        let req = request(#"{"id":"c4","system":"","user":"look","driver":"codex","model":"gpt-6-luna","effort":"xhigh","files":{"attached/1.jpg":"base64:/9j/","notes.md":"x"}}"#)
+        let answer = try runAnswer(req, try requestOptions(req), cli: file.path, work: temp(), send: { _ in true }, step: { _ in })
+        XCTAssertEqual(answer.text, "ok")
+        let lines = try String(contentsOfFile: argv, encoding: .utf8).split(separator: "\n").map(String.init)
+        XCTAssertEqual(lines.last, "-")
+        XCTAssertEqual(lines[lines.firstIndex(of: "-m")! + 1], "gpt-6-luna")
+        XCTAssertEqual(lines.filter { $0.hasPrefix("--image=") }.count, 1, "the notes file is not a picture")
+        XCTAssertTrue(lines.contains { $0.hasPrefix("--image=") && $0.hasSuffix("/attached/1.jpg") })
+    }
+
     func testCodexWithNoFolderStartsInItsOwnEmptyFolderUnderApplicationSupport() throws {
         // A stand-in codex that answers with its working folder, so the test can see where the run started.
         let file = temp().appendingPathComponent("codex")

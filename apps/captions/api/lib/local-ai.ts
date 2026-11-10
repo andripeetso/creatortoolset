@@ -8,7 +8,7 @@ import { type CliId, type ConnectResult, type LocalAiRow, type LocalAiView, type
 import { planFromCli, type PlanId } from "../../contracts/plans";
 import { addInstanceTo, type ProviderInstance } from "../../contracts/providers";
 import { checkInstance } from "../providers";
-import { connectedOwn, ownSettings, parseSettings, saveSettings } from "./providers";
+import { connectedOwn, modelsFor, ownSettings, parseSettings, saveSettings } from "./providers";
 import { deviceOf, isOnline } from "./devices";
 import { findUser, newApiKey, type UserRecord } from "../users";
 
@@ -469,8 +469,12 @@ export async function connectCli(username: string, id: CliId, home = os.homedir(
 
   const instId = `local-${id}`;
   const inst: ProviderInstance = { id: instId, driver: id, name: NAMES[id], enabled: true, device: device.id, ...(p.home ? { home: p.home } : {}) };
-  // the same writer as the Settings page's Add provider: addInstanceTo builds the set, parseSettings checks it
-  const next = parseSettings(addInstanceTo(ownSettings(username), inst), username, { trustedFolder: true });
+  // the same writer as the Settings page's Add provider: addInstanceTo builds the set, parseSettings checks it.
+  // A first AI becomes the default with the first model this login really has (modelsFor), not the catalogue's.
+  const cur = ownSettings(username);
+  const built = addInstanceTo(cur, inst);
+  const first = modelsFor(inst)[0];
+  const next = parseSettings(!cur?.default.instance && first ? { ...built, default: { ...built.default, model: first } } : built, username, { trustedFolder: true });
 
   // the check runs before anything is saved: a failed check leaves the saved set, its default included, as it was
   const check = await checkInstance(username, inst, next);

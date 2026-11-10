@@ -3,6 +3,7 @@ import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { transcribeWav } from "../transcribe";
+import { deviceTranscribes, DEVICE_AUDIO, transcribeOnDevice } from "../lib/device-transcribe";
 import { isAdminActor, keyFor } from "../my-keys";
 import { findUser } from "../users";
 import { ffmpegTo } from "./media/run";
@@ -10,10 +11,11 @@ import { ffmpegTo } from "./media/run";
 /**
  * The library's `transcribe` job (tasks/media-library-plan.md, sections 5, 6 and 11). It runs as the job's actor, on the
  * key that serves them (my-keys.ts keyFor): their own Deepgram or OpenAI key, else the server's for a platform admin.
- * Without one the job parks as `needs_key` with the key to add: never
+ * Without one, a server on its owner's computer transcribes by itself (lib/device-transcribe.ts: slower, free);
+ * any other server parks the job as `needs_key` with the key to add: never
  * failed, and never on another person's account.
  * Deepgram first (the request Caption Studio sends, api/transcribe.ts), else an
- * OpenAI-compatible /audio/transcriptions endpoint.
+ * OpenAI-compatible /audio/transcriptions endpoint, else this computer.
  */
 
 export interface Segment {
@@ -40,12 +42,13 @@ export function needKey(actor: string | null, name: Parameters<typeof keyFor>[1]
   return r;
 }
 
-/** Which key transcribes for `actor`. Throws NeedsKey when there is none. */
-export function transcribeRoute(actor: string | null): { provider: "deepgram" | "openai"; key: string } {
+/** What transcribes for `actor`: their key, else this computer when the server is on it. Throws NeedsKey when there is neither. */
+export function transcribeRoute(actor: string | null): { provider: "deepgram" | "openai"; key: string } | { provider: "device" } {
   const dg = keyFor(actor, "DEEPGRAM_API_KEY");
   if (!dg.missing) return { provider: "deepgram", ...dg };
   const oa = keyFor(actor, "OPENAI_API_KEY");
   if (!oa.missing) return { provider: "openai", ...oa };
+  if (deviceTranscribes()) return { provider: "device" };
   throw new NeedsKey("Add your Deepgram (or OpenAI) key in Settings → API keys");
 }
 
@@ -132,15 +135,24 @@ async function openai(file: string, key: string): Promise<Transcribed> {
   return { segments, words, language: data.language ?? null };
 }
 
-/** A file's transcript as its actor's key gives it: the route first (no audio is cut without one), then the provider. Throws NeedsKey without a key. */
-export async function transcribeFile(src: string, actor: string | null, scratch: string): Promise<Transcribed & { provider: "deepgram" | "openai" }> {
+/** On this computer: `status` names the run for whoever shows what it is doing (deviceStatus). */
+async function device(file: string, status: string): Promise<Transcribed> {
+  const { words, language } = await transcribeOnDevice(file, status);
+  return { segments: wordsToSegments(words), words: words.map((w) => ({ w: w.text, s: w.start, e: w.end })), language };
+}
+
+/**
+ * A file's transcript as its actor's key gives it, or this computer: the route first (no audio is cut without one),
+ * then the provider. Throws NeedsKey without a route. `status` names an on-device run (a version's id) for deviceStatus.
+ */
+export async function transcribeFile(src: string, actor: string | null, scratch: string, status: string = src): Promise<Transcribed & { provider: "deepgram" | "openai" | "device" }> {
   const route = transcribeRoute(actor);
   await mkdir(scratch, { recursive: true });
-  const out = path.join(scratch, `transcribe-${randomUUID()}.${route.provider === "deepgram" ? "wav" : "m4a"}`);
+  const out = path.join(scratch, `transcribe-${randomUUID()}.${route.provider === "deepgram" ? "wav" : route.provider === "openai" ? "m4a" : "f32"}`);
   try {
-    const codec = route.provider === "deepgram" ? ["-c:a", "pcm_s16le"] : ["-c:a", "aac", "-b:a", "32k"];
-    await ffmpegTo(out, ["-i", src, "-vn", "-ac", "1", "-ar", "16000", ...codec]);
-    const t = route.provider === "deepgram" ? await deepgram(out, actor ?? "") : await openai(out, route.key);
+    if (route.provider === "device") await ffmpegTo(out, ["-i", src, ...DEVICE_AUDIO]);
+    else await ffmpegTo(out, ["-i", src, "-vn", "-ac", "1", "-ar", "16000", ...(route.provider === "deepgram" ? ["-c:a", "pcm_s16le"] : ["-c:a", "aac", "-b:a", "32k"])]);
+    const t = route.provider === "device" ? await device(out, status) : route.provider === "deepgram" ? await deepgram(out, actor ?? "") : await openai(out, route.key);
     return { ...t, provider: route.provider };
   } finally {
     await rm(out, { force: true });
@@ -149,6 +161,6 @@ export async function transcribeFile(src: string, actor: string | null, scratch:
 
 /** Transcribes one version's audio as its job's actor, and stores it. */
 export async function transcribeVersion(db: DatabaseSync, versionId: string, src: string, actor: string | null, scratch: string): Promise<void> {
-  const { provider, segments, words, language } = await transcribeFile(src, actor, scratch);
+  const { provider, segments, words, language } = await transcribeFile(src, actor, scratch, versionId);
   saveTranscript(db, versionId, provider, language, segments, words);
 }

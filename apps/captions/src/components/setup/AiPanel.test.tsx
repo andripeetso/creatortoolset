@@ -20,7 +20,7 @@ const view = (rows: LocalAiRow[], local = true): LocalAiView => ({ local, rows }
 const panel = (v: LocalAiView | null, over: Partial<Parameters<typeof AiPanelView>[0]> = {}) =>
   text(
     renderToStaticMarkup(
-      <AiPanelView view={v} results={{}} phases={{}} onAction={() => {}} onInstall={() => {}} onRefresh={() => {}} {...over} />,
+      <AiPanelView view={v} results={{}} phases={{}} onAction={() => {}} onInstall={() => {}} {...over} />,
     ),
   );
 
@@ -94,10 +94,10 @@ describe("the desktop apps: a row each when installed, text only", () => {
 });
 
 describe("the list", () => {
-  it("never offers an API key, and always has Check again", () => {
+  it("never offers an API key, and has no Check button: it looks again by itself", () => {
     const html = panel(view([claude, codex]));
     expect(html).not.toMatch(/api key/i);
-    expect(html).toContain("Check again");
+    expect(html).not.toContain("Check again");
   });
 
   it("asks the owner of a server that is not this computer to connect its AI, with no rows", () => {
@@ -152,8 +152,8 @@ describe("what a row does, in order", () => {
     expect(rowView(claude, undefined, "signingIn").line).toContain("Waiting for you to finish in your browser");
   });
 
-  it("after three minutes still out: asks for Check again", () => {
-    expect(rowView(claude, undefined, "timedOut").button).toEqual({ label: "Check again", action: "check" });
+  it("after three minutes still out: offers Sign in again, never a Check button", () => {
+    expect(rowView(claude, undefined, "timedOut").button).toEqual({ label: "Sign in", action: "signin" });
   });
 
   it("a failed answer shows the plain line and keeps the raw text for Details", () => {

@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
 import { confirmHeavy, openToolSetup } from "@/lib/setup";
 import { ToolSetupLine } from "@/components/setup/ToolSetupLine";
 import { EditorDefaultsButton } from "@/components/settings/EditorDefaultsDialog";
+import { FootageFolderCard } from "@/components/FootageFolderCard";
 
 /**
  * AI Editor (/editor): the edits I made (a workspace owner: the members' too), and New edit: footage picked from the
@@ -255,6 +256,7 @@ function NewEditSheet({ open, onClose }: { open: boolean; onClose: () => void })
           </div>
 
           <section aria-label="Footage" className="flex flex-col gap-2">
+            {libId && items.length === 0 && !term && !folder && <FootageFolderCard libraryId={libId} />}
             <div className="flex flex-wrap items-center gap-2">
               {libraries.length > 1 && (
                 <select

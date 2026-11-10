@@ -2,7 +2,7 @@ import {
   isOutOfCredits,
   outOfCreditsMessage,
 } from "./credits";
-import type { JobId, Selection } from "../contracts/providers";
+import { DRIVERS, type JobId, type Selection } from "../contracts/providers";
 import { MAC_MISS, MacClaudeError, recordUsage, streamMacClaude, type MacOpts, type MacUsage } from "./lib/mac-claude";
 import { instanceIn, limitFallbacks, routeFor, runFields } from "./lib/providers";
 import { completeLocal } from "./lib/local-claude";
@@ -72,6 +72,9 @@ export type ProviderOpts = {
 /** Who is asking: a session, or a username (background work names its owner). Nobody = no AI. */
 type Who = Pick<SessionUser, "username" | "role"> | string | undefined;
 
+/** The name a Mac answer carries: the CLI that ran it ("Codex (Mac)"), Claude when the call names none. */
+export const macLabelOf = (opts: ProviderOpts): string => `${DRIVERS.find((d) => d.id === opts.mac?.provider?.driver)?.label ?? "Claude"} (Mac)`;
+
 /**
  * Where one AI call goes. Accounts: the job's provider (the session's own pick first), with the label for the
  * usage tally. Its scope (lib/providers.ts routeFor): the account's own providers when it has a runnable one on its
@@ -84,7 +87,7 @@ export function aiFor(who: Who, job: JobId, label: string, own?: Selection): Pro
   // nobody named: never the server's providers (background work names whose work it is)
   if (!name || role === "visitor") return { only: [], off: "This AI call names no account" };
   const r = routeFor(name, role === "admin", job, own);
-  if (!r) return onApiKey(name, job, label) || onBudget(name, job, label) || { only: [], off: "No AI for your account: add one in Settings → Your own AI, or your Anthropic key in Settings → API keys" };
+  if (!r) return onApiKey(name, job, label) || onBudget(name, job, label) || { only: [], off: "No AI for your account: add one in Settings → Providers, or your Anthropic key in Settings → API keys" };
   const { selection, instance } = r;
   return {
     only: ["mac"],
@@ -100,7 +103,7 @@ export function aiFor(who: Who, job: JobId, label: string, own?: Selection): Pro
 function onApiKey(name: string, job: JobId, label: string): ProviderOpts | null {
   const k = keyFor(name, "ANTHROPIC_API_KEY");
   if (!k.key) return null;
-  if (job === "workshop") return { only: [], off: "Content Workshop runs on your own AI (it reads the whole project folder): connect yours in Settings → Your own AI" };
+  if (job === "workshop") return { only: [], off: "Content Workshop runs on your own AI (it reads the whole project folder): connect yours in Settings → Providers" };
   return { only: ["anthropic"], retries: 1, apiKey: k.key, mac: { label } };
 }
 
@@ -113,7 +116,7 @@ function onBudget(name: string, job: JobId, label: string): ProviderOpts | null 
   if (!hostedMode()) return null;
   const left = budgetLeft(name);
   if (left === null) return null;
-  if (job === "workshop") return { only: [], off: "Content Workshop runs on your own AI (it reads the whole project folder): connect yours in Settings → Your own AI" };
+  if (job === "workshop") return { only: [], off: "Content Workshop runs on your own AI (it reads the whole project folder): connect yours in Settings → Providers" };
   if (left <= 0) return { only: [], off: "Your AI budget for this month is used up: ask your workspace's owner or an admin for more" };
   const apiKey = process.env.ANTHROPIC_API_KEY || "";
   if (!apiKey) return { only: [], off: "The workspace's API key isn't set up: ask the owner" };
@@ -579,11 +582,12 @@ export async function streamWithFallback<T>(
     for (let attempt = 0; attempt < attempts; attempt++) {
       if (cancelSignal?.aborted) throw new AiProviderError("Stopped", "ABORTED", false);
       try {
-        await hooks.onStart?.({ id: provider.id, label: provider.label });
+        const label = provider.id === "mac" ? macLabelOf(opts) : provider.label;
+        await hooks.onStart?.({ id: provider.id, label });
         const text = await STREAMERS[provider.id](system, user, cancelSignal, async (t) => {
           await hooks.onDelta?.(t);
         }, hooks.onUsage, opts);
-        return { result: parseAnswer(provider.id, text, parse), provider: provider.label };
+        return { result: parseAnswer(provider.id, text, parse), provider: label };
       } catch (e) {
         if (e instanceof MacClaudeError && !MAC_MISS.has(e.kind)) throw e; // Claude on the Mac had it: a Stop, timeout or failure never reaches the API key
         if (e instanceof AiProviderError && !e.retryable) throw e;

@@ -1,8 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { ffmpegCommand } from "../ffmpeg-runtime";
 
 const scratch = process.env.CT_SCRATCH_DIR ?? tmpdir();
@@ -17,6 +17,7 @@ const { saveTranscript } = await import("../library/transcribe");
 const { createEdit, readStep } = await import("./store");
 const { ENERGY_PER_SECOND, energyFile, readEnergy, sentencesOf } = await import("./analyze");
 const { tick } = await import("./worker");
+const { deviceStatus, LISTENING, transcribeOnDevice } = await import("../lib/device-transcribe");
 
 const wav = path.join(dir, "tone.wav");
 const word = (w: string, s: number, e: number) => ({ w, s, e });
@@ -101,6 +102,33 @@ describe("AI Editor analyze", () => {
     expect(transcribeJob("ver_late")).toEqual({ state: "queued", actor: "mem-a" });
     expect(again.job()).toMatchObject({ state: "queued" });
     saveMyKey("mem-a", "OPENAI_API_KEY", null);
+  });
+
+  it("on the person's own computer a transcribe parked for a missing key is queued again, and the step says what a running one is doing", async () => {
+    const jobs = (state: string) => libraryDb().prepare("UPDATE jobs SET state = ?, error = NULL WHERE version_id = 'ver_late' AND kind = 'transcribe'").run(state);
+    process.env.CT_LOCAL = "1";
+    try {
+      libraryDb().prepare("UPDATE jobs SET state = 'needs_key', error = 'Add a key' WHERE version_id = 'ver_late' AND kind = 'transcribe'").run();
+      const first = await analyze(["ver_late"], Date.now());
+      expect(transcribeJob("ver_late")).toEqual({ state: "queued", actor: "mem-a" });
+      expect(first.job()).toMatchObject({ state: "queued", error: null });
+      // the library's worker is on it: a stand-in model that listens until it is let go
+      jobs("running");
+      const samples = path.join(dir, "speech.f32");
+      writeFileSync(samples, Buffer.from(new Float32Array(1600).buffer));
+      let letGo!: () => void;
+      const held = new Promise<void>((r) => (letGo = r));
+      const model = Object.assign(async () => (await held, { chunks: [] }), { dispose: async () => {}, model: { generation_config: {} } });
+      const run = transcribeOnDevice(samples, "ver_late", async () => model);
+      await vi.waitFor(() => expect(deviceStatus("ver_late")).toBe(LISTENING));
+      const { job } = await analyze(["ver_late"], Date.now());
+      expect(job()).toMatchObject({ state: "queued", error: LISTENING });
+      letGo();
+      await run;
+    } finally {
+      delete process.env.CT_LOCAL;
+      jobs("queued");
+    }
   });
 
   it("numbers sentences across sources in recording order, caches each source's energy and notes a source with no sound", async () => {

@@ -5,7 +5,7 @@ import AppKit
 import Foundation
 
 /// The questions the page may ask over the "thisMac" handler (TitleBar.swift); any other is answered as off.
-let thisMacAsks = ["state", "start", "access"]
+let thisMacAsks = ["state", "start", "access", "folder"]
 
 extension Shell {
     /// One `thismac-<what>` message: state, ai:on|off, select:<id>, add:<text>, rename:<id>:<name>, remove:<id>, forget,
@@ -40,6 +40,20 @@ extension Shell {
             password = typed
         }
         return thisMacState(problem: await setOtherDevices(true, password: password))
+    }
+
+    /// "folder" from the page (FootageFolderCard, "Choose a folder"): this Mac's own open panel for one folder. The reply is
+    /// { path }, or { path: null } when cancelled. Choosing it is what lets this app read the folder; the server then adds it
+    /// to the Library's watch list (api/library/watch.ts), which reads it in place.
+    @MainActor func chooseFolder() -> [String: Any] {
+        let open = NSOpenPanel()
+        open.canChooseDirectories = true
+        open.canChooseFiles = false
+        open.canCreateDirectories = true
+        open.prompt = "Choose"
+        open.message = "Choose the folder with your videos. Nothing is moved or uploaded."
+        guard open.runModal() == .OK, let url = open.url else { return ["path": NSNull()] }
+        return ["path": url.path]
     }
 
     /// The owner's new password for other devices, typed in a sheet of this app (nil: cancelled or too short).

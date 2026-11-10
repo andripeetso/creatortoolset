@@ -11,7 +11,7 @@ import { inSlideOrder, storedZip, type Delivery } from "./lib/workshop/deliverie
 import path from "node:path";
 import { sessionOf, type AuthVars } from "./auth";
 import { AiProviderError, aiFor as route, completeWithFallback, streamWithFallback, type ProviderOpts, type StreamHooks } from "./ai-complete";
-import type { Selection } from "../contracts/providers";
+import { DRIVERS, type Selection } from "../contracts/providers";
 import { MAC_MISS, MacClaudeError, streamMacClaude, type MacErrorKind, type MacOpts, type MacSession, type MacUsage } from "./lib/mac-claude";
 import { env } from "./lib/env";
 import type { SessionUser, UserRecord } from "./users";
@@ -124,9 +124,11 @@ const RESUME_MAX_TOKENS = 100_000;
 const onMac = (user: SessionUser, own?: Selection) => !!workshopAi(user, own).only?.includes("mac");
 /** The asker's Perplexity key (their own, or the server's for the platform admin), or "" */
 const perplexityFor = (user: SessionUser) => keyFor(user, "PERPLEXITY_API_KEY").key;
-const researchFor = (user: SessionUser) => !!perplexityFor(user) || onMac(user);
-const RESEARCH_OFF = "Research needs an AI of your own (Settings → Your own AI) or your Perplexity key in Settings → API keys";
-const researchLabel = (user: SessionUser) => (onMac(user) ? "Claude (Mac)" : "Perplexity");
+/** A Mac CLI that can search the web (Codex's read-only sandbox has no network, so research never runs on it). */
+const onWebMac = (user: SessionUser, own?: Selection) => onMac(user, own) && (workshopAi(user, own).mac?.provider?.driver ?? "claude") !== "codex";
+const researchFor = (user: SessionUser) => !!perplexityFor(user) || onWebMac(user);
+const RESEARCH_OFF = "Research needs an AI on your Mac that can search the web (Claude Code, Gemini CLI or Grok) or your Perplexity key in Settings → API keys";
+const researchLabel = (user: SessionUser) => (onWebMac(user) ? "Claude (Mac)" : "Perplexity");
 const macLabel = (u?: MacUsage) => (u ? `Claude (Mac) · ${(u.tokens / 1000).toFixed(1)}k tokens · $${u.costUsd.toFixed(2)} API-equivalent` : "Claude (Mac)");
 
 /**
@@ -141,7 +143,7 @@ async function webResearch(
   opts: { depth: ResearchDepth; jsonSchema?: Record<string, unknown>; signal?: AbortSignal },
 ): Promise<ResearchAnswer & { usage?: MacUsage }> {
   if (opts.signal?.aborted) throw new Error("Stopped");
-  if (onMac(user)) {
+  if (onWebMac(user)) {
     try {
       let usage: MacUsage | undefined;
       const rules = MAC_RESEARCH[opts.depth] + (opts.jsonSchema ? "" : MAC_RESEARCH.sources);
@@ -1258,7 +1260,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
           file: folder ? postFile(p.item) : undefined,
           text: p.slides?.join("\n") || p.item.caption || "",
         })),
-        web: folder ? approvedWeb || undefined : undefined,
+        web: folder && onWebMac(user, session.ai) ? approvedWeb || undefined : undefined,
         quotes: ask.quotes,
         pasted: askPasted.map((p) => ({ name: p.name, text: p.text, ...(folder ? { file: pastedFile(session, p) } : {}) })),
         images: askImages.map((im, i) => ({ name: im.name, ...(folder || macReads ? { file: attachedFile(im, i) } : {}) })),
@@ -1318,7 +1320,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
             label: "Workshop",
             // no folder: the pictures still go as files the provider reads
             files: folder ?? (attachments.length ? Object.fromEntries(attachments.map((f, i) => [attachedFile(f, i), `base64:${f.data}`])) : undefined),
-            web: !!folder && !!approvedWeb,
+            web: !!folder && !!approvedWeb && onWebMac(user, session.ai),
             onStep: step,
             ...(folder ? { session: { key: session.id, resume: resume?.id }, onSession: (s: MacSession) => (got.session = s) } : {}),
           };
@@ -1478,7 +1480,8 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
           : `I searched the library for “${plan.search}” — nothing beyond what is already in the session.`,
       );
     }
-    if ((approvedWeb && !folder && !research) || (ask.deep && !research)) notes.push("Research is not configured on the server, so I could not check that on the web.");
+    // Codex's sandbox has no network: an approved search runs only on Claude Code on the Mac (or Perplexity), say so otherwise
+    if ((approvedWeb && !research && (!folder || !onWebMac(user, session.ai))) || (ask.deep && !research)) notes.push("Web search isn't set up for this AI, so I could not check that on the web. An AI on your Mac that can search can, or add a Perplexity key.");
     // a web search the model ran itself is said in the answer, in code (the model may not)
     const searched = steps.filter((x) => x.label.startsWith("Searched the web: ")).map((x) => x.label.slice("Searched the web: ".length));
     if (searched.length) notes.push(`Searched the web for ${searched.join(", ")}.`);
@@ -1585,6 +1588,10 @@ function fableProvider(user: SessionUser): MacOpts["provider"] {
   return c ? { instance: c.id, driver: c.driver, home: c.home, device: c.device ?? "", scope: "workspace", model: REVIEW_MODEL, effort: p?.effort ?? "xhigh" } : p;
 }
 
+/** The name of the CLI that reads a follower's review: Claude Fable for a Claude, else that CLI ("Codex (Mac)"). */
+const readerName = (reader: MacOpts["provider"]): string =>
+  reader && reader.driver !== "claude" ? `${DRIVERS.find((d) => d.id === reader.driver)?.label ?? reader.driver} (Mac)` : "Claude Fable (Mac)";
+
 /** "Read as a follower": Fable on the Mac reads the piece with only the piece, the audience and the author's best posts (review.ts). */
 async function runReview(session: SessionMeta, user: SessionUser, messageId: string, docId: string): Promise<void> {
   const signal = stopSignal(messageId);
@@ -1597,9 +1604,11 @@ async function runReview(session: SessionMeta, user: SessionUser, messageId: str
     const { system, user: prompt } = buildReviewPrompt({ doc, handle, audience: audienceOf(project), best, packText });
     let usage: MacUsage | undefined;
     const write = progressWriter(session.id, messageId);
-    const text = await streamMacClaude(system, prompt, signal, (t) => write({ text: t, stage: "writing" }), (u) => (usage = u), { label: "Workshop follower's read", provider: fableProvider(user), model: REVIEW_MODEL });
+    const reader = fableProvider(user);
+    const text = await streamMacClaude(system, prompt, signal, (t) => write({ text: t, stage: "writing" }), (u) => (usage = u), { label: "Workshop follower's read", provider: reader, model: REVIEW_MODEL });
     await write({}, true);
-    await patchMessage(session.id, messageId, { status: "done", stage: undefined, text: text.trim(), provider: "Claude Fable (Mac)", usage });
+    // a non-Claude reader (a member whose only AI is Codex) keeps its own model: name the CLI that actually read it
+    await patchMessage(session.id, messageId, { status: "done", stage: undefined, text: text.trim(), provider: readerName(reader), usage });
     bumpUsage(user.username, { aiRuns: 1 });
   } catch (e) {
     await patchMessage(session.id, messageId, { status: "error", stage: undefined, error: errorMessage(e).slice(0, 300) });
@@ -3234,11 +3243,11 @@ workshopApp.post("/sessions/:id/reviews", async (c) => {
   const body = (await c.req.json().catch(() => null)) as { docId?: unknown } | null;
   const doc = typeof body?.docId === "string" ? await readDoc(meta.id, body.docId) : null;
   if (!doc || doc.kind === "notes" || !doc.blocks.length) return c.json({ error: "Open a piece with some text first" }, 400);
-  if (!onMac(user)) return c.json({ error: "A follower's read runs on Claude Fable through your AI on the Mac" }, 503);
+  if (!onMac(user)) return c.json({ error: "A follower's read runs through your AI on the Mac" }, 503);
   await readChat(meta.id);
   const now = Date.now();
   const ask: ChatMessage = { id: randomUUID(), role: "user", text: "Read it as a follower would.", at: now, docId: doc.id, status: "done" };
-  const reply: ChatMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, docId: doc.id, status: "thinking", stage: "thinking", provider: "Claude Fable (Mac)", review: { model: REVIEW_MODEL } };
+  const reply: ChatMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, docId: doc.id, status: "thinking", stage: "thinking", provider: readerName(fableProvider(user)), review: { model: REVIEW_MODEL } };
   if (!(await startTurn(meta.id, [ask, reply]))) return c.json({ error: "Still working on the last message — wait for it" }, 409);
   void runReview(meta, user, reply.id, doc.id);
   return c.json({ ask, reply }, 202);

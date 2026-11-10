@@ -38,6 +38,19 @@ describe("TOOL_NEEDS readiness", () => {
     expect(readiness("editor", ["ai", "library", "OPENAI_API_KEY"]).ready).toBe(true);
   });
 
+  it("on the person's own computer transcripts need no key: the Editor, Video Notes and Guide Builder are ready without one", () => {
+    expect(readiness("editor", ["ai", "library", "deviceTranscripts"]).ready).toBe(true);
+    expect(readiness("notes", ["ai", "deviceTranscripts"]).ready).toBe(true);
+    expect(readiness("guides", ["ai", "deviceTranscripts"]).ready).toBe(true);
+    expect(readiness("media", ["library", "deviceTranscripts"]).extra.map((n) => n.what)).not.toContainEqual(expect.stringMatching(/^Transcripts/));
+    // anywhere else the row is still missing, asks only for keys (never for "this computer"), and says a key is faster
+    for (const t of ["editor", "notes", "guides"] as const) {
+      const [row] = readiness(t, ["ai", "library"]).missing;
+      expect(row.anyOf.every((h) => h.endsWith("_API_KEY"))).toBe(true);
+      expect(row.what).toMatch(/a key is faster/);
+    }
+  });
+
   it("every tool has a row list, and the key → tools direction matches it", () => {
     for (const t of TOOLS) expect(Array.isArray(TOOL_NEEDS[t])).toBe(true);
     expect(toolsUsing("DEEPGRAM_API_KEY")).toEqual(["captions", "media", "editor", "notes", "guides"]);

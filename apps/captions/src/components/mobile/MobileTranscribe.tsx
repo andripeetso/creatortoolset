@@ -60,10 +60,7 @@ export function MobileTranscribe({
     }
     if (status.phase === "loading") {
       return (
-        <ModelLoadingStatus
-          progress={status.progress}
-          detail={status.detail}
-        />
+        <ModelLoadingStatus progress={status.progress} />
       );
     }
     if (status.phase === "checking") {

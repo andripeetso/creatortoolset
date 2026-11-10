@@ -117,6 +117,7 @@ final class Shell: NSObject, ObservableObject {
             switch ask {
             case "state": done(self.thisMacState())
             case "access": Task { done(await self.accessFromOtherDevices()) }
+            case "folder": done(self.chooseFolder())
             default: Task { done(await self.startThisMac()) }
             }
         }

@@ -4,6 +4,7 @@ import { AudioLines, Captions, MessageSquare, Quote, Share2, FileText, Folder, I
 import type { AssetCard, AssetDetail, AssetKind, Collection, LibrarySummary, SearchHit } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
 import { ToolSetupLine } from "@/components/setup/ToolSetupLine";
+import { FootageFolderCard } from "@/components/FootageFolderCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
@@ -319,6 +320,7 @@ export default function LibraryPage() {
 
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 px-4 py-4 sm:px-6">
         <ToolSetupLine tool="media" />
+        {library && <FootageFolderCard libraryId={library.id} onUpload={() => picker.current?.click()} />}
         {libraries === null && !error && (
           <div className="flex justify-center py-16 text-zinc-500">
             <Loader2 className="h-6 w-6 animate-spin" />
@@ -861,7 +863,7 @@ function Player({
       ) : (
         job && (
           <p className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-            {waiting ? "Transcribing…" : job.state === "done" ? "Nothing is said in this clip." : job.error ?? "The transcript failed."}
+            {waiting ? (job.state === "running" && job.error) || "Transcribing…" : job.state === "done" ? "Nothing is said in this clip." : job.error ?? "The transcript failed."}
             {(job.state === "needs_key" || job.state === "failed") && !inTrash && (
               <Button size="sm" variant="outline" onClick={retry}>
                 Retry

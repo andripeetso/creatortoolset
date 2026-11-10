@@ -38,7 +38,7 @@ export interface LocalAiView {
   rows: LocalAiRow[];
 }
 
-/** "unsupported": this CLI can't be the app's own AI (the Mac relay runs Claude Code and Gemini CLI only). */
+/** "unsupported": this CLI can't be the app's own AI (the Mac relay has no runner for it). */
 export type ConnectState = "missing" | "mac" | "signin" | "failed" | "ready" | "unsupported";
 
 export interface ConnectResult {

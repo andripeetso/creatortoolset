@@ -55,7 +55,8 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
         configuration.userContentController.add(self, name: "badge")
         configuration.userContentController.add(self, name: "signIn")
         configuration.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "account")
-        // This Mac's AI (src/lib/thisMac.ts): "state", "start" and "access", answered with { aiOn, paired, problem }
+        // This Mac's AI (src/lib/thisMac.ts): "state", "start" and "access", answered with { aiOn, paired, problem };
+        // "folder" (the folder picker, src/lib/thisMac.ts chooseFolderOnMac), answered with { path }
         configuration.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "thisMac")
         // A picture of the page for the assistant (src/lib/page-context.ts snapshot()): replies with a PNG in base64
         configuration.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "snapshot")

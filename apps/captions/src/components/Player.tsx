@@ -872,10 +872,7 @@ export function Player() {
               />
             )}
             {status.phase === "loading" && !refining && (
-              <ModelLoadingStatus
-                progress={status.progress}
-                detail={status.detail}
-              />
+              <ModelLoadingStatus progress={status.progress} />
             )}
             {status.phase === "transcribing" &&
               !refining &&
@@ -996,8 +993,11 @@ export function ExtractionProcessingStatus({
     Math.min(90, Math.round(Math.max(0, duration) * 0.12)),
   );
 
+  const onDevice = useStudio((s) => s.model !== CLOUD_MODEL_ID);
+
   return (
     <EstimatedProcessingStatus
+      plain={onDevice}
       operationKey="extracting"
       complete={false}
       title={
@@ -1024,29 +1024,34 @@ export function ExtractionProcessingStatus({
   );
 }
 
-export function ModelLoadingStatus({
-  progress,
-  detail,
-}: {
-  progress: number;
-  detail: string;
-}) {
+export function ModelLoadingStatus({ progress }: { progress: number }) {
+  const model = useStudio((s) => s.model);
+  const mb = MODELS.find((m) => m.id === model)?.mb;
+  // already in this browser's model cache: nothing downloads, so the size is not said again
+  const [kept, setKept] = useState(false);
+  useEffect(() => {
+    void globalThis.caches
+      ?.open("transformers-cache")
+      .then((c) => c.keys())
+      .then((keys) => setKept(keys.some((k) => k.url.includes(`/${model}/`) && k.url.endsWith(".onnx"))))
+      .catch(() => {});
+  }, [model]);
   return (
     <EstimatedProcessingStatus
+      plain
       operationKey="model-loading"
       complete={false}
-      title="Preparing transcription…"
+      title={`Getting the speech model ready${mb && !kept ? ` (${mb} MB, only the first time)` : ""}`}
       completeTitle="Model ready"
       completeDetail="The transcription model is ready."
       expectedSeconds={30}
       lowSeconds={5}
       highSeconds={180}
-      progressLabel="Transcription model loading progress"
-      workingMessage="Still working — loading the transcription model on this device."
-      completeMessage="The transcription model is ready."
-      lockMessage="Playback and editing are locked."
+      progressLabel="Speech model progress"
+      workingMessage=""
+      completeMessage=""
+      lockMessage=""
       progressOverride={Math.round(Math.max(0, Math.min(1, progress)) * 100)}
-      progressDetail={detail || "Loading model files"}
     />
   );
 }
@@ -1065,9 +1070,10 @@ export function OnDeviceTranscriptionStatus({
 
   return (
     <EstimatedProcessingStatus
+      plain={!complete}
       operationKey="on-device-transcription"
       complete={complete}
-      title="Transcribing on-device…"
+      title="Listening to your video"
       completeTitle="Transcription complete"
       completeDetail="Your captions are ready to review and edit."
       expectedSeconds={expectedSeconds}
@@ -1138,6 +1144,7 @@ function EstimatedProcessingStatus({
   onStop,
   progressOverride,
   progressDetail,
+  plain,
 }: {
   operationKey: string;
   complete: boolean;
@@ -1154,6 +1161,8 @@ function EstimatedProcessingStatus({
   onStop?: () => void;
   progressOverride?: number;
   progressDetail?: string;
+  /** One line and its bar: no estimate, no second line (the on-device steps of a first job). */
+  plain?: boolean;
 }) {
   const [elapsed, setElapsed] = useState(0);
 
@@ -1185,7 +1194,11 @@ function EstimatedProcessingStatus({
   const estimateLabel = `${formatElapsed(lowSeconds)}–${formatElapsed(highSeconds)}`;
 
   return (
-    <span className="flex w-[min(28rem,calc(100vw-3rem))] min-w-0 flex-col gap-2.5 text-zinc-300">
+    <span
+      className={`flex min-w-0 flex-col gap-2.5 text-zinc-300 ${
+        plain ? "w-[min(34rem,calc(100vw-3rem))]" : "w-[min(28rem,calc(100vw-3rem))]"
+      }`}
+    >
       <span className="flex min-w-0 items-center gap-3">
         {complete ? (
           <Check className="h-5 w-5 shrink-0 text-emerald-400" />
@@ -1197,20 +1210,24 @@ function EstimatedProcessingStatus({
             <span className="text-sm font-medium text-zinc-100">
               {complete ? completeTitle : title}
             </span>
-            <span
-              aria-hidden="true"
-              className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-400"
-            >
-              {shownProgress}%{complete || !estimated ? "" : " estimated"}
+            {!(plain && estimated) && (
+              <span
+                aria-hidden="true"
+                className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-400"
+              >
+                {shownProgress}%{complete || !estimated ? "" : " estimated"}
+              </span>
+            )}
+          </span>
+          {!plain && (
+            <span className="text-[11px] text-zinc-400">
+              {complete
+                ? completeDetail
+                : progressDetail
+                  ? `${progressDetail} · ${formatElapsed(elapsed)} elapsed`
+                  : `Estimated ${estimateLabel} · ${formatElapsed(elapsed)} elapsed`}
             </span>
-          </span>
-          <span className="text-[11px] text-zinc-400">
-            {complete
-              ? completeDetail
-              : progressDetail
-                ? `${progressDetail} · ${formatElapsed(elapsed)} elapsed`
-                : `Estimated ${estimateLabel} · ${formatElapsed(elapsed)} elapsed`}
-          </span>
+          )}
         </span>
       </span>
 
@@ -1240,6 +1257,7 @@ function EstimatedProcessingStatus({
         </span>
       </span>
 
+      {!plain && (
       <span className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[11px] text-zinc-400">
         <span className="flex items-center gap-2">
           {!complete && (
@@ -1271,6 +1289,7 @@ function EstimatedProcessingStatus({
           </span>
         )}
       </span>
+      )}
     </span>
   );
 }

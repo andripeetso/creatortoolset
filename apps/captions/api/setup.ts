@@ -9,10 +9,9 @@ import { connectState } from "./connect/state";
 import { joinServer, saveJoin } from "./lib/server-join";
 import { readConnectors } from "./lib/connectors/store";
 import { publicApifyStatus, readApify } from "./lib/instagram/apify";
+import { deviceTranscribes } from "./lib/device-transcribe";
 import { connectedOwn } from "./lib/providers";
-import { homedir } from "node:os";
 import { addMcp, connectCli, installCli, localAiView, signIn, CLI_IDS, MAC_ONLY } from "./lib/local-ai";
-import { defaultRoots, scanFolders } from "./lib/folder-scan";
 import { ownedProjects } from "./lib/workshop/workspace";
 import { ensureLibrary, homeOf } from "./library/access";
 import { libraryDb } from "./library/db";
@@ -41,7 +40,6 @@ import { isPlan, planFromCli, type PlanId } from "../contracts/plans";
  * readiness rows. $DATA_DIR/setup/<username>.json; accounts only (a share-link visitor has no setup).
  *
  *   GET  /api/setup  → SetupView
- *   GET  /api/setup/folders/scan → { folders, truncated }  the folders with video or audio on this computer (owner only)
  *   GET  /api/setup/computers → ComputersView  this computer, plus the account's other computers (devices) with online state
  *   PUT  /api/setup  { tools?: Tool[], plan?: PlanId | null, done?: boolean } → SetupView
  *   GET  /api/setup/ai[?fresh=1]       → LocalAiView   the AI CLIs found on this computer (owner only; fresh reads them again)
@@ -86,6 +84,7 @@ export async function haveFor(user: SessionUser): Promise<Have[]> {
     (k) => k.env,
   );
   if (anyAiConfigured(user)) have.push("ai");
+  if (deviceTranscribes()) have.push("deviceTranscripts");
   // the Workshop's own check (workshop.ts workshopAi): its route, an admin's workspace AI included
   if (connectedOwn(u) || !aiFor(user, "workshop", "Workshop").off) have.push("ownAi");
   if ((await ownedProjects(u)).length) have.push("project");
@@ -199,7 +198,7 @@ setupApp.put("/", async (c) => {
   return c.json(await view(user));
 });
 
-/* ---- your AI on this Mac (Connect your AI, Settings → Your own AI) ---- */
+/* ---- your AI on this Mac (Connect your AI, Settings → Providers) ---- */
 
 /**
  * The AI CLIs on this computer are the owner's: only the owner's own account on a server that runs on a computer
@@ -215,12 +214,6 @@ setupApp.get("/ai", async (c) => {
   const u = c.get("user").username;
   if (!ownComputer(c.get("user"))) return c.json({ local: false, rows: [] } satisfies LocalAiView);
   return c.json(await localAiView(u, mcpToOf(u), c.req.query("fresh") === "1"));
-});
-
-/** Step 3: the folders with footage or music on this computer, read only (api/lib/folder-scan.ts). */
-setupApp.get("/folders/scan", async (c) => {
-  if (!ownComputer(c.get("user"))) return c.json({ error: "Only the owner's computer can be scanned" }, 403);
-  return c.json(await scanFolders(defaultRoots(homedir())));
 });
 
 setupApp.post("/ai/signin", async (c) => {

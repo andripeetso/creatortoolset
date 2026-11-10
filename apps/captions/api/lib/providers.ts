@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import {
   DEFAULT_SETTINGS,
@@ -171,8 +172,30 @@ export function belongsTo(scope: Scope, deviceId: string): boolean {
   return d.owner === scope;
 }
 
-/** The models an instance offers: its driver's list. */
+/**
+ * The models Codex's own login lists on this Mac: the `list`-visible slugs of its models_cache.json, by priority. Read
+ * only by the server on the Mac (CT_LOCAL=1); a Codex update changes the list here, so a model the login refuses is
+ * never offered or saved as the default. Empty when the file can't be read.
+ */
+export function codexLoginModels(home?: string): string[] {
+  try {
+    const dir = home || process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+    const cache = JSON.parse(readFileSync(path.join(dir, "models_cache.json"), "utf8")) as { models?: { slug?: unknown; visibility?: unknown; priority?: unknown }[] };
+    return (cache.models ?? [])
+      .filter((m) => m.visibility === "list" && typeof m.slug === "string")
+      .sort((a, b) => Number(a.priority ?? 0) - Number(b.priority ?? 0))
+      .map((m) => m.slug as string);
+  } catch {
+    return [];
+  }
+}
+
+/** The models an instance offers: its driver's list (Codex: the login's own list on the Mac's server). */
 export function modelsFor(inst: ProviderInstance): string[] {
+  if (inst.driver === "codex" && process.env.CT_LOCAL === "1") {
+    const own = codexLoginModels(inst.home);
+    if (own.length) return own;
+  }
   return DRIVER_MODELS[inst.driver] ?? [];
 }
 

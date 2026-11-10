@@ -1,17 +1,9 @@
 import { useEffect, useState } from "react";
 import { Upload } from "lucide-react";
 import { confirmDiscardUnsavedProject } from "@/lib/persistence-guard";
-import { useStudio } from "@/lib/store";
+import { captionThisVideo } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { CaptionArt } from "./HowArt";
-
-// ponytail: replaced by the first-caption entry on fr/captions-first-job
-/** Opens a new Caption Studio project with this video (today's import). False when the import took nothing (not a video). */
-function captionThisVideo(file: File): boolean {
-  const before = useStudio.getState().projectId;
-  useStudio.getState().importFile(file);
-  return useStudio.getState().projectId !== before;
-}
 
 /**
  * Setup's last screen, "Try it": one drop target that is also the file chooser (the whole card is the input's label;
@@ -21,9 +13,11 @@ function captionThisVideo(file: File): boolean {
 export function TryStep({ onStart }: { onStart: () => void | Promise<void> }) {
   const [over, setOver] = useState(false);
   const [refused, setRefused] = useState(false);
-  const take = (file: File | undefined) => {
+  const take = async (file: File | undefined) => {
     if (!file || !confirmDiscardUnsavedProject("Start a new project")) return;
-    if (captionThisVideo(file)) void onStart();
+    // looked at before setup closes: a file with only a video's name, or a clip with no sound, would end in a failed job
+    const { hasSoundTrack } = await import("@/lib/audio-decode");
+    if ((await hasSoundTrack(file)) && captionThisVideo(file)) void onStart();
     else setRefused(true);
   };
   // a drop anywhere in the window counts: one that misses the card would otherwise make the browser open the file
@@ -33,7 +27,7 @@ export function TryStep({ onStart }: { onStart: () => void | Promise<void> }) {
     const drop = (e: DragEvent) => {
       e.preventDefault();
       setOver(false);
-      take(e.dataTransfer?.files[0]);
+      void take(e.dataTransfer?.files[0]);
     };
     window.addEventListener("dragover", allow);
     window.addEventListener("drop", drop);
@@ -59,7 +53,7 @@ export function TryStep({ onStart }: { onStart: () => void | Promise<void> }) {
         accept="video/*"
         className="sr-only"
         onChange={(e) => {
-          take(e.target.files?.[0]);
+          void take(e.target.files?.[0]);
           e.target.value = ""; // the same file can be picked again
         }}
       />
@@ -67,7 +61,7 @@ export function TryStep({ onStart }: { onStart: () => void | Promise<void> }) {
         <CaptionArt />
       </span>
       <span className="space-y-3">
-        <span className="block text-lg font-semibold tracking-tight text-foreground">{refused ? "That file can't be captioned. Try a video" : "Drop a video here"}</span>
+        <span className="block text-lg font-semibold tracking-tight text-foreground">{refused ? "That file can't be captioned. Try a video with sound" : "Drop a video here"}</span>
         <span className="inline-flex items-center gap-2 rounded-full bg-[var(--tint)] px-4 py-2 text-sm font-medium text-white transition group-hover:brightness-110">
           <Upload className="size-4" aria-hidden />
           Choose a video
