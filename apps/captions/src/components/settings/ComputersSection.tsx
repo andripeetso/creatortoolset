@@ -262,11 +262,15 @@ function ThisMacSwitch({ bridge }: { bridge: ThisMacState | null }) {
   );
 }
 
-/** This Mac before it is on the list (not paired yet): its name and its switch. */
+/**
+ * This Mac before it is on the list (not paired yet): its name and its switch. A Mac app from before it told the page
+ * its name (0.7.2 and older) gets the switch alone: a row that could only say "This Mac · This Mac" names nothing, and
+ * on a Mac that also runs the AI Editor's worker it reads as a second computer.
+ */
 function ThisMacRow({ names, bridge }: { names: ThisMacNames; bridge: ThisMacState | null }) {
   return (
     <>
-      <ListRow icon={<Laptop className="size-4" />} title={names.computer || "This Mac"} subtitle="This Mac" />
+      {names.computer && <ListRow icon={<Laptop className="size-4" />} title={names.computer} subtitle="This Mac" />}
       <ThisMacSwitch bridge={bridge} />
     </>
   );
