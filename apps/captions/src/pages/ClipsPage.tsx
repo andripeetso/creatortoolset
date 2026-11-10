@@ -19,6 +19,7 @@ import {
 import { canRecordScreen, openRecorder } from "@/lib/mac-record";
 import { canUse, useAuth } from "@/lib/auth";
 import { putCached, useCachedList, useCachedLoad } from "@/lib/local-cache";
+import { useSteadyList } from "@/lib/steady-list";
 import { Picture } from "@/components/Picture";
 import { fmtBytes, timeAgo } from "@/lib/exports";
 import { toolsetHomePath } from "@/lib/mobile";
@@ -558,6 +559,9 @@ export default function ClipsPage() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   // the saved list shows at once and refreshes underneath (lib/local-cache)
   const { items: sessions, setItems: setSessions, refresh: loadSessions } = useCachedList("/api/clips", listClips);
+  // on screen: a list scrolled down keeps its rows where they are, and a new recording waits at its top (lib/steady-list)
+  const clipsBox = useRef<HTMLDivElement>(null);
+  const shownClips = useSteadyList(sessions, clipsBox);
   // the open clip: its saved copy (or its row in the list) paints at once; processing and new blocks arrive as change
   // notices (lib/local-cache)
   const detail = useCachedLoad<ClipSession>(clipId ? `/api/clips/${clipId}` : null, () => getClip(clipId!));
@@ -902,8 +906,8 @@ export default function ClipsPage() {
             {showLibrary && sessions.length > 0 && (
               <div className="mt-8">
                 <h2 className={label}>Your clips</h2>
-                <div className="flex max-h-80 flex-col gap-1.5 overflow-y-auto pr-1">
-                  {sessions.map((s) => (
+                <div ref={clipsBox} className="flex max-h-80 flex-col gap-1.5 overflow-y-auto pr-1">
+                  {shownClips.map((s) => (
                     <div
                       key={s.id}
                       onClick={() => {
