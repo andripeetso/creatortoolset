@@ -577,17 +577,21 @@ export function AssistantDock() {
           <div className="flex h-full flex-col justify-end gap-2 pb-1">
             {notice && <NoticeLine notice={notice} onChip={chipSend} />}
             {welcome.showing && <WelcomeLine text={welcome.shown} typing={welcome.stage === "typing"} />}
+            {/* the suggestions come after the welcome has finished writing, one after another. While it writes they hold
+                their place unseen, so the line never moves when they arrive */}
             {suggestionsFor(pathname).map((s, i) => (
               <button
                 key={`${pathname}-${s}`}
                 type="button"
                 disabled={busy}
                 onClick={() => submit({ ...EMPTY_DRAFT, text: s })}
-                style={{ animationDelay: `${i * 60}ms` }}
+                style={{ animationDelay: `${150 + i * 180}ms` }}
                 className={cn(
                   "group flex w-fit max-w-full items-center gap-2 rounded-2xl border bg-background px-3.5 py-2 text-left text-sm transition-all duration-200",
                   "hover:-translate-y-0.5 hover:border-[color-mix(in_srgb,var(--tint)_50%,transparent)] hover:shadow-md active:translate-y-0",
-                  "motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-3 motion-safe:fill-mode-both motion-safe:duration-300",
+                  welcome.stage === "typing"
+                    ? "invisible"
+                    : "motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-90 motion-safe:slide-in-from-bottom-3 motion-safe:fill-mode-both motion-safe:duration-300",
                 )}
               >
                 <span>{s}</span>
