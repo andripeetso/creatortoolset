@@ -8,6 +8,8 @@ import { initLocalRecovery } from "@/lib/local-recovery";
 import { hydrateLocalCache } from "@/lib/local-cache";
 import { startSync, stopSync, tagWrites } from "@/lib/sync";
 import { useAuth } from "@/lib/auth";
+import { seedWorkspace } from "@/lib/workspace";
+import { seedSetup } from "@/lib/setup";
 import { AuthGate } from "@/components/AuthGate";
 import { ShareThemeProvider } from "@/components/ShareTheme";
 import App from "./App.tsx";
@@ -27,6 +29,9 @@ async function bootstrap() {
   tagWrites();
   // every screen's saved copy into memory before the first render (lib/local-cache.ts), then live while signed in
   await Promise.all([initLocalRecovery(), hydrateLocalCache()]);
+  // the shell's own saved copies into their stores, so the top bar and Home's marks are there on the first frame
+  seedWorkspace();
+  seedSetup();
   const live = (signedIn: boolean) => (signedIn ? startSync() : stopSync());
   live(!!useAuth.getState().me);
   useAuth.subscribe((s, prev) => !!s.me !== !!prev.me && live(!!s.me));

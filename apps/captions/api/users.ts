@@ -5,6 +5,7 @@ import path from "node:path";
 import { env } from "./lib/env";
 import { TOOLS, isPluginGateId, isRetiredAppId, isTool, type PluginGateId, type Tool } from "../contracts/tools";
 import { pluginDefaultOff } from "./lib/plugin";
+import { announce } from "./lib/sync";
 
 export { isTool, type Tool };
 
@@ -324,6 +325,8 @@ export function userForApiKey(key: string, level: KeyLevel = "review"): UserReco
   if (user && Date.now() - (info?.usedAt ?? 0) > ACTIVE_WRITE_INTERVAL) {
     user.keyInfo = { ...user.keyInfo, [level]: { at: info?.at ?? 0, last4: info?.last4 ?? "", usedAt: Date.now() } };
     persist();
+    // a new Full key's first use ticks setup's "your AI has Creator Toolset" (api/setup.ts haveFor)
+    if (level === "full" && (info?.usedAt ?? 0) < (info?.at ?? 0)) announce(user.username, "setup");
   }
   return user;
 }

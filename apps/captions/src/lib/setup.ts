@@ -1,9 +1,13 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { create } from "zustand";
 import { planWarning, type Feature, type PlanId } from "@contracts/plans";
 import { DEFAULT_TOOLS, type SetupView, type Tool } from "@contracts/tools";
 import { DEFAULT_WORK_PREFS, type Make, type WorkPrefs } from "@contracts/work-prefs";
 import { confirmDialog } from "./dialogs";
+import { useAuth } from "./auth";
+import { putCached, readCached, useCachedLoad, warmCached } from "./local-cache";
+import { boot, onTopic, seqNow, whenVisible } from "./sync";
+import { useWorkspace } from "./workspace";
 
 export type { SetupView };
 
@@ -148,30 +152,78 @@ export interface SetupPatch {
   done?: boolean;
 }
 
+/** The setup's saved copy (lib/local-cache.ts): the dot on each Home tile and Finish setting up paint from it. */
+const SETUP_KEY = "/api/setup";
+/** The change the newest read of the setup started at: a notice at or before it is already in it. */
+let readAt = { seq: -1, boot: "" };
+const fetchSetup = () => {
+  readAt = { seq: seqNow(), boot: boot() };
+  return fetch(SETUP_KEY).then((r) => json<SetupView>(r));
+};
+const me = () => useAuth.getState().me?.username ?? null;
+
 /** The account's setup (api/setup.ts), shared by the dialog, the first-open checklist, Settings → Setup and the plan warnings. */
 export const useSetup = create<{ view: SetupView | null; load: () => Promise<SetupView | null>; save: (p: SetupPatch) => Promise<void> }>((set) => ({
   view: null,
-  load: () =>
-    fetch("/api/setup")
-      .then((r) => json<SetupView>(r))
-      .then((view) => (set({ view }), view))
-      .catch(() => null), // a guest or the demo has none
+  load: async () => {
+    try {
+      await warmCached(SETUP_KEY, fetchSetup);
+    } catch {
+      return null; // a guest or the demo has none
+    }
+    const view = readCached<SetupView>(me(), SETUP_KEY);
+    set({ view });
+    return view;
+  },
   save: (p) =>
     fetch("/api/setup", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(p) })
       .then((r) => json<SetupView>(r))
-      .then((view) => set({ view })),
+      .then((view) => (putCached(me(), SETUP_KEY, view), set({ view }))),
 }));
 
-/** Reads the setup again every few seconds while `on`, and when the window comes back to the front: a key added in another form shows up. */
+/** Before the first render (main.tsx): the last setup this account saw, so Home's marks are there on the first frame. */
+export const seedSetup = () => useSetup.setState({ view: readCached<SetupView>(me(), SETUP_KEY) });
+
+/** What a setup's "have" also comes from: keys, providers, social logins, paired computers, the Apify key. */
+const FEEDS = ["my-keys", "providers", "connectors", "devices", "instagram"];
+
+/**
+ * Keeps the setup live while signed in (App.tsx): its saved copy at once, read again when "setup" or one of its FEEDS
+ * changes (another window, a Mac coming online, a provider starting to answer) and when the project count changes.
+ * No timer.
+ */
+export function useSetupSync(): void {
+  const user = useAuth((s) => s.me?.username ?? null);
+  const { data, refresh } = useCachedLoad<SetupView>(user ? SETUP_KEY : null, fetchSetup, { topic: "setup" });
+  useEffect(() => {
+    if (data) useSetup.setState({ view: data });
+  }, [data]);
+  useEffect(() => {
+    if (!user) return;
+    const stale = (latest: number) => readAt.boot !== boot() || latest > readAt.seq;
+    const offs = FEEDS.map((t) => onTopic(t, (latest) => {
+      if (stale(latest)) whenVisible("setup:feeds", () => void (stale(latest) && refresh().catch(() => {})));
+    }));
+    return () => offs.forEach((off) => off());
+  }, [user, refresh]);
+  // "project" in have: a project made or deleted (here or elsewhere) shows in the workspace first
+  const projects = useWorkspace((s) => (s.loaded ? s.projects.length : null));
+  const was = useRef(projects);
+  useEffect(() => {
+    if (was.current !== null && projects !== null && projects !== was.current) void refresh().catch(() => {});
+    was.current = projects;
+  }, [projects, refresh]);
+}
+
+/** While `on` (a setup screen is up): reads the setup once, and again when the window comes back to the front (an install finished elsewhere). Live otherwise (useSetupSync). */
 export function useSetupLive(on: boolean) {
   const load = useSetup((s) => s.load);
   useEffect(() => {
     if (!on) return;
     void load();
-    const t = window.setInterval(() => void load(), 5000);
     const again = () => void load();
     window.addEventListener("focus", again);
-    return () => (window.clearInterval(t), window.removeEventListener("focus", again));
+    return () => window.removeEventListener("focus", again);
   }, [on, load]);
 }
 

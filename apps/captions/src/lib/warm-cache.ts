@@ -2,11 +2,12 @@ import { canUse, useAuth } from "./auth";
 import { readCached, warmCached } from "./local-cache";
 import { listReviewAssets, listReviewProjects } from "./review";
 import { getSession, listChat, listDocuments as listPieces, listSessions, listFrameworks, listRules, getWorkshopAvailability, saveSession, type SessionRow } from "./workshop";
-import { listAccounts } from "./instagram";
+import { listAccounts, listPosts, type ListPostsQuery } from "./instagram";
+import { listEdits } from "./editor";
 import { listClips } from "./clips";
 import { listDocuments } from "./documents";
 import { listEnhance } from "./enhance";
-import { useWorkspace } from "./workspace";
+import { PROJECT_ACCOUNTS_KEY, useWorkspace } from "./workspace";
 import { listSessions as listProjects } from "./persist";
 
 /**
@@ -33,7 +34,20 @@ export async function warmScreens(): Promise<void> {
     job("workshop/rules", listRules);
     job("workshop/availability", getWorkshopAvailability);
   }
-  if (canUse(me, "instagram")) job(`instagram/accounts?p=${pid}`, () => listAccounts());
+  if (canUse(me, "instagram")) {
+    job(`instagram/accounts?p=${pid}`, () => listAccounts());
+    job(PROJECT_ACCOUNTS_KEY, () => listAccounts("", { projectId: null }));
+    // the Analyzer's first screen: its feed with the page's starting filters (InstagramPage.tsx listQuery and its defaults)
+    const feed: ListPostsQuery = { account: "", tag: "", idea: "inbox", savedFor: "content", sort: "pulled" };
+    job(`instagram/posts?${JSON.stringify(feed)}|p=${pid}`, () => listPosts(feed));
+  }
+  if (canUse(me, "workshop")) {
+    // the session page's sidebar (WorkshopSidebar.tsx) before its own first read
+    const qs = pid ? `?projectId=${encodeURIComponent(pid)}` : "";
+    job(`workshop/summary?p=${pid}`, () => fetch(`/api/workshop/sessions/summary${qs}`).then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status))))));
+  }
+  // Home's to-do and badges (HomeTodo.tsx useTodoLists)
+  if (canUse(me, "editor")) job("/api/editor", listEdits);
   if (canUse(me, "captions")) job("caption-projects", listProjects);
   if (canUse(me, "notes")) job("/api/clips", listClips);
   if (canUse(me, "guides")) job("/api/documents", listDocuments);

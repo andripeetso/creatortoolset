@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { DeviceJob } from "../../contracts/devices";
 import { isOnline } from "../lib/devices";
+import { announce } from "../lib/sync";
 import { libraryDb } from "../library/db";
 import { defer, enqueueJob, extendLease, finishJob, type JobRow, parkJob, requeueExpired } from "../library/jobs";
 import { NeedsKey } from "../library/transcribe";
@@ -90,6 +91,7 @@ export async function tick(now = Date.now()): Promise<boolean> {
   } finally {
     clearInterval(beat);
     running.delete(job.id);
+    announce(job.actor, "editor"); // a step ended (done, failed, parked): its edit list and Home's to-do change
   }
   return true;
 }
@@ -133,15 +135,18 @@ export function doneForDevice(device: string, id: number): boolean {
   const { editId, variant } = splitVersion(job);
   const edit = readEdit(editId);
   if (edit) queueNext(db, job, edit, variant);
+  if (job.actor) announce(job.actor, "editor");
   return true;
 }
 
 /** The device could not run its step: retried after a backoff, or failed after MAX_ATTEMPTS. False when it does not hold the step. */
 export function failForDevice(device: string, id: number, why: string): boolean {
   const db = libraryDb();
-  if (!heldBy(db, id, device)) return false;
+  const job = heldBy(db, id, device);
+  if (!job) return false;
   db.prepare("UPDATE edit_jobs SET device = NULL WHERE id = ?").run(id);
   finishJob(db, id, false, why.slice(0, 500), Date.now(), T);
+  if (job.actor) announce(job.actor, "editor");
   return true;
 }
 

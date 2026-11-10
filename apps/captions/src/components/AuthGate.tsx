@@ -128,8 +128,8 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         if (cur.required !== next.required || cur.hosted !== next.hosted || cur.viewedBy !== next.viewedBy || JSON.stringify(cur.me) !== JSON.stringify(next.user))
           setAuth(next.required, next.user, { hosted: next.hosted, viewedBy: next.viewedBy });
         writeSnap(d.user ? next : null);
-        if (d.user) void useWorkspace.getState().load();
-        else useWorkspace.getState().reset();
+        // the projects follow the account (App.tsx WorkspaceSync)
+        if (!d.user) useWorkspace.getState().reset();
         setMustLink(d.mustLink ?? []);
         setState(
           d.required && !d.authed && !publicShare
@@ -194,7 +194,6 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         }
         setAuth(true, d.user ?? null);
         writeSnap(d.user ? { required: true, user: d.user, hosted: useAuth.getState().hosted, viewedBy: null } : null);
-        void useWorkspace.getState().load();
         setState("ok");
       } else {
         setError(d.error || "Login failed");

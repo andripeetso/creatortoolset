@@ -43,11 +43,12 @@ import { canUse, useAuth, useMe } from "@/lib/auth";
 import { initTabGuard } from "@/lib/tabs";
 import { useStudio } from "@/lib/store";
 import { getProjectPersistenceStatus } from "@/lib/persistence-status";
-import { useRootTint, useWorkspace } from "@/lib/workspace";
+import { applyWorkspace, fetchWorkspace, useRootTint, useWorkspace, WORKSPACE_KEY, type Workspace } from "@/lib/workspace";
+import { useCachedLoad } from "@/lib/local-cache";
 import { warmScreens } from "@/lib/warm-cache";
 import { useAppearance } from "@/lib/settings";
 import { historyDepth } from "@/lib/history-depth";
-import { SETTINGS_CLOSED, useSetupShown } from "@/lib/setup";
+import { SETTINGS_CLOSED, useSetupShown, useSetupSync } from "@/lib/setup";
 import { replacementFor } from "@/lib/plugin";
 import { webPlugins } from "./plugins.gen";
 
@@ -207,17 +208,15 @@ function SettingsShortcut() {
   return null;
 }
 
+/** The projects and the setup, from their saved copies and live while signed in (lib/workspace.ts, lib/setup.ts). */
 function WorkspaceSync() {
-  const me = useAuth((s) => s.me);
-  const load = useWorkspace((s) => s.load);
-  const reset = useWorkspace((s) => s.reset);
+  const user = useAuth((s) => s.me?.username ?? null);
+  const { data } = useCachedLoad<Workspace>(user ? WORKSPACE_KEY : null, fetchWorkspace);
   useEffect(() => {
-    if (!me) {
-      reset();
-      return;
-    }
-    void load();
-  }, [me, load, reset]);
+    if (!user) useWorkspace.getState().reset();
+  }, [user]);
+  useEffect(() => applyWorkspace(data), [data]);
+  useSetupSync();
   return null;
 }
 

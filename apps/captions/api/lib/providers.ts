@@ -28,6 +28,7 @@ import { env } from "./env";
 import { deviceExists, deviceOf } from "./devices";
 import { USERNAME_RE, findUser } from "../users";
 import { driverKinds, providerPresets } from "./plugin";
+import { announce } from "./sync";
 
 /**
  * The AI providers (contracts/providers.ts): which coding-agent CLI on a Mac answers each job, signed in as which
@@ -148,8 +149,12 @@ export async function recordCheck(key: string, c: ProviderCheck): Promise<void> 
   const id = at < 0 ? key : key.slice(at + 1);
   const s = scope === "workspace" ? providerSettings() : ownSettings(scope);
   if (!s?.instances.some((i) => i.id === id)) return;
+  const was = s.instances.find((i) => i.id === id)?.lastCheck?.ok;
   const instances = s.instances.map((i) => (i.id === id ? { ...i, lastCheck: { ok: c.ok, at: c.at, ms: c.ms } } : i));
   await saveSettings({ ...s, instances }, scope);
+  // an own AI that starts or stops answering is what setup and Home show; a same result again is not news
+  // ponytail: the workspace's AI tells no one (per-account notices); fan out to its accounts if they need it live
+  if (was !== c.ok && scope !== "workspace") announce(scope, "providers");
 }
 
 /** A driver id the server knows: a built-in, or a kind a plug-in adds. */

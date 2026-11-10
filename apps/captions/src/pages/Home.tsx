@@ -1,5 +1,6 @@
 import { SendToCleanerButton } from "@/components/SendToCleanerButton";
 import { useEffect, useState } from "react";
+import { useCachedList } from "@/lib/local-cache";
 import { useLocation, useNavigate } from "react-router";
 import {
   Check,
@@ -42,14 +43,12 @@ function ProjectSwitcher() {
   const projectId = useStudio((s) => s.projectId);
   const reset = useStudio((s) => s.reset);
   const [open, setOpen] = useState(false);
-  const [sessions, setSessions] = useState<SessionMeta[]>([]);
+  // the projects list's saved copy (ImportScreen's key): the menu opens full, and reads again underneath
+  const { items: sessions, refresh } = useCachedList<SessionMeta>("caption-projects", listSessions, { topic: "projects" });
   const [busy, setBusy] = useState(false);
 
   const toggle = () => {
-    if (!open)
-      listSessions()
-        .then(setSessions)
-        .catch(() => {});
+    if (!open) void refresh().catch(() => {});
     setOpen(!open);
   };
 
