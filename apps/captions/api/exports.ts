@@ -30,6 +30,7 @@ import { addToFinals, belowHd, libraryOf, type FinalsOutcome } from "./library/f
 import { type SessionUser, bumpUsage } from "./users";
 import type { ExportStatus } from "../contracts/exports";
 import { type Moves, canMove, move } from "./lib/transition";
+import { announceSoon } from "./lib/announce-soon";
 
 /**
  * Background export jobs (Canva-style). POST creates a job and returns
@@ -119,6 +120,12 @@ async function persist(job: Job): Promise<void> {
   } catch {
     /* dir may already be deleted (cancel) */
   }
+}
+
+/** A render's save: the owner's open screens follow it (at most about once a second, the last save always). */
+async function jobPersist(job: Job): Promise<void> {
+  await persist(job);
+  announceSoon(job.owner, "exports");
 }
 
 /** Load persisted jobs once at boot; renders killed by a restart → error. */
@@ -220,11 +227,11 @@ async function runRenderedFfmpeg(
 ): Promise<void> {
   const renderer = await createCaptionFrameRenderer(spec, () => {
     job.note = "Downloading the export browser (196 MB)…";
-    void persist(job);
+    void jobPersist(job);
   });
   if (job.note) {
     delete job.note;
-    await persist(job);
+    await jobPersist(job);
   }
   const fps = job.params.fps ?? 30;
   const total = Math.max(1, Math.ceil(job.params.duration * fps));
@@ -283,7 +290,7 @@ async function runRenderedFfmpeg(
       job.progress = Math.min(end / total, 0.99);
       if (Date.now() - lastWrite > 500) {
         lastWrite = Date.now();
-        await persist(job);
+        await jobPersist(job);
       }
     }
     p.stdin!.end();
@@ -329,7 +336,7 @@ async function runNativeFfmpeg(job: Job, args: string[]): Promise<void> {
     job.progress = Math.min(Number(m[1]) / 1e6 / job.params.duration, 0.99);
     if (Date.now() - lastWrite > 500) {
       lastWrite = Date.now();
-      void persist(job);
+      void jobPersist(job);
     }
   });
   await new Promise<void>((resolve, reject) => {
@@ -364,7 +371,7 @@ function run(cmd: string, args: string[]): Promise<void> {
 async function runJob(job: Job): Promise<void> {
   const dir = jobDir(job.id);
   job.status = move(EXPORT_MOVES, job.status, "running", "export job");
-  await persist(job);
+  await jobPersist(job);
   try {
     const { fps = 30, duration, crf, projectId, clipId } = job.params;
 
@@ -652,7 +659,7 @@ async function runJob(job: Job): Promise<void> {
     job.finishedAt = Date.now();
     await rm(path.join(dir, "render.json"), { force: true }).catch(() => {});
     await rm(path.join(dir, "captions.ass"), { force: true }).catch(() => {});
-    await persist(job);
+    await jobPersist(job);
     // success only: an error, a cancel and the restart recovery (which marks jobs as failed) do not emit
     emitEvent("export.finished", { id: job.id, owner: job.owner, kind: job.kind, format: job.format, bytes: st.size });
     if (job.params.finals && job.owner) await sendToFinals(job);
@@ -662,7 +669,7 @@ async function runJob(job: Job): Promise<void> {
     job.status = "error";
     job.error = e instanceof Error ? e.message : String(e);
     job.finishedAt = Date.now();
-    await persist(job);
+    await jobPersist(job);
   }
 }
 
@@ -689,7 +696,7 @@ async function sendToFinals(job: Job): Promise<void> {
   job.finals = out.ok
     ? { status: "sent", pieceId: out.pieceId }
     : { status: out.code === "refused" ? "refused" : "error", error: out.error };
-  await persist(job);
+  await jobPersist(job);
 }
 
 /* ---- routes ---- */

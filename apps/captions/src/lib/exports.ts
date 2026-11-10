@@ -1,11 +1,12 @@
 import { create } from "zustand";
 import type { CaptionRenderSpec } from "./types";
 import type { ExportStatus } from "@contracts/exports";
+import { onTopic } from "./sync";
 
 /**
  * Client side of background exports. Jobs render on the server, so they
- * survive reloads and closed tabs; this store polls /api/exports while
- * anything is active and drives the bottom-right tray. Finished files
+ * survive reloads and closed tabs; this store reads /api/exports again whenever the server says exports changed
+ * (lib/sync.ts: a render's progress, its end) and drives the bottom-right tray. Finished files
  * auto-download once (when the completion happens live) and stay
  * re-downloadable until server retention removes them.
  */
@@ -97,11 +98,14 @@ export function batchExports(ids: string[], name: string): void {
   if (ids.length > 1) batches.push({ ids, name });
 }
 
-let pollTimer: ReturnType<typeof setTimeout> | null = null;
 let refreshing = false;
+let againAfter = false;
 
 async function refresh(): Promise<void> {
-  if (refreshing) return;
+  if (refreshing) {
+    againAfter = true; // a notice during a read: read once more after it
+    return;
+  }
   refreshing = true;
   try {
     const res = await fetch("/api/exports");
@@ -136,28 +140,23 @@ async function refresh(): Promise<void> {
 
     useExports.setState({ jobs: next, dismissed, loadedOnce: true });
   } catch {
-    /* transient network error — next poll retries */
+    /* transient network error — the next change notice reads again */
   } finally {
     refreshing = false;
+    if (againAfter) {
+      againAfter = false;
+      void refresh();
+    }
   }
 }
 
-function schedule(): void {
-  if (pollTimer) return;
-  pollTimer = setTimeout(async () => {
-    pollTimer = null;
-    await refresh();
-    const active = useExports.getState().jobs.some(isActive);
-    if (active) schedule();
-  }, 1000);
-}
-
-/** Fetch now and keep polling while anything renders. */
+/** Fetch now and follow every change from then on (straight away, not when shown: a finished render downloads). */
+let watching = false;
 export function watchExports(): void {
-  void refresh().then(() => {
-    const active = useExports.getState().jobs.some(isActive);
-    if (active) schedule();
-  });
+  void refresh();
+  if (watching) return;
+  watching = true;
+  onTopic("exports", () => void refresh());
 }
 
 /** Kick off a background export; resolves with the accepted job. */
@@ -194,7 +193,7 @@ export async function startExport(payload: {
   }
   const job: ExportJob = await res.json();
   useExports.setState((s) => ({ jobs: [job, ...s.jobs.filter((x) => x.id !== job.id)] }));
-  schedule();
+  watchExports();
   return job;
 }
 
