@@ -118,3 +118,77 @@ describe("connectors", () => {
   });
 });
 
+
+describe("the sign-in service", () => {
+  it("an install with no app of its own signs in through the service: the ticket pays out to its verifier, and the login renews there", async () => {
+    const { createHash } = await import("node:crypto");
+    const { forgetServiceLogins, serviceRefresh } = await import("./lib/connectors/signin-service");
+    const { freshToken } = await import("./lib/connectors/platforms");
+    process.env.PLATFORM_SIGNIN_ORIGIN = "https://svc.test";
+    forgetServiceLogins();
+    let challenge = "";
+    const asked: string[] = [];
+    vi.stubGlobal("fetch", async (url: string | URL, init?: RequestInit) => {
+      const u = String(url);
+      asked.push(u);
+      if (u === "https://svc.test/api/platform-signin") return Response.json({ meta: true, google: true, tiktok: false });
+      if (u === "https://svc.test/api/platform-signin/redeem") {
+        const { ticket, verifier } = JSON.parse(String(init?.body)) as { ticket: string; verifier: string };
+        const ok = ticket === "T1" && createHash("sha256").update(verifier).digest("base64url") === challenge;
+        return ok ? Response.json({ access_token: "t1", refresh_token: "r1", expires_in: 60 }) : Response.json({ error: "no" }, { status: 403 });
+      }
+      if (u === "https://svc.test/api/platform-signin/refresh") return Response.json({ access_token: "t2", expires_in: 3600 });
+      if (u.includes("youtube/v3/channels")) return Response.json({ items: [{ id: "UC1", snippet: { title: "Tiny Acrobatics", customUrl: "@tinyacrobatics" } }] });
+      return Response.json({}, { status: 404 });
+    });
+    try {
+      // Meta has its app here (META_APP_ID above): that one stays local; YouTube comes from the service
+      const view = (await (await app.request("/api/connectors")).json()) as { logins: Record<string, boolean> };
+      expect(view.logins).toEqual({ meta: true, google: true, tiktok: false });
+      expect((await app.request("/api/connectors/login/meta")).headers.get("location")).toContain("facebook.com");
+
+      const start = new URL((await app.request("/api/connectors/login/google")).headers.get("location")!);
+      expect(start.origin + start.pathname).toBe("https://svc.test/api/platform-signin/start/google");
+      expect(start.searchParams.get("return")).toBe("http://localhost/api/connectors/callback/google");
+      challenge = start.searchParams.get("challenge")!;
+      const state = start.searchParams.get("state")!;
+
+      const done = await app.request(`/api/connectors/callback/google?state=${state}&ticket=T1`);
+      expect(done.headers.get("location")).toBe("/settings/connectors?connected=1");
+      const yt = readConnectors("ana").accounts.find((a) => a.platform === "youtube")!;
+      expect(yt).toMatchObject({ handle: "tinyacrobatics", token: "t1", refresh: "r1", issuer: "service" });
+      // no tokens in any address the browser saw
+      expect(asked.join(" ")).not.toContain("t1");
+
+      // a renewal of a service login goes back to the service
+      expect(await freshToken({ ...yt, expiresAt: Date.now() }, serviceRefresh)).toMatchObject({ token: "t2", refresh: "r1" });
+
+      // a ticket the service refuses (another install's verifier) ends as an error, not an account
+      const again = new URL((await app.request("/api/connectors/login/google")).headers.get("location")!);
+      challenge = "someone-else";
+      expect((await app.request(`/api/connectors/callback/google?state=${again.searchParams.get("state")}&ticket=T1`)).headers.get("location")).toContain("error=");
+    } finally {
+      delete process.env.PLATFORM_SIGNIN_ORIGIN;
+      forgetServiceLogins();
+    }
+  });
+
+  it("an offline service hides its sign-ins and is asked again only after a minute", async () => {
+    const { forgetServiceLogins, loginsOn } = await import("./lib/connectors/signin-service");
+    process.env.PLATFORM_SIGNIN_ORIGIN = "https://svc.test";
+    forgetServiceLogins();
+    let n = 0;
+    vi.stubGlobal("fetch", async () => {
+      n++;
+      throw new Error("offline");
+    });
+    try {
+      expect(await loginsOn()).toEqual({ meta: true, google: false, tiktok: false });
+      await loginsOn();
+      expect(n).toBe(1);
+    } finally {
+      delete process.env.PLATFORM_SIGNIN_ORIGIN;
+      forgetServiceLogins();
+    }
+  });
+});

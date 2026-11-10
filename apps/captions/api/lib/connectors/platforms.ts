@@ -91,13 +91,53 @@ export function loginUrl(kind: LoginKind, redirect: string, state: string): { ur
 
 type NewAccount = Omit<StoredAccount, "key" | "connectedAt">;
 
-/* ---- finishing a login: the accounts it gives ---- */
+/* ---- the steps that need the app's secret: a login's code for its tokens, and renewing them ---- */
 
-export async function finishLogin(kind: LoginKind, code: string, redirect: string, verifier?: string): Promise<NewAccount[]> {
-  const app = appFor(kind)!;
+/** A platform's token answer, the fields the accounts are made from. Meta's is already the long-lived user token. */
+export interface Grant {
+  access_token: string;
+  refresh_token?: string;
+  expires_in?: number;
+  /** TikTok's id for the user. */
+  open_id?: string;
+}
+
+const grantOf = (t: Rec): Grant => ({
+  access_token: str(t.access_token),
+  ...(str(t.refresh_token) ? { refresh_token: str(t.refresh_token) } : {}),
+  ...(num(t.expires_in) !== undefined ? { expires_in: num(t.expires_in) } : {}),
+  ...(str(t.open_id) ? { open_id: str(t.open_id) } : {}),
+});
+
+/** The login's code for its tokens, with this server's own app. */
+export async function exchangeCode(kind: LoginKind, code: string, redirect: string, verifier?: string): Promise<Grant> {
+  const app = appFor(kind);
+  if (!app) throw new Error("This login isn't set up on the server yet");
   if (kind === "meta") {
     const short = await getJson(`${META}/oauth/access_token?${new URLSearchParams({ client_id: app.id, client_secret: app.secret, redirect_uri: redirect, code })}`);
-    const long = await getJson(`${META}/oauth/access_token?${new URLSearchParams({ grant_type: "fb_exchange_token", client_id: app.id, client_secret: app.secret, fb_exchange_token: str(short.access_token) })}`);
+    return grantOf(await getJson(`${META}/oauth/access_token?${new URLSearchParams({ grant_type: "fb_exchange_token", client_id: app.id, client_secret: app.secret, fb_exchange_token: str(short.access_token) })}`));
+  }
+  if (kind === "google") return grantOf(await getJson("https://oauth2.googleapis.com/token", form({ client_id: app.id, client_secret: app.secret, code, grant_type: "authorization_code", redirect_uri: redirect })));
+  return grantOf(await getJson("https://open.tiktokapis.com/v2/oauth/token/", form({ client_key: app.id, client_secret: app.secret, code, grant_type: "authorization_code", redirect_uri: redirect, ...(verifier ? { code_verifier: verifier } : {}) })));
+}
+
+/** New tokens for a login's refresh token, with this server's own app (Google: an hour; TikTok: two hours and a new refresh token every time). */
+export async function refreshGrant(kind: "google" | "tiktok", refresh: string): Promise<Grant> {
+  const app = appFor(kind);
+  if (!app) throw new Error("This login's app isn't on this server any more: connect the account again");
+  if (kind === "google") return grantOf(await getJson("https://oauth2.googleapis.com/token", form({ client_id: app.id, client_secret: app.secret, refresh_token: refresh, grant_type: "refresh_token" })));
+  return grantOf(await getJson("https://open.tiktokapis.com/v2/oauth/token/", form({ client_key: app.id, client_secret: app.secret, grant_type: "refresh_token", refresh_token: refresh })));
+}
+
+/* ---- finishing a login: the accounts its tokens give (no secret needed from here on) ---- */
+
+export async function finishLogin(kind: LoginKind, code: string, redirect: string, verifier?: string): Promise<NewAccount[]> {
+  return accountsFromGrant(kind, await exchangeCode(kind, code, redirect, verifier));
+}
+
+export async function accountsFromGrant(kind: LoginKind, t: Grant): Promise<NewAccount[]> {
+  if (kind === "meta") {
+    const long = t;
     const fields = "id,name,username,access_token,followers_count,picture{url},instagram_business_account{id,username,name,profile_picture_url,followers_count,media_count}";
     const pages = await getJson(`${META}/me/accounts?${new URLSearchParams({ fields, limit: "100", access_token: str(long.access_token) })}`);
     const out: NewAccount[] = [];
@@ -112,8 +152,7 @@ export async function finishLogin(kind: LoginKind, code: string, redirect: strin
     return out;
   }
   if (kind === "google") {
-    const t = await getJson("https://oauth2.googleapis.com/token", form({ client_id: app.id, client_secret: app.secret, code, grant_type: "authorization_code", redirect_uri: redirect }));
-    const token = str(t.access_token);
+    const token = t.access_token;
     const ch = await getJson("https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics,contentDetails&mine=true", { headers: { Authorization: `Bearer ${token}` } });
     const items = Array.isArray(ch.items) ? ch.items.filter(isRec) : [];
     if (!items.length) throw new Error("That Google account has no YouTube channel");
@@ -127,28 +166,25 @@ export async function finishLogin(kind: LoginKind, code: string, redirect: strin
         avatar: isRec(sn.thumbnails) && isRec(sn.thumbnails.default) ? str(sn.thumbnails.default.url) : undefined,
         via: "login" as const,
         token,
-        refresh: str(t.refresh_token) || undefined,
-        expiresAt: Date.now() + (num(t.expires_in) ?? 3600) * 1000,
+        refresh: t.refresh_token,
+        expiresAt: Date.now() + (t.expires_in ?? 3600) * 1000,
       };
     });
   }
-  const t = await getJson("https://open.tiktokapis.com/v2/oauth/token/", form({ client_key: app.id, client_secret: app.secret, code, grant_type: "authorization_code", redirect_uri: redirect, ...(verifier ? { code_verifier: verifier } : {}) }));
-  const token = str(t.access_token);
+  const token = t.access_token;
   const me = await tiktokUser(token);
-  return [{ platform: "tiktok", platformId: str(t.open_id) || me.id, handle: me.handle, name: me.name, avatar: me.avatar, via: "login", token, refresh: str(t.refresh_token), expiresAt: Date.now() + (num(t.expires_in) ?? 7200) * 1000 }];
+  return [{ platform: "tiktok", platformId: t.open_id || me.id, handle: me.handle, name: me.name, avatar: me.avatar, via: "login", token, refresh: t.refresh_token, expiresAt: Date.now() + (t.expires_in ?? 7200) * 1000 }];
 }
 
-/** A login's token, renewed when it is about to run out (Google: an hour; TikTok: two hours and a new refresh token every time). */
-export async function freshToken(a: StoredAccount): Promise<Pick<StoredAccount, "token" | "refresh" | "expiresAt">> {
+/**
+ * A login's token, renewed when it is about to run out, by the app that issued it: this server's own, or the sign-in
+ * service's (a token one app issued only renews there).
+ */
+export async function freshToken(a: StoredAccount, renew: (kind: "google" | "tiktok", refresh: string) => Promise<Grant> = refreshGrant): Promise<Pick<StoredAccount, "token" | "refresh" | "expiresAt">> {
   if (!a.expiresAt || a.expiresAt - Date.now() > 5 * 60_000 || !a.refresh) return { token: a.token, refresh: a.refresh, expiresAt: a.expiresAt };
-  if (a.platform === "youtube") {
-    const app = appFor("google")!;
-    const t = await getJson("https://oauth2.googleapis.com/token", form({ client_id: app.id, client_secret: app.secret, refresh_token: a.refresh, grant_type: "refresh_token" }));
-    return { token: str(t.access_token), refresh: str(t.refresh_token) || a.refresh, expiresAt: Date.now() + (num(t.expires_in) ?? 3600) * 1000 };
-  }
-  const app = appFor("tiktok")!;
-  const t = await getJson("https://open.tiktokapis.com/v2/oauth/token/", form({ client_key: app.id, client_secret: app.secret, grant_type: "refresh_token", refresh_token: a.refresh }));
-  return { token: str(t.access_token), refresh: str(t.refresh_token) || a.refresh, expiresAt: Date.now() + (num(t.expires_in) ?? 7200) * 1000 };
+  const kind = a.platform === "youtube" ? "google" : "tiktok";
+  const t = await renew(kind, a.refresh);
+  return { token: t.access_token, refresh: t.refresh_token || a.refresh, expiresAt: Date.now() + (t.expires_in ?? (kind === "google" ? 3600 : 7200)) * 1000 };
 }
 
 /* ---- pulls ---- */

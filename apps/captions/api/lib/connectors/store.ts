@@ -32,6 +32,8 @@ export interface StoredAccount extends ConnectedAccount {
   token?: string;
   refresh?: string;
   expiresAt?: number;
+  /** Which app issued the login: this server's own (unset = local) or the sign-in service's. It renews only there. */
+  issuer?: "local" | "service";
   /** Per-day counts kept across pulls (TikTok). Never sent to the browser, see publicAccount. */
   snapshots?: VideoSnapshot[];
   /** Each posted video's per-second pHashes by post id (an empty list = it could not be read). Never sent to the browser. */

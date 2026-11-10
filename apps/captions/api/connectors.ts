@@ -2,7 +2,8 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { sessionOf, type AuthVars } from "./auth";
 import { LOGINS, PLATFORMS, type ConnectorsView, type OwnInstagram, type LoginKind, type SocialPlatform } from "../contracts/connectors";
-import { appFor, finishLogin, freshToken, loginUrl, pullAccount } from "./lib/connectors/platforms";
+import { accountsFromGrant, finishLogin, freshToken, loginUrl, pullAccount, refreshGrant } from "./lib/connectors/platforms";
+import { issuerFor, loginsOn, serviceRedeem, serviceRefresh, serviceStart, type Issuer } from "./lib/connectors/signin-service";
 import { sessionSources } from "./lib/connectors/provider";
 import { printPosts } from "./lib/connectors/prints";
 import { findAccount, newState, patchAccount, publicAccount, readConnectors, removeAccount, saveAccounts, type StoredAccount } from "./lib/connectors/store";
@@ -20,7 +21,7 @@ export const connectorsApp = new Hono<{ Variables: AuthVars }>();
 
 const KINDS: LoginKind[] = ["meta", "google", "tiktok"];
 const STATE_MS = 15 * 60_000;
-const states = new Map<string, { user: string; kind: LoginKind; projectId?: string; verifier?: string; at: number; back: string }>();
+const states = new Map<string, { user: string; kind: LoginKind; issuer: Issuer; projectId?: string; verifier?: string; at: number; back: string }>();
 
 const nobody = (u: SessionUser) => u.role === "visitor";
 
@@ -37,7 +38,7 @@ async function view(c: Context<{ Variables: AuthVars }>): Promise<ConnectorsView
   const user = c.get("user");
   const apify = publicApifyStatus(await readApify(user.username));
   return {
-    logins: Object.fromEntries(KINDS.map((k) => [k, !!appFor(k)])) as ConnectorsView["logins"],
+    logins: await loginsOn(),
     instagram: await ownInstagram(user.username),
     apify: { configured: apify.configured, valid: apify.valid },
     accounts: readConnectors(user.username).accounts.map(publicAccount),
@@ -55,8 +56,8 @@ async function ownInstagram(username: string): Promise<OwnInstagram[]> {
 
 connectorsApp.get("/", async (c) => c.json(await view(c)));
 
-/** Which logins this server is set up for, by name only (from .env; the keys never leave the server). */
-connectorsApp.get("/apps", (c) => c.json({ set: Object.fromEntries(KINDS.map((k) => [k, !!appFor(k)])) }));
+/** Which logins work here, by name only: this server's own apps (.env; the keys never leave it) or the sign-in service's. */
+connectorsApp.get("/apps", async (c) => c.json({ set: await loginsOn() }));
 
 /** TikTok's "verify URL ownership" file, at the site's root (boot.ts mounts this before the app). .env: TIKTOK_VERIFY_FILE + TIKTOK_VERIFY_CONTENT. */
 export function tiktokVerifyFile(name: string): string | null {
@@ -66,17 +67,19 @@ export function tiktokVerifyFile(name: string): string | null {
 }
 
 /** Start a login: the page to open (the browser goes there and comes back to /callback). */
-connectorsApp.get("/login/:kind", (c) => {
+connectorsApp.get("/login/:kind", async (c) => {
   const user = c.get("user");
   const kind = c.req.param("kind") as LoginKind;
   if (nobody(user)) return c.json({ error: "Connect accounts from your own account" }, 403);
   if (!KINDS.includes(kind)) return c.json({ error: "Unknown login" }, 404);
-  if (!appFor(kind)) return c.json({ error: `${LOGINS.find((l) => l.id === kind)!.label} login isn't set up on this server yet` }, 409);
+  const issuer = await issuerFor(kind);
+  if (!issuer) return c.json({ error: `${LOGINS.find((l) => l.id === kind)!.label} login isn't set up on this server yet` }, 409);
   const state = newState();
-  const { url, verifier } = loginUrl(kind, redirectFor(c, kind), state);
+  // the service's start page, or the platform's own login with this server's app
+  const { url, verifier } = issuer === "service" ? serviceStart(kind, redirectFor(c, kind), state) : loginUrl(kind, redirectFor(c, kind), state);
   for (const [k, v] of states) if (Date.now() - v.at > STATE_MS) states.delete(k);
   const back = c.req.query("back")?.startsWith("/") && !c.req.query("back")!.startsWith("//") ? c.req.query("back")! : "/settings/connectors";
-  states.set(state, { user: user.username, kind, projectId: c.req.query("projectId") || undefined, verifier, at: Date.now(), back });
+  states.set(state, { user: user.username, kind, issuer, projectId: c.req.query("projectId") || undefined, verifier, at: Date.now(), back });
   return c.redirect(url);
 });
 
@@ -90,8 +93,9 @@ connectorsApp.get("/callback/:kind", async (c) => {
   const denied = c.req.query("error_description") || c.req.query("error");
   if (denied) return back(`error=${encodeURIComponent(denied)}`);
   try {
-    const got = await finishLogin(kind, c.req.query("code") ?? "", redirectFor(c, kind), st.verifier);
-    const saved = saveAccounts(user.username, got.map((a) => ({ ...a, loginStatus: "connected" as const, pullError: undefined, ...(st.projectId ? { projectId: st.projectId } : {}) })));
+    // through the service the platform's code was swapped on the site: this install redeems its ticket with the verifier
+    const got = st.issuer === "service" ? await accountsFromGrant(kind, await serviceRedeem(c.req.query("ticket") ?? "", st.verifier!)) : await finishLogin(kind, c.req.query("code") ?? "", redirectFor(c, kind), st.verifier);
+    const saved = saveAccounts(user.username, got.map((a) => ({ ...a, issuer: st.issuer, loginStatus: "connected" as const, pullError: undefined, ...(st.projectId ? { projectId: st.projectId } : {}) })));
     for (const a of saved) void pullOne(user, a.key);
     return back(`connected=${saved.length}`);
   } catch (e) {
@@ -154,7 +158,7 @@ async function pullOne(user: SessionUser | string, key: string): Promise<void> {
       patchAccount(name, key, { loginStatus: "needs_reconnect", pullError: "The login expired. Connect it again.", pulledAt: Date.now() });
       return;
     }
-    const fresh = a.via === "login" ? await freshToken(a) : {};
+    const fresh = a.via === "login" ? await freshToken(a, a.issuer === "service" ? serviceRefresh : refreshGrant) : {};
     if (fresh.token !== a.token) patchAccount(name, key, fresh); // TikTok's refresh token changes on every refresh: keep the new one at once
     const got = await pullAccount({ ...a, ...fresh } as StoredAccount, name);
     patchAccount(name, key, { stats: got.stats, posts: got.posts.sort((x, y) => y.at - x.at).slice(0, 100), ...(got.snapshots ? { snapshots: got.snapshots } : {}), ...(got.daily ? { daily: got.daily } : {}), name: got.name || a.name, avatar: got.avatar || a.avatar, pulledAt: Date.now(), pullError: undefined, loginStatus: "connected" });
