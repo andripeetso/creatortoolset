@@ -54,6 +54,11 @@ export const MAC_NOTE = `
 
 You also run on the user's own Mac, in a folder of your own there (the current folder), with Claude Code's tools: Bash, Read, Glob, Grep, Edit and Write. What Claude Code treats as safe runs at once; anything else (a command that changes something, a file write, a read outside your folder) is asked of the user in the chat first, and they allow or deny it. When they deny something, don't try it another way: say what you wanted to do and ask.`;
 
+/** Added for a turn whose AI is not Claude Code: the Creator Toolset tools and the Mac's tools are Claude Code's only. */
+export const NO_TOOLS_NOTE = `
+
+In this conversation you have no Creator Toolset tools and no tools on the user's Mac. Answer from the message and what it says. When doing a thing needs a tool, say so plainly and say what the user can do instead.`;
+
 /* ---- the conversation, in memory and on disk ---- */
 
 interface Conv {
@@ -446,21 +451,25 @@ export async function answerWithTools(
     onAsk?: (ask: MacAsk) => MacAskStatus;
   },
 ): Promise<string> {
-  const token = mintJobToken(username, opts.turn);
+  // Claude Code gets Creator Toolset's MCP tools (under a job token for this answer) and the Mac's tools with asks; the
+  // other drivers (Codex, Gemini CLI…) answer with the message alone, so they get no token and no asks.
+  const claude = route.instance.driver === "claude";
+  const token = claude ? mintJobToken(username, opts.turn) : undefined;
+  const system = !claude ? SYSTEM + NO_TOOLS_NOTE : opts.onAsk ? SYSTEM + MAC_NOTE : SYSTEM;
   try {
-    return await streamMacClaude(opts.onAsk ? SYSTEM + MAC_NOTE : SYSTEM, prompt, opts.cancel, (t) => opts.onDelta?.(t), undefined, {
+    return await streamMacClaude(system, prompt, opts.cancel, (t) => opts.onDelta?.(t), undefined, {
       label: opts.label,
       background: opts.background,
       web: true, // the assistant may search and read the web, as the Workshop's writer does
       provider: { instance: route.instance.id, driver: route.instance.driver, home: route.instance.home, model: route.selection.model, effort: route.selection.effort, device: route.device, scope: route.scope, ...runFields(route.instance) },
-      mcp: { url, token },
+      mcp: token ? { url, token } : undefined,
       files: opts.files,
       // a turn waiting for an approval isn't counted toward its time limit (mac-claude.ts), so its token waits too
-      onAsk: opts.onAsk && ((ask) => {
+      onAsk: claude ? opts.onAsk && ((ask) => {
         const status = opts.onAsk!(ask);
-        if (status === "waiting") touchJobToken(token);
+        if (status === "waiting" && token) touchJobToken(token);
         return status;
-      }),
+      }) : undefined,
       // Claude's own reads and searches; its MCP calls are noted by mcp.ts already, and "Thinking" is the reply's own status
       onStep: (label) => {
         if (label !== "Thinking" && !label.startsWith("mcp__")) noteStep(username, opts.turn, label);
@@ -468,9 +477,10 @@ export async function answerWithTools(
     });
   } catch (e) {
     // the token never goes into a stored reply
-    throw new Error((e instanceof Error ? e.message : String(e)).split(token).join(""));
+    const text = e instanceof Error ? e.message : String(e);
+    throw new Error(token ? text.split(token).join("") : text);
   } finally {
-    revokeJobToken(token);
+    if (token) revokeJobToken(token);
   }
 }
 
@@ -540,7 +550,6 @@ assistantApp.post("/turn", async (c) => {
   // Before an AI is connected: no model call, no job, no paid call of any kind (the server's keys included).
   const route = routeOf(u.username, u.role === "admin");
   if (!route) return c.json({ error: "Connect your AI first", code: "NO_PROVIDER" }, 409);
-  if (route.instance.driver !== "claude") return c.json({ error: "The assistant needs Claude Code on your Mac for now", code: "NOT_CLAUDE" }, 409);
   const now = Date.now();
   // the pictures are kept only once the turn runs
   const images = input.images.map((im) => saveImage(u.username, im, im.bytes));
