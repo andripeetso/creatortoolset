@@ -456,7 +456,7 @@ export function AssistantDock() {
         </span>
         <span className="flex-1 text-sm font-semibold tracking-tight">Assistant</span>
         {view?.provider === "other" && !view.tools && (
-          <span className="truncate text-[11px] text-muted-foreground" title={`${view.aiName} answers from your message only: it can't use Creator Toolset's tools or do things on your Mac for you. Claude Code can.`}>
+          <span className="min-w-0 truncate text-[11px] text-muted-foreground" title={`${view.aiName} answers from your message only: it can't use Creator Toolset's tools or do things on your Mac for you. Claude Code can.`}>
             {view.aiName} · no app tools
           </span>
         )}
