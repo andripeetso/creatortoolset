@@ -40,7 +40,6 @@ import {
   deleteClip,
   displayBlocks,
   downloadClip,
-  getClip,
   getClipTranscript,
   cleanupClipTranscript,
   restoreClipTranscript,
@@ -544,15 +543,7 @@ export function MobileClipView({
       ? tab
       : (tabs.find((t) => t.id === "actions")?.id ?? tabs[0]?.id ?? null);
 
-  useEffect(() => {
-    if (!isProcessing(session) && !session.generating?.length) return;
-    const t = setInterval(async () => {
-      const next = await getClip(session.id).catch(() => null);
-      if (next) onChange(next);
-    }, 400);
-    return () => clearInterval(t);
-  }, [session.id, session.status, session.generating, onChange]);
-
+  // processing and new blocks arrive through the page's live copy (ClipsPage's useCachedLoad)
   useEffect(() => {
     if (!session.hasTranscript) {
       setWords([]);
