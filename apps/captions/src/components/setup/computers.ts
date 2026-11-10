@@ -1,3 +1,5 @@
+import { useCachedLoad } from "@/lib/local-cache";
+
 /** One computer of this account as the setup steps show it (api/setup.ts GET /computers). */
 export interface ComputerInfo {
   id: string;
@@ -16,6 +18,21 @@ export const getComputers = (): Promise<ComputersView | null> =>
   fetch("/api/setup/computers")
     .then((r) => (r.ok ? (r.json() as Promise<ComputersView>) : null))
     .catch(() => null);
+
+/**
+ * The computers as the setup steps read them: the saved copy at once (lib/local-cache.ts), read again when a setup step
+ * saves or a computer comes online or reports its AI tools. A failed read keeps the saved copy.
+ */
+export const useComputers = () =>
+  useCachedLoad<ComputersView>(
+    "/api/setup/computers",
+    async () => {
+      const v = await getComputers();
+      if (!v) throw new Error("Couldn't reach this computer");
+      return v;
+    },
+    { topic: ["setup", "devices"] },
+  );
 
 const LAN = /^(localhost|127\.0\.0\.1|\[::1\]|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|[^.]+\.local)$/i;
 

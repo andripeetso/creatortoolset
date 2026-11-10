@@ -7,7 +7,8 @@ import { AccountStep, hasAccountBridge } from "@/components/setup/AccountStep";
 import { useAuth } from "@/lib/auth";
 import { allowOtherDevices, thisMacBridge } from "@/lib/thisMac";
 import { cn } from "@/lib/utils";
-import { getComputers, serverUrl, type ComputerInfo, type ComputersView } from "./computers";
+import { readCached, putCached } from "@/lib/local-cache";
+import { serverUrl, useComputers, type ComputerInfo } from "./computers";
 
 /** The id of this computer in the picked set. The account's other computers are listed without a pick. */
 export const HERE = "here";
@@ -30,6 +31,8 @@ export interface PhoneCode {
  */
 export type PhoneState = PhoneCode | "local" | "signin" | null;
 const isCode = (c: PhoneState | undefined): c is PhoneCode => typeof c === "object" && c !== null;
+/** Whether the last answer in this browser was a code (lib/local-cache.ts): its space is then held while one is made. */
+const HAD_CODE = "setup/phone-code";
 
 /**
  * Mints a code on this server and draws it, at the address the server says a phone can reach (its tunnel, the address
@@ -73,6 +76,10 @@ export function PhoneRow() {
   const [turningOn, setTurningOn] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const latest = useRef(0);
+  const user = useAuth((s) => s.me?.username);
+  useEffect(() => {
+    if (code !== undefined) putCached(user, HAD_CODE, isCode(code));
+  }, [user, code]);
   // a reply to an older request is dropped, so the screen shows the newest code only
   const fresh = useCallback((mint: () => Promise<PhoneState> = mintPhoneCode) => {
     const mine = ++latest.current;
@@ -104,6 +111,7 @@ export function PhoneRow() {
   return (
     <PhoneRowView
       code={code}
+      hold={readCached<boolean>(user, HAD_CODE) === true}
       now={now}
       canTurnOn={!!thisMacBridge()}
       turningOn={turningOn}
@@ -115,6 +123,7 @@ export function PhoneRow() {
 
 export function PhoneRowView({
   code,
+  hold = false,
   now,
   canTurnOn,
   turningOn,
@@ -122,6 +131,8 @@ export function PhoneRowView({
   onTurnOn,
 }: {
   code: PhoneState | undefined;
+  /** the last answer was a code: the line that says one is being made is as tall as the code, so nothing under it moves */
+  hold?: boolean;
   now: number;
   /** the Mac app is here to turn Access from other devices on */
   canTurnOn: boolean;
@@ -138,7 +149,7 @@ export function PhoneRowView({
           <p className="text-xs text-muted-foreground">Use Creator Toolset on your phone too. Scan this with your phone's camera, on the same Wi-Fi.</p>
         </div>
       </div>
-      {code === undefined && <p className="text-xs text-muted-foreground">Making a code…</p>}
+      {code === undefined && <p className={cn("text-xs text-muted-foreground", hold && "h-44")}>Making a code…</p>}
       {code === null && <p className="text-xs text-muted-foreground">Couldn't make a code. Check the connection, then reopen this step.</p>}
       {code === "signin" && <p className="text-xs text-muted-foreground">Sign in first, then this code appears here.</p>}
       {code === "local" && (
@@ -392,15 +403,12 @@ export function ConnectStepView({
  */
 export function ConnectStep({ picked, onPick }: { picked: ReadonlySet<string>; onPick: (id: string, on: boolean) => void }) {
   const hosted = useAuth((s) => s.hosted);
-  const [view, setView] = useState<ComputersView | null>(null);
+  const { data: view, refresh } = useComputers();
   const [expanded, setExpanded] = useState(false);
   const [server, setServer] = useState("");
   const [serverBad, setServerBad] = useState(false);
   const [link, setLink] = useState("");
   const [joinNote, setJoinNote] = useState<{ ok: boolean; text: string } | null>(null);
-  useEffect(() => {
-    void getComputers().then(setView);
-  }, []);
 
   const go = () => {
     const url = serverUrl(server);
@@ -419,7 +427,7 @@ export function ConnectStep({ picked, onPick }: { picked: ReadonlySet<string>; o
     if (j?.ok) {
       setLink("");
       setJoinNote({ ok: true, text: `Joined ${j.server}${j.device?.name ? ` as ${j.device.name}` : ""}.` });
-      void getComputers().then(setView);
+      void refresh().catch(() => {});
     } else setJoinNote({ ok: false, text: j?.message ?? "Couldn't reach this computer. Try again." });
   };
 
