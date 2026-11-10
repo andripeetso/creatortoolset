@@ -56,7 +56,7 @@ export function TryStep({ onStart }: { onStart: () => void | Promise<void> }) {
     >
       <input
         type="file"
-        accept="video/*,audio/*"
+        accept="video/*"
         className="sr-only"
         onChange={(e) => {
           take(e.target.files?.[0]);

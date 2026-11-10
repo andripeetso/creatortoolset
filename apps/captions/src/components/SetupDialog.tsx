@@ -20,7 +20,6 @@ import { TOOLS, type Tool } from "@contracts/tools";
 import { MAKES, type Make } from "@contracts/work-prefs";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { AgentsStep } from "@/components/setup/AgentsStep";
 import { Choice } from "@/components/setup/Choice";
 import { ConnectStep, HERE } from "@/components/setup/ConnectStep";
@@ -28,7 +27,7 @@ import { FoldersStep } from "@/components/setup/FoldersStep";
 import { HowPicker } from "@/components/setup/HowPicker";
 import { ToolsPicker } from "@/components/setup/ToolNeeds";
 import { TryStep } from "@/components/setup/TryStep";
-import { canUse, useMe } from "@/lib/auth";
+import { canUse, useAuth, useMe } from "@/lib/auth";
 import { openAssistant } from "@/lib/assistant";
 import { isPhoneHub } from "@/lib/mobile";
 import {
@@ -92,14 +91,14 @@ export function SetupDialog() {
   const save = useSetup((s) => s.save);
   const prefs = useWorkPrefs((s) => s.prefs);
   const loadPrefs = useWorkPrefs((s) => s.load);
-  const { talk, setTalk } = useWorkTalk();
+  const { setTalk } = useWorkTalk();
   const { projects, loaded, load: loadProjects } = useWorkspace();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const [ticked, setTicked] = useState<Tool[] | null>(null);
   const [note, setNote] = useState(false);
   const [busy, setBusy] = useState(false); // leaving "What do you make?" saves first: one press, one project
-  const [from, setFrom] = useState<SetupStep | null>(null); // the screen a side screen was opened from: Done goes back to it
+  const hosted = useAuth((s) => s.hosted); // a hosted server is not this computer: "Try it" does not say nothing is uploaded
   const [footerSlot, setFooterSlot] = useState<HTMLElement | null>(null); // the folders screen portals its buttons in
   const [unsure, setUnsure] = useState<boolean | null>(null); // "Not sure yet" ticked here; null = read it from the saved answers
   const asked = params.get("setup");
@@ -159,10 +158,7 @@ export function SetupDialog() {
   const leave = () => setParams((p) => (p.delete("setup"), p), { replace: true });
 
   const close = () => {
-    if (side) {
-      setFrom(null);
-      return from ? to(from) : leave();
-    }
+    if (side) return leave();
     // on "Try it" setup is already saved as done: nothing to come back to
     if (step !== "try") {
       rememberLater(step);
@@ -248,44 +244,17 @@ export function SetupDialog() {
             </button>
           </div>
           <DialogTitle className="mt-4 text-2xl font-semibold tracking-tight">{STEP[step].title}</DialogTitle>
-          <DialogDescription className="mt-1.5 text-sm">{STEP[step].hint}</DialogDescription>
+          <DialogDescription className="mt-1.5 text-sm">{step === "try" && hosted ? "Drop a video and get captions." : STEP[step].hint}</DialogDescription>
         </header>
 
         <div
           key={step}
           className={cn(
             "min-h-0 flex-1 px-6 pb-5 pt-5 sm:px-8 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-right-2 motion-safe:duration-200",
-            // "Connect your AI": the list scrolls by itself, so the two controls under it are always in view
-            step === "agents" ? "flex flex-col overflow-hidden" : "overflow-y-auto",
+            "overflow-y-auto",
           )}
         >
-          {step === "agents" && (
-            <>
-              <div className="-mx-6 min-h-0 flex-1 overflow-y-auto px-6 sm:-mx-8 sm:px-8">
-                <AgentsStep picked={THIS_COMPUTER} onConnectedChange={onConnected} />
-              </div>
-              <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-6 gap-y-3 px-1 pt-4">
-                <label className="flex cursor-pointer items-center gap-2.5 text-sm text-muted-foreground hover:text-foreground">
-                  <Checkbox
-                    checked={talk === "both" || talk === "chat"}
-                    onCheckedChange={(v) => void setTalk(v === true ? "both" : "app")}
-                    className="data-[state=checked]:border-[var(--tint)] data-[state=checked]:bg-[var(--tint)] data-[state=checked]:text-white dark:data-[state=checked]:bg-[var(--tint)]"
-                  />
-                  Also let my own Claude Code or Codex use Creator Toolset
-                </label>
-                <button
-                  type="button"
-                  className="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-                  onClick={() => {
-                    setFrom(step);
-                    to("connect");
-                  }}
-                >
-                  I was invited to a team
-                </button>
-              </div>
-            </>
-          )}
+          {step === "agents" && <AgentsStep picked={THIS_COMPUTER} onConnectedChange={onConnected} />}
 
           {step === "make" && (
             <div className="space-y-4">
@@ -340,8 +309,8 @@ export function SetupDialog() {
                 Skip for now
               </Button>
             )}
-            {(step === "agents" || step === "make") && (
-              <Button onClick={() => void next()} disabled={busy || (step === "agents" && !connected)} className={PRIMARY}>
+            {((step === "agents" && connected) || step === "make") && (
+              <Button onClick={() => void next()} disabled={busy} className={PRIMARY}>
                 Continue
               </Button>
             )}

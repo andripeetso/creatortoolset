@@ -4,9 +4,9 @@ import { TryStep } from "./TryStep";
 
 const html = renderToStaticMarkup(<TryStep onStart={() => {}} />);
 
-it("is one drop target that is also the file chooser, for video and audio", () => {
+it("is one drop target that is also the file chooser, for a video", () => {
   expect(html.match(/<input/g)).toHaveLength(1);
-  expect(html).toMatch(/<label[^>]*>.*<input[^>]*type="file"[^>]*accept="video\/\*,audio\/\*"/s);
+  expect(html).toMatch(/<label[^>]*>.*<input[^>]*type="file"[^>]*accept="video\/\*"/s);
   expect(html).toContain("Drop a video here");
 });
 

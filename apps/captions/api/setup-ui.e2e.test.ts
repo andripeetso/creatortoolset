@@ -98,13 +98,13 @@ async function plain(dialog: Any) {
   }
 }
 
-/** Leaves "Connect your AI": Continue when an AI is connected, else Continue is off and Skip for now goes on. */
+/** Leaves "Connect your AI": Continue when an AI is connected, else the one button is Skip for now. */
 async function pastAi(dialog: Any) {
   await dialog.getByText(/Looking for your AI/).waitFor({ state: "hidden", timeout: 30_000 }).catch(() => {});
   const go = dialog.getByRole("button", { name: "Continue", exact: true });
   const skip = dialog.getByRole("button", { name: "Skip for now" });
-  expect(await go.isDisabled()).toBe((await skip.count()) === 1);
-  await ((await go.isDisabled()) ? skip : go).click();
+  expect((await go.count()) + (await skip.count())).toBe(1);
+  await ((await skip.count()) ? skip : go).click();
 }
 
 describe.skipIf(!enabled)("first-run setup in the browser", () => {
@@ -145,12 +145,8 @@ describe.skipIf(!enabled)("first-run setup in the browser", () => {
     await page.getByRole("button", { name: /Finish setting up/ }).click();
     await screen(dialog, "Connect your AI", "1 of 3");
 
-    // her own AI may use Creator Toolset: the box saves it both ways
-    const own = dialog.getByRole("checkbox", { name: "Also let my own Claude Code or Codex use Creator Toolset" });
-    await own.check();
-    await expect.poll(async () => (await get("/api/work-prefs")).talk).toBe("both");
-    await own.uncheck();
-    await expect.poll(async () => (await get("/api/work-prefs")).talk).toBe("app");
+    // nothing under the AI rows: no box, no link
+    expect(await dialog.getByRole("checkbox").count()).toBe(0);
 
     await pastAi(dialog);
     await screen(dialog, "What do you make?", "2 of 3");
@@ -168,8 +164,6 @@ describe.skipIf(!enabled)("first-run setup in the browser", () => {
     // Back keeps the answer, even after something else was saved on the screen before
     await dialog.getByRole("button", { name: "Back" }).click();
     await screen(dialog, "Connect your AI", "1 of 3");
-    await own.check();
-    await expect.poll(async () => (await get("/api/work-prefs")).talk).toBe("both");
     await pastAi(dialog);
     await screen(dialog, "What do you make?", "2 of 3");
     expect(await dialog.getByRole("checkbox", { name: /Short videos/ }).isChecked()).toBe(true);
@@ -228,7 +222,7 @@ describe.skipIf(!enabled)("first-run setup in the browser", () => {
       await screen(dialog, "Try it", "3 of 3");
       await plain(dialog);
       // the chooser behind the card takes a video too (not picked here: one Caption Studio project is enough)
-      expect(await dialog.locator('label input[type="file"][accept="video/*,audio/*"]').count()).toBe(1);
+      expect(await dialog.locator('label input[type="file"][accept="video/*"]').count()).toBe(1);
       await dialog.getByRole("button", { name: "Skip, take me to Home" }).click();
       await dialog.waitFor({ state: "hidden" });
       expect(new URL(page.url()).pathname).toBe("/");
@@ -250,10 +244,8 @@ describe.skipIf(!enabled)("first-run setup in the browser", () => {
 
   it("the screens off the path open alone and close with Done", async () => {
     const { page, dialog, scans, close } = await open();
-    // from the first screen: I was invited to a team opens the join form, and Done comes back
-    await page.goto(url("/?setup=agents"));
-    await screen(dialog, "Connect your AI", "1 of 3");
-    await dialog.getByRole("button", { name: "I was invited to a team" }).click();
+    // from a link: the join form opens alone
+    await page.goto(url("/?setup=connect"));
     await screen(dialog, "Connect your computers", null);
     expect(await dialog.getByRole("button", { name: /^(Back|Continue|Not now)$/ }).count()).toBe(0);
     // a pasted link that is not another server's link is refused on this server before anything is fetched
@@ -263,9 +255,9 @@ describe.skipIf(!enabled)("first-run setup in the browser", () => {
     await dialog.getByText("That isn't a sign-in link from another server").waitFor();
     await shot(page, "side-connect-refused");
     await dialog.getByRole("button", { name: "Done" }).click();
-    await screen(dialog, "Connect your AI", "1 of 3");
+    await dialog.waitFor({ state: "hidden" });
 
-    // from a link: Done closes it
+    // the same for the way of working
     await page.goto(url("/?setup=how"));
     await screen(dialog, "How do you work best?", null);
     expect(await dialog.getByRole("radio").count()).toBe(3);
