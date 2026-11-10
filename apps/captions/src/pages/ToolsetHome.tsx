@@ -77,11 +77,15 @@ export default function ToolsetHome() {
   // what's working right now: a Workshop reply being written. Its stage's box pulses and the tile says how many.
   const rows = useSessionSummaries();
   const running: Record<string, number> = showCounts ? { "/workshop": rows?.filter((r) => r.working).length ?? 0 } : {};
-  // which tools are ready: the saved setup, live (lib/setup.ts useSetupSync); read again when Settings closes, since this
-  // window's own changes there send it no notice
+  // which tools are ready: the saved setup, live (lib/setup.ts useSetupSync). Read again on coming Home and when Settings
+  // closes, since this window's own changes (a key added in a tool or in Settings) send it no notice
   const view = useSetup((s) => s.view);
   const load = useSetup((s) => s.load);
-  useEffect(() => (me ? onSettingsClosed(() => void load()) : undefined), [me, load]);
+  useEffect(() => {
+    if (!me) return;
+    void load();
+    return onSettingsClosed(() => void load());
+  }, [me, load]);
 
   const { dark } = useShareTheme();
   if (phone && location.pathname === "/") {

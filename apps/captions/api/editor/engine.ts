@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { MAX_ATTEMPTS, type JobRow, type JobTable } from "../library/jobs";
 import { RESOLVE_KIND } from "../../contracts/devices";
+import { announce } from "../lib/sync";
 import { analyzeStep } from "./analyze";
 import { brollStep } from "./broll";
 import { fileStep, previewStep } from "./preview";
@@ -119,6 +120,9 @@ export function releaseQuietDevices(db: DatabaseSync, isOnline: (device: string)
   let released = 0;
   for (const { device } of held) {
     if (isOnline(device)) continue;
+    // whose steps these are: their edit lists change (a step back in the queue, or failed)
+    const actors = db.prepare("SELECT DISTINCT actor FROM edit_jobs WHERE state = 'running' AND device = ?").all(device) as { actor: string | null }[];
+    for (const { actor } of actors) if (actor) announce(actor, "editor");
     released += Number(
       db
         .prepare(

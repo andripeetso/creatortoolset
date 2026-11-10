@@ -215,15 +215,24 @@ export function useSetupSync(): void {
   }, [projects, refresh]);
 }
 
-/** While `on` (a setup screen is up): reads the setup once, and again when the window comes back to the front (an install finished elsewhere). Live otherwise (useSetupSync). */
+/**
+ * While `on` (a setup screen is up): reads the setup once, again when the window comes back to the front (an install
+ * finished elsewhere), and a moment after a click on it (a key or a login saved in one of its rows: this window's own
+ * writes send it no notice). Live otherwise (useSetupSync).
+ * ponytail: a click stands in for "this window saved something"; read on the write itself once the change stream
+ * tells a window about its own writes.
+ */
 export function useSetupLive(on: boolean) {
   const load = useSetup((s) => s.load);
   useEffect(() => {
     if (!on) return;
     void load();
     const again = () => void load();
+    let t: ReturnType<typeof setTimeout> | undefined;
+    const clicked = () => (clearTimeout(t), (t = setTimeout(again, 1500)));
     window.addEventListener("focus", again);
-    return () => window.removeEventListener("focus", again);
+    document.addEventListener("click", clicked, true);
+    return () => (clearTimeout(t), window.removeEventListener("focus", again), document.removeEventListener("click", clicked, true));
   }, [on, load]);
 }
 
