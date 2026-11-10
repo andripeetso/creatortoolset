@@ -3,7 +3,7 @@ import { ChevronRight, Folder, HardDrive, Laptop, Monitor, MoreHorizontal, Plus 
 import { useAuth } from "@/lib/auth";
 import { getProviders, removeDevice, renameDevice } from "@/lib/providers";
 import { DEFAULT_WEIGHT, LOAD_PREFERENCES, TOOL_NAMES, runsOn, type Balance, type Machine, type ProvidersView } from "@contracts/providers";
-import { LIBRARY_NAME, STORAGE_ROLES, sourcesOf, type AddFolderBody, type Disk, type MakeLibraryBody, type SourceRole, type StorageFolder, type StorageState, type StorageView } from "@contracts/storage";
+import { LIBRARY_NAME, STORAGE_ROLES, THIS_COMPUTER, sourcesOf, type AddFolderBody, type Disk, type MakeLibraryBody, type SourceRole, type StorageFolder, type StorageState, type StorageView } from "@contracts/storage";
 import { devicesSectionsFor } from "@/lib/plugin";
 import { webPlugins } from "@/plugins.gen";
 import { Button } from "@/components/ui/button";
@@ -278,7 +278,8 @@ const weightOf = (weights: Record<string, number>, id: string) =>
 
 /** The drives a computer reported (its system disk, external drives, network shares). Empty until it reports one. */
 const disksOf = (d: Device): Disk[] => d.report?.machine?.disks ?? [];
-const nameOf = (devices: Device[], host: string) => devices.find((d) => d.id === host)?.name ?? "A computer that is gone";
+const nameOf = (devices: Device[], host: string) =>
+  host === THIS_COMPUTER ? "This computer" : (devices.find((d) => d.id === host)?.name ?? "A computer that is gone");
 
 const size = (gb: number) => (gb >= 1000 ? `${(gb / 1024).toFixed(1)} TB` : `${Math.round(gb)} GB`);
 const full = (d: { freeGb: number; totalGb?: number }) => d.freeGb < 20 || (d.totalGb !== undefined && d.freeGb / d.totalGb < 0.1);

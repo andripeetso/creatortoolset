@@ -95,8 +95,14 @@ async function walkSetup(how: "In the app" | "In my own AI" | "Both", size: keyo
 
   await dialog.getByRole("heading", { name: "Where are your videos?" }).waitFor();
   expect(await dialog.getByRole("list", { name: "Stage 3 of 3" }).count()).toBe(1);
+  // the screen says where it looked (Downloads is not searched) and what each row is for; nothing is ticked before a press
+  await dialog.getByText(/^Looked in /).waitFor({ timeout: 30_000 }).catch(() => {});
+  expect(await dialog.getByText(/Not searched: Downloads/).count()).toBe(1);
+  expect(await dialog.getByRole("heading", { name: "Footage" }).count()).toBe(1);
+  expect(await dialog.getByRole("heading", { name: "Music" }).count()).toBe(1);
+  expect(await dialog.getByRole("checkbox", { checked: true }).count()).toBe(0);
   await shot(page, `${tag}-4folders`);
-  await dialog.getByRole("button", { name: "Do not add folders" }).click();
+  await dialog.getByRole("button", { name: "Skip for now" }).click();
 
   await dialog.getByRole("heading", { name: "What will you make?" }).waitFor();
   await dialog.getByRole("checkbox", { name: /Short videos/ }).check();
