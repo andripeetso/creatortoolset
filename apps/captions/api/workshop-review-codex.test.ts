@@ -66,4 +66,15 @@ describe("a follower's read for a Codex-only member", () => {
     expect(done).toMatchObject({ status: "done", provider: "Codex (Mac)" });
     expect(relay.calls.at(-1)?.provider).toMatchObject({ driver: "codex", model: "gpt-6-luna" });
   });
+
+  it("an approved web search is never sent to Codex, whose sandbox has no network", async () => {
+    const before = relay.calls.length;
+    const r = await call("POST", `/api/workshop/sessions/${SESSION}/chat`, { docId: DOC, text: "What do studies say about lifting twice a week?", web: "lifting twice a week studies" });
+    expect(r.status).toBe(202);
+    for (let i = 0; i < 500 && relay.calls.length === before; i++) await new Promise((res) => setTimeout(res, 10));
+    expect(relay.calls.length).toBeGreaterThan(before);
+    const sent = relay.calls.at(-1) as { provider?: { driver: string }; web?: unknown } | undefined;
+    expect(sent?.provider?.driver).toBe("codex");
+    expect(sent?.web).toBeFalsy();
+  });
 });

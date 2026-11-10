@@ -1260,7 +1260,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
           file: folder ? postFile(p.item) : undefined,
           text: p.slides?.join("\n") || p.item.caption || "",
         })),
-        web: folder ? approvedWeb || undefined : undefined,
+        web: folder && onWebMac(user, session.ai) ? approvedWeb || undefined : undefined,
         quotes: ask.quotes,
         pasted: askPasted.map((p) => ({ name: p.name, text: p.text, ...(folder ? { file: pastedFile(session, p) } : {}) })),
         images: askImages.map((im, i) => ({ name: im.name, ...(folder || macReads ? { file: attachedFile(im, i) } : {}) })),
@@ -1320,7 +1320,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
             label: "Workshop",
             // no folder: the pictures still go as files the provider reads
             files: folder ?? (attachments.length ? Object.fromEntries(attachments.map((f, i) => [attachedFile(f, i), `base64:${f.data}`])) : undefined),
-            web: !!folder && !!approvedWeb,
+            web: !!folder && !!approvedWeb && onWebMac(user, session.ai),
             onStep: step,
             ...(folder ? { session: { key: session.id, resume: resume?.id }, onSession: (s: MacSession) => (got.session = s) } : {}),
           };
@@ -1480,7 +1480,8 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
           : `I searched the library for “${plan.search}” — nothing beyond what is already in the session.`,
       );
     }
-    if ((approvedWeb && !folder && !research) || (ask.deep && !research)) notes.push("Research is not configured on the server, so I could not check that on the web.");
+    // Codex's sandbox has no network: an approved search runs only on Claude Code on the Mac (or Perplexity), say so otherwise
+    if ((approvedWeb && !research && (!folder || !onWebMac(user, session.ai))) || (ask.deep && !research)) notes.push("Web search isn't set up for this AI, so I could not check that on the web. Claude Code on your Mac can, or add a Perplexity key.");
     // a web search the model ran itself is said in the answer, in code (the model may not)
     const searched = steps.filter((x) => x.label.startsWith("Searched the web: ")).map((x) => x.label.slice("Searched the web: ".length));
     if (searched.length) notes.push(`Searched the web for ${searched.join(", ")}.`);
