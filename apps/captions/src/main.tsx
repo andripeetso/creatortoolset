@@ -11,6 +11,7 @@ import { useAuth } from "@/lib/auth";
 import { seedWorkspace } from "@/lib/workspace";
 import { seedSetup } from "@/lib/setup";
 import { AuthGate } from "@/components/AuthGate";
+import { RootBoundary } from "@/components/StaleBuild";
 import { ShareThemeProvider } from "@/components/ShareTheme";
 import App from "./App.tsx";
 
@@ -47,6 +48,7 @@ async function bootstrap() {
 
   createRoot(document.getElementById("root")!).render(
     <StrictMode>
+      <RootBoundary>
       <BrowserRouter>
         <TRPCProvider>
           <ShareThemeProvider>
@@ -56,6 +58,7 @@ async function bootstrap() {
           </ShareThemeProvider>
         </TRPCProvider>
       </BrowserRouter>
+      </RootBoundary>
     </StrictMode>,
   );
 }
