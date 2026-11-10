@@ -12,17 +12,18 @@ import { useWorkspace } from "./workspace";
 export type { SetupView };
 
 /**
- * First run: the same three screens for everyone (Connect your AI, What do you make?, How do you work best?), then
- * Home. They are questions only: no job to do is asked of her.
+ * First run: three screens for everyone (Connect your AI, What do you make?, How do you work best?), then Home.
+ * "In my own AI" and "Both" are followed by one more, `own`: Creator Toolset is installed in her AI apps there, so the
+ * answer is carried out where she can see it. Questions and their installs only: no job to do is asked of her.
  */
 export const SETUP_PATH = ["agents", "make", "how"] as const;
-/** Screens other pages still open with `?setup=`: one screen each, closed by Done, never part of the path. */
-export const SIDE_STEPS = ["connect", "folders"] as const;
+/** Screens that open alone from a `?setup=` link and close with Done. `own` is also the path's last screen (stepsFor). */
+export const SIDE_STEPS = ["connect", "folders", "own"] as const;
 export const SETUP_STEPS = [...SETUP_PATH, ...SIDE_STEPS] as const;
 export type SetupStep = (typeof SETUP_STEPS)[number];
 
-/** The click path. It takes no answer: it is the same whatever the saved `talk` is. */
-export const stepsFor = (): readonly SetupStep[] => SETUP_PATH;
+/** The click path: the three screens, and `own` after them when the answer to the third is "In my own AI" or "Both". */
+export const stepsFor = (talk?: string | null): readonly SetupStep[] => (talk === "chat" || talk === "both" ? [...SETUP_PATH, "own"] : SETUP_PATH);
 
 /** Ids from the older, longer setups still open the screen they now belong to. */
 const OLD_STEP: Record<string, SetupStep> = { tools: "make", ai: "agents", project: "make", left: "make", done: "make", try: "make" };

@@ -16,18 +16,16 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import type { LocalAiView, McpResult } from "@contracts/local-ai";
 import { TOOLS, type Tool } from "@contracts/tools";
 import { MAKES, type Make } from "@contracts/work-prefs";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { connectableRows } from "@/components/settings/OwnAiSection";
 import { AgentsStep } from "@/components/setup/AgentsStep";
-import { ROW_NAME } from "@/components/setup/AiPanel";
 import { Choice } from "@/components/setup/Choice";
 import { ConnectStep, HERE } from "@/components/setup/ConnectStep";
 import { FoldersStep } from "@/components/setup/FoldersStep";
 import { HowPicker } from "@/components/setup/HowPicker";
+import { OwnAiStep } from "@/components/setup/OwnAiStep";
 import { ToolsPicker } from "@/components/setup/ToolNeeds";
 import { canUse, useMe } from "@/lib/auth";
 import { openAssistant } from "@/lib/assistant";
@@ -54,7 +52,7 @@ import { createProject } from "@/lib/workshop";
 import { useWorkspace } from "@/lib/workspace";
 import { cn } from "@/lib/utils";
 
-/** Each screen: its title and the line under it. The first three are the path; the rest open alone from a `?setup=` link. */
+/** Each screen: its title and the line under it. The first three are the path, with `own` after them for an own-AI answer; the rest open alone from a `?setup=` link. */
 const STEP: Record<SetupStep, { title: string; hint: string }> = {
   agents: { title: "Connect your AI", hint: "Creator Toolset works with the ChatGPT or Claude plan you already have." },
   make: { title: "What do you make?", hint: "Pick what fits. It turns on the right tools." },
@@ -64,6 +62,7 @@ const STEP: Record<SetupStep, { title: string; hint: string }> = {
     hint: "Pick the folders where you keep your footage and music. The AI Editor and Media Library find your clips there. Nothing is moved or uploaded.",
   },
   how: { title: "How do you work best?", hint: "Pick where you talk to your AI." },
+  own: { title: "Add Creator Toolset to your AI", hint: "Install it once. Your AI app can then find your clips, start edits and work in your projects, as you." },
 };
 
 const MAKE_ICONS: Record<Make, LucideIcon> = {
@@ -77,32 +76,12 @@ const THIS_COMPUTER: ReadonlySet<string> = new Set([HERE]);
 const PRIMARY = "min-w-28 bg-[var(--tint)] text-white hover:bg-[var(--tint)] hover:brightness-110";
 
 /**
- * "In my own AI" and "Both" on the last screen: adds Creator Toolset to each AI app found on this computer (the same
- * request as Settings → Headless access). Null when it is done, or the one sentence to show when it could not be.
- */
-export async function addToOwnAi(get: typeof fetch = fetch): Promise<string | null> {
-  const later = "You can add it later in Settings → Headless access.";
-  try {
-    const view = (await (await get("/api/setup/ai")).json()) as LocalAiView;
-    if (!view.local) return null; // a hosted server: there is no AI app on this computer to add it to
-    const rows = connectableRows(view);
-    if (!rows.length) return `No AI app was found on this computer to add Creator Toolset to. ${later}`;
-    for (const r of rows) {
-      const res = await get("/api/setup/ai/mcp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: r.id }) });
-      if (!res.ok || !((await res.json()) as McpResult).ok) return `Creator Toolset couldn't be added to ${ROW_NAME[r.id]}. ${later}`;
-    }
-    return null;
-  } catch {
-    return `Creator Toolset couldn't be added to your AI. ${later}`;
-  }
-}
-
-/**
- * First-run setup in one window, the same three screens for everyone: connect your AI → what you make (ticks the
- * tools, makes the first project quietly) → how you work best (in the app, in your own AI, or both), then Home.
- * Leaving the last screen saves `done`; they are questions only, no job to do is asked of her. Not now (the X, the
- * footer link, Escape) hides it for this browser and remembers the screen; Home's card brings it back. A click outside
- * never closes it. Never shown on a phone. The other screens (`?setup=connect`, `folders`) open alone and close with Done.
+ * First-run setup in one window, three screens for everyone: connect your AI → what you make (ticks the tools, makes
+ * the first project quietly) → how you work best (in the app, in your own AI, or both), then Home. "In my own AI" and
+ * "Both" get one more screen first, where Creator Toolset is installed in the AI apps on this computer. Leaving the
+ * last screen saves `done`; no job to do is asked of her. Not now (the X, the footer link, Escape) hides it for this
+ * browser and remembers the screen; Home's card brings it back. A click outside never closes it. Never shown on a
+ * phone. The other screens (`?setup=connect`, `folders`, `own`) open alone and close with Done.
  */
 export function SetupDialog() {
   const me = useMe();
@@ -121,7 +100,6 @@ export function SetupDialog() {
   const [busy, setBusy] = useState(false); // leaving "What do you make?" saves first: one press, one project
   const [footerSlot, setFooterSlot] = useState<HTMLElement | null>(null); // the folders screen portals its buttons in
   const [unsure, setUnsure] = useState<boolean | null>(null); // "Not sure yet" ticked here; null = read it from the saved answers
-  const [ownAiNote, setOwnAiNote] = useState<string | null>(null); // "In my own AI" could not be set up: said once, then Done finishes
   const asked = params.get("setup");
   // by itself only on a first sign-in (setupOpensItself); Settings → Setup and ?setup= always open it; never on a phone
   const firstRun = setupOpensItself({ logins: me?.logins, loaded, projects: projects.length });
@@ -162,7 +140,7 @@ export function SetupDialog() {
   const mine = TOOLS.filter((t) => canUse(me, t));
   const makes = prefs.makes;
   const tools = ticked ?? view.tools ?? toolsFor(makes, mine);
-  const path = stepsFor();
+  const path = stepsFor(prefs.talk);
   const at = path.indexOf(step);
   const side = at < 0;
   const connected = view.have.includes("ai");
@@ -190,12 +168,7 @@ export function SetupDialog() {
     setBusy(true);
     try {
       if (step === "make") await saveMakes();
-      if (step === "how") {
-        // "In my own AI" and "Both" are done here, not only remembered: Creator Toolset is added to the AI apps on this computer
-        if (prefs.talk !== "app" && ownAiNote === null) {
-          const problem = await addToOwnAi();
-          if (problem) return setOwnAiNote(problem);
-        }
+      if (at === path.length - 1) {
         // the last screen: this is the end of setup, and it never opens by itself again
         await save({ tools, done: true });
         const name = loaded ? firstProjectName(makes, projects.length) : null;
@@ -286,18 +259,9 @@ export function SetupDialog() {
 
           {step === "folders" && <FoldersStep onNext={close} actions={footerSlot} />}
 
-          {step === "how" && (
-            <div className="space-y-3">
-              <HowPicker
-                value={prefs.talk}
-                onChange={(t) => {
-                  setOwnAiNote(null);
-                  void setTalk(t);
-                }}
-              />
-              {ownAiNote && <p role="status" className="text-sm">{ownAiNote}</p>}
-            </div>
-          )}
+          {step === "how" && <HowPicker value={prefs.talk} onChange={(t) => void setTalk(t)} />}
+
+          {step === "own" && <OwnAiStep />}
         </div>
 
         <footer className="flex shrink-0 items-center justify-between gap-2 border-t border-border/60 px-6 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-8">
@@ -327,9 +291,9 @@ export function SetupDialog() {
                 Skip for now
               </Button>
             )}
-            {((step === "agents" && connected) || step === "make" || step === "how") && (
+            {!side && (step !== "agents" || connected) && (
               <Button onClick={() => void next()} disabled={busy} className={PRIMARY}>
-                {step === "how" ? "Done" : "Continue"}
+                {at === path.length - 1 ? "Done" : "Continue"}
               </Button>
             )}
           </div>

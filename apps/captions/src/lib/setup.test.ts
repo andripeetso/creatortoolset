@@ -8,16 +8,16 @@ import { TOOLS } from "@contracts/tools";
 afterEach(() => vi.unstubAllGlobals());
 
 describe("setup steps", () => {
-  it("is the same three screens for every way of working", () => {
+  it("is three screens, and a fourth that installs Creator Toolset in her AI apps after In my own AI or Both", () => {
     // Connect your AI, What do you make?, How do you work best? The owner asked for the third back on 2026-11-10
     expect(stepsFor()).toEqual(["agents", "make", "how"]);
     expect(stepsFor()).toBe(SETUP_PATH);
-    // it takes no answer at all; called as the old one was, with each saved answer, the path is still the same
-    const asBefore = stepsFor as (talk?: string | null) => readonly string[];
-    for (const talk of ["app", "chat", "both", null]) expect(asBefore(talk)).toEqual(["agents", "make", "how"]);
+    for (const talk of ["app", null, undefined]) expect(stepsFor(talk)).toEqual(["agents", "make", "how"]);
+    // the owner picked Both and setup "ended abruptly": the answer is carried out on a screen of its own, last
+    for (const talk of ["chat", "both"]) expect(stepsFor(talk)).toEqual(["agents", "make", "how", "own"]);
   });
 
-  it("keeps Connect and Folders as screens a link can open, off the path", () => {
+  it("keeps Connect, Folders and the AI apps screen as screens a link can open alone", () => {
     for (const s of SIDE_STEPS) {
       expect(setupStepFromParam(s)).toBe(s);
       expect(stepsFor()).not.toContain(s);

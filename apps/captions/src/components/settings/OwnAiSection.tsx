@@ -55,14 +55,8 @@ async function json<T>(r: Response): Promise<T> {
   return j as T;
 }
 
-/**
- * Settings → Headless access: the other way round from Providers. Providers is the AI the app uses; this page lets your own AI
- * app (Claude Code, Codex, a script) use the app, as you, each with a key of its own.
- * On the computer the server runs on, each AI app found is a row and its button does the work (Sign in, Update, Install);
- * Command shows the same install as a line to run yourself.
- * On a hosted server nothing can be run on your computer, so the page gives the command to paste into Terminal.
- */
-export function OwnAiSection() {
+/** What the Headless access rows read: the AI apps' keys and what this computer has. Shared by the page and setup's last screen. */
+export function useOwnAi() {
   const [keys, setKeys] = useState<AiKeyInfo[] | null>(null);
   const [local, setLocal] = useState<LocalAiView | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -85,6 +79,18 @@ export function OwnAiSection() {
       .then((r) => json<{ ai?: AiKeyInfo[] }>(r))
       .then((k) => setKeys(k.ai ?? []))
       .catch((e) => (saveFailed(msg(e)), void load()));
+  return { keys, local, error, load, disconnect };
+}
+
+/**
+ * Settings → Headless access: the other way round from Providers. Providers is the AI the app uses; this page lets your own AI
+ * app (Claude Code, Codex, a script) use the app, as you, each with a key of its own.
+ * On the computer the server runs on, each AI app found is a row and its button does the work (Sign in, Update, Install);
+ * Command shows the same install as a line to run yourself.
+ * On a hosted server nothing can be run on your computer, so the page gives the command to paste into Terminal.
+ */
+export function OwnAiSection() {
+  const { keys, local, error, load, disconnect } = useOwnAi();
 
   const here = local?.local ? connectableRows(local) : [];
   // the apps with a row of their own above are not listed again under Installed in
@@ -175,7 +181,7 @@ const STEP_LABEL = { signin: ["Sign in", "Signing in…"], update: ["Update", "U
  * One AI app on this computer. Install does it here (the same `mcp add` a person would type, with a key that is never
  * shown). A Codex too old for it shows Update beside a greyed Install, so the order is plain.
  */
-function LocalAppRow({ row, aiKey, onDone, onDisconnect }: { row: LocalAiRow & { id: CliId }; aiKey?: AiKeyInfo; onDone: () => void; onDisconnect: (id: string) => Promise<unknown> }) {
+export function LocalAppRow({ row, aiKey, onDone, onDisconnect }: { row: LocalAiRow & { id: CliId }; aiKey?: AiKeyInfo; onDone: () => void; onDisconnect: (id: string) => Promise<unknown> }) {
   const [busy, setBusy] = useState<"signin" | "update" | "connect" | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const step = nextStep(row, aiKey);
