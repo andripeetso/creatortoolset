@@ -225,8 +225,14 @@ export const useSetup = create<{ view: SetupView | null; load: () => Promise<Set
       .then((view) => (putCached(me(), SETUP_KEY, view), set({ view }))),
 }));
 
-/** Before the first render (main.tsx): the last setup this account saw, so Home's marks are there on the first frame. */
-export const seedSetup = () => useSetup.setState({ view: readCached<SetupView>(me(), SETUP_KEY) });
+/**
+ * Before the first render (main.tsx): the last setup and work preferences this account saw, so Home's marks and an
+ * unfinished setup window are there on the first frame.
+ */
+export const seedSetup = () => {
+  useSetup.setState({ view: readCached<SetupView>(me(), SETUP_KEY) });
+  useWorkPrefs.setState({ prefs: readCached<WorkPrefs>(me(), PREFS_KEY) });
+};
 
 /** What a setup's "have" also comes from: keys, providers, social logins, paired computers, the Apify key. */
 const FEEDS = ["my-keys", "providers", "connectors", "devices", "instagram"];
@@ -299,31 +305,42 @@ interface WorkPrefsState {
   load: () => Promise<void>;
   put: (p: Partial<WorkPrefs>) => Promise<void>;
 }
+/** The work preferences' saved copy (lib/local-cache.ts): the setup window opens from it without waiting for the server. */
+const PREFS_KEY = "/api/work-prefs";
+/** Whether this page load has asked the server yet: until then what shows is the saved copy. */
+let prefsAsked = false;
 export const useWorkPrefs = create<WorkPrefsState>((set, get) => ({
   prefs: null,
-  load: () =>
-    fetch("/api/work-prefs")
-      .then((r) => (r.ok ? (r.json() as Promise<WorkPrefs>) : DEFAULT_WORK_PREFS))
-      .then((prefs) => set({ prefs }))
-      .catch(() => {}),
+  load: () => {
+    prefsAsked = true;
+    const saved = JSON.stringify(readCached<WorkPrefs>(me(), PREFS_KEY));
+    return fetch(PREFS_KEY)
+      .then((r) => (r.ok ? (r.json() as Promise<WorkPrefs>).then((w) => (putCached(me(), PREFS_KEY, w), w)) : DEFAULT_WORK_PREFS))
+      .then((prefs) => {
+        // the saved copy was right: what is on screen stays, with an answer ticked while this was on its way
+        if (get().prefs && JSON.stringify(prefs) === saved) return;
+        set({ prefs });
+      })
+      .catch(() => {});
+  },
   put: (p) => {
     const cur = get().prefs;
     if (cur) set({ prefs: { ...cur, ...p } }); // shown at once; the server's copy replaces it below
-    return fetch("/api/work-prefs", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(p) })
+    return fetch(PREFS_KEY, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(p) })
       .then((r) => (r.ok ? (r.json() as Promise<WorkPrefs>) : null))
       .then((w) => {
-        if (w) set({ prefs: w });
+        if (w) (putCached(me(), PREFS_KEY, w), set({ prefs: w }));
       })
       .catch(() => {});
   },
 }));
 
-/** How they want to work with the AI (work-prefs `talk`), loaded on first use. `talk` is null until the server answers. */
+/** How they want to work with the AI (work-prefs `talk`), loaded on first use. `talk` is null until it is known (the saved copy, else the server's answer). */
 export function useWorkTalk(): { talk: WorkPrefs["talk"] | null; setTalk: (v: WorkPrefs["talk"]) => Promise<void> } {
   const prefs = useWorkPrefs((s) => s.prefs);
   const load = useWorkPrefs((s) => s.load);
   useEffect(() => {
-    if (!prefs) void load();
+    if (!prefs || !prefsAsked) void load();
   }, [prefs, load]);
   return { talk: prefs?.talk ?? null, setTalk: (v) => useWorkPrefs.getState().put({ talk: v }) };
 }
