@@ -5,6 +5,7 @@ import { DEFAULT_EYELINE, type Draft, type Edit, type Sentence } from "@contract
 import { AppBar } from "@/components/AppBar";
 import { Button } from "@/components/ui/button";
 import { deleteEdit, exportUrl, getEdit, getSentences, patchEdit, putLines, retryJob, reviewDraft, runEdit, setEyeline, stopEdit, swapTake, takeSpan } from "@/lib/editor";
+import { useCachedLoad } from "@/lib/local-cache";
 import { confirmHeavy } from "@/lib/setup";
 import { StateBadge, thumb } from "./EditorPage";
 
@@ -23,7 +24,10 @@ const settingFor = (why: string) => (/Settings → API keys/.test(why) && !/Sett
 export default function EditorEditPage() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
-  const [edit, setEdit] = useState<Edit | null>(null);
+  // the saved copy paints at once; the server says when a step moved (lib/local-cache), so nothing polls
+  const live = useCachedLoad<Edit>(`/api/editor/${id}`, () => getEdit(id));
+  const edit = live.data;
+  const setEdit = live.set;
   const [sentences, setSentences] = useState<Sentence[]>([]);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [error, setError] = useState<string | null>(null);
@@ -36,15 +40,6 @@ export default function EditorEditPage() {
       setError(null);
     }, (e) => setError(message(e)));
 
-  useEffect(() => {
-    void act(getEdit(id));
-  }, [id]);
-
-  useEffect(() => {
-    if (!busy) return;
-    const t = setInterval(() => void getEdit(id).then(setEdit, () => {}), 2000);
-    return () => clearInterval(t);
-  }, [id, busy]);
 
   const sentenceCount = edit?.sentences ?? 0;
   useEffect(() => {
@@ -66,7 +61,9 @@ export default function EditorEditPage() {
     return (
       <div className="flex min-h-dvh flex-col">
         <AppBar tool="AI Editor" to="/editor" />
-        <div className="flex justify-center py-16 text-zinc-500">{error ? <p className="text-sm text-red-400">{error}</p> : <Loader2 className="h-6 w-6 animate-spin" />}</div>
+        <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-4 py-4 sm:px-6">
+          {error || live.error ? <p className="text-sm text-red-400">{error || live.error}</p> : <div aria-hidden="true" className="h-[420px] rounded-xl border border-zinc-500/20" />}
+        </main>
       </div>
     );
   }

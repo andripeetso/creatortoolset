@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { ArrowDown, ArrowUp, Download, GripVertical, ImageOff, ImagePlus, Loader2, Scissors, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Download, GripVertical, ImageOff, ImagePlus, Scissors, Trash2 } from "lucide-react";
 import type { AssetCard, LibrarySummary, Piece, PieceItem } from "@contracts/library";
 import { PLATFORMS } from "@contracts/connectors";
 import { AppBar } from "@/components/AppBar";
@@ -27,9 +27,9 @@ import {
   setPieceCover,
   splitPieceItem,
   trashPiece,
-  useLibraryChanges,
   type WorkshopFinal,
 } from "@/lib/library";
+import { useCachedLoad } from "@/lib/local-cache";
 import { createSession, listSessions, sessionPath, type SessionRow } from "@/lib/workshop";
 import { finalsTiles } from "./FinalsPage";
 
@@ -591,6 +591,29 @@ function WorkshopLink({
   );
 }
 
+type PieceView = {
+  found: { library: LibrarySummary; piece: Piece } | null;
+  cards: AssetCard[];
+  others: Piece[];
+  workshop: Record<string, WorkshopFinal>;
+};
+
+/** The piece in the first library that has it, its library's cards and the other Finals pieces, and its Workshop link. */
+async function loadPieceView(pieceId: string): Promise<PieceView> {
+  // the Workshop session this piece is linked to (owner only; an empty answer when it is not)
+  const workshop = getWorkshopFinals().catch((): Record<string, WorkshopFinal> => ({}));
+  const all = await listLibraries();
+  // a library the account cannot see the piece in answers 404: that library is skipped
+  const hits = await Promise.all(all.map((library) => getPiece(library.id, pieceId).then((piece) => ({ library, piece }), () => null)));
+  const found = hits.find((h): h is { library: LibrarySummary; piece: Piece } => h !== null) ?? null;
+  if (!found) return { found, cards: [], others: [], workshop: await workshop };
+  // the cards come with it: the versions would otherwise read "Not in the library any more" until they arrive
+  const [cards, collections] = await Promise.all([listAllAssets(found.library.id), listCollections(found.library.id)]);
+  const finals = collections.find(isFinals);
+  const siblings = finals ? await listPieces(found.library.id, finals.id) : [];
+  return { found, cards, others: siblings.filter((p) => p.id !== pieceId), workshop: await workshop };
+}
+
 /**
  * /finals/:pieceId: the piece in whichever library the account can read (the first that answers, with its Finals or not).
  * A piece's cards come from its library's list, for the thumbnails and the add-a-version picker. Reads again when the
@@ -599,52 +622,15 @@ function WorkshopLink({
 export default function FinalsPiecePage() {
   const { pieceId = "" } = useParams();
   const navigate = useNavigate();
-  const [found, setFound] = useState<{ library: LibrarySummary; piece: Piece } | null | undefined>(undefined);
-  const [cards, setCards] = useState<AssetCard[]>([]);
-  const [others, setOthers] = useState<Piece[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [tick, setTick] = useState(0);
-  const [workshop, setWorkshop] = useState<Record<string, WorkshopFinal>>({});
-  const reload = () => setTick((n) => n + 1);
-  useLibraryChanges(reload);
-
-  // the Workshop session this piece is linked to (owner only; an empty answer when it is not)
-  useEffect(() => {
-    let live = true;
-    getWorkshopFinals().then(
-      (links) => live && setWorkshop(links),
-      () => live && setWorkshop({}),
-    );
-    return () => {
-      live = false;
-    };
-  }, [pieceId, tick]);
-
-  useEffect(() => {
-    let live = true;
-    listLibraries()
-      .then((all) =>
-        // a library the account cannot see the piece in answers 404: that library is skipped
-        Promise.all(all.map((library) => getPiece(library.id, pieceId).then((piece) => ({ library, piece }), () => null))),
-      )
-      .then(async (hits) => {
-        if (!live) return;
-        const hit = hits.find((h): h is { library: LibrarySummary; piece: Piece } => h !== null) ?? null;
-        // the cards come first: the versions would otherwise read "Not in the library any more" until they arrive
-        if (!hit) return setFound(null);
-        const [all, collections] = await Promise.all([listAllAssets(hit.library.id), listCollections(hit.library.id)]);
-        const finals = collections.find(isFinals);
-        const siblings = finals ? await listPieces(hit.library.id, finals.id) : [];
-        if (!live) return;
-        setCards(all);
-        setOthers(siblings.filter((p) => p.id !== pieceId));
-        setFound(hit);
-      })
-      .catch((e) => live && setError(message(e)));
-    return () => {
-      live = false;
-    };
-  }, [pieceId, tick]);
+  // the saved copy paints at once; the change stream's library topic reads it again (lib/local-cache)
+  const view = useCachedLoad<PieceView>(`/api/library/finals-piece/${pieceId}`, () => loadPieceView(pieceId));
+  const found = view.data ? view.data.found : undefined;
+  const cards = view.data?.cards ?? [];
+  const others = view.data?.others ?? [];
+  const workshop = view.data?.workshop ?? {};
+  const error = view.data ? null : view.error || null;
+  const reload = () => void view.refresh().catch(() => {});
+  const setFound = (next: { library: LibrarySummary; piece: Piece }) => view.set((v) => v && { ...v, found: next });
 
   const library = found?.library ?? null;
   const piece = found?.piece;
@@ -657,11 +643,7 @@ export default function FinalsPiecePage() {
           ← Finals
         </Link>
         {error && <p className="text-sm text-red-500">{error}</p>}
-        {found === undefined && !error && (
-          <div className="flex justify-center py-16 text-zinc-500">
-            <Loader2 className="h-6 w-6 animate-spin" />
-          </div>
-        )}
+        {found === undefined && !error && <div aria-hidden="true" className="h-[420px] rounded-xl bg-zinc-500/5" />}
         {found === null && <p className="py-16 text-center text-sm text-zinc-500">No such piece in Finals.</p>}
         {library && piece && (
           <PieceEditor

@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router";
 import type { WatchStatus } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useCachedLoad } from "@/lib/local-cache";
 import { chooseFolderOnMac } from "@/lib/thisMac";
 
 /**
@@ -33,25 +34,16 @@ const rememberSkip = () => {
 
 export function FootageFolderCard({ libraryId, onUpload }: { libraryId: string; onUpload?: () => void }) {
   const navigate = useNavigate();
-  const [status, setStatus] = useState<WatchStatus | null>(null);
   const [skipped, setSkipped] = useState(skippedBefore);
+  // the saved watch status (the same copy as the Library's watch folders), so the card is in place on the first frame
+  const status = useCachedLoad<WatchStatus>(skipped ? null : `/api/library/${libraryId}/watch`, () =>
+    fetch(`/api/library/${libraryId}/watch`).then((r) => (r.ok ? (r.json() as Promise<WatchStatus>) : Promise.reject(new Error(String(r.status))))),
+  ).data;
   const [added, setAdded] = useState(false);
   const [typing, setTyping] = useState(false);
   const [path, setPath] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (skipped) return;
-    let live = true;
-    fetch(`/api/library/${libraryId}/watch`)
-      .then((r) => (r.ok ? (r.json() as Promise<WatchStatus>) : null))
-      .then((s) => live && setStatus(s))
-      .catch(() => undefined); // no answer: no card
-    return () => {
-      live = false;
-    };
-  }, [libraryId, skipped]);
 
   if (skipped || added || !status || status.folders.length > 0) return null;
 

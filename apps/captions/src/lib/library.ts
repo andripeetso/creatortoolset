@@ -15,6 +15,7 @@ import type {
 } from "@contracts/library";
 import { useEffect, useRef } from "react";
 import { putDirect } from "@/lib/uploads";
+import { boot, onTopic, seqNow, whenVisible } from "@/lib/sync";
 
 /** The Media Library's calls to api/library/routes.ts, and the chunked upload that follows its offset protocol. */
 
@@ -270,24 +271,27 @@ export function reorderedPositions(items: { id: string; position: number }[], fr
   return order.flatMap((it, i) => (it.position === i + 1 ? [] : [{ id: it.id, position: i + 1 }]));
 }
 
+let watchers = 0;
+/** Whether a "library" notice is news to a page that last saw `was`: the tab's first hello only says where the stream
+ *  starts (the page has just read its list); a newer change or a restarted server is news. */
+export const libraryNews = (was: { seq: number; boot: string }, n: number, bootNow: string) =>
+  !!was.boot && (n > was.seq || bootNow !== was.boot);
+
 /**
- * Calls `onChange` when a Media Library changes on this server (GET /api/library/events: one signal per change, no
- * payload). Bursts are merged into one call 300 ms later. The browser reconnects the stream on its own.
+ * Calls `onChange` when this account's Media Library or Finals changed: in another tab, on another device, or in the
+ * server's own work (a picture made, a watch folder's file). The change stream's "library" topic (lib/sync.ts): a burst
+ * is one call 300 ms later, a hidden window waits until it is shown, and this tab's own writes are skipped.
  */
 export function useLibraryChanges(onChange: () => void): void {
   const latest = useRef(onChange);
   latest.current = onChange;
   useEffect(() => {
-    if (typeof EventSource === "undefined") return;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const source = new EventSource("/api/library/events");
-    source.addEventListener("changed", () => {
-      clearTimeout(timer);
-      timer = setTimeout(() => latest.current(), 300);
+    const key = `library-changes:${++watchers}`;
+    let seen = { seq: seqNow(), boot: boot() };
+    return onTopic("library", (n) => {
+      const was = seen;
+      seen = { seq: boot() === was.boot ? Math.max(n, was.seq) : n, boot: boot() };
+      if (libraryNews(was, n, boot())) whenVisible(key, () => latest.current());
     });
-    return () => {
-      clearTimeout(timer);
-      source.close();
-    };
   }, []);
 }

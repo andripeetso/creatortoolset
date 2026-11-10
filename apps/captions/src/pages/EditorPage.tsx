@@ -13,6 +13,7 @@ import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/
 import { Textarea } from "@/components/ui/textarea";
 import { createEdit, footageTarget, listEdits, runEdit } from "@/lib/editor";
 import { changeFolderItems, getAsset, listAssets, listCollections, listLibraries, uploadFile } from "@/lib/library";
+import { useCachedLoad } from "@/lib/local-cache";
 import { cn } from "@/lib/utils";
 import { confirmHeavy, openToolSetup } from "@/lib/setup";
 import { ToolSetupLine } from "@/components/setup/ToolSetupLine";
@@ -41,13 +42,11 @@ export function StateBadge({ state }: { state: string }) {
 }
 
 export default function EditorPage() {
-  const [edits, setEdits] = useState<EditSummary[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // the saved list paints at once; a step that moves (the server's worker, a device) reads it again: lib/local-cache
+  const list = useCachedLoad<EditSummary[]>("/api/editor", listEdits);
+  const edits = list.data;
+  const error = edits ? null : list.error || null;
   const [creating, setCreating] = useState(false);
-
-  useEffect(() => {
-    listEdits().then(setEdits, (e) => setError(message(e)));
-  }, []);
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -60,11 +59,7 @@ export default function EditorPage() {
       </AppBar>
       <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-3 px-4 py-4 sm:px-6">
         <ToolSetupLine tool="editor" />
-        {edits === null && !error && (
-          <div className="flex justify-center py-16 text-zinc-500">
-            <Loader2 className="h-6 w-6 animate-spin" />
-          </div>
-        )}
+        {edits === null && !error && <div aria-hidden="true" className="h-[184px] rounded-xl border border-zinc-500/20" />}
         {edits?.length === 0 && (
           <div className="flex flex-col items-center gap-3 py-16 text-center">
             <p className="max-w-md text-sm text-zinc-500">

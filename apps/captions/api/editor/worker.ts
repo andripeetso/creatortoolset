@@ -32,12 +32,12 @@ export const NEXT: Record<string, string[]> = nextKinds();
 
 const running = new Map<number, { edit: string; ctl: AbortController }>();
 
-/** A step ended (done, failed, parked): the account's edit list and Home's to-do change, so its open windows hear "editor". */
-const ended = (actor: string | null) => void (actor && announce(actor, "editor"));
+/** A step moved (claimed, done, failed, parked): the account's open AI Editor pages and Home's to-do refetch (api/lib/sync.ts). */
+const moved = (job: JobRow) => void (job.actor && announce(job.actor, "editor"));
 
 const fail = (db: DatabaseSync, job: JobRow, why: string) => {
   db.prepare(`UPDATE ${T} SET state = 'failed', lease_until = NULL, error = ? WHERE id = ?`).run(why, job.id);
-  ended(job.actor);
+  moved(job);
 };
 
 /** Stops an edit: its queued and running steps fail as "Stopped" (Retry or Run queues them again); a running one is aborted. */
@@ -65,6 +65,15 @@ export async function tick(now = Date.now()): Promise<boolean> {
   releaseQuietDevices(db, isOnline);
   const job = claimStep(db, "server", LEASE_S, now, T);
   if (!job) return false;
+  moved(job);
+  try {
+    return await runStep(db, job, now);
+  } finally {
+    moved(job);
+  }
+}
+
+async function runStep(db: DatabaseSync, job: JobRow, now: number): Promise<boolean> {
   const vid = job.version_id ?? "";
   const cut = vid.indexOf(":");
   const edit = readEdit(vid.slice(0, cut));
@@ -88,13 +97,11 @@ export async function tick(now = Date.now()): Promise<boolean> {
     if (ctl.signal.aborted) return true; // stopped: stopEdit already marked it
     finishJob(db, job.id, true, undefined, Date.now(), T);
     queueNext(db, job, edit, variant);
-    ended(job.actor);
   } catch (e) {
     if (ctl.signal.aborted) return true;
-    if (e instanceof Waiting) return defer(db, job.id, e.seconds, now, T), true; // still going: nothing to tell
+    if (e instanceof Waiting) return defer(db, job.id, e.seconds, now, T), true; // still going: it runs again in e.seconds
     if (e instanceof NeedsKey) parkJob(db, job.id, e.message, T);
     else finishJob(db, job.id, false, e instanceof Error ? e.message : String(e), Date.now(), T);
-    ended(job.actor);
   } finally {
     clearInterval(beat);
     running.delete(job.id);
@@ -112,6 +119,7 @@ export function claimForDevice(device: { id: string; owner: string }, kinds: str
   releaseQuietDevices(db, isOnline);
   const job = claimStep(db, claimableBy(kinds), LEASE_S, now, T, { actor: device.owner, device: device.id });
   if (!job) return null;
+  moved(job);
   const { editId, variant } = splitVersion(job);
   const edit = readEdit(editId);
   if (!edit || edit.trashedAt) return fail(db, job, "The edit is gone"), null;
@@ -141,7 +149,7 @@ export function doneForDevice(device: string, id: number): boolean {
   const { editId, variant } = splitVersion(job);
   const edit = readEdit(editId);
   if (edit) queueNext(db, job, edit, variant);
-  ended(job.actor);
+  moved(job); // after the next steps are queued, so the refetch shows them
   return true;
 }
 
@@ -152,7 +160,7 @@ export function failForDevice(device: string, id: number, why: string): boolean 
   if (!job) return false;
   db.prepare("UPDATE edit_jobs SET device = NULL WHERE id = ?").run(id);
   finishJob(db, id, false, why.slice(0, 500), Date.now(), T);
-  ended(job.actor);
+  moved(job);
   return true;
 }
 

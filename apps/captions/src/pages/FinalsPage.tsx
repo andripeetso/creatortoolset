@@ -1,11 +1,12 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link } from "react-router";
-import { Clapperboard, GalleryHorizontalEnd, ImageOff, Layers, LayoutGrid, Loader2, RotateCcw } from "lucide-react";
+import { Clapperboard, GalleryHorizontalEnd, ImageOff, Layers, LayoutGrid, RotateCcw } from "lucide-react";
 import type { AssetCard, Collection, LibrarySummary, Piece } from "@contracts/library";
 import { LibraryFacetBar } from "@/components/LibraryFacetBar";
 import { AppBar } from "@/components/AppBar";
 import { Button } from "@/components/ui/button";
-import { getWorkshopFinals, isFinals, listAllAssets, listCollections, listLibraries, listPieces, listTrashedPieces, restorePiece, useLibraryChanges, type WorkshopFinal } from "@/lib/library";
+import { getWorkshopFinals, isFinals, listAllAssets, listCollections, listLibraries, listPieces, listTrashedPieces, restorePiece, type WorkshopFinal } from "@/lib/library";
+import { useCachedLoad } from "@/lib/local-cache";
 import { libraryBadges, libraryFacets, pickedFor } from "@/lib/library-slots";
 import { cn } from "@/lib/utils";
 
@@ -189,69 +190,36 @@ function PieceCard({ tile, work }: { tile: FinalsTile; work?: WorkshopFinal }) {
 
 /** /finals: reads the first library's Finals collection and its pieces, and the facet-filtered cards for their tiles. */
 export default function FinalsPage() {
-  const [libraries, setLibraries] = useState<LibrarySummary[] | null>(null);
-  // undefined: not read yet; null: the library has no Finals collection (nothing is created on read)
-  const [finals, setFinals] = useState<Collection | null | undefined>(undefined);
-  const [pieces, setPieces] = useState<Piece[]>([]);
-  const [cards, setCards] = useState<AssetCard[]>([]);
-  const [workshop, setWorkshop] = useState<Record<string, WorkshopFinal>>({});
+  // every list is the saved copy first (lib/local-cache), kept live by the change stream's library topic: a merge, a
+  // trash or a version added in Review elsewhere reads it again, and nothing here waits on the network to paint
+  const libs = useCachedLoad<LibrarySummary[]>("/api/library", listLibraries);
+  const libraries = libs.data;
   const [picked, setPicked] = useState<Record<string, string[]>>({});
-  const [error, setError] = useState<string | null>(null);
+  const [failed, setError] = useState<string | null>(null);
   // the Finals trash: pieces taken out, listed until restored or gone for good (5 days)
   const [trashView, setTrashView] = useState(false);
-  const [trashed, setTrashed] = useState<Piece[]>([]);
   const library = libraries?.[0] ?? null;
   const libId = library?.id;
-
-  useEffect(() => {
-    listLibraries().then(setLibraries, (e) => setError(message(e)));
-  }, []);
-
-  // a change anywhere in the library (a merge, a trash, a version added in Review) reads the lists again
-  const [tick, setTick] = useState(0);
-  useLibraryChanges(() => setTick((n) => n + 1));
-
-  useEffect(() => {
-    if (!libId) return;
-    let live = true;
-    listCollections(libId).then(
-      (all) => live && setFinals(all.find(isFinals) ?? null),
-      (e) => live && setError(message(e)),
-    );
-    return () => {
-      live = false;
-    };
-  }, [libId]);
-
-  useEffect(() => {
-    if (!libId || !finals || !trashView) return;
-    let live = true;
-    listTrashedPieces(libId, finals.id).then(
-      (p) => live && setTrashed(p),
-      (e) => live && setError(message(e)),
-    );
-    return () => {
-      live = false;
-    };
-  }, [libId, finals, trashView, tick]);
-
-  useEffect(() => {
-    if (!libId || !finals || trashView) return;
-    let live = true;
-    Promise.all([listPieces(libId, finals.id), listAllAssets(libId, pickedFor(picked, "finals")), getWorkshopFinals().catch((): Record<string, WorkshopFinal> => ({}))]).then(
-      ([p, c, w]) => {
-        if (!live) return;
-        setPieces(p);
-        setCards(c);
-        setWorkshop(w);
-        setError(null);
-      },
-      (e) => live && setError(message(e)),
-    );
-    return () => {
-      live = false;
-    };
-  }, [libId, finals, picked, tick, trashView]);
+  const collections = useCachedLoad<Collection[]>(libId ? `/api/library/${libId}/collections` : null, () => listCollections(libId!));
+  // undefined: not read yet; null: the library has no Finals collection (nothing is created on read)
+  const finals = collections.data ? (collections.data.find(isFinals) ?? null) : undefined;
+  const own = pickedFor(picked, "finals");
+  const shown = useCachedLoad<FinalsLists>(
+    libId && finals && !trashView ? `/api/library/${libId}/finals/${finals.id}?facets=${encodeURIComponent(JSON.stringify(own))}` : null,
+    async () => {
+      const [pieces, cards, workshop] = await Promise.all([
+        listPieces(libId!, finals!.id),
+        listAllAssets(libId!, own),
+        getWorkshopFinals().catch((): Record<string, WorkshopFinal> => ({})),
+      ]);
+      return { pieces, cards, workshop };
+    },
+  );
+  const trash = useCachedLoad<Piece[]>(libId && finals && trashView ? `/api/library/${libId}/finals/${finals.id}/trash` : null, () =>
+    listTrashedPieces(libId!, finals!.id),
+  );
+  const trashed = trash.data ?? [];
+  const error = failed ?? ((libraries ? null : libs.error) || (finals === undefined && collections.error) || null);
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -259,17 +227,8 @@ export default function FinalsPage() {
 
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 px-4 py-4 sm:px-6">
         {error && <p className="text-sm text-red-500">{error}</p>}
-        {libraries === null && !error && (
-          <div className="flex justify-center py-16 text-zinc-500">
-            <Loader2 className="h-6 w-6 animate-spin" />
-          </div>
-        )}
         {libraries?.length === 0 && <p className="py-16 text-center text-sm text-zinc-500">No library yet. The workspace owner creates one.</p>}
-        {library && finals === undefined && !error && (
-          <div className="flex justify-center py-16 text-zinc-500">
-            <Loader2 className="h-6 w-6 animate-spin" />
-          </div>
-        )}
+        {(libraries === null || (library && finals === undefined)) && !error && <FinalsFrame />}
         {library && finals !== undefined && (
           <>
             <div className="flex gap-2">
@@ -285,16 +244,33 @@ export default function FinalsPage() {
                 pieces={trashed}
                 onRestore={(p) =>
                   void restorePiece(library.id, p.id)
-                    .then(() => setTick((n) => n + 1))
+                    .then(() => trash.refresh())
                     .catch((e) => setError(message(e)))
                 }
               />
             ) : (
-              <FinalsView hasFinals={!!finals} pieces={pieces} cards={cards} picked={picked} onFacets={setPicked} workshop={workshop} />
+              <FinalsView hasFinals={!!finals} pieces={shown.data?.pieces ?? []} cards={shown.data?.cards ?? []} picked={picked} onFacets={setPicked} workshop={shown.data?.workshop ?? {}} />
             )}
           </>
         )}
       </main>
+    </div>
+  );
+}
+
+type FinalsLists = { pieces: Piece[]; cards: AssetCard[]; workshop: Record<string, WorkshopFinal> };
+
+/** Before anything is saved on this device: the page's boxes in their final places (kind tiles, facet row, cards). */
+function FinalsFrame() {
+  return (
+    <div aria-hidden="true" className="flex flex-col gap-4">
+      <div className="h-9 sm:h-20 sm:max-w-xl" />
+      <div className="h-8" />
+      <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 sm:gap-3 lg:grid-cols-5">
+        {Array.from({ length: 10 }, (_, i) => (
+          <div key={i} className="aspect-[4/5] rounded-xl bg-zinc-500/10" />
+        ))}
+      </div>
     </div>
   );
 }

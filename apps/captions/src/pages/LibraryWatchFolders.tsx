@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { FolderSearch } from "lucide-react";
 import type { Collection, WatchFolder, WatchStatus } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useCachedLoad } from "@/lib/local-cache";
 
 /**
  * Watch folders for the library's owner (api/library/watch.ts): folders on the server's disk whose new files come in by
@@ -25,15 +26,15 @@ async function call(libraryId: string, folders?: Change[]): Promise<WatchStatus>
 const select = "h-9 rounded-md border border-zinc-500/30 bg-transparent px-2 text-sm";
 
 export function LibraryWatchFolders({ libraryId, folders: libraryFolders }: { libraryId: string; folders: Collection[] }) {
-  const [status, setStatus] = useState<WatchStatus | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // the saved status, read again when the library changes (a watch folder's file came in, a referenced file went missing)
+  const live = useCachedLoad<WatchStatus>(`/api/library/${libraryId}/watch`, () => call(libraryId));
+  const status = live.data;
+  const setStatus = live.set;
+  const [failed, setError] = useState<string | null>(null);
+  const error = failed ?? (status ? null : live.error || null);
   const [path, setPath] = useState("");
   const [mode, setMode] = useState<WatchFolder["mode"]>("reference");
   const [into, setInto] = useState("");
-
-  useEffect(() => {
-    call(libraryId).then(setStatus, (e: Error) => setError(e.message));
-  }, [libraryId]);
 
   const save = async (next: Change[]) => {
     try {

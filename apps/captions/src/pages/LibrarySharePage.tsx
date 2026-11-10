@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router";
-import { Download, Loader2, Lock } from "lucide-react";
+import { Download, Lock } from "lucide-react";
 import type { SharedView } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,7 +41,7 @@ export default function LibrarySharePage() {
   };
 
   if (gone) return <p className="p-8 text-center text-sm text-zinc-500">This link is off, has expired, or was never real.</p>;
-  if (!view) return <div className="flex justify-center py-16 text-zinc-500"><Loader2 className="h-6 w-6 animate-spin" /></div>;
+  if (!view) return <div aria-hidden="true" className="min-h-dvh" />; // no spinner: the page paints when its list arrives
 
   if (view.locked) {
     return (

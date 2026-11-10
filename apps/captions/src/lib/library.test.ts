@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { clearPieceCover, getPiece, patchPieceItem, reorderedPositions, setPieceCover } from "./library";
+import { clearPieceCover, getPiece, libraryNews, patchPieceItem, reorderedPositions, setPieceCover } from "./library";
 
 describe("reorderedPositions", () => {
   const items = [
@@ -75,5 +75,14 @@ describe("piece reads and cover", () => {
     ]);
     expect(calls.map(([, init]) => init?.method ?? "GET")).toEqual(["GET", "POST", "DELETE"]);
     expect(JSON.parse(String(calls[1][1]?.body))).toEqual({ versionId: "ver_9", t: 2.5 });
+  });
+});
+
+describe("libraryNews (useLibraryChanges)", () => {
+  it("skips the tab's first hello and a notice it has seen, refetches on a newer change or a restarted server", () => {
+    expect(libraryNews({ seq: 0, boot: "" }, 7, "b1")).toBe(false);
+    expect(libraryNews({ seq: 7, boot: "b1" }, 7, "b1")).toBe(false);
+    expect(libraryNews({ seq: 7, boot: "b1" }, 8, "b1")).toBe(true);
+    expect(libraryNews({ seq: 7, boot: "b1" }, 2, "b2")).toBe(true);
   });
 });
