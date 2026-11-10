@@ -71,7 +71,7 @@ both) and where they check the work (the app, their own editor, or both).`;
 const str = { type: "string" };
 const schedule = {
   type: "object",
-  properties: { kind: { type: "string", enum: ["daily", "weekly", "hours"] }, at: str, weekday: { type: "integer" }, every: { type: "integer" } },
+  properties: { kind: { type: "string", enum: ["fixed", "once", "interval"] }, at: str, weekdays: { type: "array", items: { type: "integer" } }, runAt: str, everyMinutes: { type: "integer" } },
   required: ["kind"],
 };
 const lines = { type: "array", items: { type: "object", properties: { id: str, text: str }, required: ["text"] } };
@@ -169,24 +169,19 @@ export const TOOLS = [
     description: "Run an AI Editor edit from a step on (analyze, script, draft, broll); send_to_review files a draft's preview in Review (needs draft).",
     inputSchema: { type: "object", properties: { edit: str, kind: { type: "string", enum: [...EDIT_STEPS, "send_to_review"] }, draft: str }, required: ["edit", "kind"] },
   },
-  // automations (automations.ts): a prompt the account's own AI runs on a schedule, reporting to the inbox
-  { name: "automations_list", description: "The user's automations: name, schedule, prompt, enabled, next run, the last result (done, error or skipped, with its text), and history: the last five results, newest first.", inputSchema: { type: "object", properties: {} } },
+  // scheduled tasks (automations.ts): a prompt the user's AI runs on its own, each run a turn in an assistant chat
   {
-    name: "automations_create",
-    description: "Schedule a prompt to run on the user's AI (as if they typed it, with these tools). schedule: kind daily (at), weekly (weekday 0 Sunday to 6 Saturday, at) or hours (every 1 to 168). Times are in timezone (IANA, such as Europe/Berlin): required for daily and weekly, so ask if you don't know it. project = a Workshop project id.",
+    name: "schedule_task",
+    description:
+      "Create a scheduled task, or change one (id: only the fields given change; enabled=false pauses it). Each run sends prompt to the user's AI with these tools and posts it and the answer in an assistant chat. schedule: {kind:'fixed',at:'HH:MM',weekdays?:[0-6, 0=Sunday; leave out for every day]} (needs timezone: the user's IANA zone, which their message gives), {kind:'once',runAt:'ISO date-time with offset'} or {kind:'interval',everyMinutes}. destination: continue (default from a chat: runs post in this chat), fresh (this chat, each run without earlier runs' context), new_chat (a new chat each run). It runs on the AI answering now; the user changes that in Settings, Scheduled tasks. project = a Workshop project id. Tell the user the returned next_run.",
     inputSchema: {
       type: "object",
-      properties: { name: str, schedule: schedule, prompt: str, timezone: str, project: str },
-      required: ["name", "schedule", "prompt"],
+      properties: { id: str, name: str, prompt: str, schedule, timezone: str, destination: { type: "string", enum: ["continue", "fresh", "new_chat"] }, project: { type: ["string", "null"] }, enabled: { type: "boolean" } },
     },
   },
-  {
-    name: "automations_update",
-    description: "Change an automation (id): any of name, schedule, prompt, timezone, project (null clears it), enabled. A new schedule or turning it on counts the next run from now.",
-    inputSchema: { type: "object", properties: { id: str, name: str, schedule: schedule, prompt: str, timezone: str, project: { type: ["string", "null"] }, enabled: { type: "boolean" } }, required: ["id"] },
-  },
-  { name: "automations_delete", description: "Delete an automation (id) for good.", inputSchema: { type: "object", properties: { id: str }, required: ["id"] } },
-  { name: "automations_run", description: "Run an automation (id) now, as its schedule would. It runs in the background: its result lands in automations_list (last result) and the user's inbox.", inputSchema: { type: "object", properties: { id: str }, required: ["id"] } },
+  { name: "list_scheduled_tasks", description: "The user's scheduled tasks: id, name, prompt, schedule, destination, enabled, next_run and the last result (done, error or skipped, with its text). Use an id with schedule_task, run_scheduled_task_now or delete_scheduled_task.", inputSchema: { type: "object", properties: {} } },
+  { name: "run_scheduled_task_now", description: "Run a scheduled task (id) now, as its schedule would. It runs in the background: its answer lands in its chat.", inputSchema: { type: "object", properties: { id: str }, required: ["id"] } },
+  { name: "delete_scheduled_task", description: "Delete a scheduled task (id) for good. To pause it instead, schedule_task with enabled=false.", inputSchema: { type: "object", properties: { id: str }, required: ["id"] } },
   { name: "get_work_prefs", description: "How the user wants to work: talk (app | chat | both), check (app | editor | both), their editor and what they make.", inputSchema: { type: "object", properties: {} } },
   {
     name: "set_work_prefs",
@@ -318,6 +313,20 @@ function apiOf(call: Call, auth: Headers) {
     return r;
   };
 }
+
+/** A scheduled task as the AI reads it: the next run as an ISO time it can say, the last result's line. */
+const taskOut = (t: Args) => ({
+  id: t.id,
+  name: t.name,
+  prompt: t.prompt,
+  schedule: t.schedule,
+  timezone: t.timezone,
+  destination: t.destination,
+  enabled: t.enabled,
+  running: t.running,
+  next_run: typeof t.nextRun === "number" ? new Date(t.nextRun).toISOString() : null,
+  last_result: t.lastResult ?? null,
+});
 
 /** The tools, each a thin client of the site's own routes with the caller's credentials. */
 function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
@@ -538,15 +547,14 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
       await json(`/api/editor/${edit}/run`, "POST", { from: a.kind });
       return { status: "queued", from: a.kind };
     },
-    automations_list: async () => ({ automations: (await json<{ items: Args[] }>("/api/automations")).items }),
-    automations_create: async (a) => json("/api/automations", "POST", pick(a, ["name", "schedule", "prompt", "timezone", "project"])),
-    automations_update: async (a) => {
-      const body = pick(a, ["name", "schedule", "prompt", "timezone", "project", "enabled"]);
+    list_scheduled_tasks: async () => ({ tasks: (await json<{ items: Args[] }>("/api/automations")).items.map(taskOut) }),
+    schedule_task: async (a) => {
+      const body = pick(a, ["name", "prompt", "schedule", "timezone", "destination", "project", "enabled"]);
       if (a.project === null) body.project = null;
-      return json(`/api/automations/${encodeURIComponent(String(a.id))}`, "PATCH", body);
+      return taskOut(a.id ? await json(`/api/automations/${encodeURIComponent(String(a.id))}`, "PATCH", body) : await json("/api/automations", "POST", body));
     },
-    automations_delete: async (a) => json(`/api/automations/${encodeURIComponent(String(a.id))}`, "DELETE"),
-    automations_run: async (a) => json(`/api/automations/${encodeURIComponent(String(a.id))}/run`, "POST"),
+    run_scheduled_task_now: async (a) => taskOut(await json(`/api/automations/${encodeURIComponent(String(a.id))}/run`, "POST")),
+    delete_scheduled_task: async (a) => json(`/api/automations/${encodeURIComponent(String(a.id))}`, "DELETE"),
     get_work_prefs: async () => json("/api/work-prefs"),
     set_work_prefs: async (a) => {
       const body = pick(a, ["talk", "check", "makes"]);
@@ -642,15 +650,14 @@ const STEPS: Record<string, string> = {
   review_set_approval: "Setting the approval",
   review_share: "Getting the share link",
   editor_list: "Looking at the AI Editor's edits",
+  list_scheduled_tasks: "Looking at your scheduled tasks",
+  schedule_task: "Saving the scheduled task",
+  run_scheduled_task_now: "Running the scheduled task",
+  delete_scheduled_task: "Deleting the scheduled task",
   editor_get: "Opening the edit",
   editor_run: "Starting an AI Editor job",
   instagram_posts: "Reading your Instagram posts",
   instagram_refresh: "Refreshing Instagram",
-  automations_list: "Looking at your scheduled tasks",
-  automations_create: "Making the scheduled task",
-  automations_update: "Changing the scheduled task",
-  automations_delete: "Deleting the scheduled task",
-  automations_run: "Running the scheduled task",
 };
 const PAGES: Record<string, string> = { review: "Review", workshop: "the Workshop", editor: "the AI Editor", settings: "Settings", instagram: "the Analyzer", analyzer: "the Analyzer" };
 export const stepFor = (name: string, args: Args): string =>
@@ -710,13 +717,15 @@ export function workFor(name: string, a: Args, r: Args): { card: AssistantWork; 
         : null;
     case "review_share":
       return typeof r.share_link === "string" ? { card: { id: `link:${r.share_link}`, kind: "link", title: String(r.name ?? "Share link"), href: r.share_link, status: "done", detail: "Share link: anyone with it can watch" } } : null;
-    case "automations_create":
-    case "automations_run":
+    case "schedule_task":
+    case "run_scheduled_task_now":
       return r.id
         ? {
             card: {
-              id: `automation:${r.id}`, kind: "automation", title: String(r.name ?? "Scheduled task"), href: "/settings/automations",
-              ...(name === "automations_run" ? { status: "running" as const, detail: "Running now: the result lands in your inbox" } : { status: "done" as const, detail: "Scheduled" }),
+              id: `automation:${r.id}`, kind: "automation", title: String(r.name ?? "Scheduled task"), href: `/settings/automations?task=${encodeURIComponent(String(r.id))}`,
+              ...(name === "run_scheduled_task_now"
+                ? { status: "running" as const, detail: "Running now: the answer lands in its chat" }
+                : { status: "done" as const, detail: r.enabled ? (r.next_run ? `Next run ${new Date(String(r.next_run)).toLocaleString("en-GB", { timeZone: String(r.timezone ?? "UTC"), dateStyle: "medium", timeStyle: "short" })}` : "Not scheduled") : "Paused" }),
             },
           }
         : null;

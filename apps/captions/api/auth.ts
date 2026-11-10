@@ -127,7 +127,7 @@ export const touchJobToken = (token: string): void => {
   if (job) job.expires = Math.max(job.expires, Date.now() + JOB_TOKEN_MS);
 };
 
-/** The turn a job token was made for (the assistant's reply id, or an automation's). */
+/** The turn a job token was made for: the assistant's reply id (a scheduled run's reply too). */
 export const jobTurn = (authorization: string | undefined): string | null =>
   jobs.get(/^Bearer (ctj_[a-f0-9]{48})$/.exec(authorization ?? "")?.[1] ?? "")?.turn ?? null;
 

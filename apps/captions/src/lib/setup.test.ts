@@ -9,14 +9,15 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe("setup steps", () => {
   it("is the same three screens for every way of working", () => {
-    expect(stepsFor()).toEqual(["agents", "make"]);
+    // Connect your AI, What do you make?, How do you work best? The owner asked for the third back on 2026-11-10
+    expect(stepsFor()).toEqual(["agents", "make", "how"]);
     expect(stepsFor()).toBe(SETUP_PATH);
     // it takes no answer at all; called as the old one was, with each saved answer, the path is still the same
     const asBefore = stepsFor as (talk?: string | null) => readonly string[];
-    for (const talk of ["app", "chat", "both", null]) expect(asBefore(talk)).toEqual(["agents", "make"]);
+    for (const talk of ["app", "chat", "both", null]) expect(asBefore(talk)).toEqual(["agents", "make", "how"]);
   });
 
-  it("keeps Connect, Folders and How as screens a link can open, off the path", () => {
+  it("keeps Connect and Folders as screens a link can open, off the path", () => {
     for (const s of SIDE_STEPS) {
       expect(setupStepFromParam(s)).toBe(s);
       expect(stepsFor()).not.toContain(s);
@@ -105,7 +106,7 @@ describe("Not now and resume", () => {
   });
 
   it("never reopens on a screen that is off the path (one an older build remembered)", () => {
-    for (const old of ["how", "connect", "folders"]) {
+    for (const old of ["connect", "folders"]) {
       vi.stubGlobal("sessionStorage", { getItem: () => old, setItem: () => {} });
       expect(resumeStep()).toBe("agents");
     }

@@ -292,14 +292,14 @@ export function useCachedLoad<T>(url: string | null, load: () => Promise<T>, opt
   return { data: k ? read<T>(k) : local, error, refresh, set };
 }
 
-/** useCachedLoad for a list: `items` is [] until something is known; `setItems` takes a list or an updater. */
+/** useCachedLoad for a list: `items` is [] until something is known (`known` says which); `setItems` takes a list or an updater. */
 export function useCachedList<T>(url: string | null, load: () => Promise<T[]>, opts?: CacheOpts) {
   const { data, set, refresh, error } = useCachedLoad<T[]>(url, load, opts);
   const setItems = useCallback(
     (next: T[] | ((prev: T[]) => T[])) => set((prev) => (typeof next === "function" ? next(prev ?? []) : next)),
     [set],
   );
-  return { items: data ?? [], setItems, refresh, error };
+  return { items: data ?? [], known: data !== null, setItems, refresh, error };
 }
 
 /** How much this account keeps here: its saved lists and their size (characters, about bytes). For Settings → General → This computer. */

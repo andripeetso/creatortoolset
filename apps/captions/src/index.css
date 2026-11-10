@@ -154,7 +154,9 @@ body { overscroll-behavior-y: none; }
 .pl-safe { padding-left: env(safe-area-inset-left); }
 .pr-safe { padding-right: env(safe-area-inset-right); }
 
-/* slim scrollbars for dark UI */
+/* slim scrollbars for dark UI. These bars always take their 8px and WebKit (the Mac app) ignores scrollbar-gutter for
+   them, so a pane whose content must not move when it starts to scroll uses overflow-y-scroll, never overflow-y-auto:
+   the track is transparent, so an empty one is not seen (Settings and Community do). */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }

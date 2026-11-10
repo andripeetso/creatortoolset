@@ -76,7 +76,7 @@ devicesApp.post("/relay/editor/job/:id/fail", async (c) => {
 devicesApp.route("/relay", relayRoutes((c) => deviceForToken(c.req.header("authorization"))?.id ?? null));
 devicesApp.route("/storage", storageApp);
 
-/** Load balancing (Settings → Computers → Advanced): on/off and each of the account's computers' preference, in $DATA_DIR/balance/<user>.json. Admins only. */
+/** Load balancing (Settings → Devices): on/off and each of the account's computers' preference, in $DATA_DIR/balance/<user>.json. Admins only. */
 const balanceFile = (user: string) => path.join(env.dataDir, "balance", `${user}.json`);
 const ALLOWED_WEIGHTS = new Set<number>(LOAD_PREFERENCES.map((x) => x.value));
 async function readBalance(user: string): Promise<Balance> {

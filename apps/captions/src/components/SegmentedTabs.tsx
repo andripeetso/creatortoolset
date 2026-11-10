@@ -14,14 +14,3 @@ export function segmentItem(on: boolean, className?: string) {
     className,
   );
 }
-
-/** The one filter-chip style: a pill, the accent when on. */
-export function filterChip(on: boolean, className?: string) {
-  return cn(
-    "whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
-    on
-      ? "border-violet-500/50 bg-violet-600/20 text-violet-100"
-      : "border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200",
-    className,
-  );
-}

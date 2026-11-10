@@ -44,7 +44,7 @@ const STATIC_ROWS = [
   { section: "providers", id: "default-ai", title: "Default AI", description: "Which AI does the work unless a tool picks another", keywords: ["provider", "default", "which ai", "model", "thinking"] },
   { section: "providers", id: "tool-ai", title: "A different AI for one tool", keywords: ["provider", "tool", "override", "use default", "model", "thinking"] },
   { section: "providers", id: "add-provider", title: "Add provider", keywords: ["install", "sign in", "claude", "codex", "cursor", "grok", "gemini"] },
-  // Computers: the computers that run your AI
+  // Devices: the computers that run your AI, and the phones
   { section: "devices", id: "computers", title: "Computers", keywords: ["mac", "computer", "machine", "rename", "remove", "online"] },
   { section: "devices", id: "add-computer", title: "Add computer", keywords: ["mac", "pair", "link", "command line"] },
   { section: "devices", id: "phones", title: "Phones", description: "Use the app on your phone: scan a code with its camera", keywords: ["phone", "iphone", "qr", "qr code", "pair", "camera", "scan", "wifi", "wi-fi"] },
@@ -69,8 +69,8 @@ const STATIC_ROWS = [
   { section: "own-ai", id: "connect-ai", title: "Use Creator Toolset from Claude Code or Codex", keywords: ["headless", "install", "claude code", "chatgpt", "codex", "mcp", "script", "connector", "ai access", "use from your ai", "terminal", "command"] },
   { section: "own-ai", id: "access-keys", title: "Access keys", keywords: ["key", "api key", "mcp", "script", "review", "full access", "claude"] },
   // Servers (Mac app)
-  { section: "servers", id: "servers-list", title: "Servers", keywords: ["server", "open", "rename", "remove", "address"] },
-  { section: "servers", id: "sign-in-another", title: "Open this server on another computer", description: "Make a sign-in link here and paste it into Add server there", keywords: ["server", "link", "sign in", "pair", "computer", "another computer"] },
+  { section: "servers", id: "servers-list", title: "Servers", keywords: ["server", "open", "rename", "remove", "address", "cloud", "own server", "self-host", "vps"] },
+  { section: "servers", id: "sign-in-another", title: "Sign-in link for another computer", description: "Signs another computer into this server as you", keywords: ["server", "link", "sign in", "pair", "computer", "another computer"] },
   // Team (hosted)
   { section: "team", id: "team-name", title: "Team name", keywords: ["team", "rename", "name"] },
   { section: "team", id: "team-members", title: "Members", keywords: ["member", "people", "role", "tools", "remove", "team"] },
@@ -87,7 +87,6 @@ const STATIC_ROWS = [
   { section: "account", id: "password", title: "Password", keywords: ["change password", "sign in", "security", "reset"], needs: "sign-in" },
   { section: "account", id: "photo", title: "Photo", description: "From your Google or GitHub sign-in", keywords: ["picture", "avatar", "image", "profile photo"] },
   { section: "account", id: "sign-in-with", title: "Sign in with Google, Apple or GitHub", keywords: ["google", "apple", "github", "link", "unlink", "sign in"], needs: "sign-in" },
-  { section: "account", id: "sign-in-setup", title: "No sign-in is set up on this server", description: "Google, Apple or GitHub sign-in is switched on in the server's .env", keywords: ["google", "apple", "github", "env", "set up", "redirect", "client id"] },
   { section: "account", id: "sign-out", title: "Sign out", keywords: ["log out", "logout", "session", "sign off"], needs: "sign-in" },
 ] as const satisfies readonly SearchRow[];
 

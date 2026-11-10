@@ -26,7 +26,7 @@ export interface SettingsEntry {
   id: string;
   title: string;
   icon: LucideIcon;
-  /** The sidebar block it sits in ("AI", "Devices", "Connections", "People"); none = the top block. */
+  /** The sidebar block it sits in ("AI", "Hardware", "Connections", "People"); none = the top block. */
   group?: string;
   adminOnly?: boolean;
   body?: ReactNode;
@@ -42,7 +42,7 @@ export interface PluginSettingsSection extends SettingsEntry {
   adminTab?: boolean;
 }
 
-/** A section a plug-in adds to Settings → Computers (`page: "computers"`, after its card) or → Storage (the default). `adminOnly` shows it to admins only. */
+/** A section a plug-in adds to Settings → Devices (`page: "computers"`, after its card) or → Storage (the default). `adminOnly` shows it to admins only. */
 export interface PluginDevicesSection {
   id: string;
   title: string;
@@ -333,7 +333,7 @@ export function webPluginAdds(p: WebPlugin, ctx: { me: Me | null; hosted: boolea
   }
   for (const d of p.devices ?? []) if (!d.adminOnly || admin) {
     const computers = d.page === "computers";
-    out.push({ text: `Settings → ${computers ? "Computers" : "Storage"}: ${d.title}`, to: computers ? "/settings/devices" : "/settings/folders" });
+    out.push({ text: `Settings → ${computers ? "Devices" : "Storage"}: ${d.title}`, to: computers ? "/settings/devices" : "/settings/folders" });
   }
   const r = p.replaces ?? {};
   if (r.editor || r.editorEdit) out.push({ text: "Replaces the AI Editor page", to: "/editor" });
@@ -388,7 +388,7 @@ export function mergePluginInfo(web: WebPlugin[], server: ServerPluginInfo[], ct
 export const visibleSettings = (sections: ReadonlyArray<SettingsEntry>, me: { role: string } | null): SettingsEntry[] =>
   sections.filter((s) => !s.adminOnly || me?.role === "admin");
 
-/** The Computers or Storage sections the plug-ins add for this account (`page`, default storage): an adminOnly one only for an admin. */
+/** The Devices or Storage sections the plug-ins add for this account (`page`, default storage): an adminOnly one only for an admin. */
 export const devicesSectionsFor = (me: { role: string } | null, plugins: WebPlugin[], page: "computers" | "storage" = "storage"): PluginDevicesSection[] =>
   plugins.flatMap((p) => p.devices ?? []).filter((s) => (s.page ?? "storage") === page && (!s.adminOnly || me?.role === "admin"));
 

@@ -24,12 +24,16 @@ import { dropAiKey, findUser, newAiKey, type UserRecord } from "../users";
 
 export const CLI_IDS: CliId[] = ["claude", "codex", "gemini"];
 const NAMES: Record<CliId, string> = { claude: "Claude Code", codex: "Codex", gemini: "Gemini CLI" };
-const DESKTOP: Array<{ id: "claude-desktop" | "chatgpt-desktop"; name: string; app: string }> = [
-  { id: "claude-desktop", name: "Claude desktop", app: "Claude" },
-  { id: "chatgpt-desktop", name: "ChatGPT desktop", app: "ChatGPT" },
-];
-/** The name this server goes by in the AI CLIs' MCP lists. */
-export const MCP_NAME = "creator-toolset";
+/**
+ * The name of this app's entry in the AI tools (claude mcp, codex). A copy of the Mac app beside the released one keeps
+ * its data in "Creator Toolset (<name>)" (CT_APP_FOLDER): its entry is "creator-toolset-<name>", so trying the copy never
+ * overwrites the entry the released app wrote.
+ */
+export const mcpName = (appFolder = process.env.CT_APP_FOLDER ?? ""): string => {
+  const copy = appFolder.match(/\(([a-z0-9-]+)\)\/?$/i)?.[1];
+  return copy ? `creator-toolset-${copy.toLowerCase()}` : "creator-toolset";
+};
+export const MCP_NAME = mcpName();
 const MISSING = "Couldn't find it on this Mac anymore. Check it's still installed.";
 export const MAC_ONLY = "Open the Creator Toolset Mac app to connect your AI.";
 const PROBE_TTL = 10_000;
@@ -50,8 +54,10 @@ const realRun: Runner = async (file, args, opt) => {
     const r = await execP(file, args, { env: opt.env, timeout: opt.timeout, maxBuffer: 4 << 20 });
     return { stdout: String(r.stdout), stderr: String(r.stderr), code: 0 };
   } catch (e) {
-    const x = e as { stdout?: unknown; stderr?: unknown; code?: number | string; message?: string };
-    return { stdout: String(x.stdout ?? ""), stderr: String(x.stderr ?? x.message ?? ""), code: x.code ?? null };
+    const x = e as { stdout?: unknown; stderr?: unknown; code?: number | string; message?: string; killed?: boolean; signal?: string };
+    // a command that was stopped says nothing itself: say that it ran out of time, so Details is never empty
+    const stopped = x.killed || x.signal ? `stopped after ${Math.round(opt.timeout / 1000)} s without finishing` : "";
+    return { stdout: String(x.stdout ?? ""), stderr: String(x.stderr || stopped || x.message || ""), code: x.code ?? null };
   }
 };
 let run: Runner = realRun;
@@ -60,18 +66,13 @@ const bins = new Map<CliId, string>();
 let codexUrl: boolean | undefined;
 const probes = new Map<CliId, { at: number; p: Probe }>();
 
-/** Tests: a fake runner, and a clean cache. */
-export function setRunnerForTests(r?: Runner): void {
+/** Tests: a fake runner (and which fallback paths hold a copy: none unless said), and a clean cache. */
+export function setRunnerForTests(r?: Runner, onDisk?: (p: string) => boolean): void {
   run = r ?? realRun;
+  copyAt = r ? (onDisk ?? (() => false)) : isExecutable;
   bins.clear();
   probes.clear();
   codexUrl = undefined;
-}
-
-/** Whether a desktop app is installed: the real /Applications on this Mac, unless a test says otherwise. */
-let appPresent = (app: string): boolean => existsSync(`/Applications/${app}.app`);
-export function setDesktopAppsForTests(f?: (app: string) => boolean): void {
-  appPresent = f ?? ((app) => existsSync(`/Applications/${app}.app`));
 }
 
 const isExecutable = (p: string): boolean => {
@@ -82,6 +83,8 @@ const isExecutable = (p: string): boolean => {
     return false;
   }
 };
+
+let copyAt: (p: string) => boolean = isExecutable;
 
 /** The first candidate that exists and can run. Pure except for the check passed in. */
 export function firstExecutable(candidates: string[], ok: (p: string) => boolean = isExecutable): string | null {
@@ -111,6 +114,8 @@ export function fallbackCandidates(id: CliId, home: string, nvmDirs: string[]): 
     path.join(home, ".bun", "bin", id),
     ...nvmDirs.map((d) => path.join(d, "bin", id)),
     `/usr/bin/${id}`,
+    // the Codex the ChatGPT app carries: OpenAI's own program with the same sign-in, so that person needs no download
+    ...(id === "codex" ? ["/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex"] : []),
   ];
 }
 
@@ -129,12 +134,44 @@ const nodeRoot = (): string =>
 export const toolPath = (bin: string): string =>
   [path.dirname(bin), ...(existsSync(path.join(nodeRoot(), "bin")) ? [path.join(nodeRoot(), "bin")] : []), process.env.PATH ?? ""].join(":");
 
+/** The version numbers in a `--version` line ("codex-cli 0.39.0" → [0, 39, 0]); [] when it names none. */
+export const versionNumbers = (text: string): number[] => (/\d+(\.\d+)+/.exec(text)?.[0] ?? "").split(".").filter(Boolean).map(Number);
+/** Whether version `a` is older than `b`, number by number. */
+export function olderThan(a: number[], b: number[]): boolean {
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const d = (a[i] ?? 0) - (b[i] ?? 0);
+    if (d) return d < 0;
+  }
+  return false;
+}
+
+/**
+ * The copy of a CLI this Mac runs. Every copy counts: the login shell's, then the usual folders, each real file once.
+ * With more than one (an old Homebrew Codex beside the one Install put in ~/.local/bin) the newest runs, since today's
+ * models refuse an old Codex; the first found wins a tie. The Mac app picks the same way (MacReport.swift binary()).
+ */
 async function lookup(id: CliId): Promise<string | null> {
   // -i: nvm is usually set up in .zshrc, which only an interactive login shell reads
   const out = await run("/bin/zsh", ["-lic", `command -v ${id}`], { timeout: 5000 });
   const line = out.stdout.split("\n").map((l) => l.trim()).filter((l) => l.startsWith("/")).pop();
-  if (line) return line;
-  return firstExecutable(fallbackCandidates(id, os.homedir(), nvmVersionDirs(os.homedir())));
+  const home = os.homedir();
+  const seen = new Set<string>();
+  const copies = [...(line ? [line] : []), ...fallbackCandidates(id, home, nvmVersionDirs(home)).filter(copyAt)].filter((p) => {
+    const real = safeReal(p) ?? p;
+    return !seen.has(real) && !!seen.add(real);
+  });
+  if (copies.length < 2) return copies[0] ?? null;
+  const versionAt = async (bin: string) => {
+    const v = await run(bin, ["--version"], { env: { ...process.env, PATH: toolPath(bin) }, timeout: 5000 });
+    return versionNumbers(v.stdout || v.stderr);
+  };
+  let best = copies[0]!;
+  let bestVersion = await versionAt(best);
+  for (const p of copies.slice(1)) {
+    const v = await versionAt(p);
+    if (olderThan(bestVersion, v)) [best, bestVersion] = [p, v];
+  }
+  return best;
 }
 
 /** The CLI's path on this Mac, cached once found. */
@@ -189,7 +226,7 @@ export function plainError(raw: string): { state: "signin" | "missing" | "failed
   if (/not logged in|\/login|log in|authentication|unauthorized|401/i.test(raw)) return { state: "signin", message: "Not signed in yet." };
   if (/timed out|timeout|did not pick up/i.test(raw)) return { state: "failed", message: "It took too long to answer. Try again." };
   if (/ENOENT|command not found|no such file/i.test(raw)) return { state: "missing", message: MISSING };
-  return { state: "failed", message: "It didn't answer. Check that you're signed in, then try again." };
+  return { state: "failed", message: "It didn't answer. Try again." };
 }
 
 /** Homebrew installs update with brew; anything else with npm. */
@@ -283,7 +320,7 @@ export async function probe(id: CliId, fresh = false, home = os.homedir()): Prom
 
 /* ---- the view ---- */
 
-/** The rows setup shows: each CLI found on this Mac, then the desktop apps found (text only). */
+/** The rows setup shows: each CLI, found on this Mac or not. */
 export async function localAiView(username: string, mcpTo: CliId[], fresh = false): Promise<LocalAiView> {
   // fresh: Check again. Nothing cached is used, so a CLI installed a moment ago is found and its sign-in is read again.
   if (fresh) CLI_IDS.forEach(forgetCli);
@@ -313,9 +350,6 @@ export async function localAiView(username: string, mcpTo: CliId[], fresh = fals
       ...(mcp === "update" ? { updateCommand: codexUpdateCommand(p.bin ?? "", p.real) } : {}),
     });
   }
-  for (const d of DESKTOP) {
-    if (appPresent(d.app)) rows.push({ id: d.id, name: d.name, kind: "desktop", found: true, signedIn: null, connected: false, mcp: "n/a" });
-  }
   return { local: true, rows };
 }
 
@@ -335,8 +369,8 @@ interface Failed {
   raw?: string;
 }
 
-async function step(file: string, args: string[], env: NodeJS.ProcessEnv, message: string): Promise<Failed | null> {
-  const out = await run(file, args, { env, timeout: STEP_MS });
+async function step(file: string, args: string[], env: NodeJS.ProcessEnv, message: string, timeout = STEP_MS): Promise<Failed | null> {
+  const out = await run(file, args, { env, timeout });
   return out.code === 0 ? null : { message, raw: tailOf(out) };
 }
 
@@ -359,7 +393,8 @@ async function installCodex(): Promise<Failed | null> {
     const tgz = path.join(dir, "codex.tar.gz");
     const url = `https://github.com/openai/codex/releases/latest/download/codex-${triple}.tar.gz`;
     const failed =
-      (await step("/usr/bin/curl", ["-fL", "--retry", "2", "-o", tgz, url], process.env, `Couldn't download ${NAMES.codex}. Check the internet connection, then try again.`)) ??
+      // 108 MB: a slow connection gets half an hour before this gives up, and a dropped one carries on where it stopped
+      (await step("/usr/bin/curl", ["-fL", "--retry", "5", "--retry-all-errors", "-C", "-", "-o", tgz, url], process.env, `Couldn't download ${NAMES.codex}. Check the internet connection, then try again.`, 30 * 60_000)) ??
       (await step("/usr/bin/tar", ["-xzf", tgz, "-C", dir], process.env, `Couldn't unpack ${NAMES.codex}. Try again.`));
     if (failed) return failed;
     mkdirSync(localBin(), { recursive: true });
@@ -485,12 +520,16 @@ export async function connectCli(username: string, id: CliId, home = os.homedir(
   // the check runs before anything is saved: a failed check leaves the saved set, its default included, as it was
   const check = await checkInstance(username, inst, next);
   if (!check.ok) {
+    // today's models refuse an old Codex ("requires a newer version of Codex"): the page installs the current one and connects again
+    if (id === "codex" && /requires a newer version|not supported when using Codex|model_not_found/i.test(check.error ?? ""))
+      return { state: "outdated", signedIn: p.signedIn, answered: false, ms: check.ms, message: "ChatGPT didn't accept this. Try again later.", raw: check.error };
     const plain = plainError(check.error ?? "");
     if (plain.state === "signin") return { state: "signin", signedIn: false, answered: false, message: plain.message, raw: check.error };
     return { state: "failed", signedIn: p.signedIn, answered: false, ms: check.ms, message: plain.message, raw: check.error };
   }
-  await saveSettings({ ...next, instances: next.instances.map((i) => (i.id === instId ? { ...i, lastCheck: { ok: true, at: check.at, ms: check.ms } } : i)) }, username);
-  return { state: "ready", signedIn: p.signedIn, answered: true, ms: check.ms };
+  await saveSettings({ ...next, instances: next.instances.map((i) => (i.id === instId ? { ...i, lastCheck: { ok: true, at: check.at, ms: check.ms, ...(check.note ? { note: check.note } : {}) } } : i)) }, username);
+  // a plan at its limit is connected all the same: the message says when it resets
+  return { state: "ready", signedIn: p.signedIn, answered: !check.note, ms: check.ms, ...(check.note ? { message: check.note } : {}) };
 }
 
 /* ---- Creator Toolset in each CLI ---- */

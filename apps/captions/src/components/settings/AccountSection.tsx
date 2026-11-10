@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router";
-import { Copy } from "lucide-react";
 import { toast } from "sonner";
 import { logout, useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Advanced, Card, EmptyRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, saveFailed } from "./ui";
+import { Card, EmptyRow, FormDialog, LoadingRow, Row, RowMenu, Section } from "./ui";
 
 type Provider = "google" | "apple" | "github";
 const PROVIDER_NAME: Record<Provider, string> = { google: "Google", apple: "Apple", github: "GitHub" };
@@ -26,13 +25,6 @@ interface AccountView {
   identities: Provider[];
   signins: SignIn[];
   picture: string | null;
-}
-
-/** GET /api/account/setup (admin, hosted): the .env names each sign-in reads and the address to register. */
-interface SetupView {
-  origin: string;
-  signinOrigin: string;
-  providers: { kind: Provider; name: string; env: string[]; redirect: string }[];
 }
 
 const failure = (r: Response, d: { error?: string }) => new Error(d.error ?? `Could not save it (${r.status})`);
@@ -75,11 +67,9 @@ export function AccountAvatar({ picture, initial, className, fallback }: { pictu
 export function AccountSection() {
   const me = useAuth((s) => s.me);
   const required = useAuth((s) => s.required);
-  const hosted = useAuth((s) => s.hosted);
   const [account, setAccount] = useState<AccountView | null>(null);
   const [noAccount, setNoAccount] = useState(false);
   const [providers, setProviders] = useState<Record<Provider, boolean> | null>(null);
-  const [setup, setSetup] = useState<SetupView | "failed" | null>(null);
   const [params, setParams] = useSearchParams();
   const told = useRef(false);
 
@@ -99,21 +89,6 @@ export function AccountSection() {
       .then((d) => setProviders(d))
       .catch(() => setProviders(off));
   }, [required]);
-
-  const admin = me?.role === "admin";
-  const noneSetUp = !!providers && PROVIDERS.every((p) => !providers[p]);
-  // only the server's admin, on a hosted server, sees how to set sign-in up
-  const needSetup = hosted && admin && noneSetUp;
-  useEffect(() => {
-    if (!needSetup) return;
-    const got = async (): Promise<SetupView | "failed"> => {
-      const r = await fetch("/api/account/setup");
-      return r.ok ? ((await r.json()) as SetupView) : "failed";
-    };
-    void got()
-      .then(setSetup)
-      .catch(() => setSetup("failed"));
-  }, [needSetup]);
 
   // The sign-in return: api/sign-in.ts sends the browser back with ?linked=<provider> or ?signin=<message>
   useEffect(() => {
@@ -140,7 +115,7 @@ export function AccountSection() {
     );
   }
   // everything the page shows is loaded before it is drawn, so nothing moves in after
-  if (!account || !providers || (needSetup && setup === null)) return <LoadingRow />;
+  if (!account || !providers) return <LoadingRow />;
 
   const linkable = PROVIDERS.filter((p) => providers[p]);
   const shownName = account.name || account.username;
@@ -204,19 +179,6 @@ export function AccountSection() {
           </Card>
         </Section>
       )}
-      {needSetup && (
-        <Section id="sign-in-with" title="Sign in with">
-          <Card>
-            <Row id="sign-in-setup" title="No sign-in is set up on this server" description="Google, Apple or GitHub sign-in is switched on in the server's .env." />
-            {setup !== "failed" && setup && (
-              <Advanced summary="Set it up">
-                <SetupRows setup={setup} />
-              </Advanced>
-            )}
-          </Card>
-        </Section>
-      )}
-
       {required && (
         <Section title="Session">
           <Card>
@@ -224,41 +186,6 @@ export function AccountSection() {
           </Card>
         </Section>
       )}
-    </>
-  );
-}
-
-/** The copy button of a setup line (same pattern as the sign-in apps fold on Social accounts). */
-function CopyButton({ text, label }: { text: string; label: string }) {
-  return (
-    <Button
-      size="icon-xs"
-      variant="ghost"
-      aria-label={label}
-      onClick={() => void navigator.clipboard.writeText(text).then(() => toast("Copied"), () => saveFailed("Couldn't copy it. Select the text and copy it."))}
-    >
-      <Copy />
-    </Button>
-  );
-}
-
-/** Admin, no sign-in set up: the server's own address, then each provider's .env names and the address to register. */
-function SetupRows({ setup }: { setup: SetupView }) {
-  return (
-    <>
-      <ListRow
-        title="SIGNIN_ORIGIN"
-        subtitle={setup.origin}
-        actions={<CopyButton text={setup.origin} label="Copy the SIGNIN_ORIGIN value" />}
-      />
-      {setup.providers.map((p) => (
-        <div key={p.kind}>
-          {p.env.map((name) => (
-            <ListRow key={name} title={name} actions={<CopyButton text={name} label={`Copy ${name}`} />} />
-          ))}
-          <ListRow title={`${p.name} redirect address`} subtitle={p.redirect} actions={<CopyButton text={p.redirect} label={`Copy the ${p.name} redirect address`} />} />
-        </div>
-      ))}
     </>
   );
 }

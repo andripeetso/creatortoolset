@@ -118,7 +118,7 @@ export function SettingsSelect({ label, value, onValueChange, options, disabled,
  * The status of a thing, quiet by default. No tone = information (a version, a plan), muted text. "attention" = the person
  * must act: an amber dot, and the action button goes next to it. "broken" = something failed: red. Never green.
  */
-export function Status({ tone, children }: { tone?: "attention" | "broken"; children: ReactNode }) {
+export function Status({ tone, children }: { tone?: "attention" | "broken" | "ok"; children: ReactNode }) {
   return (
     <span className={cn("inline-flex min-w-0 max-w-full items-baseline gap-1.5 text-xs sm:items-center", tone === "broken" ? "text-red-600 dark:text-red-400" : "text-muted-foreground")}>
       {tone && <StatusDot tone={tone} />}
@@ -127,9 +127,9 @@ export function Status({ tone, children }: { tone?: "attention" | "broken"; chil
   );
 }
 
-/** The small dot of a Status: amber for "the person must act", red for "broken". */
-export function StatusDot({ tone }: { tone: "attention" | "broken" }) {
-  return <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", tone === "broken" ? "bg-red-500" : "bg-amber-500")} />;
+/** The small dot of a Status: amber for "the person must act", red for "broken", green for "connected and working". */
+export function StatusDot({ tone }: { tone: "attention" | "broken" | "ok" }) {
+  return <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", tone === "broken" ? "bg-red-500" : tone === "ok" ? "bg-emerald-500" : "bg-amber-500")} />;
 }
 
 export interface RowMenuItem {

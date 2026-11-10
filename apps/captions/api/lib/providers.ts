@@ -353,6 +353,17 @@ export function routeFor(name: string | undefined, admin: boolean, job: JobId, o
 }
 
 /**
+ * The route for one chosen AI (a scheduled task's): the set that holds that instance, the account's own or, for an
+ * admin, the workspace's. The caller checks the instance it got back: pick() moves on to another AI when the chosen
+ * one can't run, and a task must not.
+ */
+export function routeForInstance(name: string, admin: boolean, job: JobId, sel: Selection): Route | null {
+  const mine = ownSettings(name);
+  if (mine?.instances.some((i) => i.id === sel.instance)) return pick(name, mine, job, sel);
+  return admin ? pick("workspace", providerSettings(), job, sel, name) : null;
+}
+
+/**
  * The other instances a job may move to when its own hits a usage limit (only an exhausted usage window falls back).
  * They stay on the same Mac owner's logins as the instance that hit the limit, so a workspace call never moves to
  * another admin's subscription.

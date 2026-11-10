@@ -33,16 +33,16 @@ interface BuiltinEntry extends SettingsEntry {
   listed?: false;
 }
 
-/** The built-in sections in sidebar order. Groups: none = top block; "AI", "Devices", "Connections", "People" are headed. */
+/** The built-in sections in sidebar order. Groups: none = top block; "AI", "Hardware", "Connections", "People" are headed. */
 const BUILTIN: ReadonlyArray<BuiltinEntry> = [
   { id: "general", title: "General", icon: SlidersHorizontal },
   { id: "appearance", title: "Appearance", icon: Palette },
   { id: "providers", title: "Providers", icon: Cpu, group: "AI" },
   { id: "automations", title: "Scheduled tasks", icon: CalendarClock, group: "AI" },
   { id: "usage", title: "Usage", icon: Gauge, group: "AI" },
-  { id: "devices", title: "Computers", icon: Monitor, group: "Devices" },
-  { id: "folders", title: "Storage", icon: HardDrive, group: "Devices" },
-  { id: "servers", title: "Servers", icon: Server, group: "Devices", macOnly: true },
+  { id: "devices", title: "Devices", icon: Monitor, group: "Hardware" },
+  { id: "folders", title: "Storage", icon: HardDrive, group: "Hardware" },
+  { id: "servers", title: "Servers", icon: Server, group: "Hardware", macOnly: true },
   { id: "connectors", title: "Social accounts", icon: Share2, group: "Connections" },
   { id: "keys", title: "API keys", icon: KeyRound, group: "Connections" },
   { id: "own-ai", title: "Headless access", icon: Bot, group: "Connections" },

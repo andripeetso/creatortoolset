@@ -14,7 +14,7 @@ describe("phoneLine", () => {
 
 describe("phone rows are searchable", () => {
   it("finds the phones by the words people type", () => {
-    const sections = new Map([["devices", "Computers"]]);
+    const sections = new Map([["devices", "Devices"]]);
     expect(searchSettings("qr", sections)[0]?.id).toBe("phones");
     expect(searchSettings("iphone", sections).map((h) => h.id)).toContain("add-phone");
   });

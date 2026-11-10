@@ -184,6 +184,8 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
                 title={r.label}
                 subtitle={r.summary}
                 actions={
+                  <>
+                  <Status tone="ok">Connected</Status>
                   <RowMenu
                     label={`${at(r.own.handle)} actions`}
                     items={[
@@ -191,6 +193,7 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
                       { label: "Disconnect", destructive: true, confirm: { title: `Disconnect ${at(r.own.handle)}?`, body: "Its numbers stop updating here.", ok: "Disconnect" }, onSelect: () => void act(patchInstagram(r.own!.id, { mine: false })) },
                     ]}
                   />
+                  </>
                 }
               />
             ) : r.account ? (
@@ -384,6 +387,7 @@ function AccountRow({ row, a, back, onLink, onPull, onRemove }: {
       status={status}
       actions={
         <>
+          {!status && <Status tone="ok">Connected</Status>}
           {needsSignIn && login && (
             <Button asChild size="xs" variant="outline">
               <a href={loginHref(login, { back })}>Sign in again</a>

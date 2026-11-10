@@ -9,14 +9,14 @@ import {
   LayoutGrid,
   List,
   Loader2,
+  MoreHorizontal,
   RefreshCw,
   Star,
-  Trash2,
-  TriangleAlert,
 } from "lucide-react";
 import { canUse, useMe } from "@/lib/auth";
 import { timeAgo } from "@/lib/exports";
 import {
+  ACCOUNT_STEP_LABELS,
   analyzerHome,
   clampCatalogCount,
   createStack,
@@ -55,7 +55,6 @@ import {
   type SavedFor,
   type Tag,
   starsFromRank,
-  kindBadgeClass,
   kindTextClass,
 } from "@/lib/instagram";
 import { WhatWorksPane } from "@/components/instagram/WhatWorks";
@@ -71,7 +70,8 @@ import { RecipePicker } from "@/components/instagram/RecipePicker";
 import { DEFAULT_RECIPE } from "@/components/instagram/RecipePicker";
 import { TagsEditor } from "@/components/instagram/TagsEditor";
 import { IdeaStatusSelect, RankStars, SavedForToggle } from "@/components/instagram/IdeaMark";
-import { ConfirmButton } from "@/components/instagram/ConfirmButton";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { MEDIA_PILL, mediaMark } from "@/components/instagram/PostCard";
 import { QueueMenu } from "@/components/instagram/QueueMenu";
 import { confirmHeavy } from "@/lib/setup";
 
@@ -122,6 +122,7 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
   const [libView, setLibView] = useState<"grid" | "list">("grid");
   const [statsOpen, setStatsOpen] = useState(false);
   const [lastAnchor, setLastAnchor] = useState<string | undefined>();
+  const [armed, setArmed] = useState(false);
 
   const { refresh: refreshAccount } = detail;
   const load = useCallback(() => {
@@ -297,6 +298,27 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
     }
   };
 
+  // Update: the profile and the newest posts, then every listed post's numbers once there is a list
+  const updateJobs: AccountJobType[] = account?.lastCatalogAt ? ["catalog", "stats"] : ["profile", "catalog"];
+
+  const toggleMine = async () => {
+    if (!account) return;
+    const next = !account.own;
+    setBusy("mine");
+    setError(null);
+    try {
+      const a = await patchAccount(account.id, { mine: next });
+      setAccount((cur) => (cur ? { ...cur, mine: a.mine, own: a.own } : { ...a }));
+      // a project with no account takes this one; "not mine" took it off its project on the server: read the projects again
+      if (next && project && !project.accountId) await patchProject(project.id, { accountId: account.id });
+      else if (!next) await useWorkspace.getState().load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const remove = async () => {
     if (!account) return;
     await deleteAccount(account.id).catch(() => {});
@@ -370,18 +392,13 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
                 )}
               </div>
               <div className="min-w-0 flex-1">
-                <h1 className="text-xl font-semibold text-zinc-100">
-                  @{account.username}
-                  {account.own ? (
-                    <span className="ml-2 rounded-md bg-violet-600 px-1.5 py-0.5 text-[10px] font-medium text-white">
-                      Mine
-                    </span>
-                  ) : null}
-                  {account.isVerified ? (
-                    <span className="ml-2 text-[11px] font-normal text-violet-300">verified</span>
-                  ) : null}
-                </h1>
-                {account.fullName && <p className="text-sm text-zinc-400">{account.fullName}</p>}
+                <h1 className="text-xl font-semibold text-zinc-100">@{account.username}</h1>
+                {account.fullName || account.own ? (
+                  <p className="text-sm text-zinc-400">
+                    {account.fullName}
+                    {account.own ? <span className="text-zinc-600">{account.fullName ? " · " : ""}Your account</span> : null}
+                  </p>
+                ) : null}
                 <AccountTotals account={account} catalog={allCatalog} className="mt-2">
                   <button
                     type="button"
@@ -396,111 +413,82 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
                 )}
               </div>
               {owns && (
-                <div className="flex shrink-0 flex-col items-end gap-1">
-                  <button
-                    type="button"
-                    disabled={!!busy}
-                    onClick={() => {
-                      const next = !account.own;
-                      setBusy("mine");
-                      setError(null);
-                      patchAccount(account.id, { mine: next })
-                        .then(async (a) => {
-                          setAccount((cur) => (cur ? { ...cur, mine: a.mine, own: a.own } : { ...a }));
-                          // the same two steps as the My account slot: a project with no account takes this one.
-                          // "Not mine" took it off its project on the server: read the projects again
-                          if (next && project && !project.accountId) await patchProject(project.id, { accountId: account.id });
-                          else if (!next) await useWorkspace.getState().load();
-                        })
-                        .catch((e) => setError(e instanceof Error ? e.message : String(e)))
-                        .finally(() => setBusy(null));
-                    }}
-                    className={`rounded-md border px-2 py-1 text-xs ${
-                      account.own
-                        ? "border-violet-500/50 bg-violet-600/20 text-violet-100"
-                        : "border-zinc-700 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
-                    }`}
-                  >
-                    {busy === "mine" ? "Saving…" : account.own ? "My account" : "This is my account"}
-                  </button>
-                  <ConfirmButton
-                    label="Remove"
-                    confirmLabel="Click again to remove (posts stay)"
-                    icon={<Trash2 className="h-3.5 w-3.5" />}
-                    onConfirm={remove}
-                    className="flex items-center gap-1 rounded-md border border-transparent px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-red-400"
-                    armedClassName="!border-red-500/50 !bg-red-500/10 !text-red-200"
-                  />
+                <div className="flex shrink-0 flex-col items-end gap-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      disabled={!!busy || !catalogReady || processing}
+                      onClick={() => void runJobs(updateJobs)}
+                      className="flex items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 py-1.5 text-[11px] text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
+                    >
+                      {busy === updateJobs.join(",") || processing ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-3 w-3" />
+                      )}
+                      Update
+                    </button>
+                    <DropdownMenu onOpenChange={(open) => !open && setArmed(false)}>
+                      <DropdownMenuTrigger asChild>
+                        <button
+                          type="button"
+                          aria-label="More"
+                          disabled={!!busy}
+                          className="rounded-md border border-zinc-700 p-1.5 text-zinc-300 hover:bg-zinc-800 disabled:opacity-50 data-[state=open]:bg-zinc-900"
+                        >
+                          <MoreHorizontal className="h-3.5 w-3.5" />
+                        </button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-60">
+                        <DropdownMenuItem className="text-xs" onSelect={() => void toggleMine()}>
+                          {account.own ? "This isn’t my account" : "This is my account"}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          className="text-xs"
+                          variant={armed ? "destructive" : "default"}
+                          onSelect={(e) => {
+                            // two steps: the first arms it and keeps the menu open
+                            if (!armed) {
+                              e.preventDefault();
+                              setArmed(true);
+                              return;
+                            }
+                            void remove();
+                          }}
+                        >
+                          {armed ? "Click again to remove (posts stay)" : "Remove from the Analyzer"}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                  {account.lastCatalogAt ? (
+                    <span className="text-[11px] text-zinc-600">Updated {timeAgo(account.lastCatalogAt)}</span>
+                  ) : null}
                 </div>
               )}
             </div>
 
             {processing && (
-              <p className="mt-4 flex items-center gap-2 text-sm text-violet-300">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                {account.step || "Working"} · {Math.round((account.progress || 0) * 100)}%
+              <p className="mt-4 flex items-center gap-2 text-sm text-zinc-400">
+                <Loader2 className="h-4 w-4 animate-spin text-violet-400" />
+                {(account.step && ACCOUNT_STEP_LABELS[account.step]) || "Working"} · {Math.round((account.progress || 0) * 100)}%
               </p>
             )}
-            {account.status === "error" && (
-              <p className="mt-4 flex items-center gap-2 text-sm text-red-300">
-                <TriangleAlert className="h-4 w-4" /> {account.error || "Account job failed"}
-              </p>
-            )}
-
-            {owns && (
-              <div className="mt-4 flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  disabled={!!busy || !catalogReady}
-                  onClick={() => void runJobs(["profile", "catalog"])}
-                  title={
-                    account.mine
-                      ? "Refresh profile and every post from the official Instagram login"
-                      : "Refresh the profile and list the latest videos — nothing is ingested until you pull it"
-                  }
-                  className="flex items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 py-1.5 text-[11px] text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
-                >
-                  {busy === "profile,catalog" ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
-                  {account.mine ? "Sync" : "Pull profile & catalog"}
-                </button>
-                {!account.mine && (
-                  <>
-                    <input
-                      type="number"
-                      min={1}
-                      max={200}
-                      value={count}
-                      onChange={(e) => setCount(clampCatalogCount(e.target.value, count))}
-                      className="w-14 rounded-md border border-zinc-700 bg-zinc-950 px-1.5 py-1 text-[11px] text-zinc-200 outline-none focus:border-violet-500"
-                      title="How many videos to list"
-                    />
-                    {COUNT_PRESETS.map((n) => (
-                      <button
-                        key={n}
-                        type="button"
-                        onClick={() => setCount(n)}
-                        className={`rounded-md px-1.5 py-1 text-[11px] ${
-                          count === n ? "text-violet-200" : "text-zinc-500 hover:text-zinc-300"
-                        }`}
-                      >
-                        {n}
-                      </button>
-                    ))}
-                  </>
-                )}
-                <button
-                  type="button"
-                  disabled={!!busy || !catalogReady}
-                  onClick={() => void runJobs(["stats"])}
-                  className="flex items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 py-1.5 text-[11px] text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
-                >
-                  {busy === "stats" ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
-                  Refresh stats
-                </button>
-                {account.lastCatalogAt ? (
-                  <span className="text-[11px] text-zinc-600">synced {timeAgo(account.lastCatalogAt)}</span>
+            {account.status === "error" && !processing && (
+              <p className="mt-4 flex items-center gap-2 text-xs text-zinc-400" title={account.error}>
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" />
+                Couldn’t update the account
+                {owns ? (
+                  <button
+                    type="button"
+                    disabled={!!busy || !catalogReady}
+                    onClick={() => void runJobs(updateJobs)}
+                    className="rounded-md border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
+                  >
+                    Try again
+                  </button>
                 ) : null}
-              </div>
+              </p>
             )}
 
             <Dialog open={statsOpen} onOpenChange={setStatsOpen}>
@@ -543,15 +531,15 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
                   ? ([
                       ["public", `Public · ${publicCatalog.length}`],
                       ["trial", `Trial · ${trialCatalog.length}`],
-                      ["library", `Library · ${posts.length}`],
+                      ["library", `Saved · ${posts.length}`],
                       ...(insights?.whatWorks ? [["works", "What works"] as const] : []),
                       ...((insights?.duplicates.length ?? 0)
                         ? [["reposts", `Reposts · ${insights!.duplicates.length}`] as const]
                         : []),
                     ] as Array<["public" | "trial" | "library" | "works" | "reposts", string]>)
                   : ([
-                      ["library", `Library · ${posts.length}`],
-                      ["catalog", `Catalog · ${allCatalog.length}`],
+                      ["library", `Saved · ${posts.length}`],
+                      ["catalog", `All posts · ${allCatalog.length}`],
                       ...(insights?.whatWorks ? [["works", "What works"] as const] : []),
                       ...((insights?.duplicates.length ?? 0)
                         ? [["reposts", `Reposts · ${insights!.duplicates.length}`] as const]
@@ -584,7 +572,7 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
               <div className="mt-4">
                 <div className="mb-3 flex items-center justify-between gap-2">
                   <p className="text-[11px] text-zinc-500">
-                    {posts.length} ingested {posts.length === 1 ? "post" : "posts"}
+                    {posts.length} saved {posts.length === 1 ? "post" : "posts"}
                   </p>
                   <div className="flex rounded-md border border-zinc-800 p-0.5">
                     {(["grid", "list"] as const).map((v) => (
@@ -606,8 +594,8 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
                 {posts.length === 0 ? (
                   <p className="py-8 text-center text-sm text-zinc-600">
                     {account.mine
-                      ? "The live list is Public / Trial. Pull a video here when you want media or a transcript to remake it."
-                      : "Nothing from this account is in the library yet — pick videos in the catalog and pull them."}
+                      ? "Save a video from Public or Trial when you want its video or transcript to remake it."
+                      : "Nothing saved from this account yet. Pick posts in All posts and save them."}
                   </p>
                 ) : libView === "grid" ? (
                   <div className="grid grid-cols-3 gap-1 sm:gap-1.5">
@@ -670,10 +658,10 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
                     {pane === "trial"
                       ? "No trial reels: the official login marks none as not shared to the feed."
                       : pane === "public"
-                        ? "No public posts listed yet — pull the profile & catalog."
+                        ? "No public posts listed yet. Update lists them."
                         : posts.length
-                          ? "Pull profile & catalog to list more of this account's videos."
-                          : "No videos listed yet — pull the profile & catalog."}
+                          ? "Update to list more of this account’s posts."
+                          : "No posts listed yet. Update lists them."}
                   </p>
                 ) : (
                   <div className="flex select-none flex-col gap-1">
@@ -695,7 +683,7 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
                   </div>
                 )}
                 {owns && catalog.length > 0 && (
-                  <div className="mt-3">
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
                     <button
                       type="button"
                       disabled={
@@ -709,6 +697,32 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
                       {busy === "more" ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
                       Load {account.mine ? "more" : clampCatalogCount(count) + " more"}
                     </button>
+                    {/* how many posts Load more (and Update) lists for someone else's account */}
+                    {!account.mine && (
+                      <>
+                        <input
+                          type="number"
+                          min={1}
+                          max={200}
+                          value={count}
+                          onChange={(e) => setCount(clampCatalogCount(e.target.value, count))}
+                          className="w-14 rounded-md border border-zinc-700 bg-zinc-950 px-1.5 py-1 text-[11px] text-zinc-200 outline-none focus:border-violet-500"
+                          aria-label="How many posts to list"
+                        />
+                        {COUNT_PRESETS.map((n) => (
+                          <button
+                            key={n}
+                            type="button"
+                            onClick={() => setCount(n)}
+                            className={`rounded-md px-1.5 py-1 text-[11px] ${
+                              count === n ? "text-violet-200" : "text-zinc-500 hover:text-zinc-300"
+                            }`}
+                          >
+                            {n}
+                          </button>
+                        ))}
+                      </>
+                    )}
                   </div>
                 )}
               </div>
@@ -760,7 +774,7 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
 function LibraryTile({ post, onOpen }: { post: InstagramPost; onOpen: () => void }) {
   const first = post.slides[0];
   const plays = virality(post);
-  const pill = "rounded bg-black/65 px-1 py-0.5 text-[10px] font-medium text-zinc-100 backdrop-blur-sm";
+  const mark = mediaMark(post);
   return (
     <button
       type="button"
@@ -780,22 +794,19 @@ function LibraryTile({ post, onOpen }: { post: InstagramPost; onOpen: () => void
           <Instagram className="h-5 w-5 text-zinc-600" />
         </span>
       )}
-      <span className={`${pill} absolute left-1 top-1 ${kindBadgeClass(post.kind)}`}>
-        {kindLabel(post.kind)}
-        {post.kind === "carousel" && post.slides.length > 1 ? ` · ${post.slides.length}` : ""}
-      </span>
+      {mark ? <span className={`${MEDIA_PILL} absolute left-1 top-1 flex items-center gap-1 tabular-nums`}>{mark}</span> : null}
       {post.ideaStatus === "done" ? (
-        <span className={`${pill} absolute right-1 top-1 !bg-emerald-600/85`} title="Done">
+        <span className={`${MEDIA_PILL} absolute right-1 top-1 !bg-emerald-600/85`} title="Done">
           <Check className="h-3 w-3" />
         </span>
       ) : null}
       {plays ? (
-        <span className={`${pill} absolute bottom-1 left-1 flex items-center gap-0.5`}>
+        <span className={`${MEDIA_PILL} absolute bottom-1 left-1 flex items-center gap-0.5`}>
           <Eye className="h-3 w-3" /> {fmtCount(plays)}
         </span>
       ) : null}
       {post.rank ? (
-        <span className={`${pill} absolute bottom-1 right-1 flex items-center gap-0.5`}>
+        <span className={`${MEDIA_PILL} absolute bottom-1 right-1 flex items-center gap-0.5`}>
           <Star className="h-3 w-3 fill-amber-400 text-amber-400" /> {starsFromRank(post.rank)}
         </span>
       ) : null}
@@ -838,7 +849,7 @@ function SavedPostRow({
             {virality(post) ? ` · ${fmtCount(virality(post))} plays` : ""}
           </p>
           <p className="truncate text-xs text-zinc-500">
-            {post.status === "error" ? post.error : post.caption.split("\n")[0] || "Saved — jobs pending"}
+            {post.caption.split("\n")[0] || "Saved for later"}
           </p>
           <p className="text-[11px] text-zinc-600">
             {post.takenAt ? `${fmtDate(post.takenAt)} · ` : ""}
@@ -913,7 +924,7 @@ function CatalogRow({
             {row.starred ? <Star className="ml-1 inline h-3 w-3 text-amber-400" /> : null}
           </span>
           {row.postId ? (
-            <span className="rounded bg-violet-500/15 px-1 text-[10px] text-violet-200">In library</span>
+            <span className="rounded bg-violet-500/15 px-1 text-[10px] text-violet-200">Saved</span>
           ) : null}
           {row.counts.plays !== undefined && (
             <span className="font-medium tabular-nums text-zinc-100">
@@ -974,7 +985,7 @@ function CatalogRow({
           }}
           className="shrink-0 rounded-md bg-violet-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
         >
-          {pulling ? "Pulling…" : "Pull"}
+          {pulling ? "Saving…" : "Save"}
         </button>
       )}
     </div>
@@ -1038,7 +1049,7 @@ function RepostCluster({
                 </div>
               )}
               <span className="mt-1 block truncate text-[10px] text-zinc-500">
-                {m.postId ? "Saved" : "Pull"}
+                {m.postId ? "Saved" : "Save"}
               </span>
             </button>
           );

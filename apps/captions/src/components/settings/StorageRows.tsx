@@ -29,6 +29,11 @@ const removeStorageFolder = (id: string) => call<StorageState>(`${STORAGE_API}/f
 
 /** The drives a computer reported (its system disk, external drives, network shares). Empty until it reports one. */
 export const disksOf = (d: Computer): Disk[] => d.report?.machine?.disks ?? [];
+/** The drives a folder on `host` can be on: that computer's, or the server's own when it reports none (a local install). */
+export const disksFor = (devices: Computer[], host: string, serverDisks: Disk[] = []): Disk[] => {
+  const d = devices.find((x) => x.id === host);
+  return d && disksOf(d).length ? disksOf(d) : serverDisks;
+};
 const nameOf = (devices: Computer[], host: string) =>
   host === THIS_COMPUTER ? "This computer" : (devices.find((d) => d.id === host)?.name ?? "A computer that is gone");
 
@@ -50,6 +55,41 @@ function diskOf(f: StorageFolder, devices: Computer[], serverDisks: Disk[]): Dis
   return [...holding].sort((a, b) => b.path.length - a.path.length)[0] ?? disks.find((d) => d.path === "/");
 }
 
+/** A drive as the Drive select names it: "BABY ACROBATICS · nas-name · 2.8 TB free" (a network share says whose it is). */
+export const driveLabel = (d: Disk) => `${d.name}${d.network ? ` · ${d.server && d.server !== d.name ? d.server : "Network"}` : ""} · ${size(d.freeGb)} free`;
+/** Where a folder field starts once a drive is picked: the home folder on the system disk, else the drive's own folder. */
+export const driveStart = (d: Disk) => (d.path === "/" ? "~" : d.path.replace(/\/+$/, ""));
+/** The drive a typed path is on: the longest drive folder that holds it; "~" and any other full path are the system disk. */
+export function driveOf(disks: readonly Disk[], typed: string): Disk | undefined {
+  const p = typed.trim();
+  if (!p) return undefined;
+  const under = (d: Disk) => d.path !== "/" && (p === d.path.replace(/\/+$/, "") || p.startsWith(`${d.path.replace(/\/+$/, "")}/`));
+  const holding = disks.filter(under).sort((a, b) => b.path.length - a.path.length)[0];
+  return holding ?? (p.startsWith("/") || p.startsWith("~") ? disks.find((d) => d.path === "/") : undefined);
+}
+
+const NO_DRIVE = "no-drive";
+/**
+ * The drives of the chosen computer (its system disk, external drives, network shares), above a folder field: picking one
+ * starts the path there, and a typed path shows the drive it is on. Nothing is shown for a computer that reported none.
+ */
+export function DriveSelect({ disks, path, onPick }: { disks: readonly Disk[]; path: string; onPick: (start: string) => void }) {
+  if (disks.length === 0) return null;
+  const on = driveOf(disks, path);
+  return (
+    <SettingsSelect
+      label="Drive"
+      value={on?.path ?? NO_DRIVE}
+      onValueChange={(v) => {
+        const d = disks.find((x) => x.path === v);
+        if (d) onPick(driveStart(d));
+      }}
+      options={[...(on ? [] : [{ value: NO_DRIVE, label: "Choose a drive" }]), ...disks.map((d) => ({ value: d.path, label: driveLabel(d) }))]}
+      className="sm:w-full"
+    />
+  );
+}
+
 const roleLabel = (role: SourceRole) => STORAGE_ROLES.find((r) => r.value === role)?.label ?? role;
 
 /**
@@ -64,8 +104,8 @@ export function Storage({ devices, storage, onChanged }: { devices: Computer[]; 
     <Card>
       {folders.length === 0 && <EmptyRow title="No folders set yet" description="Where the Media Library and the AI Editor read and save files." />}
       <LibraryRow library={folders.find((f) => f.role === "library")} devices={devices} serverDisks={storage.serverDisks} onChanged={onChanged} />
-      <SourceRow role="footage" sources={sources} folders={folders} devices={devices} onChanged={onChanged} />
-      <SourceRow role="music" sources={sources} folders={folders} devices={devices} onChanged={onChanged} />
+      <SourceRow role="footage" sources={sources} folders={folders} devices={devices} serverDisks={storage.serverDisks} onChanged={onChanged} />
+      <SourceRow role="music" sources={sources} folders={folders} devices={devices} serverDisks={storage.serverDisks} onChanged={onChanged} />
     </Card>
   );
 }
@@ -93,12 +133,12 @@ function LibraryRow({ library, devices, serverDisks, onChanged }: { library?: St
           </Button>
         }
       />
-      <LibraryDialog open={open} onOpenChange={setOpen} devices={devices} change={!!library} onChanged={onChanged} />
+      <LibraryDialog open={open} onOpenChange={setOpen} devices={devices} serverDisks={serverDisks} change={!!library} onChanged={onChanged} />
     </>
   );
 }
 
-function LibraryDialog({ open, onOpenChange, devices, change, onChanged }: { open: boolean; onOpenChange: (o: boolean) => void; devices: Computer[]; change: boolean; onChanged: () => void }) {
+function LibraryDialog({ open, onOpenChange, devices, serverDisks, change, onChanged }: { open: boolean; onOpenChange: (o: boolean) => void; devices: Computer[]; serverDisks: Disk[]; change: boolean; onChanged: () => void }) {
   const [pickHost, setPickHost] = useState("");
   const [folder, setFolder] = useState("~");
   const [busy, setBusy] = useState(false);
@@ -135,6 +175,7 @@ function LibraryDialog({ open, onOpenChange, devices, change, onChanged }: { ope
       ) : (
         <>
           <SettingsSelect label="Computer" value={host} onValueChange={setPickHost} options={devices.map((d) => ({ value: d.id, label: d.name }))} className="sm:w-full" />
+          <DriveSelect disks={disksFor(devices, host, serverDisks)} path={folder} onPick={setFolder} />
           <Input value={folder} onChange={(e) => setFolder(e.target.value)} placeholder="~" aria-label="Folder to put it in" />
           <p className="font-mono text-xs text-muted-foreground">{where}</p>
         </>
@@ -144,8 +185,8 @@ function LibraryDialog({ open, onOpenChange, devices, change, onChanged }: { ope
 }
 
 /** Footage or music: each folder's full path, "Set folder" when none and "Change" after (the dialog adds one), and a `…` menu to remove one. */
-function SourceRow({ role, sources, folders, devices, onChanged }: {
-  role: SourceRole; sources: StorageFolder[]; folders: StorageFolder[]; devices: Computer[]; onChanged: () => void;
+function SourceRow({ role, sources, folders, devices, serverDisks, onChanged }: {
+  role: SourceRole; sources: StorageFolder[]; folders: StorageFolder[]; devices: Computer[]; serverDisks: Disk[]; onChanged: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const mine = sources.filter((f) => f.role === role);
@@ -184,25 +225,25 @@ function SourceRow({ role, sources, folders, devices, onChanged }: {
           </div>
         }
       />
-      <AddFolderDialog open={open} onOpenChange={setOpen} role={role} devices={devices} onChanged={onChanged} />
+      <AddFolderDialog open={open} onOpenChange={setOpen} role={role} devices={devices} serverDisks={serverDisks} onChanged={onChanged} />
     </>
   );
 }
 
-/** "Add storage" from the Storage section: a folder you already have, as footage or music, on one of your computers. */
-export function AddStorageButton({ devices, onChanged }: { devices: Computer[]; onChanged: () => void }) {
+/** "Add storage" from the Storage section: a folder you already have, as footage or music, on a drive of one of your computers. */
+export function AddStorageButton({ devices, serverDisks, onChanged }: { devices: Computer[]; serverDisks?: Disk[]; onChanged: () => void }) {
   const [open, setOpen] = useState(false);
   return (
     <>
       <Button size="xs" variant="ghost" onClick={() => setOpen(true)}><Plus className="size-3" /> Add storage</Button>
-      <AddFolderDialog open={open} onOpenChange={setOpen} devices={devices} onChanged={onChanged} />
+      <AddFolderDialog open={open} onOpenChange={setOpen} devices={devices} serverDisks={serverDisks} onChanged={onChanged} />
     </>
   );
 }
 
 /** A folder you already have, as footage or music, on one of your computers. `role` picks it first; the person can change it. */
-export function AddFolderDialog({ open, onOpenChange, role: first, devices, onChanged }: {
-  open: boolean; onOpenChange: (o: boolean) => void; role?: SourceRole; devices: Computer[]; onChanged: () => void;
+export function AddFolderDialog({ open, onOpenChange, role: first, devices, serverDisks, onChanged }: {
+  open: boolean; onOpenChange: (o: boolean) => void; role?: SourceRole; devices: Computer[]; serverDisks?: Disk[]; onChanged: () => void;
 }) {
   const [role, setRole] = useState<SourceRole>(first ?? "footage");
   const [pickHost, setPickHost] = useState("");
@@ -245,6 +286,7 @@ export function AddFolderDialog({ open, onOpenChange, role: first, devices, onCh
             className="sm:w-full"
           />
           <SettingsSelect label="Computer" value={host} onValueChange={setPickHost} options={devices.map((d) => ({ value: d.id, label: d.name }))} className="sm:w-full" />
+          <DriveSelect disks={disksFor(devices, host, serverDisks)} path={path} onPick={setPath} />
           <Input value={path} onChange={(e) => setPath(e.target.value)} placeholder="/Volumes/Drive/Footage" aria-label="Folder path" />
         </>
       )}

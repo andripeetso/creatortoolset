@@ -5,7 +5,9 @@ import path from "node:path";
 import type { AuthVars } from "./auth";
 import { mintJobToken, revokeJobToken, touchJobToken } from "./auth";
 import { env } from "./lib/env";
-import { routeFor, runFields, type Route } from "./lib/providers";
+import { routeFor, routeForInstance, runFields, type Route } from "./lib/providers";
+import type { Selection } from "../contracts/providers";
+import { validTimezone } from "../contracts/automations";
 import { streamMacClaude, type MacAsk, type MacAskStatus } from "./lib/mac-claude";
 import { slug } from "./lib/workshop/folder";
 import { myKeys } from "./my-keys";
@@ -40,7 +42,7 @@ Your reply is shown in a small chat dock. You act in the app only through its to
 - The workshop_* tools (projects, sessions, pieces), list_reviews, get_review, resolve_comment, review_set_approval and review_share (a video's public share link) work on the user's own content.
 - instagram_posts and instagram_refresh: the user's Instagram posts in the Analyzer and their numbers.
 - editor_list, editor_get and editor_run: the AI Editor's edits, their drafts and jobs.
-- automations_list, automations_create, automations_update, automations_delete and automations_run: scheduled prompts. Each runs on the user's AI at a set time (daily or weekly at HH:MM in a timezone, or every N hours) and reports to the inbox and its last result.
+- schedule_task, list_scheduled_tasks, run_scheduled_task_now and delete_scheduled_task: scheduled tasks. A task is a prompt the user's AI runs on its own on a schedule (at a time on chosen weekdays, once at a date and time, or every few minutes or hours), and each run posts the prompt and its answer in an assistant chat: by default this chat. When the user asks for something to happen regularly or later, make one; say the next run, and that they can change it in Settings, Scheduled tasks.
 - navigate opens a page of the app for the user, given as a relative path such as /workshop.
 - show_video plays a Review video (or an AI Editor draft's preview) inside the chat, with a link to its page.
 - use_file sends a video or recording (dropped in the chat, or by its path on this computer when the server runs here) to Video Notes (transcript, summary, takeaways, action items, chapters), Review (a video page with comments and a share link) or Caption Studio (captions on the video). notes_get follows a Video Note until it's ready and reads what it found.
@@ -61,12 +63,24 @@ In this conversation you have no Creator Toolset tools and no tools on the user'
 
 /* ---- the conversation, in memory and on disk ---- */
 
+/** A chat: `title` and `task` are set for one a scheduled task made (its name, its id). */
+interface Chat {
+  id: string;
+  messages: AssistantMessage[];
+  title?: string;
+  task?: string;
+}
+
 interface Conv {
+  /** The open chat's id, title and task (it keeps them going into `past` and coming back). */
+  id?: string;
+  title?: string;
+  task?: string;
   messages: AssistantMessage[];
   pending?: { env: string; why: string; at: number };
   navigate?: string;
   /** Earlier conversations, newest first (New chat keeps the one it replaces here). */
-  past?: Array<{ id: string; messages: AssistantMessage[] }>;
+  past?: Chat[];
 }
 
 /** How many earlier conversations an account keeps; the oldest goes past this. */
@@ -79,13 +93,25 @@ const titleOf = (messages: AssistantMessage[]) => {
 
 /** The conversation on screen goes into the history (when it has anything) and a fresh one starts; one pushed past PAST_KEPT goes with its pictures. */
 function archive(username: string, conv: Conv): void {
-  if (conv.messages.length) {
-    const all = [{ id: randomUUID(), messages: conv.messages }, ...(conv.past ?? [])];
-    conv.past = all.slice(0, PAST_KEPT);
-    for (const p of all.slice(PAST_KEPT)) dropImages(username, p.messages);
-  }
+  if (conv.messages.length) keepPast(username, conv, [{ id: conv.id ?? randomUUID(), messages: conv.messages, title: conv.title, task: conv.task }, ...(conv.past ?? [])]);
+  conv.id = randomUUID();
+  conv.title = conv.task = undefined;
   conv.messages = [];
   conv.navigate = undefined;
+}
+
+/** The history capped at PAST_KEPT: the oldest scheduled-task chats go first, so runs never push the person's own chats out. */
+function keepPast(username: string, conv: Conv, all: Chat[]): void {
+  const out: Chat[] = [];
+  for (let i = all.length - 1, over = all.length - PAST_KEPT; i >= 0 && over > 0; i--) {
+    if (!all[i]!.task) continue;
+    out.push(all[i]!);
+    over--;
+  }
+  const left = all.filter((c) => !out.includes(c));
+  out.push(...left.slice(PAST_KEPT));
+  conv.past = left.slice(0, PAST_KEPT);
+  for (const p of out) dropImages(username, p.messages);
 }
 
 const cache = new Map<string, Conv>();
@@ -184,6 +210,7 @@ function parseTurn(raw: unknown): TurnInput {
         title: capped(c.title, CONTEXT_CAPS.title)?.replace(/\s+/g, " ") ?? "",
         selection: capped(c.selection, CONTEXT_CAPS.selection),
         visible: capped(c.visible, CONTEXT_CAPS.visible),
+        ...(typeof c.timezone === "string" && validTimezone(c.timezone) ? { timezone: c.timezone } : {}),
       }
     : undefined;
   return { text, images, pasted, fileIds, files: [], context };
@@ -210,9 +237,10 @@ function load(username: string): Conv {
   } catch {
     /* no conversation yet */
   }
+  conv.id ??= randomUUID();
   // a reply the server stopped in the middle of: it can't finish any more
   // and it can't do what it asked
-  for (const m of conv.messages) if (m.status === "thinking") {
+  for (const m of [conv.messages, ...(conv.past ?? []).map((p) => p.messages)].flat()) if (m.status === "thinking") {
     m.status = "error";
     expireApprovals(m, 0);
   }
@@ -240,9 +268,13 @@ function saveSoon(username: string): void {
   }, 1000));
 }
 
-const messageOf = (username: string, id: string) => load(username).messages.find((m) => m.id === id);
+/** A message by id, in the open chat or an earlier one (a scheduled run streams into a chat that may not be open). */
+const messageOf = (username: string, id: string) => {
+  const conv = load(username);
+  return conv.messages.find((m) => m.id === id) ?? conv.past?.flatMap((p) => p.messages).find((m) => m.id === id);
+};
 
-/** A tool the reply is using, as a line under it (mcp.ts); an automation's turn has no message, so nothing. */
+/** A tool the reply is using, as a line under it (mcp.ts). */
 export function noteStep(username: string, turn: string, step: string): void {
   const m = messageOf(username, turn);
   if (m?.status !== "thinking") return;
@@ -379,9 +411,13 @@ const publicOrigin = (c: Context) => {
   return process.env.PUBLIC_ORIGIN?.replace(/\/$/, "") || `${c.req.header("x-forwarded-proto") ?? url.protocol.replace(":", "")}://${url.host}`;
 };
 
-/** The account's own AI only: the workspace's providers (the owner's own logins) answer the assistant for an admin alone. */
-export const routeOf = (username: string, admin: boolean): Route | null => {
-  const r = routeFor(username, admin, JOB);
+/**
+ * The account's own AI only: the workspace's providers (the owner's own logins) answer the assistant for an admin alone.
+ * `ai`: one chosen AI (a scheduled task's), null when that one can't run.
+ */
+export const routeOf = (username: string, admin: boolean, ai?: Selection): Route | null => {
+  const r = ai ? routeForInstance(username, admin, JOB, ai) : routeFor(username, admin, JOB);
+  if (ai && r?.instance.id !== ai.instance) return null;
   return r && (admin || r.scope !== "workspace") ? r : null;
 };
 
@@ -392,11 +428,12 @@ function view(username: string, admin: boolean): AssistantView {
   const pending = conv.pending ? MY_KEYS.find((k) => k.env === conv.pending!.env) : undefined;
   const route = routeOf(username, admin);
   return {
+    id: conv.id!,
     provider: providerOf(route),
     aiName: route?.instance.name ?? "",
     tools: route?.instance.driver === "claude",
     messages: conv.messages.slice(-80),
-    past: (conv.past ?? []).map((p) => ({ id: p.id, title: titleOf(p.messages), at: p.messages.at(-1)?.at ?? 0, count: p.messages.length })),
+    past: (conv.past ?? []).map((p) => ({ id: p.id, title: p.title ?? titleOf(p.messages), at: p.messages.at(-1)?.at ?? 0, count: p.messages.length })),
     pending: pending && conv.pending ? { env: pending.env, name: pending.name, why: conv.pending.why } : null,
     navigate: conv.navigate ?? null,
   };
@@ -417,6 +454,10 @@ function newestFacts(input: TurnInput): string[] {
   if (c) {
     out.push(`The user is on ${c.path}${c.title ? ` (page title: ${c.title})` : ""}.${c.visible ? ` On screen: ${c.visible}` : ""}`);
     if (c.selection) out.push(`They highlighted this on the page: «${c.selection}»`);
+    if (c.timezone) {
+      const now = new Intl.DateTimeFormat("en-GB", { timeZone: c.timezone, weekday: "long", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date());
+      out.push(`The user's time zone is ${c.timezone}; there it is ${now}.`);
+    }
   }
   return out;
 }
@@ -434,8 +475,8 @@ function promptFor(messages: AssistantMessage[], input?: TurnInput): string {
 
 /**
  * One answer from the account's Claude Code on its Mac, with this server's MCP tools under a job token made for
- * this answer only (turn names it: the reply id, or an automation's). The token is revoked when the answer ends
- * either way, and never appears in a thrown message. Used by the dock's turns and by automations (automations.ts).
+ * this answer only (turn names it: the reply id). The token is revoked when the answer ends
+ * either way, and never appears in a thrown message. Used by the dock's turns and by scheduled runs (runInChat).
  * streamMacClaude queues the job synchronously, so the Mac's next poll gets it.
  */
 export async function answerWithTools(
@@ -450,7 +491,7 @@ export async function answerWithTools(
     background?: boolean;
     cancel?: AbortSignal;
     files?: Record<string, string>;
-    /** Someone is there to answer: Claude may use the Mac's own tools and asks (MacOpts.onAsk). Never for automations. */
+    /** Someone is there to answer: Claude may use the Mac's own tools and asks (MacOpts.onAsk). Never for scheduled runs. */
     onAsk?: (ask: MacAsk) => MacAskStatus;
   },
 ): Promise<string> {
@@ -518,6 +559,76 @@ async function runTurn(username: string, replyId: string, route: Route, url: str
     const m = messageOf(username, replyId);
     if (m) expireApprovals(m, 0);
     if (running.get(username) === stop) running.delete(username);
+    const t = pendingSave.get(username);
+    if (t) clearTimeout(t);
+    pendingSave.delete(username);
+    save(username);
+  }
+}
+
+/* ---- scheduled runs (api/automations.ts): a task's prompt and its reply, as a turn in one of the account's chats ---- */
+
+const chatOf = (conv: Conv, id: string | undefined): Chat | null =>
+  !id ? null : conv.id === id ? (conv as Chat) : (conv.past?.find((p) => p.id === id) ?? null);
+
+/** The chat a message is in (the chat a scheduled task was made from: the reply that made it). */
+export function chatOfTurn(username: string, turn: string): string | null {
+  const conv = load(username);
+  if (conv.messages.some((m) => m.id === turn)) return conv.id!;
+  return conv.past?.find((p) => p.messages.some((m) => m.id === turn))?.id ?? null;
+}
+
+/** A reply is being written in this chat now: a run waits for it to end. */
+export function chatBusy(username: string, chat: string | undefined): boolean {
+  return chatOf(load(username), chat)?.messages.at(-1)?.status === "thinking";
+}
+
+/**
+ * One scheduled run as a turn: the prompt goes in as the user's message (marked with its task), the reply streams in
+ * under it, and the dock shows both like any other turn. `chat` is the chat to post in; gone or absent, a new chat
+ * named after the task starts among the earlier chats (the open one is left alone). `fresh`: the reply sees only this
+ * prompt, not the chat's earlier messages. In the open chat, the dock's Stop stops it. Resolves with the chat and the
+ * answer; rejects with the reason when the run fails.
+ */
+export async function runInChat(
+  username: string,
+  o: { chat?: string; task: { id: string; name: string }; prompt: string; preface: string; fresh: boolean; route: Route; url: string },
+): Promise<{ chat: string; text: string }> {
+  const conv = load(username);
+  let chat = chatOf(conv, o.chat);
+  if (!chat) {
+    chat = { id: randomUUID(), messages: [], title: o.task.name, task: o.task.id };
+    keepPast(username, conv, [chat, ...(conv.past ?? [])]);
+  }
+  const now = Date.now();
+  const asked: AssistantMessage = { id: randomUUID(), role: "user", text: o.prompt, at: now, task: o.task };
+  const reply: AssistantMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, status: "thinking" };
+  chat.messages.push(asked, reply);
+  save(username);
+  const prompt = `${o.preface}\n\n${promptFor(o.fresh ? [asked] : chat.messages)}`;
+  const stop = new AbortController();
+  const open = conv.id === chat.id && !running.has(username);
+  if (open) running.set(username, stop);
+  try {
+    const text = await answerWithTools(username, o.route, o.url, prompt, {
+      label: "Scheduled task",
+      turn: reply.id,
+      background: true,
+      cancel: stop.signal,
+      onDelta: (t) => {
+        const m = messageOf(username, reply.id);
+        if (m) m.text = t;
+        saveSoon(username);
+      },
+    });
+    Object.assign(messageOf(username, reply.id) ?? {}, { status: "done", text });
+    return { chat: chat.id, text };
+  } catch (e) {
+    const why = stop.signal.aborted ? "Stopped." : (e instanceof Error ? e.message : String(e)).slice(0, 300) || "The run failed.";
+    Object.assign(messageOf(username, reply.id) ?? {}, { status: stop.signal.aborted ? "done" : "error", text: why });
+    throw new Error(why);
+  } finally {
+    if (open && running.get(username) === stop) running.delete(username);
     const t = pendingSave.get(username);
     if (t) clearTimeout(t);
     pendingSave.delete(username);
@@ -626,7 +737,7 @@ assistantApp.post("/past/:id/open", (c) => {
   if (!found) return c.json({ error: "That conversation is gone" }, 404);
   conv.past = conv.past!.filter((p) => p !== found);
   archive(u.username, conv);
-  conv.messages = found.messages;
+  Object.assign(conv, { id: found.id, title: found.title, task: found.task, messages: found.messages });
   save(u.username);
   return c.json(view(u.username, u.role === "admin"));
 });

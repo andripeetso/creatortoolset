@@ -60,7 +60,7 @@ export function FoldersSection() {
     return (
       <Section title="Storage">
         <Card>
-          <EmptyRow title="No computer yet" description="Footage, music and finished videos are folders on one of your computers. Add one in Computers." />
+          <EmptyRow title="No computer yet" description="Footage, music and finished videos are folders on one of your computers. Add one in Devices." />
         </Card>
       </Section>
     );
@@ -74,7 +74,7 @@ export function FoldersSection() {
       {Replaced ? (
         <Replaced />
       ) : (
-        <Section title="Storage" action={own.length > 0 ? <AddStorageButton devices={own} onChanged={load} /> : undefined}>
+        <Section title="Storage" action={own.length > 0 ? <AddStorageButton devices={own} serverDisks={storage.serverDisks} onChanged={load} /> : undefined}>
           <Storage devices={own} storage={storage} onChanged={load} />
         </Section>
       )}

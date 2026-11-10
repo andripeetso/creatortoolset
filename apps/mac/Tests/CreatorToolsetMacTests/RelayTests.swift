@@ -466,6 +466,58 @@ final class RelayTests: XCTestCase {
         XCTAssertEqual(stream.seen["codex"]?["output_tokens"] as? Int, 7)
     }
 
+    // Today's Codex (0.163 on 2026-11-10, its own lines): a notice first, then the answer and the turn's usage.
+    private let codexNowLines = [
+        #"{"type":"thread.started","thread_id":"01a1c69e-7612-75f1-a263-593414a2a941"}"#,
+        #"{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Configured service tier `priority` is not advertised as supported for model `gpt-6-luna` and will be omitted from requests."}}"#,
+        #"{"type":"turn.started"}"#,
+        #"{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"ready"}}"#,
+        #"{"type":"turn.completed","usage":{"input_tokens":16634,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":5,"reasoning_output_tokens":0}}"#,
+    ]
+
+    func testCodexAnswerIsReadFromTodaysEventsAndANoticeIsNotAFailure() {
+        let result = feedCodex(codexNowLines).result(err: "")
+        XCTAssertEqual(result["is_error"] as? Bool, false)
+        XCTAssertEqual(result["result"] as? String, "ready")
+        let usage = result["usage"] as? [String: Any] ?? [:]
+        XCTAssertEqual(usage["input_tokens"] as? Int, 16634)
+        XCTAssertEqual(usage["output_tokens"] as? Int, 5)
+    }
+
+    func testCodexFailureInTodaysEventsIsTheTurnsError() {
+        let refused = #"{\"type\":\"error\",\"status\":400,\"error\":{\"message\":\"The 'no-such-model' model is not supported when using Codex with a ChatGPT account.\"}}"#
+        let result = feedCodex([
+            #"{"type":"item.completed","item":{"id":"item_1","type":"error","message":"Model metadata for `no-such-model` not found."}}"#,
+            #"{"type":"turn.started"}"#,
+            #"{"type":"turn.failed","error":{"message":""# + refused + #""}}"#,
+        ]).result(err: "")
+        XCTAssertEqual(result["is_error"] as? Bool, true)
+        XCTAssertTrue((result["result"] as? String ?? "").contains("not supported when using Codex with a ChatGPT account"))
+    }
+
+    func testCodexsOwnLimitWordsCountAsALimit() {
+        XCTAssertTrue(limitFlag("codex", "You've hit your usage limit. Upgrade to Pro or try again in 3 hours 12 minutes."))
+        XCTAssertFalse(limitFlag("codex", "The 'gpt-5.6-terra' model requires a newer version of Codex."))
+    }
+
+    func testTheNewestCopyOfACliRuns() {
+        // an old Homebrew Codex found first, the one the app installed found second: the newer one runs
+        let versions = ["/opt/homebrew/bin/codex": [0, 39, 0], "/Users/a/.local/bin/codex": [0, 167, 0]]
+        XCTAssertEqual(newest(["/opt/homebrew/bin/codex", "/Users/a/.local/bin/codex"]) { versions[$0] ?? [] }, "/Users/a/.local/bin/codex")
+        // the first found wins a tie, and when no copy names a version
+        XCTAssertEqual(newest(["/a/claude", "/b/claude"]) { _ in [2, 1, 321] }, "/a/claude")
+        XCTAssertEqual(newest(["/a/claude", "/b/claude"]) { _ in [] }, "/a/claude")
+        XCTAssertEqual(newest(["/only/codex"]) { _ in XCTFail("one copy needs no version"); return [] }, "/only/codex")
+        XCTAssertNil(newest([]))
+        XCTAssertEqual(versionNumbers("codex-cli 0.39.0"), [0, 39, 0])
+        XCTAssertEqual(versionNumbers("2.1.321 (Claude Code)"), [2, 1, 321])
+        XCTAssertEqual(versionNumbers("codex-cli 0.163.0-alpha.11.2"), [0, 163, 0])
+        XCTAssertEqual(versionNumbers("no version here"), [])
+        // the Codex inside the ChatGPT app is a copy that may run (no download for that person); no Claude inside another app is
+        XCTAssertTrue(driverBinaries["codex"]?.contains(chatGPTAppCodex) ?? false)
+        XCTAssertEqual(driverBinaries["claude"], ["claude"])
+    }
+
     func testCodexStreamShowsTheAnswerAsItWrites() {
         var stream = CodexStream()
         var shown: [String] = []
@@ -647,8 +699,12 @@ final class RelayTests: XCTestCase {
         guard ProcessInfo.processInfo.environment["CT_REAL_CODEX"] == "1" else {
             throw XCTSkip("set CT_REAL_CODEX=1 to run one real codex call")
         }
-        let cli = binary("codex", home: FileManager.default.homeDirectoryForCurrentUser) ?? "codex"
-        let req = request(#"{"id":"real-codex","system":"Reply with just OK.","user":"Reply with just OK.","driver":"codex","effort":"low"}"#)
+        // CT_REAL_CODEX_BIN names another copy to run (a newly downloaded one); CT_REAL_CODEX_MODEL the model, as the app sends one
+        let env = ProcessInfo.processInfo.environment
+        let cli = env["CT_REAL_CODEX_BIN"] ?? binary("codex", home: FileManager.default.homeDirectoryForCurrentUser) ?? "codex"
+        let model = env["CT_REAL_CODEX_MODEL"].map { #","model":""# + $0 + #"""# } ?? ""
+        print("REAL CODEX: running \(cli), version \(cliVersion(cli))")
+        let req = request(#"{"id":"real-codex","system":"Reply with just OK.","user":"Reply with just OK.","driver":"codex","effort":"low""# + model + "}")
         let answer = try runAnswer(req, try requestOptions(req), cli: cli, work: temp(), send: { _ in true }, step: { _ in })
         print("REAL CODEX: text=\(answer.text) usage=\(answer.usage)")
         XCTAssertTrue(answer.text.localizedCaseInsensitiveContains("OK"))

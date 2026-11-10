@@ -31,6 +31,8 @@ export interface AssistantMessage {
   files?: Array<{ id: string; name: string }>;
   /** The highlighted text a user message asked about. */
   quote?: string;
+  /** A scheduled task's run: its prompt, posted as the user's message (api/automations.ts). */
+  task?: { id: string; name: string };
 }
 
 /**
@@ -102,6 +104,8 @@ export interface AssistantContext {
   selection?: string;
   /** A few lines that say what's on screen: the page's headings and the open item's name. */
   visible?: string;
+  /** The browser's IANA time zone, so a task the assistant schedules runs on the person's clock. */
+  timezone?: string;
 }
 
 /** POST /api/assistant/turn's body. */
@@ -137,6 +141,8 @@ export interface AssistantPast {
 }
 
 export interface AssistantView {
+  /** The open chat's id (a scheduled task posts in a chat by id; ?chat=<id> on any page opens one). */
+  id: string;
   provider: AssistantProvider;
   /** The AI's name ("Codex", "Claude Code (work)"), "" when none is connected. */
   aiName: string;

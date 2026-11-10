@@ -456,7 +456,7 @@ export interface InstagramAnalysis {
 
 export const IDEA_STATUSES: { id: IdeaStatus; label: string }[] = [
   { id: "inbox", label: "Inbox" },
-  { id: "idea", label: "In Project" },
+  { id: "idea", label: "To make" },
   { id: "done", label: "Done" },
   { id: "skip", label: "Skip" },
 ];
@@ -853,6 +853,14 @@ export interface CommentsFile {
 export const isProcessing = (p: InstagramPost | null | undefined) =>
   p?.status === "processing";
 
+/** An account run's step in plain words, for its page and the queue. */
+export const ACCOUNT_STEP_LABELS: Record<string, string> = {
+  profile: "Reading the profile",
+  catalog: "Listing the posts",
+  stats: "Updating the numbers",
+  tags: "Suggesting tags",
+};
+
 /** How a post is doing, for the phone list. A saved-for-later post keeps its jobs
  *  pending while it reads "ready"; a finished post can hold a failed job. */
 export type PostHealth = "working" | "stuck" | "failed" | "partial" | "waiting" | "done";
@@ -1171,7 +1179,7 @@ export const FIND_FIELD_LABELS: Record<FindField, string> = {
   idea: "idea",
   slides: "on-screen",
   transcript: "transcript",
-  caption: "caption",
+  caption: "description",
   comments: "comments",
 };
 
@@ -1415,7 +1423,7 @@ export const PROCESS_STEPS: { id: PostStep; label: string }[] = [
   { id: "queued", label: "Waiting in the queue" },
   { id: "resolve", label: "Resolving the link" },
   { id: "info", label: "Reading post details" },
-  { id: "download", label: "Downloading media" },
+  { id: "download", label: "Downloading" },
   { id: "thumbs", label: "Preparing previews" },
   { id: "transcribe", label: "Transcribing videos" },
   { id: "vision", label: "Reading the slides" },

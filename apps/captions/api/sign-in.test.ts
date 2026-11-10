@@ -61,26 +61,6 @@ describe("sign-in to a site account (hosted mode)", () => {
     const res = await app.request("/api/auth/google/callback?state=not-ours&code=x");
     expect([400, 404]).toContain(res.status);
   });
-
-  it("shows the server's admin the .env names and the address to register, and nobody else", async () => {
-    createUser("boss", "bosspass12", { role: "admin" });
-    const adminCookie = cookieOf(await app.request("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: "boss", password: "bosspass12" }) }));
-    const anaCookie = cookieOf(await app.request("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: "ana", password: "anapass12" }) }));
-
-    expect((await app.request("/api/account/setup")).status).toBe(403);
-    expect((await app.request("/api/account/setup", { headers: { cookie: anaCookie } })).status).toBe(403);
-    const view = (await (await app.request("/api/account/setup", { headers: { cookie: adminCookie } })).json()) as {
-      origin: string;
-      providers: { kind: string; env: string[]; redirect: string }[];
-    };
-    expect(view.origin).toBe("http://localhost");
-    expect(view.providers.find((p) => p.kind === "google")).toEqual({
-      kind: "google",
-      name: "Google",
-      env: ["GOOGLE_SIGNIN_CLIENT_ID", "GOOGLE_SIGNIN_CLIENT_SECRET"],
-      redirect: "http://localhost/api/auth/google/callback",
-    });
-  });
 });
 
 describe("GitHub sign-in (hosted mode, GitHub's endpoints faked)", () => {

@@ -72,6 +72,10 @@ export function planFromCli(text: string | null | undefined): PlanId | null {
  * A closed usage window in plain words, from the CLI's own: "You've hit your limit · resets 2pm (Europe/Tallinn)" →
  * "Your Claude plan's limit is reached; it resets 2pm (Europe/Tallinn)." The CLI's words follow, as it said them.
  */
+/** A limit message's own sentence, as a row shows it: no "X said: …" tail and no time zone name. */
+export const limitLine = (message: string): string =>
+  `${message.split(/\. \S+ said: /)[0]!.replace(/ \([A-Za-z_]+\/[A-Za-z_/]+\)/, "").replace(/\.$/, "")}.`;
+
 export function limitMessage(cli: string, tool = "Claude"): string {
   const window = /weekly/i.test(cli) ? "weekly limit" : /session|5-hour/i.test(cli) ? "5-hour limit" : "limit";
   const reset = /resets\s+(?:at\s+)?([^·\n]+?)\s*\.?$/i.exec(cli.trim())?.[1];

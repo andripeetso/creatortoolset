@@ -217,7 +217,7 @@ describe("Devices sections", () => {
     expect(devicesSectionsFor(admin(), [])).toEqual([]);
   });
 
-  it("puts a section on Computers only when it says page: computers", () => {
+  it("puts a section on Devices only when it says page: computers", () => {
     const plugin = defineWebPlugin({
       id: "editor-boxes",
       devices: [

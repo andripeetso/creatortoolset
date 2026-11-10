@@ -17,19 +17,19 @@ export const INSTALL_LINE: Record<CliId, string> = {
   codex: "npm install -g @openai/codex",
   gemini: "npm install -g @google/gemini-cli",
 };
-export type LocalAiId = CliId | "claude-desktop" | "chatgpt-desktop";
+export type LocalAiId = CliId;
 
 export interface LocalAiRow {
   id: LocalAiId;
-  name: string; // "Claude Code" | "Codex" | "Gemini CLI" | "Claude desktop" | "ChatGPT desktop"
-  kind: "cli" | "desktop"; // desktop rows are text only
+  name: string; // "Claude Code" | "Codex" | "Gemini CLI"
+  kind: "cli";
   found: boolean;
   version?: string; // first line of --version, max 120 chars
   signedIn: boolean | null; // null: unknown (gemini, or the probe could not tell)
   plan?: PlanId; // only when the CLI reports one
   connected: boolean; // own instance "local-<driver>" exists, enabled, lastCheck.ok
   lastCheck?: { ok: boolean; at: number; ms: number };
-  mcp: "added" | "off" | "update" | "n/a"; // n/a: gemini and desktop rows
+  mcp: "added" | "off" | "update" | "n/a"; // n/a: gemini
   updateCommand?: string; // only when mcp === "update"
 }
 
@@ -38,8 +38,12 @@ export interface LocalAiView {
   rows: LocalAiRow[];
 }
 
-/** "unsupported": this CLI can't be the app's own AI (the Mac relay has no runner for it). */
-export type ConnectState = "missing" | "mac" | "signin" | "failed" | "ready" | "unsupported";
+/**
+ * "unsupported": this CLI can't be the app's own AI (the Mac relay has no runner for it). "outdated": the copy on this
+ * Mac is too old for today's models; the page installs the current one and connects again. "ready" with a `message`:
+ * connected, and the plan's limit is reached until the time the message names.
+ */
+export type ConnectState = "missing" | "mac" | "signin" | "failed" | "ready" | "unsupported" | "outdated";
 
 export interface ConnectResult {
   state: ConnectState;

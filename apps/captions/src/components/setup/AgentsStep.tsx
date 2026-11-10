@@ -29,7 +29,7 @@ function remoteRows(c: ComputerInfo) {
             <div className="min-w-0 flex-1 space-y-1">
               <p className="text-sm font-medium">{ROW_NAME[id]}</p>
               <p className="text-xs text-muted-foreground">{ROW_SUB[id]}</p>
-              {!d.installed && <p className="text-xs">Not installed on {c.name}. Open Creator Toolset there and press Install.</p>}
+              {!d.installed && <p className="text-xs">Not installed on {c.name}. Open Creator Toolset there and press Connect.</p>}
               {d.installed && d.signedIn === false && <p className="text-xs text-muted-foreground">Not signed in on {c.name} yet.</p>}
             </div>
             {d.installed && d.signedIn !== false && <Check aria-label={`${ROW_NAME[id]} is connected on ${c.name}`} className="mt-0.5 size-4 text-emerald-600 dark:text-emerald-400" />}

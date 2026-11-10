@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useLocation, useNavigate } from "react-router";
+import { Link, useLocation, useNavigate } from "react-router";
 import { ArrowUpRight, Check, Copy, CornerDownLeft, FileText, Film, History, KeyRound, MessageCircle, PanelRight, PanelRightClose, Pencil, RotateCcw, SquarePen, Trash2, VolumeX, X } from "lucide-react";
 import type { AssistantImage, AssistantMessage, AssistantView } from "@contracts/assistant";
 import { ReplyText } from "@/components/ReplyText";
@@ -72,7 +72,7 @@ function suggestionsFor(path: string): string[] {
 export function AssistantDock() {
   const me = useMe();
   const navigate = useNavigate();
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const { collapsed, set, quote, setQuote, images: handed, notice } = useAssistant();
   const readAloud = useReadAloud();
   const real = !!me;
@@ -133,6 +133,12 @@ export function AssistantDock() {
     const t = setInterval(() => void load(), 1500);
     return () => clearInterval(t);
   }, [real, thinking, load]);
+  // a scheduled task may post in the open chat any time: look again now and then while the dock is open
+  useEffect(() => {
+    if (!real || collapsed || thinking) return;
+    const t = setInterval(() => void load(), 15_000);
+    return () => clearInterval(t);
+  }, [real, collapsed, thinking, load]);
 
   // a reply that just finished: read it aloud, when that's on
   const waitingOn = useRef<string | null>(null);
@@ -147,6 +153,25 @@ export function AssistantDock() {
   // the reply asks to do something on the Mac: the closed bubble nudges until it's answered
   const asking = thinking && !!last?.approvals?.some((a) => a.status === "waiting");
   const unread = asking || (collapsed && seenId !== undefined && last?.role === "assistant" && last.status === "done" && last.id !== seenId);
+
+  // ?chat=<id> on any page (a scheduled task's run, the inbox): open that chat, then take the id out of the address
+  // (read fresh: a run may have made the chat since this view was loaded)
+  useEffect(() => {
+    const chat = new URLSearchParams(search).get("chat");
+    if (!chat || !real) return;
+    const q = new URLSearchParams(search);
+    q.delete("chat");
+    navigate({ pathname, search: q.toString() ? `?${q}` : "" }, { replace: true });
+    void (async () => {
+      const fresh = await getAssistant();
+      const r = fresh.ok && fresh.data.id !== chat && fresh.data.past.some((p) => p.id === chat) ? await openPast(chat) : fresh;
+      if (!r.ok) return setError(r.error);
+      setView(r.data);
+      setSeenId(r.data.messages.at(-1)?.id ?? null);
+      setShowPast(false);
+      openAssistant();
+    })();
+  }, [search, real, pathname, navigate]);
 
   // a page the assistant opened: move there once, then clear it on the server
   useEffect(() => {
@@ -684,6 +709,11 @@ function Message({ m, onRetry }: { m: AssistantMessage; onRetry?: () => void }) 
   if (m.role === "user")
     return (
       <div className={cn("ml-auto flex max-w-[85%] flex-col items-end gap-1", enter)}>
+        {m.task && (
+          <Link to={`/settings/automations?task=${encodeURIComponent(m.task.id)}`} className="text-[11px] text-muted-foreground underline-offset-2 hover:underline" title="Open the scheduled task">
+            Scheduled task · {m.task.name}
+          </Link>
+        )}
         {m.quote && (
           <p className="line-clamp-2 border-r-2 border-[color-mix(in_srgb,var(--tint)_50%,transparent)] pr-2 text-right text-xs text-muted-foreground" title={m.quote}>
             «{m.quote}»

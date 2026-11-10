@@ -16,11 +16,14 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
+import type { LocalAiView, McpResult } from "@contracts/local-ai";
 import { TOOLS, type Tool } from "@contracts/tools";
 import { MAKES, type Make } from "@contracts/work-prefs";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { connectableRows } from "@/components/settings/OwnAiSection";
 import { AgentsStep } from "@/components/setup/AgentsStep";
+import { ROW_NAME } from "@/components/setup/AiPanel";
 import { Choice } from "@/components/setup/Choice";
 import { ConnectStep, HERE } from "@/components/setup/ConnectStep";
 import { FoldersStep } from "@/components/setup/FoldersStep";
@@ -74,11 +77,32 @@ const THIS_COMPUTER: ReadonlySet<string> = new Set([HERE]);
 const PRIMARY = "min-w-28 bg-[var(--tint)] text-white hover:bg-[var(--tint)] hover:brightness-110";
 
 /**
- * First-run setup in one window, the same two screens for everyone: connect your AI → what you make (ticks the tools,
- * makes the first project quietly), then Home. Leaving the last screen saves `done`; nothing to do is asked of her.
- * Not now (the X, the footer link, Escape) hides it for this browser and remembers the screen; Home's card brings it
- * back. A click outside never closes it. Never shown on a phone. The other screens (`?setup=connect`, `folders`, `how`)
- * open alone and close with Done.
+ * "In my own AI" and "Both" on the last screen: adds Creator Toolset to each AI app found on this computer (the same
+ * request as Settings → Headless access). Null when it is done, or the one sentence to show when it could not be.
+ */
+export async function addToOwnAi(get: typeof fetch = fetch): Promise<string | null> {
+  const later = "You can add it later in Settings → Headless access.";
+  try {
+    const view = (await (await get("/api/setup/ai")).json()) as LocalAiView;
+    if (!view.local) return null; // a hosted server: there is no AI app on this computer to add it to
+    const rows = connectableRows(view);
+    if (!rows.length) return `No AI app was found on this computer to add Creator Toolset to. ${later}`;
+    for (const r of rows) {
+      const res = await get("/api/setup/ai/mcp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: r.id }) });
+      if (!res.ok || !((await res.json()) as McpResult).ok) return `Creator Toolset couldn't be added to ${ROW_NAME[r.id]}. ${later}`;
+    }
+    return null;
+  } catch {
+    return `Creator Toolset couldn't be added to your AI. ${later}`;
+  }
+}
+
+/**
+ * First-run setup in one window, the same three screens for everyone: connect your AI → what you make (ticks the
+ * tools, makes the first project quietly) → how you work best (in the app, in your own AI, or both), then Home.
+ * Leaving the last screen saves `done`; they are questions only, no job to do is asked of her. Not now (the X, the
+ * footer link, Escape) hides it for this browser and remembers the screen; Home's card brings it back. A click outside
+ * never closes it. Never shown on a phone. The other screens (`?setup=connect`, `folders`) open alone and close with Done.
  */
 export function SetupDialog() {
   const me = useMe();
@@ -97,6 +121,7 @@ export function SetupDialog() {
   const [busy, setBusy] = useState(false); // leaving "What do you make?" saves first: one press, one project
   const [footerSlot, setFooterSlot] = useState<HTMLElement | null>(null); // the folders screen portals its buttons in
   const [unsure, setUnsure] = useState<boolean | null>(null); // "Not sure yet" ticked here; null = read it from the saved answers
+  const [ownAiNote, setOwnAiNote] = useState<string | null>(null); // "In my own AI" could not be set up: said once, then Done finishes
   const asked = params.get("setup");
   // by itself only on a first sign-in (setupOpensItself); Settings → Setup and ?setup= always open it; never on a phone
   const firstRun = setupOpensItself({ logins: me?.logins, loaded, projects: projects.length });
@@ -126,7 +151,7 @@ export function SetupDialog() {
   const onConnected = useCallback((on: boolean) => void (on && load()), [load]);
 
   const savedNote = note ? (
-    <p role="status" className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-full border border-border bg-popover px-4 py-2 text-xs text-popover-foreground shadow-lg motion-safe:animate-in motion-safe:fade-in">
+    <p role="status" className="fixed bottom-4 left-1/2 z-50 [translate:-50%_0] rounded-full border border-border bg-popover px-4 py-2 text-xs text-popover-foreground shadow-lg motion-safe:animate-in motion-safe:fade-in">
       {SAVED_NOTE}
     </p>
   ) : null;
@@ -164,8 +189,13 @@ export function SetupDialog() {
   const next = async () => {
     setBusy(true);
     try {
-      if (step === "make") {
-        await saveMakes();
+      if (step === "make") await saveMakes();
+      if (step === "how") {
+        // "In my own AI" and "Both" are done here, not only remembered: Creator Toolset is added to the AI apps on this computer
+        if (prefs.talk !== "app" && ownAiNote === null) {
+          const problem = await addToOwnAi();
+          if (problem) return setOwnAiNote(problem);
+        }
         // the last screen: this is the end of setup, and it never opens by itself again
         await save({ tools, done: true });
         const name = loaded ? firstProjectName(makes, projects.length) : null;
@@ -210,7 +240,7 @@ export function SetupDialog() {
       >
         <header className="shrink-0 px-6 pt-5 sm:px-8">
           <div className="flex items-center gap-3">
-            {/* a plain count that never changes: three screens, whatever was answered */}
+            {/* a plain count that never changes, whatever was answered */}
             <p className="flex-1 text-xs font-medium tabular-nums text-muted-foreground">{!side && `${at + 1} of ${path.length}`}</p>
             <button
               type="button"
@@ -256,7 +286,18 @@ export function SetupDialog() {
 
           {step === "folders" && <FoldersStep onNext={close} actions={footerSlot} />}
 
-          {step === "how" && <HowPicker value={prefs.talk} onChange={(t) => void setTalk(t)} />}
+          {step === "how" && (
+            <div className="space-y-3">
+              <HowPicker
+                value={prefs.talk}
+                onChange={(t) => {
+                  setOwnAiNote(null);
+                  void setTalk(t);
+                }}
+              />
+              {ownAiNote && <p role="status" className="text-sm">{ownAiNote}</p>}
+            </div>
+          )}
         </div>
 
         <footer className="flex shrink-0 items-center justify-between gap-2 border-t border-border/60 px-6 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-8">
@@ -286,9 +327,9 @@ export function SetupDialog() {
                 Skip for now
               </Button>
             )}
-            {((step === "agents" && connected) || step === "make") && (
+            {((step === "agents" && connected) || step === "make" || step === "how") && (
               <Button onClick={() => void next()} disabled={busy} className={PRIMARY}>
-                {step === "make" ? "Done" : "Continue"}
+                {step === "how" ? "Done" : "Continue"}
               </Button>
             )}
           </div>
