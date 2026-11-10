@@ -267,7 +267,8 @@ function AddDialog({ open, onOpenChange, platform, startStep, view, back, projec
   const login = loginOf(platform);
   // Instagram by handle goes to the Analyzer, which reads your own account through the server's token or your Apify key
   const ig = platform === "instagram";
-  const configured = ig || (view.apify.configured && view.apify.valid !== false);
+  const ytKey = platform === "youtube" && !!view.youtubeKey;
+  const configured = ig || ytKey || (view.apify.configured && view.apify.valid !== false);
   const title = `Add ${NOUN[platform]} account`;
   const close = () => onOpenChange(false);
 
@@ -318,7 +319,7 @@ function AddDialog({ open, onOpenChange, platform, startStep, view, back, projec
               ) : (
                 <button type="button" className={choiceCls} onClick={() => setStep("handle")}>
                   <span className="text-sm font-medium">Someone's public account</span>
-                  <span className="text-xs text-muted-foreground">{configured ? "Type its @handle. Reads its public posts with your Apify key." : "Needs your Apify key first."}</span>
+                  <span className="text-xs text-muted-foreground">{ytKey ? "Type its @handle." : configured ? "Type its @handle. Reads its public posts with your Apify key." : "Needs your Apify key first."}</span>
                 </button>
               )}
             </div>
@@ -339,7 +340,7 @@ function AddDialog({ open, onOpenChange, platform, startStep, view, back, projec
             <DialogHeader>
               <DialogTitle>{title}</DialogTitle>
               <DialogDescription>
-                {ig ? "Type your @handle or profile link." : configured ? "Type its @handle or profile link. Reads its public posts with your Apify key." : "Reading public posts needs your Apify key. Add it first."}
+                {ig ? "Type your @handle or profile link." : ytKey ? "Type its @handle or channel link." : configured ? "Type its @handle or profile link. Reads its public posts with your Apify key." : "Reading public posts needs your Apify key. Add it first."}
               </DialogDescription>
             </DialogHeader>
             {configured && (

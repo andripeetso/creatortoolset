@@ -193,3 +193,37 @@ describe("the sign-in service", () => {
     }
   });
 });
+
+describe("YouTube by @handle", () => {
+  it("reads a public channel through YouTube's own API on the person's key, and on Apify without one", async () => {
+    const { saveMyKey } = await import("./my-keys");
+    const { pullAccount } = await import("./lib/connectors/platforms");
+    const a = { key: "youtube:tinyacrobatics", platform: "youtube" as const, platformId: "tinyacrobatics", handle: "tinyacrobatics", via: "apify" as const, connectedAt: 0 };
+    const asked: string[] = [];
+    vi.stubGlobal("fetch", async (url: string | URL) => {
+      const u = new URL(String(url));
+      asked.push(u.hostname + u.pathname);
+      if (u.hostname === "api.apify.com") return Response.json([], { status: 401 });
+      expect(u.searchParams.get("key")).toBe("yt-key");
+      if (u.pathname.endsWith("/channels")) {
+        expect(u.searchParams.get("forHandle")).toBe("@tinyacrobatics");
+        return Response.json({ items: [{ id: "UC1", snippet: { title: "Tiny Acrobatics" }, statistics: { subscriberCount: "910", viewCount: "50000", videoCount: "2" }, contentDetails: { relatedPlaylists: { uploads: "UU1" } } }] });
+      }
+      if (u.pathname.endsWith("/playlistItems")) return Response.json({ items: [{ snippet: { resourceId: { videoId: "v1" } } }] });
+      if (u.pathname.endsWith("/videos")) return Response.json({ items: [{ id: "v1", snippet: { title: "Crawl", publishedAt: "2026-11-01T00:00:00Z" }, statistics: { viewCount: "1200", likeCount: "80" }, contentDetails: { duration: "PT30S" } }] });
+      return Response.json({}, { status: 404 });
+    });
+    saveMyKey("ana", "YOUTUBE_API_KEY", "yt-key");
+    const got = await pullAccount(a, "ana");
+    expect(got).toMatchObject({ name: "Tiny Acrobatics", stats: { followers: 910, views: 50000, posts: 2 } });
+    expect(got.posts[0]).toMatchObject({ id: "v1", views: 1200, likes: 80, duration: 30 });
+    expect(asked.every((x) => x.startsWith("www.googleapis.com"))).toBe(true);
+    const view = (await (await app.request("/api/connectors")).json()) as { youtubeKey?: boolean };
+    expect(view.youtubeKey).toBe(true);
+
+    saveMyKey("ana", "YOUTUBE_API_KEY", null);
+    asked.length = 0;
+    await expect(pullAccount(a, "ana")).rejects.toThrow();
+    expect(asked.some((x) => x.startsWith("www.googleapis.com"))).toBe(false);
+  });
+});

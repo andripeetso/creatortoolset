@@ -3,6 +3,7 @@ import type { LoginKind, SocialPlatform, SocialPost, SocialStats } from "../../.
 import { apifyRun } from "../instagram/apify";
 import { nextAccountDaily } from "../instagram/account-insights";
 import { businessDiscoveryOn, fetchBusinessDiscovery, fetchMineAccountStats, fetchMineCatalog, fetchMineProfile, META_VERSION, withGraphCreds } from "../instagram/graph";
+import { keyFor } from "../../my-keys";
 import { readerFor, registerReader } from "./provider";
 import { mergeSnapshots, type AccountDay, type StoredAccount, type VideoSnapshot } from "./store";
 
@@ -313,18 +314,25 @@ function ytRows(r: YtReport, rep: Rec): Rec[] {
   return (Array.isArray(rep.rows) ? rep.rows : []).filter(Array.isArray).map((row) => Object.fromEntries(cols.map((c, i) => [c, row[i]])));
 }
 
-async function pullYoutube(a: StoredAccount): Promise<Pulled> {
-  const h = { headers: { Authorization: `Bearer ${a.token}` } };
-  const ch = await getJson(`https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics,contentDetails&id=${a.platformId}`, h);
+/** YouTube Data API calls: with the channel owner's sign-in (Bearer), or with an API key for public channels. */
+type YtAuth = { token: string } | { key: string };
+const yt = (path: string, auth: YtAuth) =>
+  "key" in auth
+    ? getJson(`https://www.googleapis.com/youtube/v3/${path}&key=${encodeURIComponent(auth.key)}`)
+    : getJson(`https://www.googleapis.com/youtube/v3/${path}`, { headers: { Authorization: `Bearer ${auth.token}` } });
+
+/** A channel (picked by `select`, e.g. id=… or forHandle=@…) and its 50 newest uploads with their numbers. */
+async function ytChannel(select: string, auth: YtAuth): Promise<{ c: Rec; st: Rec; posts: SocialPost[] }> {
+  const ch = await yt(`channels?part=snippet,statistics,contentDetails&${select}`, auth);
   const c = Array.isArray(ch.items) && isRec(ch.items[0]) ? ch.items[0] : {};
   const st = isRec(c.statistics) ? c.statistics : {};
   const uploads = isRec(c.contentDetails) && isRec(c.contentDetails.relatedPlaylists) ? str(c.contentDetails.relatedPlaylists.uploads) : "";
   let posts: SocialPost[] = [];
   if (uploads) {
-    const list = await getJson(`https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&maxResults=50&playlistId=${uploads}`, h);
+    const list = await yt(`playlistItems?part=snippet&maxResults=50&playlistId=${uploads}`, auth);
     const ids = (Array.isArray(list.items) ? list.items.filter(isRec) : []).map((i) => (isRec(i.snippet) && isRec(i.snippet.resourceId) ? str(i.snippet.resourceId.videoId) : "")).filter(Boolean);
     if (ids.length) {
-      const vids = await getJson(`https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics,contentDetails&id=${ids.join(",")}`, h);
+      const vids = await yt(`videos?part=snippet,statistics,contentDetails&id=${ids.join(",")}`, auth);
       posts = (Array.isArray(vids.items) ? vids.items.filter(isRec) : []).map((v) => {
         const sn = isRec(v.snippet) ? v.snippet : {};
         const s = isRec(v.statistics) ? v.statistics : {};
@@ -341,6 +349,12 @@ async function pullYoutube(a: StoredAccount): Promise<Pulled> {
       });
     }
   }
+  return { c, st, posts };
+}
+
+async function pullYoutube(a: StoredAccount): Promise<Pulled> {
+  const h = { headers: { Authorization: `Bearer ${a.token}` } };
+  const { st, posts } = await ytChannel(`id=${a.platformId}`, { token: a.token ?? "" });
   const end = isoDay(Date.now());
   const start = isoDay(Date.now() - DAYS * 86_400_000);
   const reports: Partial<Record<YtReportId, Rec[]>> = {};
@@ -414,6 +428,22 @@ function apifyStats(platform: Exclude<SocialPlatform, "instagram">, items: Rec[]
   }
   if (platform === "youtube") return { name: str(first.channelName), stats: { followers: num(first.numberOfSubscribers) } };
   return { name: str(first.pageName), stats: {} };
+}
+
+/**
+ * A public YouTube channel followed by @handle: through the official YouTube Data API on the person's own key
+ * (Settings → API keys, free quota), else on their Apify key. Numbers only the channel's owner sees (watch time,
+ * the daily reports) come with its sign-in instead.
+ */
+async function pullYoutubePublic(a: StoredAccount, username: string): Promise<Pulled> {
+  const key = keyFor(username, "YOUTUBE_API_KEY").key;
+  if (!key) return pullApify(a, username);
+  const handle = a.handle.replace(/^@+/, "");
+  const { c, st, posts } = await ytChannel(/^UC[\w-]{22}$/.test(handle) ? `id=${handle}` : `forHandle=${encodeURIComponent(`@${handle}`)}`, { key });
+  if (!str(c.id)) throw new Error(`YouTube has no channel @${handle}`);
+  const sn = isRec(c.snippet) ? c.snippet : {};
+  const avatar = isRec(sn.thumbnails) && isRec(sn.thumbnails.default) ? str(sn.thumbnails.default.url) : "";
+  return { stats: { followers: num(st.subscriberCount), views: num(st.viewCount), posts: num(st.videoCount) }, posts, name: str(sn.title) || undefined, avatar: avatar || undefined };
 }
 
 async function pullApify(a: StoredAccount, username: string): Promise<Pulled> {
@@ -491,6 +521,7 @@ export async function pullAccount(a: StoredAccount, username: string): Promise<P
 }
 
 /* The built-in readers: each login platform through its own login, and every other platform by handle on Apify. */
+registerReader({ canRead: (a) => a.via === "apify" && a.platform === "youtube", pull: pullYoutubePublic });
 registerReader({ canRead: (a) => a.via === "apify" && a.platform !== "instagram", pull: pullApify });
 registerReader({ canRead: (a) => a.via === "login" && a.platform === "instagram", pull: pullInstagram });
 registerReader({ canRead: (a) => a.via === "login" && a.platform === "facebook", pull: pullFacebook });

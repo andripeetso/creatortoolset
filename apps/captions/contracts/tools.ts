@@ -98,6 +98,7 @@ export const NEED_SHORT: Record<Have, string> = {
   ANTHROPIC_API_KEY: "an Anthropic key",
   OPENAI_API_KEY: "an OpenAI key",
   PERPLEXITY_API_KEY: "a Perplexity key",
+  YOUTUBE_API_KEY: "a YouTube Data API key",
   TYPESAFE_API_KEY: "a TypeSafe Jev key",
 };
 
@@ -117,6 +118,7 @@ export const NEED_SENTENCE: Record<Have, string> = {
   ANTHROPIC_API_KEY: "Anthropic bills you for what you use, to your own account.",
   OPENAI_API_KEY: "Used for search and descriptions in the Media Library. OpenAI bills you, to your own account.",
   PERPLEXITY_API_KEY: "Lets research look things up on the web. Perplexity bills you, to your own account.",
+  YOUTUBE_API_KEY: "Reads public YouTube channels through YouTube's own API. Free within Google's daily quota.",
   TYPESAFE_API_KEY: "Sharper picks for Content Analyzer. TypeSafe Jev bills you, to your own account.",
 };
 

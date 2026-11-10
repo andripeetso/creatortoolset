@@ -46,6 +46,7 @@ export const MY_KEYS = [
   { env: "ELEVENLABS_API_KEY", name: "ElevenLabs", group: "voice", what: "Voice isolation in the Audio Enhancer", where: "https://elevenlabs.io/app/settings/api-keys" },
   { env: "NVIDIA_API_KEY", name: "NVIDIA", group: "voice", what: "Studio Voice in the Audio Enhancer", where: "https://build.nvidia.com" },
   { env: "PERPLEXITY_API_KEY", name: "Perplexity", group: "research", what: "Accuracy check and research in the Content Workshop", where: "https://www.perplexity.ai/account/api" },
+  { env: "YOUTUBE_API_KEY", name: "YouTube Data API", group: "research", what: "Public YouTube channels you follow in Social accounts", where: "https://console.cloud.google.com/apis/library/youtube.googleapis.com" },
   { env: "OPENAI_API_KEY", name: "OpenAI", group: "ai", what: "Media Library transcripts without Deepgram, and search by meaning", where: "https://platform.openai.com/api-keys" },
   { env: "TYPESAFE_API_KEY", name: "TypeSafe Jev", group: "ai", what: "Analyzer comments and ideas, and Workshop rules" },
   // last: read only when the account has no AI of its own (api/ai-complete.ts onApiKey); the page hides it then, unless a key is saved

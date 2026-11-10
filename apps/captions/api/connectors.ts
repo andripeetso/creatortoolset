@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { getSessionUser, sessionOf, type AuthVars } from "./auth";
 import { env } from "./lib/env";
+import { keyFor } from "./my-keys";
 import { LOGINS, PLATFORMS, type ConnectorsView, type OwnInstagram, type LoginKind, type SocialPlatform } from "../contracts/connectors";
 import { accountsFromGrant, finishLogin, freshToken, loginUrl, pullAccount, refreshGrant } from "./lib/connectors/platforms";
 import { issuerFor, loginsOn, serviceRedeem, serviceRefresh, serviceStart, type Issuer } from "./lib/connectors/signin-service";
@@ -42,6 +43,7 @@ async function view(c: Context<{ Variables: AuthVars }>): Promise<ConnectorsView
     logins: await loginsOn(),
     instagram: await ownInstagram(user.username),
     apify: { configured: apify.configured, valid: apify.valid },
+    youtubeKey: !!keyFor(user, "YOUTUBE_API_KEY").key,
     accounts: readConnectors(user.username).accounts.map(publicAccount),
     extras: { sessions: sessionSources() },
   };
