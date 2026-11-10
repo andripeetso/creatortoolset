@@ -129,7 +129,7 @@ struct RelayOptions: Equatable {
 
 /// The Keychain service that keeps provider environment values, one item per instance and variable. Its account is
 /// "<instance id>/<NAME>". The values are written from this Mac only, never sent to the server.
-let providerEnvService = "com.creatortoolset.mac.env"
+let providerEnvService = AppIdentity.keychain("env")
 
 /// The Keychain value of one provider environment variable, or nil when none is kept here.
 func providerEnvValue(_ account: String) -> String? {
@@ -343,7 +343,7 @@ private func jsonLine(_ obj: [String: Any]) -> Data {
 /// The assistant's own folder on this Mac, one per server (the device token is per server, so per account):
 /// ~/Library/Application Support/Creator Toolset/assistant/<host>.
 func assistantFolder(host: String, home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
-    home.appendingPathComponent("Library/Application Support/Creator Toolset/assistant").appendingPathComponent(safeName(host.isEmpty ? "site" : host))
+    home.appendingPathComponent("Library/Application Support/Creator Toolset\(AppIdentity.tag())/assistant").appendingPathComponent(safeName(host.isEmpty ? "site" : host))
 }
 
 /// The prompt: the folder note first when there is a folder (the Mac relay request_text).

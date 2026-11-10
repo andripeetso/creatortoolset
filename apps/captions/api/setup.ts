@@ -11,7 +11,7 @@ import { readConnectors } from "./lib/connectors/store";
 import { publicApifyStatus, readApify } from "./lib/instagram/apify";
 import { deviceTranscribes } from "./lib/device-transcribe";
 import { connectedOwn } from "./lib/providers";
-import { addMcp, connectCli, installCli, localAiView, signIn, CLI_IDS, MAC_ONLY } from "./lib/local-ai";
+import { addMcp, connectCli, installCli, localAiView, signIn, updateCli, CLI_IDS, MAC_ONLY } from "./lib/local-ai";
 import { ownedProjects } from "./lib/workshop/workspace";
 import { ensureLibrary, homeOf } from "./library/access";
 import { libraryDb } from "./library/db";
@@ -246,6 +246,13 @@ setupApp.post("/ai/install", async (c) => {
   const id = cliOf(((await c.req.json().catch(() => null)) as { id?: unknown } | null)?.id);
   if (!id) return c.json({ error: "Pick Claude Code, Codex or Gemini CLI" }, 400);
   return c.json(await installCli(id));
+});
+
+setupApp.post("/ai/update", async (c) => {
+  if (!ownComputer(c.get("user"))) return c.json({ ok: false, message: MAC_ONLY }, 403);
+  const id = cliOf(((await c.req.json().catch(() => null)) as { id?: unknown } | null)?.id);
+  if (!id) return c.json({ error: "Pick Claude Code or Codex" }, 400);
+  return c.json(await updateCli(id));
 });
 
 setupApp.post("/ai/mcp", async (c) => {

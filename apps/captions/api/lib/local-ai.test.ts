@@ -349,29 +349,33 @@ describe("the list setup shows", () => {
 describe("Creator Toolset in each CLI", () => {
   const keyIn = (calls: string[]) => calls.find((c) => c.includes("mcp add --transport"))?.match(/ctk_[0-9a-f]+/)?.[0];
 
-  it("mints one new Full key and writes it into the CLI", async () => {
+  it("makes the CLI a key of its own and writes it in", async () => {
     const calls = world(["claude"], () => undefined);
     const { result, mcpTo } = await local.addMcp("ana", "claude", [], 4123);
     expect(result).toEqual({ ok: true, added: ["claude"], failed: [] });
     expect(mcpTo).toEqual(["claude"]);
     const key = keyIn(calls);
     expect(key).toMatch(/^ctk_[0-9a-f]{48}$/);
-    expect(findUser("ana")?.fullKeyHash).toBeTruthy();
+    expect(findUser("ana")?.aiKeys?.map((k) => k.name)).toEqual(["Claude Code"]);
+    expect(findUser("ana")?.aiKeys?.[0]?.last4).toBe(key?.slice(-4));
   });
 
-  it("rewrites every CLI that holds the entry with the same new key, and each Codex write replaces the file", async () => {
+  it("Connect on Codex writes only Codex; Claude keeps its own key, and Codex's earlier key goes", async () => {
     mkdirSync(codexHome, { recursive: true });
     writeFileSync(path.join(codexHome, "config.toml"), 'model = "o3"\n\n[mcp_servers.creator-toolset]\nurl = "http://127.0.0.1:4123/api/mcp"\n');
     const calls = world(["claude", "codex"], (_f, args) => {
       if (args.join(" ") === "mcp add --help") return { stdout: "--url" };
       return undefined;
     });
-    const { result } = await local.addMcp("ben", "codex", ["claude"], 4123);
-    expect(result.ok).toBe(true);
-    expect(result.added).toEqual(["claude", "codex"]);
-    const key = keyIn(calls);
-    expect(readFileSync(path.join(codexHome, "config.toml"), "utf8")).toContain(`Bearer ${key}`);
-    expect(calls.some((c) => c.includes("codex mcp add creator-toolset"))).toBe(false);
+    await local.addMcp("ben", "claude", [], 4123);
+    await local.addMcp("ben", "codex", ["claude"], 4123);
+    const { result, mcpTo } = await local.addMcp("ben", "codex", ["claude", "codex"], 4123);
+    expect(result).toEqual({ ok: true, added: ["codex"], failed: [] });
+    expect(mcpTo).toEqual(["claude", "codex"]);
+    expect(findUser("ben")?.aiKeys?.map((k) => k.name)).toEqual(["Claude Code", "Codex"]);
+    const codexKey = readFileSync(path.join(codexHome, "config.toml"), "utf8").match(/Bearer (ctk_[0-9a-f]+)/)?.[1];
+    expect(codexKey?.slice(-4)).toBe(findUser("ben")?.aiKeys?.[1]?.last4);
+    expect(calls.filter((c) => c.includes("mcp add --transport")).length).toBe(1);
     expect(readdirSync(codexHome).filter((f) => f.includes("tmp"))).toEqual([]);
   });
 
@@ -399,21 +403,42 @@ describe("Creator Toolset in each CLI", () => {
     });
     const r = await local.addMcp("eve", "codex", ["claude"], 4123);
     expect(r.result.ok).toBe(false);
-    expect(r.result.added).toEqual(["claude"]);
+    expect(r.result.added).toEqual([]);
     expect(r.result.failed.map((f) => f.id)).toEqual(["codex"]);
-    expect(r.result.failed[0]?.message).toMatch(/^Creator Toolset couldn't be added to Codex: .* Your AI is still connected\.$/);
+    expect(r.result.failed[0]?.message).toMatch(/^Creator Toolset couldn't be added to Codex: /);
     expect(r.mcpTo).toEqual(["claude"]);
+    expect(findUser("eve")?.aiKeys ?? []).toEqual([]);
     expect(calls.some((c) => c.includes("mcp add creator-toolset"))).toBe(true);
   });
 
   it("changes nothing for an old Codex: no key is made, nothing is written", async () => {
     world(["codex"], (_f, args) => (args.join(" ") === "mcp add --help" ? { stdout: "Usage: codex mcp add <NAME> [COMMAND]" } : undefined));
-    const before = findUser("ana")?.fullKeyHash;
+    const before = findUser("ana")?.aiKeys?.length;
     const r = await local.addMcp("ana", "codex", ["claude"], 4123);
     expect(r.result.ok).toBe(false);
     expect(r.result.failed[0]?.message).toBe("Codex needs an update before it can use Creator Toolset.");
     expect(r.mcpTo).toEqual(["claude"]);
-    expect(findUser("ana")?.fullKeyHash).toBe(before);
+    expect(findUser("ana")?.aiKeys?.length).toBe(before);
+  });
+
+  it("Update runs Codex's own update here, then Codex takes the address", async () => {
+    let updated = false;
+    const calls = world(["codex"], (_f, args) => {
+      if (args.join(" ") === "mcp add --help") return { stdout: updated ? "--url" : "Usage: codex mcp add <NAME> [COMMAND]" };
+      return undefined;
+    });
+    local.setRunnerForTests(async (file, args, opt) => {
+      if (file === "/bin/zsh" && args[0] === "-lc") {
+        calls.push(args[1] as string);
+        updated = true;
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      if (file === "/bin/zsh") return { stdout: "/fake/bin/codex\n", stderr: "", code: 0 };
+      return { stdout: args.join(" ") === "mcp add --help" ? (updated ? "--url" : "Usage") : "", stderr: "", code: 0 };
+    });
+    local.forgetCli("codex");
+    expect(await local.updateCli("codex")).toEqual({ ok: true, message: "Codex is updated." });
+    expect(calls).toContain("npm install -g @openai/codex@latest");
   });
 
   it("writes the entry's header with the key in it, and Codex's key header under the entry", () => {

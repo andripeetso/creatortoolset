@@ -65,8 +65,8 @@ const STATIC_ROWS = [
   { section: "connectors", id: "platform-x", title: "X", description: "Public accounts by @handle", keywords: ["x", "twitter", "follow", "handle", "tweets"] },
   // API keys: the Apify key reads other creators' posts (its routes are the account's own, not api/my-keys.ts)
   { section: "keys", id: "apify-key", title: "Apify", description: "Public accounts on TikTok, YouTube, X, Facebook and Instagram", keywords: ["apify", "token", "instagram", "tiktok", "youtube", "facebook", "x", "follow", "handle", "api key"] },
-  // Use from your AI: your own AI (Claude Code, Codex) or a script uses Creator Toolset as you
-  { section: "own-ai", id: "connect-ai", title: "Use Creator Toolset from your AI", keywords: ["claude", "chatgpt", "codex", "mcp", "script", "connector", "connect your ai", "use from your ai"] },
+  // Headless access: your own AI (Claude Code, Codex) or a script uses Creator Toolset as you
+  { section: "own-ai", id: "connect-ai", title: "Use Creator Toolset from Claude Code or Codex", keywords: ["headless", "install", "claude code", "chatgpt", "codex", "mcp", "script", "connector", "ai access", "use from your ai", "terminal", "command"] },
   { section: "own-ai", id: "access-keys", title: "Access keys", keywords: ["key", "api key", "mcp", "script", "review", "full access", "claude"] },
   // Servers (Mac app)
   { section: "servers", id: "servers-list", title: "Servers", keywords: ["server", "open", "rename", "remove", "address"] },

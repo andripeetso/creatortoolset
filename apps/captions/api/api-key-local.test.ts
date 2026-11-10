@@ -11,7 +11,7 @@ const app = (await import("./boot")).default;
 
 describe("AI access keys on a solo install (no sign-in)", () => {
   it("lists none, makes one, and lists its last four", async () => {
-    expect(await (await app.request("/api/auth/api-key")).json()).toEqual({ review: null, full: null });
+    expect(await (await app.request("/api/auth/api-key")).json()).toEqual({ review: null, full: null, ai: [] });
 
     const made = await app.request("/api/auth/api-key", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     expect(made.status).toBe(200);

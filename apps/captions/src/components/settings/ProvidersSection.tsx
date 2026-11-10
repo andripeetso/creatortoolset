@@ -25,7 +25,7 @@ import { cn } from "@/lib/utils";
 import { msg } from "./helpers";
 import { AddProviderDialog } from "./AddProviderDialog";
 import { ProviderDetail } from "./ProviderDetail";
-import { DriverMark, ProviderInstanceCard, providerStatus, withInstance, type ProviderStatus } from "./ProviderInstanceCard";
+import { DriverMark, PROVIDER_ROW, ProviderInstanceCard, providerStatus, withInstance, type ProviderStatus } from "./ProviderInstanceCard";
 import { getLocalAi, isLocalCli, LocalAiRows, localInstall, localSignIn } from "./AiSetup";
 import { Advanced, Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Row, Section, SettingsSelect, saveFailed, Status, StatusDot } from "./ui";
 import type { SearchRowId } from "./search";
@@ -36,11 +36,12 @@ const SIGN_IN_DRIVERS: string[] = ["claude", "codex", "grok"];
 const USE_DEFAULT = "use-default";
 
 /**
- * Settings → Providers. The computers that run AI are tabs on top; the AIs on the chosen computer are the list, with the
- * tools it has installed and not yet added below them (each with Add). The AI's settings open beside the list from `lg`,
- * and as their own page (`sub` = the AI's id) below it. "Who does what" sets the Default and the tool-by-tool picks.
+ * Settings → Providers. The computers that run AI are tabs on top. Under them is one bordered panel: on the left the
+ * AIs on the chosen computer, the tools it has installed and not yet added (each with Add) and Add provider; on the
+ * right the chosen AI's settings. Below `lg` the panel shows one or the other (`sub` = the AI's id is its own page).
+ * "Who does what" sets the Default and the tool-by-tool picks.
  * A member sees the AI they use: their own, or the team's API budget. On an own-computer install with no Mac app paired,
- * the list is the AI apps found on this computer (the same source as Use from your AI).
+ * the list is the AI apps found on this computer (the same source as Headless access).
  */
 /** "2.1.321" from "2.1.321 (Claude Code)", "codex-cli 0.39.0" or "grok 1.0.4 (d846eb93d94d)": the number a person reads. */
 export const shortVersion = (v: string | undefined): string | undefined => v?.match(/\d+(?:\.\d+)+/)?.[0] ?? v;
@@ -176,7 +177,9 @@ export function ProvidersSection({ sub }: { sub?: string }) {
   const listed = readOnly ? [] : (editing?.instances ?? []).filter((i) => !!tabGroup && tabGroup.records.some((r) => r.id === deviceOf(i)));
   const onDevice = (i: ProviderInstance) => devices.some((d) => d.id === deviceOf(i));
   const orphans = readOnly || !editing ? [] : editing.instances.filter((i) => !onDevice(i));
-  const detailInst = readOnly || !editing ? undefined : sub ? editing.instances.find((i) => i.id === sub) : listed[0];
+  const detailInst = readOnly || !editing ? undefined : sub ? editing.instances.find((i) => i.id === sub) : (listed[0] ?? orphans[0]);
+  // the right half exists when there is an AI to show there (or the address names one that is gone)
+  const twoPane = !!detailInst || !!sub;
   const installedHere = !readOnly && tabDevice?.report ? tabDevice.report.drivers.filter((d) => d.installed && runsOn(d.driver) && !listed.some((i) => i.driver === d.driver)) : [];
   // this computer is the owner's own (an own-computer install): its sign-in and install run here, through the local routes
   const localHere = !!localAi?.local;
@@ -369,104 +372,88 @@ export function ProvidersSection({ sub }: { sub?: string }) {
         </Tabs>
       )}
 
-      <div className="grid gap-8 lg:grid-cols-[22rem_minmax(0,1fr)]">
-        <div className={cn("min-w-0 space-y-8", sub && "hidden lg:block")}>
-          <Section
-            id="add-provider"
-            title="Providers"
-            action={
-              <Button size="xs" variant="ghost" onClick={() => openAdd()}>
-                <Plus /> Add provider
-              </Button>
-            }
-          >
-            <Card>
-              {listed.length === 0 && (
-                <EmptyRow title="No AI on this computer yet" description="Add a tool the computer has, or add one from the list below." />
-              )}
-              {listed.map((inst) => (
-                <ProviderInstanceCard
-                  key={inst.id}
-                  inst={inst}
-                  status={statusOf(inst)}
-                  version={shortVersion(reportOf(inst)?.drivers.find((d) => d.driver === inst.driver)?.version)}
-                  selected={detailInst?.id === inst.id}
-                  href={detailOpen(inst)}
-                  action={actionOf(inst, statusOf(inst))}
-                  onToggle={(on) => patch(inst, { enabled: on })}
+      {/* one panel: the list on the left, the chosen AI's settings on the right (below `lg`, one or the other) */}
+      <Section id="add-provider" title="Providers">
+        <div className={cn("overflow-hidden rounded-xl border border-border/60 bg-card/40 text-foreground", twoPane && "lg:grid lg:grid-cols-[20rem_minmax(0,1fr)]")}>
+          <div className={cn("min-w-0 [&>*+*]:border-t [&>*+*]:border-border/50", twoPane && "lg:border-r lg:border-border/50", sub && "hidden lg:block")}>
+            {[...listed, ...orphans].map((inst) => (
+              <ProviderInstanceCard
+                key={inst.id}
+                inst={inst}
+                status={statusOf(inst)}
+                version={shortVersion(reportOf(inst)?.drivers.find((d) => d.driver === inst.driver)?.version)}
+                selected={detailInst?.id === inst.id}
+                href={detailOpen(inst)}
+                action={actionOf(inst, statusOf(inst))}
+                onToggle={onDevice(inst) ? (on) => patch(inst, { enabled: on }) : undefined}
+              />
+            ))}
+            {/* the tools this computer has that are not added yet: Add is their one action */}
+            {installedHere.map((d) => (
+              <ListRow
+                key={`installed-${d.driver}`}
+                className={PROVIDER_ROW}
+                icon={<DriverMark driver={d.driver} />}
+                title={
+                  <>
+                    {nameOf(d.driver)}
+                    {d.version && <span className="ml-2 font-mono text-xs font-normal text-muted-foreground">v{shortVersion(d.version)}</span>}
+                  </>
+                }
+                actions={
+                  <Button size="xs" variant="outline" onClick={() => openAdd(d.driver)} aria-label={`Add ${nameOf(d.driver)}`}>
+                    Add
+                  </Button>
+                }
+              />
+            ))}
+            <button
+              type="button"
+              onClick={() => openAdd()}
+              className="flex h-12 w-full items-center gap-3 px-3 text-left text-sm text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:px-4"
+            >
+              <span className="flex size-5 items-center justify-center">
+                <Plus className="size-4" aria-hidden />
+              </span>
+              Add provider
+            </button>
+          </div>
+
+          {twoPane && (
+            <div className={cn("min-w-0", !sub && "hidden lg:block")}>
+              {detailInst && editing ? (
+                <ProviderDetail
+                  inst={detailInst}
+                  status={statusOf(detailInst)}
+                  check={view.checks[`${scope}:${detailInst.id}`]}
+                  checking={checking === `${scope}:${detailInst.id}`}
+                  canTest={(devices.find((d) => d.id === deviceOf(detailInst))?.online ?? true) && checking === null}
+                  used={usedBy(detailInst.id)}
+                  models={modelsOf(view, detailInst)}
+                  selection={effectiveSelection(editing, detailInst, modelsOf(view, detailInst))}
+                  computers={!onDevice(detailInst) ? devices.map((d) => ({ id: d.id, name: d.name })) : undefined}
+                  computerNote={!onDevice(detailInst) ? (deviceOf(detailInst) ? "Its computer was removed: pick another." : "Pick the computer that runs it.") : undefined}
+                  backTo="/settings/providers"
+                  onChange={(p) => patch(detailInst, p)}
+                  onTest={() => void runCheck(detailInst)}
+                  onSignIn={statusOf(detailInst).action === "sign-in" && localHere && isLocalCli(detailInst.driver) ? () => signInHere(detailInst) : statusOf(detailInst).action === "sign-in" && canSignIn(detailInst) ? () => signIn(detailInst) : undefined}
+                  onMove={onDevice(detailInst) ? undefined : (id) => patch(detailInst, { device: id })}
+                  onRemove={() => remove(detailInst)}
                 />
-              ))}
-            </Card>
-          </Section>
-
-          {installedHere.length > 0 && (
-            <Section title="Also on this computer">
-              <Card>
-                {installedHere.map((d) => (
-                  <ListRow
-                    key={`installed-${d.driver}`}
-                    className="min-h-[4.5rem]"
-                    icon={<DriverMark driver={d.driver} />}
-                    title={
-                      <>
-                        {nameOf(d.driver)}
-                        {d.version && <span className="ml-2 font-mono text-xs font-normal text-muted-foreground">v{shortVersion(d.version)}</span>}
-                      </>
-                    }
-                    actions={
-                      <Button size="xs" variant="outline" onClick={() => openAdd(d.driver)} aria-label={`Add ${nameOf(d.driver)}`}>
-                        Add
-                      </Button>
-                    }
-                  />
-                ))}
-              </Card>
-            </Section>
-          )}
-
-          {orphans.length > 0 && editing && (
-            <Section title="Not on a computer">
-              <Card>
-                {orphans.map((inst) => (
-                  <ProviderInstanceCard key={inst.id} inst={inst} status={statusOf(inst)} selected={detailInst?.id === inst.id} href={detailOpen(inst)} />
-                ))}
-              </Card>
-            </Section>
+              ) : (
+                <>
+                  <EmptyRow title="This AI is no longer here" />
+                  <div className="px-3 pb-3 sm:px-4">
+                    <Button asChild size="sm" variant="outline">
+                      <Link to="/settings/providers">Back to the list</Link>
+                    </Button>
+                  </div>
+                </>
+              )}
+            </div>
           )}
         </div>
-
-        <div className={cn("min-w-0", !sub && "hidden lg:block")}>
-          {detailInst && editing && tabDevice ? (
-            <ProviderDetail
-              inst={detailInst}
-              status={statusOf(detailInst)}
-              check={view.checks[`${scope}:${detailInst.id}`]}
-              checking={checking === `${scope}:${detailInst.id}`}
-              canTest={(devices.find((d) => d.id === deviceOf(detailInst))?.online ?? true) && checking === null}
-              used={usedBy(detailInst.id)}
-              models={modelsOf(view, detailInst)}
-              selection={effectiveSelection(editing, detailInst, modelsOf(view, detailInst))}
-              computers={!onDevice(detailInst) ? devices.map((d) => ({ id: d.id, name: d.name })) : undefined}
-              computerNote={!onDevice(detailInst) ? (deviceOf(detailInst) ? "Its computer was removed: pick another." : "Pick the computer that runs it.") : undefined}
-              backTo="/settings/providers"
-              onChange={(p) => patch(detailInst, p)}
-              onTest={() => void runCheck(detailInst)}
-              onSignIn={statusOf(detailInst).action === "sign-in" && localHere && isLocalCli(detailInst.driver) ? () => signInHere(detailInst) : statusOf(detailInst).action === "sign-in" && canSignIn(detailInst) ? () => signIn(detailInst) : undefined}
-              onMove={onDevice(detailInst) ? undefined : (id) => patch(detailInst, { device: id })}
-              onRemove={() => remove(detailInst)}
-            />
-          ) : sub ? (
-            <Card>
-              <EmptyRow title="This AI is no longer here" />
-              <div className="px-3 pb-3 sm:px-4">
-                <Button asChild size="sm" variant="outline">
-                  <Link to="/settings/providers">Back to the list</Link>
-                </Button>
-              </div>
-            </Card>
-          ) : null}
-        </div>
-      </div>
+      </Section>
 
       {view.teamAi && (
         <div className={cn("mt-8", sub && "hidden lg:block")}>

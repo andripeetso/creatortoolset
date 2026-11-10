@@ -121,7 +121,7 @@ export interface ProviderInstance {
   /** the plug-in preset it was added from; its endpoint comes from that preset on the server, never from this file */
   preset?: string;
   /** the last check that ran on it (written by the check, kept across restarts); setup's "Connected" is this passing */
-  lastCheck?: { ok: boolean; at: number; ms: number };
+  lastCheck?: { ok: boolean; at: number; ms: number; note?: string };
 }
 
 /** A command the Mac starts to run an ACP agent over stdio, and its arguments. */
@@ -265,6 +265,8 @@ export interface ProviderCheck {
   model?: string;
   text?: string;
   error?: string;
+  /** on a passing check: what the person should know although it works ("Weekly limit reached, resets Friday 09:00") */
+  note?: string;
   at: number;
 }
 

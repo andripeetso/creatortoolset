@@ -14,6 +14,8 @@
 #   BUNDLE_ID=…           the bundle id (default com.creatortoolset.mac); an installed build keeps its id to keep updating
 #   APP_NAME=…            the name in the menu bar and Dock (default Creator Toolset)
 #   DEFAULT_SERVER=…      a server added to the Servers list on first launch (https, or localhost); default none
+#   OUT=…                 the .app to write (default apps/mac/build/Creator Toolset.app); scripts/fresh-user.sh uses it
+#   BUILD_ENV=…           another settings file in place of apps/mac/build.env (/dev/null: none)
 #   apps/mac/build.env    the same settings in a git-ignored file (see build.env.example); the file is read first and
 #                         any setting already in the environment wins, so release.sh's FEED_URL still applies
 # Without both Sparkle settings, the app is built with no updater: it never checks for or installs updates.
@@ -30,7 +32,7 @@ mkdir -p "$TMPDIR"
 
 # this build's own settings (build.env): read it, then put back what the environment already set
 given="$(env | grep -E '^(BUNDLE_ID|APP_NAME|DEFAULT_SERVER|SPARKLE_PUBLIC_KEY|FEED_URL|VERSION)=' || true)"
-if [ -f "$here/build.env" ]; then set -a; . "$here/build.env"; set +a; fi
+if [ -f "${BUILD_ENV:-$here/build.env}" ]; then set -a; . "${BUILD_ENV:-$here/build.env}"; set +a; fi
 while IFS= read -r kv; do [ -z "$kv" ] || export "$kv"; done <<< "$given"
 # values go into the XML Info.plist, so & and < are escaped
 xml_escape() { printf "%s" "$1" | sed -e "s/&/\\&amp;/g" -e "s/</\\&lt;/g" -e "s/>/\\&gt;/g"; }
@@ -39,7 +41,8 @@ app_name="$(xml_escape "${APP_NAME:-Creator Toolset}")"
 
 swift build -c release
 bin="$(swift build -c release --show-bin-path)/CreatorToolsetMac"
-app="$here/build/Creator Toolset.app"
+app="${OUT:-$here/build/Creator Toolset.app}"
+mkdir -p "$(dirname "$app")"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/Frameworks"
 cp "$bin" "$app/Contents/MacOS/CreatorToolsetMac"
@@ -67,6 +70,14 @@ channel=""
 default_server=""
 [ -z "${DEFAULT_SERVER:-}" ] || default_server="  <key>CTDefaultServer</key><string>$(xml_escape "$DEFAULT_SERVER")</string>"
 
+# a copy beside the released app (com.creatortoolset.mac.<name>, Identity.swift) does not claim creatortoolset:// links:
+# they stay the released app's
+url_types="  <key>CFBundleURLTypes</key><array><dict>
+    <key>CFBundleURLName</key><string>Creator Toolset link</string>
+    <key>CFBundleURLSchemes</key><array><string>creatortoolset</string></array>
+  </dict></array>"
+case "${BUNDLE_ID:-}" in com.creatortoolset.mac.?*) url_types="";; esac
+
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -82,10 +93,7 @@ $sparkle
 $channel
 $default_server
   <key>CFBundleIconFile</key><string>AppIcon</string>
-  <key>CFBundleURLTypes</key><array><dict>
-    <key>CFBundleURLName</key><string>Creator Toolset link</string>
-    <key>CFBundleURLSchemes</key><array><string>creatortoolset</string></array>
-  </dict></array>
+$url_types
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
   <key>LSUIElement</key><false/>

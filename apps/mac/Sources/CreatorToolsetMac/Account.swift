@@ -172,7 +172,7 @@ typealias AccountReply = [String: String]
 /// The sign-in flow and the stored account: the token in the Keychain, the profile in UserDefaults, both per server.
 @MainActor
 final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
-    static let vault = "com.creatortoolset.mac.account"
+    static let vault = AppIdentity.keychain("account")
     private let serverKey = "accountServer"
     /// Where the sign-in sheet sits, and what to do with a new profile (the server on this Mac takes it).
     var window: () -> NSWindow? = { nil }

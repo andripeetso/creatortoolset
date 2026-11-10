@@ -42,6 +42,8 @@ export function providerStatus(o: {
     const computer = /did not pick up|is offline|stopped answering/i.test(o.check.error ?? "");
     return { tone: "broken", text: computer ? "Computer didn't answer" : "Didn't answer", action: signIn ? "sign-in" : "test" };
   }
+  // it works, with something to know (a plan limit and when it resets): said plainly, nothing to press
+  if (o.check?.ok && o.check.note) return { tone: "neutral", text: o.check.note };
   if (o.found?.signedIn && o.found.plan) return { tone: "neutral", text: `${o.found.plan.charAt(0).toUpperCase()}${o.found.plan.slice(1)} plan` };
   return { tone: "neutral", text: "" };
 }
@@ -124,7 +126,8 @@ export function ProviderInstanceCard({
       status={status.text ? <Status tone={status.tone === "neutral" ? undefined : status.tone}>{status.text}</Status> : <span className="block min-h-4" />}
       actions={
         <div className="relative z-10 flex items-center gap-2">
-          {action}
+          {/* the chosen AI's button is in its settings beside the list (from `lg`, where both are on screen) */}
+          {action && <span className={cn("flex items-center", selected && "lg:hidden")}>{action}</span>}
           {onToggle && <Switch checked={inst.enabled} onCheckedChange={onToggle} aria-label={`Use ${inst.name}`} />}
         </div>
       }

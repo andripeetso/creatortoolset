@@ -10,7 +10,7 @@ import { addInstanceTo, type ProviderInstance } from "../../contracts/providers"
 import { checkInstance } from "../providers";
 import { connectedOwn, modelsFor, ownSettings, parseSettings, saveSettings } from "./providers";
 import { deviceOf, isOnline } from "./devices";
-import { findUser, newApiKey, type UserRecord } from "../users";
+import { dropAiKey, findUser, newAiKey, type UserRecord } from "../users";
 
 /**
  * Setup's "Connect your AI" (Settings → Providers shares it): finds the AI command-line tools on this Mac, connects one
@@ -122,7 +122,9 @@ export function forgetCli(id: CliId): void {
 }
 
 /** Where the managed Node.js is kept (installNode), and its bin folder. */
-const nodeRoot = (): string => path.join(os.homedir(), "Library", "Application Support", "Creator Toolset", "node");
+// CT_APP_FOLDER: the Mac app's own Application Support folder (Server.swift); the default is the released app's.
+const nodeRoot = (): string =>
+  path.join(process.env.CT_APP_FOLDER || path.join(os.homedir(), "Library", "Application Support", "Creator Toolset"), "node");
 /** PATH for a spawn: the binary's own folder, the managed Node's (once this server installed it), then the rest. */
 export const toolPath = (bin: string): string =>
   [path.dirname(bin), ...(existsSync(path.join(nodeRoot(), "bin")) ? [path.join(nodeRoot(), "bin")] : []), process.env.PATH ?? ""].join(":");
@@ -559,31 +561,40 @@ async function writeEntry(id: CliId, key: string, port: number): Promise<void> {
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 /**
- * Makes one new Full key (the old one stops working) and writes it into every CLI that holds the entry, plus `id`.
- * `mcpTo` is what the setup file holds now. The returned `mcpTo` is the CLIs that took the new key. Nothing changes
- * when `id` is an old Codex or not found.
+ * Install on Settings → Headless access: makes `id` a Full key of its own (its earlier one goes, the other apps' keys stay) and
+ * writes it into that CLI. `mcpTo` is what the setup file holds now; the returned one lists `id` only once it took the
+ * key. Nothing changes when `id` is an old Codex or not found.
  */
 export async function addMcp(username: string, id: CliId, mcpTo: CliId[], port: number): Promise<{ result: McpResult; mcpTo: CliId[] }> {
   const user: UserRecord | null = findUser(username);
   if (!user) return { result: { ok: false, added: [], failed: [{ id, message: "Sign in with an account first." }] }, mcpTo };
-  if (id === "gemini") return { result: { ok: false, added: [], failed: [{ id, message: "Creator Toolset isn't added to Gemini CLI in this release. Your AI is still connected." }] }, mcpTo };
+  if (id === "gemini") return { result: { ok: false, added: [], failed: [{ id, message: "Creator Toolset isn't added to Gemini CLI in this release." }] }, mcpTo };
   const p = await probe(id, true);
   const stop = (message: string): { result: McpResult; mcpTo: CliId[] } => ({ result: { ok: false, added: [], failed: [{ id, message }] }, mcpTo });
-  if (!p.found) return stop(`Creator Toolset couldn't be added to ${NAMES[id]}: ${MISSING} Your AI is still connected.`);
+  if (!p.found) return stop(`Creator Toolset couldn't be added to ${NAMES[id]}: ${MISSING}`);
   if (id === "codex" && !p.supportsUrl) return stop("Codex needs an update before it can use Creator Toolset.");
 
-  const targets = [...new Set<CliId>([...mcpTo, id])];
-  const key = newApiKey(user, "full");
-  const added: CliId[] = [];
-  const failed: McpResult["failed"] = [];
-  for (const t of targets) {
-    try {
-      await writeEntry(t, key, port);
-      added.push(t);
-    } catch (e) {
-      failed.push({ id: t, message: `Creator Toolset couldn't be added to ${NAMES[t]}: ${plainError(errText(e)).message} Your AI is still connected.` });
-    }
+  const others = mcpTo.filter((t) => t !== id);
+  const earlier = (user.aiKeys ?? []).filter((k) => k.name === NAMES[id]);
+  const { id: keyId, key } = newAiKey(user, NAMES[id]);
+  try {
+    await writeEntry(id, key, port);
+  } catch (e) {
+    dropAiKey(user, keyId);
+    return { result: { ok: false, added: [], failed: [{ id, message: `Creator Toolset couldn't be added to ${NAMES[id]}: ${plainError(errText(e)).message}` }] }, mcpTo: others };
   }
-  // only the CLIs that now hold the new key stay listed as added; a failed one shows its action again (Try again is the same action)
-  return { result: { ok: failed.length === 0, added, failed }, mcpTo: added };
+  // the CLI now holds the new key: its earlier ones would only be rows that no longer work
+  for (const k of earlier) dropAiKey(user, k.id);
+  return { result: { ok: true, added: [id], failed: [] }, mcpTo: [...others, id] };
+}
+
+/** Codex too old to take an address: its own update (brew or npm, as it was installed), run here. */
+export async function updateCli(id: CliId): Promise<SignInResult> {
+  if (id !== "codex") return { ok: false, message: `${NAMES[id]} doesn't need an update here.` };
+  const p = await probe(id, true);
+  if (!p.found || !p.bin) return { ok: false, message: MISSING };
+  const out = await run("/bin/zsh", ["-lc", codexUpdateCommand(p.bin, p.real)], { env: { ...process.env, PATH: toolPath(p.bin) }, timeout: STEP_MS });
+  forgetCli(id);
+  if (out.code !== 0) return { ok: false, message: "Codex didn't update. Try again.", raw: tailOf(out) };
+  return (await probe(id, true)).supportsUrl ? { ok: true, message: "Codex is updated." } : { ok: false, message: "Codex updated, but it is still too old for this." };
 }

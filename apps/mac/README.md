@@ -21,6 +21,13 @@ pnpm mac:open         # launch it
 pnpm mac:test         # swift test (the logic and the relay)
 ```
 
+**A first run as a new user, beside the released app:** `scripts/fresh-user.sh` builds a copy with its own bundle id
+(`com.creatortoolset.mac.fresh`, "Creator Toolset Fresh") into `build/fresh` (`FRESH_DIR=…` for another folder), wipes
+only that copy's state (defaults, Application Support "Creator Toolset (fresh)", WebKit, caches, logs, its four Keychain
+services), and opens it. `--rebuild` rebuilds first, `--keep` opens it without wiping. Its server uses port 43129 and it
+does not claim `creatortoolset://` links. Only a bundle id that extends the released one (`com.creatortoolset.mac.<name>`)
+is such a copy (`Identity.swift`); every other id keeps the app's usual names.
+
 Build settings are environment variables, read by `scripts/build-app.sh` at build time. None is required:
 
 | Variable | Default | What it does |

@@ -65,7 +65,7 @@ async function viewFor(u: SessionUser): Promise<ProvidersView> {
   for (const [scope, set] of sets)
     for (const i of set?.instances ?? []) {
       const k = `${scope}:${i.id}`;
-      if (!checks[k] && i.lastCheck) checks[k] = { ok: i.lastCheck.ok, at: i.lastCheck.at, ms: i.lastCheck.ms };
+      if (!checks[k] && i.lastCheck) checks[k] = { ok: i.lastCheck.ok, at: i.lastCheck.at, ms: i.lastCheck.ms, ...(i.lastCheck.note ? { note: i.lastCheck.note } : {}) };
     }
 
   // admins also see the workspace's usage; everyone sees their own scope's

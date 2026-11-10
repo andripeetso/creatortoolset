@@ -150,7 +150,7 @@ export async function recordCheck(key: string, c: ProviderCheck): Promise<void> 
   const s = scope === "workspace" ? providerSettings() : ownSettings(scope);
   if (!s?.instances.some((i) => i.id === id)) return;
   const was = s.instances.find((i) => i.id === id)?.lastCheck?.ok;
-  const instances = s.instances.map((i) => (i.id === id ? { ...i, lastCheck: { ok: c.ok, at: c.at, ms: c.ms } } : i));
+  const instances = s.instances.map((i) => (i.id === id ? { ...i, lastCheck: { ok: c.ok, at: c.at, ms: c.ms, ...(c.note ? { note: c.note.slice(0, 200) } : {}) } } : i));
   await saveSettings({ ...s, instances }, scope);
   // an own AI that starts or stops answering is what setup and Home show; a same result again is not news
   // ponytail: the workspace's AI tells no one (per-account notices); fan out to its accounts if they need it live
