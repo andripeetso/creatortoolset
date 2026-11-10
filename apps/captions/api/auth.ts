@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { networkInterfaces } from "node:os";
+import { createSocket } from "node:dgram";
 import { env, hostedMode } from "./lib/env";
 import { viewAsTarget } from "./lib/view-as";
 import { getConnInfo } from "@hono/node-server/conninfo";
@@ -283,7 +283,7 @@ const NO_PASSWORD_YET = "Set a password on the Mac first: the Mac app's This Mac
  * computer only). GET /api/auth/link/<code> signs that browser in and goes home. A code works once, within 60 s, and
  * dies with a password change. Kept in memory only and never logged.
  */
-export function phoneOrigin(c: Context): string | null {
+export async function phoneOrigin(c: Context): Promise<string | null> {
   const tunnel = tunnelHostname();
   if (tunnel) return `https://${tunnel}`;
   const url = new URL(c.req.url);
@@ -292,23 +292,42 @@ export function phoneOrigin(c: Context): string | null {
   }
   const listen = process.env.HOST;
   if (listen && listen !== "0.0.0.0" && listen !== "::") return null;
-  const lan = Object.values(networkInterfaces()).flat().find((a) => a?.family === "IPv4" && !a.internal)?.address;
-  return lan ? `http://${lan}:${process.env.PORT || "3000"}` : null;
+  // the port this request came in on is the one the server listens on (a Mac app picks its own)
+  const lan = await routeAddress();
+  return lan ? `http://${lan}:${url.port || "80"}` : null;
+}
+
+/**
+ * The address this computer reaches its network by (its default route's), not the first interface found: a VPN or a
+ * virtual adapter may come first. A UDP socket connects without sending a packet, so the system picks the address.
+ * Null when there is no route.
+ */
+function routeAddress(): Promise<string | null> {
+  return new Promise((resolve) => {
+    const s = createSocket("udp4");
+    const done = (a: string | null) => {
+      s.close();
+      resolve(a);
+    };
+    s.once("error", () => done(null));
+    s.connect(53, "192.0.2.1", () => done(s.address().address));
+  });
 }
 const LINK_TTL = 60_000;
 const links = new Map<string, { username: string; hash: string; expiresAt: number }>();
 
-authApp.post("/link", (c) => {
+authApp.post("/link", async (c) => {
   // no sign-in on this server: anyone who can reach it is in, so the address alone is the code
-  if (!env.appSecret) return c.json({ url: phoneOrigin(c), path: null, expiresAt: null });
+  if (!env.appSecret) return c.json({ url: await phoneOrigin(c), path: null, expiresAt: null });
   const me = signedInAccount(c.req.header("cookie"));
   const user = me && findUser(me.username);
   if (!user) return c.json({ error: "Sign in with an account first" }, 401);
   const now = Date.now();
-  for (const [k, v] of links) if (v.expiresAt <= now) links.delete(k);
+  // one live code per account: a new one ends the older ones, so the codes on screen never stack
+  for (const [k, v] of links) if (v.expiresAt <= now || v.username === user.username) links.delete(k);
   const code = randomBytes(32).toString("base64url");
   links.set(code, { username: user.username, hash: user.hash, expiresAt: now + LINK_TTL });
-  return c.json({ url: phoneOrigin(c), path: `/api/auth/link/${code}`, expiresAt: now + LINK_TTL });
+  return c.json({ url: await phoneOrigin(c), path: `/api/auth/link/${code}`, expiresAt: now + LINK_TTL });
 });
 
 authApp.get("/link/:code", (c) => {

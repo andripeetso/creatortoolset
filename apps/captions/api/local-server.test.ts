@@ -105,3 +105,34 @@ describe("the Mac app pairs itself on a server on this Mac", () => {
     expect(providerSettings().instances).toEqual([]);
   });
 });
+
+describe("the phone's code", () => {
+  // the owner's password is already changed by the tests above
+  const ownerCookie = async () => {
+    const res = await login("127.0.0.1", "tinyacrobatics1");
+    expect(res.status).toBe(200);
+    return cookieOf(res);
+  };
+
+  it("is one live code per account: a new one ends the older ones, so none stack", async () => {
+    const cookie = await ownerCookie();
+    const mintPath = async () => {
+      const res = await post("127.0.0.1", "/api/auth/link", {}, cookie);
+      expect(res.status).toBe(200);
+      return ((await res.json()) as { path: string }).path;
+    };
+    const older = await mintPath();
+    const newer = await mintPath();
+    expect((await from("127.0.0.1", older)).status).toBe(410);
+    expect((await from("127.0.0.1", newer)).status).toBe(302);
+  });
+
+  it("gives the port this server is reached on, not a guessed one", async () => {
+    const cookie = await ownerCookie();
+    const res = await app.request("http://localhost:3773/api/auth/link", { method: "POST", headers: { cookie } }, { incoming: { socket: { remoteAddress: "127.0.0.1", remotePort: 50000, remoteFamily: "IPv4" } } });
+    expect(res.status).toBe(200);
+    const { url } = (await res.json()) as { url: string | null };
+    // no network route in some sandboxes: then there is no address to offer, and nothing is guessed
+    if (url) expect(url).toMatch(/:3773$/);
+  });
+});
