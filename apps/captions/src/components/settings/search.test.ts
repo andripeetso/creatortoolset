@@ -9,7 +9,7 @@ import { SETTINGS_SEARCH_INDEX, searchSettings } from "./search";
 const ALL = new Map<string, string>([
   ["general", "General"], ["appearance", "Appearance"], ["folders", "Storage"], ["providers", "Providers"],
   ["devices", "Computers"], ["automations", "Scheduled tasks"], ["usage", "Usage"], ["connectors", "Social accounts"],
-  ["keys", "API keys"], ["own-ai", "Use from your AI"], ["servers", "Servers"], ["team", "Team"], ["admin", "Admin"],
+  ["keys", "API keys"], ["own-ai", "Headless access"], ["servers", "Servers"], ["team", "Team"], ["admin", "Admin"],
   ["account", "Account"],
 ]);
 /** The first hit, on an install where sign-in is required (the default here: the sign-in rows exist). */

@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 process.env.DATA_DIR = mkdtempSync(path.join(tmpdir(), "api-key-"));
 process.env.APP_SECRET = "api-key-test-secret";
 
-const { createUser, newApiKey } = await import("./users");
+const { createUser, dropAiKey, newAiKey, newApiKey } = await import("./users");
 const app = (await import("./boot")).default;
 
 describe("AI access key", () => {
@@ -92,6 +92,28 @@ describe("AI access key", () => {
     // a new Full key turns the old Full key off
     newApiKey(user, "full");
     expect((await app.request("/api/workshop/sessions", { headers: full })).status).toBe(401);
+  });
+
+  it("each connected AI app has a key of its own: a second one never turns off the first", async () => {
+    const user = createUser("keyapps", "password1", { role: "admin" });
+    const old = { authorization: `Bearer ${newApiKey(user, "full")}` };
+    const claude = newAiKey(user, "Claude Code");
+    const codex = newAiKey(user, "Codex");
+    const as = (key: string) => ({ authorization: `Bearer ${key}` });
+
+    for (const h of [old, as(claude.key), as(codex.key)]) expect((await app.request("/api/workshop/sessions", { headers: h })).status).toBe(200);
+    dropAiKey(user, claude.id);
+    expect((await app.request("/api/workshop/sessions", { headers: as(claude.key) })).status).toBe(401);
+    expect((await app.request("/api/workshop/sessions", { headers: as(codex.key) })).status).toBe(200);
+    expect((await app.request("/api/workshop/sessions", { headers: old })).status).toBe(200);
+    // asked for twice before it was used: one row, the newer key
+    const again = newAiKey(user, "Codex");
+    expect(user.aiKeys?.filter((k) => k.name === "Codex").map((k) => k.id)).toEqual([codex.id, again.id]);
+    const twice = newAiKey(user, "Claude Code");
+    newAiKey(user, "Claude Code");
+    expect(user.aiKeys?.some((k) => k.id === twice.id)).toBe(false);
+    // never a way in to AI settings or keys
+    expect((await app.request("/api/providers", { headers: as(codex.key) })).status).toBe(401);
   });
 
   it("is made only for a signed-in account", async () => {

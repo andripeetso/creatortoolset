@@ -40,7 +40,7 @@ const USE_DEFAULT = "use-default";
  * tools it has installed and not yet added below them (each with Add). The AI's settings open beside the list from `lg`,
  * and as their own page (`sub` = the AI's id) below it. "Who does what" sets the Default and the tool-by-tool picks.
  * A member sees the AI they use: their own, or the team's API budget. On an own-computer install with no Mac app paired,
- * the list is the AI apps found on this computer (the same source as Use from your AI).
+ * the list is the AI apps found on this computer (the same source as Headless access).
  */
 /** "2.1.321" from "2.1.321 (Claude Code)", "codex-cli 0.39.0" or "grok 1.0.4 (d846eb93d94d)": the number a person reads. */
 export const shortVersion = (v: string | undefined): string | undefined => v?.match(/\d+(?:\.\d+)+/)?.[0] ?? v;

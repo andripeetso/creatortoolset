@@ -18,7 +18,10 @@ import {
   findUser,
   unlinkIdentity,
   pictureOf,
+  aiKeysOf,
   apiKeysOf,
+  dropAiKey,
+  newAiKey,
   dropApiKey,
   newApiKey,
   setDisplayName,
@@ -515,15 +518,17 @@ function keyAccount(cookie: string | undefined) {
 authApp.get("/api-key", (c) => {
   const user = keyAccount(c.req.header("cookie"));
   if (!user) return c.json({ error: "Sign in with an account first" }, 401);
-  return c.json(apiKeysOf(user));
+  return c.json({ ...apiKeysOf(user), ai: aiKeysOf(user) });
 });
 
-/** Turns one key off (?level=full|review). */
+/** Turns one key off: an AI app's (?id=) or a level's (?level=full|review). */
 authApp.delete("/api-key", (c) => {
   const user = keyAccount(c.req.header("cookie"));
   if (!user) return c.json({ error: "Sign in with an account first" }, 401);
-  dropApiKey(user, c.req.query("level") === "full" ? "full" : "review");
-  return c.json(apiKeysOf(user));
+  const id = c.req.query("id");
+  if (id) dropAiKey(user, id);
+  else dropApiKey(user, c.req.query("level") === "full" ? "full" : "review");
+  return c.json({ ...apiKeysOf(user), ai: aiKeysOf(user) });
 });
 
 /** Settings → Account: unlinks a Google or Apple sign-in (hosted only; a team's required provider can't be removed). */
@@ -547,7 +552,9 @@ authApp.delete("/identity/:provider", (c) => {
 authApp.post("/api-key", async (c) => {
   const user = keyAccount(c.req.header("cookie"));
   if (!user) return c.json({ error: "Sign in with an account first" }, 401);
-  const body = (await c.req.json().catch(() => null)) as { level?: unknown } | null;
+  const body = (await c.req.json().catch(() => null)) as { level?: unknown; name?: unknown } | null;
+  // `name`: a key of its own for one AI app (Headless access); the others keep working
+  if (typeof body?.name === "string") return c.json(newAiKey(user, body.name));
   return c.json({ key: newApiKey(user, body?.level === "full" ? "full" : "review") });
 });
 

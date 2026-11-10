@@ -63,6 +63,8 @@ export interface UserRecord {
   identities?: Identity[];
   /** What the Settings page shows of each key it can't show again: when it was made, its last 4 characters, when it was last used. */
   keyInfo?: Partial<Record<KeyLevel, { at: number; last4: string; usedAt?: number }>>;
+  /** Full keys made for one AI app each (Settings → Headless access): several live at once, each turned off on its own. */
+  aiKeys?: AiKey[];
   /** What the app calls the person (Settings → Account); unset = the username. */
   displayName?: string;
   /** The name typed at sign-in once the person changed it. `username` stays the id that files are filed under, so a new sign-in name moves nothing. */
@@ -320,6 +322,35 @@ export function newApiKey(user: UserRecord, level: KeyLevel = "review"): string 
   return key;
 }
 
+/** A Full key made for one AI app: its own name, so connecting a second AI never turns off the first one's key. */
+export interface AiKey {
+  id: string;
+  name: string;
+  hash: string;
+  at: number;
+  last4: string;
+  usedAt?: number;
+}
+
+/** A new Full key for one AI app (`name` is what the page lists, e.g. "Claude Code"); shown once, stored hashed. */
+export function newAiKey(user: UserRecord, name: string): { id: string; key: string } {
+  const key = `ctk_${randomBytes(24).toString("hex")}`;
+  const id = randomBytes(6).toString("hex");
+  // a key of the same name that was never used is one whose command was not run (asked for twice): it goes
+  const kept = (user.aiKeys ?? []).filter((k) => k.name !== name.trim() || k.usedAt);
+  user.aiKeys = [...kept, { id, name: name.trim().slice(0, 60) || "AI app", hash: sha256(key), at: Date.now(), last4: key.slice(-4) }];
+  persist();
+  return { id, key };
+}
+
+export function dropAiKey(user: UserRecord, id: string): void {
+  user.aiKeys = (user.aiKeys ?? []).filter((k) => k.id !== id);
+  persist();
+}
+
+/** The AI apps' keys as the page lists them: never the hash. */
+export const aiKeysOf = (user: UserRecord) => (user.aiKeys ?? []).map(({ hash: _hash, ...k }) => k);
+
 /** Turns a key off; making a new one is the only way back. */
 export function dropApiKey(user: UserRecord, level: KeyLevel): void {
   if (level === "full") delete user.fullKeyHash;
@@ -336,6 +367,16 @@ export function apiKeysOf(user: UserRecord): Record<KeyLevel, { at?: number; las
 
 export function userForApiKey(key: string, level: KeyLevel = "review"): UserRecord | null {
   const hash = sha256(key);
+  // an AI app's own key is a Full key, so it opens what Review does too
+  const named = users.find((u) => u.aiKeys?.some((k) => k.hash === hash));
+  if (named) {
+    const k = named.aiKeys!.find((x) => x.hash === hash)!;
+    if (Date.now() - (k.usedAt ?? 0) > ACTIVE_WRITE_INTERVAL) {
+      k.usedAt = Date.now();
+      persist();
+    }
+    return named;
+  }
   const user = users.find((u) => (level === "full" ? u.fullKeyHash : u.apiKeyHash) === hash) ?? null;
   // last used, saved at most once a minute
   const info = user?.keyInfo?.[level];

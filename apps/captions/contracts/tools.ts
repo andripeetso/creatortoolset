@@ -101,7 +101,7 @@ export const NEED_SENTENCE: Record<Have, string> = {
   library: "The Media Library is where your footage lives. Make one to start.",
   instagram: "Lets this tool read your own Instagram posts. You sign in yourself.",
   apify: "Apify reads public posts for you. Apify bills you for each read, to your own account.",
-  mcp: "Lets your own Claude Code or Codex use Creator Toolset. Set it up in Settings → Use from your AI.",
+  mcp: "Lets your own Claude Code or Codex use Creator Toolset. Set it up in Settings → Headless access.",
   deviceTranscripts: "This computer turns speech into text by itself, for free. A Deepgram or OpenAI key makes it faster.",
   DEEPGRAM_API_KEY: "Deepgram turns speech into text, so captions and notes can be made. Deepgram bills you, to your own account.",
   ELEVENLABS_API_KEY: "Cleans up voice audio. ElevenLabs or NVIDIA bills you, to your own account.",
