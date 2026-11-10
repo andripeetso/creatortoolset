@@ -82,7 +82,8 @@ describe("the desktop apps: a row each when installed, text only", () => {
   it("shows the installed desktop app with its one line and no button", () => {
     const html = panel(view([desktop("claude-desktop", "Claude desktop")]));
     expect(html).toContain("Claude app");
-    expect(html.match(/Installed on this Mac\./g)?.length ?? 0).toBe(1);
+    expect(html).toContain("Can't be set up from here yet. Use Claude above.");
+    expect(html).not.toContain(">Use it<");
   });
 
   it("shows no desktop row when the app is not installed", () => {
@@ -134,7 +135,7 @@ describe("what a row does, in order", () => {
   it("not signed in: Sign in, with its line before any click", () => {
     const v = rowView(codex, undefined, undefined);
     expect(v.button).toEqual({ label: "Sign in", action: "signin" });
-    expect(v.line).toBe("Sign in with your ChatGPT account.");
+    expect(v.line).toBe("Sign in with your ChatGPT account. Needs ChatGPT Plus or higher.");
   });
 
   it("signed in but not connected: Use it runs the check, and no check mark", () => {

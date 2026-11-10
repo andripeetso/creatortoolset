@@ -29,6 +29,16 @@ const ACCOUNT: Record<CliId, string> = { codex: "ChatGPT", claude: "Claude", gem
 /** What an install puts on this Mac. */
 const HELPER: Record<CliId, string> = { codex: "ChatGPT's coding helper", claude: "Claude Code", gemini: "Google's coding helper" };
 const DESKTOP_NAME: Partial<Record<LocalAiId, string>> = { "claude-desktop": "Claude app", "chatgpt-desktop": "ChatGPT app" };
+/** The plan each needs: ChatGPT's coding helper first comes with Plus, Claude Code isn't in the free Claude plan. */
+const PLAN: Partial<Record<CliId, string>> = { codex: "ChatGPT Plus", claude: "Claude Pro" };
+/**
+ * What a desktop app can honestly do from here. The ChatGPT app shares Codex's settings, so it gets Creator Toolset
+ * when ChatGPT above adds it. The Claude app needs its own extension file, not built yet.
+ */
+const DESKTOP_LINE: Partial<Record<LocalAiId, string>> = {
+  "chatgpt-desktop": "Gets Creator Toolset when ChatGPT above is set up. Restart the app after.",
+  "claude-desktop": "Can't be set up from here yet. Use Claude above.",
+};
 
 const ROW = "flex items-start gap-3 rounded-xl border border-border/60 bg-card/40 px-4 py-3";
 
@@ -62,7 +72,8 @@ export function rowView(row: LocalAiRow, result: ConnectResult | undefined, phas
   const id = row.id as CliId;
   const connected = isConnected(row, result);
   const signed = row.signedIn ?? (result?.state === "ready" ? true : null);
-  const signIn: RowView = { line: `Sign in with your ${ACCOUNT[id]} account.`, button: { label: "Sign in", action: "signin" } };
+  // a free account isn't enough for either (vendor docs, 2026-11-09): say so before the person tries
+  const signIn: RowView = { line: `Sign in with your ${ACCOUNT[id]} account.${PLAN[id] ? ` Needs ${PLAN[id]} or higher.` : ""}`, button: { label: "Sign in", action: "signin" } };
   if (phase === "connecting") return { line: "Checking. This can take up to a minute.", button: { label: "Checking…", action: "connect", disabled: true } };
   if (phase === "signingIn")
     return { line: "Waiting for you to finish in your browser. This page checks by itself.", button: { label: "Waiting…", action: "none", disabled: true } };
@@ -254,8 +265,8 @@ export function AiPanelView({ view, results, phases, installing = null, installM
             <ProviderLogo driver={r.id.startsWith("claude") ? "claude" : "codex"} className="mt-0.5 size-5" />
             <div className="min-w-0 flex-1 space-y-1">
               <p className="text-sm font-medium">{DESKTOP_NAME[r.id] ?? r.name}</p>
-              {/* ponytail: the desktop app's action goes here once research confirms what is possible; until then the line says only what is true. */}
-              <p className="text-xs">Installed on this Mac.</p>
+              {/* ponytail: the Claude app's one-click action = a generated .mcpb with a small stdio bridge (port + key in its env); build it when wanted */}
+              <p className="text-xs">{DESKTOP_LINE[r.id] ?? "Installed on this Mac."}</p>
             </div>
           </li>
         ))}
