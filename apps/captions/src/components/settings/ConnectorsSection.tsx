@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router";
-import { Copy, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { useAuth } from "@/lib/auth";
 import { analyzerHome } from "@/lib/instagram";
 import { useWorkspace } from "@/lib/workspace";
 import {
@@ -22,22 +21,16 @@ import {
   type LoginKind,
   type SocialPlatform,
 } from "@/lib/connectors";
-import { Advanced, Card, ErrorRow, ListRow, LoadingRow, RowMenu, Section, SettingsSelect, Status, saveFailed } from "./ui";
+import { Card, ErrorRow, ListRow, LoadingRow, RowMenu, Section, SettingsSelect, Status, saveFailed } from "./ui";
 import { ApifyKeyRow } from "./ApiKeysSection";
 import { PlatformLogo } from "./PlatformLogos";
-import { fmtAgo, msg } from "./helpers";
+import { msg } from "./helpers";
 import type { SearchRowId } from "./search";
 
-const ENV: Record<LoginKind, string> = {
-  meta: "META_APP_ID + META_APP_SECRET",
-  google: "GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET",
-  tiktok: "TIKTOK_CLIENT_KEY + TIKTOK_CLIENT_SECRET",
-};
 const SIGN_IN: Record<LoginKind, string> = { meta: "Sign in with Facebook", google: "Sign in with YouTube", tiktok: "Sign in with TikTok" };
 const n = (v?: number) => (v === undefined ? "" : v >= 10_000 ? `${Math.round(v / 1000).toLocaleString("en-US")}k` : v.toLocaleString("en-US"));
 /** "@name", whether the handle was stored with its @ or without. */
 const at = (handle: string) => `@${handle.replace(/^@+/, "")}`;
-const label = (p: SocialPlatform) => PLATFORMS.find((x) => x.id === p)!.label;
 const NOUN: Record<SocialPlatform, string> = { instagram: "an Instagram", facebook: "a Facebook", youtube: "a YouTube", tiktok: "a TikTok", x: "an X" };
 const loginOf = (p: SocialPlatform): LoginKind | undefined => PLATFORMS.find((x) => x.id === p)?.login;
 
@@ -46,60 +39,57 @@ export function signInItems(logins: Record<LoginKind, boolean>): Array<{ id: Log
   return LOGINS.filter((l) => logins[l.id]).map((l) => ({ id: l.id, label: SIGN_IN[l.id] }));
 }
 
-/** What a platform row's button does: the one route this server can take for that platform, from its sign-in apps and the Apify key. */
+/** One platform for one project: its account, or the one way this server can add one (sign-in apps, the Apify key). */
 export interface PlatformRow {
   platform: SocialPlatform;
   label: string;
-  /** One line: how this server reads the platform, and whether the person's own sign-in is among the ways. */
+  /** The account's @handle and numbers, or how an account is added on this server. */
   summary: string;
-  /** "Add" opens the platform's dialog (or its handle field); "Add key" goes to API keys; "Open Analyzer" goes to the Content Analyzer. */
-  button: "Add" | "Add key" | "Open Analyzer";
+  /** "Add" opens the platform's dialog (or its handle field); "Add key" goes to API keys; none = an account is there. */
+  button?: "Add" | "Add key";
   /** Following by @handle needs the Apify key, and the key is missing: amber, and the button adds it. */
   needsKey: boolean;
-  /** Accounts the person has connected on this platform. */
-  connected: number;
+  /** The project's account on this platform (one per platform per project). */
+  account?: ConnectedAccount;
 }
 
 /**
- * The platform list (Settings → Social accounts), one row per platform the app can read, in the order of PLATFORMS.
- * Instagram is read through its sign-in and the Content Analyzer (public Instagram accounts are added there). The other
- * platforms follow a public account by @handle with the Apify key; a sign-in to the platform's own account is added where
- * this server has that sign-in app set up.
+ * Settings → Social accounts for one project: one row per platform, in the order of PLATFORMS, each with the project's one
+ * account or its Add button. An account linked to no project shows in every project until one is added there. Instagram
+ * is the person's own account (its sign-in, or the Analyzer account marked Mine); without either and without a Meta
+ * sign-in on this server there is nothing to add here, so the row is left out.
  */
-export function platformRows(view: Pick<ConnectorsView, "logins" | "apify" | "accounts">): PlatformRow[] {
-  return PLATFORMS.map((p): PlatformRow => {
+export function platformRows(view: Pick<ConnectorsView, "logins" | "apify" | "accounts" | "mine">, projectId?: string): PlatformRow[] {
+  const apifyOk = view.apify.configured && view.apify.valid !== false;
+  return PLATFORMS.flatMap((p): PlatformRow[] => {
     const loginOn = !!p.login && !!view.logins[p.login];
-    const connected = view.accounts.filter((a) => a.platform === p.id).length;
-    if (p.id === "instagram") {
-      return {
-        platform: p.id,
-        label: p.label,
-        summary: loginOn ? "Your account by sign-in, others in the Content Analyzer" : "Public accounts, in the Content Analyzer",
-        button: loginOn ? "Add" : "Open Analyzer",
-        needsKey: false,
-        connected,
-      };
+    const on = view.accounts.filter((a) => a.platform === p.id);
+    // ponytail: a Meta sign-in can bring several Pages into one project; the row shows the first
+    const account = on.find((a) => !!projectId && a.projectId === projectId) ?? on.find((a) => !a.projectId);
+    if (account) {
+      const f = account.stats?.followers;
+      return [{ platform: p.id, label: p.label, summary: [at(account.handle), f !== undefined ? `${n(f)} followers` : ""].filter(Boolean).join(" · "), needsKey: false, account }];
     }
-    const apifyOk = view.apify.configured && view.apify.valid !== false;
-    const own = p.id === "facebook" ? "Your Pages by sign-in" : p.id === "youtube" ? "Your channel by sign-in" : p.id === "tiktok" ? "Your account by sign-in" : "";
-    const summary = loginOn ? `${own}, others by @handle` : p.id === "x" ? "Public accounts, by @handle" : p.id === "facebook" ? "Public Pages, by @handle" : p.id === "youtube" ? "Public channels, by @handle" : "Public accounts, by @handle";
+    if (p.id === "instagram") {
+      if (view.mine) return [{ platform: p.id, label: p.label, summary: at(view.mine), needsKey: false }];
+      return loginOn ? [{ platform: p.id, label: p.label, summary: "Your account by sign-in", button: "Add", needsKey: false }] : [];
+    }
+    const own = p.id === "facebook" ? "Your Pages by sign-in" : p.id === "youtube" ? "Your channel by sign-in" : "Your account by sign-in";
+    const summary = loginOn ? `${own}, or by @handle` : p.id === "facebook" ? "Public Pages, by @handle" : p.id === "youtube" ? "Public channels, by @handle" : "Public accounts, by @handle";
     // no sign-in here: the handle is the only way, so without a working Apify key the button is the key
     const needsKey = !loginOn && !apifyOk;
-    return { platform: p.id, label: p.label, summary, button: needsKey ? "Add key" : "Add", needsKey, connected };
+    return [{ platform: p.id, label: p.label, summary, button: needsKey ? "Add key" : "Add", needsKey }];
   });
 }
 
 /**
- * Settings → Social accounts: the platforms the app reads (one row each, with its real mark and one button), then the
- * accounts connected on them. `back` = where a sign-in returns (the setup dialog passes its own step). `compact` = the
+ * Settings → Social accounts: the platforms the app reads for the project picked above them, one row each with the
+ * project's account (its … menu) or one button. `back` = where a sign-in returns (the setup dialog passes its own step). `compact` = the
  * setup dialog's version: the Apify row and the sign-ins, nothing else.
  */
 export function ConnectorsSection({ back = "/settings/connectors", compact }: { sub?: string; back?: string; compact?: boolean }) {
-  // the sign-in apps are the hosted server's (on a computer the owner's own install has none to show)
-  const isAdmin = useAuth((s) => s.me?.role) === "admin";
-  const hosted = useAuth((s) => s.hosted);
-  const admin = isAdmin && hosted;
   const projects = useWorkspace((s) => s.projects);
+  const current = useWorkspace((s) => s.currentProjectId);
   const navigate = useNavigate();
   const [view, setView] = useState<ConnectorsView | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -156,7 +146,7 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
     );
   }
 
-  const rows = platformRows(view);
+  const rows = platformRows(view, current ?? undefined);
   const choose = (platform: SocialPlatform) => {
     const loginOn = !!loginOf(platform) && !!view.logins[loginOf(platform)!];
     setDlg({ platform, step: loginOn ? "choose" : "handle", seq: dlg.seq + 1 });
@@ -165,63 +155,53 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
 
   return (
     <>
-      <Section id="social-platforms" title="Platforms">
-        <Card>
-          {rows.map((r) => (
-            <ListRow
-              key={r.platform}
-              id={`platform-${r.platform}` as SearchRowId}
-              icon={<PlatformLogo platform={r.platform} className="size-4" />}
-              title={r.label}
-              subtitle={r.summary}
-              status={
-                r.needsKey ? (
-                  <Status tone="attention">Needs your Apify key</Status>
-                ) : r.connected ? (
-                  <Status>{r.connected} connected</Status>
-                ) : undefined
-              }
-              actions={
-                <Button
-                  size="xs"
-                  variant="outline"
-                  aria-label={`${r.button} ${r.label}`}
-                  onClick={() => (r.button === "Add key" ? navigate("/settings/keys") : r.button === "Open Analyzer" ? navigate(analyzerHome()) : choose(r.platform))}
-                >
-                  {r.button}
-                </Button>
-              }
+      <Section
+        id="social-platforms"
+        title="Platforms"
+        action={
+          projects.length > 1 && (
+            <SettingsSelect
+              label="Project"
+              value={current ?? ""}
+              onValueChange={(id) => void useWorkspace.getState().select(id).catch((e) => saveFailed(msg(e)))}
+              options={projects.map((p) => ({ value: p.id, label: p.name }))}
             />
-          ))}
+          )
+        }
+      >
+        <Card>
+          {rows.map((r) =>
+            r.account ? (
+              <AccountRow
+                key={r.platform}
+                row={r}
+                a={r.account}
+                back={back}
+                onLink={() => act(linkAccount(r.account!.key, current))}
+                onPull={() => void act(pullAccountNow(r.account!.key).then(watch))}
+                onRemove={() => act(disconnectAccount(r.account!.key))}
+                onOpen={() => navigate(`${analyzerHome()}/accounts/${r.account!.analyzerId}`)}
+              />
+            ) : (
+              <ListRow
+                key={r.platform}
+                id={`platform-${r.platform}` as SearchRowId}
+                icon={<PlatformLogo platform={r.platform} className="size-4" />}
+                title={r.label}
+                subtitle={r.summary}
+                status={r.needsKey ? <Status tone="attention">Needs your Apify key</Status> : undefined}
+                actions={
+                  r.button && (
+                    <Button size="xs" variant="outline" aria-label={`${r.button} ${r.label}`} onClick={() => (r.button === "Add key" ? navigate("/settings/keys") : choose(r.platform))}>
+                      {r.button}
+                    </Button>
+                  )
+                }
+              />
+            ),
+          )}
         </Card>
       </Section>
-
-      {view.accounts.length > 0 && (
-        <Section id="your-accounts" title="Accounts">
-          <Card>
-            {view.accounts.map((a) => (
-              <AccountRow
-                key={a.key}
-                a={a}
-                projects={projects}
-                back={back}
-                onLink={(pid) => act(linkAccount(a.key, pid))}
-                onPull={() => void act(pullAccountNow(a.key).then(watch))}
-                onRemove={() => act(disconnectAccount(a.key))}
-                onOpen={() => navigate(`${analyzerHome()}/accounts/${a.analyzerId}`)}
-              />
-            ))}
-          </Card>
-        </Section>
-      )}
-
-      {admin && (
-        <Card>
-          <Advanced summary="Sign-in apps on this server">
-            <SignInApps view={view} />
-          </Advanced>
-        </Card>
-      )}
 
       <AddDialog
         key={dlg.seq}
@@ -358,26 +338,25 @@ function AddDialog({ open, onOpenChange, platform, startStep, view, back, projec
   );
 }
 
-function AccountRow({ a, projects, back, onLink, onPull, onRemove, onOpen }: {
+/** A platform row with the project's account: its numbers, a sign-in that ran out, and its … menu. */
+function AccountRow({ row, a, back, onLink, onPull, onRemove, onOpen }: {
+  row: PlatformRow;
   a: ConnectedAccount;
-  projects: Array<{ id: string; name: string }>;
   back: string;
-  onLink: (projectId: string | null) => void;
+  onLink: () => void;
   onPull: () => void;
   onRemove: () => Promise<unknown>;
   onOpen: () => void;
 }) {
-  const s = a.stats ?? {};
-  const read = a.pulledAt && !a.pulling ? `read ${fmtAgo(a.pulledAt)}` : "reading…";
-  const subtitle = [label(a.platform), s.followers !== undefined ? `${n(s.followers)} followers` : "", read].filter(Boolean).join(" · ");
   const login = loginOf(a.platform);
   const needsSignIn = a.loginStatus === "needs_reconnect";
   const status: ReactNode = a.pullError ? <Status tone="broken">{a.pullError}</Status> : needsSignIn ? <Status tone="attention">Sign in again to keep reading it</Status> : undefined;
   return (
     <ListRow
+      id={`platform-${a.platform}` as SearchRowId}
       icon={<PlatformLogo platform={a.platform} className="size-4" />}
-      title={at(a.handle)}
-      subtitle={subtitle}
+      title={row.label}
+      subtitle={row.summary}
       status={status}
       actions={
         <>
@@ -386,19 +365,12 @@ function AccountRow({ a, projects, back, onLink, onPull, onRemove, onOpen }: {
               <a href={loginHref(login, { back })}>Sign in again</a>
             </Button>
           )}
-          {a.platform !== "instagram" && (
-            <SettingsSelect
-              label={`Project for ${at(a.handle)}`}
-              value={a.projectId ?? "none"}
-              onValueChange={(v) => onLink(v === "none" ? null : v)}
-              options={[{ value: "none", label: "No project" }, ...projects.map((p) => ({ value: p.id, label: p.name }))]}
-              className="sm:w-40"
-            />
-          )}
           <RowMenu
             label={`${at(a.handle)} actions`}
             items={[
               { label: "Read again", icon: <RefreshCw />, onSelect: onPull },
+              // an account linked to no project shows in each one: this keeps it in the one picked
+              ...(!a.projectId ? [{ label: "Link to this project", onSelect: onLink }] : []),
               ...(a.platform === "instagram" && a.analyzerId ? [{ label: "Open in the Analyzer", onSelect: onOpen }] : []),
               { label: "Disconnect", destructive: true, confirm: { title: `Disconnect ${at(a.handle)}?`, body: "Its numbers stop updating here.", ok: "Disconnect" }, onSelect: () => void onRemove() },
             ]}
@@ -406,34 +378,5 @@ function AccountRow({ a, projects, back, onLink, onPull, onRemove, onOpen }: {
         </>
       }
     />
-  );
-}
-
-/** Admin: each sign-in app's state, the .env names it needs, and its redirect URL with one copy button. Read-only. */
-function SignInApps({ view }: { view: ConnectorsView }) {
-  return (
-    <>
-      {LOGINS.map((l) => {
-        const url = view.redirects[l.id];
-        return (
-          <ListRow
-            key={l.id}
-            title={l.label}
-            subtitle={url}
-            status={view.logins[l.id] ? <Status>Set in .env</Status> : <Status tone="attention">Not set. Add {ENV[l.id]} to the server's .env</Status>}
-            actions={
-              <Button
-                size="icon-xs"
-                variant="ghost"
-                aria-label={`Copy the redirect URL for ${l.label}`}
-                onClick={() => void navigator.clipboard.writeText(url).then(() => toast("Copied"), () => saveFailed("Couldn't copy it. Select the address and copy it."))}
-              >
-                <Copy />
-              </Button>
-            }
-          />
-        );
-      })}
-    </>
   );
 }

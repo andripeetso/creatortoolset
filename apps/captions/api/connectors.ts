@@ -7,7 +7,7 @@ import { sessionSources } from "./lib/connectors/provider";
 import { printPosts } from "./lib/connectors/prints";
 import { findAccount, newState, patchAccount, publicAccount, readConnectors, removeAccount, saveAccounts, type StoredAccount } from "./lib/connectors/store";
 import { publicApifyStatus, readApify } from "./lib/instagram/apify";
-import { addLoginAccount } from "./instagram";
+import { addLoginAccount, allAccounts } from "./instagram";
 import { findUser, listUsers, LOCAL_USER, type SessionUser } from "./users";
 
 /**
@@ -37,7 +37,7 @@ async function view(c: Context<{ Variables: AuthVars }>): Promise<ConnectorsView
   const apify = publicApifyStatus(await readApify(user.username));
   return {
     logins: Object.fromEntries(KINDS.map((k) => [k, !!appFor(k)])) as ConnectorsView["logins"],
-    redirects: Object.fromEntries(KINDS.map((k) => [k, redirectFor(c, k)])) as ConnectorsView["redirects"],
+    mine: (await allAccounts()).find((a) => a.mine && a.owner === user.username)?.username,
     apify: { configured: apify.configured, valid: apify.valid },
     accounts: readConnectors(user.username).accounts.map(publicAccount),
     extras: { sessions: sessionSources() },

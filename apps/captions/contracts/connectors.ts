@@ -85,8 +85,8 @@ export interface SessionSource {
 export interface ConnectorsView {
   /** Which logins this server has an app registered for. */
   logins: Record<LoginKind, boolean>;
-  /** Where each login sends people back, for registering the apps (admins). */
-  redirects: Record<LoginKind, string>;
+  /** The handle of the person's own Instagram in the Content Analyzer (the account marked Mine), when there is one. */
+  mine?: string;
   apify: { configured: boolean; valid: boolean | null };
   accounts: ConnectedAccount[];
   /** Session sources registered on this server. Empty in the public build, so the section stays hidden. */

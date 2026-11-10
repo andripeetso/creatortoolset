@@ -8,38 +8,40 @@ it("offers only the sign-ins this server has an app for", () => {
 });
 
 const none = { meta: false, google: false, tiktok: false };
-const acct = (platform: ConnectedAccount["platform"]): ConnectedAccount => ({ key: `${platform}:x`, platform, platformId: "x", handle: "x", via: "apify", connectedAt: 0 });
-const view = (o: Partial<Pick<ConnectorsView, "logins" | "apify" | "accounts">>) => ({ logins: none, apify: { configured: true, valid: true }, accounts: [], ...o });
-const row = (rows: ReturnType<typeof platformRows>, id: string) => rows.find((r) => r.platform === id)!;
+const acct = (platform: ConnectedAccount["platform"], handle: string, projectId?: string): ConnectedAccount => ({ key: `${platform}:${handle}`, platform, platformId: handle, handle, via: "apify", connectedAt: 0, projectId, stats: { followers: 4120 } });
+const view = (o: Partial<Pick<ConnectorsView, "logins" | "apify" | "accounts" | "mine">>) => ({ logins: none, apify: { configured: true, valid: true }, accounts: [], ...o });
+const row = (rows: ReturnType<typeof platformRows>, id: string) => rows.find((r) => r.platform === id);
 
 it("the platform list: one row per platform, in order, with the one button each row does", () => {
-  // the owner's server as he sees it: no sign-in app, an Apify key: every handle platform adds by @handle, Instagram goes to the Analyzer
-  const rows = platformRows(view({}));
+  // the owner's server: no sign-in app, an Apify key, his own Instagram in the Analyzer
+  const rows = platformRows(view({ mine: "tinyacrobatics" }));
   expect(rows.map((r) => r.platform)).toEqual(["instagram", "facebook", "youtube", "tiktok", "x"]);
-  expect(row(rows, "instagram")).toMatchObject({ button: "Open Analyzer", needsKey: false });
+  expect(row(rows, "instagram")).toMatchObject({ summary: "@tinyacrobatics" });
+  expect(row(rows, "instagram")?.button).toBeUndefined();
   expect(row(rows, "youtube")).toMatchObject({ button: "Add", needsKey: false, summary: "Public channels, by @handle" });
-  expect(row(rows, "x")).toMatchObject({ button: "Add", summary: "Public accounts, by @handle" });
+  // no Instagram of his own and no Meta sign-in: nothing to add here, so no row
+  expect(row(platformRows(view({})), "instagram")).toBeUndefined();
 });
 
 it("without an Apify key the handle platforms say so and their button adds the key; a sign-in app keeps its platform working", () => {
   const rows = platformRows(view({ apify: { configured: false, valid: null }, logins: { ...none, google: true } }));
-  // YouTube has its sign-in: Add still works, the handle option just needs the key inside the dialog
-  expect(row(rows, "youtube")).toMatchObject({ button: "Add", needsKey: false, summary: "Your channel by sign-in, others by @handle" });
-  // X has no sign-in: the key is the only way
+  expect(row(rows, "youtube")).toMatchObject({ button: "Add", needsKey: false, summary: "Your channel by sign-in, or by @handle" });
   expect(row(rows, "x")).toMatchObject({ button: "Add key", needsKey: true });
-  // an Apify key the platform refused is the same as none
-  expect(platformRows(view({ apify: { configured: true, valid: false } })).find((r) => r.platform === "tiktok")).toMatchObject({ button: "Add key", needsKey: true });
+  expect(row(platformRows(view({ apify: { configured: true, valid: false } })), "tiktok")).toMatchObject({ button: "Add key", needsKey: true });
 });
 
-it("Instagram adds its own account when the Meta sign-in is set; Facebook shares that sign-in", () => {
-  const rows = platformRows(view({ logins: { ...none, meta: true } }));
-  expect(row(rows, "instagram")).toMatchObject({ button: "Add", summary: "Your account by sign-in, others in the Content Analyzer" });
-  expect(row(rows, "facebook")).toMatchObject({ button: "Add", summary: "Your Pages by sign-in, others by @handle" });
+it("Instagram adds its own account when the Meta sign-in is set", () => {
+  expect(row(platformRows(view({ logins: { ...none, meta: true } })), "instagram")).toMatchObject({ button: "Add", summary: "Your account by sign-in" });
 });
 
-it("counts the connected accounts on each platform", () => {
-  const rows = platformRows(view({ accounts: [acct("tiktok"), acct("tiktok"), acct("youtube")] }));
-  expect(row(rows, "tiktok").connected).toBe(2);
-  expect(row(rows, "youtube").connected).toBe(1);
-  expect(row(rows, "x").connected).toBe(0);
+it("each project shows its own account per platform; an account in no project shows until one is linked", () => {
+  const accounts = [acct("tiktok", "brand-a", "p1"), acct("tiktok", "brand-b", "p2"), acct("youtube", "old")];
+  const p1 = platformRows(view({ accounts }), "p1");
+  expect(row(p1, "tiktok")).toMatchObject({ summary: "@brand-a · 4,120 followers" });
+  expect(row(p1, "tiktok")?.button).toBeUndefined();
+  expect(row(platformRows(view({ accounts }), "p2"), "tiktok")?.account?.handle).toBe("brand-b");
+  expect(row(p1, "youtube")?.account?.handle).toBe("old");
+  // a project with nothing on X gets the Add button
+  expect(row(p1, "x")).toMatchObject({ button: "Add" });
+  expect(row(p1, "x")?.account).toBeUndefined();
 });

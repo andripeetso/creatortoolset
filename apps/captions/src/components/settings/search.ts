@@ -58,12 +58,11 @@ const STATIC_ROWS = [
   { section: "usage", id: "activity", title: "Activity", keywords: ["cost", "tokens", "calls", "tool", "api price", "usage"] },
   // Social accounts: sign in to one, or follow one by handle (the Add account menu on the section)
   { section: "connectors", id: "social-platforms", title: "Platforms", description: "Instagram, Facebook, YouTube, TikTok and X: sign in, or follow by @handle", keywords: ["platform", "instagram", "facebook", "youtube", "tiktok", "x", "twitter", "sign in", "login", "follow", "handle", "add account"] },
-  { section: "connectors", id: "platform-instagram", title: "Instagram", description: "Your account by sign-in; public accounts in the Content Analyzer", keywords: ["instagram", "analyzer", "sign in", "login", "reach", "saves"] },
+  { section: "connectors", id: "platform-instagram", title: "Instagram", description: "Your own Instagram account", keywords: ["instagram", "sign in", "login", "reach", "saves"] },
   { section: "connectors", id: "platform-facebook", title: "Facebook", description: "Your Pages by sign-in; public Pages by @handle", keywords: ["facebook", "pages", "meta", "sign in", "login", "follow", "handle"] },
   { section: "connectors", id: "platform-youtube", title: "YouTube", description: "Your channel by sign-in; public channels by @handle", keywords: ["youtube", "channel", "sign in", "login", "google", "subscribers", "follow", "handle"] },
   { section: "connectors", id: "platform-tiktok", title: "TikTok", description: "Your account by sign-in; public accounts by @handle", keywords: ["tiktok", "sign in", "login", "follow", "handle", "followers", "likes"] },
   { section: "connectors", id: "platform-x", title: "X", description: "Public accounts by @handle", keywords: ["x", "twitter", "follow", "handle", "tweets"] },
-  { section: "connectors", id: "your-accounts", title: "Accounts", description: "The accounts connected on each platform: project, read again, disconnect", keywords: ["followers", "project", "read again", "disconnect", "redirect url", "sign-in apps"] },
   // API keys: the Apify key reads other creators' posts (its routes are the account's own, not api/my-keys.ts)
   { section: "keys", id: "apify-key", title: "Apify", description: "Public accounts on TikTok, YouTube, X, Facebook and Instagram", keywords: ["apify", "token", "instagram", "tiktok", "youtube", "facebook", "x", "follow", "handle", "api key"] },
   // Use from your AI: your own AI (Claude Code, Codex) or a script uses Creator Toolset as you
