@@ -47,9 +47,9 @@ export function SetupSection() {
               Change
             </Button>
           </Row>
-          <Row label="Run setup again" hint="The first-run walk-through: how you work, what you make, a project, your AI.">
+          <Row label="Run setup again" hint="Three screens: your AI, what you make, and a first video to caption.">
             <Button asChild size="sm" variant="outline" className="h-7">
-              <Link to="/?setup=how">Run setup</Link>
+              <Link to="/?setup=agents">Run setup</Link>
             </Button>
           </Row>
         </Card>
