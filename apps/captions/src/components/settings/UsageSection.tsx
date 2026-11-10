@@ -117,7 +117,10 @@ export function PlanLimits({ view, now, bridge, setup }: { view: ProvidersView; 
           ))}
         </Card>
       )}
-      {(logins.length > 0 || unread.length > 0) && <YourPlan setup={setup} />}
+      {/* a computer that reports the plan (shown on the card above) answers the question itself */}
+      {(logins.length > 0 || unread.length > 0) && !logins.some((i) => view.devices.find((d) => d.id === i.device)?.report?.drivers.some((d) => d.driver === i.driver && d.plan)) && (
+        <YourPlan setup={setup} />
+      )}
     </Section>
   );
 }
