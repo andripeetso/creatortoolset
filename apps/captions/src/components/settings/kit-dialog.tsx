@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
  * button that says what it does ("Add key", "Create task"). Use it only for several fields; a single setting saves in place.
  * Submitting with Enter runs `onSubmit`. While `busy`, the button reads "Saving…" and cannot be pressed again.
  */
-export function FormDialog({ open, onOpenChange, title, description, submitLabel, onSubmit, busy, submitDisabled, error, cancelLabel = "Cancel", children }: {
+export function FormDialog({ open, onOpenChange, title, description, submitLabel, onSubmit, busy, submitDisabled, error, cancelLabel = "Cancel", wide, children }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
@@ -19,12 +19,14 @@ export function FormDialog({ open, onOpenChange, title, description, submitLabel
   submitDisabled?: boolean;
   error?: string | null;
   cancelLabel?: string;
+  /** A long form (a scheduled task): twice the width, and it scrolls inside a short window. */
+  wide?: boolean;
   children: ReactNode;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       {/* no description: say so to Radix, or it logs a warning on every open */}
-      <DialogContent {...(description ? {} : { "aria-describedby": undefined })} className="sm:max-w-md">
+      <DialogContent {...(description ? {} : { "aria-describedby": undefined })} className={wide ? "max-h-[90vh] overflow-y-auto sm:max-w-2xl" : "sm:max-w-md"}>
         <form
           className="space-y-4"
           onSubmit={(e) => {

@@ -1,134 +1,86 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { useNavigate } from "react-router";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router";
 import { Pencil, Play, Plus } from "lucide-react";
-import { AUTOMATION_NAME_MAX, AUTOMATION_PROMPT_MAX, DAY_NAMES, type AutomationResult, type Weekday } from "@contracts/automations";
+import { AUTOMATION_NAME_MAX, AUTOMATION_PROMPT_MAX, type Destination, type Weekday } from "@contracts/automations";
+import { EFFORTS, type Effort, type LimitsIdentity, type ProviderInstance, type ProvidersView, type Selection } from "@contracts/providers";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
+  WEEK,
   blankDraft,
-  cadenceOf,
   createAutomation,
   deleteAutomation,
   draftBody,
+  draftError,
   draftOf,
-  draftSchedule,
   listAutomations,
   runAutomationNow,
+  statusOf,
   updateAutomation,
   type AutomationDraft,
   type AutomationView,
+  type ScheduleMode,
 } from "@/lib/automations";
-import type { LimitsIdentity } from "@contracts/providers";
-import { getProviders } from "@/lib/providers";
+import { activeSet, effectiveSelection, effortLabel, getProviders, modelName, modelsOf } from "@/lib/providers";
 import { claudeLimitReset } from "@/lib/limits";
-import { Advanced, Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, SettingsSelect, Status, saveFailed } from "./ui";
-import { fmtAgo, msg } from "./helpers";
+import { listProjects, type WorkshopProject } from "@/lib/workshop";
+import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, SettingsSelect, Status, saveFailed } from "./ui";
+import { msg } from "./helpers";
 
 const RELOAD_MS = 15_000; // a run in progress finishes here without a reload
 const zone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
-const WORD: Record<AutomationResult["status"], string> = { done: "Done", error: "Failed", skipped: "Skipped" };
 
-/** "Mon 16 Nov 09:00": when the next run is, on the task's own clock (the cadence above is on that clock too). */
-const nextLabel = (ms: number, tz: string) =>
-  new Intl.DateTimeFormat("en-GB", { timeZone: tz, weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(ms)).replace(",", "");
-
-const firstLine = (text: string) => {
-  const line = text.split("\n")[0] ?? "";
-  return line.length > 140 ? `${line.slice(0, 140)}…` : line;
+const DESTINATION: Record<Destination, { label: string; detail: string }> = {
+  new_chat: { label: "New chat each run", detail: "Each run starts a new assistant chat, named after the task." },
+  continue: { label: "One chat, continuing the conversation", detail: "Each run posts in one chat and carries on its conversation." },
+  fresh: { label: "One chat, fresh each run", detail: "Each run posts in one chat, without the earlier runs' context." },
 };
 
-/** The cadence and the next run; the zone is named only when it is not this browser's, and never for an every-N-hours task. */
-const subtitleOf = (a: AutomationView) => {
-  if (a.running) return "Running now";
-  const where = a.schedule.kind !== "hours" && a.timezone !== zone() ? ` (${a.timezone})` : "";
-  const cadence = `${cadenceOf(a.schedule)}${where}`;
-  if (!a.enabled) return `${cadence} · off`;
-  return a.nextRun ? `${cadence} · next ${nextLabel(a.nextRun, a.timezone)}` : cadence;
+/** The AIs a task can run on: Claude Code (the one that has the app's tools), switched on, on a computer. */
+function taskAis(view: ProvidersView): ProviderInstance[] {
+  const sets = [view.own, view.workspace?.editable ? view.workspace.settings : null];
+  return sets.flatMap((s) => s?.instances ?? []).filter((i) => i.enabled && i.driver === "claude" && !!i.device);
+}
+
+const deviceLabel = (view: ProvidersView, id: string) => {
+  const d = view.devices.find((x) => x.id === id);
+  return d ? `${d.name}${d.online ? "" : " (offline)"}` : "A removed computer";
 };
 
-/** The empty list's one sentence: what a task is. The starting points and Run now do the rest. */
-const WHAT = "A task is a prompt your AI runs on its own, with the same tools as the assistant. Try it with Run now before you rely on it.";
-const LIMIT_HIT = /usage limit/i;
-
-/**
- * The starting points: each fills the name, the prompt and the schedule. Each prompt only reads, and uses a tool the
- * assistant has (api/mcp.ts) that needs no input it cannot know: Review's list, the Workshop's projects and sessions,
- * the AI Editor's edits. (instagram_posts needs an account's handle and nothing lists the accounts: no starting point.)
- */
-const STARTS: { name: string; prompt: string; kind: AutomationDraft["kind"]; at: string; weekday: Weekday }[] = [
-  {
-    name: "Review comments",
-    prompt: "List the videos in Review that have comments, newest first, with the comment count on each.",
-    kind: "daily",
-    at: "09:00",
-    weekday: 1,
-  },
-  {
-    name: "Workshop projects",
-    prompt: "List my Workshop projects with each one's audience and call to action, and say which ones have no sessions yet.",
-    kind: "weekly",
-    at: "09:00",
-    weekday: 1,
-  },
-  {
-    name: "Workshop sessions",
-    prompt: "List my newest Workshop sessions with their status and project, and say what each one is for.",
-    kind: "weekly",
-    at: "09:00",
-    weekday: 5,
-  },
-  {
-    name: "AI Editor edits",
-    prompt: "List my AI Editor edits with the step each one is on and its state, and say which ones wait for my go.",
-    kind: "daily",
-    at: "18:00",
-    weekday: 1,
-  },
-];
-
-const startDraft = (s: (typeof STARTS)[number]): AutomationDraft => ({ ...blankDraft(), name: s.name, prompt: s.prompt, kind: s.kind, at: s.at, weekday: s.weekday });
-
-/**
- * The last result on one line: red when it failed, amber when it was skipped (the person has to fix something). The
- * line never wraps (a row keeps its height); the full text of a failed or skipped run is under "Earlier runs". A
- * usage-limit failure says when the limit comes back, if a reading knows.
- */
-export function lastLine(a: AutomationView, limits: LimitsIdentity[], now: number): ReactNode {
-  const r = a.lastResult;
-  if (!r) return <span className="block truncate">Not run yet</span>;
-  if (r.status === "done") return <span className="block truncate">{`${WORD[r.status]} ${fmtAgo(r.at, now)}: ${firstLine(r.text)}`}</span>;
-  const words = [`${WORD[r.status]} ${fmtAgo(r.at, now)}`];
-  if (r.status === "error" && LIMIT_HIT.test(r.text)) {
-    const reset = claudeLimitReset(limits, now);
-    words.push(reset ? `usage limit, ${reset}` : "usage limit");
-  }
-  return (
-    <span className="block truncate">
-      <Status tone={r.status === "error" ? "broken" : "attention"}>{words.join(" · ")}</Status>
-    </span>
-  );
+/** What a new task runs on: the assistant's default when it can run one, else the first AI that can. */
+function defaultAi(view: ProvidersView, ais: ProviderInstance[]): Selection | null {
+  const set = activeSet(view)?.settings;
+  if (set && ais.some((i) => i.id === set.default.instance)) return set.default;
+  const first = ais[0];
+  if (!first) return null;
+  const s = effectiveSelection(set ?? view.own ?? view.workspace!.settings, first, modelsOf(view, first));
+  return { instance: first.id, ...s };
 }
 
 /**
- * Settings → Scheduled tasks: a prompt the account's AI runs on a schedule. The page builds none while no AI can run one
- * (the server says why: `blocked`). A task's last result shows on its row; the last few are under "Earlier runs".
+ * Settings → Scheduled tasks: a prompt the account's AI runs on its own, each run a turn in an assistant chat. The page
+ * builds none while no AI can run one (the server says why: `blocked`). ?task=<id> opens that task's form.
  */
 export function AutomationsSection() {
   const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
   const [list, setList] = useState<{ items: AutomationView[]; blocked: string | null } | null>(null);
-  const [limits, setLimits] = useState<LimitsIdentity[]>([]);
+  const [providers, setProviders] = useState<ProvidersView | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
   // "new", a task to edit, or nothing open
   const [editing, setEditing] = useState<AutomationView | "new" | null>(null);
 
-  // the plan readings say when a usage limit comes back; a failed read only leaves the reset out
+  // the providers give the form its computers and AIs, and the row its usage-limit reset; a failed read leaves those out
   const reload = () =>
-    Promise.all([listAutomations(), getProviders().then((v) => v.limits, () => [] as LimitsIdentity[])])
-      .then(([r, l]) => {
+    Promise.all([listAutomations(), getProviders().catch(() => null)])
+      .then(([r, p]) => {
         setList(r);
-        setLimits(l);
+        setNow(Date.now());
+        if (p) setProviders(p);
         setError(null);
       })
       .catch((e) => setError(msg(e)));
@@ -138,6 +90,14 @@ export function AutomationsSection() {
     const t = setInterval(() => void reload(), RELOAD_MS);
     return () => clearInterval(t);
   }, []);
+
+  // a link to one task (the assistant's card, a run's chat) opens its form once the list is in
+  const linked = params.get("task");
+  const open = editing ?? list?.items.find((x) => x.id === linked) ?? null;
+  const close = () => {
+    setEditing(null);
+    if (linked) setParams((p) => (p.delete("task"), p), { replace: true });
+  };
 
   const items = list?.items ?? [];
   const blocked = list?.blocked ?? null;
@@ -175,21 +135,22 @@ export function AutomationsSection() {
                   }
                 />
               )}
-              {!blocked && items.length === 0 && <EmptyRow title="No scheduled tasks" description={WHAT} />}
+              {!blocked && items.length === 0 && <EmptyRow title="No scheduled tasks" />}
               {items.map((a) => (
-                <TaskRow key={a.id} a={a} limits={limits} onEdit={() => setEditing(a)} onChanged={reload} />
+                <TaskRow key={a.id} a={a} limits={providers?.limits ?? []} now={now} onEdit={() => setEditing(a)} onChanged={reload} />
               ))}
             </>
           )}
         </Card>
       </Section>
-      {editing && (
+      {open && providers && (
         <TaskDialog
-          key={editing === "new" ? "new" : editing.id}
-          initial={editing === "new" ? null : editing}
-          onClose={() => setEditing(null)}
+          key={open === "new" ? "new" : open.id}
+          initial={open === "new" ? null : open}
+          providers={providers}
+          onClose={close}
           onSaved={() => {
-            setEditing(null);
+            close();
             void reload();
           }}
         />
@@ -198,101 +159,112 @@ export function AutomationsSection() {
   );
 }
 
-function TaskRow({ a, limits, onEdit, onChanged }: { a: AutomationView; limits: LimitsIdentity[]; onEdit: () => void; onChanged: () => Promise<void> }) {
+function TaskRow({ a, limits, now, onEdit, onChanged }: { a: AutomationView; limits: LimitsIdentity[]; now: number; onEdit: () => void; onChanged: () => Promise<void> }) {
   const runNow = () => runAutomationNow(a.id).then(onChanged).catch((e) => saveFailed(msg(e)));
-  // until it has run once, the row offers its first run in plain sight; after that it is in the ⋯ menu
-  const firstRun = !a.running && !a.lastResult;
+  // the chat its runs post in, or for a new-chat task the last run's
+  const chat = a.chat ?? a.lastResult?.chat;
+  const { line, problem } = statusOf(a, now, claudeLimitReset(limits, now));
   return (
-    <div>
-      <ListRow
-        title={a.name}
-        subtitle={subtitleOf(a)}
-        status={lastLine(a, limits, Date.now())}
-        actions={
-          <>
-            {/* below sm the button would crowd the name: there Run now is in the ⋯ menu only */}
-            {firstRun && (
-              <Button size="xs" variant="outline" className="hidden sm:inline-flex" onClick={() => void runNow()}>
-                <Play className="size-3" /> Run now
-              </Button>
-            )}
-            <Switch
-              checked={a.enabled}
-              onCheckedChange={(on) => updateAutomation(a.id, { enabled: on }).then(onChanged).catch((e) => saveFailed(msg(e)))}
-              aria-label={`Turn ${a.name} on or off`}
-            />
-            <RowMenu
-              label={`Actions for ${a.name}`}
-              items={[
-                { label: "Edit", icon: <Pencil />, onSelect: onEdit },
-                ...(a.running ? [] : [{ label: "Run now", icon: <Play />, onSelect: runNow }]),
-                {
-                  label: "Delete",
-                  destructive: true,
-                  confirm: { title: `Delete “${a.name}”?`, body: "Its schedule and its results are removed.", ok: "Delete" },
-                  onSelect: () => deleteAutomation(a.id).then(onChanged),
-                },
-              ]}
-            />
-          </>
-        }
-      />
-      {a.history.length > 0 && (
-        <Advanced summary="Earlier runs">
-          <ul className="space-y-2 py-1 text-xs">
-            {a.history.map((r) => (
-              <li key={r.at}>
-                <div className={r.status === "done" ? "text-muted-foreground" : r.status === "error" ? "text-red-600 dark:text-red-400" : "text-amber-700 dark:text-amber-400"}>
-                  {WORD[r.status]} · {fmtAgo(r.at)}
-                </div>
-                <div className="break-words whitespace-pre-line text-foreground/80">{r.text}</div>
-              </li>
-            ))}
-          </ul>
-        </Advanced>
-      )}
-    </div>
+    <ListRow
+      title={a.name}
+      subtitle={<span className="line-clamp-2 whitespace-normal">{a.prompt}</span>}
+      status={
+        <span className="flex min-w-0 flex-col gap-0.5">
+          <span>{line}</span>
+          {problem && <Status tone={problem.tone}>{problem.text}</Status>}
+          {chat && (
+            <Link to={`/?chat=${encodeURIComponent(chat)}`} className="w-fit underline underline-offset-2 hover:text-foreground">
+              {a.destination === "new_chat" ? "Open the last run's chat" : "Open its chat"}
+            </Link>
+          )}
+        </span>
+      }
+      actions={
+        <>
+          <Switch
+            checked={a.enabled}
+            onCheckedChange={(on) => updateAutomation(a.id, { enabled: on }).then(onChanged).catch((e) => saveFailed(msg(e)))}
+            aria-label={`Turn ${a.name} on or off`}
+          />
+          <RowMenu
+            label={`Actions for ${a.name}`}
+            items={[
+              { label: "Edit", icon: <Pencil />, onSelect: onEdit },
+              ...(a.running ? [] : [{ label: "Run now", icon: <Play />, onSelect: runNow }]),
+              {
+                label: "Delete",
+                destructive: true,
+                confirm: { title: `Delete “${a.name}”?`, body: "It stops at once. Its chats stay.", ok: "Delete" },
+                onSelect: () => deleteAutomation(a.id).then(onChanged),
+              },
+            ]}
+          />
+        </>
+      }
+    />
   );
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
+function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
   return (
-    <div className="space-y-1.5">
+    <div className="min-w-0 space-y-1.5">
       <div className="text-xs font-medium text-foreground">{label}</div>
       {children}
+      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
     </div>
   );
 }
 
-/** New or edit. The fields are the server's: name, prompt, schedule, time zone (the browser's, as the server checks it). */
-function TaskDialog({ initial, onClose, onSaved }: { initial: AutomationView | null; onClose: () => void; onSaved: () => void }) {
-  const [d, setD] = useState<AutomationDraft>(() => (initial ? draftOf(initial) : blankDraft()));
+const MODES: { value: ScheduleMode; label: string }[] = [
+  { value: "fixed", label: "At a time" },
+  { value: "once", label: "Once" },
+  { value: "interval", label: "Every interval" },
+];
+
+/** New or edit: every field here is read by the run (api/automations.ts readiness, runAutomation). */
+function TaskDialog({ initial, providers, onClose, onSaved }: { initial: AutomationView | null; providers: ProvidersView; onClose: () => void; onSaved: () => void }) {
+  const ais = useMemo(() => taskAis(providers), [providers]);
+  const [d, setD] = useState<AutomationDraft>(() => {
+    const ai = initial?.ai ?? (initial ? null : defaultAi(providers, ais));
+    const device = ais.find((i) => i.id === ai?.instance)?.device ?? ais[0]?.device ?? "";
+    return initial ? draftOf(initial, device) : { ...blankDraft(), ai, device };
+  });
+  const [projects, setProjects] = useState<WorkshopProject[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const set = (patch: Partial<AutomationDraft>) => setD((cur) => ({ ...cur, ...patch }));
-  const timed = d.kind !== "hours";
-  // the zone of a task that was made elsewhere shows only when it differs from this browser's
-  const elsewhere = initial && initial.timezone !== zone() ? initial.timezone : null;
+
+  useEffect(() => {
+    listProjects().then(setProjects, () => {});
+  }, []);
+
+  const devices = [...new Set(ais.map((i) => i.device!))];
+  const here = ais.filter((i) => i.device === d.device);
+  const models = here.flatMap((inst) => modelsOf(providers, inst).map((m) => ({ inst, m })));
+  // the stored AI is listed even when it can't run any more, so the form says what the task has
+  const aiKey = d.ai ? `${d.ai.instance}\n${d.ai.model}` : "";
+  const modelOptions = models.map(({ inst, m }) => ({ value: `${inst.id}\n${m}`, label: here.length > 1 ? `${inst.name} · ${modelName(m)}` : modelName(m) }));
+  if (d.ai && !modelOptions.some((o) => o.value === aiKey)) modelOptions.unshift({ value: aiKey, label: `${modelName(d.ai.model)} (not available)` });
+
+  const pickDevice = (device: string) => {
+    const inst = ais.find((i) => i.device === device);
+    const m = inst ? modelsOf(providers, inst)[0] : undefined;
+    set({ device, ai: inst && m ? { instance: inst.id, model: m, effort: d.ai?.effort ?? "high" } : null });
+  };
 
   const save = async () => {
-    if (!d.name.trim() || !d.prompt.trim()) {
-      setError("Give the task a name and say what it should do.");
-      return;
-    }
-    if (!timed && !(Number.isInteger(d.every) && d.every >= 1 && d.every <= 168)) {
-      setError("Every: a whole number of hours, from 1 to 168.");
-      return;
-    }
+    const problem = draftError(d);
+    if (problem) return setError(problem);
     setBusy(true);
     setError(null);
-    // a new task runs on this browser's clock; an edit keeps its own zone
-    const body = draftBody(d, initial?.timezone ?? zone());
     try {
-      if (!initial) await createAutomation({ ...body, enabled: true });
+      // a new task runs on this browser's clock; an edit keeps its own zone
+      const body = draftBody(d, initial?.timezone ?? zone());
+      if (!initial) await createAutomation(body);
       else {
-        // a changed schedule counts from now (the server's rule); a name or prompt edit must not move the next run
-        const same = JSON.stringify(draftSchedule(d)) === JSON.stringify(initial.schedule);
-        await updateAutomation(initial.id, same ? { name: body.name, prompt: body.prompt } : body);
+        // an unchanged schedule must not move the next run (a new one counts from now: the server's rule)
+        const { schedule, ...rest } = body;
+        await updateAutomation(initial.id, JSON.stringify(schedule) === JSON.stringify(initial.schedule) ? rest : body);
       }
       onSaved();
     } catch (e) {
@@ -305,66 +277,142 @@ function TaskDialog({ initial, onClose, onSaved }: { initial: AutomationView | n
     <FormDialog
       open
       onOpenChange={(open) => !open && onClose()}
-      title={initial ? "Edit scheduled task" : "New scheduled task"}
+      title={initial ? "Edit task" : "New task"}
+      description="Run a prompt automatically on an interval, at a fixed time, or once at a set date. Each run and its answer land in an assistant chat."
       submitLabel={initial ? "Save task" : "Create task"}
       onSubmit={save}
+      wide
       busy={busy}
       error={error}
     >
-      {/* the starting points are type=button: inside the dialog's form a plain button would submit it with the draft as it was */}
-      {!initial && (
-        <Field label="Start from">
-          <div role="group" aria-label="Start from" className="flex flex-wrap gap-1.5">
-            {STARTS.map((s) => (
-              <Button key={s.name} type="button" size="xs" variant="outline" onClick={() => setD(startDraft(s))}>
-                {s.name}
-              </Button>
-            ))}
-          </div>
-        </Field>
-      )}
+      <Field label="Runs on">
+        <SettingsSelect
+          label="Runs on"
+          value={d.device}
+          onValueChange={pickDevice}
+          options={(devices.includes(d.device) || !d.device ? devices : [d.device, ...devices]).map((id) => ({ value: id, label: deviceLabel(providers, id) }))}
+          className="sm:w-full"
+        />
+      </Field>
       <Field label="Name">
-        <Input value={d.name} onChange={(e) => set({ name: e.target.value })} placeholder="e.g. Monday hooks" maxLength={AUTOMATION_NAME_MAX} aria-label="Name" className="h-8" />
+        <Input value={d.name} onChange={(e) => set({ name: e.target.value })} placeholder="e.g. Monday hook ideas" maxLength={AUTOMATION_NAME_MAX} aria-label="Name" className="h-8" />
       </Field>
-      <Field label="What should it do?">
-        <Textarea value={d.prompt} onChange={(e) => set({ prompt: e.target.value })} rows={4} maxLength={AUTOMATION_PROMPT_MAX} aria-label="What should it do?" className="text-sm" />
+      <Field label="Destination" hint={DESTINATION[d.destination].detail}>
+        <SettingsSelect
+          label="Destination"
+          value={d.destination}
+          onValueChange={(v) => set({ destination: v as Destination })}
+          options={(Object.keys(DESTINATION) as Destination[]).map((k) => ({ value: k, label: DESTINATION[k].label }))}
+          className="sm:w-full"
+        />
       </Field>
-      <div className="flex flex-wrap items-end gap-3">
-        <Field label="Repeat">
+      <Field label="Project">
+        <SettingsSelect
+          label="Project"
+          value={d.project || "none"}
+          onValueChange={(v) => set({ project: v === "none" ? "" : v })}
+          options={[{ value: "none", label: "No project" }, ...projects.map((p) => ({ value: p.id, label: p.name }))]}
+          className="sm:w-full"
+        />
+      </Field>
+      <Field label="Prompt">
+        <Textarea
+          value={d.prompt}
+          onChange={(e) => set({ prompt: e.target.value })}
+          rows={4}
+          maxLength={AUTOMATION_PROMPT_MAX}
+          placeholder="What should the AI do each time this runs?"
+          aria-label="Prompt"
+          className="text-sm"
+        />
+      </Field>
+      <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+        <Field label="Model">
           <SettingsSelect
-            label="Repeat"
-            value={d.kind}
-            onValueChange={(v) => set({ kind: v as AutomationDraft["kind"] })}
-            options={[
-              { value: "daily", label: "Every day" },
-              { value: "weekly", label: "Every week" },
-              { value: "hours", label: "Every N hours" },
-            ]}
+            label="Model"
+            value={aiKey}
+            onValueChange={(v) => {
+              const [instance, model] = v.split("\n") as [string, string];
+              set({ ai: { instance, model, effort: d.ai?.effort ?? "high" } });
+            }}
+            options={modelOptions}
+            disabled={!modelOptions.length}
+            className="sm:w-full"
+          />
+        </Field>
+        <Field label="Thinking">
+          <SettingsSelect
+            label="Thinking"
+            value={d.ai?.effort ?? "high"}
+            onValueChange={(v) => d.ai && set({ ai: { ...d.ai, effort: v as Effort } })}
+            options={EFFORTS.map((e) => ({ value: e, label: effortLabel(e) }))}
+            disabled={!d.ai}
             className="sm:w-32"
           />
         </Field>
-        {d.kind === "weekly" && (
-          <Field label="Day">
-            <SettingsSelect
-              label="Day"
-              value={String(d.weekday)}
-              onValueChange={(v) => set({ weekday: Number(v) as Weekday })}
-              options={DAY_NAMES.map((n, i) => ({ value: String(i), label: n }))}
-              className="sm:w-32"
-            />
-          </Field>
+      </div>
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="text-xs font-medium text-foreground">Schedule</div>
+          <ToggleGroup type="single" variant="outline" size="sm" value={d.mode} onValueChange={(v) => v && set({ mode: v as ScheduleMode })} aria-label="Schedule type">
+            {MODES.map((m) => (
+              <ToggleGroupItem key={m.value} value={m.value} className="px-2.5 text-xs">
+                {m.label}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+        </div>
+        {d.mode === "fixed" && (
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span>Run at</span>
+            <Input type="time" value={d.at} onChange={(e) => set({ at: e.target.value })} aria-label="Run at" className="h-8 w-28" />
+            <span>on</span>
+            <ToggleGroup
+              type="multiple"
+              variant="outline"
+              size="sm"
+              value={d.weekdays.map(String)}
+              onValueChange={(v) => set({ weekdays: v.map(Number) as Weekday[] })}
+              aria-label="Days to run"
+            >
+              {WEEK.map((w) => (
+                <ToggleGroupItem key={w.day} value={String(w.day)} className="px-2 text-xs data-[state=off]:text-muted-foreground data-[state=on]:bg-foreground data-[state=on]:text-background">
+                  {w.label}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+          </div>
         )}
-        {timed ? (
-          <Field label="Time">
-            <Input type="time" value={d.at} onChange={(e) => set({ at: e.target.value })} aria-label="Time" className="h-8 w-28" />
-          </Field>
-        ) : (
-          <Field label="Hours">
-            <Input type="number" min={1} max={168} value={d.every} onChange={(e) => set({ every: Number(e.target.value) })} aria-label="Hours" className="h-8 w-24" />
-          </Field>
+        {d.mode === "once" && (
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span>Run on</span>
+            <Input type="datetime-local" value={d.runAt} onChange={(e) => set({ runAt: e.target.value })} aria-label="Run on" className="h-8 w-52" />
+          </div>
+        )}
+        {d.mode === "interval" && (
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span>Run every</span>
+            <Input type="number" min={1} value={d.every} onChange={(e) => set({ every: Number(e.target.value) })} aria-label="Run every" className="h-8 w-20" />
+            <SettingsSelect
+              label="Unit"
+              value={d.unit}
+              onValueChange={(v) => set({ unit: v as AutomationDraft["unit"] })}
+              options={[
+                { value: "minutes", label: "minutes" },
+                { value: "hours", label: "hours" },
+              ]}
+              className="w-28 sm:min-w-28"
+            />
+          </div>
         )}
       </div>
-      {elsewhere && <p className="text-xs text-muted-foreground">Runs in the {elsewhere} time zone.</p>}
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="text-xs font-medium text-foreground">Enabled</div>
+          <p className="text-xs text-muted-foreground">Disabled tasks stay saved but do not run.</p>
+        </div>
+        <Switch checked={d.enabled} onCheckedChange={(on) => set({ enabled: on })} aria-label="Enabled" />
+      </div>
     </FormDialog>
   );
 }
