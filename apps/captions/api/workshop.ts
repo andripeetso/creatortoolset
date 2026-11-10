@@ -11,7 +11,7 @@ import { inSlideOrder, storedZip, type Delivery } from "./lib/workshop/deliverie
 import path from "node:path";
 import { sessionOf, type AuthVars } from "./auth";
 import { AiProviderError, aiFor as route, completeWithFallback, streamWithFallback, type ProviderOpts, type StreamHooks } from "./ai-complete";
-import type { Selection } from "../contracts/providers";
+import { DRIVERS, type Selection } from "../contracts/providers";
 import { MAC_MISS, MacClaudeError, streamMacClaude, type MacErrorKind, type MacOpts, type MacSession, type MacUsage } from "./lib/mac-claude";
 import { env } from "./lib/env";
 import type { SessionUser, UserRecord } from "./users";
@@ -124,9 +124,11 @@ const RESUME_MAX_TOKENS = 100_000;
 const onMac = (user: SessionUser, own?: Selection) => !!workshopAi(user, own).only?.includes("mac");
 /** The asker's Perplexity key (their own, or the server's for the platform admin), or "" */
 const perplexityFor = (user: SessionUser) => keyFor(user, "PERPLEXITY_API_KEY").key;
-const researchFor = (user: SessionUser) => !!perplexityFor(user) || onMac(user);
-const RESEARCH_OFF = "Research needs an AI of your own (Settings → Your AI) or your Perplexity key in Settings → My API keys";
-const researchLabel = (user: SessionUser) => (onMac(user) ? "Claude (Mac)" : "Perplexity");
+/** Claude on the Mac searches the web; Codex's sandbox has no network, so research never runs on it. */
+const onWebMac = (user: SessionUser, own?: Selection) => onMac(user, own) && workshopAi(user, own).mac?.provider?.driver === "claude";
+const researchFor = (user: SessionUser) => !!perplexityFor(user) || onWebMac(user);
+const RESEARCH_OFF = "Research needs Claude Code on your Mac (it searches the web) or your Perplexity key in Settings → My API keys";
+const researchLabel = (user: SessionUser) => (onWebMac(user) ? "Claude (Mac)" : "Perplexity");
 const macLabel = (u?: MacUsage) => (u ? `Claude (Mac) · ${(u.tokens / 1000).toFixed(1)}k tokens · $${u.costUsd.toFixed(2)} API-equivalent` : "Claude (Mac)");
 
 /**
@@ -141,7 +143,7 @@ async function webResearch(
   opts: { depth: ResearchDepth; jsonSchema?: Record<string, unknown>; signal?: AbortSignal },
 ): Promise<ResearchAnswer & { usage?: MacUsage }> {
   if (opts.signal?.aborted) throw new Error("Stopped");
-  if (onMac(user)) {
+  if (onWebMac(user)) {
     try {
       let usage: MacUsage | undefined;
       const rules = MAC_RESEARCH[opts.depth] + (opts.jsonSchema ? "" : MAC_RESEARCH.sources);
@@ -1597,9 +1599,12 @@ async function runReview(session: SessionMeta, user: SessionUser, messageId: str
     const { system, user: prompt } = buildReviewPrompt({ doc, handle, audience: audienceOf(project), best, packText });
     let usage: MacUsage | undefined;
     const write = progressWriter(session.id, messageId);
-    const text = await streamMacClaude(system, prompt, signal, (t) => write({ text: t, stage: "writing" }), (u) => (usage = u), { label: "Workshop follower's read", provider: fableProvider(user), model: REVIEW_MODEL });
+    const reader = fableProvider(user);
+    const text = await streamMacClaude(system, prompt, signal, (t) => write({ text: t, stage: "writing" }), (u) => (usage = u), { label: "Workshop follower's read", provider: reader, model: REVIEW_MODEL });
     await write({}, true);
-    await patchMessage(session.id, messageId, { status: "done", stage: undefined, text: text.trim(), provider: "Claude Fable (Mac)", usage });
+    // a non-Claude reader (a member whose only AI is Codex) keeps its own model: name the CLI that actually read it
+    const who = reader && reader.driver !== "claude" ? `${DRIVERS.find((d) => d.id === reader.driver)?.label ?? reader.driver} (Mac)` : "Claude Fable (Mac)";
+    await patchMessage(session.id, messageId, { status: "done", stage: undefined, text: text.trim(), provider: who, usage });
     bumpUsage(user.username, { aiRuns: 1 });
   } catch (e) {
     await patchMessage(session.id, messageId, { status: "error", stage: undefined, error: errorMessage(e).slice(0, 300) });

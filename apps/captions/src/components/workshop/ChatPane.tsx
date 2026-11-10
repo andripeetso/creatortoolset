@@ -25,13 +25,15 @@ import { confirmHeavy } from "@/lib/setup";
 /** How long the wait is, measured (Claude on the Mac, 2026-10-01: a draft ~35 s, quick research ~1 min, deep ~4 min). */
 function thinkingHint(m: ChatMessage): string {
   if (m.review) return "· Fable reads it like a follower, about a minute";
-  const mac = m.provider === "Claude (Mac)";
+  // a Mac answer is named for its CLI ("Claude (Mac)", "Codex (Mac)")
+  const mac = !!m.provider?.endsWith("(Mac)");
+  const who = m.provider?.startsWith("Codex") ? "Codex" : "Claude";
   const deep = m.audit?.depth === "deep" || m.research?.depth === "deep";
   if (m.audit || m.stage === "researching") {
-    if (deep) return mac ? "· Claude reads the sources, a few minutes" : "· deep research takes 5–15 min";
-    return mac ? "· Claude searches the web, about a minute" : "· about a minute";
+    if (deep) return mac ? `· ${who} reads the sources, a few minutes` : "· deep research takes 5–15 min";
+    return mac ? `· ${who} searches the web, about a minute` : "· about a minute";
   }
-  return mac ? "· Claude thinks ~30 s before it writes" : "· a full draft takes 20–60 s";
+  return mac ? `· ${who} thinks ~30 s before it writes` : "· a full draft takes 20–60 s";
 }
 
 export function ChatPane({

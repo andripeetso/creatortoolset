@@ -104,8 +104,9 @@ describe("before an AI is connected", () => {
     const r = await app.request("/api/assistant/turn", { method: "POST", ...json({ text: "hello" }, { cookie }) });
     expect(r.status).toBe(202);
     const device = { authorization: `Bearer ${nicoMac.token}` };
-    const job = (await (await app.request("/api/devices/relay/wait", { method: "POST", ...json({}, device) })).json()) as { id: string; driver?: string; mcp?: unknown; asks?: boolean };
+    const job = (await (await app.request("/api/devices/relay/wait", { method: "POST", ...json({}, device) })).json()) as { id: string; driver?: string; model?: string; mcp?: unknown; asks?: boolean };
     expect(job.driver).toBe("codex");
+    expect(job.model).toBe("gpt-x");
     expect(job.mcp).toBeUndefined();
     expect(job.asks).toBeUndefined();
     await app.request(`/api/devices/relay/${job.id}/done`, { method: "POST", ...json({ text: "Hi from Codex." }, device) });

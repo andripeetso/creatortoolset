@@ -282,7 +282,7 @@ export default function WorkshopPage() {
         {avail && !avail.ai && (
           <p className="mb-4 flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
             <TriangleAlert className="h-3.5 w-3.5 shrink-0" />
-            Connect Claude Code to write. Research and notes work now.
+            Connect Claude Code or Codex to write. Research and notes work now.
           </p>
         )}
 
