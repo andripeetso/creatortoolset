@@ -1008,7 +1008,7 @@ export default function WorkshopSessionPage() {
   if (!allowed) return null;
 
   return (
-    <div className="flex h-dvh flex-col bg-[var(--desk-now)] text-foreground">
+    <div data-fills-window className="flex h-dvh flex-col bg-[var(--desk-now)] text-foreground">
       <AppBar
         tool="Content Workshop"
         to={WORKSHOP_HOME}

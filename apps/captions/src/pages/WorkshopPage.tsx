@@ -274,7 +274,7 @@ export default function WorkshopPage() {
     );
 
   return (
-    <div className="relative flex h-dvh flex-col bg-zinc-950 text-zinc-200">
+    <div data-fills-window className="relative flex h-dvh flex-col bg-zinc-950 text-zinc-200">
       <AppBar tool="Content Workshop" account={!!me}>
         {me ? (
           <ProjectSwitcher />

@@ -217,9 +217,16 @@ body { overscroll-behavior-y: none; }
    The bar now stays, so that padding would be the jump, and the hidden overflow would cut a scrolled page off at one
    window's height: both are undone here. */
 html { overflow-y: scroll; }
-/* A screen that is one window-high pane scrolling by itself (data-fills-window, with overflow-y-scroll) keeps the bar's
-   place in the pane instead, so the page does not keep a second, empty one beside it. */
+/* A screen that is one window high and scrolls inside itself (data-fills-window: Workshop, a Workshop session, Caption
+   Studio, a Review video, a screen recording) never scrolls the page, so the page keeps no bar there: an empty 8px
+   would stand between its panes and the window's edge. Its top bar then ends 8px further right than on every other
+   screen, so the bar keeps those 8px free itself and its right end stays in one place from screen to screen. Where
+   the whole screen is the one pane that scrolls, top bar included (data-fills-window="scrolls", with
+   overflow-y-scroll: Caption Studio's first screen), the pane's own bar already takes them. */
 html:has([data-fills-window]) { overflow-y: hidden; }
+@media (hover: hover) and (pointer: fine) {
+  [data-fills-window]:not([data-fills-window="scrolls"]) [data-appbar] { border-right: 8px solid transparent; }
+}
 html body[data-scroll-locked] { overflow: visible !important; padding-right: 0 !important; margin-right: 0 !important; }
 /* The dim behind a dialog covers the window but not the page's own bar beside it, where the window's backdrop shows
    (the body's colour). While a dialog is open the backdrop is that colour as the dim leaves it (half black over it), so

@@ -654,6 +654,7 @@ function Review({
 
   return (
     <div
+      data-fills-window
       className="flex h-dvh flex-col bg-zinc-950 text-zinc-200"
       // a file dropped anywhere on the page (textbox included) attaches to the comment
       // being written; a near miss used to open the image in the tab instead
