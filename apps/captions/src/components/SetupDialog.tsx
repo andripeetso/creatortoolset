@@ -44,6 +44,7 @@ import {
   rememberLater,
   setupOpen,
   setupOpensItself,
+  useSetupShown,
   setupStepFromParam,
   stageOf,
   stepsFor,
@@ -180,6 +181,10 @@ export function SetupDialog() {
   // by itself only on a first sign-in (setupOpensItself); Settings → Setup and ?setup= always open it
   const firstRun = setupOpensItself({ logins: me?.logins, loaded, projects: projects.length });
   const open = real && !!prefs && setupOpen(view, asked) && (asked !== null || firstRun);
+  useEffect(() => {
+    useSetupShown.setState({ shown: open });
+    return () => useSetupShown.setState({ shown: false });
+  }, [open]);
 
   useEffect(() => {
     if (real) void load();

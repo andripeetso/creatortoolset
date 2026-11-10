@@ -45,7 +45,7 @@ import { useRootTint, useWorkspace } from "@/lib/workspace";
 import { warmScreens } from "@/lib/warm-cache";
 import { useAppearance } from "@/lib/settings";
 import { historyDepth } from "@/lib/history-depth";
-import { setupOpen, useSetup, useWorkTalk } from "@/lib/setup";
+import { useSetupShown, useWorkTalk } from "@/lib/setup";
 import { replacementFor } from "@/lib/plugin";
 import { webPlugins } from "./plugins.gen";
 
@@ -245,8 +245,9 @@ export default function App() {
   // "just chat" (talk === "chat") has no dock, no selection popup and no welcome
   const { talk } = useWorkTalk();
   const location = useLocation();
-  // the setup window up: no dock, no popup, no bubble behind it (the assistant comes in after Done)
-  const setupUp = setupOpen(useSetup((s) => s.view), new URLSearchParams(location.search).get("setup"));
+  // the setup window on screen: no dock, no popup, no bubble behind it. Not "setup unfinished": an account that never
+  // pressed Done but has projects gets no setup window, and lost its assistant with the old check
+  const setupUp = useSetupShown((s) => s.shown);
   const navigate = useNavigate();
   // /settings/*, /community/* and /projects are modals: the page you were on stays mounted behind (home when opened directly)
   const inSettings = /^\/settings(?:\/|$)/.test(location.pathname);

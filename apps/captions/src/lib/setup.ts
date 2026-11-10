@@ -90,6 +90,9 @@ export const setupDismissed = (): boolean => dismissedThisLoad || read("local", 
  * finished and Not now wasn't pressed. Home's "Finish setting up" card hides while it is, and the assistant dock and
  * the selection popup stay away from it.
  */
+/** Whether the setup window is on screen right now (SetupDialog sets it): the assistant dock and popup stay away only then. */
+export const useSetupShown = create<{ shown: boolean }>(() => ({ shown: false }));
+
 export const setupOpen = (view: Pick<SetupView, "done" | "tools"> | null, asked: string | null): boolean =>
   !!view && (asked !== null || (!setupFinished(view) && !setupDismissed()));
 
