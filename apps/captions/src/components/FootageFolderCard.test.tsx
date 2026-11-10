@@ -82,7 +82,7 @@ describe("Where are your videos?", () => {
     await click("Choose a folder");
     const post = calls.find((c) => c.method === "POST");
     expect(post?.url).toBe("/api/library/watch/folder");
-    expect(JSON.parse(post!.body!)).toEqual({ path: "/Users/owner/Movies/Trip" });
+    expect(JSON.parse(post!.body!)).toEqual({ path: "/Users/owner/Movies/Trip", libraryId: "lib_1" });
     expect(card()).toBeNull();
   });
 
@@ -126,7 +126,7 @@ describe("Where are your videos?", () => {
     await click("Choose a folder");
     await typeInto("Folder path", "~/nope");
     await click("Check folder");
-    expect(JSON.parse(calls.at(-1)!.body!)).toEqual({ path: "~/nope" });
+    expect(JSON.parse(calls.at(-1)!.body!)).toEqual({ path: "~/nope", libraryId: "lib_1" });
     expect(host!.textContent).toContain("No such folder on the server: ~/nope");
     expect(card()).not.toBeNull();
   });

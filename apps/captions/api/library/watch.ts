@@ -133,15 +133,17 @@ watchApp.put("/:id/watch", async (c) => {
   return c.json(await withFound(status(libraryId)));
 });
 
-// POST /api/library/watch/folder { path } → { ok }. Adds one folder to the account's own watch list: the "Where are your
-// videos?" card (Media Library, AI Editor) and the Mac app's folder picker land here. The same checks as the list.
+// POST /api/library/watch/folder { path, libraryId? } → { ok }. Adds one folder to a watch list: the "Where are your
+// videos?" card (Media Library, AI Editor) and the Mac app's folder picker land here, on the library the card is for
+// (default: the account's own). The same checks as the list.
 watchApp.post("/watch/folder", async (c) => {
   const user = c.get("user");
   if (user.role === "visitor") return c.json({ error: "Not for guests", code: "forbidden" }, 403);
-  const body = (await c.req.json().catch(() => null)) as { path?: unknown } | null;
+  const body = (await c.req.json().catch(() => null)) as { path?: unknown; libraryId?: unknown } | null;
   const folder = typeof body?.path === "string" ? body.path.trim() : "";
   if (!folder) return c.json({ error: "Choose a folder", code: "invalid" }, 400);
-  const refused = await addWatchFolder(user.username, folder);
+  const libraryId = typeof body?.libraryId === "string" ? body.libraryId : undefined;
+  const refused = await addWatchFolder(user.username, folder, libraryId);
   if (refused) return c.json({ error: refused, code: "invalid" }, 400);
   return c.json({ ok: true });
 });
@@ -158,19 +160,20 @@ const homeLibrary = (username: string) =>
 /**
  * Adds one folder to the account's own Library watch list, read in place. The Library and the AI Editor both read that
  * list, so setup's Folders step and Settings → Devices land here. Returns the reason it was refused, or null when it is
- * in the list (already there counts as added).
+ * in the list (already there counts as added). `libraryId` is the library the person is looking at (default: their own).
  */
-export async function addWatchFolder(username: string, folderPath: string): Promise<string | null> {
+export async function addWatchFolder(username: string, folderPath: string, libraryId?: string): Promise<string | null> {
   if (!watchAllowed(username)) return "This server is not on your computer, so it cannot read your folders. Upload the files instead.";
   ensureLibrary(username);
-  const libraryId = homeLibrary(username);
-  if (!libraryId) return "The Library is not made yet. Try again.";
-  const f = await checkFolder(libraryId, { path: expandHome(folderPath), mode: "reference" }, username);
+  const target = libraryId ?? homeLibrary(username);
+  if (!target) return "The Library is not made yet. Try again.";
+  if (!libraryRole(username, target)) return "That library is not yours to add a folder to.";
+  const f = await checkFolder(target, { path: expandHome(folderPath), mode: "reference" }, username);
   if (typeof f === "string") return f;
-  const current = foldersOf(libraryId);
+  const current = foldersOf(target);
   if (current.some((g) => g.path === f.path)) return null;
   if (current.length >= MAX_FOLDERS) return `The Library watches up to ${MAX_FOLDERS} folders. Remove one first.`;
-  writeWatch(libraryId, [...current, f]);
+  writeWatch(target, [...current, f]);
   return null;
 }
 

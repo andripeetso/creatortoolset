@@ -175,6 +175,9 @@ describe("a folder chosen from the Media Library card", () => {
     expect((await post("owner-w", { path: path.join(dir, "not there") })).status).toBe(400);
     expect((await post("owner-w", { path: "footage" })).status).toBe(400);
     expect((await post("owner-w", {})).status).toBe(400);
+    const other = path.join(dir, "Other footage");
+    mkdirSync(other, { recursive: true });
+    expect((await post("owner-w", { path: other, libraryId: "lib_nope" })).status).toBe(400); // not a library of theirs
     expect(await listed()).toEqual(before);
   });
 });

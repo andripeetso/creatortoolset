@@ -62,7 +62,7 @@ export function FootageFolderCard({ libraryId, onUpload }: { libraryId: string; 
       const r = await fetch("/api/library/watch/folder", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ path: folder }),
+        body: JSON.stringify({ path: folder, libraryId }),
       });
       const body = (await r.json().catch(() => ({}))) as { error?: string };
       if (!r.ok) throw new Error(body.error ?? `Couldn't add that folder (${r.status})`);
