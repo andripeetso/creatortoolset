@@ -75,6 +75,9 @@ async function walkSetup(how: "In the app" | "In my own AI" | "Both", size: keyo
   await dialog.getByRole("heading", { name: "Connect your computers" }).waitFor();
   expect(await dialog.getByRole("list", { name: "Stage 1 of 3" }).count()).toBe(1);
   expect(await dialog.getByText(/^http:\/\/127\.0\.0\.1:\d+\/$|^http:\/\/localhost:\d+\/$/).count()).toBeGreaterThan(0);
+  // no paste command before the package is published, and no checkbox on the other computers
+  expect(await dialog.getByText("npx creatortoolset connect").count()).toBe(0);
+  expect(await dialog.getByText(/on the same Wi-Fi/).count()).toBeGreaterThan(0);
   await shot(page, `${tag}-2connect`);
   await dialog.getByRole("button", { name: "Continue", exact: true }).click();
 
@@ -136,7 +139,7 @@ async function existingServer(size: keyof typeof SIZES) {
   await page.goto(new URL("/?setup=connect", base).toString());
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("heading", { name: "Connect your computers" }).waitFor({ timeout: 60_000 });
-  await dialog.getByRole("button", { name: "Add a computer" }).click();
+  await dialog.getByRole("button", { name: "Add another computer" }).click();
   await dialog.getByLabel(/paste the link it shows here/).fill("https://studio.example.com/api/devices");
   await dialog.getByRole("button", { name: "Join" }).click();
   await dialog.getByText("That isn't a sign-in link from another server").waitFor();

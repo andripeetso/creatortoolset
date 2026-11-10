@@ -55,7 +55,7 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
         configuration.userContentController.add(self, name: "badge")
         configuration.userContentController.add(self, name: "signIn")
         configuration.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "account")
-        // This Mac's AI (src/lib/thisMac.ts): "state" and "start", answered with { aiOn, paired }
+        // This Mac's AI (src/lib/thisMac.ts): "state", "start" and "access", answered with { aiOn, paired, problem }
         configuration.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "thisMac")
         // A picture of the page for the assistant (src/lib/page-context.ts snapshot()): replies with a PNG in base64
         configuration.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "snapshot")
@@ -80,7 +80,7 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
     var onBlank: (() -> Void)?
     /// The account step (AccountStep.tsx): "status", "apple" or "google"; the reply resolves the page's postMessage.
     var onAccount: ((String, @escaping (AccountReply) -> Void) -> Void)?
-    /// This Mac's AI for the page (thisMac): "state" or "start"; the reply is { aiOn, paired }.
+    /// This Mac's AI for the page (thisMac): one of thisMacAsks; the reply is { aiOn, paired, problem }.
     var onThisMacAsk: ((String, @escaping ([String: Any]) -> Void) -> Void)?
     /// The site the window shows (Shell sets it): only its own pages may ask for a screenshot.
     var site: (() -> URL)?
@@ -254,7 +254,7 @@ extension AppWebView {
     /// "thisMac": only the open server's own main frame may ask; anything else gets the same answer as "off".
     fileprivate func thisMac(_ message: WKScriptMessage, _ replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
         guard message.frameInfo.isMainFrame, let page = message.frameInfo.request.url ?? url, let site, isSite(page, site()),
-              let ask = message.body as? String, ["state", "start"].contains(ask), let onThisMacAsk else {
+              let ask = message.body as? String, thisMacAsks.contains(ask), let onThisMacAsk else {
             return replyHandler(["aiOn": false, "paired": false], nil)
         }
         onThisMacAsk(ask) { replyHandler($0, nil) }

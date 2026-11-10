@@ -1,7 +1,11 @@
 // Settings → This Mac on the site (apps/captions ThisMacSection.tsx): the page sends `thismac-<what>` on the window
 // handler (TitleBar.swift) and every message is answered with this app's state as a `mac-this` event. The app keeps
 // all of it (servers, Use this Mac for my AI); the page only shows it. Worker buttons are plug-in rows (LaunchAgent.swift).
+import AppKit
 import Foundation
+
+/// The questions the page may ask over the "thisMac" handler (TitleBar.swift); any other is answered as off.
+let thisMacAsks = ["state", "start", "access"]
 
 extension Shell {
     /// One `thismac-<what>` message: state, ai:on|off, select:<id>, add:<text>, rename:<id>:<name>, remove:<id>, forget.
@@ -20,6 +24,33 @@ extension Shell {
         default: break
         }
         pushThisMac(problem: problem)
+    }
+
+    /// "access" from the page: turns on Access from other devices. Without the owner's password yet, this app asks for
+    /// one in a sheet (the page never sees it). The reply carries the problem, or none when it is on.
+    func accessFromOtherDevices() async -> [String: Any] {
+        guard let server else { return thisMacState(problem: "There is no server on this Mac.") }
+        if server.otherDevices { return thisMacState() }
+        var password: String?
+        if !server.hasOwnerPassword {
+            guard let typed = askNewOwnerPassword() else { return thisMacState(problem: "Choose a password to turn it on.") }
+            password = typed
+        }
+        return thisMacState(problem: await setOtherDevices(true, password: password))
+    }
+
+    /// The owner's new password for other devices, typed in a sheet of this app (nil: cancelled or too short).
+    @MainActor private func askNewOwnerPassword() -> String? {
+        let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        let alert = NSAlert()
+        alert.messageText = "Choose a password for other devices"
+        alert.informativeText = "Your phone and other computers sign in with it. Six characters or more."
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Turn on")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn, field.stringValue.count >= 6 else { return nil }
+        return field.stringValue
     }
 
     func pushThisMac(problem: String? = nil) {
