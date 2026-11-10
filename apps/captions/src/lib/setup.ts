@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { create } from "zustand";
 import { planWarning, type Feature, type PlanId } from "@contracts/plans";
-import { DEFAULT_TOOLS, type SetupView, type Tool } from "@contracts/tools";
+import { DEFAULT_TOOLS, type HomeTile, type SetupView, type Tool } from "@contracts/tools";
 import { DEFAULT_WORK_PREFS, type Make, type WorkPrefs } from "@contracts/work-prefs";
 import { confirmDialog } from "./dialogs";
 import { useAuth } from "./auth";
@@ -152,7 +152,7 @@ async function json<T>(r: Response): Promise<T> {
 
 export interface SetupPatch {
   tools?: Tool[];
-  hidden?: Tool[];
+  hidden?: HomeTile[];
   plan?: PlanId | null;
   done?: boolean;
 }

@@ -1,5 +1,5 @@
 import { MY_KEYS, SERVICE_KEYS, type MyKeyEnv, type ServiceKeyEnv } from "@contracts/service-keys";
-import { DEFAULT_TOOLS, TOOLS, TOOL_LINES, TOOL_NAMES, type Tool } from "@contracts/tools";
+import { HOME_TILES, HOME_TILE_LINES, HOME_TILE_NAMES, type HomeTile } from "@contracts/tools";
 import type { SettingsPageId } from "./nav";
 
 /**
@@ -91,18 +91,18 @@ const STATIC_ROWS = [
 ] as const satisfies readonly SearchRow[];
 
 /** The Home tools a person can switch: one row each in Appearance → Tools on Home. */
-export type HomeToolRowId = `home-tool-${Tool}`;
+export type HomeToolRowId = `home-tool-${HomeTile}`;
 
 /** Every id a row may carry: the static ones, plus one per API key, per server key and per switchable Home tool. */
 export type SearchRowId = (typeof STATIC_ROWS)[number]["id"] | ApiKeyRowId | ServerKeyRowId | HomeToolRowId;
 
 export const SETTINGS_SEARCH_INDEX: readonly SearchRow[] = [
   ...STATIC_ROWS,
-  ...TOOLS.filter((t) => !DEFAULT_TOOLS.includes(t)).map((t) => ({
-    section: "appearance" as const,
+  ...HOME_TILES.map((t) => ({
+    section: "tools" as const,
     id: `home-tool-${t}` as HomeToolRowId,
-    title: TOOL_NAMES[t],
-    description: TOOL_LINES[t],
+    title: HOME_TILE_NAMES[t],
+    description: HOME_TILE_LINES[t],
     keywords: ["home", "tools", "tile", "switch"],
   })),
   ...MY_KEYS.map((k) => ({

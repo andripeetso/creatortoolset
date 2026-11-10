@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { PluginGateId, Tool } from "@contracts/tools";
+import type { HomeTile, PluginGateId, Tool } from "@contracts/tools";
 import { clearLocalCache } from "./local-cache";
 
 /**
@@ -28,6 +28,10 @@ export const canUseCloud = (me: Me | null): boolean => !!me;
  *  the same for the apps boot.ts gates and for a plug-in's requireGate routes. */
 export const canUse = (me: Me | null, tool: Tool | PluginGateId): boolean =>
   !!me && (me.role === "admin" || !me.off.includes(tool));
+
+/** A Home tile: a tool, or the Screen Recorder, which is open to whoever can use Review or Video Notes (where a recording goes). */
+export const canUseTile = (me: Me | null, tile: HomeTile): boolean =>
+  tile === "record" ? canUse(me, "review") || canUse(me, "notes") : canUse(me, tile);
 
 interface AuthState {
   required: boolean;

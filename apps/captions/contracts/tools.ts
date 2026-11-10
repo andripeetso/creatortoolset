@@ -71,8 +71,16 @@ export const TOOL_GROUPS: ReadonlyArray<{ id: "plan" | "make" | "distribute" | "
 /** Always on for every account and never part of the "What will you make?" pick: the Plan and Make tools above. */
 export const DEFAULT_TOOLS: readonly Tool[] = TOOL_GROUPS.filter((g) => g.id !== "tools").flatMap((g) => g.tools);
 
-/** Whether Home shows a tool: every tool except the ones the person switched off (SetupView.hidden). Nothing hidden = all shown. */
-export const onHome = (hidden: readonly Tool[] | null | undefined, t: Tool): boolean => !hidden?.includes(t);
+/** A tile Home can show or hide: every tool, and the Screen Recorder (the Mac app's recorder: a tile, not a tool of its own). */
+export type HomeTile = Tool | "record";
+/** Home's tiles in its order: Plan, Make, the Extras, then the Screen Recorder (Settings → Tools lists them the same way). */
+export const HOME_TILES: readonly HomeTile[] = [...TOOL_GROUPS.flatMap((g) => g.tools), "record"];
+export const isHomeTile = (t: unknown): t is HomeTile => HOME_TILES.includes(t as HomeTile);
+export const HOME_TILE_NAMES: Record<HomeTile, string> = { ...TOOL_NAMES, record: "Screen Recorder" };
+export const HOME_TILE_LINES: Record<HomeTile, string> = { ...TOOL_LINES, record: "Record your screen, a window or an area, with your camera and voice." };
+
+/** Whether Home shows a tile: every one except those the person switched off (SetupView.hidden). Nothing hidden = all shown. */
+export const onHome = (hidden: readonly HomeTile[] | null | undefined, t: HomeTile): boolean => !hidden?.includes(t);
 
 /** What each thing a tool needs is called in a row's heading (plain, no vendor-first wording). */
 export const NEED_SHORT: Record<Have, string> = {
@@ -203,8 +211,8 @@ export const usesAi = (t: Tool) => TOOL_NEEDS[t].some((n) => n.form === "ai");
 export interface SetupView {
   /** null = never asked. Only what the tools, the needs-setup text and the setup window read; Home reads `hidden`. */
   tools: Tool[] | null;
-  /** Home tools switched off under Settings → Appearance. Empty = Home shows every tool. */
-  hidden: Tool[];
+  /** Home tiles switched off under Settings → Tools. Empty = Home shows every one. */
+  hidden: HomeTile[];
   plan: PlanId | null;
   /** what a CLI on one of their Macs says it is signed in to (`claude auth status`), for the plan question's default */
   detected: PlanId | null;

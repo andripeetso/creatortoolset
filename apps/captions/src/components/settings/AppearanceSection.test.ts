@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { TOOLS, onHome, type Tool } from "@contracts/tools";
+import { HOME_TILES, TOOLS, onHome, type Tool } from "@contracts/tools";
 import { accentFor } from "@/lib/workspace";
-import { hiddenAfter } from "./AppearanceSection";
+import { hiddenAfter } from "./ToolsSection";
 
 describe("Home shows every tool except the ones switched off", () => {
   it("default: nothing hidden, so every tool shows (and every switch starts on)", () => {
@@ -20,6 +20,15 @@ describe("Home shows every tool except the ones switched off", () => {
     const oldTools: Tool[] = ["workshop", "editor"];
     expect(oldTools.length).toBeLessThan(TOOLS.length);
     for (const t of TOOLS) expect(onHome(undefined, t)).toBe(true);
+  });
+});
+
+describe("every Home tile has a switch", () => {
+  it("lists every tool once, in Home's order, and the Screen Recorder last", () => {
+    expect(HOME_TILES.slice(0, -1).slice().sort()).toEqual([...TOOLS].sort());
+    expect(HOME_TILES.at(-1)).toBe("record");
+    expect(onHome(["record"], "record")).toBe(false);
+    expect(onHome(["record"], "review")).toBe(true);
   });
 });
 

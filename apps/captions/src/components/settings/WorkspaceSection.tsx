@@ -129,15 +129,13 @@ export function WorkspaceSection() {
               />
             }
           />
-          {on !== null && (
+          {/* only when the server has a sign-in to require: with none there is nothing to choose, so no row */}
+          {on !== null && on.length > 0 && (
             <Row
               id="team-sign-in"
               title="How the team signs in"
-              description={on.length === 0 ? "Google, Apple or GitHub sign-in must be set up on the server first (Settings → Account)." : undefined}
               control={
-                on.length === 0 ? (
-                  <span className="text-sm text-muted-foreground">Any way (password too)</span>
-                ) : (
+                (
                   <SettingsSelect
                     label="How the team signs in"
                     value={signInId(signInOptions(on, view.workspace.signInWith), view.workspace.signInWith)}

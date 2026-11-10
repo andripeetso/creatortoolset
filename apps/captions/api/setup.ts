@@ -25,13 +25,7 @@ import {
 import { viaTunnel, type AuthVars } from "./auth";
 import { MY_KEYS } from "../contracts/service-keys";
 import type { CliId, LocalAiView } from "../contracts/local-ai";
-import {
-  isTool,
-  TOOLS,
-  type Have,
-  type SetupView,
-  type Tool,
-} from "../contracts/tools";
+import { isTool, TOOLS, type Have, type SetupView, type Tool, HOME_TILES, isHomeTile, type HomeTile } from "../contracts/tools";
 import { isPlan, planFromCli, type PlanId } from "../contracts/plans";
 
 /**
@@ -52,8 +46,8 @@ import { isPlan, planFromCli, type PlanId } from "../contracts/plans";
 
 interface Saved {
   tools?: Tool[];
-  /** Home tools the person switched off under Settings → Appearance; every other tool shows. Absent = none hidden. */
-  hidden?: Tool[];
+  /** Home tiles the person switched off under Settings → Tools; every other one shows. Absent = none hidden. */
+  hidden?: HomeTile[];
   plan?: PlanId;
   done?: boolean;
   mcpTo?: CliId[];
@@ -192,9 +186,9 @@ setupApp.put("/", async (c) => {
     next.tools = TOOLS.filter((t) => (b.tools as Tool[]).includes(t));
   }
   if (b.hidden !== undefined) {
-    if (!Array.isArray(b.hidden) || !b.hidden.every(isTool))
-      return c.json({ error: `hidden: some of ${TOOLS.join(", ")}` }, 400);
-    next.hidden = TOOLS.filter((t) => (b.hidden as Tool[]).includes(t));
+    if (!Array.isArray(b.hidden) || !b.hidden.every(isHomeTile))
+      return c.json({ error: `hidden: some of ${HOME_TILES.join(", ")}` }, 400);
+    next.hidden = HOME_TILES.filter((t) => (b.hidden as HomeTile[]).includes(t));
   }
   if (b.plan !== undefined) {
     if (b.plan !== null && !isPlan(b.plan))

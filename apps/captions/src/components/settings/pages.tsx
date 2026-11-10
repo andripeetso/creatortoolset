@@ -14,6 +14,7 @@ import { ComputersSection } from "./ComputersSection";
 import { FoldersSection } from "./FoldersSection";
 import { ServersSection } from "./ServersSection";
 import { GeneralSection } from "./GeneralSection";
+import { ToolsSection } from "./ToolsSection";
 
 /**
  * Which component draws each Settings page. One line per page: a screen builder changes only the component on their own
@@ -24,6 +25,7 @@ type PageBody = ComponentType<{ sub?: string }>;
 export const PAGE_BODIES: Record<SettingsPageId, PageBody> = {
   general: GeneralSection,
   appearance: AppearanceSection,
+  tools: ToolsSection,
   folders: FoldersSection,
   providers: ProvidersSection,
   devices: ComputersSection,

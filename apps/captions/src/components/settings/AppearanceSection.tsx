@@ -2,13 +2,10 @@ import type { ReactNode } from "react";
 import { Monitor, Moon, Sun, type LucideIcon } from "lucide-react";
 import { useShareTheme, type ThemeChoice } from "@/components/ShareTheme";
 import { Switch } from "@/components/ui/switch";
-import { canUse, useMe } from "@/lib/auth";
 import { persistHomeGlow, persistOwnColour, persistProjectTint, useAppearance } from "@/lib/settings";
-import { useSetup, useSetupLive } from "@/lib/setup";
-import { DEFAULT_TOOLS, TOOLS, TOOL_LINES, TOOL_NAMES, type Tool } from "@contracts/tools";
 import { cn } from "@/lib/utils";
 import { PROJECT_COLORS, projectColor, useWorkspace, type ProjectColor } from "@/lib/workspace";
-import { Card, Row, Section, saveFailed } from "./ui";
+import { Section } from "./ui";
 
 const OPTIONS: Array<{ id: ThemeChoice; label: string; icon: LucideIcon }> = [
   { id: "system", label: "System", icon: Monitor },
@@ -56,7 +53,7 @@ function Preview({ look }: { look: Look }) {
   );
 }
 
-/** Settings → Appearance: the theme, the colour, then which tools Home shows. */
+/** Settings → Appearance: the theme, then the colour. */
 export function AppearanceSection() {
   const { choice, setChoice, dark } = useShareTheme();
   return (
@@ -101,14 +98,8 @@ export function AppearanceSection() {
       </Section>
 
       <Colour dark={dark} />
-      <ToolsOnHome />
     </>
   );
-}
-
-/** The hidden list after one tool's switch changes: on removes it from the list, off adds it. */
-export function hiddenAfter(hidden: readonly Tool[], tool: Tool, on: boolean): Tool[] {
-  return on ? hidden.filter((x) => x !== tool) : [...hidden.filter((x) => x !== tool), tool];
 }
 
 const COLOURS = Object.keys(PROJECT_COLORS) as ProjectColor[];
@@ -123,9 +114,10 @@ const name = (c: ProjectColor) => c[0].toUpperCase() + c.slice(1);
 function Colour({ dark }: { dark: boolean }) {
   const { projectTint, homeGlow, ownColour } = useAppearance();
   const projects = useWorkspace((s) => s.projects);
-  // the Project tile is striped with the colours the person's projects have (all eight before the first project)
+  // the Project tile is not a colour of its own: a neutral tile with a dot for each colour the person's projects have
+  // (the first four; the palette's before the first project), so it reads as "whatever the project is"
   const theirs = [...new Set(projects.map((p) => projectColor(p, projects)))];
-  const stripes = theirs.length ? theirs : COLOURS;
+  const dots = (theirs.length ? theirs : COLOURS).slice(0, 4);
   const tile = (key: string, label: string, on: boolean, pick: () => void, swatch: ReactNode) => (
     <button
       key={key}
@@ -161,54 +153,16 @@ function Colour({ dark }: { dark: boolean }) {
           "Project",
           projectTint,
           () => persistProjectTint(true),
-          stripes.map((c) => <span key={c} className="flex-1" style={{ background: fill(c) }} />),
+          <span className="flex flex-1 items-center justify-center bg-muted">
+            {dots.map((c, i) => (
+              <span key={c} className={cn("size-4 rounded-full ring-2 ring-muted", i > 0 && "-ml-1.5")} style={{ background: fill(c) }} />
+            ))}
+          </span>,
         )}
         {COLOURS.map((c) =>
           tile(c, name(c), !projectTint && ownColour === c, () => persistOwnColour(c), <span className="flex-1" style={{ background: fill(c) }} />),
         )}
       </div>
-    </Section>
-  );
-}
-
-/**
- * One switch per tool Home may hide (the Extras), each with what the tool does. Every switch starts on, so Home is what
- * it was until one is turned off. The Plan and Make tools have no switch: Home always shows them.
- */
-function ToolsOnHome() {
-  const me = useMe();
-  const view = useSetup((s) => s.view);
-  const save = useSetup((s) => s.save);
-  useSetupLive(true);
-  const switchable = TOOLS.filter((t) => canUse(me, t) && !DEFAULT_TOOLS.includes(t));
-  const hidden = view?.hidden ?? [];
-  const onHidden = async (next: Tool[]) => {
-    try {
-      await save({ hidden: next });
-    } catch {
-      saveFailed("The tools did not save. Try again.");
-    }
-  };
-  return (
-    <Section title="Tools on Home">
-      <Card>
-        {view &&
-          switchable.map((t) => (
-            <Row
-              key={t}
-              id={`home-tool-${t}`}
-              title={TOOL_NAMES[t]}
-              description={TOOL_LINES[t]}
-              control={
-                <Switch
-                  checked={!hidden.includes(t)}
-                  aria-label={TOOL_NAMES[t]}
-                  onCheckedChange={(on) => void onHidden(hiddenAfter(hidden, t, on))}
-                />
-              }
-            />
-          ))}
-      </Card>
     </Section>
   );
 }

@@ -39,6 +39,9 @@ describe("setup: my tools, my plan, what is set up", () => {
     expect((await put({ hidden: ["notes", "nope"] })).status).toBe(400);
     expect((await put({ hidden: ["notes", "enhance"] })).status).toBe(200);
     expect(await get()).toMatchObject({ hidden: ["enhance", "notes"], tools: ["workshop", "editor"] });
+    // the Screen Recorder is a Home tile too (no tool of its own): it is kept, after the tools
+    expect((await put({ hidden: ["record", "notes"] })).status).toBe(200);
+    expect(await get()).toMatchObject({ hidden: ["notes", "record"] });
     expect((await put({ hidden: [] })).status).toBe(200);
     expect(await get()).toMatchObject({ hidden: [] });
   });

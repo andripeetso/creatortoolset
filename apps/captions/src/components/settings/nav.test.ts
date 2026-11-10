@@ -5,9 +5,9 @@ const at = (hosted: boolean, admin: boolean, mac = false): NavContext => ({ host
 const listed = (ctx: NavContext) => navListFor(ctx, []).map((s) => s.id);
 
 describe("the sidebar per install and role", () => {
-  it("a local browser: General, Appearance, the AI block, the devices, the connections; no servers, team or admin", () => {
+  it("a local browser: General, Appearance, Tools, the AI block, the devices, the connections; no servers, team or admin", () => {
     expect(listed(at(false, true))).toEqual([
-      "general", "appearance",
+      "general", "appearance", "tools",
       "providers", "automations", "usage",
       "devices", "folders",
       "connectors", "keys", "own-ai",
@@ -47,6 +47,6 @@ describe("the sidebar blocks", () => {
   it("a hosted admin's blocks: a top block with no heading, then AI, Devices, Connections and People", () => {
     const blocks = navBlocks(navListFor(at(true, true, true), []));
     expect(blocks.map((b) => b.heading)).toEqual([undefined, "AI", "Hardware", "Connections", "People"]);
-    expect(blocks[0].items.map((s) => s.id)).toEqual(["general", "appearance"]);
+    expect(blocks[0].items.map((s) => s.id)).toEqual(["general", "appearance", "tools"]);
   });
 });

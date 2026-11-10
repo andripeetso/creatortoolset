@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useState } from "react";
 import { Link, Navigate, useLocation } from "react-router";
 import { ArrowRight, ChevronRight, Loader2, Lock, ScreenShare, Star, type LucideIcon } from "lucide-react";
-import { canUse, useMe, type Me } from "@/lib/auth";
+import { canUse, canUseTile, useMe, type Me } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { isPhoneHub } from "@/lib/mobile";
 import { shownTools, useOpenTool, withPluginTiles, type Tool as HomeTool } from "@/lib/tools";
@@ -14,7 +14,7 @@ import { useSessionSummaries } from "@/lib/workshop-summary";
 import { accentFor, currentProject, PROJECT_COLORS, projectColor, useWorkspace } from "@/lib/workspace";
 import { useAppearance } from "@/lib/settings";
 import { useShareTheme } from "@/components/ShareTheme";
-import { onHome, readiness, TOOL_GROUPS, TOOL_NAMES, type Tool } from "@contracts/tools";
+import { onHome, readiness, TOOL_GROUPS, TOOL_NAMES, type HomeTile, type Tool } from "@contracts/tools";
 import { DOWNLOAD_URL, onSettingsClosed, openSetupAt, resumeStep, setupDismissed, setupFinished, shareDownload, useSetup, useSetupShown } from "@/lib/setup";
 
 /**
@@ -59,9 +59,8 @@ const pluginTilesFor = (stage: string, me: Me | null): HomeTool[] =>
     me,
   ).filter((t) => t.pluginTile);
 
-/** Screen Recorder is open to whoever can use Review or Video Notes, the two places a recording goes. */
-const canUseKey = (me: Me | null, k: Key) =>
-  k === "record" ? canUse(me, "review") || canUse(me, "notes") : canUse(me, k === "finals" ? "media" : k);
+/** Finals is a view of the Media Library; the rest is the tile's own rule (canUseTile: the Screen Recorder's is there). */
+const canUseKey = (me: Me | null, k: Key) => (k === "finals" ? canUse(me, "media") : canUseTile(me, k));
 
 export default function ToolsetHome() {
   const location = useLocation();
@@ -81,10 +80,10 @@ export default function ToolsetHome() {
   // closes, since this window's own changes (a key added in a tool or in Settings) send it no notice
   const view = useSetup((s) => s.view);
   const load = useSetup((s) => s.load);
-  // Home's tools are all but the ones switched off under Settings → Appearance (contracts onHome). Tiles wait for the
-  // setup to load (or to fail: a guest has none, and then nothing is hidden), so a hidden tool is never drawn and dropped.
+  // Home's tiles are all but the ones switched off under Settings → Tools (contracts onHome). Tiles wait for the
+  // setup to load (or to fail: a guest has none, and then nothing is hidden), so a hidden tile is never drawn and dropped.
   const [loaded, setLoaded] = useState(false);
-  const shownOnHome = (t: Tool) => (loaded || view !== null) && onHome(view?.hidden, t);
+  const shownOnHome = (t: HomeTile) => (loaded || view !== null) && onHome(view?.hidden, t);
   useEffect(() => {
     if (!me) return;
     void load().finally(() => setLoaded(true));
@@ -108,7 +107,7 @@ export default function ToolsetHome() {
     return readiness(tool, view.have).missing.map((n) => n.what).join(" · ");
   };
   const extrasGroup = TOOL_GROUPS.find((g) => g.id === "tools");
-  const extras: Key[] = [...(extrasGroup?.tools.filter(shownOnHome) ?? []), "record"];
+  const extras: Key[] = [...(extrasGroup?.tools ?? []), "record" as const].filter(shownOnHome);
 
   // the current project's colour (Settings → Appearance can keep it violet), as CSS variables for the tiles and glow
   const c = PROJECT_COLORS[accentFor(projectTint, ownColour, project ? projectColor(project) : null)];
@@ -177,6 +176,17 @@ export default function ToolsetHome() {
     );
   };
 
+  // the boxed groups with their tiles: a group whose tiles are all switched off (Settings → Tools) is not drawn, and
+  // the row of boxes keeps its arrows between the ones that are left
+  const boxes = TOOL_GROUPS.filter((g) => g.id !== "tools")
+    .map((g) => ({
+      g,
+      nodes: [...(g.id === "distribute" ? ["finals" as Key] : g.tools.filter(shownOnHome)).map((t) => tile(t)), ...pluginTilesFor(g.label, me).map((t) => pluginTile(t))],
+    }))
+    .filter((b) => b.nodes.length > 0);
+  const boxColumns = ["", "min-[900px]:grid-cols-1", "min-[900px]:grid-cols-[1fr_auto_1fr]", "min-[900px]:grid-cols-[1fr_auto_1fr_auto_1fr]"][boxes.length] ?? "";
+  const extraTiles = [...extras.map((k) => tile(k, true)), ...pluginTilesFor("Extras", me).map((t) => pluginTile(t, true))];
+
   return (
     <div
       style={tintStyle}
@@ -226,8 +236,8 @@ export default function ToolsetHome() {
         )}
 
         {/* the boxed groups (Plan, Make, Distribute) in a row with arrows between, then Extras: quieter, a centred label */}
-        <div className="flex flex-col gap-1.5 min-[900px]:grid min-[900px]:grid-cols-[1fr_auto_1fr_auto_1fr] min-[900px]:gap-2">
-          {TOOL_GROUPS.filter((g) => g.id !== "tools").map((g, i) => (
+        <div className={`flex flex-col gap-1.5 min-[900px]:grid ${boxColumns} min-[900px]:gap-2`}>
+          {boxes.map(({ g, nodes }, i) => (
             <Fragment key={g.id}>
               {i > 0 && (
                 <div className="flex items-center justify-center gap-2 self-center min-[900px]:w-20 min-[900px]:flex-col min-[900px]:gap-1 min-[900px]:px-2">
@@ -244,7 +254,7 @@ export default function ToolsetHome() {
               >
                 <h2 className="px-1 pb-2 text-[11px] font-medium uppercase tracking-wider text-zinc-500">{g.label}</h2>
                 <div className="flex items-start justify-center gap-4 min-[900px]:justify-evenly min-[900px]:gap-0">
-                  {[...(g.id === "distribute" ? ["finals" as Key] : g.tools.filter(shownOnHome)).map((t) => tile(t)), ...pluginTilesFor(g.label, me).map((t) => pluginTile(t))].map((node, j) => (
+                  {nodes.map((node, j) => (
                     <Fragment key={j}>
                       {j > 0 && <ChevronRight className="mt-6 h-4 w-4 shrink-0 text-zinc-700 2xl:mt-7" />}
                       {node}
@@ -258,6 +268,7 @@ export default function ToolsetHome() {
 
 
         {/* one row whatever the number: the tools spread across the width from 900 px, wrapping below */}
+        {extraTiles.length > 0 && (
         <section>
           <h2 className="flex items-center gap-3 pb-2 text-[11px] font-medium uppercase tracking-wider text-zinc-600">
             <span className="h-px flex-1 bg-zinc-800/80" />
@@ -265,9 +276,10 @@ export default function ToolsetHome() {
             <span className="h-px flex-1 bg-zinc-800/80" />
           </h2>
           <div className="flex flex-wrap justify-center gap-x-2 gap-y-1 min-[900px]:grid min-[900px]:auto-cols-fr min-[900px]:grid-flow-col min-[900px]:justify-items-center min-[900px]:gap-0">
-            {[...extras.map((k) => tile(k, true)), ...pluginTilesFor("Extras", me).map((t) => pluginTile(t, true))]}
+            {extraTiles}
           </div>
         </section>
+        )}
       </div>
 
     </div>
