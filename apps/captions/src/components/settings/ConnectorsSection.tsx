@@ -5,7 +5,8 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { analyzerHome } from "@/lib/instagram";
+import { addAccount as addInstagram, analyzerHome, patchAccount as patchInstagram } from "@/lib/instagram";
+import { patchProject } from "@/lib/workshop";
 import { useWorkspace } from "@/lib/workspace";
 import {
   LOGINS,
@@ -19,6 +20,7 @@ import {
   type ConnectedAccount,
   type ConnectorsView,
   type LoginKind,
+  type OwnInstagram,
   type SocialPlatform,
 } from "@/lib/connectors";
 import { Card, ErrorRow, ListRow, LoadingRow, RowMenu, Section, SettingsSelect, Status, saveFailed } from "./ui";
@@ -51,15 +53,17 @@ export interface PlatformRow {
   needsKey: boolean;
   /** The project's account on this platform (one per platform per project). */
   account?: ConnectedAccount;
+  /** Instagram: the project's own account in the Analyzer, when no sign-in account is there. */
+  own?: OwnInstagram;
 }
 
 /**
  * Settings → Social accounts for one project: one row per platform, in the order of PLATFORMS, each with the project's one
  * account or its Add button. An account linked to no project shows in every project until one is added there. Instagram
- * is the person's own account (its sign-in, or the Analyzer account marked Mine); without either and without a Meta
- * sign-in on this server there is nothing to add here, so the row is left out.
+ * is the person's own account: its sign-in, else the Analyzer account the project links (or the one marked Mine that no
+ * project links).
  */
-export function platformRows(view: Pick<ConnectorsView, "logins" | "apify" | "accounts" | "mine">, projectId?: string): PlatformRow[] {
+export function platformRows(view: Pick<ConnectorsView, "logins" | "apify" | "accounts" | "instagram">, projectId?: string): PlatformRow[] {
   const apifyOk = view.apify.configured && view.apify.valid !== false;
   return PLATFORMS.flatMap((p): PlatformRow[] => {
     const loginOn = !!p.login && !!view.logins[p.login];
@@ -71,8 +75,9 @@ export function platformRows(view: Pick<ConnectorsView, "logins" | "apify" | "ac
       return [{ platform: p.id, label: p.label, summary: [at(account.handle), f !== undefined ? `${n(f)} followers` : ""].filter(Boolean).join(" · "), needsKey: false, account }];
     }
     if (p.id === "instagram") {
-      if (view.mine) return [{ platform: p.id, label: p.label, summary: at(view.mine), needsKey: false }];
-      return loginOn ? [{ platform: p.id, label: p.label, summary: "Your account by sign-in", button: "Add", needsKey: false }] : [];
+      const own = view.instagram.find((x) => !!projectId && x.projectId === projectId) ?? view.instagram.find((x) => x.mine && !x.projectId);
+      if (own) return [{ platform: p.id, label: p.label, summary: [at(own.handle), own.followers !== undefined ? `${n(own.followers)} followers` : ""].filter(Boolean).join(" · "), needsKey: false, own }];
+      return [{ platform: p.id, label: p.label, summary: loginOn ? "Your account by sign-in, or by @handle" : "Your account, by @handle", button: "Add", needsKey: false }];
     }
     const own = p.id === "facebook" ? "Your Pages by sign-in" : p.id === "youtube" ? "Your channel by sign-in" : "Your account by sign-in";
     const summary = loginOn ? `${own}, or by @handle` : p.id === "facebook" ? "Public Pages, by @handle" : p.id === "youtube" ? "Public channels, by @handle" : "Public accounts, by @handle";
@@ -171,7 +176,25 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
       >
         <Card>
           {rows.map((r) =>
-            r.account ? (
+            r.own ? (
+              <ListRow
+                key={r.platform}
+                id={`platform-${r.platform}` as SearchRowId}
+                icon={<PlatformLogo platform={r.platform} className="size-4" />}
+                title={r.label}
+                subtitle={r.summary}
+                actions={
+                  <RowMenu
+                    label={`${at(r.own.handle)} actions`}
+                    items={[
+                      { label: "Open in the Analyzer", onSelect: () => navigate(`${analyzerHome()}/accounts/${r.own!.id}`) },
+                      // not "my account" any more: the Analyzer keeps it as a followed account, no project links it
+                      { label: "Disconnect", destructive: true, confirm: { title: `Disconnect ${at(r.own.handle)}?`, body: "Its numbers stop updating here.", ok: "Disconnect" }, onSelect: () => void act(patchInstagram(r.own!.id, { mine: false })) },
+                    ]}
+                  />
+                }
+              />
+            ) : r.account ? (
               <AccountRow
                 key={r.platform}
                 row={r}
@@ -241,7 +264,9 @@ function AddDialog({ open, onOpenChange, platform, startStep, view, back, projec
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const login = loginOf(platform);
-  const configured = view.apify.configured && view.apify.valid !== false;
+  // Instagram by handle goes to the Analyzer, which reads your own account through the server's token or your Apify key
+  const ig = platform === "instagram";
+  const configured = ig || (view.apify.configured && view.apify.valid !== false);
   const title = `Add ${NOUN[platform]} account`;
   const close = () => onOpenChange(false);
 
@@ -255,10 +280,13 @@ function AddDialog({ open, onOpenChange, platform, startStep, view, back, projec
     setBusy(true);
     setError(null);
     try {
-      await addHandle(platform, handle.trim(), projectId);
+      if (ig) {
+        const a = await addInstagram(handle.trim(), { run: "now", mine: !view.instagram.some((x) => x.mine) });
+        if (projectId) await patchProject(projectId, { accountId: a.id });
+      } else await addHandle(platform, handle.trim(), projectId);
       setHandle("");
       close();
-      toast(`Following ${at(handle.trim())}. Reading its posts now.`);
+      toast(`${ig ? "Connected" : "Following"} ${at(handle.trim())}. Reading its posts now.`);
       onDone();
     } catch (e) {
       setError(msg(e));
@@ -283,9 +311,8 @@ function AddDialog({ open, onOpenChange, platform, startStep, view, back, projec
                 </a>
               )}
               {platform === "instagram" ? (
-                <button type="button" className={choiceCls} onClick={() => (close(), navigate(analyzerHome()))}>
-                  <span className="text-sm font-medium">Someone's public account</span>
-                  <span className="text-xs text-muted-foreground">Added in the Content Analyzer.</span>
+                <button type="button" className={choiceCls} onClick={() => setStep("handle")}>
+                  <span className="text-sm font-medium">My own account, by @handle</span>
                 </button>
               ) : (
                 <button type="button" className={choiceCls} onClick={() => setStep("handle")}>
@@ -311,7 +338,7 @@ function AddDialog({ open, onOpenChange, platform, startStep, view, back, projec
             <DialogHeader>
               <DialogTitle>{title}</DialogTitle>
               <DialogDescription>
-                {configured ? `Type its @handle or profile link. Reads its public posts with your Apify key.` : "Reading public posts needs your Apify key. Add it first."}
+                {ig ? "Type your @handle or profile link." : configured ? "Type its @handle or profile link. Reads its public posts with your Apify key." : "Reading public posts needs your Apify key. Add it first."}
               </DialogDescription>
             </DialogHeader>
             {configured && (
