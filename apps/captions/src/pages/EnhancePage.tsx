@@ -53,6 +53,9 @@ import { ToolSetupLine } from "@/components/setup/ToolSetupLine";
  * engine; what they can't use is shown locked with why. Admins can add a second pass.
  */
 
+/** What refetches Enhance's availability: a key added, a computer or an AI coming online or going quiet. */
+const AVAILABILITY_LIVE = { topic: ["my-keys", "service-keys", "devices", "providers"], own: true };
+
 const ENGINE_KEY = "enhance.engine";
 const THEN_KEY = "enhance.then";
 const saved = (key: string): string | null => {
@@ -484,22 +487,29 @@ export default function EnhancePage() {
   const current = sessionId ? (detail.data ?? sessions.find((x) => x.id === sessionId) ?? null) : null;
   const setCurrent = detail.set;
   const openingSession = !!sessionId && !current && !detail.error;
-  const [avail, setAvail] = useState<EnhanceAvailability | null>(null);
-  const [engine, setEngine] = useState<Engine>("nvidia");
-  const [then, setThen] = useState<Engine | null>(null);
+  // what this account can use: the saved answer paints at once (the engine picker keeps its place) and is refreshed
+  // underneath, and again when a key, a computer or an AI changes (this window's own Settings included)
+  const { data: avail } = useCachedLoad<EnhanceAvailability>("enhance/availability", getAvailability, AVAILABILITY_LIVE);
+  // the last ones picked, if still offered; else the server's default
+  const pickEngine = (a: EnhanceAvailability): Engine => offered(a).find((e) => e.key === saved(ENGINE_KEY))?.key ?? a.default;
+  const pickThen = (a: EnhanceAvailability): Engine | null => (a.admin ? (offered(a).find((e) => e.key === saved(THEN_KEY))?.key ?? null) : null);
+  const [engine, setEngine] = useState<Engine>(() => (avail ? pickEngine(avail) : "nvidia"));
+  const [then, setThen] = useState<Engine | null>(() => (avail ? pickThen(avail) : null));
   const second = avail?.admin && then !== engine ? then : null;
-
+  const picked = useRef(!!avail);
   useEffect(() => {
-    getAvailability()
-      .then((a) => {
-        setAvail(a);
-        // the last ones picked, if still offered; else the server's default
-        const can = offered(a);
-        setEngine(can.find((e) => e.key === saved(ENGINE_KEY))?.key ?? a.default);
-        if (a.admin) setThen(can.find((e) => e.key === saved(THEN_KEY))?.key ?? null);
-      })
-      .catch(() => {});
-  }, []);
+    if (!avail) return;
+    if (!picked.current) {
+      // the first answer on this device
+      picked.current = true;
+      setEngine(pickEngine(avail));
+      setThen(pickThen(avail));
+    } else {
+      // a newer answer only replaces a pick that is no longer offered
+      setEngine((cur) => (offered(avail).some((e) => e.key === cur) ? cur : avail.default));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [avail]);
 
   // The route id lets Admin open any user's Audio Enhancer project and
   // also makes ordinary audio projects directly addressable.

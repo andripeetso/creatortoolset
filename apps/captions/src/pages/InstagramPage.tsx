@@ -121,6 +121,9 @@ import { createSession, listSessions, patchProject, sessionPath, type SessionRow
 import { ideaMatchesQuery, needsIdeaDistill } from "@/lib/instagram-ideas";
 import { decayHeightLock, shrinkWouldClamp } from "@/lib/library-scroll";
 
+/** What refetches the Analyzer's availability: a connector or a key changing (this window's own Settings included). */
+const AVAILABILITY_LIVE = { topic: ["connectors", "my-keys", "service-keys"], own: true };
+
 const label =
   "mb-2 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-zinc-500";
 const libraryEmptyClass =
@@ -1005,7 +1008,8 @@ export default function InstagramPage() {
   const detail = useCachedLoad<InstagramPost>(postId ? `/api/instagram/${postId}` : null, () => getPost(postId!));
   const current = detail.data;
   const setCurrent = detail.set;
-  const [avail, setAvail] = useState<InstagramAvailability | null>(null);
+  // what the Analyzer can read with: the saved answer paints at once, refreshed underneath and when a connector or key changes
+  const { data: avail, refresh: loadAvail } = useCachedLoad<InstagramAvailability>("instagram/availability", getInstagramAvailability, AVAILABILITY_LIVE);
   const [q, setQ] = useState("");
   const [accountFilter, setAccountFilter] = useState("");
   const [tagFilter, setTagFilter] = useState("");
@@ -1099,11 +1103,7 @@ export default function InstagramPage() {
       .catch(() => {});
   }, []);
 
-  const refreshAvailability = useCallback(() => {
-    getInstagramAvailability()
-      .then(setAvail)
-      .catch(() => {});
-  }, []);
+  const refreshAvailability = useCallback(() => void loadAvail().catch(() => {}), [loadAvail]);
   // The Apify key lives in Settings → Connectors: re-read it when it changes there.
   useEffect(() => {
     window.addEventListener(INSTAGRAM_CONNECTION_EVENT, refreshAvailability);
