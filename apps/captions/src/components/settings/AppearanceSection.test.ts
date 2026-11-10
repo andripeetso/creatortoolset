@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { HOME_TILES, TOOLS, onHome, type Tool } from "@contracts/tools";
+import { HOME_TILES, TOOLS, TOOL_NEEDS, onHome, type Tool } from "@contracts/tools";
 import { accentFor } from "@/lib/workspace";
-import { hiddenAfter } from "./ToolsSection";
+import { hiddenAfter, needFix, needsLine, needsOf, openNeeds } from "./ToolsSection";
 
 describe("Home shows every tool except the ones switched off", () => {
   it("default: nothing hidden, so every tool shows (and every switch starts on)", () => {
@@ -55,5 +55,32 @@ describe("the colour the app wears", () => {
   it("falls back to violet for a saved colour that is not one of ours", () => {
     expect(accentFor(false, "chartreuse", "sky")).toBe("violet");
     expect(accentFor(false, "toString", null)).toBe("violet");
+  });
+});
+
+describe("a tool's row says what it needs and where that is fixed", () => {
+  it("says the missing required needs in one amber line, and nothing once they are set up or the tool needs nothing", () => {
+    expect(needsLine("enhance", [])).toBe("Needs an ElevenLabs or NVIDIA key");
+    expect(needsLine("enhance", ["NVIDIA_API_KEY"])).toBe("");
+    expect(needsLine("instagram", [])).toBe("Needs a project, an Apify key");
+    expect(needsLine("instagram", ["project", "instagram"])).toBe(""); // its own Instagram login reads the posts too
+    expect(needsLine("review", [])).toBe("");
+    expect(needsLine("record", [])).toBe("");
+  });
+
+  it("keeps the optional needs apart: they do not make the row amber, they are listed when it is opened", () => {
+    expect(needsLine("captions", [])).toBe("");
+    expect(openNeeds("captions", []).extra.map((n) => n.form)).toEqual(["keys", "ai"]);
+    expect(needsOf("record")).toEqual([]);
+    expect(needsOf("media")).toBe(TOOL_NEEDS.media);
+  });
+
+  it("sends each kind of need to the place that sets it up", () => {
+    const need = (tool: Tool, i: number) => TOOL_NEEDS[tool][i]!;
+    expect(needFix(need("enhance", 0))).toEqual({ label: "Add key", to: "/settings/keys#api-key-ELEVENLABS_API_KEY" });
+    expect(needFix(need("instagram", 0))).toEqual({ label: "New project", to: "/projects" });
+    expect(needFix(need("instagram", 1))).toEqual({ label: "Add key", to: "/settings/keys#apify-key" });
+    expect(needFix(need("workshop", 1))).toEqual({ label: "Add AI", to: "/settings/providers" });
+    expect(needFix(need("media", 0))).toEqual({ label: "Open Media Library", to: "/library" });
   });
 });
