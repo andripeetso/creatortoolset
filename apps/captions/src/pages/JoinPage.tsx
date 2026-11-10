@@ -38,14 +38,16 @@ export function JoinPage({ token }: { token: string }) {
 
   return (
     <div className="flex h-screen flex-col items-center justify-center bg-zinc-950 text-zinc-200">
-      <div className="mb-6 flex items-center gap-3">
+      {/* Nothing here moves once it shows: the name appears with the invite's answer (its width is the team's name), the
+          line under it keeps its place, and the block below is as tall as the form it most often becomes. */}
+      <div className={`mb-6 flex items-center gap-3 ${info || error ? "" : "invisible"}`}>
         <ToolsetLogo className="h-11 w-11" />
         <div>
           <h1 className="text-xl font-semibold tracking-tight">{info ? `Join ${info.workspace}` : "Creator Toolset"}</h1>
-          {info && <p className="text-sm text-zinc-500">{info.invitedBy} invited you to join</p>}
+          <p className="min-h-5 text-sm text-zinc-500">{info && `${info.invitedBy} invited you to join`}</p>
         </div>
       </div>
-      <div className="flex w-72 flex-col gap-2">
+      <div className="flex min-h-[192px] w-72 flex-col gap-2">
         {!info && !error && <p className="text-sm text-zinc-500">Checking the invite…</p>}
         {info?.expired && <p className="text-sm text-zinc-400">This invite link has expired. Ask {info.invitedBy} for a new one.</p>}
         {info && !info.expired && info.member && (
