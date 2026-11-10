@@ -104,15 +104,17 @@ describe("your AI on this computer: only the owner's account, on a server that r
     process.env.CT_MODE = "hosted";
     try {
       expect(await (await app.request("/api/setup/ai")).json()).toEqual({ local: false, rows: [] });
-      expect((await app.request("/api/setup/folders/scan")).status).toBe(403);
+      expect((await app.request("/api/setup/folders/scan")).status).toBe(404); // no folder scan exists at all
     } finally {
       delete process.env.CT_MODE;
     }
   });
 
-  it("scans folders for the owner only: another account gets 403 and no listing", async () => {
-    who = { username: "sam", role: "user", cloud: true, off: [] };
-    expect((await app.request("/api/setup/folders/scan")).status).toBe(403);
+  it("never scans folders: the route is gone, folders are only ever picked by the person", async () => {
+    for (const w of [{ username: "owner", role: "admin" as const }, { username: "sam", role: "user" as const }]) {
+      who = { ...w, cloud: true, off: [] };
+      expect((await app.request("/api/setup/folders/scan")).status).toBe(404);
+    }
   });
 
   it("the setup view carries the CLIs Creator Toolset is in (empty to start)", async () => {
