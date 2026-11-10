@@ -31,6 +31,13 @@ describe("the sidebar per install and role", () => {
     expect(ids.at(-1)).toBe("admin");
   });
 
+  it("on a server whose plug-in keeps the storage, only admins get Storage", () => {
+    const owns = [{ replaces: { storage: () => null } }];
+    expect(navListFor(at(true, false), owns).map((s) => s.id)).not.toContain("folders");
+    expect(navListFor(at(true, true), owns).map((s) => s.id)).toContain("folders");
+    expect(listed(at(true, false))).toContain("folders");
+  });
+
   it("never lists Account: its entry is the account button", () => {
     expect(listed(at(true, true, true))).not.toContain("account");
   });

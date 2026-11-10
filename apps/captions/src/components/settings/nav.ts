@@ -2,7 +2,7 @@ import { Bot, CalendarClock, Cpu, HardDrive, Gauge, KeyRound, Monitor, Palette, 
 import { settingsWithPlugins, visibleSettings, type PluginSettingsSection, type SettingsEntry } from "@/lib/plugin";
 import { webPlugins } from "@/plugins.gen";
 
-type PluginList = ReadonlyArray<{ settings?: PluginSettingsSection[] }>;
+type PluginList = ReadonlyArray<{ settings?: PluginSettingsSection[]; replaces?: { storage?: unknown } }>;
 
 /**
  * The Settings pages: the one place that says which sections exist, which install and person sees each, and where old
@@ -63,7 +63,12 @@ export const RETIRED_PATHS: Readonly<Record<string, string>> = {
 
 /** Every section this install and person may open (sidebar and account page), with the plug-ins' sections placed in. */
 export function sectionsFor(ctx: NavContext, plugins: PluginList = webPlugins): SettingsEntry[] {
-  const allowed = BUILTIN.filter((s) => (ctx.hosted || !s.hostedOnly) && (ctx.mac || !s.macOnly) && (ctx.admin || !s.adminOnly));
+  // a plug-in that owns storage (replaces.storage) keeps the server's folders, which only admins edit: a member's own
+  // folder list would be read by nothing there, so a member has no Storage page on such a server
+  const pluginStorage = plugins.some((p) => !!p.replaces?.storage);
+  const allowed = BUILTIN.filter(
+    (s) => (ctx.hosted || !s.hostedOnly) && (ctx.mac || !s.macOnly) && (ctx.admin || !s.adminOnly) && !(s.id === "folders" && pluginStorage && !ctx.admin),
+  );
   return visibleSettings(settingsWithPlugins(allowed, plugins), { role: ctx.admin ? "admin" : "user" });
 }
 
