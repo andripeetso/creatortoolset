@@ -12,7 +12,7 @@ import { HomeIntro, IntroCaption, STAGE_SAYS, useIntroBeat } from "@/components/
 import { TOOL_ICONS } from "@/components/setup/ToolNeeds";
 import { webPlugins } from "@/plugins.gen";
 import { useSessionSummaries } from "@/lib/workshop-summary";
-import { accentFor, currentProject, PROJECT_COLORS, projectColor, useWorkspace } from "@/lib/workspace";
+import { accentFor, accentTones, currentProject, projectColor, useWorkspace } from "@/lib/workspace";
 import { useAppearance } from "@/lib/settings";
 import { useShareTheme } from "@/components/ShareTheme";
 import { onHome, readiness, TOOL_GROUPS, TOOL_NAMES, type HomeTile, type Tool } from "@contracts/tools";
@@ -125,7 +125,7 @@ export default function ToolsetHome() {
   const extras: Key[] = [...(extrasGroup?.tools ?? []), "record" as const].filter(shownOnHome);
 
   // the current project's colour (Settings → Appearance can keep it violet), as CSS variables for the tiles and glow
-  const c = PROJECT_COLORS[accentFor(projectTint, ownColour, project ? projectColor(project) : null)];
+  const c = accentTones(accentFor(projectTint, ownColour, project ? projectColor(project) : null));
   const tintStyle = { "--tint": `rgb(${c.rgb})`, "--tint-text": `rgb(${dark ? c.text : c.rgb})`, transition: "--tint 500ms, --tint-text 500ms" } as React.CSSProperties;
 
   // one tile: its icon (in the project's colour), its name and its status; quiet = Extras, smaller and grey
