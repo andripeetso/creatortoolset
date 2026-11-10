@@ -1,5 +1,4 @@
 import { Hono, type Context } from "hono";
-import { streamSSE } from "hono/streaming";
 import { randomUUID } from "node:crypto";
 import { copyFile, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -11,7 +10,7 @@ import { ensureLibrary, homeOf, libraryRole, mayWrite } from "./access";
 import { expandCollection } from "./collections";
 import { blobs, libraryDb, libraryStore, meter } from "./db";
 import { sendFile } from "../lib/send-file";
-import { notifyLibraryChanges, onEvent } from "../lib/events";
+import { notifyLibraryChanges } from "../lib/events";
 import type { AssetCard, LibrarySettings, LibrarySummary } from "../../contracts/library";
 import type { LibraryViewer } from "../../contracts/library-source";
 import { enqueueJob } from "./jobs";
@@ -30,23 +29,6 @@ import { buildAssetQuery, indexAsset, pageOf, parseSearch, type CardRow } from "
 
 export const libraryApp = new Hono<{ Variables: AuthVars }>();
 libraryApp.use("*", notifyLibraryChanges);
-
-/** Server-sent events: one "changed" per library change (any account's, this server's), a ping every 15 s so proxies keep the line open. */
-libraryApp.get("/events", (c) => {
-  c.header("Cache-Control", "no-store");
-  c.header("X-Accel-Buffering", "no"); // nginx passes each event on at once
-  return streamSSE(c, async (stream) => {
-    await new Promise<void>((done) => {
-      const ping = setInterval(() => void stream.writeSSE({ event: "ping", data: "" }), 15_000);
-      const stop = onEvent("library.changed", () => void stream.writeSSE({ event: "changed", data: "" }));
-      stream.onAbort(() => {
-        clearInterval(ping);
-        stop();
-        done();
-      });
-    });
-  });
-});
 
 const CHUNK_BYTES = 32 * 1024 * 1024;
 const STAGE_DAYS = 7;

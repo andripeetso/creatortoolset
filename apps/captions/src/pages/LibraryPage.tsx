@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { AudioLines, Captions, MessageSquare, Quote, Share2, FileText, Folder, Image as ImageIcon, Loader2, RotateCcw, Star, Trash2, Upload, Video } from "lucide-react";
-import type { AssetCard, AssetDetail, AssetKind, Collection, LibrarySummary, SearchHit } from "@contracts/library";
+import type { AssetCard, AssetDetail, AssetKind, AssetPage, Collection, LibrarySummary, SearchHit } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
 import { ToolSetupLine } from "@/components/setup/ToolSetupLine";
 import { FootageFolderCard } from "@/components/FootageFolderCard";
@@ -27,6 +27,7 @@ import {
   updateLibrary,
   uploadFile,
 } from "@/lib/library";
+import { useCachedLoad } from "@/lib/local-cache";
 import { cn } from "@/lib/utils";
 import { LibraryFacetBar } from "@/components/LibraryFacetBar";
 import { libraryBadges, libraryFacets } from "@/lib/library-slots";
@@ -36,8 +37,8 @@ import { LibraryWatchFolders } from "./LibraryWatchFolders";
 /**
  * Media Library (/library): one library's footage as a grid of 16:9 cards. Search runs over titles and tags
  * (FTS5, api/library/query.ts), and over what is said in the clips (api/library/search.ts): a line said opens the
- * preview at its second. A card opens its preview. Uploads go in one at a time, from the tray. Cards that are
- * still being prepared poll every two seconds until they are ready.
+ * preview at its second. A card opens its preview. Uploads go in one at a time, from the tray. A card being prepared
+ * updates when the server finishes it (the change stream), without polling.
  */
 
 const KINDS: { value: AssetKind | "all"; label: string }[] = [
@@ -72,25 +73,24 @@ const clock = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60))
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export default function LibraryPage() {
-  const [libraries, setLibraries] = useState<LibrarySummary[] | null>(null);
+  // the lists are saved copies (lib/local-cache): they paint on the first frame and the change stream's library topic
+  // reads them again (an upload elsewhere, a picture or transcript the server finished), so nothing here polls
+  const libs = useCachedLoad<LibrarySummary[]>("/api/library", listLibraries);
+  const libraries = libs.data;
+  const setLibraries = libs.set;
   const [libraryId, setLibraryId] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [term, setTerm] = useState("");
   const [kind, setKind] = useState<AssetKind | "all">("all");
   const [facets, setFacets] = useState<Record<string, string[]>>({}); // plug-in sidebar filters picked so far
-  const [items, setItems] = useState<AssetCard[]>([]);
-  const [next, setNext] = useState<string | undefined>();
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [preview, setPreview] = useState<AssetCard | null>(null);
   const [startAt, setStartAt] = useState(0); // the second the preview opens at (a line said in it)
   const [said, setSaid] = useState<SearchHit[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [refresh, setRefresh] = useState(0);
   const [scope, setScope] = useState("all"); // "all", "trash", or a collection id
   const [source, setSource] = useState(""); // "" = this library, else a plug-in source's id (its cards only)
   const [sources, setSources] = useState<{ id: string; label: string }[]>([]);
-  const [collections, setCollections] = useState<Collection[]>([]);
-  const [folders, setFolders] = useState(0); // counts folder changes, so the list is read again
   const [folderName, setFolderName] = useState("");
   const picker = useRef<HTMLInputElement>(null);
   const seq = useRef(0);
@@ -98,14 +98,11 @@ export default function LibraryPage() {
 
   const library = libraries?.find((l) => l.id === libraryId) ?? libraries?.[0] ?? null;
   const libId = library?.id;
+  const folderList = useCachedLoad<Collection[]>(libId ? `/api/library/${libId}/collections` : null, () => listCollections(libId!));
+  const collections = folderList.data ?? [];
+  const reloadFolders = () => void folderList.refresh().catch((e) => setError(message(e)));
   const finals = collections.find(isFinals);
   const [linked] = useSearchParams(); // ?library=&asset= (the Video Cleaner's duplicate check links here)
-
-  useEffect(() => {
-    listLibraries()
-      .then(setLibraries)
-      .catch((e) => setError(message(e)));
-  }, []);
 
   useEffect(() => {
     const lib = linked.get("library");
@@ -120,24 +117,17 @@ export default function LibraryPage() {
     return () => clearTimeout(t);
   }, [q]);
 
-  // the first page for the current library, search and kind; `refresh` counts re-reads (uploads, cards in progress)
+  // the first page for the current library, search, kind and folder, kept per view; "Load more" pages add to it
   const folder = scope === "all" ? {} : scope === "trash" ? { trashed: true } : { collectionId: scope };
-
-  useEffect(() => {
-    if (!libId) return;
-    const mine = ++seq.current;
-    listAssets(libId, { q: term || undefined, kind: kind === "all" ? undefined : [kind], facets, ...folder, source: source || undefined })
-      .then((page) => {
-        if (mine !== seq.current) return;
-        setItems(page.items);
-        setNext(page.next);
-        setError(null);
-      })
-      .catch((e) => {
-        if (mine === seq.current) setError(message(e));
-      });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [libId, term, kind, facets, scope, refresh, source]);
+  const query = { q: term || undefined, kind: kind === "all" ? undefined : [kind], facets, ...folder, source: source || undefined };
+  const pageKey = libId ? `/api/library/${libId}/assets?view=${encodeURIComponent(JSON.stringify(query))}` : null;
+  const first = useCachedLoad<AssetPage>(pageKey, () => listAssets(libId!, query));
+  const reload = () => void first.refresh().catch((e) => setError(message(e)));
+  const [more, setMore] = useState<{ key: string; items: AssetCard[]; next?: string } | null>(null);
+  const extra = more && more.key === pageKey ? more : null;
+  const shownIds = new Set(first.data?.items.map((a) => a.id));
+  const items = [...(first.data?.items ?? []), ...(extra?.items.filter((a) => !shownIds.has(a.id)) ?? [])];
+  const next = extra ? extra.next : first.data?.next;
 
   // the plug-in sources this account may browse here (none unless a plug-in brings one)
   useEffect(() => {
@@ -164,34 +154,18 @@ export default function LibraryPage() {
     setPreview(a);
   };
 
-  useEffect(() => {
-    if (!libId) return;
-    listCollections(libId)
-      .then(setCollections)
-      .catch((e) => setError(message(e)));
-  }, [libId, folders]);
-
   const loadMore = () => {
-    if (!libId || !next) return;
+    if (!libId || !next || !pageKey) return;
     const mine = ++seq.current;
-    listAssets(libId, { q: term || undefined, kind: kind === "all" ? undefined : [kind], facets, ...folder, cursor: next })
+    listAssets(libId, { ...query, cursor: next })
       .then((page) => {
         if (mine !== seq.current) return;
-        setItems((prev) => [...prev, ...page.items]);
-        setNext(page.next);
+        setMore({ key: pageKey, items: [...(extra?.items ?? []), ...page.items], next: page.next });
       })
       .catch((e) => {
         if (mine === seq.current) setError(message(e));
       });
   };
-
-  // cards still being prepared: look again in two seconds
-  const preparing = items.some((a) => a.state === "processing");
-  useEffect(() => {
-    if (!preparing) return;
-    const t = setTimeout(() => setRefresh((n) => n + 1), 2000);
-    return () => clearTimeout(t);
-  }, [preparing, items]);
 
   const patch = (key: number, change: Partial<Upload>) =>
     setUploads((prev) => prev.map((u) => (u.key === key ? { ...u, ...change } : u)));
@@ -202,8 +176,8 @@ export default function LibraryPage() {
     try {
       const r = await uploadFile(libId, u.file, (sent) => patch(u.key, { sent }), u.folderId);
       patch(u.key, r.duplicateOf ? { status: "duplicate", sent: u.file.size } : { status: "added", sent: u.file.size });
-      setRefresh((n) => n + 1);
-      if (u.folderId) setFolders((n) => n + 1); // the folder's count
+      reload();
+      if (u.folderId) reloadFolders(); // the folder's count
     } catch (e) {
       patch(u.key, { status: "failed", error: message(e) });
     }
@@ -235,7 +209,7 @@ export default function LibraryPage() {
     try {
       await createCollection(libId, { name: folderName.trim().slice(0, 80) });
       setFolderName("");
-      setFolders((n) => n + 1);
+      reloadFolders();
     } catch (e) {
       setError(message(e));
     }
@@ -250,7 +224,7 @@ export default function LibraryPage() {
         kind: "smart",
         query: { q: term, kind: kind === "all" ? undefined : [kind] },
       });
-      setFolders((n) => n + 1);
+      reloadFolders();
       setScope(c.id);
     } catch (e) {
       setError(message(e));
@@ -262,7 +236,7 @@ export default function LibraryPage() {
     try {
       await setTrashed(libId, a.id, trash);
       setPreview(null);
-      setRefresh((n) => n + 1);
+      reload();
     } catch (e) {
       setError(message(e));
     }
@@ -272,7 +246,7 @@ export default function LibraryPage() {
   const finalsId = async (): Promise<string> => {
     if (finals) return finals.id;
     const c = await createCollection(libId!, { name: FINALS });
-    setFolders((n) => n + 1);
+    reloadFolders();
     return c.id;
   };
   const openFinals = () =>
@@ -282,7 +256,7 @@ export default function LibraryPage() {
     if (!libId || !folderId) return;
     try {
       await changeFolderItems(libId, folderId, [a.id], true);
-      setFolders((n) => n + 1);
+      reloadFolders();
     } catch (e) {
       setError(message(e));
     }
@@ -321,11 +295,7 @@ export default function LibraryPage() {
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 px-4 py-4 sm:px-6">
         <ToolSetupLine tool="media" />
         {library && <FootageFolderCard libraryId={library.id} onUpload={() => picker.current?.click()} />}
-        {libraries === null && !error && (
-          <div className="flex justify-center py-16 text-zinc-500">
-            <Loader2 className="h-6 w-6 animate-spin" />
-          </div>
-        )}
+        {libraries === null && !error && <TileFrame />}
 
         {libraries?.length === 0 && (
           <div className="flex flex-col items-center gap-3 py-16 text-center">
@@ -483,7 +453,9 @@ export default function LibraryPage() {
               </section>
             )}
 
-            {items.length > 0 ? (
+            {!first.data ? (
+              <TileFrame />
+            ) : items.length > 0 ? (
               <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
                 {items.map((a) => (
                   <li key={a.id}>
@@ -507,7 +479,9 @@ export default function LibraryPage() {
           </>
         )}
 
-        {error && <p className="text-sm text-red-400">{error}</p>}
+        {(error ?? ((!libraries && libs.error) || (!first.data && first.error) || null)) && (
+          <p className="text-sm text-red-400">{error ?? (libs.error || first.error)}</p>
+        )}
       </main>
 
       <Sheet open={preview !== null} onOpenChange={(open) => !open && setPreview(null)}>
@@ -583,7 +557,9 @@ export default function LibraryPage() {
                   readOnly={scope === "trash"}
                   onSaved={(a) => {
                     setPreview(a);
-                    setItems((all) => all.map((x) => (x.id === a.id ? { ...x, description: a.description, tags: a.tags, aiTags: a.aiTags } : x)));
+                    const fix = (all: AssetCard[]) => all.map((x) => (x.id === a.id ? { ...x, description: a.description, tags: a.tags, aiTags: a.aiTags } : x));
+                    first.set((page) => page && { ...page, items: fix(page.items) });
+                    setMore((m) => m && { ...m, items: fix(m.items) });
                   }}
                   onError={setError}
                 />
@@ -599,6 +575,20 @@ export default function LibraryPage() {
         </SheetContent>
       </Sheet>
     </div>
+  );
+}
+
+/** The grid's boxes before its list is known, the size of the cards: nothing moves when the list arrives. */
+function TileFrame() {
+  return (
+    <ul aria-hidden="true" className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+      {Array.from({ length: 8 }, (_, i) => (
+        <li key={i} className="flex flex-col gap-1.5">
+          <div className="aspect-video w-full rounded-lg bg-zinc-900 ring-1 ring-zinc-500/20" />
+          <div className="h-5" />
+        </li>
+      ))}
+    </ul>
   );
 }
 

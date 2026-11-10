@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { env } from "../lib/env";
+import { libraryChanged } from "./access";
 import { blobs, libraryDb, librarySetting } from "./db";
 import { describeVersion } from "./describe";
 import { embedVersion } from "./embed";
@@ -52,6 +53,8 @@ export async function tick(now = Date.now()): Promise<boolean> {
     finishJob(db, job.id, false, e instanceof Error ? e.message : String(e), now);
     const after = db.prepare("SELECT state FROM jobs WHERE id = ?").get(job.id) as { state: string };
     if (after.state === "failed" && !EXTRA.has(job.kind)) db.prepare("UPDATE asset_versions SET state = 'failed' WHERE id = ?").run(job.version_id);
+  } finally {
+    libraryChanged(job.library_id); // a picture, a transcript or the card's state: the open pages refetch
   }
   return true;
 }

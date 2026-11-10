@@ -5,6 +5,7 @@ import { addExternalItem, externalCanSee, externalRefFor } from "./refs";
 import { saveToLibrary } from "./routes";
 import { pluginFinalsAdded, pluginFinalsRefusal } from "../lib/plugin";
 import { emitEvent } from "../lib/events";
+import { announce } from "../lib/sync";
 
 /**
  * Finals is a view over the Media Library, not a store of its own: a Finals piece is a `pieces` row in the library's
@@ -143,6 +144,7 @@ export async function addToFinals(input: FinalsAdd, source: FinalsSource): Promi
       ).run(collectionId, assetId, input.owner, collectionId);
     }
     emitEvent("library.changed", {});
+    announce(input.owner, "library"); // sent from the Workshop or the AI Editor: the open Finals pages refetch
     const outcome: FinalsOutcome = { ok: true, pieceId: piece.id, assetId, versionId };
     await pluginFinalsAdded(input, source, outcome); // a plug-in's own reaction (a change note, say); its failure does not undo this
     return outcome;
@@ -159,6 +161,7 @@ export function linkFinalsPiece(pieceId: string, sessionId: string, docId: strin
   if (!row || libraryRole(owner, row.library_id) !== "owner") return false;
   d.prepare("UPDATE pieces SET workshop_session = ?, workshop_doc = ? WHERE id = ?").run(sessionId, docId ?? null, pieceId);
   emitEvent("library.changed", {});
+  announce(owner, "library");
   return true;
 }
 

@@ -7,7 +7,7 @@ import type { AuthVars } from "../auth";
 import type { WatchFolder, WatchStatus } from "../../contracts/library";
 import { env, hostedMode } from "../lib/env";
 import { freeBytes, sha256File } from "../lib/uploads";
-import { ensureLibrary, homeOf, libraryRole } from "./access";
+import { ensureLibrary, homeOf, libraryChanged, libraryRole } from "./access";
 import { blobs, libraryDb } from "./db";
 import { enqueueJob } from "./jobs";
 import { kindOf, recordVersion } from "./routes";
@@ -308,6 +308,7 @@ async function scanLibrary(libraryId: string, now: number): Promise<number> {
       }
     }
   }
+  if (took) libraryChanged(libraryId);
   return took;
 }
 
@@ -321,7 +322,10 @@ async function refreshMissing(): Promise<void> {
     .all() as { id: string; state: string; source_path: string; created_by: string; library_id: string }[];
   for (const v of refs) {
     const there = !!(await stat(v.source_path).catch(() => null));
-    if (!there && v.state !== "missing") db().prepare("UPDATE asset_versions SET state = 'missing' WHERE id = ?").run(v.id);
+    if (!there && v.state !== "missing") {
+      db().prepare("UPDATE asset_versions SET state = 'missing' WHERE id = ?").run(v.id);
+      libraryChanged(v.library_id);
+    }
     if (there && v.state === "missing") {
       const jobs = db().prepare("SELECT kind, state, actor FROM jobs WHERE version_id = ?").all(v.id) as { kind: string; state: string; actor: string | null }[];
       for (const j of jobs) if (j.state === "failed") enqueueJob(db(), v.library_id, v.id, j.kind, j.actor);
@@ -329,6 +333,7 @@ async function refreshMissing(): Promise<void> {
       // done and needs_key jobs don't hold a version back; the worker sets `ready` when the rest are through
       const open = !jobs.length || jobs.some((j) => j.state === "failed" || j.state === "queued" || j.state === "running");
       db().prepare("UPDATE asset_versions SET state = ? WHERE id = ?").run(open ? "processing" : "ready", v.id);
+      libraryChanged(v.library_id);
     }
   }
 }

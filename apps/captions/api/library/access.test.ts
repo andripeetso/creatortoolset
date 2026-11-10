@@ -6,11 +6,20 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "library-access-"));
 process.env.DATA_DIR = dir;
 // an account with the Media Library switched off, written before the user store loads
-writeFileSync(path.join(dir, "users.json"), JSON.stringify({ users: [{ username: "off-a", salt: "", hash: "", role: "user", cloud: true, off: ["media"], createdAt: 0 }] }));
+writeFileSync(
+  path.join(dir, "users.json"),
+  JSON.stringify({
+    users: [
+      { username: "off-a", salt: "", hash: "", role: "user", cloud: true, off: ["media"], createdAt: 0 },
+      { username: "old", salt: "", hash: "", role: "user", cloud: true, off: [], createdAt: 0 },
+    ],
+  }),
+);
 // an install from before: its owner's libraries carry the id it had then
 writeFileSync(path.join(dir, "workspaces.json"), JSON.stringify({ workspaces: [{ id: "ws_old", members: [{ username: "old", role: "owner" }, { username: "mem", role: "member" }] }] }));
 const { libraryDb } = await import("./db");
-const { homeOf, libraryRole } = await import("./access");
+const { homeOf, libraryChanged, libraryRole } = await import("./access");
+const { syncApp } = await import("../lib/sync");
 const { similarTo } = await import("./similar");
 const { libraryRef } = await import("./attach");
 
@@ -48,5 +57,32 @@ describe("libraryRole", () => {
     expect(similarTo("off-a", ["0000000000000000"]).matches).toEqual([]);
     expect(await libraryRef("ana", "ast_a", "v_a")).not.toBeNull();
     expect(similarTo("ana", ["0000000000000000"]).matches.map((m) => m.assetId)).toEqual(["ast_a"]);
+  });
+});
+
+describe("libraryChanged", () => {
+  /** The newest "library" change this account's open tabs were told about (the stream's hello). */
+  const heard = async (user: string) => {
+    const { Hono } = await import("hono");
+    const app = new Hono<{ Variables: { user: { username: string } } }>();
+    app.use("*", async (c, next) => {
+      c.set("user", { username: user });
+      await next();
+    });
+    app.route("/", syncApp as never);
+    const ac = new AbortController();
+    const res = await app.request("/events", { signal: ac.signal });
+    const { value } = await res.body!.getReader().read();
+    ac.abort();
+    return (JSON.parse(/data: (.*)/.exec(new TextDecoder().decode(value))![1]) as { topics: Record<string, number> }).topics.library;
+  };
+
+  it("tells the library's own account, an install's old library id included, and nobody else", async () => {
+    libraryChanged("lib_old");
+    expect(await heard("old")).toBeGreaterThan(0);
+    expect(await heard("ws_old")).toBeUndefined();
+    libraryChanged("lib_a");
+    expect(await heard("ana")).toBeGreaterThan(await heard("old"));
+    expect(await heard("bo")).toBeUndefined();
   });
 });

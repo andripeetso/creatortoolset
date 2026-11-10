@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { env } from "../lib/env";
-import { findUser, mayUse } from "../users";
+import { announce } from "../lib/sync";
+import { findUser, listUsers, LOCAL_USER, mayUse } from "../users";
 import { blobs, libraryDb } from "./db";
 import { assetRef, canSee } from "./sources";
 
@@ -22,6 +23,17 @@ export function homeOf(username: string): string {
     }
   }
   return before[username] ?? username;
+}
+
+/**
+ * Tells the library's account that it changed, for a save outside a request (the worker, a watch folder): its open
+ * Media Library and Finals pages refetch (api/lib/sync.ts). A request's own write is announced already.
+ */
+export function libraryChanged(libraryId: string): void {
+  const row = libraryDb().prepare("SELECT workspace_id FROM libraries WHERE id = ?").get(libraryId) as { workspace_id: string } | undefined;
+  if (!row) return;
+  const accounts = [...listUsers().map((u) => u.username), LOCAL_USER.username];
+  announce(accounts.find((u) => homeOf(u) === row.workspace_id) ?? row.workspace_id, "library");
 }
 
 /**

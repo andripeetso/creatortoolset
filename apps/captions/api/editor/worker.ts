@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { DeviceJob } from "../../contracts/devices";
 import { isOnline } from "../lib/devices";
+import { announce } from "../lib/sync";
 import { libraryDb } from "../library/db";
 import { defer, enqueueJob, extendLease, finishJob, type JobRow, parkJob, requeueExpired } from "../library/jobs";
 import { NeedsKey } from "../library/transcribe";
@@ -31,6 +32,9 @@ export const NEXT: Record<string, string[]> = nextKinds();
 
 const running = new Map<number, { edit: string; ctl: AbortController }>();
 
+/** A step moved (claimed, done, failed, parked): the account's open AI Editor pages refetch (api/lib/sync.ts). */
+const moved = (job: JobRow) => job.actor && announce(job.actor, "editor");
+
 const fail = (db: DatabaseSync, id: number, why: string) =>
   db.prepare(`UPDATE ${T} SET state = 'failed', lease_until = NULL, error = ? WHERE id = ?`).run(why, id);
 
@@ -59,6 +63,15 @@ export async function tick(now = Date.now()): Promise<boolean> {
   releaseQuietDevices(db, isOnline);
   const job = claimStep(db, "server", LEASE_S, now, T);
   if (!job) return false;
+  moved(job);
+  try {
+    return await runStep(db, job, now);
+  } finally {
+    moved(job);
+  }
+}
+
+async function runStep(db: DatabaseSync, job: JobRow, now: number): Promise<boolean> {
   const vid = job.version_id ?? "";
   const cut = vid.indexOf(":");
   const edit = readEdit(vid.slice(0, cut));
@@ -104,6 +117,7 @@ export function claimForDevice(device: { id: string; owner: string }, kinds: str
   releaseQuietDevices(db, isOnline);
   const job = claimStep(db, claimableBy(kinds), LEASE_S, now, T, { actor: device.owner, device: device.id });
   if (!job) return null;
+  moved(job);
   const { editId, variant } = splitVersion(job);
   const edit = readEdit(editId);
   if (!edit || edit.trashedAt) return fail(db, job.id, "The edit is gone"), null;
@@ -130,6 +144,7 @@ export function doneForDevice(device: string, id: number): boolean {
   if (!job) return false;
   db.prepare("UPDATE edit_jobs SET device = NULL WHERE id = ?").run(id);
   finishJob(db, id, true, undefined, Date.now(), T);
+  moved(job);
   const { editId, variant } = splitVersion(job);
   const edit = readEdit(editId);
   if (edit) queueNext(db, job, edit, variant);
@@ -139,9 +154,11 @@ export function doneForDevice(device: string, id: number): boolean {
 /** The device could not run its step: retried after a backoff, or failed after MAX_ATTEMPTS. False when it does not hold the step. */
 export function failForDevice(device: string, id: number, why: string): boolean {
   const db = libraryDb();
-  if (!heldBy(db, id, device)) return false;
+  const job = heldBy(db, id, device);
+  if (!job) return false;
   db.prepare("UPDATE edit_jobs SET device = NULL WHERE id = ?").run(id);
   finishJob(db, id, false, why.slice(0, 500), Date.now(), T);
+  moved(job);
   return true;
 }
 
