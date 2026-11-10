@@ -67,6 +67,8 @@ extension Shell {
             "lastError": ai.lastError ?? NSNull(),
             "notice": notice ?? NSNull(),
             "paired": pairedHere,
+            // this Mac's device id on the open server: the page's Connect binds its AI to it (setup's AI step)
+            "device": DeviceVault.deviceID(for: base.host ?? "") ?? NSNull(),
             "problem": problem ?? NSNull(),
             "servers": listed.map { ["id": $0.id, "name": $0.name, "url": $0.url, "current": $0.id == current] as [String: Any] },
         ]

@@ -1,7 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { ConnectResult, LocalAiRow, LocalAiView } from "@contracts/local-ai";
-import { AiPanelView, anyConnected, rowView } from "./AiPanel";
+import type { ProviderSettings, ProvidersView } from "@contracts/providers";
+import { AiPanelView, AnswerPicker, anyConnected, rowView } from "./AiPanel";
 
 const row = (over: Partial<LocalAiRow> & Pick<LocalAiRow, "id" | "name">): LocalAiRow => ({
   kind: "cli",
@@ -22,11 +23,11 @@ const claude = row({ id: "claude", name: "Claude Code" });
 const codex = row({ id: "codex", name: "Codex", version: "codex-cli 0.50.0", signedIn: false });
 
 describe("the agents list: one row each, the one action each needs", () => {
-  it("a found, signed-in Claude Code offers Use existing CLI, with its logo and the one-line description", () => {
+  it("a found, signed-in Claude Code offers Use this, with its logo and the one-line description", () => {
     const html = panel(view([claude]));
     expect(html).toContain("Claude Code");
     expect(html).toContain("Code with your Claude subscription.");
-    expect(html).toContain("Use existing CLI");
+    expect(html).toContain("Use this");
     expect(html).toContain("<svg");
   });
 
@@ -35,8 +36,7 @@ describe("the agents list: one row each, the one action each needs", () => {
     expect(html).toContain("Continue with ChatGPT");
     expect(html).toContain("Code with your ChatGPT subscription.");
     const missing = panel(view([]));
-    expect(missing).toContain("Not found · Claude Code (");
-    expect(missing).toContain("was not found on PATH.");
+    expect(missing).toContain("Not installed on this computer.");
     expect(missing).toContain("Install");
   });
 
@@ -51,7 +51,7 @@ describe("the agents list: one row each, the one action each needs", () => {
     expect(html).toContain('aria-label="Claude Code is connected"');
     expect(html).not.toContain("Ready");
     expect(html).not.toContain("Connected ✓");
-    expect(html).not.toContain("Use existing CLI");
+    expect(html).not.toContain("Use this");
   });
 
   it("never offers an API key, and always has Check again", () => {
@@ -63,27 +63,59 @@ describe("the agents list: one row each, the one action each needs", () => {
   it("asks the owner of a server that is not this computer to connect its AI, with no rows", () => {
     const html = panel(view([], false));
     expect(html).toContain("Ask the owner of this server to connect the AI it runs on.");
-    expect(html).not.toContain("Use existing CLI");
+    expect(html).not.toContain("Use this");
   });
 
   it("shows the desktop apps as text only, with no action", () => {
     const html = panel(view([{ ...claude, id: "claude-desktop", kind: "desktop", name: "Claude desktop" } as LocalAiRow]));
     expect(html).toContain("Claude desktop");
     expect(html).toContain("The Claude app.");
-    expect(html).not.toContain("Use existing CLI");
+    expect(html).not.toContain("Use this");
   });
 });
 
-describe("what a row does, in order", () => {
-  it("not signed in: Sign in, with the Terminal line before any click", () => {
-    const v = rowView(row({ id: "claude", name: "Claude Code", signedIn: false }), undefined, undefined);
-    expect(v.button).toEqual({ label: "Sign in", action: "signin" });
-    expect(v.line).toContain("A Terminal window opens");
+describe("the app's AI: which one answers, and the picker", () => {
+  const connected = (id: "claude" | "codex", name: string) => row({ id, name, connected: true, lastCheck: { ok: true, at: 1, ms: 5 } });
+  const settings = (instances: ProviderSettings["instances"], def: ProviderSettings["default"]): ProviderSettings => ({ instances, default: def, jobs: {} });
+  const inst = (id: string, driver: "claude" | "codex", name: string) => ({ id, driver, name, enabled: true, device: "dev_1" });
+
+  it("offers Use for the app on a connected agent that does not answer yet, and not on the one that does", () => {
+    const view = view2([connected("claude", "Claude Code"), connected("codex", "Codex")]);
+    const html = panel(view, { appAi: "local-claude", onUseForApp: () => {} });
+    expect(html.match(/Use for the app/g)?.length ?? 0).toBe(1);
+    expect(html).toContain("Use for the app");
   });
 
-  it("signed in but not connected: Use existing CLI, and no connected state", () => {
+  it("no Use for the app button without a connected agent", () => {
+    expect(panel(view([claude]), { onUseForApp: () => {} })).not.toContain("Use for the app");
+  });
+
+  it("the picker lists the connected AIs and the models of the one picked; nothing when none is connected", () => {
+    const own = settings([inst("local-claude", "claude", "Claude Code"), inst("local-codex", "codex", "Codex")], { instance: "local-claude", model: "claude-opus-5-5", effort: "xhigh" });
+    const providers = { own, models: { "local-claude": ["claude-opus-5-5", "claude-sonnet-5"] } } as unknown as ProvidersView;
+    const html = renderToStaticMarkup(<AnswerPicker view={providers} onPick={() => {}} />);
+    expect(html).toContain("Answers in the app");
+    expect(html).toContain('aria-label="AI that answers in the app"');
+    expect(html).toContain("Codex");
+    expect(html).toContain("claude-sonnet-5");
+    const none = { own: null, models: {} } as unknown as ProvidersView;
+    expect(renderToStaticMarkup(<AnswerPicker view={none} onPick={() => {}} />)).toBe("");
+  });
+});
+
+/** A view with the given rows, for the app's-AI tests (the default rows are the shared `view` above). */
+const view2 = (rows: LocalAiRow[]) => ({ local: true, rows }) as LocalAiView;
+
+describe("what a row does, in order", () => {
+  it("not signed in: Sign in, with the browser line before any click", () => {
+    const v = rowView(row({ id: "claude", name: "Claude Code", signedIn: false }), undefined, undefined);
+    expect(v.button).toEqual({ label: "Sign in", action: "signin" });
+    expect(v.line).toContain("Your browser opens");
+  });
+
+  it("signed in but not connected: Use this, and no connected state", () => {
     const v = rowView(claude, undefined, undefined);
-    expect(v.button).toEqual({ label: "Use existing CLI", action: "connect" });
+    expect(v.button).toEqual({ label: "Use this", action: "connect" });
     expect(v.connected).toBeFalsy();
   });
 
@@ -91,8 +123,8 @@ describe("what a row does, in order", () => {
     expect(rowView(claude, undefined, "connecting")).toMatchObject({ button: { label: "Checking…", disabled: true }, line: "Checking. This can take up to a minute." });
   });
 
-  it("after Sign in: the Terminal line while it waits", () => {
-    expect(rowView(claude, undefined, "signingIn").line).toContain("Sign in there, then come back here");
+  it("after Sign in: the browser line while it waits", () => {
+    expect(rowView(claude, undefined, "signingIn").line).toContain("Waiting for you to finish in your browser");
   });
 
   it("after three minutes still out: asks for Check again", () => {
@@ -120,5 +152,23 @@ describe("anyConnected", () => {
     expect(anyConnected(view([row({ id: "claude", name: "Claude Code", connected: true })]), {})).toBe(true);
     expect(anyConnected(view([codex]), { codex: { state: "ready", signedIn: true, answered: true } })).toBe(true);
     expect(anyConnected(view([claude]), { claude: { state: "failed", signedIn: true, answered: false } })).toBe(false);
+  });
+});
+
+describe("install: a progress line while it runs, one plain sentence when it fails", () => {
+  it("the row says it is installing, and its Install waits", () => {
+    const html = panel(view([]), { installing: "claude" });
+    expect(html).toContain("Installing Claude Code. This can take a few minutes.");
+    expect(html).toContain("Installing…");
+  });
+
+  it("a failed install: one sentence, the output under Details, and Copy for Terminal as the last resort", () => {
+    const html = panel(view([]), {
+      installMsg: { message: "Couldn't install Claude Code. Check the internet connection, then try again.", raw: "curl: (6) Could not resolve host", line: "curl -fsSL https://claude.ai/install.sh | bash" },
+    });
+    expect(html).toContain("Check the internet connection, then try again.");
+    expect(html).toContain("curl: (6) Could not resolve host");
+    expect(html).toContain("Copy install line for Terminal");
+    expect(html).not.toContain("Terminal window");
   });
 });
