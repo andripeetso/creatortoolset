@@ -25,7 +25,7 @@ const inflight = new Map<string, Promise<void>>();
 let preferredUpstream = 0;
 
 /** The file from the first upstream that answers (the one that worked last time first). */
-async function openUpstream(urlPath: string): Promise<Response> {
+async function openUpstream(urlPath: string, method: "GET" | "HEAD" = "GET"): Promise<Response> {
   let lastErr: unknown = null;
   const order = [
     preferredUpstream,
@@ -38,11 +38,12 @@ async function openUpstream(urlPath: string): Promise<Response> {
       const timer = setTimeout(() => ctrl.abort(), HEADER_TIMEOUT_MS);
       try {
         const res = await fetch(base + urlPath, {
+          method,
           redirect: "follow",
           signal: ctrl.signal,
         });
         clearTimeout(timer);
-        if (!res.ok || !res.body) {
+        if (!res.ok || (method === "GET" && !res.body)) {
           res.body?.cancel().catch(() => {});
           lastErr = new Error(`HTTP ${res.status}`);
           continue;
@@ -67,6 +68,17 @@ hfApp.all("/*", async (c) => {
     return c.json({ error: "bad path" }, 400);
   }
   const dest = path.join(CACHE_DIR, sub);
+  if (c.req.method !== "GET" && !cached(dest)) {
+    // a size probe (HEAD) for a file that is not here yet: the upstream's own answer, and nothing is fetched for it
+    // (fetching it here made the real request wait behind a download nobody could watch)
+    try {
+      const probe = await openUpstream(sub, "HEAD");
+      const length = probe.headers.get("content-encoding") ? null : probe.headers.get("content-length");
+      return new Response(null, { status: 200, headers: { "Content-Type": typeOf(sub), ...(length ? { "Content-Length": length } : {}) } });
+    } catch (e) {
+      return c.json({ error: e instanceof Error ? e.message : "upstream unavailable" }, 502);
+    }
+  }
   // another request is fetching this file: its copy serves this one
   while (inflight.has(dest)) await inflight.get(dest);
   if (!cached(dest)) {
@@ -89,8 +101,6 @@ hfApp.all("/*", async (c) => {
       .finally(release);
     const length = res.headers.get("content-encoding") ? null : res.headers.get("content-length");
     const headers = { "Content-Type": typeOf(sub), ...(length ? { "Content-Length": length } : {}), "Access-Control-Allow-Origin": "*" };
-    // a request that reads no body (HEAD) must not leave its half of the stream filling memory
-    if (c.req.method !== "GET") return void toBrowser.cancel(), new Response(null, { status: 200, headers });
     return new Response(toBrowser, { status: 200, headers });
   }
   const size = statSync(dest).size;

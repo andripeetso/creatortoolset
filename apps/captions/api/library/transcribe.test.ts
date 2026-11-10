@@ -8,11 +8,20 @@ const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "libra
 process.env.DATA_DIR = dir;
 delete process.env.APP_SECRET; // the solo install: "local" is the admin, served by the server's key
 process.env.DEEPGRAM_API_KEY = "dg-test";
+// the speech model is not loaded in a test: this stands in for it, and says which runs reached it
+const heard: string[] = [];
+vi.mock("../lib/device-transcribe", async (real) => ({
+  ...(await real<typeof import("../lib/device-transcribe")>()),
+  transcribeOnDevice: async (_file: string, key: string) => {
+    heard.push(key);
+    return { words: [{ text: "Tere,", start: 0.2, end: 0.5 }, { text: "Tiny", start: 0.6, end: 0.9 }, { text: "Acrobatics.", start: 2.4, end: 3 }], language: "et" };
+  },
+}));
 const { ffmpegCommand } = await import("../ffmpeg-runtime");
 const { LOCAL_USER } = await import("../users");
 const { transcribeWav } = await import("../transcribe");
 const { openLibraryDb } = await import("./db");
-const { saveTranscript, segmentsOf, transcribeVersion, wordsOf } = await import("./transcribe");
+const { NeedsKey, saveTranscript, segmentsOf, transcribeRoute, transcribeVersion, wordsOf } = await import("./transcribe");
 
 const wav = path.join(dir, "speech.wav");
 const db = openLibraryDb(path.join(dir, "library.db"));
@@ -34,7 +43,13 @@ beforeAll(() => {
     return Response.json({ results: { channels: [{ alternatives: [{ words }] }], utterances: [{ start: 0, end: 1 }] } });
   });
 });
-afterEach(() => (urls.length = 0));
+afterEach(() => {
+  urls.length = 0;
+  heard.length = 0;
+  process.env.DEEPGRAM_API_KEY = "dg-test";
+  delete process.env.CT_LOCAL;
+  delete process.env.CT_MODE;
+});
 afterAll(() => {
   vi.unstubAllGlobals();
   db.close();
@@ -58,6 +73,43 @@ describe("library transcripts with words", () => {
       { w: "so", s: 0.6, e: 0.8, c: 0.95 },
     ]);
     expect(segmentsOf(db, "ver_1")).toEqual([{ start: 0.1, end: 0.8, text: "So um so" }]);
+  });
+
+  it("a key goes first; with none, only a server on its owner's computer transcribes by itself", () => {
+    process.env.CT_LOCAL = "1";
+    expect(transcribeRoute("local")).toEqual({ provider: "deepgram", key: "dg-test" });
+    delete process.env.DEEPGRAM_API_KEY;
+    expect(transcribeRoute("local")).toEqual({ provider: "device" });
+    process.env.CT_MODE = "hosted";
+    expect(() => transcribeRoute("local")).toThrow(NeedsKey);
+    delete process.env.CT_MODE;
+    delete process.env.CT_LOCAL;
+    expect(() => transcribeRoute("local")).toThrow(NeedsKey);
+  });
+
+  it("with no key on the person's own computer, the transcript is made there: words with their times, the language heard", async () => {
+    delete process.env.DEEPGRAM_API_KEY;
+    process.env.CT_LOCAL = "1";
+    await transcribeVersion(db, "ver_1", wav, "local", dir);
+    expect(urls).toEqual([]); // nothing left this computer
+    expect(heard).toEqual(["ver_1"]);
+    expect(wordsOf(db, "ver_1")).toEqual([
+      { w: "Tere,", s: 0.2, e: 0.5 },
+      { w: "Tiny", s: 0.6, e: 0.9 },
+      { w: "Acrobatics.", s: 2.4, e: 3 },
+    ]);
+    expect(segmentsOf(db, "ver_1")).toEqual([
+      { start: 0.2, end: 0.9, text: "Tere, Tiny" },
+      { start: 2.4, end: 3, text: "Acrobatics." },
+    ]);
+    expect(db.prepare("SELECT provider, language FROM transcripts WHERE version_id = 'ver_1'").get()).toEqual({ provider: "device", language: "et" });
+  });
+
+  it("with a key, the on-device model is never reached", async () => {
+    process.env.CT_LOCAL = "1";
+    await transcribeVersion(db, "ver_1", wav, "local", dir);
+    expect(heard).toEqual([]);
+    expect(urls).toHaveLength(1);
   });
 
   it("a transcript saved without words reads back as null words", () => {

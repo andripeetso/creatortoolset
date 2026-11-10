@@ -19,8 +19,14 @@ it("sends a model file on while it is still arriving, keeps a copy, and serves t
       finish = () => (c.enqueue(new Uint8Array([4, 5])), c.close());
     },
   });
-  const fetched = vi.fn(async () => new Response(upstream, { headers: { "content-length": "5" } }));
+  const fetched = vi.fn(async (_url: string, init?: RequestInit) => new Response(init?.method === "HEAD" ? null : upstream, { headers: { "content-length": "5" } }));
   vi.stubGlobal("fetch", fetched);
+
+  // a size probe first: answered from the upstream's headers, and it starts no download
+  const probe = await hfApp.request("/api/hf" + file, { method: "HEAD" });
+  expect(probe.headers.get("content-length")).toBe("5");
+  expect(fetched).toHaveBeenLastCalledWith(expect.any(String), expect.objectContaining({ method: "HEAD" }));
+  expect(existsSync(path.join(kept, "resolve/main/weights.bin"))).toBe(false);
 
   const res = await hfApp.request("/api/hf" + file);
   expect(res.headers.get("content-length")).toBe("5");
@@ -34,5 +40,5 @@ it("sends a model file on while it is still arriving, keeps a copy, and serves t
   await vi.waitFor(() => expect(existsSync(path.join(kept, "resolve/main/weights.bin"))).toBe(true));
   const again = await hfApp.request("/api/hf" + file);
   expect([...new Uint8Array(await again.arrayBuffer())]).toEqual([1, 2, 3, 4, 5]);
-  expect(fetched).toHaveBeenCalledTimes(1);
+  expect(fetched).toHaveBeenCalledTimes(2); // the probe and the one download
 });

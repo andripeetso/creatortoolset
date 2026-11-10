@@ -33,7 +33,7 @@ export interface AssetDetail extends AssetCard {
   transcript?: { provider: string; segments: { start: number; end: number; text: string }[] };
   collections: { id: string; name: string }[];
   sourcePath?: string; // reference-mode only, shown to owner/admin only
-  /** the current version's background jobs: a transcribe that `needs_key` says why in `error` */
+  /** the current version's background jobs: a transcribe that `needs_key` says why in `error`; one running on this computer says what it is doing there */
   jobs: { kind: string; state: "queued" | "running" | "done" | "failed" | "needs_key"; error?: string }[];
 }
 

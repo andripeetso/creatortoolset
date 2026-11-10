@@ -33,7 +33,8 @@ pnpm --filter @creator-toolset/captions dev    # http://localhost:43127
 No `.env` is needed. With `APP_SECRET` unset, sign-in is off and everything runs as the local admin. Projects
 are kept in `~/.caption-studio` (override with `DATA_DIR`).
 
-Transcription runs on the device by default (Whisper in the browser). Add `DEEPGRAM_API_KEY` for cloud
+Transcription runs on the device by default (Whisper in the browser; in the desktop app the server runs the same
+model for the Media Library, the AI Editor and Video Notes, `api/lib/device-transcribe.ts`). Add `DEEPGRAM_API_KEY` for cloud
 transcription, and the AI keys for the AI-backed tools. The full list, with explanations, is in
 [`.env.example`](.env.example). Copy it to `.env` and fill in only what you use.
 

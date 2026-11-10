@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Sentence } from "../../contracts/editor";
 import { ffmpegCommand } from "../ffmpeg-runtime";
+import { deviceStatus } from "../lib/device-transcribe";
 import { env } from "../lib/env";
 import { blobs, libraryDb } from "../library/db";
 import { enqueueJob } from "../library/jobs";
@@ -126,7 +127,7 @@ interface SourceRow {
   title: string;
 }
 
-export async function analyzeStep({ edit, signal }: StepContext): Promise<void> {
+export async function analyzeStep({ edit, job, signal }: StepContext): Promise<void> {
   const db = libraryDb();
   const rows = edit.sources.map(
     (id) =>
@@ -140,6 +141,7 @@ export async function analyzeStep({ edit, signal }: StepContext): Promise<void> 
   const notes: string[] = [];
   const ready: { row: SourceRow; probe: ProbeSummary; words: TimedWord[] }[] = [];
   let wait = false;
+  let waitingOn: string | undefined;
   for (const row of rows) {
     const probe = JSON.parse(row.probe ?? "null") as ProbeSummary | null;
     if (!probe) {
@@ -159,7 +161,10 @@ export async function analyzeStep({ edit, signal }: StepContext): Promise<void> 
     const job = db.prepare("SELECT state, error, actor FROM jobs WHERE version_id = ? AND kind = 'transcribe'").get(row.id) as
       | { state: string; error: string | null; actor: string | null }
       | undefined;
-    if (job?.state === "queued" || job?.state === "running") wait = true;
+    if (job?.state === "queued" || job?.state === "running") {
+      wait = true;
+      waitingOn = deviceStatus(row.id) ?? waitingOn;
+    }
     else if (job?.state === "failed") throw new Error(`Transcribing “${row.title}” failed (${job.error ?? "no reason given"}): retry it in the Media Library`);
     else {
       // parked for the creator: still no key throws NeedsKey with what to add; a key added since queues it again
@@ -169,6 +174,8 @@ export async function analyzeStep({ edit, signal }: StepContext): Promise<void> 
       wait = true;
     }
   }
+  // a transcript being made on this computer: the step says what it is doing while it waits (the worker clears it when the step is done)
+  if (wait && waitingOn) db.prepare("UPDATE edit_jobs SET error = ? WHERE id = ?").run(waitingOn, job.id);
   if (wait) throw new Waiting();
 
   ready.sort((a, b) => (a.probe.capturedAt ?? Infinity) - (b.probe.capturedAt ?? Infinity) || a.row.title.localeCompare(b.row.title));

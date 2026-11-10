@@ -80,6 +80,7 @@ export const NEED_SHORT: Record<Have, string> = {
   instagram: "an Instagram login",
   apify: "an Apify key",
   mcp: "Creator Toolset in your AI",
+  deviceTranscripts: "transcripts",
   DEEPGRAM_API_KEY: "a Deepgram key",
   ELEVENLABS_API_KEY: "an ElevenLabs or NVIDIA key",
   NVIDIA_API_KEY: "an ElevenLabs or NVIDIA key",
@@ -98,6 +99,7 @@ export const NEED_SENTENCE: Record<Have, string> = {
   instagram: "Lets this tool read your own Instagram posts. You sign in yourself.",
   apify: "Apify reads public posts for you. Apify bills you for each read, to your own account.",
   mcp: "Lets your own Claude Code or Codex use Creator Toolset. Set it up in Settings → Your AI.",
+  deviceTranscripts: "This computer turns speech into text by itself, for free. A Deepgram or OpenAI key makes it faster.",
   DEEPGRAM_API_KEY: "Deepgram turns speech into text, so captions and notes can be made. Deepgram bills you, to your own account.",
   ELEVENLABS_API_KEY: "Cleans up voice audio. ElevenLabs or NVIDIA bills you, to your own account.",
   NVIDIA_API_KEY: "Cleans up voice audio. ElevenLabs or NVIDIA bills you, to your own account.",
@@ -111,17 +113,23 @@ export const NEED_SENTENCE: Record<Have, string> = {
  * What a person has set up, as the server sees it (api/setup.ts): a Workshop project, AI (any route: their own
  * Claude/Codex, or an API key), their own AI (a provider: the Workshop has no API-key path), a Media Library,
  * an Instagram login, their Apify key, their own AI connected through the MCP (their Full key used since it was made),
+ * transcripts made on this computer without a key (the server is on its owner's computer: api/lib/device-transcribe.ts),
  * and each key keyFor (api/my-keys.ts) finds for them.
  */
-export type Have = "project" | "ai" | "ownAi" | "library" | "instagram" | "apify" | "mcp" | MyKeyEnv;
+export type Have = "project" | "ai" | "ownAi" | "library" | "instagram" | "apify" | "mcp" | "deviceTranscripts" | MyKeyEnv;
 
 /** The screen that sets a row up: My API keys (its keys only), Apify, the Media Library, AI providers, a project. */
 export type NeedForm = "keys" | "apify" | "library" | "ai" | "project";
 
-/** One row of a tool's checklist: met when any of `anyOf` is set up. `optional` rows unlock more; the tool works without. */
+/**
+ * One row of a tool's checklist: met when any of `anyOf` is set up. `optional` rows unlock more; the tool works without.
+ * `alsoMetBy`: what meets the row without being something to add (transcripts made on the person's own computer),
+ * so `anyOf` stays the list of things a screen or the assistant can ask for.
+ */
 export interface Need {
   what: string;
   anyOf: readonly Have[];
+  alsoMetBy?: readonly Have[];
   form: NeedForm;
   optional?: true;
 }
@@ -129,8 +137,10 @@ export interface Need {
 /**
  * Each tool's needs, from the code: the keyFor callers (api/transcribe.ts, enhance.ts, workshop.ts, instagram.ts,
  * library/transcribe.ts, library/embed.ts, ai-complete.ts), the Media Library's storage and the AI Editor's steps.
- * Review, Video Cleaner and Story Splitter need nothing.
+ * Review, Video Cleaner and Story Splitter need nothing. A transcripts row is also met by "deviceTranscripts": on the
+ * person's own computer no key is needed.
  */
+const OWN_COMPUTER = "the Mac app transcribes without one; a key is faster";
 export const TOOL_NEEDS: Record<Tool, readonly Need[]> = {
   instagram: [
     { what: "A project", anyOf: ["project"], form: "project" },
@@ -151,23 +161,23 @@ export const TOOL_NEEDS: Record<Tool, readonly Need[]> = {
   review: [],
   media: [
     { what: "A library: where your files live", anyOf: ["library"], form: "library" },
-    { what: "Transcripts: a Deepgram or OpenAI key", anyOf: ["DEEPGRAM_API_KEY", "OPENAI_API_KEY"], form: "keys", optional: true },
+    { what: `Transcripts: a Deepgram or OpenAI key (${OWN_COMPUTER})`, anyOf: ["DEEPGRAM_API_KEY", "OPENAI_API_KEY"], alsoMetBy: ["deviceTranscripts"], form: "keys", optional: true },
     { what: "Search by meaning: an OpenAI key", anyOf: ["OPENAI_API_KEY"], form: "keys", optional: true },
     { what: "AI: descriptions", anyOf: ["ai"], form: "ai", optional: true },
   ],
   editor: [
     { what: "AI", anyOf: ["ai"], form: "ai" },
     { what: "Your footage in a Media Library", anyOf: ["library"], form: "library" },
-    { what: "Transcripts: a Deepgram or OpenAI key", anyOf: ["DEEPGRAM_API_KEY", "OPENAI_API_KEY"], form: "keys" },
+    { what: `Transcripts: a Deepgram or OpenAI key (${OWN_COMPUTER})`, anyOf: ["DEEPGRAM_API_KEY", "OPENAI_API_KEY"], alsoMetBy: ["deviceTranscripts"], form: "keys" },
   ],
   clean: [],
   stories: [],
   notes: [
-    { what: "Transcripts: a Deepgram key", anyOf: ["DEEPGRAM_API_KEY"], form: "keys" },
+    { what: `Transcripts: a Deepgram key (${OWN_COMPUTER})`, anyOf: ["DEEPGRAM_API_KEY"], alsoMetBy: ["deviceTranscripts"], form: "keys" },
     { what: "AI: summaries and chapters", anyOf: ["ai"], form: "ai" },
   ],
   guides: [
-    { what: "Transcripts: a Deepgram key", anyOf: ["DEEPGRAM_API_KEY"], form: "keys" },
+    { what: `Transcripts: a Deepgram key (${OWN_COMPUTER})`, anyOf: ["DEEPGRAM_API_KEY"], alsoMetBy: ["deviceTranscripts"], form: "keys" },
     { what: "AI: writes the guide", anyOf: ["ai"], form: "ai" },
   ],
 };
@@ -175,7 +185,7 @@ export const TOOL_NEEDS: Record<Tool, readonly Need[]> = {
 /** A tool's rows split by what is still missing: `ready` when no required row is. */
 export function readiness(tool: Tool, have: Iterable<Have>): { ready: boolean; missing: Need[]; extra: Need[] } {
   const got = new Set(have);
-  const open = TOOL_NEEDS[tool].filter((n) => !n.anyOf.some((h) => got.has(h)));
+  const open = TOOL_NEEDS[tool].filter((n) => ![...n.anyOf, ...(n.alsoMetBy ?? [])].some((h) => got.has(h)));
   const missing = open.filter((n) => !n.optional);
   return { ready: missing.length === 0, missing, extra: open.filter((n) => n.optional) };
 }
