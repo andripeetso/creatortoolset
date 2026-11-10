@@ -20,6 +20,7 @@ export function serveStaticFiles(app: App) {
       root: "./dist/public",
       onFound: (p, c) => {
         if (p.includes("/assets/")) c.header("Cache-Control", "public, max-age=31536000, immutable");
+        else if (p.endsWith(".html")) c.header("Cache-Control", "no-cache");
       },
     }),
   );
@@ -39,6 +40,7 @@ export function serveStaticFiles(app: App) {
       { get: (name) => c.req.header(name) },
       c.req.path,
     );
+    c.header("Cache-Control", "no-cache");
     return c.html(content);
   });
 }

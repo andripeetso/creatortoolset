@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCachedLoad } from "@/lib/local-cache";
 import { Link } from "react-router";
 import { CircleAlert, Eye, KeyRound, ListTodo } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -37,8 +37,19 @@ export function todoRows(edits: EditSummary[], assets: ReviewAsset[]): TodoRow[]
 const ICON = { review: Eye, failed: CircleAlert, key: KeyRound };
 const TONE = { review: "text-amber-500", failed: "text-red-500", key: "text-amber-400" };
 
-/** The Home page's to-do: an icon with a count of what waits on you, opening a list of the rows. Looks again every 30 s
- *  while the tab is visible. Shown only for the tools the account may use. */
+/** The two lists the to-do and Home's badges count, from their saved copies (the same keys as Review's page), live. */
+export function useTodoLists(me: Me | null) {
+  const edits = useCachedLoad<EditSummary[]>(canUse(me, "editor") ? "/api/editor" : null, listEdits);
+  const assets = useCachedLoad<ReviewAsset[]>(canUse(me, "review") ? "/api/review" : null, listReviewAssets);
+  return {
+    edits: edits.data ?? [],
+    assets: assets.data ?? [],
+    refresh: () => void Promise.all([edits.refresh(), assets.refresh()]).catch(() => {}),
+  };
+}
+
+/** The Home page's to-do: an icon with a count of what waits on you, opening a list of the rows. Live from the saved
+ *  lists, read again when opened. Shown only for the tools the account may use. */
 export function HomeTodo() {
   const me = useMe();
   const show = canUse(me, "editor") || canUse(me, "review");
@@ -47,21 +58,11 @@ export function HomeTodo() {
 }
 
 function TodoButton({ me }: { me: Me | null }) {
-  const [rows, setRows] = useState<TodoRow[] | null>(null);
-  const load = useCallback(() => {
-    const edits = canUse(me, "editor") ? listEdits().catch(() => [] as EditSummary[]) : Promise.resolve([] as EditSummary[]);
-    const assets = canUse(me, "review") ? listReviewAssets().catch(() => [] as ReviewAsset[]) : Promise.resolve([] as ReviewAsset[]);
-    return Promise.all([edits, assets]).then(([e, a]) => setRows(todoRows(e, a)));
-  }, [me]);
-  useEffect(() => {
-    void load();
-    const t = window.setInterval(() => document.visibilityState === "visible" && void load(), 30_000);
-    return () => window.clearInterval(t);
-  }, [load]);
-
+  const { edits, assets, refresh } = useTodoLists(me);
+  const rows = todoRows(edits, assets);
   const waiting = rows?.length ?? 0;
   return (
-    <Popover onOpenChange={(open) => open && void load()}>
+    <Popover onOpenChange={(open) => open && refresh()}>
       <PopoverTrigger asChild>
         <button
           title="To do"

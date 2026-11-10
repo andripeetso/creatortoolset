@@ -50,3 +50,22 @@ describe("forViewer", () => {
     expect(forViewer("someadmin", d).report?.machine?.host).toBe("h");
   });
 });
+
+// Its owner hears "devices" when a Mac comes online and when its CLIs change, not on every call or report.
+describe("device notices", () => {
+  it("announces the online flip once and a report only when its drivers change", async () => {
+    const { currentSeq } = await import("./sync");
+    const { touchDevice } = await import("./devices");
+    const { device } = pairDevice("tinyacrobatics", "Tiny Notices");
+    const report = (signedIn: boolean): MacReport => ({ at: Date.now(), drivers: [{ driver: "claude", installed: true, signedIn }], homes: [] });
+    const s0 = currentSeq();
+    touchDevice(device.id);
+    touchDevice(device.id);
+    expect(currentSeq() - s0).toBe(1);
+    saveReport(device.id, report(false));
+    saveReport(device.id, { ...report(false), at: Date.now() + 1 });
+    expect(currentSeq() - s0).toBe(2);
+    saveReport(device.id, report(true));
+    expect(currentSeq() - s0).toBe(3);
+  });
+});

@@ -1,6 +1,8 @@
 import { useEffect } from "react";
 import { create } from "zustand";
 import type { WorkshopProject } from "./workshop";
+import { useAuth } from "./auth";
+import { putCached, readCached, warmCached } from "./local-cache";
 
 /**
  * The logged-in account's current brand project. Analyzer and Workshop
@@ -26,6 +28,28 @@ async function json<T>(res: Response): Promise<T> {
   return j as T;
 }
 
+/** The projects' saved copy (lib/local-cache.ts): the switcher, the tint and Projects paint from it, live on "workshop". */
+export const WORKSPACE_KEY = "workshop/workspace";
+/** Every project's Instagram accounts, for Projects (ProjectList.tsx; warm-cache.ts fills it at sign-in). */
+export const PROJECT_ACCOUNTS_KEY = "instagram/accounts?all";
+export const fetchWorkspace = async () => json<Workspace>(await fetch("/api/workshop/workspace"));
+const me = () => useAuth.getState().me?.username ?? null;
+
+/**
+ * A copy of the projects into the store. A notice's refetch (`keepMine`) keeps the project this window is in while that
+ * still exists: a switch in another window changes the list here, not the project. This window's own read follows the
+ * server (a project made here becomes the current one).
+ */
+export function applyWorkspace(ws: Workspace | null, keepMine = true): void {
+  if (!ws) return;
+  const s = useWorkspace.getState();
+  const keep = keepMine && s.loaded && ws.projects.some((p) => p.id === s.currentProjectId);
+  useWorkspace.setState({ projects: ws.projects, currentProjectId: keep ? s.currentProjectId : ws.currentProjectId, loaded: true });
+}
+
+/** Before the first render (main.tsx): the last projects this account saw. */
+export const seedWorkspace = () => applyWorkspace(readCached<Workspace>(me(), WORKSPACE_KEY));
+
 /** Counts the switches: an answer that was asked for before the newest one is out of date and is dropped. */
 let switches = 0;
 
@@ -35,13 +59,10 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   loaded: false,
   load: async () => {
     const asked = switches;
-    try {
-      const ws = await json<Workspace>(await fetch("/api/workshop/workspace"));
-      if (asked === switches) set({ ...ws, loaded: true });
-    } catch {
-      // nothing was loaded (signed out, a server restart): "loaded, no projects" would read as a brand-new account
-      if (asked === switches) set({ currentProjectId: null, projects: [], loaded: false });
-    }
+    // on failure (signed out, a server restart) the known copy stays: "loaded, no projects" would read as a new account
+    await warmCached(WORKSPACE_KEY, fetchWorkspace).catch(() => {});
+    // a switch made while it ran is newer than its answer
+    applyWorkspace(readCached<Workspace>(me(), WORKSPACE_KEY), asked !== switches);
   },
   select: async (id) => {
     // the switch shows at once and the server is told after: on a busy server the click used to look dead for seconds
@@ -56,7 +77,9 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
           body: JSON.stringify({ currentProjectId: id }),
         }),
       );
-      if (asked === switches) set({ ...ws, loaded: true });
+      if (asked !== switches) return;
+      putCached(me(), WORKSPACE_KEY, ws);
+      set({ ...ws, loaded: true });
     } catch (e) {
       if (asked === switches) set({ currentProjectId: before });
       throw e;

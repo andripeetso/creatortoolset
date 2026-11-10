@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useWorkspace } from "./workspace";
+import { useAuth, type Me } from "./auth";
+import { applyWorkspace, useWorkspace } from "./workspace";
 import type { WorkshopProject } from "./workshop";
 
 const projects = [
@@ -16,6 +17,7 @@ function held() {
 
 describe("switching project", () => {
   beforeEach(() => {
+    useAuth.setState({ me: { username: "tinyacrobatics" } as Me });
     useWorkspace.setState({ currentProjectId: "tiny-acrobatics", projects, loaded: true });
   });
 
@@ -45,5 +47,24 @@ describe("switching project", () => {
     patch.answer({ error: "Not found" }, 404);
     await expect(switching).rejects.toThrow("Not found");
     expect(useWorkspace.getState().currentProjectId).toBe("tiny-acrobatics");
+  });
+});
+
+describe("projects from the server", () => {
+  beforeEach(() => {
+    useAuth.setState({ me: { username: "tinyacrobatics" } as Me });
+    useWorkspace.setState({ currentProjectId: "tiny-acrobatics", projects, loaded: true });
+  });
+
+  it("a change from another window keeps this window's project", () => {
+    applyWorkspace({ currentProjectId: "tiny-homes", projects: [...projects, { id: "tiny-boats", name: "Tiny Boats" } as WorkshopProject] });
+    expect(useWorkspace.getState().currentProjectId).toBe("tiny-acrobatics");
+    expect(useWorkspace.getState().projects).toHaveLength(3);
+  });
+
+  it("this window's own read follows the server (a project made here is the current one)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ currentProjectId: "tiny-homes", projects }))));
+    await useWorkspace.getState().load();
+    expect(useWorkspace.getState().currentProjectId).toBe("tiny-homes");
   });
 });

@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { DeviceJob } from "../../contracts/devices";
 import { isOnline } from "../lib/devices";
+import { announce } from "../lib/sync";
 import { libraryDb } from "../library/db";
 import { defer, enqueueJob, extendLease, finishJob, type JobRow, parkJob, requeueExpired } from "../library/jobs";
 import { NeedsKey } from "../library/transcribe";
@@ -31,8 +32,13 @@ export const NEXT: Record<string, string[]> = nextKinds();
 
 const running = new Map<number, { edit: string; ctl: AbortController }>();
 
-const fail = (db: DatabaseSync, id: number, why: string) =>
-  db.prepare(`UPDATE ${T} SET state = 'failed', lease_until = NULL, error = ? WHERE id = ?`).run(why, id);
+/** A step ended (done, failed, parked): the account's edit list and Home's to-do change, so its open windows hear "editor". */
+const ended = (actor: string | null) => void (actor && announce(actor, "editor"));
+
+const fail = (db: DatabaseSync, job: JobRow, why: string) => {
+  db.prepare(`UPDATE ${T} SET state = 'failed', lease_until = NULL, error = ? WHERE id = ?`).run(why, job.id);
+  ended(job.actor);
+};
 
 /** Stops an edit: its queued and running steps fail as "Stopped" (Retry or Run queues them again); a running one is aborted. */
 export function stopEdit(editId: string): void {
@@ -67,11 +73,11 @@ export async function tick(now = Date.now()): Promise<boolean> {
     parkJob(db, job.id, "This edit names no account to run as", T);
     return true;
   }
-  if (!edit || edit.trashedAt) return fail(db, job.id, "The edit is gone"), true;
+  if (!edit || edit.trashedAt) return fail(db, job, "The edit is gone"), true;
   // read again at every step: footage trashed or a library left since the edit was made
-  if (sourcesWorkspace(job.actor, edit.sources) !== edit.workspaceId) return fail(db, job.id, "Some footage is gone or no longer yours to read"), true;
+  if (sourcesWorkspace(job.actor, edit.sources) !== edit.workspaceId) return fail(db, job, "Some footage is gone or no longer yours to read"), true;
   const step = STEPS[job.kind];
-  if (!step) return fail(db, job.id, `No ${job.kind} step yet`), true;
+  if (!step) return fail(db, job, `No ${job.kind} step yet`), true;
 
   const ctl = new AbortController();
   running.set(job.id, { edit: edit.id, ctl });
@@ -82,11 +88,13 @@ export async function tick(now = Date.now()): Promise<boolean> {
     if (ctl.signal.aborted) return true; // stopped: stopEdit already marked it
     finishJob(db, job.id, true, undefined, Date.now(), T);
     queueNext(db, job, edit, variant);
+    ended(job.actor);
   } catch (e) {
     if (ctl.signal.aborted) return true;
-    if (e instanceof Waiting) defer(db, job.id, e.seconds, now, T);
-    else if (e instanceof NeedsKey) parkJob(db, job.id, e.message, T);
+    if (e instanceof Waiting) return defer(db, job.id, e.seconds, now, T), true; // still going: nothing to tell
+    if (e instanceof NeedsKey) parkJob(db, job.id, e.message, T);
     else finishJob(db, job.id, false, e instanceof Error ? e.message : String(e), Date.now(), T);
+    ended(job.actor);
   } finally {
     clearInterval(beat);
     running.delete(job.id);
@@ -106,8 +114,8 @@ export function claimForDevice(device: { id: string; owner: string }, kinds: str
   if (!job) return null;
   const { editId, variant } = splitVersion(job);
   const edit = readEdit(editId);
-  if (!edit || edit.trashedAt) return fail(db, job.id, "The edit is gone"), null;
-  if (sourcesWorkspace(job.actor ?? "", edit.sources) !== edit.workspaceId) return fail(db, job.id, "Some footage is gone or no longer yours to read"), null;
+  if (!edit || edit.trashedAt) return fail(db, job, "The edit is gone"), null;
+  if (sourcesWorkspace(job.actor ?? "", edit.sources) !== edit.workspaceId) return fail(db, job, "Some footage is gone or no longer yours to read"), null;
   return { id: job.id, kind: job.kind, editId, variant };
 }
 
@@ -133,15 +141,18 @@ export function doneForDevice(device: string, id: number): boolean {
   const { editId, variant } = splitVersion(job);
   const edit = readEdit(editId);
   if (edit) queueNext(db, job, edit, variant);
+  ended(job.actor);
   return true;
 }
 
 /** The device could not run its step: retried after a backoff, or failed after MAX_ATTEMPTS. False when it does not hold the step. */
 export function failForDevice(device: string, id: number, why: string): boolean {
   const db = libraryDb();
-  if (!heldBy(db, id, device)) return false;
+  const job = heldBy(db, id, device);
+  if (!job) return false;
   db.prepare("UPDATE edit_jobs SET device = NULL WHERE id = ?").run(id);
   finishJob(db, id, false, why.slice(0, 500), Date.now(), T);
+  ended(job.actor);
   return true;
 }
 

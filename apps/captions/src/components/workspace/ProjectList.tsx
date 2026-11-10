@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useCachedList } from "@/lib/local-cache";
 import { Pencil, Plus } from "lucide-react";
 import { ConfirmButton } from "@/components/instagram/ConfirmButton";
 import { PLATFORMS } from "@contracts/connectors";
@@ -12,7 +13,7 @@ import {
   type ProjectFields,
   type WorkshopProject,
 } from "@/lib/workshop";
-import { PROJECT_COLORS, projectColor, useWorkspace } from "@/lib/workspace";
+import { PROJECT_ACCOUNTS_KEY, PROJECT_COLORS, projectColor, useWorkspace } from "@/lib/workspace";
 
 const secondary =
   "flex items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 py-1.5 text-[11px] text-zinc-200 hover:bg-zinc-800 disabled:opacity-50";
@@ -25,13 +26,9 @@ export function ProjectList() {
   const [editing, setEditing] = useState<string | "new" | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [accounts, setAccounts] = useState<InstagramAccount[]>([]);
-
-  const loadAccounts = () => listAccounts("", { projectId: null }).then(setAccounts).catch(() => {});
-
-  useEffect(() => {
-    loadAccounts();
-  }, []);
+  // every project's accounts, from their saved copy (warmed at sign-in), live
+  const { items: accounts, refresh } = useCachedList<InstagramAccount>(PROJECT_ACCOUNTS_KEY, () => listAccounts("", { projectId: null }));
+  const loadAccounts = () => void refresh().catch(() => {});
 
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true);

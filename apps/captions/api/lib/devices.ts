@@ -5,6 +5,7 @@ import path from "node:path";
 import type { Device, MacReport, ProviderSettings } from "../../contracts/providers";
 import { env } from "./env";
 import { dropOwnSettings, ownSettings, providerSettings, saveSettings } from "./providers";
+import { announce } from "./sync";
 
 /**
  * The Macs that run AI jobs (contracts/providers.ts `Device`), in $DATA_DIR/devices.json. Any account pairs its
@@ -63,12 +64,26 @@ function find(id: string): Stored | undefined {
   return all().find((d) => d.id === id);
 }
 
-/** Any relay call says the Mac is here (lastSeen). Written at most once a minute: online is in memory anyway. */
+/** The timer per device that tells its owner it went offline, ONLINE_MS after its last call. */
+const goingOff = new Map<string, ReturnType<typeof setTimeout>>();
+
+/**
+ * Any relay call says the Mac is here (lastSeen). Written at most once a minute: online is in memory anyway. Its owner's
+ * open windows hear "devices" when it comes online and when it goes quiet, never on each call.
+ */
 export function touchDevice(id: string): void {
   const d = find(id);
   if (!d) return;
+  if (!isOnline(id)) announce(d.owner, "devices");
   d.lastSeen = Date.now();
   if (d.lastSeen - persistedAt > 60_000) persist();
+  clearTimeout(goingOff.get(id));
+  const t = setTimeout(() => {
+    goingOff.delete(id);
+    if (find(id) && !isOnline(id)) announce(d.owner, "devices");
+  }, ONLINE_MS + 1000);
+  t.unref?.();
+  goingOff.set(id, t);
 }
 
 export const deviceOf = (id: string): Device | undefined => {
@@ -182,6 +197,9 @@ export function saveReport(id: string, r: MacReport, version?: string): void {
   // ponytail: an empty list from the only reporter keeps the old disks; add an explicit clear when a Mac really loses them all.
   const kept = d.report?.machine?.disks;
   if (r.machine && kept && !r.machine.disks) r.machine = { ...r.machine, disks: kept };
+  // a CLI installed, signed in or on another plan is a change setup shows; the machine's load in each report is not
+  const drivers = (x: MacReport | undefined) => JSON.stringify(x?.drivers ?? []);
+  if (drivers(d.report) !== drivers(r)) announce(d.owner, "devices");
   d.report = r;
   if (version) d.version = version;
   persist();

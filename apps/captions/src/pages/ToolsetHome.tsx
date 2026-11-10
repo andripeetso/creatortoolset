@@ -7,12 +7,10 @@ import { isPhoneHub } from "@/lib/mobile";
 import { shownTools, useOpenTool, withPluginTiles, type Tool as HomeTool } from "@/lib/tools";
 import { AppBar } from "@/components/AppBar";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
-import { HomeTodo } from "@/components/HomeTodo";
+import { HomeTodo, useTodoLists } from "@/components/HomeTodo";
 import { TOOL_ICONS } from "@/components/setup/ToolNeeds";
 import { webPlugins } from "@/plugins.gen";
 import { useSessionSummaries } from "@/lib/workshop-summary";
-import { listEdits } from "@/lib/editor";
-import { listReviewAssets } from "@/lib/review";
 import { currentProject, PROJECT_COLORS, projectColor, useWorkspace } from "@/lib/workspace";
 import { useAppearance } from "@/lib/settings";
 import { useShareTheme } from "@/components/ShareTheme";
@@ -79,16 +77,14 @@ export default function ToolsetHome() {
   // what's working right now: a Workshop reply being written. Its stage's box pulses and the tile says how many.
   const rows = useSessionSummaries();
   const running: Record<string, number> = showCounts ? { "/workshop": rows?.filter((r) => r.working).length ?? 0 } : {};
-  // which tools are ready: read on mount and when the window comes back to the front (no polling)
+  // which tools are ready: the saved setup, live (lib/setup.ts useSetupSync). Read again on coming Home and when Settings
+  // closes, since this window's own changes (a key added in a tool or in Settings) send it no notice
   const view = useSetup((s) => s.view);
   const load = useSetup((s) => s.load);
   useEffect(() => {
     if (!me) return;
     void load();
-    const again = () => void load();
-    window.addEventListener("focus", again);
-    const offSettings = onSettingsClosed(again);
-    return () => (window.removeEventListener("focus", again), offSettings());
+    return onSettingsClosed(() => void load());
   }, [me, load]);
 
   const { dark } = useShareTheme();
@@ -289,30 +285,13 @@ function NeedsSetup({ what }: { what: string }) {
 /**
  * What waits on you at a tool, by its route: only what needs you, never what the AI or someone else is working on.
  * Workshop: replies you haven't read. AI Editor: edits whose last step failed or needs a key. Review: videos marked
- * Needs review. Read once for the page, again every 30 s while it is in front.
+ * Needs review. From the to-do's saved lists, live (HomeTodo.tsx useTodoLists).
  */
 function useWaiting(me: Me | null): Record<string, number> {
-  const editor = canUse(me, "editor");
-  const review = canUse(me, "review");
-  const [counts, setCounts] = useState<{ editor: number; review: number }>({ editor: 0, review: 0 });
-  useEffect(() => {
-    if (!editor && !review) return;
-    let live = true;
-    const load = () =>
-      void Promise.all([
-        editor ? listEdits().then((l) => l.filter((e) => e.last?.state === "failed" || e.last?.state === "needs_key").length, () => 0) : 0,
-        review ? listReviewAssets().then((l) => l.filter((a) => a.approval.status === "needs_review").length, () => 0) : 0,
-      ]).then(([e, r]) => live && setCounts({ editor: e, review: r }));
-    load();
-    const t = window.setInterval(() => document.visibilityState === "visible" && load(), 30_000);
-    return () => {
-      live = false;
-      window.clearInterval(t);
-    };
-  }, [editor, review]);
+  const { edits, assets } = useTodoLists(me);
   return {
-    editor: counts.editor,
-    review: counts.review,
+    editor: edits.filter((e) => e.last?.state === "failed" || e.last?.state === "needs_key").length,
+    review: assets.filter((a) => a.approval.status === "needs_review").length,
   };
 }
 
