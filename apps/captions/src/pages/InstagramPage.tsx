@@ -2,7 +2,6 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 import {
   ArrowLeft,
-  Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -13,15 +12,15 @@ import {
   ScanSearch,
   Loader2,
   MessageCircle,
+  MoreHorizontal,
   RefreshCw,
   RotateCcw,
   Search,
-  Trash2,
   TriangleAlert,
   X,
 } from "lucide-react";
 import { canUse, useAuth, useMe } from "@/lib/auth";
-import { fmtBytes, timeAgo } from "@/lib/exports";
+import { timeAgo } from "@/lib/exports";
 import { toolsetHomePath } from "@/lib/mobile";
 import {
   JOB_GROUPS,
@@ -34,7 +33,6 @@ import {
   analyzerHome,
   deletePost,
   fmtAge,
-  fmtAgeSince,
   fmtCount,
   fmtDate,
   fmtDelta,
@@ -65,7 +63,6 @@ import {
   refreshCounts,
   retryPost,
   runPostJobs,
-  groupError,
   groupStatus,
   savePostTags,
   thumbUrl,
@@ -107,10 +104,10 @@ import { TagsEditor } from "@/components/instagram/TagsEditor";
 import { IdeaStatusSelect, RankStars, SavedForToggle } from "@/components/instagram/IdeaMark";
 import { IdeaCard } from "@/components/instagram/IdeaCard";
 import { AccountAvatar, AccountCard, AddMyAccount } from "@/components/instagram/AccountCard";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { confirmDialog } from "@/lib/dialogs";
 import { PostCard, workshopUsesByPost } from "@/components/instagram/PostCard";
 import { QueueMenu } from "@/components/instagram/QueueMenu";
-import { ConfirmButton } from "@/components/instagram/ConfirmButton";
 import { JobsDock } from "@/components/instagram/JobsDock";
 import { SlidePanel } from "@/components/instagram/SlidePanel";
 import { SlideViewer, type SeekRequest } from "@/components/instagram/SlideViewer";
@@ -262,9 +259,7 @@ function PostView({
   const [comments, setComments] = useState<InstagramComment[]>([]);
   const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState<"retry" | "refresh" | "jobs" | null>(null);
-  const [pick, setPick] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
   const [snap, setSnap] = useState<{
     snapshots: Snapshot[];
     vsFirst: SnapshotDiff | null;
@@ -287,7 +282,6 @@ function PostView({
     setExpanded(false);
     setError(null);
     setSimilar([]);
-    setPick(new Set());
   }, [post.id]);
 
   // Shift+arrows step through the list you came from; plain arrows do the
@@ -370,14 +364,7 @@ function PostView({
   }, [post.id, wanted]);
 
   const retry = async (force: boolean) => {
-    if (
-      force &&
-      !window.confirm(
-        "Re-download the media and redo every transcript and slide text?",
-      )
-    ) {
-      return;
-    }
+    if (force && !(await confirmDialog({ title: "Download this post again and redo every transcript and slide text?", ok: "Redo everything" }))) return;
     setBusy("retry");
     setError(null);
     try {
@@ -415,7 +402,6 @@ function PostView({
     setError(null);
     try {
       onChange(await runPostJobs(post.id, { types, ignoreDuplicate: Boolean(post.duplicateOf) }));
-      setPick(new Set());
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -450,14 +436,13 @@ function PostView({
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(postToMarkdown(post, transcripts, comments));
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1600);
     } catch {
       /* ignore */
     }
   };
 
   const remove = async () => {
+    if (!(await confirmDialog({ title: "Delete this post from your library?", ok: "Delete", danger: true, deleting: true }))) return;
     await deletePost(post.id).catch(() => {});
     onDeleted();
   };
@@ -470,11 +455,15 @@ function PostView({
   const caption = post.caption.trim();
   const captionLong = caption.length > 320 || caption.split("\n").length > 6;
   const shownCaption = expanded || !captionLong ? caption : `${caption.slice(0, 320).trimEnd()}…`;
-  const onScreen = post.slides
-    .map((s) => ({ index: s.index, text: s.vision.onScreenText?.trim() ?? "" }))
-    .filter((s) => s.text);
-  const onScreenCtx = (at: number) =>
-    JSON.stringify({ postId: post.id, handle: post.creator.username, slide: at, field: "slides" });
+  /** When and how old it was when it was saved: the date's tooltip. */
+  const saved = [
+    post.pulledAt ? `Saved ${timeAgo(post.pulledAt)}` : "",
+    post.ageAtPullMs !== undefined ? `${fmtAge(post.ageAtPullMs)} old then` : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
+  /** Parts that were tried and did not finish: one quiet line with Try again, nothing for the ones that are fine. */
+  const failed = JOB_GROUPS.filter((g) => groupStatus(post.jobs, g.types) === "error");
 
   return (
     <div className="mx-auto w-[1160px] max-w-[96vw]">
@@ -542,8 +531,8 @@ function PostView({
         </div>
 
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-            <h2 className="text-lg font-semibold text-zinc-100">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <h2 className="text-lg font-semibold text-zinc-100" title={post.creator.fullName || undefined}>
               {post.creator.username ? (
                 accountHref ? (
                   <Link to={accountHref} className="hover:text-violet-200">
@@ -556,73 +545,94 @@ function PostView({
                 "Instagram post"
               )}
             </h2>
-            {post.creator.fullName && (
-              <span className="text-sm text-zinc-400">{post.creator.fullName}</span>
-            )}
             <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider ${postBadgeClass(post)}`}>
               {postBadgeLabel(post)}
             </span>
             {post.takenAt ? (
-              <span className="text-xs text-zinc-500">{fmtDate(post.takenAt)}</span>
-            ) : null}
-            <a
-              href={post.url}
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center gap-1 text-xs text-violet-300 hover:text-violet-200"
-            >
-              {openPostLabel(post)} <ExternalLink className="h-3 w-3" />
-            </a>
-            {siblings && at >= 0 && siblings.length > 1 && onOpenPost && (
-              <span
-                className="ml-auto flex items-center gap-1 text-[11px] text-zinc-500"
-                title="Shift + ← / → also steps through the list"
-              >
-                <button
-                  type="button"
-                  aria-label="Previous post"
-                  disabled={!prevId}
-                  onClick={() => prevId && onOpenPost(prevId)}
-                  className="rounded p-1 hover:bg-zinc-800 hover:text-zinc-100 disabled:opacity-30"
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </button>
-                <span className="tabular-nums">
-                  {at + 1} / {siblings.length}
-                </span>
-                <button
-                  type="button"
-                  aria-label="Next post"
-                  disabled={!nextId}
-                  onClick={() => nextId && onOpenPost(nextId)}
-                  className="rounded p-1 hover:bg-zinc-800 hover:text-zinc-100 disabled:opacity-30"
-                >
-                  <ChevronRight className="h-4 w-4" />
-                </button>
+              <span className="text-xs text-zinc-500" title={saved || undefined}>
+                {fmtDate(post.takenAt)}
               </span>
-            )}
+            ) : null}
+            <span className="ml-auto flex items-center gap-0.5 text-zinc-500">
+              {siblings && at >= 0 && siblings.length > 1 && onOpenPost && (
+                <span className="mr-1 flex items-center gap-1 text-[11px]" title="Shift + ← / → also steps through the list">
+                  <button
+                    type="button"
+                    aria-label="Previous post"
+                    disabled={!prevId}
+                    onClick={() => prevId && onOpenPost(prevId)}
+                    className="rounded p-1 hover:bg-zinc-800 hover:text-zinc-100 disabled:opacity-30"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+                  <span className="tabular-nums">
+                    {at + 1} / {siblings.length}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label="Next post"
+                    disabled={!nextId}
+                    onClick={() => nextId && onOpenPost(nextId)}
+                    className="rounded p-1 hover:bg-zinc-800 hover:text-zinc-100 disabled:opacity-30"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                </span>
+              )}
+              <a
+                href={post.url}
+                target="_blank"
+                rel="noreferrer"
+                aria-label={openPostLabel(post)}
+                title={openPostLabel(post)}
+                className="rounded p-1.5 hover:bg-zinc-800 hover:text-zinc-100"
+              >
+                <ExternalLink className="h-4 w-4" />
+              </a>
+              {/* everything that is done to the post as a whole, in one menu */}
+              <DropdownMenu>
+                <DropdownMenuTrigger aria-label="More" title="More" className="rounded p-1.5 outline-none hover:bg-zinc-800 hover:text-zinc-100 data-[state=open]:bg-zinc-800">
+                  {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <MoreHorizontal className="h-4 w-4" />}
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-52">
+                  <DropdownMenuItem onClick={() => void copy()}>Copy as Markdown</DropdownMenuItem>
+                  {owns && !processing && (
+                    <>
+                      <DropdownMenuItem disabled={busy !== null} onClick={() => void refresh()}>
+                        Refresh the numbers
+                      </DropdownMenuItem>
+                      <DropdownMenuItem disabled={busy !== null} onClick={() => setRunOpen(true)}>
+                        Read it again…
+                      </DropdownMenuItem>
+                      <DropdownMenuItem disabled={busy !== null} onClick={() => void retry(true)}>
+                        Redo everything
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem className="text-red-400" onClick={() => void remove()}>
+                        Delete
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </span>
           </div>
 
-          <div className="mt-3 flex flex-wrap items-center gap-4 text-sm text-zinc-300">
+          <div
+            className="mt-3 flex flex-wrap items-center gap-4 text-sm text-zinc-300"
+            title={post.counts.fetchedAt ? `Numbers from ${timeAgo(post.counts.fetchedAt)}` : undefined}
+          >
             {post.counts.plays !== undefined && (
-              <span className="flex items-center gap-1.5" title="Plays">
-                <Eye className="h-4 w-4 text-zinc-500" /> {fmtCount(post.counts.plays)}
+              <span className="flex items-center gap-1.5">
+                <Eye aria-label="Plays" className="h-4 w-4 text-zinc-500" /> {fmtCount(post.counts.plays)}
               </span>
             )}
-            <span className="flex items-center gap-1.5" title="Likes">
-              <Heart className="h-4 w-4 text-zinc-500" /> {fmtCount(post.counts.likes)}
+            <span className="flex items-center gap-1.5">
+              <Heart aria-label="Likes" className="h-4 w-4 text-zinc-500" /> {fmtCount(post.counts.likes)}
             </span>
-            <span className="flex items-center gap-1.5" title="Comments">
-              <MessageCircle className="h-4 w-4 text-zinc-500" /> {fmtCount(post.counts.comments)}
+            <span className="flex items-center gap-1.5">
+              <MessageCircle aria-label="Comments" className="h-4 w-4 text-zinc-500" /> {fmtCount(post.counts.comments)}
             </span>
-            {post.counts.fetchedAt ? (
-              <span className="text-[11px] text-zinc-600">
-                numbers from {timeAgo(post.counts.fetchedAt)}
-              </span>
-            ) : null}
-            {post.bytes > 0 && (
-              <span className="text-[11px] text-zinc-600">{fmtBytes(post.bytes)} stored</span>
-            )}
           </div>
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -644,13 +654,15 @@ function PostView({
               disabled={!owns}
               onChange={(rank) => void mark({ rank })}
             />
-            {owns && (
+            {/* only once there is a stack to put it in */}
+            {owns && stacks.length > 0 && (
               <select
                 value={post.stackId ?? ""}
                 onChange={(e) => void mark({ stackId: e.target.value || null })}
+                aria-label="Stack"
                 className="rounded-md border border-zinc-800 bg-zinc-950 px-1.5 py-1 text-[11px] text-zinc-300"
               >
-                <option value="">Solo — not stacked</option>
+                <option value="">No stack</option>
                 {stacks.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.title}
@@ -660,11 +672,18 @@ function PostView({
             )}
           </div>
 
-          {(post.takenAt || post.pulledAt) && (
-            <p className="mt-2 text-[11px] text-zinc-500">
-              {post.takenAt ? `Posted ${fmtDate(post.takenAt)} · ${fmtAgeSince(post.takenAt)} old now` : ""}
-              {post.ageAtPullMs !== undefined ? ` · ${fmtAge(post.ageAtPullMs)} old when pulled` : ""}
-              {post.pulledAt ? ` · pulled ${timeAgo(post.pulledAt)}` : ""}
+          {failed.length > 0 && post.status !== "error" && owns && !processing && (
+            <p className="mt-3 flex flex-wrap items-center gap-2 text-xs text-amber-400">
+              <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+              Couldn't finish: {failed.map((g) => g.label.toLowerCase()).join(", ")}
+              <button
+                type="button"
+                disabled={busy !== null}
+                onClick={() => void retry(false)}
+                className="underline underline-offset-2 hover:text-amber-300 disabled:opacity-50"
+              >
+                Try again
+              </button>
             </p>
           )}
           {lastDiff && (
@@ -672,42 +691,6 @@ function PostView({
               Since last refresh: plays {fmtDelta(lastDiff.plays)} · likes {fmtDelta(lastDiff.likes)} ·
               comments {fmtDelta(lastDiff.comments)}
             </p>
-          )}
-
-          {onScreen.length > 0 && (
-            <div className="mt-4">
-              <p className={label}>On-screen text</p>
-              {onScreen.length === 1 ? (
-                <p
-                  data-ctx={onScreenCtx(onScreen[0]!.index)}
-                  className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-200"
-                >
-                  {onScreen[0]!.text}
-                </p>
-              ) : (
-                <ol className="flex flex-col gap-2">
-                  {onScreen.map((s) => (
-                    <li key={s.index}>
-                      <button
-                        type="button"
-                        onClick={() => setIndex(s.index)}
-                        className={`flex w-full gap-2 rounded-md px-1 py-0.5 text-left hover:bg-zinc-800/50 ${
-                          s.index === index ? "bg-zinc-800/40" : ""
-                        }`}
-                      >
-                        <span className="mt-0.5 w-4 shrink-0 font-mono text-[10px] text-zinc-500">{s.index + 1}</span>
-                        <span
-                          data-ctx={onScreenCtx(s.index)}
-                          className="min-w-0 flex-1 whitespace-pre-wrap text-sm leading-snug text-zinc-200"
-                        >
-                          {s.text}
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ol>
-              )}
-            </div>
           )}
 
           {post.slides.length > 0 && (
@@ -723,27 +706,37 @@ function PostView({
             </div>
           )}
 
-          <div className="mt-4">
-            <p className={label}>Idea</p>
-            {owns ? (
-              <IdeaFields
-                key={`${post.id}:${post.idea?.title ?? ""}:${post.idea?.takeaway ?? ""}`}
-                idea={post.idea}
-                onSave={(idea) => void mark({ idea })}
-              />
-            ) : post.idea ? (
-              <>
-                <p className="text-sm font-medium text-zinc-100">{post.idea.title}</p>
-                <p className="mt-1 text-[13px] leading-snug text-zinc-400">{post.idea.takeaway}</p>
-              </>
-            ) : (
-              <p className="text-sm text-zinc-600">Not distilled yet — run Idea on this post.</p>
-            )}
-          </div>
+          {(owns || post.idea) && (
+            <div className="mt-4">
+              <p className={label}>Idea</p>
+              {owns ? (
+                <IdeaFields
+                  key={`${post.id}:${post.idea?.title ?? ""}:${post.idea?.takeaway ?? ""}`}
+                  idea={post.idea}
+                  onSave={(idea) => void mark({ idea })}
+                />
+              ) : (
+                <>
+                  <p className="text-sm font-medium text-zinc-100">{post.idea?.title}</p>
+                  <p className="mt-1 text-[13px] leading-snug text-zinc-400">{post.idea?.takeaway}</p>
+                </>
+              )}
+              {owns && !processing && !post.idea && groupStatus(post.jobs, ["idea"]) !== "done" && (
+                <button
+                  type="button"
+                  disabled={busy !== null}
+                  onClick={() => void runGroups(["idea"])}
+                  className="mt-1.5 text-xs text-violet-300 hover:text-violet-200 hover:underline disabled:opacity-50"
+                >
+                  Write the idea
+                </button>
+              )}
+            </div>
+          )}
 
-          <div className="mt-4">
-            <p className={label}>Caption</p>
-            {caption ? (
+          {caption && (
+            <div className="mt-4">
+              <p className={label}>Description</p>
               <p className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-300">
                 {shownCaption}
                 {captionLong && (
@@ -756,88 +749,8 @@ function PostView({
                   </button>
                 )}
               </p>
-            ) : (
-              <p className="text-sm text-zinc-600">No caption.</p>
-            )}
-          </div>
-
-          <div className="mt-4">
-            <p className={label}>Jobs</p>
-            <div className="flex flex-wrap items-center gap-1.5">
-              {JOB_GROUPS.map((g) => {
-                const st = groupStatus(post.jobs, g.types);
-                const err = groupError(post.jobs, g.types);
-                const on = pick.has(g.id);
-                const tone =
-                  st === "done"
-                    ? "border-emerald-500/30 text-emerald-300"
-                    : st === "error"
-                      ? "border-red-500/30 text-red-300"
-                      : st === "running" || st === "pending"
-                        ? "border-violet-500/40 text-violet-200"
-                        : st === "skipped"
-                          ? "border-zinc-800 text-zinc-500"
-                          : "border-zinc-700 text-zinc-300";
-                return (
-                  <button
-                    key={g.id}
-                    type="button"
-                    disabled={!owns}
-                    aria-pressed={on}
-                    title={err || g.hint}
-                    onClick={() =>
-                      setPick((cur) => {
-                        const next = new Set(cur);
-                        if (next.has(g.id)) next.delete(g.id);
-                        else next.add(g.id);
-                        return next;
-                      })
-                    }
-                    className={`rounded-md border px-1.5 py-0.5 text-[10px] ${tone} ${
-                      on ? "ring-1 ring-violet-400" : ""
-                    } disabled:opacity-60`}
-                  >
-                    {g.label}
-                    {st !== "idle" ? ` · ${st}` : ""}
-                  </button>
-                );
-              })}
-              {owns && !processing && (
-                <span className="ml-auto flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    disabled={busy !== null || pick.size === 0}
-                    onClick={() => void runGroups([...pick])}
-                    className="flex items-center gap-1 rounded-md bg-violet-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
-                  >
-                    {busy === "jobs" ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-                    Run {pick.size ? `${pick.size} selected` : "selected"}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={busy !== null}
-                    onClick={() => void runGroups(JOB_GROUPS.map((g) => g.id))}
-                    title="Run whatever is not done yet, all in one go"
-                    className="rounded-md border border-zinc-700 px-2.5 py-1 text-[11px] text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
-                  >
-                    Run everything
-                  </button>
-                  <button
-                    type="button"
-                    disabled={busy !== null}
-                    onClick={() => setRunOpen(true)}
-                    className="rounded-md px-2 py-1 text-[11px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 disabled:opacity-50"
-                  >
-                    More…
-                  </button>
-                </span>
-              )}
             </div>
-            <p className="mt-1 text-[11px] text-zinc-600">
-              Click jobs to pick them, then run them together — one fetch of the post covers every
-              job in the same run.
-            </p>
-          </div>
+          )}
 
           <div className="mt-4">
             <p className={label}>Tags</p>
@@ -852,6 +765,16 @@ function PostView({
                   : "custom"
               }
             />
+            {owns && !processing && !post.tags?.length && groupStatus(post.jobs, ["tags"]) !== "done" && (
+              <button
+                type="button"
+                disabled={busy !== null}
+                onClick={() => void runGroups(["tags"])}
+                className="mt-1.5 text-xs text-violet-300 hover:text-violet-200 hover:underline disabled:opacity-50"
+              >
+                Suggest tags
+              </button>
+            )}
           </div>
 
           {similar.length > 0 && (
@@ -886,7 +809,7 @@ function PostView({
             </div>
           )}
 
-          {snap && snap.snapshots.length > 0 && (
+          {snap && snap.snapshots.length > 1 && (
             <div className="mt-4">
               <p className={label}>Snapshots</p>
               <table className="w-full text-left text-[11px] text-zinc-400">
@@ -932,71 +855,6 @@ function PostView({
 
           {error && <p className="mt-4 text-xs text-red-400">{error}</p>}
 
-          <div className="mt-6 flex flex-wrap items-center gap-2 border-t border-zinc-800 pt-4">
-            <button
-              type="button"
-              onClick={() => void copy()}
-              className="flex items-center gap-1.5 rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800"
-            >
-              {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-              {copied ? "Copied" : "Copy as Markdown"}
-            </button>
-            {owns && !processing && (
-              <>
-                <button
-                  type="button"
-                  disabled={busy !== null}
-                  onClick={() => setRunOpen(true)}
-                  className="flex items-center gap-1.5 rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
-                >
-                  Run jobs…
-                </button>
-                <button
-                  type="button"
-                  disabled={busy !== null}
-                  onClick={() => void refresh()}
-                  className="flex items-center gap-1.5 rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
-                >
-                  {busy === "refresh" ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <RefreshCw className="h-3.5 w-3.5" />
-                  )}
-                  Refresh numbers
-                </button>
-                <button
-                  type="button"
-                  disabled={busy !== null}
-                  onClick={() => void retry(false)}
-                  title="Re-run only the parts that failed or were skipped"
-                  className="flex items-center gap-1.5 rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
-                >
-                  {busy === "retry" ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <RotateCcw className="h-3.5 w-3.5" />
-                  )}
-                  Retry missing parts
-                </button>
-                <button
-                  type="button"
-                  disabled={busy !== null}
-                  onClick={() => void retry(true)}
-                  className="rounded-md px-3 py-1.5 text-xs text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 disabled:opacity-50"
-                >
-                  Redo everything
-                </button>
-                <ConfirmButton
-                  label="Delete"
-                  confirmLabel="Click again to delete"
-                  icon={<Trash2 className="h-3.5 w-3.5" />}
-                  onConfirm={remove}
-                  className="ml-auto flex items-center gap-1.5 rounded-md border border-transparent px-3 py-1.5 text-xs text-zinc-400 hover:bg-zinc-800 hover:text-red-400"
-                  armedClassName="!border-red-500/50 !bg-red-500/10 !text-red-200"
-                />
-              </>
-            )}
-          </div>
         </div>
       </div>
       {runOpen && (

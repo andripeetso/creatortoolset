@@ -4059,7 +4059,9 @@ instagramApp.get("/similar", async (c) => {
  * means near-duplicates: the same media, or text so close it is the same
  * script. Loose topical overlap is what the stacks and tags are for.
  */
-const SAME_TEXT_MIN = 0.55;
+// 0.9, as a repost is told apart elsewhere (lib/instagram/duplicates.ts REPOST_MIN): at 0.55 every post of the same
+// niche scored about 0.75 against every other one, and the list was full of posts that had nothing in common.
+const SAME_TEXT_MIN = 0.9;
 
 instagramApp.get("/similar/:id", async (c) => {
   const user = c.get("user");
