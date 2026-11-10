@@ -74,6 +74,13 @@ describe("a member", () => {
 });
 
 describe("an admin", () => {
+  it("uses the workspace's providers on the workspace's own Mac", async () => {
+    const workerMac = pairDevice("workspace", "AI worker").device.id;
+    await saveSettings(settings([instance("claude_worker", workerMac)]));
+    expect(routeFor("alex", true, "workshop")).toMatchObject({ scope: "workspace", device: workerMac });
+    expect(routeFor("casey", false, "workshop")).toBeNull();
+  });
+
   it("uses the workspace's providers on its own Mac", async () => {
     await saveSettings(settings([instance("claude_alex", alexMac)]));
     expect(routeFor("alex", true, "workshop")).toMatchObject({ scope: "workspace", device: alexMac });
