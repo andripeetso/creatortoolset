@@ -44,7 +44,7 @@ const STATIC_ROWS = [
   { section: "providers", id: "default-ai", title: "Default AI", description: "Which AI does the work unless a tool picks another", keywords: ["provider", "default", "which ai", "model", "thinking"] },
   { section: "providers", id: "tool-ai", title: "A different AI for one tool", keywords: ["provider", "tool", "override", "use default", "model", "thinking"] },
   { section: "providers", id: "add-provider", title: "Add provider", keywords: ["install", "sign in", "claude", "codex", "cursor", "grok", "gemini"] },
-  // Computers: the computers that run your AI
+  // Devices: the computers that run your AI, and the phones
   { section: "devices", id: "computers", title: "Computers", keywords: ["mac", "computer", "machine", "rename", "remove", "online"] },
   { section: "devices", id: "add-computer", title: "Add computer", keywords: ["mac", "pair", "link", "command line"] },
   { section: "devices", id: "phones", title: "Phones", description: "Use the app on your phone: scan a code with its camera", keywords: ["phone", "iphone", "qr", "qr code", "pair", "camera", "scan", "wifi", "wi-fi"] },

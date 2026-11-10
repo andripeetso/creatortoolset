@@ -60,7 +60,7 @@ export function FoldersSection() {
     return (
       <Section title="Storage">
         <Card>
-          <EmptyRow title="No computer yet" description="Footage, music and finished videos are folders on one of your computers. Add one in Computers." />
+          <EmptyRow title="No computer yet" description="Footage, music and finished videos are folders on one of your computers. Add one in Devices." />
         </Card>
       </Section>
     );

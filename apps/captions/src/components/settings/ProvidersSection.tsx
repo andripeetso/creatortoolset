@@ -168,7 +168,7 @@ export function ProvidersSection({ sub }: { sub?: string }) {
   // one tab per Mac: a Mac that paired twice (the app and the worker) is one tab holding the AIs of both records
   const allGroups = groupComputers(devices, me.username);
   // a tab is a computer that can do something here: it is online, or it already holds an AI of this set. A computer that
-  // is offline with no AI on it (an old pairing) stays on Settings → Computers, where it can be removed.
+  // is offline with no AI on it (an old pairing) stays on Settings → Devices, where it can be removed.
   const holdsAi = (ids: string[]) => (editing?.instances ?? []).some((i) => ids.includes(deviceOf(i)));
   const useful = allGroups.filter((g) => g.records.some((r) => r.online) || holdsAi(g.records.map((r) => r.id)));
   const groups = useful.length ? useful : allGroups;

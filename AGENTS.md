@@ -108,8 +108,8 @@ newest one. A release reaches everyone's Mac, so make one only when the maintain
 - Types shared by client and server live in `contracts/`.
 - Where things live (the app's one system; put new work in the matching place):
   - **Home** = the tools you use (`src/lib/tools.ts`). **Settings** = how the app is set up: General, Appearance,
-    AI (Providers, Scheduled tasks, Usage), Devices (Computers, Storage, Servers), Connections (Social accounts,
-    API keys, Your own AI), Team, Server (Admin). **The account button** = you.
+    AI (Providers, Scheduled tasks, Usage), Hardware (Devices, Storage, Servers), Connections (Social accounts,
+    API keys, Headless access), Team, Server (Admin). **The account button** = you.
   - Inside a tool = that tool's own choices (its page, its Defaults dialog).
   - **Community** = everything added to the app. Installed shows **Plug-ins** (code built into this server: they
     make the install different) and then **Packs** (content you switch on per project and can remove).
