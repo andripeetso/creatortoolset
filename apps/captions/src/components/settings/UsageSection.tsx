@@ -174,7 +174,7 @@ function LoginCard({ i, view, now }: { i: LimitsIdentity; view: ProvidersView; n
       <ListRow
         icon={<ProviderLogo driver={i.driver} className="size-4" />}
         title={title}
-        subtitle={[plan, mac?.name].filter(Boolean).join(" · ") || undefined}
+        subtitle={[plan ? `${plan[0]!.toUpperCase()}${plan.slice(1)} plan` : null, mac?.name].filter(Boolean).join(" · ") || undefined}
         status={staleLine(i, now)}
       />
       {i.state === "ok" && i.windows.map((w) => <WindowBar key={w.id} w={countedWindow(i, w, now)} now={now} />)}

@@ -1,3 +1,4 @@
+import { Plus } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import { TOOLS, TOOL_NAMES, type Tool } from "@contracts/tools";
@@ -125,7 +126,7 @@ export function WorkspaceSection() {
         title="Members"
         action={
           <Button size="xs" variant="ghost" onClick={() => setInviting(true)}>
-            + Invite
+            <Plus className="size-3" /> Invite
           </Button>
         }
       >
@@ -181,7 +182,7 @@ export function memberLine(m: MemberView, self: boolean, owner: boolean): string
   const parts = [m.role === "owner" ? "Owner" : null];
   if (owner || self) {
     parts.push(m.ai === "own" ? (self ? "Your own AI" : "Own AI") : `API budget $${m.spentUsd.toFixed(2)} of $${m.budgetUsd} this month`);
-    parts.push(`active ${fmtAgo(m.lastActiveAt)}`);
+    parts.push(m.lastActiveAt ? `active ${fmtAgo(m.lastActiveAt)}` : "not signed in yet");
   }
   return parts.filter(Boolean).join(" · ");
 }

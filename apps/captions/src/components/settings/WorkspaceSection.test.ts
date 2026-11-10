@@ -29,11 +29,11 @@ describe("budgetFrom (the AI dialog's budget field)", () => {
 
 describe("memberLine (the owner's row subtitle)", () => {
   it("shows the budget's spend and the cap on a budget member", () => {
-    expect(memberLine(member({}), false, true)).toMatch(/^API budget \$14\.20 of \$25 this month · active /);
+    expect(memberLine(member({}), false, true)).toMatch(/^API budget \$14\.20 of \$25 this month · not signed in yet$/);
   });
 
   it("shows own AI for an owner's view, and nothing for another member's row", () => {
-    expect(memberLine(member({ ai: "own" }), false, true)).toMatch(/^Own AI · active /);
+    expect(memberLine(member({ ai: "own" }), false, true)).toBe("Own AI · not signed in yet");
     expect(memberLine(member({}), false, false)).toBe("");
   });
 });

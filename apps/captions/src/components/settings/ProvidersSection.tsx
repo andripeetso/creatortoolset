@@ -273,7 +273,7 @@ export function ProvidersSection({ sub }: { sub?: string }) {
     if (st.action === "sign-in") {
       if (localHere && isLocalCli(inst.driver)) return <Button size="xs" variant="outline" onClick={() => signInHere(inst)}>Sign in</Button>;
       if (canSignIn(inst)) return <Button size="xs" variant="outline" onClick={() => signIn(inst)}>Sign in</Button>;
-      return <Button size="xs" variant="outline" asChild><Link to={detailOpen(inst)}>How to sign in</Link></Button>;
+      return undefined; // the detail beside the list says how
     }
     if (st.action === "install") {
       if (localHere && isLocalCli(inst.driver))
@@ -282,7 +282,7 @@ export function ProvidersSection({ sub }: { sub?: string }) {
             {installing === inst.id ? "Installing…" : "Install"}
           </Button>
         );
-      return <Button size="xs" variant="outline" asChild><Link to={detailOpen(inst)}>How to install</Link></Button>;
+      return undefined; // the detail beside the list says how
     }
     if (st.action === "test") return <Button size="xs" variant="outline" disabled={checking !== null} onClick={() => void runCheck(inst)}>Test</Button>;
     return undefined;
@@ -362,7 +362,7 @@ export function ProvidersSection({ sub }: { sub?: string }) {
         </Tabs>
       )}
 
-      <div className="grid gap-8 lg:grid-cols-[17rem_minmax(0,1fr)]">
+      <div className="grid gap-8 lg:grid-cols-[22rem_minmax(0,1fr)]">
         <div className={cn("min-w-0 space-y-8", sub && "hidden lg:block")}>
           <Section
             id="add-provider"
