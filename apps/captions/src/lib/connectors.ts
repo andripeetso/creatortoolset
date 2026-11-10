@@ -2,7 +2,7 @@ import type { ConnectedAccount, ConnectorsView, LoginKind, SocialPlatform } from
 
 export * from "@contracts/connectors";
 
-/** Client for Settings → Connectors (api/connectors.ts). */
+/** Client for Settings → Social accounts (api/connectors.ts). */
 async function json<T>(r: Response): Promise<T> {
   const body = (await r.json().catch(() => ({}))) as T & { error?: string };
   if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
