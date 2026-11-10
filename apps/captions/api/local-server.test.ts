@@ -81,9 +81,8 @@ describe("a hosted server behind a CDN is not held to the own-computer password 
 
   it("still holds a server on someone's own computer to it, through the same headers", async () => {
     vi.stubEnv("CT_LOCAL", "1");
-    const cookie = cookieOf(await login("127.0.0.1", "local-sign-in-test-secret"));
-    const { path: link } = (await (await post("127.0.0.1", "/api/auth/link", {}, cookie)).json()) as { path: string };
-    expect((await from("127.0.0.1", link, { headers: cdn })).status).toBe(403);
+    const signIn = await from("127.0.0.1", "/api/auth/login", { method: "POST", headers: { "content-type": "application/json", ...cdn }, body: JSON.stringify({ username: "admin", password: "local-sign-in-test-secret" }) });
+    expect(signIn.status).toBe(403);
   });
 });
 
@@ -101,9 +100,8 @@ describe("a server on this Mac signs in from other devices only once a password 
     expect((await login("::ffff:127.0.0.1", "local-sign-in-test-secret")).status).toBe(200);
     const cookie = cookieOf(await login("127.0.0.1", "local-sign-in-test-secret"));
 
-    // a sign-in link opened from another device is refused too
-    const { path: link } = (await (await post("127.0.0.1", "/api/auth/link", {}, cookie)).json()) as { path: string };
-    expect((await from(LAN, link)).status).toBe(403);
+    // no sign-in code is made while another device would only be refused: the page asks for the password first
+    expect(await (await post("127.0.0.1", "/api/auth/link", {}, cookie)).json()).toEqual({ url: null, path: null, expiresAt: null });
 
     // a short password or a wrong current one changes nothing
     expect((await post("127.0.0.1", "/api/auth/password", { current: "nope", password: "tinyacrobatics1" }, cookie)).status).toBe(403);
@@ -118,6 +116,9 @@ describe("a server on this Mac signs in from other devices only once a password 
     expect(await authed(cookie)).toBe(false);
 
     expect((await login(LAN, "tinyacrobatics1")).status).toBe(200);
+    // with the password chosen, the code is made and another device signs in with it
+    const { path: link } = (await (await post("127.0.0.1", "/api/auth/link", {}, fresh)).json()) as { path: string };
+    expect((await from(LAN, link)).status).toBe(302);
   });
 });
 

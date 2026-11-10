@@ -332,6 +332,9 @@ authApp.post("/link", async (c) => {
   const me = signedInAccount(c.req.header("cookie"));
   const user = me && findUser(me.username);
   if (!user) return c.json({ error: "Sign in with an account first" }, 401);
+  // an own computer whose password is still the app's secret refuses every other device: no code is made that the
+  // scan would only be refused for, and the page asks for the password first (the same answer as "listens here only")
+  if (ownComputer() && verifyPassword(user, env.appSecret)) return c.json({ url: null, path: null, expiresAt: null });
   const now = Date.now();
   // one live code per account: a new one ends the older ones, so the codes on screen never stack
   for (const [k, v] of links) if (v.expiresAt <= now || v.username === user.username) links.delete(k);
