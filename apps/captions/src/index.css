@@ -176,6 +176,24 @@ html { scroll-padding-top: var(--bar-h); }
 [data-appbar][data-scrolled] + [data-appbar-fade], [data-sticks][data-stuck]::after { opacity: 1; }
 [data-sticks][data-stuck] { border-bottom-color: transparent; }
 
+/* A Workshop session is white panels on a grey desk; every other page is the plain page colour. Going in, the grey comes
+   in softly rather than at once: the session page paints with --desk-now, the desk's colour mixed in by --desk-t, which
+   the page sets to 0 and lets run to 1 as it opens (the mix lives on the root, so parts of the page that are built a
+   moment later join it mid-way instead of starting over). Going out, the next page starts from the grey and settles to
+   its own colour (html[data-from-desk], set for a moment by the session page as it leaves). */
+@property --desk-t { syntax: "<number>"; inherits: true; initial-value: 1; }
+:root {
+  --desk-t: 1;
+  --desk-now: color-mix(in srgb, var(--desk-page) calc(var(--desk-t) * 100%), rgb(var(--zinc-950)));
+  transition: --desk-t 320ms ease-out;
+}
+@keyframes desk-out { from { background-color: var(--desk-page); } }
+html[data-from-desk] :has(> [data-appbar]) { animation: desk-out 320ms ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  :root { transition: none; }
+  html[data-from-desk] :has(> [data-appbar]) { animation: none; }
+}
+
 /* mobile PWA: no rubber-band scroll past the app, no flash on taps */
 body { overscroll-behavior-y: none; }
 * { -webkit-tap-highlight-color: transparent; }
