@@ -20,9 +20,16 @@ struct ThisMacView: View {
     @State private var accountInvalid = false
     @State private var renaming: String?
     @State private var newName = ""
+    @State private var loginOn = LoginItem.isOn
 
     var body: some View {
         Form {
+            Section("Startup") {
+                Toggle("Open Creator Toolset when I log in", isOn: $loginOn)
+                    .onChange(of: loginOn) { _, on in LoginItem.set(on) }
+                Text("On for a copy in Applications. It waits in the menu bar, so your AI and recordings are ready when you need them.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section("Servers") {
                 ForEach(shell.listed) { s in serverRow(s) }
                 AddServerField(shell: shell)
@@ -52,12 +59,13 @@ struct ThisMacView: View {
                     Text("Your data, account and projects stay on this Mac. Off: the window opens another server from the list.")
                         .font(.caption).foregroundStyle(.secondary)
                     if shell.runsHere {
-                        Text(shell.serverLine ?? "")
+                        if let line = shell.serverLine { Text(line) }
                         HStack {
                             TextField("Port", text: $port)
                                 .onSubmit { savePort() }
                             Button("Change port") { savePort() }
                             Button("Open server log") { shell.openServerLog() }
+                            if shell.serverProblem != nil { Button("Try again") { shell.retryServer() } }
                         }
                     }
                 }
@@ -80,8 +88,7 @@ struct ThisMacView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 560)
-        .frame(minHeight: 420)
+        .frame(minWidth: 520, idealWidth: 560, maxWidth: .infinity, minHeight: 420, maxHeight: .infinity)
         .onAppear {
             accountServer = shell.account.serverText
             port = shell.server.map { String($0.port) } ?? ""
@@ -170,7 +177,7 @@ struct ThisMacView: View {
                     Task { accessMessage = await shell.setOtherDevices(on) }
                 }
             }))
-            Text("Off: only this Mac reaches the server. On: devices on your network sign in at http://\(ProcessInfo.processInfo.hostName):\(server.port) as \(LocalServer.ownerName) with this computer's password.")
+            Text("Off: only this Mac reaches the server. On: devices on your network sign in at http://\(ProcessInfo.processInfo.hostName):\(server.port) as \(LocalServer.ownerName) with this computer's password. macOS may ask to allow incoming connections for node: allow it, or phones can't connect.")
                 .font(.caption).foregroundStyle(.secondary)
             if askPassword {
                 SecureField("This computer's password (6 characters or more)", text: $password)
@@ -296,7 +303,7 @@ struct GuideView: View {
             }
             .padding(24)
         }
-        .frame(width: 600, height: 680)
+        .frame(minWidth: 480, idealWidth: 600, maxWidth: .infinity, minHeight: 420, idealHeight: 680, maxHeight: .infinity)
     }
 
     private func check() async {

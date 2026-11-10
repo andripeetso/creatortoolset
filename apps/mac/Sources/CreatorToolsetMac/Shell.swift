@@ -35,6 +35,8 @@ final class Shell: NSObject, ObservableObject {
     @Published private(set) var servers: [ServerEntry] = []
     @Published private(set) var current: String?
     @Published private(set) var serverLine: String?
+    /// The plain words for a server that could not start (the window's Try again card); nil when it is fine.
+    @Published private(set) var serverProblem: String?
     /// "Only N GB free on the data disk", when under 10 GB (checked with the notes, every 30 s).
     @Published private(set) var spaceLine: String?
     private var serverWatch: AnyCancellable?
@@ -49,6 +51,7 @@ final class Shell: NSObject, ObservableObject {
     private let noteCenter = NoteCenter()
     private var timer: Timer?
     private let seenKey = "seenNotificationIDs"
+    private let notesAskedKey = "notificationsAsked"
     private let serversKey = "servers"
     private let currentKey = "currentServer"
     private let aiKey = "aiOnThisMac"
@@ -131,7 +134,6 @@ final class Shell: NSObject, ObservableObject {
             Task { @MainActor in self?.noteClicked(href: href, id: id) }
         }
         UNUserNotificationCenter.current().delegate = noteCenter
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
         serverWatch = server?.$state.sink { [weak self] state in
             MainActor.assumeIsolated { self?.serverChanged(state) }
         }
@@ -349,15 +351,23 @@ final class Shell: NSObject, ObservableObject {
 
     private func serverChanged(_ state: LocalServer.State) {
         guard let server else { return }
+        // a fine state has no line: only starting and a failure say anything
         switch state {
-        case .off: serverLine = "Server on this Mac: off"
-        case .starting: serverLine = "Server on this Mac: starting"
-        case .running: serverLine = "Server on this Mac: running on port \(server.port)" + (server.otherDevices ? ", open to other devices" : "")
+        case .off, .running:
+            serverLine = nil
+            serverProblem = nil
+        case .starting:
+            serverLine = "Starting the server…"
+            serverProblem = nil
         case .failed(let why):
-            serverLine = "Server on this Mac: \(why)"
+            serverLine = why
+            serverProblem = why
             if runsHere { webView.loadHTMLString(messagePage(why), baseURL: nil) }
         }
     }
+
+    /// Try again (the window's card, This Mac): the server starts once more, with its crash count reset.
+    func retryServer() { server?.retry() }
 
     /// "Run the server on this Mac" (This Mac): on = the window opens it; off = the first added server, or none.
     func setRunsHere(_ on: Bool) {
@@ -681,11 +691,35 @@ final class Shell: NSObject, ObservableObject {
             unread = notes.unread
             NSApplication.shared.dockTile.badgeLabel = notes.unread > 0 ? "\(notes.unread)" : nil
             let seen = UserDefaults.standard.stringArray(forKey: seenKey)
-            for note in freshNotes(notes.items, seen: seen) { post(note) }
+            let fresh = freshNotes(notes.items, seen: seen)
+            if !fresh.isEmpty {
+                // the first note that needs a Mac notification is when macOS is asked (with a line first); the seen list
+                // waits too, so a note is not lost while the app is in the background
+                let status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+                switch notePostStep(undetermined: status == .notDetermined, appActive: NSApp.isActive,
+                                    asked: UserDefaults.standard.bool(forKey: notesAskedKey)) {
+                case .wait: return
+                case .askFirst: await askForNotifications()
+                case .post: break
+                }
+                fresh.forEach(post)
+            }
             UserDefaults.standard.set(rememberedIDs(notes.items, seen: seen), forKey: seenKey)
         } catch {
             // not signed in yet: the window signs in
         }
+    }
+
+    /// The line before macOS's own notification prompt: once, when the first Review note needs a notification.
+    private func askForNotifications() async {
+        UserDefaults.standard.set(true, forKey: notesAskedKey)
+        let a = NSAlert()
+        a.messageText = "Get a Mac notification when something is ready to review?"
+        a.informativeText = "Creator Toolset tells you when a video or a note is waiting for your review. macOS asks next. You can change this later in System Settings → Notifications."
+        a.addButton(withTitle: "Continue")
+        a.addButton(withTitle: "Not now")
+        guard a.runModal() == .alertFirstButtonReturn else { return }
+        _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
     }
 
     private func post(_ note: ReviewNote) {

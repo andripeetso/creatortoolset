@@ -74,6 +74,9 @@ func bytesText(_ n: Int64) -> String {
     ByteCountFormatter.string(fromByteCount: n, countStyle: .file)
 }
 
+/// What the person reads when the server cannot start; the technical reason is in the server log.
+let serverStartFailed = "Creator Toolset could not start. Try again, or restart your Mac."
+
 /// Seconds to wait before restarting after these crashes, or nil after five in five minutes (stop trying).
 func restartDelay(crashes: [Date], now: Date) -> TimeInterval? {
     let recent = crashes.filter { now.timeIntervalSince($0) < 300 }
@@ -211,6 +214,12 @@ final class LocalServer: ObservableObject {
 
     private var pidFile: URL { dataDir.appendingPathComponent("server.pid") }
 
+    /// Try again after a failure: the crashes so far no longer hold back the restart.
+    func retry() {
+        crashes = []
+        start()
+    }
+
     func start() {
         guard process == nil, let folder = Self.folder else { return }
         stopping = false
@@ -287,7 +296,8 @@ final class LocalServer: ObservableObject {
     private func launch(_ folder: URL) {
         guard process == nil, !stopping else { return }
         guard let secret = appSecret() else {
-            state = .failed("The Keychain did not keep the server's secret")
+            ServerLog.note("the Keychain did not keep the server's secret")
+            state = .failed(serverStartFailed)
             return
         }
         let fm = FileManager.default
@@ -327,7 +337,7 @@ final class LocalServer: ObservableObject {
             try p.run()
         } catch {
             ServerLog.note("could not start node: \(error.localizedDescription)")
-            state = .failed("The server could not start. Open server log")
+            state = .failed(serverStartFailed)
             return
         }
         process = p
@@ -363,7 +373,7 @@ final class LocalServer: ObservableObject {
         ServerLog.note("the server ended (status \(p.terminationStatus))")
         crashes.append(Date())
         guard let delay = restartDelay(crashes: crashes, now: Date()) else {
-            state = .failed("The server stopped. Open server log")
+            state = .failed(serverStartFailed)
             return
         }
         state = .starting
