@@ -1025,13 +1025,23 @@ export function ExtractionProcessingStatus({
 }
 
 export function ModelLoadingStatus({ progress }: { progress: number }) {
-  const mb = useStudio((s) => MODELS.find((m) => m.id === s.model)?.mb);
+  const model = useStudio((s) => s.model);
+  const mb = MODELS.find((m) => m.id === model)?.mb;
+  // already in this browser's model cache: nothing downloads, so the size is not said again
+  const [kept, setKept] = useState(false);
+  useEffect(() => {
+    void globalThis.caches
+      ?.open("transformers-cache")
+      .then((c) => c.keys())
+      .then((keys) => setKept(keys.some((k) => k.url.includes(`/${model}/`) && k.url.endsWith(".onnx"))))
+      .catch(() => {});
+  }, [model]);
   return (
     <EstimatedProcessingStatus
       plain
       operationKey="model-loading"
       complete={false}
-      title={`Getting the speech model ready${mb ? ` (${mb} MB, only the first time)` : ""}`}
+      title={`Getting the speech model ready${mb && !kept ? ` (${mb} MB, only the first time)` : ""}`}
       completeTitle="Model ready"
       completeDetail="The transcription model is ready."
       expectedSeconds={30}

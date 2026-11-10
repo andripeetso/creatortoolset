@@ -1207,8 +1207,7 @@ export function TranscriptPanel() {
           <p className="pointer-events-none absolute inset-x-0 top-8 px-6 text-center text-xs leading-5 text-zinc-600">
             {status.phase === "error" ? (
               <span className="text-red-400/80">
-                Transcription failed — {status.message}. Any previous transcript
-                was restored.
+                Transcription failed — {status.message.replace(/\.+$/, "")}
               </span>
             ) : (
               "Transcribe the video to get an editable transcript — every line is one caption."
