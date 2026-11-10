@@ -4,6 +4,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { jobTurn, type AuthVars } from "./auth";
 import { chatBusy, chatOfTurn, routeOf, runInChat } from "./assistant";
+import { announceSoon } from "./lib/announce-soon";
 import { deviceName, isOnline } from "./lib/devices";
 import { env, hostedMode } from "./lib/env";
 import type { Route } from "./lib/providers";
@@ -142,6 +143,7 @@ async function finish(username: string, id: string, result: Omit<AutomationResul
     // a one-chat task keeps the chat its first run made (or the one it was made from, if that one is gone: the new one)
     if (r.chat && x.destination !== "new_chat") x.chat = r.chat;
   });
+  announceSoon(username, "automations"); // the row shows the result (a skipped run has no start or end to tell)
   if (again) return;
   await notifyWorkshopOwner(username, {
     kind: r.status === "done" ? "workshop" : "failed",
@@ -181,9 +183,13 @@ function start(username: string, a: Automation, now: number, go: () => Promise<v
     console.error("[automations]", e);
     return Promise.resolve();
   }
+  announceSoon(username, "automations"); // the open Settings page says Running now
   return go()
     .catch((e) => console.error("[automations]", e))
-    .finally(() => running.delete(a.id));
+    .finally(() => {
+      running.delete(a.id);
+      announceSoon(username, "automations"); // told once the flag is down, so the row leaves Running now
+    });
 }
 
 type Runner = (username: string, a: Automation, ready: { route: Route; url: string }) => Promise<void>;
