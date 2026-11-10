@@ -39,6 +39,29 @@ export function isPublicReviewPath(pathname: string): boolean {
   return new RegExp(`^/(?:r/${PUBLIC_UUID}|rp/${PUBLIC_UUID}(?:/${PUBLIC_UUID})?|fs/${PUBLIC_UUID}|ws/${PUBLIC_UUID})/?$`, "i").test(pathname);
 }
 
+export type SignInProvider = "apple" | "google" | "github";
+export type SignInProviders = Record<SignInProvider, boolean>;
+const PROVIDER_NAME: Record<SignInProvider, string> = { apple: "Apple", google: "Google", github: "GitHub" };
+
+/** One "Sign in with …" button per provider this server has keys for (api/sign-in.ts, GET /api/account/providers). */
+export function ProviderButtons({ providers }: { providers: SignInProviders }) {
+  return (
+    <>
+      {(Object.keys(PROVIDER_NAME) as SignInProvider[])
+        .filter((p) => providers[p])
+        .map((p) => (
+          <a
+            key={p}
+            href={`/api/account/login/${p}?for=site`}
+            className="flex items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 py-2 text-sm font-medium text-zinc-100 hover:border-violet-500"
+          >
+            Sign in with {PROVIDER_NAME[p]}
+          </a>
+        ))}
+    </>
+  );
+}
+
 /**
  * Blocks the app behind an account login when the server has
  * APP_SECRET set (public hosting). Renders children immediately when
@@ -51,8 +74,12 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<"checking" | "login" | "link" | "ok">("checking");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // the sign-in buttons this server offers (null until read); the password form sits behind "Use a password instead"
+  const [providers, setProviders] = useState<SignInProviders | null>(null);
+  const [usePassword, setUsePassword] = useState(false);
+  // a failed sign-in comes back to /login?error=…
+  const [error, setError] = useState(() => new URLSearchParams(window.location.search).get("error") ?? "");
   // a team that signs in with Google / Apple: the providers this account must link first (auth.ts ruleFor)
   const [mustLink, setMustLink] = useState<("apple" | "google")[]>([]);
   const setAuth = useAuth((s) => s.setAuth);
@@ -85,6 +112,15 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
       .catch(() => setState("ok")); // server unreachable — let the app surface it
   }, [setAuth, pathname, publicShare]);
 
+  useEffect(() => {
+    if (state !== "login") return;
+    // only a server that mounts the route answers ok; elsewhere the account gate's 401 must not read as providers
+    fetch("/api/account/providers")
+      .then((r) => (r.ok ? (r.json() as Promise<SignInProviders>) : Promise.reject(new Error(String(r.status)))))
+      .then(setProviders)
+      .catch(() => setProviders({ apple: false, google: false, github: false }));
+  }, [state]);
+
   // a plug-in's product site on its own host (the hosted front page): shown signed in or not
   const site = siteFrameFor(window.location.hostname, pathname, window.location.search, webPlugins);
   if (site) return <>{site.element}</>;
@@ -106,6 +142,8 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     );
   }
   if (publicShare) return <>{children}</>;
+
+  const anyProvider = !!providers && Object.values(providers).some(Boolean);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -146,6 +184,18 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
           <p className="text-sm text-zinc-500">Sign in to your account</p>
         </div>
       </div>
+      {error && <p className="w-72 text-xs text-red-400">{error}</p>}
+      {providers && (
+        <div className="flex w-72 flex-col gap-2">
+          <ProviderButtons providers={providers} />
+          {anyProvider && !usePassword && (
+            <button type="button" onClick={() => setUsePassword(true)} className="py-1 text-xs text-zinc-500 hover:text-zinc-300">
+              Use a password instead
+            </button>
+          )}
+        </div>
+      )}
+      {providers && (!anyProvider || usePassword) && (
       <form onSubmit={submit} className="flex w-72 flex-col gap-2">
         <div className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 focus-within:border-violet-500">
           <UserRound className="h-4 w-4 shrink-0 text-zinc-500" />
@@ -170,7 +220,6 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
             className="w-full bg-transparent text-sm outline-none placeholder:text-zinc-600"
           />
         </div>
-        {error && <p className="text-xs text-red-400">{error}</p>}
         <button
           type="submit"
           disabled={busy || !username || !password}
@@ -179,6 +228,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
           {busy ? "Checking…" : "Sign in"}
         </button>
       </form>
+      )}
     </div>
   );
 }

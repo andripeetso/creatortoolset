@@ -52,3 +52,11 @@ it("gives a computer that has no agent the vendor's line to paste there, and not
 it("never shows an API key on this step", () => {
   expect(render()).not.toMatch(/api key/i);
 });
+
+it("on a hosted server it lists the account's computers, and says so when none is connected", () => {
+  expect(render({ hosted: true, picked: new Set() })).toContain("Workshop PC");
+  const none = render({ hosted: true, others: [], picked: new Set() });
+  expect(none).toContain("No computer is connected yet");
+  expect(none).not.toContain("No computer is picked");
+  expect(none).not.toContain("MINE-PANEL");
+});

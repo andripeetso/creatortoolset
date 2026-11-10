@@ -29,9 +29,10 @@ import { AgentsStep } from "@/components/setup/AgentsStep";
 import { Choice } from "@/components/setup/Choice";
 import { ConnectStep, HERE } from "@/components/setup/ConnectStep";
 import { FoldersStep } from "@/components/setup/FoldersStep";
+import { getComputers, type ComputersView } from "@/components/setup/computers";
 import { HowPicker } from "@/components/setup/HowPicker";
 import { ToolsPicker } from "@/components/setup/ToolNeeds";
-import { canUse, useMe } from "@/lib/auth";
+import { canUse, useAuth, useMe } from "@/lib/auth";
 import { openAssistant } from "@/lib/assistant";
 import {
   MAKE_NAMES,
@@ -159,14 +160,22 @@ export function SetupDialog() {
   const [unsure, setUnsure] = useState<boolean | null>(null); // "Not sure yet" ticked here; null = read it from the saved answers
   // the computers picked on the Connect step: this computer first and checked, the others unchecked until picked
   const [picked, setPicked] = useState<Set<string> | null>(null);
-  const pickedIds: ReadonlySet<string> = picked ?? new Set([HERE]);
+  const hosted = useAuth((s) => s.hosted);
+  const pickedIds: ReadonlySet<string> = picked ?? new Set(hosted ? [] : [HERE]);
   const pick = (id: string, on: boolean) =>
     setPicked((cur) => {
-      const next = new Set(cur ?? [HERE]);
+      const next = new Set(cur ?? (hosted ? [] : [HERE]));
       if (on) next.add(id);
       else next.delete(id);
       return next;
     });
+  // hosted: the done step does not say "ready" while no computer of the person is online (undefined: not read yet)
+  const [computers, setComputers] = useState<ComputersView | null | undefined>(undefined);
+  const onDone = params.get("setup") === "done";
+  useEffect(() => {
+    if (real && hosted && onDone) void getComputers().then(setComputers);
+  }, [real, hosted, onDone]);
+  const noComputer = hosted && onDone && computers !== undefined && !computers?.others.some((c) => c.online);
   const asked = params.get("setup");
   // by itself only on a first sign-in (setupOpensItself); Settings → Setup and ?setup= always open it
   const firstRun = setupOpensItself({ logins: me?.logins, loaded, projects: projects.length });
@@ -309,7 +318,7 @@ export function SetupDialog() {
               </button>
             </div>
             {step === "how" && <p className="mt-5 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--tint-text)]">Welcome to Creator Toolset</p>}
-            <DialogTitle className={cn("text-2xl font-semibold tracking-tight", step === "how" ? "mt-1.5" : "mt-5")}>{STEP[step].title}</DialogTitle>
+            <DialogTitle className={cn("text-2xl font-semibold tracking-tight", step === "how" ? "mt-1.5" : "mt-5")}>{noComputer ? "Almost there" : STEP[step].title}</DialogTitle>
             <DialogDescription className="mt-1.5 text-sm">{STEP[step].hint}</DialogDescription>
           </header>
 
@@ -353,6 +362,12 @@ export function SetupDialog() {
 
             {step === "done" && (
               <div className="space-y-4">
+                {noComputer && (
+                  <p className="px-1 text-sm text-muted-foreground">
+                    No computer is running Creator Toolset for this account yet, so your footage and AI can't be reached from here. Download the{" "}
+                    <a className="text-foreground underline" href="https://creatortoolset.com/download">Creator Toolset Mac app</a> on the computer you work on, then open it.
+                  </p>
+                )}
                 {prefs.talk !== "chat" && (
                   <p className="px-1 text-sm text-muted-foreground">
                     {assistantOn

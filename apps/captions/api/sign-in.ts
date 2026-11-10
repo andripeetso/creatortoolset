@@ -3,12 +3,12 @@ import type { Context } from "hono";
 import { createPrivateKey, randomBytes, sign as cryptoSign } from "node:crypto";
 import { getSessionUser, setLoginCookie, type AuthVars } from "./auth";
 import { hostedMode } from "./lib/env";
-import { bumpUsage, findByIdentity, findUser, isSignInProvider, linkIdentity, SIGNIN_NAME, type SignInProvider } from "./users";
+import { bumpUsage, createUser, findByIdentity, findByLogin, findUser, isSignInProvider, linkIdentity, type SignInProvider } from "./users";
 
 /**
  * Sign in with Apple, Google and GitHub to a site account, and linking one to an account (Settings → Account). A hosted
  * server only (CT_MODE=hosted): on one person's Mac there are no providers to sign in with. The keys live in the
- * server's .env only. The free Mac app's own sign-in is a separate service (a hosted plug-in), with its own state.
+ * server's .env only. A first sign-in with no account here makes one (newAccountFor). The free Mac app's own sign-in is a separate service (a hosted plug-in), with its own state.
  *
  * Sign-in start: GET /api/account/login/<apple|google|github>?for=link|site. Callbacks: /api/auth/<kind>/callback. A
  * callback for a sign-in this module did not start calls next(), so the plug-in that started it can answer.
@@ -110,10 +110,11 @@ const sweep = () => {
   for (const [k, v] of states) if (now - v.at > STATE_MS) states.delete(k);
 };
 
-const providerName = (p: Kind) => SIGNIN_NAME[p];
-
 /** Starts a sign-in for a site account (`for=site`) or links one to the signed-in account (`for=link`); others go on. */
 export const signInStartApp = new Hono<{ Variables: AuthVars }>();
+
+/** Which sign-in buttons the site's login screen shows: the providers this server has keys for (none off hosted). */
+signInStartApp.get("/providers", (c) => c.json(hostedMode() ? signinOn(originOf(c)) : { apple: false, google: false, github: false }));
 
 signInStartApp.get("/login/:kind", (c, next) => {
   if (!hostedMode()) return next();
@@ -190,8 +191,7 @@ async function callback(c: Context, kind: Kind, p: { code: string; state: string
       }
       return c.redirect(`/settings/account?linked=${kind}`);
     }
-    const user = findByIdentity(kind, who.sub);
-    if (!user) return fail(`No account here signs in with that ${providerName(kind)} account. Sign in with your password, then link it in Settings → Account`);
+    const user = findByIdentity(kind, who.sub) ?? newAccountFor(who);
     setLoginCookie(c, user);
     bumpUsage(user.username, { logins: 1 });
     return c.redirect("/");
@@ -199,6 +199,27 @@ async function callback(c: Context, kind: Kind, p: { code: string; state: string
     console.error(`[sign-in] ${kind} sign-in failed:`, e instanceof Error ? e.message : e);
     return fail("Sign-in failed");
   }
+}
+
+/**
+ * The account for a first sign-in with no account here: named from the person's name (else their email's first part),
+ * with a password nobody knows, so the password form only works once they set one in Settings → Account.
+ */
+function newAccountFor(who: Who) {
+  const from = (who.name || who.email.split("@")[0] || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 20);
+  const base = from.length >= 2 ? from : "creator";
+  for (let i = 1; i <= 100; i++) {
+    const name = i === 1 ? base : `${base}-${i}`;
+    if (findUser(name) || findByLogin(name)) continue;
+    try {
+      const user = createUser(name, randomBytes(24).toString("base64url"), { role: "user" });
+      linkIdentity(user, who);
+      return user;
+    } catch {
+      // a reserved or taken name: the next one
+    }
+  }
+  throw new Error("No free account name");
 }
 
 /** The provider's identity for a returned code: its token exchange and checks. Used by both callers (here and account.ts). */
