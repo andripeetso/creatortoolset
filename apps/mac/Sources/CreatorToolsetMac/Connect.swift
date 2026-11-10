@@ -6,13 +6,17 @@
 import AppKit
 import Foundation
 
-/// The broker's address (apps/relay). Never set = defaultConnectBroker; "" = none (forks, own servers).
-let defaultConnectBroker = URL(string: "https://connect.creatortoolset.com")!
-
+/// The connect service's address (the broker, apps/relay), as saved in UserDefaults `connectBroker`. None until one is
+/// set: no hosted one answers yet, so by default the app offers nothing that needs it ("Add this Mac to my account…")
+/// and asks nothing of it.
 func connectBrokerURL(_ saved: String?) -> URL? {
-    guard let saved else { return defaultConnectBroker }
-    return saved.trimmingCharacters(in: .whitespaces).isEmpty ? nil : siteURL(from: saved)
+    guard let saved, !saved.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
+    return siteURL(from: saved)
 }
+
+/// The connect service this Mac is set to use, if any. The menu item, the server's CT_CONNECT_URL and the account's
+/// other computers all hang on it, so they are there together or not at all.
+var connectService: URL? { connectBrokerURL(UserDefaults.standard.string(forKey: "connectBroker")) }
 
 /// One computer on the account, as the broker lists it (GET /v1/computers).
 struct BrokerComputer: Decodable, Equatable {
@@ -182,7 +186,7 @@ extension Shell {
     /// Signed out, or the broker does not answer: none (the list just stays empty).
     func brokerComputers() async -> [ServerEntry] {
         guard let host = account.server?.host, let token = DeviceVault.token(for: host, service: Account.vault),
-              let base = connectBrokerURL(UserDefaults.standard.string(forKey: "connectBroker")) else { return [] }
+              let base = connectService else { return [] }
         let mine = server.flatMap { try? Data(contentsOf: $0.dataDir.appendingPathComponent("connect.json")) }
         guard let list = try? await BrokerClient(base: base).computers(token: token) else { return [] }
         return accountServers(list, thisComputer: tunnelConfig(data: mine)?.computerId)

@@ -29,17 +29,24 @@ import { OwnAiStep } from "@/components/setup/OwnAiStep";
 import { ToolsPicker } from "@/components/setup/ToolNeeds";
 import { canUse, useMe } from "@/lib/auth";
 import { openAssistant } from "@/lib/assistant";
+import { primeIntroSound } from "@/lib/intro-sound";
 import { isPhoneHub } from "@/lib/mobile";
 import {
   MAKE_NAMES,
   SETUP_PATH,
   dismissSetup,
   firstProjectName,
+  markIntroSeen,
+  introPlays,
+  introSeen,
   rememberLater,
+  setupFinished,
   setupOpen,
   setupOpensItself,
   setupStepFromParam,
+  startIntro,
   stepsFor,
+  stillMotion,
   toolsFor,
   useSetup,
   useSetupLive,
@@ -107,6 +114,8 @@ export function SetupDialog() {
   const step: SetupStep = setupStepFromParam(asked) ?? SETUP_PATH[0];
   useEffect(() => {
     useSetupShown.setState({ shown: open });
+    // Home's welcome opens on the name in its own typeface: fetched now, so it is there when Done is pressed
+    if (open) void document.fonts?.load('900 1em "Archivo Expanded"').catch(() => {});
     return () => useSetupShown.setState({ shown: false });
   }, [open]);
 
@@ -147,16 +156,24 @@ export function SetupDialog() {
   const to = (s: SetupStep) => setParams((p) => (p.set("setup", s), p), { replace: true });
   const leave = () => setParams((p) => (p.delete("setup"), p), { replace: true });
 
+  /** Whether leaving setup now plays Home's welcome (lib/setup.ts introPlays). */
+  const welcomes = () => introPlays({ finishedBefore: setupFinished(view), seen: introSeen(), phone: isPhoneHub(), still: stillMotion() });
   const close = () => {
     if (side) return leave();
     rememberLater(step);
-    setNote(true);
+    // Not now on Home gets the welcome too, in place of the note (its sound is started here, in the press)
+    const plays = window.location.pathname === "/" && welcomes();
+    if (plays) (primeIntroSound(), markIntroSeen());
+    else setNote(true);
     dismissSetup();
     leave();
+    startIntro(plays);
   };
-  const goHome = () => {
+  const goHome = (plays: boolean) => {
     dismissSetup();
-    if (connected) openAssistant();
+    // Home plays its welcome first (once: not again after a Not now that showed it); the assistant says hello when it ends
+    if (plays) markIntroSeen();
+    startIntro(plays, connected ? openAssistant : undefined);
     navigate("/");
   };
   const saveMakes = () => useWorkPrefs.getState().put({ makes });
@@ -165,6 +182,9 @@ export function SetupDialog() {
     to(path[at - 1]!);
   };
   const next = async () => {
+    // the welcome has sound, and a browser lets sound start only from a press: this one, before anything is awaited
+    const plays = at === path.length - 1 && welcomes(); // asked before the save below finishes setup
+    if (plays) primeIntroSound();
     setBusy(true);
     try {
       if (step === "make") await saveMakes();
@@ -173,7 +193,7 @@ export function SetupDialog() {
         await save({ tools, done: true });
         const name = loaded ? firstProjectName(makes, projects.length) : null;
         if (name) await createProject({ name }).catch(() => {});
-        return goHome();
+        return goHome(plays);
       }
       to(path[at + 1]!);
     } finally {

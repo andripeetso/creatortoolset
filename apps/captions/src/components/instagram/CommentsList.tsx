@@ -82,7 +82,6 @@ export function CommentsList({
   const [showAll, setShowAll] = useState(false);
   const [onlyQuestions, setOnlyQuestions] = useState(false);
   const [comments, setComments] = useState<InstagramComment[] | null>(null);
-  const [cursor, setCursor] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -99,7 +98,6 @@ export function CommentsList({
       .then((f) => {
         if (cancelled) return;
         setComments(f.comments);
-        setCursor(f.cursor);
         onLoaded?.(f.comments);
       })
       .catch(() => {
@@ -126,24 +124,20 @@ export function CommentsList({
 
   const chip = (() => {
     switch (summary.status) {
+      // only what is not plain from the list below: how many are here when that is not all, and a failure
       case "complete":
-        return `complete · ${summary.count}`;
+        return "";
       case "capped":
-        return `capped at ${summary.count}${cursor ? " · more available" : ""}`;
+        return `${summary.count} here`;
       case "failed":
-        return `failed${summary.error ? ` · ${summary.error}` : ""}`;
+        return "Couldn't get them";
       case "skipped":
-        return "not collected";
+        return "";
       default:
         return "pending";
     }
   })();
-  const chipColor =
-    summary.status === "complete"
-      ? "text-emerald-300"
-      : summary.status === "failed"
-        ? "text-red-300"
-        : "text-zinc-400";
+  const chipColor = summary.status === "failed" ? "text-amber-400" : "text-zinc-400";
 
   return (
     <div className="mt-6">
@@ -154,7 +148,7 @@ export function CommentsList({
             <span className="text-zinc-600">· {fmtCount(post.counts.comments)} on Instagram</span>
           )}
         </h3>
-        <span className={`text-[11px] ${chipColor}`}>{chip}</span>
+        {chip ? <span className={`text-[11px] ${chipColor}`}>{chip}</span> : null}
         {summary.questions ? (
           <button
             type="button"
@@ -194,7 +188,7 @@ export function CommentsList({
                 onClick={() => void fetchMore(true)}
                 className="flex items-center gap-1 rounded-md border border-zinc-700 px-2 py-1 text-[11px] text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
               >
-                {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : null} Fetch more
+                {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : null} Get more
               </button>
             ) : null}
             <button
@@ -204,21 +198,13 @@ export function CommentsList({
               className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 disabled:opacity-50"
             >
               <RefreshCw className="h-3 w-3" />
-              {summary.status === "skipped" || summary.status === "pending" ? "Fetch" : "Re-fetch"}
+              {summary.status === "skipped" || summary.status === "pending" ? "Get the comments" : "Get them again"}
             </button>
           </span>
         )}
       </div>
       {error && <p className="mb-2 text-xs text-red-400">{error}</p>}
-      {comments === null ? (
-        <p className="text-xs text-zinc-500">Loading…</p>
-      ) : comments.length === 0 ? (
-        <p className="text-xs text-zinc-500">
-          {summary.status === "pending" || processing
-            ? "Comments are collected when that job runs."
-            : "No comments stored."}
-        </p>
-      ) : (
+      {comments === null || comments.length === 0 ? null : (
         <ul className="flex flex-col gap-3">
           {rankComments(comments)
             .filter((c) => !onlyQuestions || (c.judged?.needsAnswer ?? 0) >= QUESTION_MIN)

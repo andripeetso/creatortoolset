@@ -60,7 +60,6 @@ export function TagsEditor({
   return (
     <div>
       <div className="flex flex-wrap gap-1.5">
-        {list.length === 0 && <span className="text-[11px] text-zinc-600">No tags yet.</span>}
         {list.map((t) => (
           <span
             key={t.id}

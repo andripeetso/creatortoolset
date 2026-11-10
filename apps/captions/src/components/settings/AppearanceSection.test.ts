@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { HOME_TILES, TOOLS, TOOL_NEEDS, onHome, type Tool } from "@contracts/tools";
-import { accentFor } from "@/lib/workspace";
+import { accentFor, accentTones, customTintCss, shadesOf } from "@/lib/workspace";
 import { hiddenAfter, missingNeeds, needFix, needLabel } from "./ToolsSection";
 
 describe("Home shows every tool except the ones switched off", () => {
@@ -20,6 +20,38 @@ describe("Home shows every tool except the ones switched off", () => {
     const oldTools: Tool[] = ["workshop", "editor"];
     expect(oldTools.length).toBeLessThan(TOOLS.length);
     for (const t of TOOLS) expect(onHome(undefined, t)).toBe(true);
+  });
+});
+
+describe("a colour of the person's own", () => {
+  it("is the accent once picked, and the project's again when they follow the project", () => {
+    expect(accentFor(false, "#12AB9F", "sky")).toBe("#12ab9f");
+    expect(accentFor(true, "#12ab9f", "sky")).toBe("sky");
+    expect(accentFor(false, "#12ab9", "sky")).toBe("violet"); // not a whole colour
+  });
+
+  it("makes eleven shades from the picked colour: itself at 500, white-wards below, black-wards above", () => {
+    const s = shadesOf("#ff0000");
+    expect(s[500]).toBe("255 0 0");
+    expect(s[50]).toBe("255 242 242");
+    expect(s[950]).toBe("71 0 0");
+    const light = (rgb: string) => rgb.split(" ").reduce((n, v) => n + Number(v), 0);
+    const order = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950] as const;
+    for (let i = 1; i < order.length; i++) expect(light(s[order[i]!])).toBeLessThan(light(s[order[i - 1]!]));
+    expect(accentTones("#ff0000")).toEqual({ rgb: s[600], text: s[400] });
+    expect(accentTones("sky")).toMatchObject({ rgb: "2 132 199" });
+  });
+
+  it("writes the same variables a project colour has, with pale and deep swapped for the light theme", () => {
+    const css = customTintCss("#ff0000");
+    const s = shadesOf("#ff0000");
+    const [light, dark] = css.split(".dark[data-tint=\"custom\"]");
+    expect(light).toContain(':root[data-tint="custom"]{');
+    for (const part of [light, dark]) expect(part).toContain(`--violet-500:${s[500]}`);
+    expect(dark).toContain(`--t-violet-300:${s[300]}`);
+    expect(light).toContain(`--t-violet-300:${s[700]}`);
+    expect(dark).toContain(`--s-violet-900:${s[900]}`);
+    expect(light).toContain(`--s-violet-900:${s[100]}`);
   });
 });
 

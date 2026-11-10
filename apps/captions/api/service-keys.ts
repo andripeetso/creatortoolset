@@ -6,7 +6,7 @@ import { env } from "./lib/env";
 import { SERVICE_KEYS, type ServiceKeyEnv, type ServiceKeyView } from "../contracts/service-keys";
 
 /**
- * Settings → API keys (contracts/service-keys.ts): $DATA_DIR/service-keys.json (0600). A saved key is put into
+ * Settings → Admin → Server keys (contracts/service-keys.ts): $DATA_DIR/service-keys.json (0600). A saved key is put into
  * process.env under its own name, so every place that already reads the env (read at each call, never cached) uses it.
  * Forgetting one puts the .env's own value back. Platform admins only (the middleware below checks it).
  */

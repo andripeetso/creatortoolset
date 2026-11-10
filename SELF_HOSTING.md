@@ -21,8 +21,8 @@ Ground rules for whoever runs it:
 - Your data on the server's disk, or in a private S3-compatible bucket you own.
 - AI from your own subscription: you install Claude Code (or Codex) on your own Mac and sign in with your own
   subscription; the Mac app relays only your own requests to it. Or add your own Anthropic key in
-  Settings → My API keys.
-- Every paid service on your own keys (Settings → My API keys, or the server's `.env`). The server's Anthropic
+  Settings → API keys.
+- Every paid service on your own keys (Settings → API keys, or the server's `.env`). The server's Anthropic
   key is never used for AI. See "Whose keys pay" in step 8.
 - The web app works on phones: open it in the phone's browser and add it to the home screen.
 - Nothing from anyone else: no outside account, no outside service. The Mac app's first run offers an optional
@@ -103,7 +103,7 @@ Optional, now or later (see step 4 and `.env.example` for every variable):
 - `ELEVENLABS_API_KEY`, `NVIDIA_API_KEY`: the Audio Enhancer's engines, for you.
 - `PERPLEXITY_API_KEY`: the Content Workshop's accuracy check, for you.
 
-These are the server's keys, for you. For AI, add your own Anthropic key in Settings → My API keys (step 8).
+These are the server's keys, for you. For AI, add your own Anthropic key in Settings → API keys (step 8).
 - `OBJECT_STORAGE_*`: a private bucket for uploads (step 5).
 - `COOKIE_DOMAIN`: only if several subdomains of one server share the sign-in, e.g. `.example.com`. Empty = the exact host.
 
@@ -200,25 +200,26 @@ On your Mac:
    with a check for HTTPS, the health call and the sign-in.
 3. Sign in to your server in the app's window.
 4. Turn on **Use this Mac for my AI**. This pairs the Mac with your account once.
-5. In the site: **Settings → AI providers → Set up your AI** shows the install and sign-in commands for Claude
-   Code and Codex. Run them once in Terminal on that Mac, then press **check**.
+5. In the site: **Settings → Providers → Add provider** shows the install and sign-in commands for Claude
+   Code and Codex when that Mac doesn't have them yet. Run them once in Terminal on that Mac, then pick
+   **Test now** in the provider's menu.
 
 The first run in the Mac app offers an Apple or Google sign-in at an account server. It is optional and your server
 works without it: set **This Mac → Account → Account server** to empty to skip that step.
 
-**An API key of your own.** Add your own Anthropic key in **Settings → My API keys**: it answers only your
+**An API key of your own.** Add your own Anthropic key in **Settings → API keys**: it answers only your
 account, and Anthropic bills you. There is no fallback: with no provider and no key, a tool that needs AI says so.
 The Content Workshop always needs your own Claude Code or Codex.
 
 ### Whose keys pay
 
 One resolver, `keyFor` in `apps/captions/api/my-keys.ts`, picks the key every paid call runs on: the person's own
-key from **Settings → My API keys** first. Else the server's key (`.env` or **Settings → API keys**), only for you,
+key from **Settings → API keys** first. Else the server's key (`.env`), only for you,
 the admin (or the one local account when `APP_SECRET` is unset), for every service except AI. A tool without a key
 says which one to add. Instagram: the official Meta login reads a person's own posts and their numbers; other
-creators' posts are read only with that person's own Apify key (**Settings → Connectors**).
+creators' posts are read only with that person's own Apify key (**Settings → API keys**).
 
-Check: **Settings → AI providers** shows your Mac as online with a tool installed, and a test call passes.
+Check: **Settings → Providers** shows your Mac as online with a tool installed, and a test call passes.
 
 Rules to keep:
 

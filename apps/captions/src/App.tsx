@@ -48,7 +48,7 @@ import { useCachedLoad } from "@/lib/local-cache";
 import { warmScreens } from "@/lib/warm-cache";
 import { useAppearance } from "@/lib/settings";
 import { historyDepth } from "@/lib/history-depth";
-import { SETTINGS_CLOSED, useSetupShown, useSetupSync } from "@/lib/setup";
+import { SETTINGS_CLOSED, endIntro, useIntro, useSetupShown, useSetupSync } from "@/lib/setup";
 import { replacementFor } from "@/lib/plugin";
 import { webPlugins } from "./plugins.gen";
 
@@ -279,6 +279,11 @@ export default function App() {
   // the setup window on screen: no dock, no popup, no bubble behind it. Not "setup unfinished": an account that never
   // pressed Done but has projects gets no setup window, and lost its assistant with the old check
   const setupUp = useSetupShown((s) => s.shown);
+  // Home's welcome animation: the dock and the popup wait for it, and leaving Home (or opening Settings over it) ends it
+  const introOn = useIntro((s) => s.on);
+  useEffect(() => {
+    if (location.pathname !== "/") endIntro();
+  }, [location.pathname]);
   const navigate = useNavigate();
   // /settings/*, /community/* and /projects are modals: the page you were on stays mounted behind (home when opened directly)
   const inSettings = /^\/settings(?:\/|$)/.test(location.pathname);
@@ -399,8 +404,8 @@ export default function App() {
       {!publicPage && !inSettings && !inCommunity && <FirstOpen />}
       {/* the assistant is there in every way of working (owner, 2026-11-10: "it shouldn't be gone"); talk only says
           whether the person's own AI also gets Creator Toolset */}
-      {!onMobile && !publicPage && !setupUp && <AssistantDock />}
-      {!onMobile && !publicPage && !setupUp && <AskAboutSelection />}
+      {!onMobile && !publicPage && !setupUp && !introOn && <AssistantDock />}
+      {!onMobile && !publicPage && !setupUp && !introOn && <AskAboutSelection />}
       {!onMobile && !publicPage && <CornerNav />}
       {inSettings && <SettingsModal onClose={closeSettings} />}
       {inCommunity && <CommunityModal onClose={closeSettings} />}

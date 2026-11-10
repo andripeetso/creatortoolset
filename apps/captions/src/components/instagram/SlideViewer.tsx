@@ -148,15 +148,12 @@ export function SlideViewer({
       {count > 1 && (
         <div className="mt-2 grid grid-cols-6 gap-1.5 sm:grid-cols-7">
           {slides.map((s) => {
-            const read =
-              s.vision.status === "done" ||
-              (s.kind === "video" && s.transcript.status === "done");
             return (
               <button
                 key={s.index}
                 type="button"
                 onClick={() => onIndex(s.index)}
-                title={`Slide ${s.index + 1}${read ? " · text read" : ""}`}
+                title={`Slide ${s.index + 1}`}
                 className={`relative aspect-[4/5] overflow-hidden rounded-md border ${
                   s.index === index
                     ? "border-violet-500"
@@ -186,8 +183,9 @@ export function SlideViewer({
                     {fmtMmSs(s.durationS)}
                   </span>
                 ) : null}
-                {read && (
-                  <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                {/* a slide that was read shows nothing; one that could not be read gets the one mark */}
+                {(s.vision.status === "error" || s.transcript.status === "error") && (
+                  <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-amber-500" />
                 )}
               </button>
             );

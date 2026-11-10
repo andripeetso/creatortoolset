@@ -1,10 +1,10 @@
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import { Monitor, Moon, Sun, type LucideIcon } from "lucide-react";
 import { useShareTheme, type ThemeChoice } from "@/components/ShareTheme";
 import { Switch } from "@/components/ui/switch";
 import { persistHomeGlow, persistOwnColour, persistProjectTint, useAppearance } from "@/lib/settings";
 import { cn } from "@/lib/utils";
-import { PROJECT_COLORS, projectColor, useWorkspace, type ProjectColor } from "@/lib/workspace";
+import { isHexColour, PROJECT_COLORS, projectColor, useWorkspace, type ProjectColor } from "@/lib/workspace";
 import { Section } from "./ui";
 
 const OPTIONS: Array<{ id: ThemeChoice; label: string; icon: LucideIcon }> = [
@@ -107,7 +107,8 @@ const fill = (c: ProjectColor) => `rgb(${PROJECT_COLORS[c].rgb})`;
 const name = (c: ProjectColor) => c[0].toUpperCase() + c.slice(1);
 
 /**
- * The colour the app wears: the current project's, or one of the person's own. One choice, so picking a colour is
+ * The colour the app wears: the current project's, one of the eight project colours, or a colour of the person's own
+ * making (Custom). One choice, so picking a colour is
  * also what stops following the project. The glow behind Home is dark theme only: its switch sits in the heading's
  * line, so it comes and goes with the theme without moving anything under it.
  */
@@ -118,6 +119,16 @@ function Colour({ dark }: { dark: boolean }) {
   // (the first four; the palette's before the first project), so it reads as "whatever the project is"
   const theirs = [...new Set(projects.map((p) => projectColor(p, projects)))];
   const dots = (theirs.length ? theirs : COLOURS).slice(0, 4);
+  // Custom: a colour of the person's own, picked in the computer's colour panel; the app follows it while it is dragged
+  const picker = useRef<HTMLInputElement>(null);
+  const custom = isHexColour(ownColour) ? ownColour : null;
+  const openPicker = () => {
+    const el = picker.current;
+    if (!el) return;
+    if (!custom) persistOwnColour(el.value);
+    if (typeof el.showPicker === "function") el.showPicker();
+    else el.click();
+  };
   const tile = (key: string, label: string, on: boolean, pick: () => void, swatch: ReactNode) => (
     <button
       key={key}
@@ -162,6 +173,23 @@ function Colour({ dark }: { dark: boolean }) {
         {COLOURS.map((c) =>
           tile(c, name(c), !projectTint && ownColour === c, () => persistOwnColour(c), <span className="flex-1" style={{ background: fill(c) }} />),
         )}
+        {tile(
+          "custom",
+          "Custom",
+          !projectTint && !!custom,
+          openPicker,
+          // before one is picked: every hue, so the tile reads as "any colour"
+          <span className="flex-1" style={{ background: custom ?? "conic-gradient(#ef4444, #f59e0b, #84cc16, #14b8a6, #0ea5e9, #8b5cf6, #ec4899, #ef4444)" }} />,
+        )}
+        <input
+          ref={picker}
+          type="color"
+          tabIndex={-1}
+          aria-label="Your own colour"
+          className="sr-only"
+          value={custom ?? "#7c3aed"}
+          onChange={(e) => persistOwnColour(e.target.value)}
+        />
       </div>
     </Section>
   );

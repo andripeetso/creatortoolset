@@ -51,7 +51,7 @@ The app also bundles Node.js (its licence is `server/NODE-LICENSE` inside the ap
 ## Fonts
 
 `apps/captions/public/fonts/` bundles Google Fonts under the SIL Open Font License 1.1 (the text is in `OFL.txt`
-there): Anton, Archivo Black, Bebas Neue, Inter, Montserrat, Oswald and Poppins.
+there): Anton, Archivo, Archivo Black, Bebas Neue, Inter, Montserrat, Oswald and Poppins.
 
 ## Provider and platform marks
 

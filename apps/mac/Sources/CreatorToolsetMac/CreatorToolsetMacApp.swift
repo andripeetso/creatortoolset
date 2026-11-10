@@ -267,7 +267,8 @@ struct ServersMenu: View {
             .keyboardShortcut(index < 9 ? KeyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: [.command, .option]) : nil)
         }
         if !shell.listed.isEmpty { Divider() }
-        Button("Add this Mac to my account…") { Task { await shell.connectThisComputer() } }
+        // only with a connect service set: without one the server can't start the link, and the item did nothing
+        if connectService != nil { Button("Add this Mac to my account…") { Task { await shell.connectThisComputer() } } }
         Button("Add server…") { open("this-mac") }
         Button("Run your own server…") { open("guide") }
         Button("This Mac…") { open("this-mac") }

@@ -22,6 +22,17 @@
         var tint = null;
         try { tint = localStorage.getItem("ct-tint"); } catch (e) {}
         if (tint && !share) document.documentElement.dataset.tint = tint;
+        // a colour of the person's own (Settings → Appearance → Custom): its variables, as useRootTint saved them
+        if (tint === "custom" && !share) {
+          var own = null;
+          try { own = localStorage.getItem("ct-tint-css"); } catch (e) {}
+          if (own) {
+            var st = document.createElement("style");
+            st.id = "ct-custom-tint";
+            st.textContent = own;
+            document.head.appendChild(st);
+          }
+        }
       })();
     </script>
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />

@@ -140,7 +140,8 @@ on this Mac…" and opens `http://127.0.0.1:43128` once `/api/health` answers (p
    "Which plan are you on?", filled in from what `claude auth status --json` itself says), then what's left for
    the ticked tools (all optional). The AI step looks again every 5 s, and the app reports its tools again
    whenever it comes to the front, so a tool installed in Terminal shows up without a reload. These are the same
-   screens as Settings; Settings → Setup shows every tool's readiness and runs setup again.
+   screens as Settings; Settings → Tools shows what each tool still needs, and after **Not now** Home keeps a
+   **Finish setting up** card that opens setup again.
 
 The optional account sign-in is not part of this: the server on your Mac works without one.
 
@@ -263,7 +264,7 @@ one at most once a minute). A crash of the app itself is macOS's report in
   the account server; the page's Settings has no entry for it. A page that posts `this-mac` to the `window` message
   handler opens it too. `ThisMac.swift`.
 - The page learns this Mac's device id on the open server as `<html data-mac-device>` (a user script, renewed on
-  each switch and pairing), so Settings → AI providers can say "This Mac (*name*) answers your AI" rather than
+  each switch and pairing), so Settings → Providers can say "This Mac (*name*) answers your AI" rather than
   another Mac's name.
 - File inputs open the Mac's own open panel. Downloads land in `~/Downloads` (a name taken
   gets ` (2)`). `target=_blank`, `window.open` and links to other sites open in the default

@@ -3,7 +3,7 @@ import path from "path";
 
 const templateRoot = path.resolve(import.meta.dirname);
 
-// Test files that run ffmpeg (or, for lib/folder-plugins, the plug-in builder as its own program). Under full-suite
+// Test files that run ffmpeg (or the plug-in builder: lib/folder-plugins as its own program, scripts/plugin-build here). Under full-suite
 // load they hit the 5 s default timeout, so they run in their own project, after the rest: at most 4 files at once,
 // and a 30 s per-test timeout. Add a new ffmpeg test file here.
 const ffmpegFiles = [
@@ -34,6 +34,7 @@ const ffmpegFiles = [
   "api/library/transcribe.test.ts",
   "api/review-library.test.ts",
   "api/review.test.ts",
+  "scripts/plugin-build.test.mjs",
 ];
 
 const include = [

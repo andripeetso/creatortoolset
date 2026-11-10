@@ -433,7 +433,10 @@ export function ImportScreen() {
   );
 
   return (
-    <div className="relative flex h-full flex-col overflow-y-auto bg-zinc-950 text-zinc-200">
+    // this pane is the whole window and scrolls by itself, top bar and all: it keeps its own bar's place
+    // (data-fills-window="scrolls", index.css), so the top bar is as wide as on every other page and nothing moves when
+    // the list grows
+    <div data-fills-window="scrolls" className="relative flex h-full flex-col overflow-y-scroll bg-zinc-950 text-zinc-200">
       <AppBar
         tool="Caption Studio"
         onHome={(event) => {

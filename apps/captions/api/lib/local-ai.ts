@@ -1,6 +1,6 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
-import { accessSync, chmodSync, constants, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, chmodSync, constants, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -52,7 +52,8 @@ export type Runner = (file: string, args: string[], opt: { env?: NodeJS.ProcessE
 const execP = promisify(execFile);
 const realRun: Runner = async (file, args, opt) => {
   try {
-    const r = await execP(file, args, { env: opt.env, timeout: opt.timeout, maxBuffer: 4 << 20 });
+    // SIGKILL at the timeout: an interactive shell ignores the default signal and would stay for good
+    const r = await execP(file, args, { env: opt.env, timeout: opt.timeout, killSignal: "SIGKILL", maxBuffer: 4 << 20 });
     return { stdout: String(r.stdout), stderr: String(r.stderr), code: 0 };
   } catch (e) {
     const x = e as { stdout?: unknown; stderr?: unknown; code?: number | string; message?: string; killed?: boolean; signal?: string };
@@ -64,8 +65,14 @@ const realRun: Runner = async (file, args, opt) => {
 let run: Runner = realRun;
 
 const bins = new Map<CliId, string>();
-let codexUrl: boolean | undefined;
+let codexUrl: { bin: string; changed: number; value: boolean } | undefined;
 const probes = new Map<CliId, { at: number; p: Probe }>();
+/** A look at one program that is still running: looks that overlap share it, so a poll never stacks processes. */
+const probing = new Map<CliId, Promise<Probe>>();
+/** What the login shell answered for a `command -v …` line, and when it was asked (fromShell). */
+const shellSaid = new Map<string, { at: number; out: Promise<string> }>();
+/** A program's `--version` answer, kept while the file is unchanged (versionOut). */
+const versions = new Map<string, { changed: number; out: Out }>();
 
 /** Tests: a fake runner (and which fallback paths hold a copy: none unless said), and a clean cache. */
 export function setRunnerForTests(r?: Runner, onDisk?: (p: string) => boolean): void {
@@ -73,6 +80,9 @@ export function setRunnerForTests(r?: Runner, onDisk?: (p: string) => boolean): 
   copyAt = r ? (onDisk ?? (() => false)) : isExecutable;
   bins.clear();
   probes.clear();
+  probing.clear();
+  shellSaid.clear();
+  versions.clear();
   codexUrl = undefined;
 }
 
@@ -128,7 +138,6 @@ export function fallbackCandidates(id: string, home: string, nvmDirs: string[]):
 export function forgetCli(id: CliId): void {
   bins.delete(id);
   probes.delete(id);
-  if (id === "codex") codexUrl = undefined;
 }
 
 /** Where the managed Node.js is kept (installNode), and its bin folder. */
@@ -158,9 +167,7 @@ export function olderThan(a: number[], b: number[]): boolean {
  * models refuse an old Codex; the first found wins a tie. The Mac app picks the same way (MacReport.swift binary()).
  */
 async function lookup(id: CliId): Promise<string | null> {
-  // -i: nvm is usually set up in .zshrc, which only an interactive login shell reads
-  const out = await run("/bin/zsh", ["-lic", `command -v ${id}`], { timeout: 5000 });
-  const line = out.stdout.split("\n").map((l) => l.trim()).filter((l) => l.startsWith("/")).pop();
+  const line = (await fromShell(id)).split("\n").map((l) => l.trim()).filter((l) => l.startsWith("/")).pop();
   const home = os.homedir();
   const seen = new Set<string>();
   const copies = [...(line ? [line] : []), ...fallbackCandidates(id, home, nvmVersionDirs(home)).filter(copyAt)].filter((p) => {
@@ -169,7 +176,7 @@ async function lookup(id: CliId): Promise<string | null> {
   });
   if (copies.length < 2) return copies[0] ?? null;
   const versionAt = async (bin: string) => {
-    const v = await run(bin, ["--version"], { env: { ...process.env, PATH: toolPath(bin) }, timeout: 5000 });
+    const v = await versionOut(bin);
     return versionNumbers(v.stdout || v.stderr);
   };
   let best = copies[0]!;
@@ -179,6 +186,41 @@ async function lookup(id: CliId): Promise<string | null> {
     if (olderThan(bestVersion, v)) [best, bestVersion] = [p, v];
   }
   return best;
+}
+
+const SHELL_TTL = 10_000;
+/**
+ * A login shell's answer to `command -v <names>` (-i: nvm is usually set up in .zshrc, which only an interactive login
+ * shell reads). An interactive shell can take seconds to start, so one is asked at most every ten seconds per line and
+ * every look that overlaps shares that one answer. A look per program on every poll, each with a shell of its own that
+ * outlived its timeout, once left hundreds of shells running on a busy Mac.
+ */
+function fromShell(names: string): Promise<string> {
+  const hit = shellSaid.get(names);
+  if (hit && Date.now() - hit.at < SHELL_TTL) return hit.out;
+  const out = run("/bin/zsh", ["-lic", `command -v ${names}`], { timeout: 5000 }).then((o) => o.stdout);
+  shellSaid.set(names, { at: Date.now(), out });
+  return out;
+}
+
+/** A program's `--version` answer, asked once per file: it starts the program (Gemini CLI takes seconds), and every look needs it. */
+/** When a program's file last changed (0 when it can't be read): what its remembered answers are kept by. */
+function changedAt(bin: string): number {
+  try {
+    return statSync(safeReal(bin) ?? bin).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+async function versionOut(bin: string): Promise<Out> {
+  const changed = changedAt(bin);
+  const hit = versions.get(bin);
+  if (hit && hit.changed === changed) return hit.out;
+  // 10 s: Gemini CLI, a Node script, took 2.7 s to answer on its first start after install
+  const out = await run(bin, ["--version"], { env: { ...process.env, PATH: toolPath(bin) }, timeout: 10_000 });
+  if (out.code === 0) versions.set(bin, { changed, out });
+  return out;
 }
 
 /** The CLI's path on this Mac, cached once found. */
@@ -272,18 +314,27 @@ export interface Probe {
 }
 
 async function codexSupportsUrl(): Promise<boolean> {
-  if (codexUrl === undefined) {
+  const bin = bins.get("codex") ?? "";
+  const changed = changedAt(bin);
+  // asked once per copy of Codex (until that file changes), not on every look
+  if (codexUrl?.bin !== bin || codexUrl.changed !== changed) {
     const h = await runCli("codex", ["mcp", "add", "--help"], 3000);
-    if (h) codexUrl = /--url/.test(h.stdout + h.stderr);
+    if (h) codexUrl = { bin, changed, value: /--url/.test(h.stdout + h.stderr) };
   }
-  return codexUrl ?? false;
+  return codexUrl?.bin === bin && codexUrl.changed === changed ? codexUrl.value : false;
 }
 
 /** The state of one CLI on this Mac, read from the CLI itself. `home` is where Claude folders are looked for. */
 export async function probeCli(id: CliId, home = os.homedir()): Promise<Probe> {
-  const v = await runCli(id, ["--version"], 10_000);
-  // found only when --version exits 0: a timeout or a crash is not a found CLI (M-53). 10 s: Gemini CLI, a Node
-  // script, took 2.7 s to answer on its first start after install
+  // found only when --version exits 0: a timeout or a crash is not a found CLI (M-53)
+  let v: Out | null = null;
+  for (let tries = 0; tries < 2 && !v; tries++) {
+    const at = await binFor(id);
+    if (!at) break;
+    const out = await versionOut(at);
+    if (out.code === "ENOENT") bins.delete(id); // the copy is gone: look once more
+    else v = out;
+  }
   if (!v || v.code !== 0) return { id, found: false, signedIn: null };
   const version = parseVersion(v.stdout || v.stderr);
   const bin = bins.get(id);
@@ -325,7 +376,12 @@ const safeReal = (p: string): string | undefined => {
 export async function probe(id: CliId, fresh = false, home = os.homedir()): Promise<Probe> {
   const hit = probes.get(id);
   if (!fresh && hit && Date.now() - hit.at < PROBE_TTL) return hit.p;
-  const p = await probeCli(id, home);
+  let running = probing.get(id);
+  if (!running) {
+    running = probeCli(id, home).finally(() => probing.delete(id));
+    probing.set(id, running);
+  }
+  const p = await running;
   probes.set(id, { at: Date.now(), p });
   return p;
 }
@@ -342,8 +398,8 @@ export const OTHER_AIS: Partial<Record<Driver, string>> = { grok: "grok", cursor
 /** The other AIs on this Mac: one login shell's `command -v` for all of them, then the usual folders (as lookup). */
 export async function otherAis(home = os.homedir()): Promise<Driver[]> {
   const ids = Object.keys(OTHER_AIS) as Driver[];
-  const out = await run("/bin/zsh", ["-lic", `command -v ${ids.map((id) => OTHER_AIS[id]).join(" ")}`], { timeout: 5000 });
-  const onPath = new Set(out.stdout.split("\n").map((l) => l.trim()).filter((l) => l.startsWith("/")).map((l) => path.basename(l)));
+  const out = await fromShell(ids.map((id) => OTHER_AIS[id]).join(" "));
+  const onPath = new Set(out.split("\n").map((l) => l.trim()).filter((l) => l.startsWith("/")).map((l) => path.basename(l)));
   const nvm = nvmVersionDirs(home);
   return ids.filter((id) => onPath.has(OTHER_AIS[id]!) || fallbackCandidates(OTHER_AIS[id]!, home, nvm).some(copyAt));
 }
@@ -496,6 +552,7 @@ export async function installCli(id: CliId): Promise<SignInResult> {
   const bin = id === "gemini" ? geminiBin() : path.join(localBin(), id);
   const v = await run(bin, ["--version"], { env: { ...process.env, PATH: toolPath(bin) }, timeout: 15_000 });
   forgetCli(id); // the next look reads the machine again
+  shellSaid.delete(id); // and asks the shell again: the new copy may be on its PATH
   if (v.code !== 0) return { ok: false, message: `${NAMES[id]} installed, but it didn't start. Try again.`, raw: tailOf(v) };
   return { ok: true, message: `${NAMES[id]} is installed.` };
 }
@@ -706,6 +763,10 @@ export async function updateCli(id: CliId): Promise<SignInResult> {
   if (!p.found || !p.bin) return { ok: false, message: MISSING };
   const out = await run("/bin/zsh", ["-lc", codexUpdateCommand(p.bin, p.real)], { env: { ...process.env, PATH: toolPath(p.bin) }, timeout: STEP_MS });
   forgetCli(id);
+  // the copy is a new one now: ask it again what it is and what it takes
+  shellSaid.delete(id);
+  versions.delete(p.bin);
+  codexUrl = undefined;
   if (out.code !== 0) return { ok: false, message: "Codex didn't update. Try again.", raw: tailOf(out) };
   return (await probe(id, true)).supportsUrl ? { ok: true, message: "Codex is updated." } : { ok: false, message: "Codex updated, but it is still too old for this." };
 }

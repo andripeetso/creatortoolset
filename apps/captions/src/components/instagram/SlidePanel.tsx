@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronLeft, ChevronRight, Film, Image as ImageIcon, Loader2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Film, Image as ImageIcon } from "lucide-react";
 import {
   fmtMmSs,
   isProcessing,
@@ -12,47 +12,6 @@ import {
 
 const label =
   "mb-1.5 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-zinc-500";
-
-function PartDot({
-  name,
-  status,
-  error,
-  processing,
-  onClick,
-}: {
-  name: string;
-  status: "pending" | "done" | "skipped" | "error";
-  error?: string;
-  processing: boolean;
-  /** Done: show it; not made or failed: make it. */
-  onClick?: () => void;
-}) {
-  const cls =
-    status === "done"
-      ? "border-emerald-500/30 text-emerald-300"
-      : status === "error"
-        ? "border-red-500/30 text-red-300"
-        : "border-zinc-800 text-zinc-500";
-  const busy = status === "pending" && processing;
-  const inner = (
-    <>
-      {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-      {name}
-      {status === "skipped" ? " · skipped" : status === "error" ? " · failed" : ""}
-    </>
-  );
-  if (!onClick || busy) return <span title={busy ? `Making the ${name.toLowerCase()}…` : error} className={`flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] ${cls}`}>{inner}</span>;
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={status === "done" ? `Show the ${name.toLowerCase()}` : status === "error" ? `${error ?? "Failed"}. Click to try again.` : `Make the ${name.toLowerCase()} (transcript and on-screen text together)`}
-      className={`flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] hover:bg-zinc-800 hover:text-zinc-100 ${cls}`}
-    >
-      {inner}
-    </button>
-  );
-}
 
 function TranscriptBlock({
   words,
@@ -106,7 +65,8 @@ export function SlidePanel({
   /** Make the transcript and on-screen text (a chip that isn't done yet was clicked). */
   onRead?: () => void;
 }) {
-  const [mode, setMode] = useState<"one" | "all">("one");
+  // a post of several slides that has been read opens on all of its text; one slide, or nothing read yet, on the slide
+  const [mode, setMode] = useState<"one" | "all">(() => (post.slides.length > 1 && post.slides.some(slideHasText) ? "all" : "one"));
   const processing = isProcessing(post);
   const slides = post.slides;
   const slide = slides[index];
@@ -154,24 +114,9 @@ export function SlidePanel({
         ) : (
           <span className="text-xs font-medium text-zinc-200">{slide.kind === "video" ? "Video" : "Image"}</span>
         )}
-        <span className="text-[11px] text-zinc-500">
-          {slide.durationS ? `${fmtMmSs(slide.durationS)}` : ""}
-          {slide.durationS && slide.width && slide.height ? " · " : ""}
-          {slide.width && slide.height ? `${slide.width}×${slide.height}` : ""}
-        </span>
         <span className="ml-auto flex items-center gap-1.5">
-          {slide.kind === "video" && (
-            <PartDot
-              name="Transcript"
-              status={slide.transcript.status}
-              error={slide.transcript.error}
-              processing={processing}
-              onClick={slide.transcript.status === "done" ? () => document.getElementById(`transcript-${post.id}-${slide.index}`)?.scrollIntoView({ behavior: "smooth", block: "start" }) : onRead}
-            />
-          )}
-          <PartDot name="On-screen text" status={v.status} error={v.error} processing={processing} onClick={v.status === "done" ? undefined : onRead} />
-          {count > 1 && (
-            <span className="ml-1 flex overflow-hidden rounded-md border border-zinc-800 text-[10px]">
+          {count > 1 && anyText && (
+            <span className="flex overflow-hidden rounded-md border border-zinc-800 text-[10px]">
               <button
                 type="button"
                 onClick={() => setMode("one")}
@@ -277,11 +222,16 @@ export function SlidePanel({
             </div>
           )}
           {alt && !v.description && <p className="mb-3 text-xs text-zinc-500">Alt text: {alt}</p>}
-          {v.status === "error" && v.error && (
-            <p className="mb-2 text-xs text-red-400">On-screen text: {v.error}</p>
-          )}
-          {slide.transcript.status === "error" && slide.transcript.error && (
-            <p className="mb-2 text-xs text-red-400">Transcript: {slide.transcript.error}</p>
+          {(v.status === "error" || slide.transcript.status === "error") && (
+            <p className="mb-2 flex flex-wrap items-center gap-2 text-xs text-amber-400">
+              <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+              Couldn't read this slide
+              {onRead && !processing ? (
+                <button type="button" onClick={onRead} className="underline underline-offset-2 hover:text-amber-300">
+                  Try again
+                </button>
+              ) : null}
+            </p>
           )}
           {!slideHasText(slide) && v.status !== "error" && (
             <p className="text-xs text-zinc-600">

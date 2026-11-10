@@ -144,13 +144,55 @@ export function projectColor(p: { id: string; color?: string } | null | undefine
   return keys.find((k) => !used.has(k)) ?? keys[0];
 }
 
+/** A colour of the person's own making (Settings → Appearance → Colour → Custom): "#rrggbb". */
+export const isHexColour = (c: string): c is `#${string}` => /^#[0-9a-f]{6}$/i.test(c);
+/** What the app can wear: one of the project colours, or a colour of the person's own. */
+export type Accent = ProjectColor | `#${string}`;
+
 /**
  * The colour the app wears (Settings → Appearance → Colour): the current project's while the person follows the
- * project, else the one they picked for themselves. No project, or a colour that is not one of ours, is violet.
+ * project, else the one they picked for themselves (a project colour, or their own "#rrggbb"). No project, or a colour
+ * that is neither, is violet.
  */
-export function accentFor(followProject: boolean, own: string, project: ProjectColor | null): ProjectColor {
+export function accentFor(followProject: boolean, own: string, project: ProjectColor | null): Accent {
   if (followProject) return project ?? "violet";
+  if (isHexColour(own)) return own.toLowerCase() as Accent;
   return Object.keys(PROJECT_COLORS).includes(own) ? (own as ProjectColor) : "violet";
+}
+
+const SHADES = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950] as const;
+// how far each shade is from the picked colour (its 500): towards white below it, towards black above it
+const TOWARDS: Record<(typeof SHADES)[number], number> = { 50: -0.95, 100: -0.9, 200: -0.75, 300: -0.55, 400: -0.3, 500: 0, 600: 0.14, 700: 0.3, 800: 0.44, 900: 0.56, 950: 0.72 };
+// the light theme swaps the pale and the deep shades for text and for filled chips (tailwind.config.js `mirror`)
+const MIRROR: Record<number, (typeof SHADES)[number]> = { 50: 950, 100: 900, 200: 800, 300: 700, 400: 600, 800: 200, 900: 100, 950: 50 };
+
+/** The eleven shades of a picked colour, each as "r g b": the picked one is 500, lighter ones mix in white, darker ones black. */
+export function shadesOf(hex: string): Record<(typeof SHADES)[number], string> {
+  const base = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  const shade = (t: number) => base.map((v) => Math.round(t < 0 ? v + (255 - v) * -t : v * (1 - t))).join(" ");
+  return Object.fromEntries(SHADES.map((n) => [n, shade(TOWARDS[n])])) as Record<(typeof SHADES)[number], string>;
+}
+
+/**
+ * The CSS that makes a picked colour the app's accent in both themes: the same variables tailwind.config.js writes for
+ * each project colour, under data-tint="custom". Kept as text so index.html can paint it before the app loads.
+ */
+export function customTintCss(hex: string): string {
+  const s = shadesOf(hex);
+  const vars = (dark: boolean) =>
+    [
+      ...SHADES.map((n) => `--violet-${n}:${s[n]}`),
+      ...([50, 100, 200, 300, 400] as const).map((n) => `--t-violet-${n}:${s[dark ? n : MIRROR[n]]}`),
+      ...([800, 900, 950] as const).map((n) => `--s-violet-${n}:${s[dark ? n : MIRROR[n]]}`),
+    ].join(";");
+  return `:root[data-tint="custom"]{${vars(false)}}.dark[data-tint="custom"]{${vars(true)}}`;
+}
+
+/** The two tones Home's tiles take from the accent, each as "r g b": the filled one (600) and the pale one (400). */
+export function accentTones(a: Accent): { rgb: string; text: string } {
+  if (!isHexColour(a)) return PROJECT_COLORS[a];
+  const s = shadesOf(a);
+  return { rgb: s[600], text: s[400] };
 }
 
 /** Puts that colour on <html data-tint>, which every violet class follows (tailwind.config.js):
@@ -163,12 +205,29 @@ export function useRootTint(on: boolean, own = "violet"): void {
   useEffect(() => {
     if (!color) return;
     const el = document.documentElement;
-    if (color === "violet") delete el.dataset.tint;
-    else el.dataset.tint = color;
+    const css = isHexColour(color) ? customTintCss(color) : null;
+    // a colour of the person's own has no rules in the stylesheet: its variables go in a style element of its own
+    let own = document.getElementById("ct-custom-tint");
+    if (css) {
+      if (!own) {
+        own = document.createElement("style");
+        own.id = "ct-custom-tint";
+        document.head.appendChild(own);
+      }
+      own.textContent = css;
+      el.dataset.tint = "custom";
+    } else {
+      own?.remove();
+      if (color === "violet") delete el.dataset.tint;
+      else el.dataset.tint = color;
+    }
     try {
-      localStorage.setItem("ct-tint", color);
+      // index.html paints these before the app loads, so a reload never flashes violet first
+      localStorage.setItem("ct-tint", css ? "custom" : color);
+      if (css) localStorage.setItem("ct-tint-css", css);
+      else localStorage.removeItem("ct-tint-css");
     } catch {
-      /* private mode: this visit only */
+      /* private mode: the colour holds for this visit */
     }
   }, [color]);
 }

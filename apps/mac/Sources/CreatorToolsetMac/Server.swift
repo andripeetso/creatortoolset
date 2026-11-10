@@ -317,6 +317,8 @@ final class LocalServer: ObservableObject {
         env["PLAYWRIGHT_BROWSERS_PATH"] = appSupport.appendingPathComponent("runtime/chromium").path
         env["CT_LOCAL"] = "1"
         env["CT_APP_FOLDER"] = appSupport.path
+        // the connect service, when this Mac has one set: the server starts "Add this Mac to my account" with it
+        if let service = connectService { env["CT_CONNECT_URL"] = service.absoluteString }
         env["CT_EXIT_WITH_PARENT"] = "1"
         env.merge(releaseEnv(Bundle.main.infoDictionary), uniquingKeysWith: { $1 })
         env.merge(pluginEnvironment(approved: PluginRecord.live.load(), paused: UserDefaults.standard.bool(forKey: pluginsPausedKey)), uniquingKeysWith: { $1 })

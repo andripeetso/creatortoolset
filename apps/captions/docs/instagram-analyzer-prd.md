@@ -8,11 +8,11 @@ Target product name: **Instagram Analyzer**
 
 > **How it reads Instagram today (2026-11).** Two sources, nothing else:
 >
-> - **The official Meta login** (Settings → Connectors, or `META_ACCESS_TOKEN` for the server admin's own account):
+> - **The official Meta login** (Settings → Social accounts, or `META_ACCESS_TOKEN` for the server admin's own account):
 >   your own professional account only. It gives your posts, their insights and comments, your account's numbers,
 >   and whether a reel was shared to the feed (trial reels). It gives nothing about other creators, and a reel it
 >   has no shared-to-feed flag for stays "visibility unknown".
-> - **Your own Apify key** (Settings → Connectors): other creators' public profiles, posts and comments. Apify bills
+> - **Your own Apify key** (Settings → API keys): other creators' public profiles, posts and comments. Apify bills
 >   you for each read; nobody else's key, and no server-wide key, is ever used for you (`APIFY_TOKEN` serves only
 >   the one local account when `APP_SECRET` is unset).
 >
@@ -112,7 +112,7 @@ Stored at `$DATA_DIR/instagram/users/<username>/` mode `0600`, never returned to
 
 | File | Purpose |
 | --- | --- |
-| `apify.json` | Their Apify token (set in Settings → Connectors) |
+| `apify.json` | Their Apify token (set in Settings → API keys) |
 
 Ingest and jobs always use **the calling user’s** credentials. If they have none, the UI says so. An admin token is not a fallback for other people.
 
@@ -323,7 +323,7 @@ Do not rename `$DATA_DIR/instagram/` on disk. Folder name is storage, not the pr
 **Required:**
 
 - Settings card moves from “admin-only global” to **each user’s Analyzer page**.
-- The Apify token is read and saved per user in `$DATA_DIR/instagram/users/<username>/apify.json` (Settings → Connectors).
+- The Apify token is read and saved per user in `$DATA_DIR/instagram/users/<username>/apify.json` (Settings → API keys).
 - Jobs read credentials of `jobUsers.get(id)`, never the global file.
 - Migrate existing `instagram/apify.json` once: copy into the admin user’s folder, then stop reading the global path (keep a read fallback for one release).
 - Env `APIFY_TOKEN` only seeds the **local** user when `APP_SECRET` is unset.
@@ -386,7 +386,7 @@ New / changed:
 - Analyzer home: accounts strip + post library + paste box with **recipe**.
 - Account page (new).
 - Post page: recipe + snapshots + age; existing media/comments.
-- Credentials: per user, the Apify key and the Meta login in Settings → Connectors.
+- Credentials: per user, the Apify key in Settings → API keys and the Meta login in Settings → Social accounts.
 - “Run jobs” dialog (shared by library, account, post).
 - Group/sort controls on the library.
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { LIBRARY_NAME, STORAGE_ROLES, THIS_COMPUTER, sourcesOf, type AddFolderBody, type Disk, type MakeLibraryBody, type SourceRole, type StorageFolder, type StorageState, type StorageView } from "@contracts/storage";
 import type { ProvidersView } from "@contracts/providers";
 import { Plus } from "lucide-react";
@@ -69,24 +69,98 @@ export function driveOf(disks: readonly Disk[], typed: string): Disk | undefined
 }
 
 const NO_DRIVE = "no-drive";
+const CONNECT = "connect-network-storage";
+
+/**
+ * What a person types for a network share, as the address Finder connects to: "nas.local/Footage", "\\nas\Footage" and
+ * "smb://nas.local/My Footage" all become smb://…, with spaces written the way an address needs. Only smb and afp are
+ * taken (the address becomes a link, so nothing else may get through); null for anything that is not a share.
+ */
+export function shareAddress(typed: string): string | null {
+  const t = typed.trim().replace(/\\/g, "/");
+  const m = /^([a-z][a-z0-9+.-]*):\/\/(.*)$/i.exec(t);
+  const scheme = m ? m[1].toLowerCase() : "smb";
+  const rest = (m ? m[2] : t).replace(/^\/+/, "").replace(/\/+$/, "");
+  if (!["smb", "afp"].includes(scheme) || !/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:\d+)?(\/.+)?$/i.test(rest)) return null;
+  let plain = rest;
+  try {
+    plain = decodeURI(rest);
+  } catch {
+    /* a stray % in a share's name: taken as typed */
+  }
+  return `${scheme}://${encodeURI(plain)}`;
+}
+
+/** A link like smb:// only opens Finder on a Mac: the page offers Connect there and nowhere else. */
+const onMac = () => typeof navigator !== "undefined" && /mac/i.test(navigator.platform || navigator.userAgent);
+
 /**
  * The drives of the chosen computer (its system disk, external drives, network shares), above a folder field: picking one
  * starts the path there, and a typed path shows the drive it is on. Nothing is shown for a computer that reported none.
+ * On a Mac the list ends with "Connect network storage…": an address, and Connect hands it to Finder on this Mac, which
+ * asks for the share's name and password itself. While that form is open the drives are read again every few seconds
+ * (`onLook`), and a share that appears is picked.
  */
-export function DriveSelect({ disks, path, onPick }: { disks: readonly Disk[]; path: string; onPick: (start: string) => void }) {
+export function DriveSelect({ disks, path, onPick, onLook }: { disks: readonly Disk[]; path: string; onPick: (start: string) => void; onLook?: () => void }) {
+  const [connecting, setConnecting] = useState(false);
+  const [address, setAddress] = useState("");
+  const known = useRef<string[] | null>(null);
+  useEffect(() => {
+    if (!connecting || !onLook) return;
+    const t = window.setInterval(onLook, 5000);
+    return () => window.clearInterval(t);
+  }, [connecting, onLook]);
+  // the share Finder just connected: the first network drive that was not in the list when the form opened
+  useEffect(() => {
+    if (!connecting) {
+      known.current = null;
+      return;
+    }
+    if (!known.current) known.current = disks.map((d) => d.path);
+    const fresh = disks.find((d) => d.network && !known.current!.includes(d.path));
+    if (!fresh) return;
+    onPick(driveStart(fresh));
+    setConnecting(false);
+    setAddress("");
+  }, [connecting, disks, onPick]);
   if (disks.length === 0) return null;
   const on = driveOf(disks, path);
+  const href = shareAddress(address);
   return (
-    <SettingsSelect
-      label="Drive"
-      value={on?.path ?? NO_DRIVE}
-      onValueChange={(v) => {
-        const d = disks.find((x) => x.path === v);
-        if (d) onPick(driveStart(d));
-      }}
-      options={[...(on ? [] : [{ value: NO_DRIVE, label: "Choose a drive" }]), ...disks.map((d) => ({ value: d.path, label: driveLabel(d) }))]}
-      className="sm:w-full"
-    />
+    <>
+      <SettingsSelect
+        label="Drive"
+        value={connecting ? CONNECT : (on?.path ?? NO_DRIVE)}
+        onValueChange={(v) => {
+          setConnecting(v === CONNECT);
+          const d = disks.find((x) => x.path === v);
+          if (d) onPick(driveStart(d));
+        }}
+        options={[
+          ...(on || connecting ? [] : [{ value: NO_DRIVE, label: "Choose a drive" }]),
+          ...disks.map((d) => ({ value: d.path, label: driveLabel(d) })),
+          ...(onMac() ? [{ value: CONNECT, label: "Connect network storage…" }] : []),
+        ]}
+        className="sm:w-full"
+      />
+      {connecting && (
+        <>
+          <div className="flex items-center gap-2">
+            <Input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="smb://nas.local/Footage" aria-label="Network storage address" autoFocus />
+            {href ? (
+              <Button asChild type="button" size="sm" variant="outline">
+                <a href={href}>Connect</a>
+              </Button>
+            ) : (
+              <Button type="button" size="sm" variant="outline" disabled>
+                Connect
+              </Button>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground">Finder connects it on this Mac and asks for its name and password. It is picked here once it is connected.</p>
+        </>
+      )}
+    </>
   );
 }
 
@@ -175,7 +249,7 @@ function LibraryDialog({ open, onOpenChange, devices, serverDisks, change, onCha
       ) : (
         <>
           <SettingsSelect label="Computer" value={host} onValueChange={setPickHost} options={devices.map((d) => ({ value: d.id, label: d.name }))} className="sm:w-full" />
-          <DriveSelect disks={disksFor(devices, host, serverDisks)} path={folder} onPick={setFolder} />
+          <DriveSelect disks={disksFor(devices, host, serverDisks)} path={folder} onPick={setFolder} onLook={onChanged} />
           <Input value={folder} onChange={(e) => setFolder(e.target.value)} placeholder="~" aria-label="Folder to put it in" />
           <p className="font-mono text-xs text-muted-foreground">{where}</p>
         </>
@@ -286,7 +360,7 @@ export function AddFolderDialog({ open, onOpenChange, role: first, devices, serv
             className="sm:w-full"
           />
           <SettingsSelect label="Computer" value={host} onValueChange={setPickHost} options={devices.map((d) => ({ value: d.id, label: d.name }))} className="sm:w-full" />
-          <DriveSelect disks={disksFor(devices, host, serverDisks)} path={path} onPick={setPath} />
+          <DriveSelect disks={disksFor(devices, host, serverDisks)} path={path} onPick={setPath} onLook={onChanged} />
           <Input value={path} onChange={(e) => setPath(e.target.value)} placeholder="/Volumes/Drive/Footage" aria-label="Folder path" />
         </>
       )}

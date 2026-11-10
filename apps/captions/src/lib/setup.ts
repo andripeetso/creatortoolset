@@ -90,6 +90,45 @@ export const setupOpen = (view: Pick<SetupView, "done" | "tools"> | null, asked:
 /** Whether the setup window is on screen right now (SetupDialog sets it): the assistant dock and popup stay away only then. */
 export const useSetupShown = create<{ shown: boolean }>(() => ({ shown: false }));
 
+/**
+ * Home's welcome animation (components/HomeIntro.tsx), on right after the Done that finishes setup. In memory only, so
+ * a reload, a later visit or an account that finished setup earlier never sees it.
+ */
+export const useIntro = create<{ on: boolean; after: (() => void) | null }>(() => ({ on: false, after: null }));
+
+/**
+ * Whether leaving setup starts it: the Done that finishes setup the first time, or Not now before that; once per
+ * browser (`seen`), never on a phone or with motion turned down.
+ */
+export const introPlays = (at: { finishedBefore: boolean; seen: boolean; phone: boolean; still: boolean }): boolean =>
+  !at.finishedBefore && !at.seen && !at.phone && !at.still;
+
+const INTRO_SEEN = "ct-intro-seen";
+let introSeenThisLoad = false;
+/** The welcome has played in this browser: Not now showed it, so the Done that finishes setup later does not show it again. */
+export function markIntroSeen(): void {
+  introSeenThisLoad = true;
+  write("local", INTRO_SEEN, "1");
+}
+export const introSeen = (): boolean => introSeenThisLoad || read("local", INTRO_SEEN) === "1";
+
+/** The system's Reduce motion. */
+export const stillMotion = (): boolean => globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+
+/** Starts it. `after` runs when it ends or is skipped, or at once when it does not play. */
+export function startIntro(plays: boolean, after?: () => void): void {
+  if (!plays) return void after?.();
+  useIntro.setState({ on: true, after: after ?? null });
+}
+
+/** The end, Skip, or leaving Home: Home is all there, and what waited for it runs. */
+export function endIntro(): void {
+  const { on, after } = useIntro.getState();
+  if (!on) return;
+  useIntro.setState({ on: false, after: null });
+  after?.();
+}
+
 /** Remembers the step Not now was pressed on, for Finish setting up. */
 export function rememberLater(step: SetupStep): void {
   write("session", LATER, step);

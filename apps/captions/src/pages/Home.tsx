@@ -338,6 +338,7 @@ export default function Home() {
   return (
     <div
       aria-busy={editorBusy}
+      data-fills-window
       className="relative isolate flex h-screen flex-col bg-zinc-950 text-zinc-200"
     >
       {/* top bar */}

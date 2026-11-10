@@ -52,7 +52,7 @@ export default function ScreenProjectPage() {
   ];
 
   return (
-    <div className="flex h-dvh flex-col bg-zinc-950 text-zinc-100">
+    <div data-fills-window className="flex h-dvh flex-col bg-zinc-950 text-zinc-100">
       <AppBar tool="Screen Recorder" trail={rec?.name} />
       {!rec || !source ? (
         <div className="flex flex-1 items-center justify-center text-sm text-zinc-400">
