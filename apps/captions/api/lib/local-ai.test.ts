@@ -1,4 +1,5 @@
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { ProviderCheck } from "../../contracts/providers";
@@ -12,12 +13,12 @@ process.env.APP_SECRET = "test-secret";
 process.env.CODEX_HOME = path.join(root, "codex");
 
 // The Mac relay is not run here: the check's result is set per test, and it still goes through recordCheck.
-const mockCheck = vi.hoisted(() => ({ next: { ok: true, ms: 5, error: undefined as string | undefined } }));
+const mockCheck = vi.hoisted(() => ({ next: { ok: true, ms: 5, error: undefined as string | undefined, note: undefined as string | undefined } }));
 vi.mock("../providers", async () => {
   const lib = await import("./providers");
   return {
     checkInstance: async (scope: string, inst: { id: string }) => {
-      const c = { ok: mockCheck.next.ok, ms: mockCheck.next.ms, model: "m", at: Date.now(), error: mockCheck.next.error } as ProviderCheck;
+      const c = { ok: mockCheck.next.ok, ms: mockCheck.next.ms, model: "m", at: Date.now(), error: mockCheck.next.error, ...(mockCheck.next.note ? { note: mockCheck.next.note } : {}) } as ProviderCheck;
       await lib.recordCheck(`${scope}:${inst.id}`, c);
       return c;
     },
@@ -35,7 +36,7 @@ const home = path.join(root, "home");
 const codexHome = path.join(root, "codex");
 
 beforeAll(() => {
-  for (const u of ["ana", "ben", "dee", "eve", "fay", "gus", "hal", "ian", "cy", "zed", "joy"]) createUser(u, "password1", { role: "user" });
+  for (const u of ["ana", "ben", "dee", "eve", "fay", "gus", "hal", "ian", "cy", "zed", "joy", "old", "lim"]) createUser(u, "password1", { role: "user" });
 });
 afterAll(() => {
   local.setRunnerForTests();
@@ -83,7 +84,7 @@ describe("reading what the CLIs say", () => {
     expect(plainError("Claude: Not logged in · Please run /login")).toEqual({ state: "signin", message: "Not signed in yet." });
     expect(plainError("request timed out after 60s")).toMatchObject({ state: "failed", message: "It took too long to answer. Try again." });
     expect(plainError("spawn claude ENOENT")).toMatchObject({ state: "missing" });
-    expect(plainError("model not found for this plan")).toMatchObject({ state: "failed", message: "It didn't answer. Check that you're signed in, then try again." });
+    expect(plainError("model not found for this plan")).toMatchObject({ state: "failed", message: "It didn't answer. Try again." });
   });
 
   it("finds a binary in the usual places, nvm's newest last-resort", () => {
@@ -156,6 +157,63 @@ describe("connect your AI", () => {
     expect(ownSettings("cy")).toBeNull();
   });
 
+  it("an old Codex that today's models refuse is 'outdated' (the page installs the current one), and nothing is saved", async () => {
+    const { device } = pairDevice("old", "Old Mac");
+    touchDevice(device.id);
+    world(["codex"], (f, args) => {
+      if (args.join(" ") === "login status") return { stdout: "Logged in using ChatGPT\n" };
+      if (f.endsWith("/codex") && args[0] === "--version") return { stdout: "codex-cli 0.39.0\n" };
+      return undefined;
+    });
+    // Codex's own words, as codex-cli 0.39.0 got them on 2026-11-10
+    mockCheck.next = { ok: false, ms: 3, note: undefined, error: `Codex: unexpected status 400 Bad Request: {"detail":"The 'gpt-5.6-terra' model requires a newer version of Codex. Please upgrade to the latest app or CLI and try again."}` };
+    expect(await local.connectCli("old", "codex", home, device.id)).toMatchObject({ state: "outdated", answered: false });
+    expect(ownSettings("old")).toBeNull();
+  });
+
+  it("a plan at its limit is connected: saved with its check, and the message says when it resets", async () => {
+    const { device } = pairDevice("lim", "Lim Mac");
+    touchDevice(device.id);
+    world(["claude"], (f, args) => (args.join(" ") === "auth status --json" ? { stdout: claudeAuth(true, "max") } : claudeVersion(f, args)));
+    const note = "Your Claude plan's weekly limit is reached; it resets Nov 11 at 5pm.";
+    mockCheck.next = { ok: true, ms: 4, error: undefined, note };
+    expect(await local.connectCli("lim", "claude", home, device.id)).toEqual({ state: "ready", signedIn: true, answered: false, ms: 4, message: note });
+    expect(ownSettings("lim")?.instances[0]).toMatchObject({ id: "local-claude", lastCheck: { ok: true } });
+    mockCheck.next = { ok: true, ms: 5, error: undefined, note: undefined };
+  });
+
+  it("runs the newest copy when this Mac has two: an old Homebrew Codex beside the one Install put in ~/.local/bin", async () => {
+    const mine = path.join(os.homedir(), ".local", "bin", "codex");
+    local.setRunnerForTests(
+      async (file, args) => {
+        if (file === "/bin/zsh") return { stdout: "/opt/homebrew/bin/codex\n", stderr: "", code: 0 };
+        if (args[0] === "--version") return { stdout: file === mine ? "codex-cli 0.167.0\n" : "codex-cli 0.39.0\n", stderr: "", code: 0 };
+        return { stdout: "", stderr: "", code: 0 };
+      },
+      (p) => p === mine,
+    );
+    expect(await local.binFor("codex")).toBe(mine);
+    expect(local.olderThan([0, 39, 0], [0, 167, 0])).toBe(true);
+    expect(local.olderThan([2, 1, 321], [2, 1, 321])).toBe(false);
+    expect(local.versionNumbers("2.1.321 (Claude Code)")).toEqual([2, 1, 321]);
+  });
+
+  it("counts the Codex the ChatGPT app carries, so that person needs no download; never a Claude inside another app", async () => {
+    const inApp = "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex";
+    expect(fallbackCandidates("codex", "/Users/x", [])).toContain(inApp);
+    expect(fallbackCandidates("claude", "/Users/x", []).filter((p) => p.includes(".app/"))).toEqual([]);
+    // an old Homebrew Codex on the shell's PATH, the ChatGPT app's newer one beside it: the app's runs
+    local.setRunnerForTests(
+      async (file, args) => {
+        if (file === "/bin/zsh") return { stdout: "/opt/homebrew/bin/codex\n", stderr: "", code: 0 };
+        if (args[0] === "--version") return { stdout: file === inApp ? "codex-cli 0.163.0-alpha.11.2\n" : "codex-cli 0.39.0\n", stderr: "", code: 0 };
+        return { stdout: "", stderr: "", code: 0 };
+      },
+      (p) => p === inApp,
+    );
+    expect(await local.binFor("codex")).toBe(inApp);
+  });
+
   it("says the Mac app must be open when no Mac of this account is online", async () => {
     world(["claude"], (f, args) => (args.join(" ") === "auth status --json" ? { stdout: claudeAuth(true) } : claudeVersion(f, args)));
     expect(await local.connectCli("cy", "claude", home)).toMatchObject({ state: "mac", signedIn: true });
@@ -165,7 +223,7 @@ describe("connect your AI", () => {
     const { device } = pairDevice("fay", "Studio Mac");
     touchDevice(device.id);
     world(["claude"], (f, args) => (args.join(" ") === "auth status --json" ? { stdout: claudeAuth(true, "max") } : claudeVersion(f, args)));
-    mockCheck.next = { ok: true, ms: 7, error: undefined };
+    mockCheck.next = { ok: true, ms: 7, error: undefined, note: undefined };
     const r = await local.connectCli("fay", "claude", home, device.id);
     expect(r).toEqual({ state: "ready", signedIn: true, answered: true, ms: 7 });
     const s = ownSettings("fay");
@@ -184,7 +242,7 @@ describe("connect your AI", () => {
       if (f.endsWith("/codex") && args[0] === "--version") return { stdout: "codex-cli 0.50.0\n" };
       return undefined;
     });
-    mockCheck.next = { ok: true, ms: 11, error: undefined };
+    mockCheck.next = { ok: true, ms: 11, error: undefined, note: undefined };
     const r = await local.connectCli("hal", "codex", home, device.id);
     expect(r).toEqual({ state: "ready", signedIn: true, answered: true, ms: 11 });
     expect(ownSettings("hal")?.instances).toEqual([expect.objectContaining({ id: "local-codex", driver: "codex", name: "Codex", enabled: true, device: device.id })]);
@@ -200,7 +258,7 @@ describe("connect your AI", () => {
       if (f.endsWith("/codex") && args[0] === "--version") return { stdout: "codex-cli 0.50.0\n" };
       return undefined;
     });
-    mockCheck.next = { ok: true, ms: 9, error: undefined };
+    mockCheck.next = { ok: true, ms: 9, error: undefined, note: undefined };
     expect(await local.connectCli("kit", "codex", home, device.id)).toMatchObject({ state: "ready" });
     const saved = ownSettings("kit");
     expect(saved?.default).toEqual({ instance: "local-codex", model: "gpt-6-luna", effort: "xhigh" });
@@ -213,7 +271,7 @@ describe("connect your AI", () => {
     const mine = pairDevice("joy", "Studio Mac");
     touchDevice(mine.device.id);
     world(["claude"], (f, args) => (args.join(" ") === "auth status --json" ? { stdout: claudeAuth(true) } : claudeVersion(f, args)));
-    mockCheck.next = { ok: true, ms: 6, error: undefined };
+    mockCheck.next = { ok: true, ms: 6, error: undefined, note: undefined };
     expect(await local.connectCli("joy", "claude", home, mine.device.id)).toMatchObject({ state: "ready" });
     expect(ownSettings("joy")?.instances[0]?.device).toBe(mine.device.id);
   });
@@ -234,20 +292,18 @@ describe("connect your AI", () => {
       if (f.endsWith("/codex") && args[0] === "--version") return { stdout: "codex-cli 0.50.0\n" };
       return undefined;
     });
-    mockCheck.next = { ok: false, ms: 4, error: "Codex: boom" };
+    mockCheck.next = { ok: false, ms: 4, error: "Codex: boom", note: undefined };
     expect(await local.connectCli("joy", "codex", home, mine.device.id)).toMatchObject({ state: "failed" });
     expect(ownSettings("joy")?.instances.map((i) => i.id)).toEqual(["local-claude"]);
     expect(ownSettings("joy")?.default.instance).toBe("local-claude");
 
-    mockCheck.next = { ok: true, ms: 4, error: undefined };
+    mockCheck.next = { ok: true, ms: 4, error: undefined, note: undefined };
     expect(await local.connectCli("joy", "codex", home, mine.device.id)).toMatchObject({ state: "ready" });
     expect(ownSettings("joy")?.instances.map((i) => i.id)).toEqual(["local-claude", "local-codex"]);
     expect(ownSettings("joy")?.default.instance).toBe("local-claude");
   });
 
   it("Check again finds a CLI installed since the last look, and reads its sign-in again (no cached 'not found')", async () => {
-    // no desktop app either: this Mac's real /Applications would add its rows (the test is about the CLIs only)
-    local.setDesktopAppsForTests(() => false);
     const present: string[] = [];
     world(present, (f, args) => {
       if (f.endsWith("/codex") && args[0] === "--version") return { stdout: "codex-cli 0.50.0\n" };
@@ -260,13 +316,12 @@ describe("connect your AI", () => {
     expect((await local.localAiView("ana", [])).rows.filter((r) => r.found).map((r) => r.id)).toEqual([]);
     const fresh = await local.localAiView("ana", [], true);
     expect(fresh.rows.filter((r) => r.found)).toEqual([expect.objectContaining({ id: "codex", found: true, signedIn: true, version: "codex-cli 0.50.0" })]);
-    local.setDesktopAppsForTests();
   });
 
   it("updates the same instance on a second connect, and keeps its check through a Settings save", async () => {
     const before = ownSettings("fay")!;
     world(["claude"], (f, args) => (args.join(" ") === "auth status --json" ? { stdout: claudeAuth(true) } : claudeVersion(f, args)));
-    mockCheck.next = { ok: true, ms: 9, error: undefined };
+    mockCheck.next = { ok: true, ms: 9, error: undefined, note: undefined };
     await local.connectCli("fay", "claude", home, before.instances[0]!.device);
     expect(ownSettings("fay")?.instances).toHaveLength(1);
     // the Settings page sends its instances back without the check: the saved check stays
@@ -280,7 +335,7 @@ describe("connect your AI", () => {
     const { device } = pairDevice("gus", "Mac");
     touchDevice(device.id);
     world(["claude"], (f, args) => (args.join(" ") === "auth status --json" ? { stdout: claudeAuth(true) } : claudeVersion(f, args)));
-    mockCheck.next = { ok: false, ms: 30_000, error: "Claude: request timed out" };
+    mockCheck.next = { ok: false, ms: 30_000, error: "Claude: request timed out", note: undefined };
     const r = await local.connectCli("gus", "claude", home, device.id);
     expect(r).toMatchObject({ state: "failed", answered: false, message: "It took too long to answer. Try again.", raw: "Claude: request timed out" });
     expect(connectedOwn("gus")).toBe(false);
@@ -290,7 +345,7 @@ describe("connect your AI", () => {
     const { device } = pairDevice("hal", "Mac");
     touchDevice(device.id);
     world(["claude"], (f, args) => (args.join(" ") === "auth status --json" ? { stdout: claudeAuth(true) } : claudeVersion(f, args)));
-    mockCheck.next = { ok: false, ms: 3, error: "Claude: Not logged in · Please run /login" };
+    mockCheck.next = { ok: false, ms: 3, error: "Claude: Not logged in · Please run /login", note: undefined };
     expect(await local.connectCli("hal", "claude", home, device.id)).toMatchObject({ state: "signin", signedIn: false, answered: false, message: "Not signed in yet." });
   });
 
@@ -302,7 +357,7 @@ describe("connect your AI", () => {
     const { device } = pairDevice("ian", "Mac");
     touchDevice(device.id);
     world(["claude"], (f, args, env) => (args.join(" ") === "auth status --json" ? { stdout: claudeAuth(env?.CLAUDE_CONFIG_DIR === folder) } : claudeVersion(f, args)));
-    mockCheck.next = { ok: true, ms: 4, error: undefined };
+    mockCheck.next = { ok: true, ms: 4, error: undefined, note: undefined };
     await local.connectCli("ian", "claude", h, device.id);
     expect(ownSettings("ian")?.instances[0]).toMatchObject({ home: folder });
   });

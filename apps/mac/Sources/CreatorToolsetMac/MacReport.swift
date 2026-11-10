@@ -10,8 +10,11 @@ let reportDrivers: [(id: String, label: String)] = [
 
 /// Where each CLI may be (the Mac relay BINARIES): the official install on PATH or in the usual folders below.
 /// Claude is the `claude` command-line tool its owner installed and signed in to, never a copy inside another app.
+/// Codex also counts the copy the ChatGPT app carries (OpenAI's own program, the same sign-in in ~/.codex): a person
+/// with the ChatGPT app connects with no download, and the newest copy runs (binary()).
+let chatGPTAppCodex = "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex"
 let driverBinaries: [String: [String]] = [
-    "claude": ["claude"], "codex": ["codex", "/opt/homebrew/bin/codex"], "grok": ["grok", "~/.grok/bin/grok"], "gemini": ["gemini", "/opt/homebrew/bin/gemini"],
+    "claude": ["claude"], "codex": ["codex", "/opt/homebrew/bin/codex", chatGPTAppCodex], "grok": ["grok", "~/.grok/bin/grok"], "gemini": ["gemini", "/opt/homebrew/bin/gemini"],
     "cursor": ["cursor-agent"],
     "opencode": ["opencode", "~/.opencode/bin/opencode"], "antigravity": ["antigravity-acp"], "musecode": ["muse"], "pi": ["pi"],
 ]
@@ -75,12 +78,54 @@ func withBinaryOnPath(_ env: [String: String], binary path: String) -> [String: 
     return out
 }
 
-/// A driver's CLI on this Mac (the Mac relay binary()).
-func binary(_ driver: String, home: URL) -> String? {
-    for name in driverBinaries[driver] ?? [] {
-        if let found = which(name) { return found }
+/// Every executable named `name` in searchDirs(), in that order, each real file once (a folder listed twice, a symlink).
+func whichAll(_ name: String) -> [String] {
+    let expanded = (name as NSString).expandingTildeInPath
+    let candidates = expanded.hasPrefix("/") ? [expanded] : searchDirs().map { ($0 as NSString).appendingPathComponent(name) }
+    var seen = Set<String>()
+    return candidates.filter { FileManager.default.isExecutableFile(atPath: $0) && seen.insert(URL(fileURLWithPath: $0).resolvingSymlinksInPath().path).inserted }
+}
+
+/// The version numbers in a `--version` line ("codex-cli 0.39.0" → [0, 39, 0]); [] when it names none.
+func versionNumbers(_ text: String) -> [Int] {
+    guard let range = text.range(of: #"\d+(\.\d+)+"#, options: .regularExpression) else { return [] }
+    return text[range].split(separator: ".").compactMap { Int($0) }
+}
+
+/// A CLI copy's version, read once per file (its path and change date): `--version` starts a process.
+private var versionCache: [String: (changed: Date?, version: [Int])] = [:]
+private let versionLock = NSLock()
+func cliVersion(_ path: String) -> [Int] {
+    let changed = (try? FileManager.default.attributesOfItem(atPath: URL(fileURLWithPath: path).resolvingSymlinksInPath().path))?[.modificationDate] as? Date
+    versionLock.lock()
+    let hit = versionCache[path]
+    versionLock.unlock()
+    if let hit, hit.changed == changed { return hit.version }
+    let version = versionNumbers(runQuick(path, ["--version"], seconds: 5) ?? "")
+    versionLock.lock()
+    versionCache[path] = (changed, version)
+    versionLock.unlock()
+    return version
+}
+
+/// The newest of several copies, by version; the first found wins a tie (and when no copy names a version).
+func newest(_ paths: [String], version: (String) -> [Int] = cliVersion) -> String? {
+    guard paths.count > 1 else { return paths.first }
+    var best = (path: paths[0], version: version(paths[0]))
+    for path in paths.dropFirst() {
+        let v = version(path)
+        if v.lexicographicallyPrecedes(best.version) || v == best.version { continue }
+        best = (path, v)
     }
-    return nil
+    return best.path
+}
+
+/// A driver's CLI on this Mac (the Mac relay binary()). With more than one copy on the Mac (an old Homebrew Codex
+/// beside the one this app installed in ~/.local/bin), the newest runs: today's models refuse an old Codex.
+func binary(_ driver: String, home: URL) -> String? {
+    var seen = Set<String>()
+    let copies = (driverBinaries[driver] ?? []).flatMap(whichAll).filter { seen.insert($0).inserted }
+    return newest(copies)
 }
 
 /// `<bin> <args>`'s output (stdout, else stderr), or nil when it can't start or runs past `seconds`.

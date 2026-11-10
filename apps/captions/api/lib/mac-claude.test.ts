@@ -127,6 +127,20 @@ describe("Claude on the Mac", () => {
     await expect(answer).rejects.toThrow(/usage limit/);
   });
 
+  it("a provider check on a plan at its limit passes, with the one sentence a row shows; any other failure still fails it", async () => {
+    const { checkInstance } = await import("../providers");
+    const inst = { id: "local-claude", driver: "claude" as const, name: "Claude Code", enabled: true, device: mac.id };
+    // Claude's own words on 2026-11-10: the login is signed in and reachable, its week is used up
+    const limited = checkInstance("alex", inst, null);
+    await post(`/${((await (await post("/wait")).json()) as { id: string }).id}/fail`, { error: "You've hit your weekly limit · resets Nov 11 at 5pm (America/Costa_Rica)", limit: true });
+    expect(await limited).toMatchObject({ ok: true, note: "Your Claude plan's weekly limit is reached; it resets Nov 11 at 5pm." });
+    const broken = checkInstance("alex", inst, null);
+    await post(`/${((await (await post("/wait")).json()) as { id: string }).id}/fail`, { error: "boom" });
+    const result = await broken;
+    expect(result).toMatchObject({ ok: false, error: "Claude on the Mac: boom" });
+    expect(result).not.toHaveProperty("note");
+  });
+
   it("says why an answer did not come: a Stop, a Claude limit, or a failure", async () => {
     const stopped = new AbortController();
     const a = streamMacClaude("sys", "a", stopped.signal, () => {}).catch((e: unknown) => e);

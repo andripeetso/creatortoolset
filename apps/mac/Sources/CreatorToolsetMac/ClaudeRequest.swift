@@ -584,9 +584,10 @@ func driverEnv(base: [String: String], home: String = "") -> [String: String] {
     return env
 }
 
-/// the Mac relay limit_flag: the usage-limit flag. Claude's windows (isLimitError) and Gemini's quota errors; the rest have none.
+/// the Mac relay limit_flag: the usage-limit flag. Claude's and Codex's windows (isLimitError: "You've hit your usage
+/// limit") and Gemini's quota errors; the rest have none.
 func limitFlag(_ driver: String, _ text: String) -> Bool {
-    if driver == "claude" { return isLimitError(text) }
+    if driver == "claude" || driver == "codex" { return isLimitError(text) }
     return driver == "gemini"
         && text.range(of: "exhausted your (daily )?(quota|capacity)|MODEL_CAPACITY_EXHAUSTED", options: [.regularExpression, .caseInsensitive]) != nil
 }
@@ -682,8 +683,10 @@ func codexUsage(_ total: [String: Any]) -> [String: Any] {
             "cache_creation_input_tokens": 0]
 }
 
-/// `codex exec --json` events (codex-cli 0.39), one line at a time: the answer's text (the last message), its total usage
-/// (token_count) and its last error. Codex exits 0 when a model refuses, so an answer is what counts.
+/// `codex exec --json` events, one line at a time: the answer's text (the last message), its total usage and its last
+/// error. Codex exits 0 when a model refuses, so an answer is what counts. Two shapes are read: today's
+/// (`{"type":"item.completed","item":{…}}`, `turn.completed`, `turn.failed`) and codex-cli 0.39's (`{"msg":{"type":…}}`).
+/// An item of type "error" is a notice (a setting the model ignores), not a failure.
 struct CodexStream: RunStream {
     private(set) var text = ""
     private var done = false   // the last message is complete: a new message starts a new text
@@ -695,6 +698,25 @@ struct CodexStream: RunStream {
     mutating func feed(_ line: String) -> [StreamUpdate] {
         guard line.hasPrefix("{"),
               let obj = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any] else { return [] }
+        if let type = obj["type"] as? String {
+            switch type {
+            case "item.started", "item.updated", "item.completed":
+                let item = obj["item"] as? [String: Any] ?? [:]
+                guard item["type"] as? String == "agent_message", let said = nonEmpty(item["text"] as? String) else { return [] }
+                text = said
+                done = true
+                return [.text(text)]
+            case "turn.completed":
+                total = obj["usage"] as? [String: Any] ?? total
+            case "error":
+                error = nonEmpty(obj["message"] as? String) ?? error
+            case "turn.failed":
+                error = nonEmpty((obj["error"] as? [String: Any])?["message"] as? String) ?? error
+            default:
+                break
+            }
+            return []
+        }
         let msg = obj["msg"] as? [String: Any] ?? [:]
         switch msg["type"] as? String {
         case "agent_message_delta":

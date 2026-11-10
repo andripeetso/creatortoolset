@@ -7,10 +7,13 @@ import { confirmDialog } from "./dialogs";
 
 export type { SetupView };
 
-/** First run: the same two screens for everyone (Connect your AI, What do you make?), then Home. Nothing to do is asked of her. */
-export const SETUP_PATH = ["agents", "make"] as const;
+/**
+ * First run: the same three screens for everyone (Connect your AI, What do you make?, How do you work best?), then
+ * Home. They are questions only: no job to do is asked of her.
+ */
+export const SETUP_PATH = ["agents", "make", "how"] as const;
 /** Screens other pages still open with `?setup=`: one screen each, closed by Done, never part of the path. */
-export const SIDE_STEPS = ["connect", "folders", "how"] as const;
+export const SIDE_STEPS = ["connect", "folders"] as const;
 export const SETUP_STEPS = [...SETUP_PATH, ...SIDE_STEPS] as const;
 export type SetupStep = (typeof SETUP_STEPS)[number];
 

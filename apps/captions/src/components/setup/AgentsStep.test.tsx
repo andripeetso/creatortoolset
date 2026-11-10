@@ -51,7 +51,7 @@ it("names an AI a computer does not have, with its install left to that computer
     ],
     picked: new Set(["a", "b"]),
   });
-  expect(html).toContain("Not installed on Workshop PC. Open Creator Toolset there and press Install.");
+  expect(html).toContain("Not installed on Workshop PC. Open Creator Toolset there and press Connect.");
   expect(html).toContain('aria-label="Claude is connected on Mac Studio"');
 });
 

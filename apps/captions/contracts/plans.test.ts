@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { limitMessage, planFromCli, planWarning, shareOfWindow, WARN_SHARE } from "./plans";
+import { limitLine, limitMessage, planFromCli, planWarning, shareOfWindow, WARN_SHARE } from "./plans";
 
 describe("plan warnings", () => {
   it("warn before an AI Editor run on Pro and Plus, never on Max or ChatGPT Pro", () => {
@@ -38,5 +38,8 @@ describe("limit reached", () => {
     );
     expect(limitMessage("You've hit your weekly limit · resets Oct 12", "Codex")).toMatch(/^Your Codex plan's weekly limit is reached; it resets Oct 12\./);
     expect(limitMessage("You've hit your limit")).toBe("Your Claude plan's limit is reached. Claude said: You've hit your limit");
+    // a row shows the sentence alone: no "Claude said: …" tail, no time zone name
+    expect(limitLine(limitMessage("You've hit your weekly limit · resets Nov 11 at 5pm (America/Costa_Rica)"))).toBe("Your Claude plan's weekly limit is reached; it resets Nov 11 at 5pm.");
+    expect(limitLine(limitMessage("You've hit your limit"))).toBe("Your Claude plan's limit is reached.");
   });
 });

@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 import type { ProviderCheck, ProviderInstance, ProviderSettings, ProvidersView, Scope } from "../contracts/providers";
 import type { AuthVars } from "./auth";
-import { streamMacClaude, macUsageSince } from "./lib/mac-claude";
+import { limitLine } from "../contracts/plans";
+import { MacClaudeError, streamMacClaude, macUsageSince } from "./lib/mac-claude";
 import { forViewer, isOnline, listDevices } from "./lib/devices";
 import { deviceIdOf, driverCatalog, dropOwnSettings, instanceIn, modelsFor, ownSettings, parseSettings, providerChecks, providerSettings, recordCheck, routeFor, runFields, saveSettings } from "./lib/providers";
 import { limitsFor, type LimitRef } from "./lib/limits";
@@ -142,6 +143,7 @@ export async function checkInstance(scope: Scope, inst: ProviderInstance, s: Pro
   const device = inst.device ?? "";
   const model = (s?.default.instance === inst.id ? s?.default.model : undefined) ?? modelsFor(inst)[0] ?? "";
   const started = Date.now();
+  // note: the plan's limit is reached (the sentence with its reset time); the AI is signed in and reachable, so the check passes
   let check: ProviderCheck;
   try {
     const text = await streamMacClaude("Answer with one word.", "Reply with just: ready", undefined, () => {}, undefined, {
@@ -150,7 +152,11 @@ export async function checkInstance(scope: Scope, inst: ProviderInstance, s: Pro
     });
     check = { ok: true, ms: Date.now() - started, model, text: text.trim().slice(0, 80), at: Date.now() };
   } catch (e) {
-    check = { ok: false, ms: Date.now() - started, model, error: (e instanceof Error ? e.message : String(e)).slice(0, 300), at: Date.now() };
+    const error = (e instanceof Error ? e.message : String(e)).slice(0, 300);
+    check =
+      e instanceof MacClaudeError && e.kind === "limit"
+        ? { ok: true, ms: Date.now() - started, model, note: limitLine(error), at: Date.now() }
+        : { ok: false, ms: Date.now() - started, model, error, at: Date.now() };
   }
   await recordCheck(`${scope}:${inst.id}`, check);
   return check;
