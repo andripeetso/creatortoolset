@@ -211,6 +211,22 @@ body { overscroll-behavior-y: none; }
 /* slim scrollbars for dark UI. These bars always take their 8px and WebKit (the Mac app) ignores scrollbar-gutter for
    them, so a pane whose content must not move when it starts to scroll uses overflow-y-scroll, never overflow-y-auto:
    the track is transparent, so an empty one is not seen (Settings and Community do). */
+/* The page itself always keeps its bar's 8px too, so a page that grows past the window never jumps sideways (measured in
+   WebKit: 8px on Media Library, Review, Captions, Enhance, Cleaner, Stories and Notes before this). A dialog locks the page
+   behind it and expects the page's bar to vanish: it pads the body by the bar's width and hides the body's overflow.
+   The bar now stays, so that padding would be the jump, and the hidden overflow would cut a scrolled page off at one
+   window's height: both are undone here. */
+html { overflow-y: scroll; }
+/* A screen that is one window-high pane scrolling by itself (data-fills-window, with overflow-y-scroll) keeps the bar's
+   place in the pane instead, so the page does not keep a second, empty one beside it. */
+html:has([data-fills-window]) { overflow-y: hidden; }
+html body[data-scroll-locked] { overflow: visible !important; padding-right: 0 !important; margin-right: 0 !important; }
+/* The dim behind a dialog covers the window but not the page's own bar beside it, where the window's backdrop shows
+   (the body's colour). While a dialog is open the backdrop is that colour as the dim leaves it (half black over it), so
+   no bright line stands at the window's edge in the light theme. Restyling the bar's own track does not take in WebKit
+   while it is on screen, which is why the backdrop is what changes. */
+html:has([data-slot$="-overlay"]) body { background: #060608; }
+html:not(.dark):has([data-slot$="-overlay"]) body { background: #7d7d7d; }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
