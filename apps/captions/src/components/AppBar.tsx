@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useMe } from "@/lib/auth";
 import { isPhoneHub } from "@/lib/mobile";
-import { OTHER, WORKFLOW, useOpenTool } from "@/lib/tools";
+import { toolLayout, useOpenTool } from "@/lib/tools";
 import { cn } from "@/lib/utils";
 
 /**
@@ -96,7 +96,7 @@ function ToolMenu({ tool, to, dim, onLeave }: {
   const name = cn("max-w-[40%] shrink-0 truncate", dim && "text-zinc-500");
   if (!me) return <h1 className={name}>{tool}</h1>;
   const phone = isPhoneHub();
-  const groups = [WORKFLOW.flatMap((s) => s.tools), OTHER].map((g) => g.filter((t) => t.can(me))).filter((g) => g.length);
+  const groups = [toolLayout().workflow.flatMap((s) => s.tools), toolLayout().other].map((g) => g.filter((t) => t.can(me))).filter((g) => g.length);
   const here = (path: string) => {
     const base = path.split("?")[0];
     return pathname === base || pathname.startsWith(`${base}/`);

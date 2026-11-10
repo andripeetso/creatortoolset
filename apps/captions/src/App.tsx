@@ -52,13 +52,20 @@ import { SETTINGS_CLOSED, useSetupShown, useSetupSync } from "@/lib/setup";
 import { replacementFor } from "@/lib/plugin";
 import { webPlugins } from "./plugins.gen";
 
-// pages from plug-ins (plugins/<id>/web.tsx), routed like the built-in pages above
-const pluginRoutes = webPlugins.flatMap((p) => p.routes ?? []);
-// a plug-in's replacement for the editor pages (replaces in web.tsx); the built-in pages when none does
-const EditorScreen = replacementFor(webPlugins, "editor") ?? EditorPage;
-const EditorEditScreen = replacementFor(webPlugins, "editorEdit") ?? EditorEditPage;
-const LibraryScreen = replacementFor(webPlugins, "media") ?? LibraryPage;
-const FinalsScreen = replacementFor(webPlugins, "finals") ?? FinalsPage;
+// Read when the app is first drawn, not when this file loads: the plug-ins switched on in the Mac app join the list
+// just before that (lib/folder-plugins.tsx). Made once, so each screen keeps one identity between renders.
+function pluginScreens() {
+  return {
+    // pages from plug-ins (plugins/<id>/web.tsx), routed like the built-in pages above
+    pluginRoutes: webPlugins.flatMap((p) => p.routes ?? []),
+    // a plug-in's replacement for the editor pages (replaces in web.tsx); the built-in pages when none does
+    EditorScreen: replacementFor(webPlugins, "editor") ?? EditorPage,
+    EditorEditScreen: replacementFor(webPlugins, "editorEdit") ?? EditorEditPage,
+    LibraryScreen: replacementFor(webPlugins, "media") ?? LibraryPage,
+    FinalsScreen: replacementFor(webPlugins, "finals") ?? FinalsPage,
+  };
+}
+let screens: ReturnType<typeof pluginScreens> | undefined;
 
 const MobileCaptionPage = lazy(
   () => import("./pages/mobile/MobileCaptionPage"),
@@ -265,6 +272,7 @@ function InstagramAnalyzeRoute() {
 }
 
 export default function App() {
+  const { pluginRoutes, EditorScreen, EditorEditScreen, LibraryScreen, FinalsScreen } = (screens ??= pluginScreens());
   const look = useAppearance();
   useRootTint(look.projectTint, look.ownColour);
   const location = useLocation();

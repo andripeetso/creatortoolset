@@ -1,0 +1,91 @@
+// @vitest-environment happy-dom
+import { describe, expect, it, vi } from "vitest";
+import { act } from "react";
+import { createRoot } from "react-dom/client";
+import { Sparkles } from "lucide-react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { folderRowNote, type FolderPluginRow } from "@/components/community/PluginsInstalled";
+import { guardWebPlugin, webAdmissionProblem } from "./folder-plugins";
+import { defineWebPlugin, type WebPlugin } from "./plugin";
+
+const Page = () => <p>a page</p>;
+const Broken = (): never => {
+  throw new Error("bad data");
+};
+const ok = defineWebPlugin({ id: "sponsors", name: "Sponsors", routes: [{ path: "/sponsors", element: <Page /> }] });
+
+describe("a folder plug-in's page half joins the app only when it can't break a screen", () => {
+  it("lets a plain plug-in in", () => {
+    expect(webAdmissionProblem([], ok, "sponsors")).toBeNull();
+  });
+
+  const cases: [string, WebPlugin | null, WebPlugin[], RegExp][] = [
+    ["nothing exported", null, [], /must export defineWebPlugin/],
+    ["another id than its server half", { ...ok, id: "other" }, [], /says its id is other/],
+    ["an id the app already has", ok, [ok], /already has a plug-in called sponsors/],
+    ["a front page of its own", { ...ok, site: { hosts: ["127.0.0.1"], claims: () => true, element: null } }, [], /front page/],
+    ["a page path without its slash", { ...ok, routes: [{ path: "sponsors", element: null }] }, [], /must start with \//],
+    ["a page another plug-in has", ok, [{ id: "first", routes: [{ path: "/sponsors", element: null }] }], /already has the page \/sponsors/],
+    ["a replaced page another plug-in replaces", { ...ok, replaces: { finals: Page } }, [{ id: "first", replaces: { finals: Page } }], /more than one plug-in replaces the finals page/],
+    ["a tile that names no Home stage", { ...ok, tiles: [{ stage: "Nowhere" as never, to: "/sponsors", icon: Sparkles, name: "S", desc: "", gate: "sponsors" as never }] }, [], /names no stage/],
+    ["a Settings section with a built-in section's id", { ...ok, settings: [{ id: "general", title: "Mine", icon: Sparkles, body: null }] }, [], /already a built-in section/],
+  ];
+  it.each(cases)("refuses %s", (_what, candidate, admitted, why) => {
+    expect(webAdmissionProblem(admitted, candidate as WebPlugin, "sponsors")).toMatch(why);
+  });
+});
+
+describe("every piece a folder plug-in draws has its own boundary", () => {
+  it("draws a working page as it is", () => {
+    const guarded = guardWebPlugin(ok);
+    expect(renderToStaticMarkup(<>{guarded.routes![0]!.element}</>)).toBe("<p>a page</p>");
+  });
+
+  it("wraps pages, Settings and Devices sections, replaced pages and Review panels, and nothing else", () => {
+    const tile = { stage: "Tools" as const, to: "/sponsors", icon: Sparkles, name: "S", desc: "", gate: "sponsors" as never };
+    const full = defineWebPlugin({
+      ...ok,
+      tiles: [tile],
+      settings: [{ id: "sponsors", title: "Sponsors", icon: Sparkles, body: <Page /> }],
+      devices: [{ id: "sponsors", title: "Sponsors", body: <Page /> }],
+      replaces: { finals: Page },
+      review: { panels: [{ id: "p", panel: Page as never }] },
+    });
+    const g = guardWebPlugin(full);
+    expect(g.tiles).toEqual([tile]);
+    for (const piece of [g.routes![0]!.element, g.settings![0]!.body, g.devices![0]!.body]) expect(piece).not.toBe(full.routes![0]!.element);
+    expect(g.replaces!.finals).not.toBe(Page);
+    expect(g.review!.panels![0]!.panel).not.toBe(Page);
+    const Finals = g.replaces!.finals!;
+    expect(renderToStaticMarkup(<Finals />)).toBe("<p>a page</p>");
+  });
+
+  it("catches a page that throws while drawing, names the plug-in and keeps the app", async () => {
+    // a boundary catches only in a mounted tree (the server renderer rethrows)
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const guarded = guardWebPlugin(defineWebPlugin({ id: "sponsors", name: "Sponsors", routes: [{ path: "/sponsors", element: <Broken /> }] }));
+    const host = document.createElement("div");
+    const root = createRoot(host);
+    await act(async () => root.render(<><i>rest of the app</i>{guarded.routes![0]!.element}</>));
+    expect(host.textContent).toBe("rest of the appThe Sponsors plug-in stopped working here.");
+    await act(async () => root.unmount());
+    quiet.mockRestore();
+  });
+});
+
+describe("what a plug-in's row says under its name", () => {
+  const row: FolderPluginRow = { folder: "sponsors", id: "sponsors", name: "Sponsors", about: "", on: true, running: true, changed: false };
+  it("says nothing when all is well", () => {
+    expect(folderRowNote(row, undefined, false)).toBeNull();
+  });
+  it("says why it is not running, before anything else", () => {
+    expect(folderRowNote({ ...row, running: false, changed: true, error: "boom" }, "x", false)).toEqual({ tone: "broken", text: "boom" });
+  });
+  it("says when only its pages were left out", () => {
+    expect(folderRowNote(row, "It needs src/x, which this version of the app doesn't have", false)?.text).toMatch(/^Its pages were left out: It needs src\/x/);
+  });
+  it("says the folder changed", () => {
+    expect(folderRowNote({ ...row, changed: true }, undefined, false)).toEqual({ tone: "attention", text: "Changed since you switched it on" });
+  });
+});

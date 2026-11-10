@@ -13,6 +13,7 @@ import { seedSetup } from "@/lib/setup";
 import { AuthGate } from "@/components/AuthGate";
 import { RootBoundary } from "@/components/StaleBuild";
 import { ShareThemeProvider } from "@/components/ShareTheme";
+import { loadFolderPlugins, reloadForFolderPlugins } from "@/lib/folder-plugins";
 import App from "./App.tsx";
 
 // ⌘S / Ctrl+S never opens the browser's "Save page" dialog: everything autosaves,
@@ -29,13 +30,18 @@ async function bootstrap() {
   initPersistence();
   tagWrites();
   // every screen's saved copy into memory before the first render (lib/local-cache.ts), then live while signed in
-  await Promise.all([initLocalRecovery(), hydrateLocalCache()]);
+  // and the page halves of the plug-ins switched on in the Mac app (lib/folder-plugins.tsx), so every screen has them
+  await Promise.all([initLocalRecovery(), hydrateLocalCache(), loadFolderPlugins()]);
   // the shell's own saved copies into their stores, so the top bar and Home's marks are there on the first frame
   seedWorkspace();
   seedSetup();
   const live = (signedIn: boolean) => (signedIn ? startSync() : stopSync());
   live(!!useAuth.getState().me);
-  useAuth.subscribe((s, prev) => !!s.me !== !!prev.me && live(!!s.me));
+  useAuth.subscribe((s, prev) => {
+    if (!!s.me === !!prev.me) return;
+    live(!!s.me);
+    if (s.me) void reloadForFolderPlugins();
+  });
 
   // not an installable web app: drop a service worker and caches a browser still has from an older version
   if ("serviceWorker" in navigator) {

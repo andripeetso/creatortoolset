@@ -67,7 +67,7 @@ export default function CommunityPage({ onClose }: { onClose: () => void }) {
     section === "pack" ? (
       <PackDetailView id={sub ?? ""} installed={installed.find((p) => p.id === sub)} reload={data.reload} />
     ) : section === "installed" ? (
-      <InstalledView plugins={plugins} installed={data.installed} updates={data.updates} reload={data.reload} error={data.error} />
+      <InstalledView plugins={plugins} folderPlugins={data.folderPlugins} installed={data.installed} updates={data.updates} reload={data.reload} error={data.error} />
     ) : catalogWaiting ? (
       <Card>
         {data.catalogError ? <ErrorRow title="The Community catalog did not load" detail={data.catalogError} retry={data.reload} /> : <LoadingRow />}

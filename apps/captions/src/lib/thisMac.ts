@@ -72,3 +72,29 @@ export async function allowOtherDevices(): Promise<string | null> {
     return "The Creator Toolset Mac app did not answer. Try again.";
   }
 }
+
+/** The Mac app's answer to a plug-in ask: done, or why not. No `problem` on a plain no (the person pressed Cancel). */
+export type PluginReply = { ok: boolean; problem?: string };
+
+/**
+ * Plug-ins from the person's folder are switched on and off by the Mac app, never by a page: Switch on is the app's own
+ * dialog, and the app keeps the record of that click (apps/mac Plugins.swift). After a yes the app restarts its server
+ * and reloads this window. null in a browser, where there is no switch.
+ */
+async function pluginAsk(ask: string): Promise<PluginReply | null> {
+  const bridge = thisMacBridge();
+  if (!bridge) return null;
+  try {
+    const r = ((await bridge.postMessage(ask)) ?? {}) as unknown as Partial<PluginReply>;
+    return { ok: r.ok === true, problem: typeof r.problem === "string" ? r.problem : undefined };
+  } catch {
+    return { ok: false, problem: "The Creator Toolset Mac app did not answer. Try again." };
+  }
+}
+/** Switch on (or take the new version of) the plug-in in this folder of the plug-ins folder. */
+export const switchPluginOn = (folder: string) => pluginAsk(`plugin:on:${folder}`);
+export const switchPluginOff = (id: string) => pluginAsk(`plugin:off:${id}`);
+/** After the app switched every plug-in off (its server stopped five times): on again. */
+export const resumePlugins = () => pluginAsk("plugins:resume");
+/** Shows the plug-in's folder in Finder ("" = the plug-ins folder). */
+export const showPluginFolder = (folder: string) => pluginAsk(`plugin:show:${folder}`);
