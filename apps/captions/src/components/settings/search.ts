@@ -30,7 +30,6 @@ const STATIC_ROWS = [
   { section: "general", id: "confirm-deletes", title: "Ask before moving to trash or deleting a comment", keywords: ["trash", "delete", "confirm", "comment"] },
   { section: "general", id: "status-colours", title: "Colour bar beside each session in the Workshop", keywords: ["status", "colour", "color", "sidebar", "workshop"] },
   { section: "general", id: "read-aloud", title: "Read the assistant's replies aloud", keywords: ["voice", "speech", "speak", "audio"] },
-  { section: "general", id: "run-setup", title: "Setup", description: "Run the first-run walk-through again", keywords: ["setup", "walk-through", "onboarding", "wizard", "first run"] },
   { section: "general", id: "recording-shortcut", title: "Recording shortcut", description: "Starts and stops a screen recording from any app (Mac app)", keywords: ["record", "screen", "shortcut", "hotkey", "keyboard", "key", "mac app"], needs: "mac" },
   { section: "general", id: "saved-lists", title: "Cache", description: "Lists kept on this computer so screens open at once. Clearing it loses no work.", keywords: ["cache", "clear", "storage", "saved", "lists", "screens", "reload"] },
   // Appearance

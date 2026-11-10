@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { useAuth } from "@/lib/auth";
@@ -13,17 +12,11 @@ import { tell, useThisMac, type ThisMacState } from "./ThisMacSection";
 const size = (bytes: number) =>
   bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : bytes >= 1024 ? `${Math.round(bytes / 1024)} KB` : `${bytes} B`;
 
-/** Settings → General: setup, the switches that have a reader, add-ons, and this computer's saved lists. */
+/** Settings → General: the switches that have a reader, add-ons, and this computer's saved lists. */
 export function GeneralSection() {
   const mac = useThisMac(canRecordScreen());
   return (
     <>
-      <Section title="Setup">
-        <Card>
-          <Row id="run-setup" title="Setup" control={<Button asChild size="sm" variant="outline"><Link to="/?setup=agents">Run again</Link></Button>} />
-        </Card>
-      </Section>
-
       <Working />
       <AddOns />
       <ScreenRecording mac={canRecordScreen() ? mac : null} />
