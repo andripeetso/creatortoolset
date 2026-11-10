@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { TOOLS, onHome, type Tool } from "@contracts/tools";
+import { accentFor } from "@/lib/workspace";
 import { hiddenAfter } from "./AppearanceSection";
 
 describe("Home shows every tool except the ones switched off", () => {
@@ -28,5 +29,22 @@ describe("the switches save the hidden list", () => {
     expect(hiddenAfter(["enhance"], "notes", false)).toEqual(["enhance", "notes"]);
     expect(hiddenAfter(["enhance", "notes"], "notes", true)).toEqual(["enhance"]);
     expect(hiddenAfter(["enhance"], "notes", true)).toEqual(["enhance"]);
+  });
+});
+
+describe("the colour the app wears", () => {
+  it("follows the project while that is the choice, whatever colour was picked before", () => {
+    expect(accentFor(true, "rose", "sky")).toBe("sky");
+    expect(accentFor(true, "rose", null)).toBe("violet");
+  });
+
+  it("is the person's own colour once they pick one, whatever the project's is", () => {
+    expect(accentFor(false, "rose", "sky")).toBe("rose");
+    expect(accentFor(false, "violet", "sky")).toBe("violet");
+  });
+
+  it("falls back to violet for a saved colour that is not one of ours", () => {
+    expect(accentFor(false, "chartreuse", "sky")).toBe("violet");
+    expect(accentFor(false, "toString", null)).toBe("violet");
   });
 });

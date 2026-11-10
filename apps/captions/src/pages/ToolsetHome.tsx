@@ -13,7 +13,7 @@ import { webPlugins } from "@/plugins.gen";
 import { useSessionSummaries } from "@/lib/workshop-summary";
 import { listEdits } from "@/lib/editor";
 import { listReviewAssets } from "@/lib/review";
-import { currentProject, PROJECT_COLORS, projectColor, useWorkspace } from "@/lib/workspace";
+import { accentFor, currentProject, PROJECT_COLORS, projectColor, useWorkspace } from "@/lib/workspace";
 import { useAppearance } from "@/lib/settings";
 import { useShareTheme } from "@/components/ShareTheme";
 import { onHome, readiness, TOOL_GROUPS, TOOL_NAMES, type Tool } from "@contracts/tools";
@@ -75,7 +75,7 @@ export default function ToolsetHome() {
   const showCounts = canUse(me, "workshop");
   const waiting = useWaiting(me);
   const project = useWorkspace(currentProject);
-  const { projectTint, homeGlow } = useAppearance();
+  const { projectTint, homeGlow, ownColour } = useAppearance();
   // what's working right now: a Workshop reply being written. Its stage's box pulses and the tile says how many.
   const rows = useSessionSummaries();
   const running: Record<string, number> = showCounts ? { "/workshop": rows?.filter((r) => r.working).length ?? 0 } : {};
@@ -115,7 +115,7 @@ export default function ToolsetHome() {
   const extras: Key[] = [...(extrasGroup?.tools.filter(shownOnHome) ?? []), "record"];
 
   // the current project's colour (Settings → Appearance can keep it violet), as CSS variables for the tiles and glow
-  const c = PROJECT_COLORS[projectTint && project ? projectColor(project) : "violet"];
+  const c = PROJECT_COLORS[accentFor(projectTint, ownColour, project ? projectColor(project) : null)];
   const tintStyle = { "--tint": `rgb(${c.rgb})`, "--tint-text": `rgb(${dark ? c.text : c.rgb})`, transition: "--tint 500ms, --tint-text 500ms" } as React.CSSProperties;
 
   // one tile: its icon (in the project's colour), its name and its status; quiet = Extras, smaller and grey

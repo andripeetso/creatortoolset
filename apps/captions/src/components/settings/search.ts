@@ -34,8 +34,8 @@ const STATIC_ROWS = [
   { section: "general", id: "saved-lists", title: "Cache", description: "Lists kept on this computer so screens open at once. Clearing it loses no work.", keywords: ["cache", "clear", "storage", "saved", "lists", "screens", "reload"] },
   // Appearance
   { section: "appearance", id: "theme", title: "Theme", keywords: ["dark", "light", "system", "colour", "color", "look"] },
-  { section: "appearance", id: "project-colour", title: "Project colour", keywords: ["tint", "violet", "colour", "color"] },
-  { section: "appearance", id: "background-glow", title: "Background glow", keywords: ["glow", "dark", "home"] },
+  { section: "appearance", id: "colour", title: "Colour", keywords: ["tint", "accent", "project", "own", "color", "violet", "sky", "emerald", "amber", "rose", "orange", "teal", "pink"] },
+  { section: "appearance", id: "background-glow", title: "Glow behind Home", keywords: ["glow", "background", "dark", "home"] },
   // Storage: where footage, music and finished videos live
   { section: "folders", id: "finished-videos", title: "Finished videos", keywords: ["folder", "export", "save", "output", "library"] },
   { section: "folders", id: "footage-folder", title: "Footage", keywords: ["folder", "media", "library", "clips", "raw"] },
