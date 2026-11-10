@@ -36,7 +36,7 @@ export function phoneLine(url: string): { wifi: boolean; host: string } {
 /**
  * Settings → Computers: the computers that run this account's AI, and the phones that use the app. One row per Mac (a Mac
  * that registered twice shows once), the `…` menu to rename or remove it, and in the Mac app this Mac's own switch. The
- * plug-ins' "computers" sections come after the list (the AI Editor's computers and their share of its jobs). `?add=1`
+ * plug-ins' "computers" cards sit under the list, without a heading (the AI Editor's folded Load balancing). `?add=1`
  * opens the add-computer dialog, `?phone=1` the add-phone dialog (other pages link there).
  */
 export function ComputersSection() {
@@ -147,13 +147,11 @@ export function ComputersSection() {
           ))}
           {unlisted && <ThisMacRow names={names} bridge={bridge} />}
         </Card>
+        {/* the plug-ins' cards sit under the list, with no heading of their own (the AI Editor's Load balancing) */}
+        {devicesSectionsFor(me, webPlugins, "computers").map((s) => (
+          <div key={s.id} className="pt-5 empty:hidden">{s.body}</div>
+        ))}
       </Section>
-
-      {devicesSectionsFor(me, webPlugins, "computers").map((s) => (
-        <Section key={s.id} title={s.title}>
-          {s.body}
-        </Section>
-      ))}
 
       {phones}
 

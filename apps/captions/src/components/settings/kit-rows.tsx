@@ -156,6 +156,40 @@ export function ErrorRow({ title, detail, retry }: { title: ReactNode; detail?: 
 }
 
 /**
+ * A folded card (e.g. Load balancing): the header row has the chevron, the title, a muted summary and a
+ * control on the right (a Switch); the rows are inside. Opens by itself when a search result lands on or inside it.
+ */
+export function Folded({ id, title, summary, control, children }: { id?: SearchRowId; title: ReactNode; summary?: ReactNode; control?: ReactNode; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const { hash } = useLocation();
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const row = decodeURIComponent(hash.slice(1));
+    if (row && (row === id || ref.current?.querySelector(`[data-settings-row="${CSS.escape(row)}"]`))) setOpen(true);
+  }, [hash, id]);
+  return (
+    <div ref={ref} data-settings-row={id} className="rounded-xl border border-border/60 bg-card/40 text-foreground">
+      <div className="flex items-center gap-4 px-3 sm:px-4">
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen((o) => !o)}
+          className="flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-md py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        >
+          <ChevronRight className={cn("size-4 shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none", open && "rotate-90")} aria-hidden />
+          <span className="shrink-0 text-sm font-medium">{title}</span>
+          {summary && <span className="min-w-0 truncate text-xs text-muted-foreground">{summary}</span>}
+        </button>
+        {control && <div className="flex shrink-0 items-center">{control}</div>}
+      </div>
+      <div hidden={!open} className="border-t border-border/50 [&>*+*]:border-t [&>*+*]:border-border/50">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/**
  * A folded disclosure row for the rare settings. Opens by itself when a search result lands inside it. The content stays
  * in the DOM while closed (hidden), so the search can find and open it.
  */
