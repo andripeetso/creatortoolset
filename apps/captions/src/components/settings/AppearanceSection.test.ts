@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { HOME_TILES, TOOLS, TOOL_NEEDS, onHome, type Tool } from "@contracts/tools";
 import { accentFor } from "@/lib/workspace";
-import { hiddenAfter, needFix, needsLine, needsOf, openNeeds } from "./ToolsSection";
+import { hiddenAfter, missingNeeds, needFix, needLabel } from "./ToolsSection";
 
 describe("Home shows every tool except the ones switched off", () => {
   it("default: nothing hidden, so every tool shows (and every switch starts on)", () => {
@@ -58,21 +58,21 @@ describe("the colour the app wears", () => {
   });
 });
 
-describe("a tool's row says what it needs and where that is fixed", () => {
-  it("says the missing required needs in one amber line, and nothing once they are set up or the tool needs nothing", () => {
-    expect(needsLine("enhance", [])).toBe("Needs an ElevenLabs or NVIDIA key");
-    expect(needsLine("enhance", ["NVIDIA_API_KEY"])).toBe("");
-    expect(needsLine("instagram", [])).toBe("Needs a project, an Apify key");
-    expect(needsLine("instagram", ["project", "instagram"])).toBe(""); // its own Instagram login reads the posts too
-    expect(needsLine("review", [])).toBe("");
-    expect(needsLine("record", [])).toBe("");
+describe("a tool's row says what stops it and where that is fixed", () => {
+  const labels = (tile: Parameters<typeof missingNeeds>[0], have: Parameters<typeof missingNeeds>[1]) => missingNeeds(tile, have).map(needLabel);
+
+  it("lists only what is missing and required: one line each, nothing once it is set up", () => {
+    expect(labels("enhance", [])).toEqual(["Needs an ElevenLabs or NVIDIA key"]);
+    expect(labels("enhance", ["NVIDIA_API_KEY"])).toEqual([]);
+    expect(labels("instagram", [])).toEqual(["Needs a project", "Needs an Apify key"]);
+    expect(labels("instagram", ["project", "instagram"])).toEqual([]); // its own Instagram login reads the posts too
   });
 
-  it("keeps the optional needs apart: they do not make the row amber, they are listed when it is opened", () => {
-    expect(needsLine("captions", [])).toBe("");
-    expect(openNeeds("captions", []).extra.map((n) => n.form)).toEqual(["keys", "ai"]);
-    expect(needsOf("record")).toEqual([]);
-    expect(needsOf("media")).toBe(TOOL_NEEDS.media);
+  it("says nothing for a tool that works: no list of what it has, nothing optional, nothing for one that needs nothing", () => {
+    expect(labels("captions", [])).toEqual([]); // Deepgram and AI are optional there
+    expect(labels("review", [])).toEqual([]);
+    expect(labels("record", [])).toEqual([]);
+    for (const t of TOOLS) expect(labels(t, ["project", "ai", "ownAi", "library", "apify", "DEEPGRAM_API_KEY", "ELEVENLABS_API_KEY"])).toEqual([]);
   });
 
   it("sends each kind of need to the place that sets it up", () => {
