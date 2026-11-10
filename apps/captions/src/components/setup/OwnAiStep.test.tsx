@@ -47,6 +47,11 @@ describe("setup's AI apps screen, after In my own AI or Both", () => {
     expect(buttons(html)).toEqual(["Install", "Install"]);
   });
 
+  it("mounted ahead of its screen it shows nothing, wherever setup mounts it", () => {
+    data.next = { keys: [], local: { local: true, rows: [app("claude", "Claude Code")] }, error: null, load: () => {}, disconnect: async () => {} };
+    expect(renderToStaticMarkup(<OwnAiStep into={null} />)).toBe("");
+  });
+
   it("never shows a line to run in Terminal, whatever the computer has", () => {
     for (const html of [
       show({ local: true, rows: [app("claude", "Claude Code"), app("codex", "Codex", { mcp: "update" })] }),

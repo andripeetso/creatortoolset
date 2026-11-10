@@ -106,6 +106,7 @@ export function SetupDialog() {
   const [note, setNote] = useState(false);
   const [busy, setBusy] = useState(false); // leaving "What do you make?" saves first: one press, one project
   const [footerSlot, setFooterSlot] = useState<HTMLElement | null>(null); // the folders screen portals its buttons in
+  const [ownSlot, setOwnSlot] = useState<HTMLElement | null>(null); // where the AI apps screen shows its rows
   const [unsure, setUnsure] = useState<boolean | null>(null); // "Not sure yet" ticked here; null = read it from the saved answers
   const asked = params.get("setup");
   // by itself only on a first sign-in (setupOpensItself); Settings → Setup and ?setup= always open it; never on a phone
@@ -281,8 +282,12 @@ export function SetupDialog() {
 
           {step === "how" && <HowPicker value={prefs.talk} onChange={(t) => void setTalk(t)} />}
 
-          {step === "own" && <OwnAiStep />}
+          {/* its rows are put here by the one OwnAiStep below */}
+          {step === "own" && <div ref={setOwnSlot} />}
         </div>
+        {/* Outside the body above, which starts over on every step: mounted from the question before it, so this
+            computer's AI apps are read while that question is answered and the screen opens with its rows. */}
+        {(step === "how" || step === "own") && <OwnAiStep into={step === "own" ? ownSlot : null} />}
 
         <footer className="flex shrink-0 items-center justify-between gap-2 border-t border-border/60 px-6 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-8">
           {/* a side screen only has Done */}
