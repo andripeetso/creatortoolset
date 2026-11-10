@@ -318,7 +318,7 @@ export function WorkshopShareView({ token, embedded = false }: { token: string; 
     : "border-zinc-700 text-zinc-300";
   return (
     <div className={`${embedded ? "" : "min-h-dvh"} bg-zinc-950 text-zinc-200`}>
-      <header data-titlebar={embedded ? undefined : ""} className={`border-b border-zinc-900 py-3 ${embedded ? "pl-4 pr-12" : "px-4"}`}>
+      <header data-titlebar={embedded ? undefined : ""} className={`py-3 ${embedded ? "border-b border-zinc-900 pl-4 pr-12" : "px-4"}`}>
         <div className="mx-auto flex max-w-6xl items-center gap-3">
           <h1 className="min-w-0 truncate text-lg font-semibold tracking-tight">{data.title}</h1>
           <span className={`shrink-0 rounded-md border px-2 py-0.5 text-[11px] ${statusTone}`}>{sessionStatusLabel(data.status)}</span>

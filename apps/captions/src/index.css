@@ -148,10 +148,10 @@ html.mac-app:not(.mac-full) [data-titlebar] { padding-left: 92px; }
    bar can wrap to two rows, so there it scrolls away as before). It is painted in the page's own colour (--bar-bg where
    a page is not the plain one), so nothing ever shows through it. --bar-h is its height, for whatever else sticks
    below it. Zero specificity (:where): a page that places or paints its bar itself wins (Home pins it over its glow).
-   Directly under the bar the page fades out instead of meeting a hard line: a strip in the page's colour whose strength
-   follows the first 24px of scrolling, and the bar's hairline goes over the same distance. The browser ties both to the
-   scroll position itself, so no script runs while scrolling. A browser that cannot do that keeps the hairline and shows
-   no fade. Nothing else gets a fade: not a row that sticks below the bar. */
+   The bar has no line under it. Directly under it the page fades out instead of meeting a hard edge: a strip in the
+   page's colour whose strength follows the first 24px of scrolling. The browser ties it to the scroll position itself,
+   so no script runs while scrolling; a browser that cannot do that shows no fade. Nothing else gets a fade: not a row
+   that sticks below the bar. */
 :root { --bar-h: 0px; }
 html { scroll-padding-top: var(--bar-h); }
 @media (min-width: 640px) {
@@ -176,10 +176,8 @@ html { scroll-padding-top: var(--bar-h); }
   );
 }
 @keyframes bar-fade { to { opacity: 1; } }
-@keyframes bar-line { to { border-bottom-color: transparent; } }
 @supports (animation-timeline: scroll()) {
   [data-appbar-fade] { animation: bar-fade linear both; animation-timeline: scroll(root block); animation-range: 0 24px; }
-  [data-appbar] { animation: bar-line linear both; animation-timeline: scroll(root block); animation-range: 0 24px; }
 }
 
 /* A Workshop session is white panels on a grey desk; every other page is the plain page colour. Going in, the grey comes

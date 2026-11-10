@@ -204,7 +204,7 @@ export default function ToolsetHome() {
       )}
       {/* the tool pages' own bar (components/AppBar.tsx) with no tool and an invisible edge, so the name, the arrows and
           the account sit exactly where they do on every tool page and never move between them */}
-      <AppBar className="absolute inset-x-0 top-0 mt-[env(safe-area-inset-top)] border-transparent bg-transparent">
+      <AppBar className="absolute inset-x-0 top-0 mt-[env(safe-area-inset-top)] bg-transparent">
         {canUse(me, "instagram") || canUse(me, "workshop") ? <ProjectSwitcher /> : null}
         <HomeTodo />
       </AppBar>

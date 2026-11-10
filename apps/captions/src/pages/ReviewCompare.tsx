@@ -127,7 +127,7 @@ export function ReviewCompare({
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-zinc-950 text-zinc-200">
-      <header data-titlebar className="flex h-14 items-center gap-2 border-b border-zinc-900 px-3 sm:px-4">
+      <header data-titlebar className="flex h-14 items-center gap-2 px-3 sm:px-4">
         <HomeLink />
         <h2 className="text-sm font-semibold">Compare</h2>
         {picker(left, setLeft, "Left")}

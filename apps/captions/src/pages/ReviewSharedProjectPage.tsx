@@ -31,7 +31,7 @@ export default function ReviewSharedProjectPage() {
 
   return (
     <div className="min-h-dvh bg-zinc-950 text-zinc-200">
-      <header data-titlebar className="flex h-14 items-center gap-3 border-b border-zinc-900 px-3 sm:px-4">
+      <header data-titlebar className="flex h-14 items-center gap-3 px-3 sm:px-4">
         <HomeLink />
         <Folder className="h-5 w-5 shrink-0 text-violet-400" />
         <h1 className="truncate text-lg font-semibold tracking-tight">{data?.name}</h1>

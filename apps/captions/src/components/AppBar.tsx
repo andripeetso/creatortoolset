@@ -54,7 +54,7 @@ export function AppBar({
         // fixed-height row (every page the same height), the trail truncates and the actions never shrink.
         // From tablet width up it stays put while the page scrolls under it: that, and its colour, are in index.css
         // ([data-appbar]) at zero specificity, so a page's own classes here win
-        "flex min-h-14 w-full shrink-0 flex-wrap items-center gap-x-2 gap-y-1.5 border-b border-zinc-500/20 px-3 py-2 sm:h-14 sm:flex-nowrap sm:gap-x-3 sm:px-4",
+        "flex min-h-14 w-full shrink-0 flex-wrap items-center gap-x-2 gap-y-1.5 px-3 py-2 sm:h-14 sm:flex-nowrap sm:gap-x-3 sm:px-4",
         className,
       )}
     >

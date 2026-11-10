@@ -193,7 +193,7 @@ export function ScreenRecordingEditor({
       role={embedded ? undefined : "dialog"}
       aria-label="Zoom and pointer"
     >
-      <div className="flex min-h-14 items-center gap-3 border-b border-zinc-800 px-4" data-titlebar>
+      <div className="flex min-h-14 items-center gap-3 px-4" data-titlebar>
         <span className="text-sm font-semibold">Zoom & pointer</span>
         <span className="truncate text-xs text-zinc-500">{meta.name}</span>
         <div className="ml-auto flex items-center gap-2">
