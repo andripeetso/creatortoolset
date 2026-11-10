@@ -17,6 +17,11 @@ vi.mock("./ai-complete", async (importOriginal) => ({
 vi.mock("./lib/mac-claude", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./lib/mac-claude")>()),
 }));
+// open windows hear of a turn's saves (lib/workshop/job): watched, not sent
+vi.mock("./lib/sync", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./lib/sync")>()),
+  announce: vi.fn(),
+}));
 vi.mock("./lib/devices", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./lib/devices")>()),
   isOnline: () => true,
@@ -27,6 +32,7 @@ const { workshopApp } = await import("./workshop");
 const { streamWithFallback, AiProviderError } = await import("./ai-complete");
 const { MacClaudeError } = await import("./lib/mac-claude");
 const mocked = vi.mocked(streamWithFallback);
+const heard = vi.mocked((await import("./lib/sync")).announce);
 const { createUser } = await import("./users");
 const { pairDevice } = await import("./lib/devices");
 const { saveSettings } = await import("./lib/providers");
@@ -109,6 +115,30 @@ const replies = (text: string) => once(async (_s, _u, _sig, parse) => ({ result:
 
 beforeEach(() => {
   mocked.mockReset();
+});
+
+describe("a turn's saves reach open windows", () => {
+  it("while the reply is written (its progress arrives on the Mac's own request) and when it ends", async () => {
+    const { id, docId } = seed(["Slide"]);
+    let hooks: { onDelta?: (t: string) => Promise<void> | void } | undefined;
+    let finish!: () => void;
+    const gate = new Promise<void>((r) => (finish = r));
+    mocked.mockImplementationOnce((async (_s: string, _u: string, _sig: unknown, parse: (t: string) => unknown, h: typeof hooks) => {
+      hooks = h;
+      await gate;
+      return { result: parse(answer({ reply: "Done.", edits: [] })), provider: "Claude (Mac)" };
+    }) as never);
+    const { body } = await send(id, docId, "Tighten it.");
+    await vi.waitFor(() => expect(hooks).toBeTruthy());
+    await new Promise((r) => setTimeout(r, 1100)); // past the throttle
+    heard.mockClear();
+    await hooks!.onDelta!(answer({ reply: "Half way" }).slice(0, -2)); // called here, outside the turn's own chain
+    await vi.waitFor(() => expect(heard).toHaveBeenCalledWith("alex", "workshop"), { timeout: 2500 }); // a throttle later at most
+    heard.mockClear();
+    finish();
+    await settled(id, body.reply!.id);
+    await vi.waitFor(() => expect(heard).toHaveBeenCalledWith("alex", "workshop"));
+  });
 });
 
 describe("a turn's edits", () => {

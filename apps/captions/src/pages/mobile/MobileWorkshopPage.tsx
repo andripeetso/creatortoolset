@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { ArrowLeft, ArrowUp, Copy, Loader2, NotebookPen, Square } from "lucide-react";
 import { ModelChip } from "@/components/workshop/ModelChip";
@@ -12,6 +12,8 @@ import { canUse, useAuth, useMe } from "@/lib/auth";
 import { timeAgo } from "@/lib/exports";
 import { toolsetHomePath } from "@/lib/mobile";
 import { useWorkspace } from "@/lib/workspace";
+import { keepSession, sessionKeys } from "@/lib/workshop";
+import { useCachedLoad } from "@/lib/local-cache";
 import {
   documentMarkdown,
   docTabLabel,
@@ -72,15 +74,9 @@ export default function MobileWorkshopPage() {
   const me = useMe();
   const allowed = canUse(me, "workshop");
   const currentProjectId = useWorkspace((s) => s.currentProjectId);
-  const [sessions, setSessions] = useState<SessionRow[]>([]);
-
-  const load = useCallback(() => {
-    listSessions().then(setSessions).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    if (allowed) load();
-  }, [allowed, load, currentProjectId]);
+  // the desktop list's saved copy (lib/local-cache): paints at once, live
+  const list = useCachedLoad<SessionRow[]>(allowed ? `workshop/sessions?p=${currentProjectId ?? ""}` : null, listSessions);
+  const sessions = list.data ?? [];
 
   return (
     <div className={shell}>
@@ -102,7 +98,13 @@ export default function MobileWorkshopPage() {
 
         <section>
           <p className="mb-2 text-xs text-zinc-500">Sessions</p>
-          {sessions.length === 0 ? (
+          {list.data === null ? (
+            <div aria-hidden className="flex flex-col gap-1.5">
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="h-[62px] rounded-xl border border-zinc-800 bg-zinc-900/30" />
+              ))}
+            </div>
+          ) : sessions.length === 0 ? (
             <p className="py-6 text-center text-sm text-zinc-600">
               No sessions yet. Start one on your desktop, then read it here.
             </p>
@@ -151,60 +153,51 @@ export function MobileWorkshopSessionPage() {
   const selectProject = useWorkspace((s) => s.select);
   const aligned = useRef(false);
   const boundProjectId = useRef<string | null>(null);
-  const [title, setTitle] = useState("Session");
-  const [docs, setDocs] = useState<WorkshopDocument[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
+  // the same saved copies as the desktop page (lib/local-cache): they paint at once and stay live
+  const keys = sessionKeys(sessionId);
+  const on = allowed && !!sessionId;
+  const sessionLoad = useCachedLoad(on ? keys.session : null, () => getSession(sessionId));
+  const docsLoad = useCachedLoad<WorkshopDocument[]>(on ? keys.docs : null, () => listDocuments(sessionId));
+  const chatLoad = useCachedLoad<ChatMessage[]>(on ? keys.chat : null, () => listChat(sessionId));
+  const title = sessionLoad.data?.title ?? "Session";
+  const docs = docsLoad.data ?? [];
+  const messages = chatLoad.data ?? [];
+  const setMessages = chatLoad.set;
+  const [picked, setActiveId] = useState<string | null>(null);
+  const activeId = picked && docs.some((d) => d.id === picked) ? picked : ((docs.find((x) => x.kind !== "notes") ?? docs[0])?.id ?? null);
   const [error, setError] = useState<string | null>(null);
+  const shownError = error ?? (!sessionLoad.data && sessionLoad.error ? sessionLoad.error : null);
   const [copied, setCopied] = useState(false);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [ai, setAi] = useState<Selection | undefined>();
+  const savedAi = sessionLoad.data?.ai;
+  useEffect(() => setAi(savedAi), [savedAi]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const thinking = messages.find((m) => m.status === "thinking");
 
+  useEffect(() => keepSession(me?.username, sessionId), [me?.username, sessionId]);
+  // the session's own project, once it is known
+  const sessionProject = sessionLoad.data ? (sessionLoad.data.projectId ?? null) : undefined;
   useEffect(() => {
-    if (!allowed || !sessionId) return;
+    if (sessionProject === undefined) return;
     aligned.current = false;
-    listChat(sessionId).then(setMessages).catch(() => {});
-    getSession(sessionId)
-      .then((s) => {
-        setTitle(s.title);
-        setAi(s.ai);
-        boundProjectId.current = s.projectId ?? null;
-        if (s.projectId) {
-          void selectProject(s.projectId).then(() => {
-            aligned.current = true;
-          });
-        } else {
+    boundProjectId.current = sessionProject;
+    if (sessionProject && useWorkspace.getState().currentProjectId !== sessionProject) {
+      void selectProject(sessionProject)
+        .catch(() => {})
+        .then(() => {
           aligned.current = true;
-        }
-      })
-      .catch((e) => setError(e instanceof Error ? e.message : "Could not open this session"));
-    listDocuments(sessionId)
-      .then((d) => {
-        setDocs(d);
-        setActiveId((d.find((x) => x.kind !== "notes") ?? d[0])?.id ?? null);
-      })
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
-  }, [allowed, sessionId, selectProject]);
+        });
+    } else {
+      aligned.current = true;
+    }
+  }, [sessionId, sessionProject, selectProject]);
 
   useEffect(() => {
     if (!aligned.current) return;
     const bound = boundProjectId.current;
     if (bound && currentProjectId && currentProjectId !== bound) navigate("/workshop");
   }, [currentProjectId, navigate]);
-
-  // a reply is running: read the chat every 2 s; when it ends, the piece it edited is read again
-  useEffect(() => {
-    if (!thinking) return;
-    const t = window.setInterval(() => {
-      void listChat(sessionId).then((next) => {
-        setMessages(next);
-        if (!next.some((m) => m.status === "thinking")) void listDocuments(sessionId).then(setDocs);
-      });
-    }, 2000);
-    return () => window.clearInterval(t);
-  }, [thinking, sessionId]);
 
   const send = async () => {
     const text = draft.trim();
@@ -213,7 +206,7 @@ export function MobileWorkshopSessionPage() {
     setError(null);
     try {
       const { ask, reply } = await sendTurn(sessionId, { docId: activeId, text });
-      setMessages((m) => [...m, ask, reply]);
+      setMessages((m) => [...(m ?? []), ask, reply]);
       setDraft("");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -246,9 +239,14 @@ export function MobileWorkshopSessionPage() {
           <p className="mt-1 text-sm text-zinc-500">Ask the AI to change the open piece</p>
         </div>
 
-        {error && <p className="text-xs text-red-400">{error}</p>}
+        {shownError && <p className="text-xs text-red-400">{shownError}</p>}
 
-        {docs.length === 0 && !error ? (
+        {docsLoad.data === null ? (
+          <div aria-hidden className="flex flex-col gap-4">
+            <div className="h-7 w-40 rounded-full bg-zinc-900" />
+            <div className="h-48 rounded-xl border border-zinc-800 bg-zinc-900/40" />
+          </div>
+        ) : docs.length === 0 && !shownError ? (
           <p className="py-10 text-center text-sm text-zinc-600">
             Nothing written yet. Open this session on your desktop to draft.
           </p>

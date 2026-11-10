@@ -1,11 +1,13 @@
-import { useSyncExternalStore } from "react";
+import { useMemo } from "react";
+import { useAuth } from "@/lib/auth";
+import { putCached, readCached, useCachedLoad, warmCached } from "@/lib/local-cache";
 import type { PieceKind, SessionStatus } from "@/lib/workshop";
-import { appendProjectId, useWorkspace } from "@/lib/workspace";
+import { useWorkspace } from "@/lib/workspace";
 
 /**
- * Every Workshop session at a glance (GET /api/workshop/sessions/summary), shared by the sidebar, the tab title and
- * the Mac app's Dock badge. One poll for the
- * whole page: every 3 s while it's in front, every 10 s behind, and at once when you come back to it.
+ * Every Workshop session at a glance (GET /api/workshop/sessions/summary), shared by the sidebar, the tab title, Home
+ * and the Mac app's Dock badge. A saved list (lib/local-cache): it paints at once and refetches when the Workshop
+ * changes anywhere (a reply's progress included), never on a timer.
  */
 export interface SessionSummary {
   id: string;
@@ -22,86 +24,49 @@ export interface SessionSummary {
   replyAt?: number;
 }
 
-let rows: SessionSummary[] | null = null;
-// sessions marked seen here whose seen the server may not have yet: a poll that started earlier can't bring the dot back
+const keyFor = (projectId: string | null) => `workshop/summary?p=${projectId ?? ""}`;
+// sessions marked seen here whose seen the server may not have yet: a list fetched earlier can't bring the dot back
 const seenHere = new Set<string>();
-const listeners = new Set<() => void>();
-let timer: number | undefined;
-// the query of the poll in flight: a poll for another project doesn't wait for it, and its answer is dropped
-let inFlight: string | null = null;
+// lists fetched since this page loaded: a saved "working" from an earlier visit is not shown (no stale spinner)
+const fetched = new Set<string>();
 
-const emit = () => listeners.forEach((f) => f());
-
-export async function refreshSummaries(): Promise<void> {
-  const params = new URLSearchParams();
-  appendProjectId(params); // the project you're in, like the sessions list
-  const qs = params.toString();
-  if (inFlight === qs) return;
-  inFlight = qs;
-  try {
-    const r = await fetch(`/api/workshop/sessions/summary${qs ? `?${qs}` : ""}`);
-    if (inFlight !== qs) return; // the project changed while it ran
-    if (r.ok) {
-      const got = (await r.json()) as SessionSummary[];
-      for (const x of got) if (!x.ready) seenHere.delete(x.id);
-      rows = got.map((x) => (x.ready && seenHere.has(x.id) ? { ...x, ready: false } : x));
-      emit();
-    }
-  } catch {
-    // offline for a moment: the next tick tries again
-  } finally {
-    if (inFlight === qs) inFlight = null;
-  }
-}
-
-// another project: its counts at once, never the last one's
-useWorkspace.subscribe((s, prev) => {
-  if (s.currentProjectId === prev.currentProjectId) return;
-  rows = null;
-  emit();
-  if (listeners.size) void refreshSummaries();
-});
-
-function schedule() {
-  window.clearTimeout(timer);
-  if (!listeners.size) return;
-  timer = window.setTimeout(() => {
-    void refreshSummaries().finally(schedule);
-  }, document.hidden ? 10_000 : 3_000);
-}
-
-const wake = () => {
-  if (document.hidden) return;
-  void refreshSummaries();
-  schedule();
+const load = (projectId: string | null) => async (): Promise<SessionSummary[]> => {
+  const r = await fetch(`/api/workshop/sessions/summary${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ""}`);
+  if (!r.ok) throw new Error(`Request failed (${r.status})`);
+  const got = (await r.json()) as SessionSummary[];
+  for (const x of got) if (!x.ready) seenHere.delete(x.id);
+  fetched.add(keyFor(projectId));
+  return got;
 };
 
-function subscribe(f: () => void) {
-  listeners.add(f);
-  if (listeners.size === 1) {
-    void refreshSummaries();
-    schedule();
-    document.addEventListener("visibilitychange", wake);
-    window.addEventListener("focus", wake);
-  }
-  return () => {
-    listeners.delete(f);
-    if (!listeners.size) {
-      window.clearTimeout(timer);
-      document.removeEventListener("visibilitychange", wake);
-      window.removeEventListener("focus", wake);
-    }
-  };
+export function refreshSummaries(): Promise<void> {
+  const pid = useWorkspace.getState().currentProjectId;
+  return warmCached(keyFor(pid), load(pid)).catch(() => {});
 }
 
-export const useSessionSummaries = () => useSyncExternalStore(subscribe, () => rows);
+export function useSessionSummaries(): SessionSummary[] | null {
+  const pid = useWorkspace((s) => s.currentProjectId);
+  const { data } = useCachedLoad<SessionSummary[]>(keyFor(pid), load(pid));
+  const live = fetched.has(keyFor(pid));
+  return useMemo(
+    () => data?.map((x) => (x.ready && seenHere.has(x.id) ? { ...x, ready: false } : !live && x.working ? { ...x, working: false } : x)) ?? null,
+    [data, live],
+  );
+}
+
+/** A change to the saved rows of the project you're in (they repaint everywhere at once). */
+function patchRows(fn: (rows: SessionSummary[]) => SessionSummary[]) {
+  const user = useAuth.getState().me?.username;
+  const key = keyFor(useWorkspace.getState().currentProjectId);
+  const rows = readCached<SessionSummary[]>(user, key);
+  if (rows) putCached(user, key, fn(rows));
+}
 
 /** You've seen this session's newest reply: its dot goes at once, and on every device once the server has it. */
 export function markSeen(sessionId: string, messageId: string) {
-  seenHere.add(sessionId);
-  if (rows?.some((r) => r.id === sessionId && r.ready)) {
-    rows = rows.map((r) => (r.id === sessionId ? { ...r, ready: false } : r));
-    emit();
+  if (!seenHere.has(sessionId)) {
+    seenHere.add(sessionId);
+    patchRows((rows) => rows.map((r) => (r.id === sessionId && r.ready ? { ...r, ready: false } : r)));
   }
   void fetch(`/api/workshop/sessions/${sessionId}/seen`, {
     method: "POST",
@@ -113,20 +78,13 @@ export function markSeen(sessionId: string, messageId: string) {
 /** Mark unread (the menu): the newest reply's Done dot comes back, here at once and on the server. */
 export function markUnread(sessionId: string) {
   seenHere.delete(sessionId);
-  if (rows?.some((r) => r.id === sessionId && r.replyAt && !r.working)) {
-    rows = rows.map((r) => (r.id === sessionId ? { ...r, ready: true } : r));
-    emit();
-  }
-  void fetch(`/api/workshop/sessions/${sessionId}/seen`, { method: "DELETE" })
-    .then(() => refreshSummaries())
-    .catch(() => {});
+  patchRows((rows) => rows.map((r) => (r.id === sessionId && r.replyAt && !r.working ? { ...r, ready: true } : r)));
+  void fetch(`/api/workshop/sessions/${sessionId}/seen`, { method: "DELETE" }).catch(() => {});
 }
 
-/** A change made here (a status, a title) shows in the sidebar now, not on the next poll. */
+/** A change made here (a status, a title) shows in the sidebar now; this tab skips its own write's notice. */
 export function patchSummary(sessionId: string, patch: Partial<SessionSummary>) {
-  if (!rows) return;
-  rows = rows.map((r) => (r.id === sessionId ? { ...r, ...patch } : r));
-  emit();
+  patchRows((rows) => rows.map((r) => (r.id === sessionId ? { ...r, ...patch } : r)));
 }
 
 /** Script done, not yet posted: Ready, In Production, Editing, Ready to post (the list's and the sidebar's fold). */

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useCachedList } from "@/lib/local-cache";
 import { ChevronDown, ChevronRight, ExternalLink, Loader2, RotateCw, Upload } from "lucide-react";
 import { ConfirmButton } from "@/components/instagram/ConfirmButton";
 import { onlyPageMarks, pdfPages, pdfText } from "@/lib/pdf-text";
@@ -90,7 +91,8 @@ async function toSource(file: File, say: (s: string) => void): Promise<SourceBod
  */
 export function KnowledgePanel() {
   const projects = useWorkspace((s) => s.projects);
-  const [sources, setSources] = useState<KnowledgeSource[]>([]);
+  // a saved list, live: a read running on the Mac saves as it goes, and each save refetches it (lib/local-cache)
+  const { items: sources, setItems: setSources, error: loadError } = useCachedList<KnowledgeSource>("workshop/sources", listSources);
   const [open, setOpen] = useState<string | null>(null);
   const [adding, setAdding] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -99,15 +101,6 @@ export function KnowledgePanel() {
   const [link, setLink] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const load = useCallback(() => listSources().then(setSources).catch((e) => setError(String(e instanceof Error ? e.message : e))), []);
-  useEffect(() => void load(), [load]);
-  // a read runs in the background on the Mac: look again until none is running
-  const reading = sources.some((s) => s.status === "reading");
-  useEffect(() => {
-    if (!reading) return;
-    const t = window.setInterval(() => void load(), 5000);
-    return () => window.clearInterval(t);
-  }, [reading, load]);
 
   const put = (s: KnowledgeSource) => setSources((list) => (list.some((x) => x.id === s.id) ? list.map((x) => (x.id === s.id ? s : x)) : [...list, s]));
   const act = (p: Promise<unknown>) => p.catch((e) => setError(e instanceof Error ? e.message : String(e)));
@@ -201,7 +194,7 @@ export function KnowledgePanel() {
           </div>
         </form>
       )}
-      {error && <p className="mb-2 text-xs text-red-400">{error}</p>}
+      {(error || (!sources.length && loadError)) && <p className="mb-2 text-xs text-red-400">{error || loadError}</p>}
       {sources.length === 0 ? (
         <p className="py-8 text-center text-sm text-zinc-600">Nothing yet.</p>
       ) : (

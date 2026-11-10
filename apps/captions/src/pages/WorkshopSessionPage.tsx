@@ -32,7 +32,6 @@ import {
   deleteChatMessage,
   deleteDocument,
   restoreDocument,
-  getDocument,
   getVersion,
   getSession,
   getWorkshopAvailability,
@@ -81,9 +80,8 @@ import {
   type WorkshopRule,
   readScope,
   saveScope,
-  saveSession,
-  savedSession,
-  type SavedSession,
+  keepSession,
+  sessionKeys,
   type ChangeScope,
 } from "@/lib/workshop";
 import { exportFilename } from "@/lib/workshop-markdown";
@@ -97,8 +95,7 @@ import { WorkshopSidebar } from "@/components/workshop/WorkshopSidebar";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import InstagramAccountPage from "@/pages/InstagramAccountPage";
 import { markSeen, patchSummary, refreshSummaries } from "@/lib/workshop-summary";
-import { listCache, sessionCache } from "@/lib/workshop-cache";
-import { readCached } from "@/lib/local-cache";
+import { useCachedList, useCachedLoad } from "@/lib/local-cache";
 import { useWorkspace } from "@/lib/workspace";
 
 type BlockEdit = { id?: string; text: string };
@@ -122,40 +119,67 @@ export default function WorkshopSessionPage() {
   const allowed = canUse(me, "workshop");
   const selectProject = useWorkspace((s) => s.select);
 
-  // A session opened before paints at once from memory or from its saved copy (lib/workshop savedSession); the fetches
-  // below refresh it underneath (`fresh` until they land). Without either, the page paints its layout with placeholders.
-  const seedFor = (id: string): SavedSession | null => (id ? (sessionCache.get(id) ?? savedSession(me?.username, id)) : null);
-  const [seededFor, setSeededFor] = useState(sessionId);
-  const [seed] = useState(() => seedFor(sessionId));
-  const [session, setSession] = useState<SessionRecord | null>(seed?.session ?? null);
-  const [fresh, setFresh] = useState(!seed);
-  const [pageError, setPageError] = useState<string | null>(null);
-  const [title, setTitle] = useState(seed?.session.title ?? "");
+  // The session, its pieces and its chat are saved copies (lib/local-cache): one opened or warmed before paints at once,
+  // and each stays live (a change elsewhere refetches it; this tab's own writes don't). Until a copy exists the page
+  // paints its layout with placeholders.
+  const keys = sessionKeys(sessionId);
+  const on = allowed && !!sessionId;
+  const sessionLoad = useCachedLoad<SessionRecord>(on ? keys.session : null, () => getSession(sessionId));
+  const docsLoad = useCachedLoad<WorkshopDocument[]>(on ? keys.docs : null, () => listDocuments(sessionId));
+  const chatLoad = useCachedLoad<ChatMessage[]>(on ? keys.chat : null, () => listChat(sessionId));
+  const session = sessionLoad.data;
+  const setSession = sessionLoad.set;
+  // a failed refresh keeps the saved copy on screen (offline, a restart); without one the error shows
+  const pageError = !session && sessionLoad.error ? sessionLoad.error : null;
+  // what was saved when this session opened: until a fetch replaces it the piece is not editable (it may be behind)
+  const opened = useRef({ id: sessionId, docs: docsLoad.data, chat: chatLoad.data });
+  if (opened.current.id !== sessionId) opened.current = { id: sessionId, docs: docsLoad.data, chat: chatLoad.data };
+  const fresh = docsLoad.data !== null && docsLoad.data !== opened.current.docs;
+  const chatFresh = chatLoad.data !== null && chatLoad.data !== opened.current.chat;
+  useEffect(() => keepSession(me?.username, sessionId), [me?.username, sessionId]);
+  const [title, setTitle] = useState(session?.title ?? "");
+  // the title field follows the saved name (a rename elsewhere) until you type in it
+  const titleDirty = useRef(false);
+  useEffect(() => {
+    if (!titleDirty.current) setTitle(session?.title ?? "");
+  }, [sessionId, session?.title]);
   const [error, setError] = useState<string | null>(null);
 
   // ---- the desk: documents and the conversation
-  const [docs, setDocs] = useState<WorkshopDocument[]>(seed?.docs ?? []);
+  // A piece being typed in keeps the copy it showed until its save lands (`held`): a refetch caused elsewhere never
+  // moves the text under the cursor.
+  const held = useRef(new Map<string, WorkshopDocument>());
+  const savingDocs = useRef(new Map<string, number>());
+  // `held` changes only with a docs write, which changes the data
+  const setDocsData = docsLoad.set;
+  const docs = useMemo(() => (docsLoad.data ?? []).map((d) => held.current.get(d.id) ?? d), [docsLoad.data]);
+  const setDocs = useCallback(
+    (next: WorkshopDocument[] | ((prev: WorkshopDocument[]) => WorkshopDocument[])) => setDocsData((prev) => (typeof next === "function" ? next(prev ?? []) : next)),
+    [setDocsData],
+  );
   // the pieces are known: saved, or fetched (an empty list is an answer too); until then the tabs and the body show placeholders
-  const [docsKnown, setDocsKnown] = useState(!!seed);
+  const docsKnown = docsLoad.data !== null;
   // ?doc= opens on that piece (a Convert to copy opens on the piece being written)
   const [searchParams] = useSearchParams();
-  const [activeDocId, setActiveDocId] = useState<string | null>(searchParams.get("doc") ?? seed?.activeDocId ?? null);
+  const [activeDocId, setActiveDocId] = useState<string | null>(() => searchParams.get("doc") ?? pickActive(docs, null));
   const [closed, setClosed] = useState<Array<{ doc: WorkshopDocument; index: number }>>([]);
-  const [messages, setMessages] = useState<ChatMessage[]>(seed?.messages ?? []);
-  // A sidebar click keeps this page mounted: its state moves to the other session's copy (or the placeholders) in the same render.
-  if (seededFor !== sessionId) {
-    const next = seedFor(sessionId);
-    setSeededFor(sessionId);
-    setSession(next?.session ?? null);
-    setFresh(!next);
-    setTitle(next?.session.title ?? "");
-    setDocs(next?.docs ?? []);
-    setDocsKnown(!!next);
-    setActiveDocId(next?.activeDocId ?? null);
-    setMessages(next?.messages ?? []);
+  const setChatData = chatLoad.set;
+  const messages = useMemo(() => chatLoad.data ?? [], [chatLoad.data]);
+  const setMessages = useCallback(
+    (next: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => setChatData((prev) => (typeof next === "function" ? next(prev ?? []) : next)),
+    [setChatData],
+  );
+  // A sidebar click keeps this page mounted: the piece shown and the closed tabs belong to the session.
+  const [shownFor, setShownFor] = useState(sessionId);
+  if (shownFor !== sessionId) {
+    setShownFor(sessionId);
+    setActiveDocId(pickActive(docs, null));
     setClosed([]);
-    setPageError(null);
   }
+  // the piece shown: the one picked while it exists, else the first working one
+  useEffect(() => {
+    if (docsKnown) setActiveDocId((cur) => pickActive(docs, cur));
+  }, [docsKnown, docs]);
   // The composer's context survives a reload (per session); send() clears it once the turn is accepted.
   const draftKey = `workshop-draft:${sessionId}`;
   const [savedContext] = useState(() => readComposerContext(`${draftKey}:ctx`));
@@ -230,8 +254,9 @@ export default function WorkshopSessionPage() {
   };
   const [readerSlide, setReaderSlide] = useState<{ postId: string; index: number } | null>(null);
 
-  const [projects, setProjects] = useState<WorkshopProject[]>(listCache.projects ?? []);
-  const [accounts, setAccounts] = useState<InstagramAccount[]>(listCache.accounts ?? []);
+  const pid = useWorkspace((s) => s.currentProjectId) ?? "";
+  const { items: projects } = useCachedList<WorkshopProject>(allowed ? "workshop/projects" : null, listProjects);
+  const { items: accounts } = useCachedList<InstagramAccount>(allowed ? "instagram/accounts?all" : null, () => listAccounts("", { projectId: null }));
   const [mineOnly, setMineOnly] = useState(false);
   // Browse: your own posts only under My account, posts other sessions use hidden unless asked for,
   // and the library by date, newest or oldest first (both remembered)
@@ -245,76 +270,35 @@ export default function WorkshopSessionPage() {
     localStorage.setItem("workshop:browse-order", order);
   }, [showElsewhere, order]);
   const [formatOnly, setFormatOnly] = useState(false);
-  const [sessions, setSessions] = useState<SessionRow[]>(listCache.sessions ?? []);
-  const [frameworks, setFrameworks] = useState<WorkshopFramework[]>(listCache.frameworks ?? []);
-  const [rules, setRules] = useState<WorkshopRule[]>(listCache.rules ?? []);
-  // the availability saved on this device (the list's own copy) decides the banners from the first frame
-  const savedAvail = readCached<{ ai: boolean; research: boolean; mac?: boolean }>(me?.username, "workshop/availability");
-  const [aiAvailable, setAiAvailable] = useState(savedAvail?.ai ?? true);
-  const [researchAvailable, setResearchAvailable] = useState(savedAvail?.research ?? false);
-  const [macOff, setMacOff] = useState(savedAvail?.mac === false);
+  // the same keys as the Workshop list and the warm-up (lib/warm-cache)
+  const { items: sessions } = useCachedList<SessionRow>(allowed ? `workshop/sessions?p=${pid}` : null, listSessions);
+  const { items: frameworks } = useCachedList<WorkshopFramework>(allowed ? "workshop/frameworks" : null, listFrameworks);
+  const { items: rules } = useCachedList<WorkshopRule>(allowed ? "workshop/rules" : null, listRules);
+  // the availability saved on this device decides the banners from the first frame; asked again when the window is
+  // focused (a Mac that was off a moment ago is back: that is not a change the server announces)
+  const avail = useCachedLoad(allowed ? "workshop/availability" : null, getWorkshopAvailability);
+  const aiAvailable = avail.data?.ai ?? true;
+  const researchAvailable = avail.data?.research ?? false;
+  const macOff = avail.data?.mac === false;
+  const refreshAvail = avail.refresh;
+  useEffect(() => {
+    const check = () => void refreshAvail().catch(() => {});
+    window.addEventListener("focus", check);
+    return () => window.removeEventListener("focus", check);
+  }, [refreshAvail]);
   const [desk, setDesk] = useDeskLayout();
   const [auditMessageId, setAuditMessageId] = useState<string | null>(null);
   const auditThinking = useRef(new Set<string>());
 
   const fail = (e: unknown) => setError(e instanceof Error ? e.message : String(e));
 
-  // ---- load
-  // an answer for the session this page showed before a sidebar click is dropped
-  const openId = useRef(sessionId);
-  openId.current = sessionId;
-  const load = useCallback(() => {
-    if (!sessionId) return;
-    const id = sessionId;
-    const current = () => openId.current === id;
-    getSession(id)
-      .then((s) => {
-        if (!current()) return;
-        setSession(s);
-        setTitle(s.title);
-        setQuery((q) => q || s.query);
-        if (s.projectId) void selectProject(s.projectId);
-      })
-      .catch((e) => current() && setPageError(e instanceof Error ? e.message : "Could not open the session"));
-    listDocuments(id)
-      .then((d) => {
-        if (!current()) return;
-        setDocs(d);
-        setDocsKnown(true);
-        setActiveDocId((cur) => pickActive(d, cur));
-        setFresh(true);
-      })
-      .catch((e) => current() && setError(e instanceof Error ? e.message : String(e)));
-    listChat(id)
-      .then((ms) => current() && setMessages(ms))
-      .catch(() => {});
-  }, [sessionId, selectProject]);
-
+  // a session opens in its own project (its search box too)
   useEffect(() => {
-    if (!allowed) return;
-    load();
-    listProjects().then(setProjects).catch(() => {});
-    listAccounts("", { projectId: null }).then(setAccounts).catch(() => {});
-    listSessions().then(setSessions).catch(() => {});
-    listFrameworks().then(setFrameworks).catch(() => {});
-    listRules().then(setRules).catch(() => {});
-    // asked again every 30 s and on focus: a Mac that was off a moment ago (a deploy's restart, a sleep) is back
-    const check = () =>
-      getWorkshopAvailability()
-        .then((a) => {
-          setAiAvailable(a.ai);
-          setResearchAvailable(a.research);
-          setMacOff(a.mac === false);
-        })
-        .catch(() => {});
-    void check();
-    const t = window.setInterval(check, 30_000);
-    window.addEventListener("focus", check);
-    return () => {
-      window.clearInterval(t);
-      window.removeEventListener("focus", check);
-    };
-  }, [allowed, load]);
+    if (!session) return;
+    setQuery((q) => q || session.query);
+    if (session.projectId && useWorkspace.getState().currentProjectId !== session.projectId) void selectProject(session.projectId).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per session opened
+  }, [session?.id]);
 
   useEffect(() => {
     setDocPreview(false);
@@ -334,25 +318,10 @@ export default function WorkshopSessionPage() {
     return () => document.removeEventListener("mousedown", onDown);
   }, []);
 
-  useEffect(() => {
-    if (sessionId && session) sessionCache.set(sessionId, { session, docs, messages, activeDocId });
-  }, [sessionId, session, docs, messages, activeDocId]);
-  // the copy kept on this device for the next open: a moment after a change (a reply streams in once a second), and when leaving
-  const saveCopy = useRef<() => void>(() => {});
-  saveCopy.current = () => {
-    if (sessionId && session) saveSession(me?.username, sessionId, { session, docs, messages, activeDocId });
-  };
-  useEffect(() => {
-    const t = window.setTimeout(() => saveCopy.current(), 600);
-    return () => window.clearTimeout(t);
-  }, [sessionId, session, docs, messages, activeDocId]);
-  useEffect(() => () => saveCopy.current(), []);
-  useEffect(() => {
-    Object.assign(listCache, { projects, accounts, sessions, frameworks, rules });
-  }, [projects, accounts, sessions, frameworks, rules]);
 
-  // ---- the running reply's words, pushed as they arrive (the poll below brings everything else)
-  const liveId = messages.find((m) => m.status === "thinking")?.id;
+  // ---- the running reply's words, pushed as they arrive (its saves refetch the chat and the pieces: lib/local-cache).
+  // A saved copy's "thinking" from an earlier visit counts once the chat is fetched again.
+  const liveId = chatFresh ? messages.find((m) => m.status === "thinking")?.id : undefined;
   const [streamed, setStreamed] = useState<{ id: string; text: string } | null>(null);
   useEffect(() => {
     if (!liveId || !sessionId) return;
@@ -361,7 +330,7 @@ export default function WorkshopSessionPage() {
       try {
         setStreamed({ id: liveId, text: (JSON.parse(e.data) as { text: string }).text });
       } catch {
-        // a broken event: the poll still brings the text
+        // a broken event: the chat's refetch still brings the text
       }
     };
     es.addEventListener("end", () => es.close());
@@ -372,9 +341,7 @@ export default function WorkshopSessionPage() {
     [messages, streamed],
   );
 
-  // ---- a turn is running: poll the chat every second (the reply streams in),
-  // refresh the document while blocks are being written, then everything when it ends
-  const thinking = messages.some((m) => m.status === "thinking");
+  const thinking = !!liveId;
   // A rename from the sidebar (double-click a session) lands in the title field too.
   useEffect(() => {
     const on = (e: Event) => {
@@ -385,7 +352,7 @@ export default function WorkshopSessionPage() {
     };
     window.addEventListener("workshop:renamed", on);
     return () => window.removeEventListener("workshop:renamed", on);
-  }, [sessionId]);
+  }, [sessionId, setSession]);
 
   // The tab's title and the sidebar's dots come from the session summary (WorkshopSidebar). Looking at a finished
   // reply here marks it seen, so its dot goes everywhere.
@@ -401,39 +368,17 @@ export default function WorkshopSessionPage() {
       window.removeEventListener("focus", look);
     };
   }, [sessionId, latestReply?.id, latestReply?.status]); // eslint-disable-line react-hooks/exhaustive-deps
+  // a turn that made a new piece opens it when it ends
+  const running = useRef<string | null>(null);
   useEffect(() => {
-    if (!thinking || !sessionId) return;
-    let seenBlocks = -1;
-    let busy = false;
-    const t = window.setInterval(() => {
-      if (busy) return;
-      busy = true;
-      listChat(sessionId)
-        .then(async (ms) => {
-          setMessages(ms);
-          const live = ms.find((m) => m.status === "thinking");
-          if (live) {
-            const written = live.edits?.blockIds?.length ?? 0;
-            if (live.edits && written !== seenBlocks) {
-              seenBlocks = written;
-              const doc = await getDocument(sessionId, live.edits.docId).catch(() => null);
-              if (doc) setDocs((ds) => (ds.some((d) => d.id === doc.id) ? ds.map((d) => (d.id === doc.id ? doc : d)) : [...ds, doc]));
-            }
-            return;
-          }
-          const d = await listDocuments(sessionId);
-          setDocs(d);
-          const last = [...ms].reverse().find((m) => m.role === "assistant" && m.status === "done");
-          setActiveDocId((cur) => (last?.edits?.created ? last.edits.docId : pickActive(d, cur)));
-          void refreshSummaries();
-        })
-        .catch(() => {})
-        .finally(() => {
-          busy = false;
-        });
-    }, 1000);
-    return () => window.clearInterval(t);
-  }, [thinking, sessionId, title]);
+    if (liveId) {
+      running.current = liveId;
+      return;
+    }
+    const ended = running.current ? messages.find((m) => m.id === running.current) : undefined;
+    running.current = null;
+    if (ended?.edits?.created) setActiveDocId(ended.edits.docId);
+  }, [liveId, messages]);
 
   useEffect(() => {
     for (const m of messages) {
@@ -456,13 +401,18 @@ export default function WorkshopSessionPage() {
       blockTimer.current = null;
     }
     setDocSaving(true);
+    const inFlight = (n: number) => savingDocs.current.set(p.docId, (savingDocs.current.get(p.docId) ?? 0) + n);
+    inFlight(1);
     return patchDocument(sessionId, p.docId, { blocks: p.blocks, caption: p.caption, pinned: p.pinned, ...(p.hooks !== undefined ? { hooks: p.hooks } : {}) })
       .then((doc) => {
-        // A newer edit to the same document is waiting; its own save will bring the final copy.
-        if (pendingBlocks.current?.docId !== doc.id) setDocs((ds) => ds.map((d) => (d.id === doc.id ? doc : d)));
+        inFlight(-1);
+        // the saved copy takes the server's; the piece on screen lets go of its own once no newer edit is waiting
+        if (pendingBlocks.current?.docId !== doc.id && !savingDocs.current.get(doc.id)) held.current.delete(doc.id);
+        setDocs((ds) => ds.map((d) => (d.id === doc.id ? doc : d)));
         return true;
       })
       .catch((e) => {
+        inFlight(-1);
         setError(e instanceof Error ? e.message : String(e));
         if (!pendingBlocks.current) {
           pendingBlocks.current = p;
@@ -471,9 +421,11 @@ export default function WorkshopSessionPage() {
         return false;
       })
       .finally(() => setDocSaving(false));
-  }, [sessionId]);
+  }, [sessionId, setDocs]);
 
   const onBlocks = (docId: string, blocks: BlockEdit[], companions: { caption: string; pinned: string; hooks?: BlockEdit[] }) => {
+    const shown = docs.find((d) => d.id === docId);
+    if (shown && !held.current.has(docId)) held.current.set(docId, shown);
     pendingBlocks.current = { docId, blocks, ...companions };
     if (blockTimer.current) window.clearTimeout(blockTimer.current);
     blockTimer.current = window.setTimeout(() => void flushBlocks(), 700);
@@ -1038,9 +990,14 @@ export default function WorkshopSessionPage() {
         <span aria-hidden className="invisible col-start-1 row-start-1 truncate whitespace-pre border border-transparent px-2 py-1 text-sm font-medium">{title || "Session title"}</span>
         <input
           value={title}
-          onChange={(e) => setTitle(e.target.value)}
+          onChange={(e) => {
+            titleDirty.current = true;
+            setTitle(e.target.value);
+          }}
           onBlur={() => {
-            if (session && title.trim() !== session.title) {
+            const typed = titleDirty.current;
+            titleDirty.current = false;
+            if (session && typed && title.trim() !== session.title) {
               patchSummary(session.id, { title: title.trim() || "Untitled session" });
               patchSession(session.id, { title }).then((m) => setSession((s) => (s ? { ...s, title: m.title } : s))).catch(() => {});
             }
@@ -1049,6 +1006,7 @@ export default function WorkshopSessionPage() {
             // Enter saves and leaves the field, Esc puts the saved name back
             if (e.key === "Enter") e.currentTarget.blur();
             if (e.key === "Escape") {
+              titleDirty.current = false;
               setTitle(session?.title ?? "");
               requestAnimationFrame(() => (document.activeElement as HTMLElement | null)?.blur());
             }
