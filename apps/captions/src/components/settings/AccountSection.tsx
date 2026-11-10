@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router";
 import { toast } from "sonner";
 import { logout, useAuth } from "@/lib/auth";
+import { useCachedLoad } from "@/lib/local-cache";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -63,32 +64,35 @@ export function AccountAvatar({ picture, initial, className, fallback }: { pictu
   return <span className={cn("flex shrink-0 items-center justify-center rounded-full bg-muted font-medium uppercase text-muted-foreground", className)}>{initial}</span>;
 }
 
+const NO_SIGN_INS = Object.fromEntries(PROVIDERS.map((p) => [p, false])) as Record<Provider, boolean>;
+/**
+ * The sign-ins this server has switched on (Account links them, Team picks from them): the saved copy at once. A server
+ * that does not answer has none.
+ */
+export function useSignInApps(): Record<Provider, boolean> | null {
+  const { data, error } = useCachedLoad<Record<Provider, boolean>>("/api/account/providers", () =>
+    fetch("/api/account/providers").then((r) => (r.ok ? (r.json() as Promise<Record<Provider, boolean>>) : NO_SIGN_INS)),
+  );
+  return data ?? (error ? NO_SIGN_INS : null);
+}
+
 /** Settings → Account: the photo, name, sign-in name and password; Google, Apple and GitHub sign-in; sign out. */
 export function AccountSection() {
   const me = useAuth((s) => s.me);
   const required = useAuth((s) => s.required);
-  const [account, setAccount] = useState<AccountView | null>(null);
-  const [noAccount, setNoAccount] = useState(false);
-  const [providers, setProviders] = useState<Record<Provider, boolean> | null>(null);
+  // a computer with no account answers 401 here ("none"): the page then says so, instead of a name that can never save
+  const stored = useCachedLoad<AccountView | "none">("/api/auth/account", () =>
+    fetch("/api/auth/account").then((r) => (r.status === 401 ? "none" : r.ok ? (r.json() as Promise<AccountView>) : Promise.reject(new Error(`Request failed (${r.status})`)))),
+  );
+  const noAccount = stored.data === "none";
+  const account = stored.data === "none" ? null : stored.data;
+  const setStored = stored.set;
+  const setAccount = (change: (a: AccountView) => AccountView) => setStored((a) => (a && a !== "none" ? change(a) : a));
+  const refresh = stored.refresh;
+  const load = () => refresh().catch(() => {});
+  const providers = useSignInApps();
   const [params, setParams] = useSearchParams();
   const told = useRef(false);
-
-  // a computer with no account answers 401 here: the page then says so, instead of a name that can never save
-  const load = () =>
-    fetch("/api/auth/account")
-      .then((r) => (r.status === 401 ? (setNoAccount(true), null) : r.ok ? (r.json() as Promise<AccountView>) : null))
-      .then((d) => d && setAccount(d))
-      .catch(() => {});
-  useEffect(() => {
-    void load();
-  }, []);
-  useEffect(() => {
-    const off = Object.fromEntries(PROVIDERS.map((p) => [p, false])) as Record<Provider, boolean>;
-    void fetch("/api/account/providers")
-      .then((r) => (r.ok ? (r.json() as Promise<Record<Provider, boolean>>) : off))
-      .then((d) => setProviders(d))
-      .catch(() => setProviders(off));
-  }, [required]);
 
   // The sign-in return: api/sign-in.ts sends the browser back with ?linked=<provider> or ?signin=<message>
   useEffect(() => {
@@ -121,7 +125,7 @@ export function AccountSection() {
   const shownName = account.name || account.username;
   const photo = account.signins.find((s) => s.picture);
   const saved = (name: string) => {
-    setAccount((a) => a && { ...a, name });
+    setAccount((a) => ({ ...a, name }));
     useAuth.getState().setAuth(required, { ...me, name: name || me.username });
   };
 
@@ -133,7 +137,7 @@ export function AccountSection() {
             <Row id="photo" title="Photo" description={`From ${PROVIDER_NAME[photo.provider]}`} control={<AccountAvatar picture={photo.picture} initial={shownName.charAt(0)} className="size-10" />} />
           )}
           <NameRow name={account.name} username={account.username} onSaved={saved} />
-          {required && <SignInNameRow login={account.login} onSaved={(login) => setAccount((a) => a && { ...a, login })} />}
+          {required && <SignInNameRow login={account.login} onSaved={(login) => setAccount((a) => ({ ...a, login }))} />}
           {required && <PasswordRow />}
         </Card>
       </Section>

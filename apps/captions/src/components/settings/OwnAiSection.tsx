@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { CliId, LocalAiRow, LocalAiView } from "@contracts/local-ai";
 import { Check, Copy, KeyRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { AccessKeysSection } from "./AccessKeys";
+import { AccessKeysSection, useAccessKeys } from "./AccessKeys";
+import { useLocalAi } from "./AiSetup";
 import { ProviderLogo } from "./ProviderLogos";
 import { installInMacAi, thisMacBridge } from "@/lib/thisMac";
 import { Advanced, Card, ErrorRow, ListRow, LoadingRow, RowMenu, Section, Status, saveFailed, InUse } from "./ui";
@@ -57,29 +58,23 @@ async function json<T>(r: Response): Promise<T> {
 
 /** What the Headless access rows read: the AI apps' keys and what this computer has. Shared by the page and setup's last screen. */
 export function useOwnAi() {
-  const [keys, setKeys] = useState<AiKeyInfo[] | null>(null);
-  const [local, setLocal] = useState<LocalAiView | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // both lists are their saved copy at once (the keys' and the computer's AI apps', shared with Access keys and Providers)
+  const stored = useAccessKeys();
+  const apps = useLocalAi();
+  const keys: AiKeyInfo[] | null = stored.data ? (stored.data.ai ?? []) : null;
+  // an answer that never came reads as "not this computer": the rows are then the ones for a server elsewhere
+  const local: LocalAiView | null = apps.data ?? (apps.error ? { local: false, rows: [] } : null);
   const load = () => {
-    fetch("/api/auth/api-key")
-      .then((r) => json<{ ai?: AiKeyInfo[] }>(r))
-      .then((k) => (setKeys(k.ai ?? []), setError(null)))
-      .catch((e) => setError(msg(e)));
-    fetch("/api/setup/ai", { signal: AbortSignal.timeout(20_000) })
-      .then((r) => json<LocalAiView>(r))
-      .then(setLocal)
-      .catch(() => setLocal({ local: false, rows: [] }));
+    void stored.refresh().catch(() => {});
+    void apps.refresh().catch(() => {});
   };
-  useEffect(() => {
-    load();
-  }, []);
 
   const disconnect = (id: string) =>
     fetch(`/api/auth/api-key?id=${encodeURIComponent(id)}`, { method: "DELETE" })
-      .then((r) => json<{ ai?: AiKeyInfo[] }>(r))
-      .then((k) => setKeys(k.ai ?? []))
+      .then((r) => json<NonNullable<typeof stored.data>>(r))
+      .then((k) => stored.set(k))
       .catch((e) => (saveFailed(msg(e)), void load()));
-  return { keys, local, error, load, disconnect };
+  return { keys, local, error: stored.error, load, disconnect };
 }
 
 /**

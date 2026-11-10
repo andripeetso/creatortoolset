@@ -1,12 +1,11 @@
-import { useEffect, useState } from "react";
 import { MY_KEYS, type MyKeyEnv, type MyKeyGroup, type MyKeyView } from "@contracts/service-keys";
-import type { SetupView } from "@contracts/tools";
 import { removeApify, saveApify, type ApifyStatus } from "@/lib/instagram";
+import { useCachedLoad } from "@/lib/local-cache";
+import { useSetup } from "@/lib/setup";
 import { Card, ErrorRow, LoadingRow, Section } from "./ui";
 import { KeyRow } from "./KeyRow";
-import { getMyKeys, saveMyKey } from "./MyKeysSection";
+import { saveMyKey, useMyKeys } from "./MyKeysSection";
 import type { ApiKeyRowId } from "./search";
-import { msg } from "./helpers";
 
 const GROUPS: Array<{ id: MyKeyGroup; title: string }> = [
   { id: "voice", title: "Transcription and voice" },
@@ -26,12 +25,11 @@ const getApify = () => fetch("/api/instagram/apify").then((r) => json<ApifyStatu
  * account's own Apify routes (api/instagram.ts), not api/my-keys.ts.
  */
 export function ApifyKeyRow({ onChanged }: { onChanged?: () => void }) {
-  const [status, setStatus] = useState<ApifyStatus | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const load = () => getApify().then(setStatus).catch((e) => setError(msg(e)));
-  useEffect(() => void load(), []);
+  // read when the row is shown and after its own save; nothing else changes it (its "instagram" topic is every pull's step)
+  const { data: status, error, refresh } = useCachedLoad<ApifyStatus>("/api/instagram/apify", getApify, { topic: [] });
+  const load = () => refresh().catch(() => {});
   if (!status)
-    return error ? <ErrorRow title="Couldn't load the Apify key" detail={error} retry={() => (setError(null), void load())} /> : <LoadingRow />;
+    return error ? <ErrorRow title="Couldn't load the Apify key" detail={error} retry={() => void load()} /> : <LoadingRow />;
   return (
     <KeyRow
       id="apify-key"
@@ -61,24 +59,15 @@ export function ApifyKeyRow({ onChanged }: { onChanged?: () => void }) {
  * instead (their own key wins, api/my-keys.ts keyFor). Anthropic is listed only when the account has no AI of its own.
  */
 export function ApiKeysSection() {
-  const [keys, setKeys] = useState<MyKeyView[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  // no AI of its own yet: the Anthropic key is what the tools use. Until the check answers, it stays hidden.
-  const [ownAi, setOwnAi] = useState(true);
-  const reload = () => getMyKeys().then(setKeys).catch((e) => setError(msg(e)));
-  useEffect(() => {
-    void reload();
-    void fetch("/api/setup")
-      .then((r) => json<SetupView>(r))
-      .then((v) => setOwnAi(v.have.includes("ownAi")))
-      .catch(() => undefined);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const { data: keys, error, refresh } = useMyKeys();
+  // no AI of its own yet: the Anthropic key is what the tools use. Until the setup is known, it stays hidden.
+  const ownAi = useSetup((s) => s.view?.have.includes("ownAi") ?? true);
+  const reload = () => refresh().catch(() => {});
 
   if (!keys)
     return (
       <Card>
-        {error ? <ErrorRow title="Couldn't load your API keys" detail={error} retry={() => (setError(null), void reload())} /> : <LoadingRow />}
+        {error ? <ErrorRow title="Couldn't load your API keys" detail={error} retry={() => void reload()} /> : <LoadingRow />}
       </Card>
     );
 

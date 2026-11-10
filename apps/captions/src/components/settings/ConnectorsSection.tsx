@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { addAccount as addInstagram, patchAccount as patchInstagram } from "@/lib/instagram";
 import { patchProject } from "@/lib/workshop";
+import { useCachedLoad } from "@/lib/local-cache";
 import { useWorkspace } from "@/lib/workspace";
 import {
   LOGINS,
@@ -91,14 +92,12 @@ export function platformRows(view: Pick<ConnectorsView, "logins" | "apify" | "ac
 export function ConnectorsSection({ back = "/settings/connectors", compact }: { sub?: string; back?: string; compact?: boolean }) {
   const projects = useWorkspace((s) => s.projects);
   const current = useWorkspace((s) => s.currentProjectId);
-  const [view, setView] = useState<ConnectorsView | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { data: view, error, refresh } = useCachedLoad<ConnectorsView>("/api/connectors", getConnectors);
   const [dlg, setDlg] = useState<{ platform: SocialPlatform; step: "choose" | "handle"; seq: number }>({ platform: "tiktok", step: "handle", seq: 0 });
   const [open, setOpen] = useState(false);
   const [params, setParams] = useSearchParams();
 
-  const reload = useCallback(() => getConnectors().then(setView).catch((e) => setError(msg(e))), []);
-  useEffect(() => void reload(), [reload]);
+  const reload = useCallback(() => refresh().catch(() => {}), [refresh]);
   // a sign-in from the Mac app finishes in the computer's browser: coming back to the window shows the new account
   useEffect(() => {
     const onFocus = () => void reload();
@@ -147,7 +146,7 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
   if (!view) {
     return (
       <Section title="Platforms">
-        <Card>{error ? <ErrorRow title="Couldn't load your accounts" detail={error} retry={() => (setError(null), void reload())} /> : <LoadingRow />}</Card>
+        <Card>{error ? <ErrorRow title="Couldn't load your accounts" detail={error} retry={() => void reload()} /> : <LoadingRow />}</Card>
       </Section>
     );
   }
