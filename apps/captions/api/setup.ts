@@ -10,9 +10,7 @@ import { joinServer, saveJoin } from "./lib/server-join";
 import { readConnectors } from "./lib/connectors/store";
 import { publicApifyStatus, readApify } from "./lib/instagram/apify";
 import { connectedOwn } from "./lib/providers";
-import { homedir } from "node:os";
 import { addMcp, connectCli, installCli, localAiView, signIn, CLI_IDS, MAC_ONLY } from "./lib/local-ai";
-import { defaultRoots, scanFolders } from "./lib/folder-scan";
 import { ownedProjects } from "./lib/workshop/workspace";
 import { ensureLibrary, homeOf } from "./library/access";
 import { libraryDb } from "./library/db";
@@ -41,7 +39,6 @@ import { isPlan, planFromCli, type PlanId } from "../contracts/plans";
  * readiness rows. $DATA_DIR/setup/<username>.json; accounts only (a share-link visitor has no setup).
  *
  *   GET  /api/setup  → SetupView
- *   GET  /api/setup/folders/scan → { folders, truncated }  the folders with video or audio on this computer (owner only)
  *   GET  /api/setup/computers → ComputersView  this computer, plus the account's other computers (devices) with online state
  *   PUT  /api/setup  { tools?: Tool[], plan?: PlanId | null, done?: boolean } → SetupView
  *   GET  /api/setup/ai[?fresh=1]       → LocalAiView   the AI CLIs found on this computer (owner only; fresh reads them again)
@@ -215,12 +212,6 @@ setupApp.get("/ai", async (c) => {
   const u = c.get("user").username;
   if (!ownComputer(c.get("user"))) return c.json({ local: false, rows: [] } satisfies LocalAiView);
   return c.json(await localAiView(u, mcpToOf(u), c.req.query("fresh") === "1"));
-});
-
-/** Step 3: the folders with footage or music on this computer, read only (api/lib/folder-scan.ts). */
-setupApp.get("/folders/scan", async (c) => {
-  if (!ownComputer(c.get("user"))) return c.json({ error: "Only the owner's computer can be scanned" }, 403);
-  return c.json(await scanFolders(defaultRoots(homedir())));
 });
 
 setupApp.post("/ai/signin", async (c) => {

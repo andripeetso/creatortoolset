@@ -151,3 +151,30 @@ describe("watch folder scan", () => {
     expect(versions()).toHaveLength(2);
   });
 });
+
+describe("a folder chosen from the Media Library card", () => {
+  const post = (user: string, body: unknown) =>
+    app.request("/api/library/watch/folder", {
+      method: "POST",
+      headers: { "x-user": user, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  const listed = async () => ((await (await app.request("/api/library/lib_w/watch", { headers: { "x-user": "owner-w" } })).json()) as { folders: { path: string }[] }).folders.map((f) => f.path);
+
+  it("joins the account's watch list, read in place", async () => {
+    const chosen = path.join(dir, "Picked footage");
+    mkdirSync(chosen, { recursive: true });
+    expect((await post("owner-w", { path: chosen })).status).toBe(200);
+    expect(await listed()).toContain(chosen);
+    expect((await post("owner-w", { path: chosen })).status).toBe(200); // already there counts as added
+    expect((await listed()).filter((p) => p === chosen)).toHaveLength(1);
+  });
+
+  it("checks the folder: a missing or relative path is refused and nothing is added", async () => {
+    const before = await listed();
+    expect((await post("owner-w", { path: path.join(dir, "not there") })).status).toBe(400);
+    expect((await post("owner-w", { path: "footage" })).status).toBe(400);
+    expect((await post("owner-w", {})).status).toBe(400);
+    expect(await listed()).toEqual(before);
+  });
+});

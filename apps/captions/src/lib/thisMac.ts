@@ -27,6 +27,21 @@ export async function startThisMac(): Promise<ThisMacState | null> {
 }
 
 /**
+ * "Choose a folder" in the Mac app: its own open panel (ThisMacBridge.swift chooseFolder). Resolves to the folder's path,
+ * or null when it was cancelled. undefined in a browser, where the page asks for a typed path instead.
+ */
+export async function chooseFolderOnMac(): Promise<string | null | undefined> {
+  const bridge = thisMacBridge();
+  if (!bridge) return undefined;
+  try {
+    const reply = (await (bridge.postMessage("folder") as unknown as Promise<{ path?: string | null }>)) ?? {};
+    return reply.path ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * "Access from other devices" on this Mac: the server starts listening beyond this computer (the Mac app asks for the
  * owner's password first, when there is none). Resolves to the problem to show, or null when it is on and the server
  * is restarting.

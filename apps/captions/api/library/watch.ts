@@ -133,6 +133,19 @@ watchApp.put("/:id/watch", async (c) => {
   return c.json(await withFound(status(libraryId)));
 });
 
+// POST /api/library/watch/folder { path } → { ok }. Adds one folder to the account's own watch list: the "Where are your
+// videos?" card (Media Library, AI Editor) and the Mac app's folder picker land here. The same checks as the list.
+watchApp.post("/watch/folder", async (c) => {
+  const user = c.get("user");
+  if (user.role === "visitor") return c.json({ error: "Not for guests", code: "forbidden" }, 403);
+  const body = (await c.req.json().catch(() => null)) as { path?: unknown } | null;
+  const folder = typeof body?.path === "string" ? body.path.trim() : "";
+  if (!folder) return c.json({ error: "Choose a folder", code: "invalid" }, 400);
+  const refused = await addWatchFolder(user.username, folder);
+  if (refused) return c.json({ error: refused, code: "invalid" }, 400);
+  return c.json({ ok: true });
+});
+
 /** Only the watch key: other settings (transcription and the rest) are written by other code. */
 const writeWatch = (libraryId: string, folders: WatchFolder[]) => {
   db().prepare("UPDATE libraries SET settings = json_set(settings, '$.watch', json(?)) WHERE id = ?").run(JSON.stringify(folders), libraryId);
