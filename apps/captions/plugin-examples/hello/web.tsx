@@ -1,13 +1,18 @@
 import { Hand } from "lucide-react";
+import { AppBar } from "@/components/AppBar";
 import { defineWebPlugin } from "../../src/lib/plugin";
 
 // Example page at /hello, added to the app's routes by the generated src/plugins.gen.ts.
+// It starts with the app's own top bar, like every built-in page: the way back to Home and to the other tools.
 function HelloPage() {
   return (
-    <main className="p-6">
-      <h1 className="text-xl font-semibold">Hello plug-in</h1>
-      <p>This page comes from a plug-in folder, not from the core app.</p>
-    </main>
+    <>
+      <AppBar tool="Hello" />
+      <main className="p-6">
+        <h1 className="text-xl font-semibold">Hello plug-in</h1>
+        <p>This page comes from a plug-in folder, not from the core app.</p>
+      </main>
+    </>
   );
 }
 

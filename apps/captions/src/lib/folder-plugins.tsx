@@ -46,13 +46,67 @@ export function guardWebPlugin(p: WebPlugin): WebPlugin {
     devices: p.devices?.map((d) => ({ ...d, body: node(d.body) })),
     replaces: p.replaces && (Object.fromEntries(Object.entries(p.replaces).map(([k, C]) => [k, C && part(C)])) as WebPlugin["replaces"]),
     review: p.review && { ...p.review, panels: p.review.panels?.map((s) => ({ ...s, panel: part(s.panel) })) },
+    // badges are worked out for every card the Media Library draws: one that throws adds none
+    library: p.library && { ...p.library, badges: p.library.badges && safeBadges(name, p.library.badges) },
   };
+}
+
+type Badges = NonNullable<NonNullable<WebPlugin["library"]>["badges"]>;
+function safeBadges(name: string, badges: Badges): Badges {
+  let said = false;
+  return (card) => {
+    try {
+      return badges(card);
+    } catch (e) {
+      if (!said) console.error(`[plugins] ${name} failed on a Media Library badge`, e);
+      said = true;
+      return [];
+    }
+  };
+}
+
+// What the app's own screens draw or call from a plug-in without the plug-in's boundary around it: a Home tile's icon,
+// a Settings row's title, an account menu item. One that is missing (an icon name the app's icon set doesn't have
+// arrives as undefined) would break the app's own screen, so the plug-in is refused with the piece named.
+const drawable = (x: unknown) => typeof x === "function" || (typeof x === "object" && x !== null && "$$typeof" in x);
+const text = (x: unknown) => typeof x === "string" && x.length > 0;
+function shapeProblem(p: WebPlugin): string | null {
+  const bad = (what: string) => `${what} (is the name right? the app may not have it)`;
+  for (const t of p.tiles ?? []) {
+    if (!text(t?.name) || !text(t.to) || typeof t.desc !== "string") return "a Home tile needs name, to and desc";
+    if (!drawable(t.icon)) return bad(`the Home tile "${t.name}" has no icon`);
+  }
+  for (const s of p.settings ?? []) {
+    if (!text(s?.id) || !text(s.title)) return "a Settings section needs id and title";
+    if (!drawable(s.icon)) return bad(`the Settings section "${s.title}" has no icon`);
+  }
+  for (const d of p.devices ?? []) if (!text(d?.id) || !text(d.title)) return "a Devices or Storage section needs id and title";
+  for (const a of p.accountMenu ?? []) {
+    if (!text(a?.label) || !text(a.to)) return "an account menu item needs label and to";
+    if (!drawable(a.icon)) return bad(`the account menu item "${a.label}" has no icon`);
+  }
+  for (const [kind, actions] of Object.entries(p.itemActions ?? {})) {
+    if (!Array.isArray(actions)) return `itemActions.${kind} must be a list`;
+    for (const a of actions) {
+      if (!text(a?.label) || typeof a.onRun !== "function") return `a button on ${kind} items needs label and onRun`;
+      if (a.icon !== undefined && !drawable(a.icon)) return bad(`the button "${a.label}" has an icon that is missing`);
+    }
+  }
+  for (const [slot, C] of Object.entries(p.replaces ?? {})) if (C !== undefined && !drawable(C)) return bad(`replaces.${slot} is not a component`);
+  for (const s of p.review?.panels ?? []) if (!text(s?.id) || !drawable(s.panel)) return "a Review panel needs id and panel";
+  for (const a of p.review?.actions ?? []) {
+    if (!text(a?.label) || typeof a.onRun !== "function") return "a Review button needs label and onRun";
+    if (a.icon !== undefined && !drawable(a.icon)) return bad(`the Review button "${a.label}" has an icon that is missing`);
+  }
+  for (const f of p.library?.facets ?? []) if (!text(f?.key) || !text(f.label) || !Array.isArray(f.values)) return "a Media Library filter needs key, label and values";
+  if (p.library?.badges !== undefined && typeof p.library.badges !== "function") return "library.badges must be a function";
+  return null;
 }
 
 /**
  * Why a plug-in's page half can't join the ones already in, or null: every mistake that would otherwise throw while a
  * screen is drawn (two plug-ins replacing one page, a Settings section with a built-in section's id, a tile that names
- * no Home stage), found here, on this one plug-in.
+ * no Home stage, a tile whose icon is missing), found here, on this one plug-in.
  */
 export function webAdmissionProblem(admitted: WebPlugin[], candidate: WebPlugin, id: string): string | null {
   try {
@@ -66,6 +120,8 @@ export function webAdmissionProblem(admitted: WebPlugin[], candidate: WebPlugin,
       if (typeof r?.path !== "string" || !r.path.startsWith("/")) throw new Error(`the page path "${String(r?.path)}" must start with /`);
       if (paths.has(r.path)) throw new Error(`another plug-in already has the page ${r.path}`);
     }
+    const shape = shapeProblem(candidate);
+    if (shape) throw new Error(shape);
     for (const slot of Object.keys(candidate.replaces ?? {}) as ReplaceSlot[]) replacementFor([...admitted, candidate], slot);
     withPluginTiles([candidate]);
     sectionsFor({ hosted: true, admin: true, mac: true }, [candidate]);

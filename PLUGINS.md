@@ -58,13 +58,18 @@ What is different from a checkout:
 
 - **Imports:** the app's own files, and the packages the app itself uses. There is no `npm install` for a plug-in;
   the check names an import the app doesn't have. Anything else runs as its own program beside the app.
-- **No type-checking.** The check finds syntax errors, missing files and packages, and names that are taken. A type
-  mistake shows when the code runs. For `pnpm check`, use a checkout.
+- **No type-checking and no tests.** The check finds syntax errors, missing files and packages, and names that are
+  taken. A type mistake shows when the code runs. `pnpm check` and a test runner need a checkout, and the app's copy
+  of the example has no test file. Look up an icon's or a component's exact name in the app's source before you use
+  it: one the app doesn't have is refused when the plug-in loads, with the piece named on its row.
 - **Not there:** `?url` imports, web workers and `import.meta.glob` in `web.tsx`; `env: […]` names with a `.env`
   file (keep a plug-in's own settings in its Settings section, saved under its data folder); a `site`.
 - **When it fails**, the app starts without it and its row says why: it doesn't build, it throws while loading,
   it uses a name another plug-in has, or it stopped the app's server. A page that throws while it is drawn shows
-  one line in its place. `~/Library/Logs/Creator Toolset Server.log` has the `[plugins]` lines.
+  one line in its place. `~/Library/Logs/Creator Toolset Server.log` has the `[plugins]` lines. After a fix, they
+  switch it off and on again (or take the new version) and it gets another try.
+- **You can't open the page yourself.** Until the person switches the plug-in on, nothing of it runs. Say so in
+  your last message, tell them where the switch is and where the page will appear, and ask what they see.
 - **Updates:** the app updates itself and the folder stays. When the app changed something the plug-in imports,
   the row says what is missing; fix the folder and they take the new version.
 
@@ -132,12 +137,16 @@ both before you decide a slot is missing.
   `process.env` where they are used. The build reports any that are unset. No keys in the code.
 - **Its files:** under `path.join(env.dataDir, "plugins", "<id>")` (`env` from `api/lib/env.ts`), per account by
   `c.get("user").username`.
+- **A page starts with the app's top bar:** `<AppBar tool="Sponsors" />` from `@/components/AppBar`, as in the
+  example. Without it the person has no way back to Home from your page.
 - **Where its pieces go:** where the built-in ones are. A choice about how the app is set up is a Settings section,
   a tool is a Home tile and a page. Settings sections use the kit in `src/components/settings/ui.tsx`.
 - **Names that are taken:** a page path of a built-in page, a tool name the app already serves, and a gate id that
   is a built-in app are refused, by the build or when the server starts, with a message naming the plug-in.
 
 ## Check it
+
+In the downloaded Mac app the check is step 4 above. The rest of this section is for a checkout.
 
 - `pnpm check` type-checks `plugin.ts`, `web.tsx` and everything they import.
 - Tests: the app's own `pnpm test` doesn't look in `plugins/`. The example brings a test and the small
@@ -147,12 +156,12 @@ both before you decide a slot is missing.
 
 ## Run it for real
 
+- **In the downloaded Mac app:** the person switches it on ([In the downloaded Mac app](#in-the-downloaded-mac-app)).
 - **From this checkout:** `pnpm dev` while you work. `pnpm build` makes the production server, plug-ins included.
 - **On your own server:** the Docker kit builds its image from the checkout, with the `plugins/` folder in it:
   `docker compose up -d --build` ([SELF_HOSTING.md](SELF_HOSTING.md)).
-- **In the Mac app:** put the folder in the app's plug-ins folder and switch it on
-  ([In the downloaded Mac app](#in-the-downloaded-mac-app)). Only the server the Mac app runs on that Mac reads a
-  plug-ins folder; a server you host for other people takes plug-ins from its build alone.
+- Only the server the Mac app runs on that Mac reads a plug-ins folder; a server you host for other people takes
+  plug-ins from its build alone.
 
 ## Keep it and share it
 

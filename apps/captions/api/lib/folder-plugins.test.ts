@@ -131,6 +131,9 @@ describe("plug-ins from the person's folder", () => {
     ["a public route without its slash", 'publicRoutes: [{ path: "nope", app: new Hono() }]', null, /must start with \//],
     ["routes that are not a Hono app", "routes: { nope: true }", null, /./],
     ["a start that is not a function", 'start: "soon"', null, /start must be a function/],
+    ["a Media Library filter another plug-in has", 'library: { facets: [{ key: "who", where: () => ({ sql: "1", params: [] }) }] }', definePlugin({ id: "first", library: { facets: [{ key: "who", where: () => ({ sql: "1", params: [] }) }] } }), /library facet "who" is already registered/],
+    ["a Media Library policy for a source nobody has", 'library: { policies: [{ sourceId: "nowhere", canSee: () => true }] }', null, /library policy for unknown source "nowhere"/],
+    ["large bodies that are not regular expressions", 'replaces: { paths: ["/api/editor"], routes: new Hono(), largeBodies: ["/api/editor"] }', null, /largeBodies must be regular expressions/],
   ];
   it.each(collisions)("leaves out a plug-in with %s", async (_what, field, first, why) => {
     write("x", "plugin.ts", `import { Hono } from "hono";\nimport { definePlugin } from "../../api/lib/plugin";\nexport default definePlugin({ id: "x", ${field} } as never);\nexport const keep = Hono;\n`);
@@ -179,6 +182,14 @@ describe("plug-ins from the person's folder", () => {
     expect(JSON.parse(readFileSync(path.join(root, "plugins-state.json"), "utf8")).loading).toBeNull();
     // a compiled-in plug-in's hook still fails loudly
     expect(() => startFolderPlugin(definePlugin({ id: "compiled" }), () => { throw new Error("loud"); })).toThrow("loud");
+  });
+
+  it("counts a body-limit hook that throws as no, on every request, and names the plug-in", async () => {
+    write("a", "plugin.ts", server("a").replace('routes: app', 'routes: app, bodyLimitExempt: () => { throw new Error("bad pattern"); }'));
+    await switchOn("a");
+    const [plugin] = await start();
+    expect(plugin!.bodyLimitExempt!("POST", "/api/x/a/upload")).toBe(false);
+    expect(row("a")).toMatchObject({ running: true, error: "Its bodyLimitExempt failed: bad pattern" });
   });
 
   it("loads nothing while plug-ins are paused, and still lists what is on", async () => {

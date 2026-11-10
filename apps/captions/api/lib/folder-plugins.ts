@@ -225,6 +225,7 @@ export async function loadFolderPlugins(compiled: ServerPlugin[], more?: (all: S
         const problem = admissionProblem([...compiled, ...loaded], plugin, more);
         if (problem) throw new Error(problem);
         if (plugin.id !== b.id) throw new Error(`plugin.ts loaded as ${plugin.id}`);
+        contain(plugin);
         loaded.push(plugin);
         fromFolder.add(plugin);
       }
@@ -243,6 +244,24 @@ export async function loadFolderPlugins(compiled: ServerPlugin[], more?: (all: S
   }
   if (loaded.length) watchCrashes();
   return loaded;
+}
+
+/**
+ * bodyLimitExempt is asked on every request to the server (boot.ts): a throw there would fail every one of them, the
+ * app's own included. For a folder plug-in a throw counts as "no", and the plug-in's row says so.
+ */
+function contain(plugin: ServerPlugin): void {
+  const exempt = plugin.bodyLimitExempt;
+  if (!exempt) return;
+  plugin.bodyLimitExempt = (method, at) => {
+    try {
+      return exempt(method, at) === true;
+    } catch (e) {
+      if (!failures.has(plugin.id)) console.error(`[plugins] ${plugin.id} bodyLimitExempt failed: ${message(e)}`);
+      failures.set(plugin.id, `Its bodyLimitExempt failed: ${message(e)}`);
+      return false;
+    }
+  };
 }
 
 /**

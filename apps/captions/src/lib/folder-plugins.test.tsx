@@ -28,6 +28,14 @@ describe("a folder plug-in's page half joins the app only when it can't break a 
     ["a replaced page another plug-in replaces", { ...ok, replaces: { finals: Page } }, [{ id: "first", replaces: { finals: Page } }], /more than one plug-in replaces the finals page/],
     ["a tile that names no Home stage", { ...ok, tiles: [{ stage: "Nowhere" as never, to: "/sponsors", icon: Sparkles, name: "S", desc: "", gate: "sponsors" as never }] }, [], /names no stage/],
     ["a Settings section with a built-in section's id", { ...ok, settings: [{ id: "general", title: "Mine", icon: Sparkles, body: null }] }, [], /already a built-in section/],
+    // an icon name the app's icon set doesn't have arrives as undefined, and Home itself would draw it
+    ["a tile whose icon is missing", { ...ok, tiles: [{ stage: "Tools", to: "/sponsors", icon: undefined as never, name: "Sponsors", desc: "", gate: "sponsors" as never }] }, [], /the Home tile "Sponsors" has no icon/],
+    ["a Settings section whose icon is missing", { ...ok, settings: [{ id: "sponsors", title: "Sponsors", icon: undefined as never, body: null }] }, [], /the Settings section "Sponsors" has no icon/],
+    ["an account menu item with no label", { ...ok, accountMenu: [{ label: "", to: "/sponsors", icon: Sparkles }] }, [], /account menu item needs label and to/],
+    ["a button with no onRun", { ...ok, itemActions: { session: [{ label: "Send", onRun: undefined as never }] } }, [], /button on session items needs label and onRun/],
+    ["a replaced page that is not a component", { ...ok, replaces: { finals: "FinalsPage" as never } }, [], /replaces\.finals is not a component/],
+    ["a Review panel with no component", { ...ok, review: { panels: [{ id: "p", panel: undefined as never }] } }, [], /Review panel needs id and panel/],
+    ["a Media Library filter with no values", { ...ok, library: { facets: [{ key: "k", label: "K", values: undefined as never }] } }, [], /Media Library filter needs key, label and values/],
   ];
   it.each(cases)("refuses %s", (_what, candidate, admitted, why) => {
     expect(webAdmissionProblem(admitted, candidate as WebPlugin, "sponsors")).toMatch(why);
@@ -57,6 +65,15 @@ describe("every piece a folder plug-in draws has its own boundary", () => {
     expect(g.review!.panels![0]!.panel).not.toBe(Page);
     const Finals = g.replaces!.finals!;
     expect(renderToStaticMarkup(<Finals />)).toBe("<p>a page</p>");
+  });
+
+  it("adds no badge when a plug-in's badge function throws", () => {
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+    const g = guardWebPlugin(defineWebPlugin({ ...ok, library: { badges: () => { throw new Error("no such field"); } } }));
+    expect(g.library!.badges!({} as never)).toEqual([]);
+    expect(g.library!.badges!({} as never)).toEqual([]);
+    expect(quiet).toHaveBeenCalledTimes(1);
+    quiet.mockRestore();
   });
 
   it("catches a page that throws while drawing, names the plug-in and keeps the app", async () => {

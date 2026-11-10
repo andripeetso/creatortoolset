@@ -3,7 +3,7 @@ import { isPluginGateId, isTool, type PluginGateId, type Tool } from "../../cont
 import type { LibrarySlot } from "../../contracts/library-source";
 import type { EditFlag, FootageTarget } from "../../contracts/editor";
 import { DRIVERS, type DriverKind, type ProviderPreset } from "../../contracts/providers";
-import { registerLibrarySlot } from "../library/sources";
+import { checkLibrarySlots, registerLibrarySlot } from "../library/sources";
 import type { ActivityFn, MenuFn } from "../activity";
 import type { FinalsAdd, FinalsOutcome, FinalsSource } from "../library/finals";
 import { readers, registerPublicGridReader, registerReader, type PublicGridReader, type SocialReader } from "./connectors/provider";
@@ -523,8 +523,8 @@ export function mountAnsweredRoutes(app: Hono<any, any, any>, plugins: ServerPlu
 
 /**
  * Why a plug-in can't join the ones already in, or null. It runs, on this one plug-in, every check that otherwise stops
- * the server when it starts: an id, gate, edit flag, provider, upload relay, pack kind, replaced or answered path that
- * another plug-in has, a route path without its /, and routes that are not a Hono app. So a plug-in from the person's own
+ * the server when it starts: an id, gate, edit flag, provider, upload relay, pack kind, replaced or answered path, or
+ * Media Library source or filter that another plug-in has, a route path without its /, and routes that are not a Hono app. So a plug-in from the person's own
  * folder (lib/folder-plugins.ts) is left out with this sentence and the app starts without it. `more` is for the checks
  * this file can't import (the AI tools, api/mcp.ts).
  */
@@ -541,6 +541,9 @@ export function admissionProblem(admitted: ServerPlugin[], candidate: ServerPlug
     checkPackItems(all);
     checkReplaces(all);
     checkAnswers(all);
+    checkLibrarySlots(all.flatMap((p) => (p.library ? [[p.id, p.library] as [string, LibrarySlot]] : [])));
+    // read on every request (replacedLargeBody): anything but a RegExp there would fail them all
+    for (const re of candidate.replaces?.largeBodies ?? []) if (!(re instanceof RegExp)) throw new Error("replaces.largeBodies must be regular expressions");
     const paths = [...(candidate.publicRoutes ?? []), ...(candidate.gatedRoutes ?? [])];
     for (const r of paths) if (typeof r?.path !== "string" || !r.path.startsWith("/")) throw new Error(`route "${String(r?.path)}" must start with /`);
     // every set of routes is mounted once on a throwaway app: what isn't a Hono app fails here, not while the server starts
