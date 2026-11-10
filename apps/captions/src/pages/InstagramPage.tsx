@@ -1023,7 +1023,6 @@ export default function InstagramPage() {
   const [stackOpen, setStackOpen] = useState(false);
   const [hits, setHits] = useState<FindHit[] | null>(null);
   const [searching, setSearching] = useState(false);
-  const [workshopSessions, setWorkshopSessions] = useState<SessionRow[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [runOpen, setRunOpen] = useState(false);
   const [runBusy, setRunBusy] = useState(false);
@@ -1111,11 +1110,12 @@ export default function InstagramPage() {
     return () => window.removeEventListener(INSTAGRAM_CONNECTION_EVENT, refreshAvailability);
   }, [refreshAvailability]);
 
-  const refreshWorkshop = useCallback(() => {
-    listSessions()
-      .then(setWorkshopSessions)
-      .catch(() => {});
-  }, []);
+  // the Workshop's own saved list (same key as its page), live on the Workshop's changes: no poll while it writes
+  const { items: workshopSessions, refresh: loadWorkshop } = useCachedList<SessionRow>(
+    allowed ? `workshop/sessions?p=${currentProjectId ?? ""}` : null,
+    listSessions,
+  );
+  const refreshWorkshop = useCallback(() => void loadWorkshop().catch(() => {}), [loadWorkshop]);
 
   // the posts and the accounts refresh themselves when their key (the project, the filters) changes: useCachedList.
   // Asking again here, and once more 250 ms after a filter, fetched the whole list three times per change.
@@ -1123,8 +1123,7 @@ export default function InstagramPage() {
     if (!allowed) return;
     refreshStacks();
     refreshAvailability();
-    refreshWorkshop();
-  }, [allowed, currentProjectId, refreshStacks, refreshAvailability, refreshWorkshop]);
+  }, [allowed, currentProjectId, refreshStacks, refreshAvailability]);
 
   useLayoutEffect(() => {
     const chrome = chromeRef.current;
@@ -1207,12 +1206,6 @@ export default function InstagramPage() {
     );
   }, [allowed, postId, anyProcessing, postsBusy, accountsBusy, loadPosts, loadAccounts]);
 
-  const workshopBusy = workshopSessions.some((s) => s.generating);
-  useEffect(() => {
-    if (!allowed || !workshopBusy) return;
-    const t = window.setInterval(() => refreshWorkshop(), 2500);
-    return () => window.clearInterval(t);
-  }, [allowed, workshopBusy, refreshWorkshop]);
 
 
   const applyPost = useCallback((p: InstagramPost) => {

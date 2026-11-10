@@ -31,6 +31,7 @@ import {
   createSession,
   deleteFramework,
   deleteRule,
+  AVAILABILITY_LIVE,
   getWorkshopAvailability,
   listFrameworks,
   listRules,
@@ -166,7 +167,7 @@ export default function WorkshopPage() {
   const frameworks = frameworksList.items;
   const rules = rulesList.items;
   const [newRule, setNewRule] = useState("");
-  const availList = useCachedLoad("workshop/availability", getWorkshopAvailability);
+  const availList = useCachedLoad("workshop/availability", getWorkshopAvailability, AVAILABILITY_LIVE);
   const avail = availList.data;
   const [editing, setEditing] = useState<string | "new" | null>(null);
   const [busy, setBusy] = useState<string | null>(null);

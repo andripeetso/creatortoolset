@@ -34,6 +34,7 @@ import {
   restoreDocument,
   getVersion,
   getSession,
+  AVAILABILITY_LIVE,
   getWorkshopAvailability,
   isStockDocTitle,
   KIND_STOCK_TITLE,
@@ -276,7 +277,7 @@ export default function WorkshopSessionPage() {
   const { items: rules } = useCachedList<WorkshopRule>(allowed ? "workshop/rules" : null, listRules);
   // the availability saved on this device decides the banners from the first frame; asked again when the window is
   // focused (a Mac that was off a moment ago is back: that is not a change the server announces)
-  const avail = useCachedLoad(allowed ? "workshop/availability" : null, getWorkshopAvailability);
+  const avail = useCachedLoad(allowed ? "workshop/availability" : null, getWorkshopAvailability, AVAILABILITY_LIVE);
   const aiAvailable = avail.data?.ai ?? true;
   const researchAvailable = avail.data?.research ?? false;
   const macOff = avail.data?.mac === false;

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { onTopic } from "@/lib/sync";
 import { AtSign, BarChart3, Check, ChevronLeft, ChevronRight, ExternalLink, Plus } from "lucide-react";
 import { Link } from "react-router";
 import {
@@ -86,10 +87,10 @@ export function SourceReader({
     // once per post: the polling below follows the run
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [post.id]);
+  // follows the run from the Analyzer's job notices (each save, at most one a second): no timer
   useEffect(() => {
     if (!fresh || !working) return;
-    const t = window.setInterval(() => void getPost(post.id).then(setFresh).catch(() => {}), 2000);
-    return () => window.clearInterval(t);
+    return onTopic("instagram-jobs", () => void getPost(post.id).then(setFresh).catch(() => {}));
   }, [fresh, working, post.id]);
   const [index, setIndexState] = useState(0);
   const setIndex = (i: number) => {

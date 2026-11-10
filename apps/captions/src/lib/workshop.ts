@@ -300,6 +300,8 @@ const jsonInit = (body: unknown, method = "POST"): RequestInit => ({
   body: JSON.stringify(body),
 });
 
+/** What refetches the availability: a Workshop change, and a computer or an AI coming online or going quiet. */
+export const AVAILABILITY_LIVE = { topic: ["workshop", "devices", "providers"] };
 export const getWorkshopAvailability = () =>
   fetch("/api/workshop/availability").then((r) => json<{ ai: boolean; research: boolean; library: number; /** Admins only: Claude on the Mac is online. */ mac?: boolean }>(r));
 
