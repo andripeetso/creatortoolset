@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link2, Loader2, TriangleAlert } from "lucide-react";
+import { Link2, Loader2 } from "lucide-react";
 import {
   DEFAULT_RECIPE,
   KNOWHOW,
@@ -26,15 +26,12 @@ export type IngestPayload = {
 };
 
 export function IngestBox({
-  nowDisabledReason,
+  nowDisabled,
   onIngest,
-  onConnect,
   defaultValue = "",
 }: {
-  /** Blocks Run now only. Save for later still works. */
-  nowDisabledReason?: string | null;
-  /** Opens the Instagram connection settings, offered beside nowDisabledReason. */
-  onConnect?: () => void;
+  /** Posts cannot be read yet: Run now is off, Save for later still works. The page says why, once, under the box. */
+  nowDisabled?: boolean;
   onIngest: (payload: IngestPayload) => Promise<string | void>;
   defaultValue?: string;
 }) {
@@ -62,11 +59,11 @@ export function IngestBox({
   const submit = async (run: RunWhen, raw?: string) => {
     const text = (raw ?? value).trim();
     if (!text || busy) return;
-    if (run === "now" && nowDisabledReason) return;
+    if (run === "now" && nowDisabled) return;
     const list = instagramUrlsFromText(text);
     const handles = instagramProfilesFromText(text);
     if (!list.length && !handles.length) {
-      setError("Paste post/reel links, a profile URL, or @username");
+      setError("Paste post links, a profile link or @username");
       return;
     }
     setBusy(run);
@@ -145,11 +142,11 @@ export function IngestBox({
             onKeyDown={(e) => {
               if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                 e.preventDefault();
-                void submit(nowDisabledReason ? "later" : "now");
+                void submit(nowDisabled ? "later" : "now");
               }
             }}
             disabled={!!busy}
-            placeholder="Paste post links, a profile URL, or @username"
+            placeholder="Paste post links, a profile link or @username"
             rows={1}
             spellCheck={false}
             className={`min-w-0 flex-1 bg-transparent py-1.5 text-sm text-zinc-100 outline-none transition-[min-height] duration-300 placeholder:text-zinc-600 disabled:opacity-60 ${
@@ -187,7 +184,7 @@ export function IngestBox({
           </button>
           <button
             type="button"
-            disabled={!!nowDisabledReason || !!busy || !value.trim()}
+            disabled={nowDisabled || !!busy || !value.trim()}
             onClick={() => void submit("now")}
             className="flex shrink-0 items-center gap-1.5 rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
           >
@@ -198,22 +195,7 @@ export function IngestBox({
           </div>
         </div>
       </div>
-      {nowDisabledReason ? (
-        <p className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-amber-400/80">
-          <TriangleAlert className="h-3 w-3 shrink-0" /> {nowDisabledReason} — or save for later
-          {onConnect ? (
-            <button
-              type="button"
-              onClick={onConnect}
-              className="ml-1 rounded-md border border-amber-400/30 px-2 py-0.5 text-amber-200 hover:bg-amber-400/10"
-            >
-              Connect Instagram
-            </button>
-          ) : null}
-        </p>
-      ) : error ? (
-        <p className="mt-2 text-xs text-red-400">{error}</p>
-      ) : null}
+      {error ? <p className="mt-2 text-xs text-red-400">{error}</p> : null}
     </div>
   );
 }

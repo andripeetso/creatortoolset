@@ -5,7 +5,7 @@ import { RecipePicker } from "./RecipePicker";
 
 export function RunJobsDialog({
   title,
-  confirmLabel = "Run jobs",
+  confirmLabel = "Run",
   allowLater = false,
   busy = false,
   onClose,
@@ -50,7 +50,7 @@ export function RunJobsDialog({
             onChange={(e) => setForce(e.target.checked)}
             className="accent-violet-500"
           />
-          Force already-done jobs
+          Redo what is already done
         </label>
         {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
         <div className="mt-4 flex justify-end gap-2">

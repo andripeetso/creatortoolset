@@ -10,11 +10,9 @@ import {
   ExternalLink,
   Eye,
   Heart,
-  Instagram,
   ScanSearch,
   Loader2,
   MessageCircle,
-  MoreHorizontal,
   RefreshCw,
   RotateCcw,
   Search,
@@ -96,8 +94,8 @@ import {
   INSTAGRAM_CONNECTION_EVENT,
 } from "@/lib/instagram";
 import { AppBar, ToolIntro } from "@/components/AppBar";
-import { ToolSetupLine } from "@/components/setup/ToolSetupLine";
-import { filterChip, segmentItem, segmentList } from "@/components/SegmentedTabs";
+import { openToolSetup } from "@/lib/setup";
+import { segmentItem, segmentList } from "@/components/SegmentedTabs";
 import { cn } from "@/lib/utils";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
 import { useWorkspace } from "@/lib/workspace";
@@ -107,8 +105,8 @@ import { RunJobsDialog } from "@/components/instagram/RunJobsDialog";
 import { TagsEditor } from "@/components/instagram/TagsEditor";
 import { IdeaStatusSelect, RankStars, SavedForToggle } from "@/components/instagram/IdeaMark";
 import { IdeaCard } from "@/components/instagram/IdeaCard";
-import { AccountCard, MyAccountSlot, Stat } from "@/components/instagram/AccountCard";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { AccountAvatar, AccountCard, AddMyAccount } from "@/components/instagram/AccountCard";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { PostCard, workshopUsesByPost } from "@/components/instagram/PostCard";
 import { QueueMenu } from "@/components/instagram/QueueMenu";
 import { ConfirmButton } from "@/components/instagram/ConfirmButton";
@@ -128,18 +126,62 @@ const libraryEmptyClass =
 type LibrarySort = "pulled" | "posted" | "plays" | "account" | "age" | "rank" | "virality";
 type LibraryView = "feed" | "ideas" | "knowhow";
 
-/** The library's top tabs: the same three "kept for" choices as sharing a post from the phone. */
-const LIBRARY_TABS: { id: SavedFor | "knowhow"; label: string; hint: string }[] = [...SAVED_FOR, { id: "knowhow", ...KNOWHOW }];
+/** What the posts were kept for: the same three choices as sharing a post from the phone. */
+const KEPT_FOR: { id: SavedFor | "knowhow"; label: string; hint: string }[] = [...SAVED_FOR, { id: "knowhow", ...KNOWHOW }];
+
+const KINDS: { id: PostKind | "all"; label: string }[] = [{ id: "all", label: "All types" }, ...KIND_FILTERS];
 
 const LIBRARY_SORTS: { id: LibrarySort; label: string }[] = [
-  { id: "pulled", label: "recently added" },
-  { id: "rank", label: "rating" },
-  { id: "virality", label: "virality" },
-  { id: "posted", label: "posted" },
-  { id: "plays", label: "plays" },
-  { id: "account", label: "account" },
-  { id: "age", label: "age at pull" },
+  { id: "pulled", label: "Recently added" },
+  { id: "rank", label: "Rating" },
+  { id: "virality", label: "Virality" },
+  { id: "posted", label: "Posted" },
+  { id: "plays", label: "Plays" },
+  { id: "account", label: "Account" },
+  { id: "age", label: "Age when saved" },
 ];
+
+/** The one height and outline of everything in the filter row; the two buttons beside the paste box share the outline. */
+const pick = "flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-zinc-800 outline-none";
+const beside =
+  "flex h-[50px] shrink-0 items-center gap-2.5 whitespace-nowrap rounded-xl border border-zinc-800 px-3.5 outline-none hover:border-zinc-700 hover:bg-zinc-900/60";
+
+/** A filter with one choice out of a few: the button says the current one, the menu has the rest. */
+function PickMenu<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: T;
+  options: { id: T; label: string; hint?: string }[];
+  onChange: (id: T) => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label={label}
+          className={cn(pick, "bg-zinc-950 px-2.5 text-[12px] text-zinc-300 hover:border-zinc-700 data-[state=open]:border-zinc-700")}
+        >
+          {options.find((o) => o.id === value)?.label}
+          <ChevronDown className="h-3 w-3 text-zinc-500" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuRadioGroup value={value} onValueChange={(v) => onChange(v as T)}>
+          {options.map((o) => (
+            <DropdownMenuRadioItem key={o.id} value={o.id} title={o.hint} className="text-xs">
+              {o.label}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
 const STATUS_FILTERS: { id: IdeaStatus | ""; label: string }[] = [
   ...IDEA_STATUSES,
@@ -177,7 +219,7 @@ function libraryEmptyCopy(opts: {
     return "Nothing matches that search.";
   }
   if (opts.ideaFilter === "inbox") return "Inbox is empty.";
-  if (opts.ideaFilter === "idea") return "Nothing in a project yet.";
+  if (opts.ideaFilter === "idea") return "Nothing to make yet.";
   if (opts.ideaFilter === "done") return "Nothing marked done.";
   if (opts.ideaFilter === "skip") return "Nothing skipped.";
   return "No posts yet — paste links above.";
@@ -198,7 +240,7 @@ function PostView({
 }: {
   post: InstagramPost;
   owns: boolean;
-  /** A Workshop session uses it (In Project in the library). */
+  /** A Workshop session uses it (it is filed under To make). */
   inSession?: boolean;
   stacks: InstagramStack[];
   accountHref?: string;
@@ -956,7 +998,7 @@ function PostView({
       </div>
       {runOpen && (
         <RunJobsDialog
-          title="Run jobs on this post"
+          title="Run this post"
           busy={busy !== null}
           onClose={() => setRunOpen(false)}
           onRun={async (recipe, opts) => {
@@ -991,7 +1033,7 @@ export default function InstagramPage() {
   const allowed = canUse(me, "instagram");
   const currentProjectId = useWorkspace((s) => s.currentProjectId);
   // the saved lists show at once and refresh underneath (lib/local-cache); keys carry the project and the filters
-  const { items: accounts, setItems: setAccounts, refresh: loadAccounts } = useCachedList<InstagramAccount>(
+  const { items: accounts, known: accountsKnown, setItems: setAccounts, refresh: loadAccounts } = useCachedList<InstagramAccount>(
     `instagram/accounts?p=${currentProjectId ?? ""}`,
     () => listAccounts(),
   );
@@ -1054,10 +1096,29 @@ export default function InstagramPage() {
           },
     [accountFilter, tagFilter, ideaFilter, savedForFilter, sort, libraryView],
   );
-  const { items: posts, setItems: setPosts, refresh: loadPosts } = useCachedList<InstagramPost>(
+  const { items: posts, known: postsKnown, setItems: setPosts, refresh: loadPosts } = useCachedList<InstagramPost>(
     `instagram/posts?${JSON.stringify(listQuery())}|p=${currentProjectId ?? ""}`,
     () => listPosts(listQuery()),
   );
+
+  // The filters come with the first post, and the first-run home (the name, one line, the paste box) is only for a
+  // project known to hold nothing. The filters hide posts, so an empty list does not say either: once this project has
+  // shown a post the filters stay, and a project whose list is empty is asked once for any post at all. Until it
+  // answers the page is the full home (an open project never waits on this).
+  const seenPostsIn = useRef<string | null | undefined>(undefined);
+  if (posts.length) seenPostsIn.current = currentProjectId;
+  const [held, setHeld] = useState<{ project: string | null; any: boolean } | null>(null);
+  const answered = held?.project === currentProjectId;
+  const hasPosts = seenPostsIn.current === currentProjectId || (answered && !!held?.any);
+  const started = accounts.length > 0 || hasPosts;
+  const fresh = accountsKnown && postsKnown && !started && answered;
+  useEffect(() => {
+    if (!allowed || !accountsKnown || !postsKnown || hasPosts || answered) return;
+    const project = currentProjectId;
+    listPosts({ shelf: "all", projectId: project })
+      .then((all) => setHeld({ project, any: all.length > 0 }))
+      .catch(() => {});
+  }, [allowed, accountsKnown, postsKnown, hasPosts, answered, currentProjectId]);
 
   const pinLibraryChrome = useCallback(() => {
     const chrome = chromeRef.current;
@@ -1287,13 +1348,12 @@ export default function InstagramPage() {
     }
   }, []);
 
+  // the saved board is read with the page (its size is on the Ideas button) and again when Ideas opens
   useEffect(() => {
-    if (!allowed || libraryView !== "ideas") {
-      autoBoard.current = false;
-      return;
-    }
+    if (!allowed) return;
+    if (libraryView !== "ideas") autoBoard.current = false;
     refreshBoard();
-  }, [allowed, libraryView, refreshBoard]);
+  }, [allowed, libraryView, currentProjectId, refreshBoard]);
 
   useEffect(() => {
     if (!allowed || !avail?.ai || libraryView !== "ideas" || boardBusy) return;
@@ -1340,15 +1400,16 @@ export default function InstagramPage() {
       knowhow: payload.knowhow,
     });
     for (const p of posts) applyPost(p);
+    if (posts.length) setHeld({ project: currentProjectId, any: true });
     refreshAccounts();
     if (posts.length === 1 && errors.length === 0 && !payload.profiles.length) {
       navigate(`${base}/${posts[0].id}`);
     } else {
       navigate(base);
     }
-    if (!posts.length) throw new Error(errors[0]?.error || notes[0] || "Ingest failed");
+    if (!posts.length) throw new Error(errors[0]?.error || notes[0] || "Couldn’t save these posts");
     if (errors.length || notes.length) {
-      return `${posts.length} saved. ${errors.length + notes.length} failed: ${errors[0]?.error || notes[0]}`;
+      return `${posts.length} saved. ${errors.length + notes.length} couldn’t be saved: ${errors[0]?.error || notes[0]}`;
     }
   };
 
@@ -1445,11 +1506,19 @@ export default function InstagramPage() {
   const opening = Boolean(postId && !viewing && !routeError);
   const ownsCurrent =
     !!me && !!viewing && (me.role === "admin" || me.username === viewing.owner);
-  const sessionReason = !avail || avail.available
+  // the one thing this tool still needs, in the person's words; Set up holds the how
+  const cantRead = !!avail && !avail.available;
+  const needs = !avail
     ? null
     : avail.apify?.valid === false
-      ? "Your Apify key is invalid"
-      : "Other creators' posts need your own Apify key";
+      ? "Your Apify key isn’t working"
+      : cantRead
+        ? avail.graph?.configured
+          ? "Can’t read other creators’ posts yet"
+          : "Can’t read Instagram posts yet"
+        : !avail.ai
+          ? "No AI to work out the ideas yet"
+          : null;
 
   const searchingLibrary = q.trim().length >= 2;
   const ideasView = libraryView === "ideas";
@@ -1495,10 +1564,12 @@ export default function InstagramPage() {
       }
       return true;
     });
+  // your account is the button beside the paste box, and nowhere else: not in the list, its count or its action
   const myAccount = accounts.find((a) => a.own);
-  const pulledAccounts = accounts.filter((a) => !a.own && isReferenceAccount(a));
-  const savedOnlyAccounts = accounts.filter((a) => !isReferenceAccount(a));
-  const otherAccounts = [...pulledAccounts, ...savedOnlyAccounts];
+  const others = accounts.filter((a) => a !== myAccount);
+  // accounts that are here only because one of their posts was saved: their profile was never read
+  const savedOnlyAccounts = others.filter((a) => !isReferenceAccount(a));
+  const otherAccounts = [...others.filter(isReferenceAccount), ...savedOnlyAccounts];
   const unpulledAccounts = savedOnlyAccounts.filter((a) => a.status !== "processing");
   const pullUnpulled = async () => {
     setPullingAll(true);
@@ -1511,14 +1582,8 @@ export default function InstagramPage() {
     }
     refreshAccounts();
     setPullingAll(false);
-    if (errors.length) setPullAllError(`${errors.length} not queued. ${errors[0]}`);
+    if (errors.length) setPullAllError(`${errors.length} not started. ${errors[0]}`);
   };
-  const distillingCount = posts.filter(
-    (p) =>
-      !p.idea &&
-      (p.status === "processing" ||
-        p.jobs?.some((j) => j.type === "idea" && (j.status === "pending" || j.status === "running"))),
-  ).length;
   const grouped: LibraryGroup[] = ideasView
     ? []
     : [{ key: "", label: "", posts: visiblePosts }];
@@ -1567,16 +1632,16 @@ export default function InstagramPage() {
         ) : null}
       </AppBar>
 
-      {!postId && (
-        <ToolIntro icon={ScanSearch} title="Content Analyzer" line="Dump interesting posts. Distill the idea. Rank them." />
-      )}
-      {!postId && (
-        <div className="w-[760px] max-w-[92vw]">
-          <ToolSetupLine tool="instagram" />
-        </div>
+      {!postId && fresh && (
+        <ToolIntro
+          icon={ScanSearch}
+          title="Content Analyzer"
+          line="Collect posts you like. The AI works out the idea in each one. You rank them."
+        />
       )}
 
-      <div className={viewing || postId ? "mt-6 w-full" : "w-[760px] max-w-[92vw]"}>
+      {/* with posts the grid runs across the window; a project with nothing in it is the name, one line and the paste box */}
+      <div className={postId ? "mt-6 w-full" : fresh ? "w-[760px] max-w-[92vw]" : "w-full max-w-[1640px] px-4 pt-6 sm:px-8"}>
         {opening ? (
           <div className="flex items-center justify-center gap-2 py-16 text-sm text-zinc-500">
             <Loader2 className="h-4 w-4 animate-spin" /> Opening post…
@@ -1621,216 +1686,159 @@ export default function InstagramPage() {
           </>
         ) : (
           <>
-            <IngestBox
-              defaultValue={sharePrefill}
-              nowDisabledReason={sessionReason}
-              onConnect={() => navigate("/settings/connectors")}
-              onIngest={onIngest}
-            />
-
-            <div className="mt-6 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-              {myAccount ? (
-                <AccountCard account={myAccount} to={`${base}/accounts/${myAccount.id}`} />
-              ) : (
-                <MyAccountSlot
-                  busy={addingMine}
-                  error={mineError}
-                  disabledReason={sessionReason}
-                  onAdd={addMine}
-                />
+            <div className={fresh ? "" : "flex flex-col gap-3 lg:flex-row lg:items-start"}>
+              <div className="min-w-0 flex-1">
+                <IngestBox defaultValue={sharePrefill} nowDisabled={cantRead} onIngest={onIngest} />
+              </div>
+              {fresh ? null : (
+                <div className="flex min-w-0 gap-3">
+                  {myAccount ? (
+                    <Link to={`${base}/accounts/${myAccount.id}`} aria-label={`Your account, @${myAccount.username}`} className={beside}>
+                      <AccountAvatar account={myAccount} className="h-7 w-7" />
+                      <span className="truncate text-sm font-medium text-zinc-100">@{myAccount.username}</span>
+                      {myAccount.counts.fetchedAt > 0 ? (
+                        <span className="text-xs text-zinc-500">{fmtCount(myAccount.counts.followers)} followers</span>
+                      ) : null}
+                    </Link>
+                  ) : hasPosts ? (
+                    <AddMyAccount busy={addingMine} error={mineError} onAdd={addMine} className={cn(beside, "text-sm text-zinc-300")} />
+                  ) : null}
+                  {otherAccounts.length ? (
+                    <button
+                      type="button"
+                      aria-expanded={showAllAccounts}
+                      onClick={() => setShowAllAccounts((v) => !v)}
+                      className={cn(beside, showAllAccounts && "border-zinc-700 bg-zinc-900/60")}
+                    >
+                      <span className="flex shrink-0 -space-x-2">
+                        {otherAccounts.slice(0, 5).map((a) => (
+                          <AccountAvatar key={a.id} account={a} className="h-6 w-6 ring-2 ring-zinc-950" />
+                        ))}
+                      </span>
+                      <span className="text-sm text-zinc-300">
+                        {otherAccounts.length} {otherAccounts.length === 1 ? "account" : "accounts"}
+                      </span>
+                      <ChevronDown className={cn("h-3.5 w-3.5 text-zinc-500 transition-transform", showAllAccounts && "rotate-180")} />
+                    </button>
+                  ) : null}
+                </div>
               )}
-              {otherAccounts.length ? (
-                <div className="relative flex min-w-0 lg:col-span-2">
+            </div>
+            {needs ? (
+              <p className="mt-3 flex items-center gap-2 text-xs text-zinc-400">
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" />
+                {needs}
                 <button
                   type="button"
-                  aria-expanded={showAllAccounts}
-                  onClick={() => setShowAllAccounts((v) => !v)}
-                  className={`flex min-w-0 flex-1 items-center gap-4 rounded-xl border px-4 py-2.5 pr-12 text-left ${
-                    showAllAccounts
-                      ? "border-zinc-700 bg-zinc-900/60"
-                      : "border-zinc-800 hover:border-zinc-700 hover:bg-zinc-900/60"
-                  }`}
+                  onClick={() => openToolSetup("instagram")}
+                  className="font-medium text-zinc-200 underline underline-offset-2"
                 >
-                  <span className="flex shrink-0 -space-x-2">
-                    {otherAccounts.slice(0, 5).map((a) => (
-                      <span
-                        key={a.id}
-                        className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full bg-zinc-800 ring-2 ring-zinc-950"
-                      >
-                        {a.avatarUrl ? (
-                          <img src={`${a.avatarUrl}?t=${a.updatedAt}`} alt="" className="h-full w-full object-cover" />
-                        ) : (
-                          <Instagram className="h-3.5 w-3.5 text-zinc-500" />
-                        )}
-                      </span>
-                    ))}
-                  </span>
-                  <span className="grid min-w-0 flex-1 grid-cols-3 gap-2">
-                    <Stat value={String(otherAccounts.length)} label="accounts" />
-                    <Stat value={String(pulledAccounts.length)} label="pulled" />
-                    <Stat value={String(savedOnlyAccounts.length)} label="single posts" />
-                  </span>
-                  <ChevronDown
-                    className={`h-4 w-4 shrink-0 text-zinc-500 transition-transform ${showAllAccounts ? "rotate-180" : ""}`}
-                  />
+                  Set up
                 </button>
+              </p>
+            ) : null}
+            {showAllAccounts && otherAccounts.length && !fresh ? (
+              <div className="mt-3 rounded-xl border border-zinc-800 p-2">
                 {unpulledAccounts.length ? (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <button
-                        type="button"
-                        disabled={pullingAll}
-                        title="More"
-                        aria-label="More"
-                        className="absolute right-2 top-2 rounded-md p-1.5 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200 disabled:opacity-50"
-                      >
-                        {pullingAll ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <MoreHorizontal className="h-3.5 w-3.5" />
-                        )}
-                      </button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-64">
-                      <DropdownMenuItem
-                        disabled={!!sessionReason}
-                        className="items-start py-2 text-xs"
-                        onSelect={() => void pullUnpulled()}
-                      >
-                        <RefreshCw className="mt-0.5 text-muted-foreground" />
-                        <span className="min-w-0 flex-1">
-                          <span className="block">
-                            Pull the {unpulledAccounts.length} missing account
-                            {unpulledAccounts.length === 1 ? "" : "s"}
-                          </span>
-                          <span className="mt-0.5 block text-[10px] text-muted-foreground">
-                            {sessionReason || "Profile and recent posts for each, one after another on the queue"}
-                          </span>
-                        </span>
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                  <div className="mb-2 flex flex-wrap items-center gap-2 px-1 pt-1 text-xs">
+                    <button
+                      type="button"
+                      disabled={pullingAll || cantRead}
+                      onClick={() => void pullUnpulled()}
+                      title="Their profile and latest posts, one account after another"
+                      className="flex items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 py-1 text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
+                    >
+                      {pullingAll ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                      Read the {unpulledAccounts.length} missing {unpulledAccounts.length === 1 ? "profile" : "profiles"}
+                    </button>
+                    {pullAllError ? <span className="text-zinc-500">{pullAllError}</span> : null}
+                  </div>
                 ) : null}
-                </div>
-              ) : null}
-            </div>
-            {pullAllError ? <p className="mt-2 text-[11px] text-red-400">{pullAllError}</p> : null}
-            {showAllAccounts && otherAccounts.length ? (
-              <div className="mt-2 max-h-[min(60vh,34rem)] overflow-y-auto rounded-xl border border-zinc-800 p-2">
-                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                <div className="grid max-h-[min(60vh,34rem)] gap-2 overflow-y-auto sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                   {otherAccounts.map((a) => (
-                    <AccountCard
-                      key={a.id}
-                      account={a}
-                      to={`${base}/accounts/${a.id}`}
-                      active={accountFilter === a.id}
-                    />
+                    <AccountCard key={a.id} account={a} to={`${base}/accounts/${a.id}`} />
                   ))}
                 </div>
               </div>
             ) : null}
 
-            <div className={`mt-8 ${selected.size > 0 ? "pb-16" : ""}`}>
-              <div
-                ref={chromeRef}
-                className="sticky top-0 z-20 mb-2 flex flex-col gap-3 bg-zinc-950 py-2"
-              >
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                  <h2 className={`${label} mb-0`}>Library</h2>
-                  {!ideasView && distillingCount > 0 ? (
-                    <p className="text-[11px] text-zinc-500 sm:ml-auto">
-                      Distilling {distillingCount} {distillingCount === 1 ? "idea" : "ideas"}…
-                    </p>
-                  ) : searchingLibrary ? (
-                    <p className="text-[11px] text-zinc-500 sm:ml-auto">
-                      {searchPending && hits === null
-                        ? "Searching…"
-                        : ideasView
-                          ? `${ideaRows.length} idea${ideaRows.length === 1 ? "" : "s"}`
-                          : `${visiblePosts.length} match${visiblePosts.length === 1 ? "" : "es"}`}
-                    </p>
-                  ) : ideasView && ideaBoard?.generatedAt ? (
-                    <p className="text-[11px] text-zinc-500 sm:ml-auto">
-                      {ideaRows.length} idea{ideaRows.length === 1 ? "" : "s"}
-                      {ideaBoard.usage ? (
-                        <span title="Made by Claude on your Mac (your subscription): measured tokens, and what the API would have charged">
-                          {" "}· Claude (Mac) · {(ideaBoard.usage.tokens / 1000).toFixed(1)}k tokens · ${ideaBoard.usage.costUsd.toFixed(2)} API-equivalent
-                        </span>
-                      ) : null}
-                    </p>
-                  ) : null}
-                </div>
-                <div role="tablist" aria-label="Kept for" className={cn(segmentList, "w-full")}>
-                  {LIBRARY_TABS.map((t) => {
-                    const on = knowhowView ? t.id === "knowhow" : t.id === savedForFilter;
-                    return (
-                      <button
-                        key={t.id}
-                        type="button"
-                        role="tab"
-                        aria-selected={on}
-                        title={t.hint}
-                        onClick={() => {
-                          pinLibraryChrome();
-                          if (t.id === "knowhow") return setLibraryView("knowhow");
-                          setSavedForFilter(t.id);
-                          setLibraryView("feed");
-                        }}
-                        className={segmentItem(on, "flex-1 text-center")}
-                      >
-                        {t.label}
-                      </button>
-                    );
-                  })}
-                </div>
-                {!knowhowView && savedForFilter === "content" ? (
-                  <div role="radiogroup" aria-label="Content view" className={cn(segmentList, "self-start")}>
-                    {(
-                      [
-                        ["feed", "Posts"],
-                        ["ideas", "Ideas"],
-                      ] as Array<[LibraryView, string]>
-                    ).map(([id, text]) => (
-                      <button
-                        key={id}
-                        type="button"
-                        role="radio"
-                        aria-checked={libraryView === id}
-                        onClick={() => {
-                          pinLibraryChrome();
-                          setLibraryView(id);
-                        }}
-                        className={segmentItem(libraryView === id)}
-                      >
-                        {text}
-                        {id === "ideas" && ideaBoard?.ideas.length ? (
-                          <span className="ml-1.5 rounded-full bg-zinc-800 px-1.5 text-[10px] tabular-nums text-zinc-300">{ideaBoard.ideas.length}</span>
-                        ) : null}
-                      </button>
-                    ))}
-                  </div>
+            {/* filters appear with the first post */}
+            {hasPosts ? (
+            <div className={selected.size > 0 ? "pb-16" : ""}>
+              <div ref={chromeRef} className="sticky top-0 z-20 flex flex-wrap items-center gap-2 bg-zinc-950 pb-4 pt-5">
+                {knowhowView ? null : (
+                  <>
+                    <div role="radiogroup" aria-label="Status" className={cn(segmentList, "shrink-0")}>
+                      {STATUS_FILTERS.map((s) => {
+                        const on = !ideasView && ideaFilter === s.id;
+                        return (
+                          <button
+                            key={s.id || "all"}
+                            type="button"
+                            role="radio"
+                            aria-checked={on}
+                            onClick={() => {
+                              pinLibraryChrome();
+                              setIdeaFilter(s.id);
+                              setLibraryView("feed");
+                            }}
+                            className={segmentItem(on)}
+                          >
+                            {s.label}
+                            {on && !searchPending ? <span className="ml-1.5 tabular-nums opacity-70">{visiblePosts.length}</span> : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <button
+                      type="button"
+                      aria-pressed={ideasView}
+                      onClick={() => {
+                        pinLibraryChrome();
+                        setSavedForFilter("content");
+                        setLibraryView("ideas");
+                      }}
+                      className={cn(
+                        pick,
+                        "px-3 text-sm font-medium transition-colors",
+                        ideasView ? "border-violet-500/40 bg-violet-600/25 text-violet-100" : "text-zinc-400 hover:text-zinc-200",
+                      )}
+                    >
+                      Ideas
+                      {ideaBoard?.ideas.length ? <span className="tabular-nums opacity-70">{ideaBoard.ideas.length}</span> : null}
+                    </button>
+                  </>
+                )}
+                {accountFilter ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      pinLibraryChrome();
+                      setAccountFilter("");
+                    }}
+                    aria-label="Show every account"
+                    className={cn(pick, "border-violet-500/40 px-2.5 text-[12px] text-violet-200")}
+                  >
+                    @{accounts.find((a) => a.id === accountFilter)?.username ?? accountFilter}
+                    <X className="h-3 w-3" />
+                  </button>
                 ) : null}
-                {!ideasView && !knowhowView ? (
-                  <div role="radiogroup" aria-label="Status" className={cn(segmentList, "w-full")}>
-                    {STATUS_FILTERS.map((s) => (
-                      <button
-                        key={s.id || "all"}
-                        type="button"
-                        role="radio"
-                        aria-checked={ideaFilter === s.id}
-                        onClick={() => {
-                          pinLibraryChrome();
-                          setIdeaFilter(s.id);
-                        }}
-                        className={segmentItem(ideaFilter === s.id, "flex-1 px-2 text-center text-[13px]")}
-                      >
-                        {s.label}
-                      </button>
-                    ))}
-                  </div>
+                {tagFilter ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      pinLibraryChrome();
+                      setTagFilter("");
+                    }}
+                    aria-label="Show every tag"
+                    className={cn(pick, "border-violet-500/40 px-2.5 text-[12px] text-violet-200")}
+                  >
+                    {tagFilter}
+                    <X className="h-3 w-3" />
+                  </button>
                 ) : null}
-                <div className="flex min-w-0 flex-wrap items-stretch gap-2">
-                  <div className="flex min-w-[12rem] flex-1 items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-2.5 focus-within:border-violet-500/50">
+                <div className="ml-auto flex min-w-0 flex-wrap items-center gap-2">
+                  <div className={cn(pick, "w-[260px] min-w-[120px] flex-[0_1_260px] bg-zinc-900/50 px-3 focus-within:border-violet-500/50")}>
                     {searching || searchPending ? (
                       <Loader2 className="h-4 w-4 shrink-0 animate-spin text-violet-400" />
                     ) : (
@@ -1839,8 +1847,9 @@ export default function InstagramPage() {
                     <input
                       value={q}
                       onChange={(e) => setQ(e.target.value)}
-                      aria-label="Search library"
-                      className="min-w-0 flex-1 bg-transparent text-sm text-zinc-200 outline-none"
+                      placeholder="Search"
+                      aria-label="Search posts"
+                      className="min-w-0 flex-1 bg-transparent text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
                     />
                     {q ? (
                       <button
@@ -1853,79 +1862,49 @@ export default function InstagramPage() {
                       </button>
                     ) : null}
                   </div>
+                  {ideasView ? null : (
+                    <PickMenu
+                      label="Kept for"
+                      value={knowhowView ? "knowhow" : savedForFilter}
+                      options={KEPT_FOR}
+                      onChange={(id) => {
+                        pinLibraryChrome();
+                        if (id === "knowhow") return setLibraryView("knowhow");
+                        setSavedForFilter(id);
+                        setLibraryView("feed");
+                      }}
+                    />
+                  )}
+                  <PickMenu
+                    label="Type"
+                    value={kindFilter || "all"}
+                    options={KINDS}
+                    onChange={(id) => {
+                      pinLibraryChrome();
+                      setKindFilter(id === "all" ? "" : id);
+                    }}
+                  />
                   {ideasView ? (
                     <button
                       type="button"
                       disabled={boardBusy || !avail?.ai}
                       onClick={() => void runGenerateBoard()}
-                      className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-[12px] text-zinc-300 hover:border-zinc-700 hover:text-zinc-100 disabled:opacity-50"
+                      className={cn(pick, "bg-zinc-950 px-2.5 text-[12px] text-zinc-300 hover:border-zinc-700 disabled:opacity-50")}
                     >
-                      {boardBusy ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <RefreshCw className="h-3.5 w-3.5" />
-                      )}
+                      {boardBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
                       {ideaBoard?.ideas.length ? "Regenerate" : "Find ideas"}
                     </button>
                   ) : (
-                    <select
+                    <PickMenu
+                      label="Sort"
                       value={sort}
-                      onChange={(e) => {
+                      options={LIBRARY_SORTS}
+                      onChange={(id) => {
                         pinLibraryChrome();
-                        setSort(e.target.value as LibrarySort);
+                        setSort(id);
                       }}
-                      aria-label="Sort"
-                      className="shrink-0 rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-2.5 text-[11px] text-zinc-300"
-                    >
-                      {LIBRARY_SORTS.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          Sort: {s.label}
-                        </option>
-                      ))}
-                    </select>
+                    />
                   )}
-                </div>
-                <div className="flex flex-wrap items-center gap-y-2 text-[11px]">
-                  <div role="group" aria-label="Kind" className="flex flex-wrap items-center gap-1">
-                    {KIND_FILTERS.map((k) => (
-                      <button
-                        key={k.id}
-                        type="button"
-                        aria-pressed={kindFilter === k.id}
-                        onClick={() => {
-                          pinLibraryChrome();
-                          setKindFilter((cur) => (cur === k.id ? "" : k.id));
-                        }}
-                        className={filterChip(kindFilter === k.id)}
-                      >
-                        {k.label}
-                      </button>
-                    ))}
-                  </div>
-                  {accountFilter ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        pinLibraryChrome();
-                        setAccountFilter("");
-                      }}
-                      className="ml-2 rounded-md border border-violet-500/40 px-1.5 py-0.5 text-violet-200"
-                    >
-                      @{accounts.find((a) => a.id === accountFilter)?.username ?? accountFilter} ×
-                    </button>
-                  ) : null}
-                  {tagFilter ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        pinLibraryChrome();
-                        setTagFilter("");
-                      }}
-                      className="ml-2 rounded-md border border-violet-500/40 px-1.5 py-0.5 text-violet-200"
-                    >
-                      tag:{tagFilter} ×
-                    </button>
-                  ) : null}
                 </div>
               </div>
               <div ref={resultsRef} className="[overflow-anchor:none]">
@@ -1934,6 +1913,14 @@ export default function InstagramPage() {
               ) : ideasView ? (
                 <div className="flex min-h-full flex-col gap-3">
                   {boardError ? <p className="text-sm text-red-400">{boardError}</p> : null}
+                  {ideaBoard?.generatedAt && ideaBoard.usage ? (
+                    <p
+                      className="text-[11px] text-zinc-500"
+                      title="Made by Claude on your Mac (your subscription): measured tokens, and what the API would have charged"
+                    >
+                      Claude (Mac) · {(ideaBoard.usage.tokens / 1000).toFixed(1)}k tokens · ${ideaBoard.usage.costUsd.toFixed(2)} API-equivalent
+                    </p>
+                  ) : null}
                   {boardBusy && ideaRows.length === 0 ? (
                     <p className={libraryEmptyClass}>Finding ideas…</p>
                   ) : ideaRows.length === 0 ? (
@@ -1943,7 +1930,7 @@ export default function InstagramPage() {
                         : (ideaBoard?.ideas.length ?? 0) > 0
                           ? "These remakes are already in Workshop. Regenerate to look for new ones."
                           : posts.length
-                            ? "Find ideas to pull a short list of strong remakes from this library."
+                            ? "Find ideas to get a short list of strong remakes from your saved posts."
                             : "Paste links above, then find ideas."}
                     </p>
                   ) : (
@@ -2001,9 +1988,10 @@ export default function InstagramPage() {
                       ) : null}
                       <div
                         className={
+                          // a search keeps its ranking left to right; the feed flows down the columns
                           searchingLibrary
-                            ? "grid grid-cols-1 items-start gap-3 sm:grid-cols-2 lg:grid-cols-3 [&>div]:mb-0"
-                            : "columns-1 gap-3 sm:columns-2 lg:columns-3"
+                            ? "grid grid-cols-[repeat(auto-fill,minmax(min(100%,225px),1fr))] items-start gap-3"
+                            : "gap-3 [column-width:225px] [&>div]:break-inside-avoid [&>div]:pb-3"
                         }
                       >
                         {g.posts.map((p) => {
@@ -2013,8 +2001,8 @@ export default function InstagramPage() {
                               (!!p.creator.username && a.username.toLowerCase() === p.creator.username.toLowerCase()),
                           );
                           return (
+                            <div key={p.id}>
                             <PostCard
-                              key={p.id}
                               post={p}
                               selected={selected.has(p.id)}
                               anySelected={selected.size > 0}
@@ -2033,13 +2021,9 @@ export default function InstagramPage() {
                               }
                               onOpen={() => openPost(p.id)}
                               onMark={(patch) => void markOne(p.id, patch)}
-                              onRetry={() =>
-                                void retryPost(p.id)
-                                  .then(applyPost)
-                                  // refused (no key to read with, say): the card says why
-                                  .catch((e) => applyPost({ ...p, error: e instanceof Error ? e.message : String(e) }))
-                              }
+                              onRetry={cantRead ? undefined : () => retryPost(p.id).then(applyPost)}
                             />
+                            </div>
                           );
                         })}
                       </div>
@@ -2049,6 +2033,7 @@ export default function InstagramPage() {
               )}
               </div>
             </div>
+            ) : null}
             {selected.size > 0 && (
               <div className="pointer-events-none fixed inset-x-0 bottom-[max(1rem,env(safe-area-inset-bottom))] z-40 flex justify-center px-4">
                 <div className="pointer-events-auto flex max-w-full flex-wrap items-center justify-center gap-1.5 rounded-xl border border-zinc-800 bg-zinc-925/95 px-2 py-1.5 text-[11px] shadow-xl backdrop-blur">
@@ -2148,14 +2133,14 @@ export default function InstagramPage() {
                     onClick={() => setRunOpen(true)}
                     className="rounded-md bg-violet-600 px-2.5 py-1 font-semibold text-white hover:bg-violet-500"
                   >
-                    Run jobs on {selected.size}
+                    Run {selected.size}
                   </button>
                 </div>
               </div>
             )}
             {runOpen && (
               <RunJobsDialog
-                title={`Run jobs on ${selected.size} ${selected.size === 1 ? "post" : "posts"}`}
+                title={`Run ${selected.size} ${selected.size === 1 ? "post" : "posts"}`}
                 busy={runBusy}
                 onClose={() => setRunOpen(false)}
                 onRun={runSelected}

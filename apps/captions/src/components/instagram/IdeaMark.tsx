@@ -29,7 +29,7 @@ export function IdeaStatusSelect({
   value: IdeaStatus | undefined;
   onChange: (status: IdeaStatus) => void;
   disabled?: boolean;
-  /** A Workshop session uses it: the library files it under In Project, so say so. */
+  /** A Workshop session uses it: it is filed under To make, so say so. */
   inSession?: boolean;
 }) {
   const stored = ideaStatusOf(value);
@@ -41,7 +41,7 @@ export function IdeaStatusSelect({
       onClick={(e) => e.stopPropagation()}
       onChange={(e) => onChange(e.target.value as IdeaStatus)}
       className={`rounded-md border bg-zinc-950 px-1.5 py-1 text-[11px] ${STATUS_CLASS[current]} disabled:opacity-50`}
-      title={inSession ? "In Project: a Workshop session uses it" : "Inbox, in project, done, or skip"}
+      title={inSession ? "To make: a Workshop session uses it" : "Inbox, to make, done, or skip"}
     >
       {IDEA_STATUSES.map((s) => (
         <option key={s.id} value={s.id}>
@@ -122,10 +122,13 @@ export function RankStars({
   value,
   onChange,
   disabled,
+  onMedia,
 }: {
   value: number | undefined;
   onChange: (rank: number | null) => void;
   disabled?: boolean;
+  /** On a picture's dark bar (a card under the pointer): white outlines, a size up. */
+  onMedia?: boolean;
 }) {
   const shown = starsFromRank(value);
   const [hover, setHover] = useState<number | null>(null);
@@ -134,7 +137,7 @@ export function RankStars({
     <div
       role="radiogroup"
       aria-label="Rating"
-      className="flex items-center"
+      className={`flex items-center ${onMedia ? "gap-0.5" : ""}`}
       onClick={(e) => e.stopPropagation()}
       onMouseLeave={() => setHover(null)}
     >
@@ -153,10 +156,10 @@ export function RankStars({
             onFocus={() => !disabled && setHover(n)}
             onBlur={() => setHover(null)}
             onClick={() => onChange(shown === n ? null : n)}
-            className="rounded p-0.5 text-zinc-600 disabled:opacity-50"
+            className={`rounded disabled:opacity-50 ${onMedia ? "text-white/85" : "p-0.5 text-zinc-600"}`}
           >
             <Star
-              className={`h-3.5 w-3.5 transition-colors ${
+              className={`${onMedia ? "h-4 w-4" : "h-3.5 w-3.5"} transition-colors ${
                 filled
                   ? preview
                     ? "fill-amber-300 text-amber-300"
