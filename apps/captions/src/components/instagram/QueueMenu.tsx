@@ -61,9 +61,19 @@ export function QueueMenu({
   const failed = items.filter((i) => i.state === "failed");
   const moving = running.length + queued.length > 0;
 
+  // what is running, waiting and failed, as one string: when it changes by itself (a failed download tried again,
+  // a run that ended), the page is told so its lists follow
+  const seen = useRef<string | null>(null);
+  const changed = useRef(onChange);
+  changed.current = onChange;
   const refresh = useCallback(() => {
     getQueue()
-      .then(setView)
+      .then((next) => {
+        const now = next.items.map((i) => `${i.kind}:${i.id}:${i.state}`).sort().join(",");
+        if (seen.current !== null && seen.current !== now) changed.current?.();
+        seen.current = now;
+        setView(next);
+      })
       .catch(() => {});
   }, []);
 

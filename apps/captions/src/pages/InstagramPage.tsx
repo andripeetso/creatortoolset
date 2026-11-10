@@ -1115,29 +1115,14 @@ export default function InstagramPage() {
       .catch(() => {});
   }, []);
 
+  // the posts and the accounts refresh themselves when their key (the project, the filters) changes: useCachedList.
+  // Asking again here, and once more 250 ms after a filter, fetched the whole list three times per change.
   useEffect(() => {
     if (!allowed) return;
-    refreshList();
-    refreshAccounts();
     refreshStacks();
     refreshAvailability();
     refreshWorkshop();
-  }, [allowed, currentProjectId, refreshList, refreshAccounts, refreshStacks, refreshAvailability, refreshWorkshop]);
-
-  useEffect(() => {
-    if (!allowed) return;
-    const t = window.setTimeout(() => refreshList(), 250);
-    return () => window.clearTimeout(t);
-  }, [
-    accountFilter,
-    tagFilter,
-    ideaFilter,
-    savedForFilter,
-    sort,
-    libraryView,
-    allowed,
-    refreshList,
-  ]);
+  }, [allowed, currentProjectId, refreshStacks, refreshAvailability, refreshWorkshop]);
 
   useLayoutEffect(() => {
     const chrome = chromeRef.current;
@@ -1205,15 +1190,25 @@ export default function InstagramPage() {
     };
   }, [q, libraryView]);
 
-  const anyProcessing = posts.some(isProcessing) || accounts.some((a) => a.status === "processing");
+  const postsBusy = posts.some(isProcessing);
+  const accountsBusy = accounts.some((a) => a.status === "processing");
+  const anyProcessing = postsBusy || accountsBusy;
   useEffect(() => {
     if (!allowed || postId || !anyProcessing) return;
-    const t = window.setInterval(() => {
-      refreshList();
-      refreshAccounts();
-    }, 800);
-    return () => window.clearInterval(t);
-  }, [allowed, postId, anyProcessing, refreshList, refreshAccounts]);
+    // Only the list with something running in it, and the next request only after the last one answered: an interval
+    // kept asking a slow server, and the requests piled up in front of everything else the page sent.
+    let stop = false;
+    let t = 0;
+    const tick = async () => {
+      await Promise.all([postsBusy ? loadPosts().catch(() => {}) : null, accountsBusy ? loadAccounts().catch(() => {}) : null]);
+      if (!stop) t = window.setTimeout(tick, 800);
+    };
+    t = window.setTimeout(tick, 800);
+    return () => {
+      stop = true;
+      window.clearTimeout(t);
+    };
+  }, [allowed, postId, anyProcessing, postsBusy, accountsBusy, loadPosts, loadAccounts]);
 
   const workshopBusy = workshopSessions.some((s) => s.generating);
   useEffect(() => {
@@ -1500,8 +1495,8 @@ export default function InstagramPage() {
       }
       return true;
     });
-  const myAccount = accounts.find((a) => a.mine);
-  const pulledAccounts = accounts.filter((a) => !a.mine && isReferenceAccount(a));
+  const myAccount = accounts.find((a) => a.own);
+  const pulledAccounts = accounts.filter((a) => !a.own && isReferenceAccount(a));
   const savedOnlyAccounts = accounts.filter((a) => !isReferenceAccount(a));
   const otherAccounts = [...pulledAccounts, ...savedOnlyAccounts];
   const unpulledAccounts = savedOnlyAccounts.filter((a) => a.status !== "processing");
@@ -1562,7 +1557,8 @@ export default function InstagramPage() {
                 refreshAccounts();
               }}
             />
-            <ProjectSwitcher />
+            {/* an open post belongs to the project being left: the other project opens on its own list */}
+            <ProjectSwitcher onSelect={() => (postId ? navigate(base) : undefined)} />
           </>
         ) : required ? (
           <Link to={home} className="rounded-md px-2 py-1.5 text-xs text-zinc-500 hover:text-zinc-200">
@@ -2037,6 +2033,12 @@ export default function InstagramPage() {
                               }
                               onOpen={() => openPost(p.id)}
                               onMark={(patch) => void markOne(p.id, patch)}
+                              onRetry={() =>
+                                void retryPost(p.id)
+                                  .then(applyPost)
+                                  // refused (no key to read with, say): the card says why
+                                  .catch((e) => applyPost({ ...p, error: e instanceof Error ? e.message : String(e) }))
+                              }
                             />
                           );
                         })}

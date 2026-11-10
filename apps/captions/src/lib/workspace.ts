@@ -26,28 +26,41 @@ async function json<T>(res: Response): Promise<T> {
   return j as T;
 }
 
-export const useWorkspace = create<WorkspaceState>((set) => ({
+/** Counts the switches: an answer that was asked for before the newest one is out of date and is dropped. */
+let switches = 0;
+
+export const useWorkspace = create<WorkspaceState>((set, get) => ({
   currentProjectId: null,
   projects: [],
   loaded: false,
   load: async () => {
+    const asked = switches;
     try {
       const ws = await json<Workspace>(await fetch("/api/workshop/workspace"));
-      set({ ...ws, loaded: true });
+      if (asked === switches) set({ ...ws, loaded: true });
     } catch {
       // nothing was loaded (signed out, a server restart): "loaded, no projects" would read as a brand-new account
-      set({ currentProjectId: null, projects: [], loaded: false });
+      if (asked === switches) set({ currentProjectId: null, projects: [], loaded: false });
     }
   },
   select: async (id) => {
-    const ws = await json<Workspace>(
-      await fetch("/api/workshop/workspace", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ currentProjectId: id }),
-      }),
-    );
-    set({ ...ws, loaded: true });
+    // the switch shows at once and the server is told after: on a busy server the click used to look dead for seconds
+    const before = get().currentProjectId;
+    const asked = ++switches;
+    set({ currentProjectId: id });
+    try {
+      const ws = await json<Workspace>(
+        await fetch("/api/workshop/workspace", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ currentProjectId: id }),
+        }),
+      );
+      if (asked === switches) set({ ...ws, loaded: true });
+    } catch (e) {
+      if (asked === switches) set({ currentProjectId: before });
+      throw e;
+    }
   },
   reset: () => set({ currentProjectId: null, projects: [], loaded: false }),
 }));

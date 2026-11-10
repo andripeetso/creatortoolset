@@ -276,8 +276,10 @@ export interface InstagramAccount {
   posts?: InstagramPost[];
   snapshots?: Snapshot[];
   insights?: AccountInsights;
-  /** This is the Toolset user's own Instagram. */
+  /** The stored flag: the one account the official login reads and pulls in full (at most one per owner). */
   mine?: boolean;
+  /** This is the user's own Instagram: flagged, linked by a project as its account, or connected by its own login. */
+  own?: boolean;
 }
 
 export interface AccountInsights {
@@ -1265,6 +1267,10 @@ export const patchAccount = (id: string, patch: { mine?: boolean }) =>
 
 export const getAccount = (id: string) =>
   fetch(`/api/instagram/accounts/${id}`).then((r) => json<InstagramAccount>(r));
+
+/** The account's record alone, no catalog or posts: what its page asks for while a run is on. */
+export const getAccountStatus = (id: string) =>
+  fetch(`/api/instagram/accounts/${id}/status`).then((r) => json<InstagramAccount>(r));
 
 export const runAccountJobs = (
   id: string,

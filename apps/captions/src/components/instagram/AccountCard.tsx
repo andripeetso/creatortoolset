@@ -25,14 +25,14 @@ export function AccountCard({
     <Link
       to={to}
       className={`relative flex min-w-0 flex-col gap-2 rounded-xl border px-3 py-2.5 ${
-        account.mine
+        account.own
           ? "border-violet-500/40 bg-violet-600/10"
           : active
             ? "border-violet-500/50 bg-violet-600/10"
             : "border-zinc-800 hover:border-zinc-700 hover:bg-zinc-900/60"
       }`}
     >
-      {account.mine ? (
+      {account.own ? (
         <span className="absolute right-2 top-2 rounded-md bg-violet-600 px-1.5 py-0.5 text-[10px] font-medium text-white">
           Mine
         </span>

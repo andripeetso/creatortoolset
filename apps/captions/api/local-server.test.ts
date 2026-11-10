@@ -66,6 +66,27 @@ describe("one-time sign-in links", () => {
   });
 });
 
+describe("a hosted server behind a CDN is not held to the own-computer password rule", () => {
+  // Cloudflare in front of a hosted server sets the same headers as this computer's own tunnel; nothing here is a tunnel
+  const cdn = { "cf-connecting-ip": "203.0.113.9", "cf-ray": "8f00-SJO" };
+  it("signs a phone in with the code it scanned, and the account's own password works", async () => {
+    const signIn = await from("127.0.0.1", "/api/auth/login", { method: "POST", headers: { "content-type": "application/json", ...cdn }, body: JSON.stringify({ username: "admin", password: "local-sign-in-test-secret" }) });
+    expect(signIn.status).toBe(200);
+    const minted = await from("127.0.0.1", "/api/auth/link", { method: "POST", headers: { cookie: cookieOf(signIn), ...cdn } });
+    const { path: link } = (await minted.json()) as { path: string };
+    const phone = await from("127.0.0.1", link, { headers: cdn });
+    expect(phone.status).toBe(302);
+    expect(cookieOf(phone)).toMatch(/=/);
+  });
+
+  it("still holds a server on someone's own computer to it, through the same headers", async () => {
+    vi.stubEnv("CT_LOCAL", "1");
+    const cookie = cookieOf(await login("127.0.0.1", "local-sign-in-test-secret"));
+    const { path: link } = (await (await post("127.0.0.1", "/api/auth/link", {}, cookie)).json()) as { path: string };
+    expect((await from("127.0.0.1", link, { headers: cdn })).status).toBe(403);
+  });
+});
+
 describe("a server on this Mac signs in from other devices only once a password is set", () => {
   it("refuses another address while the password is still APP_SECRET, and lets it in after one is chosen", async () => {
     vi.stubEnv("CT_LOCAL", "1");

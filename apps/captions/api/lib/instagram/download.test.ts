@@ -1,8 +1,10 @@
 import { existsSync, mkdtempSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
+import net from "node:net";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
+  CONNECT_ATTEMPT_MS,
   DownloadError,
   assertCdnUrl,
   describeFetchError,
@@ -13,6 +15,14 @@ import {
 
 const dir = mkdtempSync(path.join(tmpdir(), "ig-dl-"));
 const CDN = "https://scontent-lhr8-1.cdninstagram.com/v/t51/01.jpg?x=1";
+
+describe("connecting", () => {
+  it("gives a far media server more than Node's 250 ms to connect", () => {
+    // 270 ms measured to an edge server: with the default every try ended in "fetch failed (ETIMEDOUT)"
+    expect(net.getDefaultAutoSelectFamilyAttemptTimeout()).toBe(CONNECT_ATTEMPT_MS);
+    expect(CONNECT_ATTEMPT_MS).toBeGreaterThanOrEqual(1000);
+  });
+});
 
 describe("assertCdnUrl", () => {
   it("accepts Instagram's CDN hosts only, over https", () => {

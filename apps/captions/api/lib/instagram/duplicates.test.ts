@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { detectReposts, pairMode, pairScore } from "./duplicates";
 
 const long = "Crawling does one real thing for the brain every morning if you let them stay on the floor";
@@ -87,5 +87,19 @@ describe("detectReposts", () => {
       [],
     );
     expect(clusters).toHaveLength(0);
+  });
+
+  it("prepares each caption once, however many posts are compared", () => {
+    // an account page waited seconds here: every pair of a few hundred posts normalised both captions again
+    const rows = Array.from({ length: 60 }, (_, i) => ({
+      shortcode: `r${i}`,
+      kind: "reel" as const,
+      caption: `Sample post number ${i} about rolling, crawling and climbing with a small sample`,
+    }));
+    const lowered = vi.spyOn(String.prototype, "toLowerCase");
+    detectReposts(rows, []);
+    const calls = lowered.mock.calls.length;
+    lowered.mockRestore();
+    expect(calls).toBeLessThanOrEqual(rows.length * 4);
   });
 });

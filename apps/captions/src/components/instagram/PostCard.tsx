@@ -115,6 +115,7 @@ export function PostCard({
   onOpen,
   onOpenAccount,
   onMark,
+  onRetry,
 }: {
   post: InstagramPost;
   selected: boolean;
@@ -127,6 +128,8 @@ export function PostCard({
   onOpen: () => void;
   onOpenAccount?: (href: string) => void;
   onMark: (patch: { ideaStatus?: IdeaStatus; rank?: number | null; savedFor?: SavedFor[]; knowhow?: boolean }) => void;
+  /** A failed post: run it again from the card. */
+  onRetry?: () => void;
 }) {
   const first = post.slides[0];
   const ratio =
@@ -255,7 +258,14 @@ export function PostCard({
           {post.takenAt ? <span className="ml-auto shrink-0 text-zinc-600">{fmtDate(post.takenAt)}</span> : null}
         </div>
         {failed ? (
-          <p className="line-clamp-2 text-[12px] leading-snug text-red-300">{post.error || "Ingest failed"}</p>
+          <div className="flex items-start gap-2">
+            <p className="line-clamp-2 min-w-0 flex-1 text-[12px] leading-snug text-red-300">{post.error || "Ingest failed"}</p>
+            {onRetry ? (
+              <button type="button" onClick={onRetry} className="shrink-0 text-[12px] leading-snug text-red-200 underline hover:text-red-100">
+                Retry
+              </button>
+            ) : null}
+          </div>
         ) : (
           <p className="line-clamp-2 text-[13px] leading-snug text-zinc-200">
             {headline || <span className="text-zinc-500">Saved — jobs pending</span>}

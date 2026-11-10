@@ -9,11 +9,11 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe("setup steps", () => {
   it("is the same three screens for every way of working", () => {
-    expect(stepsFor()).toEqual(["agents", "make", "try"]);
+    expect(stepsFor()).toEqual(["agents", "make"]);
     expect(stepsFor()).toBe(SETUP_PATH);
     // it takes no answer at all; called as the old one was, with each saved answer, the path is still the same
     const asBefore = stepsFor as (talk?: string | null) => readonly string[];
-    for (const talk of ["app", "chat", "both", null]) expect(asBefore(talk)).toEqual(["agents", "make", "try"]);
+    for (const talk of ["app", "chat", "both", null]) expect(asBefore(talk)).toEqual(["agents", "make"]);
   });
 
   it("keeps Connect, Folders and How as screens a link can open, off the path", () => {
@@ -27,8 +27,9 @@ describe("setup steps", () => {
     expect(setupStepFromParam("tools")).toBe("make");
     expect(setupStepFromParam("ai")).toBe("agents");
     expect(setupStepFromParam("project")).toBe("make");
-    expect(setupStepFromParam("left")).toBe("try");
-    expect(setupStepFromParam("done")).toBe("try");
+    expect(setupStepFromParam("left")).toBe("make");
+    expect(setupStepFromParam("done")).toBe("make");
+    expect(setupStepFromParam("try")).toBe("make"); // the dropped "Try it" screen
   });
 
   it("names no step for an empty, unknown or inherited id", () => {
@@ -62,7 +63,7 @@ describe("setupOpen", () => {
   });
   it("never opens on a phone, asked for or not", () => {
     expect(setupOpen(fresh, null, { firstRun: true, phone: true })).toBe(false);
-    expect(setupOpen(fresh, "try", { firstRun: true, phone: true })).toBe(false);
+    expect(setupOpen(fresh, "make", { firstRun: true, phone: true })).toBe(false);
   });
   it("stays shut with no setup to show (a guest, the demo)", () => {
     expect(setupOpen(null, "agents", { firstRun: true, phone: false })).toBe(false);

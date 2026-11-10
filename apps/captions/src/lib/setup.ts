@@ -7,8 +7,8 @@ import { confirmDialog } from "./dialogs";
 
 export type { SetupView };
 
-/** First run: the same three screens for everyone (Connect your AI, What do you make?, Try it). */
-export const SETUP_PATH = ["agents", "make", "try"] as const;
+/** First run: the same two screens for everyone (Connect your AI, What do you make?), then Home. Nothing to do is asked of her. */
+export const SETUP_PATH = ["agents", "make"] as const;
 /** Screens other pages still open with `?setup=`: one screen each, closed by Done, never part of the path. */
 export const SIDE_STEPS = ["connect", "folders", "how"] as const;
 export const SETUP_STEPS = [...SETUP_PATH, ...SIDE_STEPS] as const;
@@ -18,7 +18,7 @@ export type SetupStep = (typeof SETUP_STEPS)[number];
 export const stepsFor = (): readonly SetupStep[] => SETUP_PATH;
 
 /** Ids from the older, longer setups still open the screen they now belong to. */
-const OLD_STEP: Record<string, SetupStep> = { tools: "make", ai: "agents", project: "make", left: "try", done: "try" };
+const OLD_STEP: Record<string, SetupStep> = { tools: "make", ai: "agents", project: "make", left: "make", done: "make", try: "make" };
 
 /** The `?setup=` value as a step, or null when it names none (then setup opens on its first step). */
 export function setupStepFromParam(v: string | null): SetupStep | null {
@@ -31,7 +31,7 @@ export function setupStepFromParam(v: string | null): SetupStep | null {
 export const firstProjectName = (makes: readonly Make[], projects: number): string | null =>
   projects > 0 ? null : makes.length === 1 ? MAKE_NAMES[makes[0]!] : "My videos";
 
-/** Setup is finished once `done` is saved (arriving on Try it saves it) with tools picked (leaving screen 2 saves them). */
+/** Setup is finished once `done` is saved with tools picked (leaving the last screen saves both). */
 export const setupFinished = (view: Pick<SetupView, "done" | "tools">): boolean => view.done && view.tools !== null;
 
 /**

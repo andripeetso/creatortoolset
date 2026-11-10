@@ -27,6 +27,7 @@ import {
   fmtDate,
   fmtDelta,
   getAccount,
+  getAccountStatus,
   getInstagramAvailability,
   isProcessing,
   keysInRange,
@@ -62,6 +63,9 @@ import { AccountStats, AccountTotals, StatsSection } from "@/components/instagra
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { AppBar } from "@/components/AppBar";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
+import { readCached } from "@/lib/local-cache";
+import { currentProject, useWorkspace } from "@/lib/workspace";
+import { patchProject } from "@/lib/workshop";
 import { RecipePicker } from "@/components/instagram/RecipePicker";
 import { DEFAULT_RECIPE } from "@/components/instagram/RecipePicker";
 import { TagsEditor } from "@/components/instagram/TagsEditor";
@@ -78,6 +82,9 @@ const CATALOG_SORTS: { id: CatalogSort; label: string }[] = [
   { id: "comments", label: "Comments" },
 ];
 
+/** The accounts opened in this window, as they were last loaded: opening one again shows it at once and refreshes underneath. */
+const seen = new Map<string, InstagramAccount>();
+
 /**
  * An account's page. Given `accountId` it is embedded (the Workshop opens a creator in a modal): no header, a post opens through `onOpenPost`, removing closes it.
  */
@@ -89,7 +96,15 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
   const base = analyzerHome();
   const me = useMe();
   const allowed = canUse(me, "instagram");
-  const [account, setAccount] = useState<InstagramAccount | null>(null);
+  const currentProjectId = useWorkspace((s) => s.currentProjectId);
+  const project = useWorkspace(currentProject);
+  // what is already known shows at once: the last visit, else the account's row in the home list (header and counts)
+  const known = (id?: string) =>
+    (id &&
+      (seen.get(id) ??
+        readCached<InstagramAccount[]>(me?.username, `instagram/accounts?p=${currentProjectId ?? ""}`)?.find((a) => a.id === id))) ||
+    null;
+  const [account, setAccount] = useState<InstagramAccount | null>(() => known(accountId));
   const [error, setError] = useState<string | null>(null);
   const [avail, setAvail] = useState<InstagramAvailability | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -111,6 +126,7 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
     getAccount(accountId)
       .then((a) => {
         setBrokenAvatar(false);
+        seen.set(a.id, a);
         setAccount(a);
       })
       .catch((e) => setPageError(e instanceof Error ? e.message : "Could not open account"));
@@ -127,11 +143,32 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
   const processing = account?.status === "processing";
   useEffect(() => {
     if (!processing || !accountId) return;
-    const t = window.setInterval(load, 800);
-    return () => window.clearInterval(t);
+    // While a run is on: the account's small record, one request at a time. The whole account (catalog, posts,
+    // insights) is read again only when the run moves to its next step or ends.
+    let stop = false;
+    let t = 0;
+    let step: string | undefined;
+    const tick = async () => {
+      const next = await getAccountStatus(accountId).catch(() => null);
+      if (stop) return;
+      if (next) {
+        const moved = next.status !== "processing" || (step !== undefined && next.step !== step);
+        step = next.step;
+        setAccount((cur) => (cur ? { ...cur, status: next.status, step: next.step, progress: next.progress, error: next.error, jobs: next.jobs } : cur));
+        if (moved) load();
+      }
+      if (next?.status !== "processing") return;
+      t = window.setTimeout(tick, 800);
+    };
+    t = window.setTimeout(tick, 800);
+    return () => {
+      stop = true;
+      window.clearTimeout(t);
+    };
   }, [processing, accountId, load]);
 
   useEffect(() => {
+    setAccount((cur) => (cur && cur.id !== accountId ? known(accountId) : cur));
     setPane(null);
     setSelected(new Set());
     setLastAnchor(undefined);
@@ -276,6 +313,7 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
   const remove = async () => {
     if (!account) return;
     await deleteAccount(account.id).catch(() => {});
+    seen.delete(account.id);
     if (embedded) onClose?.();
     else navigate(base);
   };
@@ -304,7 +342,8 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
         {me ? (
           <>
             <QueueMenu base={base} busyHint={processing} onChange={load} />
-            <ProjectSwitcher />
+            {/* this account belongs to the project being left: the other project opens on its own list */}
+            <ProjectSwitcher onSelect={() => navigate(base)} />
           </>
         ) : null}
       </AppBar>}
@@ -344,7 +383,7 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
               <div className="min-w-0 flex-1">
                 <h1 className="text-xl font-semibold text-zinc-100">
                   @{account.username}
-                  {account.mine ? (
+                  {account.own ? (
                     <span className="ml-2 rounded-md bg-violet-600 px-1.5 py-0.5 text-[10px] font-medium text-white">
                       Mine
                     </span>
@@ -373,25 +412,27 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
                     type="button"
                     disabled={!!busy}
                     onClick={() => {
-                      const next = !account.mine;
+                      const next = !account.own;
                       setBusy("mine");
                       setError(null);
                       patchAccount(account.id, { mine: next })
-                        .then((a) =>
-                          setAccount((cur) =>
-                            cur ? { ...cur, mine: a.mine } : { ...a },
-                          ),
-                        )
+                        .then(async (a) => {
+                          setAccount((cur) => (cur ? { ...cur, mine: a.mine, own: a.own } : { ...a }));
+                          // the same two steps as the My account slot: a project with no account takes this one.
+                          // "Not mine" took it off its project on the server: read the projects again
+                          if (next && project && !project.accountId) await patchProject(project.id, { accountId: account.id });
+                          else if (!next) await useWorkspace.getState().load();
+                        })
                         .catch((e) => setError(e instanceof Error ? e.message : String(e)))
                         .finally(() => setBusy(null));
                     }}
                     className={`rounded-md border px-2 py-1 text-xs ${
-                      account.mine
+                      account.own
                         ? "border-violet-500/50 bg-violet-600/20 text-violet-100"
                         : "border-zinc-700 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
                     }`}
                   >
-                    {busy === "mine" ? "Saving…" : account.mine ? "My account" : "This is my account"}
+                    {busy === "mine" ? "Saving…" : account.own ? "My account" : "This is my account"}
                   </button>
                   <ConfirmButton
                     label="Remove"
