@@ -45,7 +45,7 @@ export interface MacOpts {
   label?: string;
   /** A working folder (path → text): Claude reads it with Read, Glob and Grep before answering (the Workshop's chat). */
   files?: Record<string, string>;
-  /** Another Claude than the provider's model, e.g. Fable for a reader's review. */
+  /** Another Claude than the provider's model, e.g. Fable for a reader's review. Only for a Claude provider: any other keeps its own model. */
   model?: string;
   /** The provider instance that answers (contracts/providers.ts): its CLI, identity folder, model and effort, the device it runs on and whose settings it is. */
   provider?: { instance: string; driver: Driver; home?: string; model: string; effort: Effort; device?: string; scope?: Scope;
@@ -480,6 +480,7 @@ export function packFor(r: Req, keepsBlobs: boolean) {
   return { ...p, files };
 }
 
+// `model` (another Claude, e.g. Fable) only ever goes to a Claude provider: a Codex or Gemini run keeps its own model.
 const pack = (r: Req) => ({
   id: r.id,
   device: r.device,
@@ -488,7 +489,7 @@ const pack = (r: Req) => ({
   web: r.web,
   ...(r.files ? { files: r.files } : {}),
   ...(r.provider ? { instance: r.provider.instance, driver: r.provider.driver, effort: r.provider.effort, ...(r.provider.home ? { home: r.provider.home } : {}), ...(r.provider.scope ? { scope: r.provider.scope } : {}), ...(r.provider.baseUrl ? { baseUrl: r.provider.baseUrl } : {}), ...(r.provider.envNames?.length ? { envNames: r.provider.envNames } : {}), ...(r.provider.launchArgs?.length ? { launchArgs: r.provider.launchArgs } : {}), ...(r.provider.acp ? { acp: r.provider.acp } : {}), ...(r.provider.binaryPath ? { binaryPath: r.provider.binaryPath } : {}) } : {}),
-  ...(r.model || r.provider ? { model: r.model ?? r.provider!.model } : {}),
+  ...(r.model || r.provider ? { model: r.provider && r.provider.driver !== "claude" ? r.provider.model : (r.model ?? r.provider?.model) } : {}),
   ...(r.session ? { session: r.session.key, ...(r.session.resume ? { resume: r.session.resume } : {}) } : {}),
   ...(r.mcp ? { mcp: r.mcp } : {}),
   ...(r.onAsk ? { asks: true } : {}),

@@ -191,6 +191,22 @@ describe("connect your AI", () => {
     expect(connectedOwn("hal")).toBe(true);
   });
 
+  it("a Codex-only person's connect names a model the login lists, so the AI step's own save of the default is accepted", async () => {
+    const { device } = pairDevice("kit", "Kit's Mac");
+    touchDevice(device.id);
+    world(["codex"], (f, args) => {
+      if (args.join(" ") === "login status") return { stdout: "Logged in using ChatGPT\n" };
+      if (args.join(" ") === "mcp add --help") return { stdout: "Usage: codex mcp add [OPTIONS] <NAME> --url <URL>" };
+      if (f.endsWith("/codex") && args[0] === "--version") return { stdout: "codex-cli 0.50.0\n" };
+      return undefined;
+    });
+    mockCheck.next = { ok: true, ms: 9, error: undefined };
+    expect(await local.connectCli("kit", "codex", home, device.id)).toMatchObject({ state: "ready" });
+    const saved = ownSettings("kit");
+    expect(saved?.default).toEqual({ instance: "local-codex", model: "gpt-6-luna", effort: "xhigh" });
+    expect(() => parseSettings(JSON.parse(JSON.stringify(saved)), "kit")).not.toThrow();
+  });
+
   it("binds the AI to the Mac the app paired here, never the first online Mac of the account", async () => {
     const other = pairDevice("joy", "Other Mac");
     touchDevice(other.device.id);

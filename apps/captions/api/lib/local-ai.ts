@@ -8,7 +8,7 @@ import { type CliId, type ConnectResult, type LocalAiRow, type LocalAiView, type
 import { planFromCli, type PlanId } from "../../contracts/plans";
 import { DEFAULT_SETTINGS, DRIVER_MODELS, type ProviderInstance, type ProviderSettings } from "../../contracts/providers";
 import { checkInstance } from "../providers";
-import { connectedOwn, ownSettings, saveSettings } from "./providers";
+import { connectedOwn, modelsFor, ownSettings, saveSettings } from "./providers";
 import { deviceOf, isOnline } from "./devices";
 import { findUser, newApiKey, type UserRecord } from "../users";
 
@@ -465,7 +465,7 @@ export async function connectCli(username: string, id: CliId, home = os.homedir(
   const instId = `local-${id}`;
   const inst: ProviderInstance = { id: instId, driver: id, name: NAMES[id], enabled: true, device: device.id, ...(p.home ? { home: p.home } : {}) };
   const instances = cur.instances.some((i) => i.id === instId) ? cur.instances.map((i) => (i.id === instId ? inst : i)) : [...cur.instances, inst];
-  const def = cur.default.instance ? cur.default : { instance: instId, model: DRIVER_MODELS[id]?.[0] ?? "", effort: "xhigh" as const };
+  const def = cur.default.instance ? cur.default : { instance: instId, model: modelsFor(inst)[0] ?? "", effort: "xhigh" as const };
   const next: ProviderSettings = { ...cur, instances, default: def };
 
   // the check runs before anything is saved: a failed check leaves the saved set, its default included, as it was

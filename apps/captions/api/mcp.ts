@@ -561,7 +561,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
       return {
         ai: route
           ? { connected: true, name: route.instance.name, driver: route.instance.driver, on: deviceName(route.device) }
-          : { connected: false, note: "No AI yet: connect Claude Code on a paired Mac (Settings → Your AI)." },
+          : { connected: false, note: "No AI yet: connect Claude Code or Codex on a paired Mac (Settings → Your AI)." },
         logins: readConnectors(user.username).accounts.map((a) => ({ platform: a.platform, handle: a.handle, via: a.via })),
         keys: MY_KEYS.map((k) => ({ env: k.env, name: k.name, what: k.what, saved: !!keys[k.env] })),
         projects: projects.length,

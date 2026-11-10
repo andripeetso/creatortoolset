@@ -12,6 +12,7 @@ const {
   OUT_OF_TOKENS_CODE,
   OUT_OF_TOKENS_MSG,
   aiFor,
+  macLabelOf,
   streamWithFallback,
 } = await import("./ai-complete");
 const { saveSettings } = await import("./lib/providers");
@@ -70,6 +71,15 @@ describe("isOutOfTokens", () => {
 
   it("treats HTTP 402 as out of tokens", () => {
     expect(isOutOfTokens(402, "")).toBe(true);
+  });
+});
+
+describe("a Mac answer is named for the CLI that ran it", () => {
+  const onMacWith = (driver: "claude" | "codex") => ({ only: ["mac" as const], mac: { label: "Claude (Mac)", provider: { instance: driver, driver, model: "m", effort: "low" as const } } });
+  it("Codex answers as Codex (Mac), Claude as Claude (Mac)", () => {
+    expect(macLabelOf(onMacWith("codex"))).toBe("Codex (Mac)");
+    expect(macLabelOf(onMacWith("claude"))).toBe("Claude (Mac)");
+    expect(macLabelOf({ only: ["mac"] })).toBe("Claude (Mac)");
   });
 });
 

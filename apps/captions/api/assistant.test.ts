@@ -104,10 +104,13 @@ describe("before an AI is connected", () => {
     const r = await app.request("/api/assistant/turn", { method: "POST", ...json({ text: "hello" }, { cookie }) });
     expect(r.status).toBe(202);
     const device = { authorization: `Bearer ${nicoMac.token}` };
-    const job = (await (await app.request("/api/devices/relay/wait", { method: "POST", ...json({}, device) })).json()) as { id: string; driver?: string; mcp?: unknown; asks?: boolean };
+    const job = (await (await app.request("/api/devices/relay/wait", { method: "POST", ...json({}, device) })).json()) as { id: string; driver?: string; model?: string; mcp?: unknown; asks?: boolean };
     expect(job.driver).toBe("codex");
+    expect(job.model).toBe("gpt-x");
     expect(job.mcp).toBeUndefined();
     expect(job.asks).toBeUndefined();
+    // the dock says Codex answers without the app's tools (AssistantDock: "· no app tools")
+    expect(((await (await app.request("/api/assistant", { headers: { cookie } })).json()) as { aiName: string; tools: boolean })).toMatchObject({ aiName: "Codex", tools: false });
     await app.request(`/api/devices/relay/${job.id}/done`, { method: "POST", ...json({ text: "Hi from Codex." }, device) });
     // the turn's reply is written once its promise settles, a tick after the Mac's answer
     let last: { role: string; text: string; status?: string } | undefined;

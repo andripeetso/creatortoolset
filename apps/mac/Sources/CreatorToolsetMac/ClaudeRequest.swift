@@ -542,10 +542,19 @@ func codexRunFolder() -> URL {
 /// (direct connections and DNS both failed in the sandbox). Its use of CODEX_HOME was not measured. Runs only ever carry the device owner's own prompts:
 /// unnamed calls are refused and no one else's login is used (providers-routing).
 /// ponytail: read access is not limited here; add a read allowlist when codex exposes one.
-func codexArguments(cwd: String, model: String, effort: String) -> [String] {
+func codexArguments(cwd: String, model: String, effort: String, pictures: [String] = []) -> [String] {
     var args = ["exec", "--json", "--skip-git-repo-check", "-C", cwd, "-s", "read-only", "-c", "model_reasoning_effort=" + effort]
     if !model.isEmpty { args += ["-m", model] }
+    // one `--image=<file>` each: the list form would take the "-" (the prompt from stdin) as a picture
+    args += pictures.map { "--image=" + $0 }
     return args + ["-"]
+}
+
+/// The pictures in a run's folder (the Caption Studio and Vision passes write them there), as the paths Codex attaches.
+func codexPictures(_ files: [String: String], cwd: URL) -> [String] {
+    let exts: Set<String> = ["jpg", "jpeg", "png", "webp", "gif"]
+    return files.keys.filter { exts.contains(URL(fileURLWithPath: $0).pathExtension.lowercased()) }.sorted()
+        .map { cwd.appendingPathComponent($0).path }
 }
 
 /// grok's tool ids for its read tools and its web tools (the Mac relay GROK_READ, GROK_WEB).

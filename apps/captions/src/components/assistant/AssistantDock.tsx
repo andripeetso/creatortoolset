@@ -455,6 +455,11 @@ export function AssistantDock() {
           <span className={cn("relative size-2.5 rounded-full transition-colors duration-500", thinking ? "bg-[var(--tint)]" : connected ? "bg-emerald-500" : "bg-muted-foreground/50")} />
         </span>
         <span className="flex-1 text-sm font-semibold tracking-tight">Assistant</span>
+        {view?.provider === "other" && !view.tools && (
+          <span className="min-w-0 truncate text-[11px] text-muted-foreground" title={`${view.aiName} answers from your message only: it can't use Creator Toolset's tools or do things on your Mac for you. Claude Code can.`}>
+            {view.aiName} · no app tools
+          </span>
+        )}
         {/* read-aloud is an add-on (Settings → General): the dock only offers to stop a reply being read */}
         {readAloud.speaking && (
           <button type="button" onClick={stopSpeaking} className={cn(headBtn, "text-[var(--tint)] motion-safe:animate-pulse")} aria-label="Stop reading aloud" title="Stop reading">

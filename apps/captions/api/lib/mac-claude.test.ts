@@ -44,6 +44,17 @@ describe("Claude on the Mac", () => {
     expect((await post(`/${req.id}/text`, { text: "late" })).status).toBe(404); // gone: the Mac stops
   });
 
+  it("a Codex job keeps its own model: another Claude named for a Claude-only read (Fable) never reaches Codex", async () => {
+    const codex: MacOpts["provider"] = { instance: "codex", driver: "codex", model: "gpt-6-luna", effort: "high", device: mac.id, scope: "workspace" };
+    const wait = post("/wait");
+    await new Promise((r) => setTimeout(r, 5));
+    const answer = streamMacClaude("sys", "read", undefined, () => {}, undefined, { provider: codex, model: "claude-fable-5-1" });
+    const req = (await (await wait).json()) as { id: string; driver: string; model: string };
+    expect(req).toMatchObject({ driver: "codex", model: "gpt-6-luna" });
+    await post(`/${req.id}/done`, { text: "ok" });
+    expect(await answer).toBe("ok");
+  });
+
   it("a relay that keeps big files gets a hash for each and fetches it once; an old relay still gets the text", async () => {
     const book = "chapter\n".repeat(40_000);
     const run = async (body: unknown) => {
