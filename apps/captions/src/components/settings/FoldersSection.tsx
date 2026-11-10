@@ -74,7 +74,7 @@ export function FoldersSection() {
       {Replaced ? (
         <Replaced />
       ) : (
-        <Section title="Storage" action={own.length > 0 ? <AddStorageButton devices={own} onChanged={load} /> : undefined}>
+        <Section title="Storage" action={own.length > 0 ? <AddStorageButton devices={own} serverDisks={storage.serverDisks} onChanged={load} /> : undefined}>
           <Storage devices={own} storage={storage} onChanged={load} />
         </Section>
       )}
