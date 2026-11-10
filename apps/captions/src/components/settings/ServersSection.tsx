@@ -35,12 +35,13 @@ export function ServersSection() {
     }, { replace: true });
   }, [params, setParams]);
 
-  // the app answers every poll; a silent one for a while is a failed load, not a spinner forever
+  // the app answers every poll; a silent one for a while is a failed load, not a spinner (or its last answer) forever
+  const silent = !s || !!s.saved;
   useEffect(() => {
-    if (s) return;
+    if (!silent) return;
     const t = window.setTimeout(() => setLate(true), 8000);
     return () => window.clearTimeout(t);
-  }, [s]);
+  }, [silent]);
 
   const open = s?.servers.find((v) => v.current);
   const added = s?.servers.some((v) => v.id !== THIS_MAC);
@@ -66,7 +67,7 @@ export function ServersSection() {
         }
       >
         <Card>
-          {!s ? (
+          {!s || (late && silent) ? (
             late ? (
               <ErrorRow title="The Mac app did not answer" retry={() => { setLate(false); tell("state"); }} />
             ) : (
