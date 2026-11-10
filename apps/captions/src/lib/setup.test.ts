@@ -1,46 +1,34 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { dismissSetup, MAKE_NAMES, neighbours, resumeStep, SETUP_STEPS, setupDismissed, setupFinished, setupOpensItself, setupStepFromParam, stageOf, stepsFor, toolForPath, toolsFor } from "./setup";
+import {
+  dismissSetup, DOWNLOAD_URL, firstProjectName, MAKE_NAMES, resumeStep, SETUP_PATH, SIDE_STEPS, setupDismissed, setupFinished, setupOpen, setupOpensItself,
+  setupStepFromParam, shareDownload, stepsFor, toolForPath, toolsFor,
+} from "./setup";
 import { TOOLS } from "@contracts/tools";
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe("setup steps", () => {
-  it("puts the three stages on the path, right after the mode cards: Connect, Agents, Folders, then make, project, done", () => {
-    expect(SETUP_STEPS).toEqual(["how", "connect", "agents", "folders", "make", "project", "done"]);
-    expect(stepsFor("both")).toEqual(["how", "connect", "agents", "folders", "make", "project", "done"]);
-    expect(stepsFor(null)).toEqual(["how", "connect", "agents", "folders", "make", "project", "done"]);
+  it("is the same three screens for every way of working", () => {
+    expect(stepsFor()).toEqual(["agents", "make", "try"]);
+    expect(stepsFor()).toBe(SETUP_PATH);
+    // it takes no answer at all; called as the old one was, with each saved answer, the path is still the same
+    const asBefore = stepsFor as (talk?: string | null) => readonly string[];
+    for (const talk of ["app", "chat", "both", null]) expect(asBefore(talk)).toEqual(["agents", "make", "try"]);
   });
 
-  it("skips Agents on the In the app path, and keeps Connect and Folders on every path", () => {
-    expect(stepsFor("app")).toEqual(["how", "connect", "folders", "make", "project", "done"]);
-    expect(stepsFor("chat")).toContain("agents");
-    for (const t of ["app", "chat", "both", null] as const) {
-      expect(stepsFor(t)).toContain("connect");
-      expect(stepsFor(t)).toContain("folders");
+  it("keeps Connect, Folders and How as screens a link can open, off the path", () => {
+    for (const s of SIDE_STEPS) {
+      expect(setupStepFromParam(s)).toBe(s);
+      expect(stepsFor()).not.toContain(s);
     }
   });
 
-  it("gives the three bar stages to Connect, Agents and Folders, and none to the other steps", () => {
-    expect(SETUP_STEPS.map(stageOf)).toEqual([-1, 0, 1, 2, -1, -1, -1]);
-  });
-
-  it("goes Back and Continue along the mode's path", () => {
-    expect(neighbours("connect", "both")).toEqual({ before: "how", after: "agents" });
-    expect(neighbours("agents", "both")).toEqual({ before: "connect", after: "folders" });
-    expect(neighbours("folders", "both")).toEqual({ before: "agents", after: "make" });
-    expect(neighbours("make", "both")).toEqual({ before: "folders", after: "project" });
-    expect(neighbours("done", "both")).toEqual({ before: "project", after: "done" });
-    expect(neighbours("folders", "app")).toEqual({ before: "connect", after: "make" });
-    expect(neighbours("project", "chat")).toEqual({ before: "make", after: "done" });
-  });
-
-  it("maps the old step ids to the step they now belong to", () => {
+  it("maps the old step ids to the screen they now belong to", () => {
     expect(setupStepFromParam("tools")).toBe("make");
     expect(setupStepFromParam("ai")).toBe("agents");
-    expect(setupStepFromParam("connect")).toBe("connect");
-    expect(setupStepFromParam("folders")).toBe("folders");
-    expect(setupStepFromParam("left")).toBe("done");
-    expect(setupStepFromParam("project")).toBe("project");
+    expect(setupStepFromParam("project")).toBe("make");
+    expect(setupStepFromParam("left")).toBe("try");
+    expect(setupStepFromParam("done")).toBe("try");
   });
 
   it("names no step for an empty, unknown or inherited id", () => {
@@ -50,8 +38,53 @@ describe("setup steps", () => {
   });
 });
 
+describe("the first project, made on What do you make?", () => {
+  it("is named after the one thing picked, else My videos", () => {
+    expect(firstProjectName(["podcast"], 0)).toBe(MAKE_NAMES.podcast);
+    expect(firstProjectName(["reel", "ad"], 0)).toBe("My videos");
+    expect(firstProjectName([], 0)).toBe("My videos");
+  });
+  it("is not made when the account already has a project", () => {
+    expect(firstProjectName(["podcast"], 1)).toBeNull();
+    expect(firstProjectName([], 3)).toBeNull();
+  });
+});
+
+describe("setupOpen", () => {
+  const fresh = { done: false, tools: null };
+  it("opens by itself only on a first run that isn't finished", () => {
+    expect(setupOpen(fresh, null, { firstRun: true, phone: false })).toBe(true);
+    expect(setupOpen(fresh, null, { firstRun: false, phone: false })).toBe(false); // a project, or more than one login
+    expect(setupOpen({ done: true, tools: ["workshop"] }, null, { firstRun: true, phone: false })).toBe(false); // saved by the old setup
+  });
+  it("opens when a link asks for it, finished or not", () => {
+    expect(setupOpen({ done: true, tools: [] }, "agents", { firstRun: false, phone: false })).toBe(true);
+  });
+  it("never opens on a phone, asked for or not", () => {
+    expect(setupOpen(fresh, null, { firstRun: true, phone: true })).toBe(false);
+    expect(setupOpen(fresh, "try", { firstRun: true, phone: true })).toBe(false);
+  });
+  it("stays shut with no setup to show (a guest, the demo)", () => {
+    expect(setupOpen(null, "agents", { firstRun: true, phone: false })).toBe(false);
+  });
+});
+
+describe("the download link a phone is given", () => {
+  it("uses the share sheet, else the clipboard, else shows the address", async () => {
+    const share = vi.fn(async () => {});
+    const writeText = vi.fn(async () => {});
+    expect(await shareDownload({ share, clipboard: { writeText } } as unknown as Navigator)).toBe("shared");
+    expect(share).toHaveBeenCalledWith({ url: DOWNLOAD_URL });
+    expect(await shareDownload({ clipboard: { writeText } } as unknown as Navigator)).toBe("copied");
+    expect(writeText).toHaveBeenCalledWith(DOWNLOAD_URL);
+    expect(await shareDownload({} as Navigator)).toBe("shown");
+    const denied = { clipboard: { writeText: () => Promise.reject(new Error("denied")) } } as unknown as Navigator;
+    expect(await shareDownload(denied)).toBe("shown");
+  });
+});
+
 describe("setupFinished", () => {
-  it("counts setup as finished only after Done saved it with tools picked", () => {
+  it("counts setup as finished only once done is saved with tools picked (a view saved by the old setup counts)", () => {
     expect(setupFinished({ done: false, tools: ["workshop"] })).toBe(false);
     expect(setupFinished({ done: true, tools: ["workshop"] })).toBe(true);
     expect(setupFinished({ done: true, tools: null })).toBe(false); // closed early by an older build
@@ -67,7 +100,16 @@ describe("Not now and resume", () => {
 
   it("starts at the first step when the stored step is not a step", () => {
     vi.stubGlobal("sessionStorage", { getItem: () => "tools-old-junk", setItem: () => {} });
-    expect(resumeStep()).toBe("how");
+    expect(resumeStep()).toBe("agents");
+  });
+
+  it("never reopens on a screen that is off the path (one an older build remembered)", () => {
+    for (const old of ["how", "connect", "folders"]) {
+      vi.stubGlobal("sessionStorage", { getItem: () => old, setItem: () => {} });
+      expect(resumeStep()).toBe("agents");
+    }
+    vi.stubGlobal("sessionStorage", { getItem: () => "project", setItem: () => {} });
+    expect(resumeStep()).toBe("make");
   });
 
   it("starts at the first step when storage throws", () => {
@@ -79,7 +121,7 @@ describe("Not now and resume", () => {
         throw new Error("denied");
       },
     });
-    expect(resumeStep()).toBe("how");
+    expect(resumeStep()).toBe("agents");
   });
 
   it("keeps a dismissal for this page load even when storage throws", () => {

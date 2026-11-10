@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from "react";
 import { Link, Navigate, useLocation } from "react-router";
 import { ArrowRight, ChevronRight, Loader2, Lock, ScreenShare, Star, type LucideIcon } from "lucide-react";
 import { canUse, useMe, type Me } from "@/lib/auth";
+import { Button } from "@/components/ui/button";
 import { isPhoneHub } from "@/lib/mobile";
 import { shownTools, useOpenTool, withPluginTiles, type Tool as HomeTool } from "@/lib/tools";
 import { AppBar } from "@/components/AppBar";
@@ -16,7 +17,7 @@ import { currentProject, PROJECT_COLORS, projectColor, useWorkspace } from "@/li
 import { useAppearance } from "@/lib/settings";
 import { useShareTheme } from "@/components/ShareTheme";
 import { readiness, TOOL_GROUPS, TOOL_NAMES, type Tool } from "@contracts/tools";
-import { openSetupAt, resumeStep, setupFinished, setupOpen, useSetup } from "@/lib/setup";
+import { DOWNLOAD_URL, openSetupAt, resumeStep, setupDismissed, setupFinished, shareDownload, useSetup, useSetupShown } from "@/lib/setup";
 
 /**
  * Creator Toolset: the landing hub. Two boxes side by side, Plan (analyze, write) and Make (edit, review), in the order
@@ -66,7 +67,8 @@ const canUseKey = (me: Me | null, k: Key) =>
 
 export default function ToolsetHome() {
   const location = useLocation();
-  const asked = new URLSearchParams(location.search).get("setup");
+  const setupUp = useSetupShown((s) => s.shown);
+  const [shared, setShared] = useState<Awaited<ReturnType<typeof shareDownload>> | null>(null);
   const openTool = useOpenTool();
   const me = useMe();
   const phone = isPhoneHub();
@@ -198,7 +200,17 @@ export default function ToolsetHome() {
       {phone && <div className="h-16 shrink-0" />}
 
       <div className="flex w-[520px] max-w-[94vw] flex-col gap-3 min-[900px]:w-[1120px] min-[900px]:gap-6 2xl:w-[1280px]">
-        {view && !setupFinished(view) && !setupOpen(view, asked) && (
+        {/* setup happens on the computer: a phone gets the way there, never the setup itself */}
+        {view && !setupFinished(view) && phone && !view.have.includes("project") && (
+          <div className="flex flex-col gap-3 rounded-xl border border-violet-500/30 bg-violet-500/5 px-4 py-3">
+            <p className="text-sm text-zinc-100">Set up Creator Toolset on your computer first. Then add this phone from there.</p>
+            <Button size="sm" variant="outline" className="self-start" onClick={() => void shareDownload().then(setShared)}>
+              {shared === "copied" ? "Link copied" : shared === "shown" ? DOWNLOAD_URL.replace("https://", "") : "Share the download link"}
+            </Button>
+          </div>
+        )}
+        {/* the way back after Not now; an account that never saw setup (it has projects, or signed in before) gets no card */}
+        {view && !setupFinished(view) && !phone && !setupUp && setupDismissed() && (
           <button
             type="button"
             onClick={() => openSetupAt(resumeStep())}
@@ -206,7 +218,7 @@ export default function ToolsetHome() {
           >
             <span>
               <span className="block text-sm text-zinc-100">Finish setting up</span>
-              <span className="block text-xs text-zinc-400">A few quick steps. Your answers are saved.</span>
+              <span className="block text-xs text-zinc-400">Three short screens. Your answers are saved.</span>
             </span>
             <ChevronRight className="h-4 w-4 shrink-0 text-zinc-500" />
           </button>
