@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { FormDialog, ListRow, RowMenu, SecretField, Status } from "./ui";
+import { FormDialog, InUse, ListRow, RowMenu, SecretField, Status } from "./ui";
 import type { SearchRowId } from "./search";
 import { msg } from "./helpers";
 
@@ -31,10 +31,17 @@ export interface KeyRowProps {
 }
 
 const masked = (last4?: string) => <span className="font-mono text-xs text-muted-foreground">••••{last4 ?? ""}</span>;
+/** A key that is there and not known to be broken: its last characters, then the kit's green state. A broken one has its red line instead. */
+const inUse = (last4: string | undefined, broken?: string) => (
+  <>
+    {masked(last4)}
+    {!broken && <InUse>Active</InUse>}
+  </>
+);
 
 /**
- * One API key: the service, what uses it, the masked key with a `…` menu when the person set it, and [Add key] when it
- * is not set. A key the server serves shows masked with its source as the status, so the row keeps the same height
+ * One API key: the service, what uses it, the masked key with the green Active and a `…` menu when a key is there, and
+ * [Add key] when it is not set. A key the server serves shows masked with its source as the status, so the row keeps the same height
  * when the person saves their own (the status line stays: "Your own key is used"). Saving opens a small dialog with one
  * field, a "Get a key" link and [Save key].
  */
@@ -53,10 +60,10 @@ export function KeyRow({ id, name, subtitle, where, set, last4, readOnly, readOn
   ) : undefined;
 
   const actions: ReactNode = readOnly ? (
-    last4 ? masked(last4) : undefined
+    last4 ? inUse(last4, broken) : undefined
   ) : set ? (
     <>
-      {masked(last4)}
+      {inUse(last4, broken)}
       <RowMenu
         label={`${name} actions`}
         items={[
@@ -78,7 +85,7 @@ export function KeyRow({ id, name, subtitle, where, set, last4, readOnly, readOn
     </>
   ) : served ? (
     <>
-      {masked(served.last4)}
+      {inUse(served.last4, broken)}
       <RowMenu label={`${name} actions`} items={[{ label: "Use a different key", onSelect: () => setOpen(true) }]} />
     </>
   ) : (
