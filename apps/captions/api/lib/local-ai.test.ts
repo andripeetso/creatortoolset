@@ -299,11 +299,9 @@ describe("connect your AI", () => {
 });
 
 describe("sign in", () => {
-  it("opens Terminal with the tool's own sign-in, using the path this server found", async () => {
-    const calls = world(["claude"], (f, args) => (args.join(" ") === "auth status --json" ? { stdout: claudeAuth(false) } : claudeVersion(f, args)));
-    expect(await local.signIn("claude")).toEqual({ ok: true });
-    const open = calls.find((c) => c.startsWith("/usr/bin/osascript"));
-    expect(open).toContain(`do script "export PATH='/fake/bin':\\"$PATH\\"; '/fake/bin/claude' auth login"`);
+  it("starts the tool's own sign-in as a child process, and says so in one sentence when it cannot start", async () => {
+    world(["claude"], (f, args) => (args.join(" ") === "auth status --json" ? { stdout: claudeAuth(false) } : claudeVersion(f, args)));
+    expect(await local.signIn("claude")).toEqual({ ok: false, message: "Couldn't start Claude Code sign-in. Try again." });
     expect(await local.signIn("gemini")).toMatchObject({ ok: false });
   });
 });

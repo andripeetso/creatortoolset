@@ -20,14 +20,14 @@ const TIMEOUT_MS = 90_000;
 /** The agents this step lists, in order. */
 const AGENTS: CliId[] = ["claude", "codex", "gemini"];
 const NAME: Record<CliId, string> = { claude: "Claude Code", codex: "Codex", gemini: "Gemini CLI" };
-const COMMAND: Record<CliId, string> = { claude: "claude", codex: "codex", gemini: "gemini" };
 const DESCRIBE: Record<CliId, string> = {
   claude: "Code with your Claude subscription.",
   codex: "Code with your ChatGPT subscription.",
   gemini: "Google's coding tool. Sign in with your Google account.",
 };
 const SIGN_IN: Record<CliId, string> = { claude: "Continue with Claude", codex: "Continue with ChatGPT", gemini: "Sign in" };
-const TERMINAL_HINT = "A Terminal window opens. Sign in there with your browser, then come back here.";
+/** An install runs the vendor's installer here: a few minutes on a slow connection. */
+const INSTALL_TIMEOUT_MS = 6 * 60_000;
 const DESKTOP_LINE: Partial<Record<LocalAiId, string>> = {
   "claude-desktop": "The Claude app. It can't be the AI this app uses, and it can't be connected from here yet.",
   "chatgpt-desktop": "The ChatGPT app. It can't be the AI this app uses, and it can't be connected from here yet.",
@@ -56,14 +56,14 @@ export interface RowView {
 export function rowView(row: LocalAiRow, result: ConnectResult | undefined, phase: Phase | undefined): RowView {
   const connected = isConnected(row, result);
   const signed = row.signedIn ?? (result?.state === "ready" ? true : null);
-  const notSignedIn: RowView = { line: "Not signed in yet. " + TERMINAL_HINT, button: { label: "Sign in", action: "signin" } };
+  const notSignedIn: RowView = { line: "Not signed in yet. Your browser opens to sign in.", button: { label: "Sign in", action: "signin" } };
   if (phase === "connecting") return { line: "Checking. This can take up to a minute.", button: { label: "Checking…", action: "connect", disabled: true } };
   if (phase === "signingIn")
     return {
-      line: "A Terminal window opened. Sign in there, then come back here. This page checks by itself.",
+      line: "Waiting for you to finish in your browser. This page checks by itself.",
       button: { label: "Waiting for sign-in…", action: "none", disabled: true },
     };
-  if (phase === "timedOut") return { line: "Still not signed in. Sign in in the Terminal window, then press Check again.", button: { label: "Check again", action: "check" } };
+  if (phase === "timedOut") return { line: "Still not signed in. Finish signing in in your browser, then press Check again.", button: { label: "Check again", action: "check" } };
   if (result?.state === "failed")
     return {
       line: `It didn't answer: ${plain(result.message ?? "Try again")}.`,
@@ -76,8 +76,8 @@ export function rowView(row: LocalAiRow, result: ConnectResult | undefined, phas
     return { line: "Connected, but not signed in right now. Sign in again.", button: { label: "Sign in", action: "signin" } };
   if (connected) return { line: "", button: null, connected: true };
   if (signed === false) return notSignedIn;
-  if (signed === true) return { line: "Signed in. Ready to connect.", button: { label: "Use existing CLI", action: "connect" } };
-  return { line: "", button: { label: "Use existing CLI", action: "connect" } };
+  if (signed === true) return { line: "Signed in.", button: { label: "Use this", action: "connect" } };
+  return { line: "", button: { label: "Use this", action: "connect" } };
 }
 
 /** The row's view: the same rules for every agent (the app's own AI can be any of them now). */
@@ -91,6 +91,7 @@ function AgentRow({
   result,
   phase,
   installing,
+  installDisabled,
   usedByApp,
   onAction,
   onInstall,
@@ -101,7 +102,10 @@ function AgentRow({
   row?: LocalAiRow;
   result?: ConnectResult;
   phase?: Phase;
+  /** this agent's install is running */
   installing: boolean;
+  /** some install is running (this row's Install waits for it) */
+  installDisabled: boolean;
   /** this agent is the one that answers in the app (its default) */
   usedByApp: boolean;
   onAction: (a: Action) => void;
@@ -122,11 +126,8 @@ function AgentRow({
           {version && <span className="ml-2 text-xs font-normal text-muted-foreground">{version}</span>}
         </p>
         <p className="text-xs text-muted-foreground">{DESCRIBE[id]}</p>
-        {!found && (
-          <p className="text-xs">
-            Not found · {NAME[id]} (<code className="font-mono">{COMMAND[id]}</code>) was not found on PATH.
-          </p>
-        )}
+        {!found && !installing && <p className="text-xs">Not installed on this computer.</p>}
+        {installing && <p className="text-xs">Installing {NAME[id]}. This can take a few minutes.</p>}
         {found && v?.line && <p className="text-xs">{v.line}</p>}
         {v?.raw && (
           <details className="text-xs">
@@ -155,8 +156,8 @@ function AgentRow({
           </Button>
         )}
         {canInstall && (
-          <Button size="sm" variant="outline" disabled={installing} onClick={() => onInstall?.(id)}>
-            <span aria-hidden className="font-mono">›_</span> Install
+          <Button size="sm" variant="outline" disabled={installDisabled} onClick={() => onInstall?.(id)}>
+            {installing ? "Installing…" : <><span aria-hidden className="font-mono">›_</span> Install</>}
           </Button>
         )}
       </div>
@@ -205,12 +206,20 @@ export function AnswerPicker({ view, onPick }: { view: ProvidersView; onPick: (s
   );
 }
 
+/** A failed install or save: one plain sentence, the command's output for Details, and the install line for Copy. */
+export interface InstallMsg {
+  message: string;
+  raw?: string;
+  line?: string;
+}
+
 export interface AiPanelViewProps {
   view: LocalAiView | null;
   results: Results;
   phases: Phases;
-  installing?: boolean;
-  installMsg?: string | null;
+  /** the agent being installed now */
+  installing?: CliId | null;
+  installMsg?: InstallMsg | null;
   /** the instance id that answers in the app ("local-claude"…), so its row says so */
   appAi?: string;
   onAction: (id: CliId, action: Action) => void;
@@ -220,7 +229,7 @@ export interface AiPanelViewProps {
 }
 
 /** The agents on this computer: one row each, found or not, and the desktop apps it can see. Pure, for tests. */
-export function AiPanelView({ view, results, phases, installing = false, installMsg, appAi, onAction, onInstall, onUseForApp, onRefresh }: AiPanelViewProps) {
+export function AiPanelView({ view, results, phases, installing = null, installMsg, appAi, onAction, onInstall, onUseForApp, onRefresh }: AiPanelViewProps) {
   if (!view) return <p className="text-sm text-muted-foreground">Looking for your AI on this computer…</p>;
   if (!view.local)
     return <p className="text-sm text-muted-foreground">Ask the owner of this server to connect the AI it runs on.</p>;
@@ -238,7 +247,8 @@ export function AiPanelView({ view, results, phases, installing = false, install
               row={row}
               result={results[id]}
               phase={phases[id]}
-              installing={installing}
+              installing={installing === id}
+              installDisabled={installing !== null}
               usedByApp={appAi === `local-${id}`}
               onAction={(a) => onAction(id, a)}
               onInstall={onInstall}
@@ -255,7 +265,22 @@ export function AiPanelView({ view, results, phases, installing = false, install
           </li>
         ))}
       </ul>
-      {installMsg && <p role="status" className="text-xs text-muted-foreground">{installMsg}</p>}
+      {installMsg && (
+        <div role="status" className="space-y-1 text-xs">
+          <p>{installMsg.message}</p>
+          {(installMsg.raw || installMsg.line) && (
+            <details>
+              <summary className="cursor-pointer text-muted-foreground">Details</summary>
+              {installMsg.raw && <pre className="mt-1 whitespace-pre-wrap font-mono text-[11px]">{installMsg.raw}</pre>}
+              {installMsg.line && (
+                <Button size="sm" variant="outline" className="mt-1" onClick={() => void navigator.clipboard?.writeText(installMsg.line ?? "").catch(() => {})}>
+                  Copy install line for Terminal
+                </Button>
+              )}
+            </details>
+          )}
+        </div>
+      )}
       <div className="flex justify-end">
         <Button size="sm" variant="ghost" onClick={onRefresh}>
           Check again
@@ -276,9 +301,9 @@ async function thisMacFor(): Promise<string | undefined> {
 }
 
 /** One request, bounded: no answer in time (or no server) is null, which the caller turns into a plain message. */
-async function request<T>(url: string, init?: RequestInit): Promise<T | null> {
+async function request<T>(url: string, init?: RequestInit, ms = TIMEOUT_MS): Promise<T | null> {
   const ctl = new AbortController();
-  const timer = window.setTimeout(() => ctl.abort(), TIMEOUT_MS);
+  const timer = window.setTimeout(() => ctl.abort(), ms);
   try {
     const r = await fetch(url, { ...init, signal: ctl.signal });
     return r.ok ? ((await r.json()) as T) : null;
@@ -289,8 +314,8 @@ async function request<T>(url: string, init?: RequestInit): Promise<T | null> {
   }
 }
 const getJson = <T,>(url: string) => request<T>(url);
-const postJson = <T,>(url: string, body: unknown) =>
-  request<T>(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+const postJson = <T,>(url: string, body: unknown, ms?: number) =>
+  request<T>(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }, ms);
 
 /**
  * The agents on this computer, with the server behind them: reads what the computer has, and runs Connect, Sign in and
@@ -301,8 +326,8 @@ export function AiPanel({ onConnectedChange }: { onConnectedChange?: (on: boolea
   const [view, setView] = useState<LocalAiView | null>(null);
   const [results, setResults] = useState<Results>({});
   const [phases, setPhases] = useState<Phases>({});
-  const [installing, setInstalling] = useState(false);
-  const [installMsg, setInstallMsg] = useState<string | null>(null);
+  const [installing, setInstalling] = useState<CliId | null>(null);
+  const [installMsg, setInstallMsg] = useState<InstallMsg | null>(null);
   const [providers, setProviders] = useState<ProvidersView | null>(null);
   const timers = useRef<number[]>([]);
 
@@ -329,7 +354,7 @@ export function AiPanel({ onConnectedChange }: { onConnectedChange?: (on: boolea
   );
 
   /** Saves the account's providers with a new default (the picker, or "Use for the app"); a failed save says so. */
-  const pickDefault = (s: ProviderSettings) => saveOwn(s).then(setProviders, () => setInstallMsg("Couldn't save that. Try again."));
+  const pickDefault = (s: ProviderSettings) => saveOwn(s).then(setProviders, () => setInstallMsg({ message: "Couldn't save that. Try again." }));
   const useForApp = (id: CliId) => {
     const own = providers?.own;
     const inst = own?.instances.find((i) => i.id === `local-${id}`);
@@ -362,12 +387,17 @@ export function AiPanel({ onConnectedChange }: { onConnectedChange?: (on: boolea
     waitForSignIn(id);
   };
 
+  // the vendor's own installer runs on this computer; the row shows the progress line until it answers
   const install = async (id: CliId) => {
-    setInstalling(true);
-    const r = await postJson<SignInResult>("/api/setup/ai/install", { id });
-    setInstalling(false);
-    if (!r?.ok) setInstallMsg(`${r?.message ?? "Couldn't reach this computer. Try again."} The install line: ${INSTALL_LINE[id]}`);
-    else setInstallMsg("A Terminal window opened. Let the install finish there, then press Check again.");
+    setInstalling(id);
+    setInstallMsg(null);
+    const r = await postJson<SignInResult>("/api/setup/ai/install", { id }, INSTALL_TIMEOUT_MS);
+    setInstalling(null);
+    if (r?.ok) {
+      await refresh(true);
+      return;
+    }
+    setInstallMsg({ message: r?.message ?? "Couldn't reach this computer. Try again.", raw: r?.raw, line: INSTALL_LINE[id] });
   };
 
   useEffect(() => {

@@ -36,7 +36,7 @@ it("leaves this server's own section out on a hosted server, and shows the perso
   expect(html).toContain("Workshop PC");
 });
 
-it("gives a computer that has no agent the vendor's line to paste there, and nothing for one where Claude is ready", () => {
+it("names an agent a computer does not have, with its install left to that computer, and nothing for one where Claude is ready", () => {
   const html = render({
     others: [
       { id: "a", name: "Workshop PC", online: true, drivers: [{ driver: "claude", installed: false }] },
@@ -44,8 +44,7 @@ it("gives a computer that has no agent the vendor's line to paste there, and not
     ],
     picked: new Set(["a", "b"]),
   });
-  expect(html).toContain("paste this line into a Terminal there");
-  expect(html).toContain("curl -fsSL https://claude.ai/install.sh | bash");
+  expect(html).toContain("Not installed on Workshop PC. Open Creator Toolset there and press Install.");
   expect(html).toContain('aria-label="Claude Code is ready on Mac Studio"');
 });
 

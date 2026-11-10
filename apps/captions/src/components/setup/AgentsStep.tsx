@@ -1,6 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Check } from "lucide-react";
-import { INSTALL_LINE, type CliId } from "@contracts/local-ai";
 import { ProviderLogo } from "@/components/settings/ProviderLogos";
 import { useAuth } from "@/lib/auth";
 import { AiPanel } from "@/components/setup/AiPanel";
@@ -12,33 +11,25 @@ const AGENTS = ["claude", "codex", "gemini"] as const;
 const ROW = "flex items-start gap-3 rounded-xl border border-border/60 bg-card/40 px-4 py-3";
 
 /**
- * One other computer's agents, as it reports them. Install and sign-in there can't be run from here, so a missing
- * agent gets the vendor's line to paste into that computer's Terminal.
+ * One other computer's agents, as it reports them. Install and sign-in run on that computer's own app, so a missing
+ * agent is only named here: its Agents step installs it.
  */
 function remoteRows(c: ComputerInfo) {
   const agents = c.drivers.filter((d) => (AGENTS as readonly string[]).includes(d.driver));
   if (!agents.length) return <p className="text-sm text-muted-foreground">Nothing reported yet. Open Creator Toolset on {c.name}, and its agents show up here.</p>;
   return (
     <ul className="space-y-2">
-      {agents.map((d) => {
-        const id = d.driver as CliId;
-        const line = !d.installed ? INSTALL_LINE[id] : undefined;
-        return (
-          <li key={d.driver} className={ROW}>
-            <ProviderLogo driver={d.driver} className="mt-0.5 size-5" />
-            <div className="min-w-0 flex-1 space-y-1">
-              <p className="text-sm font-medium">{NAME[d.driver] ?? d.driver}</p>
-              {!d.installed && (
-                <p className="text-xs">
-                  Not found on {c.name}. To add it, paste this line into a Terminal there: <code className="break-all font-mono">{line ?? "(installs on its own)"}</code>
-                </p>
-              )}
-              {d.installed && d.signedIn === false && <p className="text-xs text-muted-foreground">Not signed in on {c.name} yet.</p>}
-            </div>
-            {d.installed && d.signedIn !== false && <Check aria-label={`${NAME[d.driver] ?? d.driver} is ready on ${c.name}`} className="mt-0.5 size-4 text-emerald-600 dark:text-emerald-400" />}
-          </li>
-        );
-      })}
+      {agents.map((d) => (
+        <li key={d.driver} className={ROW}>
+          <ProviderLogo driver={d.driver} className="mt-0.5 size-5" />
+          <div className="min-w-0 flex-1 space-y-1">
+            <p className="text-sm font-medium">{NAME[d.driver] ?? d.driver}</p>
+            {!d.installed && <p className="text-xs">Not installed on {c.name}. Open Creator Toolset there and press Install.</p>}
+            {d.installed && d.signedIn === false && <p className="text-xs text-muted-foreground">Not signed in on {c.name} yet.</p>}
+          </div>
+          {d.installed && d.signedIn !== false && <Check aria-label={`${NAME[d.driver] ?? d.driver} is ready on ${c.name}`} className="mt-0.5 size-4 text-emerald-600 dark:text-emerald-400" />}
+        </li>
+      ))}
     </ul>
   );
 }
