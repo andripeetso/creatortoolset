@@ -7,9 +7,6 @@ import { KIND_DOT } from "./DocumentTabs";
 import { KindTile } from "./KindTile";
 import { SessionMenu } from "./SessionMenu";
 import { storedStatusBars } from "@/lib/settings";
-import { useWorkspace } from "@/lib/workspace";
-import { useMe } from "@/lib/auth";
-import { putCached, readCached } from "@/lib/local-cache";
 
 /**
  * The Workshop's session list beside every Workshop screen: what's being
@@ -132,22 +129,9 @@ function Group({ label, rows, active, numbers, foldKey, foldDefault }: { label: 
 }
 
 export function WorkshopSidebar({ activeId, title }: { activeId?: string; title: string }) {
-  const live = useSessionSummaries();
+  // the rows saved on this device paint at once and stay live (lib/workshop-summary)
+  const all = useSessionSummaries();
   const navigate = useNavigate();
-  // the rows saved on this device paint at once; the live poll replaces them (saved without "working": no stale spinner)
-  const me = useMe();
-  const projectId = useWorkspace((s) => s.currentProjectId);
-  const summaryKey = `workshop/summary?p=${projectId ?? ""}`;
-  const all = live ?? readCached<SessionSummary[]>(me?.username, summaryKey);
-  const lastSaved = useRef("");
-  useEffect(() => {
-    if (!live || !me?.username) return;
-    const next = live.map((r) => ({ ...r, working: false }));
-    const raw = JSON.stringify(next);
-    if (raw === lastSaved.current) return;
-    lastSaved.current = raw;
-    putCached(me.username, summaryKey, next);
-  }, [live, me?.username, summaryKey]);
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("workshop:sidebar") === "closed");
   const [finding, setFinding] = useState(false);
   const [making, setMaking] = useState(false);
@@ -167,8 +151,6 @@ export function WorkshopSidebar({ activeId, title }: { activeId?: string; title:
     return sortBy === "name" ? [...rows].sort((a, b) => a.title.localeCompare(b.title)) : rows;
   }, [all, q, kind, sortBy]);
   const g = useMemo(() => groupSummaries(filtered, sortBy === "name"), [filtered, sortBy]);
-  // switching project shows that project's sessions at once
-  useEffect(() => void refreshSummaries(), [projectId]);
   // ⌘1–9: the rows in the order they show, folded groups included
   const order = useMemo(() => [...g.pinned, ...g.writing, ...g.making, ...g.published, ...g.shelved], [g]);
   const numbers = useMemo(() => new Map(order.slice(0, 9).map((r, i) => [r.id, i + 1])), [order]);

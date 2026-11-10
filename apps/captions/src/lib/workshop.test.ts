@@ -1,31 +1,23 @@
-import { describe, expect, it } from "vitest";
-import { SAVED_SESSION_CHARS, fitSavedSession, type SavedSession } from "./workshop";
+import { describe, expect, it, vi } from "vitest";
+import { putCached, readCached } from "./local-cache";
+import { SAVED_SESSIONS, keepSession, sessionKeys } from "./workshop";
+import { useAuth } from "./auth";
 
-const message = (i: number) => ({ id: `m${i}`, role: "user", text: "x".repeat(2000), at: i, docId: "d" });
-const snap = (messages: unknown[], blockText = "hook"): SavedSession =>
-  ({
-    session: { id: "s", title: "Tiny Acrobatics session" },
-    docs: [{ id: "d", kind: "reel", blocks: [{ id: "b1", text: blockText }], versions: [] }],
-    messages,
-    activeDocId: "d",
-  }) as unknown as SavedSession;
-
-describe("fitSavedSession", () => {
-  it("cuts a long chat to its newest messages that fit the cap", () => {
-    const long = snap(Array.from({ length: 200 }, (_, i) => message(i)));
-    const fit = fitSavedSession(long);
-    expect(fit).not.toBeNull();
-    expect(JSON.stringify(fit).length).toBeLessThanOrEqual(SAVED_SESSION_CHARS);
-    expect(fit!.messages.at(-1)).toEqual(long.messages.at(-1));
-    expect(fit!.messages.length).toBe(60);
-  });
-
-  it("keeps a short session whole", () => {
-    const short = snap([message(1), message(2)]);
-    expect(fitSavedSession(short)).toEqual(short);
-  });
-
-  it("gives up when the piece alone is over the cap", () => {
-    expect(fitSavedSession(snap([], "y".repeat(SAVED_SESSION_CHARS + 1)))).toBeNull();
+describe("keepSession", () => {
+  it("keeps the most recent sessions' copies and drops the rest", () => {
+    vi.spyOn(useAuth, "getState").mockReturnValue({ me: { username: "tiny" } } as never);
+    const ids = Array.from({ length: SAVED_SESSIONS + 1 }, (_, i) => `s${i}`);
+    for (const id of ids) {
+      const k = sessionKeys(id);
+      putCached("tiny", k.session, { id });
+      putCached("tiny", k.docs, []);
+      keepSession("tiny", id);
+    }
+    const oldest = sessionKeys(ids[0]!);
+    expect(readCached("tiny", oldest.session)).toBeNull();
+    expect(readCached("tiny", oldest.docs)).toBeNull();
+    expect(readCached("tiny", sessionKeys(ids[1]!).session)).toEqual({ id: "s1" });
+    keepSession("tiny", "s1"); // opened again: first in line, kept
+    expect(readCached<string[]>("tiny", "workshop/saved")?.[0]).toBe("s1");
   });
 });

@@ -113,7 +113,7 @@ export function SharePopover({
             </button>
           </div>
           {!loaded ? (
-            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+            <span aria-hidden className="block h-[26px] rounded bg-muted/50" />
           ) : link ? (
             <>
               <div className="flex items-center gap-1.5">

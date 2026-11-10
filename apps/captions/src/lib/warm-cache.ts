@@ -1,7 +1,7 @@
 import { canUse, useAuth } from "./auth";
-import { readCached, warmCached } from "./local-cache";
+import { forgetCached, readCached, warmCached } from "./local-cache";
 import { listReviewAssets, listReviewProjects } from "./review";
-import { getSession, listChat, listDocuments as listPieces, listSessions, listFrameworks, listRules, getWorkshopAvailability, saveSession, type SessionRow } from "./workshop";
+import { getSession, keepSession, listChat, listDocuments as listPieces, listSessions, listFrameworks, listRules, getWorkshopAvailability, sessionKeys, type SessionRecord, type SessionRow } from "./workshop";
 import { listAccounts } from "./instagram";
 import { listClips } from "./clips";
 import { listDocuments } from "./documents";
@@ -43,19 +43,25 @@ export async function warmScreens(): Promise<void> {
 }
 
 /**
- * The most recent sessions' own contents (session, documents, chat) saved on this device, one session at a time, after
- * the session list is saved. Run after the list loads; a failed session is skipped and opens as before.
+ * The current project's most recent sessions' own contents (session, pieces, chat) saved on this device, one session at
+ * a time, after the session list is saved, so opening one paints at once. A session whose saved copy is as new as its
+ * row is skipped; a failed one is skipped and opens as before. Each stays live once on screen.
  */
-export async function warmRecentSessions(count = 3): Promise<void> {
+export async function warmRecentSessions(count = 10): Promise<void> {
   const me = useAuth.getState().me;
   if (!me) return;
+  // the copies before they were live (one record per session, size-capped)
+  forgetCached("workshop/session/");
+  forgetCached("workshop/saved-sessions");
   const pid = useWorkspace.getState().currentProjectId ?? "";
   const rows = readCached<SessionRow[]>(me.username, `workshop/sessions?p=${pid}`) ?? [];
-  for (const row of rows.slice(0, count)) {
+  for (const row of rows.slice(0, count).reverse()) {
+    const k = sessionKeys(row.id);
+    const have = readCached<SessionRecord>(me.username, k.session);
+    keepSession(me.username, row.id);
+    if (have?.updatedAt === row.updatedAt && readCached(me.username, k.docs) && readCached(me.username, k.chat)) continue;
     try {
-      const [session, docs, messages] = await Promise.all([getSession(row.id), listPieces(row.id), listChat(row.id)]);
-      const activeDocId = (docs.find((d) => d.kind !== "notes") ?? docs[0])?.id ?? null;
-      saveSession(me.username, row.id, { session, docs, messages, activeDocId });
+      await Promise.all([warmCached(k.session, () => getSession(row.id)), warmCached(k.docs, () => listPieces(row.id)), warmCached(k.chat, () => listChat(row.id))]);
     } catch {
       // this one opens as before
     }

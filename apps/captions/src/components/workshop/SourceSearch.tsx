@@ -1,4 +1,4 @@
-import { Loader2, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import { KIND_FILTERS, type PostKind } from "@/lib/instagram";
 
 /** recent = when the post entered the library; newest/oldest = when it was posted. */
@@ -35,11 +35,7 @@ export function SourceSearch({
   return (
     <div className="flex flex-col gap-2">
       <label className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 focus-within:border-violet-500">
-        {searching ? (
-          <Loader2 className="h-4 w-4 shrink-0 animate-spin text-violet-400" />
-        ) : (
-          <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
-        )}
+        <Search className={`h-4 w-4 shrink-0 ${searching ? "text-violet-400" : "text-muted-foreground"}`} />
         <input
           value={query}
           onChange={(e) => onQuery(e.target.value)}

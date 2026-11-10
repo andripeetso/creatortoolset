@@ -38,6 +38,8 @@ import { type AuditInput, LIMITS, okId, parseAuditInput, parseDocCreate, parseDo
 import { setSessionStatus, TURN_STOPPED } from "./lib/workshop/types";
 import { readWorkPrefs } from "./work-prefs";
 import { emitEvent, onEvent } from "./lib/events";
+import { announce } from "./lib/sync";
+import { inJob, saved } from "./lib/workshop/job";
 import { IllegalTransition } from "./lib/transition";
 import { pluginCheckPosted, pluginFinalsVersions } from "./lib/plugin";
 import {
@@ -213,6 +215,7 @@ async function writeJsonAtomic(file: string, data: unknown): Promise<void> {
   const tmp = `${file}.tmp-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
   await writeFile(tmp, JSON.stringify(data));
   await rename(tmp, file);
+  saved(); // inside background work, the account's open tabs hear of it
 }
 
 /** Every record in a flat <dir>/<id>.json store that the user may see, newest first. */
@@ -1929,7 +1932,7 @@ async function newSource(user: SessionUser, name: string, text: string, projectI
   if (pages?.length) await writePages(s.id, pages);
   await writeSource(s, text.slice(0, SOURCE_LIMITS.chars));
   if (more) return s;
-  void fileSource(user, s.id);
+  void inJob([user.username], () => fileSource(user, s.id));
   return { ...s, status: "reading", startedAt: now };
 }
 
@@ -1989,7 +1992,7 @@ workshopApp.post("/sources/:id/pages", async (c) => {
   const pages = Array.isArray(body?.pages) ? body.pages.filter((p): p is string => typeof p === "string" && p.length > 100) : [];
   const total = await writePages(s.id, pages);
   if (body?.more === true) return c.json({ ...s, pages: total });
-  void fileSource(user, s.id);
+  void inJob([user.username], () => fileSource(user, s.id));
   return c.json({ ...s, status: "reading", startedAt: Date.now() });
 });
 
@@ -1999,7 +2002,7 @@ workshopApp.post("/sources/:id/read", async (c) => {
   const s = await readSource(c.req.param("id"), user);
   if (!s) return c.json({ error: "Not found" }, 404);
   if (s.status === "reading") return c.json(s);
-  void fileSource(user, s.id);
+  void inJob([user.username], () => fileSource(user, s.id));
   return c.json({ ...s, status: "reading", startedAt: Date.now() });
 });
 
@@ -2216,7 +2219,7 @@ workshopApp.post("/own-post", async (c) => {
 workshopApp.get("/sessions", async (c) => {
   const user = c.get("user");
   // matching sessions to posts reads the account's posts: it runs beside the list, never in front of it
-  void linkPosted(user).catch((e) => console.error(`workshop: matching sessions to posts: ${errorMessage(e)}`));
+  void inJob([user.username], () => linkPosted(user)).catch((e) => console.error(`workshop: matching sessions to posts: ${errorMessage(e)}`));
   const scope = c.req.query("projectId") || "";
   const projectId = okId(scope) ? scope : undefined;
   let names: string[] = [];
@@ -2328,6 +2331,8 @@ workshopApp.post("/sessions/:id/seen", async (c) => {
     seen[meta.id] = body.messageId;
     await mkdir(path.dirname(seenPath(user.username)), { recursive: true });
     await writeJsonAtomic(seenPath(user.username), seen);
+    // a read mark is a quiet write: the other devices' dots go here
+    announce(user.username, "workshop", c.req.header("x-ct-client") ?? null);
   }
   return c.json({ ok: true });
 });
@@ -2342,6 +2347,7 @@ workshopApp.delete("/sessions/:id/seen", async (c) => {
     delete seen[meta.id];
     await mkdir(path.dirname(seenPath(user.username)), { recursive: true });
     await writeJsonAtomic(seenPath(user.username), seen);
+    announce(user.username, "workshop", c.req.header("x-ct-client") ?? null);
   }
   return c.json({ ok: true });
 });
@@ -2777,7 +2783,7 @@ export async function describeVersion(
   const ask: ChatMessage = { id: randomUUID(), role: "user", text, at: now, docId: piece.id, captionFor: v.key, auto: true, status: "done" };
   const reply: ChatMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, docId: piece.id, status: "thinking" };
   if (!(await startTurn(meta.id, [ask, reply]))) return false;
-  await runTurn(meta, sessionOf(owner), ask, reply.id);
+  await inJob([meta.owner], () => runTurn(meta, sessionOf(owner), ask, reply.id));
   return true;
 }
 
@@ -3076,7 +3082,7 @@ workshopApp.post("/sessions/:id/chat", async (c) => {
   };
   const reply: ChatMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, docId: input.docId, status: "thinking" };
   if (!(await startTurn(meta.id, [ask, reply], input.retryOf))) return c.json({ error: "Still thinking about the last message — wait for it" }, 409);
-  void runTurn(meta, user, ask, reply.id);
+  void inJob([meta.owner, user.username], () => runTurn(meta, user, ask, reply.id));
   return c.json({ ask, reply }, 202);
 });
 
@@ -3118,7 +3124,7 @@ async function beginAudit(meta: SessionMeta, user: SessionUser, input: AuditInpu
   };
   const reply: ChatMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, docId: input.docId, status: "thinking", audit: { target, depth: input.depth } };
   if (!(await startTurn(meta.id, [ask, reply]))) return { error: "Still working on the last message — wait for it", status: 409 };
-  void runAudit(meta, user, reply.id, input, target);
+  void inJob([meta.owner, user.username], () => runAudit(meta, user, reply.id, input, target));
   return { ask, reply };
 }
 
@@ -3249,7 +3255,7 @@ workshopApp.post("/sessions/:id/reviews", async (c) => {
   const ask: ChatMessage = { id: randomUUID(), role: "user", text: "Read it as a follower would.", at: now, docId: doc.id, status: "done" };
   const reply: ChatMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, docId: doc.id, status: "thinking", stage: "thinking", provider: readerName(fableProvider(user)), review: { model: REVIEW_MODEL } };
   if (!(await startTurn(meta.id, [ask, reply]))) return c.json({ error: "Still working on the last message — wait for it" }, 409);
-  void runReview(meta, user, reply.id, doc.id);
+  void inJob([meta.owner, user.username], () => runReview(meta, user, reply.id, doc.id));
   return c.json({ ask, reply }, 202);
 });
 
@@ -3287,7 +3293,7 @@ workshopApp.post("/sessions/:id/chat/:messageId/proposal", async (c) => {
     const ask: ChatMessage = { id: randomUUID(), role: "user", text: `Search the web: ${question}`, at: now, docId: m.docId, status: "done", web: question };
     const reply: ChatMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, docId: m.docId, status: "thinking" };
     if (!(await startTurn(meta.id, [ask, reply]))) return c.json({ error: "Still working on the last message — wait for it" }, 409);
-    void runTurn(meta, user, ask, reply.id);
+    void inJob([meta.owner, user.username], () => runTurn(meta, user, ask, reply.id));
     const proposal: Proposal = { ...m.proposal, status: "accepted", depth, question };
     await patchMessage(meta.id, m.id, { proposal });
     return c.json({ message: { ...m, proposal }, ask, reply }, 202);
@@ -3295,7 +3301,7 @@ workshopApp.post("/sessions/:id/chat/:messageId/proposal", async (c) => {
   const ask: ChatMessage = { id: randomUUID(), role: "user", text: `Run deep research: ${question}`, at: now, docId: m.docId, status: "done" };
   const reply: ChatMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, docId: m.docId, status: "thinking", research: { question, depth: "deep", status: "running" } };
   if (!(await startTurn(meta.id, [ask, reply]))) return c.json({ error: "Still working on the last message — wait for it" }, 409);
-  void runResearch(meta, user, reply.id, question);
+  void inJob([meta.owner, user.username], () => runResearch(meta, user, reply.id, question));
   return c.json({ message: await settle("accepted"), ask, reply }, 202);
 });
 
@@ -3761,7 +3767,7 @@ workshopApp.post("/sessions/:id/generate", async (c) => {
     generating.delete(draft.id);
     return c.json({ error: "Not found" }, 404);
   }
-  void runDraft(next, draft, user);
+  void inJob([next.owner, user.username], () => runDraft(next, draft, user));
   return c.json({ draft }, 202);
 });
 
@@ -4075,6 +4081,7 @@ workshopShareApp.post("/:token/progress", async (c) => {
     if (!["published", "shelved"].includes(m.status ?? "draft")) setSessionStatus(m, state === "done" ? "toPost" : "editing", "freelancer progress");
   });
   await notifyWorkshopOwner(share.owner, { kind: state === "done" ? "delivered" : "producing", by: by || "A freelancer", name: meta.title || share.title, href: `/workshop/sessions/${meta.id}`, ref: meta.id });
+  announce(share.owner, "workshop");
   if (state === "done") sendDeliveriesToFinals(token);
   return c.json({ progress: share.progress });
 });
@@ -4117,6 +4124,7 @@ workshopShareApp.post("/:token/deliveries", async (c) => {
   live.deliveries = [...(live.deliveries ?? []), item];
   await writeJsonAtomic(SHARES_FILE, shares);
   await notifyWorkshopOwner(share.owner, { kind: "delivered", by: by || "A freelancer", name: meta.title || share.title, text: name, href: `/workshop/sessions/${meta.id}`, ref: meta.id });
+  announce(share.owner, "workshop");
   if (live.progress?.state === "done") sendDeliveriesToFinals(token);
   return c.json(item);
 });
