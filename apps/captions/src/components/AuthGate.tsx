@@ -114,8 +114,9 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (state !== "login") return;
+    // only a server that mounts the route answers ok; elsewhere the account gate's 401 must not read as providers
     fetch("/api/account/providers")
-      .then((r) => r.json() as Promise<SignInProviders>)
+      .then((r) => (r.ok ? (r.json() as Promise<SignInProviders>) : Promise.reject(new Error(String(r.status)))))
       .then(setProviders)
       .catch(() => setProviders({ apple: false, google: false, github: false }));
   }, [state]);
