@@ -39,7 +39,7 @@ import { setSessionStatus, TURN_STOPPED } from "./lib/workshop/types";
 import { readWorkPrefs } from "./work-prefs";
 import { emitEvent, onEvent } from "./lib/events";
 import { announce } from "./lib/sync";
-import { inJob, saved } from "./lib/workshop/job";
+import { inJob, keepJob, saved } from "./lib/workshop/job";
 import { IllegalTransition } from "./lib/transition";
 import { pluginCheckPosted, pluginFinalsVersions } from "./lib/plugin";
 import {
@@ -922,7 +922,8 @@ function progressWriter(sessionId: string, messageId: string) {
   let pending: Partial<ChatMessage> | null = null;
   let last = 0;
   let chain: Promise<void> = Promise.resolve();
-  return (patch: Partial<ChatMessage>, force = false): Promise<void> => {
+  // called from a Mac's steps too: its saves stay in the job that made it
+  return keepJob((patch: Partial<ChatMessage>, force = false): Promise<void> => {
     pending = { ...(pending ?? {}), ...patch };
     const now = Date.now();
     if (!force && now - last < 400) return chain;
@@ -931,7 +932,7 @@ function progressWriter(sessionId: string, messageId: string) {
     pending = null;
     chain = chain.then(() => patchMessage(sessionId, messageId, p)).catch(() => {});
     return chain;
-  };
+  });
 }
 
 /**
@@ -1276,7 +1277,8 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
     };
 
     // The answer streams: the reply shows as it is written, each finished edit lands in the document at once.
-    const hooks: StreamHooks = {
+    // called from the Mac's own request: keepJob keeps their saves announced
+    const hooks: StreamHooks = keepJob({
       onStart: async (p) => {
         await undoPartial();
         await progress({ stage: "thinking", provider: p.label, text: "", edits: undefined }, true);
@@ -1300,7 +1302,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
         await progress(patch);
       },
       onUsage: addUsage,
-    };
+    } satisfies StreamHooks);
 
     let plan: TurnPlan;
     let provider = "";
