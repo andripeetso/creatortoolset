@@ -69,7 +69,12 @@ describe("one-time sign-in links", () => {
 describe("a server on this Mac signs in from other devices only once a password is set", () => {
   it("refuses another address while the password is still APP_SECRET, and lets it in after one is chosen", async () => {
     vi.stubEnv("CT_LOCAL", "1");
-    expect((await login(LAN, "local-sign-in-test-secret")).status).toBe(403);
+    const refused = await login(LAN, "local-sign-in-test-secret");
+    expect(refused.status).toBe(403);
+    // the words name this computer's password, the one the person chooses, never another password
+    const words = ((await refused.json()) as { error: string }).error;
+    expect(words).toContain("This computer's password isn't set yet");
+    expect(words).not.toMatch(/Mac first|catalog/i);
     // a wrong guess from the LAN is an ordinary failure: it never learns the account is still on APP_SECRET
     expect((await login(LAN, "a-wrong-guess")).status).toBe(401);
     expect((await login("::ffff:127.0.0.1", "local-sign-in-test-secret")).status).toBe(200);

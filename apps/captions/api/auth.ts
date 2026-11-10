@@ -275,7 +275,7 @@ export const viaTunnel = (c: Context) => {
 const hostOf = (c: Context) => new URL(c.req.url).hostname.toLowerCase();
 const localOnly = (c: Context) => (process.env.CT_LOCAL === "1" && !isLoopback(c)) || viaTunnel(c);
 const remoteRefused = (c: Context, user: UserRecord) => localOnly(c) && !!env.appSecret && verifyPassword(user, env.appSecret);
-const NO_PASSWORD_YET = "Set a password on the Mac first: the Mac app's This Mac → Access from other devices";
+const NO_PASSWORD_YET = "This computer's password isn't set yet. In Creator Toolset on this computer, turn on Access from other devices and choose it, then try again.";
 
 /**
  * One-time sign-in links, for a phone (Setup → Add your phone, as a QR code) or another computer. POST mints one for

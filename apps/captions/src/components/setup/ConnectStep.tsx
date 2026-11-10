@@ -145,7 +145,9 @@ export function PhoneRowView({
         <div className="space-y-2">
           <p className="text-xs text-muted-foreground">
             Your phone can't reach this computer yet.
-            {!canTurnOn && " In the Creator Toolset Mac app, turn on Access from other devices, then come back here."}
+            {canTurnOn
+              ? " Turn on Access from other devices, then choose this computer's password once."
+              : " In the Creator Toolset Mac app, turn on Access from other devices and choose this computer's password, then come back here."}
           </p>
           {canTurnOn && (
             <Button size="sm" variant="outline" disabled={turningOn} onClick={onTurnOn}>
