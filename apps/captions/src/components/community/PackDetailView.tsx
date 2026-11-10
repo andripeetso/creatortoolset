@@ -1,7 +1,7 @@
 import type { InstalledPack } from "@contracts/packs";
-import { useEffect, useState } from "react";
 import { Link } from "react-router";
-import { CatalogError, cachedCatalogPack } from "@/lib/pack-catalog";
+import { forgetCached, useCachedLoad } from "@/lib/local-cache";
+import { CatalogError, catalogPack } from "@/lib/pack-catalog";
 import type { CatalogDetail } from "@contracts/pack-catalog";
 import { msg } from "../settings/helpers";
 import { Card, ErrorRow, LoadingRow } from "@/components/settings/ui";
@@ -16,18 +16,16 @@ const BACK = (
 );
 /** One pack in Community: its facts, Install or the installed controls, what it adds, its versions. */
 export function PackDetailView({ id, installed, reload }: { id: string; installed?: InstalledPack; reload: () => Promise<void> }) {
-  const [detail, setDetail] = useState<CatalogDetail | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    let live = true;
-    cachedCatalogPack(id)
-      .then((d) => live && setDetail(d))
-      .catch((e) => live && setError(e instanceof CatalogError && e.reason ? `Pulled from the community: ${e.reason}` : msg(e)));
-    return () => {
-      live = false;
-    };
-  }, [id]);
-  if (error)
+  // its saved copy at once, read again when the page opens; a pack the catalog pulled loses its copy, so the reason shows
+  const key = `/api/pack-catalog/public/${encodeURIComponent(id)}`;
+  const { data: detail, error } = useCachedLoad<CatalogDetail>(key, () =>
+    catalogPack(id).catch((e) => {
+      if (!(e instanceof CatalogError && e.reason)) throw new Error(msg(e));
+      forgetCached(key);
+      throw new Error(`Pulled from the community: ${e.reason}`);
+    }),
+  );
+  if (error && !detail)
     return (
       <>
         {BACK}

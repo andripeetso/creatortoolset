@@ -53,19 +53,6 @@ export async function catalogPack(id: string): Promise<CatalogDetail> {
   return json<CatalogDetail>(await fetch(`/api/pack-catalog/public/${encodeURIComponent(id)}`));
 }
 
-/** Only the detail, remembered for the session: a card's preview and the detail page ask once. */
-const detailCache = new Map<string, Promise<CatalogDetail>>();
-// ponytail: each visible card fetches its pack once; the list endpoint should carry a preview when the catalog grows.
-export function cachedCatalogPack(id: string): Promise<CatalogDetail> {
-  let hit = detailCache.get(id);
-  if (!hit) {
-    hit = catalogPack(id);
-    detailCache.set(id, hit);
-    hit.catch(() => detailCache.delete(id));
-  }
-  return hit;
-}
-
 /** Install the latest approved version into the signed-in account: every project when `projectIds` is empty or missing. */
 export async function installCatalogPack(id: string, projectIds?: string[]): Promise<CatalogInstallResult> {
   return json<CatalogInstallResult>(await fetch(`/api/pack-catalog/${encodeURIComponent(id)}/install`, jsonInit({ projectIds })));
