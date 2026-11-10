@@ -7,8 +7,8 @@ afterEach(() => vi.unstubAllGlobals());
 
 it("asks the Mac app for access and shows what it answers, nothing when it is on", async () => {
   const asked: string[] = [];
-  bridgeWith(async (m) => (asked.push(m), { aiOn: true, paired: true, problem: "Choose a password to turn it on." }));
-  expect(await allowOtherDevices()).toBe("Choose a password to turn it on.");
+  bridgeWith(async (m) => (asked.push(m), { aiOn: true, paired: true, problem: "Choose this computer's password to turn it on." }));
+  expect(await allowOtherDevices()).toBe("Choose this computer's password to turn it on.");
   expect(asked).toEqual(["access"]);
   bridgeWith(async () => ({ aiOn: true, paired: true, problem: null }));
   expect(await allowOtherDevices()).toBeNull();

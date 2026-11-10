@@ -70,10 +70,10 @@ describe("joinServer", () => {
   });
 
   it("shows the password refusal from a server that asks for one first", async () => {
-    const refused = () => new Response("Set a password on the Mac first: the Mac app's This Mac → Access from other devices", { status: 403 });
+    const refused = () => new Response("This computer's password isn't set yet. In Creator Toolset on this computer, turn on Access from other devices and choose it, then try again.", { status: 403 });
     const r = await joinServer(LINK, { fetchImpl: fakeServer(refused, added()).fetchImpl });
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.message).toContain("Set a password on the Mac first");
+    if (!r.ok) expect(r.message).toContain("This computer's password isn't set yet");
   });
 
   it("fails when the link answers without signing anyone in", async () => {

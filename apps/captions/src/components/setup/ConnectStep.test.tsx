@@ -122,16 +122,17 @@ it("offers Access from other devices as a button on a Mac app, and the copy to d
   const local = phone("local");
   expect(local).toContain("Your phone can&#x27;t reach this computer yet.");
   expect(local).not.toContain("<button");
-  expect(local).toContain("In the Creator Toolset Mac app, turn on Access from other devices");
+  expect(local).toContain("In the Creator Toolset Mac app, turn on Access from other devices and choose this computer&#x27;s password");
 
   const withBridge = phone("local", { canTurnOn: true });
   expect(withBridge).toContain("<button");
   expect(withBridge).toContain("Access from other devices");
   expect(withBridge).not.toContain("In the Creator Toolset Mac app");
+  expect(withBridge).toContain("choose this computer&#x27;s password once");
 });
 
 it("shows the problem the Mac app gave for turning access on", () => {
-  expect(phone("local", { canTurnOn: true, problem: "Choose a password to turn it on." })).toContain("Choose a password to turn it on.");
+  expect(phone("local", { canTurnOn: true, problem: "Choose this computer's password to turn it on." })).toContain("Choose this computer&#x27;s password to turn it on.");
 });
 
 it("draws the live code with its QR, and drops it once it has run out", () => {

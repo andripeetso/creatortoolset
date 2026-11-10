@@ -33,7 +33,7 @@ extension Shell {
         if server.otherDevices { return thisMacState() }
         var password: String?
         if !server.hasOwnerPassword {
-            guard let typed = askNewOwnerPassword() else { return thisMacState(problem: "Choose a password to turn it on.") }
+            guard let typed = askNewOwnerPassword() else { return thisMacState(problem: "Choose this computer's password to turn it on.") }
             password = typed
         }
         return thisMacState(problem: await setOtherDevices(true, password: password))
@@ -43,8 +43,8 @@ extension Shell {
     @MainActor private func askNewOwnerPassword() -> String? {
         let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
         let alert = NSAlert()
-        alert.messageText = "Choose a password for other devices"
-        alert.informativeText = "Your phone and other computers sign in with it. Six characters or more."
+        alert.messageText = "Choose this computer's password"
+        alert.informativeText = "Phones and other computers ask for it once, when they first sign in. Six characters or more."
         alert.accessoryView = field
         alert.addButton(withTitle: "Turn on")
         alert.addButton(withTitle: "Cancel")
