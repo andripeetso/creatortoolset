@@ -37,6 +37,19 @@ export interface ScannedFolder {
   lastChanged: number;
 }
 
+/** GET /api/setup/folders/scan: what the walk found, where it looked, and what it could not read. Paths are absolute;
+ *  `home` lets the screen show them as ~/… */
+export interface FolderScanView {
+  folders: ScannedFolder[];
+  /** a cap stopped the walk early: the list may be missing folders */
+  truncated: boolean;
+  /** the folders it looked in (each common folder that exists, and each drive) */
+  looked: string[];
+  /** the folders the system did not let it read (macOS asks for access): shown so the person can allow them */
+  blocked: string[];
+  home: string;
+}
+
 /** A drive or volume a computer reported: its name, where it is mounted, and its space (GB). A network share
  *  also says it is one (`network`) and which machine it lives on (`server`, e.g. the NAS's name). */
 export interface Disk {

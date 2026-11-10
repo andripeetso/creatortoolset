@@ -1,12 +1,13 @@
 import { Hono } from "hono";
 import { randomUUID } from "node:crypto";
 import { copyFile, mkdir, readdir, realpath, rm, stat, symlink } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import type { AuthVars } from "../auth";
 import type { WatchFolder, WatchStatus } from "../../contracts/library";
 import { env, hostedMode } from "../lib/env";
 import { freeBytes, sha256File } from "../lib/uploads";
-import { libraryRole } from "./access";
+import { ensureLibrary, homeOf, libraryRole } from "./access";
 import { blobs, libraryDb } from "./db";
 import { enqueueJob } from "./jobs";
 import { kindOf, recordVersion } from "./routes";
@@ -119,10 +120,47 @@ watchApp.put("/:id/watch", async (c) => {
     if (typeof f === "string") return c.json({ error: f, code: "invalid" }, 400);
     if (!folders.some((g) => g.path === f.path)) folders.push(f);
   }
-  // only this key: other settings (transcription and the rest) are written by other code
-  db().prepare("UPDATE libraries SET settings = json_set(settings, '$.watch', json(?)) WHERE id = ?").run(JSON.stringify(folders), libraryId);
+  writeWatch(libraryId, folders);
   return c.json(await withFound(status(libraryId)));
 });
+
+/** Only the watch key: other settings (transcription and the rest) are written by other code. */
+const writeWatch = (libraryId: string, folders: WatchFolder[]) => {
+  db().prepare("UPDATE libraries SET settings = json_set(settings, '$.watch', json(?)) WHERE id = ?").run(JSON.stringify(folders), libraryId);
+};
+
+const expandHome = (p: string) => (p === "~" || p.startsWith("~/") ? path.join(os.homedir(), p.slice(1)) : p);
+const homeLibrary = (username: string) =>
+  (db().prepare("SELECT id FROM libraries WHERE workspace_id = ? ORDER BY created_at LIMIT 1").get(homeOf(username)) as { id: string } | undefined)?.id;
+
+/**
+ * Adds one folder to the account's own Library watch list, read in place. The Library and the AI Editor both read that
+ * list, so setup's Folders step and Settings → Devices land here. Returns the reason it was refused, or null when it is
+ * in the list (already there counts as added).
+ */
+export async function addWatchFolder(username: string, folderPath: string): Promise<string | null> {
+  if (!watchAllowed()) return "This server is not on your computer, so it cannot read your folders. Upload the files instead.";
+  ensureLibrary(username);
+  const libraryId = homeLibrary(username);
+  if (!libraryId) return "The Library is not made yet. Try again.";
+  const f = await checkFolder(libraryId, { path: expandHome(folderPath), mode: "reference" }, username);
+  if (typeof f === "string") return f;
+  const current = foldersOf(libraryId);
+  if (current.some((g) => g.path === f.path)) return null;
+  if (current.length >= MAX_FOLDERS) return `The Library watches up to ${MAX_FOLDERS} folders. Remove one first.`;
+  writeWatch(libraryId, [...current, f]);
+  return null;
+}
+
+/** Stops watching a folder (Settings → Devices: forget). The files already in the Library stay. */
+export async function removeWatchFolder(username: string, folderPath: string): Promise<void> {
+  const libraryId = homeLibrary(username);
+  if (!libraryId) return;
+  const p = expandHome(folderPath);
+  const real = await realpath(p).catch(() => p);
+  const current = foldersOf(libraryId);
+  if (current.some((g) => g.path === real || g.path === p)) writeWatch(libraryId, current.filter((g) => g.path !== real && g.path !== p));
+}
 
 // ---- the scan ----------------------------------------------------------------------------------------------------
 

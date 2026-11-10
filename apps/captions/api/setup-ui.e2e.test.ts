@@ -93,7 +93,7 @@ async function walkSetup(how: "In the app" | "In my own AI" | "Both", size: keyo
   await dialog.getByRole("heading", { name: "Where are your videos?" }).waitFor();
   expect(await dialog.getByRole("list", { name: "Stage 3 of 3" }).count()).toBe(1);
   await shot(page, `${tag}-4folders`);
-  await dialog.getByRole("button", { name: "Do not add folders" }).click();
+  await dialog.getByRole("button", { name: "Skip for now" }).click();
 
   await dialog.getByRole("heading", { name: "What will you make?" }).waitFor();
   await dialog.getByRole("checkbox", { name: /Short videos/ }).check();

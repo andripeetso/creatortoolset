@@ -8,13 +8,13 @@ import { getProviders } from "@/lib/providers";
 import { useAuth, useMe } from "@/lib/auth";
 import { timeAgo } from "@/lib/exports";
 import { cn } from "@/lib/utils";
-import { LIBRARY_NAME, THIS_COMPUTER, type StorageView } from "@contracts/storage";
+import { THIS_COMPUTER, type FolderScanView, type ScannedFolder, type StorageView } from "@contracts/storage";
 import type { ProvidersView } from "@contracts/providers";
-import type { ScannedFolder } from "@contracts/storage";
 
 const STORAGE = "/api/devices/storage";
 const DEFAULT_LIBRARY_DISK = "~/Movies";
-const RECENT_MS = 30 * 24 * 60 * 60 * 1000;
+/** The folders shown before "Show more": the list is capped, the rest is one click away. */
+const SHOWN_FIRST = 6;
 
 async function send(url: string, method: string, body?: unknown): Promise<void> {
   const r = await fetch(url, { method, headers: body === undefined ? undefined : { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -23,15 +23,19 @@ async function send(url: string, method: string, body?: unknown): Promise<void> 
   if (!r.ok && !/already/i.test(j.error ?? "")) throw new Error(j.error ?? `Request failed (${r.status})`);
 }
 
+/** A path as the person knows it: "~/Movies/Trip", not "/Users/name/Movies/Trip". */
+const shown = (p: string, home: string) => (home && (p === home || p.startsWith(`${home}/`)) ? `~${p.slice(home.length)}` : p);
+
 /** The folder list: what the scan found on this computer, in the Settings → Devices storage the app reads. */
 /** `actions`: the dialog footer's slot, where this step's buttons go (the footer has no Continue on this step). */
 export function FoldersStep({ onNext, actions }: { onNext: () => void; actions: HTMLElement | null }) {
   const hosted = useAuth((s) => s.hosted);
   const me = useMe();
   const [storage, setStorage] = useState<StorageView | null>(null);
-  const [found, setFound] = useState<ScannedFolder[] | null>(null);
-  const [truncated, setTruncated] = useState(false);
-  const [picked, setPicked] = useState<Set<string> | null>(null);
+  const [scan, setScan] = useState<FolderScanView | null>(null); // null while the look is on
+  const [scanFailed, setScanFailed] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+  const [picked, setPicked] = useState<Set<string>>(() => new Set()); // nothing is ticked until the person ticks it
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [providers, setProviders] = useState<ProvidersView | null>(null);
@@ -48,6 +52,15 @@ export function FoldersStep({ onNext, actions }: { onNext: () => void; actions: 
     void reload();
   };
 
+  const look = () => {
+    setScanFailed(false);
+    setScan(null);
+    fetch("/api/setup/folders/scan")
+      .then((r) => (r.ok ? (r.json() as Promise<FolderScanView>) : Promise.reject(new Error(`Scan failed (${r.status})`))))
+      .then(setScan)
+      .catch(() => setScanFailed(true));
+  };
+
   useEffect(() => {
     if (hosted) {
       loadHosted();
@@ -62,30 +75,23 @@ export function FoldersStep({ onNext, actions }: { onNext: () => void; actions: 
         await reload();
       }
     })();
-    fetch("/api/setup/folders/scan")
-      .then((r) => (r.ok ? (r.json() as Promise<{ folders: ScannedFolder[]; truncated: boolean }>) : null))
-      .then((v) => {
-        setFound(v?.folders ?? []);
-        setTruncated(!!v?.truncated);
-      })
-      .catch(() => setFound([]));
+    look();
   }, [hosted]);
 
   // folders the person already uses are not listed again
   const added = new Set((storage?.folders ?? []).filter((f) => f.role !== "library" && f.origin.host === THIS_COMPUTER).map((f) => f.origin.path));
-  const offered = (found ?? []).filter((f) => !added.has(f.path));
-  // the ones changed in the last 30 days start picked
-  const selected = picked ?? new Set(offered.filter((f) => f.lastChanged >= Date.now() - RECENT_MS).map((f) => f.path));
-  const chosen = offered.filter((f) => selected.has(f.path));
-  const setSelected = (next: Set<string>) => setPicked(next);
-  const toggle = (path: string, on: boolean) => {
-    const next = new Set(selected);
-    if (on) next.add(path);
-    else next.delete(path);
-    setSelected(next);
-  };
-  const library = storage?.folders.find((f) => f.role === "library");
-  const libraryShown = library ? `${library.origin.path}` : `${DEFAULT_LIBRARY_DISK}/${LIBRARY_NAME}`;
+  const home = scan?.home ?? "";
+  const offered: ScannedFolder[] = (scan?.folders ?? []).filter((f) => !added.has(f.path));
+  const chosen = offered.filter((f) => picked.has(f.path));
+  const listed = showAll ? offered : offered.slice(0, SHOWN_FIRST);
+
+  const toggle = (path: string, on: boolean) =>
+    setPicked((cur) => {
+      const next = new Set(cur);
+      if (on) next.add(path);
+      else next.delete(path);
+      return next;
+    });
 
   const addAll = async () => {
     setBusy(true);
@@ -107,10 +113,7 @@ export function FoldersStep({ onNext, actions }: { onNext: () => void; actions: 
     setError(null);
     try {
       await send(`${STORAGE}/folders`, "POST", { role: customRole, host: THIS_COMPUTER, path: p });
-      setCustomPath("");
-      setChoosing(false);
-      await reload();
-      setFound(found?.filter((f) => f.path !== p) ?? null);
+      onNext();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't add that folder. Check the path, then try again.");
     } finally {
@@ -142,16 +145,34 @@ export function FoldersStep({ onNext, actions }: { onNext: () => void; actions: 
 
   return (
     <div className="space-y-4">
-      <p className="text-xs text-muted-foreground">
-        Finished videos are saved to <span className="font-mono text-foreground">{libraryShown}</span>.
-      </p>
+      {scan && (
+        <p className="text-xs text-muted-foreground">
+          Looked in {scan.looked.length ? scan.looked.map((p) => shown(p, home)).join(", ") : "no common folders"}. Not searched: Downloads, backup and network drives.
+        </p>
+      )}
 
-      {found === null ? (
+      {scan && scan.blocked.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-500/40 bg-amber-500/5 px-4 py-3 text-sm">
+          <span className="min-w-0 flex-1">
+            macOS did not let Creator Toolset look in {scan.blocked.map((p) => shown(p, home)).join(", ")}. Allow it in System Settings → Privacy &amp; Security, then try again.
+          </span>
+          <Button variant="outline" size="sm" onClick={look}>
+            Try again
+          </Button>
+        </div>
+      )}
+
+      {scanFailed ? (
+        <div className="flex flex-wrap items-center gap-3 text-sm">
+          <span className="text-muted-foreground">Couldn't look in your folders.</span>
+          <Button variant="outline" size="sm" onClick={look}>
+            Try again
+          </Button>
+        </div>
+      ) : !scan ? (
         <p className="text-sm text-muted-foreground">Looking for footage and music on this computer…</p>
       ) : offered.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          No folders with video or music were found in Movies, Desktop, Documents, Downloads, Pictures or Music. Choose a folder below.
-        </p>
+        <p className="text-sm text-muted-foreground">No footage or music folders were found there. Type a folder path below.</p>
       ) : (
         <>
           <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
@@ -159,24 +180,24 @@ export function FoldersStep({ onNext, actions }: { onNext: () => void; actions: 
               {chosen.length} of {offered.length} selected
             </span>
             <div className="flex items-center gap-1">
-              <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" disabled={busy || chosen.length === offered.length} onClick={() => setSelected(new Set(offered.map((f) => f.path)))}>
+              <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" disabled={busy || chosen.length === offered.length} onClick={() => setPicked(new Set(offered.map((f) => f.path)))}>
                 Select all
               </Button>
-              <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" disabled={busy || chosen.length === 0} onClick={() => setSelected(new Set())}>
+              <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" disabled={busy || chosen.length === 0} onClick={() => setPicked(new Set())}>
                 Select none
               </Button>
             </div>
           </div>
           <ul className="divide-y divide-border/60 rounded-xl border border-border/60">
-            {offered.map((f) => (
+            {listed.map((f) => (
               <li key={f.path}>
                 <label className="flex cursor-pointer items-center gap-3 px-4 py-3 hover:bg-muted/40">
-                  <Checkbox checked={selected.has(f.path)} onCheckedChange={(v) => toggle(f.path, v === true)} aria-label={f.name} disabled={busy} />
+                  <Checkbox checked={picked.has(f.path)} onCheckedChange={(v) => toggle(f.path, v === true)} aria-label={f.name} disabled={busy} />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium">{f.name}</span>
-                    <span className="block truncate font-mono text-xs text-muted-foreground">{f.path}</span>
+                    <span className="block truncate font-mono text-xs text-muted-foreground">{shown(f.path, home)}</span>
                     <span className="block text-xs text-muted-foreground">
-                      {f.files} {f.files === 1 ? "file" : "files"} · changed {timeAgo(f.lastChanged)}
+                      Holds {f.files} {f.kind === "footage" ? "video and audio" : "audio"} {f.files === 1 ? "file" : "files"} · changed {timeAgo(f.lastChanged)}
                     </span>
                   </span>
                   <span className={cn("shrink-0 rounded-md px-2 py-0.5 text-xs", f.kind === "footage" ? "bg-muted text-foreground" : "bg-muted/60 text-muted-foreground")}>
@@ -186,7 +207,12 @@ export function FoldersStep({ onNext, actions }: { onNext: () => void; actions: 
               </li>
             ))}
           </ul>
-          {truncated && <p className="text-xs text-muted-foreground">The search stopped early, so some folders may be missing. Choose a folder below.</p>}
+          {offered.length > SHOWN_FIRST && (
+            <Button variant="ghost" size="sm" onClick={() => setShowAll((v) => !v)}>
+              {showAll ? "Show fewer" : `Show ${offered.length - SHOWN_FIRST} more`}
+            </Button>
+          )}
+          {scan.truncated && <p className="text-xs text-muted-foreground">The search stopped early, so some folders may be missing. Type a folder path below.</p>}
         </>
       )}
 
@@ -199,7 +225,7 @@ export function FoldersStep({ onNext, actions }: { onNext: () => void; actions: 
             id="ct-folder-path"
             value={customPath}
             onChange={(e) => setCustomPath(e.target.value)}
-            placeholder="/Volumes/Drive/Footage"
+            placeholder="~/Movies/My footage"
             className="w-full rounded-md border border-input bg-background px-2 py-1.5 font-mono text-sm"
           />
           <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -217,7 +243,7 @@ export function FoldersStep({ onNext, actions }: { onNext: () => void; actions: 
       ) : (
         <Button variant="ghost" size="sm" onClick={() => setChoosing(true)}>
           <Plus className="size-3.5" />
-          Choose another folder
+          Type a folder path
         </Button>
       )}
 
@@ -231,10 +257,10 @@ export function FoldersStep({ onNext, actions }: { onNext: () => void; actions: 
         createPortal(
           <>
             <Button variant="ghost" disabled={busy} onClick={onNext}>
-              Do not add folders
+              Skip for now
             </Button>
             <Button disabled={busy || chosen.length === 0} onClick={() => void addAll()}>
-              {chosen.length > 0 ? `Add ${chosen.length} ${chosen.length === 1 ? "folder" : "folders"}` : "Add folders"}
+              {chosen.length > 0 ? `Use these ${chosen.length} ${chosen.length === 1 ? "folder" : "folders"}` : "Use these folders"}
             </Button>
           </>,
           actions,

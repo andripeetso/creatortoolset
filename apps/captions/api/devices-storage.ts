@@ -6,13 +6,15 @@ import { LIBRARY_NAME, LIBRARY_SUBFOLDERS, STORAGE_ROLES, THIS_COMPUTER, okFolde
 import type { AuthVars } from "./auth";
 import { deviceOf } from "./lib/devices";
 import { env, hostedMode } from "./lib/env";
+import { addWatchFolder, removeWatchFolder } from "./library/watch";
 import { libraryPath, localDisks, parseStorageFile, storageFilePath } from "./lib/storage";
 
 /**
  * Settings → Devices → Storage (contracts/storage.ts), mounted at /api/devices/storage by devices.ts:
  *   GET    /                        → StorageView (this account's folders, and the server's own disks when CT_LOCAL=1)
  *   POST   /library   {host, disk}  → make the Library ("Creator Toolset") in `disk` on one of this account's computers
- *   POST   /folders   {role, host, path} → use a folder you already have as footage or music
+ *   POST   /folders   {role, host, path} → use a folder you already have as footage or music (this computer's also go on
+ *                                          the Library's watch list, which the Library and the AI Editor read)
  *   DELETE /folders/:id             → forget a folder (its marker files stay where they are)
  * Each account has its own list in $DATA_DIR/storage/<user>.json. `host` is a device id this account owns.
  * Nothing here moves a file: the folders are recorded, and each computer finds them by their marker.
@@ -108,6 +110,11 @@ storageApp.post("/folders", async (c) => {
   const raw = b?.path;
   if (!role || !host || !okFolderPath(raw) || !(thisComputer(c, host) || mine(user, host))) return c.json({ error: "Pick a role, a computer and a folder" }, 400);
   const p = raw.replace(/(.)\/+$/, "$1");
+  // this computer's folders are read by the Library and the AI Editor through its watch list: the path is checked there
+  if (host === THIS_COMPUTER) {
+    const refused = await addWatchFolder(user, p);
+    if (refused) return c.json({ error: refused }, 400);
+  }
   const out = await chained(user, async () => {
     const st = await readStorage(user);
     if (st.folders.some((f) => f.role === role && f.origin.host === host && f.origin.path === p)) return null;
@@ -124,10 +131,13 @@ storageApp.delete("/folders/:id", async (c) => {
   const id = c.req.param("id");
   const out = await chained(user, async () => {
     const st = await readStorage(user);
-    if (!st.folders.some((f) => f.id === id)) return null;
-    st.folders = st.folders.filter((f) => f.id !== id);
+    const gone = st.folders.find((f) => f.id === id);
+    if (!gone) return null;
+    st.folders = st.folders.filter((f) => f !== gone);
     await writeStorage(user, st);
-    return st;
+    return { st, gone };
   });
-  return out ? c.json(out) : c.json({ error: "Not found" }, 404);
+  if (!out) return c.json({ error: "Not found" }, 404);
+  if (out.gone.role !== "library" && out.gone.origin.host === THIS_COMPUTER) await removeWatchFolder(user, out.gone.origin.path);
+  return c.json(out.st);
 });

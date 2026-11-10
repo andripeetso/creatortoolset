@@ -390,16 +390,21 @@ export function SetupDialog() {
           </div>
 
           <footer className="flex shrink-0 items-center justify-between gap-2 border-t border-border/60 px-6 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-8">
-            <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={close}>
-              Not now
-            </Button>
+            {/* the folders step has its own one Skip for now, so the footer's Not now is not offered there */}
+            {step !== "folders" ? (
+              <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={close}>
+                Not now
+              </Button>
+            ) : (
+              <span />
+            )}
             <div className="flex items-center gap-2">
               {before && (
                 <Button variant="ghost" onClick={() => to(before)}>
                   Back
                 </Button>
               )}
-              {/* the folders step puts its own buttons here (Do not add folders, Add N folders) */}
+              {/* the folders step puts its own buttons here (Skip for now, Use these N folders) */}
               {step === "folders" && <div ref={setFooterSlot} className="flex items-center gap-2" />}
               {step !== "folders" &&
                 (last ? (
