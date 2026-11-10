@@ -66,7 +66,13 @@ AI Editor: edits made from footage in the Media Library; each runs steps (analyz
 one per version, which can be filed in Review.
 
 How the user wants to work (get_work_prefs / set_work_prefs): where they talk to the AI (the app, their own AI chat, or
-both) and where they check the work (the app, their own editor, or both).`;
+both) and where they check the work (the app, their own editor, or both).
+
+Changing the app itself: Creator Toolset is open source and takes plug-ins. When the user wants the app to work
+differently for them (a page or tool it lacks, a step done another way, a new tool for you), first see whether the
+tools here already do the job. If not, build a plug-in in a checkout of the source
+(https://creatortoolset.com/api/landing/github; PLUGINS.md there is the guide) instead of changing the app's own
+files. A plug-in runs on a server the user builds themselves, on their computer or their own server.`;
 
 const str = { type: "string" };
 const schedule = {

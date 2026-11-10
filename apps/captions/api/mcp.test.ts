@@ -148,6 +148,15 @@ describe("Creator Toolset as a remote MCP server", () => {
     expect(pluginToolsOf([{ id: "tiny" }]).defs).toEqual([]);
   });
 
+  // plugin-examples/hello is what a new plug-in is copied from (PLUGINS.md), so its tool must keep loading.
+  it("serves the example plug-in's tool", async () => {
+    const { pluginToolsOf } = await import("./mcp");
+    const hello = (await import("../plugin-examples/hello/plugin")).default;
+    const plugged = pluginToolsOf([hello]);
+    expect(plugged.defs.map((d) => d.name)).toEqual(["hello_greet"]);
+    expect(await plugged.handlers.get("hello_greet")!({ name: "Tiny" }, { user: { username: "mcpowner" } } as never)).toEqual({ greeting: "hello, Tiny" });
+  });
+
   // With the owner's plug-in folder present it answers editor_list and editor_run instead, so the built-ins are checked only without it.
   it.skipIf(existsSync(new URL("../plugins/baby-acrobatics", import.meta.url)))("the built-in AI Editor tools answer with no plug-in", async () => {
     expect((await tool("editor_list")).value).toEqual({ edits: [] });

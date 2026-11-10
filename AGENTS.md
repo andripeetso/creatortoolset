@@ -22,6 +22,36 @@ and signed in to with their own subscription.
 Start with `apps/captions/README.md` for the app, `SELF_HOSTING.md` for running a server, and
 `apps/mac/README.md` for the Mac app.
 
+## Changing the app for one person: a plug-in first
+
+Two kinds of work happen in a checkout of this repository, and they go to different places:
+
+- **Work on the app itself.** Its maintainers and contributors fix or build something for everyone who uses it. That
+  goes in the app's own code, by the rules below, and the rest of this section is not for that work.
+- **One person's own copy.** Someone who uses the app wants it to work their way: a tool they miss, a step done
+  differently, a page for their own process. Don't edit the app's own files for that, and don't fork.
+
+Not told which? `git log -1 --author="$(git config user.email)"` answers it: someone with commits in this
+repository works on the app itself.
+
+For one person's own copy, work down this list and stop at the first that does the job:
+
+1. **A setting**, or the tool's own Defaults dialog.
+2. **A pack** (no code): frameworks, caption styles, instructions on top of the AI prompts
+   (`apps/captions/docs/features/packs.md`).
+3. **Their own AI with the app's tools** (Settings → Headless access): a job the AI can do with the tools that exist
+   needs no change to the app.
+4. **A plug-in**: a folder in `apps/captions/plugins/<id>/`. It adds pages, Home tiles, Settings sections, API
+   routes, tools for their AI and buttons on items, and it can take the place of some built-in pages.
+   [PLUGINS.md](PLUGINS.md) is the guide, and `apps/captions/plugin-examples/hello` is the one to copy.
+5. **A plug-in plus one new slot**, when no slot fits: the smallest slot in the app (PLUGINS.md, "When no slot
+   fits"), everything else in the plug-in.
+6. **A fork** is the last choice. Tell the person before you start.
+
+Why: `apps/captions/plugins/` is ignored by git, so an update never touches a plug-in. An edit to one of the app's
+own files conflicts with every update from then on. A bug in the app is the exception: fix it in the app's own code
+and offer the fix as a pull request, so the person doesn't carry it.
+
 ## Commands
 
 ```sh

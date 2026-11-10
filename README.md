@@ -67,6 +67,13 @@ and the AI reads only the project you're in.
 Around the tools there are also a **Mac app** (below), an **[Obsidian plugin](apps/obsidian/README.md)** that keeps
 vault notes and Workshop sessions in step, and an **assistant** that helps you set things up.
 
+## Make it work your way
+
+The app is open source, so your AI can change it for you. Open this repository in Claude Code, Codex or another
+coding AI and say what you want different: a tool you miss, a step that should go another way, a page for your own
+process. It builds that as a **plug-in**, a folder of your own beside the app's code. The app's code stays as it
+is, so you keep getting updates. [PLUGINS.md](PLUGINS.md) tells your AI how.
+
 ## Your own AI, your own keys
 
 Creator Toolset doesn't come with an AI account. You bring your own, in one of two ways:
@@ -143,6 +150,7 @@ is the step-by-step guide.
 | [`apps/obsidian/`](apps/obsidian/README.md) | The Obsidian plugin |
 | [`SELF_HOSTING.md`](SELF_HOSTING.md) | Running it on your own server |
 | [`docs/operations/self-host-relay.md`](docs/operations/self-host-relay.md) | Running the Connect broker on your own server |
+| [`PLUGINS.md`](PLUGINS.md) | Changing the app for yourself with a plug-in |
 | [`AGENTS.md`](AGENTS.md) | Rules and commands for contributors and their coding agents |
 
 ## Contributing
