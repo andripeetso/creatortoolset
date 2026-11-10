@@ -147,8 +147,7 @@ describe("connect your AI", () => {
   it("is missing when the CLI is not on this Mac", async () => {
     world([], () => undefined);
     expect(await local.connectCli("cy", "claude", home)).toMatchObject({ state: "missing", answered: null });
-    // Codex can't be the app's own AI (the Mac relay runs Claude Code and Gemini CLI only): refused before any probe
-    expect(await local.connectCli("cy", "codex", home)).toMatchObject({ state: "unsupported", answered: null, message: local.CODEX_NOT_APP_AI });
+    expect(await local.connectCli("cy", "codex", home)).toMatchObject({ state: "missing", answered: null });
   });
 
   it("asks to sign in when no folder is signed in, and saves nothing", async () => {
@@ -174,6 +173,37 @@ describe("connect your AI", () => {
     expect(s?.default).toEqual({ instance: "local-claude", model: "claude-opus-5-5", effort: "xhigh" });
     expect(s?.instances[0]?.lastCheck).toMatchObject({ ok: true, ms: 7 });
     expect(connectedOwn("fay")).toBe(true);
+  });
+
+  it("connects Codex as the app's AI the same way: a saved local-codex instance on the Mac, after a real check", async () => {
+    const { device } = pairDevice("hal", "Studio Mac");
+    touchDevice(device.id);
+    world(["codex"], (f, args) => {
+      if (args.join(" ") === "login status") return { stdout: "Logged in using ChatGPT\n" };
+      if (args.join(" ") === "mcp add --help") return { stdout: "Usage: codex mcp add [OPTIONS] <NAME> --url <URL>" };
+      if (f.endsWith("/codex") && args[0] === "--version") return { stdout: "codex-cli 0.50.0\n" };
+      return undefined;
+    });
+    mockCheck.next = { ok: true, ms: 11, error: undefined };
+    const r = await local.connectCli("hal", "codex", home);
+    expect(r).toEqual({ state: "ready", signedIn: true, answered: true, ms: 11 });
+    expect(ownSettings("hal")?.instances).toEqual([expect.objectContaining({ id: "local-codex", driver: "codex", name: "Codex", enabled: true, device: device.id })]);
+    expect(connectedOwn("hal")).toBe(true);
+  });
+
+  it("Check again finds a CLI installed since the last look, and reads its sign-in again (no cached 'not found')", async () => {
+    const present: string[] = [];
+    world(present, (f, args) => {
+      if (f.endsWith("/codex") && args[0] === "--version") return { stdout: "codex-cli 0.50.0\n" };
+      if (args.join(" ") === "login status") return { stdout: "Logged in using ChatGPT\n" };
+      return undefined;
+    });
+    expect((await local.localAiView("ana", [])).rows.map((r) => r.id)).toEqual([]);
+    // installed after that look: a plain look still shows the cached answer, Check again reads the machine
+    present.push("codex");
+    expect((await local.localAiView("ana", [])).rows.map((r) => r.id)).toEqual([]);
+    const fresh = await local.localAiView("ana", [], true);
+    expect(fresh.rows).toEqual([expect.objectContaining({ id: "codex", found: true, signedIn: true, version: "codex-cli 0.50.0" })]);
   });
 
   it("updates the same instance on a second connect, and keeps its check through a Settings save", async () => {

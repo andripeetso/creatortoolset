@@ -27,7 +27,7 @@ import { MyKeysSection } from "@/components/settings/MyKeysSection";
 import { ProjectForm } from "@/components/workshop/ProjectForm";
 import { AgentsStep } from "@/components/setup/AgentsStep";
 import { Choice } from "@/components/setup/Choice";
-import { ConnectStep } from "@/components/setup/ConnectStep";
+import { ConnectStep, HERE } from "@/components/setup/ConnectStep";
 import { FoldersStep } from "@/components/setup/FoldersStep";
 import { HowPicker } from "@/components/setup/HowPicker";
 import { ToolsPicker } from "@/components/setup/ToolNeeds";
@@ -53,7 +53,7 @@ import {
   useWorkTalk,
   type SetupStep,
 } from "@/lib/setup";
-import { createProject } from "@/lib/workshop";
+import { createProject, patchProject } from "@/lib/workshop";
 import { useWorkspace } from "@/lib/workspace";
 import { cn } from "@/lib/utils";
 
@@ -70,15 +70,15 @@ const STEP: Record<SetupStep, { title: string; hint: string }> = {
   },
   connect: {
     title: "Connect your computers",
-    hint: "Add your phone or another computer now or later.",
+    hint: "Choose one or more computers. We'll set up agents and folders on each.",
   },
   agents: {
     title: "Connect your agents",
-    hint: "Creator Toolset uses the AI you already have on each computer. Nothing connects until you press a button. You can add more later.",
+    hint: "Choose an AI to work with. You can add more later.",
   },
   folders: {
-    title: "Add your folders",
-    hint: "Where your footage, music and finished videos are. Nothing is moved.",
+    title: "Where are your videos?",
+    hint: "Pick the folders where you keep your footage and music. The AI Editor and Media Library find your clips there. Nothing is moved or uploaded.",
   },
   done: {
     title: "You're ready to start",
@@ -136,8 +136,8 @@ function MoreRow({ need }: { need: Need }) {
 }
 
 /**
- * First-run setup in one window, five fixed steps: how you work → what you make (ticks the tools) → your first project
- * → your AI (found on this Mac, nothing connected until pressed) → ready. Not now (the X, the footer link, Escape) hides
+ * First-run setup in one window: how you work → your computers → your agents → your video folders → what you make (ticks
+ * the tools) → your first project → ready. Not now (the X, the footer link, Escape) hides
  * it for this browser and remembers the step; Home's card brings it back. A click outside never closes it.
  */
 export function SetupDialog() {
@@ -153,10 +153,19 @@ export function SetupDialog() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const [ticked, setTicked] = useState<Tool[] | null>(null);
-  const [aiOn, setAiOn] = useState(false);
   const [note, setNote] = useState(false);
   const [named, setNamed] = useState(false); // the project form reports when it has a name: Create stays off until then
   const [unsure, setUnsure] = useState<boolean | null>(null); // "Not sure yet" ticked here; null = read it from the saved answers
+  // the computers picked on the Connect step: this computer first and checked, the others unchecked until picked
+  const [picked, setPicked] = useState<Set<string> | null>(null);
+  const pickedIds: ReadonlySet<string> = picked ?? new Set([HERE]);
+  const pick = (id: string, on: boolean) =>
+    setPicked((cur) => {
+      const next = new Set(cur ?? [HERE]);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
   const asked = params.get("setup");
   // by itself only on a first sign-in (setupOpensItself); Settings → Setup and ?setup= always open it
   const firstRun = setupOpensItself({ logins: me?.logins, loaded, projects: projects.length });
@@ -249,9 +258,10 @@ export function SetupDialog() {
           onInteractOutside={(e) => e.preventDefault()}
           onOpenAutoFocus={(e) => e.preventDefault()}
           className={cn(
-            // as tall as the step needs, its top fixed below the window's title bar: a step change only moves the bottom edge
-            "top-[max(4rem,12dvh)] flex max-h-[min(680px,calc(100dvh-max(4rem,12dvh)-2rem))] w-[min(820px,calc(100vw-3rem))] max-w-none translate-y-0 flex-col gap-0 overflow-hidden rounded-2xl p-0 shadow-2xl shadow-black/40 sm:max-w-none",
-            "max-sm:top-0 max-sm:h-dvh max-sm:max-h-none max-sm:w-screen max-sm:rounded-none max-sm:border-0 max-sm:pt-[env(safe-area-inset-top)]",
+            // as tall as the screen allows (680px at most): the header and footer stay put and only the body scrolls,
+            // so a small window shows a usable step rather than a thin strip
+            "flex h-[min(680px,calc(100dvh-2rem))] w-[min(820px,calc(100vw-3rem))] max-w-none flex-col gap-0 overflow-hidden rounded-2xl p-0 shadow-2xl shadow-black/40 sm:max-w-none",
+            "max-sm:h-dvh max-sm:w-screen max-sm:rounded-none max-sm:border-0 max-sm:pt-[env(safe-area-inset-top)]",
           )}
         >
           <header className="shrink-0 px-6 pt-5 sm:px-8">
@@ -322,44 +332,26 @@ export function SetupDialog() {
               </div>
             )}
 
-            {step === "project" &&
-              (projects.length ? (
-                <p className="rounded-xl border border-border/60 bg-card/40 p-4 text-sm text-muted-foreground">
-                  {projects.length === 1 ? `You have a project: ${projects[0]!.name}.` : `You have ${projects.length} projects.`} Add more from the Workshop's
-                  project switcher.
-                </p>
-              ) : (
-                <ProjectForm
-                  variant="setup"
-                  formId={PROJECT_FORM}
-                  busy={false}
-                  onReady={setNamed}
-                  onSave={(f) => createProject(f).then(() => void next())}
-                />
-              ))}
+            {step === "project" && (
+              <ProjectForm
+                key={projects[0]?.id ?? "new"}
+                variant="setup"
+                formId={PROJECT_FORM}
+                busy={false}
+                initial={projects[0]}
+                onReady={setNamed}
+                onSave={(f) => (projects.length ? patchProject(projects[0]!.id, f) : createProject(f)).then(() => void next())}
+              />
+            )}
 
-            {step === "connect" && <ConnectStep />}
+            {step === "connect" && <ConnectStep picked={pickedIds} onPick={pick} />}
 
-            {step === "agents" && <AgentsStep talk={prefs.talk} onConnectedChange={setAiOn} />}
+            {step === "agents" && <AgentsStep picked={pickedIds} />}
 
-            {step === "folders" && <FoldersStep />}
+            {step === "folders" && <FoldersStep onNext={() => to(after)} />}
 
             {step === "done" && (
               <div className="space-y-4">
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <Button variant="outline" className="h-auto justify-start whitespace-normal py-3 text-left" onClick={() => openSetupAt("connect")}>
-                    <span>
-                      <span className="block font-medium">Add your phone or another computer</span>
-                      <span className="block text-xs font-normal text-muted-foreground">A QR code for your phone, or a computer on your account</span>
-                    </span>
-                  </Button>
-                  <Button variant="outline" className="h-auto justify-start whitespace-normal py-3 text-left" onClick={() => openSetupAt("folders")}>
-                    <span>
-                      <span className="block font-medium">Add your folders</span>
-                      <span className="block text-xs font-normal text-muted-foreground">Where your footage, music and finished videos are</span>
-                    </span>
-                  </Button>
-                </div>
                 {prefs.talk !== "chat" && (
                   <p className="px-1 text-sm text-muted-foreground">
                     {assistantOn
@@ -386,29 +378,33 @@ export function SetupDialog() {
               Not now
             </Button>
             <div className="flex items-center gap-2">
-                            {before && (
+              {before && (
                 <Button variant="ghost" onClick={() => to(before)}>
                   Back
                 </Button>
               )}
-              {(newProject || step === "folders") && (
-                <Button variant="ghost" className="text-muted-foreground" onClick={() => void next()}>
-                  {step === "folders" ? "Do not add folders" : "Skip"}
-                </Button>
-              )}
-              {last ? (
-                <Button onClick={() => void finish()} className="min-w-28 bg-[var(--tint)] text-white hover:bg-[var(--tint)] hover:brightness-110">
-                  Open Review
-                </Button>
-              ) : (
-                <Button
-                  // a first project: the button submits the project form (its own checks, then Continue)
-                  {...(newProject ? { type: "submit" as const, form: PROJECT_FORM, disabled: !named } : { onClick: () => void next() })}
-                  className="min-w-28 bg-[var(--tint)] text-white hover:bg-[var(--tint)] hover:brightness-110"
-                >
-                  {step === "agents" && !aiOn ? "Continue without connecting" : newProject ? "Create project" : "Continue"}
-                </Button>
-              )}
+              {/* the folders step has its own buttons (Do not add folders, Add N folders) */}
+              {step !== "folders" &&
+                (last ? (
+                  <Button onClick={() => void finish()} className="min-w-28 bg-[var(--tint)] text-white hover:bg-[var(--tint)] hover:brightness-110">
+                    Open Review
+                  </Button>
+                ) : (
+                  <>
+                    {newProject && (
+                      <Button variant="ghost" className="text-muted-foreground" onClick={() => void next()}>
+                        Skip
+                      </Button>
+                    )}
+                    <Button
+                      // the project step submits its form (its own checks, then the save, then on)
+                      {...(step === "project" ? { type: "submit" as const, form: PROJECT_FORM, disabled: !named } : { onClick: () => void next() })}
+                      className="min-w-28 bg-[var(--tint)] text-white hover:bg-[var(--tint)] hover:brightness-110"
+                    >
+                      {step === "project" && !projects.length ? "Create project" : "Continue"}
+                    </Button>
+                  </>
+                ))}
             </div>
           </footer>
         </DialogContent>

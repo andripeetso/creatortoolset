@@ -10,7 +10,9 @@ import { joinServer, saveJoin } from "./lib/server-join";
 import { readConnectors } from "./lib/connectors/store";
 import { publicApifyStatus, readApify } from "./lib/instagram/apify";
 import { connectedOwn } from "./lib/providers";
+import { homedir } from "node:os";
 import { addMcp, connectCli, installCli, localAiView, signIn, CLI_IDS, MAC_ONLY } from "./lib/local-ai";
+import { defaultRoots, scanFolders } from "./lib/folder-scan";
 import { ownedProjects } from "./lib/workshop/workspace";
 import { ensureLibrary, homeOf } from "./library/access";
 import { libraryDb } from "./library/db";
@@ -39,9 +41,10 @@ import { isPlan, planFromCli, type PlanId } from "../contracts/plans";
  * readiness rows. $DATA_DIR/setup/<username>.json; accounts only (a share-link visitor has no setup).
  *
  *   GET  /api/setup  → SetupView
+ *   GET  /api/setup/folders/scan → { folders, truncated }  the folders with video or audio on this computer (owner only)
  *   GET  /api/setup/computers → ComputersView  this computer, plus the account's other computers (devices) with online state
  *   PUT  /api/setup  { tools?: Tool[], plan?: PlanId | null, done?: boolean } → SetupView
- *   GET  /api/setup/ai                 → LocalAiView   the AI CLIs found on this Mac (CT_LOCAL=1; else local: false)
+ *   GET  /api/setup/ai[?fresh=1]       → LocalAiView   the AI CLIs found on this computer (owner only; fresh reads them again)
  *   POST /api/setup/ai/signin  { id }  → SignInResult  opens Terminal with the tool's own sign-in (CT_LOCAL=1)
  *   POST /api/setup/ai/connect { id }  → ConnectResult connects it as this account's AI after a real check (always 200)
  *   POST /api/setup/ai/mcp     { id }  → McpResult     adds Creator Toolset to it, with one new Full key (CT_LOCAL=1)
@@ -197,7 +200,11 @@ setupApp.put("/", async (c) => {
 
 /* ---- your AI on this Mac (Connect your AI, Settings → Your AI) ---- */
 
-const localOn = () => process.env.CT_LOCAL === "1";
+/**
+ * The AI CLIs on this computer are the owner's: only the owner's own account on a server that runs on a computer
+ * (not hosted) can see or connect them. Anyone else's subscription is never run for another account.
+ */
+const ownComputer = (u: SessionUser): boolean => !hostedMode() && u.role === "admin";
 const port = () => Number(process.env.PORT || 3000);
 const cliOf = (v: unknown): CliId | null =>
   typeof v === "string" && (CLI_IDS as string[]).includes(v) ? (v as CliId) : null;
@@ -205,33 +212,39 @@ const mcpToOf = (u: string): CliId[] => read(u)?.mcpTo ?? [];
 
 setupApp.get("/ai", async (c) => {
   const u = c.get("user").username;
-  if (!localOn()) return c.json({ local: false, rows: [] } satisfies LocalAiView);
-  return c.json(await localAiView(u, mcpToOf(u)));
+  if (!ownComputer(c.get("user"))) return c.json({ local: false, rows: [] } satisfies LocalAiView);
+  return c.json(await localAiView(u, mcpToOf(u), c.req.query("fresh") === "1"));
+});
+
+/** Step 3: the folders with footage or music on this computer, read only (api/lib/folder-scan.ts). */
+setupApp.get("/folders/scan", async (c) => {
+  if (!ownComputer(c.get("user"))) return c.json({ error: "Only the owner's computer can be scanned" }, 403);
+  return c.json(await scanFolders(defaultRoots(homedir())));
 });
 
 setupApp.post("/ai/signin", async (c) => {
-  if (!localOn()) return c.json({ ok: false, message: MAC_ONLY }, 403);
+  if (!ownComputer(c.get("user"))) return c.json({ ok: false, message: MAC_ONLY }, 403);
   const id = cliOf(((await c.req.json().catch(() => null)) as { id?: unknown } | null)?.id);
   if (!id) return c.json({ error: "Pick Claude Code, Codex or Gemini CLI" }, 400);
   return c.json(await signIn(id));
 });
 
 setupApp.post("/ai/connect", async (c) => {
-  if (!localOn()) return c.json({ state: "mac", signedIn: null, answered: null, message: MAC_ONLY });
+  if (!ownComputer(c.get("user"))) return c.json({ state: "mac", signedIn: null, answered: null, message: MAC_ONLY });
   const id = cliOf(((await c.req.json().catch(() => null)) as { id?: unknown } | null)?.id);
   if (!id) return c.json({ error: "Pick Claude Code, Codex or Gemini CLI" }, 400);
   return c.json(await connectCli(c.get("user").username, id));
 });
 
 setupApp.post("/ai/install", async (c) => {
-  if (!localOn()) return c.json({ ok: false, message: MAC_ONLY }, 403);
+  if (!ownComputer(c.get("user"))) return c.json({ ok: false, message: MAC_ONLY }, 403);
   const id = cliOf(((await c.req.json().catch(() => null)) as { id?: unknown } | null)?.id);
   if (!id) return c.json({ error: "Pick Claude Code or Codex" }, 400);
   return c.json(await installCli(id));
 });
 
 setupApp.post("/ai/mcp", async (c) => {
-  if (!localOn()) return c.json({ ok: false, added: [], failed: [], message: MAC_ONLY }, 403);
+  if (!ownComputer(c.get("user"))) return c.json({ ok: false, added: [], failed: [], message: MAC_ONLY }, 403);
   const u = c.get("user").username;
   const id = cliOf(((await c.req.json().catch(() => null)) as { id?: unknown } | null)?.id);
   if (!id) return c.json({ error: "Pick Claude Code or Codex" }, 400);

@@ -18,9 +18,24 @@ export type StorageRole = "footage" | "music" | "library";
 export type SourceRole = (typeof STORAGE_ROLES)[number]["value"];
 
 export const MARKER_FILE = ".creatortoolset-folder";
+/** The host of a folder on the computer the server runs on, when no paired Mac stands for it (setup's Folders step, owner only). */
+export const THIS_COMPUTER = "this-computer";
 /** The library folder's name and the subfolder for each role inside it. */
 export const LIBRARY_NAME = "Creator Toolset";
 export const LIBRARY_SUBFOLDERS: Record<SourceRole | "finished", string> = { footage: "Footage", music: "Music", finished: "Finished" };
+
+/** One folder the setup scan found on this computer (GET /api/setup/folders/scan): footage or music, read in place. */
+export interface ScannedFolder {
+  /** absolute path on this computer */
+  path: string;
+  name: string;
+  /** footage when a video file is in it, music when only audio is */
+  kind: "footage" | "music";
+  /** how many media files are directly in it (not counting subfolders) */
+  files: number;
+  /** when it last changed (ms): the folder's own modified time */
+  lastChanged: number;
+}
 
 /** A drive or volume a computer reported: its name, where it is mounted, and its space (GB). A network share
  *  also says it is one (`network`) and which machine it lives on (`server`, e.g. the NAS's name). */

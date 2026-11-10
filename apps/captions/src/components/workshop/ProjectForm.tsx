@@ -90,7 +90,8 @@ export function ProjectForm({
   const setup = variant === "setup";
   const [f, setF] = useState<ProjectFields>(() => fieldsFrom(initial));
   const [handle, setHandle] = useState("");
-  const [where, setWhere] = useState<Partial<Record<SocialPlatform, string>>>({});
+  // setup's edit shows the saved handles, so saving again keeps them (and the page can change them)
+  const [where, setWhere] = useState<Partial<Record<SocialPlatform, string>>>(() => (setup && initial?.handles ? { ...initial.handles } : {}));
   const [accounts, setAccounts] = useState<InstagramAccount[]>([]);
   const [avail, setAvail] = useState<InstagramAvailability | null>(null);
   const [pulling, setPulling] = useState(false);

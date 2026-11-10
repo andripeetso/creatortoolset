@@ -2,10 +2,10 @@ import { Hono, type Context } from "hono";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { LIBRARY_NAME, LIBRARY_SUBFOLDERS, STORAGE_ROLES, okFolderPath, type StorageState, type StorageView } from "../contracts/storage";
+import { LIBRARY_NAME, LIBRARY_SUBFOLDERS, STORAGE_ROLES, THIS_COMPUTER, okFolderPath, type StorageState, type StorageView } from "../contracts/storage";
 import type { AuthVars } from "./auth";
 import { deviceOf } from "./lib/devices";
-import { env } from "./lib/env";
+import { env, hostedMode } from "./lib/env";
 import { libraryPath, localDisks, parseStorageFile, storageFilePath } from "./lib/storage";
 
 /**
@@ -48,6 +48,8 @@ const mine = (user: string, host: string) => {
   const d = deviceOf(host);
   return d && d.owner === user ? d : undefined;
 };
+/** This computer, for the owner of a server that runs on one (not hosted): setup's Folders step records against it. */
+const thisComputer = (c: C, host: string) => host === THIS_COMPUTER && !hostedMode() && c.get("user").role === "admin";
 
 export const storageApp = new Hono<{ Variables: AuthVars }>();
 
@@ -74,7 +76,7 @@ storageApp.post("/library", async (c) => {
   const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   const host = str(b?.host, 120);
   const disk = b?.disk;
-  if (!host || !okFolderPath(disk) || !mine(user, host)) return c.json({ error: "Pick a computer and a folder" }, 400);
+  if (!host || !okFolderPath(disk) || !(thisComputer(c, host) || mine(user, host))) return c.json({ error: "Pick a computer and a folder" }, 400);
   const p = libraryPath(disk);
   if (!okFolderPath(p)) return c.json({ error: "Path too long" }, 400);
   const out = await chained(user, async () => {
@@ -104,7 +106,7 @@ storageApp.post("/folders", async (c) => {
   const role = STORAGE_ROLES.find((r) => r.value === b?.role)?.value;
   const host = str(b?.host, 120);
   const raw = b?.path;
-  if (!role || !host || !okFolderPath(raw) || !mine(user, host)) return c.json({ error: "Pick a role, a computer and a folder" }, 400);
+  if (!role || !host || !okFolderPath(raw) || !(thisComputer(c, host) || mine(user, host))) return c.json({ error: "Pick a role, a computer and a folder" }, 400);
   const p = raw.replace(/(.)\/+$/, "$1");
   const out = await chained(user, async () => {
     const st = await readStorage(user);

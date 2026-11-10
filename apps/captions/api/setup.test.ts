@@ -77,11 +77,11 @@ it("adds this Mac's own server to Codex by address, the key as a header on its e
   expect(() => codexWithKey("", "ctk_x")).toThrow();
 });
 
-describe("your AI on this Mac: only on the owner's Mac (CT_LOCAL=1)", () => {
+describe("your AI on this computer: only the owner's account, on a server that runs on a computer", () => {
   const post = (url: string, body: unknown) => app.request(url, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } });
 
-  it("shows no CLIs and refuses the actions when CT_LOCAL is not 1", async () => {
-    delete process.env.CT_LOCAL;
+  it("shows no CLIs and refuses the actions to an account that is not the owner's", async () => {
+    delete process.env.CT_MODE;
     who = { username: "sam", role: "user", cloud: true, off: [] };
     expect(await (await app.request("/api/setup/ai")).json()).toEqual({ local: false, rows: [] });
     expect((await post("/api/setup/ai/mcp", { id: "claude" })).status).toBe(403);
@@ -95,9 +95,24 @@ describe("your AI on this Mac: only on the owner's Mac (CT_LOCAL=1)", () => {
   });
 
   it("refuses an unknown CLI name before anything runs", async () => {
-    process.env.CT_LOCAL = "1";
+    who = { username: "owner", role: "admin", cloud: true, off: [] };
     expect((await post("/api/setup/ai/connect", { id: "rm -rf" })).status).toBe(400);
-    delete process.env.CT_LOCAL;
+  });
+
+  it("is closed on a hosted server, even for its admin: the server is not the person's computer", async () => {
+    who = { username: "owner", role: "admin", cloud: true, off: [] };
+    process.env.CT_MODE = "hosted";
+    try {
+      expect(await (await app.request("/api/setup/ai")).json()).toEqual({ local: false, rows: [] });
+      expect((await app.request("/api/setup/folders/scan")).status).toBe(403);
+    } finally {
+      delete process.env.CT_MODE;
+    }
+  });
+
+  it("scans folders for the owner only: another account gets 403 and no listing", async () => {
+    who = { username: "sam", role: "user", cloud: true, off: [] };
+    expect((await app.request("/api/setup/folders/scan")).status).toBe(403);
   });
 
   it("the setup view carries the CLIs Creator Toolset is in (empty to start)", async () => {

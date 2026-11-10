@@ -8,15 +8,11 @@ import { confirmDialog } from "./dialogs";
 export type { SetupView };
 
 /**
- * The steps in order. The click path is the mode cards, what you make, the first project, your AI (Agents; skipped in
- * "In the app") and done, so a one-computer person clicks through as before. Connect and Folders are side steps, opened
- * from the done step's two rows: they are never on the path, and Back from them returns to done.
+ * The steps in order: the mode cards first, then the three stages (Connect your computers, Connect your agents, Where are
+ * your videos?), then what you make, the first project and done. "In the app" skips Agents (its AI runs in the app).
  */
-export const SETUP_STEPS = ["how", "make", "project", "agents", "connect", "folders", "done"] as const;
+export const SETUP_STEPS = ["how", "connect", "agents", "folders", "make", "project", "done"] as const;
 export type SetupStep = (typeof SETUP_STEPS)[number];
-
-/** The side steps: never on the click path, reached on purpose. */
-const SIDE_STEPS: readonly SetupStep[] = ["connect", "folders"];
 
 /** The bar's stages, shown on the three steps that have one. */
 export const STAGES = ["connect", "agents", "folders"] as const satisfies readonly SetupStep[];
@@ -24,16 +20,14 @@ export const STAGE_NAME: Record<(typeof STAGES)[number], string> = { connect: "C
 /** Which stage (0-2) a step is in, or -1 for a step with no stage (the bar is not shown for those). */
 export const stageOf = (s: SetupStep): number => STAGES.indexOf(s as (typeof STAGES)[number]);
 
-/** The click path a mode shows: "In the app" skips Agents (its AI runs in the app); the side steps are never on it. */
-export const stepsFor = (talk: WorkPrefs["talk"] | null): SetupStep[] =>
-  SETUP_STEPS.filter((s) => !SIDE_STEPS.includes(s) && !(talk === "app" && s === "agents"));
+/** The click path a mode shows: "In the app" skips Agents (its AI runs in the app). */
+export const stepsFor = (talk: WorkPrefs["talk"] | null): SetupStep[] => SETUP_STEPS.filter((s) => !(talk === "app" && s === "agents"));
 
 /**
  * The step Back and Continue go to from `step`: the nearest step on the mode's path, in the order above. A side step
  * (or a step the mode skips) takes its neighbours from that order, so Back and Continue still go the right way.
  */
 export function neighbours(step: SetupStep, talk: WorkPrefs["talk"] | null): { before?: SetupStep; after: SetupStep } {
-  if (SIDE_STEPS.includes(step)) return { before: "done", after: "done" }; // a side step goes back to the done step it came from
   const i = SETUP_STEPS.indexOf(step);
   const path = stepsFor(talk);
   const before = [...SETUP_STEPS.slice(0, i)].reverse().find((s) => path.includes(s));

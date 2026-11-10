@@ -5,38 +5,40 @@ import { TOOLS } from "@contracts/tools";
 afterEach(() => vi.unstubAllGlobals());
 
 describe("setup steps", () => {
-  it("keeps the click path as before (mode, make, project, agents, done) and puts Connect and Folders beside it", () => {
-    expect(SETUP_STEPS).toEqual(["how", "make", "project", "agents", "connect", "folders", "done"]);
-    expect(stepsFor("both")).toEqual(["how", "make", "project", "agents", "done"]);
-    expect(stepsFor(null)).toEqual(["how", "make", "project", "agents", "done"]);
+  it("puts the three stages on the path, right after the mode cards: Connect, Agents, Folders, then make, project, done", () => {
+    expect(SETUP_STEPS).toEqual(["how", "connect", "agents", "folders", "make", "project", "done"]);
+    expect(stepsFor("both")).toEqual(["how", "connect", "agents", "folders", "make", "project", "done"]);
+    expect(stepsFor(null)).toEqual(["how", "connect", "agents", "folders", "make", "project", "done"]);
   });
 
-  it("skips Agents on the In the app path, and never puts Connect or Folders on the click path", () => {
-    expect(stepsFor("app")).toEqual(["how", "make", "project", "done"]);
+  it("skips Agents on the In the app path, and keeps Connect and Folders on every path", () => {
+    expect(stepsFor("app")).toEqual(["how", "connect", "folders", "make", "project", "done"]);
     expect(stepsFor("chat")).toContain("agents");
     for (const t of ["app", "chat", "both", null] as const) {
-      expect(stepsFor(t)).not.toContain("connect");
-      expect(stepsFor(t)).not.toContain("folders");
+      expect(stepsFor(t)).toContain("connect");
+      expect(stepsFor(t)).toContain("folders");
     }
   });
 
   it("gives the three bar stages to Connect, Agents and Folders, and none to the other steps", () => {
-    expect(SETUP_STEPS.map(stageOf)).toEqual([-1, -1, -1, 1, 0, 2, -1]);
+    expect(SETUP_STEPS.map(stageOf)).toEqual([-1, 0, 1, 2, -1, -1, -1]);
   });
 
-  it("goes Back and Continue along the mode's path, and a side step returns to done", () => {
-    expect(neighbours("make", "both")).toEqual({ before: "how", after: "project" });
-    expect(neighbours("agents", "both")).toEqual({ before: "project", after: "done" });
-    expect(neighbours("done", "both")).toEqual({ before: "agents", after: "done" });
-    expect(neighbours("done", "app")).toEqual({ before: "project", after: "done" });
-    expect(neighbours("connect", "both")).toEqual({ before: "done", after: "done" });
-    expect(neighbours("folders", "chat")).toEqual({ before: "done", after: "done" });
+  it("goes Back and Continue along the mode's path", () => {
+    expect(neighbours("connect", "both")).toEqual({ before: "how", after: "agents" });
+    expect(neighbours("agents", "both")).toEqual({ before: "connect", after: "folders" });
+    expect(neighbours("folders", "both")).toEqual({ before: "agents", after: "make" });
+    expect(neighbours("make", "both")).toEqual({ before: "folders", after: "project" });
+    expect(neighbours("done", "both")).toEqual({ before: "project", after: "done" });
+    expect(neighbours("folders", "app")).toEqual({ before: "connect", after: "make" });
+    expect(neighbours("project", "chat")).toEqual({ before: "make", after: "done" });
   });
 
   it("maps the old step ids to the step they now belong to", () => {
     expect(setupStepFromParam("tools")).toBe("make");
     expect(setupStepFromParam("ai")).toBe("agents");
     expect(setupStepFromParam("connect")).toBe("connect");
+    expect(setupStepFromParam("folders")).toBe("folders");
     expect(setupStepFromParam("left")).toBe("done");
     expect(setupStepFromParam("project")).toBe("project");
   });

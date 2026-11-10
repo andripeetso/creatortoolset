@@ -51,9 +51,11 @@ async function shot(page: Any, name: string) {
 }
 
 const SIZES = { desktop: { width: 1440, height: 900 }, phone: { width: 390, height: 844 } } as const;
+// Small windows (a Mac window that is not full screen): the dialog must still show a whole step, never a thin strip
+const SMALL = { w1024x640: { width: 1024, height: 640 }, w800x600: { width: 800, height: 600 } } as const;
 
 // One path through the steps. The answer on step 1 is the only thing that differs between paths. The click path is
-// how → make → project → agents (not in In the app) → done; Connect and Folders are reached from the done step.
+// how → connect → agents (not in In the app) → folders → make → project → done.
 async function walkSetup(how: "In the app" | "In my own AI" | "Both", size: keyof typeof SIZES) {
   const tag = `${how.replace(/\s+/g, "-").toLowerCase()}-${size}`;
   const page = await browser.newPage({ viewport: SIZES[size] });
@@ -67,48 +69,44 @@ async function walkSetup(how: "In the app" | "In my own AI" | "Both", size: keyo
   expect(await dialog.getByRole("list", { name: "Stage 1 of 3" }).count()).toBe(0);
   await shot(page, `${tag}-1how`);
   await dialog.getByRole("radio", { name: new RegExp(how) }).check();
-  await dialog.getByRole("button", { name: "Continue" }).click();
+  await dialog.getByRole("button", { name: "Continue", exact: true }).click();
 
-  await dialog.getByText("What will you make?").waitFor();
-  await dialog.getByRole("checkbox", { name: /Short videos/ }).check();
-  await shot(page, `${tag}-2make`);
-  await dialog.getByRole("button", { name: "Continue" }).click();
-
-  await dialog.getByRole("heading", { name: "Your first project" }).waitFor();
-  // a project may already exist from an earlier path in this run: then the step only offers Continue
-  if (await dialog.getByPlaceholder("My brand").count()) {
-    await dialog.getByPlaceholder("My brand").fill("Tiny Acrobatics");
-    await dialog.getByRole("button", { name: "Create project" }).click();
-  } else {
-    await dialog.getByRole("button", { name: "Continue" }).click();
-  }
+  // Connect your computers: this computer is picked, and its address is shown under its name
+  await dialog.getByRole("heading", { name: "Connect your computers" }).waitFor();
+  expect(await dialog.getByRole("list", { name: "Stage 1 of 3" }).count()).toBe(1);
+  expect(await dialog.getByText(/^http:\/\/127\.0\.0\.1:\d+\/$|^http:\/\/localhost:\d+\/$/).count()).toBeGreaterThan(0);
+  await shot(page, `${tag}-2connect`);
+  await dialog.getByRole("button", { name: "Continue", exact: true }).click();
 
   if (how !== "In the app") {
     await dialog.getByRole("heading", { name: "Connect your agents" }).waitFor();
     expect(await dialog.getByRole("list", { name: "Stage 2 of 3" }).count()).toBe(1);
-    // nothing is connected before a press: no Connect was clicked, so the footer offers to go on without one
+    // nothing is connected before a press, and there is no API key ask
     expect(await dialog.getByText("Connected ✓").count()).toBe(0);
+    expect(await dialog.getByText(/api key/i).count()).toBe(0);
     await shot(page, `${tag}-3agents`);
-    await dialog.getByRole("button", { name: /^Continue/ }).click();
+    await dialog.getByRole("button", { name: "Continue", exact: true }).click();
   }
 
-  await dialog.getByRole("heading", { name: "You're ready to start" }).waitFor();
-  await shot(page, `${tag}-4done`);
-
-  // Connect and Folders are a side trip from the done step, and Back returns to done
-  await dialog.getByRole("button", { name: /Add your phone or another computer/ }).click();
-  await dialog.getByRole("heading", { name: "Connect your computers" }).waitFor();
-  expect(await dialog.getByRole("list", { name: "Stage 1 of 3" }).count()).toBe(1);
-  await shot(page, `${tag}-5connect`);
-  await dialog.getByRole("button", { name: "Back" }).click();
-  await dialog.getByRole("heading", { name: "You're ready to start" }).waitFor();
-
-  await dialog.getByRole("button", { name: /Add your folders/ }).click();
-  await dialog.getByRole("heading", { name: "Add your folders" }).waitFor();
+  await dialog.getByRole("heading", { name: "Where are your videos?" }).waitFor();
   expect(await dialog.getByRole("list", { name: "Stage 3 of 3" }).count()).toBe(1);
-  await shot(page, `${tag}-6folders`);
+  await shot(page, `${tag}-4folders`);
   await dialog.getByRole("button", { name: "Do not add folders" }).click();
+
+  await dialog.getByRole("heading", { name: "What will you make?" }).waitFor();
+  await dialog.getByRole("checkbox", { name: /Short videos/ }).check();
+  await shot(page, `${tag}-5make`);
+  await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+
+  await dialog.getByRole("heading", { name: "Your first project" }).waitFor();
+  // a project may already exist from an earlier path in this run: then the form shows its saved name and saves it again
+  await dialog.getByPlaceholder("My brand").fill("Tiny Acrobatics");
+  await dialog.getByRole("button", { name: /Create project|Continue/ }).click();
+
   await dialog.getByRole("heading", { name: "You're ready to start" }).waitFor();
+  // the done step has no side buttons: Connect and Folders are steps on the path now
+  expect(await dialog.getByRole("button", { name: /Add your phone or another computer/ }).count()).toBe(0);
+  await shot(page, `${tag}-6done`);
 
   await dialog.getByRole("button", { name: "Open Review" }).click();
   await dialog.waitFor({ state: "hidden" });
@@ -130,7 +128,7 @@ async function existingServer(size: keyof typeof SIZES) {
   await page.goto(new URL("/?setup=connect", base).toString());
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("heading", { name: "Connect your computers" }).waitFor({ timeout: 60_000 });
-  await dialog.getByRole("button", { name: "Add another computer" }).click();
+  await dialog.getByRole("button", { name: "Add a computer" }).click();
   await dialog.getByLabel(/paste the link it shows here/).fill("https://studio.example.com/api/devices");
   await dialog.getByRole("button", { name: "Join" }).click();
   await dialog.getByText("That isn't a sign-in link from another server").waitFor();
@@ -154,6 +152,25 @@ describe.skipIf(!enabled)("first-run setup in the browser", () => {
 
     it(`existing server (${size}): a pasted link that isn't one is refused`, async () => {
       await existingServer(size);
+    }, 120_000);
+  }
+
+  for (const size of Object.keys(SMALL) as Array<keyof typeof SMALL>) {
+    it(`small window (${size}): the three stages fit, and the body scrolls`, async () => {
+      const page = await browser.newPage({ viewport: SMALL[size] });
+      await page.goto(new URL("/?setup=connect", base).toString());
+      const dialog = page.getByRole("dialog");
+      await dialog.getByRole("heading", { name: "Connect your computers" }).waitFor({ timeout: 60_000 });
+      const box = await dialog.boundingBox();
+      expect(box!.height).toBeLessThanOrEqual(SMALL[size].height);
+      await shot(page, `small-${size}-2connect`);
+      await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+      await dialog.getByRole("heading", { name: "Connect your agents" }).waitFor();
+      await shot(page, `small-${size}-3agents`);
+      await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+      await dialog.getByRole("heading", { name: "Where are your videos?" }).waitFor();
+      await shot(page, `small-${size}-4folders`);
+      await page.close();
     }, 120_000);
   }
 

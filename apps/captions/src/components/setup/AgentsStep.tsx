@@ -1,47 +1,78 @@
 import { useEffect, useState, type ReactNode } from "react";
-import type { WorkPrefs } from "@contracts/work-prefs";
-import { INSTALL_LINE } from "@contracts/local-ai";
+import { Check } from "lucide-react";
+import { INSTALL_LINE, type CliId } from "@contracts/local-ai";
+import { ProviderLogo } from "@/components/settings/ProviderLogos";
+import { useAuth } from "@/lib/auth";
 import { AiPanel } from "@/components/setup/AiPanel";
+import { HERE } from "@/components/setup/ConnectStep";
 import { getComputers, type ComputerInfo, type ComputersView } from "./computers";
 
-const NAME: Record<string, string> = { claude: "Claude", codex: "Codex", gemini: "Gemini CLI" };
+const NAME: Record<string, string> = { claude: "Claude Code", codex: "Codex", gemini: "Gemini CLI" };
+const AGENTS = ["claude", "codex", "gemini"] as const;
+const ROW = "flex items-start gap-3 rounded-xl border border-border/60 bg-card/40 px-4 py-3";
 
 /**
- * One computer's agents, as it reports them: installed and signed in, or not found. A computer that reports nothing says so.
- * Install and sign-in for a computer that is not this one are run in that computer's own Terminal, so the line is shown to paste.
+ * One other computer's agents, as it reports them. Install and sign-in there can't be run from here, so a missing
+ * agent gets the vendor's line to paste into that computer's Terminal.
  */
 function remoteRows(c: ComputerInfo) {
-  if (!c.drivers.length) return <p className="px-1 text-sm text-muted-foreground">Nothing reported yet. The Creator Toolset app there reports its agents while its AI is on.</p>;
-  const missing = c.drivers.filter((d) => !d.installed && INSTALL_LINE[d.driver as keyof typeof INSTALL_LINE]);
+  const agents = c.drivers.filter((d) => (AGENTS as readonly string[]).includes(d.driver));
+  if (!agents.length) return <p className="text-sm text-muted-foreground">Nothing reported yet. Open Creator Toolset on {c.name}, and its agents show up here.</p>;
   return (
-    <div className="space-y-2">
-      <ul className="divide-y divide-border rounded-xl border border-border/60 bg-card/40">
-        {c.drivers.map((d) => (
-          <li key={d.driver} className="flex items-center justify-between gap-3 px-4 py-3 text-sm">
-            <span className="font-medium">{NAME[d.driver] ?? d.driver}</span>
-            <span className="text-xs text-muted-foreground">{!d.installed ? "Not found" : d.signedIn === false ? "Found, not signed in" : "Ready"}</span>
+    <ul className="space-y-2">
+      {agents.map((d) => {
+        const id = d.driver as CliId;
+        const line = !d.installed ? INSTALL_LINE[id] : undefined;
+        return (
+          <li key={d.driver} className={ROW}>
+            <ProviderLogo driver={d.driver} className="mt-0.5 size-5" />
+            <div className="min-w-0 flex-1 space-y-1">
+              <p className="text-sm font-medium">{NAME[d.driver] ?? d.driver}</p>
+              {!d.installed && (
+                <p className="text-xs">
+                  Not found on {c.name}. To add it, paste this line into a Terminal there: <code className="break-all font-mono">{line ?? "(installs on its own)"}</code>
+                </p>
+              )}
+              {d.installed && d.signedIn === false && <p className="text-xs text-muted-foreground">Not signed in on {c.name} yet.</p>}
+            </div>
+            {d.installed && d.signedIn !== false && <Check aria-label={`${NAME[d.driver] ?? d.driver} is ready on ${c.name}`} className="mt-0.5 size-4 text-emerald-600 dark:text-emerald-400" />}
           </li>
-        ))}
-      </ul>
-      {missing.map((d) => (
-        <p key={d.driver} className="px-1 text-xs text-muted-foreground">
-          To add {NAME[d.driver] ?? d.driver} there, paste this line into a Terminal on {c.name}:{" "}
-          <code className="break-all font-mono text-foreground">{INSTALL_LINE[d.driver as keyof typeof INSTALL_LINE]}</code>
-        </p>
-      ))}
-    </div>
+        );
+      })}
+    </ul>
   );
 }
 
-/** Step 2: one section per computer. This computer's agents are the Connect-your-AI panel; the others show what they report. */
-export function AgentsStepView({ here, others, mine }: { here: string; others: ComputerInfo[]; mine: ReactNode }) {
+/**
+ * Stage 2, "Connect your agents": one section per computer that is picked on the Connect step. This computer's section
+ * is the AI panel (it connects on a press); the other computers show what they report.
+ */
+export function AgentsStepView({
+  here,
+  others,
+  picked,
+  hosted = false,
+  mine,
+}: {
+  here: string;
+  others: ComputerInfo[];
+  picked: ReadonlySet<string>;
+  /** on a hosted server this server is not a computer of the person: its own section is left out */
+  hosted?: boolean;
+  mine: ReactNode;
+}) {
+  const shownOthers = others.filter((c) => picked.has(c.id));
+  const showHere = !hosted && picked.has(HERE);
+  if (!showHere && !shownOthers.length) return <p className="text-sm text-muted-foreground">No computer is picked. Go back and pick one to set up its agents.</p>;
   return (
     <div className="space-y-6">
-      <section className="space-y-3" aria-label={`Agents on ${here}`}>
-        <h3 className="text-sm font-semibold">{here}</h3>
-        {mine}
-      </section>
-      {others.map((c) => (
+      {showHere && (
+        <section className="space-y-3" aria-label={`Agents on ${here}`}>
+          <h3 className="text-sm font-semibold">{here}</h3>
+          {mine}
+        </section>
+      )}
+      {shownOthers.map((c) => (
         <section key={c.id} className="space-y-3" aria-label={`Agents on ${c.name}`}>
           <h3 className="text-sm font-semibold">{c.name}</h3>
           {remoteRows(c)}
@@ -51,9 +82,10 @@ export function AgentsStepView({ here, others, mine }: { here: string; others: C
   );
 }
 
-/** Step 2 container: loads the computers, and passes this computer's AI panel in as the first section. */
-export function AgentsStep({ talk, onConnectedChange }: { talk: WorkPrefs["talk"]; onConnectedChange?: (on: boolean) => void }) {
+/** Stage 2 container: loads the computers, and passes this computer's AI panel in as its section. */
+export function AgentsStep({ picked, onConnectedChange }: { picked: ReadonlySet<string>; onConnectedChange?: (on: boolean) => void }) {
   const [view, setView] = useState<ComputersView | null>(null);
+  const hosted = useAuth((s) => s.hosted);
   useEffect(() => {
     void getComputers().then(setView);
   }, []);
@@ -61,7 +93,9 @@ export function AgentsStep({ talk, onConnectedChange }: { talk: WorkPrefs["talk"
     <AgentsStepView
       here={view?.here.name ?? "This computer"}
       others={view?.others ?? []}
-      mine={<AiPanel talk={talk} onConnectedChange={onConnectedChange} />}
+      picked={picked}
+      hosted={hosted}
+      mine={<AiPanel onConnectedChange={onConnectedChange} />}
     />
   );
 }

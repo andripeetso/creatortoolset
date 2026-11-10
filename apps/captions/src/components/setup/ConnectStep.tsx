@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { ChevronDown, Monitor, Smartphone } from "lucide-react";
+import { ChevronRight, Cloud, Copy, Link as LinkIcon, Monitor, Smartphone } from "lucide-react";
 import QRCode from "qrcode";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { AccountStep, hasAccountBridge } from "@/components/setup/AccountStep";
 import { cn } from "@/lib/utils";
 import { getComputers, serverUrl, type ComputerInfo, type ComputersView } from "./computers";
 
+/** The id of this computer in the picked set. The other computers are picked by their device id. */
+export const HERE = "here";
 /** The line to paste on another computer. The command is not published yet: it arrives with the one-line connect package. */
 export const CONNECT_COMMAND = "npx creatortoolset connect";
 
-const ROW = "flex items-center gap-3 rounded-xl border border-border/60 bg-card/40 px-4 py-3";
+const CARD = "rounded-xl border border-border/60 bg-card/40";
 
 /** A one-time sign-in link for the phone (POST /api/auth/link: 60 s, single use), as a QR code. */
 export interface PhoneCode {
@@ -37,8 +40,11 @@ export async function mintPhoneCode(): Promise<PhoneCode | "local" | null> {
   }
 }
 
-/** The phone's row: a QR code for a fresh one-time link, a new one on request, and the address as text if no code can be made. */
-export function PhoneRow({ address }: { address: string }) {
+/**
+ * "Add your phone": a QR code the phone's camera reads. The code is one-time and lasts about a minute, so a new one is
+ * drawn when it runs out (on its own, and by the button).
+ */
+export function PhoneRow() {
   const [code, setCode] = useState<PhoneCode | "local" | null | undefined>(undefined); // undefined: making one
   const [now, setNow] = useState(() => Date.now());
   const fresh = useCallback(() => {
@@ -52,41 +58,73 @@ export function PhoneRow({ address }: { address: string }) {
     return () => window.clearInterval(t);
   }, [code]);
   const expired = !!code && code !== "local" && code.expiresAt <= now;
+  // a code that ran out is replaced by itself: the person only scans what is on the screen
+  useEffect(() => {
+    if (expired) fresh();
+  }, [expired, fresh]);
 
   return (
-    <div className={cn(ROW, "items-start")}>
-      <Smartphone className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
-      <div className="min-w-0 flex-1 space-y-2 text-sm">
-        <p className="font-medium">Add your phone</p>
-        {code === undefined && <p className="text-xs text-muted-foreground">Making a code…</p>}
-        {code === null && (
-          <p className="text-xs text-muted-foreground">
-            Open this address on your phone and sign in: <span className="break-all font-mono text-foreground">{address}</span>
-          </p>
-        )}
-        {code === "local" && <p className="text-xs text-muted-foreground">Turn on Access from other devices in the Mac app's This Mac first.</p>}
-        {code && code !== "local" && !expired && (
-          <div className="flex flex-wrap items-center gap-4">
-            <img src={code.qr} alt="QR code: scan it with your phone to sign in here" width={176} height={176} className="rounded-md bg-white p-1" />
-            <p className="min-w-0 flex-1 text-xs text-muted-foreground">Scan with your phone's camera or the Creator Toolset app.</p>
-          </div>
-        )}
-        {code && expired && (
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-xs text-muted-foreground">That code has expired.</p>
-            <Button size="sm" variant="outline" onClick={fresh}>
-              New code
-            </Button>
-          </div>
-        )}
+    <div className={cn(CARD, "space-y-3 px-4 py-3")}>
+      <div className="flex items-start gap-3">
+        <Smartphone className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
+        <div className="min-w-0">
+          <p className="text-sm font-medium">Add your phone</p>
+          <p className="text-xs text-muted-foreground">Use Creator Toolset on your phone too. Scan this with your phone's camera.</p>
+        </div>
       </div>
+      {code === undefined && <p className="text-xs text-muted-foreground">Making a code…</p>}
+      {code === null && <p className="text-xs text-muted-foreground">Couldn't make a code. Check the connection, then reopen this step.</p>}
+      {code === "local" && (
+        <p className="text-xs text-muted-foreground">
+          Your phone can't reach this computer yet. In the Creator Toolset Mac app, turn on Access from other devices, then come back here.
+        </p>
+      )}
+      {code && code !== "local" && !expired && (
+        <div className="flex flex-wrap items-center gap-4">
+          <img src={code.qr} alt="QR code: scan it with your phone to sign in here" width={176} height={176} className="rounded-md bg-white p-1" />
+          <p className="min-w-0 flex-1 text-xs text-muted-foreground">The code works once and runs out after a minute, then a new one appears here.</p>
+        </div>
+      )}
     </div>
+  );
+}
+
+/** One computer's row: a checkbox, its name and its address, and the mark of a computer that needs attention. */
+function ComputerCheck({
+  id,
+  name,
+  detail,
+  picked,
+  onPick,
+  icon,
+  attention,
+}: {
+  id: string;
+  name: string;
+  detail?: string;
+  picked: boolean;
+  onPick: (id: string, on: boolean) => void;
+  icon: ReactNode;
+  attention?: string;
+}) {
+  return (
+    <label className="flex cursor-pointer items-center gap-3 px-4 py-3">
+      <Checkbox checked={picked} onCheckedChange={(v) => onPick(id, v === true)} aria-label={name} />
+      {icon}
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-medium">{name}</span>
+        {detail && <span className="block truncate font-mono text-xs text-muted-foreground">{detail}</span>}
+      </span>
+      {attention && <span className="size-2 shrink-0 rounded-full bg-amber-500" role="img" aria-label={attention} title={attention} />}
+    </label>
   );
 }
 
 export function ConnectStepView({
   here,
   others,
+  picked,
+  onPick,
   phone,
   expanded,
   onExpand,
@@ -98,10 +136,12 @@ export function ConnectStepView({
   onLink,
   onJoin,
   joinNote,
-  signIn,
+  account,
 }: {
-  here: string;
+  here: { name: string; address: string };
   others: ComputerInfo[];
+  picked: ReadonlySet<string>;
+  onPick: (id: string, on: boolean) => void;
   phone: ReactNode;
   expanded: boolean;
   onExpand: () => void;
@@ -113,122 +153,143 @@ export function ConnectStepView({
   onLink: (v: string) => void;
   onJoin: () => void;
   joinNote?: { ok: boolean; text: string } | null;
-  signIn?: ReactNode;
+  /** the account sign-in (AccountStep), when the Mac app can show it */
+  account?: ReactNode;
 }) {
+  const [signingIn, setSigningIn] = useState(false);
   return (
     <div className="space-y-3">
-      <div className={ROW}>
-        <input type="checkbox" checked readOnly aria-label={`${here} is in setup`} className="size-4 accent-[var(--tint)]" />
-        <Monitor className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium">{here}</p>
-          <p className="text-xs text-muted-foreground">This computer</p>
-        </div>
+      <div className={CARD}>
+        <ComputerCheck
+          id={HERE}
+          name={here.name}
+          detail={here.address}
+          picked={picked.has(HERE)}
+          onPick={onPick}
+          icon={<Monitor className="size-4 shrink-0 text-muted-foreground" aria-hidden />}
+        />
       </div>
 
-      {others.length > 0 && (
-        <ul className="space-y-2" aria-label="Your computers">
-          {others.map((c) => (
-            <li key={c.id} className={ROW}>
-              <Monitor className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-              <span className="min-w-0 flex-1 truncate text-sm">{c.name}</span>
-              {!c.online && <span className="text-xs text-muted-foreground">Not running</span>}
-            </li>
-          ))}
-        </ul>
-      )}
+      <section className={CARD} aria-label="Creator Toolset Connect">
+        <div className="flex items-center gap-3 px-4 py-3">
+          <Cloud className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+          <p className="flex-1 text-sm font-medium">Creator Toolset Connect</p>
+          {account && (
+            <button type="button" aria-expanded={signingIn} onClick={() => setSigningIn((v) => !v)} className="text-sm text-muted-foreground hover:text-foreground">
+              Sign in ›
+            </button>
+          )}
+        </div>
+        {signingIn && account && <div className="border-t border-border/60 px-4 py-3">{account}</div>}
+        {others.length > 0 ? (
+          <ul className="divide-y divide-border/60 border-t border-border/60" aria-label="Your other computers">
+            {others.map((c) => (
+              <li key={c.id}>
+                <ComputerCheck
+                  id={c.id}
+                  name={c.name}
+                  picked={picked.has(c.id)}
+                  onPick={onPick}
+                  icon={<Monitor className="size-4 shrink-0 text-muted-foreground" aria-hidden />}
+                  attention={c.online ? undefined : "Not running. Open Creator Toolset on it."}
+                />
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="border-t border-border/60 px-4 py-3 text-xs text-muted-foreground">No other computers on your account yet.</p>
+        )}
+        <div className="space-y-2 border-t border-border/60 px-4 py-3">
+          <p className="text-xs text-muted-foreground">Run this on each computer you want to connect.</p>
+          <div className="flex items-center justify-between gap-2 rounded-md bg-muted/60 px-3 py-2 font-mono text-xs">
+            <span>$ {CONNECT_COMMAND}</span>
+            <Button size="icon-sm" variant="ghost" aria-label="Copy the command" title="Copy the command" onClick={() => void navigator.clipboard?.writeText(CONNECT_COMMAND)}>
+              <Copy className="size-3.5" />
+            </Button>
+          </div>
+        </div>
+      </section>
 
       {phone}
 
-      <div className="rounded-xl border border-border/60 bg-card/40">
+      <div className={CARD}>
         <button
           type="button"
           aria-expanded={expanded}
           onClick={onExpand}
-          className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm font-medium"
+          className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm font-medium"
         >
-          Add another computer
-          <ChevronDown className={cn("size-4 text-muted-foreground transition-transform", expanded && "rotate-180")} aria-hidden />
+          <LinkIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+          <span className="flex-1">Add a computer</span>
+          <ChevronRight className={cn("size-4 text-muted-foreground transition-transform", expanded && "rotate-90")} aria-hidden />
         </button>
         {expanded && (
           <div className="space-y-5 border-t border-border/60 px-4 pb-4 pt-3 text-sm">
-            <div className="space-y-2">
-              <p className="font-medium">Add a computer that runs its own Creator Toolset</p>
-              <p className="text-muted-foreground">Paste this into a terminal on each computer you want on your account. It stays connected while Creator Toolset runs there.</p>
-              <div className="flex items-center justify-between gap-2 rounded-md bg-muted/60 px-3 py-2 font-mono text-xs">
-                <span>$ {CONNECT_COMMAND}</span>
-                <Button size="sm" variant="ghost" onClick={() => void navigator.clipboard?.writeText(CONNECT_COMMAND)}>
-                  Copy
+            <p className="text-muted-foreground">If your computer runs Creator Toolset on its own server, join it here with a link from that server.</p>
+            <form
+              className="space-y-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                onServerGo();
+              }}
+            >
+              <label htmlFor="ct-server-address" className="block text-xs text-muted-foreground">
+                1. Its address, like studio.example.com. It opens in a new tab, where you sign in.
+              </label>
+              <div className="flex gap-2">
+                <input
+                  id="ct-server-address"
+                  value={server}
+                  onChange={(e) => onServer(e.target.value)}
+                  placeholder="studio.example.com"
+                  autoComplete="off"
+                  inputMode="url"
+                  aria-invalid={serverBad || undefined}
+                  className="min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+                />
+                <Button size="sm" type="submit" variant="outline">
+                  Open
                 </Button>
               </div>
-            </div>
-
-            <div className="space-y-3">
-              <p className="font-medium">I already have a server</p>
-              <form
-                className="space-y-2"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  onServerGo();
-                }}
-              >
-                <label htmlFor="ct-server-address" className="block text-xs text-muted-foreground">
-                  1. Its address, like studio.example.com. It opens in a new tab, where you sign in.
-                </label>
-                <div className="flex gap-2">
-                  <input
-                    id="ct-server-address"
-                    value={server}
-                    onChange={(e) => onServer(e.target.value)}
-                    placeholder="studio.example.com"
-                    autoComplete="off"
-                    inputMode="url"
-                    aria-invalid={serverBad || undefined}
-                    className="min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-1.5 text-sm"
-                  />
-                  <Button size="sm" type="submit" variant="outline">
-                    Open
-                  </Button>
-                </div>
-                {serverBad && <p className="text-xs text-destructive">Enter a web address, like studio.example.com. Plain http works only on this network.</p>}
-              </form>
-              <form
-                className="space-y-2"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  onJoin();
-                }}
-              >
-                <label htmlFor="ct-server-link" className="block text-xs text-muted-foreground">
-                  2. On that server's Devices page, press "Sign in another computer", and paste the link it shows here.
-                </label>
-                <div className="flex gap-2">
-                  <input
-                    id="ct-server-link"
-                    value={link}
-                    onChange={(e) => onLink(e.target.value)}
-                    placeholder="https://studio.example.com/api/auth/link/…"
-                    autoComplete="off"
-                    className="min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-1.5 text-sm"
-                  />
-                  <Button size="sm" type="submit" variant="outline" disabled={!link.trim()}>
-                    Join
-                  </Button>
-                </div>
-                {joinNote && <p role="status" className={cn("text-xs", joinNote.ok ? "text-muted-foreground" : "text-destructive")}>{joinNote.text}</p>}
-              </form>
-            </div>
+              {serverBad && <p className="text-xs text-destructive">Enter a web address, like studio.example.com. Plain http works only on this network.</p>}
+            </form>
+            <form
+              className="space-y-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                onJoin();
+              }}
+            >
+              <label htmlFor="ct-server-link" className="block text-xs text-muted-foreground">
+                2. On that server's Devices page, press "Sign in another computer", and paste the link it shows here.
+              </label>
+              <div className="flex gap-2">
+                <input
+                  id="ct-server-link"
+                  value={link}
+                  onChange={(e) => onLink(e.target.value)}
+                  placeholder="https://studio.example.com/api/auth/link/…"
+                  autoComplete="off"
+                  className="min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+                />
+                <Button size="sm" type="submit" variant="outline" disabled={!link.trim()}>
+                  Join
+                </Button>
+              </div>
+              {joinNote && <p role="status" className={cn("text-xs", joinNote.ok ? "text-muted-foreground" : "text-destructive")}>{joinNote.text}</p>}
+            </form>
           </div>
         )}
       </div>
-
-      {signIn}
     </div>
   );
 }
 
-/** Step 1: this computer, the account's other computers, the phone's code, and the folded add-a-computer and existing-server rows. */
-export function ConnectStep() {
+/**
+ * Stage 1, "Connect your computers": this computer (checked by default), the account's other computers with a checkbox
+ * each, the phone's code, and the folded add-a-computer row. `picked` is the set the next stages work on.
+ */
+export function ConnectStep({ picked, onPick }: { picked: ReadonlySet<string>; onPick: (id: string, on: boolean) => void }) {
   const [view, setView] = useState<ComputersView | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [server, setServer] = useState("");
@@ -262,9 +323,11 @@ export function ConnectStep() {
 
   return (
     <ConnectStepView
-      here={view?.here.name ?? "This computer"}
+      here={{ name: view?.here.name ?? "This computer", address: `${window.location.origin}/` }}
       others={view?.others ?? []}
-      phone={<PhoneRow address={window.location.origin} />}
+      picked={picked}
+      onPick={onPick}
+      phone={<PhoneRow />}
       expanded={expanded}
       onExpand={() => setExpanded((v) => !v)}
       server={server}
@@ -281,14 +344,7 @@ export function ConnectStep() {
       }}
       onJoin={() => void join()}
       joinNote={joinNote}
-      signIn={
-        hasAccountBridge() && (
-          <div className="rounded-xl border border-border/60 bg-card/40 px-4 py-3">
-            <p className="mb-2 text-sm font-medium">Sign in</p>
-            <AccountStep />
-          </div>
-        )
-      }
+      account={hasAccountBridge() ? <AccountStep /> : undefined}
     />
   );
 }

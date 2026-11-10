@@ -92,15 +92,25 @@ export function nvmVersionDirs(home: string): string[] {
   }
 }
 
-/** Where a CLI is installed when the login shell can't say: the usual places, in order. */
+/** Where a CLI is installed when the login shell can't say: the usual places, in order. The server may have started with a short PATH (the Mac app's), so the common global install folders are listed too. */
 export function fallbackCandidates(id: CliId, home: string, nvmDirs: string[]): string[] {
   return [
     `/opt/homebrew/bin/${id}`,
     `/usr/local/bin/${id}`,
     path.join(home, ".local", "bin", id),
+    path.join(home, ".npm-global", "bin", id),
+    path.join(home, ".volta", "bin", id),
+    path.join(home, ".bun", "bin", id),
     ...nvmDirs.map((d) => path.join(d, "bin", id)),
     `/usr/bin/${id}`,
   ];
+}
+
+/** Forgets what was found about one CLI, so the next look reads the machine again (Check again after an install). */
+export function forgetCli(id: CliId): void {
+  bins.delete(id);
+  probes.delete(id);
+  if (id === "codex") codexUrl = undefined;
 }
 
 async function lookup(id: CliId): Promise<string | null> {
@@ -257,8 +267,10 @@ export async function probe(id: CliId, fresh = false, home = os.homedir()): Prom
 /* ---- the view ---- */
 
 /** The rows setup shows: each CLI found on this Mac, then the desktop apps found (text only). */
-export async function localAiView(username: string, mcpTo: CliId[]): Promise<LocalAiView> {
-  const probed = await Promise.all(CLI_IDS.map((id) => probe(id)));
+export async function localAiView(username: string, mcpTo: CliId[], fresh = false): Promise<LocalAiView> {
+  // fresh: Check again. Nothing cached is used, so a CLI installed a moment ago is found and its sign-in is read again.
+  if (fresh) CLI_IDS.forEach(forgetCli);
+  const probed = await Promise.all(CLI_IDS.map((id) => probe(id, fresh)));
   const own = ownSettings(username)?.instances ?? [];
   const rows: LocalAiRow[] = [];
   for (const p of probed) {
@@ -317,10 +329,7 @@ export async function installCli(id: CliId): Promise<SignInResult> {
  * Connects one CLI as this account's AI: its sign-in is checked (a signed-in folder is used when the default one is
  * signed out), its instance is saved on this Mac, and a real check runs through the Mac. Mints no key.
  */
-export const CODEX_NOT_APP_AI = "Codex can't run the app's own AI yet. Claude Code does that for now.";
-
 export async function connectCli(username: string, id: CliId, home = os.homedir()): Promise<ConnectResult> {
-  if (id === "codex") return { state: "unsupported", signedIn: null, answered: null, message: CODEX_NOT_APP_AI };
   const p = await probe(id, true, home);
   if (!p.found) return { state: "missing", signedIn: null, answered: null, message: MISSING };
   if (p.signedIn === false) return { state: "signin", signedIn: false, answered: null, message: "Not signed in yet." };

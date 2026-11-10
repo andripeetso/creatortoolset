@@ -1,46 +1,54 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
 import { AgentsStepView } from "./AgentsStep";
+import { HERE } from "./ConnectStep";
 
 const mine = <p>MINE-PANEL</p>;
+const others = [
+  { id: "a", name: "Workshop PC", online: true, drivers: [{ driver: "claude", installed: true, signedIn: true }, { driver: "codex", installed: false }] },
+  { id: "b", name: "ARCHIVE", online: false, drivers: [] },
+];
+const render = (over: Partial<Parameters<typeof AgentsStepView>[0]> = {}) =>
+  renderToStaticMarkup(<AgentsStepView here="Studio Mac" mine={mine} others={others} picked={new Set([HERE, "a", "b"])} {...over} />);
 
-it("puts this computer's panel first, then one section per other computer", () => {
-  const html = renderToStaticMarkup(
-    <AgentsStepView
-      here="Studio Mac"
-      mine={mine}
-      others={[
-        { id: "a", name: "Workshop PC", online: true, drivers: [{ driver: "claude", installed: true, signedIn: true }, { driver: "codex", installed: false }] },
-        { id: "b", name: "ARCHIVE", online: false, drivers: [] },
-      ]}
-    />,
-  );
+it("shows one section per picked computer: this computer's panel first, then the others it reports", () => {
+  const html = render();
   expect(html.indexOf("Studio Mac")).toBeLessThan(html.indexOf("MINE-PANEL"));
   expect(html.indexOf("MINE-PANEL")).toBeLessThan(html.indexOf("Workshop PC"));
-  expect(html).toContain("Claude");
-  expect(html).toContain("Ready");
-  expect(html).toContain("Not found");
-  expect(html).toContain("Nothing reported yet");
+  expect(html).toContain("Claude Code");
+  expect(html).toContain("Nothing reported yet.");
 });
 
-it("shows only this computer's panel when there are no other computers", () => {
-  const html = renderToStaticMarkup(<AgentsStepView here="Studio Mac" mine={mine} others={[]} />);
+it("leaves out any computer that is not picked on the Connect step", () => {
+  const html = render({ picked: new Set([HERE]) });
   expect(html).toContain("MINE-PANEL");
-  expect(html).not.toContain("Install and sign-in");
+  expect(html).not.toContain("Workshop PC");
+  expect(html).not.toContain("ARCHIVE");
 });
 
-it("shows the vendor's install line for a computer where Claude is not found, and nothing for one where it is Ready", () => {
-  const html = renderToStaticMarkup(
-    <AgentsStepView
-      here="Studio Mac"
-      mine={mine}
-      others={[
-        { id: "a", name: "Workshop PC", online: true, drivers: [{ driver: "claude", installed: false }] },
-        { id: "b", name: "Mac Studio", online: true, drivers: [{ driver: "claude", installed: true, signedIn: true }] },
-      ]}
-    />,
-  );
-  expect(html).toContain("paste this line into a Terminal on Workshop PC");
+it("says nothing is picked when no computer is", () => {
+  expect(render({ picked: new Set() })).toContain("No computer is picked");
+});
+
+it("leaves this server's own section out on a hosted server, and shows the person's computers only", () => {
+  const html = render({ hosted: true });
+  expect(html).not.toContain("MINE-PANEL");
+  expect(html).toContain("Workshop PC");
+});
+
+it("gives a computer that has no agent the vendor's line to paste there, and nothing for one where Claude is ready", () => {
+  const html = render({
+    others: [
+      { id: "a", name: "Workshop PC", online: true, drivers: [{ driver: "claude", installed: false }] },
+      { id: "b", name: "Mac Studio", online: true, drivers: [{ driver: "claude", installed: true, signedIn: true }] },
+    ],
+    picked: new Set(["a", "b"]),
+  });
+  expect(html).toContain("paste this line into a Terminal there");
   expect(html).toContain("curl -fsSL https://claude.ai/install.sh | bash");
-  expect(html).not.toContain("paste this line into a Terminal on Mac Studio");
+  expect(html).toContain('aria-label="Claude Code is ready on Mac Studio"');
+});
+
+it("never shows an API key on this step", () => {
+  expect(render()).not.toMatch(/api key/i);
 });

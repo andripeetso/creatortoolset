@@ -1,33 +1,31 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { INSTALL_LINE, type CliId, type ConnectResult, type LocalAiId, type LocalAiRow, type LocalAiView, type McpResult, type SignInResult } from "@contracts/local-ai";
-import { PLANS } from "@contracts/plans";
-import type { WorkPrefs } from "@contracts/work-prefs";
+import { Check } from "lucide-react";
+import { INSTALL_LINE, type CliId, type ConnectResult, type LocalAiId, type LocalAiRow, type LocalAiView, type SignInResult } from "@contracts/local-ai";
 import { Button } from "@/components/ui/button";
-import { MyKeysSection } from "@/components/settings/MyKeysSection";
-import { CopyButton } from "@/components/workshop/CopyButton";
+import { ProviderLogo } from "@/components/settings/ProviderLogos";
 
-type Talk = WorkPrefs["talk"];
 export type Phase = "connecting" | "signingIn" | "timedOut";
 export type Results = Partial<Record<LocalAiId, ConnectResult>>;
 export type Phases = Partial<Record<LocalAiId, Phase>>;
-export interface McpState {
-  busy?: boolean;
-  done?: boolean;
-  message?: string;
-}
-export type McpStates = Partial<Record<LocalAiId, McpState>>;
 type Action = "connect" | "signin" | "check";
 
 const WAIT_MS = 3 * 60_000;
 const POLL_MS = 3_000;
-/** Said once under the list (not on every row): sign-in opens a Terminal window. */
-const TERMINAL_HINT = "A Terminal window opens. That's normal: sign in there with your browser, then come back.";
+/** How long a request may take before it gives up with a plain message (no wait spins forever). */
+const TIMEOUT_MS = 90_000;
 
-
-const BLURB: Partial<Record<LocalAiId, string>> = {
-  claude: "Anthropic's coding tool. Runs the app's AI.",
-  codex: "Codex can use Creator Toolset from your own chats. The app's own AI runs on Claude Code for now.",
-  gemini: "Google's coding tool. Runs the app's AI.",
+/** The agents this step lists, in order. Gemini CLI installs on its own, so it has no Install button. */
+const AGENTS: CliId[] = ["claude", "codex", "gemini"];
+const NAME: Record<CliId, string> = { claude: "Claude Code", codex: "Codex", gemini: "Gemini CLI" };
+const COMMAND: Record<CliId, string> = { claude: "claude", codex: "codex", gemini: "gemini" };
+const DESCRIBE: Record<CliId, string> = {
+  claude: "Code with your Claude subscription.",
+  codex: "Code with your ChatGPT subscription.",
+  gemini: "Google's coding tool. Sign in with your Google account.",
+};
+const SIGN_IN: Record<CliId, string> = { claude: "Continue with Claude", codex: "Continue with ChatGPT", gemini: "Sign in" };
+const TERMINAL_HINT = "A Terminal window opens. Sign in there with your browser, then come back here.";
+const DESKTOP_LINE: Partial<Record<LocalAiId, string>> = {
   "claude-desktop": "The Claude app. It can't be the AI this app uses, and it can't be connected from here yet.",
   "chatgpt-desktop": "The ChatGPT app. It can't be the AI this app uses, and it can't be connected from here yet.",
 };
@@ -35,330 +33,175 @@ const BLURB: Partial<Record<LocalAiId, string>> = {
 const isCli = (id: LocalAiId): id is CliId => id === "claude" || id === "codex" || id === "gemini";
 const plain = (msg: string) => msg.replace(/\.+$/, "");
 const isConnected = (row: LocalAiRow, result?: ConnectResult) => row.connected || result?.state === "ready";
-/** Only these can be the app's own AI: the Mac relay runs Claude Code and Gemini CLI (apps/mac ClaudeRequest.swift). */
-const runsAppAi = (id: LocalAiId): boolean => id === "claude" || id === "gemini";
-/** How long a request may take before it gives up with a plain message (no wait spins forever). */
-const TIMEOUT_MS = 90_000;
 
-/** The app's own AI has a passing check: saved from before, or this session's Connect. Drives "Continue without connecting". */
+/** The app's own AI has a passing check: saved from before, or this session's Connect. */
 export const anyConnected = (view: LocalAiView | null, results: Results): boolean =>
-  !!view?.rows.some((r) => isCli(r.id) && runsAppAi(r.id) && isConnected(r, results[r.id]));
+  !!view?.rows.some((r) => isCli(r.id) && isConnected(r, results[r.id]));
 
 export interface RowView {
   line: string;
   hint?: string;
-  answered?: string;
   button: { label: string; action: Action | "none"; disabled?: boolean } | null;
-  ticks: { signedIn?: boolean; answers?: boolean };
   connected?: boolean;
   raw?: string;
 }
 
 /**
- * What one CLI row says, checked in order (SPEC 6.3): an in-progress step first, then this session's last Connect, then
- * the probe. "Connected" only after a passing check, so a failed part never shows it.
+ * What one agent's row says, checked in order: an in-progress step first, then this session's last Connect, then the
+ * probe. "Connected" only after a passing check, so a failed part never shows it.
  */
 export function rowView(row: LocalAiRow, result: ConnectResult | undefined, phase: Phase | undefined): RowView {
   const connected = isConnected(row, result);
   const signed = row.signedIn ?? (result?.state === "ready" ? true : null);
-  const signedTick = signed === true ? { signedIn: true } : {};
-  const notSignedIn: RowView = {
-    line: "Not signed in yet.",
-    hint: TERMINAL_HINT,
-    button: { label: "Sign in", action: "signin" },
-    ticks: {},
-  };
-  if (phase === "connecting") return { line: "Checking. This can take up to a minute.", button: { label: "Checking…", action: "connect", disabled: true }, ticks: signedTick };
+  const notSignedIn: RowView = { line: "Not signed in yet. " + TERMINAL_HINT, button: { label: "Sign in", action: "signin" } };
+  if (phase === "connecting") return { line: "Checking. This can take up to a minute.", button: { label: "Checking…", action: "connect", disabled: true } };
   if (phase === "signingIn")
     return {
       line: "A Terminal window opened. Sign in there, then come back here. This page checks by itself.",
       button: { label: "Waiting for sign-in…", action: "none", disabled: true },
-      ticks: {},
     };
-  if (phase === "timedOut") return { line: "Still not signed in. Sign in in the Terminal window, then press Check.", button: { label: "Check", action: "check" }, ticks: {} };
+  if (phase === "timedOut") return { line: "Still not signed in. Sign in in the Terminal window, then press Check again.", button: { label: "Check again", action: "check" } };
   if (result?.state === "failed")
     return {
       line: `It didn't answer: ${plain(result.message ?? "Try again")}.`,
       button: { label: "Try again", action: "connect" },
-      ticks: { ...signedTick, answers: false },
       raw: result.raw,
     };
-  if (result?.state === "mac" || result?.state === "unsupported") return { line: result.message ?? "Open the Creator Toolset Mac app to connect your AI.", button: null, ticks: {} };
+  if (result?.state === "mac" || result?.state === "unsupported") return { line: result.message ?? "Open the Creator Toolset Mac app to connect your AI.", button: null };
   if (result?.state === "signin") return notSignedIn;
   if (connected && signed === false)
-    return { line: "Connected, but not signed in right now. Sign in again.", button: { label: "Sign in", action: "signin" }, ticks: { answers: true } };
-  if (connected)
-    return {
-      line: "Connected.",
-      answered: answeredIn(result?.ms ?? row.lastCheck?.ms),
-      button: { label: "Connected ✓", action: "none", disabled: true },
-      ticks: { ...signedTick, answers: true },
-      connected: true,
-    };
+    return { line: "Connected, but not signed in right now. Sign in again.", button: { label: "Sign in", action: "signin" } };
+  if (connected) return { line: "", button: null, connected: true };
   if (signed === false) return notSignedIn;
-  if (signed === true) return { line: "Signed in. Ready to connect.", button: { label: "Connect", action: "connect" }, ticks: signedTick };
-  return { line: "Ready to check.", button: { label: "Connect", action: "connect" }, ticks: {} };
+  if (signed === true) return { line: "Signed in. Ready to connect.", button: { label: "Use existing CLI", action: "connect" } };
+  return { line: "", button: { label: "Use existing CLI", action: "connect" } };
 }
 
-/**
- * Codex can't be the app's AI, so its row has no Connect: sign-in on the own-AI paths (then the Creator Toolset action
- * in McpBlock), and no action at all on the app path. Its one plain line is its description (BLURB).
- */
-export function codexRowView(row: LocalAiRow, talk: Talk): RowView {
-  if (talk === "app") return { line: "", button: null, ticks: {} };
-  if (row.signedIn === true) return { line: "Signed in.", button: null, ticks: { signedIn: true } };
-  return { line: "Not signed in yet.", hint: TERMINAL_HINT, button: { label: "Continue with ChatGPT", action: "signin" }, ticks: {} };
-}
+/** The row's view: the same rules for every agent (the app's own AI can be any of them now). */
+export const viewOf = (row: LocalAiRow, result?: ConnectResult, phase?: Phase): RowView => rowView(row, result, phase);
 
-/** The row's view for this path: Codex has its own, every other tool is checked as before. */
-export const viewOf = (row: LocalAiRow, talk: Talk, result?: ConnectResult, phase?: Phase): RowView =>
-  row.id === "codex" ? codexRowView(row, talk) : rowView(row, result, phase);
-
-const answeredIn = (ms?: number) => (ms == null ? undefined : `Answered in ${(ms / 1000).toFixed(1)} s.`);
-
-function Ticks({ t }: { t: RowView["ticks"] }) {
+/** The agent's row in the list: logo, name, its description, and on the right the one action it needs. */
+function AgentRow({
+  id,
+  found,
+  row,
+  result,
+  phase,
+  installing,
+  onAction,
+  onInstall,
+}: {
+  id: CliId;
+  found: boolean;
+  row?: LocalAiRow;
+  result?: ConnectResult;
+  phase?: Phase;
+  installing: boolean;
+  onAction: (a: Action) => void;
+  onInstall?: (id: CliId) => void;
+}) {
+  const v = row ? viewOf(row, result, phase) : null;
+  const b = v?.button ?? null;
+  const version = row?.version?.replace(/\s*\([^)]*\)\s*$/, "");
+  const canInstall = !found && !!INSTALL_LINE[id] && !!onInstall;
+  const label = b?.action === "signin" ? SIGN_IN[id] : b?.label;
   return (
-    <p className="flex flex-wrap gap-x-3 text-xs text-muted-foreground">
-      {t.signedIn && <span>Signed in ✓</span>}
-      {t.answers === true && <span>Answers ✓</span>}
-      {t.answers === false && <span>Answers ✗</span>}
-    </p>
-  );
-}
-
-/** The Creator Toolset action under a connected Claude Code or Codex row: off until clicked (SPEC 6.5). */
-function McpBlock({ row, talk, state, onAdd }: { row: LocalAiRow; talk: Talk; state?: McpState; onAdd: () => void }) {
-  // Codex has no Connect (it can't be the app's AI), so its action shows once it is signed in
-  const ready = row.connected || (row.id === "codex" && row.signedIn === true);
-  if (talk === "app" || !ready || !isCli(row.id) || row.mcp === "n/a") return null;
-  if (row.mcp === "added" || state?.done)
-    return (
-      <div className="rounded-lg bg-muted/40 p-3 text-xs">
-        <p className="font-medium">Added to {row.name} ✓</p>
-        <p className="text-muted-foreground">You can see it in Settings → Your AI.</p>
-      </div>
-    );
-  if (row.mcp === "update")
-    return (
-      <div className="space-y-2 rounded-lg bg-muted/40 p-3 text-xs">
-        <p>Codex needs an update before it can use Creator Toolset.</p>
-        {row.updateCommand && (
-          <details>
-            <summary className="cursor-pointer text-muted-foreground">How to update</summary>
-            <div className="mt-2 flex items-center gap-2">
-              <code className="min-w-0 flex-1 truncate font-mono">{row.updateCommand}</code>
-              <CopyButton text={() => row.updateCommand ?? ""} title="Copy the command" label="Copy" className="flex items-center gap-1 rounded border px-2 py-1" />
-            </div>
+    <li className="flex items-start gap-3 rounded-xl border border-border/60 bg-card/40 px-4 py-3">
+      <ProviderLogo driver={id} className="mt-0.5 size-5" />
+      <div className="min-w-0 flex-1 space-y-1">
+        <p className="text-sm font-medium">
+          {NAME[id]}
+          {version && <span className="ml-2 text-xs font-normal text-muted-foreground">{version}</span>}
+        </p>
+        <p className="text-xs text-muted-foreground">{DESCRIBE[id]}</p>
+        {!found && (
+          <p className="text-xs">
+            Not found · {NAME[id]} (<code className="font-mono">{COMMAND[id]}</code>) was not found on PATH.
+          </p>
+        )}
+        {found && v?.line && <p className="text-xs">{v.line}</p>}
+        {v?.raw && (
+          <details className="text-xs">
+            <summary className="cursor-pointer text-muted-foreground">Details</summary>
+            <pre className="mt-1 whitespace-pre-wrap font-mono text-[11px]">{v.raw}</pre>
           </details>
         )}
       </div>
-    );
-  return (
-    <div className="space-y-2 rounded-lg bg-muted/40 p-3 text-xs">
-      <p className="text-muted-foreground">So you can ask {row.name} to make captions, plan reels or check a cut here, from your own chat.</p>
-      {state?.message && (
-        <p className="text-rose-500">
-          Creator Toolset couldn't be added to {row.name}: {plain(state.message)}. Your AI is still connected.
-        </p>
-      )}
-      <Button size="sm" variant="outline" disabled={state?.busy} onClick={onAdd}>
-        {state?.busy ? "Adding…" : state?.message ? "Try again" : `Let ${row.name} use Creator Toolset`}
-      </Button>
-    </div>
-  );
-}
-
-function AiRow({
-  row, talk, result, phase, mcp, onAction, onAdd,
-}: {
-  row: LocalAiRow;
-  talk: Talk;
-  result?: ConnectResult;
-  phase?: Phase;
-  mcp?: McpState;
-  onAction: (a: Action) => void;
-  onAdd: () => void;
-}) {
-  const v = viewOf(row, talk, result, phase);
-  const plan = PLANS.find((p) => p.id === row.plan)?.label ?? row.plan;
-  // the tool's own name is already the row's title: "2.1.310 (Claude Code)" shows as "2.1.310"
-  const version = row.version?.replace(/\s*\([^)]*\)\s*$/, "");
-  const b = v.button;
-  return (
-    <li className="space-y-1.5 rounded-xl border border-border/60 bg-card/40 p-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-sm font-medium">
-            {row.name}
-            {version && <span className="ml-2 text-xs font-normal text-muted-foreground">{version}</span>}
-          </p>
-          {BLURB[row.id] && <p className="text-xs text-muted-foreground">{BLURB[row.id]}</p>}
-        </div>
+      <div className="flex shrink-0 items-center gap-2 pt-0.5">
+        {v?.connected && <Check aria-label={`${NAME[id]} is connected`} className="size-4 text-emerald-600 dark:text-emerald-400" />}
         {b && (
           <Button
             size="sm"
-            variant={b.action === "connect" || b.action === "signin" || b.action === "check" ? "default" : "outline"}
+            variant={b.action === "signin" || b.action === "check" ? "default" : "outline"}
             disabled={b.disabled}
-            className="shrink-0"
             onClick={() => {
               if (b.action !== "none") onAction(b.action);
             }}
           >
-            {b.label}
+            {label}
+          </Button>
+        )}
+        {canInstall && (
+          <Button size="sm" variant="outline" disabled={installing} onClick={() => onInstall?.(id)}>
+            <span aria-hidden className="font-mono">›_</span> Install
           </Button>
         )}
       </div>
-      {v.line && <p className="text-sm">{v.line}</p>}
-      {v.answered && <p className="text-xs text-muted-foreground">{v.answered}</p>}
-      {row.plan && (
-        <>
-          <p className="text-xs text-muted-foreground">Plan: {plan}, read from {row.name}.</p>
-          <p className="text-[11px] text-muted-foreground">Wrong? Change it in Settings → Setup → Your plan.</p>
-        </>
-      )}
-      <Ticks t={v.ticks} />
-      {v.raw && (
-        <details className="text-xs">
-          <summary className="cursor-pointer text-muted-foreground">Details</summary>
-          <pre className="mt-1 whitespace-pre-wrap font-mono text-[11px]">{v.raw}</pre>
-        </details>
-      )}
-      {v.connected && <p className="text-xs text-muted-foreground">Manage in Settings → Your AI</p>}
-      <McpBlock row={row} talk={talk} state={mcp} onAdd={onAdd} />
     </li>
-  );
-}
-
-function NotFound({ onRefresh, onInstall, talk }: { onRefresh: () => void; onInstall?: (id: CliId) => void; talk: Talk }) {
-  const claude = INSTALL_LINE.claude!;
-  const codex = INSTALL_LINE.codex!;
-  return (
-    <div className="space-y-3 rounded-xl border border-border/60 bg-card/40 p-4">
-      <p className="text-sm">
-        {talk === "app"
-          ? "Creator Toolset's own AI runs on Claude Code. Claude Code isn't on this Mac yet."
-          : "Creator Toolset needs Claude Code or Codex on this Mac. Neither is installed yet."}
-      </p>
-      <div className="flex flex-wrap gap-2">
-        {onInstall && (
-          <Button size="sm" onClick={() => onInstall("claude")}>
-            Install Claude Code
-          </Button>
-        )}
-        {onInstall && talk !== "app" && (
-          <Button size="sm" variant="outline" onClick={() => onInstall("codex")}>
-            Install Codex
-          </Button>
-        )}
-      </div>
-      <details>
-        <summary className="cursor-pointer text-sm font-medium">Install it yourself</summary>
-        <ol className="mt-2 list-decimal space-y-2 pl-5 text-sm">
-          <li>Open Terminal (press Command and Space, type Terminal, press Return).</li>
-          <li className="space-y-1">
-            <span>Paste this line and press Return:</span>
-            <span className="flex items-center gap-2">
-              <code className="min-w-0 truncate font-mono text-xs">{claude}</code>
-              <CopyButton text={() => claude} title="Copy the line" label="Copy" className="flex shrink-0 items-center gap-1 rounded border px-2 py-0.5 text-xs" />
-            </span>
-          </li>
-          <li>Come back here and press Check again.</li>
-        </ol>
-        <p className="mt-2 text-xs text-muted-foreground">
-          {talk !== "app" && (
-            <>
-              Or Codex from OpenAI: install Node.js, then paste <code className="font-mono">{codex}</code>.
-            </>
-          )}
-        </p>
-      </details>
-      <Button size="sm" variant="outline" onClick={onRefresh}>
-        Check again
-      </Button>
-    </div>
-  );
-}
-
-function AnthropicKey() {
-  return (
-    <details className="group rounded-xl border border-border/60 bg-card/40">
-      <summary className="cursor-pointer list-none px-4 py-3 text-sm text-muted-foreground hover:text-foreground">Use an Anthropic API key instead</summary>
-      <div className="space-y-3 px-4 pb-4">
-        <p className="text-xs text-muted-foreground">Create a key on Anthropic's website. You pay Anthropic for what you use.</p>
-        <MyKeysSection only={["ANTHROPIC_API_KEY"]} />
-      </div>
-    </details>
   );
 }
 
 export interface AiPanelViewProps {
   view: LocalAiView | null;
-  talk: Talk;
   results: Results;
   phases: Phases;
-  mcp: McpStates;
+  installing?: boolean;
+  installMsg?: string | null;
   onAction: (id: CliId, action: Action) => void;
-  onAdd: (id: CliId) => void;
   onInstall?: (id: CliId) => void;
   onRefresh: () => void;
 }
 
-/** Step 4's body, from the probe's view: the rows the Mac has, nothing connected until a press (pure, for tests). */
-export function AiPanelView({ view, talk, results, phases, mcp, onAction, onAdd, onInstall, onRefresh }: AiPanelViewProps) {
-  if (!view) return <p className="text-sm text-muted-foreground">Looking for your AI on this Mac…</p>;
-  const found = view.rows.filter((r) => r.found);
-  const clis = found.filter((r) => r.kind === "cli");
-  const desktops = found.filter((r) => r.kind === "desktop");
+/** The agents on this computer: one row each, found or not, and the desktop apps it can see. Pure, for tests. */
+export function AiPanelView({ view, results, phases, installing = false, installMsg, onAction, onInstall, onRefresh }: AiPanelViewProps) {
+  if (!view) return <p className="text-sm text-muted-foreground">Looking for your AI on this computer…</p>;
   if (!view.local)
-    return (
-      <div className="space-y-4">
-        <p className="text-sm">Open the Creator Toolset Mac app to connect your AI. Browsers can't reach your Claude or Codex.</p>
-        <AnthropicKey />
-      </div>
-    );
-  // the app's own AI needs Claude Code (or Gemini CLI); on the own-AI paths any CLI found is enough to show the list
-  const needsInstall = talk === "app" ? !clis.some((r) => runsAppAi(r.id)) : clis.length === 0;
+    return <p className="text-sm text-muted-foreground">Ask the owner of this server to connect the AI it runs on.</p>;
+  const desktops = view.rows.filter((r) => r.kind === "desktop");
   return (
-    <div className="space-y-2">
-      {clis.length > 0 && (
-        <section className="space-y-1.5">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Found on this Mac</h3>
-          <ul className="space-y-1.5">
-            {clis.map((r) => (
-              <AiRow
-                key={r.id}
-                row={r}
-                talk={talk}
-                result={results[r.id]}
-                phase={phases[r.id]}
-                mcp={mcp[r.id]}
-                onAction={(a) => onAction(r.id as CliId, a)}
-                onAdd={() => onAdd(r.id as CliId)}
-              />
-            ))}
-          </ul>
-          {clis.some((r) => viewOf(r, talk, results[r.id], phases[r.id]).hint) && <p className="text-xs text-muted-foreground">{TERMINAL_HINT}</p>}
-        </section>
-      )}
-      {needsInstall && <NotFound talk={talk} onInstall={onInstall} onRefresh={onRefresh} />}
-      <details className="group rounded-xl border border-border/60 bg-card/40">
-        <summary className="cursor-pointer list-none px-4 py-3 text-sm text-muted-foreground hover:text-foreground">Other options</summary>
-        <div className="space-y-3 px-4 pb-4">
-          <AnthropicKey />
-          {desktops.length > 0 && (
-            <div className="space-y-1">
-              <p className="text-xs font-medium">Also on this Mac</p>
-              <ul className="space-y-1">
-              {desktops.map((r) => (
-                <li key={r.id} className="text-xs text-muted-foreground">
-                  <span className="font-medium text-foreground">{r.name}.</span> {BLURB[r.id]}
-                </li>
-              ))}
-              </ul>
+    <div className="space-y-3">
+      <ul className="space-y-2">
+        {AGENTS.map((id) => {
+          const row = view.rows.find((r) => r.id === id);
+          return (
+            <AgentRow
+              key={id}
+              id={id}
+              found={!!row?.found}
+              row={row}
+              result={results[id]}
+              phase={phases[id]}
+              installing={installing}
+              onAction={(a) => onAction(id, a)}
+              onInstall={onInstall}
+            />
+          );
+        })}
+        {desktops.map((r) => (
+          <li key={r.id} className="flex items-start gap-3 rounded-xl border border-border/60 bg-card/40 px-4 py-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">{r.name}</p>
+              <p className="text-xs text-muted-foreground">{DESKTOP_LINE[r.id]}</p>
             </div>
-          )}
-        </div>
-      </details>
+          </li>
+        ))}
+      </ul>
+      {installMsg && <p role="status" className="text-xs text-muted-foreground">{installMsg}</p>}
+      <div className="flex justify-end">
+        <Button size="sm" variant="ghost" onClick={onRefresh}>
+          Check again
+        </Button>
+      </div>
     </div>
   );
 }
@@ -381,19 +224,21 @@ const postJson = <T,>(url: string, body: unknown) =>
   request<T>(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
 /**
- * Step 4 with the server behind it: reads the Mac's AI, and runs Connect, Sign in and the Creator Toolset action only
- * when the person presses them. After Sign in it checks by itself every few seconds for up to three minutes.
+ * The agents on this computer, with the server behind them: reads what the computer has, and runs Connect, Sign in and
+ * Install only when the person presses them. "Check again" re-reads the computer (no cached answer). After Sign in it
+ * checks by itself every few seconds for up to three minutes.
  */
-export function AiPanel({ talk, onConnectedChange }: { talk: Talk; onConnectedChange?: (on: boolean) => void }) {
+export function AiPanel({ onConnectedChange }: { onConnectedChange?: (on: boolean) => void }) {
   const [view, setView] = useState<LocalAiView | null>(null);
   const [results, setResults] = useState<Results>({});
   const [phases, setPhases] = useState<Phases>({});
-  const [mcp, setMcp] = useState<McpStates>({});
+  const [installing, setInstalling] = useState(false);
   const [installMsg, setInstallMsg] = useState<string | null>(null);
   const timers = useRef<number[]>([]);
 
-  const refresh = useCallback(async () => {
-    const v = await getJson<LocalAiView>("/api/setup/ai");
+  // fresh: Check again. The server re-reads PATH and the sign-in; a plain read may answer from its last look.
+  const refresh = useCallback(async (fresh = false) => {
+    const v = await getJson<LocalAiView>(fresh ? "/api/setup/ai?fresh=1" : "/api/setup/ai");
     if (v) setView(v);
     return v;
   }, []);
@@ -405,7 +250,7 @@ export function AiPanel({ talk, onConnectedChange }: { talk: Talk; onConnectedCh
       const r = await postJson<ConnectResult>("/api/setup/ai/connect", { id });
       setResults((s) => ({ ...s, [id]: r ?? { state: "failed", signedIn: null, answered: null, message: "it took too long or couldn't be reached, so try again" } }));
       setPhase(id, undefined);
-      await refresh();
+      await refresh(true);
     },
     [refresh],
   );
@@ -414,7 +259,7 @@ export function AiPanel({ talk, onConnectedChange }: { talk: Talk; onConnectedCh
     setPhase(id, "signingIn");
     const started = Date.now();
     const t = window.setInterval(async () => {
-      const v = await refresh();
+      const v = await refresh(true);
       if (v?.rows.find((r) => r.id === id)?.signedIn) {
         window.clearInterval(t);
         void connect(id);
@@ -436,17 +281,11 @@ export function AiPanel({ talk, onConnectedChange }: { talk: Talk; onConnectedCh
   };
 
   const install = async (id: CliId) => {
+    setInstalling(true);
     const r = await postJson<SignInResult>("/api/setup/ai/install", { id });
-    if (!r?.ok) setInstallMsg(r?.message ?? "Couldn't reach this computer. Try again.");
+    setInstalling(false);
+    if (!r?.ok) setInstallMsg(`${r?.message ?? "Couldn't reach this computer. Try again."} The install line: ${INSTALL_LINE[id]}`);
     else setInstallMsg("A Terminal window opened. Let the install finish there, then press Check again.");
-  };
-
-  const addMcp = async (id: CliId) => {
-    setMcp((s) => ({ ...s, [id]: { busy: true } }));
-    const r = await postJson<McpResult>("/api/setup/ai/mcp", { id });
-    const message = r?.failed.find((f) => f.id === id)?.message ?? r?.message ?? "it couldn't be reached.";
-    setMcp((s) => ({ ...s, [id]: r?.ok ? { done: true } : { message } }));
-    await refresh();
   };
 
   useEffect(() => {
@@ -460,19 +299,15 @@ export function AiPanel({ talk, onConnectedChange }: { talk: Talk; onConnectedCh
   }, [view, results, onConnectedChange]);
 
   return (
-    <>
-      {installMsg && <p role="status" className="mb-2 text-xs text-muted-foreground">{installMsg}</p>}
-      <AiPanelView
-        view={view}
-        talk={talk}
-        results={results}
-        phases={phases}
-        mcp={mcp}
-        onAction={(id, action) => (action === "signin" ? void signIn(id) : void connect(id))}
-        onAdd={(id) => void addMcp(id)}
-        onInstall={(id) => void install(id)}
-        onRefresh={() => void refresh()}
-      />
-    </>
+    <AiPanelView
+      view={view}
+      results={results}
+      phases={phases}
+      installing={installing}
+      installMsg={installMsg}
+      onAction={(id, action) => (action === "signin" ? void signIn(id) : void connect(id))}
+      onInstall={(id) => void install(id)}
+      onRefresh={() => void refresh(true)}
+    />
   );
 }
