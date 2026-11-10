@@ -8,7 +8,7 @@ process.env.APP_SECRET = "automations-test-secret";
 
 const { createUser, newApiKey } = await import("./users");
 const app = (await import("./boot")).default;
-const { tick } = await import("./automations");
+const { tick, blockOf } = await import("./automations");
 
 const alice = createUser("alice", "password1");
 const bob = createUser("bobby", "password1");
@@ -158,5 +158,12 @@ describe("automations: runs and the scheduler", () => {
     expect(after?.lastResult.status).toBe("skipped");
     await tick(late); // the same instant again: not due any more
     expect((await find("bob", a.id))?.lastResult.at).toBe(after?.lastResult.at);
+  });
+});
+
+describe("why no task can run", () => {
+  it("an admin or a personal install is told to add Claude Code in Providers; a team member is told the team's AI can't run tasks", () => {
+    expect(blockOf(null, true)).toContain("Add it on a computer in Providers");
+    expect(blockOf(null, false)).toContain("Your team's AI can't run them");
   });
 });

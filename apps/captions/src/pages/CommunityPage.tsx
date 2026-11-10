@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { Link, Navigate, useLocation, useNavigate } from "react-router";
-import { BarChart3, Compass, Layers, Package, PenLine, Scissors, Type, type LucideIcon } from "lucide-react";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
+import { BarChart3, Compass, Layers, Package, PenLine, Scissors, Search, Type, X, type LucideIcon } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogClose, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { Card, ErrorRow, LoadingRow } from "@/components/settings/ui";
 import { PACK_KINDS, packKinds, type KindId } from "@/components/community/packs-helpers";
@@ -78,8 +79,17 @@ export default function CommunityPage({ onClose }: { onClose: () => void }) {
     );
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="flex h-dvh w-full max-w-none flex-col gap-0 overflow-hidden rounded-none border-0 p-0 shadow-none sm:h-[min(60rem,calc(100dvh-3rem))] sm:w-[min(80rem,calc(100vw-3rem))] sm:max-w-none sm:rounded-2xl sm:border sm:shadow-2xl lg:h-[min(60rem,calc(100dvh-5rem))] lg:w-[min(80rem,calc(100vw-5rem))]">
-        <header className="flex h-12 shrink-0 items-center gap-3 border-b ps-5 pe-12">
+      <DialogContent
+        showCloseButton={false}
+        aria-describedby={undefined}
+        // focus the dialog itself, as Settings does: opening it drew a focus ring on the search field
+        onOpenAutoFocus={(e) => {
+          e.preventDefault();
+          (e.currentTarget as HTMLElement).focus();
+        }}
+        className="flex h-dvh w-full max-w-none flex-col gap-0 overflow-hidden rounded-none border-0 p-0 shadow-none sm:h-[min(60rem,calc(100dvh-3rem))] sm:w-[min(80rem,calc(100vw-3rem))] sm:max-w-none sm:rounded-2xl sm:border sm:shadow-2xl lg:h-[min(60rem,calc(100dvh-5rem))] lg:w-[min(80rem,calc(100vw-5rem))]"
+      >
+        <header className="flex h-12 shrink-0 items-center gap-3 border-b ps-5 pe-3">
           <DialogTitle className="min-w-0 flex-1 truncate text-sm font-normal">
             <span className="text-muted-foreground">Community</span>{" "}
             <span aria-hidden className="text-muted-foreground/60">
@@ -87,31 +97,44 @@ export default function CommunityPage({ onClose }: { onClose: () => void }) {
             </span>{" "}
             <span className="font-medium text-foreground">{title}</span>
           </DialogTitle>
-          <Input
-            type="search"
-            value={q}
-            onChange={(e) => {
-              setQ(e.target.value);
-              if (!isCatalog) navigate("/community/explore", { replace: true });
-            }}
-            placeholder="Search Community"
-            aria-label="Search Community"
-            className="h-8 w-40 shrink-0 text-sm sm:w-64"
-          />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <DialogClose asChild>
+                <Button variant="ghost" size="icon-xs" aria-label="Close">
+                  <X />
+                </Button>
+              </DialogClose>
+            </TooltipTrigger>
+            <TooltipContent>Close (Esc)</TooltipContent>
+          </Tooltip>
         </header>
         <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-          <nav
-            aria-label="Community sections"
-            className="flex shrink-0 gap-1 overflow-x-auto border-b border-border bg-sidebar p-2 text-sidebar-foreground md:w-60 md:flex-col md:overflow-visible md:border-b-0 md:border-e"
-          >
-            <span className="hidden px-2.5 pb-1 text-xs font-medium text-sidebar-foreground/60 md:block">Discover</span>
-            {nav("explore", "Explore", Compass, data.catalog?.length)}
-            {KINDS.map((id) =>
-              nav(id, PACK_KINDS[id], KIND_ICONS[id], data.catalog?.filter((e) => packKinds(e.contains).some((k) => k.id === id)).length),
-            )}
-            <span className="hidden px-2.5 pb-1 pt-4 text-xs font-medium text-sidebar-foreground/60 md:block">You</span>
-            {nav("installed", "Installed", Package, data.installed ? installed.length + plugins.length : undefined, waiting > 0)}
-          </nav>
+          {/* the Settings sidebar's shape: search at the top, then the sections */}
+          <div className="shrink-0 border-b border-border bg-sidebar p-2 text-sidebar-foreground md:w-60 md:border-b-0 md:border-e">
+            <label className="relative mb-2 block">
+              <Search aria-hidden className="pointer-events-none absolute start-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <input
+                type="search"
+                value={q}
+                onChange={(e) => {
+                  setQ(e.target.value);
+                  if (!isCatalog) navigate("/community/explore", { replace: true });
+                }}
+                placeholder="Search Community"
+                aria-label="Search Community"
+                className="h-8 w-full rounded-md border border-border/60 bg-background/50 ps-8 pe-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              />
+            </label>
+            <nav aria-label="Community sections" className="flex gap-1 overflow-x-auto md:flex-col md:overflow-visible">
+              <span className="hidden px-2.5 pb-1 text-xs font-medium text-sidebar-foreground/60 md:block">Discover</span>
+              {nav("explore", "Explore", Compass, data.catalog?.length)}
+              {KINDS.map((id) =>
+                nav(id, PACK_KINDS[id], KIND_ICONS[id], data.catalog?.filter((e) => packKinds(e.contains).some((k) => k.id === id)).length),
+              )}
+              <span className="hidden px-2.5 pb-1 pt-4 text-xs font-medium text-sidebar-foreground/60 md:block">You</span>
+              {nav("installed", "Installed", Package, data.installed ? installed.length + plugins.length : undefined, waiting > 0)}
+            </nav>
+          </div>
           <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
             <div className="mx-auto w-full max-w-4xl space-y-8 px-5 pt-6 pb-24 sm:px-6 sm:pb-12">{body}</div>
           </main>

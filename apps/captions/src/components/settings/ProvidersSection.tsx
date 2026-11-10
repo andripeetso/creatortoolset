@@ -1,5 +1,5 @@
 import { groupComputers } from "./computers-group";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
 import { Plus, RotateCcw } from "lucide-react";
 import {
@@ -16,8 +16,9 @@ import {
   type Scope,
   type Selection,
 } from "@contracts/providers";
+import type { CliId, LocalAiView } from "@contracts/local-ai";
 import { useAuth } from "@/lib/auth";
-import { autoTestDue, checkProvider, deviceOf, effortLabel, getProviders, modelName, modelsOf, saveOwn, saveWorkspace, thisMacDevice } from "@/lib/providers";
+import { autoTestDue, checkProvider, deviceOf, effectiveSelection, effortLabel, getProviders, modelChoices, modelName, modelsOf, saveOwn, saveWorkspace, thisMacDevice } from "@/lib/providers";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
@@ -25,7 +26,8 @@ import { msg } from "./helpers";
 import { AddProviderDialog } from "./AddProviderDialog";
 import { ProviderDetail } from "./ProviderDetail";
 import { DriverMark, ProviderInstanceCard, providerStatus, withInstance, type ProviderStatus } from "./ProviderInstanceCard";
-import { Advanced, Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Row, Section, SettingsSelect, saveFailed, StatusDot } from "./ui";
+import { getLocalAi, isLocalCli, LocalAiRows, localInstall, localSignIn } from "./AiSetup";
+import { Advanced, Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Row, Section, SettingsSelect, saveFailed, Status, StatusDot } from "./ui";
 import type { SearchRowId } from "./search";
 
 /** The tools the Mac app can open a sign-in for in Terminal (the Mac's signInCommands). */
@@ -37,19 +39,22 @@ const USE_DEFAULT = "use-default";
  * Settings → Providers. The computers that run AI are tabs on top; the AIs on the chosen computer are the list, with the
  * tools it has installed and not yet added below them (each with Add). The AI's settings open beside the list from `lg`,
  * and as their own page (`sub` = the AI's id) below it. "Who does what" sets the Default and the tool-by-tool picks.
- * Members see the team's AI read-only, with Add my own. One refresh loop for the page, while a computer has no tool yet
- * or a sign-in is open.
+ * A member sees the AI they use: their own, or the team's API budget. On an own-computer install with no Mac app paired,
+ * the list is the AI apps found on this computer (the same source as Your own AI).
  */
 export function ProvidersSection({ sub }: { sub?: string }) {
   const navigate = useNavigate();
   const me = useAuth((s) => s.me);
+  const hosted = useAuth((s) => s.hosted);
   const isAdmin = me?.role === "admin";
   const [view, setView] = useState<ProvidersView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [localAi, setLocalAi] = useState<LocalAiView | null>(null);
   const [tab, setTab] = useState<string | null>(null);
   const [adding, setAdding] = useState<{ driver?: Driver } | null>(null);
   const [checking, setChecking] = useState<string | null>(null);
   const [signingIn, setSigningIn] = useState<string | null>(null);
+  const [installing, setInstalling] = useState<string | null>(null);
   const savingRef = useRef(false);
   // the report each AI was last tested for (the page tests an AI once per report)
   const tried = useRef(new Map<string, number>());
@@ -63,17 +68,24 @@ export function ProvidersSection({ sub }: { sub?: string }) {
         .catch((e) => setLoadError(msg(e))),
     [],
   );
+  // the computer's own AI apps; on a hosted server the answer is { local: false } and nothing is shown for it
+  const refreshLocal = useCallback(() => getLocalAi().then(setLocalAi).catch(() => setLocalAi((v) => v ?? { local: false, rows: [] })), []);
+  const refreshAll = useCallback(() => {
+    void load();
+    void refreshLocal();
+  }, [load, refreshLocal]);
   useEffect(() => {
     void load();
-  }, [load]);
+    void refreshLocal();
+  }, [load, refreshLocal]);
 
   const waiting = !!view && !view.devices.some((d) => d.online && d.report?.drivers.some((x) => x.installed));
   const every = signingIn ? 3000 : waiting ? 5000 : 0;
   useEffect(() => {
     if (!every) return;
-    const t = window.setInterval(() => void load(), every);
+    const t = window.setInterval(() => refreshAll(), every);
     return () => window.clearInterval(t);
-  }, [every, load]);
+  }, [every, refreshAll]);
   useEffect(() => {
     if (!signingIn || !view) return;
     const found = view.devices.find((d) => d.id === thisMacDevice())?.report?.drivers.find((d) => d.driver === signingIn);
@@ -86,7 +98,7 @@ export function ProvidersSection({ sub }: { sub?: string }) {
   }, [signingIn]);
 
   // One test at a time, by itself: an AI with nothing on record (or failed since the computer last reported) on an online
-  // computer that has the tool. Each AI is tried once per report, so a failure stays until the next report or Test now.
+  // computer that has the tool. Each AI is tried once per report; a failure waits five minutes before it is tried again.
   const testOne = useCallback(async (scopeKey: string, id: string) => {
     const key = `${scopeKey}:${id}`;
     setChecking(key);
@@ -154,11 +166,13 @@ export function ProvidersSection({ sub }: { sub?: string }) {
   const groups = groupComputers(devices, me.username);
   const tabGroup = groups.find((g) => g.records.some((r) => r.id === tab)) ?? groups[0] ?? null;
   const tabDevice = tabGroup?.primary ?? null;
-  const listed = readOnly ? (shown?.instances ?? []) : (editing?.instances ?? []).filter((i) => !!tabGroup && tabGroup.records.some((r) => r.id === deviceOf(i)));
+  const listed = readOnly ? [] : (editing?.instances ?? []).filter((i) => !!tabGroup && tabGroup.records.some((r) => r.id === deviceOf(i)));
   const onDevice = (i: ProviderInstance) => devices.some((d) => d.id === deviceOf(i));
   const orphans = readOnly || !editing ? [] : editing.instances.filter((i) => !onDevice(i));
   const detailInst = readOnly || !editing ? undefined : sub ? editing.instances.find((i) => i.id === sub) : listed[0];
   const installedHere = !readOnly && tabDevice?.report ? tabDevice.report.drivers.filter((d) => d.installed && runsOn(d.driver) && !listed.some((i) => i.driver === d.driver)) : [];
+  // this computer is the owner's own (an own-computer install): its sign-in and install run here, through the local routes
+  const localHere = !!localAi?.local;
 
   const reportOf = (i: ProviderInstance) => devices.find((d) => d.id === deviceOf(i))?.report ?? null;
   const statusOf = (i: ProviderInstance): ProviderStatus => {
@@ -225,6 +239,23 @@ export function ProvidersSection({ sub }: { sub?: string }) {
     setSigningIn(inst.driver);
   };
   const canSignIn = (inst: ProviderInstance) => !!thisMacDevice() && deviceOf(inst) === thisMacDevice() && SIGN_IN_DRIVERS.includes(inst.driver);
+  // on an own-computer install the app signs in and installs the tool itself (the local routes)
+  const signInHere = (inst: ProviderInstance) => {
+    setSigningIn(inst.driver);
+    void localSignIn(inst.driver as CliId).then((r) => !r.ok && saveFailed(r.message ?? "Couldn't start the sign-in."), (e) => saveFailed(msg(e)));
+  };
+  const installHere = async (inst: ProviderInstance) => {
+    setInstalling(inst.id);
+    try {
+      const r = await localInstall(inst.driver as CliId);
+      if (!r.ok) saveFailed(r.message ?? "Couldn't install it. Try again.");
+    } catch (e) {
+      saveFailed(msg(e));
+    } finally {
+      setInstalling(null);
+      refreshAll();
+    }
+  };
 
   const addAi = async (inst: ProviderInstance) => {
     if (!tabDevice) throw new Error("Connect a computer first.");
@@ -236,8 +267,70 @@ export function ProvidersSection({ sub }: { sub?: string }) {
     else setAdding({ driver });
   };
 
-  // ---- empty: no computer yet ----
-  if (!readOnly && devices.length === 0) {
+  // What the row's one action is: sign in, install, or test. Only what the app can do here; otherwise the detail says how.
+  const detailOpen = (inst: ProviderInstance) => `/settings/providers/${encodeURIComponent(inst.id)}`;
+  const actionOf = (inst: ProviderInstance, st: ProviderStatus): ReactNode => {
+    if (st.action === "sign-in") {
+      if (localHere && isLocalCli(inst.driver)) return <Button size="xs" variant="outline" onClick={() => signInHere(inst)}>Sign in</Button>;
+      if (canSignIn(inst)) return <Button size="xs" variant="outline" onClick={() => signIn(inst)}>Sign in</Button>;
+      return <Button size="xs" variant="outline" asChild><Link to={detailOpen(inst)}>How to sign in</Link></Button>;
+    }
+    if (st.action === "install") {
+      if (localHere && isLocalCli(inst.driver))
+        return (
+          <Button size="xs" variant="outline" disabled={installing === inst.id} onClick={() => void installHere(inst)}>
+            {installing === inst.id ? "Installing…" : "Install"}
+          </Button>
+        );
+      return <Button size="xs" variant="outline" asChild><Link to={detailOpen(inst)}>How to install</Link></Button>;
+    }
+    if (st.action === "test") return <Button size="xs" variant="outline" disabled={checking !== null} onClick={() => void runCheck(inst)}>Test</Button>;
+    return undefined;
+  };
+
+  // ---- a member: the AI they use, read-only (their own set is the only one they edit) ----
+  if (readOnly) {
+    const team = view.teamAi;
+    return (
+      <Section id="add-provider" title="Providers">
+        <Card>
+          {team ? (
+            <TeamAiRow team={team} description="Content Workshop needs your own AI." onAdd={() => openAdd()} />
+          ) : (
+            <>
+              <EmptyRow title="No AI answers your jobs yet" description="Add your own AI on a computer you connect." />
+              <div className="px-3 pb-3 sm:px-4">
+                <Button size="sm" variant="outline" onClick={() => openAdd()}>
+                  <Plus /> Add my own
+                </Button>
+              </div>
+            </>
+          )}
+        </Card>
+      </Section>
+    );
+  }
+
+  // ---- empty: no computer paired yet ----
+  if (devices.length === 0) {
+    if (localHere && localAi) {
+      return (
+        <Section id="add-provider" title="Providers">
+          <Card>
+            <LocalAiRows rows={localAi.rows.filter((r) => r.kind === "cli")} device={thisMacDevice() ?? ""} onChanged={refreshAll} />
+          </Card>
+        </Section>
+      );
+    }
+    if (!localAi) {
+      return (
+        <Section id="add-provider" title="Providers">
+          <Card>
+            <LoadingRow />
+          </Card>
+        </Section>
+      );
+    }
     return (
       <Section id="add-provider" title="Providers">
         <Card>
@@ -252,12 +345,11 @@ export function ProvidersSection({ sub }: { sub?: string }) {
     );
   }
 
-  const detailOpen = (inst: ProviderInstance) => `/settings/providers/${encodeURIComponent(inst.id)}`;
   const nameOf = (id: string) => DRIVERS.find((d) => d.id === id)?.label ?? id;
 
   return (
     <>
-      {!readOnly && devices.length > 0 && (
+      {devices.length > 0 && (
         <Tabs value={tabDevice?.id ?? ""} onValueChange={(v) => { setTab(v); if (sub) navigate("/settings/providers"); }} className="mb-8">
           <TabsList className="h-auto max-w-full flex-wrap justify-start">
             {groups.map(({ primary: d }) => (
@@ -276,23 +368,14 @@ export function ProvidersSection({ sub }: { sub?: string }) {
             id="add-provider"
             title="Providers"
             action={
-              readOnly ? (
-                <Button size="xs" variant="ghost" onClick={() => openAdd()}>
-                  <Plus /> Add my own
-                </Button>
-              ) : (
-                <Button size="xs" variant="ghost" onClick={() => openAdd()}>
-                  <Plus /> Add provider
-                </Button>
-              )
+              <Button size="xs" variant="ghost" onClick={() => openAdd()}>
+                <Plus /> Add provider
+              </Button>
             }
           >
             <Card>
               {listed.length === 0 && installedHere.length === 0 && (
-                <EmptyRow
-                  title={readOnly ? "No AI answers your jobs yet" : "No AI on this computer yet"}
-                  description={readOnly ? "Add your own AI on a computer you connect." : "Add a tool the computer has, or add one from the list below."}
-                />
+                <EmptyRow title="No AI on this computer yet" description="Add a tool the computer has, or add one from the list below." />
               )}
               {listed.map((inst) => (
                 <ProviderInstanceCard
@@ -300,18 +383,10 @@ export function ProvidersSection({ sub }: { sub?: string }) {
                   inst={inst}
                   status={statusOf(inst)}
                   version={reportOf(inst)?.drivers.find((d) => d.driver === inst.driver)?.version}
-                  selected={!readOnly && detailInst?.id === inst.id}
-                  href={readOnly ? undefined : detailOpen(inst)}
-                  action={!readOnly && statusOf(inst).action === "sign-in" && canSignIn(inst) ? (
-                    <Button size="xs" variant="outline" onClick={() => signIn(inst)}>
-                      Sign in
-                    </Button>
-                  ) : !readOnly && statusOf(inst).action === "install" ? (
-                    <Button size="xs" variant="outline" asChild>
-                      <Link to={detailOpen(inst)}>Install</Link>
-                    </Button>
-                  ) : undefined}
-                  onToggle={readOnly ? undefined : (on) => patch(inst, { enabled: on })}
+                  selected={detailInst?.id === inst.id}
+                  href={detailOpen(inst)}
+                  action={actionOf(inst, statusOf(inst))}
+                  onToggle={(on) => patch(inst, { enabled: on })}
                 />
               ))}
               {installedHere.map((d) => (
@@ -343,7 +418,6 @@ export function ProvidersSection({ sub }: { sub?: string }) {
               </Card>
             </Section>
           )}
-
         </div>
 
         <div className={cn("min-w-0", !sub && "hidden lg:block")}>
@@ -356,12 +430,13 @@ export function ProvidersSection({ sub }: { sub?: string }) {
               canTest={(devices.find((d) => d.id === deviceOf(detailInst))?.online ?? true) && checking === null}
               used={usedBy(detailInst.id)}
               models={modelsOf(view, detailInst)}
+              selection={effectiveSelection(editing, detailInst, modelsOf(view, detailInst))}
               computers={!onDevice(detailInst) ? devices.map((d) => ({ id: d.id, name: d.name })) : undefined}
               computerNote={!onDevice(detailInst) ? (deviceOf(detailInst) ? "Its computer was removed: pick another." : "Pick the computer that runs it.") : undefined}
               backTo="/settings/providers"
               onChange={(p) => patch(detailInst, p)}
               onTest={() => void runCheck(detailInst)}
-              onSignIn={statusOf(detailInst).action === "sign-in" && canSignIn(detailInst) ? () => signIn(detailInst) : undefined}
+              onSignIn={statusOf(detailInst).action === "sign-in" && localHere && isLocalCli(detailInst.driver) ? () => signInHere(detailInst) : statusOf(detailInst).action === "sign-in" && canSignIn(detailInst) ? () => signIn(detailInst) : undefined}
               onMove={onDevice(detailInst) ? undefined : (id) => patch(detailInst, { device: id })}
               onRemove={() => remove(detailInst)}
             />
@@ -377,6 +452,16 @@ export function ProvidersSection({ sub }: { sub?: string }) {
           ) : null}
         </div>
       </div>
+
+      {view.teamAi && (
+        <div className={cn("mt-8", sub && "hidden lg:block")}>
+          <Section title="Team's AI">
+            <Card>
+              <TeamAiRow team={view.teamAi} description="Used when none of your AIs can run. Content Workshop needs your own AI." onAdd={() => openAdd()} />
+            </Card>
+          </Section>
+        </div>
+      )}
 
       {shown && (
         <div className={cn("mt-8 space-y-8", sub && "hidden lg:block")}>
@@ -415,9 +500,9 @@ export function ProvidersSection({ sub }: { sub?: string }) {
             </Card>
           </Section>
 
-          {isAdmin && editing && (
+          {isAdmin && hosted && editing && (
             <Card>
-              <Row title="Who else can use it" control={<Button asChild size="xs" variant="ghost"><Link to="/settings/admin/access">Admin → Access</Link></Button>} />
+              <Row title="Who else can use it" control={<Button asChild size="xs" variant="ghost"><Link to="/settings/admin/access">Open Access</Link></Button>} />
             </Card>
           )}
         </div>
@@ -427,13 +512,42 @@ export function ProvidersSection({ sub }: { sub?: string }) {
         <AddProviderDialog
           deviceName={tabDevice.name}
           report={tabDevice.report ?? null}
-          instances={editing?.instances ?? []}
+          instances={(editing?.instances ?? []).filter((i) => i.device === tabDevice.id)}
           initialDriver={adding.driver}
           onClose={() => setAdding(null)}
           onAdd={addAi}
         />
       )}
     </>
+  );
+}
+
+/** Money as the page shows it: "$25", "$14.20". */
+const money = (n: number) => (Number.isInteger(n) ? `$${n}` : `$${n.toFixed(2)}`);
+
+/**
+ * The team's AI for a member on the team's API budget: what they may spend this month and what they spent. Only their
+ * own numbers. Its one action is Add my own (a computer of their own), as the secondary action.
+ */
+function TeamAiRow({ team, description, onAdd }: { team: NonNullable<ProvidersView["teamAi"]>; description: string; onAdd: () => void }) {
+  const status = !team.ready ? (
+    <Status tone="attention">The team's AI isn't set up on this server. Ask the owner.</Status>
+  ) : team.left <= 0 ? (
+    <Status tone="attention">Used up for this month. Ask the owner for more.</Status>
+  ) : (
+    <span className="text-muted-foreground">{money(team.spentUsd)} spent this month</span>
+  );
+  return (
+    <Row
+      title={`You use the team's AI, up to ${money(team.budgetUsd)} a month`}
+      description={description}
+      status={status}
+      control={
+        <Button size="sm" variant="outline" onClick={onAdd}>
+          Add my own
+        </Button>
+      }
+    />
   );
 }
 
@@ -477,6 +591,8 @@ function PickRow({
 
   const explicit = isDefault || !!sel;
   const defaultName = set.instances.find((i) => i.id === set.default.instance)?.name ?? "the Default";
+  // the stored model is always offered, even when the tool's list doesn't have it (never swapped for the first one)
+  const options = modelChoices(models, cur.model);
   return (
     <Row
       id={id}
@@ -502,25 +618,41 @@ function PickRow({
       }
     >
       {explicit && inst && (
-        <div className="flex flex-wrap gap-2">
-          {models.length > 0 ? (
-            <SettingsSelect
-              label={`${title}: model`}
-              value={models.includes(cur.model) ? cur.model : models[0]!}
-              onValueChange={(m) => onChange({ ...cur, model: m })}
-              options={models.map((m) => ({ value: m, label: modelName(m) }))}
-            />
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+          {cur.model && options.length ? (
+            <Field label="Model">
+              <SettingsSelect
+                label={`${title}: model`}
+                value={cur.model}
+                onValueChange={(m) => onChange({ ...cur, model: m })}
+                options={options.map((m) => ({ value: m, label: modelName(m) }))}
+                className="sm:w-56"
+              />
+            </Field>
           ) : (
             <span className="self-center text-xs text-muted-foreground">Uses the tool's own default</span>
           )}
-          <SettingsSelect
-            label={`${title}: thinking level`}
-            value={cur.effort}
-            onValueChange={(e) => onChange({ ...cur, effort: e as Selection["effort"] })}
-            options={EFFORTS.map((e) => ({ value: e, label: effortLabel(e) }))}
-          />
+          <Field label="Thinking">
+            <SettingsSelect
+              label={`${title}: thinking level`}
+              value={cur.effort}
+              onValueChange={(e) => onChange({ ...cur, effort: e as Selection["effort"] })}
+              options={EFFORTS.map((e) => ({ value: e, label: effortLabel(e) }))}
+              className="sm:w-36"
+            />
+          </Field>
         </div>
       )}
     </Row>
+  );
+}
+
+/** A select's visible label, above it: both selects of a row share one height and width. */
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      {children}
+    </div>
   );
 }

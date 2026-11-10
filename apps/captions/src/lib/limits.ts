@@ -63,6 +63,18 @@ export function countedWindow(identity: LimitsIdentity, reported: LimitWindow, n
 }
 
 /**
+ * When a Claude login can run again after a usage limit, in Usage's words ("resets in 2h 9m"): the latest reset among its
+ * windows that are used up, since every one of them has to come back. Null when no reading shows a used-up window, or one
+ * of them has no reset time. ponytail: Claude logins only; Codex limits are not needed by a scheduled task.
+ */
+export function claudeLimitReset(limits: LimitsIdentity[], now: number): string | null {
+  const used = limits.filter((i) => i.driver === "claude").flatMap((i) => i.windows).filter((w) => w.usedPercent >= 100);
+  if (used.length === 0 || used.some((w) => w.resetsAt === undefined)) return null;
+  const latest = used.reduce((a, b) => ((b.resetsAt ?? 0) > (a.resetsAt ?? 0) ? b : a));
+  return resetsIn(latest, now);
+}
+
+/**
  * The sentence for a login with no usable reading, or null. `customEndpoint`: the Mac reports that this Claude folder sends
  * its requests to a custom endpoint (ANTHROPIC_BASE_URL), which has no claude.ai plan to read.
  */

@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { Link } from "react-router";
 import { ArrowLeft } from "lucide-react";
-import { DRIVERS, driverFields, EFFORTS, type ProviderCheck, type ProviderInstance } from "@contracts/providers";
+import { DRIVERS, driverFields, EFFORTS, type Effort, type ProviderCheck, type ProviderInstance } from "@contracts/providers";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { effortLabel, modelName } from "@/lib/providers";
+import { effortLabel, modelChoices, modelName } from "@/lib/providers";
 import { fmtAgo } from "./helpers";
 import { DriverMark, type ProviderStatus } from "./ProviderInstanceCard";
-import { InstallHelp } from "./AiSetup";
+import { InstallHelp, SignInHelp } from "./AiSetup";
 import { Advanced, Card, RowMenu, Row, Section, SettingsSelect, Status, TextField, type RowMenuItem } from "./ui";
 
 /**
@@ -23,6 +23,7 @@ export function ProviderDetail({
   canTest,
   used,
   models,
+  selection,
   computers,
   computerNote,
   backTo,
@@ -42,6 +43,8 @@ export function ProviderDetail({
   used: string[];
   /** the models this AI offers; empty = the tool's own default */
   models: string[];
+  /** the model and thinking level it really runs with (effectiveSelection): the same values the Default row shows */
+  selection: { model: string; effort: Effort };
   /** the computers this AI can move to (only when it runs on none, or on one that was removed) */
   computers?: Array<{ id: string; name: string }>;
   /** the sentence about its computer: "Its computer was removed: pick another." */
@@ -106,10 +109,15 @@ export function ProviderDetail({
                 <Button size="sm" variant="outline" onClick={onSignIn}>
                   Sign in
                 </Button>
-              ) : undefined
+              ) : (
+                <Button size="sm" variant="outline" disabled={!canTest} title={testTitle} onClick={onTest}>
+                  {checking ? "Testing…" : "Test"}
+                </Button>
+              )
             }
           >
             {status.action === "install" && <InstallHelp driver={inst.driver} />}
+            {status.action === "sign-in" && !onSignIn && <SignInHelp driver={inst.driver} computer="its computer" />}
             {check && !check.ok && check.error && <p className="break-words text-xs text-muted-foreground">{check.error}</p>}
           </Row>
         </Card>
@@ -149,12 +157,12 @@ export function ProviderDetail({
             title="Model"
             description="Used for the Default, or a job that picks this AI."
             control={
-              models.length ? (
+              selection.model ? (
                 <SettingsSelect
                   label="Model"
-                  value={models.includes(inst.model ?? "") ? (inst.model as string) : models[0]!}
+                  value={selection.model}
                   onValueChange={(m) => onChange({ model: m })}
-                  options={models.map((m) => ({ value: m, label: modelName(m) }))}
+                  options={modelChoices(models, selection.model).map((m) => ({ value: m, label: modelName(m) }))}
                 />
               ) : (
                 <span className="text-sm text-muted-foreground">Uses the tool's own default</span>
@@ -166,7 +174,7 @@ export function ProviderDetail({
             control={
               <SettingsSelect
                 label="Thinking level"
-                value={inst.effort ?? "xhigh"}
+                value={selection.effort}
                 onValueChange={(e) => onChange({ effort: e as ProviderInstance["effort"] })}
                 options={EFFORTS.map((e) => ({ value: e, label: effortLabel(e) }))}
               />

@@ -161,6 +161,8 @@ const toPublic = (u: SessionUser) => ({
 const withLogins = (u: SessionUser) => ({
   ...toPublic(u),
   logins: findUser(u.username)?.usage.logins ?? null,
+  // an install without sign-in has one fixed session user: its saved display name comes from its account record
+  ...(u.name ? {} : findUser(u.username)?.displayName ? { name: findUser(u.username)!.displayName } : {}),
 });
 
 // hosted: says whether this server is a hosted one (the web shows team, admin and join screens only then). While a
@@ -478,18 +480,28 @@ inviteApp.post("/invite/:token", async (c) => {
   return c.json({ ok: true, username: user.username });
 });
 
+/**
+ * The account the access-key routes act for. A solo install (no APP_SECRET) has no sign-in and no account record until
+ * something writes one: its one account (LOCAL_USER) is made here, so its keys work without sign-in.
+ */
+function keyAccount(cookie: string | undefined) {
+  const session = getSessionUser(cookie);
+  if (!session) return null;
+  const user = findUser(session.username);
+  if (user || env.appSecret) return user;
+  return createUser(LOCAL_USER.username, randomBytes(24).toString("base64url"), { role: "admin" });
+}
+
 /** This account's AI access keys: which are on, when each was made and last used, its last 4 characters. */
 authApp.get("/api-key", (c) => {
-  const session = getSessionUser(c.req.header("cookie"));
-  const user = session && findUser(session.username);
+  const user = keyAccount(c.req.header("cookie"));
   if (!user) return c.json({ error: "Sign in with an account first" }, 401);
   return c.json(apiKeysOf(user));
 });
 
 /** Turns one key off (?level=full|review). */
 authApp.delete("/api-key", (c) => {
-  const session = getSessionUser(c.req.header("cookie"));
-  const user = session && findUser(session.username);
+  const user = keyAccount(c.req.header("cookie"));
   if (!user) return c.json({ error: "Sign in with an account first" }, 401);
   dropApiKey(user, c.req.query("level") === "full" ? "full" : "review");
   return c.json(apiKeysOf(user));
@@ -514,8 +526,7 @@ authApp.delete("/identity/:provider", (c) => {
 
 /** A new AI access key for this account (body `{ level: "full" }` for the Full key); the old one of that level stops working. */
 authApp.post("/api-key", async (c) => {
-  const session = getSessionUser(c.req.header("cookie"));
-  const user = session && findUser(session.username);
+  const user = keyAccount(c.req.header("cookie"));
   if (!user) return c.json({ error: "Sign in with an account first" }, 401);
   const body = (await c.req.json().catch(() => null)) as { level?: unknown } | null;
   return c.json({ key: newApiKey(user, body?.level === "full" ? "full" : "review") });

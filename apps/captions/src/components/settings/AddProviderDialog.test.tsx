@@ -18,8 +18,8 @@ const catalog: DriverCatalog = {
   }),
 };
 
-const grid = (report: MacReport | null, showMore: boolean) =>
-  renderToStaticMarkup(<ToolGrid catalog={catalog} report={report} driver={null} showMore={showMore} onPick={() => {}} onToggleMore={() => {}} />);
+const grid = (report: MacReport | null, showMore: boolean, added: string[] = []) =>
+  renderToStaticMarkup(<ToolGrid catalog={catalog} report={report} driver={null} showMore={showMore} added={added} onPick={() => {}} onToggleMore={() => {}} />);
 
 describe("Add provider tool grid", () => {
   it("lists the featured tools in order, and hides Gemini and the local command behind Show more", () => {
@@ -41,6 +41,22 @@ describe("Add provider tool grid", () => {
   it("disables every tool the Mac app can't run, with the server's reason", () => {
     const html = grid(null, false);
     expect(html).toContain("The Creator Toolset Mac app can&#x27;t run this CLI yet.");
+    expect((html.match(/disabled=""/g) ?? []).length).toBe(7);
+  });
+
+  it("marks a tool already added on this computer Added and does not offer it again (one account folder)", () => {
+    const report: MacReport = { at: 1, drivers: [{ driver: "claude", installed: true }], homes: [{ driver: "claude", home: "/Users/me/.claude" }] };
+    const html = grid(report, false, ["claude"]);
+    expect(html).toContain(">Added<");
+    expect(html).not.toContain(">Installed<");
+    // Claude is disabled as added; the 7 unrunnable tools stay disabled too
+    expect((html.match(/disabled=""/g) ?? []).length).toBe(8);
+  });
+
+  it("still offers an added tool when the computer has a second account folder for it", () => {
+    const report: MacReport = { at: 1, drivers: [{ driver: "claude", installed: true }], homes: [{ driver: "claude", home: "/Users/me/.claude" }, { driver: "claude", home: "/Users/me/.claude-work" }] };
+    const html = grid(report, false, ["claude"]);
+    expect(html).not.toContain(">Added<");
     expect((html.match(/disabled=""/g) ?? []).length).toBe(7);
   });
 });

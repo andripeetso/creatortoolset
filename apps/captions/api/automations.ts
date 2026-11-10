@@ -5,7 +5,7 @@ import path from "node:path";
 import type { AuthVars } from "./auth";
 import { answerWithTools, routeOf } from "./assistant";
 import { deviceName, isOnline } from "./lib/devices";
-import { env } from "./lib/env";
+import { env, hostedMode } from "./lib/env";
 import { notifyWorkshopOwner } from "./review";
 import { findUser, listUsers, USERNAME_RE } from "./users";
 import {
@@ -86,9 +86,15 @@ async function finish(username: string, id: string, status: AutomationResult["st
 /* ---- one run ---- */
 
 const NO_AI = "No Claude Code is set up for your AI here. Add it on a computer in Providers.";
+// a member's route never includes the team's AI (routeOf), and a member cannot add a computer for the team: say that instead
+const NO_AI_MEMBER = "Scheduled tasks need Claude Code on one of your computers. Your team's AI can't run them.";
 const NOT_CLAUDE = "Scheduled tasks run on Claude Code, and your AI here is another tool. Add Claude Code on a computer.";
+const noRouteText = (admin: boolean) => (admin ? NO_AI : NO_AI_MEMBER);
+/** True for an admin, and for every account on an install of one's own (no team to be a member of). */
+const isAdminHere = (username: string) => !hostedMode() || findUser(username)?.role === "admin";
 /** Why no task can run on this route, in plain words, or null. The page shows it before a task is built; a run records it. */
-export const blockOf = (route: ReturnType<typeof routeOf>): string | null => (!route ? NO_AI : route.instance.driver !== "claude" ? NOT_CLAUDE : null);
+export const blockOf = (route: ReturnType<typeof routeOf>, admin = true): string | null =>
+  !route ? noRouteText(admin) : route.instance.driver !== "claude" ? NOT_CLAUDE : null;
 
 const runPrompt = (a: Automation): string =>
   `This is a scheduled run of the automation "${a.name}". Nobody is at the screen: do the work with the app's tools, and don't open pages with navigate.${a.project ? ` Its Workshop project is ${a.project}.` : ""}\n\n${a.prompt}`;
@@ -98,8 +104,9 @@ const runPrompt = (a: Automation): string =>
  * offline, no address for the tools). Resolves once the result is recorded.
  */
 export async function runAutomation(username: string, a: Automation): Promise<void> {
-  const route = routeOf(username, findUser(username)?.role === "admin");
-  if (!route) return finish(username, a.id, "skipped", NO_AI);
+  const admin = isAdminHere(username);
+  const route = routeOf(username, admin);
+  if (!route) return finish(username, a.id, "skipped", noRouteText(admin));
   if (route.instance.driver !== "claude") return finish(username, a.id, "skipped", NOT_CLAUDE);
   if (!isOnline(route.device)) return finish(username, a.id, "skipped", `${deviceName(route.device)} is offline, so this run was skipped.`);
   // the tools' address: PUBLIC_ORIGIN, else the Mac app's own server on this Mac (CT_LOCAL), where the Mac's AI runs too
@@ -203,7 +210,8 @@ function readFields(b: Input): { fields: Partial<Automation>; error?: string } {
 /** The account's tasks, and why none can run for it now (`blocked`, null when one can): the page then builds none. */
 automationsApp.get("/", (c) => {
   const username = c.get("user").username;
-  return c.json({ items: readAll(username).map(view), blocked: blockOf(routeOf(username, findUser(username)?.role === "admin")) });
+  const admin = isAdminHere(username);
+  return c.json({ items: readAll(username).map(view), blocked: blockOf(routeOf(username, admin), admin) });
 });
 
 automationsApp.post("/", async (c) => {

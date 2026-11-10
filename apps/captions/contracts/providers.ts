@@ -365,6 +365,11 @@ export interface ProvidersView {
   usage: Array<{ hour: string; label: string; scope: Scope; instance?: string; calls: number; tokens: number; costUsd: number }>;
   /** the plan limits of the identities this account's visible providers run on (never another person's) */
   limits: LimitsIdentity[];
+  /**
+   * A member on the team's API budget (hosted): the team's AI answers their jobs when they have no AI of their own that
+   * can run. Only this account's own numbers. Absent for everyone else.
+   */
+  teamAi?: { budgetUsd: number; spentUsd: number; left: number; ready: boolean } | null;
 }
 
 /** One Mac's word on one driver: what its last report found (`signedIn` absent = the CLI doesn't say). */

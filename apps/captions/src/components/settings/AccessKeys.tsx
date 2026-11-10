@@ -28,8 +28,9 @@ async function json<T>(r: Response): Promise<T> {
 }
 
 /**
- * Settings → Your own AI, "Access keys": keys that let your own AI or a script act as you here. Signed-in accounts only
- * (the caller shows it when sign-in is on). Making one opens a dialog that shows the key once.
+ * Settings → Your own AI, "Access keys": keys that let your own AI or a script act as you here. On a solo install the
+ * account is the local one (api/auth.ts keyAccount), so it works without sign-in too. Making one opens a dialog that
+ * shows the key once.
  */
 export function AccessKeysSection() {
   const [keys, setKeys] = useState<Keys | null>(null);

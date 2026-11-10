@@ -80,7 +80,7 @@ export function PackOnSwitch({ id, name, installed, reload }: { id: string; name
   const { busy, run } = usePackRun(reload);
   return (
     <div className="flex items-center gap-2 text-xs text-muted-foreground">
-      <span>On</span>
+      <span>{installed.off.includes("*") ? "Off" : "On"}</span>
       <Switch
         aria-label={`${name} on`}
         checked={!installed.off.includes("*")}

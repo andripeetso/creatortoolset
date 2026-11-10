@@ -289,7 +289,11 @@ export async function localAiView(username: string, mcpTo: CliId[], fresh = fals
   const own = ownSettings(username)?.instances ?? [];
   const rows: LocalAiRow[] = [];
   for (const p of probed) {
-    if (!p.found) continue;
+    // not installed: still a row (Providers offers Install); the Own AI page lists only the found ones
+    if (!p.found) {
+      rows.push({ id: p.id, name: NAMES[p.id], kind: "cli", found: false, signedIn: null, connected: false, mcp: "n/a" });
+      continue;
+    }
     const inst = own.find((i) => i.id === `local-${p.id}`);
     const lastCheck = inst?.lastCheck;
     const mcp: LocalAiRow["mcp"] = p.id === "gemini" ? "n/a" : p.id === "codex" && !p.supportsUrl ? "update" : mcpTo.includes(p.id) ? "added" : "off";

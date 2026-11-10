@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { addInstanceTo, driverFields, type ProviderInstance } from "@contracts/providers";
-import { autoTestDue } from "./providers";
+import { addInstanceTo, driverFields, type ProviderInstance, type ProviderSettings } from "@contracts/providers";
+import { autoTestDue, effectiveSelection, modelChoices } from "./providers";
 
 const ready = { enabled: true, runs: true, online: true, reportAt: 100, installed: true };
 
@@ -21,6 +21,42 @@ describe("autoTestDue: when Providers tests an AI by itself", () => {
     expect(autoTestDue({ ...ready, online: false })).toBe(false);
     expect(autoTestDue({ ...ready, installed: false })).toBe(false);
     expect(autoTestDue({ ...ready, reportAt: undefined })).toBe(false); // the computer has not reported at all
+  });
+
+  it("does not test a failed AI again for five minutes, even when the computer keeps reporting", () => {
+    const failedAt = 1_000_000;
+    const failed = { ...ready, reportAt: failedAt + 15_000, check: { ok: false, at: failedAt } };
+    expect(autoTestDue({ ...failed, now: failedAt + 60_000 })).toBe(false);
+    expect(autoTestDue({ ...failed, now: failedAt + 5 * 60_000 })).toBe(true);
+  });
+});
+
+describe("modelChoices: a stored model is offered even when the tool's list lacks it", () => {
+  it("adds the stored model to the list, once, and never drops it for the first model", () => {
+    expect(modelChoices(["a", "b"], "c")).toEqual(["a", "b", "c"]);
+    expect(modelChoices(["a", "b"], "a")).toEqual(["a", "b"]);
+    expect(modelChoices([], "")).toEqual([]);
+  });
+});
+
+describe("effectiveSelection: the model an AI really runs with", () => {
+  const set = (over: Partial<ProviderSettings> = {}): ProviderSettings => ({
+    instances: [claude("claude", { model: "claude-opus-5-5", effort: "xhigh" }), claude("claude_work")],
+    default: { instance: "claude", model: "claude-sonnet-5-5", effort: "medium" },
+    jobs: {},
+    ...over,
+  });
+  const models = ["claude-opus-5-5", "claude-sonnet-5-5"];
+
+  it("shows the Default's model and thinking level for the AI that is the Default (what the Default row says)", () => {
+    const s = set();
+    expect(effectiveSelection(s, s.instances[0]!, models)).toEqual({ model: "claude-sonnet-5-5", effort: "medium" });
+  });
+
+  it("shows the AI's own model and effort for another AI, falling back to the tool's first model and the Default's effort", () => {
+    const s = set();
+    expect(effectiveSelection(s, s.instances[1]!, models)).toEqual({ model: "claude-opus-5-5", effort: "medium" });
+    expect(effectiveSelection(s, claude("x", { model: "claude-haiku-5-5", effort: "low" }), models)).toEqual({ model: "claude-haiku-5-5", effort: "low" });
   });
 });
 

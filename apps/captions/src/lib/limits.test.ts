@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { LimitsIdentity, LimitWindow } from "@contracts/providers";
-import { countedWindow, formatDuration, leftOf, noticeOf, resetsIn } from "./limits";
+import { claudeLimitReset, countedWindow, formatDuration, leftOf, noticeOf, resetsIn } from "./limits";
 
 const NOW = 1_800_000_000_000;
 const H = 3_600_000;
@@ -60,5 +60,28 @@ describe("the sentence for a login with no reading", () => {
 
   it("is null for a reading with windows", () => {
     expect(noticeOf(id([w({ id: "five_hour", kind: "session", label: "Session", usedPercent: 1, resetsAt: NOW + H, windowMs: 5 * H })]))).toBeNull();
+  });
+});
+
+describe("when a Claude limit comes back", () => {
+  const claude = (windows: LimitWindow[], over: Partial<LimitsIdentity> = {}) => id(windows, over);
+  const session = (usedPercent: number, resetsAt?: number) => w({ id: "five_hour", kind: "session", label: "Session", usedPercent, resetsAt });
+  const weekly = (usedPercent: number, resetsAt?: number) => w({ id: "seven_day", kind: "weekly", label: "Weekly", usedPercent, resetsAt });
+
+  it("says nothing when no window is used up", () => {
+    expect(claudeLimitReset([claude([session(62, NOW + H)])], NOW)).toBeNull();
+  });
+
+  it("names the reset of the used-up window in Usage's words", () => {
+    expect(claudeLimitReset([claude([session(100, NOW + 2 * H + 9 * 60_000)])], NOW)).toBe("resets in 2h 9m");
+  });
+
+  it("waits for the latest of the used-up windows", () => {
+    expect(claudeLimitReset([claude([session(100, NOW + H), weekly(100, NOW + 3 * 24 * H)])], NOW)).toBe("resets in 3d 0h");
+  });
+
+  it("says nothing when a used-up window has no reset time, or only Codex is used up", () => {
+    expect(claudeLimitReset([claude([session(100)])], NOW)).toBeNull();
+    expect(claudeLimitReset([id([session(100, NOW + H)], { driver: "codex" })], NOW)).toBeNull();
   });
 });

@@ -109,8 +109,9 @@ export function ListRow({ id, icon, title, subtitle, status, actions, className 
       {icon && <span className="flex size-5 items-center justify-center text-muted-foreground [&>svg]:size-4">{icon}</span>}
       <div className="min-w-0">
         <div className="truncate text-sm font-medium text-foreground">{title}</div>
-        {subtitle && <div className="truncate text-xs text-muted-foreground">{subtitle}</div>}
-        {status && <div className="truncate pt-0.5 text-xs text-muted-foreground">{status}</div>}
+        {/* below sm a long line wraps to two lines instead of being cut mid-word */}
+        {subtitle && <div className="line-clamp-2 break-words text-xs text-muted-foreground sm:line-clamp-1">{subtitle}</div>}
+        {status && <div className="min-w-0 pt-0.5 text-xs text-muted-foreground">{status}</div>}
       </div>
       {actions && <div className="flex shrink-0 items-center gap-1">{actions}</div>}
     </div>

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useNavigate } from "react-router";
 import { DRIVERS, type LimitsIdentity, type LimitWindow, type ProviderInstance, type ProvidersView } from "@contracts/providers";
 import { PLANS, type PlanId } from "@contracts/plans";
 import type { SetupView } from "@contracts/tools";
@@ -9,7 +10,7 @@ import { useSetup } from "@/lib/setup";
 import { tokensLabel } from "@/lib/workshop";
 import { cn } from "@/lib/utils";
 import { ProviderLogo } from "./ProviderLogos";
-import { Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Row, Section, SettingsSelect, saveFailed } from "./ui";
+import { Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Row, Section, SettingsSelect, Status, saveFailed } from "./ui";
 import { msg } from "./helpers";
 import { hasThisMac, tell, useThisMac, type ThisMacState } from "./ThisMacSection";
 
@@ -94,7 +95,12 @@ export function PlanLimits({ view, now, bridge, setup }: { view: ProvidersView; 
     return (
       <Section id="plan-limits" title="Plan limits">
         <Card>
-          <EmptyRow title="No plan limits to show" description="Add Claude or Codex in Providers, and the plan left on it shows here." />
+          {view.teamAi ? (
+            // on the team's key there is no plan of your own to read: the budget is the limit
+            <EmptyRow title="You use the team's AI" description={`$${view.teamAi.spentUsd.toFixed(2)} of $${view.teamAi.budgetUsd} used this month.`} />
+          ) : (
+            <EmptyRow title="No plan limits to show" description="Add Claude or Codex in Providers, and the plan left on it shows here." />
+          )}
         </Card>
       </Section>
     );
@@ -151,7 +157,7 @@ function missingReadings(view: ProvidersView): Array<{ inst: ProviderInstance; d
     .filter(({ inst, device }) => !view.limits.some((l) => l.driver === inst.driver && l.device === device && l.instances.some((k) => k.endsWith(`:${inst.id}`))));
 }
 
-/** One AI login: its logo, name, computer and plan, then a bar per window with the share left and when it resets. */
+/** One AI login: its logo, name, computer and plan, then a bar per window with the share left and when it resets. A team's login reads "Team". */
 function LoginCard({ i, view, now }: { i: LimitsIdentity; view: ProvidersView; now: number }) {
   const mac = view.devices.find((d) => d.id === i.device);
   const plan = mac?.report?.drivers.find((d) => d.driver === i.driver)?.plan;
@@ -160,11 +166,14 @@ function LoginCard({ i, view, now }: { i: LimitsIdentity; view: ProvidersView; n
   const folder = i.label === "default" ? `.${i.driver}` : `.${i.driver}-${i.label}`;
   const custom = !!mac?.report?.homes.some((h) => h.driver === i.driver && h.home.split("/").pop() === folder && h.customEndpoint);
   const notice = noticeOf(i, custom);
+  // a login only team instances run on is the team's (its instances are `workspace:<id>`), whichever computer holds it
+  const team = i.instances.length > 0 && i.instances.every((k) => k.startsWith("workspace:"));
+  const title = team ? `${driver} · Team` : i.label === "default" ? driver : `${driver} · ${i.label}`;
   return (
     <Card>
       <ListRow
         icon={<ProviderLogo driver={i.driver} className="size-4" />}
-        title={i.label === "default" ? driver : `${driver} · ${i.label}`}
+        title={title}
         subtitle={[plan, mac?.name].filter(Boolean).join(" · ") || undefined}
         status={staleLine(i, now)}
       />
@@ -186,12 +195,22 @@ function Unread({ inst, device, view, bridge }: { inst: ProviderInstance; device
   // the Mac app reports its version, the worker does not; a Mac app posts no sign-in state while its switch is off
   const installed = (mac?.report?.drivers ?? []).filter((d) => (d.driver === "claude" || d.driver === "codex") && d.installed);
   const off = reported !== undefined ? !reported : !!mac?.version && installed.length > 0 && installed.every((d) => d.signedIn === undefined);
+  const signedOut = !!mac?.online && !!mac.report?.drivers.some((d) => d.driver === inst.driver && d.installed && d.signedIn === false);
+  if (signedOut) {
+    // the same state Providers shows: amber, with where to sign in (Providers has the sign-in itself)
+    return (
+      <Row
+        title={`${inst.name} on ${who}`}
+        status={<Status tone="attention">{`Not signed in on ${who}, so there is no plan to read.`}</Status>}
+        control={<OpenProviders />}
+      />
+    );
+  }
   let reason = "No reading yet. One comes in within five minutes.";
   let fix: string | undefined;
   let control: ReactNode | undefined;
   if (!mac) reason = "Its computer is no longer connected to this account.";
   else if (!mac.online) reason = "Its Mac is offline, so no reading comes in.";
-  else if (mac.report?.drivers.some((d) => d.driver === inst.driver && d.installed && d.signedIn === false)) reason = `Not signed in on ${who}, so there is no plan to read.`;
   else if (off) {
     reason = "Plan limits are off on this Mac.";
     if (reported !== undefined) control = <Button size="sm" variant="outline" onClick={() => tell("limits:on")}>Turn on</Button>;
@@ -201,6 +220,15 @@ function Unread({ inst, device, view, bridge }: { inst: ProviderInstance; device
         : `Open the Mac app on ${who} and turn on Read this Mac's Claude and Codex limits under This Mac.`;
   }
   return <Row title={`${inst.name} on ${who}`} description={reason} status={fix} control={control} />;
+}
+
+function OpenProviders() {
+  const navigate = useNavigate();
+  return (
+    <Button size="sm" variant="outline" onClick={() => navigate("/settings/providers")}>
+      Open Providers
+    </Button>
+  );
 }
 
 function WindowBar({ w, now }: { w: LimitWindow; now: number }) {

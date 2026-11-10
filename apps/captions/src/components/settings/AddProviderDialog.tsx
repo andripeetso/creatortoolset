@@ -6,11 +6,8 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { msg } from "./helpers";
 import { DriverMark } from "./ProviderInstanceCard";
-import { InstallHelp } from "./AiSetup";
+import { InstallHelp, SIGN_IN } from "./AiSetup";
 import { FormDialog } from "./ui";
-
-/** The sign-in each tool has, for the line that says to sign in on the computer. */
-const SIGN_IN: Partial<Record<Driver, string>> = { codex: "codex login", claude: "claude", grok: "grok login", gemini: "gemini" };
 
 /** The id a new AI gets: "~/.claude-work" → "claude_work"; no folder → the tool's id. Starts with a letter, unique. */
 export function instanceId(driver: Driver, home: string, taken: string[]): string {
@@ -60,6 +57,7 @@ export function ToolGrid({
   report,
   driver,
   showMore,
+  added,
   presets,
   onPick,
   onPreset,
@@ -69,6 +67,8 @@ export function ToolGrid({
   report: MacReport | null;
   driver: Driver | null;
   showMore: boolean;
+  /** the tools already added on this computer: marked, and not offered again unless the computer has a second account folder for them */
+  added: Driver[];
   /** a plug-in's ready-made AI, shown as a tile */
   presets?: PresetView[];
   onPick: (d: Driver) => void;
@@ -83,17 +83,19 @@ export function ToolGrid({
   const shown = all
     .filter((d) => d.featured || installed(d.id) || showMore)
     .sort((a, b) => Number(installed(b.id)) - Number(installed(a.id)));
+  const accounts = (id: Driver) => new Set((report?.homes ?? []).filter((h) => h.driver === id).map((h) => h.home)).size;
   const tile = (d: { id: Driver; label: string }) => {
     const entry = catalog?.drivers.find((x) => x.id === d.id);
     const runs = !!entry?.runs;
+    const isAdded = added.includes(d.id) && accounts(d.id) <= 1;
     return (
       <Tile
         key={d.id}
         driver={d.id}
         label={d.label}
         selected={driver === d.id}
-        disabled={!!catalog && !runs}
-        sub={!catalog ? undefined : !runs ? (entry?.reason ?? "Not available here") : installed(d.id) ? "Installed" : undefined}
+        disabled={(!!catalog && !runs) || isAdded}
+        sub={isAdded ? "Added" : !catalog ? undefined : !runs ? (entry?.reason ?? "Not available here") : installed(d.id) ? "Installed" : undefined}
         onClick={() => onPick(d.id)}
       />
     );
@@ -230,10 +232,10 @@ export function AddProviderDialog({
       open
       onOpenChange={(open) => !open && onClose()}
       title="Add provider"
-      description={`Add an AI tool on ${deviceName}.`}
       submitLabel="Add provider"
       onSubmit={submit}
       busy={busy}
+      submitDisabled={!driver}
       error={error ?? catalogError}
     >
       <ToolGrid
@@ -241,6 +243,7 @@ export function AddProviderDialog({
         report={report}
         driver={driver}
         showMore={showMore}
+        added={instances.map((i) => i.driver)}
         onPick={pick}
         onToggleMore={() => setShowMore((s) => !s)}
       />

@@ -48,8 +48,8 @@ export const MY_KEYS = [
   { env: "PERPLEXITY_API_KEY", name: "Perplexity", group: "research", what: "Accuracy check and research in the Content Workshop", where: "https://www.perplexity.ai/account/api" },
   { env: "OPENAI_API_KEY", name: "OpenAI", group: "ai", what: "Media Library transcripts without Deepgram, and search by meaning", where: "https://platform.openai.com/api-keys" },
   { env: "TYPESAFE_API_KEY", name: "TypeSafe", group: "ai", what: "Analyzer comments and ideas, and Workshop rules" },
-  // last: read only when the account has no AI of its own (api/ai-complete.ts onApiKey)
-  { env: "ANTHROPIC_API_KEY", name: "Anthropic API", group: "ai", what: "AI for the tools, only when you have no Claude or ChatGPT of your own", where: "https://console.anthropic.com/settings/keys" },
+  // last: read only when the account has no AI of its own (api/ai-complete.ts onApiKey); the page hides it then, unless a key is saved
+  { env: "ANTHROPIC_API_KEY", name: "Anthropic API", group: "ai", what: "Used by the tools, except Content Workshop, when you have no AI of your own here", where: "https://console.anthropic.com/settings/keys" },
 ] as const satisfies ReadonlyArray<{ env: string; name: string; group: MyKeyGroup; what: string; where?: string }>;
 
 export type MyKeyEnv = (typeof MY_KEYS)[number]["env"];

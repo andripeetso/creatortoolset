@@ -68,7 +68,7 @@ describe("the driver catalog (GET /api/providers/drivers)", () => {
     expect(by("acp")).toMatchObject({ featured: false, runs: true });
     expect(by("pi")).toMatchObject({ featured: true, runs: true });
     expect(by("pi")).not.toHaveProperty("reason");
-    expect(by("musecode").reason).toMatch(/No command-line tool on this Mac yet/); // shown disabled with its reason
+    expect(by("musecode").reason).toMatch(/Not in the Mac app yet/); // shown disabled with its reason
     expect(by("claude")).not.toHaveProperty("reason");
   });
 

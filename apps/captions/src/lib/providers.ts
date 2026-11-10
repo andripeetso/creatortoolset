@@ -40,7 +40,8 @@ export const saveOwn = (settings: ProviderSettings | null) =>
 
 /** One short question through the instance's device. `scope` is "workspace" or the account's username. */
 export const checkProvider = (scope: Scope, id: string) =>
-  fetch(`/api/providers/${encodeURIComponent(scope)}/${encodeURIComponent(id)}/check`, { method: "POST" }).then((r) =>
+  // a test the computer never answers ends here, so "Checking…" is never the resting state
+  fetch(`/api/providers/${encodeURIComponent(scope)}/${encodeURIComponent(id)}/check`, { method: "POST", signal: AbortSignal.timeout(90_000) }).then((r) =>
     json<ProviderCheck>(r),
   );
 
@@ -66,15 +67,35 @@ export function modelName(id: string): string {
 /** "Claude Opus 5.5 · High" */
 export const selectionLabel = (s: Selection) => `${modelName(s.model)} · ${effortLabel(s.effort)}`;
 
+/** A failed test is not repeated by itself for this long (the person can press Test now at any time). */
+export const RETEST_AFTER_MS = 5 * 60_000;
+
 /**
  * Whether Providers tests an AI by itself, once: it is on, runs, its computer is online and has reported the tool as
- * installed, and either nothing is on record, or the last result failed and the computer has reported since (a sign-in
- * shows up that way). A tool that is off or not installed is never tested: its row says what to do.
+ * installed, and either nothing is on record, or the last result failed, the computer has reported since (a sign-in
+ * shows up that way) and RETEST_AFTER_MS has passed. A tool that is off or not installed is never tested: its row says
+ * what to do.
  */
-export function autoTestDue(o: { enabled: boolean; runs: boolean; online: boolean; reportAt?: number; installed?: boolean; check?: { ok: boolean; at: number } }): boolean {
+export function autoTestDue(o: { enabled: boolean; runs: boolean; online: boolean; reportAt?: number; installed?: boolean; check?: { ok: boolean; at: number }; now?: number }): boolean {
   if (!o.enabled || !o.runs || !o.online || o.reportAt === undefined || o.installed !== true) return false;
   if (!o.check) return true;
-  return !o.check.ok && o.reportAt > o.check.at;
+  return !o.check.ok && o.reportAt > o.check.at && (o.now ?? Date.now()) - o.check.at >= RETEST_AFTER_MS;
+}
+
+/**
+ * The model choices a select offers: the tool's list plus the model it is set to, even when the list doesn't have it
+ * (never swapped for the list's first model). Empty = nothing to show but the tool's own default.
+ */
+export const modelChoices = (models: string[], current: string): string[] => [...new Set([...models, current].filter(Boolean))];
+
+/**
+ * The model and thinking level an AI really runs with, the one source for its detail page and the Default row. The
+ * Default's own pick is the Default's (routing uses it); any other AI runs on its own model and effort, falling back to
+ * the tool's first model and the Default's effort (server pick(), api/lib/providers.ts).
+ */
+export function effectiveSelection(set: ProviderSettings, inst: ProviderInstance, models: string[]): { model: string; effort: Effort } {
+  if (set.default.instance === inst.id) return { model: set.default.model, effort: set.default.effort };
+  return { model: inst.model ?? models[0] ?? "", effort: inst.effort ?? set.default.effort };
 }
 
 /** The device an instance runs on. Missing = none picked: it runs nowhere. */

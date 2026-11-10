@@ -774,6 +774,8 @@ export interface ApifyStatus {
   source: "file" | "env" | "none";
   /** One actor run at a time. */
   slow?: boolean;
+  /** The last four characters of the token (never the token). */
+  last4?: string;
 }
 
 export interface InstagramAvailability {

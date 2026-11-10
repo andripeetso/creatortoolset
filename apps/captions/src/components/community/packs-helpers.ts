@@ -122,3 +122,12 @@ export function toolLine(c: CatalogEntry["contains"]): string {
   const seen = new Set<string>();
   return destinations(c).filter((d) => !seen.has(d.tool) && seen.add(d.tool)).map((d) => `${d.stage} · ${d.tool}`).join(", ");
 }
+
+/**
+ * The one line a pack row shows: its first sentence when that is short enough to fit a row, so it ends cleanly. A longer
+ * or unfinished sentence gives "" (the row shows no line; the whole text is in the row's fold, and on the pack's page).
+ */
+export function firstSentence(text: string): string {
+  const s = /^.*?[.!?](?=\s|$)/.exec(text.trim())?.[0] ?? "";
+  return s.length > 0 && s.length <= 100 ? s : "";
+}

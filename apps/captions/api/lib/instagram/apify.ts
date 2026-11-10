@@ -59,6 +59,8 @@ export interface ApifyStatus {
   invalidReason?: string;
   source: "file" | "env" | "none";
   slow?: boolean;
+  /** The last four characters of the token (never the token). */
+  last4?: string;
 }
 
 export type IngestGate =
@@ -175,6 +177,8 @@ export function publicApifyStatus(s: StoredApify | null): ApifyStatus {
     invalidReason: s.invalidReason,
     source: s.source,
     slow: s.slow === true,
+    // the last four characters only, for the masked row on API keys
+    last4: s.token ? s.token.slice(-4) : undefined,
   };
 }
 

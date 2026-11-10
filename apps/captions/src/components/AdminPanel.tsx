@@ -178,6 +178,14 @@ export function AdminPanel({ tab }: { tab: AdminTab }) {
                           admin
                             ? { label: "Remove admin", confirm: { title: `Remove ${u.username} as admin?`, ok: "Remove admin" }, onSelect: () => changeRole(u, "team") }
                             : { label: "Make admin", confirm: { title: `Make ${u.username} an admin?`, body: "Admins see every project and manage accounts.", ok: "Make admin" }, onSelect: () => changeRole(u, "admin") },
+                          ...(admin
+                            ? []
+                            : [
+                                {
+                                  label: u.role === "team" ? "Make a plain member (files kept 14 days)" : "Make a team member (files kept 28 days)",
+                                  onSelect: () => changeRole(u, u.role === "team" ? "user" : "team"),
+                                },
+                              ]),
                           {
                             label: "Delete account",
                             destructive: true,
@@ -206,17 +214,11 @@ export function AdminPanel({ tab }: { tab: AdminTab }) {
           {loadError && <ErrorRow title={loadError} retry={() => void refresh()} />}
           {!loadError && users === null && <LoadingRow />}
           {users && (
-            <div className="overflow-x-auto p-3 sm:p-4">
+            <div className="overflow-x-auto py-3 sm:py-4">
               <table className={`${tableCls} min-w-[640px]`}>
                 <thead>
                   <tr className="text-[11px] leading-tight text-muted-foreground">
-                    <th className="pb-2 text-left align-bottom text-[10px] font-medium uppercase tracking-wider">Account</th>
-                    <th className="px-1 pb-2 text-center align-bottom font-normal" title="Every app, sees all projects, manages accounts">
-                      Admin
-                    </th>
-                    <th className="px-1 pb-2 text-center align-bottom font-normal" title="Files are kept 28 days after they last change (unticked: 14)">
-                      Team
-                    </th>
+                    <th className="sticky left-0 z-10 bg-card pb-2 pl-3 pr-3 text-left align-bottom text-[10px] font-medium uppercase tracking-wider sm:pl-4">Account</th>
                     {TOOLS.map((t) => (
                       <th key={t} className="px-1 pb-2 text-center align-bottom font-normal">
                         {TOOL_NAMES[t]}
@@ -231,29 +233,12 @@ export function AdminPanel({ tab }: { tab: AdminTab }) {
                     return (
                       <Fragment key={u.username}>
                         <tr className="border-t border-border/50 hover:bg-accent/50">
-                          <td className="truncate py-2 pr-2 font-medium text-foreground">
-                            {u.username}
-                            {you && <span className="ml-1 text-[10px] font-normal text-muted-foreground">(you)</span>}
+                          <td className="sticky left-0 z-10 bg-card py-2 pl-3 pr-3 font-medium text-foreground sm:pl-4">
+                            <span className="block max-w-[10rem] truncate">
+                              {u.username}
+                              {you && <span className="ml-1 text-[10px] font-normal text-muted-foreground">(you)</span>}
+                            </span>
                           </td>
-                          <Tick
-                            on={admin}
-                            disabled={you}
-                            title={you ? "You can't change your own admin" : admin ? `Remove ${u.username} as admin` : `Make ${u.username} an admin`}
-                            onClick={async () => {
-                              const ok = await confirmDialog({
-                                title: admin ? `Remove ${u.username} as admin?` : `Make ${u.username} an admin?`,
-                                body: admin ? undefined : "Admins see every project and manage accounts.",
-                                ok: admin ? "Remove admin" : "Make admin",
-                              });
-                              if (ok) void changeRole(u, admin ? "team" : "admin");
-                            }}
-                          />
-                          <Tick
-                            on={u.role === "team" || admin}
-                            disabled={admin}
-                            title={`${u.username} is a team account (files kept 28 days)`}
-                            onClick={() => void changeRole(u, u.role === "team" ? "user" : "team")}
-                          />
                           {TOOLS.map((t) => (
                             <Tick key={t} on={admin || !u.off.includes(t)} disabled={admin} title={`${TOOL_NAMES[t]} for ${u.username}`} onClick={() => void toggleApp(u, t)} />
                           ))}

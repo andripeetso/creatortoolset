@@ -14,7 +14,7 @@ describe("providerStatus", () => {
     expect(providerStatus({ ...base, runs: false }).text).toBe("Not in the Mac app yet");
     expect(providerStatus({ ...base, online: false, found: signedIn }).text).toBe("Computer offline");
     expect(providerStatus({ ...base, found: { driver: "codex", installed: false } })).toEqual({ tone: "attention", text: "Not installed", action: "install" });
-    expect(providerStatus({ ...base, found: signedIn, check: { ok: false, ms: 0, error: "Timed out", at: 1 } })).toEqual({ tone: "broken", text: "Didn't answer" });
+    expect(providerStatus({ ...base, found: signedIn, check: { ok: false, ms: 0, error: "Timed out", at: 1 } })).toEqual({ tone: "broken", text: "Didn't answer", action: "test" });
     // a computer that did not pick the request up is not the AI failing
     expect(providerStatus({ ...base, found: signedIn, check: { ok: false, ms: 0, error: "Sam's Mac did not pick up the request", at: 1 } }).text).toBe("Computer didn't answer");
     // a failure about signing in gets its fix on the row
@@ -59,6 +59,7 @@ const detail = (inst: ProviderInstance, extra: Partial<Parameters<typeof Provide
         canTest
         used={[]}
         models={[]}
+        selection={{ model: "", effort: "xhigh" }}
         onChange={() => {}}
         onTest={() => {}}
         onRemove={() => {}}
@@ -86,10 +87,11 @@ describe("ProviderDetail", () => {
     expect(detail({ id: "grok", driver: "grok", name: "Grok", enabled: true, device: "mac1" })).toContain("Uses the tool&#x27;s own default");
   });
 
-  it("has no Test button on the page: Test now is in the menu, and the Status row shows what is true", () => {
+  it("tests from the Status row, and that row rests on what is true, never on Checking", () => {
     const html = detail({ id: "codex", driver: "codex", name: "Codex", enabled: true, device: "mac1" });
-    expect(html).not.toContain(">Test<");
+    expect(html).toContain(">Test<");
     expect(html).toContain("Not tested yet");
+    expect(html).not.toContain("Checking…");
     const answered = detail(
       { id: "codex", driver: "codex", name: "Codex", enabled: true, device: "mac1" },
       { check: { ok: true, ms: 3700, model: "claude-opus-5-5", at: Date.now() - 180_000 } },

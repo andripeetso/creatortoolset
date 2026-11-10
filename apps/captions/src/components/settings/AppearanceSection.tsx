@@ -1,11 +1,10 @@
 import { Monitor, Moon, Sun, type LucideIcon } from "lucide-react";
 import { useShareTheme, type ThemeChoice } from "@/components/ShareTheme";
-import { ToolsPicker } from "@/components/setup/ToolNeeds";
 import { Switch } from "@/components/ui/switch";
 import { canUse, useMe } from "@/lib/auth";
 import { persistHomeGlow, persistProjectTint, useAppearance } from "@/lib/settings";
 import { useSetup, useSetupLive } from "@/lib/setup";
-import { TOOLS, type Tool } from "@contracts/tools";
+import { DEFAULT_TOOLS, TOOLS, TOOL_NAMES, type Tool } from "@contracts/tools";
 import { cn } from "@/lib/utils";
 import { Card, Row, Section, saveFailed } from "./ui";
 
@@ -52,6 +51,18 @@ export function AppearanceSection() {
   );
 }
 
+/** The tools a person may use that are switched on or off on Home (the always-on ones are shown there, not switched). */
+export const switchableTools = (mine: readonly Tool[]): Tool[] => mine.filter((t) => !DEFAULT_TOOLS.includes(t));
+
+/**
+ * The saved list of Home tools after one switchable tool changes. Same rule the setup's tool picker used: turning one on
+ * keeps the always-on tools and the ones already on, in the account's own order; turning one off drops only that tool.
+ */
+export function toolsAfter(mine: readonly Tool[], value: readonly Tool[], tool: Tool, on: boolean): Tool[] {
+  if (!on) return value.filter((x) => x !== tool);
+  return mine.filter((x) => x === tool || value.includes(x) || DEFAULT_TOOLS.includes(x));
+}
+
 /** The home page: which tools it shows, the project colour, and the glow (dark theme only, so it is hidden in light). */
 function Home({ dark }: { dark: boolean }) {
   const me = useMe();
@@ -60,6 +71,7 @@ function Home({ dark }: { dark: boolean }) {
   const { projectTint, homeGlow } = useAppearance();
   useSetupLive(true);
   const mine = TOOLS.filter((t) => canUse(me, t));
+  const value = view?.tools ?? [];
   const onTools = async (tools: Tool[]) => {
     try {
       await save({ tools });
@@ -70,13 +82,19 @@ function Home({ dark }: { dark: boolean }) {
   return (
     <Section title="Home">
       <Card>
-        <Row id="home-tools" title="Tools on Home" control={undefined}>
-          {view && <ToolsPicker tools={mine} value={view.tools ?? []} onChange={(t) => void onTools(t)} />}
-        </Row>
+        {view &&
+          switchableTools(mine).map((t) => (
+            <Row
+              key={t}
+              id={`home-tool-${t}`}
+              title={TOOL_NAMES[t]}
+              control={<Switch checked={value.includes(t)} aria-label={TOOL_NAMES[t]} onCheckedChange={(on) => void onTools(toolsAfter(mine, value, t, on))} />}
+            />
+          ))}
         <Row
           id="project-colour"
           title="Project colour"
-          description="Off: violet everywhere."
+          description="Tools, buttons and Home take the current project's colour."
           control={<Switch checked={projectTint} aria-label="Project colour" onCheckedChange={persistProjectTint} />}
         />
         {dark && (

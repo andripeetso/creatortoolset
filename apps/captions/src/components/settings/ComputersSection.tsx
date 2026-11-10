@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
-import { Copy, Laptop, Monitor, Plus } from "lucide-react";
+import { Laptop, Monitor, Plus } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { promptDialog } from "@/lib/dialogs";
 import { allowOtherDevices, thisMacBridge } from "@/lib/thisMac";
 import { getProviders, removeDevice, renameDevice, thisMacDevice } from "@/lib/providers";
 import { DEFAULT_WEIGHT, LOAD_PREFERENCES, type Balance, type ProvidersView } from "@contracts/providers";
-import { CONNECT_COMMAND, SHOW_CONNECT_COMMAND, mintPhoneCode, type PhoneState } from "@/components/setup/ConnectStep";
+import { mintPhoneCode, type PhoneState } from "@/components/setup/ConnectStep";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
@@ -87,19 +87,18 @@ export function ComputersSection() {
     </span>
   );
   const phones = (
-    <Section
-      id="phones"
-      title="Phones"
-      action={
-        <span data-settings-row="add-phone">
-          <Button size="xs" variant="ghost" onClick={() => setPhoning(true)}>
-            <Plus className="size-3" /> Add phone
-          </Button>
-        </span>
-      }
-    >
+    <Section id="phones" title="Phones">
       <Card>
-        <EmptyRow title="Use the app from your phone" description="Scan a code with its camera." />
+        <Row
+          id="add-phone"
+          title="Phone"
+          description="Scan a code to open the app in the phone's browser."
+          control={
+            <Button size="sm" variant="outline" onClick={() => setPhoning(true)}>
+              Add phone
+            </Button>
+          }
+        />
       </Card>
     </Section>
   );
@@ -185,11 +184,17 @@ function ComputerRow({ group, admin, mine, bridge, onChanged }: {
   // this Mac with its AI switched off is not offline: that is its choice
   const offline = !online && (!mine || !!bridge?.aiOn);
   const hw = admin ? hardware(primary) : null;
+  // the part that matters goes first (it survives a cut line); the hardware goes last and only shows from `sm` up
   const subtitle = (
     <span className="flex min-w-0 items-center gap-1.5">
+      {offline && (
+        <>
+          <Status tone="attention">{`Offline${lastSeen ? ` · last seen ${fmtAgo(lastSeen)}` : ""}`}</Status>
+          <span aria-hidden>·</span>
+        </>
+      )}
       <span className="shrink-0">{["Mac app", team ? "Team" : null].filter(Boolean).join(" · ")}</span>
-      {offline && <Status tone="attention">Offline{lastSeen ? ` · last seen ${fmtAgo(lastSeen)}` : ""}</Status>}
-      {hw && <span className="min-w-0 truncate">· {hw}</span>}
+      {hw && <span className="hidden min-w-0 truncate sm:inline">· {hw}</span>}
     </span>
   );
 
@@ -217,12 +222,15 @@ function ComputerRow({ group, admin, mine, bridge, onChanged }: {
       actions={
         <>
           {mine && (
-            <Switch
-              checked={!!bridge?.aiOn}
-              disabled={!bridge}
-              aria-label="Use this Mac for my AI"
-              onCheckedChange={(on) => tell(on ? "ai:on" : "ai:off")}
-            />
+            <>
+              <span className="text-xs text-muted-foreground">Use this Mac for my AI</span>
+              <Switch
+                checked={!!bridge?.aiOn}
+                disabled={!bridge}
+                aria-label="Use this Mac for my AI"
+                onCheckedChange={(on) => tell(on ? "ai:on" : "ai:off")}
+              />
+            </>
           )}
           <RowMenu
             label={`${primary.name} actions`}
@@ -255,7 +263,10 @@ function ThisMacRow({ bridge }: { bridge: ThisMacState | null }) {
       title="This Mac"
       subtitle="Mac app"
       actions={
-        <Switch checked={!!bridge?.aiOn} disabled={!bridge} aria-label="Use this Mac for my AI" onCheckedChange={(on) => tell(on ? "ai:on" : "ai:off")} />
+        <>
+          <span className="text-xs text-muted-foreground">Use this Mac for my AI</span>
+          <Switch checked={!!bridge?.aiOn} disabled={!bridge} aria-label="Use this Mac for my AI" onCheckedChange={(on) => tell(on ? "ai:on" : "ai:off")} />
+        </>
       }
     />
   );
@@ -309,59 +320,41 @@ function LoadBalancing({ devices }: { devices: Listed[] }) {
 }
 
 /**
- * Add computer: the Mac app is the way that works today. "Other ways" folds the command line (only once it is published,
- * SHOW_CONNECT_COMMAND) and "I already have a server" (the Mac app's Servers page; a browser cannot list servers).
+ * Add computer: the Mac app is the way that works today. In the Mac app, "Other ways" folds "I already have a server" (its
+ * Servers page; a browser cannot list servers). The close X takes no focus on open.
  */
 function AddComputerDialog({ open, onOpenChange, macApp }: { open: boolean; onOpenChange: (o: boolean) => void; macApp: boolean }) {
   const navigate = useNavigate();
-  const otherWays = SHOW_CONNECT_COMMAND || macApp;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md" aria-describedby={undefined}>
+      <DialogContent className="sm:max-w-md" aria-describedby={undefined} onOpenAutoFocus={(e) => e.preventDefault()}>
         <DialogHeader>
           <DialogTitle>Add a computer</DialogTitle>
         </DialogHeader>
         <ol className="list-decimal space-y-2 pl-5 text-sm text-foreground">
-          <li>Install the Creator Toolset Mac app on the Mac.</li>
-          <li>Sign in there with this account.</li>
-          <li>Turn on Use this Mac for my AI. It shows up here.</li>
+          <li>Install the Creator Toolset Mac app on the Mac that runs your AI.</li>
+          <li>Open it and sign in with this account.</li>
+          <li>Turn on Use this Mac for my AI. The Mac then shows up here.</li>
         </ol>
-        {otherWays && (
+        {macApp && (
           <Advanced summary="Other ways">
-            {SHOW_CONNECT_COMMAND && (
-              <Row
-                className="px-0 sm:px-0"
-                title="Command line"
-                description="Run this on each computer you want to connect."
-                children={
-                  <div className="flex items-center justify-between gap-2 rounded-md bg-muted/60 px-3 py-2 font-mono text-xs">
-                    <span className="min-w-0 truncate">$ {CONNECT_COMMAND}</span>
-                    <Button size="icon-xs" variant="ghost" aria-label="Copy the command" onClick={() => void navigator.clipboard?.writeText(CONNECT_COMMAND)}>
-                      <Copy className="size-3.5" />
-                    </Button>
-                  </div>
-                }
-              />
-            )}
-            {macApp && (
-              <Row
-                className="px-0 sm:px-0"
-                title="I already have a server"
-                description="Its Creator Toolset runs on its own. Join it from Servers."
-                control={
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      onOpenChange(false);
-                      navigate("/settings/servers?add=1");
-                    }}
-                  >
-                    Open Servers
-                  </Button>
-                }
-              />
-            )}
+            <Row
+              className="px-0 sm:px-0"
+              title="I already have a server"
+              description="Its Creator Toolset runs on its own. Join it from Servers."
+              control={
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    onOpenChange(false);
+                    navigate("/settings/servers?add=1");
+                  }}
+                >
+                  Open Servers
+                </Button>
+              }
+            />
           </Advanced>
         )}
       </DialogContent>

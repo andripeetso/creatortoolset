@@ -5,6 +5,8 @@ import { streamMacClaude, macUsageSince } from "./lib/mac-claude";
 import { forViewer, isOnline, listDevices } from "./lib/devices";
 import { deviceIdOf, driverCatalog, dropOwnSettings, instanceIn, modelsFor, ownSettings, parseSettings, providerChecks, providerSettings, recordCheck, routeFor, runFields, saveSettings } from "./lib/providers";
 import { limitsFor, type LimitRef } from "./lib/limits";
+import { hostedMode } from "./lib/env";
+import { budgetLeft, spentThisMonth } from "./lib/workspaces";
 import { findUser, type SessionUser } from "./users";
 
 /**
@@ -91,7 +93,11 @@ async function viewFor(u: SessionUser): Promise<ProvidersView> {
     .map(({ scope, i }) => ({ key: `${scope}:${i.id}`, driver: i.driver, device: deviceIdOf(i), home: i.home }));
   const limits = limitsFor(refs, isOnline);
 
-  return { workspace, own: own && forPage(own), using, devices, checks, models, usage, limits };
+  // a member on the team's API budget (ai-complete.ts onBudget): only their own numbers, and whether the team's key is set
+  const left = admin ? null : budgetLeft(u.username);
+  const teamAi = left === null ? null : { budgetUsd: left + spentThisMonth(u.username), spentUsd: spentThisMonth(u.username), left, ready: hostedMode() && !!process.env.ANTHROPIC_API_KEY };
+
+  return { workspace, own: own && forPage(own), using, devices, checks, models, usage, limits, teamAi };
 }
 
 const findAdmin = (owner: string) => findUser(owner)?.role === "admin";

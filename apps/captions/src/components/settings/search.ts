@@ -1,4 +1,5 @@
 import { MY_KEYS, SERVICE_KEYS, type MyKeyEnv, type ServiceKeyEnv } from "@contracts/service-keys";
+import { DEFAULT_TOOLS, TOOLS, TOOL_NAMES, type Tool } from "@contracts/tools";
 import type { SettingsPageId } from "./nav";
 
 /**
@@ -32,11 +33,9 @@ const STATIC_ROWS = [
   { section: "general", id: "how-you-work", title: "How you use the app", keywords: ["assistant", "own ai", "setup", "chat", "how you work"] },
   { section: "general", id: "run-setup", title: "Setup", description: "Run the first-run walk-through again", keywords: ["setup", "walk-through", "onboarding", "wizard", "first run"] },
   { section: "general", id: "recording-shortcut", title: "Recording shortcut", description: "Starts and stops a screen recording from any app (Mac app)", keywords: ["record", "screen", "shortcut", "hotkey", "keyboard", "key", "mac app"], needs: "mac" },
-  { section: "general", id: "saved-lists", title: "Saved lists", keywords: ["cache", "clear", "storage", "saved", "lists"] },
-  { section: "general", id: "screens", title: "Saved screens", keywords: ["cache", "warm", "refresh", "reload"] },
+  { section: "general", id: "saved-lists", title: "Saved lists", description: "Copies the screens open from, so they show at once. Your work stays.", keywords: ["cache", "clear", "storage", "saved", "lists", "refresh", "reload", "screens"] },
   // Appearance
   { section: "appearance", id: "theme", title: "Theme", keywords: ["dark", "light", "system", "colour", "color", "look"] },
-  { section: "appearance", id: "home-tools", title: "Tools on Home", keywords: ["home", "tools", "page", "tiles"] },
   { section: "appearance", id: "project-colour", title: "Project colour", keywords: ["tint", "violet", "colour", "color"] },
   { section: "appearance", id: "background-glow", title: "Background glow", keywords: ["glow", "dark", "home"] },
   // Storage: where footage, music and finished videos live
@@ -88,11 +87,20 @@ const STATIC_ROWS = [
   { section: "account", id: "sign-out", title: "Sign out", keywords: ["log out", "logout", "session", "sign off"], needs: "sign-in" },
 ] as const satisfies readonly SearchRow[];
 
-/** Every id a row may carry: the static ones, plus one per API key and per server key. */
-export type SearchRowId = (typeof STATIC_ROWS)[number]["id"] | ApiKeyRowId | ServerKeyRowId;
+/** The Home tools a person can switch (one row each on Appearance; the always-on tools have no switch). */
+export type HomeToolRowId = `home-tool-${Tool}`;
+
+/** Every id a row may carry: the static ones, plus one per API key, per server key and per switchable Home tool. */
+export type SearchRowId = (typeof STATIC_ROWS)[number]["id"] | ApiKeyRowId | ServerKeyRowId | HomeToolRowId;
 
 export const SETTINGS_SEARCH_INDEX: readonly SearchRow[] = [
   ...STATIC_ROWS,
+  ...TOOLS.filter((t) => !DEFAULT_TOOLS.includes(t)).map((t) => ({
+    section: "appearance" as const,
+    id: `home-tool-${t}` as HomeToolRowId,
+    title: TOOL_NAMES[t],
+    keywords: ["home", "tools", "tile", "switch"],
+  })),
   ...MY_KEYS.map((k) => ({
     section: "keys" as const,
     id: `api-key-${k.env}` as ApiKeyRowId,

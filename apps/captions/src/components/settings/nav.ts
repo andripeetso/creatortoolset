@@ -33,7 +33,7 @@ interface BuiltinEntry extends SettingsEntry {
   listed?: false;
 }
 
-/** The built-in sections in sidebar order. Groups: none = top block; "AI", "Devices", "Connections", "Team", "Server" are headed. */
+/** The built-in sections in sidebar order. Groups: none = top block; "AI", "Devices", "Connections", "People" are headed. */
 const BUILTIN: ReadonlyArray<BuiltinEntry> = [
   { id: "general", title: "General", icon: SlidersHorizontal },
   { id: "appearance", title: "Appearance", icon: Palette },
@@ -46,8 +46,8 @@ const BUILTIN: ReadonlyArray<BuiltinEntry> = [
   { id: "connectors", title: "Social accounts", icon: Share2, group: "Connections" },
   { id: "keys", title: "API keys", icon: KeyRound, group: "Connections" },
   { id: "own-ai", title: "Your own AI", icon: Bot, group: "Connections" },
-  { id: "team", title: "Team", icon: Users, group: "Team", hostedOnly: true },
-  { id: "admin", title: "Admin", icon: ShieldCheck, group: "Server", hostedOnly: true, adminOnly: true },
+  { id: "team", title: "Team", icon: Users, group: "People", hostedOnly: true },
+  { id: "admin", title: "Admin", icon: ShieldCheck, group: "People", hostedOnly: true, adminOnly: true },
   { id: "account", title: "Account", icon: UserRound, listed: false },
 ];
 

@@ -2,7 +2,7 @@ import { Link } from "react-router";
 import type { CatalogEntry, UpdateRow } from "@contracts/pack-catalog";
 import { compareVersions, type InstalledPack } from "@contracts/packs";
 import { Card, EmptyRow, ListRow, Section } from "@/components/settings/ui";
-import { PACK_KINDS, packKinds, type KindId } from "./packs-helpers";
+import { PACK_KINDS, firstSentence, packKinds, type KindId } from "./packs-helpers";
 import { OfficialBadge } from "./PacksShared";
 import { InstallButton, PackUpdateButton } from "./PackActions";
 
@@ -76,7 +76,7 @@ function CatalogRow({ entry, installed, latest, reload }: { entry: CatalogEntry;
         </span>
       }
       subtitle={`by ${entry.author}`}
-      status={<span className="truncate">{entry.description}</span>}
+      status={firstSentence(entry.description)}
       actions={
         installed ? (
           updatable ? (

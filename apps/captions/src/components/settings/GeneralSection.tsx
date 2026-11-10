@@ -9,7 +9,7 @@ import { persistConfirmDeletes, persistStatusBars, storedConfirmDeletes, storedS
 import { useWorkTalk } from "@/lib/setup";
 import { warmScreens } from "@/lib/warm-cache";
 import { canRecordScreen } from "@/lib/mac-record";
-import { Card, Row, Section, saveFailed } from "./ui";
+import { Card, Row, RowMenu, Section, saveFailed } from "./ui";
 import { HowYouWorkDialog, HOW_NAMES } from "./HowYouWorkDialog";
 import { tell, useThisMac, type ThisMacState } from "./ThisMacSection";
 
@@ -115,7 +115,10 @@ export function ScreenRecording({ mac }: { mac: ThisMacState | null }) {
   );
 }
 
-/** The saved lists (lib/local-cache.ts) and the screens' refresh (lib/warm-cache.ts). Failures are toasts. */
+/**
+ * The saved lists (lib/local-cache.ts): one row with their count and size, read when the page opens and after each
+ * change. Refresh (lib/warm-cache.ts) fills them again from the server; Clear empties them. Failures are toasts.
+ */
 function ThisComputer() {
   const me = useAuth((s) => s.me);
   const [usage, setUsage] = useState(() => cachedUsage(me?.username));
@@ -124,11 +127,12 @@ function ThisComputer() {
   useEffect(() => measure(), [measure, me]);
 
   const refresh = async () => {
+    if (busy) return;
     setBusy(true);
     try {
       await warmScreens();
     } catch {
-      saveFailed("The saved screens did not refresh. Try again.");
+      saveFailed("The saved lists did not refresh. Try again.");
     } finally {
       setBusy(false);
       measure();
@@ -146,10 +150,21 @@ function ThisComputer() {
   return (
     <Section title="This computer">
       <Card>
-        {usage.items > 0 && (
-          <Row id="saved-lists" title="Saved lists" status={`${usage.items} · ${size(usage.bytes)}`} control={<Button size="sm" variant="outline" onClick={clear}>Clear</Button>} />
-        )}
-        <Row id="screens" title="Saved screens" control={<Button size="sm" variant="outline" disabled={busy || !me} onClick={() => void refresh()}>Refresh</Button>} />
+        <Row
+          id="saved-lists"
+          title="Saved lists"
+          description="Copies the screens open from, so they show at once. Your work stays."
+          status={usage.items > 0 ? `${usage.items} · ${size(usage.bytes)}` : undefined}
+          control={
+            <RowMenu
+              label="Saved lists"
+              items={[
+                { label: busy ? "Refreshing…" : "Refresh", onSelect: refresh },
+                { label: "Clear", onSelect: clear },
+              ]}
+            />
+          }
+        />
       </Card>
     </Section>
   );

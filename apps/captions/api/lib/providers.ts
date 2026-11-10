@@ -372,7 +372,7 @@ export const instanceIn = (scope: Scope, id: string): ProviderInstance | undefin
 
 /** Why a driver the Mac app can't run yet is shown disabled; the rest share the general line. */
 const NOT_RUN_REASON: Partial<Record<Driver, string>> = {
-  musecode: "No command-line tool on this Mac yet.",
+  musecode: "Not in the Mac app yet.",
 };
 
 /**

@@ -254,12 +254,12 @@ describe("connect your AI", () => {
       if (args.join(" ") === "login status") return { stdout: "Logged in using ChatGPT\n" };
       return undefined;
     });
-    expect((await local.localAiView("ana", [])).rows.map((r) => r.id)).toEqual([]);
+    expect((await local.localAiView("ana", [])).rows.filter((r) => r.found).map((r) => r.id)).toEqual([]);
     // installed after that look: a plain look still shows the cached answer, Check again reads the machine
     present.push("codex");
-    expect((await local.localAiView("ana", [])).rows.map((r) => r.id)).toEqual([]);
+    expect((await local.localAiView("ana", [])).rows.filter((r) => r.found).map((r) => r.id)).toEqual([]);
     const fresh = await local.localAiView("ana", [], true);
-    expect(fresh.rows).toEqual([expect.objectContaining({ id: "codex", found: true, signedIn: true, version: "codex-cli 0.50.0" })]);
+    expect(fresh.rows.filter((r) => r.found)).toEqual([expect.objectContaining({ id: "codex", found: true, signedIn: true, version: "codex-cli 0.50.0" })]);
     local.setDesktopAppsForTests();
   });
 
@@ -336,7 +336,7 @@ describe("the list setup shows", () => {
     });
     const v = await local.localAiView("ana", ["claude"]);
     expect(v.local).toBe(true);
-    const cli = v.rows.filter((r) => r.kind === "cli");
+    const cli = v.rows.filter((r) => r.kind === "cli" && r.found);
     expect(cli.map((r) => [r.id, r.mcp, r.signedIn])).toEqual([
       ["claude", "added", true],
       ["codex", "update", true],

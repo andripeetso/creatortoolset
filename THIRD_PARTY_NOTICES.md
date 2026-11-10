@@ -53,6 +53,13 @@ The app also bundles Node.js (its licence is `server/NODE-LICENSE` inside the ap
 `apps/captions/public/fonts/` bundles Google Fonts under the SIL Open Font License 1.1 (the text is in `OFL.txt`
 there): Anton, Archivo Black, Bebas Neue, Inter, Montserrat, Oswald and Poppins.
 
+## Provider marks
+
+The AI provider marks in Settings (`apps/captions/src/components/settings/ProviderLogos.tsx`) are single SVG paths
+copied into the code: most from [Simple Icons](https://simpleicons.org) (CC0 1.0), Grok and Antigravity from
+[@lobehub/icons-static-svg](https://github.com/lobehub/lobe-icons) (MIT). The marks themselves are trademarks of
+their owners and are shown only to name the product a row is about.
+
 ## Optional runtimes you build yourself
 
 These are not in the repository or the Docker image. The setup scripts fetch them on your machine, and they

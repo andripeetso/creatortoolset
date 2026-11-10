@@ -72,46 +72,49 @@ export function WorkspaceSection() {
   }
 
   const owner = view.me === "owner";
+  if (!owner) {
+    // a member can change nothing here: the team's name is the page, and their own line is the only row
+    const mine = view.members.find((m) => m.username === me?.username);
+    return (
+      <Section title={view.workspace.name}>
+        <Card>
+          <ListRow title={me?.username ?? ""} subtitle={mine ? memberLine(mine, true, false) : undefined} />
+        </Card>
+      </Section>
+    );
+  }
   // every change reloads the view; a failure throws, so the control that asked shows its toast
   const act = (p: Promise<unknown>) => p.then(load);
   const attempt = (p: Promise<unknown>) => act(p).catch((e) => saveFailed(msg(e)));
-  const signIn = SIGN_IN.find((o) => o.id === signInId(view.workspace.signInWith));
 
   return (
     <>
       <Section title="Team">
         <Card>
-          {owner ? (
-            <Row
-              id="team-name"
-              title="Team name"
-              control={
-                <TextField
-                  label="Team name"
-                  value={view.workspace.name}
-                  onCommit={async (next) => {
-                    if (!next.trim()) throw new Error("A team needs a name.");
-                    await act(renameWorkspace(next.trim()));
-                  }}
-                />
-              }
-            />
-          ) : (
-            <Row id="team-name" title="Team name" status={view.workspace.name} />
-          )}
+          <Row
+            id="team-name"
+            title="Team name"
+            control={
+              <TextField
+                label="Team name"
+                value={view.workspace.name}
+                onCommit={async (next) => {
+                  if (!next.trim()) throw new Error("A team needs a name.");
+                  await act(renameWorkspace(next.trim()));
+                }}
+              />
+            }
+          />
           <Row
             id="team-sign-in"
             title="How the team signs in"
-            status={owner ? undefined : signIn?.label}
             control={
-              owner ? (
-                <SettingsSelect
-                  label="How the team signs in"
-                  value={signInId(view.workspace.signInWith)}
-                  options={SIGN_IN.map((o) => ({ value: o.id, label: o.label }))}
-                  onValueChange={(id) => void attempt(setSignInWith(SIGN_IN.find((o) => o.id === id)?.value ?? []))}
-                />
-              ) : undefined
+              <SettingsSelect
+                label="How the team signs in"
+                value={signInId(view.workspace.signInWith)}
+                options={SIGN_IN.map((o) => ({ value: o.id, label: o.label }))}
+                onValueChange={(id) => void attempt(setSignInWith(SIGN_IN.find((o) => o.id === id)?.value ?? []))}
+              />
             }
           />
         </Card>
@@ -121,11 +124,9 @@ export function WorkspaceSection() {
         id="team-members"
         title="Members"
         action={
-          owner ? (
-            <Button size="xs" variant="ghost" onClick={() => setInviting(true)}>
-              + Invite
-            </Button>
-          ) : undefined
+          <Button size="xs" variant="ghost" onClick={() => setInviting(true)}>
+            + Invite
+          </Button>
         }
       >
         <Card>
@@ -140,15 +141,15 @@ export function WorkspaceSection() {
                     {self && <span className="ml-1.5 font-normal text-muted-foreground">(you)</span>}
                   </>
                 }
-                subtitle={memberLine(m, self, owner)}
-                actions={owner && m.role !== "owner" && !self ? <MemberMenu m={m} canEditHere={me?.role !== "admin"} onAi={() => setAiFor(m)} onTools={() => setEditing(m)} onAdmin={() => navigate("/settings/admin/access")} onRemove={() => attempt(removeMember(m.username))} /> : undefined}
+                subtitle={memberLine(m, self, true)}
+                actions={m.role !== "owner" && !self ? <MemberMenu m={m} canEditHere={me?.role !== "admin"} onAi={() => setAiFor(m)} onTools={() => setEditing(m)} onAdmin={() => navigate("/settings/admin/access")} onRemove={() => attempt(removeMember(m.username))} /> : undefined}
               />
             );
           })}
         </Card>
       </Section>
 
-      {owner && view.invites.length > 0 && (
+      {view.invites.length > 0 && (
         <Section id="team-invite" title="Pending invites">
           <Card>
             {view.invites.map((i) => (
@@ -321,7 +322,7 @@ function InviteDialog({ open, onOpenChange, onCreated }: { open: boolean; onOpen
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Invite someone</DialogTitle>
-          <DialogDescription>A link for one person, good for 7 days. Copy it now: it is not shown again.</DialogDescription>
+          <DialogDescription>Good for 7 days. Shown once: copy it now.</DialogDescription>
         </DialogHeader>
         {link && <code className="block truncate rounded-md border border-border/60 bg-muted/40 px-3 py-2 text-xs">{link}</code>}
         <DialogFooter>

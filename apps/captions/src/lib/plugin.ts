@@ -26,7 +26,7 @@ export interface SettingsEntry {
   id: string;
   title: string;
   icon: LucideIcon;
-  /** The sidebar block it sits in ("AI", "Connections", "Team", "Server"); none = the top block. */
+  /** The sidebar block it sits in ("AI", "Devices", "Connections", "People"); none = the top block. */
   group?: string;
   adminOnly?: boolean;
   body?: ReactNode;

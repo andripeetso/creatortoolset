@@ -68,6 +68,7 @@ export function ServersSection() {
                 }
                 title={v.name}
                 subtitle={v.url}
+                status={v.current ? "Open now" : undefined}
                 actions={
                   <RowMenu
                     label={`${v.name} actions`}

@@ -1,65 +1,96 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
-import type { CliId, LocalAiRow, LocalAiView } from "@contracts/local-ai";
+import type { CliId, LocalAiRow, LocalAiView, SignInResult } from "@contracts/local-ai";
 import { Button } from "@/components/ui/button";
-import { useAuth } from "@/lib/auth";
+import { getComputers, type ComputerInfo } from "@/components/setup/computers";
 import { AccessKeysSection } from "./AccessKeys";
 import { ProviderLogo } from "./ProviderLogos";
 import { Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Section, Status, saveFailed } from "./ui";
 import { msg } from "./helpers";
+
+/** A page that waits this long for the Mac's answer shows a row with Try again, not a spinner for ever. */
+const WAIT_MS = 20_000;
 
 async function json<T>(r: Response): Promise<T> {
   const j = (await r.json().catch(() => null)) as { error?: string } | null;
   if (!r.ok) throw new Error(j?.error || `Request failed (${r.status})`);
   return j as T;
 }
+const getAi = () => fetch("/api/setup/ai", { signal: AbortSignal.timeout(WAIT_MS) }).then((r) => json<LocalAiView>(r));
+const errorText = (e: unknown) => (e instanceof Error && e.name === "TimeoutError" ? "It took too long to answer. Try again." : msg(e));
 
-/** The AI apps on this Mac that can use Creator Toolset (Claude Code, Codex; Gemini has no key path). */
+/** The AI apps this page can connect (Claude Code, Codex; Gemini has no key path). */
 export const connectableRows = (view: LocalAiView) =>
   view.rows.filter((r): r is LocalAiRow & { id: CliId } => r.kind === "cli" && r.found && r.mcp !== "n/a" && r.id !== "gemini");
 
+const NAMES: Partial<Record<string, string>> = { claude: "Claude Code", codex: "Codex" };
+
 /**
  * Settings → Your own AI: the app gives your own AI (Claude Code, Codex) a key, so it can work here as you. Each AI app
- * found on this Mac is one row with [Connect]. Access keys (for AIs and scripts) sit below, with sign-in.
+ * found on this computer is one row. Access keys (for AIs and scripts) sit below.
  */
 export function OwnAiSection() {
-  const required = useAuth((s) => s.required);
   return (
     <>
       <ConnectAiSection />
-      {required && <AccessKeysSection />}
+      <AccessKeysSection />
     </>
   );
 }
 
-/** "Connect your AI": the Mac's AI apps, one row each. Also what Settings → Providers used to hold; now its own section. */
-export function ConnectAiSection() {
-  const [view, setView] = useState<LocalAiView | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<CliId | null>(null);
-  const [failed, setFailed] = useState<Partial<Record<CliId, string>>>({});
+/** What the rows need from the page's state: which row is busy, and the last failure per AI app. */
+export interface ConnectState {
+  busy: CliId | null;
+  signing: CliId | null;
+  failed: Partial<Record<CliId, string>>;
+  signFailed: Partial<Record<CliId, string>>;
+}
 
-  const load = () =>
-    fetch("/api/setup/ai")
-      .then((r) => json<LocalAiView>(r))
-      .then((v) => (setView(v), setError(null)))
-      .catch((e) => setError(msg(e)));
+/**
+ * "Connect your AI": the AI apps on this computer (one row each, with Sign in or Connect), or, on a hosted server, the
+ * AI apps on the computers the person has connected to it. Also what Settings → Providers used to hold.
+ */
+export function ConnectAiSection() {
+  const [view, setView] = useState<{ ai: LocalAiView; others: ComputerInfo[] } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [state, setState] = useState<ConnectState>({ busy: null, signing: null, failed: {}, signFailed: {} });
+
+  const load = () => {
+    setError(null);
+    getAi()
+      .then(async (ai) => ({ ai, others: ai.local ? [] : ((await getComputers())?.others ?? []) }))
+      .then(setView)
+      .catch((e) => setError(errorText(e)));
+  };
   useEffect(() => {
-    void load();
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const add = async (id: CliId) => {
-    setBusy(id);
-    setFailed((f) => ({ ...f, [id]: undefined }));
+    setState((s) => ({ ...s, busy: id, failed: { ...s.failed, [id]: undefined } }));
     try {
       const res = await fetch("/api/setup/ai/mcp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) }).then((r) => json<{ ok: boolean; failed: Array<{ id: CliId; message: string }>; message?: string }>(r));
       const mine = res.failed.find((x) => x.id === id);
-      if (mine || !res.ok) setFailed((f) => ({ ...f, [id]: mine?.message ?? res.message ?? "it could not be added" }));
+      if (mine || !res.ok) setState((s) => ({ ...s, failed: { ...s.failed, [id]: mine?.message ?? res.message ?? "it could not be added" } }));
     } catch (e) {
-      setFailed((f) => ({ ...f, [id]: msg(e) }));
+      setState((s) => ({ ...s, failed: { ...s.failed, [id]: errorText(e) } }));
     } finally {
-      setBusy(null);
-      void load();
+      setState((s) => ({ ...s, busy: null }));
+      load();
+    }
+  };
+
+  const signIn = async (id: CliId) => {
+    setState((s) => ({ ...s, signing: id, signFailed: { ...s.signFailed, [id]: undefined } }));
+    try {
+      const res = await fetch("/api/setup/ai/signin", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) }).then((r) => json<SignInResult>(r));
+      if (!res.ok) setState((s) => ({ ...s, signFailed: { ...s.signFailed, [id]: res.message ?? "it did not start" } }));
+    } catch (e) {
+      setState((s) => ({ ...s, signFailed: { ...s.signFailed, [id]: errorText(e) } }));
+    } finally {
+      setState((s) => ({ ...s, signing: null }));
+      load();
     }
   };
 
@@ -67,37 +98,81 @@ export function ConnectAiSection() {
     <Section id="connect-ai" title="Connect your AI">
       <Card>
         {!view ? (
-          error ? <ErrorRow title="Couldn't load your AI apps" detail={error} retry={() => void load()} /> : <LoadingRow />
+          error ? <ErrorRow title="Couldn't load your AI apps" detail={error} retry={load} /> : <LoadingRow />
+        ) : view.ai.local ? (
+          <ConnectAiRows view={view.ai} state={state} onAdd={(id) => void add(id)} onSignIn={(id) => void signIn(id)} />
         ) : (
-          <ConnectAiRows view={view} busy={busy} failed={failed} onAdd={(id) => void add(id)} />
+          <OtherComputerRows others={view.others} />
         )}
       </Card>
     </Section>
   );
 }
 
-/** The rows for a loaded view: pure, so each state can be checked without a server. */
-export function ConnectAiRows({ view, busy, failed, onAdd }: { view: LocalAiView; busy: CliId | null; failed: Partial<Record<CliId, string>>; onAdd: (id: CliId) => void }) {
-  if (!view.local)
-    return <EmptyRow title="Connect your AI from the Mac app" description="Claude Code and Codex run on a Mac. Open Creator Toolset on that Mac to connect them." />;
+/** The rows for a loaded view on this computer: pure, so each state can be checked without a server. */
+export function ConnectAiRows({ view, state, onAdd, onSignIn }: { view: LocalAiView; state: ConnectState; onAdd: (id: CliId) => void; onSignIn: (id: CliId) => void }) {
   const rows = connectableRows(view);
   if (rows.length === 0)
     return <EmptyRow title="Use the app from Claude, ChatGPT or a script" description="Your own AI can read and work in your projects here." />;
   return (
     <>
       {rows.map((r) => (
-        <AiRow key={r.id} row={r} busy={busy === r.id} failed={failed[r.id]} onAdd={() => onAdd(r.id)} />
+        <AiRow
+          key={r.id}
+          row={r}
+          busy={state.busy === r.id}
+          signing={state.signing === r.id}
+          failed={state.failed[r.id]}
+          signFailed={state.signFailed[r.id]}
+          onAdd={() => onAdd(r.id)}
+          onSignIn={() => onSignIn(r.id)}
+        />
       ))}
     </>
   );
 }
 
-function AiRow({ row, busy, failed, onAdd }: { row: LocalAiRow; busy: boolean; failed?: string; onAdd: () => void }) {
+/**
+ * On a hosted server the AI apps are on the person's computers: one row per AI app each of them reports. Signed in on a
+ * computer that is on is quiet ("Connected"); not signed in says where to fix it (the sign-in happens on that computer).
+ * An offline computer's AI is not claimed as connected.
+ */
+export function OtherComputerRows({ others }: { others: ComputerInfo[] }) {
+  const rows = others.flatMap((c) => c.drivers.filter((d) => d.installed && NAMES[d.driver]).map((d) => ({ c, d })));
+  if (rows.length === 0)
+    return <EmptyRow title="Connect your AI from the Mac app" description="Claude Code and Codex run on a Mac. Open Creator Toolset on that Mac to connect them." />;
+  return (
+    <>
+      {rows.map(({ c, d }) => (
+        <ListRow
+          key={`${c.id}-${d.driver}`}
+          icon={<ProviderLogo driver={d.driver as CliId} className="size-4" />}
+          title={NAMES[d.driver] ?? d.driver}
+          subtitle={c.online ? c.name : `${c.name} · offline`}
+          actions={
+            !c.online ? undefined : d.signedIn === false ? (
+              <Status tone="attention">Not signed in. Sign in on {c.name}.</Status>
+            ) : d.signedIn ? (
+              <Status>Connected</Status>
+            ) : undefined
+          }
+        />
+      ))}
+    </>
+  );
+}
+
+function AiRow({ row, busy, signing, failed, signFailed, onAdd, onSignIn }: { row: LocalAiRow; busy: boolean; signing: boolean; failed?: string; signFailed?: string; onAdd: () => void; onSignIn: () => void }) {
   let status: ReactNode = undefined;
   let action: ReactNode = null;
   let subtitle: string | undefined = row.version ? `Version ${row.version}` : undefined;
-  if (!row.connected) {
-    status = <Status tone="attention">Sign in to {row.name} on this Mac first</Status>;
+  if (row.signedIn === false) {
+    status = signFailed ? <Status tone="broken">Couldn't sign in: {signFailed}</Status> : <Status tone="attention">Not signed in</Status>;
+    action = (
+      <Button size="xs" variant="outline" disabled={signing} onClick={onSignIn}>
+        {signing ? "Signing in…" : "Sign in"}
+      </Button>
+    );
   } else if (row.mcp === "added") {
     action = <Status>Connected</Status>;
   } else if (row.mcp === "update") {

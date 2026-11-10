@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { adminTabList } from "./AdminSection";
+import { adminTabList, retiredTabTarget } from "./AdminSection";
 
 const footage = { id: "footage-access", title: "Footage" };
 const admin = { role: "admin" };
@@ -16,6 +16,15 @@ describe("adminTabList (Settings → Admin tabs per install and role)", () => {
 
   it("own-computer install: no Server keys tab, plug-in tabs still follow the built-in ones", () => {
     expect(adminTabList(admin, false, [footage]).map((t) => t.id)).toEqual(["users", "access", "projects", "footage-access"]);
+  });
+
+  it("moves a retired tab id to its tab, and only when that tab is on this server", () => {
+    const hosted = ["users", "access", "projects", "server-keys"];
+    expect(retiredTabTarget("ai", hosted)).toBe("server-keys");
+    expect(retiredTabTarget("apps", hosted)).toBe("access");
+    expect(retiredTabTarget("ai", ["users", "access", "projects"])).toBeNull();
+    expect(retiredTabTarget("access", hosted)).toBeNull();
+    expect(retiredTabTarget(undefined, hosted)).toBeNull();
   });
 
   it("uses the names people read", () => {

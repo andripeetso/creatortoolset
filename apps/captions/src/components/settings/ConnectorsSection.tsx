@@ -53,7 +53,10 @@ const loginOf = (p: SocialPlatform): LoginKind | undefined => PLATFORMS.find((x)
  * dialog's version: the Apify row and the sign-ins, nothing else.
  */
 export function ConnectorsSection({ back = "/settings/connectors", compact }: { sub?: string; back?: string; compact?: boolean }) {
-  const admin = useAuth((s) => s.me?.role) === "admin";
+  // the sign-in apps are the hosted server's (on a computer the owner's own install has none to show)
+  const isAdmin = useAuth((s) => s.me?.role) === "admin";
+  const hosted = useAuth((s) => s.hosted);
+  const admin = isAdmin && hosted;
   const projects = useWorkspace((s) => s.projects);
   const navigate = useNavigate();
   const [view, setView] = useState<ConnectorsView | null>(null);

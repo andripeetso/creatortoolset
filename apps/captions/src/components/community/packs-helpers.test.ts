@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { countLabel, destinations, packContents, packKinds, packProjects, slugify, toolLine } from "./packs-helpers";
+import { countLabel, destinations, firstSentence, packContents, packKinds, packProjects, slugify, toolLine } from "./packs-helpers";
 
 describe("packContents", () => {
   it("lists instruction slots in the app's slot order, with their labels, and leaves out ones this app doesn't use", () => {
@@ -66,5 +66,16 @@ describe("where a pack goes", () => {
       "Make Caption Studio › The style list when you caption a video",
     ]);
     expect(toolLine(c)).toBe("Plan · Content Workshop, Make · Caption Studio");
+  });
+});
+
+describe("firstSentence", () => {
+  it("is the first sentence when it fits a row, so the line ends cleanly", () => {
+    expect(firstSentence("Writing frame for hooks. It reads your last ten posts and then asks what you want to say.")).toBe("Writing frame for hooks.");
+    expect(firstSentence("Does it work? Yes.")).toBe("Does it work?");
+  });
+  it("is empty when there is no full sentence or it is too long for one line (the fold keeps the rest)", () => {
+    expect(firstSentence("No full stop here")).toBe("");
+    expect(firstSentence(`${"word ".repeat(30)}end.`)).toBe("");
   });
 });

@@ -37,9 +37,9 @@ describe("the sidebar per install and role", () => {
 });
 
 describe("the sidebar blocks", () => {
-  it("a hosted admin's blocks: a top block with no heading, then AI, Devices, Connections, Team and Server", () => {
+  it("a hosted admin's blocks: a top block with no heading, then AI, Devices, Connections and People", () => {
     const blocks = navBlocks(navListFor(at(true, true, true), []));
-    expect(blocks.map((b) => b.heading)).toEqual([undefined, "AI", "Devices", "Connections", "Team", "Server"]);
+    expect(blocks.map((b) => b.heading)).toEqual([undefined, "AI", "Devices", "Connections", "People"]);
     expect(blocks[0].items.map((s) => s.id)).toEqual(["general", "appearance"]);
   });
 });

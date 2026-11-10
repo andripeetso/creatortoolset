@@ -4,7 +4,7 @@ import type { UpdateRow } from "@contracts/pack-catalog";
 import { Advanced, Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Row, Section, Status } from "@/components/settings/ui";
 import type { PluginInfo } from "@/lib/plugin";
 import { ContentsView } from "./PacksShared";
-import { packContents } from "./packs-helpers";
+import { firstSentence, packContents } from "./packs-helpers";
 import { InstalledPackActions, PackHereSwitch, PackUsedIn } from "./PackActions";
 import { PluginRows } from "./PluginsInstalled";
 
@@ -68,15 +68,14 @@ function PackRow({ pack: p, latest, reload }: { pack: InstalledPack; latest?: st
         }
         subtitle={`by ${p.author}`}
         status={
-          p.delisted ? (
-            <Status tone="broken">Pulled from the community: {p.delisted}. Its instructions are off.</Status>
-          ) : (
-            <span className="truncate">{p.description}</span>
-          )
+          p.delisted ? <Status tone="broken">Pulled from the community: {p.delisted}. Its instructions are off.</Status> : firstSentence(p.description)
         }
         actions={<InstalledPackActions id={p.id} name={p.name} installed={p} latest={latest} reload={reload} />}
       />
       <Advanced summary="What it adds">
+        {!p.delisted && p.description.trim() !== firstSentence(p.description) && (
+          <p className="px-3 py-3 text-sm text-muted-foreground sm:px-4">{p.description.trim()}</p>
+        )}
         <PackUsedIn id={p.id} installed={p} reload={reload} />
         <PackHereSwitch id={p.id} name={p.name} installed={p} reload={reload} />
         {p.default && p.off.includes("*") && <Row title="Off for you: you had your own setup before packs." />}

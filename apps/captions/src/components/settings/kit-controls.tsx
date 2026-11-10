@@ -100,7 +100,7 @@ export function SettingsSelect({ label, value, onValueChange, options, disabled,
 }) {
   return (
     <Select value={value} onValueChange={onValueChange} disabled={disabled}>
-      <SelectTrigger size="sm" aria-label={label} className={cn("w-full sm:w-44", className)}>
+      <SelectTrigger size="sm" aria-label={label} className={cn("w-full sm:w-auto sm:min-w-44", className)}>
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
@@ -120,9 +120,9 @@ export function SettingsSelect({ label, value, onValueChange, options, disabled,
  */
 export function Status({ tone, children }: { tone?: "attention" | "broken"; children: ReactNode }) {
   return (
-    <span className={cn("inline-flex min-w-0 items-center gap-1.5 text-xs", tone === "broken" ? "text-red-600 dark:text-red-400" : "text-muted-foreground")}>
+    <span className={cn("inline-flex min-w-0 max-w-full items-baseline gap-1.5 text-xs sm:items-center", tone === "broken" ? "text-red-600 dark:text-red-400" : "text-muted-foreground")}>
       {tone && <StatusDot tone={tone} />}
-      <span className="min-w-0 truncate">{children}</span>
+      <span className="min-w-0 break-words sm:truncate">{children}</span>
     </span>
   );
 }

@@ -11,8 +11,8 @@ export interface ProviderStatus {
   /** attention = the person must act (amber, with the button that fixes it); broken = a check failed (red); neutral = a fact or nothing */
   tone: "attention" | "broken" | "neutral";
   text: string;
-  /** the button that fixes it, shown beside the switch */
-  action?: "sign-in" | "install";
+  /** the button that fixes it, shown beside the switch: a sign-in, an install, or a new test */
+  action?: "sign-in" | "install" | "test";
 }
 
 /**
@@ -40,7 +40,7 @@ export function providerStatus(o: {
     // the plain reason is in the detail; a sign-in problem gets its fix on the row
     const signIn = /sign in|log ?in|login/i.test(o.check.error ?? "");
     const computer = /did not pick up|is offline|stopped answering/i.test(o.check.error ?? "");
-    return { tone: "broken", text: computer ? "Computer didn't answer" : "Didn't answer", ...(signIn ? { action: "sign-in" as const } : {}) };
+    return { tone: "broken", text: computer ? "Computer didn't answer" : "Didn't answer", action: signIn ? "sign-in" : "test" };
   }
   if (o.found?.signedIn && o.found.plan) return { tone: "neutral", text: `${o.found.plan.charAt(0).toUpperCase()}${o.found.plan.slice(1)} plan` };
   return { tone: "neutral", text: "" };

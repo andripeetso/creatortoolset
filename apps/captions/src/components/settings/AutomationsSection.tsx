@@ -20,6 +20,9 @@ import {
   type AutomationDraft,
   type AutomationView,
 } from "@/lib/automations";
+import type { LimitsIdentity } from "@contracts/providers";
+import { getProviders } from "@/lib/providers";
+import { claudeLimitReset } from "@/lib/limits";
 import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, SettingsSelect, Status, saveFailed } from "./ui";
 import { fmtAgo, msg } from "./helpers";
 
@@ -45,12 +48,23 @@ const subtitleOf = (a: AutomationView) => {
   return a.nextRun ? `${cadence} · next ${nextLabel(a.nextRun, a.timezone)}` : cadence;
 };
 
-/** The last result on one line: red when it failed, amber when it was skipped (the person has to fix something). A failed or skipped result's words are below the row. */
-function lastLine(a: AutomationView): ReactNode {
+const WHAT = "A task is a prompt your AI runs on its own, daily, weekly or every few hours. Its last result shows on its row.";
+const LIMIT_HIT = /usage limit/i;
+
+/**
+ * The last result on one line: red when it failed, amber when it was skipped (the person has to fix something). A failed
+ * or skipped result's words are below the row. A usage-limit failure says when the limit comes back, if a reading knows.
+ */
+export function lastLine(a: AutomationView, limits: LimitsIdentity[], now: number): ReactNode {
   const r = a.lastResult;
   if (!r) return "Not run yet";
-  if (r.status === "done") return `${WORD[r.status]} ${fmtAgo(r.at)}: ${firstLine(r.text)}`;
-  return <Status tone={r.status === "error" ? "broken" : "attention"}>{`${WORD[r.status]} ${fmtAgo(r.at)}`}</Status>;
+  if (r.status === "done") return `${WORD[r.status]} ${fmtAgo(r.at, now)}: ${firstLine(r.text)}`;
+  const words = [`${WORD[r.status]} ${fmtAgo(r.at, now)}`];
+  if (r.status === "error" && LIMIT_HIT.test(r.text)) {
+    const reset = claudeLimitReset(limits, now);
+    words.push(reset ? `usage limit, ${reset}` : "usage limit");
+  }
+  return <Status tone={r.status === "error" ? "broken" : "attention"}>{words.join(" · ")}</Status>;
 }
 
 /**
@@ -60,14 +74,17 @@ function lastLine(a: AutomationView): ReactNode {
 export function AutomationsSection() {
   const navigate = useNavigate();
   const [list, setList] = useState<{ items: AutomationView[]; blocked: string | null } | null>(null);
+  const [limits, setLimits] = useState<LimitsIdentity[]>([]);
   const [error, setError] = useState<string | null>(null);
   // "new", a task to edit, or nothing open
   const [editing, setEditing] = useState<AutomationView | "new" | null>(null);
 
+  // the plan readings say when a usage limit comes back; a failed read only leaves the reset out
   const reload = () =>
-    listAutomations()
-      .then((r) => {
+    Promise.all([listAutomations(), getProviders().then((v) => v.limits, () => [] as LimitsIdentity[])])
+      .then(([r, l]) => {
         setList(r);
+        setLimits(l);
         setError(null);
       })
       .catch((e) => setError(msg(e)));
@@ -106,6 +123,7 @@ export function AutomationsSection() {
               {blocked && (
                 <Row
                   title="Tasks can't run yet"
+                  description={WHAT}
                   status={<Status tone="attention">{blocked}</Status>}
                   control={
                     <Button size="sm" variant="outline" onClick={() => navigate("/settings/providers")}>
@@ -115,10 +133,10 @@ export function AutomationsSection() {
                 />
               )}
               {!blocked && items.length === 0 && (
-                <EmptyRow title="No scheduled tasks" description="A task is a prompt your AI runs on its own, daily, weekly or every few hours. Its last result shows on its row." />
+                <EmptyRow title="No scheduled tasks" description={WHAT} />
               )}
               {items.map((a) => (
-                <TaskRow key={a.id} a={a} onEdit={() => setEditing(a)} onChanged={reload} />
+                <TaskRow key={a.id} a={a} limits={limits} onEdit={() => setEditing(a)} onChanged={reload} />
               ))}
             </>
           )}
@@ -139,14 +157,14 @@ export function AutomationsSection() {
   );
 }
 
-function TaskRow({ a, onEdit, onChanged }: { a: AutomationView; onEdit: () => void; onChanged: () => Promise<void> }) {
+function TaskRow({ a, limits, onEdit, onChanged }: { a: AutomationView; limits: LimitsIdentity[]; onEdit: () => void; onChanged: () => Promise<void> }) {
   const r = a.lastResult;
   return (
     <div>
       <ListRow
         title={a.name}
         subtitle={subtitleOf(a)}
-        status={lastLine(a)}
+        status={lastLine(a, limits, Date.now())}
         actions={
           <>
             <Switch

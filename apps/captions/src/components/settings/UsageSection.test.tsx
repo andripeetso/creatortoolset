@@ -1,4 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
+import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProviderInstance, ProvidersView } from "@contracts/providers";
 import type { SetupView } from "@contracts/tools";
@@ -54,5 +55,28 @@ describe("your plan", () => {
 
   it("is not asked when a reading already tells it", () => {
     expect(page(null, setup({ detected: "claude_max5" }))).not.toContain("Your plan");
+  });
+});
+
+describe("an AI that is not signed in", () => {
+  it("is amber on its computer, with a way to Providers", () => {
+    const codex = { id: "codex", driver: "codex", name: "Codex", enabled: true, device: "dev_2" } as ProviderInstance;
+    const studio = { id: "dev_2", name: "Studio", online: true, version: "2.0", report: { drivers: [{ driver: "codex", installed: true, signedIn: false }], homes: [] } };
+    const v = { limits: [], devices: [studio], own: { instances: [codex] }, workspace: null } as unknown as ProvidersView;
+    const html = renderToStaticMarkup(<MemoryRouter><PlanLimits view={v} now={0} bridge={null} setup={setup()} /></MemoryRouter>);
+    expect(html).toContain("Not signed in on Studio, so there is no plan to read.");
+    expect(html).toContain("Open Providers");
+  });
+});
+
+describe("a team's login", () => {
+  it("is labelled as the team's, not with a person's name", () => {
+    // the admin's own Mac can hold the team's login: the instances say whose it is
+    const studio = { id: "ws_1", name: "Studio", owner: "sam", online: true, report: { drivers: [{ driver: "claude", installed: true, plan: "Max" }], homes: [] } };
+    const login = { driver: "claude", label: "sam", state: "ok", at: 0, device: "ws_1", online: true, instances: ["workspace:claude_hub"], windows: [{ id: "five_hour", kind: "session", label: "Session", usedPercent: 38, resetsAt: 3_600_000 }] };
+    const v = { limits: [login], devices: [studio], own: null, workspace: null } as unknown as ProvidersView;
+    const html = renderToStaticMarkup(<PlanLimits view={v} now={0} bridge={null} setup={setup()} />);
+    expect(html).toContain("Claude · Team");
+    expect(html).not.toContain("Claude · sam");
   });
 });

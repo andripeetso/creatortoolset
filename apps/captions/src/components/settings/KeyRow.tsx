@@ -17,6 +17,8 @@ export interface KeyRowProps {
   /** Set in the server's .env or by the server: shown read-only, nothing to change here. */
   readOnly?: boolean;
   readOnlyText?: string;
+  /** This account has no key of its own and the server's key serves it: the subtitle says so, and [Use my own key] adds one (a person's own key wins). */
+  provided?: boolean;
   /** Saved, but not working: the words that say why (red). */
   broken?: string;
   /** The Remove confirm's sentence. */
@@ -29,7 +31,7 @@ export interface KeyRowProps {
  * One API key: the service, what uses it, the masked key with `…` (Replace, Remove after a confirm) when set, and
  * [Add key] when not. Saving opens a small dialog with one field, a "Get a key" link and [Save key].
  */
-export function KeyRow({ id, name, subtitle, where, set, last4, readOnly, readOnlyText = "Set in .env", broken, removeBody, save }: KeyRowProps) {
+export function KeyRow({ id, name, subtitle, where, set, last4, readOnly, readOnlyText = "Set in .env", provided, broken, removeBody, save }: KeyRowProps) {
   const [open, setOpen] = useState(false);
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -61,7 +63,7 @@ export function KeyRow({ id, name, subtitle, where, set, last4, readOnly, readOn
     </>
   ) : (
     <Button size="xs" variant="outline" onClick={() => setOpen(true)}>
-      Add key
+      {provided ? "Use my own key" : "Add key"}
     </Button>
   );
 
@@ -83,7 +85,7 @@ export function KeyRow({ id, name, subtitle, where, set, last4, readOnly, readOn
 
   return (
     <>
-      <ListRow id={id} title={name} subtitle={subtitle} status={status} actions={actions} />
+      <ListRow id={id} title={name} subtitle={provided ? `Provided by this server. ${subtitle}` : subtitle} status={status} actions={actions} />
       <FormDialog
         open={open}
         onOpenChange={(o) => {
@@ -93,7 +95,7 @@ export function KeyRow({ id, name, subtitle, where, set, last4, readOnly, readOn
             setError(null);
           }
         }}
-        title={set ? `Replace the ${name} key` : `Add the ${name} key`}
+        title={set ? `Replace the ${name} key` : provided ? `Use your own ${name} key` : `Add the ${name} key`}
         submitLabel="Save key"
         onSubmit={submit}
         busy={busy}

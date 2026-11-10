@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
  * button that says what it does ("Add key", "Create task"). Use it only for several fields; a single setting saves in place.
  * Submitting with Enter runs `onSubmit`. While `busy`, the button reads "Saving…" and cannot be pressed again.
  */
-export function FormDialog({ open, onOpenChange, title, description, submitLabel, onSubmit, busy, error, cancelLabel = "Cancel", children }: {
+export function FormDialog({ open, onOpenChange, title, description, submitLabel, onSubmit, busy, submitDisabled, error, cancelLabel = "Cancel", children }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
@@ -15,6 +15,8 @@ export function FormDialog({ open, onOpenChange, title, description, submitLabel
   submitLabel: string;
   onSubmit: () => void | Promise<void>;
   busy?: boolean;
+  /** Nothing to submit yet (e.g. no choice made): the primary button is off. */
+  submitDisabled?: boolean;
   error?: string | null;
   cancelLabel?: string;
   children: ReactNode;
@@ -27,7 +29,7 @@ export function FormDialog({ open, onOpenChange, title, description, submitLabel
           className="space-y-4"
           onSubmit={(e) => {
             e.preventDefault();
-            if (!busy) void onSubmit();
+            if (!busy && !submitDisabled) void onSubmit();
           }}
         >
           <DialogHeader>
@@ -40,7 +42,7 @@ export function FormDialog({ open, onOpenChange, title, description, submitLabel
             <Button type="button" variant="ghost" size="sm" onClick={() => onOpenChange(false)}>
               {cancelLabel}
             </Button>
-            <Button type="submit" size="sm" disabled={busy}>
+            <Button type="submit" size="sm" disabled={busy || submitDisabled}>
               {busy ? "Saving…" : submitLabel}
             </Button>
           </DialogFooter>

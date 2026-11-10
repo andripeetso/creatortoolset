@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { MY_KEYS, type MyKeyEnv, type MyKeyGroup, type MyKeyView } from "@contracts/service-keys";
+import type { SetupView } from "@contracts/tools";
 import { removeApify, saveApify, type ApifyStatus } from "@/lib/instagram";
 import { Card, ErrorRow, LoadingRow, Section } from "./ui";
 import { KeyRow } from "./KeyRow";
@@ -37,6 +38,7 @@ export function ApifyKeyRow({ onChanged }: { onChanged?: () => void }) {
       name="Apify"
       subtitle="Reading other creators' Instagram, TikTok and YouTube posts in Social accounts and the Content Analyzer"
       set={status.configured}
+      last4={status.last4}
       readOnly={status.source === "env"}
       broken={status.configured && status.valid === false ? "Apify refused this key" : undefined}
       removeBody="Social accounts and the Content Analyzer stop reading public posts until you add it again."
@@ -55,13 +57,23 @@ export function ApifyKeyRow({ onChanged }: { onChanged?: () => void }) {
 
 /**
  * Settings → API keys: every key the person can paste, in sections by what it is for. Each service appears once. A key
- * that is not set shows only its Add key button (the tool that needs it asks when it is used).
+ * that is not set shows only its button. A key the server provides says so, and the person can use a key of their own
+ * instead (their own key wins, api/my-keys.ts keyFor). Anthropic is listed only when the account has no AI of its own.
  */
 export function ApiKeysSection() {
   const [keys, setKeys] = useState<MyKeyView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // no AI of its own yet: the Anthropic key is what the tools use. Until the check answers, it stays hidden.
+  const [ownAi, setOwnAi] = useState(true);
   const reload = () => getMyKeys().then(setKeys).catch((e) => setError(msg(e)));
-  useEffect(() => void reload(), []);
+  useEffect(() => {
+    void reload();
+    void fetch("/api/setup")
+      .then((r) => json<SetupView>(r))
+      .then((v) => setOwnAi(v.have.includes("ownAi")))
+      .catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (!keys)
     return (
@@ -70,9 +82,11 @@ export function ApiKeysSection() {
       </Card>
     );
 
+  const shown = (env: MyKeyEnv, mine?: MyKeyView) => env !== "ANTHROPIC_API_KEY" || !ownAi || !!mine?.set;
   const rows = (group: MyKeyGroup) =>
     MY_KEYS.filter((k) => k.group === group).map((k) => {
       const mine = keys.find((x) => x.env === k.env);
+      if (!shown(k.env, mine)) return null;
       return (
         <KeyRow
           key={k.env}
@@ -80,10 +94,9 @@ export function ApiKeysSection() {
           name={k.name}
           subtitle={k.what}
           where={"where" in k ? k.where : undefined}
-          set={!!mine?.set || !!mine?.server}
+          set={!!mine?.set}
           last4={mine?.last4}
-          readOnly={!mine?.set && !!mine?.server}
-          readOnlyText="From the server"
+          provided={!mine?.set && !!mine?.server}
           save={(v) => saveMyKey(k.env as MyKeyEnv, v).then(reload)}
         />
       );

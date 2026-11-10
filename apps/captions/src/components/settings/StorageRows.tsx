@@ -1,11 +1,10 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { LIBRARY_NAME, STORAGE_ROLES, THIS_COMPUTER, sourcesOf, type AddFolderBody, type Disk, type MakeLibraryBody, type SourceRole, type StorageFolder, type StorageState, type StorageView } from "@contracts/storage";
 import type { ProvidersView } from "@contracts/providers";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { cn } from "@/lib/utils";
-import { Card, FormDialog, Row, RowMenu, SettingsSelect, Status } from "./ui";
+import { Card, EmptyRow, FormDialog, Row, RowMenu, SettingsSelect, Status } from "./ui";
 import { msg } from "./helpers";
 
 /** The computers an account owns (the list the Storage rows pick from). */
@@ -33,6 +32,9 @@ export const disksOf = (d: Computer): Disk[] => d.report?.machine?.disks ?? [];
 const nameOf = (devices: Computer[], host: string) =>
   host === THIS_COMPUTER ? "This computer" : (devices.find((d) => d.id === host)?.name ?? "A computer that is gone");
 
+/** A folder as the row shows it: the computer it is on, then its full path (the Library's own Footage and Music too). */
+const whereOf = (f: StorageFolder, devices: Computer[]) => `${nameOf(devices, f.origin.host)} · ${f.origin.path}`;
+
 const size = (gb: number) => (gb >= 1000 ? `${(gb / 1024).toFixed(1)} TB` : `${Math.round(gb)} GB`);
 /** Almost full: under 20 GB free, or under a tenth of the disk. */
 export const isFull = (d: { freeGb: number; totalGb?: number }) => d.freeGb < 20 || (d.totalGb !== undefined && d.freeGb / d.totalGb < 0.1);
@@ -48,23 +50,19 @@ function diskOf(f: StorageFolder, devices: Computer[], serverDisks: Disk[]): Dis
   return [...holding].sort((a, b) => b.path.length - a.path.length)[0] ?? disks.find((d) => d.path === "/");
 }
 
-/** A source's label: its folder name and computer; the Library's own Footage and Music read "Library/Footage". */
-function sourceLabel(f: StorageFolder, folders: StorageFolder[], devices: Computer[]): string {
-  if (!folders.some((g) => g.id === f.id)) return `Library/${f.name}`;
-  const base = f.origin.path.split("/").filter(Boolean).pop() ?? f.origin.path;
-  return `${base} on ${nameOf(devices, f.origin.host)}`;
-}
-
 const roleLabel = (role: SourceRole) => STORAGE_ROLES.find((r) => r.value === role)?.label ?? role;
 
-/** Where footage, music and finished videos are kept: rows, one per place. Used by Settings → Storage and the setup's Folders step. */
-export function Storage({ devices, storage, onChanged, intro }: { devices: Computer[]; storage: StorageView | null; onChanged: () => void; intro?: ReactNode }) {
+/**
+ * Where footage, music and finished videos are kept: rows, one per place. Used by Settings → Storage and the setup's Folders
+ * step. With nothing set, one row says what these folders are for; an unset row shows only its button.
+ */
+export function Storage({ devices, storage, onChanged }: { devices: Computer[]; storage: StorageView | null; onChanged: () => void }) {
   if (!storage) return null;
   const folders = storage.folders;
   const sources = sourcesOf(folders);
   return (
     <Card>
-      {intro && <p className="px-3 py-3 text-xs text-muted-foreground sm:px-4">{intro}</p>}
+      {folders.length === 0 && <EmptyRow title="No folders set yet" description="Where the Media Library and the AI Editor read and save files." />}
       <LibraryRow library={folders.find((f) => f.role === "library")} devices={devices} serverDisks={storage.serverDisks} onChanged={onChanged} />
       <SourceRow role="footage" sources={sources} folders={folders} devices={devices} onChanged={onChanged} />
       <SourceRow role="music" sources={sources} folders={folders} devices={devices} onChanged={onChanged} />
@@ -145,7 +143,7 @@ function LibraryDialog({ open, onOpenChange, devices, change, onChanged }: { ope
   );
 }
 
-/** Footage or music: its folders as one line, "Set folder" when none, "Add folder" after, and a `…` menu to remove one. */
+/** Footage or music: each folder's full path, "Set folder" when none and "Change" after (the dialog adds one), and a `…` menu to remove one. */
 function SourceRow({ role, sources, folders, devices, onChanged }: {
   role: SourceRole; sources: StorageFolder[]; folders: StorageFolder[]; devices: Computer[]; onChanged: () => void;
 }) {
@@ -163,14 +161,14 @@ function SourceRow({ role, sources, folders, devices, onChanged }: {
       <Row
         id={role === "footage" ? "footage-folder" : "music-folder"}
         title={label}
-        description={mine.length ? mine.map((f) => sourceLabel(f, folders, devices)).join(" · ") : undefined}
+        description={mine.length ? mine.map((f) => <span key={f.id} className="block">{whereOf(f, devices)}</span>) : undefined}
         status={
           errors.map((f) => <Status key={f.id} tone="broken">{f.error}</Status>)
         }
         control={
-          <div className={cn("flex items-center gap-1")}>
+          <div className="flex items-center gap-1">
             <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
-              {mine.length ? "Add folder" : "Set folder"}
+              {mine.length ? "Change" : "Set folder"}
             </Button>
             {listed.length > 0 && (
               <RowMenu
