@@ -190,15 +190,11 @@ export function ConnectStepView({
         {others.length > 0 ? (
           <ul className="divide-y divide-border/60 border-t border-border/60" aria-label="Your other computers">
             {others.map((c) => (
-              <li key={c.id}>
-                <ComputerCheck
-                  id={c.id}
-                  name={c.name}
-                  picked={picked.has(c.id)}
-                  onPick={onPick}
-                  icon={<Monitor className="size-4 shrink-0 text-muted-foreground" aria-hidden />}
-                  attention={c.online ? undefined : "Not running. Open Creator Toolset on it."}
-                />
+              // a plain row: the other computers are listed, not picked (the picks did nothing until they work)
+              <li key={c.id} className="flex items-center gap-3 px-4 py-3">
+                <Monitor className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                <span className="min-w-0 flex-1 truncate text-sm font-medium">{c.name}</span>
+                {!c.online && <span className="size-2 shrink-0 rounded-full bg-amber-500" role="img" aria-label="Not running. Open Creator Toolset on it." title="Not running. Open Creator Toolset on it." />}
               </li>
             ))}
           </ul>

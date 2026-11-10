@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { LIBRARY_NAME, LIBRARY_SUBFOLDERS, STORAGE_ROLES, THIS_COMPUTER, okFolderPath, type StorageState, type StorageView } from "../contracts/storage";
 import type { AuthVars } from "./auth";
@@ -109,7 +110,8 @@ storageApp.post("/folders", async (c) => {
   const host = str(b?.host, 120);
   const raw = b?.path;
   if (!role || !host || !okFolderPath(raw) || !(thisComputer(c, host) || mine(user, host))) return c.json({ error: "Pick a role, a computer and a folder" }, 400);
-  const p = raw.replace(/(.)\/+$/, "$1");
+  // "~/…" is this computer's home folder: stored as the full path, so it matches the scan's list
+  const p = (raw === "~" || raw.startsWith("~/") ? path.join(os.homedir(), raw.slice(1)) : raw).replace(/(.)\/+$/, "$1");
   // this computer's folders are read by the Library and the AI Editor through its watch list: the path is checked there
   if (host === THIS_COMPUTER) {
     const refused = await addWatchFolder(user, p);

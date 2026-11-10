@@ -88,6 +88,37 @@ describe("a folder added in setup", () => {
     expect(await watchedPaths()).toEqual([]);
   });
 
+  it("a music folder's audio is imported as audio, not as footage", async () => {
+    const band = path.join(dir, "Band");
+    mkdirSync(band, { recursive: true });
+    writeFileSync(path.join(band, "song.mp3"), Buffer.alloc(2048, 3));
+    expect((await addSetupFolder(band, "music")).status).toBe(200);
+    const later = Date.now() + 10 * SETTLE_MS;
+    await scanWatchFolders(later);
+    await scanWatchFolders(later + SETTLE_MS + 1000);
+    const a = libraryDb()
+      .prepare("SELECT a.kind FROM assets a JOIN asset_versions v ON v.asset_id = a.id WHERE v.source_path = ?")
+      .get(path.join(band, "song.mp3")) as { kind: string } | undefined;
+    expect(a?.kind).toBe("audio");
+  });
+
+  it("a typed ~/ path is stored as the full path, so the setup list does not offer it again", async () => {
+    const home = process.env.HOME;
+    process.env.HOME = dir;
+    try {
+      const r = await app.request("/api/devices/storage/folders", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ role: "footage", host: "this-computer", path: "~/Trip" }),
+      });
+      expect(r.status).toBe(200);
+      const st = (await r.json()) as { folders: { origin: { path: string } }[] };
+      expect(st.folders.some((f) => f.origin.path === footage)).toBe(true);
+    } finally {
+      process.env.HOME = home;
+    }
+  });
+
   it("is refused in words the person understands when this server cannot watch folders", async () => {
     process.env.LIBRARY_WATCH_FOLDERS = "0";
     try {

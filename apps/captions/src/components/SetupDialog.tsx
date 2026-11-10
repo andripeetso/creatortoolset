@@ -158,7 +158,7 @@ export function SetupDialog() {
   const [named, setNamed] = useState(false); // the project form reports when it has a name: Create stays off until then
   const [footerSlot, setFooterSlot] = useState<HTMLElement | null>(null); // the folders step portals its buttons in
   const [unsure, setUnsure] = useState<boolean | null>(null); // "Not sure yet" ticked here; null = read it from the saved answers
-  // the computers picked on the Connect step: this computer first and checked, the others unchecked until picked
+  // the computers picked on the Connect step: this computer is checked by default; the other computers are listed, not picked
   const [picked, setPicked] = useState<Set<string> | null>(null);
   const hosted = useAuth((s) => s.hosted);
   const pickedIds: ReadonlySet<string> = picked ?? new Set(hosted ? [] : [HERE]);
