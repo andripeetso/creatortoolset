@@ -628,7 +628,12 @@ export default function CleanPage() {
             {notice}
           </p>
         )}
-        {!!rows.length && (
+        {restoring ? (
+          // the row of uploads, its height held while the saved upload is read back (nothing below moves when it fills)
+          <div aria-hidden="true" className="invisible mb-5 flex">
+            <span className="rounded-xl border px-3 py-2 text-xs">&nbsp;</span>
+          </div>
+        ) : !!rows.length && (
           <nav
             aria-label="Uploaded videos"
             className="mb-5 flex flex-wrap gap-2"
@@ -664,11 +669,12 @@ export default function CleanPage() {
               : [],
           )}
           busy={rows.some((item) => Boolean(item.operation))}
+          loadingVideos={restoring}
           clearAfterDownload={clearAfterDownload}
           onBusyChange={setBatchBusy}
           onDownloaded={clearBatchOriginals}
         />
-        {row && (
+        {(row || restoring) && (
           <div
             role="group"
             aria-label="Comparison mode"
@@ -702,7 +708,10 @@ export default function CleanPage() {
             </button>
           </div>
         )}
-        {compareUploads && row ? (
+        {compareUploads && restoring ? (
+          // the comparison's place, empty, while both uploads are read back
+          <div aria-busy="true" aria-label="Restoring your uploads" className="mx-auto h-80 max-w-6xl rounded-xl bg-zinc-900/40" />
+        ) : compareUploads && row ? (
           <CleanUploadedComparison
             original={row}
             comparison={comparison}
@@ -1095,7 +1104,8 @@ export default function CleanPage() {
                   )}
                 </>
               )}
-              <div className="mt-5 rounded-xl border border-zinc-800/70 p-4">
+              {/* under the whole editor once the upload is back: painted before it, it would jump a screen down */}
+              {!restoring && <div className="mt-5 rounded-xl border border-zinc-800/70 p-4">
                 <Toggle
                   label="Delete server session after download"
                   disabled={
@@ -1111,7 +1121,7 @@ export default function CleanPage() {
                   default. You can also use Done & delete; abandoned sessions
                   expire after one hour. Your local file stays unchanged.
                 </p>
-              </div>
+              </div>}
             </main>
           </div>
         )}

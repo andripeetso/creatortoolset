@@ -11,18 +11,29 @@ import {
 } from "@/lib/clean-batch";
 import { CleanCleanupControls } from "./CleanCleanupControls";
 import { AuditTable } from "./CleanMetadataAudit";
+import { useAuth } from "@/lib/auth";
 import { fmtBytes } from "@/lib/exports";
+import { putCached, readCached } from "@/lib/local-cache";
 import { onTopic } from "@/lib/sync";
+
+/**
+ * Kept on this device: only whether the account has a batch, so a reload paints the panel open on its first frame
+ * instead of opening it under the page a moment later. Never the batch: its report lists what the videos' metadata held.
+ */
+const HAS_BATCH = "clean-batch-open";
 
 export function CleanBatchPanel({
   videos,
   busy,
+  loadingVideos = false,
   clearAfterDownload,
   onBusyChange,
   onDownloaded,
 }: {
   videos: { id: string; name: string; options: EditOptions }[];
   busy: boolean;
+  /** The page is still reading its uploads back: their row is held, so the open panel does not grow when they arrive. */
+  loadingVideos?: boolean;
   clearAfterDownload: boolean;
   onBusyChange: (busy: boolean) => void;
   onDownloaded: (ids: string[]) => Promise<void>;
@@ -33,6 +44,11 @@ export function CleanBatchPanel({
   const [working, setWorking] = useState(false);
   const [restoring, setRestoring] = useState(true);
   const [error, setError] = useState("");
+  const user = useAuth((s) => s.me?.username);
+  const [expected] = useState(() => readCached<boolean>(user, HAS_BATCH) === true);
+  useEffect(() => {
+    if (!restoring) putCached(user, HAS_BATCH, Boolean(job));
+  }, [user, restoring, job]);
   const selected = videos.filter((v) => !excluded.includes(v.id));
   const active = job?.state === "processing" || job?.state === "packing";
   useEffect(() => {
@@ -128,7 +144,7 @@ export function CleanBatchPanel({
   return (
     <details
       className="mb-5 rounded-2xl border border-zinc-800 bg-zinc-900/30 p-4"
-      open={job ? true : undefined}
+      open={job || (restoring && expected) ? true : undefined}
     >
       <summary className="cursor-pointer text-sm font-semibold">
         Batch cleanup & ZIP export{" "}
@@ -149,6 +165,9 @@ export function CleanBatchPanel({
             preset applies to the whole batch.
           </p>
           <div className="flex flex-wrap gap-2">
+            {loadingVideos && !videos.length && (
+              <span aria-hidden="true" className="invisible rounded-lg border px-3 py-2 text-xs">&nbsp;</span>
+            )}
             {videos.map((v) => (
               <label
                 key={v.id}
