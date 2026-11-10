@@ -21,11 +21,15 @@ COPY apps/captions/package.json apps/captions/
 COPY apps/mac/package.json apps/mac/
 COPY apps/relay/package.json apps/relay/
 RUN pnpm install --frozen-lockfile
+# Chromium and the production node_modules depend only on the manifests, so they are made before the
+# source is copied: a source change then rebuilds only dist/, and the image's big layers stay the same.
+RUN pnpm --filter @creator-toolset/captions exec playwright install chromium-headless-shell
+# the CUDA provider (300 MB) is for GPU machines; the server runs ONNX models on the CPU
+RUN pnpm --filter @creator-toolset/captions deploy --prod /deploy \
+  && rm -f /deploy/node_modules/.pnpm/onnxruntime-node@*/node_modules/onnxruntime-node/bin/napi-v6/linux/x64/libonnxruntime_providers_*.so
 
 COPY apps/captions apps/captions
-RUN pnpm --filter @creator-toolset/captions run build \
-  && pnpm --filter @creator-toolset/captions exec playwright install chromium-headless-shell \
-  && pnpm --filter @creator-toolset/captions deploy --prod /deploy
+RUN pnpm --filter @creator-toolset/captions run build
 
 # ---------- runtime stage ----------
 FROM node:22-bookworm-slim
@@ -47,14 +51,15 @@ RUN apt-get update \
   && /tmp/install-ffmpeg-runtime.sh /app/runtime \
   && rm -f /tmp/install-ffmpeg-runtime.sh
 
+# what changes least first: dependencies and Chromium, then the source-made files
 COPY --from=build /deploy/package.json ./package.json
 COPY --from=build /deploy/node_modules ./node_modules
-COPY --from=build /repo/apps/captions/dist ./dist
+COPY --from=build /ms-playwright /ms-playwright
 # the shipped packs (api/official-packs.ts reads ../packs from dist/)
 COPY apps/captions/packs ./packs
-COPY --from=build /ms-playwright /ms-playwright
 # `docker compose exec app node scripts/doctor.mjs` checks the running install
 COPY apps/captions/scripts/doctor.mjs ./scripts/doctor.mjs
+COPY --from=build /repo/apps/captions/dist ./dist
 
 ENV NODE_ENV=production
 ENV PORT=3000
