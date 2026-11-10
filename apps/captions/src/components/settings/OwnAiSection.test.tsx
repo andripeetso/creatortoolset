@@ -1,6 +1,6 @@
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { LocalAiRow } from "@contracts/local-ai";
-import { commandFor, nextStep } from "./OwnAiSection";
+import { commandFor, nextStep, NEEDS_MAC_APP, UPDATE_MAC_APP, installOutcome } from "./OwnAiSection";
 
 const url = "https://studio.example.com/api/mcp";
 const key = "ctk_" + "a".repeat(48);
@@ -34,4 +34,19 @@ it("Codex: the entry goes into its config with the key as a header", () => {
 
 it("another app gets the address and the header", () => {
   expect(commandFor("other", url, key)).toBe(`Address: ${url}\nHeader:  Authorization: Bearer ${key}`);
+});
+
+describe("how Install ends on a server that is not this computer", () => {
+  it("in the Mac app the click does the work, or says what to do: never a line to run", () => {
+    expect(installOutcome(true, { macApp: true, commands: true })).toBe("installed");
+    expect(installOutcome("Claude Code isn't on this Mac.", { macApp: true, commands: true })).toEqual({ failed: "Claude Code isn't on this Mac." });
+    // a Mac app from before it could install (the owner: "why is it giving me Terminal commands, just run them")
+    expect(installOutcome(undefined, { macApp: true, commands: true })).toEqual({ failed: UPDATE_MAC_APP });
+    expect(installOutcome(undefined, { macApp: true, commands: false })).toEqual({ failed: UPDATE_MAC_APP });
+  });
+
+  it("a line to run shows only in a plain browser, and never on a screen that shows none (setup)", () => {
+    expect(installOutcome(undefined, { macApp: false, commands: true })).toBe("command");
+    expect(installOutcome(undefined, { macApp: false, commands: false })).toEqual({ failed: NEEDS_MAC_APP });
+  });
 });

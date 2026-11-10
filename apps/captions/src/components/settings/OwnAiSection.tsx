@@ -4,7 +4,7 @@ import { Check, Copy, KeyRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AccessKeysSection } from "./AccessKeys";
 import { ProviderLogo } from "./ProviderLogos";
-import { installInMacAi } from "@/lib/thisMac";
+import { installInMacAi, thisMacBridge } from "@/lib/thisMac";
 import { Advanced, Card, ErrorRow, ListRow, LoadingRow, RowMenu, Section, Status, saveFailed, InUse } from "./ui";
 import { shortVersion } from "./ProvidersSection";
 import { fmtAgo, msg } from "./helpers";
@@ -12,7 +12,7 @@ import { fmtAgo, msg } from "./helpers";
 /** The AI apps this page writes a command for. "other" is any app or script that takes an MCP address and a key. */
 export type AiApp = "claude" | "codex" | "other";
 
-const APPS: Record<AiApp, { name: string; logo?: string; after: string }> = {
+export const APPS: Record<AiApp, { name: string; logo?: string; after: string }> = {
   claude: { name: "Claude Code", logo: "claude", after: "Open a new Claude Code window." },
   codex: { name: "Codex", logo: "codex", after: "Open a new Codex window. It needs Codex 0.40 or newer." },
   other: { name: "Another app", after: "Add it as an MCP server in that app." },
@@ -285,8 +285,25 @@ function AppIcon({ name }: { name: string }) {
   return logo ? <ProviderLogo driver={logo} className="size-4" /> : <KeyRound />;
 }
 
+/** What a row says where Install can't be done and no line to run is shown: the Mac app does the install. */
+export const NEEDS_MAC_APP = "Open this in the Creator Toolset app on your Mac to install it.";
+/** A Mac app from before it could install: the fix is its update, never a line to run. */
+export const UPDATE_MAC_APP = "Update the Creator Toolset app to install from here.";
+
+/**
+ * How Install ends, from the Mac app's answer (installInMacAi: true = done, a sentence = why not, undefined = it can't).
+ * A line to run in Terminal is shown only in a plain browser, where nothing can run on the computer, and never on a
+ * screen that shows none (`commands` false, setup). In the Mac app the click does the work or says what to do.
+ */
+export function installOutcome(done: true | string | undefined, o: { macApp: boolean; commands: boolean }): "installed" | "command" | { failed: string } {
+  if (done === true) return "installed";
+  if (done) return { failed: done };
+  if (o.macApp) return { failed: UPDATE_MAC_APP };
+  return o.commands ? "command" : { failed: NEEDS_MAC_APP };
+}
+
 /** The AI apps with a row of their own on a server that is not this computer. */
-const REMOTE_APPS = ["claude", "codex"] as const;
+export const REMOTE_APPS = ["claude", "codex"] as const;
 // this browser's note of the key the Mac app installed for an app (its last four characters): the row then says
 // Installed after a reload too, before the AI app has used it once
 const MARK = (app: string) => `ct-own-ai-installed:${app}`;
@@ -300,10 +317,18 @@ const marked = (app: string): string | null => {
 
 /**
  * One AI app on a server that is not this computer. Install makes the app a key of its own, then the Mac app adds the
- * server to that app on this Mac. In a browser nothing can run on your computer, so the same click shows the line to
- * run in Terminal (the key is in it, shown this once); the row says Installed once the app has used its key.
+ * server to that app on this Mac; a Mac app too old for that says to update it. Only in a plain browser, where nothing
+ * can run on your computer, the same click shows the line to run in Terminal (the key is in it, shown this once); the
+ * row says Installed once the app has used its key.
  */
-function RemoteAppRow({ app, aiKey, onDone, onDisconnect }: { app: (typeof REMOTE_APPS)[number]; aiKey?: AiKeyInfo; onDone: () => void; onDisconnect: (id: string) => Promise<unknown> }) {
+export function RemoteAppRow({ app, aiKey, onDone, onDisconnect, commands = true }: {
+  app: (typeof REMOTE_APPS)[number];
+  aiKey?: AiKeyInfo;
+  onDone: () => void;
+  onDisconnect: (id: string) => Promise<unknown>;
+  /** false on a screen that never shows a line to run (setup): where the install can't be done from here, the row says so */
+  commands?: boolean;
+}) {
   const [busy, setBusy] = useState(false);
   const [command, setCommand] = useState<string | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
@@ -314,9 +339,11 @@ function RemoteAppRow({ app, aiKey, onDone, onDisconnect }: { app: (typeof REMOT
     setBusy(true);
     setFailed(null);
     try {
+      // no Mac app in this window and no line to show: nothing can be done here, so no key is made for it
+      if (!commands && !thisMacBridge()) return setFailed(NEEDS_MAC_APP);
       const { key } = await fetch("/api/auth/api-key", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: APPS[app].name }) }).then((r) => json<{ key: string }>(r));
-      const done = await installInMacAi(app, key);
-      if (done === true) {
+      const end = installOutcome(await installInMacAi(app, key), { macApp: !!thisMacBridge(), commands });
+      if (end === "installed") {
         setCommand(null);
         setByMac(key.slice(-4));
         try {
@@ -324,8 +351,8 @@ function RemoteAppRow({ app, aiKey, onDone, onDisconnect }: { app: (typeof REMOT
         } catch {
           /* private mode: the row says Installed until the page is closed */
         }
-      } else if (done) setFailed(done);
-      else setCommand(commandFor(app, `${window.location.origin}/api/mcp`, key));
+      } else if (end === "command") setCommand(commandFor(app, `${window.location.origin}/api/mcp`, key));
+      else setFailed(end.failed);
     } catch (e) {
       setFailed(msg(e));
     } finally {

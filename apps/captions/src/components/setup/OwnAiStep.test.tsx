@@ -35,9 +35,25 @@ describe("setup's AI apps screen, after In my own AI or Both", () => {
   });
 
   it("with no AI app on this computer it says where to do it later, in one line, and shows no button", () => {
-    for (const html of [show({ local: true, rows: [] }), show({ local: false, rows: [] })]) {
-      expect(html).toContain("Settings → Headless access");
-      expect(buttons(html)).toEqual([]);
+    const html = show({ local: true, rows: [] });
+    expect(html).toContain("Settings → Headless access");
+    expect(buttons(html)).toEqual([]);
+  });
+
+  it("on a server that is not this computer it lists Claude Code and Codex with Install, done by the Mac app", () => {
+    const html = show({ local: false, rows: [] });
+    expect(html).toContain("Claude Code");
+    expect(html).toContain("Codex");
+    expect(buttons(html)).toEqual(["Install", "Install"]);
+  });
+
+  it("never shows a line to run in Terminal, whatever the computer has", () => {
+    for (const html of [
+      show({ local: true, rows: [app("claude", "Claude Code"), app("codex", "Codex", { mcp: "update" })] }),
+      show({ local: true, rows: [] }),
+      show({ local: false, rows: [] }),
+    ]) {
+      expect(html).not.toMatch(/Terminal|mcp add|claude mcp|codex mcp|Bearer|<pre/);
     }
   });
 });
