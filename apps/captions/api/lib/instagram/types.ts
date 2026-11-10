@@ -331,6 +331,8 @@ export interface PostMeta {
   error?: string;
   /** Non-fatal problems, e.g. "Comments: session expired". */
   warnings?: string[];
+  /** How many times a download that failed on the network was started again by itself; a finished run or a Retry clears it. */
+  autoRetries?: number;
   /** Set when a share link resolved to a post already in the library. */
   duplicateOf?: string;
   /** Missing = Instagram. "youtube" posts keep their id in `shortcode` as yt-<videoId>. */

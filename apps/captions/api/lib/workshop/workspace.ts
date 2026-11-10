@@ -42,6 +42,15 @@ export async function accountProjects(username: string): Promise<Map<string, str
   return out;
 }
 
+/** The account is not this user's own after all: no project of theirs keeps it as its Instagram. */
+export async function unlinkAccount(username: string, accountId: string): Promise<void> {
+  for (const p of await ownedProjects(username)) {
+    if (p.accountId !== accountId) continue;
+    const { accountId: _, ...rest } = p;
+    await writeJsonAtomic(projectPath(p.id), { ...rest, updatedAt: Date.now() });
+  }
+}
+
 /** Ids switched on for a project: every one of the account's, minus the project's `off` list. */
 export const onFor = <T extends { id: string }>(items: T[], project?: Pick<Project, "off"> | null): T[] =>
   project?.off?.length ? items.filter((i) => !project.off!.includes(i.id)) : items;

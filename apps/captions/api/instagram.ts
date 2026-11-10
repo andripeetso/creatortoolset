@@ -97,7 +97,8 @@ import {
   type Shelf,
 } from "./lib/instagram/research";
 import { accountOwnsPost, nextMineFlags, postInProject } from "./lib/instagram/mine";
-import { accountProjects, inProject, resolveProjectId } from "./lib/workshop/workspace";
+import { accountProjects, inProject, resolveProjectId, unlinkAccount } from "./lib/workshop/workspace";
+import { instagramLogin } from "./lib/connectors/store";
 import { catalogNewestAt, insightIdsToRead, mergeCatalog, mergeCatalogCounts, parseCatalogCount } from "./lib/instagram/catalog";
 import { publicGridReader } from "./lib/connectors/provider";
 import { IG_ROOT, InstagramError, igCredsDir, igUserFile } from "./lib/instagram/base";
@@ -124,7 +125,7 @@ import type {
   Tag,
 } from "./lib/instagram/types";
 import { POST_STATUS_MOVES } from "./lib/instagram/types";
-import { move } from "./lib/transition";
+import { canMove, move } from "./lib/transition";
 import {
   InstagramUrlError,
   canonicalPostUrl,
@@ -732,6 +733,18 @@ const queryProjectId = (c: { req: { query: (k: string) => string | undefined } }
 // "Mine" is per owner: the demo's copy of an account is never the admin's own.
 const ownMine = (a: AccountMeta, user: SessionUser) => !!a.mine && a.owner === user.username;
 
+/** Has the account its own login (Settings → Connectors)? Then it is its owner's, whatever else says. */
+const hasLogin = (a: AccountMeta) => !!a.owner && instagramLogin(a.owner, a.username) !== null;
+
+/**
+ * Is this account its owner's own? The app answers that itself where it can: the project that links the account as
+ * its Instagram says so (`links` = accountProjects(owner)), and so does the account's own login. The stored `mine`
+ * flag is what the "My account" slot and button set; it stays one per owner because it is also the one account the
+ * install's login reads (graphCredsFor) and pulls in full, so it is never copied to a second brand's account. Pages
+ * get the answer as `own` and keep reading `mine` for how the account is pulled.
+ */
+const isMine = (a: AccountMeta, links: Map<string, string>) => !!a.mine || links.has(a.id) || hasLogin(a);
+
 // Home list and analysis follow listedFor: an admin opens other owners' accounts by link, never lists them.
 const listedAccountIn = (a: AccountMeta, user: SessionUser, scope: ProjectScope) =>
   (a.owner === user.username || (user.role === "admin" && !a.owner)) && scope.accountIn(a);
@@ -1030,7 +1043,7 @@ export async function findOwnPost(user: SessionUser, shortcode: string, accountI
   if (!own) return null;
   const hit = own.posts.find((p) => p.item.shortcode === shortcode);
   if (hit) return { handle: own.handle, post: hit };
-  const acc = (await allAccounts()).find((a) => a.mine && a.owner === user.username && a.username.toLowerCase() === own.handle.toLowerCase());
+  const acc = (await allAccounts()).find((a) => a.owner === user.username && a.username.toLowerCase() === own.handle.toLowerCase());
   const creds = graphCredsFor(acc);
   if (!acc || !creds) return null;
   const recent = await withGraphCreds(creds, () => fetchMineCatalog({ cap: 12 })).catch(() => null);
@@ -1760,9 +1773,10 @@ async function findAccount(
   igUserId: string,
   username: string,
 ): Promise<AccountMeta | null> {
-  // The user's own record first: an admin also sees other owners' copies of the same handle.
+  // The user's own record (an admin also takes one from before accounts had owners). Never another owner's copy of
+  // the same handle: a post filed there, or "my account" set on it, was lost to the person who typed the handle.
   const all = (await allAccounts())
-    .filter((a) => listedAccount(a, user))
+    .filter((a) => a.owner === user.username || (user.role === "admin" && !a.owner))
     .sort((a, b) => Number(b.owner === user.username) - Number(a.owner === user.username));
   if (igUserId) {
     const byId = all.find((a) => a.igUserId && a.igUserId === igUserId);
@@ -2026,15 +2040,18 @@ type ProjectScope = Awaited<ReturnType<typeof projectScope>>;
  * No project = everything.
  */
 async function projectScope(user: SessionUser, projectId?: string) {
-  const links = projectId ? await accountProjects(user.username) : new Map<string, string>();
+  const links = await accountProjects(user.username);
   const accounts = (await allAccounts()).filter((a) => a.owner === user.username);
   const home = (a: AccountMeta) => links.get(a.id) ?? a.projectId;
   const accountIn = (a: AccountMeta) => !projectId || !home(a) || home(a) === projectId;
   const elsewhere = projectId ? accounts.filter((a) => !accountIn(a)) : [];
-  const mine = accounts.find((a) => ownMine(a, user)) ?? null;
+  const here = accounts.filter(accountIn);
+  // the project's own account first, then whatever else says "mine" (isMine)
+  const mine = here.find((a) => projectId && links.get(a.id) === projectId) ?? here.find((a) => isMine(a, links)) ?? null;
   return {
     accountIn,
-    mine: mine && accountIn(mine) ? mine : null,
+    links,
+    mine,
     postIn: (m: PostMeta) => !projectId || m.projectId === projectId || !elsewhere.some((a) => accountOwnsPost(a, m)),
   };
 }
@@ -2048,7 +2065,7 @@ async function metasInProject(
 ): Promise<PostMeta[]> {
   const scope = await projectScope(user, projectId);
   return (await allMetas()).filter(
-    (m) => onShelf(m, shelf) && listedFor(m, user) && scope.postIn(m) && postInProject(m, projectId, { focus, mine: scope.mine }),
+    (m) => onShelf(m, shelf) && listedFor(m, user) && scope.postIn(m) && postInProject(m, projectId, { focus: focus && { ...focus, mine: isMine(focus, scope.links) }, mine: scope.mine }),
   );
 }
 
@@ -2406,7 +2423,17 @@ async function processPost(id: string): Promise<void> {
           applyInfo(meta, info, true);
           await setStep(meta, "download", 0.1);
           if (youtube) await downloadYoutubeThumb(meta, info, signal);
-          else await downloadSlides(meta, info, signal);
+          else {
+            try {
+              await downloadSlides(meta, info, signal);
+            } catch (e) {
+              // links kept from an earlier run expire within hours: read the post again, once, and use the fresh ones
+              if (fetched || !(e instanceof DownloadError && e.code === "HTTP_FINAL")) throw e;
+              info = await ensureInfo();
+              applyInfo(meta, info, true);
+              await downloadSlides(meta, info, signal);
+            }
+          }
           if (!still()) return;
           await setStep(meta, "thumbs", 0.45);
           for (const slide of meta.slides) {
@@ -2545,6 +2572,7 @@ async function processPost(id: string): Promise<void> {
     meta.step = undefined;
     meta.progress = 1;
     meta.error = undefined;
+    meta.autoRetries = undefined;
     if (
       !meta.idea &&
       !meta.duplicateOf &&
@@ -2570,8 +2598,11 @@ async function processPost(id: string): Promise<void> {
     meta.status = "error";
     meta.step = undefined;
     meta.error = errorMessage(e);
+    const tries = meta.autoRetries ?? 0;
+    const again = e instanceof DownloadError && (e.code === "FAILED" || e.code === "HTTP") && tries < AUTO_RETRY_MS.length;
     await persist(meta);
-    console.warn(`[instagram] ${meta.shortcode || meta.input} failed: ${meta.error}`);
+    console.warn(`[instagram] ${meta.shortcode || meta.input} failed: ${meta.error}${again ? ` (trying again in ${AUTO_RETRY_MS[tries]! / 1000} s)` : ""}`);
+    if (again) setTimeout(() => void autoRetry(id).catch(() => {}), AUTO_RETRY_MS[tries]).unref();
   } finally {
     stopCrawl();
     active.delete(id);
@@ -2690,6 +2721,27 @@ export function enqueueAccount(
     queue.push({ kind: "account", id: meta.id });
   }
   pump();
+}
+
+/**
+ * A download that failed on the network is tried again by itself, this many times and this far apart; after that the
+ * post stays failed until someone presses Retry. The count is kept on the post, so a restart cannot start it over.
+ */
+const AUTO_RETRY_MS = [30_000, 5 * 60_000, 30 * 60_000];
+
+/** Runs a failed post's open jobs again as its owner, and counts the try. Nothing is read again unless the kept media links have expired. */
+async function autoRetry(id: string): Promise<void> {
+  if (active.has(id)) return;
+  const meta = await readMeta(id);
+  // retried by hand, removed, or its owner is gone or has no key now: leave it
+  if (!meta || meta.status !== "error" || !canMove(POST_STATUS_MOVES, meta.status, "processing")) return;
+  const user = sessionUserFor(meta.owner);
+  if (!user || !(await ingestGate(user.username)).ok) return;
+  const open = (meta.jobs ?? []).filter((j) => j.status === "error" || j.status === "pending").map((j) => j.type);
+  if (!open.length) return;
+  meta.autoRetries = (meta.autoRetries ?? 0) + 1;
+  enqueue(meta, user, open, {});
+  await persist(meta);
 }
 
 /** Queue a run, or — if the post is already running — remember it for right after. */
@@ -3036,6 +3088,14 @@ async function resumeInterrupted(): Promise<void> {
     resumed++;
   }
   if (resumed) console.log(`[instagram] resumed ${resumed} interrupted post job(s)`);
+  // A download that failed on the network and still has automatic tries left (its timer died with the old process,
+  // or it failed before there were any): one of them is used now.
+  for (const id of await allIds()) {
+    const meta = active.has(id) ? null : await readMeta(id);
+    if (!meta || meta.status !== "error" || (meta.autoRetries ?? 0) >= AUTO_RETRY_MS.length) continue;
+    if (!(meta.jobs ?? []).some((j) => j.type === "media" && j.status === "error" && j.error?.startsWith("Download failed:"))) continue;
+    await autoRetry(id);
+  }
   // Accounts have no resume path: a run cut off by the restart fails, with its open jobs.
   for (const id of await allAccountIds()) {
     if (accountActive.has(id)) continue;
@@ -3650,7 +3710,7 @@ instagramApp.post("/share", async (c) => {
         ? `Added ${name}, pulling their posts`
         : `Added ${name}${later}`;
     return c.json(
-      { message, posts: [], accounts: [publicAccount(result.meta)], errors: [] },
+      { message, posts: [], accounts: [await publicAccount(result.meta)], errors: [] },
       !result.existing && gate.ok ? 202 : 200,
     );
   }
@@ -4144,8 +4204,9 @@ instagramApp.post("/packs", async (c) => {
   }
 });
 
-const publicAccount = (m: AccountMeta, catalogCount = 0) => ({
+const publicAccount = async (m: AccountMeta, catalogCount = 0, links?: Map<string, string>) => ({
   ...m,
+  own: isMine(m, links ?? (await accountProjects(m.owner))) || undefined,
   profilePic: undefined,
   avatarUrl: existsSync(accountAvatarPath(m.id))
     ? `/api/instagram/accounts/${m.id}/avatar`
@@ -4166,10 +4227,10 @@ instagramApp.get("/accounts", async (c) => {
       continue;
     }
     const catalog = await loadCatalog(a.id);
-    const owned = posts.filter((p) => accountOwnsPost(a, p) && (a.mine || inProject(p, projectId))).length;
-    out.push({ ...publicAccount(a, Math.max(catalog.length, owned)), libraryCount: owned });
+    const owned = posts.filter((p) => accountOwnsPost(a, p) && (isMine(a, scope.links) || inProject(p, projectId))).length;
+    out.push({ ...(await publicAccount(a, Math.max(catalog.length, owned), scope.links)), libraryCount: owned });
   }
-  out.sort((a, b) => Number(!!b.mine) - Number(!!a.mine) || b.updatedAt - a.updatedAt);
+  out.sort((a, b) => Number(!!b.own) - Number(!!a.own) || b.updatedAt - a.updatedAt);
   return c.json(out);
 });
 
@@ -4198,7 +4259,7 @@ async function addAccountFor(
   }
   const now = Date.now();
   const projectId = await resolveProjectId(user, opts.projectId);
-  const meta =
+  let meta =
     existing ??
     ({
       id: randomUUID(),
@@ -4218,7 +4279,11 @@ async function addAccountFor(
     meta.projectId = projectId;
     await persistAccount(meta);
   }
-  if (mine) await assignMine(user.username, meta.id);
+  if (mine) {
+    await assignMine(meta.owner, meta.id);
+    // assignMine wrote its own copy of the record: the run below must keep that one, or its first save drops the flag
+    meta = (await readAccount(meta.id)) ?? meta;
+  }
   if (run === "now") enqueueAccount(meta, user, ["profile", "catalog"], { count: parseCatalogCount(opts.count) });
   return { ok: true, meta: (await readAccount(meta.id)) ?? meta, existing: !!existing };
 }
@@ -4257,7 +4322,7 @@ instagramApp.post("/accounts", async (c) => {
     const { error, code, status } = result;
     return c.json(code ? { error, code } : { error }, status);
   }
-  return c.json(publicAccount(result.meta), result.existing ? 200 : 202);
+  return c.json(await publicAccount(result.meta), result.existing ? 200 : 202);
 });
 
 instagramApp.get("/accounts/:id/avatar", async (c) => {
@@ -4289,8 +4354,9 @@ instagramApp.get("/accounts/:id", async (c) => {
   const [graph, daily] = await Promise.all([loadGraphStats(meta.id), loadGraphDaily(meta.id)]);
   const whatWorks = await whatWorksFor(user, meta, catalog, c.req.raw.signal);
   return c.json({
-    ...publicAccount(meta, catalog.length),
-    catalog,
+    ...(await publicAccount(meta, catalog.length)),
+    // the page never reads a row's Graph record (signed media links, half the response) or its full caption
+    catalog: catalog.map(({ graph: _graph, caption: _caption, ...row }) => row),
     posts: posts.map(publicMeta),
     snapshots,
     insights: {
@@ -4321,9 +4387,15 @@ instagramApp.get("/accounts/:id", async (c) => {
           username: p.creator.username,
           kind: p.kind,
         })),
-      ),
+      ).map((cluster) => ({ ...cluster, members: cluster.members.map(({ caption: _caption, ...m }) => m) })),
     },
   });
+});
+
+/** The account's record alone (status, step, progress, counts): what its page asks for while a run is on. */
+instagramApp.get("/accounts/:id/status", async (c) => {
+  const meta = await ownedAccount(c.req.param("id"), c.get("user"));
+  return meta ? c.json(await publicAccount(meta)) : c.json({ error: "Not found" }, 404);
 });
 
 instagramApp.post("/accounts/:id/jobs", async (c) => {
@@ -4350,7 +4422,7 @@ instagramApp.post("/accounts/:id/jobs", async (c) => {
     more: body?.more === true,
   });
   await persistAccount(meta);
-  return c.json(publicAccount(meta), 202);
+  return c.json(await publicAccount(meta), 202);
 });
 
 instagramApp.post("/accounts/:id/pull", async (c) => {
@@ -4431,7 +4503,7 @@ instagramApp.put("/accounts/:id/tags", async (c) => {
   if (!Array.isArray(body?.tags)) return c.json({ error: "tags must be an array" }, 400);
   meta.tags = parseUserTags(body.tags);
   await persistAccount(meta);
-  return c.json(publicAccount(meta));
+  return c.json(await publicAccount(meta));
 });
 
 instagramApp.patch("/accounts/:id", async (c) => {
@@ -4440,9 +4512,15 @@ instagramApp.patch("/accounts/:id", async (c) => {
   if (!meta) return c.json({ error: "Not found" }, 404);
   const body = (await c.req.json().catch(() => null)) as { mine?: unknown } | null;
   if (!body || !("mine" in body)) return c.json({ error: "Nothing to update" }, 400);
-  await assignMine(meta.owner, body.mine === true ? meta.id : null);
+  if (body.mine === true) await assignMine(meta.owner, meta.id);
+  else {
+    if (hasLogin(meta)) return c.json({ error: "This account is connected by its own login. Disconnect it in Settings → Social accounts first." }, 409);
+    // only this account: another account's flag is not this button's to clear. No project keeps it as its own either.
+    if (meta.mine) await assignMine(meta.owner, null);
+    await unlinkAccount(meta.owner, meta.id);
+  }
   const next = (await readAccount(meta.id)) ?? meta;
-  return c.json(publicAccount(next));
+  return c.json(await publicAccount(next));
 });
 
 instagramApp.patch("/accounts/:id/catalog", async (c) => {
@@ -4586,6 +4664,7 @@ instagramApp.post("/:id/retry", async (c) => {
   }
   const jobs = retryJobs(meta.recipe, meta.jobs);
   if (force) await resetParts(meta);
+  meta.autoRetries = undefined;
   queueOrFollowUp(meta, user, jobs, { force });
   await persist(meta);
   return c.json(publicMeta(meta), 202);

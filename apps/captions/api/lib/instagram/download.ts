@@ -1,5 +1,6 @@
 import { createWriteStream } from "node:fs";
 import { rename, rm } from "node:fs/promises";
+import net from "node:net";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { DESKTOP_UA } from "./base";
@@ -12,6 +13,15 @@ import { DESKTOP_UA } from "./base";
  */
 
 export const CDN_HOST = /(^|\.)(cdninstagram\.com|fbcdn\.net)$/i;
+
+/**
+ * Node tries a host's addresses one after another and drops each that has not connected in 250 ms. A media server
+ * far from this one needs longer than that (270 ms measured), and on a machine with no IPv6 route there is no second
+ * address to fall back on: every download from it failed as "fetch failed (ETIMEDOUT)", however often it was tried
+ * again. The setting is the process's, so every outbound request gets the same time.
+ */
+export const CONNECT_ATTEMPT_MS = 2500;
+net.setDefaultAutoSelectFamilyAttemptTimeout(CONNECT_ATTEMPT_MS);
 
 /** HTTP = a status worth retrying (5xx, 429); HTTP_FINAL = a definitive refusal (403/404/410…). */
 export type DownloadErrorCode = "BAD_URL" | "TOO_LARGE" | "HTTP" | "HTTP_FINAL" | "CANCELLED" | "FAILED";

@@ -45,10 +45,24 @@ function captionOf(m: DupMember): string {
   return (m.caption || m.captionPreview || "").trim();
 }
 
-function jaccard(a: string[], b: string[]): number {
-  if (!a.length || !b.length) return 0;
-  const sa = new Set(a);
-  const sb = new Set(b);
+/**
+ * One caption's working forms, made once per detectReposts call: a catalog is compared pair by pair, and making them
+ * again for every pair took seconds on a few hundred posts (and held the whole server while it ran).
+ */
+type Prepared = { text: string; vector?: number[]; words?: Set<string> };
+type Memo = Map<string, Prepared>;
+
+function prepared(raw: string, memo?: Memo): Prepared {
+  let p = memo?.get(raw);
+  if (!p) {
+    p = { text: normalizeCaption(raw) };
+    memo?.set(raw, p);
+  }
+  return p;
+}
+
+function jaccard(sa: Set<string>, sb: Set<string>): number {
+  if (!sa.size || !sb.size) return 0;
   let inter = 0;
   for (const w of sa) if (sb.has(w)) inter++;
   return inter / (sa.size + sb.size - inter);
@@ -65,13 +79,20 @@ export function pairScore(
   a: string,
   b: string,
   mode: "exact" | "fuzzy" = "fuzzy",
+  memo?: Memo,
 ): { score: number; kind?: DupKind } {
-  const na = normalizeCaption(a);
-  const nb = normalizeCaption(b);
+  const pa = prepared(a, memo);
+  const pb = prepared(b, memo);
+  const na = pa.text;
+  const nb = pb.text;
   if (na.length < MIN_CAPTION || nb.length < MIN_CAPTION) return { score: 0 };
   if (na === nb) return na.length >= EXACT_MIN ? { score: 1, kind: "repost" } : { score: 0 };
   if (mode === "exact") return { score: 0 };
-  const score = Math.max(cosine(hashEmbed(na), hashEmbed(nb)), jaccard(tokenize(na), tokenize(nb)));
+  for (const p of [pa, pb]) {
+    p.vector ??= hashEmbed(p.text);
+    p.words ??= new Set(tokenize(p.text));
+  }
+  const score = Math.max(cosine(pa.vector!, pb.vector!), jaccard(pa.words!, pb.words!));
   if (score >= REPOST_MIN) return { score, kind: "repost" };
   if (score >= VARIATION_MIN) return { score, kind: "variation" };
   return { score };
@@ -85,6 +106,7 @@ function libraryHitsFor(
   members: DupMember[],
   library: Array<{ id: string; shortcode: string; caption: string; username: string; kind?: PostKind }>,
   catalogCodes: Set<string>,
+  memo: Memo,
 ): LibraryDupHit[] {
   const hits: LibraryDupHit[] = [];
   const seen = new Set<string>();
@@ -94,7 +116,7 @@ function libraryHitsFor(
       if (!p.caption || catalogCodes.has(p.shortcode) || seen.has(p.id)) continue;
       const mode = pairMode(m.kind, p.kind);
       if (mode === "skip") continue;
-      const { score, kind } = pairScore(caption, p.caption, mode);
+      const { score, kind } = pairScore(caption, p.caption, mode, memo);
       if (!kind) continue;
       seen.add(p.id);
       hits.push({
@@ -114,6 +136,7 @@ export function detectReposts(
   catalog: DupMember[],
   library: Array<{ id: string; shortcode: string; caption: string; username: string; kind?: PostKind }>,
 ): DupCluster[] {
+  const memo: Memo = new Map();
   const parent = catalog.map((_, i) => i);
   const find = (i: number): number => {
     if (parent[i] !== i) parent[i] = find(parent[i]!);
@@ -126,7 +149,7 @@ export function detectReposts(
       const b = catalog[j]!;
       const mode = pairMode(a.kind, b.kind);
       if (mode === "skip") continue;
-      const { score, kind } = pairScore(captionOf(a), captionOf(b), mode);
+      const { score, kind } = pairScore(captionOf(a), captionOf(b), mode, memo);
       if (!kind) continue;
       const ra = find(i);
       const rb = find(j);
@@ -160,13 +183,13 @@ export function detectReposts(
       kind: meta.kind,
       score: roundScore(meta.score),
       members,
-      libraryHits: libraryHitsFor(members, library, catalogCodes),
+      libraryHits: libraryHitsFor(members, library, catalogCodes, memo),
     });
   }
 
   for (const m of catalog) {
     if (clustered.has(m.shortcode)) continue;
-    const hits = libraryHitsFor([m], library, catalogCodes);
+    const hits = libraryHitsFor([m], library, catalogCodes, memo);
     if (!hits.length) continue;
     const top = hits[0]!;
     clusters.push({ kind: top.kind, score: top.score, members: [m], libraryHits: hits });
