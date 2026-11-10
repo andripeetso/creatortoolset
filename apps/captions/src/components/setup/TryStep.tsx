@@ -1,17 +1,9 @@
 import { useEffect, useState } from "react";
 import { Upload } from "lucide-react";
 import { confirmDiscardUnsavedProject } from "@/lib/persistence-guard";
-import { useStudio } from "@/lib/store";
+import { captionThisVideo } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { CaptionArt } from "./HowArt";
-
-// ponytail: replaced by the first-caption entry on fr/captions-first-job
-/** Opens a new Caption Studio project with this video (today's import). False when the import took nothing (not a video). */
-function captionThisVideo(file: File): boolean {
-  const before = useStudio.getState().projectId;
-  useStudio.getState().importFile(file);
-  return useStudio.getState().projectId !== before;
-}
 
 /**
  * Setup's last screen, "Try it": one drop target that is also the file chooser (the whole card is the input's label;

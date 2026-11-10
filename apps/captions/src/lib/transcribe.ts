@@ -100,14 +100,16 @@ const local = (id: string, name: string, mb: number, webgpuOnly = false) => ({
   webgpuOnly,
 });
 export const MODELS = [
-  local("Xenova/whisper-base.en", "Base · English (recommended)", 291),
+  // first = the default with no saved choice and no cloud: it hears every language, and it is the first job's model,
+  // so a second job downloads nothing more
+  local("Xenova/whisper-base", "Base · Any language (recommended)", 291),
+  local("Xenova/whisper-base.en", "Base · English", 291),
   local("Xenova/whisper-tiny.en", "Tiny · English (fastest)", 152),
   local("Xenova/whisper-small.en", "Small · English (best quality)", 968, true),
-  local("Xenova/whisper-base", "Base · Multilingual (auto-detect)", 291),
 ];
 
 /** A first job's model (`captionThisVideo`): nothing says which language she speaks, so the one that hears them all. */
-export const FIRST_JOB_MODEL = "Xenova/whisper-base";
+export const FIRST_JOB_MODEL = MODELS[0].id;
 
 /**
  * The user's engine choice, persisted across reloads and new projects.

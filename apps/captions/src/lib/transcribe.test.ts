@@ -2,12 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { FIRST_JOB_MODEL, MODELS, STALL_MS, transcribeAudio } from "./transcribe";
 
 describe("on-device models", () => {
-  it("keeps the ids a saved engine choice points at, in the order the default is read from", () => {
+  it("keeps the ids a saved engine choice points at; the default (the first) hears every language", () => {
     expect(MODELS.map((m) => m.id)).toEqual([
+      "Xenova/whisper-base",
       "Xenova/whisper-base.en",
       "Xenova/whisper-tiny.en",
       "Xenova/whisper-small.en",
-      "Xenova/whisper-base",
     ]);
   });
 
