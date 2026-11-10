@@ -18,16 +18,17 @@ it("the platform list: one row per platform, in order, with the one button each 
   expect(rows.map((r) => r.platform)).toEqual(["instagram", "facebook", "youtube", "tiktok", "x"]);
   expect(row(rows, "instagram")).toMatchObject({ summary: "@tinyacrobatics · 4,120 followers", own: { id: "a1" } });
   expect(row(rows, "instagram")?.button).toBeUndefined();
-  expect(row(rows, "youtube")).toMatchObject({ button: "Add", needsKey: false, summary: "Public channels, by @handle" });
+  expect(row(rows, "youtube")).toMatchObject({ button: "Add", summary: "Public channels, by @handle" });
   // disconnected: Instagram adds the person's own account by @handle
   expect(row(platformRows(view({})), "instagram")).toMatchObject({ button: "Add", summary: "Your account, by @handle" });
 });
 
-it("without an Apify key the handle platforms say so and their button adds the key; a sign-in app keeps its platform working", () => {
+it("a row never asks for the Apify key: with none, every platform still has just Add (the dialog sends the person to API keys)", () => {
   const rows = platformRows(view({ apify: { configured: false, valid: null }, logins: { ...none, google: true } }));
-  expect(row(rows, "youtube")).toMatchObject({ button: "Add", needsKey: false, summary: "Your channel by sign-in, or by @handle" });
-  expect(row(rows, "x")).toMatchObject({ button: "Add key", needsKey: true });
-  expect(row(platformRows(view({ apify: { configured: true, valid: false } })), "tiktok")).toMatchObject({ button: "Add key", needsKey: true });
+  expect(row(rows, "youtube")).toMatchObject({ button: "Add", summary: "Your channel by sign-in, or by @handle" });
+  expect(row(rows, "x")).toMatchObject({ button: "Add", summary: "Public accounts, by @handle" });
+  expect(row(platformRows(view({ apify: { configured: true, valid: false } })), "tiktok")).toMatchObject({ button: "Add" });
+  for (const r of rows) expect(JSON.stringify(r)).not.toMatch(/apify|key/i);
 });
 
 it("Instagram adds its own account when the Meta sign-in is set", () => {

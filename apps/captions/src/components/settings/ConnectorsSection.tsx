@@ -41,16 +41,15 @@ export function signInItems(logins: Record<LoginKind, boolean>): Array<{ id: Log
   return LOGINS.filter((l) => logins[l.id]).map((l) => ({ id: l.id, label: SIGN_IN[l.id] }));
 }
 
-/** One platform for one project: its account, or the one way this server can add one (sign-in apps, the Apify key). */
+/** One platform for one project: its account, or the one way this server can add one (its sign-in, a public @handle). */
 export interface PlatformRow {
   platform: SocialPlatform;
   label: string;
   /** The account's @handle and numbers, or how an account is added on this server. */
   summary: string;
-  /** "Add" opens the platform's dialog (or its handle field); "Add key" goes to API keys; none = an account is there. */
-  button?: "Add" | "Add key";
-  /** Following by @handle needs the Apify key, and the key is missing: amber, and the button adds it. */
-  needsKey: boolean;
+  /** "Add" opens the platform's dialog (or its handle field); none = an account is there. The Apify key a public @handle
+   *  needs is never asked for on this page: the dialog sends the person to API keys, the one place it is entered. */
+  button?: "Add";
   /** The project's account on this platform (one per platform per project). */
   account?: ConnectedAccount;
   /** Instagram: the project's own account in the Analyzer, when no sign-in account is there. */
@@ -64,7 +63,6 @@ export interface PlatformRow {
  * project links).
  */
 export function platformRows(view: Pick<ConnectorsView, "logins" | "apify" | "accounts" | "instagram">, projectId?: string): PlatformRow[] {
-  const apifyOk = view.apify.configured && view.apify.valid !== false;
   return PLATFORMS.flatMap((p): PlatformRow[] => {
     const loginOn = !!p.login && !!view.logins[p.login];
     const on = view.accounts.filter((a) => a.platform === p.id);
@@ -72,18 +70,16 @@ export function platformRows(view: Pick<ConnectorsView, "logins" | "apify" | "ac
     const account = on.find((a) => !!projectId && a.projectId === projectId) ?? on.find((a) => !a.projectId);
     if (account) {
       const f = account.stats?.followers;
-      return [{ platform: p.id, label: p.label, summary: [at(account.handle), f !== undefined ? `${n(f)} followers` : ""].filter(Boolean).join(" · "), needsKey: false, account }];
+      return [{ platform: p.id, label: p.label, summary: [at(account.handle), f !== undefined ? `${n(f)} followers` : ""].filter(Boolean).join(" · "), account }];
     }
     if (p.id === "instagram") {
       const own = view.instagram.find((x) => !!projectId && x.projectId === projectId) ?? view.instagram.find((x) => x.mine && !x.projectId);
-      if (own) return [{ platform: p.id, label: p.label, summary: [at(own.handle), own.followers !== undefined ? `${n(own.followers)} followers` : ""].filter(Boolean).join(" · "), needsKey: false, own }];
-      return [{ platform: p.id, label: p.label, summary: loginOn ? "Your account by sign-in, or by @handle" : "Your account, by @handle", button: "Add", needsKey: false }];
+      if (own) return [{ platform: p.id, label: p.label, summary: [at(own.handle), own.followers !== undefined ? `${n(own.followers)} followers` : ""].filter(Boolean).join(" · "), own }];
+      return [{ platform: p.id, label: p.label, summary: loginOn ? "Your account by sign-in, or by @handle" : "Your account, by @handle", button: "Add" }];
     }
     const own = p.id === "facebook" ? "Your Pages by sign-in" : p.id === "youtube" ? "Your channel by sign-in" : "Your account by sign-in";
     const summary = loginOn ? `${own}, or by @handle` : p.id === "facebook" ? "Public Pages, by @handle" : p.id === "youtube" ? "Public channels, by @handle" : "Public accounts, by @handle";
-    // no sign-in here: the handle is the only way, so without a working Apify key the button is the key
-    const needsKey = !loginOn && !apifyOk;
-    return [{ platform: p.id, label: p.label, summary, button: needsKey ? "Add key" : "Add", needsKey }];
+    return [{ platform: p.id, label: p.label, summary, button: "Add" }];
   });
 }
 
@@ -95,7 +91,6 @@ export function platformRows(view: Pick<ConnectorsView, "logins" | "apify" | "ac
 export function ConnectorsSection({ back = "/settings/connectors", compact }: { sub?: string; back?: string; compact?: boolean }) {
   const projects = useWorkspace((s) => s.projects);
   const current = useWorkspace((s) => s.currentProjectId);
-  const navigate = useNavigate();
   const [view, setView] = useState<ConnectorsView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dlg, setDlg] = useState<{ platform: SocialPlatform; step: "choose" | "handle"; seq: number }>({ platform: "tiktok", step: "handle", seq: 0 });
@@ -213,10 +208,9 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
                 icon={<PlatformLogo platform={r.platform} className="size-4" />}
                 title={r.label}
                 subtitle={r.summary}
-                status={r.needsKey ? <Status tone="attention">Needs your Apify key</Status> : undefined}
                 actions={
                   r.button && (
-                    <Button size="xs" variant="outline" aria-label={`${r.button} ${r.label}`} onClick={() => (r.button === "Add key" ? navigate("/settings/keys") : choose(r.platform))}>
+                    <Button size="xs" variant="outline" aria-label={`${r.button} ${r.label}`} onClick={() => choose(r.platform)}>
                       {r.button}
                     </Button>
                   )
