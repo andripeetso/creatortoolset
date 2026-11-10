@@ -77,6 +77,41 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
         super.mouseDown(with: event)
     }
 
+    // A wheel mouse's steps glide instead of jumping the page (WheelGlide.swift).
+    private var glide = WheelGlide()
+    private var glideLink: CADisplayLink?
+    /// The newest wheel step: its place, window and held keys are reused for the frames of its glide.
+    private var glideStep: CGEvent?
+
+    override func scrollWheel(with event: NSEvent) {
+        // precise: a trackpad, a Magic Mouse, or a mouse whose driver smooths already
+        guard !event.hasPreciseScrollingDeltas, event.phase.isEmpty, event.momentumPhase.isEmpty,
+              !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, let step = event.cgEvent?.copy() else {
+            glide.stop()
+            return super.scrollWheel(with: event)
+        }
+        glideStep = step
+        glide.add(x: event.deltaX * WheelGlide.pointsPerLine, y: event.deltaY * WheelGlide.pointsPerLine)
+        if glideLink == nil {
+            let link = displayLink(target: self, selector: #selector(glideTick(_:)))
+            link.add(to: .main, forMode: .common)
+            glideLink = link
+        }
+        glideLink?.isPaused = false
+    }
+
+    @objc private func glideTick(_ link: CADisplayLink) {
+        glideFrame(link.targetTimestamp - link.timestamp)
+    }
+
+    /// One frame of the glide: the page gets its share of what is left, as a precise scroll.
+    func glideFrame(_ dt: Double) {
+        let move = glide.frame(dt)
+        if glide.resting { glideLink?.isPaused = true }
+        guard move.x != 0 || move.y != 0, let event = WheelGlide.event(from: glideStep, x: move.x, y: move.y) else { return }
+        super.scrollWheel(with: event)
+    }
+
     /// A page still blank 10 s after loading (pageLogScript); reloaded at most once a minute.
     var onBlank: (() -> Void)?
     /// The account step (AccountStep.tsx): "status", "apple" or "google"; the reply resolves the page's postMessage.
