@@ -18,15 +18,14 @@ const UPSTREAMS = ["https://huggingface.co", "https://hf-mirror.com"];
 const HEADER_TIMEOUT_MS = 30000;
 const CACHE_DIR = path.join(tmpdir(), "caption-studio-hf-cache");
 
-// in-flight downloads, deduped by cache path
+// in-flight downloads, deduped by cache path (each settles, never rejects)
 const inflight = new Map<string, Promise<void>>();
 
 // Remember which upstream works and try it first next time.
 let preferredUpstream = 0;
 
-async function downloadToCache(urlPath: string, dest: string): Promise<void> {
-  const tmp = dest + ".part";
-  await mkdir(path.dirname(dest), { recursive: true });
+/** The file from the first upstream that answers (the one that worked last time first). */
+async function openUpstream(urlPath: string): Promise<Response> {
   let lastErr: unknown = null;
   const order = [
     preferredUpstream,
@@ -37,7 +36,6 @@ async function downloadToCache(urlPath: string, dest: string): Promise<void> {
     for (let attempt = 0; attempt < 2; attempt++) {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), HEADER_TIMEOUT_MS);
-      const t0 = Date.now();
       try {
         const res = await fetch(base + urlPath, {
           redirect: "follow",
@@ -49,30 +47,19 @@ async function downloadToCache(urlPath: string, dest: string): Promise<void> {
           lastErr = new Error(`HTTP ${res.status}`);
           continue;
         }
-        await pipeline(Readable.fromWeb(res.body as never), createWriteStream(tmp));
-        await rename(tmp, dest);
         preferredUpstream = ui;
-        console.log(`[hf] ${urlPath} <- ${base} (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
-        return;
+        return res;
       } catch (e) {
         clearTimeout(timer);
         lastErr = e;
-        await rm(tmp, { force: true }).catch(() => {});
       }
     }
   }
   throw lastErr instanceof Error ? lastErr : new Error("upstream unavailable");
 }
 
-async function ensureCached(urlPath: string, dest: string): Promise<void> {
-  if (existsSync(dest) && statSync(dest).size > 0) return;
-  let p = inflight.get(dest);
-  if (!p) {
-    p = downloadToCache(urlPath, dest).finally(() => inflight.delete(dest));
-    inflight.set(dest, p);
-  }
-  await p;
-}
+const cached = (dest: string) => existsSync(dest) && statSync(dest).size > 0;
+const typeOf = (sub: string) => (sub.endsWith(".json") ? "application/json" : sub.endsWith(".txt") ? "text/plain" : "application/octet-stream");
 
 hfApp.all("/*", async (c) => {
   const sub = c.req.path.replace(/^\/api\/hf/, "");
@@ -80,23 +67,36 @@ hfApp.all("/*", async (c) => {
     return c.json({ error: "bad path" }, 400);
   }
   const dest = path.join(CACHE_DIR, sub);
-  try {
-    await ensureCached(sub, dest);
-  } catch (e) {
-    return c.json(
-      { error: e instanceof Error ? e.message : "upstream unavailable" },
-      502
-    );
+  // another request is fetching this file: its copy serves this one
+  while (inflight.has(dest)) await inflight.get(dest);
+  if (!cached(dest)) {
+    // not here yet: the bytes go to the browser as they arrive (its progress bar moves) and a copy is kept on the way
+    let release!: () => void;
+    inflight.set(dest, new Promise<void>((r) => (release = () => (inflight.delete(dest), r()))));
+    let res: Response;
+    try {
+      res = await openUpstream(sub);
+    } catch (e) {
+      release();
+      return c.json({ error: e instanceof Error ? e.message : "upstream unavailable" }, 502);
+    }
+    const [toBrowser, toDisk] = res.body!.tee();
+    const tmp = dest + ".part";
+    void mkdir(path.dirname(dest), { recursive: true })
+      .then(() => pipeline(Readable.fromWeb(toDisk as never), createWriteStream(tmp)))
+      .then(() => rename(tmp, dest))
+      .catch(() => rm(tmp, { force: true }).catch(() => {}))
+      .finally(release);
+    const length = res.headers.get("content-encoding") ? null : res.headers.get("content-length");
+    const headers = { "Content-Type": typeOf(sub), ...(length ? { "Content-Length": length } : {}), "Access-Control-Allow-Origin": "*" };
+    // a request that reads no body (HEAD) must not leave its half of the stream filling memory
+    if (c.req.method !== "GET") return void toBrowser.cancel(), new Response(null, { status: 200, headers });
+    return new Response(toBrowser, { status: 200, headers });
   }
   const size = statSync(dest).size;
   const web = Readable.toWeb(createReadStream(dest)) as unknown as ReadableStream;
   const headers = new Headers({
-    "Content-Type":
-      sub.endsWith(".json")
-        ? "application/json"
-        : sub.endsWith(".txt")
-          ? "text/plain"
-          : "application/octet-stream",
+    "Content-Type": typeOf(sub),
     "Content-Length": String(size),
     "Cache-Control": "public, max-age=31536000, immutable",
     "Access-Control-Allow-Origin": "*",

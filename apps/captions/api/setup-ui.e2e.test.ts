@@ -29,7 +29,15 @@ beforeAll(async () => {
   delete process.env.APP_SECRET; // every request is the local account, an admin
 
   const { createServer } = await import("vite");
-  server = await createServer({ configFile: path.resolve(import.meta.dirname, "../vite.config.ts"), server: { port: 0, host: "127.0.0.1" }, logLevel: "error" });
+  // a port nobody holds: the config's strictPort makes "0" mean the default one, which another run on this machine may have
+  const { createServer: listener } = await import("node:net");
+  const port = await new Promise<number>((done) => {
+    const s = listener().listen(0, "127.0.0.1", () => {
+      const free = (s.address() as { port: number }).port;
+      s.close(() => done(free));
+    });
+  });
+  server = await createServer({ configFile: path.resolve(import.meta.dirname, "../vite.config.ts"), server: { port, host: "127.0.0.1" }, logLevel: "error" });
   await server.listen();
   base = server.resolvedUrls?.local?.[0] ?? `http://127.0.0.1:${server.config.server.port}/`;
   const { chromium } = await import("playwright-chromium");
@@ -190,20 +198,34 @@ describe.skipIf(!enabled)("first-run setup in the browser", () => {
     expect(scans).toEqual([]);
 
     // a file that is no video, dropped beside the card (on the title): the page stays, and the card says so
-    const dropOn = async (target: Any, name: string, type: string) => {
-      const data = await page.evaluateHandle(([n, t]: string[]) => {
+    const dropOn = async (target: Any, name: string, type: string, real = false) => {
+      const data = await page.evaluateHandle(([n, t, real]: string[]) => {
+        // a real file with a sound track is a tenth of a second of silence (WAV bytes): the page reads the bytes, not the name
+        const sound = () => {
+          const b = new DataView(new ArrayBuffer(44 + 3200));
+          const text = (at: number, s: string) => [...s].forEach((c, i) => b.setUint8(at + i, c.charCodeAt(0)));
+          text(0, "RIFF"), b.setUint32(4, 36 + 3200, true), text(8, "WAVEfmt "), b.setUint32(16, 16, true);
+          b.setUint16(20, 1, true), b.setUint16(22, 1, true), b.setUint32(24, 16000, true), b.setUint32(28, 32000, true);
+          b.setUint16(32, 2, true), b.setUint16(34, 16, true), text(36, "data"), b.setUint32(40, 3200, true);
+          return b.buffer;
+        };
         const d = new DataTransfer();
-        d.items.add(new File(["not a real file"], n, { type: t }));
+        d.items.add(new File([real ? sound() : "not a real file"], n, { type: t }));
         return d;
-      }, [name, type]);
+      }, [name, type, real ? "1" : ""]);
       await target.dispatchEvent("drop", { dataTransfer: data });
     };
     await dropOn(dialog.getByRole("heading", { name: "Try it" }), "notes.txt", "text/plain");
     await dialog.getByText("That file can't be captioned. Try a video").waitFor();
     expect(new URL(page.url()).searchParams.get("setup")).toBe("try");
+    // the same for a file that only has a video's name: setup never closes into a job that cannot work
+    await dropOn(dialog.getByRole("heading", { name: "Try it" }), "notes.mp4", "video/mp4");
+    await page.waitForTimeout(500);
+    await dialog.getByText("That file can't be captioned. Try a video").waitFor();
+    expect(new URL(page.url()).searchParams.get("setup")).toBe("try");
 
     // a video dropped on the card: setup closes and Caption Studio has it
-    await dropOn(dialog.locator("label").filter({ hasText: "Choose a video" }), "tiny-acrobatics.mp4", "video/mp4");
+    await dropOn(dialog.locator("label").filter({ hasText: "Choose a video" }), "tiny-acrobatics.mp4", "video/mp4", true);
     await page.waitForURL("**/captions");
     await page.getByRole("heading", { name: "Try it" }).waitFor({ state: "hidden" });
     await page.getByText(/tiny-acrobatics/).first().waitFor();

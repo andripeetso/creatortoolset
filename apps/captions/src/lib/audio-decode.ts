@@ -35,6 +35,21 @@ export interface DecodedAudio {
   duration: number;
 }
 
+/**
+ * Whether the file opens as media with a sound track. It reads the file's headers only, so it is quick and fine on
+ * the page. A file that only has a video's name, or a clip with no sound, is false: neither can be captioned.
+ */
+export async function hasSoundTrack(file: Blob): Promise<boolean> {
+  const input = new Input({ source: new BlobSource(file), formats: ALL_FORMATS });
+  try {
+    return !!(await input.getPrimaryAudioTrack());
+  } catch {
+    return false;
+  } finally {
+    input.dispose();
+  }
+}
+
 /** Worker-only implementation; never call this from the renderer thread. */
 export async function decodeAudioFile(
   file: File,
