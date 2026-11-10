@@ -1,10 +1,17 @@
 # Plug-ins
 
-A plug-in changes Creator Toolset for one install without touching the app's own code. It is a folder,
-`apps/captions/plugins/<id>/`, that the build finds and compiles in. Git ignores that folder, so `git pull` never
-conflicts with it, while an edit to one of the app's own files conflicts with every update from then on.
+A plug-in changes Creator Toolset for one install without touching the app's own code. It is a folder with one
+or two files, and it gets into the app in one of two ways:
 
-This page is for a coding AI working in a checkout of this repository for the person who uses the app, and for
+- **The downloaded Mac app:** the folder goes in `~/Library/Application Support/Creator Toolset/plugins/<id>/` and
+  the person switches it on in the app. Nothing is installed and no checkout is needed
+  ([In the downloaded Mac app](#in-the-downloaded-mac-app)).
+- **A checkout of this repository:** the folder is `apps/captions/plugins/<id>/` and the build compiles it in. That
+  is for your own server, the Docker kit, and work on the app itself ([Make one](#make-one-in-a-checkout)). Git
+  ignores that folder, so `git pull` never conflicts with it, while an edit to one of the app's own files conflicts
+  with every update from then on.
+
+The files are the same both ways. This page is for a coding AI working for the person who uses the app, and for
 people who write plug-ins by hand.
 
 ## Before you write one
@@ -20,7 +27,48 @@ Work down this list and stop at the first that does the job:
 5. **A plug-in plus one new slot**, when no slot fits ([below](#when-no-slot-fits)).
 6. **A fork.** Tell the person first: from then on they merge every update by hand.
 
-## Make one
+## In the downloaded Mac app
+
+The app builds a plug-in folder by itself and joins it to the app that is already running. The person installs
+nothing: no Node, no pnpm, no checkout.
+
+1. **See that the app can.** This file must exist (it does from the version that brought plug-in folders):
+   `/Applications/Creator Toolset.app/Contents/Resources/server/source/scripts/plugin-build.mjs`. If it is missing,
+   the app is older: the person picks Check for Updates in the app, or you use a checkout (below).
+2. **Read the app's own source**, in `/Applications/Creator Toolset.app/Contents/Resources/server/source/`:
+   `api/lib/plugin.ts`, `src/lib/plugin.ts`, `plugin-examples/hello` and this page. Those are the files that copy of
+   the app was built from. The repository's main branch can be ahead of it.
+3. **Write the folder**: `~/Library/Application Support/Creator Toolset/plugins/<id>/` with `plugin.ts`, `web.tsx`
+   or both ([What it can add](#what-it-can-add)). Keep the import lines a checkout has (`../../api/lib/plugin`,
+   `../../src/lib/plugin`, `@/components/ui/button`): the folder is read as if it were
+   `apps/captions/plugins/<id>`.
+4. **Check it.** This prints `ok`, or what is wrong, and runs nothing of the plug-in:
+
+   ```sh
+   APP="/Applications/Creator Toolset.app/Contents/Resources/server"
+   "$APP/bin/node" "$APP/source/scripts/plugin-build.mjs" check "$HOME/Library/Application Support/Creator Toolset/plugins/<id>"
+   ```
+5. **Tell the person to switch it on**: the account menu → Community → Installed → Plug-ins, the switch on its
+   row. The app asks them in its own dialog and then restarts its server. Only they can do this. No file, setting
+   or tool switches a plug-in on, so don't look for one.
+6. **After you change the folder**, its row says Changed, and Use the new version takes it. Until then the copy
+   they switched on keeps running.
+
+What is different from a checkout:
+
+- **Imports:** the app's own files, and the packages the app itself uses. There is no `npm install` for a plug-in;
+  the check names an import the app doesn't have. Anything else runs as its own program beside the app.
+- **No type-checking.** The check finds syntax errors, missing files and packages, and names that are taken. A type
+  mistake shows when the code runs. For `pnpm check`, use a checkout.
+- **Not there:** `?url` imports, web workers and `import.meta.glob` in `web.tsx`; `env: […]` names with a `.env`
+  file (keep a plug-in's own settings in its Settings section, saved under its data folder); a `site`.
+- **When it fails**, the app starts without it and its row says why: it doesn't build, it throws while loading,
+  it uses a name another plug-in has, or it stopped the app's server. A page that throws while it is drawn shows
+  one line in its place. `~/Library/Logs/Creator Toolset Server.log` has the `[plugins]` lines.
+- **Updates:** the app updates itself and the folder stays. When the app changed something the plug-in imports,
+  the row says what is missing; fix the folder and they take the new version.
+
+## Make one in a checkout
 
 ```sh
 cd apps/captions
@@ -71,8 +119,10 @@ both before you decide a slot is missing.
 
 ## Rules
 
-- **It is code with the whole server's access**: every account's data and keys on that install. Install a plug-in
-  only from someone you trust, and read it first, or have your AI read it.
+- **It is code with the whole server's access**: every account's data and keys on that install. In the Mac app
+  that is the person's own files, their saved keys, the internet, and what macOS has allowed the app. The switch
+  is their consent, not a cage. Install a plug-in only from someone you trust, and read it first, or have your AI
+  read it.
 - **The app's own rules still hold** ([AGENTS.md](AGENTS.md)): a paid service is called with the key from `keyFor`,
   social platforms are read only through the official logins and the person's own Apify key, and one account never
   reaches another account's data or AI.
@@ -100,17 +150,16 @@ both before you decide a slot is missing.
 - **From this checkout:** `pnpm dev` while you work. `pnpm build` makes the production server, plug-ins included.
 - **On your own server:** the Docker kit builds its image from the checkout, with the `plugins/` folder in it:
   `docker compose up -d --build` ([SELF_HOSTING.md](SELF_HOSTING.md)).
-- **In the Mac app:** the downloaded app runs the server it was released with, which has no plug-ins, and one
-  can't be added to it. Run your server from this checkout and add its address (`http://localhost:43127`) in the
-  app's Servers list. That server has its own data folder (`~/.caption-studio`, or `DATA_DIR`), not the downloaded
-  app's, so it starts without the projects made there.
+- **In the Mac app:** put the folder in the app's plug-ins folder and switch it on
+  ([In the downloaded Mac app](#in-the-downloaded-mac-app)). Only the server the Mac app runs on that Mac reads a
+  plug-ins folder; a server you host for other people takes plug-ins from its build alone.
 
 ## Keep it and share it
 
 - **Updates:** `git pull`, `pnpm install`, `pnpm check`. Your folder is untouched. When the app changed something
   the plug-in imports, `pnpm check` names the line.
-- **Sharing:** a plug-in is a folder. Put it in its own git repository, and someone else clones it into
-  `apps/captions/plugins/<id>` of their checkout.
+- **Sharing:** a plug-in is a folder. Put it in its own git repository. Someone else puts it in their Mac app's
+  plug-ins folder and switches it on themselves, or clones it into `apps/captions/plugins/<id>` of their checkout.
 
 ## When no slot fits
 

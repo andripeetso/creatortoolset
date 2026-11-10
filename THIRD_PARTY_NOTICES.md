@@ -85,3 +85,5 @@ copy each one's licence next to the files they install.
     source available with it, as for the Docker image above.
   - `onnxruntime-node` (MIT) and `playwright-chromium` with `playwright-core` (Apache-2.0), and their npm
     dependencies; the fingerprint tools and, when built with it, the SSCD model listed below.
+  - The plug-in builder's packages, `esbuild`, `tailwindcss`, `tailwindcss-animate` and `postcss` (all MIT), with
+    their npm dependencies, each with its licence file in `node_modules`.

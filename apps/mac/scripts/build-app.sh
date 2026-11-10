@@ -1,8 +1,8 @@
 #!/bin/bash
 # Builds "Creator Toolset.app" into apps/mac/build: a release binary from the Swift
 # package, Sparkle (the updater), the Info.plist, the icon (AppIcon.png), the server the app runs
-# (Resources/server: Node, the built web app, its two external packages, FFmpeg, the fingerprint tools and,
-# with SSCD_CACHE, the SSCD model), and a code signature. Ad-hoc by default; SIGN_IDENTITY="Developer ID
+# (Resources/server: Node, the built web app, its two external packages, the plug-in builder with the app's own
+# source, FFmpeg, the fingerprint tools and, with SSCD_CACHE, the SSCD model), and a code signature. Ad-hoc by default; SIGN_IDENTITY="Developer ID
 # Application: …" signs for other Macs (with the hardened runtime notarization needs). The build number is the
 # repo's commit count, so every release is newer than the one before; VERSION=… sets the version people see
 # (default 1.0.<build>). Apple silicon only.
@@ -126,7 +126,9 @@ NODE_SHA=c9e1dbc748b33ed2d14f42445191ecaf14c56259c7a9a26d0042c49ec2b66428
 server="$app/Contents/Resources/server"
 mkdir -p "$server/bin" "$server/runtime"
 
-(cd "$repo" && pnpm --filter @creator-toolset/captions build)
+# CT_PLUGIN_HOST=1: the build lists every module of the app (scripts/plugins.mjs), so a plug-in from the person's own
+# plug-ins folder, built by itself on their Mac, can use the app's one copy of each (api/lib/folder-plugins.ts)
+(cd "$repo" && CT_PLUGIN_HOST=1 pnpm --filter @creator-toolset/captions build)
 ditto "$captions/dist" "$server/dist"
 ditto "$captions/packs" "$server/packs"   # the shipped packs (api/official-packs.ts reads ../packs from dist/)
 printf '{"private":true,"type":"module"}\n' > "$server/package.json"   # dist/boot.js is an ES module
@@ -141,11 +143,30 @@ tar -xzf "$node_tar" -C "$server/bin" --strip-components 2 "node-$NODE_VERSION-d
 tar -xzf "$node_tar" -C "$server" --strip-components 1 "node-$NODE_VERSION-darwin-arm64/LICENSE"
 mv "$server/LICENSE" "$server/NODE-LICENSE"
 
-# the two packages the bundle leaves outside (package.json "build"), at the versions the app pins.
+# the two packages the bundle leaves outside (package.json "build"), at the versions the app pins, and the plug-in
+# builder's four (esbuild, Tailwind and what it needs), at the versions this checkout has installed.
 # --ignore-scripts: playwright-chromium's install would download Chromium (the server does that on the first export)
 pin() { node -p "require('$captions/package.json').dependencies['$1']"; }
+has() { node -p "require('$captions/node_modules/$1/package.json').version"; }
 npm install --prefix "$server" --omit=dev --no-package-lock --no-save --ignore-scripts --no-audit --no-fund \
-  "onnxruntime-node@$(pin onnxruntime-node)" "playwright-chromium@$(pin playwright-chromium)"
+  "onnxruntime-node@$(pin onnxruntime-node)" "playwright-chromium@$(pin playwright-chromium)" \
+  "esbuild@$(has esbuild)" "tailwindcss@$(has tailwindcss)" "tailwindcss-animate@$(has tailwindcss-animate)" "postcss@$(has postcss)"
+[ -x "$server/node_modules/@esbuild/darwin-arm64/bin/esbuild" ] || { echo "esbuild's program is missing" >&2; exit 1; }
+rm -rf "$server/node_modules/fsevents"   # a file watcher's native part: the builder never watches
+
+# the app's own source, for two readers: the plug-in builder (source/scripts/plugin-build.mjs reads which modules the
+# app has, its page paths and its Tailwind theme) and the AI that writes a plug-in (the files this very build was made
+# from, with PLUGINS.md). Listed by name, so nothing else in a checkout (plugins/, .env, runtime/) can ride along.
+src_out="$server/source"
+mkdir -p "$src_out/scripts"
+for d in api src contracts db plugin-examples; do
+  rsync -a --exclude '*.test.*' --exclude '*.spec.*' --exclude '*.gen.ts' --exclude 'node_modules' "$captions/$d/" "$src_out/$d/"
+done
+cp "$captions/scripts/plugin-build.mjs" "$captions/scripts/plugin-host.mjs" "$src_out/scripts/"
+cp "$captions/package.json" "$captions/tailwind.config.js" "$captions/index.html" "$captions/render.html" "$src_out/"
+cp "$repo/PLUGINS.md" "$repo/AGENTS.md" "$src_out/"
+# the build's own check: the example plug-in builds with what is inside the app, and nothing else
+"$server/bin/node" "$src_out/scripts/plugin-build.mjs" check "$src_out/plugin-examples/hello"
 [ -f "$server/node_modules/playwright-core/cli.js" ] || { echo "playwright-core is missing" >&2; exit 1; }
 ort="$server/node_modules/onnxruntime-node/bin/napi-v6"
 [ -d "$ort/darwin/arm64" ] || { echo "onnxruntime-node has no darwin/arm64 build at $ort" >&2; exit 1; }

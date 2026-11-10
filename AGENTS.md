@@ -41,14 +41,17 @@ For one person's own copy, work down this list and stop at the first that does t
    (`apps/captions/docs/features/packs.md`).
 3. **Their own AI with the app's tools** (Settings → Headless access): a job the AI can do with the tools that exist
    needs no change to the app.
-4. **A plug-in**: a folder in `apps/captions/plugins/<id>/`. It adds pages, Home tiles, Settings sections, API
-   routes, tools for their AI and buttons on items, and it can take the place of some built-in pages.
-   [PLUGINS.md](PLUGINS.md) is the guide, and `apps/captions/plugin-examples/hello` is the one to copy.
+4. **A plug-in**: a folder of their own. It adds pages, Home tiles, Settings sections, API routes, tools for
+   their AI and buttons on items, and it can take the place of some built-in pages. With the downloaded Mac app it
+   goes in `~/Library/Application Support/Creator Toolset/plugins/<id>/` and they switch it on in the app: nothing
+   to install, no checkout. In a checkout it is `apps/captions/plugins/<id>/`. [PLUGINS.md](PLUGINS.md) is the
+   guide, and `apps/captions/plugin-examples/hello` is the one to copy.
 5. **A plug-in plus one new slot**, when no slot fits: the smallest slot in the app (PLUGINS.md, "When no slot
    fits"), everything else in the plug-in.
 6. **A fork** is the last choice. Tell the person before you start.
 
-Why: `apps/captions/plugins/` is ignored by git, so an update never touches a plug-in. An edit to one of the app's
+Why: a plug-in folder is outside the app's own code (the Mac app's plug-ins folder, or `apps/captions/plugins/`,
+which git ignores), so an update never touches it. An edit to one of the app's
 own files conflicts with every update from then on. A bug in the app is the exception: fix it in the app's own code
 and offer the fix as a pull request, so the person doesn't carry it.
 
@@ -141,13 +144,19 @@ newest one. A release reaches everyone's Mac, so make one only when the maintain
     AI (Providers, Scheduled tasks, Usage), Hardware (Devices, Storage, Servers), Connections (Social accounts,
     API keys, Headless access), Team, Server (Admin). **The account button** = you.
   - Inside a tool = that tool's own choices (its page, its Defaults dialog).
-  - **Community** = everything added to the app. Installed shows **Plug-ins** (code built into this server: they
-    make the install different) and then **Packs** (content you switch on per project and can remove).
+  - **Community** = everything added to the app. Installed shows **Plug-ins** (code: built into this server, or on
+    the Mac app's own server the folders in the person's plug-ins folder, each with its switch) and then **Packs**
+    (content you switch on per project and can remove).
   - A plug-in's pieces show up where the built-in ones do: its Settings section in the matching group or Admin tab,
     its tiles on Home, its pages in place of built-in ones. The Plug-ins list is the one place that names it.
   - Plug-in authors: add each piece to the matching place above, and give the plug-in `name` and `about` (one line)
     in both `plugin.ts` and `web.tsx` (`plugin-examples/hello` shows it). `GET /api/plugins` and Community read these.
   - Settings groups and the sidebar: `src/components/settings/nav.ts`; kit: `src/components/settings/ui.tsx`.
+- Plug-ins get in two ways. Compiled in: `scripts/plugins.mjs` writes the registries at build time. From a folder,
+  on the Mac app's own server only: `scripts/plugin-build.mjs` builds one folder by itself, `api/lib/folder-plugins.ts`
+  loads what the Mac app says is on (`apps/mac` `Plugins.swift` keeps the person's Switch on clicks) and
+  `src/lib/folder-plugins.tsx` adds the page halves before the first render. A screen reads the plug-in list when it
+  is drawn, never when its file loads. A folder plug-in that fails is left out and named; it never stops the app.
 - Long-running work (exports, enhancement, the Mac relay) runs in background queues with concurrency limits set
   by environment variables; keep those limits when you add work to them.
 - Status fields (jobs, sessions, sources, exports): the union lives once (a `contracts/` file or the module's

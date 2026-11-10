@@ -69,10 +69,11 @@ vault notes and Workshop sessions in step, and an **assistant** that helps you s
 
 ## Make it work your way
 
-The app is open source, so your AI can change it for you. Open this repository in Claude Code, Codex or another
+The app is open source, so your AI can change it for you. Give this repository to Claude Code, Codex or another
 coding AI and say what you want different: a tool you miss, a step that should go another way, a page for your own
-process. It builds that as a **plug-in**, a folder of your own beside the app's code. The app's code stays as it
-is, so you keep getting updates. [PLUGINS.md](PLUGINS.md) tells your AI how.
+process. It builds that as a **plug-in**, a folder of your own. With the Mac app you install nothing: your AI writes
+the folder, and you switch it on in Community → Installed. The app's code stays as it is, so you keep getting
+updates. [PLUGINS.md](PLUGINS.md) tells your AI how.
 
 ## Your own AI, your own keys
 
