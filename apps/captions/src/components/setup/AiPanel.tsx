@@ -4,6 +4,7 @@ import type { CliId, ConnectResult, LocalAiRow, LocalAiView, SignInResult } from
 import type { ProviderSettings, ProvidersView } from "@contracts/providers";
 import { Button } from "@/components/ui/button";
 import { ProviderLogo } from "@/components/settings/ProviderLogos";
+import { Card, ListRow, Status } from "@/components/settings/ui";
 import { getProviders, modelsOf, saveOwn, thisMacDevice } from "@/lib/providers";
 import { startThisMac, thisMacBridge } from "@/lib/thisMac";
 
@@ -32,8 +33,6 @@ const USES: Record<CliId, string> = {
   claude: "Uses your Claude plan (Pro or higher).",
   gemini: "Uses your Google account.",
 };
-
-const ROW = "flex items-start gap-3 rounded-xl border border-border/60 bg-card/40 px-4 py-3";
 
 const isConnected = (row: LocalAiRow | undefined, result?: ConnectResult) => !!row?.connected || result?.state === "ready";
 
@@ -114,34 +113,48 @@ export function AnswerPicker({ view, onPick }: { view: ProvidersView; onPick: (s
   );
 }
 
-/** One AI's row: its logo, name and small second line, one plain line, and its one button. */
+/**
+ * One AI's row, in the same rows as Settings and setup's last screen: its logo, its name with the program's name small
+ * beside it, one plain line, and its one button. A failure is the red line, with the program's own words under Details.
+ */
 function AgentRow({ id, row, result, phase, onConnect }: { id: CliId; row?: LocalAiRow; result?: ConnectResult; phase?: Phase; onConnect: () => void }) {
   const v = rowView(id, row, result, phase);
-  // Details only when something went wrong: the program's version and its own words
-  const details = v.raw ? [row?.version, v.raw].filter(Boolean).join("\n") : "";
+  const failed = !phase && !!result && result.state !== "ready" && result.state !== "mac" && result.state !== "unsupported";
   return (
-    <li className={ROW}>
-      <ProviderLogo driver={id} className="mt-0.5 size-5" />
-      <div className="min-w-0 flex-1 space-y-1">
-        <p className="text-sm font-medium">{ROW_NAME[id]}</p>
-        <p className="text-xs text-muted-foreground">{ROW_SUB[id]}</p>
-        {v.line && <p className="text-xs">{v.line}</p>}
-        {details && (
-          <details className="text-xs">
-            <summary className="cursor-pointer text-muted-foreground">Details</summary>
-            <pre className="mt-1 whitespace-pre-wrap font-mono text-[11px]">{details}</pre>
-          </details>
-        )}
-      </div>
-      <div className="flex shrink-0 items-center gap-2 pt-0.5">
-        {v.connected && <Check aria-label={`${ROW_NAME[id]} is connected`} className="size-4 text-emerald-600 dark:text-emerald-400" />}
-        {v.button && (
-          <Button size="sm" disabled={v.button.disabled} onClick={onConnect}>
-            {v.button.label}
-          </Button>
-        )}
-      </div>
-    </li>
+    <ListRow
+      icon={<ProviderLogo driver={id} className="size-4" />}
+      title={
+        <>
+          <span>{ROW_NAME[id]}</span>{" "}
+          <span className="ml-0.5 text-xs font-normal text-muted-foreground">{ROW_SUB[id]}</span>
+        </>
+      }
+      subtitle={failed ? undefined : v.line || undefined}
+      status={
+        failed ? (
+          <>
+            <Status tone="broken">{v.line}</Status>
+            {/* Details only when something went wrong: the program's version and its own words */}
+            {v.raw && (
+              <details className="pt-0.5">
+                <summary className="cursor-pointer">Details</summary>
+                <pre className="mt-1 whitespace-pre-wrap font-mono text-[11px]">{[row?.version, v.raw].filter(Boolean).join("\n")}</pre>
+              </details>
+            )}
+          </>
+        ) : undefined
+      }
+      actions={
+        <>
+          {v.connected && <Check aria-label={`${ROW_NAME[id]} is connected`} className="size-4 text-emerald-600 dark:text-emerald-400" />}
+          {v.button && (
+            <Button size="xs" disabled={v.button.disabled} onClick={onConnect}>
+              {v.button.label}
+            </Button>
+          )}
+        </>
+      }
+    />
   );
 }
 
@@ -158,13 +171,13 @@ export function AiPanelView({ view, results, phases, onConnect }: AiPanelViewPro
   if (!view.local)
     return <p className="text-sm text-muted-foreground">Ask the owner of this server to connect the AI it runs on.</p>;
   return (
-    <ul className="space-y-2">
+    <Card>
       {AGENTS.map((id) => {
         const row = view.rows.find((r) => r.id === id);
         if (id === "gemini" && !row?.found) return null;
         return <AgentRow key={id} id={id} row={row} result={results[id]} phase={phases[id]} onConnect={() => onConnect(id)} />;
       })}
-    </ul>
+    </Card>
   );
 }
 
