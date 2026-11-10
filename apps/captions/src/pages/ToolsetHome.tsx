@@ -96,13 +96,13 @@ export default function ToolsetHome() {
     return <Navigate to={{ pathname: "/", search: location.search }} replace />;
   }
 
-  /** Ready or needs setup for a tile, from the account's setup; null when there is nothing to say (no setup, or off). */
-  const statusOf = (k: Key): boolean | null => {
+  /** What a tile still needs, from the account's setup ("" when nothing); null when there is nothing to say (no setup, or off). */
+  const statusOf = (k: Key): string | null => {
     if (!view || !canUseKey(me, k)) return null;
     // the recorder needs nothing Review doesn't; Finals is a view of the Media Library
     const tool = k === "record" ? "review" : k === "finals" ? "media" : k;
     if (view.tools && !view.tools.includes(tool)) return null;
-    return readiness(tool, view.have).ready;
+    return readiness(tool, view.have).missing.map((n) => n.what).join(" · ");
   };
   const extrasGroup = TOOL_GROUPS.find((g) => g.id === "tools");
   const extras: Key[] = [...(extrasGroup?.tools ?? []), "record"];
@@ -117,7 +117,7 @@ export default function ToolsetHome() {
     const p = PAGE[k];
     const dest = phone && p.phoneTo ? p.phoneTo : p.to;
     const ok = canUseKey(me, k);
-    const ready = statusOf(k);
+    const missing = statusOf(k);
     const body = (
       <>
         <span className={quiet
@@ -127,7 +127,7 @@ export default function ToolsetHome() {
           {!ok && <Lock className="absolute -bottom-1 -right-1 h-4 w-4 rounded-full bg-zinc-900 p-0.5 text-zinc-300" />}
           {ok && (k === "workshop" ? showCounts && <WorkshopBadge /> : k !== "record" && k !== "finals" && <Badge n={waiting[k] ?? 0} means={BADGE_MEANS[k]} />)}
           {ok && running[dest] ? <Running n={running[dest]} verb="writing" /> : null}
-          {ok && ready === false && <NeedsSetup />}
+          {ok && missing && <NeedsSetup what={missing} />}
         </span>
         <span className={`text-xs leading-tight transition-colors duration-200 group-hover:text-zinc-50 ${quiet ? "text-zinc-400" : "text-zinc-300"}`}>{NAME[k]}</span>
       </>
@@ -142,11 +142,11 @@ export default function ToolsetHome() {
       );
     }
     return dest.startsWith("https://") ? (
-      <a key={k} href={dest} title={ready === false ? `${p.desc} · Needs setup` : p.desc} className={className}>
+      <a key={k} href={dest} title={missing ? `${p.desc} · Needs: ${missing}` : p.desc} className={className}>
         {body}
       </a>
     ) : (
-      <Link key={k} to={dest} title={ready === false ? `${p.desc} · Needs setup` : p.desc} onClick={(e) => openTool(e, dest)} className={className}>
+      <Link key={k} to={dest} title={missing ? `${p.desc} · Needs: ${missing}` : p.desc} onClick={(e) => openTool(e, dest)} className={className}>
         {body}
       </Link>
     );
@@ -262,12 +262,12 @@ export default function ToolsetHome() {
 }
 
 /** A tool that needs setup: a small amber dot on its icon, nothing for one that is ready (owner, 2026-11-09). */
-function NeedsSetup() {
+function NeedsSetup({ what }: { what: string }) {
   return (
     <span
       role="img"
-      aria-label="Needs setup"
-      title="Needs setup"
+      aria-label={`Needs: ${what}`}
+      title={`Needs: ${what}`}
       className="absolute -right-1 -top-1 h-3 w-3 rounded-full bg-amber-400"
     />
   );

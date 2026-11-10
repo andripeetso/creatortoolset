@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
-import { anyAiConfigured } from "./ai-complete";
+import { aiFor, anyAiConfigured } from "./ai-complete";
 import { env, hostedMode } from "./lib/env";
 import { isOnline, listDevices } from "./lib/devices";
 import { connectState } from "./connect/state";
@@ -86,7 +86,8 @@ export async function haveFor(user: SessionUser): Promise<Have[]> {
     (k) => k.env,
   );
   if (anyAiConfigured(user)) have.push("ai");
-  if (connectedOwn(u)) have.push("ownAi");
+  // the Workshop's own check (workshop.ts workshopAi): its route, an admin's workspace AI included
+  if (connectedOwn(u) || !aiFor(user, "workshop", "Workshop").off) have.push("ownAi");
   if ((await ownedProjects(u)).length) have.push("project");
   if (
     readConnectors(u).accounts.some(
