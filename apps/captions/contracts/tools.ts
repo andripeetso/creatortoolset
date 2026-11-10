@@ -71,6 +71,9 @@ export const TOOL_GROUPS: ReadonlyArray<{ id: "plan" | "make" | "distribute" | "
 /** Always on for every account and never part of the "What will you make?" pick: the Plan and Make tools above. */
 export const DEFAULT_TOOLS: readonly Tool[] = TOOL_GROUPS.filter((g) => g.id !== "tools").flatMap((g) => g.tools);
 
+/** Whether Home shows a tool: every tool except the ones the person switched off (SetupView.hidden). Nothing hidden = all shown. */
+export const onHome = (hidden: readonly Tool[] | null | undefined, t: Tool): boolean => !hidden?.includes(t);
+
 /** What each thing a tool needs is called in a row's heading (plain, no vendor-first wording). */
 export const NEED_SHORT: Record<Have, string> = {
   project: "a project",
@@ -87,7 +90,7 @@ export const NEED_SHORT: Record<Have, string> = {
   ANTHROPIC_API_KEY: "an Anthropic key",
   OPENAI_API_KEY: "an OpenAI key",
   PERPLEXITY_API_KEY: "a Perplexity key",
-  TYPESAFE_API_KEY: "a TypeSafe key",
+  TYPESAFE_API_KEY: "a TypeSafe Jev key",
 };
 
 /** One plain sentence per need: what it is for and who bills (section 11.2 of the onboarding spec). */
@@ -98,7 +101,7 @@ export const NEED_SENTENCE: Record<Have, string> = {
   library: "The Media Library is where your footage lives. Make one to start.",
   instagram: "Lets this tool read your own Instagram posts. You sign in yourself.",
   apify: "Apify reads public posts for you. Apify bills you for each read, to your own account.",
-  mcp: "Lets your own Claude Code or Codex use Creator Toolset. Set it up in Settings → Your own AI.",
+  mcp: "Lets your own Claude Code or Codex use Creator Toolset. Set it up in Settings → Use from your AI.",
   deviceTranscripts: "This computer turns speech into text by itself, for free. A Deepgram or OpenAI key makes it faster.",
   DEEPGRAM_API_KEY: "Deepgram turns speech into text, so captions and notes can be made. Deepgram bills you, to your own account.",
   ELEVENLABS_API_KEY: "Cleans up voice audio. ElevenLabs or NVIDIA bills you, to your own account.",
@@ -106,7 +109,7 @@ export const NEED_SENTENCE: Record<Have, string> = {
   ANTHROPIC_API_KEY: "Anthropic bills you for what you use, to your own account.",
   OPENAI_API_KEY: "Used for search and descriptions in the Media Library. OpenAI bills you, to your own account.",
   PERPLEXITY_API_KEY: "Lets research look things up on the web. Perplexity bills you, to your own account.",
-  TYPESAFE_API_KEY: "Sharper picks for Content Analyzer. TypeSafe bills you, to your own account.",
+  TYPESAFE_API_KEY: "Sharper picks for Content Analyzer. TypeSafe Jev bills you, to your own account.",
 };
 
 /**
@@ -146,7 +149,7 @@ export const TOOL_NEEDS: Record<Tool, readonly Need[]> = {
     { what: "A project", anyOf: ["project"], form: "project" },
     { what: "Posts to read: your own Apify key (Apify bills you for each read)", anyOf: ["apify", "instagram"], form: "apify" },
     { what: "AI to read posts and slides", anyOf: ["ai"], form: "ai", optional: true },
-    { what: "TypeSafe: sharper picks", anyOf: ["TYPESAFE_API_KEY"], form: "keys", optional: true },
+    { what: "TypeSafe Jev: sharper picks", anyOf: ["TYPESAFE_API_KEY"], form: "keys", optional: true },
   ],
   workshop: [
     { what: "A project", anyOf: ["project"], form: "project" },
@@ -198,8 +201,10 @@ export const usesAi = (t: Tool) => TOOL_NEEDS[t].some((n) => n.form === "ai");
 
 /** GET /api/setup (api/setup.ts): the tools a person ticked, their plan, whether setup is done, what they have. */
 export interface SetupView {
-  /** null = never asked */
+  /** null = never asked. Only what the tools, the needs-setup text and the setup window read; Home reads `hidden`. */
   tools: Tool[] | null;
+  /** Home tools switched off under Settings → Appearance. Empty = Home shows every tool. */
+  hidden: Tool[];
   plan: PlanId | null;
   /** what a CLI on one of their Macs says it is signed in to (`claude auth status`), for the plan question's default */
   detected: PlanId | null;

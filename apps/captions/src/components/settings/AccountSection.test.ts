@@ -1,5 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { signInReturn } from "./AccountSection";
+import { signInNameProblem, signInReturn } from "./AccountSection";
+
+describe("signInNameProblem (the allowed sign-in name, shown only when broken)", () => {
+  it("is quiet for an allowed name, any case, and while nothing is typed", () => {
+    expect(signInNameProblem("")).toBeNull();
+    expect(signInNameProblem("  Andri-2_x ")).toBeNull();
+  });
+
+  it("names the rule for a name that breaks it", () => {
+    expect(signInNameProblem("a")).not.toBeNull();
+    expect(signInNameProblem("andri peetso")).not.toBeNull();
+    expect(signInNameProblem("-andri")).not.toBeNull();
+  });
+});
 
 describe("signInReturn (the toast after a sign-in link)", () => {
   it("says a linked provider by its name", () => {

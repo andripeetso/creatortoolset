@@ -224,6 +224,7 @@ describe("Creator Toolset as a remote MCP server", () => {
     // 9864 -> 9872: "ready" in workshop_update_session's status enum (every SessionStatus)
     // 9872 -> 9904: newsletter, X thread and article pieces in the kind list
     // 9904 -> 10277: finals_link_session (link a Finals piece to the Workshop session it was made for, so its versions get post descriptions)
-    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(10277);
+    // 10277 -> 10323: automations_list says it returns history, the last five results (the list already carried them)
+    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(10323);
   });
 });

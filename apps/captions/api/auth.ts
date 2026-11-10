@@ -17,6 +17,7 @@ import {
   findByLogin,
   findUser,
   unlinkIdentity,
+  pictureOf,
   apiKeysOf,
   dropApiKey,
   newApiKey,
@@ -161,6 +162,7 @@ const toPublic = (u: SessionUser) => ({
 const withLogins = (u: SessionUser) => ({
   ...toPublic(u),
   logins: findUser(u.username)?.usage.logins ?? null,
+  picture: findUser(u.username) ? pictureOf(findUser(u.username)!) : null,
   // an install without sign-in has one fixed session user: its saved display name comes from its account record
   ...(u.name ? {} : findUser(u.username)?.displayName ? { name: findUser(u.username)!.displayName } : {}),
 });
@@ -416,7 +418,15 @@ authApp.get("/account", (c) => {
   const me = signedInAccount(c.req.header("cookie"));
   const user = me && findUser(me.username);
   if (!user) return c.json({ error: "Sign in with an account first" }, 401);
-  return c.json({ username: user.username, name: user.displayName ?? "", identities: (user.identities ?? []).map((i) => i.provider) });
+  const signins = (user.identities ?? []).map((i) => ({ provider: i.provider, email: i.email, name: i.name ?? "", picture: i.picture ?? null }));
+  return c.json({
+    username: user.username,
+    name: user.displayName ?? "",
+    login: user.login ?? user.username,
+    identities: signins.map((s) => s.provider),
+    signins,
+    picture: pictureOf(user),
+  });
 });
 
 authApp.patch("/account", async (c) => {

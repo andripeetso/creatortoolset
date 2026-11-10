@@ -34,6 +34,9 @@ const apply = () => {
 };
 apply();
 
+/** Where the server's key of this name was pasted: Admin → Server keys ("settings") or the server's .env ("env"). */
+export const serverKeyFrom = (name: string): "settings" | "env" | null => (saved[name as ServiceKeyEnv] ? "settings" : fromServer[name as ServiceKeyEnv] ? "env" : null);
+
 export const serviceKeysApp = new Hono<{ Variables: AuthVars }>();
 
 serviceKeysApp.use("*", async (c, next) => (c.get("user").role === "admin" ? next() : c.json({ error: "Admins only" }, 403)));

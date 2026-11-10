@@ -1,5 +1,5 @@
 import { MY_KEYS, SERVICE_KEYS, type MyKeyEnv, type ServiceKeyEnv } from "@contracts/service-keys";
-import { DEFAULT_TOOLS, TOOLS, TOOL_NAMES, type Tool } from "@contracts/tools";
+import { DEFAULT_TOOLS, TOOLS, TOOL_LINES, TOOL_NAMES, type Tool } from "@contracts/tools";
 import type { SettingsPageId } from "./nav";
 
 /**
@@ -30,10 +30,9 @@ const STATIC_ROWS = [
   { section: "general", id: "confirm-deletes", title: "Ask before moving to trash or deleting a comment", keywords: ["trash", "delete", "confirm", "comment"] },
   { section: "general", id: "status-colours", title: "Colour bar beside each session in the Workshop", keywords: ["status", "colour", "color", "sidebar", "workshop"] },
   { section: "general", id: "read-aloud", title: "Read the assistant's replies aloud", keywords: ["voice", "speech", "speak", "audio"] },
-  { section: "general", id: "how-you-work", title: "How you use the app", keywords: ["assistant", "own ai", "setup", "chat", "how you work"] },
   { section: "general", id: "run-setup", title: "Setup", description: "Run the first-run walk-through again", keywords: ["setup", "walk-through", "onboarding", "wizard", "first run"] },
   { section: "general", id: "recording-shortcut", title: "Recording shortcut", description: "Starts and stops a screen recording from any app (Mac app)", keywords: ["record", "screen", "shortcut", "hotkey", "keyboard", "key", "mac app"], needs: "mac" },
-  { section: "general", id: "saved-lists", title: "Saved lists", description: "Copies the screens open from, so they show at once. Your work stays.", keywords: ["cache", "clear", "storage", "saved", "lists", "refresh", "reload", "screens"] },
+  { section: "general", id: "saved-lists", title: "Cache", description: "Lists kept on this computer so screens open at once. Clearing it loses no work.", keywords: ["cache", "clear", "storage", "saved", "lists", "screens", "reload"] },
   // Appearance
   { section: "appearance", id: "theme", title: "Theme", keywords: ["dark", "light", "system", "colour", "color", "look"] },
   { section: "appearance", id: "project-colour", title: "Project colour", keywords: ["tint", "violet", "colour", "color"] },
@@ -43,8 +42,8 @@ const STATIC_ROWS = [
   { section: "folders", id: "footage-folder", title: "Footage", keywords: ["folder", "media", "library", "clips", "raw"] },
   { section: "folders", id: "music-folder", title: "Music", keywords: ["folder", "audio", "tracks", "sound"] },
   // Providers: the AI tools that do the work, per computer
-  { section: "providers", id: "default-ai", title: "Default AI", description: "Provider, model and thinking level", keywords: ["provider", "model", "effort", "thinking", "default"] },
-  { section: "providers", id: "tool-ai", title: "A different AI for one tool", keywords: ["provider", "tool", "override", "use default"] },
+  { section: "providers", id: "default-ai", title: "Default AI", description: "Which AI does the work unless a tool picks another", keywords: ["provider", "default", "which ai", "model", "thinking"] },
+  { section: "providers", id: "tool-ai", title: "A different AI for one tool", keywords: ["provider", "tool", "override", "use default", "model", "thinking"] },
   { section: "providers", id: "add-provider", title: "Add provider", keywords: ["install", "sign in", "claude", "codex", "cursor", "grok", "gemini"] },
   // Computers: the computers that run your AI
   { section: "devices", id: "computers", title: "Computers", keywords: ["mac", "computer", "machine", "rename", "remove", "online"] },
@@ -52,23 +51,28 @@ const STATIC_ROWS = [
   { section: "devices", id: "phones", title: "Phones", description: "Use the app on your phone: scan a code with its camera", keywords: ["phone", "iphone", "qr", "qr code", "pair", "camera", "scan", "wifi", "wi-fi"] },
   { section: "devices", id: "add-phone", title: "Add phone", keywords: ["phone", "iphone", "qr", "pair", "camera", "scan", "code", "wifi", "same wi-fi"] },
   { section: "devices", id: "use-this-mac", title: "Use this Mac for my AI", keywords: ["mac app", "this mac", "switch", "ai on this mac"], needs: "mac" },
-  { section: "devices", id: "load-balancing", title: "Load balancing", description: "Start jobs on the computer with the most free CPU and memory", keywords: ["balance", "jobs", "cpu", "memory", "prefer", "less often", "advanced"] },
   // Scheduled tasks
   { section: "automations", id: "scheduled-tasks", title: "Scheduled tasks", keywords: ["automation", "schedule", "repeat", "daily", "weekly", "prompt"] },
   // Usage
   { section: "usage", id: "plan-limits", title: "Plan limits", keywords: ["session", "weekly", "reset", "left", "quota", "limit", "plan"] },
-  { section: "usage", id: "your-plan", title: "Your plan", description: "Pro and Plus: heavy runs ask first", keywords: ["plan", "pro", "plus", "max", "chatgpt", "claude", "subscription", "limit"] },
+  { section: "usage", id: "your-plan", title: "Your AI plan", description: "On Pro or Plus, big jobs ask before they start", keywords: ["plan", "pro", "plus", "max", "chatgpt", "claude", "subscription", "limit"] },
   { section: "usage", id: "activity", title: "Activity", keywords: ["cost", "tokens", "calls", "tool", "api price", "usage"] },
   // Social accounts: sign in to one, or follow one by handle (the Add account menu on the section)
-  { section: "connectors", id: "your-accounts", title: "Your accounts", description: "Instagram, YouTube and TikTok accounts you sign in to or follow", keywords: ["instagram", "youtube", "tiktok", "sign in", "login", "log in", "follow", "handle", "followers", "project", "redirect url", "sign-in apps"] },
+  { section: "connectors", id: "social-platforms", title: "Platforms", description: "Instagram, Facebook, YouTube, TikTok and X: sign in, or follow by @handle", keywords: ["platform", "instagram", "facebook", "youtube", "tiktok", "x", "twitter", "sign in", "login", "follow", "handle", "add account"] },
+  { section: "connectors", id: "platform-instagram", title: "Instagram", description: "Your account by sign-in; public accounts in the Content Analyzer", keywords: ["instagram", "analyzer", "sign in", "login", "reach", "saves"] },
+  { section: "connectors", id: "platform-facebook", title: "Facebook", description: "Your Pages by sign-in; public Pages by @handle", keywords: ["facebook", "pages", "meta", "sign in", "login", "follow", "handle"] },
+  { section: "connectors", id: "platform-youtube", title: "YouTube", description: "Your channel by sign-in; public channels by @handle", keywords: ["youtube", "channel", "sign in", "login", "google", "subscribers", "follow", "handle"] },
+  { section: "connectors", id: "platform-tiktok", title: "TikTok", description: "Your account by sign-in; public accounts by @handle", keywords: ["tiktok", "sign in", "login", "follow", "handle", "followers", "likes"] },
+  { section: "connectors", id: "platform-x", title: "X", description: "Public accounts by @handle", keywords: ["x", "twitter", "follow", "handle", "tweets"] },
+  { section: "connectors", id: "your-accounts", title: "Accounts", description: "The accounts connected on each platform: project, read again, disconnect", keywords: ["followers", "project", "read again", "disconnect", "redirect url", "sign-in apps"] },
   // API keys: the Apify key reads other creators' posts (its routes are the account's own, not api/my-keys.ts)
-  { section: "keys", id: "apify-key", title: "Apify", description: "Reads other creators' Instagram, TikTok and YouTube posts", keywords: ["apify", "token", "instagram", "tiktok", "youtube", "follow", "handle", "api key"] },
-  // Own AI: the app gives your own AI a key
-  { section: "own-ai", id: "connect-ai", title: "Connect your AI", keywords: ["claude", "chatgpt", "codex", "mcp", "script", "connector"] },
+  { section: "keys", id: "apify-key", title: "Apify", description: "Public accounts on TikTok, YouTube, X, Facebook and Instagram", keywords: ["apify", "token", "instagram", "tiktok", "youtube", "facebook", "x", "follow", "handle", "api key"] },
+  // Use from your AI: your own AI (Claude Code, Codex) or a script uses Creator Toolset as you
+  { section: "own-ai", id: "connect-ai", title: "Use Creator Toolset from your AI", keywords: ["claude", "chatgpt", "codex", "mcp", "script", "connector", "connect your ai", "use from your ai"] },
   { section: "own-ai", id: "access-keys", title: "Access keys", keywords: ["key", "api key", "mcp", "script", "review", "full access", "claude"] },
   // Servers (Mac app)
   { section: "servers", id: "servers-list", title: "Servers", keywords: ["server", "open", "rename", "remove", "address"] },
-  { section: "servers", id: "sign-in-another", title: "Sign in another computer", keywords: ["server", "link", "pair", "computer"] },
+  { section: "servers", id: "sign-in-another", title: "Open this server on another computer", description: "Make a sign-in link here and paste it into Add server there", keywords: ["server", "link", "sign in", "pair", "computer", "another computer"] },
   // Team (hosted)
   { section: "team", id: "team-name", title: "Team name", keywords: ["team", "rename", "name"] },
   { section: "team", id: "team-members", title: "Members", keywords: ["member", "people", "role", "tools", "remove", "team"] },
@@ -83,11 +87,13 @@ const STATIC_ROWS = [
   { section: "account", id: "name", title: "Name", keywords: ["display name", "profile", "your name"] },
   { section: "account", id: "sign-in-name", title: "Sign-in name", keywords: ["username", "login", "sign in"], needs: "sign-in" },
   { section: "account", id: "password", title: "Password", keywords: ["change password", "sign in", "security", "reset"], needs: "sign-in" },
-  { section: "account", id: "sign-in-with", title: "Sign in with Google or Apple", keywords: ["google", "apple", "github", "link", "unlink", "sign in"], needs: "sign-in" },
+  { section: "account", id: "photo", title: "Photo", description: "From your Google or GitHub sign-in", keywords: ["picture", "avatar", "image", "profile photo"] },
+  { section: "account", id: "sign-in-with", title: "Sign in with Google, Apple or GitHub", keywords: ["google", "apple", "github", "link", "unlink", "sign in"], needs: "sign-in" },
+  { section: "account", id: "sign-in-setup", title: "No sign-in is set up on this server", description: "Google, Apple or GitHub sign-in is switched on in the server's .env", keywords: ["google", "apple", "github", "env", "set up", "redirect", "client id"] },
   { section: "account", id: "sign-out", title: "Sign out", keywords: ["log out", "logout", "session", "sign off"], needs: "sign-in" },
 ] as const satisfies readonly SearchRow[];
 
-/** The Home tools a person can switch (one row each on Appearance; the always-on tools have no switch). */
+/** The Home tools a person can switch: one row each in Appearance → Tools on Home. */
 export type HomeToolRowId = `home-tool-${Tool}`;
 
 /** Every id a row may carry: the static ones, plus one per API key, per server key and per switchable Home tool. */
@@ -99,6 +105,7 @@ export const SETTINGS_SEARCH_INDEX: readonly SearchRow[] = [
     section: "appearance" as const,
     id: `home-tool-${t}` as HomeToolRowId,
     title: TOOL_NAMES[t],
+    description: TOOL_LINES[t],
     keywords: ["home", "tools", "tile", "switch"],
   })),
   ...MY_KEYS.map((k) => ({

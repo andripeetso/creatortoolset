@@ -46,10 +46,11 @@ async function writeStorage(user: string, st: StorageState): Promise<void> {
 }
 
 const str = (x: unknown, max: number) => (typeof x === "string" && x.trim() ? x.trim().slice(0, max) : "");
-/** A device id this account owns (its own computer), or undefined. */
-const mine = (user: string, host: string) => {
+/** A device id this account may put a folder on: its own computer, or an admin's the team's AI worker (owner "workspace"). */
+const mine = (c: C, host: string) => {
+  const u = c.get("user");
   const d = deviceOf(host);
-  return d && d.owner === user ? d : undefined;
+  return d && (d.owner === u.username || (u.role === "admin" && d.owner === "workspace")) ? d : undefined;
 };
 /** This computer, for the owner of a server that runs on one (not hosted): setup's Folders step records against it. */
 const thisComputer = (c: C, host: string) => host === THIS_COMPUTER && !hostedMode() && c.get("user").role === "admin";
@@ -82,7 +83,7 @@ storageApp.post("/library", async (c) => {
   const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   const host = str(b?.host, 120);
   const disk = b?.disk;
-  if (!host || !okFolderPath(disk) || !(thisComputer(c, host) || mine(user, host))) return c.json({ error: "Pick a computer and a folder" }, 400);
+  if (!host || !okFolderPath(disk) || !(thisComputer(c, host) || mine(c, host))) return c.json({ error: "Pick a computer and a folder" }, 400);
   const p = libraryPath(disk);
   if (!okFolderPath(p)) return c.json({ error: "Path too long" }, 400);
   const out = await chained(user, async () => {
@@ -112,7 +113,7 @@ storageApp.post("/folders", async (c) => {
   const role = STORAGE_ROLES.find((r) => r.value === b?.role)?.value;
   const host = str(b?.host, 120);
   const raw = b?.path;
-  if (!role || !host || !okFolderPath(raw) || !(thisComputer(c, host) || mine(user, host))) return c.json({ error: "Pick a role, a computer and a folder" }, 400);
+  if (!role || !host || !okFolderPath(raw) || !(thisComputer(c, host) || mine(c, host))) return c.json({ error: "Pick a role, a computer and a folder" }, 400);
   // "~/…" is this computer's home folder: stored as the full path, so it matches the scan's list
   const p = (raw === "~" || raw.startsWith("~/") ? path.join(os.homedir(), raw.slice(1)) : raw).replace(/(.)\/+$/, "$1");
   // this computer's folders are read by the Library and the AI Editor through its watch list: the path is checked there

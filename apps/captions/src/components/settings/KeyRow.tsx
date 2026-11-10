@@ -11,14 +11,17 @@ export interface KeyRowProps {
   /** One line: the tools that use this key. */
   subtitle: string;
   where?: string;
-  /** A key is saved (here, or in the server's .env). */
+  /** The person's own key is saved. */
   set: boolean;
   last4?: string;
-  /** Set in the server's .env or by the server: shown read-only, nothing to change here. */
+  /** Shown read-only (the server's own key: Admin → Server keys, the Apify key from the .env): masked, no menu. */
   readOnly?: boolean;
   readOnlyText?: string;
-  /** This account has no key of its own and the server's key serves it: the subtitle says so, and [Use my own key] adds one (a person's own key wins). */
-  provided?: boolean;
+  /**
+   * The server's key serves this person (an admin's key from the .env or Admin → Server keys). Shown masked with its
+   * source; `…` → "Use a different key" saves the person's own, which then wins.
+   */
+  served?: { from: "env" | "settings"; last4: string };
   /** Saved, but not working: the words that say why (red). */
   broken?: string;
   /** The Remove confirm's sentence. */
@@ -27,11 +30,15 @@ export interface KeyRowProps {
   save: (value: string | null) => Promise<unknown>;
 }
 
+const masked = (last4?: string) => <span className="font-mono text-xs text-muted-foreground">••••{last4 ?? ""}</span>;
+
 /**
- * One API key: the service, what uses it, the masked key with `…` (Replace, Remove after a confirm) when set, and
- * [Add key] when not. Saving opens a small dialog with one field, a "Get a key" link and [Save key].
+ * One API key: the service, what uses it, the masked key with a `…` menu when the person set it, and [Add key] when it
+ * is not set. A key the server serves shows masked with its source as the status, so the row keeps the same height
+ * when the person saves their own (the status line stays: "Your own key is used"). Saving opens a small dialog with one
+ * field, a "Get a key" link and [Save key].
  */
-export function KeyRow({ id, name, subtitle, where, set, last4, readOnly, readOnlyText = "Set in .env", provided, broken, removeBody, save }: KeyRowProps) {
+export function KeyRow({ id, name, subtitle, where, set, last4, readOnly, readOnlyText = "Set in .env", served, broken, removeBody, save }: KeyRowProps) {
   const [open, setOpen] = useState(false);
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -41,11 +48,15 @@ export function KeyRow({ id, name, subtitle, where, set, last4, readOnly, readOn
     <Status>{readOnlyText}</Status>
   ) : broken ? (
     <Status tone="broken">{broken}</Status>
+  ) : served ? (
+    <Status>{set ? "Your own key is used" : served.from === "env" ? "Set in the server's .env" : "Set in Admin → Server keys"}</Status>
   ) : undefined;
 
-  const actions: ReactNode = readOnly ? undefined : set ? (
+  const actions: ReactNode = readOnly ? (
+    last4 ? masked(last4) : undefined
+  ) : set ? (
     <>
-      <span className="font-mono text-xs text-muted-foreground">••••{last4 ?? ""}</span>
+      {masked(last4)}
       <RowMenu
         label={`${name} actions`}
         items={[
@@ -53,7 +64,11 @@ export function KeyRow({ id, name, subtitle, where, set, last4, readOnly, readOn
           {
             label: "Remove key",
             destructive: true,
-            confirm: { title: `Remove the ${name} key?`, body: removeBody ?? "The tools that use it stop until you add it again.", ok: "Remove" },
+            confirm: {
+              title: `Remove the ${name} key?`,
+              body: served ? "The server's key is used again." : (removeBody ?? "The tools that use it stop until you add it again."),
+              ok: "Remove",
+            },
             onSelect: async () => {
               await save(null);
             },
@@ -61,9 +76,14 @@ export function KeyRow({ id, name, subtitle, where, set, last4, readOnly, readOn
         ]}
       />
     </>
+  ) : served ? (
+    <>
+      {masked(served.last4)}
+      <RowMenu label={`${name} actions`} items={[{ label: "Use a different key", onSelect: () => setOpen(true) }]} />
+    </>
   ) : (
     <Button size="xs" variant="outline" onClick={() => setOpen(true)}>
-      {provided ? "Use my own key" : "Add key"}
+      Add key
     </Button>
   );
 
@@ -85,7 +105,7 @@ export function KeyRow({ id, name, subtitle, where, set, last4, readOnly, readOn
 
   return (
     <>
-      <ListRow id={id} title={name} subtitle={provided ? `Provided by this server. ${subtitle}` : subtitle} status={status} actions={actions} />
+      <ListRow id={id} title={name} subtitle={subtitle} status={status} actions={actions} />
       <FormDialog
         open={open}
         onOpenChange={(o) => {
@@ -95,7 +115,7 @@ export function KeyRow({ id, name, subtitle, where, set, last4, readOnly, readOn
             setError(null);
           }
         }}
-        title={set ? `Replace the ${name} key` : provided ? `Use your own ${name} key` : `Add the ${name} key`}
+        title={set ? `Replace the ${name} key` : served ? `Use your own ${name} key` : `Add the ${name} key`}
         submitLabel="Save key"
         onSubmit={submit}
         busy={busy}

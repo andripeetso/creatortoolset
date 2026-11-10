@@ -43,7 +43,7 @@ export interface Workspace {
   /** paid by the company that runs the server (the owner's own workspace) */
   comped: boolean;
   /** Settings → Team: everyone signs in with one of these instead of a password; unset or empty = any way */
-  signInWith?: ("google" | "apple")[];
+  signInWith?: ("google" | "apple" | "github")[];
   members: Member[];
   createdAt: number;
 }
@@ -63,6 +63,8 @@ export type InviteInput = Pick<Invite, "ai" | "budgetUsd">;
 export type MemberPatch = Partial<Pick<Member, "ai" | "budgetUsd">> & { off?: (Tool | PluginGateId)[] };
 
 export interface MemberView extends Member {
+  /** the account's display name (Settings → Account), read from the account: unset when it has none */
+  name?: string;
   /** API spend this calendar month (UTC), dollars */
   spentUsd: number;
   lastActiveAt: number;

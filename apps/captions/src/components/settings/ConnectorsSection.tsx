@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router";
-import { AtSign, Copy, Plus, RefreshCw } from "lucide-react";
+import { Copy, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useAuth } from "@/lib/auth";
 import { analyzerHome } from "@/lib/instagram";
 import { useWorkspace } from "@/lib/workspace";
@@ -22,35 +22,77 @@ import {
   type LoginKind,
   type SocialPlatform,
 } from "@/lib/connectors";
-import { Advanced, Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, RowMenu, Section, SettingsSelect, Status, saveFailed } from "./ui";
+import { Advanced, Card, ErrorRow, ListRow, LoadingRow, RowMenu, Section, SettingsSelect, Status, saveFailed } from "./ui";
 import { ApifyKeyRow } from "./ApiKeysSection";
+import { PlatformLogo } from "./PlatformLogos";
 import { fmtAgo, msg } from "./helpers";
+import type { SearchRowId } from "./search";
 
 const ENV: Record<LoginKind, string> = {
   meta: "META_APP_ID + META_APP_SECRET",
   google: "GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET",
   tiktok: "TIKTOK_CLIENT_KEY + TIKTOK_CLIENT_SECRET",
 };
-const SIGN_IN: Record<LoginKind, string> = { meta: "Sign in with Instagram", google: "Sign in with YouTube", tiktok: "Sign in with TikTok" };
-/** Follow by handle reads the platforms Apify reads; Instagram is read through its own sign-in and the Analyzer. */
-const FOLLOW_PLATFORMS = PLATFORMS.filter((p) => p.id !== "instagram");
+const SIGN_IN: Record<LoginKind, string> = { meta: "Sign in with Facebook", google: "Sign in with YouTube", tiktok: "Sign in with TikTok" };
 const n = (v?: number) => (v === undefined ? "" : v >= 10_000 ? `${Math.round(v / 1000).toLocaleString("en-US")}k` : v.toLocaleString("en-US"));
-
-/** The sign-in items the add menu offers: only the logins this server has an app for. */
 /** "@name", whether the handle was stored with its @ or without. */
 const at = (handle: string) => `@${handle.replace(/^@+/, "")}`;
+const label = (p: SocialPlatform) => PLATFORMS.find((x) => x.id === p)!.label;
+const NOUN: Record<SocialPlatform, string> = { instagram: "an Instagram", facebook: "a Facebook", youtube: "a YouTube", tiktok: "a TikTok", x: "an X" };
+const loginOf = (p: SocialPlatform): LoginKind | undefined => PLATFORMS.find((x) => x.id === p)?.login;
 
+/** The sign-in items this server has an app for (the login is the platform's own: Meta covers Facebook and Instagram). */
 export function signInItems(logins: Record<LoginKind, boolean>): Array<{ id: LoginKind; label: string }> {
   return LOGINS.filter((l) => logins[l.id]).map((l) => ({ id: l.id, label: SIGN_IN[l.id] }));
 }
 
-/** The login an account signs in again with (its platform's login), if the platform has one. */
-const loginOf = (p: SocialPlatform): LoginKind | undefined => PLATFORMS.find((x) => x.id === p)?.login;
+/** What a platform row's button does: the one route this server can take for that platform, from its sign-in apps and the Apify key. */
+export interface PlatformRow {
+  platform: SocialPlatform;
+  label: string;
+  /** One line: how this server reads the platform, and whether the person's own sign-in is among the ways. */
+  summary: string;
+  /** "Add" opens the platform's dialog (or its handle field); "Add key" goes to API keys; "Open Analyzer" goes to the Content Analyzer. */
+  button: "Add" | "Add key" | "Open Analyzer";
+  /** Following by @handle needs the Apify key, and the key is missing: amber, and the button adds it. */
+  needsKey: boolean;
+  /** Accounts the person has connected on this platform. */
+  connected: number;
+}
 
 /**
- * Settings → Social accounts: accounts you sign in to (their own numbers) or follow by handle (public numbers, read with
- * the Apify key on API keys). `back` = where a sign-in returns (the setup dialog passes its own step). `compact` = the setup
- * dialog's version: the Apify row and the sign-ins, nothing else.
+ * The platform list (Settings → Social accounts), one row per platform the app can read, in the order of PLATFORMS.
+ * Instagram is read through its sign-in and the Content Analyzer (public Instagram accounts are added there). The other
+ * platforms follow a public account by @handle with the Apify key; a sign-in to the platform's own account is added where
+ * this server has that sign-in app set up.
+ */
+export function platformRows(view: Pick<ConnectorsView, "logins" | "apify" | "accounts">): PlatformRow[] {
+  return PLATFORMS.map((p): PlatformRow => {
+    const loginOn = !!p.login && !!view.logins[p.login];
+    const connected = view.accounts.filter((a) => a.platform === p.id).length;
+    if (p.id === "instagram") {
+      return {
+        platform: p.id,
+        label: p.label,
+        summary: loginOn ? "Your account by sign-in, others in the Content Analyzer" : "Public accounts, in the Content Analyzer",
+        button: loginOn ? "Add" : "Open Analyzer",
+        needsKey: false,
+        connected,
+      };
+    }
+    const apifyOk = view.apify.configured && view.apify.valid !== false;
+    const own = p.id === "facebook" ? "Your Pages by sign-in" : p.id === "youtube" ? "Your channel by sign-in" : p.id === "tiktok" ? "Your account by sign-in" : "";
+    const summary = loginOn ? `${own}, others by @handle` : p.id === "x" ? "Public accounts, by @handle" : p.id === "facebook" ? "Public Pages, by @handle" : p.id === "youtube" ? "Public channels, by @handle" : "Public accounts, by @handle";
+    // no sign-in here: the handle is the only way, so without a working Apify key the button is the key
+    const needsKey = !loginOn && !apifyOk;
+    return { platform: p.id, label: p.label, summary, button: needsKey ? "Add key" : "Add", needsKey, connected };
+  });
+}
+
+/**
+ * Settings → Social accounts: the platforms the app reads (one row each, with its real mark and one button), then the
+ * accounts connected on them. `back` = where a sign-in returns (the setup dialog passes its own step). `compact` = the
+ * setup dialog's version: the Apify row and the sign-ins, nothing else.
  */
 export function ConnectorsSection({ back = "/settings/connectors", compact }: { sub?: string; back?: string; compact?: boolean }) {
   // the sign-in apps are the hosted server's (on a computer the owner's own install has none to show)
@@ -61,7 +103,8 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
   const navigate = useNavigate();
   const [view, setView] = useState<ConnectorsView | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [follow, setFollow] = useState(false);
+  const [dlg, setDlg] = useState<{ platform: SocialPlatform; step: "choose" | "handle"; seq: number }>({ platform: "tiktok", step: "handle", seq: 0 });
+  const [open, setOpen] = useState(false);
   const [params, setParams] = useSearchParams();
 
   const reload = useCallback(() => getConnectors().then(setView).catch((e) => setError(msg(e))), []);
@@ -107,31 +150,56 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
 
   if (!view) {
     return (
-      <Section title="Your accounts">
+      <Section title="Platforms">
         <Card>{error ? <ErrorRow title="Couldn't load your accounts" detail={error} retry={() => (setError(null), void reload())} /> : <LoadingRow />}</Card>
       </Section>
     );
   }
 
+  const rows = platformRows(view);
+  const choose = (platform: SocialPlatform) => {
+    const loginOn = !!loginOf(platform) && !!view.logins[loginOf(platform)!];
+    setDlg({ platform, step: loginOn ? "choose" : "handle", seq: dlg.seq + 1 });
+    setOpen(true);
+  };
+
   return (
     <>
-      <Section
-        id="your-accounts"
-        title="Your accounts"
-        action={
-          <AddAccount
-            logins={view.logins}
-            back={back}
-            projectId={projectId()}
-            onFollow={() => setFollow(true)}
-          />
-        }
-      >
+      <Section id="social-platforms" title="Platforms">
         <Card>
-          {view.accounts.length === 0 ? (
-            <EmptyRow title="No accounts yet" description="Connect an account to see its posts, reach and saves in the Analyzer." />
-          ) : (
-            view.accounts.map((a) => (
+          {rows.map((r) => (
+            <ListRow
+              key={r.platform}
+              id={`platform-${r.platform}` as SearchRowId}
+              icon={<PlatformLogo platform={r.platform} className="size-4" />}
+              title={r.label}
+              subtitle={r.summary}
+              status={
+                r.needsKey ? (
+                  <Status tone="attention">Needs your Apify key</Status>
+                ) : r.connected ? (
+                  <Status>{r.connected} connected</Status>
+                ) : undefined
+              }
+              actions={
+                <Button
+                  size="xs"
+                  variant="outline"
+                  aria-label={`${r.button} ${r.label}`}
+                  onClick={() => (r.button === "Add key" ? navigate("/settings/keys") : r.button === "Open Analyzer" ? navigate(analyzerHome()) : choose(r.platform))}
+                >
+                  {r.button}
+                </Button>
+              }
+            />
+          ))}
+        </Card>
+      </Section>
+
+      {view.accounts.length > 0 && (
+        <Section id="your-accounts" title="Accounts">
+          <Card>
+            {view.accounts.map((a) => (
               <AccountRow
                 key={a.key}
                 a={a}
@@ -142,10 +210,10 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
                 onRemove={() => act(disconnectAccount(a.key))}
                 onOpen={() => navigate(`${analyzerHome()}/accounts/${a.analyzerId}`)}
               />
-            ))
-          )}
-        </Card>
-      </Section>
+            ))}
+          </Card>
+        </Section>
+      )}
 
       {admin && (
         <Card>
@@ -155,46 +223,51 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
         </Card>
       )}
 
-      <FollowDialog open={follow} onOpenChange={setFollow} configured={view.apify.configured} projectId={projectId()} onDone={() => void reload().then(watch)} />
+      <AddDialog
+        key={dlg.seq}
+        open={open}
+        onOpenChange={setOpen}
+        platform={dlg.platform}
+        startStep={dlg.step}
+        view={view}
+        back={back}
+        projectId={projectId()}
+        onDone={() => void reload().then(watch)}
+      />
     </>
   );
 }
 
-function AddAccount({ logins, back, projectId, onFollow }: { logins: Record<LoginKind, boolean>; back: string; projectId?: string; onFollow: () => void }) {
-  const signIns = signInItems(logins);
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button size="xs" variant="ghost">
-          <Plus className="size-3" /> Add account
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-52">
-        {signIns.map((l) => (
-          <DropdownMenuItem key={l.id} asChild className="text-sm">
-            <a href={loginHref(l.id, { back, projectId })}>{l.label}</a>
-          </DropdownMenuItem>
-        ))}
-        {signIns.length > 0 && <DropdownMenuSeparator />}
-        <DropdownMenuItem onSelect={onFollow} className="text-sm">
-          Follow by @handle
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
+const choiceCls =
+  "flex w-full flex-col gap-0.5 rounded-lg border border-border/60 px-3 py-2.5 text-left outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring";
 
-/** Follow by handle: needs the Apify key. Without it the dialog says so, and its button goes to API keys. */
-function FollowDialog({ open, onOpenChange, configured, projectId, onDone }: { open: boolean; onOpenChange: (o: boolean) => void; configured: boolean; projectId?: string; onDone: () => void }) {
+/**
+ * Add an account on one platform. Two ways when the platform has a sign-in on this server (its own account, or someone's
+ * public account by @handle); one way otherwise (the handle field, with the platform already known).
+ */
+function AddDialog({ open, onOpenChange, platform, startStep, view, back, projectId, onDone }: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  platform: SocialPlatform;
+  startStep: "choose" | "handle";
+  view: ConnectorsView;
+  back: string;
+  projectId?: string;
+  onDone: () => void;
+}) {
   const navigate = useNavigate();
-  const [platform, setPlatform] = useState<SocialPlatform>("tiktok");
+  const [step, setStep] = useState(startStep);
   const [handle, setHandle] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const login = loginOf(platform);
+  const configured = view.apify.configured && view.apify.valid !== false;
+  const title = `Add ${NOUN[platform]} account`;
+  const close = () => onOpenChange(false);
 
   const submit = async () => {
     if (!configured) {
-      onOpenChange(false);
+      close();
       navigate("/settings/keys");
       return;
     }
@@ -204,8 +277,8 @@ function FollowDialog({ open, onOpenChange, configured, projectId, onDone }: { o
     try {
       await addHandle(platform, handle.trim(), projectId);
       setHandle("");
-      onOpenChange(false);
-      toast(`Following ${handle.trim()}. Reading its posts now.`);
+      close();
+      toast(`Following ${at(handle.trim())}. Reading its posts now.`);
       onDone();
     } catch (e) {
       setError(msg(e));
@@ -215,26 +288,73 @@ function FollowDialog({ open, onOpenChange, configured, projectId, onDone }: { o
   };
 
   return (
-    <FormDialog
-      open={open}
-      onOpenChange={(o) => {
-        onOpenChange(o);
-        if (!o) setError(null);
-      }}
-      title="Follow by @handle"
-      description={configured ? "Reads their public posts with your Apify key." : "Following by handle reads public posts with your Apify key. Add it first."}
-      submitLabel={configured ? "Follow" : "Add key"}
-      onSubmit={submit}
-      busy={busy}
-      error={error}
-    >
-      {configured && (
-        <>
-          <SettingsSelect label="Platform" value={platform} onValueChange={(v) => setPlatform(v as SocialPlatform)} options={FOLLOW_PLATFORMS.map((p) => ({ value: p.id, label: p.label }))} className="sm:w-full" />
-          <Input aria-label="@handle or profile link" placeholder="@handle or profile link" value={handle} onChange={(e) => setHandle(e.target.value)} autoFocus className="h-8" />
-        </>
-      )}
-    </FormDialog>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent {...(step === "handle" ? {} : { "aria-describedby": undefined })} className="sm:max-w-md">
+        {step === "choose" ? (
+          <>
+            <DialogHeader>
+              <DialogTitle>{title}</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-2">
+              {login && view.logins[login] && (
+                <a href={loginHref(login, { back, projectId })} className={choiceCls}>
+                  <span className="text-sm font-medium">My own account: {SIGN_IN[login].replace("Sign in with ", "sign in with ")}</span>
+                  <span className="text-xs text-muted-foreground">{LOGINS.find((l) => l.id === login)!.gives.replace(/^./, (c) => c.toUpperCase())}.</span>
+                </a>
+              )}
+              {platform === "instagram" ? (
+                <button type="button" className={choiceCls} onClick={() => (close(), navigate(analyzerHome()))}>
+                  <span className="text-sm font-medium">Someone's public account</span>
+                  <span className="text-xs text-muted-foreground">Added in the Content Analyzer.</span>
+                </button>
+              ) : (
+                <button type="button" className={choiceCls} onClick={() => setStep("handle")}>
+                  <span className="text-sm font-medium">Someone's public account</span>
+                  <span className="text-xs text-muted-foreground">{configured ? "Type its @handle. Reads its public posts with your Apify key." : "Needs your Apify key first."}</span>
+                </button>
+              )}
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="ghost" size="sm" onClick={close}>
+                Cancel
+              </Button>
+            </DialogFooter>
+          </>
+        ) : (
+          <form
+            className="space-y-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!busy) void submit();
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle>{title}</DialogTitle>
+              <DialogDescription>
+                {configured ? `Type its @handle or profile link. Reads its public posts with your Apify key.` : "Reading public posts needs your Apify key. Add it first."}
+              </DialogDescription>
+            </DialogHeader>
+            {configured && (
+              <Input aria-label="@handle or profile link" placeholder="@handle or profile link" value={handle} onChange={(e) => setHandle(e.target.value)} autoFocus className="h-8" />
+            )}
+            {error && <p role="alert" className="text-xs text-red-600 dark:text-red-400">{error}</p>}
+            <DialogFooter>
+              {startStep === "choose" && (
+                <Button type="button" variant="ghost" size="sm" onClick={() => setStep("choose")}>
+                  Back
+                </Button>
+              )}
+              <Button type="button" variant="ghost" size="sm" onClick={close}>
+                Cancel
+              </Button>
+              <Button type="submit" size="sm" disabled={busy}>
+                {busy ? "Saving…" : configured ? "Add account" : "Add key"}
+              </Button>
+            </DialogFooter>
+          </form>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -248,13 +368,14 @@ function AccountRow({ a, projects, back, onLink, onPull, onRemove, onOpen }: {
   onOpen: () => void;
 }) {
   const s = a.stats ?? {};
-  const subtitle = [s.followers !== undefined ? `${n(s.followers)} followers` : "", a.pulledAt && !a.pulling ? `read ${fmtAgo(a.pulledAt)}` : "reading…"].filter(Boolean).join(" · ");
+  const read = a.pulledAt && !a.pulling ? `read ${fmtAgo(a.pulledAt)}` : "reading…";
+  const subtitle = [label(a.platform), s.followers !== undefined ? `${n(s.followers)} followers` : "", read].filter(Boolean).join(" · ");
   const login = loginOf(a.platform);
   const needsSignIn = a.loginStatus === "needs_reconnect";
   const status: ReactNode = a.pullError ? <Status tone="broken">{a.pullError}</Status> : needsSignIn ? <Status tone="attention">Sign in again to keep reading it</Status> : undefined;
   return (
     <ListRow
-      icon={<PlatformMark platform={a.platform} />}
+      icon={<PlatformLogo platform={a.platform} className="size-4" />}
       title={at(a.handle)}
       subtitle={subtitle}
       status={status}
@@ -315,29 +436,4 @@ function SignInApps({ view }: { view: ConnectorsView }) {
       })}
     </>
   );
-}
-
-/** The platform's mark: simple shapes in the text colour. Facebook and X have none: the at-sign. */
-function PlatformMark({ platform }: { platform: SocialPlatform }) {
-  if (platform === "instagram")
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden className="size-4" fill="none" stroke="currentColor" strokeWidth="2">
-        <rect x="3" y="3" width="18" height="18" rx="5" />
-        <circle cx="12" cy="12" r="4" />
-        <circle cx="17.5" cy="6.5" r="0.8" fill="currentColor" />
-      </svg>
-    );
-  if (platform === "youtube")
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden className="size-4" fill="currentColor">
-        <path fillRule="evenodd" d="M6 5h12a4 4 0 0 1 4 4v6a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V9a4 4 0 0 1 4-4zm4 4.5v5l4.5-2.5z" />
-      </svg>
-    );
-  if (platform === "tiktok")
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden className="size-4" fill="currentColor">
-        <path d="M14 3h3c.2 2.4 1.8 4.2 4.2 4.4v3.1c-1.6 0-3-.5-4.2-1.3v6.3a5.5 5.5 0 1 1-5.5-5.5c.3 0 .6 0 .9.1v3.2a2.4 2.4 0 1 0 1.6 2.2z" />
-      </svg>
-    );
-  return <AtSign className="size-4" aria-hidden />;
 }

@@ -16,3 +16,6 @@ export function fmtAgo(ts: number | undefined, now = Date.now()): string {
   if (h < 48) return `${h} h ago`;
   return `${Math.round(h / 24)} days ago`;
 }
+
+/** The one wording for an account's last sign-in, on Team and Admin: "last active 2 days ago", or "not signed in yet". */
+export const lastActiveText = (ts: number | undefined, now = Date.now()): string => (ts ? `last active ${fmtAgo(ts, now)}` : "not signed in yet");

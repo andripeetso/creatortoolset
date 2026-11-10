@@ -61,6 +61,27 @@ describe("keyFor: whose key pays", () => {
     expect((await app.request("/")).status).toBe(403);
   });
 
+  it("the server's key shows to an admin as its last four only; a member never gets any of it, the Anthropic key never", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "sk-server-openai-7f3e");
+    vi.stubEnv("ANTHROPIC_API_KEY", "sk-ant-server-9b1c");
+    const list = async (who: SessionUser) => {
+      const app = new Hono<{ Variables: AuthVars }>();
+      app.use("*", async (c, next) => (c.set("user", who), next()));
+      app.route("/", myKeysApp);
+      return await (await app.request("/")).text();
+    };
+    const admin = await list({ username: "admin", role: "admin", cloud: true, off: [] });
+    expect(JSON.parse(admin).find((k: { env: string }) => k.env === "OPENAI_API_KEY")).toMatchObject({ set: false, server: { from: "env", last4: "7f3e" } });
+    expect(JSON.parse(admin).find((k: { env: string }) => k.env === "ANTHROPIC_API_KEY")).not.toHaveProperty("server");
+    expect(admin).not.toContain("sk-server");
+
+    const member = await list({ username: "lee", role: "user", cloud: true, off: [] });
+    expect(member).not.toContain("7f3e");
+    expect(member).not.toContain("sk-server");
+    expect(JSON.parse(member).find((k: { env: string }) => k.env === "OPENAI_API_KEY")).not.toHaveProperty("server");
+    vi.unstubAllEnvs();
+  });
+
   it("transcription: an account without a key is told which key to add, and nothing reaches Deepgram", async () => {
     vi.stubEnv("DEEPGRAM_API_KEY", "server-dg");
     const fetchMock = vi.fn();

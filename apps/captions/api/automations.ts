@@ -31,6 +31,8 @@ import {
 export const automationsApp = new Hono<{ Variables: AuthVars }>();
 
 const RESULT_MAX = 2000;
+/** The last few results kept on a task (its "Earlier runs"); lastResult is the newest of them. */
+const HISTORY_MAX = 5;
 /** Which automations are running now (this process): one run at a time per automation. */
 const running = new Set<string>();
 
@@ -39,10 +41,23 @@ const running = new Set<string>();
 const dirOf = () => path.join(env.dataDir, "automations");
 const fileOf = (username: string) => path.join(dirOf(), `${username}.json`);
 
-function readAll(username: string): Automation[] {
+/** A task as stored: the contract's fields plus the last few results (files from before it have only lastResult). */
+type Stored = Automation & { history?: AutomationResult[] };
+
+/** The results a task shows under "Earlier runs", newest first; a file from before `history` gives its lastResult. */
+export const historyOf = (a: Stored): AutomationResult[] => a.history ?? (a.lastResult ? [a.lastResult] : []);
+
+/** Records a finished run on the task: it becomes lastResult and the newest of its history (capped). */
+export function recordResult(a: Stored, result: AutomationResult): void {
+  const earlier = historyOf(a); // read before lastResult changes: it is the fallback for a task saved before history
+  a.lastResult = result;
+  a.history = [result, ...earlier].slice(0, HISTORY_MAX);
+}
+
+function readAll(username: string): Stored[] {
   if (!USERNAME_RE.test(username)) return [];
   try {
-    return JSON.parse(readFileSync(fileOf(username), "utf-8")) as Automation[];
+    return JSON.parse(readFileSync(fileOf(username), "utf-8")) as Stored[];
   } catch (e) {
     // no file yet is an empty list; an unreadable file is an error, never silently emptied (the next write would erase it)
     if ((e as NodeJS.ErrnoException).code === "ENOENT") return [];
@@ -50,7 +65,7 @@ function readAll(username: string): Automation[] {
   }
 }
 
-function writeAll(username: string, list: Automation[]): void {
+function writeAll(username: string, list: Stored[]): void {
   mkdirSync(dirOf(), { recursive: true, mode: 0o700 });
   const file = fileOf(username);
   const tmp = `${file}.tmp-${process.pid}`;
@@ -61,7 +76,7 @@ function writeAll(username: string, list: Automation[]): void {
 /** The next scheduled run, from its last one (or from its creation). */
 const nextRunOf = (a: Automation): number => nextRunAfter(a.schedule, a.timezone, a.lastRun ?? a.createdAt);
 
-const view = (a: Automation) => ({ ...a, running: running.has(a.id), nextRun: a.enabled ? nextRunOf(a) : null });
+const view = (a: Stored) => ({ ...a, history: historyOf(a), running: running.has(a.id), nextRun: a.enabled ? nextRunOf(a) : null });
 
 /** Records a run's outcome in the account's list and tells the inbox. Never fails the run that reports. */
 async function finish(username: string, id: string, status: AutomationResult["status"], text: string): Promise<void> {
@@ -69,7 +84,7 @@ async function finish(username: string, id: string, status: AutomationResult["st
   const list = readAll(username);
   const a = list.find((x) => x.id === id);
   if (a) {
-    a.lastResult = result;
+    recordResult(a, result);
     writeAll(username, list);
   }
   const name = a?.name ?? "A scheduled task";

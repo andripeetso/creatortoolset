@@ -7,6 +7,9 @@ import { Input } from "@/components/ui/input";
 import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section } from "./ui";
 import { tell, useThisMac } from "./ThisMacSection";
 
+/** A server on this Mac itself (the app's own server), which has no address worth showing. */
+const LOOPBACK = /^https?:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/;
+
 /**
  * Settings → Servers (the Mac app only): the servers this app opens. The dot marks the open one. Every change goes to the
  * app, which holds the list; this page only shows it.
@@ -67,7 +70,7 @@ export function ServersSection() {
                   )
                 }
                 title={v.name}
-                subtitle={v.url}
+                subtitle={LOOPBACK.test(v.url) ? "The server inside this app" : v.url}
                 status={v.current ? "Open now" : undefined}
                 actions={
                   <RowMenu
@@ -103,12 +106,12 @@ export function ServersSection() {
         )}
       </Section>
 
-      <Section title="Sign in another computer">
+      <Section title="Open this server on another computer">
         <Card>
           <Row
             id="sign-in-another"
             title="Sign-in link"
-            description="For a computer that runs its own Creator Toolset. Paste the link there; it works once, for 60 seconds."
+            description="Make a link here, then paste it into Add server on the other computer. It works once, within 60 seconds."
             control={
               <Button size="sm" variant="outline" onClick={() => setLinkOpen(true)}>
                 Make a link
@@ -121,7 +124,8 @@ export function ServersSection() {
       <FormDialog
         open={adding}
         onOpenChange={setAdding}
-        title="Add server"
+        title="Add a server you host"
+        description="A sign-in link made on that server works too."
         submitLabel="Add server"
         onSubmit={() => {
           const a = address.trim();
@@ -131,7 +135,7 @@ export function ServersSection() {
           setAdding(false);
         }}
       >
-        <Input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Server address, or a sign-in link from it" aria-label="Server address" />
+        <Input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="https://studio.example.com" aria-label="Server address" />
       </FormDialog>
 
       <SignInLinkDialog open={linkOpen} onOpenChange={setLinkOpen} />

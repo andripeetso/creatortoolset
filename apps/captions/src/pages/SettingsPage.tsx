@@ -6,6 +6,7 @@ import { Dialog, DialogClose, DialogContent, DialogPortal, DialogTitle } from "@
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { PAGE_BODIES } from "@/components/settings/pages";
+import { AccountAvatar } from "@/components/settings/AccountSection";
 import { navBlocks, navListFor, resolveSection, sectionsFor, type NavContext, type SettingsPageId } from "@/components/settings/nav";
 import { PageActionContext } from "@/components/settings/page-action";
 import { searchSettings, type SearchHit } from "@/components/settings/search";
@@ -190,7 +191,7 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
             >
               <Search className="size-4" aria-hidden />
             </button>
-            <label className={cn("relative mb-2 block shrink-0", !railOpen && "max-md:hidden")}>
+            <label className={cn("relative mb-3 block shrink-0", !railOpen && "max-md:hidden")}>
               <Search aria-hidden className="pointer-events-none absolute start-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
               <input
                 ref={searchRef}
@@ -283,17 +284,13 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
                     aria-current={current.id === "account" ? "page" : undefined}
                     className={itemCls(current.id === "account", railOpen)}
                   >
-                    <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-[11px] font-medium uppercase text-muted-foreground">
-                      {initial}
-                    </span>
+                    <AccountAvatar picture={me?.picture} initial={initial} className="size-5 text-[11px]" />
                     <span className={cn("min-w-0 truncate", !railOpen && "max-md:sr-only")}>{name}</span>
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent side="top" align="start" className="w-64">
                   <DropdownMenuLabel className="flex items-center gap-3 px-2 py-2 font-normal">
-                    <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium uppercase text-muted-foreground">
-                      {initial}
-                    </span>
+                    <AccountAvatar picture={me?.picture} initial={initial} className="size-8 text-xs" />
                     <span className="min-w-0">
                       <span className="block truncate text-sm font-medium text-foreground">{name}</span>
                       <span className="block truncate text-xs text-muted-foreground">{me?.username}</span>

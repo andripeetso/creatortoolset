@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import type { AuthVars } from "./auth";
 import { isPluginGateId, isRetiredAppId, isTool, type PluginGateId, type Tool } from "../contracts/tools";
-import type { MemberView, WorkspaceView } from "../contracts/workspaces";
+import type { Member, MemberView, WorkspaceView } from "../contracts/workspaces";
 import { pluginDefaultOff } from "./lib/plugin";
 import {
   canManage,
@@ -16,13 +16,24 @@ import {
   updateMember,
   workspaceOf,
 } from "./lib/workspaces";
-import { findUser, setOff, type SessionUser } from "./users";
+import { findUser, setOff, type SessionUser, type UserRecord } from "./users";
 
 /**
  * Settings → Team (contracts/workspaces.ts): the team, its members, invite links and each member's AI. The owner
  * manages; a member sees who is in it and their own AI. boot.ts mounts it at /api/workspace, in hosted mode only.
  */
 export const workspaceApp = new Hono<{ Variables: AuthVars }>();
+
+/**
+ * One member as a view. The name is read from the member's account (its display name, read-only: nothing is stored
+ * here). Someone who may not manage sees the name and the role, not spend, activity or ticks.
+ */
+export function memberView(m: Member, acct: Pick<UserRecord, "displayName" | "usage" | "off"> | null, full: boolean, spentUsd: number): MemberView {
+  const name = acct?.displayName || undefined;
+  return full
+    ? { ...m, name, spentUsd, lastActiveAt: acct?.usage.lastActiveAt ?? 0, off: acct?.off ?? [] }
+    : { username: m.username, name, role: m.role, ai: "own", budgetUsd: 0, joinedAt: m.joinedAt, spentUsd: 0, lastActiveAt: 0, off: [] };
+}
 
 function viewFor(u: SessionUser): WorkspaceView | null {
   const w = workspaceOf(u.username);
@@ -31,10 +42,7 @@ function viewFor(u: SessionUser): WorkspaceView | null {
   const manager = canManage(me.role);
   const members: MemberView[] = w.members.map((m) => {
     const full = manager || m.username === u.username;
-    const acct = findUser(m.username);
-    return full
-      ? { ...m, spentUsd: spentThisMonth(m.username), lastActiveAt: acct?.usage.lastActiveAt ?? 0, off: acct?.off ?? [] }
-      : { username: m.username, role: m.role, ai: "own", budgetUsd: 0, joinedAt: m.joinedAt, spentUsd: 0, lastActiveAt: 0, off: [] };
+    return memberView(m, findUser(m.username), full, full ? spentThisMonth(m.username) : 0);
   });
   return {
     workspace: { id: w.id, name: w.name, plan: w.plan, comped: w.comped, createdAt: w.createdAt, signInWith: w.signInWith },

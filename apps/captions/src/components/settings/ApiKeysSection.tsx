@@ -36,7 +36,7 @@ export function ApifyKeyRow({ onChanged }: { onChanged?: () => void }) {
     <KeyRow
       id="apify-key"
       name="Apify"
-      subtitle="Reading other creators' Instagram, TikTok and YouTube posts in Social accounts and the Content Analyzer"
+      subtitle="Public accounts on TikTok, YouTube, X, Facebook and Instagram"
       set={status.configured}
       last4={status.last4}
       readOnly={status.source === "env"}
@@ -96,7 +96,7 @@ export function ApiKeysSection() {
           where={"where" in k ? k.where : undefined}
           set={!!mine?.set}
           last4={mine?.last4}
-          provided={!mine?.set && !!mine?.server}
+          served={mine?.server}
           save={(v) => saveMyKey(k.env as MyKeyEnv, v).then(reload)}
         />
       );

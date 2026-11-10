@@ -10,6 +10,7 @@ import {
 import { logout, useAuth } from "@/lib/auth";
 import { isPhoneHub } from "@/lib/mobile";
 import { accountItemsFor } from "@/lib/plugin";
+import { AccountAvatar } from "@/components/settings/AccountSection";
 import { webPlugins } from "@/plugins.gen";
 import { isPublicReviewPath, isPublicSharePath } from "./AuthGate";
 import {
@@ -49,9 +50,16 @@ export function UserMenu() {
             title="Account menu"
             className="flex h-7 items-center gap-2 rounded-md border border-border pl-1 pr-2.5 text-xs text-foreground outline-none transition-colors hover:bg-accent data-[state=open]:bg-accent"
           >
-            <span className="flex h-5 w-5 items-center justify-center rounded bg-muted">
-              <UserRound className="h-3.5 w-3.5 text-muted-foreground" />
-            </span>
+            <AccountAvatar
+              picture={me.picture}
+              initial=""
+              className="h-5 w-5"
+              fallback={
+                <span className="flex h-5 w-5 items-center justify-center rounded bg-muted">
+                  <UserRound className="h-3.5 w-3.5 text-muted-foreground" />
+                </span>
+              }
+            />
             <span className="hidden max-w-28 truncate sm:inline">{me.name ?? me.username}</span>
             <ChevronDown className="h-3 w-3 text-muted-foreground" />
           </button>

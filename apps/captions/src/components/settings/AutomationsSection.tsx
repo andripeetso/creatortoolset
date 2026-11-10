@@ -23,7 +23,7 @@ import {
 import type { LimitsIdentity } from "@contracts/providers";
 import { getProviders } from "@/lib/providers";
 import { claudeLimitReset } from "@/lib/limits";
-import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, SettingsSelect, Status, saveFailed } from "./ui";
+import { Advanced, Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, SettingsSelect, Status, saveFailed } from "./ui";
 import { fmtAgo, msg } from "./helpers";
 
 const RELOAD_MS = 15_000; // a run in progress finishes here without a reload
@@ -48,28 +48,72 @@ const subtitleOf = (a: AutomationView) => {
   return a.nextRun ? `${cadence} · next ${nextLabel(a.nextRun, a.timezone)}` : cadence;
 };
 
-const WHAT = "A task is a prompt your AI runs on its own, daily, weekly or every few hours. Its last result shows on its row.";
+/** The empty list's one sentence: what a task is. The starting points and Run now do the rest. */
+const WHAT = "A task is a prompt your AI runs on its own, with the same tools as the assistant. Try it with Run now before you rely on it.";
 const LIMIT_HIT = /usage limit/i;
 
 /**
- * The last result on one line: red when it failed, amber when it was skipped (the person has to fix something). A failed
- * or skipped result's words are below the row. A usage-limit failure says when the limit comes back, if a reading knows.
+ * The starting points: each fills the name, the prompt and the schedule. Each prompt only reads, and uses a tool the
+ * assistant has (api/mcp.ts) that needs no input it cannot know: Review's list, the Workshop's projects and sessions,
+ * the AI Editor's edits. (instagram_posts needs an account's handle and nothing lists the accounts: no starting point.)
+ */
+const STARTS: { name: string; prompt: string; kind: AutomationDraft["kind"]; at: string; weekday: Weekday }[] = [
+  {
+    name: "Review comments",
+    prompt: "List the videos in Review that have comments, newest first, with the comment count on each.",
+    kind: "daily",
+    at: "09:00",
+    weekday: 1,
+  },
+  {
+    name: "Workshop projects",
+    prompt: "List my Workshop projects with each one's audience and call to action, and say which ones have no sessions yet.",
+    kind: "weekly",
+    at: "09:00",
+    weekday: 1,
+  },
+  {
+    name: "Workshop sessions",
+    prompt: "List my newest Workshop sessions with their status and project, and say what each one is for.",
+    kind: "weekly",
+    at: "09:00",
+    weekday: 5,
+  },
+  {
+    name: "AI Editor edits",
+    prompt: "List my AI Editor edits with the step each one is on and its state, and say which ones wait for my go.",
+    kind: "daily",
+    at: "18:00",
+    weekday: 1,
+  },
+];
+
+const startDraft = (s: (typeof STARTS)[number]): AutomationDraft => ({ ...blankDraft(), name: s.name, prompt: s.prompt, kind: s.kind, at: s.at, weekday: s.weekday });
+
+/**
+ * The last result on one line: red when it failed, amber when it was skipped (the person has to fix something). The
+ * line never wraps (a row keeps its height); the full text of a failed or skipped run is under "Earlier runs". A
+ * usage-limit failure says when the limit comes back, if a reading knows.
  */
 export function lastLine(a: AutomationView, limits: LimitsIdentity[], now: number): ReactNode {
   const r = a.lastResult;
-  if (!r) return "Not run yet";
-  if (r.status === "done") return `${WORD[r.status]} ${fmtAgo(r.at, now)}: ${firstLine(r.text)}`;
+  if (!r) return <span className="block truncate">Not run yet</span>;
+  if (r.status === "done") return <span className="block truncate">{`${WORD[r.status]} ${fmtAgo(r.at, now)}: ${firstLine(r.text)}`}</span>;
   const words = [`${WORD[r.status]} ${fmtAgo(r.at, now)}`];
   if (r.status === "error" && LIMIT_HIT.test(r.text)) {
     const reset = claudeLimitReset(limits, now);
     words.push(reset ? `usage limit, ${reset}` : "usage limit");
   }
-  return <Status tone={r.status === "error" ? "broken" : "attention"}>{words.join(" · ")}</Status>;
+  return (
+    <span className="block truncate">
+      <Status tone={r.status === "error" ? "broken" : "attention"}>{words.join(" · ")}</Status>
+    </span>
+  );
 }
 
 /**
  * Settings → Scheduled tasks: a prompt the account's AI runs on a schedule. The page builds none while no AI can run one
- * (the server says why: `blocked`). A task's result shows on its row; a failed or skipped one shows its full text below.
+ * (the server says why: `blocked`). A task's last result shows on its row; the last few are under "Earlier runs".
  */
 export function AutomationsSection() {
   const navigate = useNavigate();
@@ -123,7 +167,6 @@ export function AutomationsSection() {
               {blocked && (
                 <Row
                   title="Tasks can't run yet"
-                  description={WHAT}
                   status={<Status tone="attention">{blocked}</Status>}
                   control={
                     <Button size="sm" variant="outline" onClick={() => navigate("/settings/providers")}>
@@ -132,9 +175,7 @@ export function AutomationsSection() {
                   }
                 />
               )}
-              {!blocked && items.length === 0 && (
-                <EmptyRow title="No scheduled tasks" description={WHAT} />
-              )}
+              {!blocked && items.length === 0 && <EmptyRow title="No scheduled tasks" description={WHAT} />}
               {items.map((a) => (
                 <TaskRow key={a.id} a={a} limits={limits} onEdit={() => setEditing(a)} onChanged={reload} />
               ))}
@@ -158,7 +199,9 @@ export function AutomationsSection() {
 }
 
 function TaskRow({ a, limits, onEdit, onChanged }: { a: AutomationView; limits: LimitsIdentity[]; onEdit: () => void; onChanged: () => Promise<void> }) {
-  const r = a.lastResult;
+  const runNow = () => runAutomationNow(a.id).then(onChanged).catch((e) => saveFailed(msg(e)));
+  // until it has run once, the row offers its first run in plain sight; after that it is in the ⋯ menu
+  const firstRun = !a.running && !a.lastResult;
   return (
     <div>
       <ListRow
@@ -167,6 +210,12 @@ function TaskRow({ a, limits, onEdit, onChanged }: { a: AutomationView; limits: 
         status={lastLine(a, limits, Date.now())}
         actions={
           <>
+            {/* below sm the button would crowd the name: there Run now is in the ⋯ menu only */}
+            {firstRun && (
+              <Button size="xs" variant="outline" className="hidden sm:inline-flex" onClick={() => void runNow()}>
+                <Play className="size-3" /> Run now
+              </Button>
+            )}
             <Switch
               checked={a.enabled}
               onCheckedChange={(on) => updateAutomation(a.id, { enabled: on }).then(onChanged).catch((e) => saveFailed(msg(e)))}
@@ -176,11 +225,11 @@ function TaskRow({ a, limits, onEdit, onChanged }: { a: AutomationView; limits: 
               label={`Actions for ${a.name}`}
               items={[
                 { label: "Edit", icon: <Pencil />, onSelect: onEdit },
-                ...(a.running ? [] : [{ label: "Run now", icon: <Play />, onSelect: () => runAutomationNow(a.id).then(onChanged) }]),
+                ...(a.running ? [] : [{ label: "Run now", icon: <Play />, onSelect: runNow }]),
                 {
                   label: "Delete",
                   destructive: true,
-                  confirm: { title: `Delete “${a.name}”?`, body: "Its schedule and last result are removed.", ok: "Delete" },
+                  confirm: { title: `Delete “${a.name}”?`, body: "Its schedule and its results are removed.", ok: "Delete" },
                   onSelect: () => deleteAutomation(a.id).then(onChanged),
                 },
               ]}
@@ -188,7 +237,20 @@ function TaskRow({ a, limits, onEdit, onChanged }: { a: AutomationView; limits: 
           </>
         }
       />
-      {r && r.status !== "done" && <p className="px-3 pb-2.5 text-xs break-words text-muted-foreground sm:px-4">{r.text}</p>}
+      {a.history.length > 0 && (
+        <Advanced summary="Earlier runs">
+          <ul className="space-y-2 py-1 text-xs">
+            {a.history.map((r) => (
+              <li key={r.at}>
+                <div className={r.status === "done" ? "text-muted-foreground" : r.status === "error" ? "text-red-600 dark:text-red-400" : "text-amber-700 dark:text-amber-400"}>
+                  {WORD[r.status]} · {fmtAgo(r.at)}
+                </div>
+                <div className="break-words whitespace-pre-line text-foreground/80">{r.text}</div>
+              </li>
+            ))}
+          </ul>
+        </Advanced>
+      )}
     </div>
   );
 }
@@ -249,6 +311,18 @@ function TaskDialog({ initial, onClose, onSaved }: { initial: AutomationView | n
       busy={busy}
       error={error}
     >
+      {/* the starting points are type=button: inside the dialog's form a plain button would submit it with the draft as it was */}
+      {!initial && (
+        <Field label="Start from">
+          <div role="group" aria-label="Start from" className="flex flex-wrap gap-1.5">
+            {STARTS.map((s) => (
+              <Button key={s.name} type="button" size="xs" variant="outline" onClick={() => setD(startDraft(s))}>
+                {s.name}
+              </Button>
+            ))}
+          </div>
+        </Field>
+      )}
       <Field label="Name">
         <Input value={d.name} onChange={(e) => set({ name: e.target.value })} placeholder="e.g. Monday hooks" maxLength={AUTOMATION_NAME_MAX} aria-label="Name" className="h-8" />
       </Field>

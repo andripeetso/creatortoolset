@@ -114,7 +114,7 @@ describe("marking a post's comments", () => {
     expect(tally).toEqual({ filteredOut: 1, questions: 1, keywords: 1 });
   });
 
-  it("keeps the word filter when there is no TypeSafe key", async () => {
+  it("keeps the word filter when there is no TypeSafe Jev key", async () => {
     const list = [cm("a", "🔥🔥🔥"), cm("b", "How long should sourdough starter be each day?")];
     const tally = await annotateComments("", list, {});
     expect(ask).not.toHaveBeenCalled();

@@ -49,4 +49,8 @@ describe("forViewer", () => {
     expect(forViewer("someadmin", d).report?.machine?.disks).toBeUndefined();
     expect(forViewer("someadmin", d).report?.machine?.host).toBe("h");
   });
+  it("keeps the team's AI worker's disks for the admins who are sent it", () => {
+    const w = { id: "w", owner: "workspace", report: { at: 1, drivers: [], homes: [], machine: { os: "mac", host: "h", cpus: 1, disks: [{ name: "footage", path: "/Volumes/footage", freeGb: 3 }] } } } as unknown as Device;
+    expect(forViewer("someadmin", w).report?.machine?.disks).toHaveLength(1);
+  });
 });

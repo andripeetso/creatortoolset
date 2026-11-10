@@ -42,11 +42,12 @@ export interface PluginSettingsSection extends SettingsEntry {
   adminTab?: boolean;
 }
 
-/** A section a plug-in adds to Settings → Devices, after Storage. `adminOnly` shows it to admins only. */
+/** A section a plug-in adds to Settings → Computers (`page: "computers"`, after its card) or → Storage (the default). `adminOnly` shows it to admins only. */
 export interface PluginDevicesSection {
   id: string;
   title: string;
   adminOnly?: boolean;
+  page?: "computers" | "storage";
   body: ReactNode;
 }
 
@@ -66,6 +67,8 @@ export interface PluginReplacements {
   media?: ComponentType;
   // Finals (/finals): a plug-in's own Finals page (its list, pieces and actions) replaces the built-in one
   finals?: ComponentType;
+  // Settings → Storage: a plug-in's own store and screen (the AI Editor's folders) replace the built-in folder rows
+  storage?: ComponentType;
 }
 
 export type ReplaceSlot = keyof PluginReplacements;
@@ -328,11 +331,15 @@ export function webPluginAdds(p: WebPlugin, ctx: { me: Me | null; hosted: boolea
       if (admin && ctx.hosted) out.push({ text: `Settings → Admin → ${s.title}`, to: `/settings/admin/${s.id}` });
     } else out.push({ text: s.group ? `Settings → ${s.group}: ${s.title}` : `Settings: ${s.title}`, to: `/settings/${s.id}` });
   }
-  for (const d of p.devices ?? []) if (!d.adminOnly || admin) out.push({ text: `Settings → Storage: ${d.title}`, to: "/settings/folders" });
+  for (const d of p.devices ?? []) if (!d.adminOnly || admin) {
+    const computers = d.page === "computers";
+    out.push({ text: `Settings → ${computers ? "Computers" : "Storage"}: ${d.title}`, to: computers ? "/settings/devices" : "/settings/folders" });
+  }
   const r = p.replaces ?? {};
   if (r.editor || r.editorEdit) out.push({ text: "Replaces the AI Editor page", to: "/editor" });
   if (r.media) out.push({ text: "Replaces the Media Library page", to: "/library" });
   if (r.finals) out.push({ text: "Replaces the Finals page", to: "/finals" });
+  if (r.storage) out.push({ text: "Replaces Settings → Storage", to: "/settings/folders" });
   // its own pages: only ones a person can open by themselves (an address with a :part needs something picked first),
   // and not the page a Home tile or a replaced page already named above
   for (const route of p.routes ?? []) {
@@ -381,9 +388,9 @@ export function mergePluginInfo(web: WebPlugin[], server: ServerPluginInfo[], ct
 export const visibleSettings = (sections: ReadonlyArray<SettingsEntry>, me: { role: string } | null): SettingsEntry[] =>
   sections.filter((s) => !s.adminOnly || me?.role === "admin");
 
-/** The Devices sections the plug-ins add for this account: an adminOnly one only for an admin. */
-export const devicesSectionsFor = (me: { role: string } | null, plugins: WebPlugin[]): PluginDevicesSection[] =>
-  plugins.flatMap((p) => p.devices ?? []).filter((s) => !s.adminOnly || me?.role === "admin");
+/** The Computers or Storage sections the plug-ins add for this account (`page`, default storage): an adminOnly one only for an admin. */
+export const devicesSectionsFor = (me: { role: string } | null, plugins: WebPlugin[], page: "computers" | "storage" = "storage"): PluginDevicesSection[] =>
+  plugins.flatMap((p) => p.devices ?? []).filter((s) => (s.page ?? "storage") === page && (!s.adminOnly || me?.role === "admin"));
 
 /**
  * The plug-ins' account menu items this account may use: an item with a gate is left out while that gate is off for

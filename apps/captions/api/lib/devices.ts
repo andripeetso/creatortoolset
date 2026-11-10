@@ -187,10 +187,13 @@ export function saveReport(id: string, r: MacReport, version?: string): void {
   persist();
 }
 
-/** The device as `viewer` may see it: a Mac it does not own (an admin sees the workspace's and other admins' Macs) shows no disks. */
+/**
+ * The device as `viewer` may see it: a Mac it does not own shows no disks. The team's AI worker (owner "workspace") keeps
+ * its disks: only admins are sent it (devices.ts, providers.ts), and Storage and Network storage need them.
+ */
 export function forViewer(viewer: string, d: Device): Device {
   const r = d.report;
-  if (d.owner === viewer || !r?.machine?.disks) return d;
+  if (d.owner === viewer || d.owner === "workspace" || !r?.machine?.disks) return d;
   return { ...d, report: { ...r, machine: { ...r.machine, disks: undefined } } };
 }
 

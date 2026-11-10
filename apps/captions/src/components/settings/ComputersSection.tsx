@@ -5,22 +5,17 @@ import { useAuth } from "@/lib/auth";
 import { promptDialog } from "@/lib/dialogs";
 import { allowOtherDevices, thisMacBridge } from "@/lib/thisMac";
 import { getProviders, removeDevice, renameDevice, thisMacDevice } from "@/lib/providers";
-import { DEFAULT_WEIGHT, LOAD_PREFERENCES, type Balance, type ProvidersView } from "@contracts/providers";
+import { devicesSectionsFor } from "@/lib/plugin";
+import { webPlugins } from "@/plugins.gen";
+import type { ProvidersView } from "@contracts/providers";
 import { mintPhoneCode, type PhoneState } from "@/components/setup/ConnectStep";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
-import { Advanced, Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, SettingsSelect, Status, saveFailed } from "./ui";
+import { Advanced, Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, Status } from "./ui";
 import { fmtAgo, msg } from "./helpers";
-import { groupComputers, type ComputerGroup, type Listed } from "./computers-group";
-import { call } from "./StorageRows";
+import { groupComputers, kindOf, type ComputerGroup, type Listed, type ThisMacNames } from "./computers-group";
 import { hasThisMac, tell, useThisMac, type ThisMacState } from "./ThisMacSection";
-
-const BALANCE_API = "/api/devices/balance";
-const getBalance = () => call<Balance>(BALANCE_API);
-const setBalanceSettings = (b: Partial<Balance>) => call<Balance>(BALANCE_API, "PUT", b);
-const weightOf = (weights: Record<string, number>, id: string) =>
-  LOAD_PREFERENCES.find((p) => p.value === (weights[id] ?? DEFAULT_WEIGHT))?.value ?? DEFAULT_WEIGHT;
 
 /** The Mac's hardware, as the subtitle's tail for an admin: "Apple M2 Max · 12 cores · 32 GB". */
 const hardware = (d: Listed): string | null => {
@@ -40,9 +35,9 @@ export function phoneLine(url: string): { wifi: boolean; host: string } {
 
 /**
  * Settings → Computers: the computers that run this account's AI, and the phones that use the app. One row per Mac (a Mac
- * that registered twice shows once), the `…` menu to rename or remove it, and in the Mac app this Mac's own switch. Admins
- * get load balancing under Advanced. `?add=1` opens the add-computer dialog, `?phone=1` the add-phone dialog (other pages
- * link there).
+ * that registered twice shows once), the `…` menu to rename or remove it, and in the Mac app this Mac's own switch. The
+ * plug-ins' "computers" sections come after the list (the AI Editor's computers and their share of its jobs). `?add=1`
+ * opens the add-computer dialog, `?phone=1` the add-phone dialog (other pages link there).
  */
 export function ComputersSection() {
   const me = useAuth((s) => s.me);
@@ -131,41 +126,46 @@ export function ComputersSection() {
   }
 
   const computers = view.devices.filter((d) => d.owner === me.username || (me.role === "admin" && d.owner === "workspace"));
-  const own = view.devices.filter((d) => d.owner === me.username);
-  const groups = groupComputers(computers, me.username);
-  const thisMac = inMac ? thisMacDevice() : undefined;
-  const thisGroup = groups.find((g) => g.records.some((r) => r.id === thisMac));
-  // the Mac app's Mac, when it is not on the list yet (not paired): its switch still pairs it
-  const unlisted = inMac && !thisGroup;
+  // this Mac's names come from the Mac app's bridge; an older app sends none, so nothing merges by name then
+  const names: ThisMacNames = inMac ? { computer: bridge?.computer, host: bridge?.host, device: bridge?.device || thisMacDevice() } : {};
+  const withAi = new Set([...(view.own?.instances ?? []), ...(view.workspace?.settings.instances ?? [])].map((i) => i.device));
+  const groups = groupComputers(computers, me.username, names, (id) => withAi.has(id));
+  const listed = groups.filter((g) => !g.old);
+  const old = groups.filter((g) => g.old);
+  // the Mac app's Mac when it is not on the list (not paired yet): its switch still pairs it
+  const unlisted = inMac && !groups.some((g) => g.mine);
 
   return (
     <>
       <Section id="computers" title="Computers" action={addButton}>
         <Card>
-          {groups.length === 0 && !unlisted && (
+          {listed.length === 0 && !unlisted && (
             <EmptyRow title="No computers yet" description="Your AI runs on a Mac you sign in on, with the Creator Toolset Mac app." />
           )}
-          {groups.map((g) => (
-            <ComputerRow
-              key={g.primary.id}
-              group={g}
-              admin={me.role === "admin"}
-              mine={g === thisGroup}
-              bridge={g === thisGroup ? bridge : null}
-              onChanged={load}
-            />
+          {listed.map((g) => (
+            <ComputerRow key={g.primary.id} group={g} admin={me.role === "admin"} bridge={g.mine ? bridge : null} onChanged={load} />
           ))}
-          {unlisted && <ThisMacRow bridge={bridge} />}
+          {unlisted && <ThisMacRow names={names} bridge={bridge} />}
         </Card>
       </Section>
 
-      {me.role === "admin" && own.length >= 2 && (
-        <Card>
-          <LoadBalancing devices={own} />
-        </Card>
-      )}
+      {devicesSectionsFor(me, webPlugins, "computers").map((s) => (
+        <Section key={s.id} title={s.title}>
+          {s.body}
+        </Section>
+      ))}
 
       {phones}
+
+      {old.length > 0 && (
+        <Card>
+          <Advanced summary={`Old pairings (${old.length})`}>
+            {old.map((g) => (
+              <OldPairingRow key={g.primary.id} group={g} onChanged={load} />
+            ))}
+          </Advanced>
+        </Card>
+      )}
 
       <AddComputerDialog open={adding} onOpenChange={setAdding} macApp={inMac} />
       <AddPhoneDialog open={phoning} onOpenChange={setPhoning} />
@@ -173,30 +173,37 @@ export function ComputersSection() {
   );
 }
 
-function ComputerRow({ group, admin, mine, bridge, onChanged }: {
-  group: ComputerGroup; admin: boolean; mine: boolean; bridge: ThisMacState | null; onChanged: () => void;
+function ComputerRow({ group, admin, bridge, onChanged }: {
+  group: ComputerGroup; admin: boolean; bridge: ThisMacState | null; onChanged: () => void;
 }) {
-  const { primary, records } = group;
+  const { primary, records, mine } = group;
   const Icon = primary.report?.machine?.os === "mac" || !primary.report?.machine ? Laptop : Monitor;
-  const team = primary.owner === "workspace";
   const online = records.some((r) => r.online);
   const lastSeen = Math.max(0, ...records.map((r) => r.lastSeen ?? 0));
+  const worker = records.find((r) => r.owner === "workspace");
   // this Mac with its AI switched off is not offline: that is its choice
   const offline = !online && (!mine || !!bridge?.aiOn);
   const hw = admin ? hardware(primary) : null;
-  // the part that matters goes first (it survives a cut line); the hardware goes last and only shows from `sm` up
+  // what it is, then its state, then the hardware (shown from `sm` up): name → what it is → state
+  const kind = mine ? (worker ? kindOf(worker) : null) : kindOf(primary);
+  const state = offline ? (
+    <Status tone="attention">{`Offline${lastSeen ? ` · last seen ${fmtAgo(lastSeen)}` : ""}`}</Status>
+  ) : mine && worker ? (
+    "running"
+  ) : null;
   const subtitle = (
-    <span className="flex min-w-0 items-center gap-1.5">
-      {offline && (
-        <>
-          <Status tone="attention">{`Offline${lastSeen ? ` · last seen ${fmtAgo(lastSeen)}` : ""}`}</Status>
-          <span aria-hidden>·</span>
-        </>
-      )}
-      <span className="shrink-0">{["Mac app", team ? "Team" : null].filter(Boolean).join(" · ")}</span>
-      {hw && <span className="hidden min-w-0 truncate sm:inline">· {hw}</span>}
-    </span>
+    <>
+      {[mine ? "This Mac" : null, kind, state].filter(Boolean).map((part, i) => (
+        <span key={i}>
+          {i > 0 && " · "}
+          {part}
+        </span>
+      ))}
+      {hw && <span className="hidden sm:inline"> · {hw}</span>}
+    </>
   );
+  // this Mac is titled with its own name and says "This Mac" first in its line (a long title would cut off)
+  const title = (mine && bridge?.computer) || primary.name;
 
   const rename = async () => {
     const name = (await promptDialog({ title: "Rename computer", value: primary.name, ok: "Rename" }))?.trim();
@@ -213,25 +220,12 @@ function ComputerRow({ group, admin, mine, bridge, onChanged }: {
   };
 
   return (
-    <ListRow
-      id={mine ? "use-this-mac" : undefined}
-      icon={<Icon className="size-4" />}
-      title={primary.name}
-      subtitle={subtitle}
-      status={mine && bridge?.lastError ? <Status tone="broken">{bridge.lastError}</Status> : undefined}
-      actions={
-        <>
-          {mine && (
-            <>
-              <span className="text-xs text-muted-foreground">Use this Mac for my AI</span>
-              <Switch
-                checked={!!bridge?.aiOn}
-                disabled={!bridge}
-                aria-label="Use this Mac for my AI"
-                onCheckedChange={(on) => tell(on ? "ai:on" : "ai:off")}
-              />
-            </>
-          )}
+    <>
+      <ListRow
+        icon={<Icon className="size-4" />}
+        title={title}
+        subtitle={subtitle}
+        actions={
           <RowMenu
             label={`${primary.name} actions`}
             items={[
@@ -248,74 +242,65 @@ function ComputerRow({ group, admin, mine, bridge, onChanged }: {
               },
             ]}
           />
-        </>
+        }
+      />
+      {mine && <ThisMacSwitch bridge={bridge} />}
+    </>
+  );
+}
+
+/** This Mac's own switch: it pairs this Mac with the account, and then the app's AI jobs run on it. */
+function ThisMacSwitch({ bridge }: { bridge: ThisMacState | null }) {
+  return (
+    <Row
+      id="use-this-mac"
+      title="Use this Mac for my AI"
+      description="Pairs this Mac with your account, so the AI jobs your AI runs can run on it."
+      status={bridge?.lastError ? <Status tone="broken">{bridge.lastError}</Status> : undefined}
+      control={
+        <Switch checked={!!bridge?.aiOn} disabled={!bridge} aria-label="Use this Mac for my AI" onCheckedChange={(on) => tell(on ? "ai:on" : "ai:off")} />
       }
     />
   );
 }
 
-/** This Mac before it is on the list (not paired yet): only its switch. */
-function ThisMacRow({ bridge }: { bridge: ThisMacState | null }) {
+/** This Mac before it is on the list (not paired yet): its name and its switch. */
+function ThisMacRow({ names, bridge }: { names: ThisMacNames; bridge: ThisMacState | null }) {
+  return (
+    <>
+      <ListRow icon={<Laptop className="size-4" />} title={names.computer || "This Mac"} subtitle="This Mac" />
+      <ThisMacSwitch bridge={bridge} />
+    </>
+  );
+}
+
+/** An old pairing (offline a day or more, no AI on it): what it is and when it was last seen; Remove in its menu. */
+function OldPairingRow({ group, onChanged }: { group: ComputerGroup; onChanged: () => void }) {
+  const { primary, records } = group;
+  const lastSeen = Math.max(0, ...records.map((r) => r.lastSeen ?? 0));
+  const remove = async () => {
+    for (const r of records) await removeDevice(r.id);
+    onChanged();
+  };
   return (
     <ListRow
-      id="use-this-mac"
       icon={<Laptop className="size-4" />}
-      title="This Mac"
-      subtitle="Mac app"
+      title={primary.name}
+      subtitle={`Mac app · Offline${lastSeen ? ` · last seen ${fmtAgo(lastSeen)}` : ""}`}
       actions={
-        <>
-          <span className="text-xs text-muted-foreground">Use this Mac for my AI</span>
-          <Switch checked={!!bridge?.aiOn} disabled={!bridge} aria-label="Use this Mac for my AI" onCheckedChange={(on) => tell(on ? "ai:on" : "ai:off")} />
-        </>
+        <RowMenu
+          label={`${primary.name} actions`}
+          items={[
+            {
+              label: "Remove",
+              destructive: true,
+              confirm: { title: `Remove ${primary.name}?`, body: "The Mac can pair again later.", ok: "Remove" },
+              onSelect: remove,
+            },
+          ]}
+        />
       }
     />
-  );
-}
-
-/** Admins with two or more computers: how jobs are spread between them. Its own errors show here. */
-function LoadBalancing({ devices }: { devices: Listed[] }) {
-  const [balance, setBalance] = useState<Balance | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const load = useCallback(() => {
-    setError(null);
-    getBalance().then(setBalance).catch((e) => setError(msg(e)));
-  }, []);
-  useEffect(() => load(), [load]);
-  const save = (b: Partial<Balance>) => setBalanceSettings(b).then(setBalance).catch((e) => saveFailed(msg(e)));
-
-  return (
-    <Advanced summary="Advanced">
-      {error && <ErrorRow title="Could not load load balancing" detail={error} retry={load} />}
-      {!balance && !error && <LoadingRow />}
-      {balance && (
-        <>
-          <Row
-            id="load-balancing"
-            title="Load balancing"
-            description="Start jobs on the computer with the most free CPU and memory."
-            control={<Switch checked={balance.on} aria-label="Load balancing" onCheckedChange={(on) => void save({ on })} />}
-          />
-          {devices.map((d) => (
-            <ListRow
-              key={d.id}
-              icon={d.report?.machine?.os === "mac" || !d.report?.machine ? <Laptop className="size-4" /> : <Monitor className="size-4" />}
-              title={d.name}
-              subtitle={d.report?.machine?.cpu ?? "Mac app"}
-              actions={
-                <SettingsSelect
-                  label={`${d.name} load preference`}
-                  value={String(weightOf(balance.weights, d.id))}
-                  disabled={!balance.on}
-                  onValueChange={(v) => void save({ weights: { [d.id]: Number(v) } })}
-                  options={LOAD_PREFERENCES.map((p) => ({ value: String(p.value), label: p.label }))}
-                  className="sm:w-32"
-                />
-              }
-            />
-          ))}
-        </>
-      )}
-    </Advanced>
   );
 }
 

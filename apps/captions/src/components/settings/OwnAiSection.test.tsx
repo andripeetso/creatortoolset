@@ -53,15 +53,16 @@ it("on a hosted server lists the AI apps on the person's computers, signed in or
   expect(html).not.toContain("Grok");
 });
 
-it("does not claim an offline computer's AI is connected", () => {
+it("leaves an offline computer out: its AI can't be reached, so it is not listed as connected", () => {
   const html = renderToStaticMarkup(
     <OtherComputerRows others={[{ id: "m2", name: "Office Mac mini", online: false, drivers: [{ driver: "codex", installed: true, signedIn: true }] }]} />,
   );
-  expect(html).toContain("Office Mac mini · offline");
+  expect(html).not.toContain("Office Mac mini");
   expect(html).not.toContain("Connected");
+  expect(html).toContain("Connect your AI from the Mac app");
 });
 
-it("a hosted browser with no computer says in one row what to do", () => {
+it("a hosted browser with no computer online says in one row what to do", () => {
   const html = renderToStaticMarkup(<OtherComputerRows others={[]} />);
   expect(html).toContain("Connect your AI from the Mac app");
 });

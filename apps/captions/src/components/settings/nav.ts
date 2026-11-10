@@ -45,7 +45,7 @@ const BUILTIN: ReadonlyArray<BuiltinEntry> = [
   { id: "servers", title: "Servers", icon: Server, group: "Devices", macOnly: true },
   { id: "connectors", title: "Social accounts", icon: Share2, group: "Connections" },
   { id: "keys", title: "API keys", icon: KeyRound, group: "Connections" },
-  { id: "own-ai", title: "Your own AI", icon: Bot, group: "Connections" },
+  { id: "own-ai", title: "Use from your AI", icon: Bot, group: "Connections" },
   { id: "team", title: "Team", icon: Users, group: "People", hostedOnly: true },
   { id: "admin", title: "Admin", icon: ShieldCheck, group: "People", hostedOnly: true, adminOnly: true },
   { id: "account", title: "Account", icon: UserRound, listed: false },

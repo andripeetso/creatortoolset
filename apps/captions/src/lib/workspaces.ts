@@ -15,7 +15,7 @@ const send = (url: string, method: string, body?: unknown) =>
 
 export const getWorkspace = () => fetch("/api/workspace").then((r) => json<WorkspaceView | null>(r));
 export const renameWorkspace = (name: string) => send("/api/workspace", "PATCH", { name }).then((r) => json<WorkspaceView>(r));
-export const setSignInWith = (signInWith: ("google" | "apple")[]) =>
+export const setSignInWith = (signInWith: ("google" | "apple" | "github")[]) =>
   send("/api/workspace", "PATCH", { signInWith }).then((r) => json<WorkspaceView>(r));
 export const createInvite = (input: InviteInput) => send("/api/workspace/invites", "POST", input).then((r) => json<{ invite: Invite; token: string }>(r));
 export const revokeInvite = (id: string) => send(`/api/workspace/invites/${id}`, "DELETE").then((r) => json<{ ok: true }>(r));

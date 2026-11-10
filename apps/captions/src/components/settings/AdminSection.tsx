@@ -64,8 +64,9 @@ export function AdminSection({ sub }: { sub?: string }) {
             aria-selected={active.id === t.id}
             replace
             className={cn(
-              "shrink-0 whitespace-nowrap border-b-2 px-2.5 py-2 text-sm transition-colors",
-              active.id === t.id ? "border-violet-500 font-medium text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
+              // one weight for every tab: a bolder active label is wider, and the bar would move under the pointer
+              "shrink-0 whitespace-nowrap border-b-2 px-2.5 py-2 text-sm font-medium transition-colors",
+              active.id === t.id ? "border-violet-500 text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
             )}
           >
             {t.label}

@@ -16,7 +16,7 @@ import { listReviewAssets } from "@/lib/review";
 import { currentProject, PROJECT_COLORS, projectColor, useWorkspace } from "@/lib/workspace";
 import { useAppearance } from "@/lib/settings";
 import { useShareTheme } from "@/components/ShareTheme";
-import { readiness, TOOL_GROUPS, TOOL_NAMES, type Tool } from "@contracts/tools";
+import { onHome, readiness, TOOL_GROUPS, TOOL_NAMES, type Tool } from "@contracts/tools";
 import { DOWNLOAD_URL, onSettingsClosed, openSetupAt, resumeStep, setupDismissed, setupFinished, shareDownload, useSetup, useSetupShown } from "@/lib/setup";
 
 /**
@@ -82,9 +82,13 @@ export default function ToolsetHome() {
   // which tools are ready: read on mount and when the window comes back to the front (no polling)
   const view = useSetup((s) => s.view);
   const load = useSetup((s) => s.load);
+  // Home's tools are all but the ones switched off under Settings → Appearance (contracts onHome). Tiles wait for the
+  // setup to load (or to fail: a guest has none, and then nothing is hidden), so a hidden tool is never drawn and dropped.
+  const [loaded, setLoaded] = useState(false);
+  const shownOnHome = (t: Tool) => (loaded || view !== null) && onHome(view?.hidden, t);
   useEffect(() => {
     if (!me) return;
-    void load();
+    void load().finally(() => setLoaded(true));
     const again = () => void load();
     window.addEventListener("focus", again);
     const offSettings = onSettingsClosed(again);
@@ -108,7 +112,7 @@ export default function ToolsetHome() {
     return readiness(tool, view.have).missing.map((n) => n.what).join(" · ");
   };
   const extrasGroup = TOOL_GROUPS.find((g) => g.id === "tools");
-  const extras: Key[] = [...(extrasGroup?.tools ?? []), "record"];
+  const extras: Key[] = [...(extrasGroup?.tools.filter(shownOnHome) ?? []), "record"];
 
   // the current project's colour (Settings → Appearance can keep it violet), as CSS variables for the tiles and glow
   const c = PROJECT_COLORS[projectTint && project ? projectColor(project) : "violet"];
@@ -244,7 +248,7 @@ export default function ToolsetHome() {
               >
                 <h2 className="px-1 pb-2 text-[11px] font-medium uppercase tracking-wider text-zinc-500">{g.label}</h2>
                 <div className="flex items-start justify-center gap-4 min-[900px]:justify-evenly min-[900px]:gap-0">
-                  {[...(g.id === "distribute" ? ["finals" as Key] : g.tools).map((t) => tile(t)), ...pluginTilesFor(g.label, me).map((t) => pluginTile(t))].map((node, j) => (
+                  {[...(g.id === "distribute" ? ["finals" as Key] : g.tools.filter(shownOnHome)).map((t) => tile(t)), ...pluginTilesFor(g.label, me).map((t) => pluginTile(t))].map((node, j) => (
                     <Fragment key={j}>
                       {j > 0 && <ChevronRight className="mt-6 h-4 w-4 shrink-0 text-zinc-700 2xl:mt-7" />}
                       {node}

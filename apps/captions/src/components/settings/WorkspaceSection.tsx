@@ -10,16 +10,29 @@ import { Switch } from "@/components/ui/switch";
 import { useMe } from "@/lib/auth";
 import { createInvite, getWorkspace, inviteUrl, removeMember, renameWorkspace, revokeInvite, setSignInWith, updateMember } from "@/lib/workspaces";
 import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, SettingsSelect, TextField, saveFailed } from "./ui";
-import { fmtAgo, msg } from "./helpers";
+import { lastActiveText, msg } from "./helpers";
 
-/** How the team signs in (api/auth.ts ruleFor enforces it). The value is the set of providers, empty = a password too. */
-const SIGN_IN: { id: string; label: string; value: ("google" | "apple")[] }[] = [
-  { id: "any", label: "Any way (password too)", value: [] },
-  { id: "google", label: "Google only", value: ["google"] },
-  { id: "apple", label: "Apple only", value: ["apple"] },
-  { id: "both", label: "Google or Apple", value: ["google", "apple"] },
-];
-const signInId = (v: string[] | undefined) => SIGN_IN.find((o) => o.value.join() === (v ?? []).join())?.id ?? "any";
+type SignInProvider = "google" | "apple" | "github";
+const PROVIDERS: SignInProvider[] = ["google", "apple", "github"];
+const PROVIDER_NAME: Record<SignInProvider, string> = { google: "Google", apple: "Apple", github: "GitHub" };
+const orList = (names: string[]) => (names.length > 1 ? `${names.slice(0, -1).join(", ")} or ${names.at(-1)}` : (names[0] ?? ""));
+
+/**
+ * How the team signs in (api/auth.ts ruleFor enforces it): a password too, each sign-in the server has switched on alone,
+ * and all the switched-on ones together. `saved` is what the team has now; a sign-in that is switched off here stays as
+ * the last choice so the value shown is the one that is enforced.
+ */
+export function signInOptions(on: readonly SignInProvider[], saved: readonly string[] = []): { id: string; label: string; value: SignInProvider[] }[] {
+  const opts: { id: string; label: string; value: SignInProvider[] }[] = [{ id: "any", label: "Any way (password too)", value: [] }];
+  for (const p of on) opts.push({ id: p, label: `${PROVIDER_NAME[p]} only`, value: [p] });
+  if (on.length > 1) opts.push({ id: "all", label: orList(on.map((p) => PROVIDER_NAME[p])), value: [...on] });
+  const same = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((x) => b.includes(x));
+  const kept = saved.filter((x): x is SignInProvider => (PROVIDERS as string[]).includes(x));
+  if (kept.length && !opts.some((o) => same(o.value, kept))) opts.push({ id: "saved", label: orList(kept.map((p) => PROVIDER_NAME[p])), value: kept });
+  return opts;
+}
+export const signInId = (opts: ReturnType<typeof signInOptions>, saved: readonly string[] | undefined) =>
+  opts.find((o) => o.value.length === (saved ?? []).length && o.value.every((x) => (saved ?? []).includes(x)))?.id ?? "any";
 
 /**
  * Settings → Team (hosted servers only). The owner renames the team, sets how it signs in, invites people and removes
@@ -35,6 +48,15 @@ export function WorkspaceSection() {
   const [inviting, setInviting] = useState(false);
   const [editing, setEditing] = useState<MemberView | null>(null);
   const [aiFor, setAiFor] = useState<MemberView | null>(null);
+  // the sign-ins this server has switched on (the Account page's list): the team can only be set to these
+  const [on, setOn] = useState<SignInProvider[] | null>(null);
+  useEffect(() => {
+    const none: Partial<Record<SignInProvider, boolean>> = {};
+    fetch("/api/account/providers")
+      .then((r) => (r.ok ? (r.json() as Promise<Partial<Record<SignInProvider, boolean>>>) : none))
+      .then((d) => setOn(PROVIDERS.filter((p) => d[p])))
+      .catch(() => setOn([]));
+  }, []);
 
   const load = useCallback(() => {
     setFailed(false);
@@ -98,7 +120,8 @@ export function WorkspaceSection() {
             control={
               <TextField
                 label="Team name"
-                value={view.workspace.name}
+                placeholder="Team name"
+                value={view.workspace.name === "Workspace" ? "" : view.workspace.name}
                 onCommit={async (next) => {
                   if (!next.trim()) throw new Error("A team needs a name.");
                   await act(renameWorkspace(next.trim()));
@@ -106,18 +129,27 @@ export function WorkspaceSection() {
               />
             }
           />
-          <Row
-            id="team-sign-in"
-            title="How the team signs in"
-            control={
-              <SettingsSelect
-                label="How the team signs in"
-                value={signInId(view.workspace.signInWith)}
-                options={SIGN_IN.map((o) => ({ value: o.id, label: o.label }))}
-                onValueChange={(id) => void attempt(setSignInWith(SIGN_IN.find((o) => o.id === id)?.value ?? []))}
-              />
-            }
-          />
+          {on !== null && (
+            <Row
+              id="team-sign-in"
+              title="How the team signs in"
+              description={on.length === 0 ? "Google, Apple or GitHub sign-in must be set up on the server first (Settings → Account)." : undefined}
+              control={
+                on.length === 0 ? (
+                  <span className="text-sm text-muted-foreground">Any way (password too)</span>
+                ) : (
+                  <SettingsSelect
+                    label="How the team signs in"
+                    value={signInId(signInOptions(on, view.workspace.signInWith), view.workspace.signInWith)}
+                    options={signInOptions(on, view.workspace.signInWith).map((o) => ({ value: o.id, label: o.label }))}
+                    onValueChange={(id) =>
+                      void attempt(setSignInWith(signInOptions(on, view.workspace.signInWith).find((o) => o.id === id)?.value ?? []))
+                    }
+                  />
+                )
+              }
+            />
+          )}
         </Card>
       </Section>
 
@@ -138,7 +170,8 @@ export function WorkspaceSection() {
                 key={m.username}
                 title={
                   <>
-                    {m.username}
+                    {m.name || m.username}
+                    {m.name && <span className="ml-1.5 font-normal text-muted-foreground">{m.username}</span>}
                     {self && <span className="ml-1.5 font-normal text-muted-foreground">(you)</span>}
                   </>
                 }
@@ -182,7 +215,7 @@ export function memberLine(m: MemberView, self: boolean, owner: boolean): string
   const parts = [m.role === "owner" ? "Owner" : null];
   if (owner || self) {
     parts.push(m.ai === "own" ? (self ? "Your own AI" : "Own AI") : `API budget $${m.spentUsd.toFixed(2)} of $${m.budgetUsd} this month`);
-    parts.push(m.lastActiveAt ? `active ${fmtAgo(m.lastActiveAt)}` : "not signed in yet");
+    parts.push(lastActiveText(m.lastActiveAt));
   }
   return parts.filter(Boolean).join(" · ");
 }

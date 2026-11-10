@@ -4,7 +4,7 @@ import { mkdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { env } from "./env";
 import { INVITE_DAYS, type AiRoute, type Invite, type InviteInput, type Member, type Workspace, type WorkspaceRole } from "../../contracts/workspaces";
-import { findUser, listUsers } from "../users";
+import { SIGNIN_NAME, findUser, listUsers } from "../users";
 
 /**
  * Teams: workspaces, members, invites and each member's API spend (contracts/workspaces.ts).
@@ -124,13 +124,15 @@ export function renameWorkspace(w: Workspace, name: string): void {
 }
 
 /**
- * Settings → Team: everyone signs in with Google and/or Apple, not a password. The owner turns it on only with one
- * of them linked to their own account, so the rule can't lock them out (auth.ts ruleFor enforces it).
+ * Settings → Team: everyone signs in with one or more of Google, Apple and GitHub, not a password. The owner turns it on
+ * only with one of them linked to their own account, so the rule can't lock them out (auth.ts ruleFor enforces it: a
+ * member needs any one of the allowed providers linked).
  */
 export function setSignInWith(w: Workspace, owner: string, list: unknown[]): void {
-  const want = (["google", "apple"] as const).filter((p) => list.includes(p));
+  const want = (["google", "apple", "github"] as const).filter((p) => list.includes(p));
   if (want.length && !findUser(owner)?.identities?.some((i) => want.some((p) => p === i.provider))) {
-    throw new Error(`Link your own ${want.map((p) => (p === "apple" ? "Apple" : "Google")).join(" or ")} account first (Settings → Account)`);
+    const names = want.map((p) => SIGNIN_NAME[p]);
+    throw new Error(`Link your own ${names.length > 1 ? `${names.slice(0, -1).join(", ")} or ${names.at(-1)}` : names[0]} account first (Settings → Account)`);
   }
   if (want.length) w.signInWith = [...want];
   else delete w.signInWith;

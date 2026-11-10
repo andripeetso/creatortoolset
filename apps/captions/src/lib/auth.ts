@@ -18,6 +18,8 @@ export interface Me {
   /** Apps and plug-in gates switched off for this account (see canUse). */
   off: (Tool | PluginGateId)[];
   logins?: number | null; // real accounts only — used to spot a first login
+  /** The picture from a linked Google or GitHub sign-in (its own URL); null: the initial is shown. */
+  picture?: string | null;
 }
 
 /** Cloud transcription and AI in Caption Studio. */
