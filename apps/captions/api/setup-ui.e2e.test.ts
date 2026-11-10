@@ -3,8 +3,8 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 // The browser smoke run for first-run setup. It starts the app's own Vite server in this process and runs one
-// headless Chrome, as the Mac app's window would be. It walks the three screens (Connect your AI, What do you make?,
-// Try it) the way a new person does, for every saved way of working, and checks what must hold: nothing on a phone,
+// headless Chrome, as the Mac app's window would be. It walks the two screens (Connect your AI, What do you make?)
+// the way a new person does, for every saved way of working, and checks what must hold: nothing on a phone,
 // closing early keeps it unfinished, one project is made, no folder scan, no key to type. The tests share one data
 // folder and run in order: the first ones need an account that has not finished. Alone:
 //   SETUP_E2E=1 CT_SCRATCH_DIR=<a scratch folder on a big disk> pnpm -s exec vitest run api/setup-ui.e2e.test.ts
@@ -92,7 +92,7 @@ async function open(context: Any = { viewport: DESKTOP }) {
 async function screen(dialog: Any, title: string, count: string | null) {
   await dialog.getByRole("heading", { name: title }).waitFor({ timeout: 60_000 });
   if (count) await dialog.getByText(count, { exact: true }).waitFor();
-  else expect(await dialog.getByText(/^\d of 3$/).count()).toBe(0);
+  else expect(await dialog.getByText(/^\d of 2$/).count()).toBe(0);
 }
 
 /** Nothing on a setup screen asks for a key or a password, and nothing reads like a line to paste into a terminal. */
@@ -137,11 +137,11 @@ describe.skipIf(!enabled)("first-run setup in the browser", () => {
     await close();
   }, 180_000);
 
-  it("first run: closing early keeps it unfinished, Home reopens where she left, one project is made, a video opens Caption Studio", async () => {
+  it("first run: closing early keeps it unfinished, Home reopens where she left, one project is made, Done lands on Home", async () => {
     const { page, dialog, errors, scans, get, close } = await open();
     await page.goto(url("/"));
     // it opens by itself for a new account, on the first of three screens
-    await screen(dialog, "Connect your AI", "1 of 3");
+    await screen(dialog, "Connect your AI", "1 of 2");
     await dialog.getByText(/Looking for your AI/).waitFor({ state: "hidden", timeout: 30_000 }).catch(() => {});
     await plain(dialog);
     await shot(page, "1-ai");
@@ -151,13 +151,13 @@ describe.skipIf(!enabled)("first-run setup in the browser", () => {
     await dialog.waitFor({ state: "hidden" });
     expect(saved().done).not.toBe(true);
     await page.getByRole("button", { name: /Finish setting up/ }).click();
-    await screen(dialog, "Connect your AI", "1 of 3");
+    await screen(dialog, "Connect your AI", "1 of 2");
 
     // nothing under the AI rows: no box, no link
     expect(await dialog.getByRole("checkbox").count()).toBe(0);
 
     await pastAi(dialog);
-    await screen(dialog, "What do you make?", "2 of 3");
+    await screen(dialog, "What do you make?", "2 of 2");
     await dialog.getByRole("checkbox", { name: /Short videos/ }).check();
     await plain(dialog);
     await shot(page, "2-make");
@@ -167,85 +167,39 @@ describe.skipIf(!enabled)("first-run setup in the browser", () => {
     await dialog.waitFor({ state: "hidden" });
     expect(saved().done).not.toBe(true);
     await page.getByRole("button", { name: /Finish setting up/ }).click();
-    await screen(dialog, "What do you make?", "2 of 3");
+    await screen(dialog, "What do you make?", "2 of 2");
 
     // Back keeps the answer, even after something else was saved on the screen before
     await dialog.getByRole("button", { name: "Back" }).click();
-    await screen(dialog, "Connect your AI", "1 of 3");
+    await screen(dialog, "Connect your AI", "1 of 2");
     await pastAi(dialog);
-    await screen(dialog, "What do you make?", "2 of 3");
+    await screen(dialog, "What do you make?", "2 of 2");
     expect(await dialog.getByRole("checkbox", { name: /Short videos/ }).isChecked()).toBe(true);
 
-    // Continue makes the first project, with no form: named after the one thing picked
+    // Done makes the first project, with no form (named after the one thing picked), ends setup and lands on Home:
+    // nothing to do is asked of her
     expect(await get("/api/workshop/projects")).toHaveLength(0);
-    await dialog.getByRole("button", { name: "Continue", exact: true }).click();
-    await screen(dialog, "Try it", "3 of 3");
-    const projects = await get("/api/workshop/projects");
-    expect(projects.map((p: Any) => p.name)).toEqual(["Short videos"]);
-    // arriving here is the end of setup
+    await dialog.getByRole("button", { name: "Done", exact: true }).click();
+    await dialog.waitFor({ state: "hidden" });
+    expect(new URL(page.url()).pathname).toBe("/");
+    expect((await get("/api/workshop/projects")).map((p: Any) => p.name)).toEqual(["Short videos"]);
     await expect.poll(() => saved().done).toBe(true);
-    expect(saved().tools).toContain("captions");
-    await plain(dialog);
-    await shot(page, "3-try");
-
-    // back and on again: still one project
-    await dialog.getByRole("button", { name: "Back" }).click();
-    await screen(dialog, "What do you make?", "2 of 3");
-    await dialog.getByRole("button", { name: "Continue", exact: true }).click();
-    await screen(dialog, "Try it", "3 of 3");
-    expect(await get("/api/workshop/projects")).toHaveLength(1);
+    expect(await page.getByText(/Try it|Drop a video/).count()).toBe(0);
     expect(errors).toEqual([]);
     expect(scans).toEqual([]);
-
-    // a file that is no video, dropped beside the card (on the title): the page stays, and the card says so
-    const dropOn = async (target: Any, name: string, type: string, real = false) => {
-      const data = await page.evaluateHandle(([n, t, real]: string[]) => {
-        // a real file with a sound track is a tenth of a second of silence (WAV bytes): the page reads the bytes, not the name
-        const sound = () => {
-          const b = new DataView(new ArrayBuffer(44 + 3200));
-          const text = (at: number, s: string) => [...s].forEach((c, i) => b.setUint8(at + i, c.charCodeAt(0)));
-          text(0, "RIFF"), b.setUint32(4, 36 + 3200, true), text(8, "WAVEfmt "), b.setUint32(16, 16, true);
-          b.setUint16(20, 1, true), b.setUint16(22, 1, true), b.setUint32(24, 16000, true), b.setUint32(28, 32000, true);
-          b.setUint16(32, 2, true), b.setUint16(34, 16, true), text(36, "data"), b.setUint32(40, 3200, true);
-          return b.buffer;
-        };
-        const d = new DataTransfer();
-        d.items.add(new File([real ? sound() : "not a real file"], n, { type: t }));
-        return d;
-      }, [name, type, real ? "1" : ""]);
-      await target.dispatchEvent("drop", { dataTransfer: data });
-    };
-    await dropOn(dialog.getByRole("heading", { name: "Try it" }), "notes.txt", "text/plain");
-    await dialog.getByText("That file can't be captioned. Try a video").waitFor();
-    expect(new URL(page.url()).searchParams.get("setup")).toBe("try");
-    // the same for a file that only has a video's name: setup never closes into a job that cannot work
-    await dropOn(dialog.getByRole("heading", { name: "Try it" }), "notes.mp4", "video/mp4");
-    await page.waitForTimeout(500);
-    await dialog.getByText("That file can't be captioned. Try a video").waitFor();
-    expect(new URL(page.url()).searchParams.get("setup")).toBe("try");
-
-    // a video dropped on the card: setup closes and Caption Studio has it
-    await dropOn(dialog.locator("label").filter({ hasText: "Choose a video" }), "tiny-acrobatics.mp4", "video/mp4", true);
-    await page.waitForURL("**/captions");
-    await page.getByRole("heading", { name: "Try it" }).waitFor({ state: "hidden" });
-    await page.getByText(/tiny-acrobatics/).first().waitFor();
     await close();
   }, 240_000);
 
   for (const talk of ["app", "chat", "both"] as const) {
-    it(`saved way of working "${talk}": the same three screens, then Home`, async () => {
+    it(`saved way of working "${talk}": the same two screens, then Home`, async () => {
       const { page, dialog, errors, scans, get, close } = await open();
       await page.request.put(url("/api/work-prefs"), { data: { talk } });
       await page.goto(url("/?setup=start"));
-      await screen(dialog, "Connect your AI", "1 of 3");
+      await screen(dialog, "Connect your AI", "1 of 2");
       await pastAi(dialog);
-      await screen(dialog, "What do you make?", "2 of 3");
-      await dialog.getByRole("button", { name: "Continue", exact: true }).click();
-      await screen(dialog, "Try it", "3 of 3");
+      await screen(dialog, "What do you make?", "2 of 2");
       await plain(dialog);
-      // the chooser behind the card takes a video too (not picked here: one Caption Studio project is enough)
-      expect(await dialog.locator('label input[type="file"][accept="video/*"]').count()).toBe(1);
-      await dialog.getByRole("button", { name: "Skip, take me to Home" }).click();
+      await dialog.getByRole("button", { name: "Done", exact: true }).click();
       await dialog.waitFor({ state: "hidden" });
       expect(new URL(page.url()).pathname).toBe("/");
       expect(await get("/api/workshop/projects")).toHaveLength(1); // the account has one: none is made
@@ -257,7 +211,7 @@ describe.skipIf(!enabled)("first-run setup in the browser", () => {
 
   it("old links land on the screen they now belong to", async () => {
     const { page, dialog, close } = await open();
-    for (const [id, title, count] of [["done", "Try it", "3 of 3"], ["project", "What do you make?", "2 of 3"], ["ai", "Connect your AI", "1 of 3"]] as const) {
+    for (const [id, title, count] of [["done", "What do you make?", "2 of 2"], ["try", "What do you make?", "2 of 2"], ["project", "What do you make?", "2 of 2"], ["ai", "Connect your AI", "1 of 2"]] as const) {
       await page.goto(url(`/?setup=${id}`));
       await screen(dialog, title, count);
     }
@@ -298,14 +252,11 @@ describe.skipIf(!enabled)("first-run setup in the browser", () => {
         expect((await dialog.locator("header + div").boundingBox())!.height).toBeGreaterThan(200); // never a thin strip
         await shot(page, `small-${size}-${name}`);
       };
-      await screen(dialog, "Connect your AI", "1 of 3");
+      await screen(dialog, "Connect your AI", "1 of 2");
       await fits("1-ai");
       await pastAi(dialog);
-      await screen(dialog, "What do you make?", "2 of 3");
+      await screen(dialog, "What do you make?", "2 of 2");
       await fits("2-make");
-      await dialog.getByRole("button", { name: "Continue", exact: true }).click();
-      await screen(dialog, "Try it", "3 of 3");
-      await fits("3-try");
       await close();
     }, 120_000);
   }

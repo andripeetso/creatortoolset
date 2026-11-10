@@ -26,8 +26,7 @@ import { ConnectStep, HERE } from "@/components/setup/ConnectStep";
 import { FoldersStep } from "@/components/setup/FoldersStep";
 import { HowPicker } from "@/components/setup/HowPicker";
 import { ToolsPicker } from "@/components/setup/ToolNeeds";
-import { TryStep } from "@/components/setup/TryStep";
-import { canUse, useAuth, useMe } from "@/lib/auth";
+import { canUse, useMe } from "@/lib/auth";
 import { openAssistant } from "@/lib/assistant";
 import { isPhoneHub } from "@/lib/mobile";
 import {
@@ -36,7 +35,6 @@ import {
   dismissSetup,
   firstProjectName,
   rememberLater,
-  setupFinished,
   setupOpen,
   setupOpensItself,
   setupStepFromParam,
@@ -57,7 +55,6 @@ import { cn } from "@/lib/utils";
 const STEP: Record<SetupStep, { title: string; hint: string }> = {
   agents: { title: "Connect your AI", hint: "Creator Toolset works with the ChatGPT or Claude plan you already have." },
   make: { title: "What do you make?", hint: "Pick what fits. It turns on the right tools." },
-  try: { title: "Try it", hint: "Drop a video and get captions. It runs on this computer and nothing is uploaded." },
   connect: { title: "Connect your computers", hint: "Add your phone or another computer." },
   folders: {
     title: "Where are your videos?",
@@ -77,8 +74,8 @@ const THIS_COMPUTER: ReadonlySet<string> = new Set([HERE]);
 const PRIMARY = "min-w-28 bg-[var(--tint)] text-white hover:bg-[var(--tint)] hover:brightness-110";
 
 /**
- * First-run setup in one window, the same three screens for everyone: connect your AI → what you make (ticks the tools,
- * makes the first project quietly) → try it (drop a video, get captions). Arriving on the last screen saves `done`.
+ * First-run setup in one window, the same two screens for everyone: connect your AI → what you make (ticks the tools,
+ * makes the first project quietly), then Home. Leaving the last screen saves `done`; nothing to do is asked of her.
  * Not now (the X, the footer link, Escape) hides it for this browser and remembers the screen; Home's card brings it
  * back. A click outside never closes it. Never shown on a phone. The other screens (`?setup=connect`, `folders`, `how`)
  * open alone and close with Done.
@@ -98,7 +95,6 @@ export function SetupDialog() {
   const [ticked, setTicked] = useState<Tool[] | null>(null);
   const [note, setNote] = useState(false);
   const [busy, setBusy] = useState(false); // leaving "What do you make?" saves first: one press, one project
-  const hosted = useAuth((s) => s.hosted); // a hosted server is not this computer: "Try it" does not say nothing is uploaded
   const [footerSlot, setFooterSlot] = useState<HTMLElement | null>(null); // the folders screen portals its buttons in
   const [unsure, setUnsure] = useState<boolean | null>(null); // "Not sure yet" ticked here; null = read it from the saved answers
   const asked = params.get("setup");
@@ -106,7 +102,6 @@ export function SetupDialog() {
   const firstRun = setupOpensItself({ logins: me?.logins, loaded, projects: projects.length });
   const open = real && !!prefs && setupOpen(view, asked, { firstRun, phone: isPhoneHub() });
   const step: SetupStep = setupStepFromParam(asked) ?? SETUP_PATH[0];
-  const arrived = open && step === "try";
   useEffect(() => {
     useSetupShown.setState({ shown: open });
     return () => useSetupShown.setState({ shown: false });
@@ -126,14 +121,6 @@ export function SetupDialog() {
     const t = window.setTimeout(() => setNote(false), 4000);
     return () => window.clearTimeout(t);
   }, [note]);
-  // arriving on "Try it" is the end of setup, whatever she does next: it never opens by itself again
-  useEffect(() => {
-    if (!arrived) return;
-    const v = useSetup.getState().view;
-    if (!v || setupFinished(v)) return;
-    const makes = useWorkPrefs.getState().prefs?.makes ?? [];
-    void save({ done: true, ...(v.tools === null ? { tools: toolsFor(makes, TOOLS.filter((t) => canUse(me, t))) } : {}) }).catch(() => {});
-  }, [arrived, save, me]);
   useSetupLive(open);
   // the AI panel connected one: read the setup again now, so Continue lights up without waiting for the next look
   const onConnected = useCallback((on: boolean) => void (on && load()), [load]);
@@ -159,13 +146,15 @@ export function SetupDialog() {
 
   const close = () => {
     if (side) return leave();
-    // on "Try it" setup is already saved as done: nothing to come back to
-    if (step !== "try") {
-      rememberLater(step);
-      setNote(true);
-    }
+    rememberLater(step);
+    setNote(true);
     dismissSetup();
     leave();
+  };
+  const goHome = () => {
+    dismissSetup();
+    if (connected) openAssistant();
+    navigate("/");
   };
   const saveMakes = () => useWorkPrefs.getState().put({ makes });
   const back = async () => {
@@ -177,26 +166,16 @@ export function SetupDialog() {
     try {
       if (step === "make") {
         await saveMakes();
-        await save({ tools });
+        // the last screen: this is the end of setup, and it never opens by itself again
+        await save({ tools, done: true });
         const name = loaded ? firstProjectName(makes, projects.length) : null;
         if (name) await createProject({ name }).catch(() => {});
+        return goHome();
       }
       to(path[at + 1]!);
     } finally {
       setBusy(false);
     }
-  };
-  const goHome = () => {
-    dismissSetup();
-    if (connected) openAssistant();
-    navigate("/");
-  };
-  /** A video was taken on "Try it": setup closes and Caption Studio opens with it. */
-  const captioning = async () => {
-    dismissSetup();
-    // the tool she just used is on her Home
-    if (mine.includes("captions") && !tools.includes("captions")) await save({ tools: mine.filter((t) => t === "captions" || tools.includes(t)) }).catch(() => {});
-    navigate("/captions");
   };
   const setMakes = (next: Make[]) => {
     useWorkPrefs.setState({ prefs: { ...prefs, makes: next } });
@@ -244,7 +223,7 @@ export function SetupDialog() {
             </button>
           </div>
           <DialogTitle className="mt-4 text-2xl font-semibold tracking-tight">{STEP[step].title}</DialogTitle>
-          <DialogDescription className="mt-1.5 text-sm">{step === "try" && hosted ? "Drop a video and get captions." : STEP[step].hint}</DialogDescription>
+          <DialogDescription className="mt-1.5 text-sm">{STEP[step].hint}</DialogDescription>
         </header>
 
         <div
@@ -272,8 +251,6 @@ export function SetupDialog() {
               </details>
             </div>
           )}
-
-          {step === "try" && <TryStep onStart={captioning} />}
 
           {step === "connect" && <ConnectStep picked={THIS_COMPUTER} onPick={() => {}} />}
 
@@ -311,12 +288,7 @@ export function SetupDialog() {
             )}
             {((step === "agents" && connected) || step === "make") && (
               <Button onClick={() => void next()} disabled={busy} className={PRIMARY}>
-                Continue
-              </Button>
-            )}
-            {step === "try" && (
-              <Button variant="ghost" className="text-muted-foreground" onClick={goHome}>
-                Skip, take me to Home
+                {step === "make" ? "Done" : "Continue"}
               </Button>
             )}
           </div>
