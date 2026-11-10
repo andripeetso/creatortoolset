@@ -1,4 +1,4 @@
-import type { Hono, MiddlewareHandler } from "hono";
+import { Hono as HonoApp, type Hono, type MiddlewareHandler } from "hono";
 import { isPluginGateId, isTool, type PluginGateId, type Tool } from "../../contracts/tools";
 import type { LibrarySlot } from "../../contracts/library-source";
 import type { EditFlag, FootageTarget } from "../../contracts/editor";
@@ -408,9 +408,12 @@ export function mountGatedRoutes(app: Hono<any, any, any>, plugins: ServerPlugin
   }
 }
 
-/** Runs each loaded plug-in's start hook, once, in load order. */
-export function startPlugins(plugins: ServerPlugin[]): void {
-  for (const plugin of plugins) plugin.start?.();
+/**
+ * Runs each loaded plug-in's start hook, once, in load order. `around` runs the hook of a plug-in it knows how to
+ * contain (one from the person's folder, lib/folder-plugins.ts): there a hook that throws is recorded, not fatal.
+ */
+export function startPlugins(plugins: ServerPlugin[], around: (plugin: ServerPlugin, run: () => void) => void = (_p, run) => run()): void {
+  for (const plugin of plugins) if (plugin.start) around(plugin, () => plugin.start!());
 }
 
 /** True when a plug-in lets this request's body go past the 50 MB cap. */
@@ -500,8 +503,8 @@ export function mountPlugins(app: Hono<any, any, any>, plugins: ServerPlugin[]):
 /** The built-in root paths a plug-in may answer before the built-in router (a plug-in's `answers[].path` must be one of these). */
 export const ANSWERABLE_PATHS = ["/api/instagram", "/api/media", "/api/enhance", "/api/review", "/api/clean"] as const;
 
-/** Mount each plug-in's answered routes ahead of the built-in router of their path (boot.ts calls it before that router). */
-export function mountAnsweredRoutes(app: Hono<any, any, any>, plugins: ServerPlugin[]): void {
+/** Refuses an answered path that is not in ANSWERABLE_PATHS, or that two plug-ins both answer. */
+function checkAnswers(plugins: ServerPlugin[]): void {
   const owner = new Map<string, string>();
   for (const plugin of plugins) {
     for (const a of plugin.answers ?? []) {
@@ -510,7 +513,48 @@ export function mountAnsweredRoutes(app: Hono<any, any, any>, plugins: ServerPlu
       owner.set(a.path, plugin.id);
     }
   }
+}
+
+/** Mount each plug-in's answered routes ahead of the built-in router of their path (boot.ts calls it before that router). */
+export function mountAnsweredRoutes(app: Hono<any, any, any>, plugins: ServerPlugin[]): void {
+  checkAnswers(plugins);
   for (const plugin of plugins) for (const a of plugin.answers ?? []) app.route(a.path, a.routes);
+}
+
+/**
+ * Why a plug-in can't join the ones already in, or null. It runs, on this one plug-in, every check that otherwise stops
+ * the server when it starts: an id, gate, edit flag, provider, upload relay, pack kind, replaced or answered path that
+ * another plug-in has, a route path without its /, and routes that are not a Hono app. So a plug-in from the person's own
+ * folder (lib/folder-plugins.ts) is left out with this sentence and the app starts without it. `more` is for the checks
+ * this file can't import (the AI tools, api/mcp.ts).
+ */
+export function admissionProblem(admitted: ServerPlugin[], candidate: ServerPlugin, more?: (all: ServerPlugin[]) => void): string | null {
+  try {
+    if (!candidate || typeof candidate !== "object") throw new Error("its file must export definePlugin({ … }) as the default");
+    if (typeof candidate.id !== "string" || !/^[a-z0-9][a-z0-9-]{0,39}$/.test(candidate.id)) throw new Error("its id must be lowercase letters, digits and dashes");
+    if (admitted.some((p) => p.id === candidate.id)) throw new Error(`the app already has a plug-in called ${candidate.id}`);
+    const all = [...admitted, candidate];
+    checkGates(all);
+    checkEditFlags(all);
+    checkProviders(all);
+    checkUploadRelays(all);
+    checkPackItems(all);
+    checkReplaces(all);
+    checkAnswers(all);
+    const paths = [...(candidate.publicRoutes ?? []), ...(candidate.gatedRoutes ?? [])];
+    for (const r of paths) if (typeof r?.path !== "string" || !r.path.startsWith("/")) throw new Error(`route "${String(r?.path)}" must start with /`);
+    // every set of routes is mounted once on a throwaway app: what isn't a Hono app fails here, not while the server starts
+    const routes = [candidate.routes, candidate.openRoutes, candidate.adminRoutes, candidate.libraryRoutes, candidate.replaces?.routes, ...paths.map((r) => r.app), ...(candidate.answers ?? []).map((a) => a.routes)];
+    const trial = new HonoApp();
+    for (const r of routes) if (r !== undefined) trial.route("/x", r);
+    for (const key of ["start", "activity", "menu", "bodyLimitExempt"] as const) {
+      if (candidate[key] !== undefined && typeof candidate[key] !== "function") throw new Error(`${key} must be a function`);
+    }
+    more?.(all);
+    return null;
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e);
+  }
 }
 
 /** The first loaded plug-in's footage target for this account (editor.ingest), or null for the default. */

@@ -41,7 +41,7 @@ import { grantsApp } from "./library/grants";
 import { assistantApp } from "./assistant";
 import { automationsApp, startAutomations } from "./automations";
 import { providersApp } from "./providers";
-import { mcpApp } from "./mcp";
+import { mcpApp, pluginToolsOf } from "./mcp";
 import { connectorsApp, connectorsCallbackApp, startConnectorPulls, tiktokVerifyFile } from "./connectors";
 import { ownerProfileApp } from "./owner-profile";
 import { devicesApp } from "./devices";
@@ -56,6 +56,7 @@ import { workPrefsApp } from "./work-prefs";
 import { captionLayoutApp } from "./caption-layout";
 import { mountAdminRoutes, mountAnsweredRoutes, mountGatedRoutes, mountLibraryRoutes, mountOpenRoutes, mountPlugins, mountPluginsList, mountPublicRoutes, mountReplacedRoutes, pluginBodyLimitExempt, replacedLargeBody, startPlugins } from "./lib/plugin";
 import { serverPlugins } from "./plugins.gen";
+import { clearLoadingMark, loadFolderPlugins, mountFolderPlugins, startFolderPlugin } from "./lib/folder-plugins";
 import { announceWrites, syncApp } from "./lib/sync";
 import { signInCallbackApp, signInStartApp } from "./sign-in";
 import { activityApp } from "./activity";
@@ -227,6 +228,9 @@ app.get("/api/health", (c) =>
 );
 
 // plug-ins' open routes (machine callers with their own check): before the account gate, as the health check is
+// plug-ins from the person's own folder (the Mac app's server only, lib/folder-plugins.ts): each is built, loaded and
+// checked by itself before anything is mounted, so one that fails is left out and the app starts without it
+serverPlugins.push(...(await loadFolderPlugins(serverPlugins, (all) => void pluginToolsOf(all))));
 mountOpenRoutes(app, serverPlugins);
 // hosted mode only: Apple / Google sign-in to a site account and linking one (sign-in.ts). A sign-in a plug-in started falls through.
 if (hostedMode()) {
@@ -405,13 +409,14 @@ if (process.env.NODE_ENV !== "test") {
   startEditorWorker();
   startTrashPurge();
   startWatchFolders();
-  startPlugins(serverPlugins);
+  startPlugins(serverPlugins, startFolderPlugin);
 }
 app.route("/api/stories", storiesApp);
 app.route("/api/account-profile", accountProfileApp);
 // plug-ins (plugins/<id>/plugin.ts, generated into api/plugins.gen.ts) mount under /api/x/<id>, behind the same login
 mountPlugins(app, serverPlugins);
 mountPluginsList(app);
+mountFolderPlugins(app);
 mountGatedRoutes(app, serverPlugins);
 // hosted mode only (CT_MODE=hosted): the platform admin, the team and invite links. On one person's Mac they don't exist.
 if (hostedMode()) {
@@ -463,5 +468,8 @@ if (env.isProduction) {
     },
   );
   if ("requestTimeout" in server) disableRequestTimeouts(server);
-  if (process.env.CT_EXIT_WITH_PARENT === "1") exitWithParent(process.stdin, () => process.exit(0));
+  if (process.env.CT_EXIT_WITH_PARENT === "1") exitWithParent(process.stdin, () => {
+    clearLoadingMark(); // the app quit while a plug-in was loading: that is not the plug-in's doing
+    process.exit(0);
+  });
 }
