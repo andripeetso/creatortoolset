@@ -86,7 +86,9 @@ function ComposeForm({
 }) {
   // the recordings to pick from: saved copy at once, live with Video Notes' changes
   const { data: media } = useCachedLoad<{ clips: MediaClip[] }>("/api/documents/media", listDocumentMedia, { topic: "clips" });
-  const [ai, setAi] = useState<boolean | null>(null);
+  // whether an AI is set up: the last answer shows at once, so its notice doesn't push the form down later
+  const availability = useCachedLoad("/api/documents/availability", getDocumentsAvailability);
+  const ai = availability.data?.ai ?? (availability.error ? false : null);
   const [kind, setKind] = useState<DocKind>(
     initial?.kind === "guide" || clipId ? "guide" : "brief",
   );
@@ -100,11 +102,6 @@ function ComposeForm({
   useEffect(() => {
     if (startClip) setPicked((cur) => (cur.length ? cur : [{ type: "clip", id: startClip.id, name: startClip.name }]));
   }, [startClip]);
-  useEffect(() => {
-    getDocumentsAvailability()
-      .then((d) => setAi(d.ai))
-      .catch(() => setAi(false));
-  }, []);
 
   const add = (s: DocSource, usable: boolean) => {
     if (!usable) return;
