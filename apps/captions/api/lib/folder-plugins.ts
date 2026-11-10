@@ -386,6 +386,7 @@ export async function prepareFolderPlugin(folder: string): Promise<Prepared> {
  * The routes: the list and Switch on's first step for the admin, and the page halves for the app's own page.
  * All under /api, so behind the login like every other route.
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function mountFolderPlugins(app: Hono<any, any, any>): void {
   const admin = (c: { get: (k: "user") => unknown }) => (c.get("user") as { role?: string } | undefined)?.role === "admin";
   app.get("/api/plugins/folder", (c) => {

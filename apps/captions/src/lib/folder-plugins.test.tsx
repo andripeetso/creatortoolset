@@ -4,8 +4,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { Sparkles } from "lucide-react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { folderRowNote, type FolderPluginRow } from "@/components/community/PluginsInstalled";
-import { guardWebPlugin, webAdmissionProblem } from "./folder-plugins";
+import { folderRowNote, guardWebPlugin, webAdmissionProblem, type FolderPluginRow } from "./folder-plugins";
 import { defineWebPlugin, type WebPlugin } from "./plugin";
 
 const Page = () => <p>a page</p>;

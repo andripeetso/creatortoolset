@@ -3,8 +3,9 @@ import path from "path";
 
 const templateRoot = path.resolve(import.meta.dirname);
 
-// Test files that run ffmpeg. Under full-suite load they hit the 5 s default timeout, so they run in their own
-// project, after the rest: at most 4 files at once, and a 30 s per-test timeout. Add a new ffmpeg test file here.
+// Test files that run ffmpeg (or, for lib/folder-plugins, the plug-in builder as its own program). Under full-suite
+// load they hit the 5 s default timeout, so they run in their own project, after the rest: at most 4 files at once,
+// and a 30 s per-test timeout. Add a new ffmpeg test file here.
 const ffmpegFiles = [
   "api/assistant.test.ts",
   "api/clean-compare.test.ts",
@@ -22,6 +23,7 @@ const ffmpegFiles = [
   "api/lib/clean-comparison.test.ts",
   "api/lib/clean-extended-scores.test.ts",
   "api/lib/clean-fingerprints.test.ts",
+  "api/lib/folder-plugins.test.ts",
   "api/library/describe.test.ts",
   "api/library/fingerprint.test.ts",
   "api/library/library-ui.e2e.test.ts",

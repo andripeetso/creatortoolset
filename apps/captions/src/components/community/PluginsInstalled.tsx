@@ -4,7 +4,7 @@ import { ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Advanced, Card, InUse, ListRow, RowMenu, Status, type RowMenuItem } from "@/components/settings/ui";
-import { folderPluginFailures } from "@/lib/folder-plugins";
+import { folderPluginFailures, folderRowNote, type FolderPlugins } from "@/lib/folder-plugins";
 import type { PluginAdd, PluginInfo } from "@/lib/plugin";
 import { resumePlugins, showPluginFolder, switchPluginOff, switchPluginOn, thisMacBridge, type PluginReply } from "@/lib/thisMac";
 
@@ -33,32 +33,6 @@ function AddLine({ add }: { add: PluginAdd }) {
       <ChevronRight aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
     </Link>
   );
-}
-
-/** One folder in the person's plug-ins folder, or a plug-in that is on (GET /api/plugins/folder, api/lib/folder-plugins.ts). */
-export interface FolderPluginRow {
-  folder: string;
-  id: string | null;
-  name: string;
-  about: string;
-  on: boolean;
-  running: boolean;
-  changed: boolean;
-  error?: string;
-}
-export interface FolderPlugins {
-  enabled: boolean;
-  /** The Mac app switched them all off after its server stopped five times with them on. */
-  paused: boolean;
-  rows: FolderPluginRow[];
-}
-
-/** What a row says under its name, and whether it is trouble: why it isn't running, or that the folder has changed. */
-export function folderRowNote(row: FolderPluginRow, pageProblem: string | undefined, paused: boolean): { tone: "broken" | "attention"; text: string } | null {
-  if (row.error) return { tone: "broken", text: row.error };
-  if (row.on && !paused && pageProblem) return { tone: "broken", text: `Its pages were left out: ${pageProblem}` };
-  if (row.changed) return { tone: "attention", text: "Changed since you switched it on" };
-  return null;
 }
 
 /**

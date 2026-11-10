@@ -6,7 +6,8 @@ import type { PluginInfo } from "@/lib/plugin";
 import { ContentsView } from "./PacksShared";
 import { firstSentence, packContents } from "./packs-helpers";
 import { InstalledPackActions, PackHereSwitch, PackUsedIn } from "./PackActions";
-import { FolderPluginRows, PluginRows, type FolderPlugins } from "./PluginsInstalled";
+import type { FolderPlugins } from "@/lib/folder-plugins";
+import { FolderPluginRows, PluginRows } from "./PluginsInstalled";
 
 /**
  * Installed: the plug-ins (the ones this server is built with, and on the Mac app's own server the ones in the person's

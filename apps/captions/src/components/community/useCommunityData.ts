@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { CatalogEntry, UpdateRow } from "@contracts/pack-catalog";
 import { browseCatalog, catalogUpdates, json } from "@/lib/pack-catalog";
 import type { ServerPluginInfo } from "@/lib/plugin";
-import type { FolderPlugins } from "./PluginsInstalled";
+import type { FolderPlugins } from "@/lib/folder-plugins";
 import { msg } from "../settings/helpers";
 import { listInstalled } from "./packs-api";
 /** The catalog, the account's installed packs and the waiting updates, loaded once for the whole window. */

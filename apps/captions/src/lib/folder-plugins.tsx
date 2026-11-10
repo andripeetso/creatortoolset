@@ -131,3 +131,31 @@ export async function reloadForFolderPlugins(): Promise<void> {
   if (listed) return;
   if ((await list())?.length) window.location.reload();
 }
+
+// ---- the rows of Community → Installed → Plug-ins (components/community/PluginsInstalled.tsx) ----
+
+/** One folder in the person's plug-ins folder, or a plug-in that is on (GET /api/plugins/folder, api/lib/folder-plugins.ts). */
+export interface FolderPluginRow {
+  folder: string;
+  id: string | null;
+  name: string;
+  about: string;
+  on: boolean;
+  running: boolean;
+  changed: boolean;
+  error?: string;
+}
+export interface FolderPlugins {
+  enabled: boolean;
+  /** The Mac app switched them all off after its server stopped five times with them on. */
+  paused: boolean;
+  rows: FolderPluginRow[];
+}
+
+/** What a row says under its name, and whether it is trouble: why it isn't running, or that the folder has changed. */
+export function folderRowNote(row: FolderPluginRow, pageProblem: string | undefined, paused: boolean): { tone: "broken" | "attention"; text: string } | null {
+  if (row.error) return { tone: "broken", text: row.error };
+  if (row.on && !paused && pageProblem) return { tone: "broken", text: `Its pages were left out: ${pageProblem}` };
+  if (row.changed) return { tone: "attention", text: "Changed since you switched it on" };
+  return null;
+}
