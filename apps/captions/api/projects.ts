@@ -44,6 +44,7 @@ import { MAX_SCRIPT_CHARS } from "../src/lib/script-check";
 import type { AuthVars } from "./auth";
 import type { Expired } from "./retention";
 import { type SessionUser, bumpUsage } from "./users";
+import { announceSoon } from "./lib/announce-soon";
 
 /**
  * File-based project persistence. A project is a POOL of clips: one
@@ -860,6 +861,7 @@ async function buildProxyFromOriginal(
           if (srcFps) clip.srcFps = srcFps;
           meta.updatedAt = Date.now();
           await writeMeta(meta);
+          announceSoon(meta.owner, "projects"); // the editor waiting for this proxy switches to it
         }
       });
       void makeThumb(src, path.join(cdir, "thumb.jpg")).catch(() => {});

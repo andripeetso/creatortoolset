@@ -302,7 +302,7 @@ export function ImportScreen() {
     items: sessions,
     setItems: setSessions,
     refresh: refreshSessions,
-  } = useCachedList<SessionMeta>("caption-projects", listSessions);
+  } = useCachedList<SessionMeta>("caption-projects", listSessions, { topic: "projects" });
   const [deletedSessions, setDeletedSessions] = useState<DeletedSessionMeta[]>(
     [],
   );
