@@ -8,7 +8,9 @@ import { bumpUsage, createUser, findByIdentity, findByLogin, findUser, isSignInP
 /**
  * Sign in with Apple, Google and GitHub to a site account, and linking one to an account (Settings → Account). A hosted
  * server only (CT_MODE=hosted): on one person's Mac there are no providers to sign in with. The keys live in the
- * server's .env only. A first sign-in with no account here makes one (newAccountFor). The free Mac app's own sign-in is a separate service (a hosted plug-in), with its own state.
+ * server's .env only. A first sign-in with no account here is refused: an account is one the server's owner made, or an
+ * invite. Only a server whose .env says SIGN_UPS=open makes an account for a newcomer (newAccountFor). The free Mac app's
+ * own sign-in is a separate service (a hosted plug-in), with its own state.
  *
  * Sign-in start: GET /api/account/login/<apple|google|github>?for=link|site. Callbacks: /api/auth/<kind>/callback. A
  * callback for a sign-in this module did not start calls next(), so the plug-in that started it can answer.
@@ -191,7 +193,10 @@ async function callback(c: Context, kind: Kind, p: { code: string; state: string
       }
       return c.redirect(`/settings/account?linked=${kind}`);
     }
-    const user = findByIdentity(kind, who.sub) ?? newAccountFor(who);
+    const known = findByIdentity(kind, who.sub);
+    // closed unless the server's owner opened it: nobody gets an account here just by signing in
+    if (!known && process.env.SIGN_UPS !== "open") return fail("There is no account here for that sign-in. This server takes new people by invitation");
+    const user = known ?? newAccountFor(who);
     setLoginCookie(c, user);
     bumpUsage(user.username, { logins: 1 });
     return c.redirect("/");

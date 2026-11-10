@@ -208,7 +208,7 @@ describe("GitHub sign-in (hosted mode, GitHub's endpoints faked)", () => {
   });
 });
 
-describe("first sign-in makes the account (hosted mode, GitHub faked)", () => {
+describe("first sign-in (hosted mode, GitHub faked): refused unless the server opened sign-ups, then it makes the account", () => {
   // a new person: GitHub id 5151, not linked to anyone here yet
   const fakeGitHub = async (input: string | URL | Request): Promise<Response> => {
     const url = String(input);
@@ -232,6 +232,7 @@ describe("first sign-in makes the account (hosted mode, GitHub faked)", () => {
     delete process.env.GITHUB_CLIENT_ID;
     delete process.env.GITHUB_CLIENT_SECRET;
     delete process.env.SIGNIN_ORIGIN;
+    delete process.env.SIGN_UPS;
     vi.restoreAllMocks();
   });
   beforeEach(() => {
@@ -242,7 +243,16 @@ describe("first sign-in makes the account (hosted mode, GitHub faked)", () => {
     expect(await (await app.request("/api/account/providers")).json()).toEqual({ apple: false, google: false, github: true });
   });
 
-  it("makes the account on the first sign-in, named from the person (a taken name takes the next)", async () => {
+  it("makes no account and signs no one in while sign-ups are closed (the default)", async () => {
+    const back = await signIn();
+    expect(back.status).toBe(302);
+    expect(decodeURIComponent(back.headers.get("location")!)).toMatch(/^\/login\?error=There is no account here for that sign-in/);
+    expect(cookieOf(back)).toBe("");
+    expect(findByIdentity("github", "5151")).toBeNull();
+  });
+
+  it("with SIGN_UPS=open, makes the account on the first sign-in, named from the person (a taken name takes the next)", async () => {
+    process.env.SIGN_UPS = "open";
     createUser("ada-tiny", "adapass12", { role: "user" });
     const back = await signIn();
     expect(back.status).toBe(302);
