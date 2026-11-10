@@ -40,10 +40,10 @@ describe("the agents list: one row each, the one action each needs", () => {
     expect(missing).toContain("Install");
   });
 
-  it("Gemini CLI has no Install button: it installs on its own", () => {
+  it("every agent that is not found has an Install button", () => {
     const missing = panel(view([]));
     expect(missing).toContain("Gemini CLI");
-    expect(missing.match(/ Install<\/button>/g)?.length ?? 0).toBe(2); // Claude Code and Codex only
+    expect(missing.match(/ Install<\/button>/g)?.length ?? 0).toBe(3); // Claude Code, Codex and Gemini CLI
   });
 
   it("a connected agent shows a quiet check, never a Ready or Connected label", () => {

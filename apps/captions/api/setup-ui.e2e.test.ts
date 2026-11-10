@@ -84,6 +84,8 @@ async function walkSetup(how: "In the app" | "In my own AI" | "Both", size: keyo
     // nothing is connected before a press, and there is no API key ask
     expect(await dialog.getByText("Connected ✓").count()).toBe(0);
     expect(await dialog.getByText(/api key/i).count()).toBe(0);
+    // the screenshot shows what this computer has, not the search for it
+    await dialog.getByText(/Looking for your AI/).waitFor({ state: "hidden", timeout: 30_000 }).catch(() => {});
     await shot(page, `${tag}-3agents`);
     await dialog.getByRole("button", { name: "Continue", exact: true }).click();
   }

@@ -196,9 +196,7 @@ export function ConnectStepView({
               </li>
             ))}
           </ul>
-        ) : (
-          <p className="border-t border-border/60 px-4 py-3 text-xs text-muted-foreground">No other computers on your account yet.</p>
-        )}
+        ) : null}
         <div className="space-y-2 border-t border-border/60 px-4 py-3">
           <p className="text-xs text-muted-foreground">Run this on each computer you want to connect.</p>
           <div className="flex items-center justify-between gap-2 rounded-md bg-muted/60 px-3 py-2 font-mono text-xs">

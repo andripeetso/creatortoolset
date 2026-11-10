@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -23,7 +24,8 @@ async function send(url: string, method: string, body?: unknown): Promise<void> 
 }
 
 /** The folder list: what the scan found on this computer, in the Settings → Devices storage the app reads. */
-export function FoldersStep({ onNext }: { onNext: () => void }) {
+/** `actions`: the dialog footer's slot, where this step's buttons go (the footer has no Continue on this step). */
+export function FoldersStep({ onNext, actions }: { onNext: () => void; actions: HTMLElement | null }) {
   const hosted = useAuth((s) => s.hosted);
   const me = useMe();
   const [storage, setStorage] = useState<StorageView | null>(null);
@@ -117,9 +119,7 @@ export function FoldersStep({ onNext }: { onNext: () => void }) {
     return (
       <div className="space-y-4">
         <Storage devices={own} storage={storage} onChanged={() => void reload()} />
-        <div className="flex justify-end">
-          <Button onClick={onNext}>Continue</Button>
-        </div>
+        {actions && createPortal(<Button onClick={onNext}>Continue</Button>, actions)}
       </div>
     );
   }
@@ -211,14 +211,18 @@ export function FoldersStep({ onNext }: { onNext: () => void }) {
         </p>
       )}
 
-      <div className="flex flex-wrap items-center justify-end gap-3 pt-2">
-        <Button variant="ghost" disabled={busy} onClick={onNext}>
-          Do not add folders
-        </Button>
-        <Button disabled={busy || chosen.length === 0} onClick={() => void addAll()}>
-          {chosen.length > 0 ? `Add ${chosen.length} ${chosen.length === 1 ? "folder" : "folders"}` : "Add folders"}
-        </Button>
-      </div>
+      {actions &&
+        createPortal(
+          <>
+            <Button variant="ghost" disabled={busy} onClick={onNext}>
+              Do not add folders
+            </Button>
+            <Button disabled={busy || chosen.length === 0} onClick={() => void addAll()}>
+              {chosen.length > 0 ? `Add ${chosen.length} ${chosen.length === 1 ? "folder" : "folders"}` : "Add folders"}
+            </Button>
+          </>,
+          actions,
+        )}
     </div>
   );
 }

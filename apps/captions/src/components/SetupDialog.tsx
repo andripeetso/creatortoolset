@@ -155,6 +155,7 @@ export function SetupDialog() {
   const [ticked, setTicked] = useState<Tool[] | null>(null);
   const [note, setNote] = useState(false);
   const [named, setNamed] = useState(false); // the project form reports when it has a name: Create stays off until then
+  const [footerSlot, setFooterSlot] = useState<HTMLElement | null>(null); // the folders step portals its buttons in
   const [unsure, setUnsure] = useState<boolean | null>(null); // "Not sure yet" ticked here; null = read it from the saved answers
   // the computers picked on the Connect step: this computer first and checked, the others unchecked until picked
   const [picked, setPicked] = useState<Set<string> | null>(null);
@@ -348,7 +349,7 @@ export function SetupDialog() {
 
             {step === "agents" && <AgentsStep picked={pickedIds} />}
 
-            {step === "folders" && <FoldersStep onNext={() => to(after)} />}
+            {step === "folders" && <FoldersStep onNext={() => to(after)} actions={footerSlot} />}
 
             {step === "done" && (
               <div className="space-y-4">
@@ -383,7 +384,8 @@ export function SetupDialog() {
                   Back
                 </Button>
               )}
-              {/* the folders step has its own buttons (Do not add folders, Add N folders) */}
+              {/* the folders step puts its own buttons here (Do not add folders, Add N folders) */}
+              {step === "folders" && <div ref={setFooterSlot} className="flex items-center gap-2" />}
               {step !== "folders" &&
                 (last ? (
                   <Button onClick={() => void finish()} className="min-w-28 bg-[var(--tint)] text-white hover:bg-[var(--tint)] hover:brightness-110">

@@ -14,7 +14,7 @@ const POLL_MS = 3_000;
 /** How long a request may take before it gives up with a plain message (no wait spins forever). */
 const TIMEOUT_MS = 90_000;
 
-/** The agents this step lists, in order. Gemini CLI installs on its own, so it has no Install button. */
+/** The agents this step lists, in order. */
 const AGENTS: CliId[] = ["claude", "codex", "gemini"];
 const NAME: Record<CliId, string> = { claude: "Claude Code", codex: "Codex", gemini: "Gemini CLI" };
 const COMMAND: Record<CliId, string> = { claude: "claude", codex: "codex", gemini: "gemini" };
