@@ -14,7 +14,8 @@ import {
   Sparkles,
   Trash2,
 } from "lucide-react";
-import { useCachedList } from "@/lib/local-cache";
+import { putCached, useCachedList, useCachedLoad } from "@/lib/local-cache";
+import { useAuth } from "@/lib/auth";
 import { fmtClock } from "@/lib/ass";
 import { fmtBytes, timeAgo } from "@/lib/exports";
 import {
@@ -295,16 +296,7 @@ function SessionView({
   };
   const pct = Math.round(mix * 100);
 
-  // poll while the job runs
-  useEffect(() => {
-    if (!isEnhancing(session)) return;
-    const t = setInterval(async () => {
-      const next = await getEnhance(session.id).catch(() => null);
-      if (next) onChange(next);
-    }, 1000);
-    return () => clearInterval(t);
-  }, [session, onChange]);
-
+  // a running job's progress arrives as change notices (the page's useCachedLoad)
   const retry = async () => {
     setError(null);
     try {
@@ -485,8 +477,13 @@ export default function EnhancePage() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   // the saved list shows at once and refreshes underneath (lib/local-cache)
   const { items: sessions, setItems: setSessions, refresh: loadSessions } = useCachedList("/api/enhance", listEnhance);
-  const [current, setCurrent] = useState<EnhanceSession | null>(null);
-  const [openingSession, setOpeningSession] = useState(false);
+  // the open project: saved copy (or its row in the list) at once, a running job live (lib/local-cache)
+  const detail = useCachedLoad<EnhanceSession>(sessionId ? `/api/enhance/${sessionId}` : null, () =>
+    getEnhance(sessionId!),
+  );
+  const current = sessionId ? (detail.data ?? sessions.find((x) => x.id === sessionId) ?? null) : null;
+  const setCurrent = detail.set;
+  const openingSession = !!sessionId && !current && !detail.error;
   const [avail, setAvail] = useState<EnhanceAvailability | null>(null);
   const [engine, setEngine] = useState<Engine>("nvidia");
   const [then, setThen] = useState<Engine | null>(null);
@@ -506,36 +503,6 @@ export default function EnhancePage() {
 
   // The route id lets Admin open any user's Audio Enhancer project and
   // also makes ordinary audio projects directly addressable.
-  useEffect(() => {
-    if (!sessionId) {
-      setOpeningSession(false);
-      setCurrent(null);
-      return;
-    }
-
-    let cancelled = false;
-    setCurrent(null);
-    setOpeningSession(true);
-    setUploadError(null);
-    getEnhance(sessionId)
-      .then((session) => {
-        if (!cancelled) setCurrent(session);
-      })
-      .catch((e) => {
-        if (!cancelled) {
-          setUploadError(
-            e instanceof Error ? e.message : "Could not open audio project",
-          );
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setOpeningSession(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [sessionId]);
 
   const refreshList = useCallback(() => {
     loadSessions().catch(() => {});
@@ -548,7 +515,7 @@ export default function EnhancePage() {
       // the server queues the enhancement in the same go — the session
       // arrives already running
       const s = await uploadEnhance(f, engine, second, setUploadPct);
-      setCurrent(s);
+      putCached(useAuth.getState().me?.username, `/api/enhance/${s.id}`, s);
       navigate(`/enhance/${s.id}`);
       refreshList();
     } catch (e) {
@@ -648,8 +615,8 @@ export default function EnhancePage() {
                 }}
               />
             </label>
-            {uploadError && (
-              <p className="mt-2 text-xs text-red-400">{uploadError}</p>
+            {(uploadError || (sessionId && !current && detail.error)) && (
+              <p className="mt-2 text-xs text-red-400">{uploadError || detail.error}</p>
             )}
 
             {sessions.length > 0 && (

@@ -12,6 +12,7 @@ import {
 import { CleanCleanupControls } from "./CleanCleanupControls";
 import { AuditTable } from "./CleanMetadataAudit";
 import { fmtBytes } from "@/lib/exports";
+import { onTopic } from "@/lib/sync";
 
 export function CleanBatchPanel({
   videos,
@@ -53,11 +54,13 @@ export function CleanBatchPanel({
   useEffect(() => {
     onBusyChange(working || active || restoring);
   }, [working, active, restoring, onBusyChange]);
+  // while a batch runs, its state is read again whenever the server says Clean changed (each video done, packing, the end)
+  const runningId = active ? job?.id : undefined;
   useEffect(() => {
-    if (!active || !job) return;
+    if (!runningId) return;
     const controller = new AbortController();
-    const timer = setTimeout(() => {
-      void readCleanBatch(job.id, controller.signal)
+    const read = () =>
+      void readCleanBatch(runningId, controller.signal)
         .then((value) => {
           setJob(value);
           setError("");
@@ -65,21 +68,16 @@ export function CleanBatchPanel({
         .catch((e) => {
           if (!controller.signal.aborted) {
             setError(e.message);
-            setJob((value) =>
-              [404, 410].includes(e.status)
-                ? undefined
-                : value
-                  ? { ...value }
-                  : value,
-            );
+            if ([404, 410].includes(e.status)) setJob(undefined);
           }
         });
-    }, 1500);
+    const off = onTopic("clean", read);
+    read(); // a change between the start and this subscription is not missed
     return () => {
-      clearTimeout(timer);
+      off();
       controller.abort();
     };
-  }, [job, active]);
+  }, [runningId]);
   async function start() {
     setWorking(true);
     setError("");

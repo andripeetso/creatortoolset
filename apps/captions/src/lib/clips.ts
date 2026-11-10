@@ -5,6 +5,7 @@
  */
 
 import { chunkedUpload, json } from "@/lib/uploads";
+import { onTopic } from "@/lib/sync";
 
 export interface ClipChapter {
   t: number;
@@ -256,7 +257,6 @@ export const restoreClipTranscript = (id: string) =>
   );
 
 const BLOCK_WAIT_MS = 13 * 60 * 1000;
-const BLOCK_POLL_MS = 800;
 
 async function settleBlock(
   id: string,
@@ -264,16 +264,29 @@ async function settleBlock(
 ): Promise<ClipSession> {
   const deadline = Date.now() + BLOCK_WAIT_MS;
   for (;;) {
-    const s = await getClip(id);
-    if (!s.generating?.includes(kind)) {
-      const err = s.blockErrors?.[kind];
-      if (err) throw new Error(err);
-      return s;
+    // asks again when the server says a clip changed (subscribed before the read, so the change is never missed);
+    // 30 s at most if the stream is down
+    let off = () => {};
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const changed = new Promise<void>((r) => {
+      off = onTopic("clips", () => r());
+      timer = setTimeout(r, 30_000);
+    });
+    try {
+      const s = await getClip(id);
+      if (!s.generating?.includes(kind)) {
+        const err = s.blockErrors?.[kind];
+        if (err) throw new Error(err);
+        return s;
+      }
+      if (Date.now() >= deadline) {
+        throw new Error("The AI took too long to answer — try again");
+      }
+      await changed;
+    } finally {
+      off();
+      clearTimeout(timer);
     }
-    if (Date.now() >= deadline) {
-      throw new Error("The AI took too long to answer — try again");
-    }
-    await new Promise<void>((r) => window.setTimeout(r, BLOCK_POLL_MS));
   }
 }
 

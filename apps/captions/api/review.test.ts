@@ -116,6 +116,32 @@ describe("review", () => {
     expect((await readMeta(id))!.name).toBe("Golden window B");
   });
 
+  it("tells the owner's open screens about a reviewer's comment on a share link", async () => {
+    const { syncApp } = await import("./lib/sync");
+    // the review topic's newest change for `user`, from the hello of their change stream
+    const newest = async (user: string) => {
+      const a = new Hono<{ Variables: AuthVars }>();
+      a.use("*", async (c, next) => {
+        c.set("user", { username: user, role: "user", cloud: false, off: [] });
+        await next();
+      });
+      a.route("/", syncApp);
+      const ac = new AbortController();
+      const reader = (await a.request("/events", { signal: ac.signal })).body!.getReader();
+      let buf = "";
+      while (!buf.includes("\n\n")) buf += new TextDecoder().decode((await reader.read()).value);
+      ac.abort();
+      return (JSON.parse(/data: (.*)/.exec(buf)![1]).topics.review as number | undefined) ?? 0;
+    };
+    const asset = await up("Linked.mov");
+    const token = (await read(app.request(`/assets/${asset.id}`, patch({ share: { enabled: true } })))).share.token;
+    await new Promise((r) => setTimeout(r, 1100)); // the failed processing's last notice has gone out
+    const before = await newest("owner");
+    const posted = await app.request(`/s/${token}/comments`, json({ version: 1, t: 0, text: "Tiny note", author: "Client" }, { "x-review-key": "k".repeat(24) }));
+    expect(posted.status).toBe(200);
+    expect(await newest("owner")).toBeGreaterThan(before);
+  });
+
   it("keeps a video marked Finished or In progress by hand", async () => {
     const added = await addVersion(undefined, { owner: "owner", name: "Published.mp4", mime: "video/mp4", bytes: 1 }, async () => {});
     const mark = async (finished: unknown) =>

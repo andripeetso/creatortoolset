@@ -63,7 +63,8 @@ import { AccountStats, AccountTotals, StatsSection } from "@/components/instagra
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { AppBar } from "@/components/AppBar";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
-import { readCached } from "@/lib/local-cache";
+import { forgetCached, readCached, useCachedLoad } from "@/lib/local-cache";
+import { onTopic, whenVisible } from "@/lib/sync";
 import { currentProject, useWorkspace } from "@/lib/workspace";
 import { patchProject } from "@/lib/workshop";
 import { RecipePicker } from "@/components/instagram/RecipePicker";
@@ -82,9 +83,6 @@ const CATALOG_SORTS: { id: CatalogSort; label: string }[] = [
   { id: "comments", label: "Comments" },
 ];
 
-/** The accounts opened in this window, as they were last loaded: opening one again shows it at once and refreshes underneath. */
-const seen = new Map<string, InstagramAccount>();
-
 /**
  * An account's page. Given `accountId` it is embedded (the Workshop opens a creator in a modal): no header, a post opens through `onOpenPost`, removing closes it.
  */
@@ -98,13 +96,17 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
   const allowed = canUse(me, "instagram");
   const currentProjectId = useWorkspace((s) => s.currentProjectId);
   const project = useWorkspace(currentProject);
-  // what is already known shows at once: the last visit, else the account's row in the home list (header and counts)
-  const known = (id?: string) =>
-    (id &&
-      (seen.get(id) ??
-        readCached<InstagramAccount[]>(me?.username, `instagram/accounts?p=${currentProjectId ?? ""}`)?.find((a) => a.id === id))) ||
-    null;
-  const [account, setAccount] = useState<InstagramAccount | null>(() => known(accountId));
+  // what is already known shows at once: the last visit (saved on this device), else the account's row in the home
+  // list (header and counts); a run's steps and its end refetch it (lib/local-cache)
+  const detail = useCachedLoad<InstagramAccount>(allowed && accountId ? `/api/instagram/accounts/${accountId}` : null, () =>
+    getAccount(accountId!),
+  );
+  const account =
+    detail.data ??
+    ((accountId &&
+      readCached<InstagramAccount[]>(me?.username, `instagram/accounts?p=${currentProjectId ?? ""}`)?.find((a) => a.id === accountId)) ||
+      null);
+  const setAccount = detail.set;
   const [error, setError] = useState<string | null>(null);
   const [avail, setAvail] = useState<InstagramAvailability | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -121,54 +123,39 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
   const [statsOpen, setStatsOpen] = useState(false);
   const [lastAnchor, setLastAnchor] = useState<string | undefined>();
 
+  const { refresh: refreshAccount } = detail;
   const load = useCallback(() => {
-    if (!accountId) return;
-    getAccount(accountId)
-      .then((a) => {
-        setBrokenAvatar(false);
-        seen.set(a.id, a);
-        setAccount(a);
-      })
-      .catch((e) => setPageError(e instanceof Error ? e.message : "Could not open account"));
-  }, [accountId]);
+    setBrokenAvatar(false);
+    void refreshAccount().catch((e) => setPageError(e instanceof Error ? e.message : "Could not open account"));
+  }, [refreshAccount]);
 
   useEffect(() => {
     if (!allowed) return;
-    load();
     getInstagramAvailability()
       .then(setAvail)
       .catch(() => {});
-  }, [allowed, load]);
+  }, [allowed]);
+  useEffect(() => {
+    if (detail.error) setPageError(detail.error);
+  }, [detail.error]);
 
   const processing = account?.status === "processing";
   useEffect(() => {
     if (!processing || !accountId) return;
-    // While a run is on: the account's small record, one request at a time. The whole account (catalog, posts,
-    // insights) is read again only when the run moves to its next step or ends.
-    let stop = false;
-    let t = 0;
-    let step: string | undefined;
-    const tick = async () => {
-      const next = await getAccountStatus(accountId).catch(() => null);
-      if (stop) return;
-      if (next) {
-        const moved = next.status !== "processing" || (step !== undefined && next.step !== step);
-        step = next.step;
-        setAccount((cur) => (cur ? { ...cur, status: next.status, step: next.step, progress: next.progress, error: next.error, jobs: next.jobs } : cur));
-        if (moved) load();
-      }
-      if (next?.status !== "processing") return;
-      t = window.setTimeout(tick, 800);
-    };
-    t = window.setTimeout(tick, 800);
-    return () => {
-      stop = true;
-      window.clearTimeout(t);
-    };
-  }, [processing, accountId, load]);
+    // While a run is on: the account's small record, read again each time its job saves. A new step or the end
+    // refetches the whole account by itself (lib/local-cache).
+    return onTopic("instagram-jobs", () =>
+      whenVisible(`instagram-account:${accountId}`, () =>
+        void getAccountStatus(accountId).then(
+          (next) =>
+            setAccount((cur) => (cur ? { ...cur, status: next.status, step: next.step, progress: next.progress, error: next.error, jobs: next.jobs } : cur)),
+          () => {},
+        ),
+      ),
+    );
+  }, [processing, accountId, setAccount]);
 
   useEffect(() => {
-    setAccount((cur) => (cur && cur.id !== accountId ? known(accountId) : cur));
     setPane(null);
     setSelected(new Set());
     setLastAnchor(undefined);
@@ -313,7 +300,7 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
   const remove = async () => {
     if (!account) return;
     await deleteAccount(account.id).catch(() => {});
-    seen.delete(account.id);
+    forgetCached(`/api/instagram/accounts/${account.id}`);
     if (embedded) onClose?.();
     else navigate(base);
   };
@@ -341,7 +328,7 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
       {!embedded && <AppBar tool="Content Analyzer" to={base} trail={account ? `@${account.username}` : undefined} account={!!me}>
         {me ? (
           <>
-            <QueueMenu base={base} busyHint={processing} onChange={load} />
+            <QueueMenu base={base} onChange={load} />
             {/* this account belongs to the project being left: the other project opens on its own list */}
             <ProjectSwitcher onSelect={() => navigate(base)} />
           </>
@@ -362,9 +349,11 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
         {pageError && !account ? (
           <p className="text-sm text-red-400">{pageError}</p>
         ) : !account ? (
-          <p className="flex items-center gap-2 py-12 text-sm text-zinc-500">
-            <Loader2 className="h-4 w-4 animate-spin" /> Opening account…
-          </p>
+          // the header's own size, empty, so nothing jumps when the account arrives
+          <div aria-busy="true" aria-label="Opening account" className="flex items-start gap-4">
+            <div className="h-14 w-14 rounded-full bg-zinc-800" />
+            <div className="h-14 flex-1 rounded-lg bg-zinc-900/40" />
+          </div>
         ) : (
           <>
             <div className="flex flex-wrap items-start gap-4">

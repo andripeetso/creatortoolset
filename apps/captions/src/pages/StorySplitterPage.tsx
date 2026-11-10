@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
+import { useCachedList } from "@/lib/local-cache";
 import { Download, Eraser, Loader2, Play, Scissors, Upload, UploadCloud, WandSparkles, X } from "lucide-react";
 import { AppBar, ToolIntro } from "@/components/AppBar";
 import { dropZoneClass } from "@/components/DropZone";
@@ -45,7 +46,10 @@ export default function StorySplitterPage() {
   const [params, setParams] = useSearchParams();
   const me = useMe();
   const lists = !!me; // an account keeps its splits
-  const [splits, setSplits] = useState<Split[]>([]);
+  // the saved splits: the local copy at once, live with changes from elsewhere (lib/local-cache)
+  const { items: splits, setItems: setSplits } = useCachedList<Split>(lists ? "/api/stories" : null, () =>
+    fetch("/api/stories").then((r) => (r.ok ? (r.json() as Promise<Split[]>) : Promise.reject(new Error(`HTTP ${r.status}`)))),
+  );
   const [saved, setSaved] = useState<Split | null>(null); // the open video's split
   const [waiting, setWaiting] = useState<Split | null>(null); // a local file's split, until it's dropped again
   const [source, setSource] = useState<Source | null>(null);
@@ -97,13 +101,6 @@ export default function StorySplitterPage() {
       if (run.current === my) setBusy(null);
     }
   }, []);
-
-  useEffect(() => {
-    if (!lists) return;
-    void fetch("/api/stories")
-      .then((r) => (r.ok ? r.json() : []))
-      .then(setSplits, () => {});
-  }, [lists]);
 
   // From a library piece: the master, read on this origin (and a saved split's cuts).
   const clip = params.get("clip");

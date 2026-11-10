@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router";
+import { onTopic, whenVisible } from "@/lib/sync";
 import {
   ArrowLeft,
   ScanSearch,
@@ -85,10 +86,10 @@ export default function MobileInstagramPage() {
 
   const anyProcessing =
     posts.some(isProcessing) || accounts.some((a) => a.status === "processing");
+  // while something runs: read again each time its job saves (lib/sync.ts)
   useEffect(() => {
     if (!allowed || !anyProcessing) return;
-    const t = window.setInterval(refresh, 800);
-    return () => window.clearInterval(t);
+    return onTopic("instagram-jobs", () => whenVisible("instagram-mobile", refresh));
   }, [allowed, anyProcessing, refresh]);
 
   const crawlNow = Boolean(avail?.available);

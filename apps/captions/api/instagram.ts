@@ -157,6 +157,7 @@ import { keyFor, type Actor } from "./my-keys";
 const typesafeFor = (who: Actor) => keyFor(who, "TYPESAFE_API_KEY").key;
 import { LOCAL_USER, bumpUsage, findUser, type SessionUser } from "./users";
 import type { LibraryPost, OwnPost } from "./lib/workshop/folder";
+import { announceSoon } from "./lib/announce-soon";
 
 /**
  * Instagram Analyzer — library of accounts and posts. Jobs (stats, media,
@@ -372,6 +373,20 @@ function afterWrite<T>(id: string, fn: () => Promise<T>): Promise<T> {
   return next;
 }
 
+/**
+ * A running job's save, told to its owner's open screens: every save on "instagram-jobs" (the queue, a post's or an
+ * account's progress: small reads), and on "instagram" (the lists, the account and Analysis, read again in full) only
+ * when a post starts or ends, or an account moves to its next step. Both at most about once a second.
+ */
+const lastStep = new Map<string, string>();
+function tellJob(key: string, owner: string | undefined, m: { status?: string; step?: string }): void {
+  announceSoon(owner, "instagram-jobs");
+  const now = key.startsWith("a:") ? `${m.status}|${m.step}` : `${m.status}`;
+  if (lastStep.get(key) !== now) announceSoon(owner, "instagram");
+  if (m.status === "processing") lastStep.set(key, now);
+  else lastStep.delete(key);
+}
+
 export async function persistAccount(meta: AccountMeta): Promise<void> {
   meta.updatedAt = Date.now();
   await afterWrite(`a:${meta.id}`, async () => {
@@ -382,6 +397,7 @@ export async function persistAccount(meta: AccountMeta): Promise<void> {
       /* deleted mid-job */
     }
   });
+  if (accountActive.has(meta.id)) tellJob(`a:${meta.id}`, meta.owner, meta);
 }
 
 export async function readAccount(id: string): Promise<AccountMeta | null> {
@@ -673,6 +689,7 @@ async function persist(meta: PostMeta): Promise<void> {
       /* deleted mid-job */
     }
   });
+  if (active.has(meta.id)) tellJob(meta.id, meta.owner, meta);
 }
 
 async function readMeta(id: string): Promise<PostMeta | null> {

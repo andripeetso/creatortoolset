@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { canRecordScreen, openRecorder } from "@/lib/mac-record";
 import { canUse, useAuth } from "@/lib/auth";
-import { useCachedList } from "@/lib/local-cache";
+import { putCached, useCachedList, useCachedLoad } from "@/lib/local-cache";
 import { Picture } from "@/components/Picture";
 import { fmtBytes, timeAgo } from "@/lib/exports";
 import { toolsetHomePath } from "@/lib/mobile";
@@ -198,15 +198,6 @@ function ClipView({
   const [chapterBusy, setChapterBusy] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState("");
-
-  useEffect(() => {
-    if (!isProcessing(session) && !session.generating?.length) return;
-    const t = setInterval(async () => {
-      const next = await getClip(session.id).catch(() => null);
-      if (next) onChange(next);
-    }, 400);
-    return () => clearInterval(t);
-  }, [session.id, session.status, session.generating, onChange]);
 
   useEffect(() => {
     if (!session.hasTranscript) {
@@ -567,13 +558,16 @@ export default function ClipsPage() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   // the saved list shows at once and refreshes underneath (lib/local-cache)
   const { items: sessions, setItems: setSessions, refresh: loadSessions } = useCachedList("/api/clips", listClips);
-  const [current, setCurrent] = useState<ClipSession | null>(null);
-  const [opening, setOpening] = useState(false);
+  // the open clip: its saved copy (or its row in the list) paints at once; processing and new blocks arrive as change
+  // notices (lib/local-cache)
+  const detail = useCachedLoad<ClipSession>(clipId ? `/api/clips/${clipId}` : null, () => getClip(clipId!));
+  const current = clipId ? (detail.data ?? sessions.find((x) => x.id === clipId) ?? null) : null;
+  const opening = !!clipId && !current && !detail.error;
+  const pageError = uploadError || (clipId && !current ? detail.error : "") || null;
+  const setDetail = detail.set;
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [avail, setAvail] = useState<ClipsAvailability | null>(null);
-  const currentIdRef = useRef<string | null>(null);
-  currentIdRef.current = current?.id ?? null;
 
   useEffect(() => {
     if (!canUse(me, "notes")) return;
@@ -582,54 +576,19 @@ export default function ClipsPage() {
       .catch(() => {});
   }, [me]);
 
-  useEffect(() => {
-    if (!clipId) {
-      setOpening(false);
-      setCurrent(null);
-      return;
-    }
-    const already = currentIdRef.current === clipId;
-    let cancelled = false;
-    if (!already) {
-      setCurrent(null);
-      setOpening(true);
-    }
-    setUploadError(null);
-    getClip(clipId)
-      .then((session) => {
-        if (!cancelled) setCurrent(session);
-      })
-      .catch((e) => {
-        if (!cancelled) {
-          setUploadError(
-            e instanceof Error ? e.message : "Could not open clip",
-          );
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setOpening(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [clipId]);
-
   const refreshList = useCallback(() => {
     loadSessions().catch(() => {});
   }, [loadSessions]);
 
   const applyClip = useCallback((s: ClipSession) => {
-    setCurrent((prev) => {
-      if (!prev || prev.id !== s.id) return s;
-      return s.updatedAt >= prev.updatedAt ? s : prev;
-    });
+    setDetail((prev) => (prev && (prev.id !== s.id || s.updatedAt < prev.updatedAt) ? prev : s));
     setSessions((list) =>
       list.map((x) => {
         if (x.id !== s.id) return x;
         return s.updatedAt >= x.updatedAt ? s : x;
       }),
     );
-  }, []);
+  }, [setDetail, setSessions]);
 
   const uploadingRef = useRef(false);
   const saveBlob = async (blob: Blob, name: string, mime: string) => {
@@ -640,7 +599,7 @@ export default function ClipsPage() {
     try {
       const s = await uploadClip(blob, name, mime, setUploadPct);
       rec.discard();
-      setCurrent(s);
+      putCached(me?.username, `/api/clips/${s.id}`, s);
       navigate(`/clips/${s.id}`);
       refreshList();
     } catch (e) {
@@ -704,7 +663,7 @@ export default function ClipsPage() {
         message={
           opening
             ? "Opening clip…"
-            : uploadError || "This clip could not be opened."
+            : pageError || "This clip could not be opened."
         }
       />
     );
@@ -869,9 +828,9 @@ export default function ClipsPage() {
                 )}
               </button>
             </div>
-            {uploadError && (
+            {pageError && (
               <p className="mt-2 text-center text-xs text-red-400">
-                {uploadError}
+                {pageError}
               </p>
             )}
           </div>
@@ -936,8 +895,8 @@ export default function ClipsPage() {
             {rec.error && (
               <p className="mt-2 text-xs text-red-400">{rec.error}</p>
             )}
-            {uploadError && (
-              <p className="mt-2 text-xs text-red-400">{uploadError}</p>
+            {pageError && (
+              <p className="mt-2 text-xs text-red-400">{pageError}</p>
             )}
 
             {showLibrary && sessions.length > 0 && (

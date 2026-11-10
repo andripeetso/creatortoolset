@@ -20,7 +20,7 @@ import {
   Video,
 } from "lucide-react";
 import { canUse, useAuth } from "@/lib/auth";
-import { useCachedList } from "@/lib/local-cache";
+import { putCached, useCachedList, useCachedLoad } from "@/lib/local-cache";
 import { Picture } from "@/components/Picture";
 import { timeAgo } from "@/lib/exports";
 import { isPhoneHub, toolsetHomePath } from "@/lib/mobile";
@@ -84,8 +84,11 @@ function ComposeForm({
   onCreated: (doc: DocumentRecord) => void;
   onUpdated?: (doc: DocumentRecord) => void;
 }) {
-  const [media, setMedia] = useState<{ clips: MediaClip[] } | null>(null);
-  const [ai, setAi] = useState<boolean | null>(null);
+  // the recordings to pick from: saved copy at once, live with Video Notes' changes
+  const { data: media } = useCachedLoad<{ clips: MediaClip[] }>("/api/documents/media", listDocumentMedia, { topic: "clips" });
+  // whether an AI is set up: the last answer shows at once, so its notice doesn't push the form down later
+  const availability = useCachedLoad("/api/documents/availability", getDocumentsAvailability);
+  const ai = availability.data?.ai ?? (availability.error ? false : null);
   const [kind, setKind] = useState<DocKind>(
     initial?.kind === "guide" || clipId ? "guide" : "brief",
   );
@@ -95,18 +98,10 @@ function ComposeForm({
   const [error, setError] = useState<string | null>(null);
   const dragFrom = useRef<number | null>(null);
 
+  const startClip = clipId ? media?.clips.find((c) => c.id === clipId) : undefined;
   useEffect(() => {
-    listDocumentMedia()
-      .then((d) => {
-        setMedia({ clips: d.clips });
-        const clip = clipId ? d.clips.find((c) => c.id === clipId) : undefined;
-        if (clip) setPicked([{ type: "clip", id: clip.id, name: clip.name }]);
-      })
-      .catch(() => setMedia({ clips: [] }));
-    getDocumentsAvailability()
-      .then((d) => setAi(d.ai))
-      .catch(() => setAi(false));
-  }, []);
+    if (startClip) setPicked((cur) => (cur.length ? cur : [{ type: "clip", id: startClip.id, name: startClip.name }]));
+  }, [startClip]);
 
   const add = (s: DocSource, usable: boolean) => {
     if (!usable) return;
@@ -237,7 +232,12 @@ function ComposeForm({
           </p>
         )}
         {!media ? (
-          <p className="text-sm text-muted-foreground">Loading media…</p>
+          // the rows' final size, empty, so the form doesn't move when they arrive
+          <div aria-hidden="true" className="flex flex-col gap-1">
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="h-[58px] rounded-lg border border-border" />
+            ))}
+          </div>
         ) : media.clips.length === 0 ? (
           <p className="text-sm text-muted-foreground">No clips yet.</p>
         ) : (
@@ -797,9 +797,14 @@ export default function DocumentsPage() {
   }, [clipId, docId, navigate]);
   // the saved list shows at once and refreshes underneath (lib/local-cache)
   const { items: docs, setItems: setDocs, refresh: loadDocs } = useCachedList("/api/documents", listDocuments);
-  const [current, setCurrent] = useState<DocumentRecord | null>(null);
-  const [opening, setOpening] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // the open guide: saved copy at once, live with changes from elsewhere (lib/local-cache)
+  const detail = useCachedLoad<DocumentRecord>(docId && !composing ? `/api/documents/${docId}` : null, () =>
+    getDocument(docId!),
+  );
+  const current = docId && !composing ? detail.data : null;
+  const setCurrent = detail.set;
+  const error = current ? null : detail.error || null;
+  const opening = !!docId && !composing && !current && !error;
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
 
@@ -807,32 +812,6 @@ export default function DocumentsPage() {
     if (!canUse(me, "guides") || composing || docId) return;
     loadDocs().catch(() => {});
   }, [me, composing, docId, loadDocs]);
-
-  useEffect(() => {
-    if (!docId || composing) {
-      setCurrent(null);
-      setOpening(false);
-      setError(null);
-      return;
-    }
-    let cancelled = false;
-    setOpening(true);
-    setError(null);
-    getDocument(docId)
-      .then((d) => {
-        if (!cancelled) setCurrent(d);
-      })
-      .catch((e) => {
-        if (!cancelled)
-          setError(e instanceof Error ? e.message : "Document not found");
-      })
-      .finally(() => {
-        if (!cancelled) setOpening(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [docId, composing]);
 
   const owns =
     !!me &&
@@ -899,7 +878,7 @@ export default function DocumentsPage() {
               <ComposeForm
                 clipId={clipId}
                 onCreated={(d) => {
-                  setCurrent(d);
+                  putCached(me?.username, `/api/documents/${d.id}`, d);
                   navigate(`/documents/${d.id}`);
                 }}
               />

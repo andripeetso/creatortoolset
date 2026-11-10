@@ -40,6 +40,7 @@ import {
   VolumeX,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Picture } from "@/components/Picture";
 import { PictureRulers, RULER, type Guide } from "@/components/PictureRulers";
 import { HistoryArrows, HomeLink } from "@/components/HomeLink";
 import { UserMenu } from "@/components/UserMenu";
@@ -144,12 +145,14 @@ export default function ReviewAssetPage() {
     [refreshShown],
   );
   useEffect(() => {
-    // the first load is the hook's; this keeps it fresh while the page is open
+    // the first load is the hook's. Signed in, change notices keep it live (lib/local-cache); a link opened without
+    // this server's stream (a share link's reviewer) asks again every 5 s while shown
+    if (!token && !ptoken) return;
     const t = window.setInterval(() => {
       if (document.visibilityState === "visible") void load();
     }, 5000);
     return () => window.clearInterval(t);
-  }, [load]);
+  }, [load, token, ptoken]);
 
   if (!view) {
     return (
@@ -162,9 +165,7 @@ export default function ReviewAssetPage() {
               Creator Toolset
             </Link>
           </p>
-        ) : (
-          <Loader2 className="h-6 w-6 animate-spin text-zinc-600" />
-        )}
+        ) : null}
       </div>
     );
   }
@@ -761,7 +762,9 @@ function Review({
             )}
             {version.removed ? (
               <div className="flex flex-col items-center gap-3 px-6 text-center text-sm text-zinc-400">
-                <img src={api.media(version, "thumb")} alt="" className="max-h-[30dvh] rounded opacity-40" />
+                <span className="block h-[30dvh] overflow-hidden rounded bg-zinc-900 opacity-40" style={{ aspectRatio: `${version.width || 9} / ${version.height || 16}` }}>
+                  <Picture src={api.media(version, "thumb")} alt="" className="h-full w-full object-contain" />
+                </span>
                 V{version.n}'s video was deleted to save space. Its comments are still here.
               </div>
             ) : version.status === "ready" ? (
@@ -848,8 +851,11 @@ function Review({
                 </svg>
               </div>
             ) : version.status === "processing" ? (
-              <div className="flex flex-col items-center gap-3 text-sm text-zinc-400">
-                <Loader2 className="h-6 w-6 animate-spin text-violet-400" />
+              // keyed: the video that replaces it is a new box, not this one growing
+              <div key="processing" className="flex flex-col items-center gap-3 text-sm text-zinc-400">
+                <span className="h-1 w-48 overflow-hidden rounded-full bg-zinc-800">
+                  <span className="block h-full bg-violet-500 transition-[width] duration-500" style={{ width: `${Math.round(version.progress * 100)}%` }} />
+                </span>
                 Preparing video for review · {Math.round(version.progress * 100)}%
               </div>
             ) : (
@@ -1008,11 +1014,11 @@ function Review({
                     )}
                   >
                     {x.ref ? (
-                      <img src={api.refUrl(n, x.ref.id, "look")} alt={x.name} className="h-full w-full object-cover" />
+                      <Picture src={api.refUrl(n, x.ref.id, "look")} alt={x.name} className="h-full w-full object-cover" />
                     ) : x.error ? (
                       <TriangleAlert className="h-5 w-5 text-red-400" />
                     ) : (
-                      <Loader2 className="h-5 w-5 animate-spin text-zinc-500" />
+                      <span className="h-full w-full animate-pulse bg-zinc-800" />
                     )}
                     <button
                       aria-label={`Remove ${x.name}`}
@@ -1928,7 +1934,7 @@ function Entry({
                 className="relative block h-16 w-16 overflow-hidden rounded-md border border-zinc-800 hover:border-violet-500"
               >
                 {/* a GIF plays as itself; a video shows the frames the AI reads */}
-                <img
+                <Picture
                   src={refUrl(c.version, r.id, r.mime === "image/gif" ? "file" : "look")}
                   alt={r.name}
                   className="h-full w-full object-cover"

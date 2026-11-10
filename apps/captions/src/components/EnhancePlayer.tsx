@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Loader2, Pause, Play, Sparkles } from "lucide-react";
+import { Pause, Play, Sparkles } from "lucide-react";
 import { isEnhancing, playUrl, type EnhanceSession } from "@/lib/enhance";
 
 /**
@@ -308,11 +308,7 @@ export function EnhancePlayer({ session, mix, onMix }: {
         title="Click or drag to seek"
       >
         <canvas ref={canvasRef} className="block w-full" />
-        {waveLoading && (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <Loader2 className="h-4 w-4 animate-spin text-zinc-600" />
-          </div>
-        )}
+        {waveLoading && <div aria-hidden="true" className="absolute inset-0 animate-pulse rounded bg-zinc-800/40" />}
       </div>
 
       <div className="mt-3 flex items-center gap-3">

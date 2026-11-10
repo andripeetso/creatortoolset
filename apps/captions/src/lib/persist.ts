@@ -13,6 +13,7 @@ import {
   type ClipSnapshot,
 } from "./store";
 import { storedAutoCadence } from "./cadence-preference";
+import { onTopic } from "./sync";
 import { bumpCueIdCounter, type CadenceFit } from "./captions";
 import {
   deleteLocalRecoveryProject,
@@ -1262,6 +1263,14 @@ async function waitForProxy(
 ): Promise<void> {
   for (let attempt = 0; attempt < 300; attempt++) {
     if (clipGone(clipId)) return;
+    // asked again when the server says a project changed (its proxy is in), or after 10 s; subscribed before the
+    // read, so a proxy finishing meanwhile is not missed
+    let off = () => {};
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const changed = new Promise<void>((resolve) => {
+      off = onTopic("projects", () => resolve());
+      timer = setTimeout(resolve, 10_000);
+    });
     try {
       const status = await sourceStatus(projectId, clipId);
       if (status.proxyReady) {
@@ -1269,11 +1278,15 @@ async function waitForProxy(
         await switchToProxy(projectId, clipId, fromUrl, originalBytes);
         return;
       }
+      await changed;
     } catch {
       // The original is already safe. A transient polling failure must not
       // turn the completed source upload back into a failed project.
+      await changed;
+    } finally {
+      off();
+      clearTimeout(timer);
     }
-    await new Promise((resolve) => window.setTimeout(resolve, 2000));
   }
 }
 

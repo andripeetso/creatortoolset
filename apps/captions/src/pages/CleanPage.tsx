@@ -735,10 +735,8 @@ export default function CleanPage() {
             </fieldset>
             <main className="min-w-0">
               {restoring ? (
-                <div className="flex h-80 items-center justify-center gap-2 text-sm text-zinc-400">
-                  <Loader2 className="h-5 w-5 animate-spin" /> Restoring your
-                  upload…
-                </div>
+                // the drop zone's own size, empty, while the saved upload is read back
+                <div aria-busy="true" aria-label="Restoring your upload" className="h-80 rounded-xl bg-zinc-900/40" />
               ) : !row ? (
                 <button
                   type="button"

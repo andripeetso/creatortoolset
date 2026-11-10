@@ -35,6 +35,7 @@ import {
   parseCleanupPayload,
   plainWords,
 } from "./lib/clip-cleanup";
+import { announceSoon } from "./lib/announce-soon";
 import { capChapters, chapterCountRange, timedTranscript } from "./lib/timed-transcript";
 import { type SessionUser } from "./users";
 import {
@@ -202,9 +203,11 @@ async function runBlockJob(
   k: BlockKind,
   force: boolean,
 ): Promise<void> {
+  let owner: string | undefined;
   try {
     const meta = await readMeta(id);
     if (!meta) return;
+    owner = meta.owner;
     const block = await generateBlock(meta, k, force);
     await afterWrite(id, async () => {
       const fresh = await readMeta(id);
@@ -220,6 +223,7 @@ async function runBlockJob(
     );
   } finally {
     releaseKind(id, k);
+    announceSoon(owner, "clips"); // the block (or its error) is in, and it is no longer generating
   }
 }
 
@@ -275,6 +279,12 @@ async function persist(meta: Meta): Promise<void> {
   } catch {
     /* deleted mid-job */
   }
+}
+
+/** A background job's save: the owner's open screens follow it (at most about once a second, the last save always). */
+async function jobPersist(meta: Meta): Promise<void> {
+  await persist(meta);
+  announceSoon(meta.owner, "clips");
 }
 
 async function readMeta(id: string): Promise<Meta | null> {
@@ -650,7 +660,7 @@ function crawlProgress(meta: Meta, hi: number): () => void {
     if (active.get(meta.id) !== meta) return;
     if (meta.progress >= hi - 0.01) return;
     meta.progress = Math.min(hi - 0.01, meta.progress + 0.015);
-    void persist(meta);
+    void jobPersist(meta);
   }, 700);
   return () => clearInterval(t);
 }
@@ -663,7 +673,7 @@ async function processClip(id: string, user: SessionUser): Promise<void> {
   try {
     meta.step = "thumbnail";
     meta.progress = 0.08;
-    await persist(meta);
+    await jobPersist(meta);
     const duration = await probeDuration(src);
     if (duration) meta.duration = duration;
     const dur = Math.max(0, meta.duration);
@@ -687,7 +697,7 @@ async function processClip(id: string, user: SessionUser): Promise<void> {
     if (canTranscribe && (await probeHasAudio(src))) {
       meta.step = "audio";
       meta.progress = 0.22;
-      await persist(meta);
+      await jobPersist(meta);
       await runFfmpeg(id, [
         "-i",
         src,
@@ -696,7 +706,7 @@ async function processClip(id: string, user: SessionUser): Promise<void> {
       ]);
       meta.step = "transcribe";
       meta.progress = 0.38;
-      await persist(meta);
+      await jobPersist(meta);
       stopCrawl = crawlProgress(meta, 0.72);
       const result = onDevice ? await transcribeOnDevice(wavPath(id), id) : await transcribeWav(await readFile(wavPath(id)), user);
       stopCrawl();
@@ -724,7 +734,7 @@ async function processClip(id: string, user: SessionUser): Promise<void> {
     if (words.length && anyAiConfigured(user)) {
       meta.step = "title";
       meta.progress = Math.max(meta.progress, 0.78);
-      await persist(meta);
+      await jobPersist(meta);
       stopCrawl = crawlProgress(meta, 0.96);
       const excerpt = timedTranscript(words);
       const { min: chMin, max: chMax } = chapterCountRange(meta.duration);
@@ -767,13 +777,13 @@ ${chapterHint} First chapter near 0:00. t matches [mm:ss] in the transcript. No 
     meta.step = undefined;
     meta.progress = 1;
     meta.error = undefined;
-    await persist(meta);
+    await jobPersist(meta);
   } catch (e) {
     stopCrawl();
     if (active.get(id) !== meta) return;
     meta.status = "error";
     meta.error = e instanceof Error ? e.message : String(e);
-    await persist(meta);
+    await jobPersist(meta);
   } finally {
     stopCrawl();
     active.delete(id);
