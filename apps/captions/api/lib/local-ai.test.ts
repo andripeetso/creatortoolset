@@ -216,6 +216,37 @@ describe("connect your AI", () => {
     expect(await local.binFor("codex")).toBe(inApp);
   });
 
+  it("a screen that looks again every few seconds never stacks shells or program starts: looks share one, and answers are kept", async () => {
+    // 2026-11-10: setup's poll started a login shell per program per look, each outliving its timeout; 198 piled up
+    let shells = 0;
+    let versionRuns = 0;
+    let release: () => void = () => {};
+    const slow = new Promise<void>((done) => (release = done));
+    local.setRunnerForTests(async (file, args) => {
+      if (file === "/bin/zsh") {
+        shells++;
+        await slow; // a busy Mac: the shell takes its time
+        const name = String(args[1]).replace("command -v ", "");
+        return { stdout: name === "claude" ? "/fake/bin/claude\n" : "", stderr: "", code: 0 };
+      }
+      if (args[0] === "--version") versionRuns++;
+      if (args.join(" ") === "auth status --json") return { stdout: claudeAuth(true), stderr: "", code: 0 };
+      return { stdout: args[0] === "--version" ? "2.1.319 (Claude Code)\n" : "", stderr: "", code: 0 };
+    });
+    // ten looks arrive while the first is still waiting for its shell
+    const looks = Array.from({ length: 10 }, () => local.localAiView("ana", [], true));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(shells).toBe(4); // claude, codex, gemini, and one line for the other AIs: once each, not ten times
+    release();
+    const views = await Promise.all(looks);
+    expect(views.every((v) => v.rows.find((r) => r.id === "claude")?.found)).toBe(true);
+    // and the looks after it, inside ten seconds, start no shell and do not start the program again for its version
+    await local.localAiView("ana", [], true);
+    await local.localAiView("ana", [], true);
+    expect(shells).toBe(4);
+    expect(versionRuns).toBe(1);
+  });
+
   it("says the Mac app must be open when no Mac of this account is online", async () => {
     world(["claude"], (f, args) => (args.join(" ") === "auth status --json" ? { stdout: claudeAuth(true) } : claudeVersion(f, args)));
     expect(await local.connectCli("cy", "claude", home)).toMatchObject({ state: "mac", signedIn: true });
@@ -316,7 +347,11 @@ describe("connect your AI", () => {
     // installed after that look: a plain look still shows the cached answer, Check again reads the machine
     present.push("codex");
     expect((await local.localAiView("ana", [])).rows.filter((r) => r.found).map((r) => r.id)).toEqual([]);
+    // the login shell is asked again at most every ten seconds (looks that come faster share its last answer)
+    const later = Date.now() + 11_000;
+    const clock = vi.spyOn(Date, "now").mockReturnValue(later);
     const fresh = await local.localAiView("ana", [], true);
+    clock.mockRestore();
     expect(fresh.rows.filter((r) => r.found)).toEqual([expect.objectContaining({ id: "codex", found: true, signedIn: true, version: "codex-cli 0.50.0" })]);
   });
 
