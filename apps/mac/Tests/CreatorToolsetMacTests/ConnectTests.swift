@@ -7,8 +7,9 @@ final class ConnectTests: XCTestCase {
         BrokerComputer(id: id, name: name, hostname: host, status: status)
     }
 
-    func testTheBrokerDefaultsToTheHostedOneAndNoneWhenEmptied() {
-        XCTAssertEqual(connectBrokerURL(nil), defaultConnectBroker)
+    func testThereIsNoConnectServiceUntilOneIsSet() {
+        // none until one is set: the menu item that needs it is hidden, and nothing calls a service that isn't there
+        XCTAssertNil(connectBrokerURL(nil))
         XCTAssertNil(connectBrokerURL(""))
         XCTAssertEqual(connectBrokerURL("https://broker.example.com/"), URL(string: "https://broker.example.com"))
         // a plain http address is refused unless it is this machine
