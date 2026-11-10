@@ -87,7 +87,7 @@ it("says what the phone row is for and that it works on the same Wi-Fi, above th
 it("opens the join forms under Add another computer, with the server address and the link steps", () => {
   const open = view({ expanded: true, link: "https://studio.example.com/api/auth/link/x" });
   expect(open).toContain("Its address, like studio.example.com");
-  expect(open).toContain("paste the link it shows here");
+  expect(open).toContain("Settings → Servers, make a sign-in link and paste it here");
   expect(open).toContain('id="ct-server-link"');
   expect(open).toContain("Join");
 });

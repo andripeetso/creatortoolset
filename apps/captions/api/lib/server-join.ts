@@ -5,7 +5,7 @@ import { env } from "./env";
 
 /**
  * "I already have a server": this computer joins another server as a device of the account that signs in there.
- * The other server's Devices page mints a one-time sign-in link (POST /api/auth/link, 60 s, single use). Pasted here,
+ * The other server's Settings → Servers mints a one-time sign-in link (POST /api/auth/link, 60 s, single use). Pasted here,
  * this server opens it once (no redirects followed), keeps the cookie it is given, and asks for a device with it
  * (POST /api/devices). The device token is kept in a file only this server's user can read; it never goes to the page.
  * Fails closed: https, or plain http on this network only, the link's own path only, no redirects, a short timeout.
@@ -46,7 +46,7 @@ async function words(r: Response): Promise<string> {
 /** Joins the other server behind a pasted link. `fetchImpl` is for tests; the caller passes the device name. */
 export async function joinServer(raw: unknown, opts: { fetchImpl?: typeof fetch; name?: string } = {}): Promise<JoinResult> {
   const link = parseJoinLink(raw);
-  if (!link) return fail("That isn't a sign-in link from another server. Copy the whole link from its Devices page.");
+  if (!link) return fail("That isn't a sign-in link from another server. Copy the whole link from its Settings → Servers.");
   const f = opts.fetchImpl ?? fetch;
   let r: Response;
   try {
