@@ -577,8 +577,10 @@ export default function EnhancePage() {
 
       <div className="w-[560px] max-w-[92vw]">
         {openingSession ? (
-          <div className="flex items-center justify-center gap-2 py-16 text-sm text-zinc-500">
-            <Loader2 className="h-4 w-4 animate-spin" /> Opening audio project…
+          // the project's final frame, empty: the same width as the editor, so nothing moves when it arrives
+          <div aria-busy="true" aria-label="Opening audio project" className="w-full">
+            <div className="h-40 w-full rounded-xl bg-zinc-900" />
+            <div className="mt-4 h-5 w-1/3 rounded bg-zinc-900" />
           </div>
         ) : current ? (
           <>

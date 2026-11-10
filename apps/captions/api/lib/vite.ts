@@ -12,7 +12,17 @@ export function serveStaticFiles(app: App) {
   const distPath = path.resolve(import.meta.dirname, "../dist/public");
 
   app.get("/favicon.ico", (c) => c.redirect("/icons/icon-192.png", 301));
-  app.use("*", serveStatic({ root: "./dist/public" }));
+  // Vite's /assets/ files carry a content hash in their name: keep them for a year, so a reopen never refetches the
+  // app. index.html (served by notFound below) is never cached, so a new deploy still loads at once.
+  app.use(
+    "*",
+    serveStatic({
+      root: "./dist/public",
+      onFound: (p, c) => {
+        if (p.includes("/assets/")) c.header("Cache-Control", "public, max-age=31536000, immutable");
+      },
+    }),
+  );
 
   app.notFound(async (c) => {
     const agent = await clipPageAgentResponse(c);

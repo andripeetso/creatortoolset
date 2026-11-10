@@ -10,6 +10,7 @@ import { SESSION_STATUSES as STAGE_IDS, TURN_STOPPED, type SessionStatus } from 
 import type { InstagramPost } from "./instagram";
 import type { CarouselLayoutSet } from "./carousel-layout";
 import { pieceMarkdown } from "./workshop-markdown";
+import { forgetCached, putCached, readCached } from "./local-cache";
 import { appendProjectId, projectBody, useWorkspace } from "./workspace";
 
 export interface KnowledgeFile {
@@ -1122,3 +1123,41 @@ export interface ShareDelivery {
 export const shareDeliveryUrl = (token: string, id: string, download = false) => `/api/workshop-share/${token}/deliveries/${id}${download ? "?download=1" : ""}`;
 /** Every delivered file in slide order as one ZIP (the iPhone app puts each in Photos). */
 export const shareDeliveriesZipUrl = (token: string) => `/api/workshop-share/${token}/deliveries.zip`;
+
+// ---- a session's saved copy: the page paints from it at once and refreshes underneath (lib/local-cache)
+export interface SavedSession {
+  session: SessionRecord;
+  docs: WorkshopDocument[];
+  messages: ChatMessage[];
+  activeDocId: string | null;
+}
+/** The most recent sessions kept with their contents; older ones are dropped from the saved store. */
+export const SAVED_SESSIONS = 8;
+/** One saved copy's size cap (characters, about bytes). A long chat is cut to its newest messages to fit. */
+export const SAVED_SESSION_CHARS = 160_000;
+const savedKey = (id: string) => `workshop/session/${id}`;
+const SAVED_INDEX = "workshop/saved-sessions";
+
+/** The newest part of a session that fits the cap: the chat is cut first, then the document versions. Null if the bare pieces don't fit. */
+export function fitSavedSession(snap: SavedSession): SavedSession | null {
+  const noVersions = snap.docs.map((d) => ({ ...d, versions: [] }));
+  for (const docs of [snap.docs, noVersions]) {
+    for (const keep of [60, 30, 15, 0]) {
+      const candidate = { ...snap, docs, messages: snap.messages.slice(Math.max(0, snap.messages.length - keep)) };
+      if (JSON.stringify(candidate).length <= SAVED_SESSION_CHARS) return candidate;
+    }
+  }
+  return null;
+}
+
+export const savedSession = (user: string | null | undefined, id: string): SavedSession | null => (id ? readCached<SavedSession>(user, savedKey(id)) : null);
+
+/** Keeps a session's copy for this account and drops the copies of sessions past the most recent SAVED_SESSIONS. */
+export function saveSession(user: string | null | undefined, id: string, snap: SavedSession) {
+  const fitted = fitSavedSession(snap);
+  if (!user || !fitted) return;
+  putCached(user, savedKey(id), fitted);
+  const next = [id, ...(readCached<string[]>(user, SAVED_INDEX) ?? []).filter((x) => x !== id)];
+  for (const gone of next.slice(SAVED_SESSIONS)) forgetCached(savedKey(gone));
+  putCached(user, SAVED_INDEX, next.slice(0, SAVED_SESSIONS));
+}

@@ -1,12 +1,13 @@
-import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { Circle, FolderOpen, MoreHorizontal, Trash2 } from "lucide-react";
 import { AppBar } from "@/components/AppBar";
+import { Picture } from "@/components/Picture";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { canUse, useMe } from "@/lib/auth";
+import { useCachedList } from "@/lib/local-cache";
 import { canRecordScreen, openRecorder, tellRecorder, useLocalRecordings, useRecorderState, type LocalRecording, type RecorderPhase, type ShareDest } from "@/lib/mac-record";
-import { listReviewAssets, thumbUrl, type ReviewAsset } from "@/lib/review";
+import { listReviewAssets, thumbUrl } from "@/lib/review";
 import { timeAgo } from "@/lib/exports";
 import { cn } from "@/lib/utils";
 
@@ -40,20 +41,12 @@ export default function ScreenRecorderPage() {
   const { phase, busy, folder, shortcut } = useRecorderState();
   const recordings = useLocalRecordings();
 
-  const [recent, setRecent] = useState<ReviewAsset[] | null>(null);
-  useEffect(() => {
-    if (busy || !canUse(me, "review")) return;
-    listReviewAssets()
-      .then((all) =>
-        setRecent(
-          all
-            .filter((a) => a.versions.some((v) => v.screen))
-            .sort((a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt))
-            .slice(0, 12),
-        ),
-      )
-      .catch(() => setRecent([]));
-  }, [busy, me]);
+  // Review's list: the saved copy (warmed after sign-in) shows at once and refreshes underneath
+  const { items: reviewAssets } = useCachedList(canUse(me, "review") ? "/api/review" : null, listReviewAssets);
+  const recent = reviewAssets
+    .filter((a) => a.versions.some((v) => v.screen))
+    .sort((a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt))
+    .slice(0, 12);
 
   const throwAway = (r: LocalRecording) => {
     if (!window.confirm(`Throw away “${r.name}”?\n\nThe recording is deleted from this Mac. This cannot be undone.`)) return;
@@ -110,7 +103,9 @@ export default function ScreenRecorderPage() {
                   {recordings.map((r) => (
                     <div key={r.id} className="group relative overflow-hidden rounded-lg border border-zinc-800 hover:border-zinc-600">
                       <Link to={`/record/${r.id}`} className="block">
-                        <img src={`ctlocal://${r.id}/thumb.jpg`} alt="" loading="lazy" className="aspect-video w-full bg-zinc-900 object-cover" />
+                        <div className="aspect-video w-full bg-zinc-900">
+                          <Picture src={`ctlocal://${r.id}/thumb.jpg`} alt="" className="h-full w-full object-cover" />
+                        </div>
                         <div className="p-2">
                           <div className="truncate text-sm">{r.name}</div>
                           <div className="text-xs text-zinc-500">
@@ -156,7 +151,9 @@ export default function ScreenRecorderPage() {
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               {recent.map((a) => (
                 <Link key={a.id} to={`/review/${a.id}`} className="group overflow-hidden rounded-lg border border-zinc-800 hover:border-zinc-600">
-                  <img src={thumbUrl(a)} alt="" loading="lazy" className="aspect-video w-full bg-zinc-900 object-cover" />
+                  <div className="aspect-video w-full bg-zinc-900">
+                    <Picture src={thumbUrl(a)} alt="" className="h-full w-full object-cover" />
+                  </div>
                   <div className="p-2">
                     <div className="truncate text-sm">{a.name}</div>
                     <div className="text-xs text-zinc-500">{timeAgo(a.updatedAt ?? a.createdAt)}</div>

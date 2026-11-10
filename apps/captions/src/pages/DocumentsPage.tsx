@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { canUse, useAuth } from "@/lib/auth";
 import { useCachedList } from "@/lib/local-cache";
+import { Picture } from "@/components/Picture";
 import { timeAgo } from "@/lib/exports";
 import { isPhoneHub, toolsetHomePath } from "@/lib/mobile";
 import { AppBar, ToolIntro } from "@/components/AppBar";
@@ -263,11 +264,9 @@ function ComposeForm({
                 }`}
               >
                 {c.hasThumb ? (
-                  <img
-                    src={thumbClipUrl(c.id)}
-                    alt=""
-                    className="h-10 w-16 shrink-0 rounded object-cover"
-                  />
+                  <div className="h-10 w-16 shrink-0 overflow-hidden rounded bg-muted">
+                    <Picture src={thumbClipUrl(c.id)} alt="" className="h-full w-full object-cover" />
+                  </div>
                 ) : (
                   <span className="flex h-10 w-16 shrink-0 items-center justify-center rounded bg-muted">
                     <Video className="h-4 w-4 text-muted-foreground" />
@@ -907,8 +906,10 @@ export default function DocumentsPage() {
             )}
           </>
         ) : opening ? (
-          <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" /> Opening…
+          // the guide's final frame, empty: its title line and page, so nothing moves when it arrives
+          <div aria-busy="true" aria-label="Opening guide" className="w-full">
+            <div className="h-7 w-2/5 rounded bg-muted" />
+            <div className="mt-4 h-96 w-full rounded-xl bg-muted/50" />
           </div>
         ) : error && !current ? (
           <p className="py-16 text-center text-sm text-muted-foreground">{error}</p>

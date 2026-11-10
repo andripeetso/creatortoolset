@@ -1,7 +1,7 @@
 import { canUse, useAuth } from "./auth";
-import { warmCached } from "./local-cache";
+import { readCached, warmCached } from "./local-cache";
 import { listReviewAssets, listReviewProjects } from "./review";
-import { listSessions, listFrameworks, listRules, getWorkshopAvailability } from "./workshop";
+import { getSession, listChat, listDocuments as listPieces, listSessions, listFrameworks, listRules, getWorkshopAvailability, saveSession, type SessionRow } from "./workshop";
 import { listAccounts } from "./instagram";
 import { listClips } from "./clips";
 import { listDocuments } from "./documents";
@@ -39,4 +39,25 @@ export async function warmScreens(): Promise<void> {
   if (canUse(me, "guides")) job("/api/documents", listDocuments);
   if (canUse(me, "enhance")) job("/api/enhance", listEnhance);
   await Promise.all(jobs);
+  await warmRecentSessions();
+}
+
+/**
+ * The most recent sessions' own contents (session, documents, chat) saved on this device, one session at a time, after
+ * the session list is saved. Run after the list loads; a failed session is skipped and opens as before.
+ */
+export async function warmRecentSessions(count = 3): Promise<void> {
+  const me = useAuth.getState().me;
+  if (!me) return;
+  const pid = useWorkspace.getState().currentProjectId ?? "";
+  const rows = readCached<SessionRow[]>(me.username, `workshop/sessions?p=${pid}`) ?? [];
+  for (const row of rows.slice(0, count)) {
+    try {
+      const [session, docs, messages] = await Promise.all([getSession(row.id), listPieces(row.id), listChat(row.id)]);
+      const activeDocId = (docs.find((d) => d.kind !== "notes") ?? docs[0])?.id ?? null;
+      saveSession(me.username, row.id, { session, docs, messages, activeDocId });
+    } catch {
+      // this one opens as before
+    }
+  }
 }

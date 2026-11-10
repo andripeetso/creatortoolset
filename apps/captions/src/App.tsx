@@ -221,25 +221,40 @@ function WorkspaceSync() {
   return null;
 }
 
-/** After sign-in (and when the project changes): fills every screen's saved lists (lib/warm-cache) and loads the
- *  route code that is lazy, so the first click doesn't wait for a chunk. */
+/** After sign-in (and when the project changes): fills every screen's saved lists (lib/warm-cache), then, when the
+ *  browser is idle, loads the route code that is lazy so no tool waits for its chunk. */
 function WarmCaches() {
   const signedIn = useAuth((s) => s.me?.username ?? null);
+  const cleanOn = useAuth((s) => canUse(s.me, "clean"));
   const project = useWorkspace((s) => s.currentProjectId);
   useEffect(() => {
     if (!signedIn) return;
-    const t = window.setTimeout(() => {
-      warmScreens();
+    let live = true;
+    const fill = window.setTimeout(() => live && void warmScreens(), 0);
+    // the route code in idle time: requestIdleCallback where the browser has it (a web view may not), else a timer
+    const idle = (fn: () => void) =>
+      typeof window.requestIdleCallback === "function"
+        ? window.requestIdleCallback(fn, { timeout: 2000 })
+        : window.setTimeout(fn, 0);
+    idle(() => {
+      if (!live) return;
       void import("./pages/SettingsPage");
       void import("./pages/CommunityPage");
+      if (cleanOn) {
+        void import("./pages/CleanClipEditor");
+        void import("./pages/CleanGuideContent");
+      }
       if (isPhoneHub()) {
         void import("./pages/mobile/MobileCaptionPage");
         void import("./pages/mobile/MobileInstagramPage");
         void import("./pages/mobile/MobileWorkshopPage");
       }
-    }, 0);
-    return () => window.clearTimeout(t);
-  }, [signedIn, project]);
+    });
+    return () => {
+      live = false;
+      window.clearTimeout(fill);
+    };
+  }, [signedIn, cleanOn, project]);
   return null;
 }
 

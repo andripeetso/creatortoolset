@@ -19,6 +19,7 @@ import {
 import { canRecordScreen, openRecorder } from "@/lib/mac-record";
 import { canUse, useAuth } from "@/lib/auth";
 import { useCachedList } from "@/lib/local-cache";
+import { Picture } from "@/components/Picture";
 import { fmtBytes, timeAgo } from "@/lib/exports";
 import { toolsetHomePath } from "@/lib/mobile";
 import { useClipsRecorder } from "@/hooks/use-clips-recorder";
@@ -741,13 +742,7 @@ export default function ClipsPage() {
       ) : null}
 
       <div
-        className={
-          current && !opening
-            ? "w-full"
-            : current || clipId
-              ? "w-[1080px] max-w-[96vw]"
-              : "w-[720px] max-w-[92vw]"
-        }
+        className={current || clipId ? "w-full" : "w-[720px] max-w-[92vw]"}
       >
         {clipId && !current && !opening && backTo ? (
           <button
@@ -759,8 +754,10 @@ export default function ClipsPage() {
           </button>
         ) : null}
         {opening ? (
-          <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" /> Opening clip…
+          // the clip's final frame, empty: the player's own size, so the page doesn't move when it arrives
+          <div aria-busy="true" aria-label="Opening clip" className="w-full">
+            <div className="aspect-video w-full rounded-xl bg-muted" />
+            <div className="mt-4 h-5 w-1/3 rounded bg-muted" />
           </div>
         ) : current ? (
           <>
@@ -956,11 +953,9 @@ export default function ClipsPage() {
                       className="group flex cursor-pointer items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-2.5 transition-colors hover:border-violet-500/50 hover:bg-zinc-900"
                     >
                       {s.hasThumb ? (
-                        <img
-                          src={thumbClipUrl(s.id)}
-                          alt=""
-                          className="h-10 w-16 shrink-0 rounded object-cover"
-                        />
+                        <div className="h-10 w-16 shrink-0 overflow-hidden rounded bg-muted">
+                          <Picture src={thumbClipUrl(s.id)} alt="" className="h-full w-full object-cover" />
+                        </div>
                       ) : (
                         <div className="flex h-10 w-16 shrink-0 items-center justify-center rounded bg-zinc-800">
                           <Video className="h-4 w-4 text-zinc-500" />

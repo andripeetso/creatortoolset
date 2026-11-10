@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { effectiveSavedFor, kindBadgeClass, kindLabel, thumbUrl, type InstagramPost } from "@/lib/instagram";
+import { Picture } from "@/components/Picture";
 import type { PieceQuote } from "@/lib/workshop";
 import { SOURCE_MIME } from "./ChipComposer";
 import { citeQuoteOf } from "./SourceResultCard";
@@ -74,7 +75,7 @@ export function SelectedSourcesStrip({
             className="block h-24 w-full bg-zinc-800"
             title={`@${p.creator.username}`}
           >
-            {p.slides[0]?.thumb ? <img src={thumbUrl(p.id, 0)} alt="" loading="lazy" draggable={false} className="h-full w-full object-cover" /> : null}
+            {p.slides[0]?.thumb ? <Picture src={thumbUrl(p.id, 0)} alt="" className="h-full w-full object-cover" /> : null}
           </button>
           <span className={`absolute left-1 top-1 rounded px-1 text-[9px] font-medium ${kindBadgeClass(p.kind)}`}>{kindLabel(p.kind)}</span>
           {effectiveSavedFor(p.savedFor).includes("format") ? (

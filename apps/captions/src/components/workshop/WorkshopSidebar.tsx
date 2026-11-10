@@ -8,6 +8,8 @@ import { KindTile } from "./KindTile";
 import { SessionMenu } from "./SessionMenu";
 import { storedStatusBars } from "@/lib/settings";
 import { useWorkspace } from "@/lib/workspace";
+import { useMe } from "@/lib/auth";
+import { putCached, readCached } from "@/lib/local-cache";
 
 /**
  * The Workshop's session list beside every Workshop screen: what's being
@@ -130,8 +132,22 @@ function Group({ label, rows, active, numbers, foldKey, foldDefault }: { label: 
 }
 
 export function WorkshopSidebar({ activeId, title }: { activeId?: string; title: string }) {
-  const all = useSessionSummaries();
+  const live = useSessionSummaries();
   const navigate = useNavigate();
+  // the rows saved on this device paint at once; the live poll replaces them (saved without "working": no stale spinner)
+  const me = useMe();
+  const projectId = useWorkspace((s) => s.currentProjectId);
+  const summaryKey = `workshop/summary?p=${projectId ?? ""}`;
+  const all = live ?? readCached<SessionSummary[]>(me?.username, summaryKey);
+  const lastSaved = useRef("");
+  useEffect(() => {
+    if (!live || !me?.username) return;
+    const next = live.map((r) => ({ ...r, working: false }));
+    const raw = JSON.stringify(next);
+    if (raw === lastSaved.current) return;
+    lastSaved.current = raw;
+    putCached(me.username, summaryKey, next);
+  }, [live, me?.username, summaryKey]);
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("workshop:sidebar") === "closed");
   const [finding, setFinding] = useState(false);
   const [making, setMaking] = useState(false);
@@ -152,7 +168,6 @@ export function WorkshopSidebar({ activeId, title }: { activeId?: string; title:
   }, [all, q, kind, sortBy]);
   const g = useMemo(() => groupSummaries(filtered, sortBy === "name"), [filtered, sortBy]);
   // switching project shows that project's sessions at once
-  const projectId = useWorkspace((s) => s.currentProjectId);
   useEffect(() => void refreshSummaries(), [projectId]);
   // ⌘1–9: the rows in the order they show, folded groups included
   const order = useMemo(() => [...g.pinned, ...g.writing, ...g.making, ...g.published, ...g.shelved], [g]);
@@ -269,7 +284,14 @@ export function WorkshopSidebar({ activeId, title }: { activeId?: string; title:
         </button>
       </div>
       <nav className="min-h-0 flex-1 overflow-y-auto pr-1">
-        {all === null ? <Loader2 className="mx-auto mt-6 h-4 w-4 animate-spin text-zinc-600" /> : null}
+        {all === null ? (
+          // nothing saved on this device yet: the rows' places in quiet blocks until the list lands
+          <div aria-hidden className="flex flex-col gap-0.5 px-1 pt-1">
+            {[0, 1, 2, 3, 4, 5].map((i) => (
+              <span key={i} className="block h-8 rounded-md bg-zinc-800/40" />
+            ))}
+          </div>
+        ) : null}
         <Group label="Pinned" rows={g.pinned} active={activeId} numbers={numbers} />
         <Group label="Ideas & writing" rows={g.writing} active={activeId} numbers={numbers} />
         <Group label="Ready & in production" rows={g.making} active={activeId} numbers={numbers} foldKey="workshop:side-production" foldDefault />

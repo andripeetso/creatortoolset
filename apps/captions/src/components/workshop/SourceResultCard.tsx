@@ -1,5 +1,6 @@
 import { Check, Eye, Plus } from "lucide-react";
 import { WorkshopUseChip, type PostWorkshopUse } from "@/components/instagram/PostCard";
+import { Picture } from "@/components/Picture";
 import { FIND_FIELD_LABELS, effectiveSavedFor, fmtCount, postBadgeClass, postBadgeLabel, thumbUrl, type FindHit, type InstagramPost } from "@/lib/instagram";
 import type { PieceQuote } from "@/lib/workshop";
 import { SOURCE_MIME } from "./ChipComposer";
@@ -62,7 +63,7 @@ export function SourceResultCard({
     >
       <button type="button" onClick={onRead} className="absolute inset-0 z-0 rounded-xl" aria-label="Read" />
       <div className="relative z-10 h-24 w-[4.5rem] shrink-0 overflow-hidden rounded-md bg-zinc-800 pointer-events-none">
-        {first?.thumb ? <img src={thumbUrl(post.id, 0)} alt="" loading="lazy" className="h-full w-full object-cover" /> : null}
+        {first?.thumb ? <Picture src={thumbUrl(post.id, 0)} alt="" className="h-full w-full object-cover" /> : null}
         <span className={`absolute left-1 top-1 rounded px-1 text-[9px] font-medium ${postBadgeClass(post)}`}>
           {postBadgeLabel(post)}
         </span>

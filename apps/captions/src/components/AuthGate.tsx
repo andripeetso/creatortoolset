@@ -62,6 +62,31 @@ export function ProviderButtons({ providers }: { providers: SignInProviders }) {
   );
 }
 
+/** The last answer from /api/auth/check, kept on this device. Under the local-cache prefix, so sign-out clears it. */
+const SNAP_KEY = "ct-swr:auth";
+type Snap = { required: boolean; user: Me | null; hosted: boolean; viewedBy: string | null };
+function readSnap(): Snap | null {
+  try {
+    const v = JSON.parse(localStorage.getItem(SNAP_KEY) ?? "null");
+    return v && typeof v === "object" && v.user ? (v as Snap) : null;
+  } catch {
+    return null;
+  }
+}
+function writeSnap(s: Snap | null) {
+  try {
+    if (s) localStorage.setItem(SNAP_KEY, JSON.stringify(s));
+    else localStorage.removeItem(SNAP_KEY);
+  } catch {
+    /* storage off: the check decides on its own */
+  }
+}
+
+// Before the first render: a returning account's last sign-in, so the app paints on its first frame. The check below
+// confirms it, and a server that disagrees sends the page to sign-in.
+const snap = readSnap();
+if (snap) useAuth.getState().setAuth(snap.required, snap.user, { hosted: snap.hosted, viewedBy: snap.viewedBy });
+
 /**
  * Blocks the app behind an account login when the server has
  * APP_SECRET set (public hosting). Renders children immediately when
@@ -71,7 +96,7 @@ export function ProviderButtons({ providers }: { providers: SignInProviders }) {
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const { pathname } = useLocation();
   const publicShare = isPublicSharePath(pathname) || isPublicReviewPath(pathname) || isPublicLibraryPath(pathname);
-  const [state, setState] = useState<"checking" | "login" | "link" | "ok">("checking");
+  const [state, setState] = useState<"checking" | "login" | "link" | "ok">(snap ? "ok" : "checking");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -97,7 +122,12 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
           window.location.replace(back);
           return;
         }
-        setAuth(d.required, d.user, { hosted: !!d.hosted, viewedBy: d.viewedBy ?? null });
+        // a re-check with the same answer leaves the store alone (a new `me` object would re-run the loads keyed on it)
+        const next: Snap = { required: d.required, user: d.user, hosted: !!d.hosted, viewedBy: d.viewedBy ?? null };
+        const cur = useAuth.getState();
+        if (cur.required !== next.required || cur.hosted !== next.hosted || cur.viewedBy !== next.viewedBy || JSON.stringify(cur.me) !== JSON.stringify(next.user))
+          setAuth(next.required, next.user, { hosted: next.hosted, viewedBy: next.viewedBy });
+        writeSnap(d.user ? next : null);
         if (d.user) void useWorkspace.getState().load();
         else useWorkspace.getState().reset();
         setMustLink(d.mustLink ?? []);
@@ -163,6 +193,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
           return;
         }
         setAuth(true, d.user ?? null);
+        writeSnap(d.user ? { required: true, user: d.user, hosted: useAuth.getState().hosted, viewedBy: null } : null);
         void useWorkspace.getState().load();
         setState("ok");
       } else {

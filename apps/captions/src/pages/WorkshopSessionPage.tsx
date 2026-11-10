@@ -81,6 +81,9 @@ import {
   type WorkshopRule,
   readScope,
   saveScope,
+  saveSession,
+  savedSession,
+  type SavedSession,
   type ChangeScope,
 } from "@/lib/workshop";
 import { exportFilename } from "@/lib/workshop-markdown";
@@ -95,6 +98,7 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import InstagramAccountPage from "@/pages/InstagramAccountPage";
 import { markSeen, patchSummary, refreshSummaries } from "@/lib/workshop-summary";
 import { listCache, sessionCache } from "@/lib/workshop-cache";
+import { readCached } from "@/lib/local-cache";
 import { useWorkspace } from "@/lib/workspace";
 
 type BlockEdit = { id?: string; text: string };
@@ -105,6 +109,11 @@ const rest0 = (docs: WorkshopDocument[], docId: string) => docs.filter((d) => d.
 const pickActive = (docs: WorkshopDocument[], cur: string | null) =>
   cur && docs.some((d) => d.id === cur) ? cur : (docs.find((d) => d.kind !== "notes") ?? docs[0])?.id ?? null;
 
+/** A quiet block in the size a real element takes: the page's shape shows before its data lands (no spinner, no text). */
+function Ghost({ className }: { className: string }) {
+  return <span aria-hidden className={`block shrink-0 rounded-md bg-muted/50 ${className}`} />;
+}
+
 export default function WorkshopSessionPage() {
   const { sessionId = "" } = useParams();
   const me = useMe();
@@ -113,21 +122,40 @@ export default function WorkshopSessionPage() {
   const allowed = canUse(me, "workshop");
   const selectProject = useWorkspace((s) => s.select);
 
-  // a session opened before paints at once from memory; the fetches below refresh it (`fresh` until they land)
-  const cached = sessionId ? sessionCache.get(sessionId) : undefined;
-  const [session, setSession] = useState<SessionRecord | null>(cached?.session ?? null);
-  const [fresh, setFresh] = useState(!cached);
+  // A session opened before paints at once from memory or from its saved copy (lib/workshop savedSession); the fetches
+  // below refresh it underneath (`fresh` until they land). Without either, the page paints its layout with placeholders.
+  const seedFor = (id: string): SavedSession | null => (id ? (sessionCache.get(id) ?? savedSession(me?.username, id)) : null);
+  const [seededFor, setSeededFor] = useState(sessionId);
+  const [seed] = useState(() => seedFor(sessionId));
+  const [session, setSession] = useState<SessionRecord | null>(seed?.session ?? null);
+  const [fresh, setFresh] = useState(!seed);
   const [pageError, setPageError] = useState<string | null>(null);
-  const [title, setTitle] = useState(cached?.session.title ?? "");
+  const [title, setTitle] = useState(seed?.session.title ?? "");
   const [error, setError] = useState<string | null>(null);
 
   // ---- the desk: documents and the conversation
-  const [docs, setDocs] = useState<WorkshopDocument[]>(cached?.docs ?? []);
+  const [docs, setDocs] = useState<WorkshopDocument[]>(seed?.docs ?? []);
+  // the pieces are known: saved, or fetched (an empty list is an answer too); until then the tabs and the body show placeholders
+  const [docsKnown, setDocsKnown] = useState(!!seed);
   // ?doc= opens on that piece (a Convert to copy opens on the piece being written)
   const [searchParams] = useSearchParams();
-  const [activeDocId, setActiveDocId] = useState<string | null>(searchParams.get("doc") ?? cached?.activeDocId ?? null);
+  const [activeDocId, setActiveDocId] = useState<string | null>(searchParams.get("doc") ?? seed?.activeDocId ?? null);
   const [closed, setClosed] = useState<Array<{ doc: WorkshopDocument; index: number }>>([]);
-  const [messages, setMessages] = useState<ChatMessage[]>(cached?.messages ?? []);
+  const [messages, setMessages] = useState<ChatMessage[]>(seed?.messages ?? []);
+  // A sidebar click keeps this page mounted: its state moves to the other session's copy (or the placeholders) in the same render.
+  if (seededFor !== sessionId) {
+    const next = seedFor(sessionId);
+    setSeededFor(sessionId);
+    setSession(next?.session ?? null);
+    setFresh(!next);
+    setTitle(next?.session.title ?? "");
+    setDocs(next?.docs ?? []);
+    setDocsKnown(!!next);
+    setActiveDocId(next?.activeDocId ?? null);
+    setMessages(next?.messages ?? []);
+    setClosed([]);
+    setPageError(null);
+  }
   // The composer's context survives a reload (per session); send() clears it once the turn is accepted.
   const draftKey = `workshop-draft:${sessionId}`;
   const [savedContext] = useState(() => readComposerContext(`${draftKey}:ctx`));
@@ -220,9 +248,11 @@ export default function WorkshopSessionPage() {
   const [sessions, setSessions] = useState<SessionRow[]>(listCache.sessions ?? []);
   const [frameworks, setFrameworks] = useState<WorkshopFramework[]>(listCache.frameworks ?? []);
   const [rules, setRules] = useState<WorkshopRule[]>(listCache.rules ?? []);
-  const [aiAvailable, setAiAvailable] = useState(true);
-  const [researchAvailable, setResearchAvailable] = useState(false);
-  const [macOff, setMacOff] = useState(false);
+  // the availability saved on this device (the list's own copy) decides the banners from the first frame
+  const savedAvail = readCached<{ ai: boolean; research: boolean; mac?: boolean }>(me?.username, "workshop/availability");
+  const [aiAvailable, setAiAvailable] = useState(savedAvail?.ai ?? true);
+  const [researchAvailable, setResearchAvailable] = useState(savedAvail?.research ?? false);
+  const [macOff, setMacOff] = useState(savedAvail?.mac === false);
   const [desk, setDesk] = useDeskLayout();
   const [auditMessageId, setAuditMessageId] = useState<string | null>(null);
   const auditThinking = useRef(new Set<string>());
@@ -230,24 +260,34 @@ export default function WorkshopSessionPage() {
   const fail = (e: unknown) => setError(e instanceof Error ? e.message : String(e));
 
   // ---- load
+  // an answer for the session this page showed before a sidebar click is dropped
+  const openId = useRef(sessionId);
+  openId.current = sessionId;
   const load = useCallback(() => {
     if (!sessionId) return;
-    getSession(sessionId)
+    const id = sessionId;
+    const current = () => openId.current === id;
+    getSession(id)
       .then((s) => {
+        if (!current()) return;
         setSession(s);
         setTitle(s.title);
         setQuery((q) => q || s.query);
         if (s.projectId) void selectProject(s.projectId);
       })
-      .catch((e) => setPageError(e instanceof Error ? e.message : "Could not open the session"));
-    listDocuments(sessionId)
+      .catch((e) => current() && setPageError(e instanceof Error ? e.message : "Could not open the session"));
+    listDocuments(id)
       .then((d) => {
+        if (!current()) return;
         setDocs(d);
+        setDocsKnown(true);
         setActiveDocId((cur) => pickActive(d, cur));
         setFresh(true);
       })
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
-    listChat(sessionId).then(setMessages).catch(() => {});
+      .catch((e) => current() && setError(e instanceof Error ? e.message : String(e)));
+    listChat(id)
+      .then((ms) => current() && setMessages(ms))
+      .catch(() => {});
   }, [sessionId, selectProject]);
 
   useEffect(() => {
@@ -297,6 +337,16 @@ export default function WorkshopSessionPage() {
   useEffect(() => {
     if (sessionId && session) sessionCache.set(sessionId, { session, docs, messages, activeDocId });
   }, [sessionId, session, docs, messages, activeDocId]);
+  // the copy kept on this device for the next open: a moment after a change (a reply streams in once a second), and when leaving
+  const saveCopy = useRef<() => void>(() => {});
+  saveCopy.current = () => {
+    if (sessionId && session) saveSession(me?.username, sessionId, { session, docs, messages, activeDocId });
+  };
+  useEffect(() => {
+    const t = window.setTimeout(() => saveCopy.current(), 600);
+    return () => window.clearTimeout(t);
+  }, [sessionId, session, docs, messages, activeDocId]);
+  useEffect(() => () => saveCopy.current(), []);
   useEffect(() => {
     Object.assign(listCache, { projects, accounts, sessions, frameworks, rules });
   }, [projects, accounts, sessions, frameworks, rules]);
@@ -1010,7 +1060,7 @@ export default function WorkshopSessionPage() {
         }
       >
         {session ? <SessionPosted postings={postingsOfSession(session)} status={session.status} onChange={setPosted} /> : null}
-        {session ? <SessionStatusSelect value={session.status} onChange={setStatus} /> : null}
+        {session ? <SessionStatusSelect value={session.status} onChange={setStatus} /> : <Ghost className="h-8 w-[107px]" />}
         {/* no project picker here: the session works in the project chosen up top, whose
             instructions and context live in Projects */}
         <DeskControls layout={desk} onChange={setDesk} />
@@ -1031,7 +1081,9 @@ export default function WorkshopSessionPage() {
               }, 300);
             }}
           />
-        ) : null}
+        ) : (
+          <Ghost className="h-7 w-[84px]" />
+        )}
         {session ? (
           <SharePopover
             sessionId={session.id}
@@ -1039,7 +1091,9 @@ export default function WorkshopSessionPage() {
             onStatus={(status) => setSession((s) => (s ? { ...s, status } : s))}
             className="flex h-7 items-center gap-1 rounded-md border border-border px-2 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
           />
-        ) : null}
+        ) : (
+          <Ghost className="w-16" />
+        )}
         {session
           ? sessionActions.map((a) => (
               <button
@@ -1059,10 +1113,6 @@ export default function WorkshopSessionPage() {
       <WorkshopSidebar activeId={sessionId} title={title || "Content Workshop"} />
       {pageError ? (
         <p className="p-6 text-sm text-red-300">{pageError}</p>
-      ) : !session ? (
-        <p className="flex items-center gap-2 p-6 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" /> Opening session…
-        </p>
       ) : (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {citing ? <CitePopover at={citing.at} comment={citing.quote.comment} onSave={saveCite} onCancel={() => setCiting(null)} /> : null}
@@ -1126,7 +1176,7 @@ export default function WorkshopSessionPage() {
             }
             islands={{
               writing: {
-                header: (
+                header: session && docsKnown ? (
                   <DocumentTabs
                     docs={docs}
                     activeId={activeDocId}
@@ -1162,8 +1212,15 @@ export default function WorkshopSessionPage() {
                       ) : null
                     }
                   />
+                ) : (
+                  // the tabs' places (a piece, Notes, New) until the session's pieces land
+                  <div aria-hidden className="flex items-center gap-1">
+                    <Ghost className="h-7 w-[174px]" />
+                    <Ghost className="h-7 w-[59px]" />
+                    <Ghost className="h-7 w-[53px]" />
+                  </div>
                 ),
-                body: activeDoc ? (
+                body: session && activeDoc ? (
                   <div className="flex min-h-0 flex-1 flex-col">
                     <SessionFinals sessionId={session.id} />
                     {/* an empty piece: write it from what the session has */}
@@ -1209,13 +1266,21 @@ export default function WorkshopSessionPage() {
                       changes={changes}
                     />
                   </div>
-                ) : (
+                ) : session && docsKnown ? (
                   <p className="p-4 text-sm text-muted-foreground">No document yet — add one with “+ New”.</p>
+                ) : (
+                  // not loaded yet: the page's shape in quiet blocks (a title line, the piece's lines)
+                  <div aria-hidden className="flex flex-col gap-3 p-4">
+                    <Ghost className="h-5 w-1/2" />
+                    <Ghost className="h-3 w-full" />
+                    <Ghost className="h-3 w-5/6" />
+                    <Ghost className="h-3 w-2/3" />
+                  </div>
                 ),
               },
               cowork: {
                 hint: usageHint,
-                body: (
+                body: session ? (
                   <ChatPane
                     messages={shownMessages}
                     docs={docs}
@@ -1292,6 +1357,12 @@ export default function WorkshopSessionPage() {
                       ) : null
                     }
                   />
+                ) : (
+                  <div aria-hidden className="flex flex-col gap-3 p-4">
+                    <Ghost className="h-16 w-4/5" />
+                    <Ghost className="h-16 w-3/5 self-end" />
+                    <Ghost className="h-16 w-4/5" />
+                  </div>
                 ),
               },
               content: {
@@ -1355,9 +1426,11 @@ export default function WorkshopSessionPage() {
                           <p className="py-8 text-center text-sm text-muted-foreground">Nothing in the library talks about that yet.</p>
                         ) : !activeResults ? (
                           library === null ? (
-                            <p className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
-                              <Loader2 className="h-4 w-4 animate-spin" /> Loading the library…
-                            </p>
+                            <div aria-hidden className="grid gap-2 md:grid-cols-2">
+                              {Array.from({ length: 4 }, (_, i) => (
+                                <Ghost key={i} className="h-24 w-full" />
+                              ))}
+                            </div>
                           ) : library.length === 0 ? (
                             <p className="py-8 text-center text-sm text-muted-foreground">
                               Nothing in the library yet —{" "}

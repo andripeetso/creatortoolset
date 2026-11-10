@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { segmentItem, segmentList } from "@/components/SegmentedTabs";
 import { Link, useNavigate, useSearchParams } from "react-router";
@@ -52,6 +52,7 @@ import {
 } from "@/lib/workshop";
 import { useCachedList, useCachedLoad } from "@/lib/local-cache";
 import { onSettingsClosed } from "@/lib/setup";
+import { warmRecentSessions } from "@/lib/warm-cache";
 import { useWorkspace } from "@/lib/workspace";
 
 type Tab = "sessions" | "projects" | "knowledge" | "frameworks" | "rules";
@@ -73,7 +74,15 @@ export default function WorkshopPage() {
   const projects = useWorkspace((s) => s.projects);
 
   const [tab, setTab] = useState<Tab>("sessions");
-  const { items: sessions, setItems: setSessions, refresh: loadSessions } = useCachedList<SessionRow>(`workshop/sessions?p=${currentProjectId ?? ""}`, listSessions);
+  // null until the list is known (saved or fetched): until then the rows' places show as quiet blocks, not an empty line
+  const sessionsLoad = useCachedLoad<SessionRow[]>(`workshop/sessions?p=${currentProjectId ?? ""}`, listSessions);
+  const sessionsKnown = sessionsLoad.data !== null;
+  const sessions = sessionsLoad.data ?? [];
+  const loadSessions = sessionsLoad.refresh;
+  const setSessions = useCallback(
+    (next: SessionRow[] | ((rows: SessionRow[]) => SessionRow[])) => sessionsLoad.set((prev) => (typeof next === "function" ? next(prev ?? []) : next)),
+    [sessionsLoad.set],
+  );
   const [find, setFind] = useState("");
   const summaries = useSessionSummaries();
   // no sidebar here: this list is the one, ⌘K is its search
@@ -164,7 +173,8 @@ export default function WorkshopPage() {
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(() => {
-    loadSessions().catch(() => {});
+    // the list's recent sessions are saved after it loads, so opening one paints at once
+    loadSessions().then(() => warmRecentSessions()).catch(() => {});
     frameworksList.refresh().catch(() => {});
     rulesList.refresh().catch(() => {});
     availList.refresh().catch(() => {});
@@ -292,13 +302,14 @@ export default function WorkshopPage() {
 
         <div className={cn(segmentList, "mb-5 self-start overflow-x-auto")}>
           {(
+            // the counts hold their width while they load, so the tabs don't move
             [
-              ["sessions", `Sessions · ${sessions.length}`],
-              ["projects", `Projects · ${projects.length}`],
+              ["sessions", <>Sessions <span className="inline-block min-w-[3ch] tabular-nums">· {sessionsKnown ? sessions.length : ""}</span></>],
+              ["projects", <>Projects <span className="inline-block min-w-[3ch] tabular-nums">· {projects.length}</span></>],
               ["knowledge", "Knowledge"],
-              ["frameworks", `Frameworks · ${frameworks.length}`],
-              ["rules", `Rules · ${rules.filter((r) => r.on).length} on`],
-            ] as Array<[Tab, string]>
+              ["frameworks", <>Frameworks <span className="inline-block min-w-[3ch] tabular-nums">· {frameworks.length}</span></>],
+              ["rules", <>Rules <span className="inline-block min-w-[7ch] tabular-nums">· {rules.filter((r) => r.on).length} on</span></>],
+            ] as Array<[Tab, ReactNode]>
           ).map(([id, text]) => (
             <button
               key={id}
@@ -400,7 +411,13 @@ export default function WorkshopPage() {
                 New session
               </button>}
             </div>
-            {sessions.length === 0 ? (
+            {!sessionsKnown ? (
+              <div aria-hidden className="flex flex-col gap-1.5">
+                {Array.from({ length: 5 }, (_, i) => (
+                  <span key={i} className="block h-[46px] rounded-lg border border-zinc-800/60 bg-zinc-900/30" />
+                ))}
+              </div>
+            ) : sessions.length === 0 ? (
               <p className="py-10 text-center text-sm text-zinc-600">
                 No sessions yet. Start one, search a topic, add the posts worth reading.
               </p>

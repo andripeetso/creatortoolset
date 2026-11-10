@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useCachedLoad } from "@/lib/local-cache";
+import { Picture } from "@/components/Picture";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import {
   Captions,
@@ -152,6 +153,38 @@ export default function ReviewPage() {
       .sort((x, y) => +isFinished(x) - +isFinished(y)) ?? null;
   const doneCount =
     projects.filter(finished).length + (assets?.filter((a) => !folderOf(a) && isFinished(a)).length ?? 0);
+
+  // Thumbnails fade in top to bottom: a picture may show once every picture above it has loaded. The page preloads
+  // them in list order (the browser's own order is not the list's); the cards get the set that may show now.
+  const readyOf = (list: ReviewAsset[]) => list.filter((a) => a.versions.at(-1)?.status === "ready");
+  const order = [
+    ...shownProjects.flatMap((p) => readyOf(assets?.filter((a) => folderOf(a) === p.id) ?? []).slice(0, 4).map((a) => thumbUrl(a))),
+    ...readyOf(shown ?? []).map((a) => thumbUrl(a)),
+  ];
+  const orderKey = order.join("\n");
+  const [loaded, setLoaded] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    const imgs = orderKey.split("\n").filter(Boolean).map((src) => {
+      const im = new Image();
+      const done = () => setLoaded((s) => (s.has(src) ? s : new Set(s).add(src)));
+      im.onload = done;
+      im.onerror = done;
+      im.src = src;
+      return im;
+    });
+    return () => imgs.forEach((im) => {
+      im.onload = null;
+      im.onerror = null;
+    });
+  }, [orderKey]);
+  const reveal = useMemo(() => {
+    const out = new Set<string>();
+    for (const src of orderKey.split("\n").filter(Boolean)) {
+      if (!loaded.has(src)) break;
+      out.add(src);
+    }
+    return out;
+  }, [orderKey, loaded]);
 
   const busy =
     uploads.length > 0 || !!assets?.some((a) => a.versions.at(-1)?.status === "processing");
@@ -377,8 +410,16 @@ export default function ReviewPage() {
         )}
         {trash ? (
           <TrashView onRestored={() => void load()} />
-        ) : shown === null ? (
-          <Loader2 className="mx-auto mt-24 h-6 w-6 animate-spin text-zinc-600" />
+        ) : shown === null || (projectsList.data === null && !projectsList.error) ? (
+          // no saved list yet: cards in their final size, empty (no spinner; nothing moves when they fill)
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-hidden="true">
+            {[0, 1, 2, 3, 4, 5].map((i) => (
+              <div key={i} className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/50">
+                <div className="aspect-video bg-zinc-950" />
+                <div className="h-16" />
+              </div>
+            ))}
+          </div>
         ) : done && shown.length === 0 && shownProjects.length === 0 ? (
           <p className="mt-16 text-center text-sm text-zinc-500">
             Nothing finished yet. A video lands here once it's marked finished.
@@ -413,6 +454,7 @@ export default function ReviewPage() {
                 act={act}
                 onMove={(ids) => moveMany(ids, p.id)}
                 onDropFiles={(files) => dropped(files, { projectId: p.id })}
+                reveal={reveal}
               />
             ))}
             {shown.map((a) => (
@@ -432,6 +474,7 @@ export default function ReviewPage() {
                 onDropVersion={(files) => dropped(files, { assetId: a.id })}
                 onCaption={() => caption(a)}
                 onEditStack={() => setStackOf(a.id)}
+                reveal={reveal}
               />
             ))}
           </div>
@@ -503,8 +546,10 @@ function ProjectCard({
   act,
   onMove,
   onDropFiles,
+  reveal,
 }: {
   project: ReviewProject;
+  reveal: Set<string>;
   assets: ReviewAsset[];
   dragId: string | null;
   /** how many videos the card being dragged carries */
@@ -555,7 +600,8 @@ function ProjectCard({
                 )}
               >
                 {covers.map((a) => (
-                  <img key={a.id} src={thumbUrl(a)} alt="" draggable={false} loading="lazy" className="h-full min-h-0 w-full object-cover" />
+                  <Picture key={a.id} src={thumbUrl(a)} alt="" className="h-full min-h-0 w-full object-cover"
+                    style={reveal.has(thumbUrl(a)) ? undefined : { opacity: 0 }} />
                 ))}
               </div>
             ) : (
@@ -648,7 +694,7 @@ function DeleteProjectDialog({
             {assets.map((a) => (
               <li key={a.id} className="flex items-center gap-2.5 rounded-md bg-zinc-900/60 p-1.5 text-sm">
                 {a.versions.at(-1)?.status === "ready" ? (
-                  <img src={thumbUrl(a)} alt="" className="h-9 w-16 shrink-0 rounded object-cover" />
+                  <Picture src={thumbUrl(a)} alt="" className="h-9 w-16 shrink-0 rounded object-cover" />
                 ) : (
                   <Film className="mx-4 h-5 w-5 shrink-0 text-zinc-600" />
                 )}
@@ -702,8 +748,10 @@ function AssetCard({
   onDropVersion,
   onCaption,
   onEditStack,
+  reveal,
 }: {
   asset: ReviewAsset;
+  reveal: Set<string>;
   projects: ReviewProject[];
   dragId: string | null;
   /** how many videos the card being dragged carries */
@@ -782,7 +830,8 @@ function AssetCard({
           )}
           <Link to={to} draggable={false} className="relative block aspect-video bg-black">
             {v?.status === "ready" && (
-              <img src={thumbUrl(a)} alt="" draggable={false} className="h-full w-full object-contain" loading="lazy" />
+              <Picture src={thumbUrl(a)} alt="" className="h-full w-full object-contain"
+                style={reveal.has(thumbUrl(a)) ? undefined : { opacity: 0 }} />
             )}
             {v?.status === "processing" && (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-xs text-zinc-400">
@@ -1012,7 +1061,7 @@ function StackDialog({ asset: a, act, onClose }: { asset?: ReviewAsset; act: Act
               <GripVertical className={cn("h-4 w-4 shrink-0 text-zinc-600", !busy && "cursor-grab")} />
               <span className="flex h-10 w-16 shrink-0 items-center justify-center overflow-hidden rounded bg-black">
                 {x.status === "ready" ? (
-                  <img src={versionThumbUrl(a.id, x)} alt="" draggable={false} className="h-full w-full object-contain" />
+                  <Picture src={versionThumbUrl(a.id, x)} alt="" className="h-full w-full object-contain" />
                 ) : x.status === "processing" ? (
                   <Loader2 className="h-4 w-4 animate-spin text-violet-400" />
                 ) : (
@@ -1063,16 +1112,15 @@ function StackDialog({ asset: a, act, onClose }: { asset?: ReviewAsset; act: Act
 
 /** Deleted videos, kept for 30 days: restore one, or delete it for good. */
 function TrashView({ onRestored }: { onRestored: () => void }) {
-  const [items, setItems] = useState<ReviewAsset[] | null>(null);
+  // the saved trash shows at once (lib/local-cache), refreshed underneath
+  const trash = useCachedLoad("/api/review/trash", listReviewTrash);
+  const items = trash.data;
   const [error, setError] = useState("");
   const load = useCallback(
-    () =>
-      listReviewTrash()
-        .then(setItems)
-        .catch((e: Error) => setError(e.message)),
-    [],
+    () => trash.refresh().catch((e: Error) => setError(e.message)),
+    [trash.refresh],
   );
-  useEffect(() => void load(), [load]);
+  // the hook fetches on mount; `load` is for the actions below
   const run = (change: Promise<unknown>) =>
     change
       .then(() => {
@@ -1081,7 +1129,17 @@ function TrashView({ onRestored }: { onRestored: () => void }) {
       })
       .catch((e: Error) => setError(e.message));
 
-  if (!items) return <Loader2 className="mx-auto mt-24 h-6 w-6 animate-spin text-zinc-600" />;
+  if (!items)
+    return (
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-hidden="true">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/50">
+            <div className="aspect-video bg-black" />
+            <div className="h-16" />
+          </div>
+        ))}
+      </div>
+    );
   return (
     <>
       {error && <p className="mb-4 text-sm text-red-400">{error}</p>}
@@ -1092,13 +1150,10 @@ function TrashView({ onRestored }: { onRestored: () => void }) {
         {items.map((a) => (
           <div key={a.id} className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/50">
             <div className="aspect-video bg-black">
-              <img
-                src={trashThumbUrl(a.id)}
-                alt=""
-                loading="lazy"
-                onError={(e) => (e.currentTarget.style.visibility = "hidden")}
-                className="h-full w-full object-contain opacity-60"
-              />
+              {/* dimmed on the wrapper: the picture's own fade-in owns its opacity */}
+              <div className="h-full w-full opacity-60">
+                <Picture src={trashThumbUrl(a.id)} alt="" className="h-full w-full object-contain" />
+              </div>
             </div>
             <div className="flex items-center gap-2 px-3.5 py-3">
               <div className="min-w-0 flex-1">
