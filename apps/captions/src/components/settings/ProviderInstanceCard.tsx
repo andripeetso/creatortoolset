@@ -26,14 +26,22 @@ export function providerStatus(o: {
   online: boolean;
   report: boolean;
   found?: MacReport["drivers"][number];
+  /** when the computer last reported (ms): a result newer than that outranks a "not signed in" from the report */
+  reportAt?: number;
   check?: ProviderCheck;
 }): ProviderStatus {
   if (!o.enabled) return { tone: "neutral", text: "" };
   if (!o.runs) return { tone: "neutral", text: "Not in the Mac app yet" };
   if (!o.online) return { tone: "neutral", text: "Computer offline" };
   if (o.report && !o.found?.installed) return { tone: "attention", text: "Not installed", action: "install" };
-  if (o.check && !o.check.ok) return { tone: "broken", text: "Check failed" };
-  if (o.found?.signedIn === false) return { tone: "attention", text: "Not signed in", action: "sign-in" };
+  const answeredSinceReport = !!o.check?.ok && (o.reportAt === undefined || o.check.at >= o.reportAt);
+  if (o.found?.signedIn === false && !answeredSinceReport) return { tone: "attention", text: "Not signed in", action: "sign-in" };
+  if (o.check && !o.check.ok) {
+    // the plain reason is in the detail; a sign-in problem gets its fix on the row
+    const signIn = /sign in|log ?in|login/i.test(o.check.error ?? "");
+    const computer = /did not pick up|is offline|stopped answering/i.test(o.check.error ?? "");
+    return { tone: "broken", text: computer ? "Computer didn't answer" : "Didn't answer", ...(signIn ? { action: "sign-in" as const } : {}) };
+  }
   if (o.found?.signedIn && o.found.plan) return { tone: "neutral", text: `${o.found.plan.charAt(0).toUpperCase()}${o.found.plan.slice(1)} plan` };
   return { tone: "neutral", text: "" };
 }

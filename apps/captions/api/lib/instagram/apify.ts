@@ -30,7 +30,7 @@ const COMMENT_ACTOR = "apify~instagram-comment-scraper";
 const RUN_TIMEOUT_S = 300;
 
 export const APIFY_MISSING_MSG =
-  "Reading other creators' posts needs your own Apify key: add it in Settings → Connectors (Apify bills you for each read)";
+  "Reading other creators' posts needs your own Apify key: add it in Settings → API keys (Apify bills you for each read)";
 export const APIFY_INVALID_MSG =
   "Apify token is invalid or expired — paste a fresh token from console.apify.com";
 /** How a post or profile was read: the one way left for other creators' posts (snapshots keep it as their source). */

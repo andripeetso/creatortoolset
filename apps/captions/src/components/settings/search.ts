@@ -16,7 +16,7 @@ export interface SearchRow {
   description?: string;
   keywords?: readonly string[];
   /** Only shown where sign-in is required (this install has accounts). Not offered by search elsewhere. */
-  needs?: "sign-in";
+  needs?: "sign-in" | "mac";
 }
 
 /** The API key rows are one per service in contracts/service-keys.ts (MY_KEYS), so their ids come from it. */
@@ -31,6 +31,7 @@ const STATIC_ROWS = [
   { section: "general", id: "read-aloud", title: "Read the assistant's replies aloud", keywords: ["voice", "speech", "speak", "audio"] },
   { section: "general", id: "how-you-work", title: "How you use the app", keywords: ["assistant", "own ai", "setup", "chat", "how you work"] },
   { section: "general", id: "run-setup", title: "Setup", description: "Run the first-run walk-through again", keywords: ["setup", "walk-through", "onboarding", "wizard", "first run"] },
+  { section: "general", id: "recording-shortcut", title: "Recording shortcut", description: "Starts and stops a screen recording from any app (Mac app)", keywords: ["record", "screen", "shortcut", "hotkey", "keyboard", "key", "mac app"], needs: "mac" },
   { section: "general", id: "saved-lists", title: "Saved lists", keywords: ["cache", "clear", "storage", "saved", "lists"] },
   { section: "general", id: "screens", title: "Saved screens", keywords: ["cache", "warm", "refresh", "reload"] },
   // Appearance
@@ -49,12 +50,15 @@ const STATIC_ROWS = [
   // Computers: the computers that run your AI
   { section: "devices", id: "computers", title: "Computers", keywords: ["mac", "computer", "machine", "rename", "remove", "online"] },
   { section: "devices", id: "add-computer", title: "Add computer", keywords: ["mac", "pair", "link", "command line"] },
-  { section: "devices", id: "use-this-mac", title: "Use this Mac for my AI", keywords: ["mac app", "this mac", "switch", "ai on this mac"] },
+  { section: "devices", id: "phones", title: "Phones", description: "Use the app on your phone: scan a code with its camera", keywords: ["phone", "iphone", "qr", "qr code", "pair", "camera", "scan", "wifi", "wi-fi"] },
+  { section: "devices", id: "add-phone", title: "Add phone", keywords: ["phone", "iphone", "qr", "pair", "camera", "scan", "code", "wifi", "same wi-fi"] },
+  { section: "devices", id: "use-this-mac", title: "Use this Mac for my AI", keywords: ["mac app", "this mac", "switch", "ai on this mac"], needs: "mac" },
   { section: "devices", id: "load-balancing", title: "Load balancing", description: "Start jobs on the computer with the most free CPU and memory", keywords: ["balance", "jobs", "cpu", "memory", "prefer", "less often", "advanced"] },
   // Scheduled tasks
   { section: "automations", id: "scheduled-tasks", title: "Scheduled tasks", keywords: ["automation", "schedule", "repeat", "daily", "weekly", "prompt"] },
   // Usage
   { section: "usage", id: "plan-limits", title: "Plan limits", keywords: ["session", "weekly", "reset", "left", "quota", "limit", "plan"] },
+  { section: "usage", id: "your-plan", title: "Your plan", description: "Pro and Plus: heavy runs ask first", keywords: ["plan", "pro", "plus", "max", "chatgpt", "claude", "subscription", "limit"] },
   { section: "usage", id: "activity", title: "Activity", keywords: ["cost", "tokens", "calls", "tool", "api price", "usage"] },
   // Social accounts: sign in to one, or follow one by handle (the Add account menu on the section)
   { section: "connectors", id: "your-accounts", title: "Your accounts", description: "Instagram, YouTube and TikTok accounts you sign in to or follow", keywords: ["instagram", "youtube", "tiktok", "sign in", "login", "log in", "follow", "handle", "followers", "project", "redirect url", "sign-in apps"] },
@@ -117,13 +121,15 @@ export interface SearchHit {
  * Finds rows (and section titles) for a query. Every word must match something (title, description, keywords, section
  * name). Ranked: title equals the query, title starts with it, title contains it, every word in the title, the whole
  * phrase elsewhere. Ties keep the index order. `sections` maps the sections this person may open to their titles;
- * `signInRequired` says whether the sign-in rows exist on this install (a row with `needs` is left out otherwise).
+ * `signInRequired` and `macApp` say whether the sign-in rows and the Mac app's own rows exist here (a row with `needs`
+ * is left out otherwise, so a hit never lands on a page that does not draw the row).
  */
 export function searchSettings(
   query: string,
   sections: ReadonlyMap<string, string>,
   index: readonly SearchRow[] = SETTINGS_SEARCH_INDEX,
   signInRequired = false,
+  macApp = false,
 ): SearchHit[] {
   const q = query.trim().toLowerCase().replace(/\s+/g, " ");
   if (!q) return [];
@@ -131,7 +137,7 @@ export function searchSettings(
   const rows: Array<SearchRow & { sectionTitle: string }> = [];
   for (const r of index) {
     const sectionTitle = sections.get(r.section);
-    if (sectionTitle !== undefined && (!r.needs || signInRequired)) rows.push({ ...r, sectionTitle });
+    if (sectionTitle !== undefined && (!r.needs || (r.needs === "mac" ? macApp : signInRequired))) rows.push({ ...r, sectionTitle });
   }
   // a section by its own title (plug-in sections have no rows in the index)
   for (const [section, title] of sections) rows.push({ section: section as SettingsPageId, id: "", title, sectionTitle: title });

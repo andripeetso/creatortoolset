@@ -113,7 +113,7 @@ export default function CommunityPage({ onClose }: { onClose: () => void }) {
             {nav("installed", "Installed", Package, data.installed ? installed.length + plugins.length : undefined, waiting > 0)}
           </nav>
           <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
-            <div className="mx-auto w-full max-w-4xl space-y-8 px-5 pt-6 pb-12 sm:px-6">{body}</div>
+            <div className="mx-auto w-full max-w-4xl space-y-8 px-5 pt-6 pb-24 sm:px-6 sm:pb-12">{body}</div>
           </main>
         </div>
       </DialogContent>

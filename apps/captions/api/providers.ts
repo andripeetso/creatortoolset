@@ -55,6 +55,16 @@ async function viewFor(u: SessionUser): Promise<ProvidersView> {
 
   const checks: Record<string, ProviderCheck> = {};
   for (const [k, v] of Object.entries(providerChecks())) if (visible(splitKey(k).scope)) checks[k] = v;
+  // the last result saved on each AI counts when this process has none (a restart or deploy keeps it)
+  const sets: Array<[Scope, ProviderSettings | null]> = [
+    [u.username, own],
+    ["workspace", seesWorkspace ? ws : null],
+  ];
+  for (const [scope, set] of sets)
+    for (const i of set?.instances ?? []) {
+      const k = `${scope}:${i.id}`;
+      if (!checks[k] && i.lastCheck) checks[k] = { ok: i.lastCheck.ok, at: i.lastCheck.at, ms: i.lastCheck.ms };
+    }
 
   // admins also see the workspace's usage; everyone sees their own scope's
   const usage: ProvidersView["usage"] = [];

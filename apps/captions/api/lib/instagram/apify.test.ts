@@ -266,7 +266,7 @@ describe("apify store", () => {
   it("ingestGate: the user's own Apify key, and the message says where to add it", async () => {
     const gate = await ingestGate(OWNER);
     expect(gate.ok).toBe(false);
-    if (!gate.ok) expect(gate.error).toMatch(/your own Apify key: add it in Settings → Connectors/);
+    if (!gate.ok) expect(gate.error).toMatch(/your own Apify key: add it in Settings → API keys/);
     await writeApify(OWNER, stored());
     expect(await ingestGate(OWNER)).toEqual({ ok: true, mode: "apify" });
     expect((await ingestGate(OTHER)).ok).toBe(false);

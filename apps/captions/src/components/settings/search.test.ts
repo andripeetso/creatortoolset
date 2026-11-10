@@ -109,6 +109,11 @@ describe("search ranking", () => {
     expect(searchSettings("zzqx", ALL)).toEqual([]);
   });
 
+  it("leaves the Mac app's own rows out of a browser's results", () => {
+    expect(searchSettings("recording shortcut", ALL).some((h) => h.id === "recording-shortcut")).toBe(false);
+    expect(searchSettings("recording shortcut", ALL, undefined, false, true)[0]?.id).toBe("recording-shortcut");
+  });
+
   it("finds nothing in a section this install does not show (team on a local server)", () => {
     const local = new Map([...ALL].filter(([id]) => id !== "team" && id !== "admin"));
     expect(searchSettings("invite", local).some((h) => h.section === "team")).toBe(false);

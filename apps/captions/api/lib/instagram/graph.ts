@@ -53,7 +53,7 @@ const PLAIN_MEDIA_FIELDS = MEDIA_FIELDS.split(",insights")[0]!;
 const COMMENT_FIELDS =
   "id,text,username,like_count,timestamp,replies.limit(25){id,text,username,like_count,timestamp}";
 export const GRAPH_MISSING_MSG =
-  "Connect your Instagram account (Settings → Connectors) with its login to read it";
+  "Connect your Instagram account (Settings → Social accounts) with its login to read it";
 export const MINE_CATALOG_CAP = Math.max(1, Math.floor(Number(process.env.INSTAGRAM_MINE_CATALOG_CAP) || 500));
 
 type Rec = Record<string, unknown>;

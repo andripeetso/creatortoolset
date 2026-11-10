@@ -57,12 +57,24 @@ export function ProviderDetail({
 }) {
   const driver = DRIVERS.find((d) => d.id === inst.driver);
   const fields = driverFields(inst.driver);
+  const testTitle = "Sends one short prompt to check that it answers";
+  // what is true when it works: the last answer, its model and how long it took
+  const answered = check?.ok
+    ? `Answered ${fmtAgo(check.at)}${check.model ? ` · ${modelName(check.model)}` : ""}${check.ms > 0 ? ` · ${(check.ms / 1000).toFixed(1)} s` : ""}`
+    : undefined;
   const menu: RowMenuItem[] = [
+    {
+      label: "Test now",
+      tooltip: testTitle,
+      onSelect: () => {
+        if (!canTest) throw new Error(checking ? "It is being tested now." : "The computer is offline, so it can't be tested now.");
+        onTest();
+      },
+    },
     used.length
       ? { label: "Remove", destructive: true, onSelect: () => { throw new Error(`${inst.name} is used by ${used.join(", ")}. Pick another there first.`); } }
       : { label: "Remove", destructive: true, onSelect: onRemove, confirm: { title: `Remove ${inst.name}?`, body: "Its settings are removed from this account.", ok: "Remove" } },
   ];
-  const testTitle = "Sends one short prompt to check that it answers";
   return (
     <div className="min-w-0 space-y-8">
       <div className="flex items-center gap-2">
@@ -81,24 +93,24 @@ export function ProviderDetail({
       <Section title="Status">
         <Card>
           <Row
-            title={status.text ? <Status tone={status.tone === "neutral" ? undefined : status.tone}>{status.text}</Status> : <span className="text-muted-foreground">Not checked yet</span>}
-            status={
-              checking ? "Testing… up to a minute" : check?.ok ? `Answered ${fmtAgo(check.at)}${check.model ? ` · ${modelName(check.model)}` : ""} · ${(check.ms / 1000).toFixed(1)} s` : check?.error
+            title={
+              status.text ? (
+                <Status tone={status.tone === "neutral" ? undefined : status.tone}>{status.text}</Status>
+              ) : (
+                <span className="text-muted-foreground">{checking ? "Checking…" : answered ?? "Not tested yet"}</span>
+              )
             }
+            status={status.text && answered ? answered : undefined}
             control={
-              <div className="flex flex-wrap items-center gap-2">
-                {status.action === "sign-in" && onSignIn && (
-                  <Button size="sm" variant="outline" onClick={onSignIn}>
-                    Sign in
-                  </Button>
-                )}
-                <Button size="sm" variant="outline" onClick={onTest} disabled={!canTest} title={testTitle} aria-label={`Test ${inst.name}. ${testTitle}`}>
-                  Test
+              status.action === "sign-in" && onSignIn ? (
+                <Button size="sm" variant="outline" onClick={onSignIn}>
+                  Sign in
                 </Button>
-              </div>
+              ) : undefined
             }
           >
             {status.action === "install" && <InstallHelp driver={inst.driver} />}
+            {check && !check.ok && check.error && <p className="break-words text-xs text-muted-foreground">{check.error}</p>}
           </Row>
         </Card>
       </Section>

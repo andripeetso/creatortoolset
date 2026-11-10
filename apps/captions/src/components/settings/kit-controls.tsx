@@ -140,6 +140,8 @@ export interface RowMenuItem {
   destructive?: boolean;
   /** Asked first with the app's own dialog (confirmDialog). The item runs only on OK. */
   confirm?: { title: string; body?: string; ok?: string };
+  /** A tooltip on the item: what it does, in one short line. */
+  tooltip?: string;
 }
 
 /**
@@ -163,6 +165,7 @@ export function RowMenu({ label, items }: { label: string; items: RowMenuItem[] 
   const render = (it: RowMenuItem) => (
     <DropdownMenuItem
       key={it.label}
+      title={it.tooltip}
       onSelect={() => void run(it)}
       className={cn("text-sm", it.destructive && "text-red-600 focus:text-red-600 dark:text-red-400 dark:focus:text-red-400")}
     >

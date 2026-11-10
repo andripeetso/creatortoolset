@@ -1,13 +1,17 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { DRIVERS, type LimitsIdentity, type LimitWindow, type ProviderInstance, type ProvidersView } from "@contracts/providers";
+import { PLANS, type PlanId } from "@contracts/plans";
+import type { SetupView } from "@contracts/tools";
 import { Button } from "@/components/ui/button";
 import { USAGE_PERIODS, deviceOf, getProviders, thisMacDevice, usageSince, type UsageRow } from "@/lib/providers";
 import { countedWindow, identityKey, leftOf, noticeOf, resetsIn } from "@/lib/limits";
+import { useSetup } from "@/lib/setup";
 import { tokensLabel } from "@/lib/workshop";
 import { cn } from "@/lib/utils";
 import { ProviderLogo } from "./ProviderLogos";
-import { Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Row, Section } from "./ui";
+import { Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Row, Section, SettingsSelect, saveFailed } from "./ui";
 import { msg } from "./helpers";
+import { hasThisMac, tell, useThisMac, type ThisMacState } from "./ThisMacSection";
 
 const RELOAD_MS = 5 * 60_000; // the Macs post their readings every five minutes
 const TICK_MS = 60_000; // the countdowns
@@ -25,6 +29,15 @@ export function UsageSection() {
   const [error, setError] = useState<string | null>(null);
   const [days, setDays] = useState(7);
   const [now, setNow] = useState(() => Date.now());
+  // the Mac app's own Plan limits switch, read live (ThisMacSection's hook; a browser reads nothing)
+  const bridge = useThisMac(hasThisMac());
+  const limitsOn = bridge?.limits;
+  const wasOff = useRef(false);
+  // the plan the person picked (setup's answer); "Your plan" reads it, and the warning before a heavy run does too
+  const setup = useSetup((s) => s.view);
+  useEffect(() => {
+    if (!setup) void useSetup.getState().load();
+  }, [setup]);
 
   const load = useCallback(
     () =>
@@ -48,6 +61,15 @@ export function UsageSection() {
     };
   }, [load]);
 
+  // turned on from the row's button: the readings it starts come in now, not in five minutes
+  useEffect(() => {
+    if (limitsOn === false) wasOff.current = true;
+    else if (limitsOn && wasOff.current) {
+      wasOff.current = false;
+      void load();
+    }
+  }, [limitsOn, load]);
+
   if (!view) {
     return (
       <Section title="Plan limits">
@@ -58,14 +80,14 @@ export function UsageSection() {
 
   return (
     <div className="space-y-8">
-      <PlanLimits view={view} now={now} />
+      <PlanLimits view={view} now={now} bridge={bridge} setup={setup} />
       <Activity view={view} days={days} onDays={setDays} />
     </div>
   );
 }
 
 /** One card per AI login with a reading, then one row for each Claude or Codex AI that has none, with the true reason. */
-function PlanLimits({ view, now }: { view: ProvidersView; now: number }) {
+export function PlanLimits({ view, now, bridge, setup }: { view: ProvidersView; now: number; bridge: ThisMacState | null; setup: SetupView | null }) {
   const logins = [...view.limits].sort((a, b) => (a.driver === b.driver ? a.label.localeCompare(b.label) : a.driver === "claude" ? -1 : 1));
   const unread = missingReadings(view);
   if (logins.length === 0 && unread.length === 0) {
@@ -85,11 +107,38 @@ function PlanLimits({ view, now }: { view: ProvidersView; now: number }) {
       {unread.length > 0 && (
         <Card>
           {unread.map(({ inst, device }, n) => (
-            <Unread key={n} inst={inst} device={device} view={view} />
+            <Unread key={n} inst={inst} device={device} view={view} bridge={bridge} />
           ))}
         </Card>
       )}
+      {(logins.length > 0 || unread.length > 0) && <YourPlan setup={setup} />}
     </Section>
+  );
+}
+
+/**
+ * "Your plan", asked only when no reading tells the plan (setup's detected plan). The answer is what a heavy run reads
+ * before it starts (confirmHeavy in lib/setup.ts; it asks first on Pro and Plus).
+ */
+function YourPlan({ setup }: { setup: SetupView | null }) {
+  if (!setup || setup.detected) return null;
+  const save = (v: string) => void useSetup.getState().save({ plan: v === "none" ? null : (v as PlanId) }).catch(() => saveFailed("That did not save. Try again."));
+  return (
+    <Card>
+      <Row
+        id="your-plan"
+        title="Your plan"
+        description="Pro and Plus: heavy runs ask first, since they can use up the 5-hour limit."
+        control={
+          <SettingsSelect
+            label="Your plan"
+            value={setup.plan ?? "none"}
+            onValueChange={save}
+            options={[{ value: "none", label: "Not sure" }, ...PLANS.map((p) => ({ value: p.id, label: p.label }))]}
+          />
+        }
+      />
+    </Card>
   );
 }
 
@@ -125,25 +174,33 @@ function LoginCard({ i, view, now }: { i: LimitsIdentity; view: ProvidersView; n
   );
 }
 
-/** An AI with no reading: the true reason for its computer, and the fix where the person can make one. */
-function Unread({ inst, device, view }: { inst: ProviderInstance; device: string; view: ProvidersView }) {
+/**
+ * An AI with no reading: the true reason for its computer, and the fix where the person can make one. On this Mac, a Mac
+ * app that reports its switch (`bridge.limits`) turns it on from the row; elsewhere the row names the fix.
+ */
+function Unread({ inst, device, view, bridge }: { inst: ProviderInstance; device: string; view: ProvidersView; bridge: ThisMacState | null }) {
   const mac = view.devices.find((d) => d.id === device);
   const who = mac?.name ?? "another Mac";
+  const here = thisMacDevice() === device;
+  const reported = here && typeof bridge?.limits === "boolean" ? bridge.limits : undefined;
   // the Mac app reports its version, the worker does not; a Mac app posts no sign-in state while its switch is off
   const installed = (mac?.report?.drivers ?? []).filter((d) => (d.driver === "claude" || d.driver === "codex") && d.installed);
-  const off = !!mac?.version && installed.length > 0 && installed.every((d) => d.signedIn === undefined);
+  const off = reported !== undefined ? !reported : !!mac?.version && installed.length > 0 && installed.every((d) => d.signedIn === undefined);
   let reason = "No reading yet. One comes in within five minutes.";
   let fix: string | undefined;
+  let control: ReactNode | undefined;
   if (!mac) reason = "Its computer is no longer connected to this account.";
   else if (!mac.online) reason = "Its Mac is offline, so no reading comes in.";
+  else if (mac.report?.drivers.some((d) => d.driver === inst.driver && d.installed && d.signedIn === false)) reason = `Not signed in on ${who}, so there is no plan to read.`;
   else if (off) {
     reason = "Plan limits are off on this Mac.";
-    fix =
-      thisMacDevice() === device
+    if (reported !== undefined) control = <Button size="sm" variant="outline" onClick={() => tell("limits:on")}>Turn on</Button>;
+    else
+      fix = here
         ? "Turn on Read this Mac's Claude and Codex limits under This Mac."
         : `Open the Mac app on ${who} and turn on Read this Mac's Claude and Codex limits under This Mac.`;
   }
-  return <Row title={`${inst.name} on ${who}`} description={reason} status={fix} />;
+  return <Row title={`${inst.name} on ${who}`} description={reason} status={fix} control={control} />;
 }
 
 function WindowBar({ w, now }: { w: LimitWindow; now: number }) {

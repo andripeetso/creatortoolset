@@ -66,6 +66,17 @@ export function modelName(id: string): string {
 /** "Claude Opus 5.5 · High" */
 export const selectionLabel = (s: Selection) => `${modelName(s.model)} · ${effortLabel(s.effort)}`;
 
+/**
+ * Whether Providers tests an AI by itself, once: it is on, runs, its computer is online and has reported the tool as
+ * installed, and either nothing is on record, or the last result failed and the computer has reported since (a sign-in
+ * shows up that way). A tool that is off or not installed is never tested: its row says what to do.
+ */
+export function autoTestDue(o: { enabled: boolean; runs: boolean; online: boolean; reportAt?: number; installed?: boolean; check?: { ok: boolean; at: number } }): boolean {
+  if (!o.enabled || !o.runs || !o.online || o.reportAt === undefined || o.installed !== true) return false;
+  if (!o.check) return true;
+  return !o.check.ok && o.reportAt > o.check.at;
+}
+
 /** The device an instance runs on. Missing = none picked: it runs nowhere. */
 export const deviceOf = (inst: ProviderInstance) => inst.device ?? "";
 

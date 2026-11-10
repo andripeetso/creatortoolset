@@ -8,8 +8,10 @@ import { canSpeak, useReadAloud } from "@/lib/read-aloud";
 import { persistConfirmDeletes, persistStatusBars, storedConfirmDeletes, storedStatusBars } from "@/lib/settings";
 import { useWorkTalk } from "@/lib/setup";
 import { warmScreens } from "@/lib/warm-cache";
+import { canRecordScreen } from "@/lib/mac-record";
 import { Card, Row, Section, saveFailed } from "./ui";
 import { HowYouWorkDialog, HOW_NAMES } from "./HowYouWorkDialog";
+import { tell, useThisMac, type ThisMacState } from "./ThisMacSection";
 
 const size = (bytes: number) =>
   bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : bytes >= 1024 ? `${Math.round(bytes / 1024)} KB` : `${bytes} B`;
@@ -18,6 +20,7 @@ const size = (bytes: number) =>
 export function GeneralSection() {
   const { talk } = useWorkTalk();
   const [howOpen, setHowOpen] = useState(false);
+  const mac = useThisMac(canRecordScreen());
   return (
     <>
       <Section title="Setup">
@@ -30,6 +33,7 @@ export function GeneralSection() {
 
       <Working />
       <AddOns />
+      <ScreenRecording mac={canRecordScreen() ? mac : null} />
       <ThisComputer />
     </>
   );
@@ -88,6 +92,23 @@ function AddOns() {
           title="Read the assistant's replies aloud"
           description={loading !== null ? `Downloading the voice · ${Math.round(loading * 100)}%` : "Downloads once, about 90 MB."}
           control={<Switch checked={on} aria-label="Read the assistant's replies aloud" onCheckedChange={toggle} />}
+        />
+      </Card>
+    </Section>
+  );
+}
+
+/** The Mac app's recording shortcut (apps/mac RecordShortcut.swift): shown only where the app reports it. */
+export function ScreenRecording({ mac }: { mac: ThisMacState | null }) {
+  if (typeof mac?.shortcut !== "string") return null;
+  return (
+    <Section title="Screen recording">
+      <Card>
+        <Row
+          id="recording-shortcut"
+          title="Recording shortcut"
+          status={mac.shortcut || "Off"}
+          control={<Button size="sm" variant="outline" onClick={() => tell("shortcut")}>Change</Button>}
         />
       </Card>
     </Section>

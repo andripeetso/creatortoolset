@@ -102,7 +102,7 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
 
   const navList = navListFor(ctx);
   const needle = query.trim();
-  const hits = needle ? searchSettings(needle, new Map(entries.map((s) => [s.id, s.title])), undefined, required) : [];
+  const hits = needle ? searchSettings(needle, new Map(entries.map((s) => [s.id, s.title])), undefined, required, ctx.mac) : [];
   const activeIdx = Math.min(active, Math.max(hits.length - 1, 0));
   const name = me?.name ?? me?.username ?? "";
   const initial = (name.trim()[0] ?? "?").toUpperCase();
@@ -339,7 +339,7 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
             </header>
             <PageActionContext.Provider value={actionEl}>
               <div className="min-h-0 flex-1 overflow-y-auto">
-                <div className="mx-auto max-w-4xl space-y-8 px-5 pt-6 pb-12 sm:px-6">{body}</div>
+                <div className="mx-auto max-w-4xl space-y-8 px-5 pt-6 pb-24 sm:px-6 sm:pb-12">{body}</div>
               </div>
             </PageActionContext.Provider>
           </main>

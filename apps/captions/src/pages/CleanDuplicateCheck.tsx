@@ -100,7 +100,7 @@ export function CleanDuplicateCheck({ sourceId }: { sourceId?: string }) {
             )}
             <p className="text-xs text-zinc-400">
               {result.posted.checked === 0 && result.posted.pending === 0
-                ? "No posted reels to compare yet. Connect an Instagram login under Settings → Connectors; its reels are read then."
+                ? "No posted reels to compare yet. Connect an Instagram login under Settings → Social accounts; its reels are read then."
                 : `Compared with ${result.posted.checked} posted reel${result.posted.checked === 1 ? "" : "s"}.`}
               {result.posted.pending > 0 && ` ${result.posted.pending} more are being fingerprinted; check again in a few minutes.`}
             </p>

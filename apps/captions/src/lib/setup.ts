@@ -178,6 +178,16 @@ export function useSetupLive(on: boolean) {
 /** Opens a tool's checklist from anywhere (a tool's own "Set up" link); FirstOpen listens. */
 export const openToolSetup = (tool: Tool) => window.dispatchEvent(new CustomEvent("ct-tool-setup", { detail: tool }));
 
+/**
+ * Settings closed (App.tsx unmounts its modal). Settings is the only place providers, keys and tools change, and the
+ * page behind it stays mounted: it re-reads what Settings may have changed (the Workshop's AI check, Home's marks).
+ */
+export const SETTINGS_CLOSED = "ct-settings-closed";
+export function onSettingsClosed(again: () => void): () => void {
+  window.addEventListener(SETTINGS_CLOSED, again);
+  return () => window.removeEventListener(SETTINGS_CLOSED, again);
+}
+
 /** The account's work preferences (api/work-prefs.ts), shared by setup's steps and useWorkTalk. */
 interface WorkPrefsState {
   prefs: WorkPrefs | null;
@@ -213,13 +223,17 @@ export function useWorkTalk(): { talk: WorkPrefs["talk"] | null; setTalk: (v: Wo
   return { talk: prefs?.talk ?? null, setTalk: (v) => useWorkPrefs.getState().put({ talk: v }) };
 }
 
+/** The plan the warning reads: the one a reading tells, else the person's answer, else none. */
+export const planToWarnBy = (view: Pick<SetupView, "detected" | "plan"> | null | undefined): PlanId | null => view?.detected ?? view?.plan ?? null;
+
 /**
  * Before a heavy AI run: on a Pro or Plus plan, says how much of the 5-hour window it usually takes and asks first.
- * True = go ahead (no plan given, a bigger plan, a light run, or they said so).
+ * True = go ahead (no plan given, a bigger plan, a light run, or they said so). The plan a reading tells (`detected`)
+ * wins over the one the person picked.
  */
 export async function confirmHeavy(feature: Feature, count = 1): Promise<boolean> {
   const view = useSetup.getState().view ?? (await useSetup.getState().load());
-  const warning = planWarning(view?.plan, feature, count);
+  const warning = planWarning(planToWarnBy(view), feature, count);
   if (!warning) return true;
   return confirmDialog({ title: "This can use up your plan's limit", body: warning, ok: "Run it anyway" });
 }

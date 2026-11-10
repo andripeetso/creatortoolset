@@ -51,6 +51,7 @@ import {
   type WorkshopRule,
 } from "@/lib/workshop";
 import { useCachedList, useCachedLoad } from "@/lib/local-cache";
+import { onSettingsClosed } from "@/lib/setup";
 import { useWorkspace } from "@/lib/workspace";
 
 type Tab = "sessions" | "projects" | "knowledge" | "frameworks" | "rules";
@@ -169,6 +170,9 @@ export default function WorkshopPage() {
     availList.refresh().catch(() => {});
     // the hook fetches on mount and when the project changes (the sessions key carries the project)
   }, [loadSessions, frameworksList.refresh, rulesList.refresh, availList.refresh]);
+
+  // Settings closed: the AI this page checks may have changed there (the banner reads the same rule as Providers)
+  useEffect(() => onSettingsClosed(() => void availList.refresh().catch(() => {})), [availList.refresh]);
 
   // /workshop?add=id1,id2 — sent from the Analyzer: open a session with those sources.
   const add = searchParams.get("add");

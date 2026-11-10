@@ -107,7 +107,7 @@ export async function runAutomation(username: string, a: Automation): Promise<vo
   if (!origin) return finish(username, a.id, "skipped", "This server doesn't know its own address, so the task can't reach the app's tools. Ask whoever runs this server.");
   try {
     const text = await answerWithTools(username, route, `${origin}/api/mcp`, runPrompt(a), {
-      label: "Automation",
+      label: "Scheduled task",
       turn: `automation:${a.id}`,
       background: true,
     });
@@ -209,7 +209,7 @@ automationsApp.get("/", (c) => {
 automationsApp.post("/", async (c) => {
   const username = c.get("user").username;
   const b = (await c.req.json().catch(() => null)) as Input | null;
-  if (!b || typeof b !== "object") return c.json({ error: "Send the automation as JSON" }, 400);
+  if (!b || typeof b !== "object") return c.json({ error: "Send the scheduled task as JSON" }, 400);
   const { fields, error } = readFields(b);
   if (error) return c.json({ error }, 400);
   if (!fields.name || !fields.prompt || !fields.schedule) return c.json({ error: "name, schedule and prompt are needed" }, 400);

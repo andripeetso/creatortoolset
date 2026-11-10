@@ -3569,8 +3569,8 @@ instagramApp.post("/", async (c) => {
 
 /** Why a shared link was saved but not crawled, worded for a phone (no "paste above"). */
 function shareLaterReason(code: string): string {
-  if (code === "APIFY_INVALID") return "your Apify key needs replacing in Settings → Connectors";
-  return "add your Apify key in Settings → Connectors to crawl it";
+  if (code === "APIFY_INVALID") return "your Apify key needs replacing in Settings → API keys";
+  return "add your Apify key in Settings → API keys to crawl it";
 }
 
 /**

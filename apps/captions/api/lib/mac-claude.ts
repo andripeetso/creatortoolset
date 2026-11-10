@@ -7,6 +7,7 @@ import { limitMessage } from "../../contracts/plans";
 import { env } from "./env";
 import { deviceName, isOnline, saveReport, touchDevice } from "./devices";
 import { saveLimits } from "./limits";
+import { noteCallOutcome } from "./providers";
 
 /**
  * The AI providers on the paired Macs (contracts/providers.ts). A request waits
@@ -267,13 +268,25 @@ export function streamMacClaude(
           onUsage?.(usage);
         }
         if (session) opts.onSession?.(session);
-        if (text.trim()) resolve(text);
-        else reject(new MacClaudeError("Claude returned an empty answer", "failed"));
+        if (text.trim()) {
+          noteOutcome(true);
+          resolve(text);
+        } else {
+          noteOutcome(false, "Claude returned an empty answer");
+          reject(new MacClaudeError("Claude returned an empty answer", "failed"));
+        }
       },
       fail: (e) => {
         end();
+        // the AI itself failed (not a stop, a usage limit, or a Mac that did not pick the request up): its check says so
+        if (e instanceof MacClaudeError && (e.kind === "failed" || e.kind === "timeout")) noteOutcome(false, e.message);
         reject(e);
       },
+    };
+    // the instance this call went through, if any: its outcome is recorded as that instance's check
+    const noteOutcome = (ok: boolean, error?: string) => {
+      const p = opts.provider;
+      if (p?.scope && p.instance) void noteCallOutcome(p.scope, p.instance, ok, error).catch(() => {});
     };
     const onAbort = () => r.fail(new MacClaudeError("Stopped", "stopped"));
     const check = setInterval(() => {

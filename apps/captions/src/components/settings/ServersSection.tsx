@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router";
 import { Plus } from "lucide-react";
 import { promptDialog } from "@/lib/dialogs";
 import { Button } from "@/components/ui/button";
@@ -12,10 +13,22 @@ import { tell, useThisMac } from "./ThisMacSection";
  */
 export function ServersSection() {
   const s = useThisMac(true);
+  const [params, setParams] = useSearchParams();
   const [late, setLate] = useState(false);
   const [adding, setAdding] = useState(false);
   const [address, setAddress] = useState("");
   const [linkOpen, setLinkOpen] = useState(false);
+
+  // `?add=1` opens Add server once (the add-computer dialog links here), then the parameter goes
+  useEffect(() => {
+    if (params.get("add") !== "1") return;
+    setAdding(true);
+    setParams((p) => {
+      const next = new URLSearchParams(p);
+      next.delete("add");
+      return next;
+    }, { replace: true });
+  }, [params, setParams]);
 
   // the app answers every poll; a silent one for a while is a failed load, not a spinner forever
   useEffect(() => {

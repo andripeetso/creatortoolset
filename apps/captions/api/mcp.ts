@@ -646,11 +646,11 @@ const STEPS: Record<string, string> = {
   editor_run: "Starting an AI Editor job",
   instagram_posts: "Reading your Instagram posts",
   instagram_refresh: "Refreshing Instagram",
-  automations_list: "Looking at your automations",
-  automations_create: "Making the automation",
-  automations_update: "Changing the automation",
-  automations_delete: "Deleting the automation",
-  automations_run: "Running the automation",
+  automations_list: "Looking at your scheduled tasks",
+  automations_create: "Making the scheduled task",
+  automations_update: "Changing the scheduled task",
+  automations_delete: "Deleting the scheduled task",
+  automations_run: "Running the scheduled task",
 };
 const PAGES: Record<string, string> = { review: "Review", workshop: "the Workshop", editor: "the AI Editor", settings: "Settings", instagram: "the Analyzer", analyzer: "the Analyzer" };
 export const stepFor = (name: string, args: Args): string =>
@@ -715,7 +715,7 @@ export function workFor(name: string, a: Args, r: Args): { card: AssistantWork; 
       return r.id
         ? {
             card: {
-              id: `automation:${r.id}`, kind: "automation", title: String(r.name ?? "Automation"), href: "/settings/automations",
+              id: `automation:${r.id}`, kind: "automation", title: String(r.name ?? "Scheduled task"), href: "/settings/automations",
               ...(name === "automations_run" ? { status: "running" as const, detail: "Running now: the result lands in your inbox" } : { status: "done" as const, detail: "Scheduled" }),
             },
           }

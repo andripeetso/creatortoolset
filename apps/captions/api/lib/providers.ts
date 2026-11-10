@@ -123,6 +123,22 @@ export async function dropOwnSettings(username: string): Promise<void> {
 }
 
 export const providerChecks = () => checks;
+
+/** A recorded call outcome stands this long before a call with the same result rewrites the saved file. */
+const NOTE_MS = 10 * 60_000;
+
+/**
+ * A real AI call's outcome is the instance's check: "Answered" or the plain failure. Written only when it changed, or the
+ * saved one is older than NOTE_MS, so a busy AI does not rewrite the settings file on every call.
+ */
+export async function noteCallOutcome(scope: Scope, instance: string, ok: boolean, error?: string): Promise<void> {
+  const key = `${scope}:${instance}`;
+  const saved = (scope === "workspace" ? providerSettings() : ownSettings(scope))?.instances.find((i) => i.id === instance)?.lastCheck;
+  const prev = checks[key] ?? saved;
+  const sameResult = prev?.ok === ok && (ok || (checks[key]?.error ?? "") === (error ?? "").slice(0, 300));
+  if (prev && sameResult && Date.now() - prev.at < NOTE_MS) return;
+  await recordCheck(key, { ok, ms: 0, at: Date.now(), ...(error ? { error: error.slice(0, 300) } : {}) });
+}
 /** Keeps a check (Settings shows it) and, on the instance it was for, its `lastCheck` (kept across restarts). */
 export async function recordCheck(key: string, c: ProviderCheck): Promise<void> {
   checks[key] = c;

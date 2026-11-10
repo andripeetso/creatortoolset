@@ -19,7 +19,7 @@ app.use("*", async (c, next) => {
 });
 app.route("/", instagramApp);
 
-const LATER = "for later: add your Apify key in Settings → Connectors to crawl it";
+const LATER = "for later: add your Apify key in Settings → API keys to crawl it";
 
 type ShareBody = {
   message?: string;

@@ -4,7 +4,10 @@ import { postToApp } from "@/lib/mac-record";
 /** Inside the Mac app (it sets <html data-mac-this-mac>): Settings shows this Mac's switch and the servers. A browser never does. */
 export const hasThisMac = () => typeof document !== "undefined" && document.documentElement.dataset.macThisMac === "1";
 
-/** What the app reports (apps/mac ThisMacBridge.swift `thisMacState`). */
+/**
+ * What the app reports (apps/mac ThisMacBridge.swift `thisMacState`). `shortcut` (the recording shortcut's display, "" =
+ * none) and `limits` (Plan limits reading on) are missing in older Mac apps: a row that needs one is not shown then.
+ */
 export type ThisMacState = {
   answer: string;
   aiOn: boolean;
@@ -14,6 +17,8 @@ export type ThisMacState = {
   paired: boolean;
   problem: string | null;
   servers: Array<{ id: string; name: string; url: string; current: boolean }>;
+  shortcut?: string;
+  limits?: boolean;
 };
 
 /** `thismac-<what>` to the app; it answers every one with a `mac-this` event carrying its state. */

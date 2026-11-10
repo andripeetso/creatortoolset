@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import { TOOLS, TOOL_NAMES, type Tool } from "@contracts/tools";
-import type { MemberView, WorkspaceView } from "@contracts/workspaces";
+import type { AiRoute, MemberPatch, MemberView, WorkspaceView } from "@contracts/workspaces";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { useMe } from "@/lib/auth";
 import { createInvite, getWorkspace, inviteUrl, removeMember, renameWorkspace, revokeInvite, setSignInWith, updateMember } from "@/lib/workspaces";
-import { Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Row, RowMenu, Section, SettingsSelect, TextField, saveFailed } from "./ui";
+import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, SettingsSelect, TextField, saveFailed } from "./ui";
 import { fmtAgo, msg } from "./helpers";
 
 /** How the team signs in (api/auth.ts ruleFor enforces it). The value is the set of providers, empty = a password too. */
@@ -32,6 +33,7 @@ export function WorkspaceSection() {
   const [failed, setFailed] = useState(false);
   const [inviting, setInviting] = useState(false);
   const [editing, setEditing] = useState<MemberView | null>(null);
+  const [aiFor, setAiFor] = useState<MemberView | null>(null);
 
   const load = useCallback(() => {
     setFailed(false);
@@ -139,7 +141,7 @@ export function WorkspaceSection() {
                   </>
                 }
                 subtitle={memberLine(m, self, owner)}
-                actions={owner && m.role !== "owner" && !self ? <MemberMenu m={m} canEditHere={me?.role !== "admin"} onTools={() => setEditing(m)} onAdmin={() => navigate("/settings/admin/access")} onRemove={() => attempt(removeMember(m.username))} /> : undefined}
+                actions={owner && m.role !== "owner" && !self ? <MemberMenu m={m} canEditHere={me?.role !== "admin"} onAi={() => setAiFor(m)} onTools={() => setEditing(m)} onAdmin={() => navigate("/settings/admin/access")} onRemove={() => attempt(removeMember(m.username))} /> : undefined}
               />
             );
           })}
@@ -167,13 +169,14 @@ export function WorkspaceSection() {
       )}
 
       <InviteDialog open={inviting} onOpenChange={setInviting} onCreated={() => void load()} />
+      {aiFor && <AiDialog member={aiFor} onClose={() => setAiFor(null)} onSave={(m, patch) => act(updateMember(m.username, patch))} />}
       <ToolsDialog member={editing} onClose={() => setEditing(null)} onChange={(m, off) => attempt(updateMember(m.username, { off }))} />
     </>
   );
 }
 
 /** One line for a member: the role, and for the owner (and the person themselves) how their AI is paid. */
-function memberLine(m: MemberView, self: boolean, owner: boolean): string {
+export function memberLine(m: MemberView, self: boolean, owner: boolean): string {
   const parts = [m.role === "owner" ? "Owner" : null];
   if (owner || self) {
     parts.push(m.ai === "own" ? (self ? "Your own AI" : "Own AI") : `API budget $${m.spentUsd.toFixed(2)} of $${m.budgetUsd} this month`);
@@ -182,11 +185,25 @@ function memberLine(m: MemberView, self: boolean, owner: boolean): string {
   return parts.filter(Boolean).join(" · ");
 }
 
-function MemberMenu({ m, canEditHere, onTools, onAdmin, onRemove }: { m: MemberView; canEditHere: boolean; onTools: () => void; onAdmin: () => void; onRemove: () => Promise<void> }) {
+/** A member's AI, as the owner picks it (api/lib/workspaces.ts updateMember: `ai` and, for a budget, `budgetUsd`). */
+const AI_CHOICES: { id: AiRoute; label: string }[] = [
+  { id: "own", label: "Their own AI" },
+  { id: "budget", label: "The team's key, up to a monthly budget" },
+];
+
+/** The budget a person typed: dollars, $1 to $10,000 a month (the server keeps it to cents and the same range). */
+export function budgetFrom(text: string): { ok: true; usd: number } | { ok: false; error: string } {
+  const n = Number(text.replace(/[$,\s]/g, ""));
+  if (!text.trim() || !Number.isFinite(n) || n < 1 || n > 10_000) return { ok: false, error: "Enter a budget from $1 to $10,000 a month." };
+  return { ok: true, usd: Math.round(n * 100) / 100 };
+}
+
+function MemberMenu({ m, canEditHere, onAi, onTools, onAdmin, onRemove }: { m: MemberView; canEditHere: boolean; onAi: () => void; onTools: () => void; onAdmin: () => void; onRemove: () => Promise<void> }) {
   return (
     <RowMenu
       label={`More for ${m.username}`}
       items={[
+        { label: "AI…", onSelect: onAi },
         canEditHere
           ? { label: "Tools…", onSelect: onTools }
           : { label: "Tools in Admin", onSelect: onAdmin },
@@ -198,6 +215,47 @@ function MemberMenu({ m, canEditHere, onTools, onAdmin, onRemove }: { m: MemberV
         },
       ]}
     />
+  );
+}
+
+/** A member's AI: their own, or a monthly budget on the team's key. Saved with the button; a failed save is a toast. */
+function AiDialog({ member, onClose, onSave }: { member: MemberView; onClose: () => void; onSave: (m: MemberView, patch: MemberPatch) => Promise<unknown> }) {
+  const [mode, setMode] = useState<AiRoute>(member.ai);
+  const [amount, setAmount] = useState(member.budgetUsd ? String(member.budgetUsd) : "");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    let patch: MemberPatch = { ai: "own" };
+    if (mode === "budget") {
+      const b = budgetFrom(amount);
+      if (!b.ok) {
+        setError(b.error);
+        return;
+      }
+      patch = { ai: "budget", budgetUsd: b.usd };
+    }
+    setError(null);
+    setBusy(true);
+    try {
+      await onSave(member, patch);
+      onClose();
+    } catch (e) {
+      saveFailed(msg(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <FormDialog open onOpenChange={(o) => !o && onClose()} title={`AI for ${member.username}`} submitLabel="Save AI" onSubmit={submit} busy={busy} error={error}>
+      <SettingsSelect label="AI" value={mode} onValueChange={(v) => setMode(v as AiRoute)} options={AI_CHOICES.map((o) => ({ value: o.id, label: o.label }))} className="sm:w-full" />
+      {mode === "budget" && (
+        <div className="flex items-center gap-2 text-sm">
+          <span className="text-muted-foreground">Up to $</span>
+          <Input aria-label="Monthly budget in dollars" inputMode="decimal" placeholder="25" value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus className="h-8 w-24" />
+          <span className="text-muted-foreground">a month</span>
+        </div>
+      )}
+    </FormDialog>
   );
 }
 

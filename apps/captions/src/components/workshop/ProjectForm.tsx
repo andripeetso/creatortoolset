@@ -337,7 +337,7 @@ export function ProjectForm({
         <p className="mt-0.5 text-[10px] text-zinc-600">
           {canSync
             ? "Sync is this project's Instagram in Analyzer: the official login's posts, insights, comments and trial reels."
-            : "Links the handle as your account. To read its posts, log in with Instagram or add your own Apify key (Settings → Connectors), then Sync."}
+            : "Links the handle as your account. To read its posts, log in with Instagram or add your own Apify key (Settings → API keys), then Sync."}
         </p>
       </div>
       )}

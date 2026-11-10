@@ -1,5 +1,30 @@
 import { describe, expect, it } from "vitest";
 import { addInstanceTo, driverFields, type ProviderInstance } from "@contracts/providers";
+import { autoTestDue } from "./providers";
+
+const ready = { enabled: true, runs: true, online: true, reportAt: 100, installed: true };
+
+describe("autoTestDue: when Providers tests an AI by itself", () => {
+  it("tests an AI with nothing on record, on a computer that is online and has the tool", () => {
+    expect(autoTestDue({ ...ready })).toBe(true);
+  });
+
+  it("never re-tests an AI that already has a result, whether it passed or failed, unless the computer reported since a failure", () => {
+    expect(autoTestDue({ ...ready, check: { ok: true, at: 50 } })).toBe(false);
+    expect(autoTestDue({ ...ready, check: { ok: false, at: 50 } })).toBe(true); // reported at 100 after the failure at 50
+    expect(autoTestDue({ ...ready, reportAt: 40, check: { ok: false, at: 50 } })).toBe(false);
+  });
+
+  it("does not test an AI that is off, not run by the app, on an offline computer, or not installed there", () => {
+    expect(autoTestDue({ ...ready, enabled: false })).toBe(false);
+    expect(autoTestDue({ ...ready, runs: false })).toBe(false);
+    expect(autoTestDue({ ...ready, online: false })).toBe(false);
+    expect(autoTestDue({ ...ready, installed: false })).toBe(false);
+    expect(autoTestDue({ ...ready, reportAt: undefined })).toBe(false); // the computer has not reported at all
+  });
+});
+
+
 
 const claude = (id: string, extra: Partial<ProviderInstance> = {}): ProviderInstance => ({ id, driver: "claude", name: id, enabled: true, device: "d1", ...extra });
 

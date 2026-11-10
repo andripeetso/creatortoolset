@@ -1,3 +1,4 @@
+import { groupComputers } from "./computers-group";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { Plus, RotateCcw } from "lucide-react";
@@ -16,7 +17,7 @@ import {
   type Selection,
 } from "@contracts/providers";
 import { useAuth } from "@/lib/auth";
-import { checkProvider, deviceOf, effortLabel, getProviders, modelName, modelsOf, saveOwn, saveWorkspace, thisMacDevice } from "@/lib/providers";
+import { autoTestDue, checkProvider, deviceOf, effortLabel, getProviders, modelName, modelsOf, saveOwn, saveWorkspace, thisMacDevice } from "@/lib/providers";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
@@ -50,6 +51,8 @@ export function ProvidersSection({ sub }: { sub?: string }) {
   const [checking, setChecking] = useState<string | null>(null);
   const [signingIn, setSigningIn] = useState<string | null>(null);
   const savingRef = useRef(false);
+  // the report each AI was last tested for (the page tests an AI once per report)
+  const tried = useRef(new Map<string, number>());
 
   const load = useCallback(
     () =>
@@ -82,6 +85,45 @@ export function ProvidersSection({ sub }: { sub?: string }) {
     return () => window.clearTimeout(t);
   }, [signingIn]);
 
+  // One test at a time, by itself: an AI with nothing on record (or failed since the computer last reported) on an online
+  // computer that has the tool. Each AI is tried once per report, so a failure stays until the next report or Test now.
+  const testOne = useCallback(async (scopeKey: string, id: string) => {
+    const key = `${scopeKey}:${id}`;
+    setChecking(key);
+    try {
+      const result: ProviderCheck = await checkProvider(scopeKey as Scope, id);
+      setView((v) => (v ? { ...v, checks: { ...v.checks, [key]: result } } : v));
+    } catch (e) {
+      saveFailed(msg(e));
+    } finally {
+      setChecking(null);
+    }
+  }, []);
+  useEffect(() => {
+    if (!view || !me || checking) return;
+    const ownSet = !isAdmin || !!view.own;
+    const set = ownSet ? view.own : (view.workspace?.settings ?? null);
+    const scopeKey = ownSet ? me.username : "workspace";
+    for (const i of set?.instances ?? []) {
+      const device = view.devices.find((d) => d.id === deviceOf(i));
+      const report = device?.report;
+      if (!device || !report) continue;
+      const key = `${scopeKey}:${i.id}`;
+      const due = autoTestDue({
+        enabled: i.enabled,
+        runs: runsOn(i.driver),
+        online: device.online,
+        reportAt: report.at,
+        installed: report.drivers.find((d) => d.driver === i.driver)?.installed,
+        check: view.checks[key],
+      });
+      if (!due || tried.current.get(key) === report.at) continue;
+      tried.current.set(key, report.at);
+      void testOne(scopeKey, i.id);
+      return; // one at a time: the next one starts when this one ends
+    }
+  }, [view, checking, isAdmin, me, testOne]);
+
   if (loadError)
     return (
       <Section title="Providers">
@@ -108,8 +150,11 @@ export function ProvidersSection({ sub }: { sub?: string }) {
   const editing: ProviderSettings | null = toOwn ? view.own : (view.workspace?.settings ?? null);
   const shown: ProviderSettings | null = editing ?? (readOnly ? (view.workspace?.settings ?? null) : null);
   const scope: Scope = toOwn ? me.username : "workspace";
-  const tabDevice = devices.find((d) => d.id === tab) ?? devices[0] ?? null;
-  const listed = readOnly ? (shown?.instances ?? []) : (editing?.instances ?? []).filter((i) => !!tabDevice && deviceOf(i) === tabDevice.id);
+  // one tab per Mac: a Mac that paired twice (the app and the worker) is one tab holding the AIs of both records
+  const groups = groupComputers(devices, me.username);
+  const tabGroup = groups.find((g) => g.records.some((r) => r.id === tab)) ?? groups[0] ?? null;
+  const tabDevice = tabGroup?.primary ?? null;
+  const listed = readOnly ? (shown?.instances ?? []) : (editing?.instances ?? []).filter((i) => !!tabGroup && tabGroup.records.some((r) => r.id === deviceOf(i)));
   const onDevice = (i: ProviderInstance) => devices.some((d) => d.id === deviceOf(i));
   const orphans = readOnly || !editing ? [] : editing.instances.filter((i) => !onDevice(i));
   const detailInst = readOnly || !editing ? undefined : sub ? editing.instances.find((i) => i.id === sub) : listed[0];
@@ -118,12 +163,14 @@ export function ProvidersSection({ sub }: { sub?: string }) {
   const reportOf = (i: ProviderInstance) => devices.find((d) => d.id === deviceOf(i))?.report ?? null;
   const statusOf = (i: ProviderInstance): ProviderStatus => {
     if (!readOnly && !onDevice(i)) return { tone: "attention", text: "No computer" };
+    if (checking === `${scope}:${i.id}`) return { tone: "neutral", text: "Checking…" };
     return providerStatus({
       enabled: i.enabled,
       runs: runsOn(i.driver),
       online: devices.find((d) => d.id === deviceOf(i))?.online ?? true,
       report: !!reportOf(i),
       found: reportOf(i)?.drivers.find((d) => d.driver === i.driver),
+      reportAt: reportOf(i)?.at,
       check: view.checks[`${scope}:${i.id}`],
     });
   };
@@ -167,18 +214,7 @@ export function ProvidersSection({ sub }: { sub?: string }) {
     void save({ ...editing, instances: editing.instances.filter((i) => i.id !== inst.id) });
   };
 
-  const runCheck = async (inst: ProviderInstance) => {
-    const key = `${scope}:${inst.id}`;
-    setChecking(key);
-    try {
-      const result: ProviderCheck = await checkProvider(scope, inst.id);
-      setView((v) => (v ? { ...v, checks: { ...v.checks, [key]: result } } : v));
-    } catch (e) {
-      saveFailed(msg(e));
-    } finally {
-      setChecking(null);
-    }
-  };
+  const runCheck = (inst: ProviderInstance) => testOne(scope, inst.id);
 
   // The Mac app's bridge (TitleBar.swift, handler "signIn") opens the CLI's sign-in in Terminal, then the page re-reads.
   const signIn = (inst: ProviderInstance) => {
@@ -196,7 +232,7 @@ export function ProvidersSection({ sub }: { sub?: string }) {
   };
 
   const openAdd = (driver?: Driver) => {
-    if (!tabDevice) navigate("/settings/devices");
+    if (!tabDevice) navigate("/settings/devices?add=1");
     else setAdding({ driver });
   };
 
@@ -208,7 +244,7 @@ export function ProvidersSection({ sub }: { sub?: string }) {
           <EmptyRow title="No computer connected" description="Your AI runs on your own computer, through the Mac app or the command-line tool." />
           <div className="px-3 pb-3 sm:px-4">
             <Button asChild size="sm" variant="outline">
-              <Link to="/settings/devices">Add computer</Link>
+              <Link to="/settings/devices?add=1">Add computer</Link>
             </Button>
           </div>
         </Card>
@@ -224,7 +260,7 @@ export function ProvidersSection({ sub }: { sub?: string }) {
       {!readOnly && devices.length > 0 && (
         <Tabs value={tabDevice?.id ?? ""} onValueChange={(v) => { setTab(v); if (sub) navigate("/settings/providers"); }} className="mb-8">
           <TabsList className="h-auto max-w-full flex-wrap justify-start">
-            {devices.map((d) => (
+            {groups.map(({ primary: d }) => (
               <TabsTrigger key={d.id} value={d.id} className="gap-1.5">
                 {!d.online && <StatusDot tone="attention" />}
                 <span className="max-w-40 truncate">{d.name}</span>

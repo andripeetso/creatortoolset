@@ -8,7 +8,8 @@ import Foundation
 let thisMacAsks = ["state", "start", "access"]
 
 extension Shell {
-    /// One `thismac-<what>` message: state, ai:on|off, select:<id>, add:<text>, rename:<id>:<name>, remove:<id>, forget.
+    /// One `thismac-<what>` message: state, ai:on|off, select:<id>, add:<text>, rename:<id>:<name>, remove:<id>, forget,
+    /// shortcut (opens the recording shortcut's chooser, RecordShortcut.swift), limits:on|off (Plan limits reading).
     func thisMacCommand(_ what: String) {
         let parts = what.split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false).map(String.init)
         let arg = parts.count > 1 ? parts[1] : ""
@@ -21,6 +22,8 @@ extension Shell {
         case "rename": if parts.count > 2 { renameServer(arg, to: parts[2]) }
         case "remove": removeServer(arg)
         case "forget": forgetThisMac()
+        case "shortcut": RecordShortcut.shared.choose()
+        case "limits": UserDefaults.standard.set(arg == "on", forKey: limitsReadingKey)
         default: break
         }
         pushThisMac(problem: problem)
@@ -71,6 +74,9 @@ extension Shell {
             "device": DeviceVault.deviceID(for: base.host ?? "") ?? NSNull(),
             "problem": problem ?? NSNull(),
             "servers": listed.map { ["id": $0.id, "name": $0.name, "url": $0.url, "current": $0.id == current] as [String: Any] },
+            // the recording shortcut as shown ("" = none) and the plan-limits switch (Settings → General, Usage)
+            "shortcut": RecordShortcut.shared.shortcut?.display ?? "",
+            "limits": limitsReadingOn(),
         ]
     }
 }

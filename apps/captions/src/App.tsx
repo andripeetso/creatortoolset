@@ -47,7 +47,7 @@ import { useRootTint, useWorkspace } from "@/lib/workspace";
 import { warmScreens } from "@/lib/warm-cache";
 import { useAppearance } from "@/lib/settings";
 import { historyDepth } from "@/lib/history-depth";
-import { useSetupShown } from "@/lib/setup";
+import { SETTINGS_CLOSED, useSetupShown } from "@/lib/setup";
 import { replacementFor } from "@/lib/plugin";
 import { webPlugins } from "./plugins.gen";
 
@@ -169,6 +169,8 @@ function AppToaster() {
 /** Settings, a modal over the page behind it: every signed-in account. */
 function SettingsModal({ onClose }: { onClose: () => void }) {
   const me = useMe();
+  // closing (however it closes) tells the page behind it that Settings may have changed its AI, keys or tools
+  useEffect(() => () => void window.dispatchEvent(new Event(SETTINGS_CLOSED)), []);
   if (!me) return <Navigate to="/" replace />;
   return (
     <Suspense fallback={null}>

@@ -17,7 +17,7 @@ import { currentProject, PROJECT_COLORS, projectColor, useWorkspace } from "@/li
 import { useAppearance } from "@/lib/settings";
 import { useShareTheme } from "@/components/ShareTheme";
 import { readiness, TOOL_GROUPS, TOOL_NAMES, type Tool } from "@contracts/tools";
-import { DOWNLOAD_URL, openSetupAt, resumeStep, setupDismissed, setupFinished, shareDownload, useSetup, useSetupShown } from "@/lib/setup";
+import { DOWNLOAD_URL, onSettingsClosed, openSetupAt, resumeStep, setupDismissed, setupFinished, shareDownload, useSetup, useSetupShown } from "@/lib/setup";
 
 /**
  * Creator Toolset: the landing hub. Two boxes side by side, Plan (analyze, write) and Make (edit, review), in the order
@@ -87,7 +87,8 @@ export default function ToolsetHome() {
     void load();
     const again = () => void load();
     window.addEventListener("focus", again);
-    return () => window.removeEventListener("focus", again);
+    const offSettings = onSettingsClosed(again);
+    return () => (window.removeEventListener("focus", again), offSettings());
   }, [me, load]);
 
   const { dark } = useShareTheme();
