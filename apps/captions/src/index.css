@@ -145,21 +145,24 @@ html:not(.dark) body { background: #fafafa; }
 html.mac-app:not(.mac-full) [data-titlebar] { padding-left: 92px; }
 
 /* The top bar (components/AppBar.tsx) stays where it is while a page scrolls under it, from tablet width up (a phone's
-   bar can wrap to two rows, so there it scrolls away as before). --bar-h is its height, for whatever else sticks below
-   it. Once the page has moved (data-scrolled, set by AppBar) the bar takes the page's colour, its hairline goes, and the
-   page fades out under it instead of meeting a hard edge. A row that sticks below the bar ([data-sticks]) gets the same
-   fade while it is stuck ([data-stuck], set by AppBar too). --bar-bg is the colour of the page they sit on. */
-:root { --bar-h: 0px; --fade-h: 1.5rem; }
-@media (min-width: 640px) { :root { --bar-h: 3.5rem; } }
+   bar can wrap to two rows, so there it scrolls away as before). It is painted in the page's own colour (--bar-bg where
+   a page is not the plain one), so nothing ever shows through it. --bar-h is its height, for whatever else sticks
+   below it. Zero specificity (:where): a page that places or paints its bar itself wins (Home pins it over its glow).
+   Directly under the bar the page fades out instead of meeting a hard line: a strip in the page's colour whose strength
+   follows the first 24px of scrolling, and the bar's hairline goes over the same distance. The browser ties both to the
+   scroll position itself, so no script runs while scrolling. A browser that cannot do that keeps the hairline and shows
+   no fade. Nothing else gets a fade: not a row that sticks below the bar. */
+:root { --bar-h: 0px; }
 html { scroll-padding-top: var(--bar-h); }
-[data-appbar] { transition: background-color 150ms, border-color 150ms; }
-[data-appbar][data-scrolled] { background-color: var(--bar-bg, rgb(var(--zinc-950))); border-bottom-color: transparent; }
-[data-appbar-fade], [data-sticks]::after {
+@media (min-width: 640px) {
+  :root { --bar-h: 3.5rem; }
+  :where([data-appbar]) { position: sticky; top: 0; z-index: 30; background-color: var(--bar-bg, rgb(var(--zinc-950))); }
+}
+[data-appbar-fade] {
   --c: var(--bar-bg, rgb(var(--zinc-950)));
-  height: var(--fade-h);
+  height: 1.5rem;
   pointer-events: none;
   opacity: 0;
-  transition: opacity 150ms;
   /* eased, not a straight ramp: most of the page is back within half the height */
   background: linear-gradient(
     to bottom,
@@ -172,9 +175,12 @@ html { scroll-padding-top: var(--bar-h); }
     transparent 100%
   );
 }
-[data-sticks]::after { content: ""; position: absolute; inset: 100% 0 auto 0; }
-[data-appbar][data-scrolled] + [data-appbar-fade], [data-sticks][data-stuck]::after { opacity: 1; }
-[data-sticks][data-stuck] { border-bottom-color: transparent; }
+@keyframes bar-fade { to { opacity: 1; } }
+@keyframes bar-line { to { border-bottom-color: transparent; } }
+@supports (animation-timeline: scroll()) {
+  [data-appbar-fade] { animation: bar-fade linear both; animation-timeline: scroll(root block); animation-range: 0 24px; }
+  [data-appbar] { animation: bar-line linear both; animation-timeline: scroll(root block); animation-range: 0 24px; }
+}
 
 /* A Workshop session is white panels on a grey desk; every other page is the plain page colour. Going in, the grey comes
    in softly rather than at once: the session page paints with --desk-now, the desk's colour mixed in by --desk-t, which

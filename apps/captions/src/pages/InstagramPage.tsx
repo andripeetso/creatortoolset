@@ -1732,7 +1732,7 @@ export default function InstagramPage() {
             {/* filters appear with the first post */}
             {hasPosts ? (
             <div className={selected.size > 0 ? "pb-16" : ""}>
-              <div ref={chromeRef} data-sticks className="sticky top-[var(--bar-h)] z-20 flex flex-wrap items-center gap-2 bg-zinc-950 pb-4 pt-5">
+              <div ref={chromeRef} className="sticky top-[var(--bar-h)] z-20 flex flex-wrap items-center gap-2 bg-zinc-950 pb-4 pt-5">
                 {knowhowView ? null : (
                   <>
                     <div role="radiogroup" aria-label="Status" className={cn(segmentList, "shrink-0")}>

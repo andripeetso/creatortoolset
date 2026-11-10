@@ -1012,7 +1012,7 @@ export default function WorkshopSessionPage() {
       <AppBar
         tool="Content Workshop"
         to={WORKSHOP_HOME}
-        className="bg-[var(--desk-now)] !transition-none"
+        className="bg-[var(--desk-now)]"
         trail={
         // as wide as the title (an invisible copy sizes it), so the rest of the bar stays free to drag the Mac window
         <span className="inline-grid min-w-0">

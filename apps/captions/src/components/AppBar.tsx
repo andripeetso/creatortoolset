@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, type ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import { Link, useLocation } from "react-router";
 import { Check, ChevronDown, ChevronRight } from "lucide-react";
 import { HistoryArrows, HomeLink } from "@/components/HomeLink";
@@ -44,19 +44,17 @@ export function AppBar({
   onHome?: (e: React.MouseEvent<HTMLAnchorElement>) => void;
   className?: string;
 }) {
-  const bar = useRef<HTMLElement>(null);
-  useStuck(bar);
   return (
     <>
     <header
-      ref={bar}
       data-titlebar
       data-appbar
       className={cn(
         // a phone's actions wrap onto a second row instead of running over the title; on a desktop the bar is one
         // fixed-height row (every page the same height), the trail truncates and the actions never shrink.
-        // From tablet width up it stays put while the page scrolls under it (index.css [data-appbar])
-        "top-0 z-30 flex min-h-14 w-full shrink-0 flex-wrap items-center gap-x-2 gap-y-1.5 border-b border-zinc-500/20 px-3 py-2 sm:sticky sm:h-14 sm:flex-nowrap sm:gap-x-3 sm:px-4",
+        // From tablet width up it stays put while the page scrolls under it: that, and its colour, are in index.css
+        // ([data-appbar]) at zero specificity, so a page's own classes here win
+        "flex min-h-14 w-full shrink-0 flex-wrap items-center gap-x-2 gap-y-1.5 border-b border-zinc-500/20 px-3 py-2 sm:h-14 sm:flex-nowrap sm:gap-x-3 sm:px-4",
         className,
       )}
     >
@@ -78,52 +76,10 @@ export function AppBar({
         {account && <UserMenu />}
       </div>
     </header>
-    {/* the page fades out just under the bar once it has scrolled; below anything else that sticks (z-10 and up) */}
+    {/* the page fades out directly under the bar once it has scrolled (index.css); below anything else that sticks */}
     <div aria-hidden data-appbar-fade className="fixed inset-x-0 top-[var(--bar-h)] z-[5] hidden sm:block" />
     </>
   );
-}
-
-/** The nearest element that scrolls `el`, or null when the window does. */
-function scrollerOf(el: Element): Element | null {
-  for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
-    const o = getComputedStyle(p).overflowY;
-    if (o === "auto" || o === "scroll") return p;
-  }
-  return null;
-}
-
-/**
- * Marks the bar `data-scrolled` once its page has scrolled, and every row that sticks below it ([data-sticks])
- * `data-stuck` while it is held at its sticking place: index.css draws the fade from those. One listener for every
- * scroller on the page (scroll events do not bubble, so it listens in the capture phase), once per frame.
- */
-function useStuck(bar: React.RefObject<HTMLElement | null>) {
-  useEffect(() => {
-    let frame = 0;
-    const sync = () => {
-      frame = 0;
-      const scrolled = (el: Element) => {
-        const s = scrollerOf(el);
-        return { top: s ? s.getBoundingClientRect().top : 0, moved: (s ? s.scrollTop : window.scrollY) > 0 };
-      };
-      if (bar.current) bar.current.toggleAttribute("data-scrolled", scrolled(bar.current).moved);
-      for (const el of document.querySelectorAll<HTMLElement>("[data-sticks]")) {
-        const s = scrolled(el);
-        const at = parseFloat(getComputedStyle(el).top) || 0;
-        el.toggleAttribute("data-stuck", s.moved && el.getBoundingClientRect().top - s.top <= at + 1);
-      }
-    };
-    const ask = () => void (frame ||= requestAnimationFrame(sync));
-    sync();
-    document.addEventListener("scroll", ask, { passive: true, capture: true });
-    window.addEventListener("resize", ask);
-    return () => {
-      cancelAnimationFrame(frame);
-      document.removeEventListener("scroll", ask, { capture: true });
-      window.removeEventListener("resize", ask);
-    };
-  }, [bar]);
 }
 
 /** The tool's name opens every tool you may use, to jump straight to another; the one you're in takes you to its
