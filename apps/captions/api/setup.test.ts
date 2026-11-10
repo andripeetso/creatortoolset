@@ -34,6 +34,19 @@ describe("setup: my tools, my plan, what is set up", () => {
     expect(await get()).toMatchObject({ tools: ["workshop", "editor"], plan: "claude_pro", done: true });
   });
 
+  it("says transcripts work without a key only when the server is on the person's own computer", async () => {
+    expect((await get()).have).not.toContain("deviceTranscripts");
+    process.env.CT_LOCAL = "1";
+    try {
+      expect((await get()).have).toContain("deviceTranscripts");
+      process.env.CT_MODE = "hosted";
+      expect((await get()).have).not.toContain("deviceTranscripts");
+    } finally {
+      delete process.env.CT_LOCAL;
+      delete process.env.CT_MODE;
+    }
+  });
+
   it("sees a key the person added, and the plan their Mac's CLI reports", async () => {
     saveMyKey("sam", "NVIDIA_API_KEY", "nv-test-1234");
     const { device } = pairDevice("sam", "Studio Mac");

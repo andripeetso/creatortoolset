@@ -53,6 +53,8 @@ export interface ClipSession {
   status: "processing" | "ready" | "error";
   progress: number;
   step?: "thumbnail" | "audio" | "transcribe" | "title";
+  /** what a transcript made on this computer is doing right now, in place of the step's own label */
+  note?: string;
   error?: string;
   summary?: string;
   chapters?: ClipChapter[];

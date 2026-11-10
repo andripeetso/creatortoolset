@@ -9,6 +9,7 @@ import { connectState } from "./connect/state";
 import { joinServer, saveJoin } from "./lib/server-join";
 import { readConnectors } from "./lib/connectors/store";
 import { publicApifyStatus, readApify } from "./lib/instagram/apify";
+import { deviceTranscribes } from "./lib/device-transcribe";
 import { connectedOwn } from "./lib/providers";
 import { addMcp, connectCli, installCli, localAiView, signIn, CLI_IDS, MAC_ONLY } from "./lib/local-ai";
 import { ownedProjects } from "./lib/workshop/workspace";
@@ -83,6 +84,7 @@ export async function haveFor(user: SessionUser): Promise<Have[]> {
     (k) => k.env,
   );
   if (anyAiConfigured(user)) have.push("ai");
+  if (deviceTranscribes()) have.push("deviceTranscripts");
   // the Workshop's own check (workshop.ts workshopAi): its route, an admin's workspace AI included
   if (connectedOwn(u) || !aiFor(user, "workshop", "Workshop").off) have.push("ownAi");
   if ((await ownedProjects(u)).length) have.push("project");

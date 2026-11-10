@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import type { AuthVars } from "../auth";
 import type { AssetDetail, SearchHit } from "../../contracts/library";
+import { deviceStatus } from "../lib/device-transcribe";
 import { libraryRole, mayWrite, versionSource } from "./access";
 import { libraryDb } from "./db";
 import { hitKey, rrf, semanticHits } from "./embed";
@@ -76,7 +77,11 @@ export function assetDetail(libraryId: string, assetId: string): AssetDetail | n
       state: AssetDetail["jobs"][number]["state"];
       error: string | null;
     }[]
-  ).map((j) => ({ kind: j.kind, state: j.state, ...(j.error ? { error: j.error } : {}) }));
+  ).map((j) => {
+    // a transcript being made on this computer says what it is doing (the speech model's first download, listening)
+    const error = j.kind === "transcribe" && j.state === "running" ? deviceStatus(row.version_id) : j.error;
+    return { kind: j.kind, state: j.state, ...(error ? { error } : {}) };
+  });
   const t = db().prepare("SELECT provider FROM transcripts WHERE version_id = ?").get(row.version_id) as { provider: string } | undefined;
   return {
     ...toCard(row),
