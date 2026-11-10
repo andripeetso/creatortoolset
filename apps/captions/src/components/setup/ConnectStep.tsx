@@ -50,11 +50,14 @@ export async function mintPhoneCode(): Promise<PhoneState> {
   }
 }
 
-/** After the server restarts for a setting change: asks again each second, 20 times at most. */
+/**
+ * After the server restarts for a setting change: asks again each second, 20 times at most. The old server answers
+ * "local" until it has stopped, so that answer is not final here either.
+ */
 async function afterRestart(): Promise<PhoneState> {
   for (let tries = 1; ; tries++) {
     const c = await mintPhoneCode();
-    if (c !== null || tries >= 20) return c;
+    if ((c !== null && c !== "local") || tries >= 20) return c;
     await new Promise((done) => setTimeout(done, 1000));
   }
 }
