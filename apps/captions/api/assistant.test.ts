@@ -41,6 +41,14 @@ const toolOf = async (token: string, name: string, args: Record<string, unknown>
   return { error: !!r.result.isError, text: r.result.content[0]!.text };
 };
 
+/** The newest "assistant" notice this account's open docks were sent (the change stream's hello, api/lib/sync.ts). */
+const noticed = async (cookie: string) => {
+  const reader = (await app.request("/api/sync/events", { headers: { cookie } })).body!.getReader();
+  const hello = new TextDecoder().decode((await reader.read()).value);
+  await reader.cancel();
+  return (JSON.parse(/^data: (.*)$/m.exec(hello)![1]!) as { topics: Record<string, number> }).topics.assistant ?? 0;
+};
+
 afterEach(() => {
   vi.useRealTimers();
 });
@@ -160,14 +168,19 @@ describe("a turn", () => {
     // the job's token opens the MCP tools for this account
     expect((await toolOf(job.mcp!.token, "setup_status")).error).toBe(false);
     // each tool it uses shows under the reply as it works; the same tool again stays one line
+    const sent = await noticed(cookie);
     await toolOf(job.mcp!.token, "setup_status");
     await toolOf(job.mcp!.token, "navigate", { path: "/review" });
     const working = (await (await app.request("/api/assistant", { headers: { cookie } })).json()) as { messages: Array<{ steps?: string[] }> };
     expect(working.messages.at(-1)?.steps).toEqual(["Checking what's set up", "Opening Review"]);
+    // the dock is told as the reply is written and when it ends, with no request of its own: it never asks on a timer
+    const written = await noticed(cookie);
+    expect(written).toBeGreaterThan(sent);
     const done = await app.request(`/api/devices/relay/${job.id}/done`, { method: "POST", ...json({ text: "Hello, let's start." }, { authorization: `Bearer ${mac.token}` }) });
     expect(done.status).toBe(200);
     const view = (await (await app.request("/api/assistant", { headers: { cookie } })).json()) as { messages: Array<{ role: string; text: string; status?: string }> };
     expect(view.messages.at(-1)).toMatchObject({ role: "assistant", text: "Hello, let's start.", status: "done" });
+    expect(await noticed(cookie)).toBeGreaterThan(written);
     expect((await toolOf(job.mcp!.token, "setup_status")).error).toBe(true);
     const onDisk = readFileSync(path.join(process.env.DATA_DIR!, "assistant", "ana.json"), "utf-8");
     expect(onDisk).not.toContain(job.mcp!.token);

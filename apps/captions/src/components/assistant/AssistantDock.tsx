@@ -24,6 +24,7 @@ import {
 import { cornerOf, storePlace, storedPlace, type Corner, type Place } from "@/lib/dock-place";
 import { pageContext } from "@/lib/page-context";
 import { speak, stopSpeaking, unlockAudio, useReadAloud } from "@/lib/read-aloud";
+import { onTopic } from "@/lib/sync";
 import { cn } from "@/lib/utils";
 import { Composer, PictureOverlay } from "./Composer";
 import { EMPTY_DRAFT, MAX_PICTURES, isLongPaste, isMediaFile, isPicture, toPicture, type Draft } from "./draft";
@@ -130,18 +131,10 @@ export function AssistantDock() {
 
   const last = view?.messages.at(-1);
   const thinking = last?.status === "thinking";
-  // a reply on the Mac takes a while: look again every 1.5 s until it's done
-  useEffect(() => {
-    if (!real || !thinking) return;
-    const t = setInterval(() => void load(), 1500);
-    return () => clearInterval(t);
-  }, [real, thinking, load]);
-  // a scheduled task may post in the open chat any time: look again now and then while the dock is open
-  useEffect(() => {
-    if (!real || collapsed || thinking) return;
-    const t = setInterval(() => void load(), 15_000);
-    return () => clearInterval(t);
-  }, [real, collapsed, thinking, load]);
+  // a reply is written on the server from the Mac's answer, and a scheduled task may post in the chat any time: the
+  // server says when the conversation changed (api/assistant.ts) and it is read again then, never on a timer. Also
+  // in a hidden window: a reply that finishes there is still read aloud
+  useEffect(() => (real ? onTopic("assistant", () => void load()) : undefined), [real, load]);
 
   // a reply that just finished: read it aloud, when that's on
   const waitingOn = useRef<string | null>(null);
