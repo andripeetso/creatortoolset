@@ -65,12 +65,12 @@ struct CreatorToolsetMacApp: App {
         Window("This Mac", id: "this-mac") {
             ThisMacView(shell: shell)
         }
-        .windowResizability(.contentSize)
+        .windowResizability(.contentMinSize)
 
         Window("Run your own server", id: "guide") {
             GuideView(shell: shell)
         }
-        .windowResizability(.contentSize)
+        .windowResizability(.contentMinSize)
 
         MenuBarExtra {
             ActivityPanel(shell: shell, checkForUpdates: { updater.checkForUpdates(nil) })
@@ -103,20 +103,33 @@ final class UpdateWhenIdle: NSObject, SPUUpdaterDelegate {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor static var shell: Shell?
 
+    /// Set when the app starts quitting: quitting (and the relaunches that quit) closes the windows too.
+    static var quitting = false
+
     /// The menu bar item stays up when the window is closed.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
     }
 
+    @MainActor func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        AppDelegate.quitting = true
+        return .terminateNow
+    }
+
     @MainActor func applicationDidFinishLaunching(_ notification: Notification) {
-        LoginItem.setOnce()
         // the last window closed: out of the Dock and the app switcher, still in the menu bar (Shell.showWindow brings it back)
         NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { note in
             let closing = note.object as? NSWindow
             DispatchQueue.main.async {
-                if !NSApp.windows.contains(where: { $0 !== closing && $0.isVisible && $0.styleMask.contains(.titled) }) {
-                    NSApp.setActivationPolicy(.accessory)
-                }
+                guard !NSApp.windows.contains(where: { $0 !== closing && $0.isVisible && $0.styleMask.contains(.titled) }) else { return }
+                NSApp.setActivationPolicy(.accessory)
+                let key = "keepsRunningSaid"
+                guard closeNoticeNeeded(quitting: AppDelegate.quitting, said: UserDefaults.standard.bool(forKey: key)) else { return }
+                UserDefaults.standard.set(true, forKey: key)
+                let a = NSAlert()
+                a.messageText = "Creator Toolset keeps running"
+                a.informativeText = "It stays in the menu bar. Click its icon there to open the window again, or choose Quit to stop it."
+                a.runModal()
             }
         }
     }
@@ -146,10 +159,37 @@ struct WebWindow: View {
                 .ignoresSafeArea()
             if !shell.hasServer {
                 PickServerView(shell: shell)
+            } else if shell.runsHere, let problem = shell.serverProblem {
+                ServerProblemView(problem: problem, shell: shell)
             }
         }
         .frame(minWidth: 960, minHeight: 640)
-        .onAppear { shell.openWindowID = { openWindow(id: $0) } }
+        .onAppear {
+            shell.openWindowID = { openWindow(id: $0) }
+            // the first window shown: the login item is on for a copy in /Applications, and that is said once
+            if LoginItem.setOnce() { Task { @MainActor in LoginItem.explainOnce() } }
+        }
+    }
+}
+
+/// The server on this Mac could not start: the plain words, Try again and the log (the technical reason is logged).
+struct ServerProblemView: View {
+    let problem: String
+    @ObservedObject var shell: Shell
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Text(problem).multilineTextAlignment(.center)
+            HStack {
+                Button("Open log") { shell.openServerLog() }
+                Button("Try again") { shell.retryServer() }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .frame(width: 440)
+        .padding(32)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.background)
     }
 }
 
@@ -165,7 +205,6 @@ struct WebViewHost: NSViewRepresentable {
 /// picked one removed). There is no default site.
 struct PickServerView: View {
     @ObservedObject var shell: Shell
-    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -181,8 +220,6 @@ struct PickServerView: View {
                 }
             }
             AddServerField(shell: shell)
-            Button("Run your own server…") { openWindow(id: "guide") }
-                .buttonStyle(.link)
         }
         .frame(width: 440)
         .padding(32)

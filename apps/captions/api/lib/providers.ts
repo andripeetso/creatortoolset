@@ -271,10 +271,10 @@ export interface Route {
 
 /**
  * An instance can run for a scope: on, a CLI that runs, and a Mac that exists and belongs to that scope. With `owner`,
- * only a Mac that account paired (an admin's workspace providers on its own Macs, never another admin's).
+ * only a Mac that account paired or the workspace's own Mac (an admin's workspace providers, never another admin's).
  */
 const usable = (scope: Scope, i: ProviderInstance, owner?: string): boolean =>
-  i.enabled && runs(i.driver) && !!deviceIdOf(i) && belongsTo(scope, deviceIdOf(i)) && (owner === undefined || deviceOf(deviceIdOf(i))?.owner === owner);
+  i.enabled && runs(i.driver) && !!deviceIdOf(i) && belongsTo(scope, deviceIdOf(i)) && (owner === undefined || [owner, "workspace"].includes(deviceOf(deviceIdOf(i))?.owner ?? ""));
 
 function pick(scope: Scope, s: ProviderSettings, job: JobId, own?: Selection, owner?: string): Route | null {
   const runnable = s.instances.filter((i) => usable(scope, i, owner));

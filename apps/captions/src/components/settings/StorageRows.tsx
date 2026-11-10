@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { LIBRARY_NAME, STORAGE_ROLES, sourcesOf, type AddFolderBody, type Disk, type MakeLibraryBody, type SourceRole, type StorageFolder, type StorageState, type StorageView } from "@contracts/storage";
+import { LIBRARY_NAME, STORAGE_ROLES, THIS_COMPUTER, sourcesOf, type AddFolderBody, type Disk, type MakeLibraryBody, type SourceRole, type StorageFolder, type StorageState, type StorageView } from "@contracts/storage";
 import type { ProvidersView } from "@contracts/providers";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -30,7 +30,8 @@ const removeStorageFolder = (id: string) => call<StorageState>(`${STORAGE_API}/f
 
 /** The drives a computer reported (its system disk, external drives, network shares). Empty until it reports one. */
 export const disksOf = (d: Computer): Disk[] => d.report?.machine?.disks ?? [];
-const nameOf = (devices: Computer[], host: string) => devices.find((d) => d.id === host)?.name ?? "A computer that is gone";
+const nameOf = (devices: Computer[], host: string) =>
+  host === THIS_COMPUTER ? "This computer" : (devices.find((d) => d.id === host)?.name ?? "A computer that is gone");
 
 const size = (gb: number) => (gb >= 1000 ? `${(gb / 1024).toFixed(1)} TB` : `${Math.round(gb)} GB`);
 /** Almost full: under 20 GB free, or under a tenth of the disk. */

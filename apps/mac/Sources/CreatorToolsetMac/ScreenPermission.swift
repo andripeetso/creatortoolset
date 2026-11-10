@@ -1,5 +1,6 @@
-// Screen recording permission. The first Record click asks macOS only (its own prompt, no app alert). While the switch
-// is still off after that, a Record click shows one alert: open System Settings, or quit and reopen the app. macOS
+// Screen recording permission. The first Record click shows one line first (what it is for, and what macOS asks next),
+// then macOS's own prompt. Cancel on that line asks nothing and the next Record click shows the line again. While the
+// switch is still off after macOS was asked, a Record click shows one alert: open System Settings, or quit and reopen the app. macOS
 // applies a new grant only to a process that starts after it, so after the user visits Settings the app offers the
 // reopen once (on the next activation), never on every activation.
 import AppKit
@@ -37,8 +38,14 @@ enum ScreenPermission {
         case .proceed:
             return true
         case .requestSystem:
-            defaults.set(true, forKey: requestedKey)
-            CGRequestScreenCaptureAccess()
+            let line = alert("Allow screen recording?",
+                             "Creator Toolset records your screen only when you press Record. macOS asks next: turn on Creator Toolset under Screen & System Audio Recording, and reopen the app if it says to.")
+            line.addButton(withTitle: "Continue")
+            line.addButton(withTitle: "Not now")
+            if line.runModal() == .alertFirstButtonReturn {
+                defaults.set(true, forKey: requestedKey)
+                CGRequestScreenCaptureAccess()
+            }
         case .showAlert:
             let a = alert("Allow screen recording",
                           "Turn on Creator Toolset in System Settings → Privacy & Security → Screen & System Audio Recording, then reopen the app.")

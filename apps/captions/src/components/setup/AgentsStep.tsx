@@ -1,41 +1,38 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Check } from "lucide-react";
-import { INSTALL_LINE, type CliId } from "@contracts/local-ai";
+import type { CliId } from "@contracts/local-ai";
 import { ProviderLogo } from "@/components/settings/ProviderLogos";
 import { useAuth } from "@/lib/auth";
-import { AiPanel } from "@/components/setup/AiPanel";
+import { AiPanel, ROW_NAME, ROW_SUB } from "@/components/setup/AiPanel";
 import { HERE } from "@/components/setup/ConnectStep";
 import { getComputers, type ComputerInfo, type ComputersView } from "./computers";
 
-const NAME: Record<string, string> = { claude: "Claude Code", codex: "Codex", gemini: "Gemini CLI" };
-const AGENTS = ["claude", "codex", "gemini"] as const;
+const AGENTS = ["codex", "claude", "gemini"] as const;
 const ROW = "flex items-start gap-3 rounded-xl border border-border/60 bg-card/40 px-4 py-3";
 
 /**
- * One other computer's agents, as it reports them. Install and sign-in there can't be run from here, so a missing
- * agent gets the vendor's line to paste into that computer's Terminal.
+ * One other computer's AIs, as it reports them. Install and sign-in run on that computer's own app, so a missing
+ * AI is only named here: its Agents step installs it. Gemini is listed only where its tool is installed.
  */
 function remoteRows(c: ComputerInfo) {
-  const agents = c.drivers.filter((d) => (AGENTS as readonly string[]).includes(d.driver));
-  if (!agents.length) return <p className="text-sm text-muted-foreground">Nothing reported yet. Open Creator Toolset on {c.name}, and its agents show up here.</p>;
+  const agents = c.drivers.filter(
+    (d) => (AGENTS as readonly string[]).includes(d.driver) && (d.driver !== "gemini" || d.installed),
+  );
+  if (!agents.length) return <p className="text-sm text-muted-foreground">Nothing reported yet. Open Creator Toolset on {c.name}, and its AIs show up here.</p>;
   return (
     <ul className="space-y-2">
       {agents.map((d) => {
         const id = d.driver as CliId;
-        const line = !d.installed ? INSTALL_LINE[id] : undefined;
         return (
           <li key={d.driver} className={ROW}>
             <ProviderLogo driver={d.driver} className="mt-0.5 size-5" />
             <div className="min-w-0 flex-1 space-y-1">
-              <p className="text-sm font-medium">{NAME[d.driver] ?? d.driver}</p>
-              {!d.installed && (
-                <p className="text-xs">
-                  Not found on {c.name}. To add it, paste this line into a Terminal there: <code className="break-all font-mono">{line ?? "(installs on its own)"}</code>
-                </p>
-              )}
+              <p className="text-sm font-medium">{ROW_NAME[id]}</p>
+              <p className="text-xs text-muted-foreground">{ROW_SUB[id]}</p>
+              {!d.installed && <p className="text-xs">Not installed on {c.name}. Open Creator Toolset there and press Install.</p>}
               {d.installed && d.signedIn === false && <p className="text-xs text-muted-foreground">Not signed in on {c.name} yet.</p>}
             </div>
-            {d.installed && d.signedIn !== false && <Check aria-label={`${NAME[d.driver] ?? d.driver} is ready on ${c.name}`} className="mt-0.5 size-4 text-emerald-600 dark:text-emerald-400" />}
+            {d.installed && d.signedIn !== false && <Check aria-label={`${ROW_NAME[id]} is connected on ${c.name}`} className="mt-0.5 size-4 text-emerald-600 dark:text-emerald-400" />}
           </li>
         );
       })}
@@ -44,7 +41,7 @@ function remoteRows(c: ComputerInfo) {
 }
 
 /**
- * Stage 2, "Connect your agents": one section per computer that is picked on the Connect step. This computer's section
+ * Stage 2, "Connect your AI": one section per computer that is picked on the Connect step. This computer's section
  * is the AI panel (it connects on a press); the other computers show what they report.
  */
 export function AgentsStepView({
@@ -71,18 +68,20 @@ export function AgentsStepView({
         <a className="text-foreground underline" href="https://creatortoolset.com/download">Creator Toolset Mac app</a> on the computer you work on, and its AI shows up here.
       </p>
     ) : (
-      <p className="text-sm text-muted-foreground">No computer is picked. Go back and pick one to set up its agents.</p>
+      <p className="text-sm text-muted-foreground">No computer is picked. Go back and pick one to set up its AI.</p>
     );
+  // a computer's name is a heading only when another computer is listed too; with this computer alone there is none
+  const named = shownOthers.length > 0;
   return (
     <div className="space-y-6">
       {showHere && (
-        <section className="space-y-3" aria-label={`Agents on ${here}`}>
-          <h3 className="text-sm font-semibold">{here}</h3>
+        <section className="space-y-3" aria-label={`AI on ${here}`}>
+          {named && <h3 className="text-sm font-semibold">{here}</h3>}
           {mine}
         </section>
       )}
       {shownOthers.map((c) => (
-        <section key={c.id} className="space-y-3" aria-label={`Agents on ${c.name}`}>
+        <section key={c.id} className="space-y-3" aria-label={`AI on ${c.name}`}>
           <h3 className="text-sm font-semibold">{c.name}</h3>
           {remoteRows(c)}
         </section>

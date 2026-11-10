@@ -69,7 +69,12 @@ describe("one-time sign-in links", () => {
 describe("a server on this Mac signs in from other devices only once a password is set", () => {
   it("refuses another address while the password is still APP_SECRET, and lets it in after one is chosen", async () => {
     vi.stubEnv("CT_LOCAL", "1");
-    expect((await login(LAN, "local-sign-in-test-secret")).status).toBe(403);
+    const refused = await login(LAN, "local-sign-in-test-secret");
+    expect(refused.status).toBe(403);
+    // the words name this computer's password, the one the person chooses, never another password
+    const words = ((await refused.json()) as { error: string }).error;
+    expect(words).toContain("This computer's password isn't set yet");
+    expect(words).not.toMatch(/Mac first|catalog/i);
     // a wrong guess from the LAN is an ordinary failure: it never learns the account is still on APP_SECRET
     expect((await login(LAN, "a-wrong-guess")).status).toBe(401);
     expect((await login("::ffff:127.0.0.1", "local-sign-in-test-secret")).status).toBe(200);
@@ -103,5 +108,36 @@ describe("the Mac app pairs itself on a server on this Mac", () => {
     const pair = async (name: string) => (await (await post("127.0.0.1", "/api/devices", { name }, cookie)).json()) as { device: { id: string } };
     await pair("Studio Mac");
     expect(providerSettings().instances).toEqual([]);
+  });
+});
+
+describe("the phone's code", () => {
+  // the owner's password is already changed by the tests above
+  const ownerCookie = async () => {
+    const res = await login("127.0.0.1", "tinyacrobatics1");
+    expect(res.status).toBe(200);
+    return cookieOf(res);
+  };
+
+  it("is one live code per account: a new one ends the older ones, so none stack", async () => {
+    const cookie = await ownerCookie();
+    const mintPath = async () => {
+      const res = await post("127.0.0.1", "/api/auth/link", {}, cookie);
+      expect(res.status).toBe(200);
+      return ((await res.json()) as { path: string }).path;
+    };
+    const older = await mintPath();
+    const newer = await mintPath();
+    expect((await from("127.0.0.1", older)).status).toBe(410);
+    expect((await from("127.0.0.1", newer)).status).toBe(302);
+  });
+
+  it("gives the port this server is reached on, not a guessed one", async () => {
+    const cookie = await ownerCookie();
+    const res = await app.request("http://localhost:3773/api/auth/link", { method: "POST", headers: { cookie } }, { incoming: { socket: { remoteAddress: "127.0.0.1", remotePort: 50000, remoteFamily: "IPv4" } } });
+    expect(res.status).toBe(200);
+    const { url } = (await res.json()) as { url: string | null };
+    // no network route in some sandboxes: then there is no address to offer, and nothing is guessed
+    if (url) expect(url).toMatch(/:3773$/);
   });
 });

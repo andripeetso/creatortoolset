@@ -1,14 +1,15 @@
-import { execFile } from "node:child_process";
-import { accessSync, constants, existsSync, readFileSync, readdirSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
+import { accessSync, chmodSync, constants, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { INSTALL_LINE, type CliId, type ConnectResult, type LocalAiRow, type LocalAiView, type McpResult, type SignInResult } from "../../contracts/local-ai";
+import { type CliId, type ConnectResult, type LocalAiRow, type LocalAiView, type McpResult, type SignInResult } from "../../contracts/local-ai";
 import { planFromCli, type PlanId } from "../../contracts/plans";
 import { addInstanceTo, type ProviderInstance } from "../../contracts/providers";
 import { checkInstance } from "../providers";
 import { connectedOwn, ownSettings, parseSettings, saveSettings } from "./providers";
-import { isOnline, listDevices } from "./devices";
+import { deviceOf, isOnline } from "./devices";
 import { findUser, newApiKey, type UserRecord } from "../users";
 
 /**
@@ -17,7 +18,8 @@ import { findUser, newApiKey, type UserRecord } from "../users";
  * owner's Mac (CT_LOCAL=1, the routes check it), and nothing here runs before a button is pressed.
  *
  * Binaries: a login shell's `command -v` first (nvm is set up in .zshrc, so -i), then fixed fallbacks. Every spawn puts
- * the binary's own folder first on PATH, since Claude Code is a Node script.
+ * the binary's own folder first on PATH, since Claude Code is a Node script. Install and sign-in run the vendors' own
+ * commands as child processes here (no Terminal window): see installCli and signIn.
  */
 
 export const CLI_IDS: CliId[] = ["claude", "codex", "gemini"];
@@ -119,6 +121,12 @@ export function forgetCli(id: CliId): void {
   if (id === "codex") codexUrl = undefined;
 }
 
+/** Where the managed Node.js is kept (installNode), and its bin folder. */
+const nodeRoot = (): string => path.join(os.homedir(), "Library", "Application Support", "Creator Toolset", "node");
+/** PATH for a spawn: the binary's own folder, the managed Node's (once this server installed it), then the rest. */
+export const toolPath = (bin: string): string =>
+  [path.dirname(bin), ...(existsSync(path.join(nodeRoot(), "bin")) ? [path.join(nodeRoot(), "bin")] : []), process.env.PATH ?? ""].join(":");
+
 async function lookup(id: CliId): Promise<string | null> {
   // -i: nvm is usually set up in .zshrc, which only an interactive login shell reads
   const out = await run("/bin/zsh", ["-lic", `command -v ${id}`], { timeout: 5000 });
@@ -143,7 +151,7 @@ async function runCli(id: CliId, args: string[], timeout: number, extraEnv: Reco
     if (!bin) return null;
     const out = await run(bin, args, {
       timeout,
-      env: { ...process.env, ...extraEnv, PATH: `${path.dirname(bin)}:${process.env.PATH ?? ""}` },
+      env: { ...process.env, ...extraEnv, PATH: toolPath(bin) },
     });
     if (out.code !== "ENOENT") return out;
     bins.delete(id);
@@ -227,7 +235,8 @@ async function codexSupportsUrl(): Promise<boolean> {
 /** The state of one CLI on this Mac, read from the CLI itself. `home` is where Claude folders are looked for. */
 export async function probeCli(id: CliId, home = os.homedir()): Promise<Probe> {
   const v = await runCli(id, ["--version"], 2000);
-  if (!v) return { id, found: false, signedIn: null };
+  // found only when --version exits 0: a timeout or a crash is not a found CLI (M-53)
+  if (!v || v.code !== 0) return { id, found: false, signedIn: null };
   const version = parseVersion(v.stdout || v.stderr);
   const bin = bins.get(id);
   const base: Probe = { id, found: true, version, signedIn: null, bin, real: bin ? safeReal(bin) : undefined };
@@ -304,54 +313,174 @@ export async function localAiView(username: string, mcpTo: CliId[], fresh = fals
   return { local: true, rows };
 }
 
-/* ---- sign in: Terminal runs the tool's own sign-in ---- */
+/* ---- install: the vendors' own routes, run here as child processes (no Terminal) ---- */
 
-/** A single-quoted shell word. */
-const shq = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
-/** A double-quoted AppleScript string. */
-const appleStr = (s: string): string => `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+/** Node.js for Gemini CLI's npm route, pinned: a newer Node is a deliberate change here, checked against its SHASUMS. */
+export const NODE_VERSION = "22.18.0";
+const STEP_MS = 5 * 60_000;
+const LOGIN_MS = 5 * 60_000;
+const localBin = (): string => path.join(os.homedir(), ".local", "bin");
+const tailOf = (o: Out): string => (o.stderr || o.stdout || "").trim().slice(-600);
+const envWith = (...dirs: string[]): NodeJS.ProcessEnv => ({ ...process.env, PATH: [...dirs, process.env.PATH ?? ""].join(":") });
 
-/** Opens Terminal with the tool's own sign-in command: a fixed command and the path this server found. */
+/** A failed install step: one plain sentence for the person, the raw output for Details. */
+interface Failed {
+  message: string;
+  raw?: string;
+}
+
+async function step(file: string, args: string[], env: NodeJS.ProcessEnv, message: string): Promise<Failed | null> {
+  const out = await run(file, args, { env, timeout: STEP_MS });
+  return out.code === 0 ? null : { message, raw: tailOf(out) };
+}
+
+/**
+ * Claude Code: Anthropic's own installer (claude.ai/install.sh), which puts the native binary in ~/.local/bin. Needs no
+ * Node and no Homebrew.
+ */
+async function installClaude(): Promise<Failed | null> {
+  return step("/bin/bash", ["-o", "pipefail", "-c", "curl -fsSL https://claude.ai/install.sh | bash"], envWith(localBin()), `Couldn't install ${NAMES.claude}. Check the internet connection, then try again.`);
+}
+
+/**
+ * Codex: OpenAI's release binary from GitHub (one file inside a .tar.gz), copied to ~/.local/bin. Needs no Node and no
+ * Homebrew. Verified after by its absolute path (installCli).
+ */
+async function installCodex(): Promise<Failed | null> {
+  const triple = os.arch() === "arm64" ? "aarch64-apple-darwin" : "x86_64-apple-darwin";
+  const dir = mkdtempSync(path.join(os.tmpdir(), "codex-install-"));
+  try {
+    const tgz = path.join(dir, "codex.tar.gz");
+    const url = `https://github.com/openai/codex/releases/latest/download/codex-${triple}.tar.gz`;
+    const failed =
+      (await step("/usr/bin/curl", ["-fL", "--retry", "2", "-o", tgz, url], process.env, `Couldn't download ${NAMES.codex}. Check the internet connection, then try again.`)) ??
+      (await step("/usr/bin/tar", ["-xzf", tgz, "-C", dir], process.env, `Couldn't unpack ${NAMES.codex}. Try again.`));
+    if (failed) return failed;
+    mkdirSync(localBin(), { recursive: true });
+    const target = path.join(localBin(), "codex");
+    copyFileSync(path.join(dir, `codex-${triple}`), target);
+    chmodSync(target, 0o755);
+    return null;
+  } catch (e) {
+    return { message: `Couldn't install ${NAMES.codex}. Try again.`, raw: errText(e) };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** Node.js for the npm route: the pinned release from nodejs.org, checked against its SHASUMS256 file, kept under nodeRoot(). */
+async function installNode(): Promise<Failed | null> {
+  const file = `node-v${NODE_VERSION}-darwin-${os.arch() === "arm64" ? "arm64" : "x64"}.tar.gz`;
+  const base = `https://nodejs.org/dist/v${NODE_VERSION}`;
+  const dir = mkdtempSync(path.join(os.tmpdir(), "node-install-"));
+  try {
+    const tgz = path.join(dir, file);
+    const sums = path.join(dir, "SHASUMS256.txt");
+    const dl = "Couldn't download Node.js. Check the internet connection, then try again.";
+    const failed = (await step("/usr/bin/curl", ["-fL", "--retry", "2", "-o", tgz, `${base}/${file}`], process.env, dl)) ?? (await step("/usr/bin/curl", ["-fL", "-o", sums, `${base}/SHASUMS256.txt`], process.env, dl));
+    if (failed) return failed;
+    const want = readFileSync(sums, "utf8").split("\n").find((l) => l.endsWith(`  ${file}`))?.split(" ")[0];
+    const got = createHash("sha256").update(readFileSync(tgz)).digest("hex");
+    if (!want || want !== got) return { message: "The Node.js download didn't check out, so it wasn't used. Try again.", raw: `expected ${want ?? "no checksum"}, got ${got}` };
+    mkdirSync(nodeRoot(), { recursive: true });
+    return step("/usr/bin/tar", ["-xzf", tgz, "-C", nodeRoot(), "--strip-components", "1"], process.env, "Couldn't unpack Node.js. Try again.");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** Gemini CLI: npm, from the managed Node.js when this Mac has none (npm itself needs Node). */
+async function installGemini(): Promise<Failed | null> {
+  if (!existsSync(path.join(nodeRoot(), "bin", "node"))) {
+    const node = await installNode();
+    if (node) return node;
+  }
+  return step(
+    path.join(nodeRoot(), "bin", "npm"),
+    ["install", "-g", "--prefix", path.join(os.homedir(), ".local"), "@google/gemini-cli"],
+    envWith(path.join(nodeRoot(), "bin"), localBin()),
+    `Couldn't install ${NAMES.gemini}. Check the internet connection, then try again.`,
+  );
+}
+
+/**
+ * Installs one CLI by its vendor's own route, then runs the binary by its absolute path with --version: only a binary
+ * that answers counts as installed. Nothing is shown as a command to paste.
+ */
+export async function installCli(id: CliId): Promise<SignInResult> {
+  const failed = id === "claude" ? await installClaude() : id === "codex" ? await installCodex() : await installGemini();
+  if (failed) return { ok: false, message: failed.message, raw: failed.raw };
+  const bin = path.join(localBin(), id);
+  const v = await run(bin, ["--version"], { env: { ...process.env, PATH: toolPath(bin) }, timeout: 15_000 });
+  forgetCli(id); // the next look reads the machine again
+  if (v.code !== 0) return { ok: false, message: `${NAMES[id]} installed, but it didn't start. Try again.`, raw: tailOf(v) };
+  return { ok: true, message: `${NAMES[id]} is installed.` };
+}
+
+/* ---- sign in: the vendor's own sign-in runs as a child process; the page polls until it is done ---- */
+
+/** The sign-in commands running now, one per CLI: a new press ends the older one. */
+const logins = new Map<CliId, ChildProcess>();
+
+/**
+ * Starts the vendor's sign-in (its browser opens) as a child process. The page checks the sign-in every few seconds
+ * until it is done. Gemini CLI signs in from its own screen.
+ */
 export async function signIn(id: CliId): Promise<SignInResult> {
   if (id === "gemini") return { ok: false, message: "Gemini CLI signs in on its own. Sign in there, then press Check." };
   const bin = await binFor(id);
   if (!bin) return { ok: false, message: MISSING };
-  const line = `export PATH=${shq(path.dirname(bin))}:"$PATH"; ${shq(bin)} ${id === "claude" ? "auth login" : "login"}`;
-  const r = await run("/usr/bin/osascript", ["-e", 'tell application "Terminal"', "-e", "activate", "-e", `do script ${appleStr(line)}`, "-e", "end tell"], { timeout: 10_000 });
-  return r.code === 0 ? { ok: true } : { ok: false, message: "Couldn't open Terminal. Sign in there yourself, then press Check." };
-}
-
-/** Opens Terminal with the vendor's own install line (INSTALL_LINE): a fixed command, nothing from the request. */
-export async function installCli(id: CliId): Promise<SignInResult> {
-  const line = INSTALL_LINE[id];
-  if (!line) return { ok: false, message: "Gemini CLI installs on its own. Install it there, then press Check." };
-  const r = await run("/usr/bin/osascript", ["-e", 'tell application "Terminal"', "-e", "activate", "-e", `do script ${appleStr(line)}`, "-e", "end tell"], { timeout: 10_000 });
-  return r.code === 0 ? { ok: true } : { ok: false, message: "Couldn't open Terminal. Paste the install line there yourself, then press Check." };
+  logins.get(id)?.kill();
+  const child = spawn(bin, id === "claude" ? ["auth", "login"] : ["login"], { env: { ...process.env, PATH: toolPath(bin) }, stdio: ["ignore", "pipe", "pipe"] });
+  logins.set(id, child);
+  const started = await new Promise<boolean>((resolve) => {
+    child.once("spawn", () => resolve(true));
+    child.on("error", () => resolve(false)); // kept listened to: a late error must not crash the server
+  });
+  if (!started) {
+    logins.delete(id);
+    return { ok: false, message: `Couldn't start ${NAMES[id]} sign-in. Try again.` };
+  }
+  child.stdout?.resume();
+  child.stderr?.resume();
+  const timer = setTimeout(() => child.kill(), LOGIN_MS);
+  child.on("exit", () => {
+    clearTimeout(timer);
+    if (logins.get(id) === child) logins.delete(id);
+  });
+  return { ok: true, message: "Your browser opens. Sign in there, then come back here." };
 }
 
 /* ---- connect ---- */
 
 /**
  * Connects one CLI as this account's AI: its sign-in is checked (a signed-in folder is used when the default one is
- * signed out), its instance is saved on this Mac, and a real check runs through the Mac. Mints no key.
+ * signed out), a real check runs through `mac` (this server's own Mac, the device the Mac app paired here), and only a
+ * passing check saves the instance. The first AI that connects becomes the default; a later one never takes it over
+ * (the AI step's picker does that). Mints no key.
  */
-export async function connectCli(username: string, id: CliId, home = os.homedir()): Promise<ConnectResult> {
+export async function connectCli(username: string, id: CliId, home = os.homedir(), mac?: string): Promise<ConnectResult> {
   const p = await probe(id, true, home);
   if (!p.found) return { state: "missing", signedIn: null, answered: null, message: MISSING };
   if (p.signedIn === false) return { state: "signin", signedIn: false, answered: null, message: "Not signed in yet." };
-  const device = listDevices((d) => d.owner === username).find((d) => isOnline(d.id));
-  if (!device) return { state: "mac", signedIn: p.signedIn, answered: null, message: MAC_ONLY };
+  // this server's own Mac: a device of this account that is answering now, never the first online one of its Macs
+  const device = mac ? deviceOf(mac) : undefined;
+  if (!device || device.owner !== username || !isOnline(device.id)) return { state: "mac", signedIn: p.signedIn, answered: null, message: MAC_ONLY };
 
-  const inst: ProviderInstance = { id: `local-${id}`, driver: id, name: NAMES[id], enabled: true, device: device.id, ...(p.home ? { home: p.home } : {}) };
+  const instId = `local-${id}`;
+  const inst: ProviderInstance = { id: instId, driver: id, name: NAMES[id], enabled: true, device: device.id, ...(p.home ? { home: p.home } : {}) };
   // the same writer as the Settings page's Add provider: addInstanceTo builds the set, parseSettings checks it
   const next = parseSettings(addInstanceTo(ownSettings(username), inst), username, { trustedFolder: true });
-  await saveSettings(next, username);
 
+  // the check runs before anything is saved: a failed check leaves the saved set, its default included, as it was
   const check = await checkInstance(username, inst, next);
-  if (check.ok) return { state: "ready", signedIn: p.signedIn, answered: true, ms: check.ms };
-  const plain = plainError(check.error ?? "");
-  if (plain.state === "signin") return { state: "signin", signedIn: false, answered: false, message: plain.message, raw: check.error };
-  return { state: "failed", signedIn: p.signedIn, answered: false, ms: check.ms, message: plain.message, raw: check.error };
+  if (!check.ok) {
+    const plain = plainError(check.error ?? "");
+    if (plain.state === "signin") return { state: "signin", signedIn: false, answered: false, message: plain.message, raw: check.error };
+    return { state: "failed", signedIn: p.signedIn, answered: false, ms: check.ms, message: plain.message, raw: check.error };
+  }
+  await saveSettings({ ...next, instances: next.instances.map((i) => (i.id === instId ? { ...i, lastCheck: { ok: true, at: check.at, ms: check.ms } } : i)) }, username);
+  return { state: "ready", signedIn: p.signedIn, answered: true, ms: check.ms };
 }
 
 /* ---- Creator Toolset in each CLI ---- */

@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from "react";
 import { Link, Navigate, useLocation } from "react-router";
 import { ArrowRight, ChevronRight, Loader2, Lock, ScreenShare, Star, type LucideIcon } from "lucide-react";
 import { canUse, useMe, type Me } from "@/lib/auth";
+import { Button } from "@/components/ui/button";
 import { isPhoneHub } from "@/lib/mobile";
 import { shownTools, useOpenTool, withPluginTiles, type Tool as HomeTool } from "@/lib/tools";
 import { AppBar } from "@/components/AppBar";
@@ -16,7 +17,7 @@ import { currentProject, PROJECT_COLORS, projectColor, useWorkspace } from "@/li
 import { useAppearance } from "@/lib/settings";
 import { useShareTheme } from "@/components/ShareTheme";
 import { readiness, TOOL_GROUPS, TOOL_NAMES, type Tool } from "@contracts/tools";
-import { openSetupAt, resumeStep, setupFinished, setupOpen, useSetup } from "@/lib/setup";
+import { DOWNLOAD_URL, openSetupAt, resumeStep, setupDismissed, setupFinished, shareDownload, useSetup, useSetupShown } from "@/lib/setup";
 
 /**
  * Creator Toolset: the landing hub. Two boxes side by side, Plan (analyze, write) and Make (edit, review), in the order
@@ -66,7 +67,8 @@ const canUseKey = (me: Me | null, k: Key) =>
 
 export default function ToolsetHome() {
   const location = useLocation();
-  const asked = new URLSearchParams(location.search).get("setup");
+  const setupUp = useSetupShown((s) => s.shown);
+  const [shared, setShared] = useState<Awaited<ReturnType<typeof shareDownload>> | null>(null);
   const openTool = useOpenTool();
   const me = useMe();
   const phone = isPhoneHub();
@@ -96,13 +98,13 @@ export default function ToolsetHome() {
     return <Navigate to={{ pathname: "/", search: location.search }} replace />;
   }
 
-  /** Ready or needs setup for a tile, from the account's setup; null when there is nothing to say (no setup, or off). */
-  const statusOf = (k: Key): boolean | null => {
+  /** What a tile still needs, from the account's setup ("" when nothing); null when there is nothing to say (no setup, or off). */
+  const statusOf = (k: Key): string | null => {
     if (!view || !canUseKey(me, k)) return null;
     // the recorder needs nothing Review doesn't; Finals is a view of the Media Library
     const tool = k === "record" ? "review" : k === "finals" ? "media" : k;
     if (view.tools && !view.tools.includes(tool)) return null;
-    return readiness(tool, view.have).ready;
+    return readiness(tool, view.have).missing.map((n) => n.what).join(" · ");
   };
   const extrasGroup = TOOL_GROUPS.find((g) => g.id === "tools");
   const extras: Key[] = [...(extrasGroup?.tools ?? []), "record"];
@@ -117,7 +119,7 @@ export default function ToolsetHome() {
     const p = PAGE[k];
     const dest = phone && p.phoneTo ? p.phoneTo : p.to;
     const ok = canUseKey(me, k);
-    const ready = statusOf(k);
+    const missing = statusOf(k);
     const body = (
       <>
         <span className={quiet
@@ -127,7 +129,7 @@ export default function ToolsetHome() {
           {!ok && <Lock className="absolute -bottom-1 -right-1 h-4 w-4 rounded-full bg-zinc-900 p-0.5 text-zinc-300" />}
           {ok && (k === "workshop" ? showCounts && <WorkshopBadge /> : k !== "record" && k !== "finals" && <Badge n={waiting[k] ?? 0} means={BADGE_MEANS[k]} />)}
           {ok && running[dest] ? <Running n={running[dest]} verb="writing" /> : null}
-          {ok && ready === false && <NeedsSetup />}
+          {ok && missing && <NeedsSetup what={missing} />}
         </span>
         <span className={`text-xs leading-tight transition-colors duration-200 group-hover:text-zinc-50 ${quiet ? "text-zinc-400" : "text-zinc-300"}`}>{NAME[k]}</span>
       </>
@@ -142,11 +144,11 @@ export default function ToolsetHome() {
       );
     }
     return dest.startsWith("https://") ? (
-      <a key={k} href={dest} title={ready === false ? `${p.desc} · Needs setup` : p.desc} className={className}>
+      <a key={k} href={dest} title={missing ? `${p.desc} · Needs: ${missing}` : p.desc} className={className}>
         {body}
       </a>
     ) : (
-      <Link key={k} to={dest} title={ready === false ? `${p.desc} · Needs setup` : p.desc} onClick={(e) => openTool(e, dest)} className={className}>
+      <Link key={k} to={dest} title={missing ? `${p.desc} · Needs: ${missing}` : p.desc} onClick={(e) => openTool(e, dest)} className={className}>
         {body}
       </Link>
     );
@@ -198,7 +200,17 @@ export default function ToolsetHome() {
       {phone && <div className="h-16 shrink-0" />}
 
       <div className="flex w-[520px] max-w-[94vw] flex-col gap-3 min-[900px]:w-[1120px] min-[900px]:gap-6 2xl:w-[1280px]">
-        {view && !setupFinished(view) && !setupOpen(view, asked) && (
+        {/* setup happens on the computer: a phone gets the way there, never the setup itself */}
+        {view && !setupFinished(view) && phone && !view.have.includes("project") && (
+          <div className="flex flex-col gap-3 rounded-xl border border-violet-500/30 bg-violet-500/5 px-4 py-3">
+            <p className="text-sm text-zinc-100">Set up Creator Toolset on your computer first. Then add this phone from there.</p>
+            <Button size="sm" variant="outline" className="self-start" onClick={() => void shareDownload().then(setShared)}>
+              {shared === "copied" ? "Link copied" : shared === "shown" ? DOWNLOAD_URL.replace("https://", "") : "Share the download link"}
+            </Button>
+          </div>
+        )}
+        {/* the way back after Not now; an account that never saw setup (it has projects, or signed in before) gets no card */}
+        {view && !setupFinished(view) && !phone && !setupUp && setupDismissed() && (
           <button
             type="button"
             onClick={() => openSetupAt(resumeStep())}
@@ -206,7 +218,7 @@ export default function ToolsetHome() {
           >
             <span>
               <span className="block text-sm text-zinc-100">Finish setting up</span>
-              <span className="block text-xs text-zinc-400">A few quick steps. Your answers are saved.</span>
+              <span className="block text-xs text-zinc-400">Three short screens. Your answers are saved.</span>
             </span>
             <ChevronRight className="h-4 w-4 shrink-0 text-zinc-500" />
           </button>
@@ -262,12 +274,12 @@ export default function ToolsetHome() {
 }
 
 /** A tool that needs setup: a small amber dot on its icon, nothing for one that is ready (owner, 2026-11-09). */
-function NeedsSetup() {
+function NeedsSetup({ what }: { what: string }) {
   return (
     <span
       role="img"
-      aria-label="Needs setup"
-      title="Needs setup"
+      aria-label={`Needs: ${what}`}
+      title={`Needs: ${what}`}
       className="absolute -right-1 -top-1 h-3 w-3 rounded-full bg-amber-400"
     />
   );

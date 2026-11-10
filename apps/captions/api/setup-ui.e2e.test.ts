@@ -3,8 +3,10 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 // The browser smoke run for first-run setup. It starts the app's own Vite server in this process and runs one
-// headless Chrome, as the Mac app's window would be. It walks all three paths (In the app, In my own AI, Both)
-// through the same five steps, then checks that Done leaves no setup dialog behind after a reload. Alone:
+// headless Chrome, as the Mac app's window would be. It walks the three screens (Connect your AI, What do you make?,
+// Try it) the way a new person does, for every saved way of working, and checks what must hold: nothing on a phone,
+// closing early keeps it unfinished, one project is made, no folder scan, no key to type. The tests share one data
+// folder and run in order: the first ones need an account that has not finished. Alone:
 //   SETUP_E2E=1 CT_SCRATCH_DIR=<a scratch folder on a big disk> pnpm -s exec vitest run api/setup-ui.e2e.test.ts
 // Everything it writes lives under CT_SCRATCH_DIR and is removed at the end.
 // Not part of the server typecheck (tsconfig.server.json excludes it): the browser types are not in this workspace.
@@ -50,137 +52,248 @@ async function shot(page: Any, name: string) {
   await page.screenshot({ path: path.join(shots, `${name}.png`) });
 }
 
-const SIZES = { desktop: { width: 1440, height: 900 }, phone: { width: 390, height: 844 } } as const;
+const DESKTOP = { width: 1440, height: 900 };
 // Small windows (a Mac window that is not full screen): the dialog must still show a whole step, never a thin strip
 const SMALL = { w1024x640: { width: 1024, height: 640 }, w800x600: { width: 800, height: 600 } } as const;
 
-// One path through the steps. The answer on step 1 is the only thing that differs between paths. The click path is
-// how → connect → agents (not in In the app) → folders → make → project → done.
-async function walkSetup(how: "In the app" | "In my own AI" | "Both", size: keyof typeof SIZES) {
-  const tag = `${how.replace(/\s+/g, "-").toLowerCase()}-${size}`;
-  const page = await browser.newPage({ viewport: SIZES[size] });
-  const errors: string[] = [];
-  page.on("pageerror", (e: Error) => errors.push(e.message));
-  await page.goto(new URL("/?setup=start", base).toString());
-
-  const dialog = page.getByRole("dialog");
-  await dialog.getByText("How do you work best?").waitFor({ timeout: 60_000 });
-  // the welcome has no stage bar at all
-  expect(await dialog.getByRole("list", { name: "Stage 1 of 3" }).count()).toBe(0);
-  await shot(page, `${tag}-1how`);
-  await dialog.getByRole("radio", { name: new RegExp(how) }).check();
-  await dialog.getByRole("button", { name: "Continue", exact: true }).click();
-
-  // Connect your computers: this computer is picked, and its address is shown under its name
-  await dialog.getByRole("heading", { name: "Connect your computers" }).waitFor();
-  expect(await dialog.getByRole("list", { name: "Stage 1 of 3" }).count()).toBe(1);
-  expect(await dialog.getByText(/^http:\/\/127\.0\.0\.1:\d+\/$|^http:\/\/localhost:\d+\/$/).count()).toBeGreaterThan(0);
-  await shot(page, `${tag}-2connect`);
-  await dialog.getByRole("button", { name: "Continue", exact: true }).click();
-
-  if (how !== "In the app") {
-    await dialog.getByRole("heading", { name: "Connect your agents" }).waitFor();
-    expect(await dialog.getByRole("list", { name: "Stage 2 of 3" }).count()).toBe(1);
-    // nothing is connected before a press, and there is no API key ask
-    expect(await dialog.getByText("Connected ✓").count()).toBe(0);
-    expect(await dialog.getByText(/api key/i).count()).toBe(0);
-    // the screenshot shows what this computer has, not the search for it
-    await dialog.getByText(/Looking for your AI/).waitFor({ state: "hidden", timeout: 30_000 }).catch(() => {});
-    await shot(page, `${tag}-3agents`);
-    await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+const url = (p: string) => new URL(p, base).toString();
+const saved = () => {
+  try {
+    return JSON.parse(readFileSync(path.join(process.env.DATA_DIR!, "setup", "local.json"), "utf-8"));
+  } catch {
+    return {}; // nothing saved yet
   }
+};
 
-  await dialog.getByRole("heading", { name: "Where are your videos?" }).waitFor();
-  expect(await dialog.getByRole("list", { name: "Stage 3 of 3" }).count()).toBe(1);
-  await shot(page, `${tag}-4folders`);
-  await dialog.getByRole("button", { name: "Do not add folders" }).click();
-
-  await dialog.getByRole("heading", { name: "What will you make?" }).waitFor();
-  await dialog.getByRole("checkbox", { name: /Short videos/ }).check();
-  await shot(page, `${tag}-5make`);
-  await dialog.getByRole("button", { name: "Continue", exact: true }).click();
-
-  await dialog.getByRole("heading", { name: "Your first project" }).waitFor();
-  // a project may already exist from an earlier path in this run: then the form shows its saved name and saves it again
-  await dialog.getByPlaceholder("My brand").fill("Tiny Acrobatics");
-  await dialog.getByRole("button", { name: /Create project|Continue/ }).click();
-
-  await dialog.getByRole("heading", { name: "You're ready to start" }).waitFor();
-  // the done step has no side buttons: Connect and Folders are steps on the path now
-  expect(await dialog.getByRole("button", { name: /Add your phone or another computer/ }).count()).toBe(0);
-  await shot(page, `${tag}-6done`);
-
-  await dialog.getByRole("button", { name: "Open Review" }).click();
-  await dialog.waitFor({ state: "hidden" });
-
-  const saved = JSON.parse(readFileSync(path.join(process.env.DATA_DIR!, "setup", "local.json"), "utf-8"));
-  expect(saved.done).toBe(true);
-  expect(Array.isArray(saved.tools)).toBe(true);
-  expect(saved.tools).toContain("editor");
-  // the assistant's popup never appears during setup
-  expect(await page.getByText("Ask assistant").count()).toBe(0);
-  expect(errors).toEqual([]);
-  await page.close();
+/** A page in its own browser context. The folder scan walks every drive of the machine: it is answered here, and counted. */
+async function open(context: Any = { viewport: DESKTOP }) {
+  const ctx = await browser.newContext(context);
+  const page = await ctx.newPage();
+  const errors: string[] = [];
+  const scans: string[] = [];
+  page.on("pageerror", (e: Error) => errors.push(e.message));
+  await page.route("**/api/setup/folders/scan*", (route: Any) => {
+    scans.push(route.request().url());
+    return route.fulfill({ json: {} });
+  });
+  const get = async (p: string) => (await page.request.get(url(p))).json();
+  return { page, dialog: page.getByRole("dialog"), errors, scans, get, close: () => ctx.close() };
 }
 
-// "I already have a server", as far as one server can show it: the address opens, and a pasted link that is not
-// another server's link is refused on this server before anything is fetched.
-async function existingServer(size: keyof typeof SIZES) {
-  const page = await browser.newPage({ viewport: SIZES[size] });
-  await page.goto(new URL("/?setup=connect", base).toString());
-  const dialog = page.getByRole("dialog");
-  await dialog.getByRole("heading", { name: "Connect your computers" }).waitFor({ timeout: 60_000 });
-  await dialog.getByRole("button", { name: "Add a computer" }).click();
-  await dialog.getByLabel(/paste the link it shows here/).fill("https://studio.example.com/api/devices");
-  await dialog.getByRole("button", { name: "Join" }).click();
-  await dialog.getByText("That isn't a sign-in link from another server").waitFor();
-  await shot(page, `existing-${size}-refused`);
-  await page.close();
+/** Waits for a screen: its title and its place in the count. */
+async function screen(dialog: Any, title: string, count: string | null) {
+  await dialog.getByRole("heading", { name: title }).waitFor({ timeout: 60_000 });
+  if (count) await dialog.getByText(count, { exact: true }).waitFor();
+  else expect(await dialog.getByText(/^\d of 3$/).count()).toBe(0);
+}
+
+/** Nothing on a setup screen asks for a key or a password, and nothing reads like a line to paste into a terminal. */
+async function plain(dialog: Any) {
+  expect(await dialog.locator('input[type="password"]').count()).toBe(0);
+  expect(await dialog.getByPlaceholder(/key|password|sk-/i).count()).toBe(0);
+  // what is on screen, and what a folded Details holds too
+  for (const text of [await dialog.innerText(), await dialog.evaluate((el: Any) => el.textContent)] as string[]) {
+    expect(text).not.toMatch(/api key|password/i);
+    expect(text).not.toMatch(/(^|\s|>)(\$|npx|npm|curl|brew|sudo|pip) \S/m);
+  }
+}
+
+/** Leaves "Connect your AI": Continue when an AI is connected, else the one button is Skip for now. */
+async function pastAi(dialog: Any) {
+  await dialog.getByText(/Looking for your AI/).waitFor({ state: "hidden", timeout: 30_000 }).catch(() => {});
+  const go = dialog.getByRole("button", { name: "Continue", exact: true });
+  const skip = dialog.getByRole("button", { name: "Skip for now" });
+  expect((await go.count()) + (await skip.count())).toBe(1);
+  await ((await skip.count()) ? skip : go).click();
 }
 
 describe.skipIf(!enabled)("first-run setup in the browser", () => {
-  for (const size of Object.keys(SIZES) as Array<keyof typeof SIZES>) {
-    it(`in the app (${size}): make → project → ready, Agents skipped`, async () => {
-      await walkSetup("In the app", size);
-    }, 180_000);
+  it("on a phone: no setup, only the way to the computer", async () => {
+    const { page, dialog, close } = await open({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+    await page.addInitScript(() => {
+      const real = window.matchMedia.bind(window);
+      window.matchMedia = (q: string) => (q === "(pointer: coarse)" ? ({ ...real(q), matches: true } as MediaQueryList) : real(q));
+    });
+    await page.goto(url("/"));
+    await page.getByText("Set up Creator Toolset on your computer first. Then add this phone from there.").waitFor({ timeout: 60_000 });
+    expect(await page.getByRole("button", { name: "Share the download link" }).count()).toBe(1);
+    expect(await page.getByText("Finish setting up").count()).toBe(0);
+    expect(await dialog.count()).toBe(0);
+    await shot(page, "phone-home");
+    // a link to the last screen opens nothing either, and so does not mark the account as set up
+    await page.goto(url("/m?setup=try"));
+    await page.getByText("Set up Creator Toolset on your computer first.").waitFor();
+    await page.waitForTimeout(1500);
+    expect(await dialog.count()).toBe(0);
+    expect(saved().done).not.toBe(true);
+    await close();
+  }, 180_000);
 
-    it(`in my own AI (${size}): make → project → agents → ready`, async () => {
-      await walkSetup("In my own AI", size);
-    }, 180_000);
+  it("first run: closing early keeps it unfinished, Home reopens where she left, one project is made, a video opens Caption Studio", async () => {
+    const { page, dialog, errors, scans, get, close } = await open();
+    await page.goto(url("/"));
+    // it opens by itself for a new account, on the first of three screens
+    await screen(dialog, "Connect your AI", "1 of 3");
+    await dialog.getByText(/Looking for your AI/).waitFor({ state: "hidden", timeout: 30_000 }).catch(() => {});
+    await plain(dialog);
+    await shot(page, "1-ai");
 
-    it(`both (${size}): make → project → agents → ready`, async () => {
-      await walkSetup("Both", size);
-    }, 180_000);
+    // the X: not done, and Home has the way back to the same screen
+    await dialog.getByRole("button", { name: "Not now" }).first().click();
+    await dialog.waitFor({ state: "hidden" });
+    expect(saved().done).not.toBe(true);
+    await page.getByRole("button", { name: /Finish setting up/ }).click();
+    await screen(dialog, "Connect your AI", "1 of 3");
 
-    it(`existing server (${size}): a pasted link that isn't one is refused`, async () => {
-      await existingServer(size);
-    }, 120_000);
+    // nothing under the AI rows: no box, no link
+    expect(await dialog.getByRole("checkbox").count()).toBe(0);
+
+    await pastAi(dialog);
+    await screen(dialog, "What do you make?", "2 of 3");
+    await dialog.getByRole("checkbox", { name: /Short videos/ }).check();
+    await plain(dialog);
+    await shot(page, "2-make");
+
+    // Not now in the footer: still not done, and it reopens here
+    await dialog.getByRole("button", { name: "Not now" }).last().click();
+    await dialog.waitFor({ state: "hidden" });
+    expect(saved().done).not.toBe(true);
+    await page.getByRole("button", { name: /Finish setting up/ }).click();
+    await screen(dialog, "What do you make?", "2 of 3");
+
+    // Back keeps the answer, even after something else was saved on the screen before
+    await dialog.getByRole("button", { name: "Back" }).click();
+    await screen(dialog, "Connect your AI", "1 of 3");
+    await pastAi(dialog);
+    await screen(dialog, "What do you make?", "2 of 3");
+    expect(await dialog.getByRole("checkbox", { name: /Short videos/ }).isChecked()).toBe(true);
+
+    // Continue makes the first project, with no form: named after the one thing picked
+    expect(await get("/api/workshop/projects")).toHaveLength(0);
+    await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+    await screen(dialog, "Try it", "3 of 3");
+    const projects = await get("/api/workshop/projects");
+    expect(projects.map((p: Any) => p.name)).toEqual(["Short videos"]);
+    // arriving here is the end of setup
+    await expect.poll(() => saved().done).toBe(true);
+    expect(saved().tools).toContain("captions");
+    await plain(dialog);
+    await shot(page, "3-try");
+
+    // back and on again: still one project
+    await dialog.getByRole("button", { name: "Back" }).click();
+    await screen(dialog, "What do you make?", "2 of 3");
+    await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+    await screen(dialog, "Try it", "3 of 3");
+    expect(await get("/api/workshop/projects")).toHaveLength(1);
+    expect(errors).toEqual([]);
+    expect(scans).toEqual([]);
+
+    // a file that is no video, dropped beside the card (on the title): the page stays, and the card says so
+    const dropOn = async (target: Any, name: string, type: string) => {
+      const data = await page.evaluateHandle(([n, t]: string[]) => {
+        const d = new DataTransfer();
+        d.items.add(new File(["not a real file"], n, { type: t }));
+        return d;
+      }, [name, type]);
+      await target.dispatchEvent("drop", { dataTransfer: data });
+    };
+    await dropOn(dialog.getByRole("heading", { name: "Try it" }), "notes.txt", "text/plain");
+    await dialog.getByText("That file can't be captioned. Try a video").waitFor();
+    expect(new URL(page.url()).searchParams.get("setup")).toBe("try");
+
+    // a video dropped on the card: setup closes and Caption Studio has it
+    await dropOn(dialog.locator("label").filter({ hasText: "Choose a video" }), "tiny-acrobatics.mp4", "video/mp4");
+    await page.waitForURL("**/captions");
+    await page.getByRole("heading", { name: "Try it" }).waitFor({ state: "hidden" });
+    await page.getByText(/tiny-acrobatics/).first().waitFor();
+    await close();
+  }, 240_000);
+
+  for (const talk of ["app", "chat", "both"] as const) {
+    it(`saved way of working "${talk}": the same three screens, then Home`, async () => {
+      const { page, dialog, errors, scans, get, close } = await open();
+      await page.request.put(url("/api/work-prefs"), { data: { talk } });
+      await page.goto(url("/?setup=start"));
+      await screen(dialog, "Connect your AI", "1 of 3");
+      await pastAi(dialog);
+      await screen(dialog, "What do you make?", "2 of 3");
+      await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+      await screen(dialog, "Try it", "3 of 3");
+      await plain(dialog);
+      // the chooser behind the card takes a video too (not picked here: one Caption Studio project is enough)
+      expect(await dialog.locator('label input[type="file"][accept="video/*"]').count()).toBe(1);
+      await dialog.getByRole("button", { name: "Skip, take me to Home" }).click();
+      await dialog.waitFor({ state: "hidden" });
+      expect(new URL(page.url()).pathname).toBe("/");
+      expect(await get("/api/workshop/projects")).toHaveLength(1); // the account has one: none is made
+      expect(errors).toEqual([]);
+      expect(scans).toEqual([]);
+      await close();
+    }, 180_000);
   }
+
+  it("old links land on the screen they now belong to", async () => {
+    const { page, dialog, close } = await open();
+    for (const [id, title, count] of [["done", "Try it", "3 of 3"], ["project", "What do you make?", "2 of 3"], ["ai", "Connect your AI", "1 of 3"]] as const) {
+      await page.goto(url(`/?setup=${id}`));
+      await screen(dialog, title, count);
+    }
+    await close();
+  }, 120_000);
+
+  it("the screens off the path open alone and close with Done", async () => {
+    const { page, dialog, scans, close } = await open();
+    // from a link: the join form opens alone
+    await page.goto(url("/?setup=connect"));
+    await screen(dialog, "Connect your computers", null);
+    expect(await dialog.getByRole("button", { name: /^(Back|Continue|Not now)$/ }).count()).toBe(0);
+    // a pasted link that is not another server's link is refused on this server before anything is fetched
+    await dialog.getByRole("button", { name: "Add another computer" }).click();
+    await dialog.getByLabel(/paste the link it shows here/).fill("https://studio.example.com/api/devices");
+    await dialog.getByRole("button", { name: "Join" }).click();
+    await dialog.getByText("That isn't a sign-in link from another server").waitFor();
+    await shot(page, "side-connect-refused");
+    await dialog.getByRole("button", { name: "Done" }).click();
+    await dialog.waitFor({ state: "hidden" });
+
+    // the same for the way of working
+    await page.goto(url("/?setup=how"));
+    await screen(dialog, "How do you work best?", null);
+    expect(await dialog.getByRole("radio").count()).toBe(3);
+    await dialog.getByRole("button", { name: "Done" }).click();
+    await dialog.waitFor({ state: "hidden" });
+    expect(scans).toEqual([]);
+    await close();
+  }, 120_000);
 
   for (const size of Object.keys(SMALL) as Array<keyof typeof SMALL>) {
-    it(`small window (${size}): the three stages fit, and the body scrolls`, async () => {
-      const page = await browser.newPage({ viewport: SMALL[size] });
-      await page.goto(new URL("/?setup=connect", base).toString());
-      const dialog = page.getByRole("dialog");
-      await dialog.getByRole("heading", { name: "Connect your computers" }).waitFor({ timeout: 60_000 });
-      const box = await dialog.boundingBox();
-      expect(box!.height).toBeLessThanOrEqual(SMALL[size].height);
-      await shot(page, `small-${size}-2connect`);
+    it(`small window (${size}): each screen fits, with a body to use`, async () => {
+      const { page, dialog, close } = await open({ viewport: SMALL[size] });
+      await page.goto(url("/?setup=agents"));
+      const fits = async (name: string) => {
+        expect((await dialog.boundingBox())!.height).toBeLessThanOrEqual(SMALL[size].height);
+        expect((await dialog.locator("header + div").boundingBox())!.height).toBeGreaterThan(200); // never a thin strip
+        await shot(page, `small-${size}-${name}`);
+      };
+      await screen(dialog, "Connect your AI", "1 of 3");
+      await fits("1-ai");
+      await pastAi(dialog);
+      await screen(dialog, "What do you make?", "2 of 3");
+      await fits("2-make");
       await dialog.getByRole("button", { name: "Continue", exact: true }).click();
-      await dialog.getByRole("heading", { name: "Connect your agents" }).waitFor();
-      await shot(page, `small-${size}-3agents`);
-      await dialog.getByRole("button", { name: "Continue", exact: true }).click();
-      await dialog.getByRole("heading", { name: "Where are your videos?" }).waitFor();
-      await shot(page, `small-${size}-4folders`);
-      await page.close();
+      await screen(dialog, "Try it", "3 of 3");
+      await fits("3-try");
+      await close();
     }, 120_000);
   }
 
-  it("Done → reload → Home, with no setup dialog again", async () => {
-    const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
-    await page.goto(new URL("/", base).toString());
+  it("after setup: a reload shows Home, with no setup dialog and no card", async () => {
+    const { page, dialog, close } = await open({ viewport: { width: 1280, height: 800 } });
+    await page.goto(url("/"));
     await page.waitForTimeout(1500);
-    expect(await page.getByRole("dialog").count()).toBe(0);
-    await page.close();
+    expect(await dialog.count()).toBe(0);
+    expect(await page.getByText("Finish setting up").count()).toBe(0);
+    await close();
   }, 60_000);
 });

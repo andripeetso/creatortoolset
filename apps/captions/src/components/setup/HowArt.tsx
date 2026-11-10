@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 
 /**
- * The pictures on setup's three "How do you want to work?" cards. All three are the same window, the same size and in
+ * Setup's pictures: the three "How do you work best?" cards, and the captioned video on "Try it". All three are the same window, the same size and in
  * the theme's own colours (light in light, dark in dark); only what's inside changes: the app, your own AI's chat, or
  * the two side by side. The accent is the project colour (`--tint`). The window is drawn in a 200×120 box.
  */
@@ -104,6 +104,20 @@ export function BothArt() {
       <AppInside x={96} w={104} />
       <circle cx="96.5" cy="71" r="9" fill={TINT} className="stroke-background" strokeWidth="2.5" />
       <path d="M92 71 H101 M97.5 67.5 L101 71 L97.5 74.5" fill="none" stroke="white" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </Frame>
+  );
+}
+
+/** "Try it": a video in the window with one caption line on it, the word being said in the accent colour. */
+export function CaptionArt() {
+  return (
+    <Frame>
+      <rect x="12" y="30" width="176" height="80" rx="6" fill={TINT} fillOpacity="0.16" />
+      <path d="M93 51 l15 11 l-15 11 Z" fill={TINT} />
+      <rect x="44" y="88" width="112" height="14" rx="7" className="fill-background" />
+      <rect x="52" y="93" width="30" height="4" rx="2" className="fill-muted-foreground/50" />
+      <rect x="86" y="93" width="26" height="4" rx="2" fill={TINT} />
+      <rect x="116" y="93" width="32" height="4" rx="2" className="fill-muted-foreground/50" />
     </Frame>
   );
 }

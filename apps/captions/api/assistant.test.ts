@@ -97,13 +97,25 @@ describe("before an AI is connected", () => {
     spy.mockRestore();
   });
 
-  it("another provider than Claude Code is refused with no model call", async () => {
+  it("a Codex-only user gets an answer: the turn runs on Codex's Mac with the message alone, and no job token", async () => {
     const nicoMac = pairDevice("nico", "Nico's Mac");
     await saveSettings({ ...structuredClone(DEFAULT_SETTINGS), instances: [{ id: "codex", driver: "codex", name: "Codex", enabled: true, device: nicoMac.device.id }], default: { instance: "codex", model: "gpt-x", effort: "high" } }, "nico");
     const cookie = await cookieOf("nico");
     const r = await app.request("/api/assistant/turn", { method: "POST", ...json({ text: "hello" }, { cookie }) });
-    expect(r.status).toBe(409);
-    expect(((await r.json()) as { code: string }).code).toBe("NOT_CLAUDE");
+    expect(r.status).toBe(202);
+    const device = { authorization: `Bearer ${nicoMac.token}` };
+    const job = (await (await app.request("/api/devices/relay/wait", { method: "POST", ...json({}, device) })).json()) as { id: string; driver?: string; mcp?: unknown; asks?: boolean };
+    expect(job.driver).toBe("codex");
+    expect(job.mcp).toBeUndefined();
+    expect(job.asks).toBeUndefined();
+    await app.request(`/api/devices/relay/${job.id}/done`, { method: "POST", ...json({ text: "Hi from Codex." }, device) });
+    // the turn's reply is written once its promise settles, a tick after the Mac's answer
+    let last: { role: string; text: string; status?: string } | undefined;
+    for (let i = 0; i < 50 && last?.status !== "done"; i++) {
+      await new Promise((res) => setTimeout(res, 20));
+      last = ((await (await app.request("/api/assistant", { headers: { cookie } })).json()) as { messages: Array<{ role: string; text: string; status?: string }> }).messages.at(-1);
+    }
+    expect(last).toMatchObject({ role: "assistant", text: "Hi from Codex.", status: "done" });
   });
 });
 

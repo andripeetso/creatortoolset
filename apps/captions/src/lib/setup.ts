@@ -7,36 +7,18 @@ import { confirmDialog } from "./dialogs";
 
 export type { SetupView };
 
-/**
- * The steps in order: the mode cards first, then the three stages (Connect your computers, Connect your agents, Where are
- * your videos?), then what you make, the first project and done. "In the app" skips Agents (its AI runs in the app).
- */
-export const SETUP_STEPS = ["how", "connect", "agents", "folders", "make", "project", "done"] as const;
+/** First run: the same three screens for everyone (Connect your AI, What do you make?, Try it). */
+export const SETUP_PATH = ["agents", "make", "try"] as const;
+/** Screens other pages still open with `?setup=`: one screen each, closed by Done, never part of the path. */
+export const SIDE_STEPS = ["connect", "folders", "how"] as const;
+export const SETUP_STEPS = [...SETUP_PATH, ...SIDE_STEPS] as const;
 export type SetupStep = (typeof SETUP_STEPS)[number];
 
-/** The bar's stages, shown on the three steps that have one. */
-export const STAGES = ["connect", "agents", "folders"] as const satisfies readonly SetupStep[];
-export const STAGE_NAME: Record<(typeof STAGES)[number], string> = { connect: "Connect", agents: "Agents", folders: "Folders" };
-/** Which stage (0-2) a step is in, or -1 for a step with no stage (the bar is not shown for those). */
-export const stageOf = (s: SetupStep): number => STAGES.indexOf(s as (typeof STAGES)[number]);
+/** The click path. It takes no answer: it is the same whatever the saved `talk` is. */
+export const stepsFor = (): readonly SetupStep[] => SETUP_PATH;
 
-/** The click path a mode shows: "In the app" skips Agents (its AI runs in the app). */
-export const stepsFor = (talk: WorkPrefs["talk"] | null): SetupStep[] => SETUP_STEPS.filter((s) => !(talk === "app" && s === "agents"));
-
-/**
- * The step Back and Continue go to from `step`: the nearest step on the mode's path, in the order above. A side step
- * (or a step the mode skips) takes its neighbours from that order, so Back and Continue still go the right way.
- */
-export function neighbours(step: SetupStep, talk: WorkPrefs["talk"] | null): { before?: SetupStep; after: SetupStep } {
-  const i = SETUP_STEPS.indexOf(step);
-  const path = stepsFor(talk);
-  const before = [...SETUP_STEPS.slice(0, i)].reverse().find((s) => path.includes(s));
-  const after = SETUP_STEPS.slice(i + 1).find((s) => path.includes(s)) ?? "done";
-  return { before, after };
-}
-
-/** Ids from the older, longer setup still open the step they now belong to. */
-const OLD_STEP: Record<string, SetupStep> = { tools: "make", ai: "agents", left: "done" };
+/** Ids from the older, longer setups still open the screen they now belong to. */
+const OLD_STEP: Record<string, SetupStep> = { tools: "make", ai: "agents", project: "make", left: "try", done: "try" };
 
 /** The `?setup=` value as a step, or null when it names none (then setup opens on its first step). */
 export function setupStepFromParam(v: string | null): SetupStep | null {
@@ -45,7 +27,11 @@ export function setupStepFromParam(v: string | null): SetupStep | null {
   return (SETUP_STEPS as readonly string[]).includes(id) ? (id as SetupStep) : null;
 }
 
-/** Setup is finished once Done saved `done` on its last step, and that run picked tools (leaving step 2 saves them). */
+/** The project made quietly on "What do you make?": its name, or null when the account already has one (then none is made). */
+export const firstProjectName = (makes: readonly Make[], projects: number): string | null =>
+  projects > 0 ? null : makes.length === 1 ? MAKE_NAMES[makes[0]!] : "My videos";
+
+/** Setup is finished once `done` is saved (arriving on Try it saves it) with tools picked (leaving screen 2 saves them). */
 export const setupFinished = (view: Pick<SetupView, "done" | "tools">): boolean => view.done && view.tools !== null;
 
 /**
@@ -86,21 +72,42 @@ export function dismissSetup(): void {
 export const setupDismissed = (): boolean => dismissedThisLoad || read("local", DISMISSED) === "1";
 
 /**
- * Whether the setup window is up: asked for by `?setup=` (Home's card, Settings, the first run), or the account isn't
- * finished and Not now wasn't pressed. Home's "Finish setting up" card hides while it is, and the assistant dock and
- * the selection popup stay away from it.
+ * Whether the setup window is up: never on a phone (setup happens on the computer); asked for by `?setup=` (Home's
+ * card, Settings); or by itself on a first sign-in (`firstRun`, setupOpensItself) that isn't finished and didn't press
+ * Not now.
  */
-export const setupOpen = (view: Pick<SetupView, "done" | "tools"> | null, asked: string | null): boolean =>
-  !!view && (asked !== null || (!setupFinished(view) && !setupDismissed()));
+export const setupOpen = (view: Pick<SetupView, "done" | "tools"> | null, asked: string | null, at: { firstRun: boolean; phone: boolean }): boolean =>
+  !!view && !at.phone && (asked !== null || (at.firstRun && !setupFinished(view) && !setupDismissed()));
+
+/** Whether the setup window is on screen right now (SetupDialog sets it): the assistant dock and popup stay away only then. */
+export const useSetupShown = create<{ shown: boolean }>(() => ({ shown: false }));
 
 /** Remembers the step Not now was pressed on, for Finish setting up. */
 export function rememberLater(step: SetupStep): void {
   write("session", LATER, step);
 }
 
-/** Where Finish setting up reopens: the step Not now was pressed on, else the first. */
+/** Where Finish setting up reopens: the screen Not now was pressed on, else the first. Only ever a screen on the path. */
 export function resumeStep(): SetupStep {
-  return setupStepFromParam(read("session", LATER)) ?? "how";
+  const s = setupStepFromParam(read("session", LATER));
+  return s && stepsFor().includes(s) ? s : SETUP_PATH[0];
+}
+
+/** Where the Mac app is downloaded: what a phone is given, since setup happens on the computer. */
+export const DOWNLOAD_URL = "https://creatortoolset.com/download";
+
+/**
+ * Hands the download link over from a phone: the share sheet where there is one, else the clipboard, else ("shown",
+ * a plain-http address has neither) the caller shows the address to type.
+ */
+export async function shareDownload(nav: Pick<Navigator, "share" | "clipboard"> = navigator): Promise<"shared" | "copied" | "shown"> {
+  try {
+    if (nav.share) return await nav.share({ url: DOWNLOAD_URL }).then(() => "shared" as const);
+    if (nav.clipboard) return await nav.clipboard.writeText(DOWNLOAD_URL).then(() => "copied" as const);
+  } catch (e) {
+    if ((e as Error).name === "AbortError") return "shared"; // she closed the share sheet herself
+  }
+  return "shown";
 }
 
 /** Opens setup at a step from anywhere (Home, Settings): sets `?setup=` and tells the router the address changed. */
@@ -217,7 +224,7 @@ export async function confirmHeavy(feature: Feature, count = 1): Promise<boolean
   return confirmDialog({ title: "This can use up your plan's limit", body: warning, ok: "Run it anyway" });
 }
 
-/** "What will you make?": each answer, the words setup shows for it. */
+/** "What do you make?": each answer, the words setup shows for it. */
 export const MAKE_NAMES: Record<Make, string> = {
   reel: "Short videos",
   youtube: "Long videos (YouTube)",
@@ -239,7 +246,7 @@ export const MAKE_NAMES: Record<Make, string> = {
 const MAKE_EXTRA: Partial<Record<Make, Tool>> = { reel: "captions", podcast: "enhance", course: "guides", recording: "notes" };
 
 /**
- * The tools "What will you make?" ticks, in `mine`'s order: the default tools (always on, DEFAULT_TOOLS) plus the extra
+ * The tools "What do you make?" ticks, in `mine`'s order: the default tools (always on, DEFAULT_TOOLS) plus the extra
  * each answer fits. Not sure yet picks everything instead (the dialog does that itself).
  */
 export const toolsFor = (makes: readonly Make[], mine: readonly Tool[]): Tool[] => {

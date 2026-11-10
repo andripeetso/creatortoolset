@@ -35,7 +35,7 @@ const home = path.join(root, "home");
 const codexHome = path.join(root, "codex");
 
 beforeAll(() => {
-  for (const u of ["ana", "ben", "dee", "eve", "fay", "gus", "hal", "ian", "cy", "zed"]) createUser(u, "password1", { role: "user" });
+  for (const u of ["ana", "ben", "dee", "eve", "fay", "gus", "hal", "ian", "cy", "zed", "joy"]) createUser(u, "password1", { role: "user" });
 });
 afterAll(() => {
   local.setRunnerForTests();
@@ -166,7 +166,7 @@ describe("connect your AI", () => {
     touchDevice(device.id);
     world(["claude"], (f, args) => (args.join(" ") === "auth status --json" ? { stdout: claudeAuth(true, "max") } : claudeVersion(f, args)));
     mockCheck.next = { ok: true, ms: 7, error: undefined };
-    const r = await local.connectCli("fay", "claude", home);
+    const r = await local.connectCli("fay", "claude", home, device.id);
     expect(r).toEqual({ state: "ready", signedIn: true, answered: true, ms: 7 });
     const s = ownSettings("fay");
     expect(s?.instances).toEqual([expect.objectContaining({ id: "local-claude", driver: "claude", name: "Claude Code", enabled: true, device: device.id })]);
@@ -185,10 +185,48 @@ describe("connect your AI", () => {
       return undefined;
     });
     mockCheck.next = { ok: true, ms: 11, error: undefined };
-    const r = await local.connectCli("hal", "codex", home);
+    const r = await local.connectCli("hal", "codex", home, device.id);
     expect(r).toEqual({ state: "ready", signedIn: true, answered: true, ms: 11 });
     expect(ownSettings("hal")?.instances).toEqual([expect.objectContaining({ id: "local-codex", driver: "codex", name: "Codex", enabled: true, device: device.id })]);
     expect(connectedOwn("hal")).toBe(true);
+  });
+
+  it("binds the AI to the Mac the app paired here, never the first online Mac of the account", async () => {
+    const other = pairDevice("joy", "Other Mac");
+    touchDevice(other.device.id);
+    const mine = pairDevice("joy", "Studio Mac");
+    touchDevice(mine.device.id);
+    world(["claude"], (f, args) => (args.join(" ") === "auth status --json" ? { stdout: claudeAuth(true) } : claudeVersion(f, args)));
+    mockCheck.next = { ok: true, ms: 6, error: undefined };
+    expect(await local.connectCli("joy", "claude", home, mine.device.id)).toMatchObject({ state: "ready" });
+    expect(ownSettings("joy")?.instances[0]?.device).toBe(mine.device.id);
+  });
+
+  it("refuses a device that is not this account's or not answering, and saves nothing", async () => {
+    world(["claude"], (f, args) => (args.join(" ") === "auth status --json" ? { stdout: claudeAuth(true) } : claudeVersion(f, args)));
+    expect(await local.connectCli("zed", "claude", home, "dev_not_mine")).toMatchObject({ state: "mac" });
+    expect(await local.connectCli("zed", "claude", home)).toMatchObject({ state: "mac" });
+    expect(ownSettings("zed")).toBeNull();
+  });
+
+  it("a failed check saves nothing and leaves the default as it was; a later passing AI does not take the default", async () => {
+    const mine = pairDevice("joy", "Studio Mac");
+    touchDevice(mine.device.id);
+    world(["codex"], (f, args) => {
+      if (args.join(" ") === "login status") return { stdout: "Logged in using ChatGPT\n" };
+      if (args.join(" ") === "mcp add --help") return { stdout: "Usage: codex mcp add [OPTIONS] <NAME> --url <URL>" };
+      if (f.endsWith("/codex") && args[0] === "--version") return { stdout: "codex-cli 0.50.0\n" };
+      return undefined;
+    });
+    mockCheck.next = { ok: false, ms: 4, error: "Codex: boom" };
+    expect(await local.connectCli("joy", "codex", home, mine.device.id)).toMatchObject({ state: "failed" });
+    expect(ownSettings("joy")?.instances.map((i) => i.id)).toEqual(["local-claude"]);
+    expect(ownSettings("joy")?.default.instance).toBe("local-claude");
+
+    mockCheck.next = { ok: true, ms: 4, error: undefined };
+    expect(await local.connectCli("joy", "codex", home, mine.device.id)).toMatchObject({ state: "ready" });
+    expect(ownSettings("joy")?.instances.map((i) => i.id)).toEqual(["local-claude", "local-codex"]);
+    expect(ownSettings("joy")?.default.instance).toBe("local-claude");
   });
 
   it("Check again finds a CLI installed since the last look, and reads its sign-in again (no cached 'not found')", async () => {
@@ -213,7 +251,7 @@ describe("connect your AI", () => {
     const before = ownSettings("fay")!;
     world(["claude"], (f, args) => (args.join(" ") === "auth status --json" ? { stdout: claudeAuth(true) } : claudeVersion(f, args)));
     mockCheck.next = { ok: true, ms: 9, error: undefined };
-    await local.connectCli("fay", "claude", home);
+    await local.connectCli("fay", "claude", home, before.instances[0]!.device);
     expect(ownSettings("fay")?.instances).toHaveLength(1);
     // the Settings page sends its instances back without the check: the saved check stays
     const again = ownSettings("fay")!;
@@ -227,7 +265,7 @@ describe("connect your AI", () => {
     touchDevice(device.id);
     world(["claude"], (f, args) => (args.join(" ") === "auth status --json" ? { stdout: claudeAuth(true) } : claudeVersion(f, args)));
     mockCheck.next = { ok: false, ms: 30_000, error: "Claude: request timed out" };
-    const r = await local.connectCli("gus", "claude", home);
+    const r = await local.connectCli("gus", "claude", home, device.id);
     expect(r).toMatchObject({ state: "failed", answered: false, message: "It took too long to answer. Try again.", raw: "Claude: request timed out" });
     expect(connectedOwn("gus")).toBe(false);
   });
@@ -237,7 +275,7 @@ describe("connect your AI", () => {
     touchDevice(device.id);
     world(["claude"], (f, args) => (args.join(" ") === "auth status --json" ? { stdout: claudeAuth(true) } : claudeVersion(f, args)));
     mockCheck.next = { ok: false, ms: 3, error: "Claude: Not logged in · Please run /login" };
-    expect(await local.connectCli("hal", "claude", home)).toMatchObject({ state: "signin", signedIn: false, answered: false, message: "Not signed in yet." });
+    expect(await local.connectCli("hal", "claude", home, device.id)).toMatchObject({ state: "signin", signedIn: false, answered: false, message: "Not signed in yet." });
   });
 
   it("saves the signed-in folder as the instance's home when the default folder is signed out", async () => {
@@ -249,7 +287,7 @@ describe("connect your AI", () => {
     touchDevice(device.id);
     world(["claude"], (f, args, env) => (args.join(" ") === "auth status --json" ? { stdout: claudeAuth(env?.CLAUDE_CONFIG_DIR === folder) } : claudeVersion(f, args)));
     mockCheck.next = { ok: true, ms: 4, error: undefined };
-    await local.connectCli("ian", "claude", h);
+    await local.connectCli("ian", "claude", h, device.id);
     expect(ownSettings("ian")?.instances[0]).toMatchObject({ home: folder });
   });
 
@@ -264,11 +302,9 @@ describe("connect your AI", () => {
 });
 
 describe("sign in", () => {
-  it("opens Terminal with the tool's own sign-in, using the path this server found", async () => {
-    const calls = world(["claude"], (f, args) => (args.join(" ") === "auth status --json" ? { stdout: claudeAuth(false) } : claudeVersion(f, args)));
-    expect(await local.signIn("claude")).toEqual({ ok: true });
-    const open = calls.find((c) => c.startsWith("/usr/bin/osascript"));
-    expect(open).toContain(`do script "export PATH='/fake/bin':\\"$PATH\\"; '/fake/bin/claude' auth login"`);
+  it("starts the tool's own sign-in as a child process, and says so in one sentence when it cannot start", async () => {
+    world(["claude"], (f, args) => (args.join(" ") === "auth status --json" ? { stdout: claudeAuth(false) } : claudeVersion(f, args)));
+    expect(await local.signIn("claude")).toEqual({ ok: false, message: "Couldn't start Claude Code sign-in. Try again." });
     expect(await local.signIn("gemini")).toMatchObject({ ok: false });
   });
 });

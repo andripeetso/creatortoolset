@@ -70,12 +70,10 @@ describe("notice", () => {
 });
 
 describe("selection popup gate", () => {
-  const ok = { connected: true, finished: true, talk: "app", dialogOpen: false };
-  it("needs setup finished, an AI, no dialog, and not the chat-only path", () => {
+  const ok = { connected: true, dialogOpen: false };
+  it("needs an AI and no dialog, in every way of working and whether or not setup's Done was pressed", () => {
     expect(popupAllowed(ok)).toBe(true);
     expect(popupAllowed({ ...ok, connected: false })).toBe(false);
-    expect(popupAllowed({ ...ok, finished: false })).toBe(false);
     expect(popupAllowed({ ...ok, dialogOpen: true })).toBe(false);
-    expect(popupAllowed({ ...ok, talk: "chat" })).toBe(false);
   });
 });

@@ -8,8 +8,11 @@ import type { PlanId } from "./plans";
 
 export type CliId = "claude" | "codex" | "gemini";
 
-/** The vendors' own install lines, pasted into a Terminal: fixed text, nothing typed in. */
-export const INSTALL_LINE: Partial<Record<CliId, string>> = {
+/**
+ * The vendors' own install lines: the last-resort Copy only (setup installs with the vendor's route itself, api/lib/
+ * local-ai.ts installCli). Fixed text, nothing typed in. Codex's and Gemini's lines need Node.js.
+ */
+export const INSTALL_LINE: Record<CliId, string> = {
   claude: "curl -fsSL https://claude.ai/install.sh | bash",
   codex: "npm install -g @openai/codex",
   gemini: "npm install -g @google/gemini-cli",
@@ -47,9 +50,11 @@ export interface ConnectResult {
   raw?: string; // raw CLI text, shown only under Details
 }
 
+/** Sign-in and install: `message` is one plain sentence; `raw` is the command's own output, shown only under Details. */
 export interface SignInResult {
   ok: boolean;
   message?: string;
+  raw?: string;
 }
 
 export interface McpResult {

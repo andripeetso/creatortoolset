@@ -194,11 +194,23 @@ enum LoginItem {
         catch { AppLog.write("login item: \(error.localizedDescription)") }
     }
 
-    /// Once, for a copy in /Applications (never a `swift run` build): on by default; the gear's switch turns it off.
-    static func setOnce() {
-        guard Bundle.main.bundlePath.hasPrefix("/Applications/"), !UserDefaults.standard.bool(forKey: "loginItemSet") else { return }
+    /// Once, for a copy in /Applications (never a `swift run` build): on by default. True when it just switched on,
+    /// so the caller says so once (explainOnce).
+    static func setOnce() -> Bool {
+        guard Bundle.main.bundlePath.hasPrefix("/Applications/"), !UserDefaults.standard.bool(forKey: "loginItemSet") else { return false }
         UserDefaults.standard.set(true, forKey: "loginItemSet")
         set(true)
+        return isOn
+    }
+
+    /// The one line about it, after the window's first open: it is on, and how to switch it off.
+    @MainActor static func explainOnce() {
+        let a = NSAlert()
+        a.messageText = "Creator Toolset opens when you log in"
+        a.informativeText = "It waits in the menu bar, so your AI and recordings are ready. Turn this off any time in This Mac."
+        a.addButton(withTitle: "OK")
+        a.addButton(withTitle: "Turn Off")
+        if a.runModal() == .alertSecondButtonReturn { set(false) }
     }
 }
 

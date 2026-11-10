@@ -23,7 +23,7 @@ export function GeneralSection() {
       <Section title="Setup">
         <Card>
           <Row id="how-you-work" title="How you use the app" status={HOW_NAMES[talk ?? "app"]} control={<Button size="sm" variant="outline" onClick={() => setHowOpen(true)}>Change</Button>} />
-          <Row id="run-setup" title="Setup" control={<Button asChild size="sm" variant="outline"><Link to="/?setup=how">Run again</Link></Button>} />
+          <Row id="run-setup" title="Setup" control={<Button asChild size="sm" variant="outline"><Link to="/?setup=agents">Run again</Link></Button>} />
         </Card>
         {howOpen && <HowYouWorkDialog onClose={() => setHowOpen(false)} />}
       </Section>
