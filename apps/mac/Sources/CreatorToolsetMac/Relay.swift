@@ -101,7 +101,7 @@ struct PairReply: Decodable {
 /// The device token in the Keychain (service com.creatortoolset.mac.device, account = the site's host)
 /// and the device id in UserDefaults, per host. Nothing else is stored.
 enum DeviceVault {
-    static let service = "com.creatortoolset.mac.device"
+    static let service = AppIdentity.keychain("device")
 
     private static func query(_ host: String, _ service: String) -> [String: Any] {
         [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: host]

@@ -273,7 +273,7 @@ final class Recorder: ObservableObject {
     static var folder: URL {
         let picked = UserDefaults.standard.string(forKey: "recordingsFolder") ?? ""
         return picked.isEmpty
-            ? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Movies/Creator Toolset", isDirectory: true)
+            ? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Movies/Creator Toolset\(AppIdentity.tag())", isDirectory: true)
             : URL(fileURLWithPath: picked, isDirectory: true)
     }
 

@@ -122,7 +122,9 @@ export function forgetCli(id: CliId): void {
 }
 
 /** Where the managed Node.js is kept (installNode), and its bin folder. */
-const nodeRoot = (): string => path.join(os.homedir(), "Library", "Application Support", "Creator Toolset", "node");
+// CT_APP_FOLDER: the Mac app's own Application Support folder (Server.swift); the default is the released app's.
+const nodeRoot = (): string =>
+  path.join(process.env.CT_APP_FOLDER || path.join(os.homedir(), "Library", "Application Support", "Creator Toolset"), "node");
 /** PATH for a spawn: the binary's own folder, the managed Node's (once this server installed it), then the rest. */
 export const toolPath = (bin: string): string =>
   [path.dirname(bin), ...(existsSync(path.join(nodeRoot(), "bin")) ? [path.join(nodeRoot(), "bin")] : []), process.env.PATH ?? ""].join(":");

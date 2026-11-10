@@ -4,7 +4,7 @@
 import Foundation
 
 enum AppLog {
-    static let path = NSHomeDirectory() + "/Library/Logs/Creator Toolset.log"
+    static let path = NSHomeDirectory() + "/Library/Logs/Creator Toolset\(AppIdentity.tag()).log"
 
     static func write(_ line: String) {
         append(Data("\(ISO8601DateFormatter().string(from: Date())) \(line)\n".utf8), to: path)

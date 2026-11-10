@@ -7,11 +7,9 @@ import Darwin
 import Foundation
 import Security
 
-let defaultServerPort = 43128
-
 /// ~/Library/Application Support/Creator Toolset: the default data folder, Chromium, the remote sites' relay folders.
 let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-    .appendingPathComponent("Creator Toolset")
+    .appendingPathComponent("Creator Toolset" + AppIdentity.tag())
 
 /// The disk a data folder lives on that isn't connected: "X" for /Volumes/X/… while no volume is mounted there.
 func missingDisk(_ path: String, mounted: [String]) -> String? {
@@ -86,7 +84,7 @@ func restartDelay(crashes: [Date], now: Date) -> TimeInterval? {
 
 /// The server's log: the child's stdout and stderr, plus the app's notes about it. At 10 MB it becomes `.1`.
 enum ServerLog {
-    static let path = NSHomeDirectory() + "/Library/Logs/Creator Toolset Server.log"
+    static let path = NSHomeDirectory() + "/Library/Logs/Creator Toolset\(AppIdentity.tag()) Server.log"
     private static let queue = DispatchQueue(label: "com.creatortoolset.mac.server-log")
 
     static func append(_ data: Data) {
@@ -138,7 +136,7 @@ final class LocalServer: ObservableObject {
     /// Resources/server inside the app, when this build has one.
     static let folder: URL? = Bundle.main.resourceURL.map { $0.appendingPathComponent("server") }
         .flatMap { FileManager.default.isExecutableFile(atPath: $0.appendingPathComponent("bin/node").path) ? $0 : nil }
-    private static let vault = "com.creatortoolset.mac.server"
+    private static let vault = AppIdentity.keychain("server")
     /// The owner account the server makes on its first start (api/users.ts bootstrap, ADMIN_USERNAME unset).
     static let ownerName = "admin"
 
@@ -158,7 +156,7 @@ final class LocalServer: ObservableObject {
     var port: Int {
         get {
             let saved = UserDefaults.standard.integer(forKey: portKey)
-            return (1024...65535).contains(saved) ? saved : defaultServerPort
+            return (1024...65535).contains(saved) ? saved : AppIdentity.port()
         }
         set { UserDefaults.standard.set(newValue, forKey: portKey) }
     }
@@ -318,6 +316,7 @@ final class LocalServer: ObservableObject {
         env["APP_SECRET"] = secret
         env["PLAYWRIGHT_BROWSERS_PATH"] = appSupport.appendingPathComponent("runtime/chromium").path
         env["CT_LOCAL"] = "1"
+        env["CT_APP_FOLDER"] = appSupport.path
         env["CT_EXIT_WITH_PARENT"] = "1"
         env.merge(releaseEnv(Bundle.main.infoDictionary), uniquingKeysWith: { $1 })
         p.environment = env

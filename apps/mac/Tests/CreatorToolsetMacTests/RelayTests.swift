@@ -795,7 +795,7 @@ final class RelayTests: XCTestCase {
     func testTheAssistantFolderIsPerServerUnderApplicationSupport() throws {
         let home = URL(fileURLWithPath: "/Users/someone")
         XCTAssertEqual(assistantFolder(host: "tools.example.com", home: home).path,
-                       "/Users/someone/Library/Application Support/Creator Toolset/assistant/tools_example_com")
+                       "/Users/someone/Library/Application Support/Creator Toolset\(AppIdentity.tag())/assistant/tools_example_com")
         XCTAssertEqual(assistantFolder(host: "../x", home: home).lastPathComponent, "___x")
         // its own files stay when a turn's attachments are written
         let root = temp()
