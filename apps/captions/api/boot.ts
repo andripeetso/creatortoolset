@@ -56,6 +56,7 @@ import { workPrefsApp } from "./work-prefs";
 import { captionLayoutApp } from "./caption-layout";
 import { mountAdminRoutes, mountAnsweredRoutes, mountGatedRoutes, mountLibraryRoutes, mountOpenRoutes, mountPlugins, mountPluginsList, mountPublicRoutes, mountReplacedRoutes, pluginBodyLimitExempt, replacedLargeBody, startPlugins } from "./lib/plugin";
 import { serverPlugins } from "./plugins.gen";
+import { announceWrites, syncApp } from "./lib/sync";
 import { signInCallbackApp, signInStartApp } from "./sign-in";
 import { activityApp } from "./activity";
 import { VISITOR, mayUse, touchActive, type Tool } from "./users";
@@ -308,6 +309,9 @@ app.use("/api/*", async (c, next) => {
   if (!viewed) touchActive(user.username);
   return next();
 });
+// live change notices (api/lib/sync.ts): every write below announces its topic to the writer's open tabs
+app.use("/api/*", announceWrites);
+app.route("/api/sync", syncApp);
 app.route("/api/auth", authApp);
 // Settings → API keys: the outside services' keys (platform admins; never an AI key)
 app.route("/api/service-keys", serviceKeysApp);

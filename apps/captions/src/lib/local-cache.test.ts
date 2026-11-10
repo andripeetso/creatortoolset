@@ -78,6 +78,7 @@ describe("local-cache", () => {
     let finish!: (v: string[]) => void;
     const pending = warmCached("/api/clips", () => new Promise<string[]>((r) => (finish = r)));
     clearAccountCache("tinyacrobatics");
+    while (!finish) await new Promise((r) => setTimeout(r, 0)); // the fetch starts once the change stream said hello
     finish(["late"]);
     await pending;
     expect(readCached("tinyacrobatics", "/api/clips")).toBeNull();
