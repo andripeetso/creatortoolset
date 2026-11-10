@@ -286,7 +286,7 @@ export default function WorkshopPage() {
       </AppBar>
 
       <div className="flex min-h-0 flex-1">
-      <div className="min-w-0 flex-1 overflow-y-auto pb-[max(2.5rem,env(safe-area-inset-bottom))]">
+      <div className="min-w-0 flex-1 overflow-y-scroll pb-[max(2.5rem,env(safe-area-inset-bottom))]">
       <div className="mx-auto w-[960px] max-w-[96%]">
         <ToolIntro
           icon={NotebookPen}

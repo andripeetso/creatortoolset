@@ -104,6 +104,19 @@ const avatarColor = (name: string) =>
   AVATARS[[...name].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) >>> 0, 7) % AVATARS.length];
 const SPEEDS = [0.5, 1, 1.5, 2];
 
+/** The comment box stands in the window's bottom right corner, where the assistant's bubble sits by default. It says how
+ *  high it stands (--corner-taken on <html>), and the bubble sits above it instead of over Send (AssistantDock). */
+function cornerTaken(box: HTMLElement | null) {
+  if (!box) return;
+  const root = document.documentElement;
+  const say = new ResizeObserver(() => root.style.setProperty("--corner-taken", `${box.offsetHeight}px`));
+  say.observe(box);
+  return () => {
+    say.disconnect();
+    root.style.removeProperty("--corner-taken");
+  };
+}
+
 /** Timeline edits not sent yet, with undo. */
 /** A talent shot's framing as rendered. */
 
@@ -963,7 +976,7 @@ function Review({
             ))}
           </div>
 
-          <div className={cn("min-h-0 flex-1 overflow-y-auto px-3 py-2")}>
+          <div className="min-h-0 flex-1 overflow-y-scroll px-3 py-2">
             {shown.length === 0 ? (
               <p className="px-2 py-10 text-center text-sm text-zinc-600">
                 {threads.length ? "Nothing here." : "No comments yet. Pause on a frame and write one below."}
@@ -989,7 +1002,7 @@ function Review({
           </div>
 
           {/* composer: drop (anywhere on the page) or paste images and videos in as references */}
-          <div className={cn("border-t border-zinc-900 p-3", dropping && "bg-violet-950/40 ring-2 ring-inset ring-violet-500")}>
+          <div ref={cornerTaken} className={cn("border-t border-zinc-900 p-3", dropping && "bg-violet-950/40 ring-2 ring-inset ring-violet-500")}>
             {guest && (
               <input
                 id="review-name"

@@ -331,7 +331,7 @@ export function ScreenRecordingEditor({
             </div>
           </div>
 
-          <aside className="w-72 shrink-0 space-y-5 overflow-y-auto border-l border-zinc-800 p-4 text-sm">
+          <aside className="w-72 shrink-0 space-y-5 overflow-y-scroll border-l border-zinc-800 p-4 text-sm">
             {zoom && (
               <Section title={`Zoom ${fmt(zoom.start)}–${fmt(zoom.end)}`}>
                 <Slider label="Depth" value={zoom.scale} min={1.2} max={4} step={0.1} show={(v) => `${v.toFixed(1)}×`} onChange={(scale) => setZoom({ scale })} />

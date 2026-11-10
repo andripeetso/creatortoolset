@@ -587,7 +587,7 @@ export function ImportScreen() {
             </h2>
             <ViewToggle view={view} onChange={changeView} />
           </div>
-          <div className="flex-1 overflow-y-auto px-5 py-4">
+          <div className="flex-1 overflow-y-scroll px-5 py-4">
             <div
               className={
                 view === "grid" ? "mx-auto max-w-5xl" : "mx-auto max-w-2xl"

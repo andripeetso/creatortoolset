@@ -485,7 +485,7 @@ export default function LibraryPage() {
       </main>
 
       <Sheet open={preview !== null} onOpenChange={(open) => !open && setPreview(null)}>
-        <SheetContent side="right" className="w-full overflow-y-auto p-0 sm:max-w-xl">
+        <SheetContent side="right" className="w-full overflow-y-scroll p-0 sm:max-w-xl">
           {preview && (
             <div className="flex flex-col gap-3 p-4 pt-12">
               <SheetTitle className="truncate text-base">{preview.title}</SheetTitle>

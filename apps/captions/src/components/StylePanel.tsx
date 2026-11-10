@@ -406,7 +406,7 @@ function TextStylePanel() {
       <div className="flex items-center gap-2 border-b border-zinc-800 px-4 py-2.5 text-xs font-medium uppercase tracking-wider text-violet-300">
         <Type className="h-3.5 w-3.5" /> Text style
       </div>
-      <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-3">
+      <div className="flex-1 overflow-x-hidden overflow-y-scroll px-4 py-3">
         <PresetRow
           kind="text"
           active={null}
@@ -671,7 +671,7 @@ export function StylePanel() {
       <div className="flex items-center gap-2 border-b border-zinc-800 px-4 py-2.5 text-xs font-medium uppercase tracking-wider text-zinc-400">
         <SlidersHorizontal className="h-3.5 w-3.5" /> Caption style
       </div>
-      <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-3">
+      <div className="flex-1 overflow-x-hidden overflow-y-scroll px-4 py-3">
         <PresetRow
           kind="caption"
           active={activePreset}

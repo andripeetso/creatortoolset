@@ -39,6 +39,9 @@ import { openSetupAt, setupFinished, useSetup, useWorkTalk } from "@/lib/setup";
 const DOCK_W = 400;
 /** Below the pages' top bars, above the corner buttons bottom left. */
 const AT: Record<Corner, string> = { tl: "left-4 top-16", tr: "right-4 top-16", bl: "left-4 bottom-14", br: "right-4 bottom-4" };
+/** The bubble's own place. Bottom right it sits above what a screen keeps in that corner: the screen says how high that
+ *  stands (--corner-taken on <html>: a Review video's comment box, whose Send button the bubble used to cover). */
+const BUBBLE_AT: Record<Corner, string> = { ...AT, br: "right-4 bottom-[calc(1rem+var(--corner-taken,0px))] motion-safe:transition-[bottom]" };
 const ORIGIN: Record<Corner, string> = { tl: "origin-top-left", tr: "origin-top-right", bl: "origin-bottom-left", br: "origin-bottom-right" };
 
 const QUEUE_KEY = "ct-assistant:queue";
@@ -402,7 +405,7 @@ export function AssistantDock() {
           className={cn(
             "group pointer-events-auto fixed z-[55] size-14 touch-none rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--tint)] focus-visible:ring-offset-2 focus-visible:ring-offset-background",
             "motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-50 motion-safe:duration-300",
-            AT[corner],
+            BUBBLE_AT[corner],
           )}
         >
           {thinking && <span className="absolute inset-0 rounded-full bg-[color-mix(in_srgb,var(--tint)_50%,transparent)] motion-safe:animate-ping" aria-hidden />}
@@ -534,7 +537,8 @@ export function AssistantDock() {
         </button>
       </header>
 
-      <div className="relative min-h-0 flex-1 overflow-y-auto px-4 pt-2 pb-3 text-sm">
+      {/* docked, the list ends at the window's edge: it keeps its bar's room, so a chat that starts to scroll moves nothing */}
+      <div className={cn("relative min-h-0 flex-1 px-4 pt-2 pb-3 text-sm", place.mode === "dock" ? "overflow-y-scroll" : "overflow-y-auto")}>
         {!view && <Dots />}
 
         {view && showPast && (
