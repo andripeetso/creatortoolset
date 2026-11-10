@@ -14,6 +14,7 @@ import { keyFor, type Actor } from "./my-keys";
 import { NvidiaRefused, readWav, SR as NV_SR, studioVoice, wav16 } from "./lib/nvidia-voice";
 import { type SessionUser, bumpUsage } from "./users";
 import { type Moves, move } from "./lib/transition";
+import { announceSoon } from "./lib/announce-soon";
 
 /**
  * Standalone audio enhancement — its own tool, fully separate from
@@ -165,6 +166,12 @@ async function persist(meta: Meta): Promise<void> {
   }
 }
 
+/** A background job's save: the owner's open screens follow it (at most about once a second, the last save always). */
+async function jobPersist(meta: Meta): Promise<void> {
+  await persist(meta);
+  announceSoon(meta.owner, "enhance");
+}
+
 async function readMeta(id: string): Promise<Meta | null> {
   const mem = active.get(id);
   if (mem) return mem;
@@ -290,7 +297,7 @@ function runStep(
         meta.progress = Math.min(progress.lo + frac * (progress.hi - progress.lo), progress.hi);
         if (Date.now() - lastWrite > 500) {
           lastWrite = Date.now();
-          void persist(meta);
+          void jobPersist(meta);
         }
       }
     });
@@ -333,7 +340,7 @@ async function runNvidia(id: string, meta: Meta, wavPath: string, outDir: string
     const { x } = readWav(await readFile(wavPath));
     const y = await studioVoice(engineKey("nvidia", meta.owner), x, controller.signal, (done, total) => {
       meta.progress = Math.max(meta.progress, lo + (done / total) * (hi - lo));
-      void persist(meta);
+      void jobPersist(meta);
     });
     const out = path.join(outDir, "enhance-nv.wav");
     await writeFile(out, wav16(y));
@@ -458,7 +465,7 @@ function startStep(meta: Meta): void {
       setStatus(meta, "error");
       meta.error = e instanceof Error ? e.message : String(e);
       meta.remote = undefined;
-      await persist(meta);
+      await jobPersist(meta);
     });
     return;
   }
@@ -498,7 +505,7 @@ async function finish(id: string, meta: Meta, clean: string, duration: number, a
     // the job — the enhanced audio is the primary result.
     if (meta.hasVideo) {
       meta.progress = 0.92;
-      await persist(meta);
+      await jobPersist(meta);
       const mux = (ext: "mp4" | "mkv") =>
         runStep(id, meta, "ffmpeg", [
           "-i", originalPath(id),
@@ -526,7 +533,7 @@ async function finish(id: string, meta: Meta, clean: string, duration: number, a
     if (!alive()) return;
     setStatus(meta, "done");
     meta.progress = 1;
-    await persist(meta);
+    await jobPersist(meta);
   } finally {
     await Promise.all([
       rm(outAudio, { force: true }),
@@ -540,7 +547,7 @@ async function runJob(id: string): Promise<void> {
   const meta = active.get(id);
   if (!meta) return; // cancelled while queued
   setStatus(meta, "running");
-  await persist(meta);
+  await jobPersist(meta);
 
   const dir = sesDir(id);
   const wav = path.join(dir, "enhance-tmp.wav");
@@ -578,7 +585,7 @@ async function runJob(id: string): Promise<void> {
         crawl = setInterval(() => {
           const frac = 1 - Math.exp(-(Date.now() - started) / tau);
           meta.progress = Math.max(meta.progress, lo + frac * (hi - lo));
-          void persist(meta);
+          void jobPersist(meta);
         }, 1000);
         clean = await runElevenLabs(id, meta.owner, wav, dir);
         clearInterval(crawl);
@@ -599,7 +606,7 @@ async function runJob(id: string): Promise<void> {
     if (active.get(id) !== meta) return; // cancelled — don't resurrect
     setStatus(meta, e instanceof NeedsKey ? "needs_key" : "error");
     meta.error = e instanceof Error ? e.message : String(e);
-    await persist(meta);
+    await jobPersist(meta);
   } finally {
     if (crawl) clearInterval(crawl);
     active.delete(id);
