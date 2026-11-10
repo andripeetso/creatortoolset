@@ -333,7 +333,13 @@ export function webPluginAdds(p: WebPlugin, ctx: { me: Me | null; hosted: boolea
   if (r.editor || r.editorEdit) out.push({ text: "Replaces the AI Editor page", to: "/editor" });
   if (r.media) out.push({ text: "Replaces the Media Library page", to: "/library" });
   if (r.finals) out.push({ text: "Replaces the Finals page", to: "/finals" });
-  for (const route of p.routes ?? []) out.push({ text: `Page at ${route.path}`, to: linkable(route.path) });
+  // its own pages: only ones a person can open by themselves (an address with a :part needs something picked first),
+  // and not the page a Home tile or a replaced page already named above
+  for (const route of p.routes ?? []) {
+    const to = linkable(route.path);
+    if (!to || route.path.includes(":") || out.some((o) => o.to === to)) continue;
+    out.push({ text: `Its own page: ${route.path}`, to });
+  }
   for (const a of p.accountMenu ?? []) if (!a.gate || canUse(ctx.me, a.gate)) out.push({ text: `Account menu: ${a.label}`, to: linkable(a.to) });
   const places: Record<ItemKind, [string, string | undefined]> = {
     export: ["exports", undefined],
@@ -345,7 +351,7 @@ export function webPluginAdds(p: WebPlugin, ctx: { me: Me | null; hosted: boolea
     const [noun, to] = places[kind];
     for (const a of actions) if (!a.gate || canUse(ctx.me, a.gate)) out.push({ text: `Button on ${noun}: ${a.label}`, to });
   }
-  for (const s of p.review?.panels ?? []) if (!s.gate || canUse(ctx.me, s.gate)) out.push({ text: `Review panel: ${s.id}`, to: "/review" });
+  for (const s of p.review?.panels ?? []) if (!s.gate || canUse(ctx.me, s.gate)) out.push({ text: "A panel in Review", to: "/review" });
   for (const a of p.review?.actions ?? []) if (!a.gate || canUse(ctx.me, a.gate)) out.push({ text: `Review button: ${a.label}`, to: "/review" });
   if (p.library) out.push({ text: "Media Library filters", to: "/library" });
   if (p.site) out.push({ text: `Front page on ${p.site.hosts.join(", ")}` });

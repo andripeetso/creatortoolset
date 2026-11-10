@@ -27,7 +27,10 @@ describe("webPluginAdds", () => {
     const adds = webPluginAdds(hello, { me: admin, hosted: true });
     expect(adds).toContainEqual({ text: "Home: Hello", to: "/hello" });
     expect(adds).toContainEqual({ text: "Settings: Hello plug-in", to: "/settings/hello" });
-    expect(adds).toContainEqual({ text: "Page at /hello", to: "/hello" });
+    // its page is the one its Home tile opens: named once
+    expect(adds.filter((a) => a.to === "/hello")).toHaveLength(1);
+    // a page that needs something picked first (/tiny/:id) is not offered as a place to go
+    expect(webPluginAdds(tiny, { me: admin, hosted: true }).some((a) => a.text.includes(":id"))).toBe(false);
   });
 
   it("leaves out admin tabs off a hosted server, gated tiles while the gate is off, and admin-only items for members", () => {
