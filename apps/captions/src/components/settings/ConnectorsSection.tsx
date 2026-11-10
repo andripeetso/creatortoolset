@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { addAccount as addInstagram, analyzerHome, patchAccount as patchInstagram } from "@/lib/instagram";
+import { addAccount as addInstagram, patchAccount as patchInstagram } from "@/lib/instagram";
 import { patchProject } from "@/lib/workshop";
 import { useWorkspace } from "@/lib/workspace";
 import {
@@ -187,7 +187,6 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
                   <RowMenu
                     label={`${at(r.own.handle)} actions`}
                     items={[
-                      { label: "Open in the Analyzer", onSelect: () => navigate(`${analyzerHome()}/accounts/${r.own!.id}`) },
                       // not "my account" any more: the Analyzer keeps it as a followed account, no project links it
                       { label: "Disconnect", destructive: true, confirm: { title: `Disconnect ${at(r.own.handle)}?`, body: "Its numbers stop updating here.", ok: "Disconnect" }, onSelect: () => void act(patchInstagram(r.own!.id, { mine: false })) },
                     ]}
@@ -203,7 +202,6 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
                 onLink={() => act(linkAccount(r.account!.key, current))}
                 onPull={() => void act(pullAccountNow(r.account!.key).then(watch))}
                 onRemove={() => act(disconnectAccount(r.account!.key))}
-                onOpen={() => navigate(`${analyzerHome()}/accounts/${r.account!.analyzerId}`)}
               />
             ) : (
               <ListRow
@@ -366,14 +364,13 @@ function AddDialog({ open, onOpenChange, platform, startStep, view, back, projec
 }
 
 /** A platform row with the project's account: its numbers, a sign-in that ran out, and its … menu. */
-function AccountRow({ row, a, back, onLink, onPull, onRemove, onOpen }: {
+function AccountRow({ row, a, back, onLink, onPull, onRemove }: {
   row: PlatformRow;
   a: ConnectedAccount;
   back: string;
   onLink: () => void;
   onPull: () => void;
   onRemove: () => Promise<unknown>;
-  onOpen: () => void;
 }) {
   const login = loginOf(a.platform);
   const needsSignIn = a.loginStatus === "needs_reconnect";
@@ -398,7 +395,6 @@ function AccountRow({ row, a, back, onLink, onPull, onRemove, onOpen }: {
               { label: "Read again", icon: <RefreshCw />, onSelect: onPull },
               // an account linked to no project shows in each one: this keeps it in the one picked
               ...(!a.projectId ? [{ label: "Link to this project", onSelect: onLink }] : []),
-              ...(a.platform === "instagram" && a.analyzerId ? [{ label: "Open in the Analyzer", onSelect: onOpen }] : []),
               { label: "Disconnect", destructive: true, confirm: { title: `Disconnect ${at(a.handle)}?`, body: "Its numbers stop updating here.", ok: "Disconnect" }, onSelect: () => void onRemove() },
             ]}
           />
