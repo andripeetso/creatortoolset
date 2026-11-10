@@ -126,26 +126,6 @@ export const signInStartApp = new Hono<{ Variables: AuthVars }>();
 /** Which sign-in buttons the site's login screen shows: the providers this server has keys for (none off hosted). */
 signInStartApp.get("/providers", (c) => c.json(hostedMode() ? signinOn(originOf(c)) : { apple: false, google: false, github: false }));
 
-/**
- * Settings → Account, for the server's admin when no sign-in is set up: the .env names each provider reads, and the
- * address to register with it (this server's origin; SIGNIN_ORIGIN must be the same address or nothing is offered).
- */
-signInStartApp.get("/setup", (c) => {
-  if (!hostedMode()) return c.json({ error: "Not Found" }, 404);
-  if (getSessionUser(c.req.header("cookie"))?.role !== "admin") return c.json({ error: "Only the server's admin sees this" }, 403);
-  const origin = originOf(c);
-  const redirect = (kind: Kind) => `${origin}/api/auth/${kind}/callback`;
-  return c.json({
-    origin,
-    signinOrigin: (process.env.SIGNIN_ORIGIN || "https://creatortoolset.com").replace(/\/$/, ""),
-    providers: [
-      { kind: "google", name: "Google", env: ["GOOGLE_SIGNIN_CLIENT_ID", "GOOGLE_SIGNIN_CLIENT_SECRET"], redirect: redirect("google") },
-      { kind: "apple", name: "Apple", env: ["APPLE_SIGNIN_TEAM_ID", "APPLE_SIGNIN_SERVICES_ID", "APPLE_SIGNIN_KEY_ID", "APPLE_SIGNIN_KEY"], redirect: redirect("apple") },
-      { kind: "github", name: "GitHub", env: ["GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"], redirect: redirect("github") },
-    ],
-  });
-});
-
 signInStartApp.get("/login/:kind", (c, next) => {
   if (!hostedMode()) return next();
   const kind = c.req.param("kind");
