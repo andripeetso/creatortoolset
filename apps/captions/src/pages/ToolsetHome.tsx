@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useState, type CSSProperties } from "react";
 import { Link, Navigate, useLocation } from "react-router";
 import { ArrowRight, ChevronRight, Loader2, Lock, ScreenShare, Star, type LucideIcon } from "lucide-react";
 import { canUse, canUseTile, useMe, type Me } from "@/lib/auth";
@@ -8,6 +8,7 @@ import { shownTools, useOpenTool, withPluginTiles, type Tool as HomeTool } from 
 import { AppBar } from "@/components/AppBar";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
 import { HomeTodo, useTodoLists } from "@/components/HomeTodo";
+import { HomeIntro, IntroCaption, STAGE_SAYS, useIntroBeat } from "@/components/HomeIntro";
 import { TOOL_ICONS } from "@/components/setup/ToolNeeds";
 import { webPlugins } from "@/plugins.gen";
 import { useSessionSummaries } from "@/lib/workshop-summary";
@@ -15,7 +16,7 @@ import { accentFor, currentProject, PROJECT_COLORS, projectColor, useWorkspace }
 import { useAppearance } from "@/lib/settings";
 import { useShareTheme } from "@/components/ShareTheme";
 import { onHome, readiness, TOOL_GROUPS, TOOL_NAMES, type HomeTile, type Tool } from "@contracts/tools";
-import { DOWNLOAD_URL, onSettingsClosed, openSetupAt, resumeStep, setupDismissed, setupFinished, shareDownload, useSetup, useSetupShown } from "@/lib/setup";
+import { DOWNLOAD_URL, introPlays, onSettingsClosed, openSetupAt, resumeStep, setupDismissed, setupFinished, shareDownload, startIntro, stillMotion, useSetup, useSetupShown } from "@/lib/setup";
 
 /**
  * Creator Toolset: the landing hub. Two boxes side by side, Plan (analyze, write) and Make (edit, review), in the order
@@ -59,6 +60,12 @@ const pluginTilesFor = (stage: string, me: Me | null): HomeTool[] =>
     me,
   ).filter((t) => t.pluginTile);
 
+/** A stage box's edge and fill (Make, the middle one, in the project's colour). The welcome's frame draws the same (index.css .intro-frame). */
+const boxLook = (id: string) =>
+  id === "make"
+    ? "border-[color-mix(in_srgb,var(--tint)_30%,transparent)] bg-[color-mix(in_srgb,var(--tint)_5%,transparent)]"
+    : "border-zinc-800/80 bg-zinc-900/30";
+
 /** Finals is a view of the Media Library; the rest is the tile's own rule (canUseTile: the Screen Recorder's is there). */
 const canUseKey = (me: Me | null, k: Key) => (k === "finals" ? canUse(me, "media") : canUseTile(me, k));
 
@@ -89,6 +96,14 @@ export default function ToolsetHome() {
     void load().finally(() => setLoaded(true));
     return onSettingsClosed(() => void load());
   }, [me, load]);
+
+  // the welcome after setup (components/HomeIntro.tsx): the beat it is on, as data-intro on the page. /?intro=1 plays it again
+  const beat = useIntroBeat();
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).has("intro")) startIntro(introPlays({ finishedBefore: false, phone, still: stillMotion() }));
+  }, [phone]);
+  // the welcome brings the boxes' tiles in one at a time, in the order they are drawn (index.css .intro-tile)
+  let nth = 0;
 
   const { dark } = useShareTheme();
   if (phone && location.pathname === "/") {
@@ -190,6 +205,7 @@ export default function ToolsetHome() {
   return (
     <div
       style={tintStyle}
+      data-intro={beat ?? undefined}
       className={`home-hub relative isolate select-none flex min-h-dvh flex-col items-center bg-zinc-950 pt-safe pb-safe text-zinc-200 ${
         phone ? "justify-start py-8" : "justify-center"
       }`}
@@ -204,13 +220,15 @@ export default function ToolsetHome() {
       )}
       {/* the tool pages' own bar (components/AppBar.tsx) with no tool and an invisible edge, so the name, the arrows and
           the account sit exactly where they do on every tool page and never move between them */}
-      <AppBar className="absolute inset-x-0 top-0 mt-[env(safe-area-inset-top)] bg-transparent">
+      {beat && <HomeIntro beat={beat} />}
+      <AppBar className="intro-bar absolute inset-x-0 top-0 mt-[env(safe-area-inset-top)] bg-transparent">
         {canUse(me, "instagram") || canUse(me, "workshop") ? <ProjectSwitcher /> : null}
         <HomeTodo />
       </AppBar>
       {phone && <div className="h-16 shrink-0" />}
 
-      <div className="flex w-[520px] max-w-[94vw] flex-col gap-3 min-[900px]:w-[1120px] min-[900px]:gap-6 2xl:w-[1280px]">
+      <div className="intro-body relative flex w-[520px] max-w-[94vw] flex-col gap-3 min-[900px]:w-[1120px] min-[900px]:gap-6 2xl:w-[1280px]">
+        {beat && <IntroCaption beat={beat} />}
         {/* setup happens on the computer: a phone gets the way there, never the setup itself */}
         {view && !setupFinished(view) && phone && !view.have.includes("project") && (
           <div className="flex flex-col gap-3 rounded-xl border border-violet-500/30 bg-violet-500/5 px-4 py-3">
@@ -240,24 +258,33 @@ export default function ToolsetHome() {
           {boxes.map(({ g, nodes }, i) => (
             <Fragment key={g.id}>
               {i > 0 && (
-                <div className="flex items-center justify-center gap-2 self-center min-[900px]:w-20 min-[900px]:flex-col min-[900px]:gap-1 min-[900px]:px-2">
+                <div style={{ "--i": i } as CSSProperties} className="intro-link relative flex items-center justify-center gap-2 self-center min-[900px]:w-20 min-[900px]:flex-col min-[900px]:gap-1 min-[900px]:px-2">
                   {showCounts && i === 1 && <Between />}
-                  <ArrowRight className="h-4 w-4 shrink-0 rotate-90 text-zinc-600 min-[900px]:rotate-0" />
+                  <ArrowRight className="intro-arrow h-4 w-4 shrink-0 rotate-90 text-zinc-600 min-[900px]:rotate-0" />
+                  {beat && <i className="intro-line" />}
                 </div>
               )}
               <section
-                className={`rounded-2xl border p-3 ${g.tools.some((t) => canUse(me, t) && running[PAGE[t].to]) ? "home-busy" : ""} ${
-                  g.id === "make"
-                    ? "border-[color-mix(in_srgb,var(--tint)_30%,transparent)] bg-[color-mix(in_srgb,var(--tint)_5%,transparent)]"
-                    : "border-zinc-800/80 bg-zinc-900/30"
-                }`}
+                style={{ "--i": i } as CSSProperties}
+                className={`intro-box relative rounded-2xl border p-3 ${g.tools.some((t) => canUse(me, t) && running[PAGE[t].to]) ? "home-busy" : ""} ${boxLook(g.id)}`}
               >
-                <h2 className="px-1 pb-2 text-[11px] font-medium uppercase tracking-wider text-zinc-500">{g.label}</h2>
+                {/* the welcome only: the stage before it is a box (its number, name and what you do there), and the frame that opens into the box */}
+                {beat && (
+                  <>
+                    <i className={`intro-frame ${boxLook(g.id)}`} />
+                    <div className="intro-node">
+                      <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--tint)] text-xs font-semibold text-white">{i + 1}</span>
+                      <b className="text-zinc-50">{g.label}</b>
+                      <span className="text-sm text-zinc-400">{STAGE_SAYS[g.id]}</span>
+                    </div>
+                  </>
+                )}
+                <h2 className="intro-label px-1 pb-2 text-[11px] font-medium uppercase tracking-wider text-zinc-500">{g.label}</h2>
                 <div className="flex items-start justify-center gap-4 min-[900px]:justify-evenly min-[900px]:gap-0">
                   {nodes.map((node, j) => (
                     <Fragment key={j}>
-                      {j > 0 && <ChevronRight className="mt-6 h-4 w-4 shrink-0 text-zinc-700 2xl:mt-7" />}
-                      {node}
+                      {j > 0 && <ChevronRight className="intro-chev mt-6 h-4 w-4 shrink-0 text-zinc-700 2xl:mt-7" />}
+                      <div className="intro-tile" style={{ "--i": nth++ } as CSSProperties}>{node}</div>
                     </Fragment>
                   ))}
                 </div>
@@ -269,14 +296,16 @@ export default function ToolsetHome() {
 
         {/* one row whatever the number: the tools spread across the width from 900 px, wrapping below */}
         {extraTiles.length > 0 && (
-        <section>
-          <h2 className="flex items-center gap-3 pb-2 text-[11px] font-medium uppercase tracking-wider text-zinc-600">
+        <section className="intro-extras">
+          <h2 className="intro-extras-head flex items-center gap-3 pb-2 text-[11px] font-medium uppercase tracking-wider text-zinc-600">
             <span className="h-px flex-1 bg-zinc-800/80" />
             {extrasGroup?.label ?? "Extras"}
             <span className="h-px flex-1 bg-zinc-800/80" />
           </h2>
           <div className="flex flex-wrap justify-center gap-x-2 gap-y-1 min-[900px]:grid min-[900px]:auto-cols-fr min-[900px]:grid-flow-col min-[900px]:justify-items-center min-[900px]:gap-0">
-            {extraTiles}
+            {extraTiles.map((node, j) => (
+              <div key={j} className="intro-extra flex" style={{ "--i": j } as CSSProperties}>{node}</div>
+            ))}
           </div>
         </section>
         )}
@@ -293,7 +322,7 @@ function NeedsSetup({ what }: { what: string }) {
       role="img"
       aria-label={`Needs: ${what}`}
       title={`Needs: ${what}`}
-      className="absolute -right-1 -top-1 h-3 w-3 rounded-full bg-amber-400"
+      className="intro-late absolute -right-1 -top-1 h-3 w-3 rounded-full bg-amber-400"
     />
   );
 }
@@ -328,7 +357,7 @@ function Running({ n, verb }: { n: number; verb: string }) {
   return (
     <span
       title={`${n} ${verb}`}
-      className="absolute -bottom-1.5 -right-1.5 flex items-center gap-1 whitespace-nowrap rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] leading-none text-zinc-300 ring-2 ring-[#0b0b10]"
+      className="intro-late absolute -bottom-1.5 -right-1.5 flex items-center gap-1 whitespace-nowrap rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] leading-none text-zinc-300 ring-2 ring-[#0b0b10]"
     >
       <Loader2 className="h-2.5 w-2.5 animate-spin" /> {n} {verb}
     </span>
@@ -341,7 +370,7 @@ function Badge({ n, means }: { n: number; means?: (n: number) => string }) {
     <span
       aria-label={means?.(n) ?? `${n} waiting`}
       title={means?.(n)}
-      className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[11px] font-semibold leading-none text-white ring-2 ring-zinc-950"
+      className="intro-late absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[11px] font-semibold leading-none text-white ring-2 ring-zinc-950"
     >
       {n > 99 ? "99+" : n}
     </span>
@@ -366,7 +395,7 @@ function Between() {
     <Link
       to="/workshop"
       title="Workshop sessions Ready or In Production: scripts waiting to be filmed and made"
-      className="flex flex-col items-center whitespace-nowrap text-center text-[11px] leading-tight text-[var(--tint-text)] transition-[filter] duration-200 hover:brightness-125 max-[899px]:flex-row max-[899px]:gap-1.5"
+      className="intro-late flex flex-col items-center whitespace-nowrap text-center text-[11px] leading-tight text-[var(--tint-text)] transition-[filter] duration-200 hover:brightness-125 max-[899px]:flex-row max-[899px]:gap-1.5"
     >
       {parts.map((p) => <span key={p}>{p}</span>)}
     </Link>

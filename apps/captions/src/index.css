@@ -315,6 +315,96 @@ html:not(.dark) ::-webkit-scrollbar-thumb { background: #d4d4d8; }
   50% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--tint) 45%, transparent), 0 0 24px -8px color-mix(in srgb, var(--tint) 55%, transparent); }
 }
 
+/* Home's welcome after setup (components/HomeIntro.tsx). .home-hub carries data-intro = the beat it is on:
+   hello (the name) > pipeline (its line alone) > stages (Plan, Make, Distribute pop up, a line drawn between) >
+   tools (each stage opens into its box, the tools pop in, then Extras) > connect > all.
+   What has not arrived yet is hidden, and things come in one after another by --i. Every move ends on the page's own
+   look, so when the attribute goes (the end, Skip) Home is exactly as it always is. The top bar stays away while it
+   plays and comes back softly. Never started under reduced motion (lib/setup.ts introPlays). */
+.home-hub[data-intro] .intro-body { pointer-events: none; transition: opacity 400ms ease, filter 400ms ease; }
+.home-hub[data-intro] .intro-bar { opacity: 0; pointer-events: none; }
+.intro-bar { transition: opacity 600ms ease; }
+.home-hub[data-intro="hello"] .intro-body { opacity: 0; }
+.home-hub[data-intro="pipeline"] :is(.intro-box, .intro-link, .intro-extras) { opacity: 0; }
+.home-hub[data-intro="stages"] :is(.intro-tile, .intro-chev, .intro-extras, .intro-label, .intro-arrow, .intro-frame) { opacity: 0; }
+.home-hub:is([data-intro="hello"], [data-intro="connect"], [data-intro="all"]) :is(.intro-node, .intro-frame, .intro-line) { opacity: 0; }
+/* while a stage is still a stage, and while it opens, its box is drawn by .intro-frame (the same edge and fill), which
+   can spring open without moving what is inside */
+.home-hub:is([data-intro="pipeline"], [data-intro="stages"], [data-intro="tools"]) .intro-box { border-color: transparent; background-color: transparent; }
+.home-hub[data-intro="stages"] .intro-node { animation: intro-pop 560ms cubic-bezier(0.34, 1.56, 0.64, 1) both; animation-delay: calc(350ms + var(--i) * 450ms); }
+.home-hub[data-intro="stages"] .intro-line { animation: intro-draw 420ms cubic-bezier(0.65, 0, 0.35, 1) both; animation-delay: calc(150ms + var(--i) * 450ms); }
+.home-hub[data-intro="tools"] .intro-frame { animation: intro-throw 620ms cubic-bezier(0.34, 1.4, 0.64, 1) both; animation-delay: calc(var(--i) * 140ms); }
+.home-hub[data-intro="tools"] .intro-node { animation: intro-node-out 520ms cubic-bezier(0.6, 0, 0.2, 1) both; animation-delay: calc(var(--i) * 140ms); }
+.home-hub[data-intro="tools"] .intro-label { animation: intro-fade 260ms ease both; animation-delay: calc(330ms + var(--i) * 140ms); }
+.home-hub[data-intro="tools"] .intro-line { animation: intro-fade 250ms ease reverse both; }
+.home-hub[data-intro="tools"] .intro-arrow { animation: intro-fade 300ms ease 250ms both; }
+.home-hub[data-intro="tools"] .intro-tile { animation: intro-pop 520ms cubic-bezier(0.34, 1.56, 0.64, 1) both; animation-delay: calc(700ms + var(--i) * 150ms); }
+.home-hub[data-intro="tools"] .intro-chev { animation: intro-fade 400ms ease 1100ms both; }
+.home-hub[data-intro="tools"] .intro-extras-head { animation: intro-fade 500ms ease 1850ms both; }
+.home-hub[data-intro="tools"] .intro-extra { animation: intro-pop 420ms cubic-bezier(0.34, 1.56, 0.64, 1) both; animation-delay: calc(2000ms + var(--i) * 70ms); }
+.home-hub[data-intro="connect"] .intro-body { opacity: 0.1; filter: blur(6px); }
+.home-hub[data-intro] .intro-late { opacity: 0; }
+.intro-late { transition: opacity 400ms ease, filter 200ms cubic-bezier(0.4, 0, 0.2, 1); } /* filter: the hover the count over the arrow already had */
+/* a stage before it is a box: its number, its name and what you do there, in the middle of where the box will be.
+   When the box opens the name flies to the corner the box's own label sits in */
+.intro-node { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.4rem; pointer-events: none; }
+.intro-node b { font-family: "Archivo Expanded", "Archivo Black", ui-sans-serif, sans-serif; font-weight: 900; font-size: clamp(1.05rem, 1.9vw, 1.6rem); line-height: 1.2; letter-spacing: 0.02em; text-transform: uppercase; }
+.intro-frame { position: absolute; inset: -1px; border-radius: inherit; border-width: 1px; pointer-events: none; }
+/* the line drawn from one stage to the next: over the gap, and into both boxes as far as the window's width leaves
+   room beside the names (in a small window the Distribute box is hardly wider than its name). A row of boxes only */
+.intro-line { --reach: clamp(-0.25rem, 6vw - 4rem, 1.5rem); position: absolute; left: calc(-1 * var(--reach)); right: calc(-1 * var(--reach)); top: 50%; height: 12px; margin-top: -6px; color: color-mix(in srgb, var(--tint) 75%, transparent); background: linear-gradient(currentColor, currentColor) left center / calc(100% - 2px) 2px no-repeat; pointer-events: none; }
+.intro-line::after { content: ""; position: absolute; right: 1px; top: 50%; width: 8px; height: 8px; margin-top: -4px; border-top: 2px solid; border-right: 2px solid; rotate: 45deg; }
+@media (max-width: 899px) { .intro-line { display: none; } }
+/* the name: the website's headline face, each letter rising into its slot, then the marker box drawn under the second
+   word, left to right, the letters turning white under it */
+@font-face { font-family: "Archivo Expanded"; src: url("/fonts/Archivo-ExpandedBlack.woff2") format("woff2"); font-weight: 900; font-display: block; }
+.intro-title { font-family: "Archivo Expanded", "Archivo Black", ui-sans-serif, sans-serif; font-weight: 900; font-size: clamp(2.5rem, 6.4vw, 5rem); line-height: 1.12; letter-spacing: -0.025em; white-space: nowrap; }
+.intro-pre { animation: intro-rise 600ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.intro-letter { display: inline-block; clip-path: inset(-0.06em -0.3em 0 -0.3em); } /* open at the sides, shut underneath */
+.intro-letter > span { display: inline-block; animation: intro-letter 720ms cubic-bezier(0.2, 0.8, 0.2, 1) both; animation-delay: calc(300ms + var(--i) * 45ms); }
+.intro-marked { display: inline-block; margin-left: 0.14em; padding: 0.02em 0.16em 0.06em; border-radius: 0.12em;
+  background: linear-gradient(var(--tint), var(--tint)) no-repeat left center / 0% 100%;
+  animation: intro-mark 800ms cubic-bezier(0.65, 0, 0.25, 1) 1350ms both; }
+/* each of its letters turns white as the box reaches it (--k = its place in the word), never before: on the light page a
+   white letter ahead of the box would vanish */
+.intro-marked .intro-letter { animation: intro-ink 120ms linear both; animation-delay: calc(1530ms + var(--k) * 65ms); }
+/* a line or a scene that comes, stays and goes: its duration is set inline (its beat, or beats) */
+.intro-scene { animation: intro-scene linear both; }
+/* the beat's line, over the boxes. On the pipeline beat it stands alone in the middle, bigger, then glides up to its place */
+.intro-caption { position: absolute; left: 0; right: 0; top: 0; translate: 0 calc(-100% - 2.5rem); text-align: center; pointer-events: none;
+  transition: top 800ms cubic-bezier(0.65, 0, 0.35, 1), translate 800ms cubic-bezier(0.65, 0, 0.35, 1), scale 800ms cubic-bezier(0.65, 0, 0.35, 1); }
+.home-hub[data-intro="pipeline"] .intro-caption { top: 50%; translate: 0 -50%; scale: 1.6; }
+.intro-chip { animation: intro-pop 520ms cubic-bezier(0.34, 1.56, 0.64, 1) both; animation-delay: calc(350ms + var(--i) * 220ms); }
+/* the colour going round: three soft discs in the project's colour and its two neighbours, each turning about its own
+   point near the middle; they open out from the middle as the name arrives. A blur this wide comes out in rings (WebKit
+   most of all, and plainest on the light page), so a fine grain lies over it and breaks them up */
+.intro-aurora { animation: intro-aurora linear both, intro-bloom 1800ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.intro-aurora::after {
+  content: ""; position: absolute; inset: 0; opacity: 0.09;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+.intro-aurora i { position: absolute; left: 50%; top: 50%; width: 46vmax; height: 46vmax; margin: -23vmax; border-radius: 50%; filter: blur(90px); opacity: 0.3; animation: intro-orbit 11s linear infinite; }
+.intro-aurora i:nth-child(1) { background: var(--tint); transform-origin: 15% 30%; }
+.intro-aurora i:nth-child(2) { background: color-mix(in oklab, var(--tint) 55%, #38bdf8); transform-origin: 90% 35%; animation-duration: 14s; animation-direction: reverse; }
+.intro-aurora i:nth-child(3) { background: color-mix(in oklab, var(--tint) 55%, #f472b6); transform-origin: 45% 95%; animation-duration: 17s; }
+@keyframes intro-fade { from { opacity: 0; } }
+@keyframes intro-rise { from { opacity: 0; translate: 0 18px; scale: 0.94; } }
+@keyframes intro-pop { from { opacity: 0; scale: 0.4; } }
+@keyframes intro-letter { from { translate: 0 108%; } }
+@keyframes intro-mark { to { background-size: 100% 100%; } }
+@keyframes intro-ink { to { color: #fff; } }
+@keyframes intro-draw { from { clip-path: inset(-2px 100% -2px 0); } to { clip-path: inset(-2px 0 -2px 0); } }
+@keyframes intro-throw { from { opacity: 0; scale: 0.3 0.25; } }
+@keyframes intro-node-out { to { opacity: 0; translate: calc(-50% + 2.4rem) calc(-50% + 1.3rem); scale: 0.46; } }
+@keyframes intro-scene {
+  0% { opacity: 0; translate: 0 10px; }
+  12%, 86% { opacity: 1; translate: 0 0; }
+  100% { opacity: 0; translate: 0 -6px; }
+}
+@keyframes intro-aurora { 0% { opacity: 0; } 8%, 88% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes intro-bloom { from { scale: 0.45; } }
+@keyframes intro-orbit { to { transform: rotate(360deg); } }
+
 /* Settings: a search result's row, landed on and pulsed once (SettingsPage). Rows take focus without a ring; no pulse
    under reduced motion, where the row gets an inset ring instead. */
 [data-settings-row]:focus { outline: none; }

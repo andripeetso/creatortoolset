@@ -29,17 +29,22 @@ import { OwnAiStep } from "@/components/setup/OwnAiStep";
 import { ToolsPicker } from "@/components/setup/ToolNeeds";
 import { canUse, useMe } from "@/lib/auth";
 import { openAssistant } from "@/lib/assistant";
+import { primeIntroSound } from "@/lib/intro-sound";
 import { isPhoneHub } from "@/lib/mobile";
 import {
   MAKE_NAMES,
   SETUP_PATH,
   dismissSetup,
   firstProjectName,
+  introPlays,
   rememberLater,
+  setupFinished,
   setupOpen,
   setupOpensItself,
   setupStepFromParam,
+  startIntro,
   stepsFor,
+  stillMotion,
   toolsFor,
   useSetup,
   useSetupLive,
@@ -107,6 +112,8 @@ export function SetupDialog() {
   const step: SetupStep = setupStepFromParam(asked) ?? SETUP_PATH[0];
   useEffect(() => {
     useSetupShown.setState({ shown: open });
+    // Home's welcome opens on the name in its own typeface: fetched now, so it is there when Done is pressed
+    if (open) void document.fonts?.load('900 1em "Archivo Expanded"').catch(() => {});
     return () => useSetupShown.setState({ shown: false });
   }, [open]);
 
@@ -154,9 +161,10 @@ export function SetupDialog() {
     dismissSetup();
     leave();
   };
-  const goHome = () => {
+  const goHome = (finishedBefore: boolean) => {
     dismissSetup();
-    if (connected) openAssistant();
+    // Home plays its welcome first (once, after the Done that finishes setup); the assistant says hello when it ends
+    startIntro(introPlays({ finishedBefore, phone: isPhoneHub(), still: stillMotion() }), connected ? openAssistant : undefined);
     navigate("/");
   };
   const saveMakes = () => useWorkPrefs.getState().put({ makes });
@@ -165,15 +173,18 @@ export function SetupDialog() {
     to(path[at - 1]!);
   };
   const next = async () => {
+    // the welcome has sound, and a browser lets sound start only from a press: this one, before anything is awaited
+    if (at === path.length - 1 && introPlays({ finishedBefore: setupFinished(view), phone: isPhoneHub(), still: stillMotion() })) primeIntroSound();
     setBusy(true);
     try {
       if (step === "make") await saveMakes();
       if (at === path.length - 1) {
         // the last screen: this is the end of setup, and it never opens by itself again
+        const finishedBefore = setupFinished(view); // the AI apps screen, opened again later, ends here too
         await save({ tools, done: true });
         const name = loaded ? firstProjectName(makes, projects.length) : null;
         if (name) await createProject({ name }).catch(() => {});
-        return goHome();
+        return goHome(finishedBefore);
       }
       to(path[at + 1]!);
     } finally {

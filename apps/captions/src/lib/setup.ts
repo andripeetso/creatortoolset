@@ -90,6 +90,32 @@ export const setupOpen = (view: Pick<SetupView, "done" | "tools"> | null, asked:
 /** Whether the setup window is on screen right now (SetupDialog sets it): the assistant dock and popup stay away only then. */
 export const useSetupShown = create<{ shown: boolean }>(() => ({ shown: false }));
 
+/**
+ * Home's welcome animation (components/HomeIntro.tsx), on right after the Done that finishes setup. In memory only, so
+ * a reload, a later visit or an account that finished setup earlier never sees it.
+ */
+export const useIntro = create<{ on: boolean; after: (() => void) | null }>(() => ({ on: false, after: null }));
+
+/** Whether Done starts it: only the Done that finishes setup the first time, never on a phone or with motion turned down. */
+export const introPlays = (at: { finishedBefore: boolean; phone: boolean; still: boolean }): boolean => !at.finishedBefore && !at.phone && !at.still;
+
+/** The system's Reduce motion. */
+export const stillMotion = (): boolean => globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+
+/** Starts it. `after` runs when it ends or is skipped, or at once when it does not play. */
+export function startIntro(plays: boolean, after?: () => void): void {
+  if (!plays) return void after?.();
+  useIntro.setState({ on: true, after: after ?? null });
+}
+
+/** The end, Skip, or leaving Home: Home is all there, and what waited for it runs. */
+export function endIntro(): void {
+  const { on, after } = useIntro.getState();
+  if (!on) return;
+  useIntro.setState({ on: false, after: null });
+  after?.();
+}
+
 /** Remembers the step Not now was pressed on, for Finish setting up. */
 export function rememberLater(step: SetupStep): void {
   write("session", LATER, step);

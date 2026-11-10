@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  dismissSetup, DOWNLOAD_URL, firstProjectName, MAKE_NAMES, resumeStep, SETUP_PATH, SIDE_STEPS, setupDismissed, setupFinished, setupOpen, setupOpensItself,
+  dismissSetup, DOWNLOAD_URL, endIntro, firstProjectName, introPlays, MAKE_NAMES, resumeStep, startIntro, useIntro, SETUP_PATH, SIDE_STEPS, setupDismissed, setupFinished, setupOpen, setupOpensItself,
   setupStepFromParam, shareDownload, stepsFor, toolForPath, toolsFor,
 } from "./setup";
 import { TOOLS } from "@contracts/tools";
@@ -68,6 +68,28 @@ describe("setupOpen", () => {
   });
   it("stays shut with no setup to show (a guest, the demo)", () => {
     expect(setupOpen(null, "agents", { firstRun: true, phone: false })).toBe(false);
+  });
+});
+
+describe("Home's welcome animation", () => {
+  it("plays after the Done that finishes setup, and only then", () => {
+    expect(introPlays({ finishedBefore: false, phone: false, still: false })).toBe(true);
+    expect(introPlays({ finishedBefore: true, phone: false, still: false })).toBe(false); // the AI apps screen, opened again from Settings
+    expect(introPlays({ finishedBefore: false, phone: true, still: false })).toBe(false);
+    expect(introPlays({ finishedBefore: false, phone: false, still: true })).toBe(false); // Reduce motion
+  });
+  it("runs what waited for it once: at the end or on Skip, and at once when it does not play", () => {
+    const after = vi.fn();
+    startIntro(false, after);
+    expect(useIntro.getState().on).toBe(false);
+    expect(after).toHaveBeenCalledTimes(1);
+    startIntro(true, after);
+    expect(useIntro.getState().on).toBe(true);
+    expect(after).toHaveBeenCalledTimes(1);
+    endIntro();
+    endIntro(); // Skip pressed as it ends
+    expect(useIntro.getState().on).toBe(false);
+    expect(after).toHaveBeenCalledTimes(2);
   });
 });
 
