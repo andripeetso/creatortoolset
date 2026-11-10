@@ -24,8 +24,16 @@ import { dropAiKey, findUser, newAiKey, type UserRecord } from "../users";
 
 export const CLI_IDS: CliId[] = ["claude", "codex", "gemini"];
 const NAMES: Record<CliId, string> = { claude: "Claude Code", codex: "Codex", gemini: "Gemini CLI" };
-/** The name this server goes by in the AI CLIs' MCP lists. */
-export const MCP_NAME = "creator-toolset";
+/**
+ * The name of this app's entry in the AI tools (claude mcp, codex). A copy of the Mac app beside the released one keeps
+ * its data in "Creator Toolset (<name>)" (CT_APP_FOLDER): its entry is "creator-toolset-<name>", so trying the copy never
+ * overwrites the entry the released app wrote.
+ */
+export const mcpName = (appFolder = process.env.CT_APP_FOLDER ?? ""): string => {
+  const copy = appFolder.match(/\(([a-z0-9-]+)\)\/?$/i)?.[1];
+  return copy ? `creator-toolset-${copy.toLowerCase()}` : "creator-toolset";
+};
+export const MCP_NAME = mcpName();
 const MISSING = "Couldn't find it on this Mac anymore. Check it's still installed.";
 export const MAC_ONLY = "Open the Creator Toolset Mac app to connect your AI.";
 const PROBE_TTL = 10_000;

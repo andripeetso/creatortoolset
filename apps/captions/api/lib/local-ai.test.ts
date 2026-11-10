@@ -508,3 +508,13 @@ function rmCodex() {
   rmSync(codexHome, { recursive: true, force: true });
   mkdirSync(codexHome, { recursive: true });
 }
+
+describe("the app's entry name in the AI tools", () => {
+  it("is creator-toolset for the app, and its own name for a copy beside it", async () => {
+    const { mcpName } = await import("./local-ai");
+    expect(mcpName("")).toBe("creator-toolset");
+    expect(mcpName("/Users/sam/Library/Application Support/Creator Toolset")).toBe("creator-toolset");
+    expect(mcpName("/Users/sam/Library/Application Support/Creator Toolset (fresh)")).toBe("creator-toolset-fresh");
+    expect(mcpName("/Users/sam/Library/Application Support/Creator Toolset (Fresh)/")).toBe("creator-toolset-fresh");
+  });
+});
