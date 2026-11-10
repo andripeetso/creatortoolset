@@ -9,7 +9,7 @@ process.env.META_APP_ID = "app";
 process.env.META_APP_SECRET = "secret";
 
 const { Hono } = await import("hono");
-const { connectorsApp, channelFiles } = await import("./connectors");
+const { connectorsApp, connectorsCallbackApp, channelFiles } = await import("./connectors");
 const { readConnectors } = await import("./lib/connectors/store");
 const { graphCredsFor } = await import("./lib/instagram/graph");
 const { apifyPost } = await import("./lib/connectors/platforms");
@@ -19,6 +19,7 @@ app.use("*", async (c, next) => {
   c.set("user", { username: "ana", role: "user", cloud: true, off: [] });
   await next();
 });
+app.route("/api/connectors", connectorsCallbackApp as never);
 app.route("/api/connectors", connectorsApp as never);
 
 afterEach(() => vi.unstubAllGlobals());

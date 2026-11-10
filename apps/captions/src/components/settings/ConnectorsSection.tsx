@@ -99,6 +99,12 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
 
   const reload = useCallback(() => getConnectors().then(setView).catch((e) => setError(msg(e))), []);
   useEffect(() => void reload(), [reload]);
+  // a sign-in from the Mac app finishes in the computer's browser: coming back to the window shows the new account
+  useEffect(() => {
+    const onFocus = () => void reload();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [reload]);
   // a pull runs on the server: look again a few times
   const watch = () => [4, 10, 25, 60].forEach((s) => window.setTimeout(() => void reload(), s * 1000));
   const act = (p: Promise<unknown>) => p.then(reload).catch((e) => saveFailed(msg(e)));

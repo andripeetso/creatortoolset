@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { sessionOf, type AuthVars } from "./auth";
+import { getSessionUser, sessionOf, type AuthVars } from "./auth";
+import { env } from "./lib/env";
 import { LOGINS, PLATFORMS, type ConnectorsView, type OwnInstagram, type LoginKind, type SocialPlatform } from "../contracts/connectors";
 import { accountsFromGrant, finishLogin, freshToken, loginUrl, pullAccount, refreshGrant } from "./lib/connectors/platforms";
 import { issuerFor, loginsOn, serviceRedeem, serviceRefresh, serviceStart, type Issuer } from "./lib/connectors/signin-service";
@@ -83,19 +84,40 @@ connectorsApp.get("/login/:kind", async (c) => {
   return c.redirect(url);
 });
 
-connectorsApp.get("/callback/:kind", async (c) => {
-  const user = c.get("user");
+/**
+ * The platform's (or the sign-in service's) way back. Mounted before the account gate (boot.ts): the Mac app opens a
+ * sign-in in the computer's browser (platforms refuse sign-in inside an app's web view), where this server's session
+ * cookie is not. The state names the account that started it (single use, 15 minutes), so the account is saved for
+ * that person either way; a browser without their session gets a page that sends them back to the app.
+ */
+export const connectorsCallbackApp = new Hono();
+
+const donePage = (title: string, line: string) =>
+  `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>:root{color-scheme:light dark}body{margin:0;min-height:100vh;display:grid;place-items:center;font:15px/1.5 -apple-system,system-ui,sans-serif}main{max-width:420px;padding:32px 24px}h1{font-size:20px;margin:0 0 8px}p{margin:0;opacity:.7}</style></head><body><main><h1>${title}</h1><p>${line}</p></main></body></html>`;
+const escHtml = (s: string) => s.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
+
+connectorsCallbackApp.get("/callback/:kind", async (c) => {
   const st = states.get(c.req.query("state") ?? "");
   const kind = c.req.param("kind") as LoginKind;
-  const back = (q: string) => c.redirect(`${st?.back ?? "/settings/connectors"}${(st?.back ?? "").includes("?") ? "&" : "?"}${q}`);
-  if (!st || st.user !== user.username || st.kind !== kind || Date.now() - st.at > STATE_MS) return back(`error=${encodeURIComponent("That login expired: start it again")}`);
+  // the browser that started it has the person's session: back to Settings with the result; any other gets a page
+  // (an own computer with no sign-in opens Settings in any browser)
+  const who = getSessionUser(c.req.header("cookie"));
+  const here = !env.appSecret || (st ? who?.username === st.user : !!who);
+  const to = st?.back ?? "/settings/connectors";
+  const back = (q: string) => {
+    if (here) return c.redirect(`${to}${to.includes("?") ? "&" : "?"}${q}`);
+    const p = new URLSearchParams(q);
+    return p.get("connected") ? c.html(donePage("Connected", "Go back to Creator Toolset: the account is in Settings → Social accounts.")) : c.html(donePage("Not connected", escHtml(p.get("error") ?? "")), 400);
+  };
+  if (!st || st.kind !== kind || Date.now() - st.at > STATE_MS) return back(`error=${encodeURIComponent("That login expired: start it again")}`);
+  const user = st.user;
   states.delete(c.req.query("state")!);
   const denied = c.req.query("error_description") || c.req.query("error");
   if (denied) return back(`error=${encodeURIComponent(denied)}`);
   try {
     // through the service the platform's code was swapped on the site: this install redeems its ticket with the verifier
     const got = st.issuer === "service" ? await accountsFromGrant(kind, await serviceRedeem(c.req.query("ticket") ?? "", st.verifier!)) : await finishLogin(kind, c.req.query("code") ?? "", redirectFor(c, kind), st.verifier);
-    const saved = saveAccounts(user.username, got.map((a) => ({ ...a, issuer: st.issuer, loginStatus: "connected" as const, pullError: undefined, ...(st.projectId ? { projectId: st.projectId } : {}) })));
+    const saved = saveAccounts(user, got.map((a) => ({ ...a, issuer: st.issuer, loginStatus: "connected" as const, pullError: undefined, ...(st.projectId ? { projectId: st.projectId } : {}) })));
     for (const a of saved) void pullOne(user, a.key);
     return back(`connected=${saved.length}`);
   } catch (e) {

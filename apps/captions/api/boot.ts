@@ -42,7 +42,7 @@ import { assistantApp } from "./assistant";
 import { automationsApp, startAutomations } from "./automations";
 import { providersApp } from "./providers";
 import { mcpApp } from "./mcp";
-import { connectorsApp, startConnectorPulls, tiktokVerifyFile } from "./connectors";
+import { connectorsApp, connectorsCallbackApp, startConnectorPulls, tiktokVerifyFile } from "./connectors";
 import { ownerProfileApp } from "./owner-profile";
 import { devicesApp } from "./devices";
 import { connectApp } from "./connect/routes";
@@ -235,6 +235,8 @@ if (hostedMode()) {
 }
 // plug-ins' public routes (plugins/<id>/plugin.ts publicRoutes): before the account gate, each checks its own access
 mountPublicRoutes(app, serverPlugins);
+// a social sign-in's way back may land in the computer's browser, without the session: its state names the account
+app.route("/api/connectors", connectorsCallbackApp);
 
 // account gate (active only when APP_SECRET is set — see api/auth.ts)
 app.use("/api/*", async (c, next) => {
