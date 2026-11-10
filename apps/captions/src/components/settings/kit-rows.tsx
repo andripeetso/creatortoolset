@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Children, useEffect, useRef, useState, type ReactNode } from "react";
 import { useLocation } from "react-router";
 import { ChevronRight, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -79,7 +79,7 @@ function RowBody({ id, title, description, status, control, children, className 
         </div>
         {control && <div className="flex min-w-0 shrink-0 items-center gap-2 sm:justify-end">{control}</div>}
       </div>
-      {children && <div className="pt-3">{children}</div>}
+      {Children.toArray(children).length > 0 && <div className="pt-3">{children}</div>}
     </div>
   );
 }

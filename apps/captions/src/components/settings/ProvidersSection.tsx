@@ -42,6 +42,9 @@ const USE_DEFAULT = "use-default";
  * A member sees the AI they use: their own, or the team's API budget. On an own-computer install with no Mac app paired,
  * the list is the AI apps found on this computer (the same source as Your own AI).
  */
+/** "2.1.321" from "2.1.321 (Claude Code)", "codex-cli 0.39.0" or "grok 1.0.4 (d846eb93d94d)": the number a person reads. */
+export const shortVersion = (v: string | undefined): string | undefined => v?.match(/\d+(?:\.\d+)+/)?.[0] ?? v;
+
 export function ProvidersSection({ sub }: { sub?: string }) {
   const navigate = useNavigate();
   const me = useAuth((s) => s.me);
@@ -163,7 +166,12 @@ export function ProvidersSection({ sub }: { sub?: string }) {
   const shown: ProviderSettings | null = editing ?? (readOnly ? (view.workspace?.settings ?? null) : null);
   const scope: Scope = toOwn ? me.username : "workspace";
   // one tab per Mac: a Mac that paired twice (the app and the worker) is one tab holding the AIs of both records
-  const groups = groupComputers(devices, me.username);
+  const allGroups = groupComputers(devices, me.username);
+  // a tab is a computer that can do something here: it is online, or it already holds an AI of this set. A computer that
+  // is offline with no AI on it (an old pairing) stays on Settings → Computers, where it can be removed.
+  const holdsAi = (ids: string[]) => (editing?.instances ?? []).some((i) => ids.includes(deviceOf(i)));
+  const useful = allGroups.filter((g) => g.records.some((r) => r.online) || holdsAi(g.records.map((r) => r.id)));
+  const groups = useful.length ? useful : allGroups;
   const tabGroup = groups.find((g) => g.records.some((r) => r.id === tab)) ?? groups[0] ?? null;
   const tabDevice = tabGroup?.primary ?? null;
   const listed = readOnly ? [] : (editing?.instances ?? []).filter((i) => !!tabGroup && tabGroup.records.some((r) => r.id === deviceOf(i)));
@@ -349,13 +357,13 @@ export function ProvidersSection({ sub }: { sub?: string }) {
 
   return (
     <>
-      {devices.length > 0 && (
+      {groups.length > 1 && (
         <Tabs value={tabDevice?.id ?? ""} onValueChange={(v) => { setTab(v); if (sub) navigate("/settings/providers"); }} className="mb-8">
           <TabsList className="h-auto max-w-full flex-wrap justify-start">
             {groups.map(({ primary: d }) => (
               <TabsTrigger key={d.id} value={d.id} className="gap-1.5">
                 {!d.online && <StatusDot tone="attention" />}
-                <span className="max-w-40 truncate">{d.name}</span>
+                <span className="max-w-64 truncate">{d.name}</span>
               </TabsTrigger>
             ))}
           </TabsList>
@@ -382,7 +390,7 @@ export function ProvidersSection({ sub }: { sub?: string }) {
                   key={inst.id}
                   inst={inst}
                   status={statusOf(inst)}
-                  version={reportOf(inst)?.drivers.find((d) => d.driver === inst.driver)?.version}
+                  version={shortVersion(reportOf(inst)?.drivers.find((d) => d.driver === inst.driver)?.version)}
                   selected={detailInst?.id === inst.id}
                   href={detailOpen(inst)}
                   action={actionOf(inst, statusOf(inst))}
@@ -396,7 +404,7 @@ export function ProvidersSection({ sub }: { sub?: string }) {
                   title={
                     <>
                       {nameOf(d.driver)}
-                      {d.version && <span className="ml-2 font-mono text-xs font-normal text-muted-foreground">v{d.version}</span>}
+                      {d.version && <span className="ml-2 font-mono text-xs font-normal text-muted-foreground">v{shortVersion(d.version)}</span>}
                     </>
                   }
                   actions={

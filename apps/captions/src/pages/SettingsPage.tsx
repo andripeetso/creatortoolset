@@ -338,7 +338,7 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
               </Tooltip>
             </header>
             <PageActionContext.Provider value={actionEl}>
-              <div className="min-h-0 flex-1 overflow-y-auto">
+              <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
                 <div className="mx-auto max-w-4xl space-y-8 px-5 pt-6 pb-24 sm:px-6 sm:pb-12">{body}</div>
               </div>
             </PageActionContext.Provider>

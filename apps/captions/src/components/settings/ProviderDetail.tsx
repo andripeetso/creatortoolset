@@ -109,11 +109,12 @@ export function ProviderDetail({
                 <Button size="sm" variant="outline" onClick={onSignIn}>
                   Sign in
                 </Button>
-              ) : (
+              ) : status.action === "test" || checking ? (
+                // only a failed check offers the retry here; a working AI shows no button ("Test now" is in the menu)
                 <Button size="sm" variant="outline" disabled={!canTest} title={testTitle} onClick={onTest}>
-                  {checking ? "Testing…" : "Test"}
+                  {checking ? "Testing…" : "Test again"}
                 </Button>
-              )
+              ) : undefined
             }
           >
             {status.action === "install" && <InstallHelp driver={inst.driver} />}

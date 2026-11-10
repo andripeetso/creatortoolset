@@ -87,11 +87,17 @@ describe("ProviderDetail", () => {
     expect(detail({ id: "grok", driver: "grok", name: "Grok", enabled: true, device: "mac1" })).toContain("Uses the tool&#x27;s own default");
   });
 
-  it("tests from the Status row, and that row rests on what is true, never on Checking", () => {
+  it("the Status row rests on what is true, with no button to press; only a failed check offers the retry", () => {
     const html = detail({ id: "codex", driver: "codex", name: "Codex", enabled: true, device: "mac1" });
-    expect(html).toContain(">Test<");
+    expect(html).not.toContain(">Test<");
+    expect(html).not.toContain(">Test again<");
     expect(html).toContain("Not tested yet");
     expect(html).not.toContain("Checking…");
+    const failed = detail(
+      { id: "codex", driver: "codex", name: "Codex", enabled: true, device: "mac1" },
+      { status: { tone: "broken" as const, text: "Didn't answer", action: "test" as const } },
+    );
+    expect(failed).toContain(">Test again<");
     const answered = detail(
       { id: "codex", driver: "codex", name: "Codex", enabled: true, device: "mac1" },
       { check: { ok: true, ms: 3700, model: "claude-opus-5-5", at: Date.now() - 180_000 } },
