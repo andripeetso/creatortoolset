@@ -4,6 +4,9 @@ import type { ConnectResult, LocalAiRow, LocalAiView } from "@contracts/local-ai
 import type { ProviderSettings, ProvidersView } from "@contracts/providers";
 import { AiPanelView, AnswerPicker, anyConnected, rowView } from "./AiPanel";
 
+/** React writes an apostrophe as &#x27; in markup; the words are what these tests check. */
+const text = (html: string) => html.replaceAll("&#x27;", "'");
+
 const row = (over: Partial<LocalAiRow> & Pick<LocalAiRow, "id" | "name">): LocalAiRow => ({
   kind: "cli",
   found: true,
@@ -15,45 +18,81 @@ const row = (over: Partial<LocalAiRow> & Pick<LocalAiRow, "id" | "name">): Local
 });
 const view = (rows: LocalAiRow[], local = true): LocalAiView => ({ local, rows });
 const panel = (v: LocalAiView | null, over: Partial<Parameters<typeof AiPanelView>[0]> = {}) =>
-  renderToStaticMarkup(
-    <AiPanelView view={v} results={{}} phases={{}} onAction={() => {}} onInstall={() => {}} onRefresh={() => {}} {...over} />,
+  text(
+    renderToStaticMarkup(
+      <AiPanelView view={v} results={{}} phases={{}} onAction={() => {}} onInstall={() => {}} onRefresh={() => {}} {...over} />,
+    ),
   );
 
 const claude = row({ id: "claude", name: "Claude Code" });
 const codex = row({ id: "codex", name: "Codex", version: "codex-cli 0.50.0", signedIn: false });
+const gemini = row({ id: "gemini", name: "Gemini CLI", version: "0.9.1", signedIn: null });
+const desktop = (id: "claude-desktop" | "chatgpt-desktop", name: string) => ({ ...claude, id, kind: "desktop", name, signedIn: null }) as LocalAiRow;
 
-describe("the agents list: one row each, the one action each needs", () => {
-  it("a found, signed-in Claude Code offers Use this, with its logo and the one-line description", () => {
-    const html = panel(view([claude]));
-    expect(html).toContain("Claude Code");
-    expect(html).toContain("Code with your Claude subscription.");
-    expect(html).toContain("Use this");
+describe("the rows: named by what a person knows, in order", () => {
+  it("ChatGPT comes first with Codex as its small second line, then Claude with Claude Code", () => {
+    const html = panel(view([claude, codex]));
+    expect(html.indexOf(">ChatGPT<")).toBeGreaterThan(-1);
+    expect(html.indexOf(">ChatGPT<")).toBeLessThan(html.indexOf(">Claude<"));
+    expect(html).toContain(">Codex<");
+    expect(html).toContain(">Claude Code<");
     expect(html).toContain("<svg");
   });
 
-  it("a signed-out Codex says Continue with ChatGPT, and a Claude Code that is not on the Mac says where it looked, with Install", () => {
+  it("shows no Gemini row unless Gemini CLI is installed", () => {
+    expect(panel(view([claude, codex]))).not.toContain("Gemini");
+    expect(panel(view([gemini]))).toContain(">Gemini<");
+  });
+
+  it("a missing AI has one Install button, and the one plain line that says what it does", () => {
+    const html = panel(view([]));
+    expect(html).toContain("Install ChatGPT's coding helper on this Mac, then sign in with your ChatGPT account.");
+    expect(html).toContain("Install Claude Code on this Mac, then sign in with your Claude account.");
+    expect(html.match(/>Install<\/button>/g)?.length ?? 0).toBe(2);
+  });
+
+  it("a signed-out ChatGPT has one Sign in button and says what it does", () => {
     const html = panel(view([codex]));
-    expect(html).toContain("Continue with ChatGPT");
-    expect(html).toContain("Code with your ChatGPT subscription.");
-    const missing = panel(view([]));
-    expect(missing).toContain("Not installed on this computer.");
-    expect(missing).toContain("Install");
+    expect(html).toContain("Sign in with your ChatGPT account.");
+    expect(html).toContain(">Sign in</button>");
   });
 
-  it("every agent that is not found has an Install button", () => {
-    const missing = panel(view([]));
-    expect(missing).toContain("Gemini CLI");
-    expect(missing.match(/ Install<\/button>/g)?.length ?? 0).toBe(3); // Claude Code, Codex and Gemini CLI
+  it("a signed-in Claude that is not yet connected has one Use it button and says what it does", () => {
+    const html = panel(view([claude]));
+    expect(html).toContain("Checks it works, then lets Creator Toolset use it.");
+    expect(html).toContain(">Use it</button>");
   });
 
-  it("a connected agent shows a quiet check, never a Ready or Connected label", () => {
+  it("a connected AI shows a quiet check, never a Ready or Connected label", () => {
     const html = panel(view([row({ id: "claude", name: "Claude Code", connected: true, lastCheck: { ok: true, at: 1, ms: 5 } })]));
-    expect(html).toContain('aria-label="Claude Code is connected"');
+    expect(html).toContain('aria-label="Claude is connected"');
+    expect(html).toContain("Makes this the AI that answers in the app.");
     expect(html).not.toContain("Ready");
-    expect(html).not.toContain("Connected ✓");
-    expect(html).not.toContain("Use this");
+    expect(html).not.toContain(">Connected");
   });
 
+  it("the AI that answers in the app says so, with a disabled In use button", () => {
+    const html = panel(view([row({ id: "claude", name: "Claude Code", connected: true, lastCheck: { ok: true, at: 1, ms: 5 } })]), { appAi: "local-claude" });
+    expect(html).toContain("This is the AI that answers in the app.");
+    expect(html).toContain("In use");
+  });
+});
+
+describe("the desktop apps: a row each when installed, text only", () => {
+  it("shows the installed desktop app with its one line and no button", () => {
+    const html = panel(view([desktop("claude-desktop", "Claude desktop")]));
+    expect(html).toContain("Claude app");
+    expect(html.match(/Installed on this Mac\./g)?.length ?? 0).toBe(1);
+  });
+
+  it("shows no desktop row when the app is not installed", () => {
+    const html = panel(view([]));
+    expect(html).not.toContain("Claude app");
+    expect(html).not.toContain("Installed on this Mac.");
+  });
+});
+
+describe("the list", () => {
   it("never offers an API key, and always has Check again", () => {
     const html = panel(view([claude, codex]));
     expect(html).not.toMatch(/api key/i);
@@ -63,14 +102,7 @@ describe("the agents list: one row each, the one action each needs", () => {
   it("asks the owner of a server that is not this computer to connect its AI, with no rows", () => {
     const html = panel(view([], false));
     expect(html).toContain("Ask the owner of this server to connect the AI it runs on.");
-    expect(html).not.toContain("Use this");
-  });
-
-  it("shows the desktop apps as text only, with no action", () => {
-    const html = panel(view([{ ...claude, id: "claude-desktop", kind: "desktop", name: "Claude desktop" } as LocalAiRow]));
-    expect(html).toContain("Claude desktop");
-    expect(html).toContain("The Claude app.");
-    expect(html).not.toContain("Use this");
+    expect(html).not.toContain(">Use it<");
   });
 });
 
@@ -79,15 +111,10 @@ describe("the app's AI: which one answers, and the picker", () => {
   const settings = (instances: ProviderSettings["instances"], def: ProviderSettings["default"]): ProviderSettings => ({ instances, default: def, jobs: {} });
   const inst = (id: string, driver: "claude" | "codex", name: string) => ({ id, driver, name, enabled: true, device: "dev_1" });
 
-  it("offers Use for the app on a connected agent that does not answer yet, and not on the one that does", () => {
-    const view = view2([connected("claude", "Claude Code"), connected("codex", "Codex")]);
-    const html = panel(view, { appAi: "local-claude", onUseForApp: () => {} });
-    expect(html.match(/Use for the app/g)?.length ?? 0).toBe(1);
-    expect(html).toContain("Use for the app");
-  });
-
-  it("no Use for the app button without a connected agent", () => {
-    expect(panel(view([claude]), { onUseForApp: () => {} })).not.toContain("Use for the app");
+  it("a connected AI that does not answer yet offers Use it, and the one that answers says In use", () => {
+    const html = panel(view([connected("claude", "Claude Code"), connected("codex", "Codex")]), { appAi: "local-claude", onUseForApp: () => {} });
+    expect(html.match(/>Use it<\/button>/g)?.length ?? 0).toBe(1);
+    expect(html.match(/>In use<\/button>/g)?.length ?? 0).toBe(1);
   });
 
   it("the picker lists the connected AIs and the models of the one picked; nothing when none is connected", () => {
@@ -103,19 +130,16 @@ describe("the app's AI: which one answers, and the picker", () => {
   });
 });
 
-/** A view with the given rows, for the app's-AI tests (the default rows are the shared `view` above). */
-const view2 = (rows: LocalAiRow[]) => ({ local: true, rows }) as LocalAiView;
-
 describe("what a row does, in order", () => {
-  it("not signed in: Sign in, with the browser line before any click", () => {
-    const v = rowView(row({ id: "claude", name: "Claude Code", signedIn: false }), undefined, undefined);
+  it("not signed in: Sign in, with its line before any click", () => {
+    const v = rowView(codex, undefined, undefined);
     expect(v.button).toEqual({ label: "Sign in", action: "signin" });
-    expect(v.line).toContain("Your browser opens");
+    expect(v.line).toBe("Sign in with your ChatGPT account.");
   });
 
-  it("signed in but not connected: Use this, and no connected state", () => {
+  it("signed in but not connected: Use it runs the check, and no check mark", () => {
     const v = rowView(claude, undefined, undefined);
-    expect(v.button).toEqual({ label: "Use this", action: "connect" });
+    expect(v.button).toEqual({ label: "Use it", action: "connect" });
     expect(v.connected).toBeFalsy();
   });
 
@@ -139,15 +163,16 @@ describe("what a row does, in order", () => {
     expect(v.connected).toBeFalsy();
   });
 
-  it("connected earlier but signed out now: says so, and never shows Connected", () => {
+  it("connected earlier but signed out now: says so, with Sign in, and no check mark", () => {
     const v = rowView(row({ id: "claude", name: "Claude Code", connected: true, signedIn: false }), undefined, undefined);
-    expect(v.line).toBe("Connected, but not signed in right now. Sign in again.");
+    expect(v.line).toBe("Signed out since last time. Sign in with your Claude account again.");
+    expect(v.button).toEqual({ label: "Sign in", action: "signin" });
     expect(v.connected).toBeFalsy();
   });
 });
 
 describe("anyConnected", () => {
-  it("counts a saved passing check or this session's ready result, for any agent, never a bare probe", () => {
+  it("counts a saved passing check or this session's ready result, for any AI, never a bare probe", () => {
     expect(anyConnected(view([claude]), {})).toBe(false);
     expect(anyConnected(view([row({ id: "claude", name: "Claude Code", connected: true })]), {})).toBe(true);
     expect(anyConnected(view([codex]), { codex: { state: "ready", signedIn: true, answered: true } })).toBe(true);
@@ -156,19 +181,34 @@ describe("anyConnected", () => {
 });
 
 describe("install: a progress line while it runs, one plain sentence when it fails", () => {
-  it("the row says it is installing, and its Install waits", () => {
+  it("the row says it is installing, and its button waits", () => {
     const html = panel(view([]), { installing: "claude" });
     expect(html).toContain("Installing Claude Code. This can take a few minutes.");
     expect(html).toContain("Installing…");
   });
 
-  it("a failed install: one sentence, the output under Details, and Copy for Terminal as the last resort", () => {
+  it("a failed install: one sentence, the output under Details, and Copy install command", () => {
     const html = panel(view([]), {
       installMsg: { message: "Couldn't install Claude Code. Check the internet connection, then try again.", raw: "curl: (6) Could not resolve host", line: "curl -fsSL https://claude.ai/install.sh | bash" },
     });
     expect(html).toContain("Check the internet connection, then try again.");
     expect(html).toContain("curl: (6) Could not resolve host");
-    expect(html).toContain("Copy install line for Terminal");
-    expect(html).not.toContain("Terminal window");
+    expect(html).toContain("Copy install command");
+  });
+});
+
+describe("the banned words", () => {
+  it("the rows, the desktop apps and a failed install say none of CLI, PATH, Terminal, API key or MCP", () => {
+    const html = panel(view([codex, claude, gemini, desktop("claude-desktop", "Claude desktop"), desktop("chatgpt-desktop", "ChatGPT desktop")]), {
+      results: { codex: { state: "failed", signedIn: false, answered: false, message: "It took too long to answer. Try again.", raw: "timed out" } },
+      installMsg: { message: "Couldn't install Claude Code. Try again.", raw: "curl: (6) Could not resolve host", line: "curl -fsSL https://claude.ai/install.sh | bash" },
+      appAi: "local-claude",
+    });
+    expect(html).toContain("ChatGPT");
+    expect(html).not.toMatch(/\bCLI\b/);
+    expect(html).not.toMatch(/\bPATH\b/);
+    expect(html).not.toMatch(/Terminal/);
+    expect(html).not.toMatch(/api key/i);
+    expect(html).not.toMatch(/\bMCP\b/);
   });
 });

@@ -16,22 +16,21 @@ const WAIT_MS = 3 * 60_000;
 const POLL_MS = 3_000;
 /** How long a request may take before it gives up with a plain message (no wait spins forever). */
 const TIMEOUT_MS = 90_000;
-
-/** The agents this step lists, in order. */
-const AGENTS: CliId[] = ["claude", "codex", "gemini"];
-const NAME: Record<CliId, string> = { claude: "Claude Code", codex: "Codex", gemini: "Gemini CLI" };
-const DESCRIBE: Record<CliId, string> = {
-  claude: "Code with your Claude subscription.",
-  codex: "Code with your ChatGPT subscription.",
-  gemini: "Google's coding tool. Sign in with your Google account.",
-};
-const SIGN_IN: Record<CliId, string> = { claude: "Continue with Claude", codex: "Continue with ChatGPT", gemini: "Sign in" };
 /** An install runs the vendor's installer here: a few minutes on a slow connection. */
 const INSTALL_TIMEOUT_MS = 6 * 60_000;
-const DESKTOP_LINE: Partial<Record<LocalAiId, string>> = {
-  "claude-desktop": "The Claude app. It can't be the AI this app uses, and it can't be connected from here yet.",
-  "chatgpt-desktop": "The ChatGPT app. It can't be the AI this app uses, and it can't be connected from here yet.",
-};
+
+/** The rows, in order: ChatGPT, then Claude; Gemini only once its tool is on this Mac (see AiPanelView). */
+const AGENTS: CliId[] = ["codex", "claude", "gemini"];
+/** What a person knows each AI by: the row's name, and its small second line. */
+export const ROW_NAME: Record<CliId, string> = { codex: "ChatGPT", claude: "Claude", gemini: "Gemini" };
+export const ROW_SUB: Record<CliId, string> = { codex: "Codex", claude: "Claude Code", gemini: "Google's coding helper" };
+/** The account that signs each AI in, in the words a person uses. */
+const ACCOUNT: Record<CliId, string> = { codex: "ChatGPT", claude: "Claude", gemini: "Google" };
+/** What an install puts on this Mac. */
+const HELPER: Record<CliId, string> = { codex: "ChatGPT's coding helper", claude: "Claude Code", gemini: "Google's coding helper" };
+const DESKTOP_NAME: Partial<Record<LocalAiId, string>> = { "claude-desktop": "Claude app", "chatgpt-desktop": "ChatGPT app" };
+
+const ROW = "flex items-start gap-3 rounded-xl border border-border/60 bg-card/40 px-4 py-3";
 
 const isCli = (id: LocalAiId): id is CliId => id === "claude" || id === "codex" || id === "gemini";
 const plain = (msg: string) => msg.replace(/\.+$/, "");
@@ -41,134 +40,50 @@ const isConnected = (row: LocalAiRow, result?: ConnectResult) => row.connected |
 export const anyConnected = (view: LocalAiView | null, results: Results): boolean =>
   !!view?.rows.some((r) => isCli(r.id) && isConnected(r, results[r.id]));
 
+/** A row's one button. "use" makes this AI the one that answers in the app; "install" runs its installer. */
+export interface RowButton {
+  label: string;
+  action: Action | "install" | "use" | "none";
+  disabled?: boolean;
+}
+
 export interface RowView {
   line: string;
-  hint?: string;
-  button: { label: string; action: Action | "none"; disabled?: boolean } | null;
+  button: RowButton | null;
   connected?: boolean;
   raw?: string;
 }
 
 /**
- * What one agent's row says, checked in order: an in-progress step first, then this session's last Connect, then the
- * probe. "Connected" only after a passing check, so a failed part never shows it.
+ * What one AI's row says, checked in order: an in-progress step first, then this session's last press, then the probe.
+ * The check mark only after a passing check, so a failed part never shows it.
  */
-export function rowView(row: LocalAiRow, result: ConnectResult | undefined, phase: Phase | undefined): RowView {
+export function rowView(row: LocalAiRow, result: ConnectResult | undefined, phase: Phase | undefined, usedByApp = false): RowView {
+  const id = row.id as CliId;
   const connected = isConnected(row, result);
   const signed = row.signedIn ?? (result?.state === "ready" ? true : null);
-  const notSignedIn: RowView = { line: "Not signed in yet. Your browser opens to sign in.", button: { label: "Sign in", action: "signin" } };
+  const signIn: RowView = { line: `Sign in with your ${ACCOUNT[id]} account.`, button: { label: "Sign in", action: "signin" } };
   if (phase === "connecting") return { line: "Checking. This can take up to a minute.", button: { label: "Checking…", action: "connect", disabled: true } };
   if (phase === "signingIn")
-    return {
-      line: "Waiting for you to finish in your browser. This page checks by itself.",
-      button: { label: "Waiting for sign-in…", action: "none", disabled: true },
-    };
-  if (phase === "timedOut") return { line: "Still not signed in. Finish signing in in your browser, then press Check again.", button: { label: "Check again", action: "check" } };
+    return { line: "Waiting for you to finish in your browser. This page checks by itself.", button: { label: "Waiting…", action: "none", disabled: true } };
+  if (phase === "timedOut")
+    return { line: "Still not signed in. Finish in your browser, then press Check again.", button: { label: "Check again", action: "check" } };
   if (result?.state === "failed")
-    return {
-      line: `It didn't answer: ${plain(result.message ?? "Try again")}.`,
-      button: { label: "Try again", action: "connect" },
-      raw: result.raw,
-    };
-  if (result?.state === "mac" || result?.state === "unsupported") return { line: result.message ?? "Open the Creator Toolset Mac app to connect your AI.", button: null };
-  if (result?.state === "signin") return notSignedIn;
+    return { line: `It didn't answer: ${plain(result.message ?? "Try again")}.`, button: { label: "Try again", action: "connect" }, raw: result.raw };
+  if (result?.state === "mac" || result?.state === "unsupported")
+    return { line: result.message ?? "Open the Creator Toolset Mac app to use this.", button: { label: "Use it", action: "none", disabled: true } };
+  if (result?.state === "signin") return signIn;
   if (connected && signed === false)
-    return { line: "Connected, but not signed in right now. Sign in again.", button: { label: "Sign in", action: "signin" } };
-  if (connected) return { line: "", button: null, connected: true };
-  if (signed === false) return notSignedIn;
-  if (signed === true) return { line: "Signed in.", button: { label: "Use this", action: "connect" } };
-  return { line: "", button: { label: "Use this", action: "connect" } };
+    return { line: `Signed out since last time. Sign in with your ${ACCOUNT[id]} account again.`, button: { label: "Sign in", action: "signin" } };
+  if (connected)
+    return usedByApp
+      ? { line: "This is the AI that answers in the app.", button: { label: "In use", action: "none", disabled: true }, connected: true }
+      : { line: "Makes this the AI that answers in the app.", button: { label: "Use it", action: "use" }, connected: true };
+  if (signed === false) return signIn;
+  return { line: "Checks it works, then lets Creator Toolset use it.", button: { label: "Use it", action: "connect" } };
 }
 
-/** The row's view: the same rules for every agent (the app's own AI can be any of them now). */
-export const viewOf = (row: LocalAiRow, result?: ConnectResult, phase?: Phase): RowView => rowView(row, result, phase);
-
-/** The agent's row in the list: logo, name, its description, and on the right the one action it needs. */
-function AgentRow({
-  id,
-  found,
-  row,
-  result,
-  phase,
-  installing,
-  installDisabled,
-  usedByApp,
-  onAction,
-  onInstall,
-  onUseForApp,
-}: {
-  id: CliId;
-  found: boolean;
-  row?: LocalAiRow;
-  result?: ConnectResult;
-  phase?: Phase;
-  /** this agent's install is running */
-  installing: boolean;
-  /** some install is running (this row's Install waits for it) */
-  installDisabled: boolean;
-  /** this agent is the one that answers in the app (its default) */
-  usedByApp: boolean;
-  onAction: (a: Action) => void;
-  onInstall?: (id: CliId) => void;
-  onUseForApp?: (id: CliId) => void;
-}) {
-  const v = row ? viewOf(row, result, phase) : null;
-  const b = v?.button ?? null;
-  const version = row?.version?.replace(/\s*\([^)]*\)\s*$/, "");
-  const canInstall = !found && !!INSTALL_LINE[id] && !!onInstall;
-  const label = b?.action === "signin" ? SIGN_IN[id] : b?.label;
-  return (
-    <li className="flex items-start gap-3 rounded-xl border border-border/60 bg-card/40 px-4 py-3">
-      <ProviderLogo driver={id} className="mt-0.5 size-5" />
-      <div className="min-w-0 flex-1 space-y-1">
-        <p className="text-sm font-medium">
-          {NAME[id]}
-          {version && <span className="ml-2 text-xs font-normal text-muted-foreground">{version}</span>}
-        </p>
-        <p className="text-xs text-muted-foreground">{DESCRIBE[id]}</p>
-        {!found && !installing && <p className="text-xs">Not installed on this computer.</p>}
-        {installing && <p className="text-xs">Installing {NAME[id]}. This can take a few minutes.</p>}
-        {found && v?.line && <p className="text-xs">{v.line}</p>}
-        {v?.raw && (
-          <details className="text-xs">
-            <summary className="cursor-pointer text-muted-foreground">Details</summary>
-            <pre className="mt-1 whitespace-pre-wrap font-mono text-[11px]">{v.raw}</pre>
-          </details>
-        )}
-      </div>
-      <div className="flex shrink-0 items-center gap-2 pt-0.5">
-        {v?.connected && <Check aria-label={`${NAME[id]} is connected`} className="size-4 text-emerald-600 dark:text-emerald-400" />}
-        {b && (
-          <Button
-            size="sm"
-            variant={b.action === "signin" || b.action === "check" ? "default" : "outline"}
-            disabled={b.disabled}
-            onClick={() => {
-              if (b.action !== "none") onAction(b.action);
-            }}
-          >
-            {label}
-          </Button>
-        )}
-        {v?.connected && !usedByApp && onUseForApp && (
-          <Button size="sm" variant="outline" onClick={() => onUseForApp(id)}>
-            Use for the app
-          </Button>
-        )}
-        {canInstall && (
-          <Button size="sm" variant="outline" disabled={installDisabled} onClick={() => onInstall?.(id)}>
-            {installing ? "Installing…" : <><span aria-hidden className="font-mono">›_</span> Install</>}
-          </Button>
-        )}
-      </div>
-    </li>
-  );
-}
-
-/**
- * Which AI answers in the app and with which model (the default of the account's providers, as Settings → Your AI sets
- * it). Only the AIs this account has connected are offered. Pure: `onPick` gets the whole new set to save.
- */
+/** The AnswerPicker: which AI answers in the app and with which model (the default of the account's providers, as Settings → Your AI sets it). Only the AIs this account has connected are offered. Pure: `onPick` gets the whole new set to save. */
 export function AnswerPicker({ view, onPick }: { view: ProvidersView; onPick: (s: ProviderSettings) => void }) {
   const own = view.own;
   const options = own?.instances.filter((i) => i.enabled) ?? [];
@@ -213,11 +128,88 @@ export interface InstallMsg {
   line?: string;
 }
 
+/** One AI's row: its logo, name and small second line, one plain line saying what its one button does, and that button. */
+function AgentRow({
+  id,
+  row,
+  result,
+  phase,
+  installing,
+  installDisabled,
+  usedByApp,
+  onAction,
+  onInstall,
+  onUseForApp,
+}: {
+  id: CliId;
+  row?: LocalAiRow;
+  result?: ConnectResult;
+  phase?: Phase;
+  /** this AI's install is running */
+  installing: boolean;
+  /** some install is running (this row's Install waits for it) */
+  installDisabled: boolean;
+  /** this AI is the one that answers in the app (its default) */
+  usedByApp: boolean;
+  onAction: (a: Action) => void;
+  onInstall?: (id: CliId) => void;
+  onUseForApp?: (id: CliId) => void;
+}) {
+  const found = !!row?.found;
+  const v = found && row ? rowView(row, result, phase, usedByApp) : null;
+  const line = !found
+    ? installing
+      ? `Installing ${HELPER[id]}. This can take a few minutes.`
+      : `Install ${HELPER[id]} on this Mac, then sign in with your ${ACCOUNT[id]} account.`
+    : v?.line ?? "";
+  const button: RowButton | null = !found
+    ? installing
+      ? { label: "Installing…", action: "none", disabled: true }
+      : { label: "Install", action: "install", disabled: installDisabled }
+    : v?.button ?? null;
+  const press = (a: RowButton["action"]) => {
+    if (a === "none") return;
+    if (a === "install") onInstall?.(id);
+    else if (a === "use") onUseForApp?.(id);
+    else onAction(a);
+  };
+  const details = [row?.version, v?.raw].filter(Boolean).join("\n");
+  return (
+    <li className={ROW}>
+      <ProviderLogo driver={id} className="mt-0.5 size-5" />
+      <div className="min-w-0 flex-1 space-y-1">
+        <p className="text-sm font-medium">{ROW_NAME[id]}</p>
+        <p className="text-xs text-muted-foreground">{ROW_SUB[id]}</p>
+        {line && <p className="text-xs">{line}</p>}
+        {details && (
+          <details className="text-xs">
+            <summary className="cursor-pointer text-muted-foreground">Details</summary>
+            <pre className="mt-1 whitespace-pre-wrap font-mono text-[11px]">{details}</pre>
+          </details>
+        )}
+      </div>
+      <div className="flex shrink-0 items-center gap-2 pt-0.5">
+        {v?.connected && <Check aria-label={`${ROW_NAME[id]} is connected`} className="size-4 text-emerald-600 dark:text-emerald-400" />}
+        {button && (
+          <Button
+            size="sm"
+            variant={button.action === "use" || button.action === "none" ? "outline" : "default"}
+            disabled={button.disabled}
+            onClick={() => press(button.action)}
+          >
+            {button.label}
+          </Button>
+        )}
+      </div>
+    </li>
+  );
+}
+
 export interface AiPanelViewProps {
   view: LocalAiView | null;
   results: Results;
   phases: Phases;
-  /** the agent being installed now */
+  /** the AI being installed now */
   installing?: CliId | null;
   installMsg?: InstallMsg | null;
   /** the instance id that answers in the app ("local-claude"…), so its row says so */
@@ -228,22 +220,23 @@ export interface AiPanelViewProps {
   onRefresh: () => void;
 }
 
-/** The agents on this computer: one row each, found or not, and the desktop apps it can see. Pure, for tests. */
+/** The AIs on this computer: one row each (ChatGPT, Claude, Gemini once installed), and the desktop apps installed. Pure, for tests. */
 export function AiPanelView({ view, results, phases, installing = null, installMsg, appAi, onAction, onInstall, onUseForApp, onRefresh }: AiPanelViewProps) {
   if (!view) return <p className="text-sm text-muted-foreground">Looking for your AI on this computer…</p>;
   if (!view.local)
     return <p className="text-sm text-muted-foreground">Ask the owner of this server to connect the AI it runs on.</p>;
+  // the server lists a desktop app only when it is installed
   const desktops = view.rows.filter((r) => r.kind === "desktop");
   return (
     <div className="space-y-3">
       <ul className="space-y-2">
         {AGENTS.map((id) => {
           const row = view.rows.find((r) => r.id === id);
+          if (id === "gemini" && !row?.found) return null;
           return (
             <AgentRow
               key={id}
               id={id}
-              found={!!row?.found}
               row={row}
               result={results[id]}
               phase={phases[id]}
@@ -257,10 +250,12 @@ export function AiPanelView({ view, results, phases, installing = null, installM
           );
         })}
         {desktops.map((r) => (
-          <li key={r.id} className="flex items-start gap-3 rounded-xl border border-border/60 bg-card/40 px-4 py-3">
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium">{r.name}</p>
-              <p className="text-xs text-muted-foreground">{DESKTOP_LINE[r.id]}</p>
+          <li key={r.id} className={ROW}>
+            <ProviderLogo driver={r.id.startsWith("claude") ? "claude" : "codex"} className="mt-0.5 size-5" />
+            <div className="min-w-0 flex-1 space-y-1">
+              <p className="text-sm font-medium">{DESKTOP_NAME[r.id] ?? r.name}</p>
+              {/* ponytail: the desktop app's action goes here once research confirms what is possible; until then the line says only what is true. */}
+              <p className="text-xs">Installed on this Mac.</p>
             </div>
           </li>
         ))}
@@ -274,7 +269,7 @@ export function AiPanelView({ view, results, phases, installing = null, installM
               {installMsg.raw && <pre className="mt-1 whitespace-pre-wrap font-mono text-[11px]">{installMsg.raw}</pre>}
               {installMsg.line && (
                 <Button size="sm" variant="outline" className="mt-1" onClick={() => void navigator.clipboard?.writeText(installMsg.line ?? "").catch(() => {})}>
-                  Copy install line for Terminal
+                  Copy install command
                 </Button>
               )}
             </details>
@@ -318,7 +313,7 @@ const postJson = <T,>(url: string, body: unknown, ms?: number) =>
   request<T>(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }, ms);
 
 /**
- * The agents on this computer, with the server behind them: reads what the computer has, and runs Connect, Sign in and
+ * The AIs on this computer, with the server behind them: reads what the computer has, and runs Connect, Sign in and
  * Install only when the person presses them. "Check again" re-reads the computer (no cached answer). After Sign in it
  * checks by itself every few seconds for up to three minutes.
  */
@@ -353,7 +348,7 @@ export function AiPanel({ onConnectedChange }: { onConnectedChange?: (on: boolea
     [refresh, loadProviders],
   );
 
-  /** Saves the account's providers with a new default (the picker, or "Use for the app"); a failed save says so. */
+  /** Saves the account's providers with a new default (the picker, or "Use it"); a failed save says so. */
   const pickDefault = (s: ProviderSettings) => saveOwn(s).then(setProviders, () => setInstallMsg({ message: "Couldn't save that. Try again." }));
   const useForApp = (id: CliId) => {
     const own = providers?.own;

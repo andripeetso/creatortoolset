@@ -19,6 +19,13 @@ it("shows one section per picked computer: this computer's panel first, then the
   expect(html).toContain("Nothing reported yet.");
 });
 
+it("shows no computer-name heading for this computer when it is the only one listed", () => {
+  const html = render({ others: [], picked: new Set([HERE]) });
+  expect(html).toContain("MINE-PANEL");
+  expect(html).not.toContain("<h3");
+  expect(html).not.toContain(">Studio Mac<");
+});
+
 it("leaves out any computer that is not picked on the Connect step", () => {
   const html = render({ picked: new Set([HERE]) });
   expect(html).toContain("MINE-PANEL");
@@ -36,7 +43,7 @@ it("leaves this server's own section out on a hosted server, and shows the perso
   expect(html).toContain("Workshop PC");
 });
 
-it("names an agent a computer does not have, with its install left to that computer, and nothing for one where Claude is ready", () => {
+it("names an AI a computer does not have, with its install left to that computer, and a check where Claude is connected", () => {
   const html = render({
     others: [
       { id: "a", name: "Workshop PC", online: true, drivers: [{ driver: "claude", installed: false }] },
@@ -45,7 +52,16 @@ it("names an agent a computer does not have, with its install left to that compu
     picked: new Set(["a", "b"]),
   });
   expect(html).toContain("Not installed on Workshop PC. Open Creator Toolset there and press Install.");
-  expect(html).toContain('aria-label="Claude Code is ready on Mac Studio"');
+  expect(html).toContain('aria-label="Claude is connected on Mac Studio"');
+});
+
+it("lists Gemini on another computer only when its tool is installed there", () => {
+  const html = render({
+    others: [{ id: "a", name: "Workshop PC", online: true, drivers: [{ driver: "gemini", installed: false }, { driver: "claude", installed: true, signedIn: true }] }],
+    picked: new Set(["a"]),
+  });
+  expect(html).not.toContain("Gemini");
+  expect(html).toContain("Claude Code");
 });
 
 it("never shows an API key on this step", () => {
