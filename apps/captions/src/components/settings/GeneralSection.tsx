@@ -1,36 +1,22 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { useAuth } from "@/lib/auth";
 import { cachedUsage, clearAccountCache } from "@/lib/local-cache";
 import { canSpeak, useReadAloud } from "@/lib/read-aloud";
 import { persistConfirmDeletes, persistStatusBars, storedConfirmDeletes, storedStatusBars } from "@/lib/settings";
-import { useWorkTalk } from "@/lib/setup";
-import { warmScreens } from "@/lib/warm-cache";
 import { canRecordScreen } from "@/lib/mac-record";
-import { Card, Row, RowMenu, Section, saveFailed } from "./ui";
-import { HowYouWorkDialog, HOW_NAMES } from "./HowYouWorkDialog";
+import { Card, Row, Section, saveFailed } from "./ui";
 import { tell, useThisMac, type ThisMacState } from "./ThisMacSection";
 
 const size = (bytes: number) =>
   bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : bytes >= 1024 ? `${Math.round(bytes / 1024)} KB` : `${bytes} B`;
 
-/** Settings → General: how the app is set up here, the switches that have a reader, add-ons, and this computer's saved lists. */
+/** Settings → General: the switches that have a reader, add-ons, and this computer's saved lists. */
 export function GeneralSection() {
-  const { talk } = useWorkTalk();
-  const [howOpen, setHowOpen] = useState(false);
   const mac = useThisMac(canRecordScreen());
   return (
     <>
-      <Section title="Setup">
-        <Card>
-          <Row id="how-you-work" title="How you use the app" status={HOW_NAMES[talk ?? "app"]} control={<Button size="sm" variant="outline" onClick={() => setHowOpen(true)}>Change</Button>} />
-          <Row id="run-setup" title="Setup" control={<Button asChild size="sm" variant="outline"><Link to="/?setup=agents">Run again</Link></Button>} />
-        </Card>
-        {howOpen && <HowYouWorkDialog onClose={() => setHowOpen(false)} />}
-      </Section>
-
       <Working />
       <AddOns />
       <ScreenRecording mac={canRecordScreen() ? mac : null} />
@@ -117,27 +103,15 @@ export function ScreenRecording({ mac }: { mac: ThisMacState | null }) {
 
 /**
  * The saved lists (lib/local-cache.ts): one row with their count and size, read when the page opens and after each
- * change. Refresh (lib/warm-cache.ts) fills them again from the server; Clear empties them. Failures are toasts.
+ * change. Clear empties them; a failure is a toast.
  */
 function ThisComputer() {
   const me = useAuth((s) => s.me);
   const [usage, setUsage] = useState(() => cachedUsage(me?.username));
-  const [busy, setBusy] = useState(false);
   const measure = useCallback(() => setUsage(cachedUsage(useAuth.getState().me?.username)), []);
   useEffect(() => measure(), [measure, me]);
 
-  const refresh = async () => {
-    if (busy) return;
-    setBusy(true);
-    try {
-      await warmScreens();
-    } catch {
-      saveFailed("The saved lists did not refresh. Try again.");
-    } finally {
-      setBusy(false);
-      measure();
-    }
-  };
+  // no Refresh: the app fills these lists itself after sign-in (App.tsx warmScreens), so a person never needs to
   const clear = () => {
     try {
       clearAccountCache(me?.username);
@@ -152,17 +126,13 @@ function ThisComputer() {
       <Card>
         <Row
           id="saved-lists"
-          title="Saved lists"
-          description="Copies the screens open from, so they show at once. Your work stays."
-          status={usage.items > 0 ? `${usage.items} · ${size(usage.bytes)}` : undefined}
+          title="Cache"
+          description="Lists kept on this computer so screens open at once. Clearing it loses no work."
+          status={`${usage.items} ${usage.items === 1 ? "list" : "lists"} · ${size(usage.bytes)}`}
           control={
-            <RowMenu
-              label="Saved lists"
-              items={[
-                { label: busy ? "Refreshing…" : "Refresh", onSelect: refresh },
-                { label: "Clear", onSelect: clear },
-              ]}
-            />
+            <Button size="sm" variant="outline" onClick={clear} disabled={usage.items === 0}>
+              Clear
+            </Button>
           }
         />
       </Card>

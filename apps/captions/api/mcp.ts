@@ -170,7 +170,7 @@ export const TOOLS = [
     inputSchema: { type: "object", properties: { edit: str, kind: { type: "string", enum: [...EDIT_STEPS, "send_to_review"] }, draft: str }, required: ["edit", "kind"] },
   },
   // automations (automations.ts): a prompt the account's own AI runs on a schedule, reporting to the inbox
-  { name: "automations_list", description: "The user's automations: name, schedule, prompt, enabled, next run, and the last result (done, error or skipped, with its text).", inputSchema: { type: "object", properties: {} } },
+  { name: "automations_list", description: "The user's automations: name, schedule, prompt, enabled, next run, the last result (done, error or skipped, with its text), and history: the last five results, newest first.", inputSchema: { type: "object", properties: {} } },
   {
     name: "automations_create",
     description: "Schedule a prompt to run on the user's AI (as if they typed it, with these tools). schedule: kind daily (at), weekly (weekday 0 Sunday to 6 Saturday, at) or hours (every 1 to 168). Times are in timezone (IANA, such as Europe/Berlin): required for daily and weekly, so ask if you don't know it. project = a Workshop project id.",

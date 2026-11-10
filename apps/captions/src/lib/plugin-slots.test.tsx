@@ -165,6 +165,13 @@ describe("replaced pages", () => {
     expect(replacementFor([tiny, swap], "editorEdit")).toBeUndefined();
   });
 
+  it("lets a plug-in's storage replacement stand in for the Storage folders, and only that", () => {
+    const folders = defineWebPlugin({ id: "folders", replaces: { storage: Mine } });
+    expect(replacementFor([tiny, folders], "storage")).toBe(Mine);
+    expect(replacementFor([tiny, folders], "media")).toBeUndefined();
+    expect(replacementFor([tiny], "storage")).toBeUndefined();
+  });
+
   it("refuses two plug-ins replacing the same page", () => {
     const a = defineWebPlugin({ id: "a", replaces: { editor: Mine } });
     const b = defineWebPlugin({ id: "b", replaces: { editor: Other } });
@@ -208,5 +215,18 @@ describe("Devices sections", () => {
     expect(devicesSectionsFor(member(), [drives]).map((s) => s.id)).toEqual(["open"]);
     expect(devicesSectionsFor(admin(), [drives]).map((s) => s.id)).toEqual(["nas", "open"]);
     expect(devicesSectionsFor(admin(), [])).toEqual([]);
+  });
+
+  it("puts a section on Computers only when it says page: computers", () => {
+    const plugin = defineWebPlugin({
+      id: "editor-boxes",
+      devices: [
+        { id: "boxes", title: "AI Editor computers", page: "computers", adminOnly: true, body: null },
+        { id: "nas", title: "Network storage", adminOnly: true, body: null },
+      ],
+    });
+    expect(devicesSectionsFor(admin(), [plugin], "computers").map((s) => s.id)).toEqual(["boxes"]);
+    expect(devicesSectionsFor(admin(), [plugin]).map((s) => s.id)).toEqual(["nas"]);
+    expect(devicesSectionsFor(member(), [plugin], "computers")).toEqual([]);
   });
 });

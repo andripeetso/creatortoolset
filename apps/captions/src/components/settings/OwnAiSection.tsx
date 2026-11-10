@@ -26,7 +26,7 @@ export const connectableRows = (view: LocalAiView) =>
 const NAMES: Partial<Record<string, string>> = { claude: "Claude Code", codex: "Codex" };
 
 /**
- * Settings → Your own AI: the app gives your own AI (Claude Code, Codex) a key, so it can work here as you. Each AI app
+ * Settings → Use from your AI: the app gives your own AI (Claude Code, Codex) a key, so it can work here as you. Each AI app
  * found on this computer is one row. Access keys (for AIs and scripts) sit below.
  */
 export function OwnAiSection() {
@@ -47,8 +47,9 @@ export interface ConnectState {
 }
 
 /**
- * "Connect your AI": the AI apps on this computer (one row each, with Sign in or Connect), or, on a hosted server, the
- * AI apps on the computers the person has connected to it. Also what Settings → Providers used to hold.
+ * "Use Creator Toolset from your AI": the AI apps on this computer (one row each, with Sign in or Connect), or, on a hosted
+ * server, the AI apps on the computers that are online now. The other way round from Providers: those are the AIs the app
+ * uses; these are the AI apps that use the app.
  */
 export function ConnectAiSection() {
   const [view, setView] = useState<{ ai: LocalAiView; others: ComputerInfo[] } | null>(null);
@@ -95,7 +96,7 @@ export function ConnectAiSection() {
   };
 
   return (
-    <Section id="connect-ai" title="Connect your AI">
+    <Section id="connect-ai" title="Use Creator Toolset from your AI">
       <Card>
         {!view ? (
           error ? <ErrorRow title="Couldn't load your AI apps" detail={error} retry={load} /> : <LoadingRow />
@@ -133,12 +134,12 @@ export function ConnectAiRows({ view, state, onAdd, onSignIn }: { view: LocalAiV
 }
 
 /**
- * On a hosted server the AI apps are on the person's computers: one row per AI app each of them reports. Signed in on a
- * computer that is on is quiet ("Connected"); not signed in says where to fix it (the sign-in happens on that computer).
- * An offline computer's AI is not claimed as connected.
+ * On a hosted server the AI apps are on the person's computers that are online now: one row per AI app each of them
+ * reports. Signed in is quiet ("Connected"); not signed in says where to fix it (the sign-in happens on that computer).
+ * An offline computer is left out: its AI can't be reached, so it is not listed as if it could.
  */
 export function OtherComputerRows({ others }: { others: ComputerInfo[] }) {
-  const rows = others.flatMap((c) => c.drivers.filter((d) => d.installed && NAMES[d.driver]).map((d) => ({ c, d })));
+  const rows = others.filter((c) => c.online).flatMap((c) => c.drivers.filter((d) => d.installed && NAMES[d.driver]).map((d) => ({ c, d })));
   if (rows.length === 0)
     return <EmptyRow title="Connect your AI from the Mac app" description="Claude Code and Codex run on a Mac. Open Creator Toolset on that Mac to connect them." />;
   return (
@@ -148,9 +149,9 @@ export function OtherComputerRows({ others }: { others: ComputerInfo[] }) {
           key={`${c.id}-${d.driver}`}
           icon={<ProviderLogo driver={d.driver as CliId} className="size-4" />}
           title={NAMES[d.driver] ?? d.driver}
-          subtitle={c.online ? c.name : `${c.name} · offline`}
+          subtitle={c.name}
           actions={
-            !c.online ? undefined : d.signedIn === false ? (
+            d.signedIn === false ? (
               <Status tone="attention">Not signed in. Sign in on {c.name}.</Status>
             ) : d.signedIn ? (
               <Status>Connected</Status>

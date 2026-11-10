@@ -23,7 +23,7 @@ export const SERVICE_KEYS = [
   { env: "PERPLEXITY_API_KEY", name: "Perplexity", what: "Accuracy check and research in the Content Workshop", where: "https://www.perplexity.ai/account/api" },
   { env: "LIBRARY_S3_ACCESS_KEY", name: "Media Library bucket: Access key", what: "The bucket libraries keep their files in (LIBRARY_S3_* in the .env)" },
   { env: "LIBRARY_S3_SECRET_KEY", name: "Media Library bucket: Secret key", what: "Goes with the access key above" },
-  { env: "TYPESAFE_API_KEY", name: "TypeSafe", what: "Analyzer comments and ideas, and Workshop rules" },
+  { env: "TYPESAFE_API_KEY", name: "TypeSafe Jev", what: "Analyzer comments and ideas, and Workshop rules" },
 ] as const;
 
 export type ServiceKeyEnv = (typeof SERVICE_KEYS)[number]["env"];
@@ -47,7 +47,7 @@ export const MY_KEYS = [
   { env: "NVIDIA_API_KEY", name: "NVIDIA", group: "voice", what: "Studio Voice in the Audio Enhancer", where: "https://build.nvidia.com" },
   { env: "PERPLEXITY_API_KEY", name: "Perplexity", group: "research", what: "Accuracy check and research in the Content Workshop", where: "https://www.perplexity.ai/account/api" },
   { env: "OPENAI_API_KEY", name: "OpenAI", group: "ai", what: "Media Library transcripts without Deepgram, and search by meaning", where: "https://platform.openai.com/api-keys" },
-  { env: "TYPESAFE_API_KEY", name: "TypeSafe", group: "ai", what: "Analyzer comments and ideas, and Workshop rules" },
+  { env: "TYPESAFE_API_KEY", name: "TypeSafe Jev", group: "ai", what: "Analyzer comments and ideas, and Workshop rules" },
   // last: read only when the account has no AI of its own (api/ai-complete.ts onApiKey); the page hides it then, unless a key is saved
   { env: "ANTHROPIC_API_KEY", name: "Anthropic API", group: "ai", what: "Used by the tools, except Content Workshop, when you have no AI of your own here", where: "https://console.anthropic.com/settings/keys" },
 ] as const satisfies ReadonlyArray<{ env: string; name: string; group: MyKeyGroup; what: string; where?: string }>;
@@ -61,6 +61,9 @@ export interface MyKeyView {
   where?: string;
   set: boolean;
   last4?: string;
-  /** Without a key of your own: "admin" when the server's key serves you instead, else absent. */
-  server?: "admin";
+  /**
+   * Without a key of your own: the server's key that serves you. Only for a platform admin (or the sole account of an
+   * own-computer install): the last four characters, never the key. `from` says where the server's key was pasted.
+   */
+  server?: { from: "env" | "settings"; last4: string };
 }

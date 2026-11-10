@@ -41,6 +41,10 @@ export interface Identity {
   provider: SignInProvider;
   sub: string;
   email: string;
+  /** The name the provider gave (Settings → Account shows it with the address). */
+  name?: string;
+  /** The provider's picture URL (Google's `picture`, GitHub's `avatar_url`); Apple gives none. Refreshed on each sign-in. */
+  picture?: string;
   linkedAt: number;
 }
 
@@ -177,10 +181,24 @@ export function findByIdentity(provider: SignInProvider, sub: string): UserRecor
 }
 
 /** Links a Google / Apple account for signing in; one per provider per account, and never to two accounts. */
-export function linkIdentity(user: UserRecord, who: { provider: SignInProvider; sub: string; email: string }): void {
+export function linkIdentity(user: UserRecord, who: Omit<Identity, "linkedAt">): void {
   const other = findByIdentity(who.provider, who.sub);
   if (other && other !== user) throw new Error(`That ${SIGNIN_NAME[who.provider]} account already signs in to another account here`);
   user.identities = [...(user.identities ?? []).filter((i) => i.provider !== who.provider), { ...who, linkedAt: Date.now() }];
+  persist();
+}
+
+/** The picture the account shows: the first linked sign-in that gives one (none: the initial). */
+export function pictureOf(user: UserRecord): string | null {
+  return user.identities?.find((i) => i.picture)?.picture ?? null;
+}
+
+/** A sign-in again: the provider's current picture URL is kept with that identity (only the URL is stored). */
+export function refreshPicture(user: UserRecord, who: { provider: SignInProvider; sub: string; picture?: string }): void {
+  const i = user.identities?.find((x) => x.provider === who.provider && x.sub === who.sub);
+  if (!i || (i.picture ?? "") === (who.picture ?? "")) return;
+  if (who.picture) i.picture = who.picture;
+  else delete i.picture;
   persist();
 }
 

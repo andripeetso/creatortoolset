@@ -144,13 +144,22 @@ export function projectColor(p: { id: string; color?: string } | null | undefine
   return keys.find((k) => !used.has(k)) ?? keys[0];
 }
 
-/** Puts the current project's colour on <html data-tint>, which every violet class follows (tailwind.config.js):
- *  the tools, buttons and the update pill take the project's colour, not only the home page. */
-export function useRootTint(on: boolean): void {
+/**
+ * The colour the app wears (Settings → Appearance → Colour): the current project's while the person follows the
+ * project, else the one they picked for themselves. No project, or a colour that is not one of ours, is violet.
+ */
+export function accentFor(followProject: boolean, own: string, project: ProjectColor | null): ProjectColor {
+  if (followProject) return project ?? "violet";
+  return Object.keys(PROJECT_COLORS).includes(own) ? (own as ProjectColor) : "violet";
+}
+
+/** Puts that colour on <html data-tint>, which every violet class follows (tailwind.config.js):
+ *  the tools, buttons and the update pill take it, not only the home page. */
+export function useRootTint(on: boolean, own = "violet"): void {
   const project = useWorkspace(currentProject);
   const loaded = useWorkspace((s) => s.loaded);
   // until the projects arrive, keep what index.html painted from the last visit (no violet flash)
-  const color = !on ? "violet" : loaded ? (project ? projectColor(project) : "violet") : null;
+  const color = !on || loaded ? accentFor(on, own, project ? projectColor(project) : null) : null;
   useEffect(() => {
     if (!color) return;
     const el = document.documentElement;

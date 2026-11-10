@@ -49,6 +49,8 @@ export function persistStatusBars(on: boolean): void {
  */
 const PROJECT_TINT_KEY = "appearance:project-tint";
 const HOME_GLOW_KEY = "appearance:home-glow";
+// the person's own colour, used when the project's colour is switched off (a PROJECT_COLORS key; violet until picked)
+const OWN_COLOUR_KEY = "appearance:own-colour";
 const APPEARANCE_EVENT = "appearance-change";
 
 function storedFlag(key: string): boolean {
@@ -71,13 +73,30 @@ export const persistProjectTint = (on: boolean) => persistFlag(PROJECT_TINT_KEY,
 export const storedHomeGlow = () => storedFlag(HOME_GLOW_KEY);
 export const persistHomeGlow = (on: boolean) => persistFlag(HOME_GLOW_KEY, on);
 
-export function useAppearance(): { projectTint: boolean; homeGlow: boolean } {
+export function storedOwnColour(): string {
+  try {
+    return localStorage.getItem(OWN_COLOUR_KEY) || "violet";
+  } catch {
+    return "violet";
+  }
+}
+/** Picks a colour of the person's own: the app stops following the project's colour and uses this one everywhere. */
+export function persistOwnColour(colour: string): void {
+  try {
+    localStorage.setItem(OWN_COLOUR_KEY, colour);
+  } catch {
+    /* private mode: the choice holds for this visit only */
+  }
+  persistProjectTint(false);
+}
+
+export function useAppearance(): { projectTint: boolean; homeGlow: boolean; ownColour: string } {
   const key = useSyncExternalStore(
     (cb) => {
       window.addEventListener(APPEARANCE_EVENT, cb);
       return () => window.removeEventListener(APPEARANCE_EVENT, cb);
     },
-    () => `${+storedProjectTint()}${+storedHomeGlow()}`,
+    () => `${+storedProjectTint()}${+storedHomeGlow()}${storedOwnColour()}`,
   );
-  return { projectTint: key[0] === "1", homeGlow: key[1] === "1" };
+  return { projectTint: key[0] === "1", homeGlow: key[1] === "1", ownColour: key.slice(2) };
 }

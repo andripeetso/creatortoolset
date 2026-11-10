@@ -117,7 +117,10 @@ export function PlanLimits({ view, now, bridge, setup }: { view: ProvidersView; 
           ))}
         </Card>
       )}
-      {(logins.length > 0 || unread.length > 0) && <YourPlan setup={setup} />}
+      {/* a computer that reports the plan (shown on the card above) answers the question itself */}
+      {(logins.length > 0 || unread.length > 0) && !logins.some((i) => view.devices.find((d) => d.id === i.device)?.report?.drivers.some((d) => d.driver === i.driver && d.plan)) && (
+        <YourPlan setup={setup} />
+      )}
     </Section>
   );
 }
@@ -133,8 +136,8 @@ function YourPlan({ setup }: { setup: SetupView | null }) {
     <Card>
       <Row
         id="your-plan"
-        title="Your plan"
-        description="Pro and Plus: heavy runs ask first, since they can use up the 5-hour limit."
+        title="Your AI plan"
+        description="On Pro or Plus, big jobs ask before they start."
         control={
           <SettingsSelect
             label="Your plan"
@@ -157,7 +160,7 @@ function missingReadings(view: ProvidersView): Array<{ inst: ProviderInstance; d
     .filter(({ inst, device }) => !view.limits.some((l) => l.driver === inst.driver && l.device === device && l.instances.some((k) => k.endsWith(`:${inst.id}`))));
 }
 
-/** One AI login: its logo, name, computer and plan, then a bar per window with the share left and when it resets. A team's login reads "Team". */
+/** One AI login: its logo, name, computer and plan, then a bar per window with the share left and when it resets. */
 function LoginCard({ i, view, now }: { i: LimitsIdentity; view: ProvidersView; now: number }) {
   const mac = view.devices.find((d) => d.id === i.device);
   const plan = mac?.report?.drivers.find((d) => d.driver === i.driver)?.plan;
@@ -166,9 +169,10 @@ function LoginCard({ i, view, now }: { i: LimitsIdentity; view: ProvidersView; n
   const folder = i.label === "default" ? `.${i.driver}` : `.${i.driver}-${i.label}`;
   const custom = !!mac?.report?.homes.some((h) => h.driver === i.driver && h.home.split("/").pop() === folder && h.customEndpoint);
   const notice = noticeOf(i, custom);
-  // a login only team instances run on is the team's (its instances are `workspace:<id>`), whichever computer holds it
-  const team = i.instances.length > 0 && i.instances.every((k) => k.startsWith("workspace:"));
-  const title = team ? `${driver} · Team` : i.label === "default" ? driver : `${driver} · ${i.label}`;
+  // the title is the name of the AI it answers ("Claude (hub)"); the folder's label only when no AI is named
+  const all = [...(view.own?.instances ?? []), ...(view.workspace?.settings.instances ?? [])];
+  const names = [...new Set(i.instances.map((k) => all.find((x) => x.id === k.slice(k.indexOf(":") + 1))?.name).filter((n): n is string => !!n))];
+  const title = names.length ? names.join(" · ") : i.label === "default" ? driver : `${driver} · ${i.label}`;
   return (
     <Card>
       <ListRow
@@ -178,7 +182,7 @@ function LoginCard({ i, view, now }: { i: LimitsIdentity; view: ProvidersView; n
         status={staleLine(i, now)}
       />
       {i.state === "ok" && i.windows.map((w) => <WindowBar key={w.id} w={countedWindow(i, w, now)} now={now} />)}
-      {notice && <Row title="No plan reading" description={notice} />}
+      {notice && <div className="px-3 pb-3 text-xs text-muted-foreground sm:px-4">{notice}</div>}
     </Card>
   );
 }
@@ -273,8 +277,7 @@ const sum = (ls: Line[]) => ls.reduce((t, l) => ({ calls: t.calls + l.calls, tok
 function aiNameOf(view: ProvidersView, r: UsageRow): string {
   if (!r.instance) return "Not tied to an AI";
   const set = r.scope === "workspace" ? view.workspace?.settings : view.own;
-  const name = set?.instances.find((i) => i.id === r.instance)?.name ?? "Removed AI";
-  return r.scope === "workspace" ? `${name} · team` : name;
+  return set?.instances.find((i) => i.id === r.instance)?.name ?? "Removed AI";
 }
 
 /** One line per tool and AI for the period: calls, tokens and what they cost at API prices, biggest first. */

@@ -37,7 +37,7 @@ export async function ask(
   questions: Record<string, Question>,
   signal?: AbortSignal,
 ): Promise<Record<string, Answer>> {
-  if (!key) throw new Error("No TypeSafe key");
+  if (!key) throw new Error("No TypeSafe Jev key");
   const result = await jev(key).systemOne(
     { state: state as never, questions },
     { signal, timeout: 30_000 },

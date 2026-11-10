@@ -3,7 +3,7 @@ import type { Context } from "hono";
 import { createPrivateKey, randomBytes, sign as cryptoSign } from "node:crypto";
 import { getSessionUser, setLoginCookie, type AuthVars } from "./auth";
 import { hostedMode } from "./lib/env";
-import { bumpUsage, createUser, findByIdentity, findByLogin, findUser, isSignInProvider, linkIdentity, type SignInProvider } from "./users";
+import { bumpUsage, createUser, findByIdentity, findByLogin, findUser, isSignInProvider, linkIdentity, refreshPicture, type SignInProvider } from "./users";
 
 /**
  * Sign in with Apple, Google and GitHub to a site account, and linking one to an account (Settings → Account). A hosted
@@ -21,7 +21,15 @@ export interface Who {
   sub: string;
   email: string;
   name: string;
+  /** The provider's picture URL, https only (Apple gives none). */
+  picture?: string;
 }
+
+/** A picture URL the provider gave: kept only as an https address of sane length; the browser loads it from there. */
+const pictureUrl = (v: unknown) => {
+  const s = typeof v === "string" ? v : "";
+  return s.startsWith("https://") && s.length <= 2048 ? s : undefined;
+};
 
 interface AppleSignin {
   teamId: string;
@@ -118,6 +126,26 @@ export const signInStartApp = new Hono<{ Variables: AuthVars }>();
 /** Which sign-in buttons the site's login screen shows: the providers this server has keys for (none off hosted). */
 signInStartApp.get("/providers", (c) => c.json(hostedMode() ? signinOn(originOf(c)) : { apple: false, google: false, github: false }));
 
+/**
+ * Settings → Account, for the server's admin when no sign-in is set up: the .env names each provider reads, and the
+ * address to register with it (this server's origin; SIGNIN_ORIGIN must be the same address or nothing is offered).
+ */
+signInStartApp.get("/setup", (c) => {
+  if (!hostedMode()) return c.json({ error: "Not Found" }, 404);
+  if (getSessionUser(c.req.header("cookie"))?.role !== "admin") return c.json({ error: "Only the server's admin sees this" }, 403);
+  const origin = originOf(c);
+  const redirect = (kind: Kind) => `${origin}/api/auth/${kind}/callback`;
+  return c.json({
+    origin,
+    signinOrigin: (process.env.SIGNIN_ORIGIN || "https://creatortoolset.com").replace(/\/$/, ""),
+    providers: [
+      { kind: "google", name: "Google", env: ["GOOGLE_SIGNIN_CLIENT_ID", "GOOGLE_SIGNIN_CLIENT_SECRET"], redirect: redirect("google") },
+      { kind: "apple", name: "Apple", env: ["APPLE_SIGNIN_TEAM_ID", "APPLE_SIGNIN_SERVICES_ID", "APPLE_SIGNIN_KEY_ID", "APPLE_SIGNIN_KEY"], redirect: redirect("apple") },
+      { kind: "github", name: "GitHub", env: ["GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"], redirect: redirect("github") },
+    ],
+  });
+});
+
 signInStartApp.get("/login/:kind", (c, next) => {
   if (!hostedMode()) return next();
   const kind = c.req.param("kind");
@@ -196,6 +224,7 @@ async function callback(c: Context, kind: Kind, p: { code: string; state: string
     const known = findByIdentity(kind, who.sub);
     // closed unless the server's owner opened it: nobody gets an account here just by signing in
     if (!known && process.env.SIGN_UPS !== "open") return fail("There is no account here for that sign-in. This server takes new people by invitation");
+    if (known) refreshPicture(known, who);
     const user = known ?? newAccountFor(who);
     setLoginCookie(c, user);
     bumpUsage(user.username, { logins: 1 });
@@ -275,7 +304,7 @@ export async function googleIdentity(code: string, redirect: string): Promise<Wh
   if (!["https://accounts.google.com", "accounts.google.com"].includes(str(claims.iss)) || !audOk(claims.aud, g.id) || typeof claims.sub !== "string") throw new Error("Google id_token check failed");
   // an address Google hasn't verified isn't kept: the account is the provider + sub either way
   const verified = claims.email_verified === true || claims.email_verified === "true";
-  return { provider: "google", sub: claims.sub, email: verified ? str(claims.email) : "", name: str(claims.name) };
+  return { provider: "google", sub: claims.sub, email: verified ? str(claims.email) : "", name: str(claims.name), picture: pictureUrl(claims.picture) };
 }
 
 /**
@@ -302,14 +331,14 @@ export async function githubIdentity(code: string, redirect: string): Promise<Wh
       signal: AbortSignal.timeout(20_000),
     });
   const me = await api("/user");
-  const user = (me.ok ? await me.json().catch(() => null) : null) as { id?: unknown; login?: unknown; name?: unknown } | null;
+  const user = (me.ok ? await me.json().catch(() => null) : null) as { id?: unknown; login?: unknown; name?: unknown; avatar_url?: unknown } | null;
   if (!user || (typeof user.id !== "number" && typeof user.id !== "string")) throw new Error(`GitHub user ${me.status}`);
   const mails = await api("/user/emails");
   const list: unknown = mails.ok ? await mails.json().catch(() => []) : [];
   const primary = (Array.isArray(list) ? list : []).find((m: { primary?: unknown; verified?: unknown }) => m?.primary === true && m?.verified === true) as { email?: unknown } | undefined;
   const email = str(primary?.email);
   if (!email) throw new Error("GitHub has no verified primary email address");
-  return { provider: "github", sub: String(user.id), email, name: str(user.name) || str(user.login) };
+  return { provider: "github", sub: String(user.id), email, name: str(user.name) || str(user.login), picture: pictureUrl(user.avatar_url) };
 }
 
 /** Apple's client secret: an ES256 JWT signed with the .p8 key (IEEE P1363 r||s, not DER). */

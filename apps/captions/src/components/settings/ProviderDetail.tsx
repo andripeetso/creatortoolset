@@ -60,7 +60,7 @@ export function ProviderDetail({
 }) {
   const driver = DRIVERS.find((d) => d.id === inst.driver);
   const fields = driverFields(inst.driver);
-  const testTitle = "Sends one short prompt to check that it answers";
+  const testTitle = "Sends one short question to check it answers.";
   // what is true when it works: the last answer, its model and how long it took
   const answered = check?.ok
     ? `Answered ${fmtAgo(check.at)}${check.model ? ` · ${modelName(check.model)}` : ""}${check.ms > 0 ? ` · ${(check.ms / 1000).toFixed(1)} s` : ""}`
@@ -80,7 +80,7 @@ export function ProviderDetail({
   ];
   return (
     <div className="min-w-0 space-y-8">
-      <div className="flex items-center gap-2">
+      <div className="flex min-h-7 items-center gap-2 px-0.5">
         {backTo && (
           <Button asChild variant="ghost" size="icon-xs" className="lg:hidden" aria-label="Back to the AI list">
             <Link to={backTo}>
@@ -96,23 +96,26 @@ export function ProviderDetail({
       <Section title="Status">
         <Card>
           <Row
+            // while a test runs only the title changes; the second line is always there, so nothing below moves
             title={
-              status.text ? (
+              checking ? (
+                <span className="text-muted-foreground">Checking…</span>
+              ) : status.text ? (
                 <Status tone={status.tone === "neutral" ? undefined : status.tone}>{status.text}</Status>
               ) : (
-                <span className="text-muted-foreground">{checking ? "Checking…" : answered ?? "Not tested yet"}</span>
+                <span className="text-muted-foreground">{answered ?? "Not tested yet"}</span>
               )
             }
-            status={status.text && answered ? answered : undefined}
+            status={<span className="block min-h-4">{!checking && status.text && answered ? answered : " "}</span>}
             control={
-              status.action === "sign-in" && onSignIn ? (
+              checking || status.action === "test" ? (
+                // only a failed check offers the retry here; a working AI shows no button ("Test now" is in the menu)
+                <Button size="sm" variant="outline" className="min-w-40 justify-center" disabled={!canTest || checking} title={testTitle} onClick={onTest}>
+                  {checking ? "Testing…" : "Test again"}
+                </Button>
+              ) : status.action === "sign-in" && onSignIn ? (
                 <Button size="sm" variant="outline" onClick={onSignIn}>
                   Sign in
-                </Button>
-              ) : status.action === "test" || checking ? (
-                // only a failed check offers the retry here; a working AI shows no button ("Test now" is in the menu)
-                <Button size="sm" variant="outline" disabled={!canTest} title={testTitle} onClick={onTest}>
-                  {checking ? "Testing…" : "Test again"}
                 </Button>
               ) : undefined
             }

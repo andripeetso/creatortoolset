@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import type { AuthVars } from "./auth";
 import { env } from "./lib/env";
 import { findUser, LOCAL_USER, USERNAME_RE, type SessionUser } from "./users";
+import { serverKeyFrom } from "./service-keys";
 import { MY_KEYS, type MyKeyEnv, type MyKeyView } from "../contracts/service-keys";
 
 /**
@@ -64,15 +65,24 @@ export const addKeyMessage = (name: MyKeyEnv) => `Add your ${nameOf(name)} key i
 /** A platform admin, or the solo install's own account (APP_SECRET unset): the server's keys are theirs. */
 export const isAdminActor = (name: string) => findUser(name)?.role === "admin" || (!env.appSecret && name === LOCAL_USER.username);
 
+/** The server's key (the .env's, or the one pasted in Admin → Server keys) that serves this actor. Admins only; "" otherwise. */
+export function serverKeyOf(actor: Actor, name: MyKeyEnv): string {
+  const username = (typeof actor === "string" ? actor : actor?.username) ?? "";
+  const role = typeof actor === "object" && actor ? actor.role : undefined;
+  if (!username || role === "visitor") return "";
+  // the server's Anthropic key is never the admin's AI: their AI is their own provider or their own key (ai-complete.ts aiFor)
+  if (name === "ANTHROPIC_API_KEY") return "";
+  return role === "admin" || isAdminActor(username) ? process.env[name] || "" : "";
+}
+
 export function keyFor(actor: Actor, name: MyKeyEnv): KeyRoute {
   const username = (typeof actor === "string" ? actor : actor?.username) ?? "";
   const role = typeof actor === "object" && actor ? actor.role : undefined;
   if (!username || role === "visitor") return { key: "", missing: addKeyMessage(name) };
   const own = myKeys(username)[name];
   if (own) return { key: own };
-  // the server's Anthropic key is never the admin's AI: their AI is their own provider or their own key (ai-complete.ts aiFor)
-  const server = process.env[name] || "";
-  if (server && name !== "ANTHROPIC_API_KEY" && (role === "admin" || isAdminActor(username))) return { key: server };
+  const server = serverKeyOf(actor, name);
+  if (server) return { key: server };
   return { key: "", missing: addKeyMessage(name) };
 }
 
@@ -87,11 +97,12 @@ myKeysApp.get("/", (c) => {
   return c.json(
     MY_KEYS.map((k): MyKeyView => {
       const value = mine[k.env];
-      const r = value ? null : keyFor(u, k.env);
+      // the server's key goes only to an admin (or the sole account of an own-computer install): only its last four go out
+      const served = serverKeyOf(u, k.env);
       return {
         env: k.env, name: k.name, what: k.what, ...("where" in k ? { where: k.where } : {}),
         set: !!value, ...(value ? { last4: value.slice(-4) } : {}),
-        ...(r?.key ? { server: "admin" } : {}),
+        ...(served ? { server: { from: serverKeyFrom(k.env) ?? "env", last4: served.slice(-4) } } : {}),
       } as MyKeyView;
     }),
   );

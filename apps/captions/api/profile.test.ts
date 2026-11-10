@@ -25,6 +25,42 @@ describe("your own account", () => {
     expect(check.user).toMatchObject({ username: "tinyboss", name: "Tiny Boss" });
 
     await send("/api/auth/account", "PATCH", { name: "" }, cookie);
-    expect(await (await app.request("/api/auth/account", { headers: { cookie } })).json()).toEqual({ username: "tinyboss", name: "", identities: [] });
+    expect(await (await app.request("/api/auth/account", { headers: { cookie } })).json()).toEqual({
+      username: "tinyboss",
+      name: "",
+      login: "tinyboss",
+      identities: [],
+      signins: [],
+      picture: null,
+    });
+  });
+
+  it("changes the sign-in name only with the current password; a wrong one changes nothing", async () => {
+    createUser("tinyroute", "routepass1", { role: "user" });
+    const cookie = cookieOf(await send("/api/auth/login", "POST", { username: "tinyroute", password: "routepass1" }));
+
+    expect((await send("/api/account-profile", "PATCH", { login: "tiny-new" }, cookie)).status).toBe(403);
+    expect((await send("/api/account-profile", "PATCH", { login: "tiny-new", password: "wrongpass" }, cookie)).status).toBe(403);
+    expect(await (await app.request("/api/account-profile", { headers: { cookie } })).json()).toEqual({ username: "tinyroute", login: "tinyroute" });
+
+    const ok = await send("/api/account-profile", "PATCH", { login: "tiny-new", password: "routepass1" }, cookie);
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ username: "tinyroute", login: "tiny-new" });
+  });
+
+  it("keeps the picture a sign-in gives with its identity, and refreshes it on the next sign-in", async () => {
+    const { findUser, linkIdentity, pictureOf, refreshPicture } = await import("./users");
+    createUser("tinypic", "picpass123", { role: "user" });
+    const user = findUser("tinypic")!;
+    expect(pictureOf(user)).toBeNull();
+
+    linkIdentity(user, { provider: "google", sub: "g-pic", email: "", name: "Tiny", picture: "https://img.example.test/a.png" });
+    expect(pictureOf(user)).toBe("https://img.example.test/a.png");
+
+    refreshPicture(user, { provider: "google", sub: "g-pic", picture: "https://img.example.test/b.png" });
+    expect(pictureOf(user)).toBe("https://img.example.test/b.png");
+
+    refreshPicture(user, { provider: "google", sub: "g-pic" });
+    expect(pictureOf(user)).toBeNull();
   });
 });

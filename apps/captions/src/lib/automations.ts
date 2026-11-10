@@ -1,8 +1,9 @@
-import { DAY_NAMES, type Automation, type Schedule, type Weekday } from "@contracts/automations";
+import { DAY_NAMES, type Automation, type AutomationResult, type Schedule, type Weekday } from "@contracts/automations";
 
 /** Settings → Scheduled tasks' calls (api/automations.ts). The form below makes the same body the MCP tool sends. */
 
-export type AutomationView = Automation & { running: boolean; nextRun: number | null };
+/** `history`: the last few results, newest first ("Earlier runs"); lastResult is the first of them. */
+export type AutomationView = Automation & { running: boolean; nextRun: number | null; history: AutomationResult[] };
 
 /** "Every Monday 09:00", "Every day 18:30", "Every 6 hours": the cadence in plain words. */
 export function cadenceOf(s: Schedule): string {

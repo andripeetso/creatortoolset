@@ -34,6 +34,15 @@ describe("setup: my tools, my plan, what is set up", () => {
     expect(await get()).toMatchObject({ tools: ["workshop", "editor"], plan: "claude_pro", done: true });
   });
 
+  it("hides only the Home tools the person switched off: none to start, junk refused, kept in home order", async () => {
+    expect(await get()).toMatchObject({ hidden: [] });
+    expect((await put({ hidden: ["notes", "nope"] })).status).toBe(400);
+    expect((await put({ hidden: ["notes", "enhance"] })).status).toBe(200);
+    expect(await get()).toMatchObject({ hidden: ["enhance", "notes"], tools: ["workshop", "editor"] });
+    expect((await put({ hidden: [] })).status).toBe(200);
+    expect(await get()).toMatchObject({ hidden: [] });
+  });
+
   it("says transcripts work without a key only when the server is on the person's own computer", async () => {
     expect((await get()).have).not.toContain("deviceTranscripts");
     process.env.CT_LOCAL = "1";

@@ -148,6 +148,7 @@ async function json<T>(r: Response): Promise<T> {
 
 export interface SetupPatch {
   tools?: Tool[];
+  hidden?: Tool[];
   plan?: PlanId | null;
   done?: boolean;
 }

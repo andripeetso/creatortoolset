@@ -19,6 +19,10 @@ export type ThisMacState = {
   servers: Array<{ id: string; name: string; url: string; current: boolean }>;
   shortcut?: string;
   limits?: boolean;
+  /** this Mac's names (the Computers page merges its records by them); missing in older Mac apps */
+  computer?: string;
+  host?: string;
+  device?: string | null;
 };
 
 /** `thismac-<what>` to the app; it answers every one with a `mac-this` event carrying its state. */

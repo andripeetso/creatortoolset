@@ -78,6 +78,9 @@ export function ProviderMark({ inst, className }: { inst: ProviderInstance; clas
   return <DriverMark driver={inst.driver} className={className} />;
 }
 
+/** Every AI row is this tall, with or without a status line, so the list never changes height when a status does. */
+export const PROVIDER_ROW = "h-[4.5rem]";
+
 /**
  * A provider's row in the list: its logo, name and version, one status line, the button its status needs, and the
  * on/off switch. The name is the link to its detail. `onToggle` absent = a read-only row (the team's AI).
@@ -103,7 +106,7 @@ export function ProviderInstanceCard({
 }) {
   return (
     <ListRow
-      className={cn("relative min-h-[4.5rem]", selected && "bg-accent/40")}
+      className={cn(PROVIDER_ROW, "relative", selected && "bg-accent")}
       icon={<ProviderMark inst={inst} />}
       title={
         <>
@@ -117,7 +120,8 @@ export function ProviderInstanceCard({
           {version && <span className="ml-2 font-mono text-xs font-normal text-muted-foreground">v{version}</span>}
         </>
       }
-      status={status.text ? <Status tone={status.tone === "neutral" ? undefined : status.tone}>{status.text}</Status> : undefined}
+      // the status line is always there (empty when fine), so the name does not move when a status comes or goes
+      status={status.text ? <Status tone={status.tone === "neutral" ? undefined : status.tone}>{status.text}</Status> : <span className="block min-h-4" />}
       actions={
         <div className="relative z-10 flex items-center gap-2">
           {action}

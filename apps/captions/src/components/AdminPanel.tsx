@@ -1,12 +1,12 @@
 import { Fragment, useCallback, useEffect, useState, type FormEvent } from "react";
-import { Check, Trash2 } from "lucide-react";
+import { Check, Plus, Trash2 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { confirmDialog } from "@/lib/dialogs";
 import { TOOLS, TOOL_NAMES, type Tool } from "@contracts/tools";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, RowMenu, Section, saveFailed } from "@/components/settings/ui";
-import { msg } from "@/components/settings/helpers";
+import { fmtAgo, lastActiveText, msg } from "@/components/settings/helpers";
 
 /**
  * Settings → Admin (hosted servers, platform admins only): accounts, the apps each one gets (Access), and every project on
@@ -41,23 +41,14 @@ interface AdminProject {
 
 export type AdminTab = "users" | "access" | "projects";
 
-const ROLE_NAME: Record<Role, string> = { admin: "Admin", team: "Team member (files kept 28 days)", user: "Member" };
+// the team and plain roles differ in how long their files are kept: that is in the role's menu, not in the row
+const ROLE_NAME: Record<Role, string> = { admin: "Admin", team: "Member", user: "Member" };
 
 function fmtBytes(n: number): string {
   if (n <= 0) return "—";
   if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
   if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(0)} MB`;
   return `${(n / 1024 / 1024 / 1024).toFixed(1)} GB`;
-}
-
-function fmtWhen(ts: number): string {
-  if (!ts) return "never";
-  const d = Date.now() - ts;
-  if (d < 60_000) return "just now";
-  if (d < 3600_000) return `${Math.round(d / 60_000)} min ago`;
-  if (d < 86400_000) return `${Math.round(d / 3600_000)} h ago`;
-  if (d < 7 * 86400_000) return `${Math.round(d / 86400_000)} d ago`;
-  return new Date(ts).toLocaleDateString();
 }
 
 const tableCls = "w-full text-left text-xs";
@@ -141,7 +132,7 @@ export function AdminPanel({ tab }: { tab: AdminTab }) {
           title="Accounts"
           action={
             <Button size="xs" variant="ghost" onClick={() => setCreating(true)}>
-              + Create account
+              <Plus className="size-3" /> Create account
             </Button>
           }
         >
@@ -154,7 +145,7 @@ export function AdminPanel({ tab }: { tab: AdminTab }) {
               const admin = u.role === "admin";
               const parts = [
                 ROLE_NAME[u.role],
-                `last active ${fmtWhen(u.usage.lastActiveAt)}`,
+                lastActiveText(u.usage.lastActiveAt),
                 u.projects ? `${u.projects} projects` : null,
                 fmtBytes(u.storageBytes) !== "—" ? fmtBytes(u.storageBytes) : null,
               ].filter(Boolean);
@@ -282,7 +273,7 @@ export function AdminPanel({ tab }: { tab: AdminTab }) {
                         {p.name} <span className="text-muted-foreground">· {p.kind === "captions" ? "Captions" : "Audio"}</span>
                       </td>
                       <td className="py-2 pr-3">{p.owner || "—"}</td>
-                      <td className="py-2 pr-3">{fmtWhen(p.updatedAt)}</td>
+                      <td className="py-2 pr-3">{fmtAgo(p.updatedAt)}</td>
                       <td className="py-2 pr-3">{fmtBytes(p.bytes)}</td>
                       <td className="py-2 text-right">
                         <Button variant="ghost" size="icon-xs" aria-label={`Delete ${p.name}`} onClick={() => void removeProject(p)}>

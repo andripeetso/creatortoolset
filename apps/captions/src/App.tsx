@@ -265,7 +265,8 @@ function InstagramAnalyzeRoute() {
 }
 
 export default function App() {
-  useRootTint(useAppearance().projectTint);
+  const look = useAppearance();
+  useRootTint(look.projectTint, look.ownColour);
   const location = useLocation();
   // the setup window on screen: no dock, no popup, no bubble behind it. Not "setup unfinished": an account that never
   // pressed Done but has projects gets no setup window, and lost its assistant with the old check

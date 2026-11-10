@@ -361,7 +361,7 @@ export function ConnectStepView({
               }}
             >
               <label htmlFor="ct-server-link" className="block text-xs text-muted-foreground">
-                2. On that server's Devices page, press "Sign in another computer", and paste the link it shows here.
+                2. In that server's Settings → Servers, make a sign-in link and paste it here.
               </label>
               <div className="flex gap-2">
                 <input

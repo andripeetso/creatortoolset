@@ -82,11 +82,22 @@ export interface SessionSource {
   hint: string;
 }
 
+export interface OwnInstagram {
+  /** The Analyzer account's id. */
+  id: string;
+  handle: string;
+  followers?: number;
+  /** The Analyzer's "my account" flag (read through the server's own Instagram token where it has one). */
+  mine: boolean;
+  /** The project that links it as its Instagram. */
+  projectId?: string;
+}
+
 export interface ConnectorsView {
   /** Which logins this server has an app registered for. */
   logins: Record<LoginKind, boolean>;
-  /** Where each login sends people back, for registering the apps (admins). */
-  redirects: Record<LoginKind, string>;
+  /** The person's own Instagram accounts in the Content Analyzer: the one marked Mine, and each project's linked one. */
+  instagram: OwnInstagram[];
   apify: { configured: boolean; valid: boolean | null };
   accounts: ConnectedAccount[];
   /** Session sources registered on this server. Empty in the public build, so the section stays hidden. */

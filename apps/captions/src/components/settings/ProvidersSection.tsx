@@ -40,7 +40,7 @@ const USE_DEFAULT = "use-default";
  * tools it has installed and not yet added below them (each with Add). The AI's settings open beside the list from `lg`,
  * and as their own page (`sub` = the AI's id) below it. "Who does what" sets the Default and the tool-by-tool picks.
  * A member sees the AI they use: their own, or the team's API budget. On an own-computer install with no Mac app paired,
- * the list is the AI apps found on this computer (the same source as Your own AI).
+ * the list is the AI apps found on this computer (the same source as Use from your AI).
  */
 /** "2.1.321" from "2.1.321 (Claude Code)", "codex-cli 0.39.0" or "grok 1.0.4 (d846eb93d94d)": the number a person reads. */
 export const shortVersion = (v: string | undefined): string | undefined => v?.match(/\d+(?:\.\d+)+/)?.[0] ?? v;
@@ -48,7 +48,6 @@ export const shortVersion = (v: string | undefined): string | undefined => v?.ma
 export function ProvidersSection({ sub }: { sub?: string }) {
   const navigate = useNavigate();
   const me = useAuth((s) => s.me);
-  const hosted = useAuth((s) => s.hosted);
   const isAdmin = me?.role === "admin";
   const [view, setView] = useState<ProvidersView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -185,7 +184,7 @@ export function ProvidersSection({ sub }: { sub?: string }) {
   const reportOf = (i: ProviderInstance) => devices.find((d) => d.id === deviceOf(i))?.report ?? null;
   const statusOf = (i: ProviderInstance): ProviderStatus => {
     if (!readOnly && !onDevice(i)) return { tone: "attention", text: "No computer" };
-    if (checking === `${scope}:${i.id}`) return { tone: "neutral", text: "Checking…" };
+    // while a test runs the status stays what it was: the detail's title says "Checking…" and its help lines stay put
     return providerStatus({
       enabled: i.enabled,
       runs: runsOn(i.driver),
@@ -382,7 +381,7 @@ export function ProvidersSection({ sub }: { sub?: string }) {
             }
           >
             <Card>
-              {listed.length === 0 && installedHere.length === 0 && (
+              {listed.length === 0 && (
                 <EmptyRow title="No AI on this computer yet" description="Add a tool the computer has, or add one from the list below." />
               )}
               {listed.map((inst) => (
@@ -397,25 +396,33 @@ export function ProvidersSection({ sub }: { sub?: string }) {
                   onToggle={(on) => patch(inst, { enabled: on })}
                 />
               ))}
-              {installedHere.map((d) => (
-                <ListRow
-                  key={`installed-${d.driver}`}
-                  icon={<DriverMark driver={d.driver} />}
-                  title={
-                    <>
-                      {nameOf(d.driver)}
-                      {d.version && <span className="ml-2 font-mono text-xs font-normal text-muted-foreground">v{shortVersion(d.version)}</span>}
-                    </>
-                  }
-                  actions={
-                    <Button size="xs" variant="outline" onClick={() => openAdd(d.driver)} aria-label={`Add ${nameOf(d.driver)}`}>
-                      Add
-                    </Button>
-                  }
-                />
-              ))}
             </Card>
           </Section>
+
+          {installedHere.length > 0 && (
+            <Section title="Also on this computer">
+              <Card>
+                {installedHere.map((d) => (
+                  <ListRow
+                    key={`installed-${d.driver}`}
+                    className="min-h-[4.5rem]"
+                    icon={<DriverMark driver={d.driver} />}
+                    title={
+                      <>
+                        {nameOf(d.driver)}
+                        {d.version && <span className="ml-2 font-mono text-xs font-normal text-muted-foreground">v{shortVersion(d.version)}</span>}
+                      </>
+                    }
+                    actions={
+                      <Button size="xs" variant="outline" onClick={() => openAdd(d.driver)} aria-label={`Add ${nameOf(d.driver)}`}>
+                        Add
+                      </Button>
+                    }
+                  />
+                ))}
+              </Card>
+            </Section>
+          )}
 
           {orphans.length > 0 && editing && (
             <Section title="Not on a computer">
@@ -482,6 +489,7 @@ export function ProvidersSection({ sub }: { sub?: string }) {
                 set={shown}
                 listModels={(i) => modelsOf(view, i)}
                 readOnly={readOnly}
+                withModel={false}
                 onChange={(v) => v && editing && void save({ ...editing, default: v })}
               />
               <Advanced summary="A different AI for one tool">
@@ -508,11 +516,6 @@ export function ProvidersSection({ sub }: { sub?: string }) {
             </Card>
           </Section>
 
-          {isAdmin && hosted && editing && (
-            <Card>
-              <Row title="Who else can use it" control={<Button asChild size="xs" variant="ghost"><Link to="/settings/admin/access">Open Access</Link></Button>} />
-            </Card>
-          )}
         </div>
       )}
 
@@ -571,6 +574,7 @@ function PickRow({
   set,
   listModels,
   readOnly,
+  withModel = true,
   onChange,
 }: {
   id?: SearchRowId;
@@ -581,6 +585,8 @@ function PickRow({
   set: ProviderSettings;
   listModels: (i: ProviderInstance) => string[];
   readOnly: boolean;
+  /** a per-tool pick may override the model and thinking level; the Default's are the AI's own (in its detail) */
+  withModel?: boolean;
   onChange: (v: Selection | undefined) => void;
 }) {
   const isDefault = !fallback;
@@ -595,6 +601,23 @@ function PickRow({
 
   if (readOnly) {
     return <Row id={id} title={title} status={`${inst?.name ?? "No AI"}${sel || isDefault ? ` · ${modelName(cur.model) || "Tool's default"} · ${effortLabel(cur.effort)}` : ""}`} />;
+  }
+  if (!withModel) {
+    // the Default: only the choice of which AI; the model and thinking level are on that AI's own page
+    return (
+      <Row
+        id={id}
+        title={title}
+        control={
+          <SettingsSelect
+            label={`${title}: AI`}
+            value={cur.instance}
+            onValueChange={(v) => pick(v)}
+            options={set.instances.map((i) => ({ value: i.id, label: `${i.name}${i.enabled ? "" : " (off)"}` }))}
+          />
+        }
+      />
+    );
   }
 
   const explicit = isDefault || !!sel;
@@ -625,7 +648,7 @@ function PickRow({
         </div>
       }
     >
-      {explicit && inst && (
+      {withModel && explicit && inst && (
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
           {cur.model && options.length ? (
             <Field label="Model">

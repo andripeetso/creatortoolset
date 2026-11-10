@@ -52,6 +52,8 @@ import { isPlan, planFromCli, type PlanId } from "../contracts/plans";
 
 interface Saved {
   tools?: Tool[];
+  /** Home tools the person switched off under Settings → Appearance; every other tool shows. Absent = none hidden. */
+  hidden?: Tool[];
   plan?: PlanId;
   done?: boolean;
   mcpTo?: CliId[];
@@ -121,6 +123,7 @@ async function view(user: SessionUser): Promise<SetupView> {
   const s = read(user.username) ?? {};
   return {
     tools: s.tools ?? null,
+    hidden: s.hidden ?? [],
     plan: s.plan ?? null,
     detected: detectedPlan(user.username),
     done: !!s.done,
@@ -177,15 +180,21 @@ setupApp.put("/", async (c) => {
   const user = c.get("user");
   const b = (await c.req.json().catch(() => null)) as {
     tools?: unknown;
+    hidden?: unknown;
     plan?: unknown;
     done?: unknown;
   } | null;
-  if (!b) return c.json({ error: "Send { tools, plan, done }" }, 400);
+  if (!b) return c.json({ error: "Send { tools, hidden, plan, done }" }, 400);
   const next = { ...(read(user.username) ?? {}) };
   if (b.tools !== undefined) {
     if (!Array.isArray(b.tools) || !b.tools.every(isTool))
       return c.json({ error: `tools: some of ${TOOLS.join(", ")}` }, 400);
     next.tools = TOOLS.filter((t) => (b.tools as Tool[]).includes(t));
+  }
+  if (b.hidden !== undefined) {
+    if (!Array.isArray(b.hidden) || !b.hidden.every(isTool))
+      return c.json({ error: `hidden: some of ${TOOLS.join(", ")}` }, 400);
+    next.hidden = TOOLS.filter((t) => (b.hidden as Tool[]).includes(t));
   }
   if (b.plan !== undefined) {
     if (b.plan !== null && !isPlan(b.plan))

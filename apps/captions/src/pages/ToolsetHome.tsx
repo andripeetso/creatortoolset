@@ -11,10 +11,10 @@ import { HomeTodo, useTodoLists } from "@/components/HomeTodo";
 import { TOOL_ICONS } from "@/components/setup/ToolNeeds";
 import { webPlugins } from "@/plugins.gen";
 import { useSessionSummaries } from "@/lib/workshop-summary";
-import { currentProject, PROJECT_COLORS, projectColor, useWorkspace } from "@/lib/workspace";
+import { accentFor, currentProject, PROJECT_COLORS, projectColor, useWorkspace } from "@/lib/workspace";
 import { useAppearance } from "@/lib/settings";
 import { useShareTheme } from "@/components/ShareTheme";
-import { readiness, TOOL_GROUPS, TOOL_NAMES, type Tool } from "@contracts/tools";
+import { onHome, readiness, TOOL_GROUPS, TOOL_NAMES, type Tool } from "@contracts/tools";
 import { DOWNLOAD_URL, onSettingsClosed, openSetupAt, resumeStep, setupDismissed, setupFinished, shareDownload, useSetup, useSetupShown } from "@/lib/setup";
 
 /**
@@ -73,7 +73,7 @@ export default function ToolsetHome() {
   const showCounts = canUse(me, "workshop");
   const waiting = useWaiting(me);
   const project = useWorkspace(currentProject);
-  const { projectTint, homeGlow } = useAppearance();
+  const { projectTint, homeGlow, ownColour } = useAppearance();
   // what's working right now: a Workshop reply being written. Its stage's box pulses and the tile says how many.
   const rows = useSessionSummaries();
   const running: Record<string, number> = showCounts ? { "/workshop": rows?.filter((r) => r.working).length ?? 0 } : {};
@@ -81,9 +81,13 @@ export default function ToolsetHome() {
   // closes, since this window's own changes (a key added in a tool or in Settings) send it no notice
   const view = useSetup((s) => s.view);
   const load = useSetup((s) => s.load);
+  // Home's tools are all but the ones switched off under Settings → Appearance (contracts onHome). Tiles wait for the
+  // setup to load (or to fail: a guest has none, and then nothing is hidden), so a hidden tool is never drawn and dropped.
+  const [loaded, setLoaded] = useState(false);
+  const shownOnHome = (t: Tool) => (loaded || view !== null) && onHome(view?.hidden, t);
   useEffect(() => {
     if (!me) return;
-    void load();
+    void load().finally(() => setLoaded(true));
     return onSettingsClosed(() => void load());
   }, [me, load]);
 
@@ -104,10 +108,10 @@ export default function ToolsetHome() {
     return readiness(tool, view.have).missing.map((n) => n.what).join(" · ");
   };
   const extrasGroup = TOOL_GROUPS.find((g) => g.id === "tools");
-  const extras: Key[] = [...(extrasGroup?.tools ?? []), "record"];
+  const extras: Key[] = [...(extrasGroup?.tools.filter(shownOnHome) ?? []), "record"];
 
   // the current project's colour (Settings → Appearance can keep it violet), as CSS variables for the tiles and glow
-  const c = PROJECT_COLORS[projectTint && project ? projectColor(project) : "violet"];
+  const c = PROJECT_COLORS[accentFor(projectTint, ownColour, project ? projectColor(project) : null)];
   const tintStyle = { "--tint": `rgb(${c.rgb})`, "--tint-text": `rgb(${dark ? c.text : c.rgb})`, transition: "--tint 500ms, --tint-text 500ms" } as React.CSSProperties;
 
   // one tile: its icon (in the project's colour), its name and its status; quiet = Extras, smaller and grey
@@ -240,7 +244,7 @@ export default function ToolsetHome() {
               >
                 <h2 className="px-1 pb-2 text-[11px] font-medium uppercase tracking-wider text-zinc-500">{g.label}</h2>
                 <div className="flex items-start justify-center gap-4 min-[900px]:justify-evenly min-[900px]:gap-0">
-                  {[...(g.id === "distribute" ? ["finals" as Key] : g.tools).map((t) => tile(t)), ...pluginTilesFor(g.label, me).map((t) => pluginTile(t))].map((node, j) => (
+                  {[...(g.id === "distribute" ? ["finals" as Key] : g.tools.filter(shownOnHome)).map((t) => tile(t)), ...pluginTilesFor(g.label, me).map((t) => pluginTile(t))].map((node, j) => (
                     <Fragment key={j}>
                       {j > 0 && <ChevronRight className="mt-6 h-4 w-4 shrink-0 text-zinc-700 2xl:mt-7" />}
                       {node}

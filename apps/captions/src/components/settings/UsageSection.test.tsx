@@ -69,14 +69,27 @@ describe("an AI that is not signed in", () => {
   });
 });
 
-describe("a team's login", () => {
-  it("is labelled as the team's, not with a person's name", () => {
-    // the admin's own Mac can hold the team's login: the instances say whose it is
-    const studio = { id: "ws_1", name: "Studio", owner: "sam", online: true, report: { drivers: [{ driver: "claude", installed: true, plan: "Max" }], homes: [] } };
+describe("a server AI's login", () => {
+  it("is titled with the AI's own name, never 'Team', and its plan is read where it is", () => {
+    // the admin's own Mac can hold the server's login: the instances say which set it answers
+    const studio = { id: "ws_1", name: "Studio", owner: "sam", online: true, report: { drivers: [{ driver: "claude", installed: true, plan: "max" }], homes: [] } };
     const login = { driver: "claude", label: "sam", state: "ok", at: 0, device: "ws_1", online: true, instances: ["workspace:claude_hub"], windows: [{ id: "five_hour", kind: "session", label: "Session", usedPercent: 38, resetsAt: 3_600_000 }] };
+    const v = { limits: [login], devices: [studio], own: null, workspace: { settings: { instances: [{ id: "claude_hub", name: "Claude (hub)" }] } } } as unknown as ProvidersView;
+    const html = renderToStaticMarkup(<PlanLimits view={v} now={0} bridge={null} setup={setup()} />);
+    expect(html).toContain("Claude (hub)");
+    expect(html).not.toContain("Team");
+    expect(html).not.toContain("sam");
+    expect(html).toContain("Max plan");
+  });
+});
+
+describe("an AI with no plan reading", () => {
+  it("says why in one quiet line, with no heading", () => {
+    const studio = { id: "dev_1", name: "Studio", online: true, report: { drivers: [{ driver: "claude", installed: true }], homes: [] } };
+    const login = { driver: "claude", label: "default", state: "no_login", at: 0, device: "dev_1", online: true, instances: ["dev_1:claude"], windows: [] };
     const v = { limits: [login], devices: [studio], own: null, workspace: null } as unknown as ProvidersView;
     const html = renderToStaticMarkup(<PlanLimits view={v} now={0} bridge={null} setup={setup()} />);
-    expect(html).toContain("Claude · Team");
-    expect(html).not.toContain("Claude · sam");
+    expect(html).toContain("This folder has no Claude sign-in, so there is no plan to read.");
+    expect(html).not.toContain("No plan reading");
   });
 });

@@ -40,10 +40,9 @@ export function MyKeysSection({ only }: { only?: MyKeyEnv[] } = {}) {
             name={k.name}
             subtitle={k.what}
             where={k.where}
-            set={k.set || !!k.server}
+            set={k.set}
             last4={k.last4}
-            readOnly={!k.set && !!k.server}
-            readOnlyText="From the server"
+            served={k.server}
             save={(v) => saveMyKey(k.env, v).then(load)}
           />
         ))}

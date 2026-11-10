@@ -3,7 +3,7 @@ import { HardDrive } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { getProviders } from "@/lib/providers";
 import type { StorageView } from "@contracts/storage";
-import { devicesSectionsFor } from "@/lib/plugin";
+import { devicesSectionsFor, replacementFor } from "@/lib/plugin";
 import { webPlugins } from "@/plugins.gen";
 import { Advanced, Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Section } from "./ui";
 import { msg } from "./helpers";
@@ -50,7 +50,8 @@ export function FoldersSection() {
     );
   }
 
-  const own = devices.filter((d) => d.owner === me.username);
+  // the computers a folder can go on: this account's own, and for an admin the team's AI worker (the server takes both)
+  const own = devices.filter((d) => d.owner === me.username || (me.role === "admin" && d.owner === "workspace"));
   const drives = driveList(own, storage.serverDisks);
   const almost = drives.filter((l) => isFull(l.disk)).length;
 
@@ -65,11 +66,18 @@ export function FoldersSection() {
     );
   }
 
+  // an admin's folders may be a plug-in's own store (the AI Editor's): its screen then stands in for the rows and its header
+  const Replaced = me.role === "admin" ? replacementFor(webPlugins, "storage") : undefined;
+
   return (
     <>
-      <Section title="Storage" action={own.length > 0 ? <AddStorageButton devices={own} onChanged={load} /> : undefined}>
-        <Storage devices={own} storage={storage} onChanged={load} />
-      </Section>
+      {Replaced ? (
+        <Replaced />
+      ) : (
+        <Section title="Storage" action={own.length > 0 ? <AddStorageButton devices={own} onChanged={load} /> : undefined}>
+          <Storage devices={own} storage={storage} onChanged={load} />
+        </Section>
+      )}
 
       {me.role === "admin" && drives.length > 0 && (
         <Card>

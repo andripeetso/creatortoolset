@@ -1,13 +1,14 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { sessionOf, type AuthVars } from "./auth";
-import { LOGINS, PLATFORMS, type ConnectorsView, type LoginKind, type SocialPlatform } from "../contracts/connectors";
+import { LOGINS, PLATFORMS, type ConnectorsView, type OwnInstagram, type LoginKind, type SocialPlatform } from "../contracts/connectors";
 import { appFor, finishLogin, freshToken, loginUrl, pullAccount } from "./lib/connectors/platforms";
 import { sessionSources } from "./lib/connectors/provider";
 import { printPosts } from "./lib/connectors/prints";
 import { findAccount, newState, patchAccount, publicAccount, readConnectors, removeAccount, saveAccounts, type StoredAccount } from "./lib/connectors/store";
 import { publicApifyStatus, readApify } from "./lib/instagram/apify";
-import { addLoginAccount } from "./instagram";
+import { addLoginAccount, allAccounts } from "./instagram";
+import { accountProjects } from "./lib/workshop/workspace";
 import { findUser, listUsers, LOCAL_USER, type SessionUser } from "./users";
 
 /**
@@ -37,11 +38,19 @@ async function view(c: Context<{ Variables: AuthVars }>): Promise<ConnectorsView
   const apify = publicApifyStatus(await readApify(user.username));
   return {
     logins: Object.fromEntries(KINDS.map((k) => [k, !!appFor(k)])) as ConnectorsView["logins"],
-    redirects: Object.fromEntries(KINDS.map((k) => [k, redirectFor(c, k)])) as ConnectorsView["redirects"],
+    instagram: await ownInstagram(user.username),
     apify: { configured: apify.configured, valid: apify.valid },
     accounts: readConnectors(user.username).accounts.map(publicAccount),
     extras: { sessions: sessionSources() },
   };
+}
+
+/** The person's own Instagram in the Analyzer: the account marked Mine and each one a project links as its Instagram. */
+async function ownInstagram(username: string): Promise<OwnInstagram[]> {
+  const links = await accountProjects(username);
+  return (await allAccounts())
+    .filter((a) => a.owner === username && (a.mine || links.has(a.id)))
+    .map((a) => ({ id: a.id, handle: a.username, followers: a.counts.followers, mine: !!a.mine, projectId: links.get(a.id) }));
 }
 
 connectorsApp.get("/", async (c) => c.json(await view(c)));
