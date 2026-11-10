@@ -372,7 +372,7 @@ export function SetupDialog() {
                   <p className="px-1 text-sm text-muted-foreground">
                     {assistantOn
                       ? "Your assistant is ready to help. It says hello in the corner."
-                      : "Your assistant needs your AI connected first. You can do that any time in Settings → Your AI."}
+                      : "Your assistant needs your AI connected first. You can do that any time in Settings → Your own AI."}
                   </p>
                 )}
                 {more.length > 0 && (

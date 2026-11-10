@@ -1,7 +1,8 @@
 import type { InstalledPack } from "@contracts/packs";
 import { useCallback, useEffect, useState } from "react";
 import type { CatalogEntry, UpdateRow } from "@contracts/pack-catalog";
-import { browseCatalog, catalogUpdates } from "@/lib/pack-catalog";
+import { browseCatalog, catalogUpdates, json } from "@/lib/pack-catalog";
+import type { ServerPluginInfo } from "@/lib/plugin";
 import { msg } from "../settings/helpers";
 import { listInstalled } from "./packs-api";
 /** The catalog, the account's installed packs and the waiting updates, loaded once for the whole window. */
@@ -11,6 +12,18 @@ export function useCommunityData() {
   const [updates, setUpdates] = useState<UpdateRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
+  // The server's plug-ins (api/lib/plugin.ts describeServerPlugins). Best effort: without it the web half still lists.
+  const [serverPlugins, setServerPlugins] = useState<ServerPluginInfo[]>([]);
+  useEffect(() => {
+    let live = true;
+    fetch("/api/plugins")
+      .then((r) => json<{ plugins: ServerPluginInfo[] }>(r))
+      .then((j) => live && setServerPlugins(j.plugins))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
   // Separately, so a server with the catalog off still lists what's installed. The updates check is best effort
   // (without it there are simply no update marks); it also marks delisted packs on this account, so the installed
   // list is read after it.
@@ -35,5 +48,5 @@ export function useCommunityData() {
   useEffect(() => {
     void reload();
   }, [reload]);
-  return { catalog, catalogError, installed, updates, error, reload };
+  return { catalog, catalogError, installed, updates, error, reload, serverPlugins };
 }

@@ -90,7 +90,7 @@ describe("AI Editor analyze", () => {
   });
 
   it("a transcribe parked for the creator's missing key parks the edit with the same message", async () => {
-    const why = "Add your Deepgram (or OpenAI) key in Settings → My API keys";
+    const why = "Add your Deepgram (or OpenAI) key in Settings → API keys";
     libraryDb().prepare("UPDATE jobs SET state = 'needs_key', error = ? WHERE version_id = 'ver_late' AND kind = 'transcribe'").run(why);
     const { job } = await analyze(["ver_late"], Date.now());
     expect(job()).toMatchObject({ state: "needs_key", error: why });

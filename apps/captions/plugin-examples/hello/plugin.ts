@@ -6,4 +6,4 @@ import { definePlugin, requireGate } from "../../api/lib/plugin";
 const app = new Hono();
 app.get("/ping", requireGate("hello"), (c) => c.json({ ok: true, plugin: "hello", greeting: process.env.HELLO_GREETING ?? "hello" }));
 
-export default definePlugin({ id: "hello", env: ["HELLO_GREETING"], gates: { ids: ["hello"] }, routes: app });
+export default definePlugin({ id: "hello", name: "Hello", about: "The example plug-in: a route behind a gate.", env: ["HELLO_GREETING"], gates: { ids: ["hello"] }, routes: app });

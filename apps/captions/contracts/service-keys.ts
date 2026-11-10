@@ -1,23 +1,29 @@
 /**
- * The server's own API keys for the outside services, asked for in Settings → API keys. One set per install, pasted by its
- * admin. A key saved there wins over the same name in the server's .env, which keeps working as before when nothing is saved.
- * They serve only the platform admin (api/my-keys.ts keyFor); every other account uses its own (MY_KEYS below).
+ * API keys for the paid services, in two lists:
  *
- *   GET /api/service-keys            → ServiceKeyView[]   (never a key, only its last 4)
- *   PUT /api/service-keys/:env       { value: string | null }  (null = forget it, the .env's own applies again)
+ *   MY_KEYS       the person's own keys (Settings → API keys). Each account's keys are saved on the server
+ *                 ($DATA_DIR/my-keys/<user>.json, api/my-keys.ts); a tool that needs one and has none says which to add.
+ *   SERVICE_KEYS  the server's fallback keys (Admin → Server keys, admins only, api/service-keys.ts). A key saved there
+ *                 wins over the same name in the server's .env, which keeps working as before when nothing is saved.
  *
- * Services that sign in through a browser on a Mac rather than with a key are not here.
+ * Apify (other creators' posts) is an API key too, saved by /api/instagram/apify and shown on the same page.
+ * `what` is the one line a row shows: the tools that use the key.
+ *
+ *   GET /api/my-keys          → MyKeyView[]   (never a key, only its last 4)
+ *   PUT /api/my-keys/:env     { value: string | null }  (null = forget it)
+ *   GET /api/service-keys     → ServiceKeyView[]   (admins; never a key, only its last 4)
+ *   PUT /api/service-keys/:env  { value: string | null }  (null = forget it, the .env's own applies again)
  */
 
 export const SERVICE_KEYS = [
-  { env: "NVIDIA_API_KEY", name: "NVIDIA", what: "Studio Voice, the Audio Enhancer's second voice engine.", where: "https://build.nvidia.com" },
-  { env: "ELEVENLABS_API_KEY", name: "ElevenLabs", what: "Voice isolator in the Audio Enhancer.", where: "https://elevenlabs.io/app/settings/api-keys" },
-  { env: "DEEPGRAM_API_KEY", name: "Deepgram", what: "Cloud transcription (nova-3) for you. Without it, transcription runs on the device.", where: "https://console.deepgram.com" },
-  { env: "OPENAI_API_KEY", name: "OpenAI", what: "Media Library transcripts without a Deepgram key and its search by meaning (any OpenAI-compatible service: OPENAI_BASE_URL in the .env).", where: "https://platform.openai.com/api-keys" },
-  { env: "PERPLEXITY_API_KEY", name: "Perplexity", what: "The Content Workshop's accuracy check and deep research.", where: "https://www.perplexity.ai/account/api" },
-  { env: "LIBRARY_S3_ACCESS_KEY", name: "Media Library bucket: Access key", what: "The server's S3-compatible bucket that libraries can keep their files in (bucket and endpoint: LIBRARY_S3_* in the .env)." },
-  { env: "LIBRARY_S3_SECRET_KEY", name: "Media Library bucket: Secret key", what: "Goes with the access key above." },
-  { env: "TYPESAFE_API_KEY", name: "TypeSafe", what: "Optional. Judges Analyzer comments, labels what works, checks Workshop rules." },
+  { env: "NVIDIA_API_KEY", name: "NVIDIA", what: "Studio Voice in the Audio Enhancer", where: "https://build.nvidia.com" },
+  { env: "ELEVENLABS_API_KEY", name: "ElevenLabs", what: "Voice isolation in the Audio Enhancer", where: "https://elevenlabs.io/app/settings/api-keys" },
+  { env: "DEEPGRAM_API_KEY", name: "Deepgram", what: "Captions and transcripts in Caption Studio and the Media Library", where: "https://console.deepgram.com" },
+  { env: "OPENAI_API_KEY", name: "OpenAI", what: "Media Library transcripts without Deepgram, and search by meaning", where: "https://platform.openai.com/api-keys" },
+  { env: "PERPLEXITY_API_KEY", name: "Perplexity", what: "Accuracy check and research in the Content Workshop", where: "https://www.perplexity.ai/account/api" },
+  { env: "LIBRARY_S3_ACCESS_KEY", name: "Media Library bucket: Access key", what: "The bucket libraries keep their files in (LIBRARY_S3_* in the .env)" },
+  { env: "LIBRARY_S3_SECRET_KEY", name: "Media Library bucket: Secret key", what: "Goes with the access key above" },
+  { env: "TYPESAFE_API_KEY", name: "TypeSafe", what: "Analyzer comments and ideas, and Workshop rules" },
 ] as const;
 
 export type ServiceKeyEnv = (typeof SERVICE_KEYS)[number]["env"];
@@ -32,23 +38,19 @@ export interface ServiceKeyView {
   last4?: string;
 }
 
-/**
- * Settings → My API keys: each account's own keys, billed by the provider to that person, never to the server.
- * A tool that needs one and finds none says which key to add here. The server's keys above serve the platform admin
- * only. Apify (other creators' posts) is in Settings → Connectors.
- *
- *   GET /api/my-keys          → MyKeyView[]   (never a key, only its last 4)
- *   PUT /api/my-keys/:env     { value: string | null }  (null = forget it)
- */
+/** The sections of the API keys page, in order. */
+export type MyKeyGroup = "voice" | "research" | "ai";
+
 export const MY_KEYS = [
-  { env: "DEEPGRAM_API_KEY", name: "Deepgram", what: "Cloud transcripts in Caption Studio, Clips, the Analyzer and the Media Library. Without it, Caption Studio transcribes on your device.", where: "https://console.deepgram.com" },
-  { env: "ELEVENLABS_API_KEY", name: "ElevenLabs", what: "Voice isolation in the Audio Enhancer.", where: "https://elevenlabs.io/app/settings/api-keys" },
-  { env: "NVIDIA_API_KEY", name: "NVIDIA", what: "Studio Voice in the Audio Enhancer.", where: "https://build.nvidia.com" },
-  { env: "ANTHROPIC_API_KEY", name: "Anthropic API", what: "AI on an API key when you have no AI of your own (not the Content Workshop, which needs your own Claude or ChatGPT login).", where: "https://console.anthropic.com/settings/keys" },
-  { env: "OPENAI_API_KEY", name: "OpenAI", what: "Media Library transcripts when you have no Deepgram key, and its search by meaning.", where: "https://platform.openai.com/api-keys" },
-  { env: "PERPLEXITY_API_KEY", name: "Perplexity", what: "The Content Workshop's accuracy check and deep research.", where: "https://www.perplexity.ai/account/api" },
-  { env: "TYPESAFE_API_KEY", name: "TypeSafe", what: "Optional. Judges Analyzer comments, labels what works, checks Workshop rules." },
-] as const;
+  { env: "DEEPGRAM_API_KEY", name: "Deepgram", group: "voice", what: "Captions and transcripts in Caption Studio and the Media Library", where: "https://console.deepgram.com" },
+  { env: "ELEVENLABS_API_KEY", name: "ElevenLabs", group: "voice", what: "Voice isolation in the Audio Enhancer", where: "https://elevenlabs.io/app/settings/api-keys" },
+  { env: "NVIDIA_API_KEY", name: "NVIDIA", group: "voice", what: "Studio Voice in the Audio Enhancer", where: "https://build.nvidia.com" },
+  { env: "PERPLEXITY_API_KEY", name: "Perplexity", group: "research", what: "Accuracy check and research in the Content Workshop", where: "https://www.perplexity.ai/account/api" },
+  { env: "OPENAI_API_KEY", name: "OpenAI", group: "ai", what: "Media Library transcripts without Deepgram, and search by meaning", where: "https://platform.openai.com/api-keys" },
+  { env: "TYPESAFE_API_KEY", name: "TypeSafe", group: "ai", what: "Analyzer comments and ideas, and Workshop rules" },
+  // last: read only when the account has no AI of its own (api/ai-complete.ts onApiKey)
+  { env: "ANTHROPIC_API_KEY", name: "Anthropic API", group: "ai", what: "AI for the tools, only when you have no Claude or ChatGPT of your own", where: "https://console.anthropic.com/settings/keys" },
+] as const satisfies ReadonlyArray<{ env: string; name: string; group: MyKeyGroup; what: string; where?: string }>;
 
 export type MyKeyEnv = (typeof MY_KEYS)[number]["env"];
 

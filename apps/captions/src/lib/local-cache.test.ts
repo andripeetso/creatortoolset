@@ -50,7 +50,7 @@ describe("local-cache", () => {
     expect([...store.keys()].some((k) => k.startsWith("ct-swr:"))).toBe(false);
   });
 
-  it("Settings → Cache counts only this account's saved lists", () => {
+  it("Settings → General counts only this account's saved lists", () => {
     putCached("tinyacrobatics", "/api/clips", ["a", "b"]);
     putCached("tinyacrobatics", "/api/review", [1]);
     putCached("ben", "/api/clips", ["c"]);
@@ -61,7 +61,7 @@ describe("local-cache", () => {
     expect(cachedUsage(null)).toEqual({ bytes: 0, items: 0 });
   });
 
-  it("Settings → Cache Clear drops only the signed-in account's lists", () => {
+  it("Settings → General Clear drops only the signed-in account's lists", () => {
     putCached("tinyacrobatics", "/api/clips", ["a"]);
     putCached("tinyacrobatics", "/api/review", [1]);
     putCached("ben", "/api/clips", ["b"]);

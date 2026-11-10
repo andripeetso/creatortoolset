@@ -96,14 +96,19 @@ describe("automations: runs and the scheduler", () => {
       if (!result) await new Promise((r) => setTimeout(r, 20));
     }
     expect(result?.status).toBe("skipped");
-    expect(result?.text).toContain("Connect your AI");
+    expect(result?.text).toContain("No Claude Code is set up for your AI here");
     // the result is saved before its inbox note is written, so wait for the note too
     let notes: Array<[string, string]> = [];
     for (let i = 0; i < 100 && !notes.length; i++) {
       notes = ((await json(await req("bob", "GET", "/review/notifications"))).items as Array<{ name: string; by: string }>).map((n) => [n.name, n.by]);
       if (!notes.length) await new Promise((r) => setTimeout(r, 20));
     }
-    expect(notes).toContainEqual(["Inbox me", "Automations"]);
+    expect(notes).toContainEqual(["Inbox me", "Scheduled tasks"]);
+  });
+
+  it("the list says why no task can run for an account with no AI", async () => {
+    const list = await json(await req("bob", "GET", "/automations"));
+    expect(list.blocked).toContain("No Claude Code is set up for your AI here");
   });
 
   it("a run that is still going refuses a second start (409), and a tick doesn't start it again", async () => {

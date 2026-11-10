@@ -125,7 +125,7 @@ const onMac = (user: SessionUser, own?: Selection) => !!workshopAi(user, own).on
 /** The asker's Perplexity key (their own, or the server's for the platform admin), or "" */
 const perplexityFor = (user: SessionUser) => keyFor(user, "PERPLEXITY_API_KEY").key;
 const researchFor = (user: SessionUser) => !!perplexityFor(user) || onMac(user);
-const RESEARCH_OFF = "Research needs an AI of your own (Settings → Your AI) or your Perplexity key in Settings → My API keys";
+const RESEARCH_OFF = "Research needs an AI of your own (Settings → Your own AI) or your Perplexity key in Settings → API keys";
 const researchLabel = (user: SessionUser) => (onMac(user) ? "Claude (Mac)" : "Perplexity");
 const macLabel = (u?: MacUsage) => (u ? `Claude (Mac) · ${(u.tokens / 1000).toFixed(1)}k tokens · $${u.costUsd.toFixed(2)} API-equivalent` : "Claude (Mac)");
 

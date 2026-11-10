@@ -9,7 +9,7 @@ import { beatForDevice, claimForDevice, doneForDevice, failForDevice } from "./e
 import { mayClaim, type WorkerSeen } from "./lib/balance";
 import { env } from "./lib/env";
 import { relayRoutes } from "./lib/mac-claude";
-import { deviceOf, deviceForToken, forViewer, isOnline, listDevices, pairDevice, renameDevice, revokeDevice, setDeviceKinds, touchDevice } from "./lib/devices";
+import { deviceOf, deviceForToken, forViewer, isOnline, listDevices, moveProviders, pairDevice, renameDevice, revokeDevice, setDeviceKinds, touchDevice } from "./lib/devices";
 import { findUser } from "./users";
 import { resolveGranted } from "./lib/packs";
 import { storageApp } from "./devices-storage";
@@ -76,7 +76,7 @@ devicesApp.post("/relay/editor/job/:id/fail", async (c) => {
 devicesApp.route("/relay", relayRoutes((c) => deviceForToken(c.req.header("authorization"))?.id ?? null));
 devicesApp.route("/storage", storageApp);
 
-/** Load balancing (Settings → Devices): on/off and each of the account's computers' preference, in $DATA_DIR/balance/<user>.json. */
+/** Load balancing (Settings → Computers → Advanced): on/off and each of the account's computers' preference, in $DATA_DIR/balance/<user>.json. Admins only. */
 const balanceFile = (user: string) => path.join(env.dataDir, "balance", `${user}.json`);
 const ALLOWED_WEIGHTS = new Set<number>(LOAD_PREFERENCES.map((x) => x.value));
 async function readBalance(user: string): Promise<Balance> {
@@ -91,12 +91,14 @@ async function readBalance(user: string): Promise<Balance> {
 devicesApp.get("/balance", async (c) => {
   const u = c.get("user");
   if (!signedIn(u)) return c.json({ error: "Not for guests" }, 403);
+  if (u.role !== "admin") return c.json({ error: "Only an admin sees load balancing" }, 403);
   return c.json(await readBalance(u.username));
 });
 
 devicesApp.put("/balance", async (c) => {
   const u = c.get("user");
   if (!signedIn(u)) return c.json({ error: "Not for guests" }, 403);
+  if (u.role !== "admin") return c.json({ error: "Only an admin changes load balancing" }, 403);
   const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   const cur = await readBalance(u.username);
   if (typeof b?.on === "boolean") cur.on = b.on;
@@ -151,7 +153,9 @@ devicesApp.post("/", async (c) => {
   const name = typeof b?.name === "string" ? b.name.trim().slice(0, 60) : "";
   if (!name) return c.json({ error: "Name the Mac" }, 400);
   const version = typeof b?.version === "string" ? b.version.slice(0, 40) : undefined;
-  const { device, token } = pairDevice(u.username, name, version);
+  const { device, token, replaced } = pairDevice(u.username, name, version);
+  // the same Mac paired again: its providers now run on the new record
+  if (replaced.length) await moveProviders(u.username, replaced, device.id);
   return c.json({ device, token });
 });
 
@@ -182,11 +186,11 @@ devicesApp.patch("/:id", async (c) => {
   return renamed ? c.json(online(renamed)) : c.json({ error: "Not found" }, 404);
 });
 
-devicesApp.delete("/:id", (c) => {
+devicesApp.delete("/:id", async (c) => {
   const u = c.get("user");
   if (!signedIn(u)) return c.json({ error: "Not for guests" }, 403);
   const id = c.req.param("id");
   if (!manageable(u, id)) return c.json({ error: "Not found" }, 404);
-  revokeDevice(id);
+  await revokeDevice(id);
   return c.json({ ok: true });
 });

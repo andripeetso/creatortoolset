@@ -16,6 +16,7 @@ import { changeFolderItems, getAsset, listAssets, listCollections, listLibraries
 import { cn } from "@/lib/utils";
 import { confirmHeavy, openToolSetup } from "@/lib/setup";
 import { ToolSetupLine } from "@/components/setup/ToolSetupLine";
+import { EditorDefaultsButton } from "@/components/settings/EditorDefaultsDialog";
 
 /**
  * AI Editor (/editor): the edits I made (a workspace owner: the members' too), and New edit: footage picked from the
@@ -50,6 +51,7 @@ export default function EditorPage() {
   return (
     <div className="flex min-h-dvh flex-col">
       <AppBar tool="AI Editor">
+        <EditorDefaultsButton />
         <Button size="sm" onClick={() => setCreating(true)}>
           <Plus className="h-4 w-4" />
           New edit

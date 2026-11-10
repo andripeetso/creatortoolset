@@ -18,6 +18,9 @@ import { PACK_ITEM_KINDS, type PackDesignSystem, type PackItemKind, type PackOri
 
 export interface ServerPlugin {
   id: string;
+  // The name Community lists it under (the id when absent) and one short line on what it does.
+  name?: string;
+  about?: string;
   // Environment variable names this plug-in reads. The generator warns about any that are not set.
   env?: string[];
   // Mounted at /api/x/<id>, behind the same login as every other /api route.
@@ -78,7 +81,7 @@ export interface ServerPlugin {
   start?: () => void;
   // Lets a route take a body past the 50 MB cap (an installer upload, e.g. a release), for the requests it returns true for.
   bodyLimitExempt?: (method: string, path: string) => boolean;
-  // AI providers (Settings → AI providers, Add provider): driver kinds the grid lists, and ready presets shown as rows with a badge.
+  // AI providers (Settings → Providers, Add provider): driver kinds the grid lists, and ready presets shown as rows with a badge.
   providers?: { kinds?: DriverKind[]; presets?: ProviderPreset[] };
   // The anonymous public-grid read (connectors/provider.ts). Without a plug-in that sets it, the app has no such read.
   connectors?: { publicGrid?: PublicGridReader; readers?: SocialReader[] };
@@ -113,6 +116,45 @@ export interface PackItemInstaller {
   adminOnly?: boolean;
   install: (item: PackDesignSystem, origin: PackOrigin) => Promise<string>;
   remove: (name: string, pack: string) => Promise<boolean>;
+}
+
+/** One line of what a plug-in adds, as the Community window lists it: text, and a path to where it lives (when there is one). */
+export interface PluginAdd {
+  text: string;
+  to?: string;
+}
+
+/** A loaded plug-in as GET /api/plugins returns it. `adds` is only sent to an admin. Names only: no secrets, paths or endpoints. */
+export interface PluginDescription {
+  id: string;
+  name: string;
+  about?: string;
+  adds?: PluginAdd[];
+}
+
+/**
+ * What each loaded plug-in registers, in words: an AI provider preset by its name, a connector by its label, the tools
+ * for the person's own AI by count, and so on. The web half of a plug-in (its Settings sections, pages) is in src/lib/plugin.ts.
+ */
+export function describeServerPlugins(plugins: ServerPlugin[], admin: boolean): PluginDescription[] {
+  return plugins.map((p) => {
+    const d: PluginDescription = { id: p.id, name: p.name ?? p.id, about: p.about };
+    if (!admin) return d;
+    const adds: PluginAdd[] = [];
+    for (const k of p.providers?.kinds ?? []) adds.push({ text: `AI provider kind: ${k.label}`, to: "/settings/providers" });
+    for (const pr of p.providers?.presets ?? []) adds.push({ text: `AI provider preset: ${pr.name}`, to: "/settings/providers" });
+    for (const r of p.connectors?.readers ?? []) adds.push({ text: `Connector: ${r.session?.label ?? "social reader"}`, to: "/settings/connectors" });
+    for (const r of p.uploadRelays ?? []) adds.push({ text: `Upload relay: ${r.label}` });
+    const tools = (p.tools as { defs?: unknown[] } | undefined)?.defs?.length ?? 0;
+    if (tools) adds.push({ text: `${tools} ${tools === 1 ? "tool" : "tools"} for your own AI`, to: "/settings/own-ai" });
+    for (const f of p.editFlags ?? []) adds.push({ text: `AI Editor flag: ${f.label}`, to: "/editor" });
+    for (const i of p.packItems ?? []) adds.push({ text: `Pack items: ${i.kind === "designSystems" ? "design systems" : i.kind}` });
+    if (p.library) adds.push({ text: "Media Library source", to: "/library" });
+    if (p.finals) adds.push({ text: "Finals hook", to: "/finals" });
+    if (p.activity) adds.push({ text: "Rows in the Mac menu bar panel" });
+    d.adds = adds;
+    return d;
+  });
 }
 
 /** The loaded plug-in that installs a pack item kind, or null (the core then holds those items on the account). */
@@ -420,6 +462,16 @@ export function replacedLargeBody(path: string): boolean {
 /** Mount each plug-in's Media Library routes at /api/library (boot.ts calls it before the core library routers). */
 export function mountLibraryRoutes(app: Hono<any, any, any>, plugins: ServerPlugin[]): void {
   for (const plugin of plugins) if (plugin.libraryRoutes) app.route("/api/library", plugin.libraryRoutes);
+}
+
+/**
+ * GET /api/plugins: the loaded plug-ins for Community → Installed (behind the account gate, like every /api route).
+ * Admins also get what each adds. boot.ts mounts it with the other routes, so mounting plug-ins never adds a route late.
+ */
+export function mountPluginsList(app: Hono<any, any, any>): void {
+  app.get("/api/plugins", (c) =>
+    c.json({ plugins: describeServerPlugins(loaded, (c.get("user") as { role?: string } | undefined)?.role === "admin") }),
+  );
 }
 
 /**

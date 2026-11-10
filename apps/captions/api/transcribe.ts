@@ -7,7 +7,7 @@ import { keyFor } from "./my-keys";
 
 /**
  * Optional cloud transcription via Deepgram nova-3, on the key that serves the caller (my-keys.ts keyFor: their own
- * key from Settings → My API keys, or the server's for the platform admin). The client then offers a "Cloud" engine in the model picker (better
+ * key from Settings → API keys, or the server's for the platform admin). The client then offers a "Cloud" engine in the model picker (better
  * accuracy + native word timestamps, no model download); without a key it says which one to add. On-device Whisper
  * remains available either way.
  */

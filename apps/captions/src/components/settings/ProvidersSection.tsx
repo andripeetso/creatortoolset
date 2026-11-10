@@ -1,9 +1,12 @@
-import { useEffect, useState } from "react";
-import { Link } from "react-router";
-import { Plus, RefreshCw } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Link, useNavigate } from "react-router";
+import { Plus, RotateCcw } from "lucide-react";
 import {
+  addInstanceTo,
+  DRIVERS,
+  EFFORTS,
   JOBS,
+  runsOn,
   type Driver,
   type ProviderCheck,
   type ProviderInstance,
@@ -11,132 +14,129 @@ import {
   type ProvidersView,
   type Scope,
   type Selection,
-  runsOn,
 } from "@contracts/providers";
 import { useAuth } from "@/lib/auth";
-import { useWorkTalk } from "@/lib/setup";
-import {
-  checkProvider,
-  deviceOf,
-  getProviders,
-  modelsOf,
-  saveOwn,
-  saveWorkspace,
-  selectionLabel,
-  thisMacDevice,
-} from "@/lib/providers";
+import { checkProvider, deviceOf, effortLabel, getProviders, modelName, modelsOf, saveOwn, saveWorkspace, thisMacDevice } from "@/lib/providers";
+import { Button } from "@/components/ui/button";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { cn } from "@/lib/utils";
+import { msg } from "./helpers";
 import { AddProviderDialog } from "./AddProviderDialog";
-import { OwnAiMcpSection } from "./OwnAiMcpSection";
 import { ProviderDetail } from "./ProviderDetail";
-import { ProviderInstanceCard, hasCustomEndpoint, providerStatus, withInstance, type ProviderStatus } from "./ProviderInstanceCard";
-import { ScopeSentence } from "./ScopeSentence";
-import { Card, EffortSelect, Group, Loading, ModelSelect, Notice } from "./ui";
-import { fmtAgo, msg, selectCls } from "./helpers";
+import { DriverMark, ProviderInstanceCard, providerStatus, withInstance, type ProviderStatus } from "./ProviderInstanceCard";
+import { Advanced, Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Row, Section, SettingsSelect, saveFailed, StatusDot } from "./ui";
+import type { SearchRowId } from "./search";
 
-/** The CLIs the Mac app can open a sign-in for (signInCommands in apps/mac Relay.swift). */
+/** The tools the Mac app can open a sign-in for in Terminal (the Mac's signInCommands). */
 const SIGN_IN_DRIVERS: string[] = ["claude", "codex", "grok"];
+/** The "Use the Default" choice of a job (a select's option needs a value; "" is not allowed). */
+const USE_DEFAULT = "use-default";
 
 /**
- * Settings → Providers: "Applying settings for All projects on <Mac>", the AI on that Mac as rows (name, version, status
- * line, on/off switch), the selected AI's detail below, then who does which job. Admins edit the workspace's set
- * (PUT /api/providers/workspace); anyone else edits their own (PUT /api/providers/own) and sees the workspace's while they
- * have none. In chat or both, it also holds the "Use Creator Toolset from your own AI" section (OwnAiMcpSection).
- * `sub` is the Mac picked on the page (its device id).
+ * Settings → Providers. The computers that run AI are tabs on top; the AIs on the chosen computer are the list, with the
+ * tools it has installed and not yet added below them (each with Add). The AI's settings open beside the list from `lg`,
+ * and as their own page (`sub` = the AI's id) below it. "Who does what" sets the Default and the tool-by-tool picks.
+ * Members see the team's AI read-only, with Add my own. One refresh loop for the page, while a computer has no tool yet
+ * or a sign-in is open.
  */
 export function ProvidersSection({ sub }: { sub?: string }) {
-  const { talk } = useWorkTalk();
+  const navigate = useNavigate();
   const me = useAuth((s) => s.me);
   const isAdmin = me?.role === "admin";
   const [view, setView] = useState<ProvidersView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [deviceChoice, setDeviceChoice] = useState<string | null>(sub ?? null);
-  const [instanceId, setInstanceId] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [tab, setTab] = useState<string | null>(null);
+  const [adding, setAdding] = useState<{ driver?: Driver } | null>(null);
   const [checking, setChecking] = useState<string | null>(null);
-  const [adding, setAdding] = useState(false);
-  // The driver whose sign-in is open in Terminal on this Mac: the page re-reads the Mac's report until it says signed in.
   const [signingIn, setSigningIn] = useState<string | null>(null);
-  // when the Macs' reports were last read (the page's "Checked …")
-  const [readAt, setReadAt] = useState(() => Date.now());
-  const [refreshing, setRefreshing] = useState(false);
+  const savingRef = useRef(false);
 
-  useEffect(() => {
-    getProviders().then((v) => {
-      setView(v);
-      setReadAt(Date.now());
-    }).catch((e) => setLoadError(msg(e)));
-  }, []);
-  const refresh = () => {
-    setRefreshing(true);
-    getProviders()
-      .then((v) => {
-        setView((prev) => (prev ? { ...prev, devices: v.devices } : v));
-        setReadAt(Date.now());
-      })
-      .catch((e) => setError(msg(e)))
-      .finally(() => setRefreshing(false));
-  };
-  useEffect(() => {
-    if (!signingIn) return;
-    const t = window.setInterval(() => {
+  const load = useCallback(
+    () =>
       getProviders()
         .then((v) => {
-          setView((prev) => (prev ? { ...prev, devices: v.devices } : v));
-          const mac = thisMacDevice();
-          const found = v.devices.find((d) => d.id === mac)?.report?.drivers.find((d) => d.driver === signingIn);
-          if (found?.signedIn) setSigningIn(null);
+          if (!savingRef.current) setView(v);
         })
-        .catch(() => {});
-    }, 3000);
-    const stop = window.setTimeout(() => setSigningIn(null), 180000);
-    return () => {
-      window.clearInterval(t);
-      window.clearTimeout(stop);
-    };
-  }, [signingIn]);
-  // until a Mac reports a coding tool, look again every 5 s: installing one shows up without a reload
-  const waiting = !!view && !view.devices.some((d) => d.online && d.report?.drivers.some((x) => x.installed));
+        .catch((e) => setLoadError(msg(e))),
+    [],
+  );
   useEffect(() => {
-    if (!waiting) return;
-    const t = window.setInterval(() => {
-      getProviders().then((v) => setView((prev) => (prev ? { ...prev, devices: v.devices } : v))).catch(() => {});
-    }, 5000);
-    return () => window.clearInterval(t);
-  }, [waiting]);
+    void load();
+  }, [load]);
 
-  if (loadError) return <Notice tone="error">Could not load your AI: {loadError}</Notice>;
-  if (!view || !me) return <Loading />;
+  const waiting = !!view && !view.devices.some((d) => d.online && d.report?.drivers.some((x) => x.installed));
+  const every = signingIn ? 3000 : waiting ? 5000 : 0;
+  useEffect(() => {
+    if (!every) return;
+    const t = window.setInterval(() => void load(), every);
+    return () => window.clearInterval(t);
+  }, [every, load]);
+  useEffect(() => {
+    if (!signingIn || !view) return;
+    const found = view.devices.find((d) => d.id === thisMacDevice())?.report?.drivers.find((d) => d.driver === signingIn);
+    if (found?.signedIn) setSigningIn(null);
+  }, [view, signingIn]);
+  useEffect(() => {
+    if (!signingIn) return;
+    const t = window.setTimeout(() => setSigningIn(null), 180_000);
+    return () => window.clearTimeout(t);
+  }, [signingIn]);
+
+  if (loadError)
+    return (
+      <Section title="Providers">
+        <Card>
+          <ErrorRow title="Could not load your AIs" detail={loadError} retry={() => { setLoadError(null); void load(); }} />
+        </Card>
+      </Section>
+    );
+  if (!view || !me)
+    return (
+      <Section title="Providers">
+        <Card>
+          <LoadingRow />
+        </Card>
+      </Section>
+    );
 
   const devices = view.devices;
-  const device = devices.find((d) => d.id === deviceChoice) ?? devices[0] ?? null;
-  // A member does not see the workspace's Mac in `devices`; its providers still say where they run.
-  const deviceName = (id: string) => devices.find((d) => d.id === id)?.name ?? (id || "no Mac picked");
-  const reportOf = (inst: ProviderInstance) => devices.find((d) => d.id === deviceOf(inst))?.report ?? null;
-  // Unknown Macs (a member's view of the workspace's) count as reachable: only a Mac listed as offline is.
-  const reachable = (inst: ProviderInstance) => devices.find((d) => d.id === deviceOf(inst))?.online ?? true;
-  const online = (inst: ProviderInstance) => devices.find((d) => d.id === deviceOf(inst))?.online ?? false;
-
-  // What this page edits: the workspace's set for admins, this account's own for anyone else.
-  const editing: ProviderSettings | null = isAdmin ? (view.workspace?.settings ?? null) : view.own;
-  const readOnly = !isAdmin && !view.own; // showing the workspace's, which answers this account now
-  const scope: Scope = isAdmin || readOnly ? "workspace" : me.username;
+  // the team's AI answers a member who has none of their own; it is shown, not edited
+  const readOnly = !isAdmin && !view.own;
+  // The page edits the set that answers this account: its own when it has one (an admin's own answers it first, so the
+  // team's set would look empty); otherwise an admin edits the team's. A member's own set is the only one they edit.
+  const toOwn = !isAdmin || !!view.own;
+  const editing: ProviderSettings | null = toOwn ? view.own : (view.workspace?.settings ?? null);
   const shown: ProviderSettings | null = editing ?? (readOnly ? (view.workspace?.settings ?? null) : null);
-  const listed = readOnly
-    ? (shown?.instances ?? [])
-    : (editing?.instances ?? []).filter((i) => device !== null && (deviceOf(i) === device.id || !deviceOf(i)));
-  // the provider whose detail pane is open (editors only; members see the rows)
-  // the first provider is shown until one is picked, so the settings pane is never empty
-  const detail = readOnly || !editing ? undefined : (listed.find((i) => i.id === instanceId) ?? listed[0]);
+  const scope: Scope = toOwn ? me.username : "workspace";
+  const tabDevice = devices.find((d) => d.id === tab) ?? devices[0] ?? null;
+  const listed = readOnly ? (shown?.instances ?? []) : (editing?.instances ?? []).filter((i) => !!tabDevice && deviceOf(i) === tabDevice.id);
+  const onDevice = (i: ProviderInstance) => devices.some((d) => d.id === deviceOf(i));
+  const orphans = readOnly || !editing ? [] : editing.instances.filter((i) => !onDevice(i));
+  const detailInst = readOnly || !editing ? undefined : sub ? editing.instances.find((i) => i.id === sub) : listed[0];
+  const installedHere = !readOnly && tabDevice?.report ? tabDevice.report.drivers.filter((d) => d.installed && runsOn(d.driver) && !listed.some((i) => i.driver === d.driver)) : [];
 
-  // Saves the whole set. Shows the change at once, undoes it on error.
-  const save = async (next: ProviderSettings) => {
+  const reportOf = (i: ProviderInstance) => devices.find((d) => d.id === deviceOf(i))?.report ?? null;
+  const statusOf = (i: ProviderInstance): ProviderStatus => {
+    if (!readOnly && !onDevice(i)) return { tone: "attention", text: "No computer" };
+    return providerStatus({
+      enabled: i.enabled,
+      runs: runsOn(i.driver),
+      online: devices.find((d) => d.id === deviceOf(i))?.online ?? true,
+      report: !!reportOf(i),
+      found: reportOf(i)?.drivers.find((d) => d.driver === i.driver),
+      check: view.checks[`${scope}:${i.id}`],
+    });
+  };
+  const usedBy = (id: string): string[] =>
+    shown ? [shown.default.instance === id ? "the Default" : null, ...JOBS.filter((j) => shown.jobs[j.id]?.instance === id).map((j) => j.label)].filter((x): x is string => !!x) : [];
+
+  // Saves the whole set and shows the change at once. Throws a sentence when it can't save; reverts first.
+  const saveSet = async (next: ProviderSettings) => {
     const prev = view;
-    setView((v) => (v && isAdmin ? (v.workspace ? { ...v, workspace: { ...v.workspace, settings: next } } : v) : v && { ...v, own: next }));
-    setSaving(true);
-    setError(null);
+    setView((v) => (v && !toOwn ? (v.workspace ? { ...v, workspace: { ...v.workspace, settings: next } } : v) : v && { ...v, own: next }));
+    savingRef.current = true;
     try {
-      if (isAdmin) {
+      if (!toOwn) {
         const saved = await saveWorkspace(next);
         setView((v) => (v && v.workspace ? { ...v, workspace: { ...v.workspace, settings: saved } } : v));
       } else {
@@ -144,87 +144,43 @@ export function ProvidersSection({ sub }: { sub?: string }) {
       }
     } catch (e) {
       setView(prev);
-      setError(msg(e));
+      throw e;
     } finally {
-      setSaving(false);
+      savingRef.current = false;
     }
   };
+  const save = (next: ProviderSettings) => saveSet(next).catch((e) => saveFailed(msg(e)));
 
-  // Changes one provider's fields (its switch, its detail pane) and saves the set.
+  // Changes one AI's fields and saves. The Default shows the AI's model and thinking level while it is the Default.
   const patch = (inst: ProviderInstance, p: Partial<ProviderInstance>) => {
-    if (editing) void save(withInstance(editing, inst.id, p));
-  };
-
-  const dropOwn = async () => {
-    setSaving(true);
-    setError(null);
-    try {
-      setView(await saveOwn(null));
-    } catch (e) {
-      setError(msg(e));
-    } finally {
-      setSaving(false);
+    if (!editing) return;
+    let next = withInstance(editing, inst.id, p);
+    if (editing.default.instance === inst.id && (p.model !== undefined || p.effort !== undefined)) {
+      next = { ...next, default: { ...next.default, ...(p.model !== undefined ? { model: p.model } : {}), ...(p.effort ? { effort: p.effort } : {}) } };
     }
+    void save(next);
   };
 
-  // The first provider an account adds starts its own set, with that provider as the default.
-  const addInstance = (inst: ProviderInstance) => {
-    if (!device) return;
-    const withDevice: ProviderInstance = { ...inst, device: device.id };
-    const base: ProviderSettings = editing ?? {
-      instances: [],
-      default: { instance: "", model: "", effort: "xhigh" },
-      jobs: {},
-    };
-    const first = modelsOf(view, withDevice)[0] ?? "";
-    void save({
-      ...base,
-      instances: [...base.instances, withDevice],
-      default: base.instances.length ? base.default : { instance: withDevice.id, model: first, effort: "xhigh" },
-    });
+  const remove = (inst: ProviderInstance) => {
+    if (!editing) return;
+    navigate("/settings/providers");
+    void save({ ...editing, instances: editing.instances.filter((i) => i.id !== inst.id) });
   };
 
-  const runCheck = async (inst: ProviderInstance, s: Scope) => {
-    const key = `${s}:${inst.id}`;
+  const runCheck = async (inst: ProviderInstance) => {
+    const key = `${scope}:${inst.id}`;
     setChecking(key);
-    let result: ProviderCheck;
     try {
-      result = await checkProvider(s, inst.id);
+      const result: ProviderCheck = await checkProvider(scope, inst.id);
+      setView((v) => (v ? { ...v, checks: { ...v.checks, [key]: result } } : v));
     } catch (e) {
-      result = { ok: false, ms: 0, error: msg(e), at: Date.now() };
+      saveFailed(msg(e));
+    } finally {
+      setChecking(null);
     }
-    setView((v) => (v ? { ...v, checks: { ...v.checks, [key]: result } } : v));
-    setChecking(null);
   };
 
-  const jobsUsing = (id: string) =>
-    shown
-      ? [shown.default.instance === id ? "the default" : null, ...JOBS.filter((j) => shown.jobs[j.id]?.instance === id).map((j) => j.label)].filter(
-          (x): x is string => !!x,
-        )
-      : [];
-
-  // The Mac's report of this provider's CLI (its version, signed-in state) and the status line built from it.
-  const foundOf = (inst: ProviderInstance) => reportOf(inst)?.drivers.find((d) => d.driver === inst.driver);
-  const statusOf = (inst: ProviderInstance): ProviderStatus =>
-    !deviceOf(inst)
-      ? { tone: "warning", text: "Not on a Mac yet" }
-      : providerStatus({
-      enabled: inst.enabled,
-      runs: runsOn(inst.driver),
-      online: reachable(inst),
-      report: !!reportOf(inst),
-      found: foundOf(inst),
-      check: view.checks[`${scope}:${inst.id}`],
-    });
-
-  // Sign in shows only in the Mac app, for a provider on this Mac whose CLI says it is not signed in (or whose check failed).
-  const canSignIn = (inst: ProviderInstance) => {
-    const mac = thisMacDevice();
-    const failed = !!view.checks[`${scope}:${inst.id}`] && !view.checks[`${scope}:${inst.id}`].ok;
-    return !!mac && deviceOf(inst) === mac && SIGN_IN_DRIVERS.includes(inst.driver) && (statusOf(inst).text === "Not signed in" || failed);
-  };
-  // The Mac app's bridge (TitleBar.swift, handler "signIn"): it opens the CLI's sign-in in Terminal, then re-reports.
+  // The Mac app's bridge (TitleBar.swift, handler "signIn") opens the CLI's sign-in in Terminal, then the page re-reads.
   const signIn = (inst: ProviderInstance) => {
     (window as unknown as { webkit?: { messageHandlers?: { signIn?: { postMessage: (m: unknown) => void } } } }).webkit?.messageHandlers?.signIn?.postMessage({
       driver: inst.driver,
@@ -232,235 +188,303 @@ export function ProvidersSection({ sub }: { sub?: string }) {
     });
     setSigningIn(inst.driver);
   };
+  const canSignIn = (inst: ProviderInstance) => !!thisMacDevice() && deviceOf(inst) === thisMacDevice() && SIGN_IN_DRIVERS.includes(inst.driver);
+
+  const addAi = async (inst: ProviderInstance) => {
+    if (!tabDevice) throw new Error("Connect a computer first.");
+    await saveSet(addInstanceTo(editing, { ...inst, device: tabDevice.id }));
+  };
+
+  const openAdd = (driver?: Driver) => {
+    if (!tabDevice) navigate("/settings/devices");
+    else setAdding({ driver });
+  };
+
+  // ---- empty: no computer yet ----
+  if (!readOnly && devices.length === 0) {
+    return (
+      <Section id="add-provider" title="Providers">
+        <Card>
+          <EmptyRow title="No computer connected" description="Your AI runs on your own computer, through the Mac app or the command-line tool." />
+          <div className="px-3 pb-3 sm:px-4">
+            <Button asChild size="sm" variant="outline">
+              <Link to="/settings/devices">Add computer</Link>
+            </Button>
+          </div>
+        </Card>
+      </Section>
+    );
+  }
+
+  const detailOpen = (inst: ProviderInstance) => `/settings/providers/${encodeURIComponent(inst.id)}`;
+  const nameOf = (id: string) => DRIVERS.find((d) => d.id === id)?.label ?? id;
 
   return (
     <>
-      <ScopeSentence devices={devices} device={device} readOnly={readOnly} onPick={setDeviceChoice} />
-      {saving && <p className="mt-2 text-xs text-muted-foreground">Saving…</p>}
-      {error && <Notice tone="error">{error}</Notice>}
+      {!readOnly && devices.length > 0 && (
+        <Tabs value={tabDevice?.id ?? ""} onValueChange={(v) => { setTab(v); if (sub) navigate("/settings/providers"); }} className="mb-8">
+          <TabsList className="h-auto max-w-full flex-wrap justify-start">
+            {devices.map((d) => (
+              <TabsTrigger key={d.id} value={d.id} className="gap-1.5">
+                {!d.online && <StatusDot tone="attention" />}
+                <span className="max-w-40 truncate">{d.name}</span>
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+      )}
 
-      {!isAdmin && (
-        <div className="mt-6 space-y-2">
-          {view.using === "own" && (
-            <Notice>
-              Your own AI answers your jobs.{" "}
-              {view.workspace && (
-                <button type="button" onClick={() => void dropOwn()} className="underline underline-offset-2 hover:text-foreground">
-                  Use the workspace's AI instead
-                </button>
+      <div className="grid gap-8 lg:grid-cols-[17rem_minmax(0,1fr)]">
+        <div className={cn("min-w-0 space-y-8", sub && "hidden lg:block")}>
+          <Section
+            id="add-provider"
+            title="Providers"
+            action={
+              readOnly ? (
+                <Button size="xs" variant="ghost" onClick={() => openAdd()}>
+                  <Plus /> Add my own
+                </Button>
+              ) : (
+                <Button size="xs" variant="ghost" onClick={() => openAdd()}>
+                  <Plus /> Add provider
+                </Button>
+              )
+            }
+          >
+            <Card>
+              {listed.length === 0 && installedHere.length === 0 && (
+                <EmptyRow
+                  title={readOnly ? "No AI answers your jobs yet" : "No AI on this computer yet"}
+                  description={readOnly ? "Add your own AI on a computer you connect." : "Add a tool the computer has, or add one from the list below."}
+                />
               )}
-            </Notice>
+              {listed.map((inst) => (
+                <ProviderInstanceCard
+                  key={inst.id}
+                  inst={inst}
+                  status={statusOf(inst)}
+                  version={reportOf(inst)?.drivers.find((d) => d.driver === inst.driver)?.version}
+                  selected={!readOnly && detailInst?.id === inst.id}
+                  href={readOnly ? undefined : detailOpen(inst)}
+                  action={!readOnly && statusOf(inst).action === "sign-in" && canSignIn(inst) ? (
+                    <Button size="xs" variant="outline" onClick={() => signIn(inst)}>
+                      Sign in
+                    </Button>
+                  ) : !readOnly && statusOf(inst).action === "install" ? (
+                    <Button size="xs" variant="outline" asChild>
+                      <Link to={detailOpen(inst)}>Install</Link>
+                    </Button>
+                  ) : undefined}
+                  onToggle={readOnly ? undefined : (on) => patch(inst, { enabled: on })}
+                />
+              ))}
+              {installedHere.map((d) => (
+                <ListRow
+                  key={`installed-${d.driver}`}
+                  icon={<DriverMark driver={d.driver} />}
+                  title={
+                    <>
+                      {nameOf(d.driver)}
+                      {d.version && <span className="ml-2 font-mono text-xs font-normal text-muted-foreground">v{d.version}</span>}
+                    </>
+                  }
+                  actions={
+                    <Button size="xs" variant="outline" onClick={() => openAdd(d.driver)} aria-label={`Add ${nameOf(d.driver)}`}>
+                      Add
+                    </Button>
+                  }
+                />
+              ))}
+            </Card>
+          </Section>
+
+          {orphans.length > 0 && editing && (
+            <Section title="Not on a computer">
+              <Card>
+                {orphans.map((inst) => (
+                  <ProviderInstanceCard key={inst.id} inst={inst} status={statusOf(inst)} selected={detailInst?.id === inst.id} href={detailOpen(inst)} />
+                ))}
+              </Card>
+            </Section>
           )}
-          {view.using === "workspace" && <Notice>You use the workspace's AI. Add your own on a Mac you connect; it answers instead.</Notice>}
-          {view.using === "none" && <Notice tone="warn">No AI answers your jobs yet. Connect a Mac, then add one to it.</Notice>}
-        </div>
-      )}
 
-      {(readOnly || devices.length > 0) && (
-        // one column: the list of providers, "Add provider" last in the same card, then the selected provider's settings
-        <div className="mt-6">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
-              <h2 className="text-base font-semibold text-foreground">Providers</h2>
-              <button
-                type="button"
-                aria-label="Add provider"
-                disabled={!device}
-                onClick={() => setAdding(true)}
-                className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"
-              >
-                <Plus className="h-4 w-4" />
-              </button>
-            </div>
-            <button
-              type="button"
-              onClick={refresh}
-              disabled={refreshing}
-              className="flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-60"
-            >
-              <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
-              {refreshing ? "Checking…" : readAt > Date.now() - 60_000 ? "Checked just now" : `Checked ${fmtAgo(readAt)}`}
-            </button>
-          </div>
-          <Card className="mt-3">
-            {listed.length === 0 ? (
-              <div className="px-4 py-3">
-                <Notice>{readOnly ? "The workspace has no AI yet." : device ? "No AI on this Mac yet." : "Connect a Mac to add your AI."}</Notice>
+        </div>
+
+        <div className={cn("min-w-0", !sub && "hidden lg:block")}>
+          {detailInst && editing && tabDevice ? (
+            <ProviderDetail
+              inst={detailInst}
+              status={statusOf(detailInst)}
+              check={view.checks[`${scope}:${detailInst.id}`]}
+              checking={checking === `${scope}:${detailInst.id}`}
+              canTest={(devices.find((d) => d.id === deviceOf(detailInst))?.online ?? true) && checking === null}
+              used={usedBy(detailInst.id)}
+              models={modelsOf(view, detailInst)}
+              computers={!onDevice(detailInst) ? devices.map((d) => ({ id: d.id, name: d.name })) : undefined}
+              computerNote={!onDevice(detailInst) ? (deviceOf(detailInst) ? "Its computer was removed: pick another." : "Pick the computer that runs it.") : undefined}
+              backTo="/settings/providers"
+              onChange={(p) => patch(detailInst, p)}
+              onTest={() => void runCheck(detailInst)}
+              onSignIn={statusOf(detailInst).action === "sign-in" && canSignIn(detailInst) ? () => signIn(detailInst) : undefined}
+              onMove={onDevice(detailInst) ? undefined : (id) => patch(detailInst, { device: id })}
+              onRemove={() => remove(detailInst)}
+            />
+          ) : sub ? (
+            <Card>
+              <EmptyRow title="This AI is no longer here" />
+              <div className="px-3 pb-3 sm:px-4">
+                <Button asChild size="sm" variant="outline">
+                  <Link to="/settings/providers">Back to the list</Link>
+                </Button>
               </div>
-            ) : (
-              listed.map((inst) => {
-                const found = foundOf(inst);
-                return (
-                  <ProviderInstanceCard
-                    key={inst.id}
-                    inst={inst}
-                    status={statusOf(inst)}
-                    version={found?.installed ? found.version : undefined}
-                    customEndpoint={hasCustomEndpoint(reportOf(inst), inst)}
-                    selected={detail?.id === inst.id}
-                    readOnly={readOnly}
-                    where={readOnly ? deviceName(deviceOf(inst)) : undefined}
-                    onSelect={() => setInstanceId(inst.id)}
-                    onToggle={(on) => patch(inst, { enabled: on })}
-                  />
-                );
-              })
-            )}
-            <button
-              type="button"
-              disabled={!device}
-              onClick={() => setAdding(true)}
-              className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground disabled:opacity-40"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              {readOnly && listed.length > 0 ? `Add my own on ${device ? device.name : "a Mac"}` : "Add provider"}
-            </button>
-            {detail && device && (
-              <ProviderDetail
-                inst={detail}
-                status={statusOf(detail)}
-                check={view.checks[`${scope}:${detail.id}`]}
-                checking={checking === `${scope}:${detail.id}`}
-                canCheck={online(detail) && checking === null}
-                used={jobsUsing(detail.id)}
-                runHere={!deviceOf(detail) ? device.name : undefined}
-                onChange={(p) => patch(detail, p)}
-                onCheck={() => void runCheck(detail, scope)}
-                onSignIn={canSignIn(detail) ? () => signIn(detail) : undefined}
-                onRunHere={!deviceOf(detail) ? () => patch(detail, { device: device.id }) : undefined}
-                onRemove={() => {
-                  setInstanceId(null);
-                  if (editing) void save({ ...editing, instances: editing.instances.filter((i) => i.id !== detail.id) });
-                }}
-              />
-            )}
-          </Card>
+            </Card>
+          ) : null}
         </div>
-      )}
-
-      {(talk === "chat" || talk === "both") && <OwnAiMcpSection />}
+      </div>
 
       {shown && (
-        <Group
-          title="Who does which job"
-          hint={readOnly ? "Set by the workspace. Add your own AI to choose." : "A job without its own pick uses the default."}
-        >
-          <Card className="px-3">
-            <JobRow
-              label="Everything else"
-              set={shown}
-              listModels={(i) => modelsOf(view, i)}
-              value={shown.default}
-              disabled={readOnly || saving}
-              onChange={(v) => v && editing && void save({ ...editing, default: v })}
-            />
-            {JOBS.map((j) => (
-              <JobRow
-                key={j.id}
-                label={j.label}
+        <div className={cn("mt-8 space-y-8", sub && "hidden lg:block")}>
+          <Section title="Who does what">
+            <Card>
+              <PickRow
+                id="default-ai"
+                title="Default"
+                sel={shown.default}
                 set={shown}
                 listModels={(i) => modelsOf(view, i)}
-                value={shown.jobs[j.id]}
-                fallback={shown.default}
-                disabled={readOnly || saving}
-                onChange={(v) => {
-                  if (!editing) return;
-                  const jobs = { ...shown.jobs };
-                  if (v) jobs[j.id] = v;
-                  else delete jobs[j.id];
-                  void save({ ...editing, jobs });
-                }}
+                readOnly={readOnly}
+                onChange={(v) => v && editing && void save({ ...editing, default: v })}
               />
-            ))}
-          </Card>
-        </Group>
+              <Advanced summary="A different AI for one tool">
+                {JOBS.map((j, n) => (
+                  <PickRow
+                    key={j.id}
+                    id={n === 0 ? "tool-ai" : undefined}
+                    title={j.label}
+                    sel={shown.jobs[j.id]}
+                    fallback={shown.default}
+                    set={shown}
+                    listModels={(i) => modelsOf(view, i)}
+                    readOnly={readOnly}
+                    onChange={(v) => {
+                      if (!editing) return;
+                      const jobs = { ...editing.jobs };
+                      if (v) jobs[j.id] = v;
+                      else delete jobs[j.id];
+                      void save({ ...editing, jobs });
+                    }}
+                  />
+                ))}
+              </Advanced>
+            </Card>
+          </Section>
+
+          {isAdmin && editing && (
+            <Card>
+              <Row title="Who else can use it" control={<Button asChild size="xs" variant="ghost"><Link to="/settings/admin/access">Admin → Access</Link></Button>} />
+            </Card>
+          )}
+        </div>
       )}
 
-      {isAdmin && editing && (
-        <p className="mt-8 text-xs text-muted-foreground">
-          This is the workspace's AI. Who else may use it:{" "}
-          <Link to="/settings/admin/ai" className="underline underline-offset-2 hover:text-foreground">
-            Admin → AI access
-          </Link>
-          .
-        </p>
-      )}
-
-      {adding && device && (
+      {adding && tabDevice && (
         <AddProviderDialog
-          deviceName={device.name}
-          report={device.report ?? null}
+          deviceName={tabDevice.name}
+          report={tabDevice.report ?? null}
           instances={editing?.instances ?? []}
-          onClose={() => setAdding(false)}
-          onAdd={async (inst) => addInstance(inst)}
+          initialDriver={adding.driver}
+          onClose={() => setAdding(null)}
+          onAdd={addAi}
         />
       )}
     </>
   );
 }
 
-/** One job (or the default): its provider, model and effort. `value` undefined = "Use default" (shows the default's pick). */
-function JobRow({
-  label,
+/**
+ * One pick: an AI, its model and thinking level. `sel` undefined on a job = "Use the Default" (its status says which AI that
+ * is). Read-only (the team's): the pick as text, no controls.
+ */
+function PickRow({
+  id,
+  title,
+  sel,
+  fallback,
   set,
   listModels,
-  value,
-  fallback,
-  disabled,
+  readOnly,
   onChange,
 }: {
-  label: string;
-  set: ProviderSettings;
-  listModels: (inst: ProviderInstance) => string[];
-  value?: Selection;
-  /** Set for a job row: the default it falls back to. Unset for the default row itself. */
+  id?: SearchRowId;
+  title: string;
+  sel?: Selection;
+  /** a job's fallback: the Default it uses when it has no pick */
   fallback?: Selection;
-  disabled?: boolean;
+  set: ProviderSettings;
+  listModels: (i: ProviderInstance) => string[];
+  readOnly: boolean;
   onChange: (v: Selection | undefined) => void;
 }) {
   const isDefault = !fallback;
-  const current = value ?? fallback ?? set.default;
-  const modelsOfId = (id: string) => {
-    const inst = set.instances.find((i) => i.id === id);
-    return inst ? listModels(inst) : [];
+  const cur: Selection = sel ?? fallback ?? set.default;
+  const inst = set.instances.find((i) => i.id === cur.instance);
+  const models = inst ? listModels(inst) : [];
+  const pick = (instanceId: string) => {
+    const target = set.instances.find((i) => i.id === instanceId);
+    const list = target ? listModels(target) : [];
+    onChange({ instance: instanceId, model: target?.model ?? list[0] ?? "", effort: target?.effort ?? cur.effort });
   };
-  const pickInstance = (id: string) => {
-    const list = modelsOfId(id);
-    const model = list.includes(current.model) ? current.model : (list[0] ?? current.model);
-    onChange({ instance: id, model, effort: current.effort });
-  };
-  const known = set.instances.some((i) => i.id === current.instance);
-  const instanceOptions = known ? set.instances : [...set.instances, { id: current.instance, driver: "claude" as Driver, name: current.instance || "None", enabled: false }];
-  const explicit = isDefault || !!value;
 
+  if (readOnly) {
+    return <Row id={id} title={title} status={`${inst?.name ?? "No AI"}${sel || isDefault ? ` · ${modelName(cur.model) || "Tool's default"} · ${effortLabel(cur.effort)}` : ""}`} />;
+  }
+
+  const explicit = isDefault || !!sel;
+  const defaultName = set.instances.find((i) => i.id === set.default.instance)?.name ?? "the Default";
   return (
-    <div className="flex flex-wrap items-center gap-2 py-3">
-      <div className="mr-auto min-w-[10rem] flex-1">
-        <div className="text-sm text-foreground">{label}</div>
-      </div>
-      <select
-        value={explicit ? current.instance : ""}
-        disabled={disabled}
-        onChange={(e) => (e.target.value ? pickInstance(e.target.value) : onChange(undefined))}
-        className={selectCls}
-        aria-label={`${label}: AI`}
-      >
-        {!isDefault && <option value="">Use default</option>}
-        {instanceOptions.map((i) => (
-          <option key={i.id} value={i.id}>
-            {i.name}
-            {i.enabled ? "" : " (off)"}
-          </option>
-        ))}
-      </select>
-      {explicit ? (
-        <>
-          <ModelSelect value={current.model} options={modelsOfId(current.instance)} disabled={disabled} onChange={(m) => onChange({ ...current, model: m })} />
-          <EffortSelect value={current.effort} disabled={disabled} onChange={(e) => onChange({ ...current, effort: e })} />
-        </>
-      ) : (
-        <span className="text-xs text-muted-foreground">{selectionLabel(current)}</span>
+    <Row
+      id={id}
+      title={title}
+      status={!explicit ? `Uses ${defaultName}` : undefined}
+      control={
+        <div className="flex items-center gap-2">
+          <SettingsSelect
+            label={`${title}: AI`}
+            value={explicit ? cur.instance : USE_DEFAULT}
+            onValueChange={(v) => (v === USE_DEFAULT ? onChange(undefined) : pick(v))}
+            options={[
+              ...(isDefault ? [] : [{ value: USE_DEFAULT, label: "Use the Default" }]),
+              ...set.instances.map((i) => ({ value: i.id, label: `${i.name}${i.enabled ? "" : " (off)"}` })),
+            ]}
+          />
+          {!isDefault && sel && (
+            <Button size="icon-xs" variant="ghost" aria-label={`Use the Default for ${title}`} title="Use the Default" onClick={() => onChange(undefined)}>
+              <RotateCcw />
+            </Button>
+          )}
+        </div>
+      }
+    >
+      {explicit && inst && (
+        <div className="flex flex-wrap gap-2">
+          {models.length > 0 ? (
+            <SettingsSelect
+              label={`${title}: model`}
+              value={models.includes(cur.model) ? cur.model : models[0]!}
+              onValueChange={(m) => onChange({ ...cur, model: m })}
+              options={models.map((m) => ({ value: m, label: modelName(m) }))}
+            />
+          ) : (
+            <span className="self-center text-xs text-muted-foreground">Uses the tool's own default</span>
+          )}
+          <SettingsSelect
+            label={`${title}: thinking level`}
+            value={cur.effort}
+            onValueChange={(e) => onChange({ ...cur, effort: e as Selection["effort"] })}
+            options={EFFORTS.map((e) => ({ value: e, label: effortLabel(e) }))}
+          />
+        </div>
       )}
-    </div>
+    </Row>
   );
 }

@@ -5,14 +5,14 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { INSTALL_LINE, type CliId, type ConnectResult, type LocalAiRow, type LocalAiView, type McpResult, type SignInResult } from "../../contracts/local-ai";
 import { planFromCli, type PlanId } from "../../contracts/plans";
-import { DEFAULT_SETTINGS, DRIVER_MODELS, type ProviderInstance, type ProviderSettings } from "../../contracts/providers";
+import { addInstanceTo, type ProviderInstance } from "../../contracts/providers";
 import { checkInstance } from "../providers";
-import { connectedOwn, ownSettings, saveSettings } from "./providers";
+import { connectedOwn, ownSettings, parseSettings, saveSettings } from "./providers";
 import { isOnline, listDevices } from "./devices";
 import { findUser, newApiKey, type UserRecord } from "../users";
 
 /**
- * Setup's "Connect your AI" (Settings → Your AI shares it): finds the AI command-line tools on this Mac, connects one
+ * Setup's "Connect your AI" (Settings → Providers shares it): finds the AI command-line tools on this Mac, connects one
  * as this account's AI after a real check, and adds Creator Toolset to the ones the person chose. Runs only on the
  * owner's Mac (CT_LOCAL=1, the routes check it), and nothing here runs before a button is pressed.
  *
@@ -64,6 +64,12 @@ export function setRunnerForTests(r?: Runner): void {
   bins.clear();
   probes.clear();
   codexUrl = undefined;
+}
+
+/** Whether a desktop app is installed: the real /Applications on this Mac, unless a test says otherwise. */
+let appPresent = (app: string): boolean => existsSync(`/Applications/${app}.app`);
+export function setDesktopAppsForTests(f?: (app: string) => boolean): void {
+  appPresent = f ?? ((app) => existsSync(`/Applications/${app}.app`));
 }
 
 const isExecutable = (p: string): boolean => {
@@ -293,7 +299,7 @@ export async function localAiView(username: string, mcpTo: CliId[], fresh = fals
     });
   }
   for (const d of DESKTOP) {
-    if (existsSync(`/Applications/${d.app}.app`)) rows.push({ id: d.id, name: d.name, kind: "desktop", found: true, signedIn: null, connected: false, mcp: "n/a" });
+    if (appPresent(d.app)) rows.push({ id: d.id, name: d.name, kind: "desktop", found: true, signedIn: null, connected: false, mcp: "n/a" });
   }
   return { local: true, rows };
 }
@@ -336,12 +342,9 @@ export async function connectCli(username: string, id: CliId, home = os.homedir(
   const device = listDevices((d) => d.owner === username).find((d) => isOnline(d.id));
   if (!device) return { state: "mac", signedIn: p.signedIn, answered: null, message: MAC_ONLY };
 
-  const cur = ownSettings(username) ?? structuredClone(DEFAULT_SETTINGS);
-  const instId = `local-${id}`;
-  const inst: ProviderInstance = { id: instId, driver: id, name: NAMES[id], enabled: true, device: device.id, ...(p.home ? { home: p.home } : {}) };
-  const instances = cur.instances.some((i) => i.id === instId) ? cur.instances.map((i) => (i.id === instId ? inst : i)) : [...cur.instances, inst];
-  const def = cur.default.instance ? cur.default : { instance: instId, model: DRIVER_MODELS[id]?.[0] ?? "", effort: "xhigh" as const };
-  const next: ProviderSettings = { ...cur, instances, default: def };
+  const inst: ProviderInstance = { id: `local-${id}`, driver: id, name: NAMES[id], enabled: true, device: device.id, ...(p.home ? { home: p.home } : {}) };
+  // the same writer as the Settings page's Add provider: addInstanceTo builds the set, parseSettings checks it
+  const next = parseSettings(addInstanceTo(ownSettings(username), inst), username, { trustedFolder: true });
   await saveSettings(next, username);
 
   const check = await checkInstance(username, inst, next);

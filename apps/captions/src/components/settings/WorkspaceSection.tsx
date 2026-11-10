@@ -1,239 +1,293 @@
-import { useEffect, useState } from "react";
-import { Check, Copy, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { useNavigate } from "react-router";
 import { TOOLS, TOOL_NAMES, type Tool } from "@contracts/tools";
-import type { MemberView, WorkspaceRole, WorkspaceView } from "@contracts/workspaces";
+import type { MemberView, WorkspaceView } from "@contracts/workspaces";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Switch } from "@/components/ui/switch";
 import { useMe } from "@/lib/auth";
 import { createInvite, getWorkspace, inviteUrl, removeMember, renameWorkspace, revokeInvite, setSignInWith, updateMember } from "@/lib/workspaces";
-import { cn } from "@/lib/utils";
-import { Card, Footnote, Group, Loading, Notice, Row } from "./ui";
-import { fmtAgo, msg, selectCls } from "./helpers";
+import { Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Row, RowMenu, Section, SettingsSelect, TextField, saveFailed } from "./ui";
+import { fmtAgo, msg } from "./helpers";
 
-const ROLE_NAMES: Record<WorkspaceRole, string> = { owner: "Owner", member: "Member" };
-
-/** How the team signs in (Settings → Team; the rule is enforced by api/auth.ts ruleFor). */
+/** How the team signs in (api/auth.ts ruleFor enforces it). The value is the set of providers, empty = a password too. */
 const SIGN_IN: { id: string; label: string; value: ("google" | "apple")[] }[] = [
   { id: "any", label: "Any way (password too)", value: [] },
   { id: "google", label: "Google only", value: ["google"] },
   { id: "apple", label: "Apple only", value: ["apple"] },
   { id: "both", label: "Google or Apple", value: ["google", "apple"] },
 ];
+const signInId = (v: string[] | undefined) => SIGN_IN.find((o) => o.value.join() === (v ?? []).join())?.id ?? "any";
 
 /**
- * Settings → Team (contracts/workspaces.ts; hosted servers only): the team, invite links and each member's apps. Owner
- * or member, nothing between: the owner changes things; a member sees who is in it. Every member uses their own AI:
- * API budgets are not wired on this server yet, so there is no budget to set.
+ * Settings → Team (hosted servers only). The owner renames the team, sets how it signs in, invites people and removes
+ * them. A member sees the team and their own row. Tools for a member are edited in one place for each viewer: a team
+ * owner who is not a platform admin changes them here; a platform admin changes them in Admin → Access (the same
+ * account setting, api/admin.ts and api/workspace.ts both write `off`).
  */
 export function WorkspaceSection() {
   const me = useMe();
+  const navigate = useNavigate();
   const [view, setView] = useState<WorkspaceView | null | undefined>(undefined);
-  const [error, setError] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [inviting, setInviting] = useState(false);
+  const [editing, setEditing] = useState<MemberView | null>(null);
 
-  useEffect(() => {
-    getWorkspace().then(setView).catch((e) => setError(msg(e)));
+  const load = useCallback(() => {
+    setFailed(false);
+    return getWorkspace().then(setView, () => setFailed(true));
   }, []);
+  useEffect(() => {
+    void load();
+  }, [load]);
 
-  const run = async (p: Promise<WorkspaceView | unknown>) => {
-    setError(null);
-    try {
-      const next = await p;
-      setView(next && typeof next === "object" && "members" in next ? (next as WorkspaceView) : await getWorkspace());
-    } catch (e) {
-      setError(msg(e));
-    }
-  };
+  if (failed) {
+    return (
+      <Section title="Team">
+        <Card>
+          <ErrorRow title="The team did not load" retry={() => void load()} />
+        </Card>
+      </Section>
+    );
+  }
+  if (view === undefined) {
+    return (
+      <Section title="Team">
+        <Card>
+          <LoadingRow />
+        </Card>
+      </Section>
+    );
+  }
+  if (view === null) {
+    return (
+      <Section title="Team">
+        <Card>
+          <EmptyRow title="You're not in a team" description="Someone who runs one sends you an invite link to join." />
+        </Card>
+      </Section>
+    );
+  }
 
-  if (view === undefined) return error ? <Notice tone="error">{error}</Notice> : <Loading />;
-  if (view === null) return <Notice>You're not in a team. Someone who runs one sends you an invite link to join.</Notice>;
-
-  const manager = view.me === "owner";
+  const owner = view.me === "owner";
+  // every change reloads the view; a failure throws, so the control that asked shows its toast
+  const act = (p: Promise<unknown>) => p.then(load);
+  const attempt = (p: Promise<unknown>) => act(p).catch((e) => saveFailed(msg(e)));
+  const signIn = SIGN_IN.find((o) => o.id === signInId(view.workspace.signInWith));
 
   return (
-    <div>
-      {error && <Notice tone="error">{error}</Notice>}
-
-      <Group title="Details" hint="Everyone signs in with their own account.">
+    <>
+      <Section title="Team">
         <Card>
-          <Row label="Name">
-            {manager ? <NameInput key={view.workspace.name} name={view.workspace.name} onSave={(n) => void run(renameWorkspace(n))} /> : <span className="text-sm">{view.workspace.name}</span>}
-          </Row>
-          <Row label="Plan">
-            <span className="text-sm">
-              {view.workspace.plan === "team" ? "Team" : "Free"} · {view.seats} {view.seats === 1 ? "seat" : "seats"}
-            </span>
-          </Row>
-          <Row label="Sign-in" hint="Google or Apple instead of a password. Link yours first in Settings → Account.">
-            {manager ? (
-              <select
-                value={SIGN_IN.find((o) => o.value.join() === (view.workspace.signInWith ?? []).join())?.id ?? "any"}
-                onChange={(e) => void run(setSignInWith(SIGN_IN.find((o) => o.id === e.target.value)?.value ?? []))}
-                className={selectCls}
-                aria-label="How the team signs in"
-              >
-                {SIGN_IN.map((o) => (
-                  <option key={o.id} value={o.id}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <span className="text-sm">{SIGN_IN.find((o) => o.value.join() === (view.workspace.signInWith ?? []).join())?.label ?? "Any way"}</span>
-            )}
-          </Row>
+          {owner ? (
+            <Row
+              id="team-name"
+              title="Team name"
+              control={
+                <TextField
+                  label="Team name"
+                  value={view.workspace.name}
+                  onCommit={async (next) => {
+                    if (!next.trim()) throw new Error("A team needs a name.");
+                    await act(renameWorkspace(next.trim()));
+                  }}
+                />
+              }
+            />
+          ) : (
+            <Row id="team-name" title="Team name" status={view.workspace.name} />
+          )}
+          <Row
+            id="team-sign-in"
+            title="How the team signs in"
+            status={owner ? undefined : signIn?.label}
+            control={
+              owner ? (
+                <SettingsSelect
+                  label="How the team signs in"
+                  value={signInId(view.workspace.signInWith)}
+                  options={SIGN_IN.map((o) => ({ value: o.id, label: o.label }))}
+                  onValueChange={(id) => void attempt(setSignInWith(SIGN_IN.find((o) => o.id === id)?.value ?? []))}
+                />
+              ) : undefined
+            }
+          />
         </Card>
-      </Group>
+      </Section>
 
-      <Group title="Members" hint={manager ? "Set each member's apps on their row." : undefined}>
+      <Section
+        id="team-members"
+        title="Members"
+        action={
+          owner ? (
+            <Button size="xs" variant="ghost" onClick={() => setInviting(true)}>
+              + Invite
+            </Button>
+          ) : undefined
+        }
+      >
         <Card>
-          {view.members.map((m) => (
-            <MemberRow key={m.username} m={m} view={view} isMe={m.username === me?.username} run={run} />
-          ))}
+          {view.members.map((m) => {
+            const self = m.username === me?.username;
+            return (
+              <ListRow
+                key={m.username}
+                title={
+                  <>
+                    {m.username}
+                    {self && <span className="ml-1.5 font-normal text-muted-foreground">(you)</span>}
+                  </>
+                }
+                subtitle={memberLine(m, self, owner)}
+                actions={owner && m.role !== "owner" && !self ? <MemberMenu m={m} canEditHere={me?.role !== "admin"} onTools={() => setEditing(m)} onAdmin={() => navigate("/settings/admin/access")} onRemove={() => attempt(removeMember(m.username))} /> : undefined}
+              />
+            );
+          })}
         </Card>
-      </Group>
+      </Section>
 
-      {manager && <InviteGroup view={view} run={run} />}
+      {owner && view.invites.length > 0 && (
+        <Section id="team-invite" title="Pending invites">
+          <Card>
+            {view.invites.map((i) => (
+              <ListRow
+                key={i.id}
+                title="Link for one person"
+                subtitle={`Expires ${new Date(i.expiresAt).toLocaleDateString(undefined, { day: "numeric", month: "short" })}`}
+                actions={
+                  <RowMenu
+                    label="More for this invite"
+                    items={[{ label: "Revoke", destructive: true, confirm: { title: "Revoke this invite link?", body: "Nobody can join with it after this.", ok: "Revoke" }, onSelect: () => attempt(revokeInvite(i.id)) }]}
+                  />
+                }
+              />
+            ))}
+          </Card>
+        </Section>
+      )}
 
-      <Group title="AI for members">
-        <Footnote>
-          Each member answers with their own AI (Settings → AI providers on their own Mac). API budgets aren't set up on this
-          server yet, so a member without an AI of their own has none until they add one.
-        </Footnote>
-      </Group>
-    </div>
+      <InviteDialog open={inviting} onOpenChange={setInviting} onCreated={() => void load()} />
+      <ToolsDialog member={editing} onClose={() => setEditing(null)} onChange={(m, off) => attempt(updateMember(m.username, { off }))} />
+    </>
   );
 }
 
-function NameInput({ name, onSave }: { name: string; onSave: (n: string) => void }) {
-  const [v, setV] = useState(name);
+/** One line for a member: the role, and for the owner (and the person themselves) how their AI is paid. */
+function memberLine(m: MemberView, self: boolean, owner: boolean): string {
+  const parts = [m.role === "owner" ? "Owner" : null];
+  if (owner || self) {
+    parts.push(m.ai === "own" ? (self ? "Your own AI" : "Own AI") : `API budget $${m.spentUsd.toFixed(2)} of $${m.budgetUsd} this month`);
+    parts.push(`active ${fmtAgo(m.lastActiveAt)}`);
+  }
+  return parts.filter(Boolean).join(" · ");
+}
+
+function MemberMenu({ m, canEditHere, onTools, onAdmin, onRemove }: { m: MemberView; canEditHere: boolean; onTools: () => void; onAdmin: () => void; onRemove: () => Promise<void> }) {
   return (
-    <Input
-      value={v}
-      onChange={(e) => setV(e.target.value)}
-      onBlur={() => v.trim() && v !== name && onSave(v)}
-      onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-      className="h-8 w-56 text-sm"
-      aria-label="Team name"
+    <RowMenu
+      label={`More for ${m.username}`}
+      items={[
+        canEditHere
+          ? { label: "Tools…", onSelect: onTools }
+          : { label: "Tools in Admin", onSelect: onAdmin },
+        {
+          label: "Remove from team",
+          destructive: true,
+          confirm: { title: `Remove ${m.username} from the team?`, body: "Their account stays theirs.", ok: "Remove" },
+          onSelect: onRemove,
+        },
+      ]}
     />
   );
 }
 
-function MemberRow({
-  m,
-  view,
-  isMe,
-  run,
-}: {
-  m: MemberView;
-  view: WorkspaceView;
-  isMe: boolean;
-  run: (p: Promise<unknown>) => Promise<void>;
-}) {
-  const [apps, setApps] = useState(false);
-  // the owner changes everyone else; the owner's own row has nothing to change
-  const editable = m.role !== "owner" && view.me === "owner";
-  const toggleApp = (t: Tool, on: boolean) =>
-    void run(updateMember(m.username, { off: on ? m.off.filter((x) => x !== t) : [...m.off, t] }));
-
+/** A member's apps: one switch per app, each saved at once (the `off` list of the account). */
+function ToolsDialog({ member, onClose, onChange }: { member: MemberView | null; onClose: () => void; onChange: (m: MemberView, off: Tool[]) => Promise<void> }) {
+  if (!member) return null;
+  const toggle = (t: Tool, on: boolean) => {
+    const off = member.off.filter((x): x is Tool => (TOOLS as readonly string[]).includes(x) && x !== t);
+    if (!on) off.push(t);
+    void onChange(member, off);
+  };
   return (
-    <div>
-      <Row
-        label={
-          <span className="flex items-center gap-2">
-            {m.username}
-            {isMe && <span className="text-xs text-muted-foreground">(you)</span>}
-            <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">{ROLE_NAMES[m.role]}</span>
-          </span>
-        }
-        hint={isMe || view.me === "owner" ? `${aiLine(m, isMe)} · active ${fmtAgo(m.lastActiveAt)}` : undefined}
-      >
-        {editable && (
-          <div className="flex flex-wrap items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={() => setApps((a) => !a)} aria-expanded={apps}>
-              Apps
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className="text-muted-foreground hover:text-red-500"
-              aria-label={`Remove ${m.username} from the team`}
-              onClick={() => window.confirm(`Remove ${m.username} from the team? Their account stays theirs.`) && void run(removeMember(m.username))}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-        )}
-      </Row>
-      {apps && editable && (
-        <div className="flex flex-wrap gap-x-4 gap-y-2 px-3 pb-3">
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent aria-describedby={undefined} className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Tools for {member.username}</DialogTitle>
+        </DialogHeader>
+        <Card>
           {TOOLS.map((t) => (
-            <label key={t} className={cn("flex items-center gap-1.5 text-xs")}>
-              <input type="checkbox" checked={!m.off.includes(t)} onChange={(e) => toggleApp(t, e.target.checked)} />
-              {TOOL_NAMES[t]}
-            </label>
+            <Row key={t} title={TOOL_NAMES[t]} control={<Switch checked={!member.off.includes(t)} aria-label={TOOL_NAMES[t]} onCheckedChange={(on) => toggle(t, on)} />} />
           ))}
-        </div>
-      )}
-    </div>
+        </Card>
+      </DialogContent>
+    </Dialog>
   );
 }
 
-/** One member's AI, in words. A budget row can exist from before; it has no effect on this server yet. */
-function aiLine(m: MemberView, isMe: boolean): string {
-  if (m.ai === "own") return isMe ? "Your own AI" : "Their own AI";
-  return "API budget (not set up on this server: no AI)";
-}
-
-function InviteGroup({ view, run }: { view: WorkspaceView; run: (p: Promise<unknown>) => Promise<void> }) {
+/** Makes an invite link (one person, 7 days). The link is shown here once; the pending list only has Revoke. */
+function InviteDialog({ open, onOpenChange, onCreated }: { open: boolean; onOpenChange: (o: boolean) => void; onCreated: () => void }) {
   const [link, setLink] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
+  const close = (o: boolean) => {
+    if (!o) {
+      setLink(null);
+      setCopied(false);
+    }
+    onOpenChange(o);
+  };
   const make = async () => {
-    setError(null);
+    setBusy(true);
     try {
       const { token } = await createInvite({ ai: "own", budgetUsd: 0 });
       setLink(inviteUrl(token));
-      setCopied(false);
-      await run(Promise.resolve(null));
+      onCreated();
     } catch (e) {
-      setError(msg(e));
+      saveFailed(msg(e));
+    } finally {
+      setBusy(false);
     }
   };
-
+  const copy = async () => {
+    if (!link) return;
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopied(true);
+    } catch {
+      saveFailed("Could not copy. Select the link and copy it.");
+    }
+  };
   return (
-    <Group title="Invite" hint="A link for one person, good for 7 days.">
-      <Card>
-        <Row label="New invite link">
-          <Button size="sm" onClick={() => void make()}>
-            Create link
-          </Button>
-        </Row>
-        {link && (
-          <div className="flex items-center gap-2 px-3 py-3">
-            <code className="min-w-0 flex-1 truncate rounded bg-muted px-2 py-1 text-xs">{link}</code>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={async () => {
-                await navigator.clipboard.writeText(link);
-                setCopied(true);
-              }}
-            >
-              {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-              {copied ? "Copied" : "Copy"}
-            </Button>
-          </div>
-        )}
-        {view.invites.map((i) => (
-          <Row key={i.id} label="Invite" hint={`Own AI · by ${i.createdBy} · expires ${new Date(i.expiresAt).toLocaleDateString()}`}>
-            <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => void run(revokeInvite(i.id))}>
-              Revoke
-            </Button>
-          </Row>
-        ))}
-      </Card>
-      {error && <Notice tone="error">{error}</Notice>}
-    </Group>
+    <Dialog open={open} onOpenChange={close}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Invite someone</DialogTitle>
+          <DialogDescription>A link for one person, good for 7 days. Copy it now: it is not shown again.</DialogDescription>
+        </DialogHeader>
+        {link && <code className="block truncate rounded-md border border-border/60 bg-muted/40 px-3 py-2 text-xs">{link}</code>}
+        <DialogFooter>
+          {link ? (
+            <>
+              <Button size="sm" variant="outline" onClick={() => void copy()}>
+                {copied ? "Copied" : "Copy link"}
+              </Button>
+              <Button size="sm" onClick={() => close(false)}>
+                Done
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button size="sm" variant="ghost" onClick={() => close(false)}>
+                Cancel
+              </Button>
+              <Button size="sm" onClick={() => void make()} disabled={busy}>
+                {busy ? "Creating…" : "Create link"}
+              </Button>
+            </>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

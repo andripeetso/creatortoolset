@@ -5,7 +5,7 @@
  * A provider instance is one coding-agent CLI (its driver) signed in as one identity (its home folder, e.g.
  * ~/.claude-work, which sends Claude through the signed-in Claude account), run by a paired Mac (the Mac relay).
  * Every job picks an instance, a model and an effort. An Anthropic API key is not a provider: it answers an account
- * with no provider: its own key from Settings → My API keys (api/my-keys.ts keyFor).
+ * with no provider: its own key from Settings → API keys (api/my-keys.ts keyFor).
  */
 
 import type { Disk } from "./storage";
@@ -74,6 +74,20 @@ export const runsOn = (driver: Driver): boolean => !!DRIVERS.find((d) => d.id ==
  */
 export const launchArgsAllowed = (driver: Driver): boolean => isAcpDriver(driver);
 
+/**
+ * The Advanced fields a driver's settings page shows: each only where the Mac reads it (apps/mac ClaudeRequest.swift).
+ * The server keeps only these for the driver (parseSettings), so a row with no reader is never saved.
+ */
+export const driverFields = (driver: Driver): { home: boolean; program: boolean; args: boolean; env: boolean } => ({
+  /** the config folder: CLAUDE_CONFIG_DIR, CODEX_HOME, GEMINI_CLI_HOME */
+  home: !!DRIVERS.find((d) => d.id === driver)?.homeEnv,
+  /** the program's full path, and the arguments: only the ACP kinds start a program from settings */
+  program: isAcpDriver(driver),
+  args: launchArgsAllowed(driver),
+  /** variable names: the Mac passes them to Claude and the ACP kinds only */
+  env: driver === "claude" || isAcpDriver(driver),
+});
+
 /** A driver's name as people say the tool: "Claude Code", not the short label. */
 export const TOOL_NAMES: Partial<Record<Driver, string>> = { claude: "Claude Code", codex: "Codex", gemini: "Gemini CLI", grok: "Grok" };
 
@@ -93,16 +107,13 @@ export interface ProviderInstance {
   device?: string;
   /** the CLI's executable on the Mac, an absolute path; missing = the driver's usual name on the Mac's PATH */
   binaryPath?: string;
-  /** a second config folder for the same CLI, sharing its history (not read yet) */
-  shadowHomePath?: string;
-  /** extra arguments for the CLI, one literal argument per item, in launch order */
+  /** extra arguments for the CLI, one literal argument per item, in launch order (ACP kinds only, see driverFields) */
   launchArgs?: string[];
-  /** names of environment variables passed to the CLI; their values stay in the Mac's keychain, never here */
+  /** names of environment variables passed to the CLI; their values stay on the Mac, never here (see driverFields) */
   envNames?: string[];
-  /** the colour of the instance in the list, #rrggbb */
-  accentColor?: string;
-  /** listed first when adding a provider */
-  featured?: boolean;
+  /** this provider's model and thinking level: used when it is picked with no model of its own (see addInstanceTo) */
+  model?: string;
+  effort?: Effort;
   /** driver "acp": the command that starts the ACP agent on the Mac (the other ACP kinds start their own default command) */
   acp?: AcpCommand;
   /** the API endpoint the CLI sends its requests to (ANTHROPIC_BASE_URL). Only a plug-in's own instance sets it; the settings page never does, and parseSettings drops it. */
@@ -304,6 +315,20 @@ export const DEFAULT_SETTINGS: ProviderSettings = {
   default: { instance: "", model: "", effort: "xhigh" },
   jobs: {},
 };
+
+/**
+ * Adds a provider to a set (replacing one with the same id), and makes it the Default when the set has none. The one
+ * way a provider gets written: the Settings page and setup's Connect both build the set here, and the server checks it
+ * (parseSettings) before it saves.
+ */
+export function addInstanceTo(set: ProviderSettings | null, inst: ProviderInstance): ProviderSettings {
+  const cur = set ?? structuredClone(DEFAULT_SETTINGS);
+  const instances = cur.instances.some((i) => i.id === inst.id) ? cur.instances.map((i) => (i.id === inst.id ? inst : i)) : [...cur.instances, inst];
+  const def: Selection = cur.default.instance
+    ? cur.default
+    : { instance: inst.id, model: inst.model ?? DRIVER_MODELS[inst.driver]?.[0] ?? "", effort: inst.effort ?? "xhigh" };
+  return { ...cur, instances, default: def };
+}
 
 /** Whose providers a set is: the workspace's, or one account's own. Instance ids are unique within a scope. */
 export type Scope = "workspace" | string;

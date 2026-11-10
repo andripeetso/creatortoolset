@@ -1,5 +1,5 @@
 /**
- * Where the files are (Settings → Devices → Storage). The app enforces one thing: where it saves. That is the Library,
+ * Where the files are (Settings → Storage). The app enforces one thing: where it saves. That is the Library,
  * one "Creator Toolset" folder (finished videos, edit files, downloads) with Footage/, Music/ and Finished/ inside it.
  * Footage and Music are lists of sources: folders read in place, any number, never moved. The Library's own Footage/
  * and Music/ count as sources too, so a user with no system of their own just drops files there.

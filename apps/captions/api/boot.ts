@@ -54,7 +54,7 @@ import { myKeysApp } from "./my-keys";
 import { setupApp } from "./setup";
 import { workPrefsApp } from "./work-prefs";
 import { captionLayoutApp } from "./caption-layout";
-import { mountAdminRoutes, mountAnsweredRoutes, mountGatedRoutes, mountLibraryRoutes, mountOpenRoutes, mountPlugins, mountPublicRoutes, mountReplacedRoutes, pluginBodyLimitExempt, replacedLargeBody, startPlugins } from "./lib/plugin";
+import { mountAdminRoutes, mountAnsweredRoutes, mountGatedRoutes, mountLibraryRoutes, mountOpenRoutes, mountPlugins, mountPluginsList, mountPublicRoutes, mountReplacedRoutes, pluginBodyLimitExempt, replacedLargeBody, startPlugins } from "./lib/plugin";
 import { serverPlugins } from "./plugins.gen";
 import { signInCallbackApp, signInStartApp } from "./sign-in";
 import { activityApp } from "./activity";
@@ -311,7 +311,7 @@ app.use("/api/*", async (c, next) => {
 app.route("/api/auth", authApp);
 // Settings → API keys: the outside services' keys (platform admins; never an AI key)
 app.route("/api/service-keys", serviceKeysApp);
-// Settings → My API keys: each account's own keys for the paid services (never through an AI key)
+// Settings → API keys: each account's own keys for the paid services (never through an AI key)
 app.route("/api/my-keys", myKeysApp);
 // first-run setup and Settings → Setup: my tools, my plan, what is set up (setup.ts)
 app.route("/api/setup", setupApp);
@@ -405,6 +405,7 @@ app.route("/api/stories", storiesApp);
 app.route("/api/account-profile", accountProfileApp);
 // plug-ins (plugins/<id>/plugin.ts, generated into api/plugins.gen.ts) mount under /api/x/<id>, behind the same login
 mountPlugins(app, serverPlugins);
+mountPluginsList(app);
 mountGatedRoutes(app, serverPlugins);
 // hosted mode only (CT_MODE=hosted): the platform admin, the team and invite links. On one person's Mac they don't exist.
 if (hostedMode()) {

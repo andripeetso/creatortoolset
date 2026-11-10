@@ -7,7 +7,7 @@ import { findUser, LOCAL_USER, USERNAME_RE, type SessionUser } from "./users";
 import { MY_KEYS, type MyKeyEnv, type MyKeyView } from "../contracts/service-keys";
 
 /**
- * Settings → My API keys (contracts/service-keys.ts MY_KEYS) and the one resolver every paid service call goes
+ * Settings → API keys (contracts/service-keys.ts MY_KEYS) and the one resolver every paid service call goes
  * through. Each account's keys: $DATA_DIR/my-keys/<username>.json (0600), never logged, never sent back (last 4 only).
  *
  * keyFor(actor, service): the actor's own key; else the server's key (Settings → API keys or the .env) only for the
@@ -59,7 +59,7 @@ export type Actor = Pick<SessionUser, "username" | "role"> | string | null | und
 
 export type KeyRoute = { key: string; missing?: undefined } | { key: ""; missing: string };
 
-export const addKeyMessage = (name: MyKeyEnv) => `Add your ${nameOf(name)} key in Settings → My API keys`;
+export const addKeyMessage = (name: MyKeyEnv) => `Add your ${nameOf(name)} key in Settings → API keys`;
 
 /** A platform admin, or the solo install's own account (APP_SECRET unset): the server's keys are theirs. */
 export const isAdminActor = (name: string) => findUser(name)?.role === "admin" || (!env.appSecret && name === LOCAL_USER.username);
@@ -76,7 +76,7 @@ export function keyFor(actor: Actor, name: MyKeyEnv): KeyRoute {
   return { key: "", missing: addKeyMessage(name) };
 }
 
-/** Settings → My API keys. Accounts only: a share-link visitor has none. */
+/** Settings → API keys. Accounts only: a share-link visitor has none. */
 export const myKeysApp = new Hono<{ Variables: AuthVars }>();
 
 myKeysApp.use("*", async (c, next) => (c.get("user").role === "visitor" ? c.json({ error: "Sign in with an account to keep your own keys" }, 403) : next()));

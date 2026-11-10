@@ -135,7 +135,7 @@ export function StatusDot({ tone }: { tone: "attention" | "broken" }) {
 export interface RowMenuItem {
   label: string;
   icon?: ReactNode;
-  onSelect: () => void | Promise<void>;
+  onSelect: () => unknown;
   /** Shown last, in red. Pair it with `confirm` (anything that removes or stops something). */
   destructive?: boolean;
   /** Asked first with the app's own dialog (confirmDialog). The item runs only on OK. */

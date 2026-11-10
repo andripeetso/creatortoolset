@@ -146,7 +146,7 @@ export function useCachedList<T>(url: string | null, load: () => Promise<T[]>) {
   return { items: data ?? [], setItems, refresh, error };
 }
 
-/** How much this account keeps here: its saved lists and their size (characters, about bytes). For Settings → Cache. */
+/** How much this account keeps here: its saved lists and their size (characters, about bytes). For Settings → General → This computer. */
 export function cachedUsage(user: string | null | undefined): { bytes: number; items: number } {
   const base = user ? `${PREFIX}${encodeURIComponent(user)}|` : null;
   let bytes = 0;
@@ -181,7 +181,7 @@ export function forgetCached(prefix: string) {
 }
 
 /**
- * Settings → Cache's Clear: drops only this account's saved lists; other accounts on this computer keep theirs. The epoch
+ * Settings → General's Clear: drops only this account's saved lists; other accounts on this computer keep theirs. The epoch
  * bump stops a fetch still in flight from saving into the cleared store (any account's; it just skips that one save).
  */
 export function clearAccountCache(user: string | null | undefined) {

@@ -1,9 +1,6 @@
 import type { ReactNode } from "react";
 import { Loader2 } from "lucide-react";
-import { EFFORTS, type Effort } from "@contracts/providers";
-import { effortLabel, modelName } from "@/lib/providers";
 import { cn } from "@/lib/utils";
-import { selectCls } from "./helpers";
 import { Section } from "./kit-rows";
 import type { SearchRowId } from "./search";
 
@@ -51,32 +48,5 @@ export function Notice({ tone = "muted", children }: { tone?: "muted" | "warn" |
     >
       {children}
     </p>
-  );
-}
-
-/** @deprecated The model picker of the old Providers screen. The providers screen rebuild replaces it. */
-export function ModelSelect({ value, options, onChange, disabled }: { value: string; options: string[]; onChange: (m: string) => void; disabled?: boolean }) {
-  const list = options.includes(value) || !value ? options : [value, ...options];
-  return (
-    <select value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled} className={selectCls} aria-label="Model">
-      {list.map((m) => (
-        <option key={m} value={m}>
-          {modelName(m)}
-        </option>
-      ))}
-    </select>
-  );
-}
-
-/** @deprecated The effort picker of the old Providers screen. The providers screen rebuild replaces it. */
-export function EffortSelect({ value, onChange, disabled }: { value: Effort; onChange: (e: Effort) => void; disabled?: boolean }) {
-  return (
-    <select value={value} onChange={(e) => onChange(e.target.value as Effort)} disabled={disabled} className={selectCls} aria-label="Effort">
-      {EFFORTS.map((e) => (
-        <option key={e} value={e}>
-          {effortLabel(e)}
-        </option>
-      ))}
-    </select>
   );
 }

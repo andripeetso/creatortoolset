@@ -62,7 +62,7 @@ export interface EnhanceSession {
 export interface EnhanceAvailability {
   /** each engine's availability by key (plug-in engines too) */
   [engine: string]: unknown;
-  /** A key serves this account for the engine (their own from Settings → My API keys, or the server's)? */
+  /** A key serves this account for the engine (their own from Settings → API keys, or the server's)? */
   nvidia: boolean;
   elevenlabs: boolean;
   /** Why not, per engine: the key to add */

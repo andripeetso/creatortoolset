@@ -26,7 +26,7 @@ export function ProjectsPicker({ value, onChange, disabled }: { value: string[];
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="sm" disabled={disabled} aria-label="Install for" className="h-7 max-w-56 justify-between gap-2 text-xs">
+        <Button variant="outline" size="sm" disabled={disabled} aria-label="Used in" className="h-7 max-w-56 justify-between gap-2 text-xs">
           <span className="truncate">{label}</span>
           <ChevronDown className="h-3 w-3 shrink-0" />
         </Button>

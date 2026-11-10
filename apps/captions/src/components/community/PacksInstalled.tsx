@@ -1,87 +1,98 @@
 import type { InstalledPack } from "@contracts/packs";
 import { Link } from "react-router";
 import type { UpdateRow } from "@contracts/pack-catalog";
-import { Card, Loading, Notice } from "../settings/ui";
-import { ContentsSummary, ContentsView } from "./PacksShared";
-import { packProjects } from "./packs-helpers";
-import { PackActions } from "./PackActions";
-/** Installed: what each pack adds, on/off, the projects it's in, update, remove. */
+import { Advanced, Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Row, Section, Status } from "@/components/settings/ui";
+import type { PluginInfo } from "@/lib/plugin";
+import { ContentsView } from "./PacksShared";
+import { packContents } from "./packs-helpers";
+import { InstalledPackActions, PackHereSwitch, PackUsedIn } from "./PackActions";
+import { PluginRows } from "./PluginsInstalled";
+
+/**
+ * Installed: the plug-ins this server is built with (they make the install different), then the packs the person has
+ * switched on. Each pack is one row: its name, who made it, one line, the On switch and `…` (Remove). "What it adds" folds.
+ */
 export function InstalledView({
+  plugins,
   installed,
   updates,
   reload,
   error,
 }: {
+  plugins: PluginInfo[];
   installed: InstalledPack[] | null;
   updates: UpdateRow[];
   reload: () => Promise<void>;
   error: string | null;
 }) {
-  if (!installed) return error ? <Notice tone="error">{error}</Notice> : <Loading />;
   return (
     <>
-      {error && <div className="mb-3"><Notice tone="error">{error}</Notice></div>}
-      {installed.length === 0 ? (
-        <Notice>
-          Nothing installed yet. <Link to="/community/explore" className="underline">Explore</Link> what people have made.
-        </Notice>
-      ) : (
-        <Card>
-          {installed.map((p) => (
-            <PackRow key={p.id} pack={p} latest={updates.find((u) => u.id === p.id)?.latest} reload={reload} />
-          ))}
-        </Card>
+      {plugins.length > 0 && (
+        <Section title="Plug-ins">
+          <PluginRows plugins={plugins} />
+        </Section>
       )}
+      <Section title="Packs">
+        {!installed ? (
+          <Card>{error ? <ErrorRow title="Your packs did not load" detail={error} retry={reload} /> : <LoadingRow />}</Card>
+        ) : installed.length === 0 ? (
+          <Card>
+            <EmptyRow title="No packs yet" description="Packs add writing frameworks, caption styles and guides to your tools. Explore has what people have made." />
+          </Card>
+        ) : (
+          <Card>
+            {installed.map((p) => (
+              <div key={p.id} className="[&>*+*]:border-t [&>*+*]:border-border/50">
+                <PackRow pack={p} latest={updates.find((u) => u.id === p.id)?.latest} reload={reload} />
+              </div>
+            ))}
+          </Card>
+        )}
+      </Section>
     </>
   );
 }
+
 function PackRow({ pack: p, latest, reload }: { pack: InstalledPack; latest?: string | null; reload: () => Promise<void> }) {
+  const contents = packContents(p);
+  const hasContents = contents.slots.length + contents.frameworks.length + contents.captionStyles.length > 0;
+  const heldDesign = p.held?.designSystems;
   return (
-    <div className="px-3 py-3">
-      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        <span className="text-sm font-medium text-foreground">{p.name}</span>
-        <span className="text-xs text-muted-foreground">v{p.version}</span>
-        {p.default && (
-          <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">Default</span>
+    <>
+      <ListRow
+        title={
+          <span className="flex min-w-0 items-baseline gap-2">
+            <span className="truncate">{p.name}</span>
+            <span className="shrink-0 text-xs font-normal text-muted-foreground">v{p.version}</span>
+          </span>
+        }
+        subtitle={`by ${p.author}`}
+        status={
+          p.delisted ? (
+            <Status tone="broken">Pulled from the community: {p.delisted}. Its instructions are off.</Status>
+          ) : (
+            <span className="truncate">{p.description}</span>
+          )
+        }
+        actions={<InstalledPackActions id={p.id} name={p.name} installed={p} latest={latest} reload={reload} />}
+      />
+      <Advanced summary="What it adds">
+        <PackUsedIn id={p.id} installed={p} reload={reload} />
+        <PackHereSwitch id={p.id} name={p.name} installed={p} reload={reload} />
+        {p.default && p.off.includes("*") && <Row title="Off for you: you had your own setup before packs." />}
+        {heldDesign && (
+          <Row
+            title={`${heldDesign.items.length} design ${heldDesign.items.length === 1 ? "system" : "systems"} kept with this pack`}
+            status={<Status tone="attention">{heldDesign.needs === "plug-in" ? "Needs a plug-in on this server to install." : "Needs an admin to install."}</Status>}
+          />
         )}
-      </div>
-      <div className="mt-0.5 text-xs text-muted-foreground">
-        by {p.author} · {p.license}
-        {packProjects(p).length > 0 && ` · ${packProjects(p).length === 1 ? "1 project" : `${packProjects(p).length} projects`}`}
-      </div>
-      <p className="mt-1 text-xs text-muted-foreground">{p.description}</p>
-      {p.default && (
-        <p className="mt-1 text-xs text-muted-foreground">
-          {p.off.includes("*")
-            ? "The team's starting pack. It's off for your account because you had your own setup before packs; switch it on to try it."
-            : "The team's starting pack, on for you now. Switch it off or remove it to use a community pack instead."}
-        </p>
-      )}
-      <div className="mt-1 text-xs text-muted-foreground">
-        Adds: <ContentsSummary pack={p} />
-      </div>
-      {p.held?.designSystems && (
-        <div className="mt-2">
-          <Notice>
-            {p.held.designSystems.items.length} design {p.held.designSystems.items.length === 1 ? "system" : "systems"} from this pack{" "}
-            {p.held.designSystems.needs === "plug-in" ? "need a plug-in on this server to install" : "need an admin to install"}. They are kept with the pack.
-          </Notice>
-        </div>
-      )}
-      {p.delisted && (
-        <div className="mt-2">
-          <Notice tone="error">Pulled from the community: {p.delisted}. Its instructions are off.</Notice>
-        </div>
-      )}
-      <details className="mt-2">
-        <summary className="cursor-pointer text-xs text-muted-foreground underline">What it adds</summary>
-        <div className="mt-2">
-          <ContentsView pack={p} />
-        </div>
-      </details>
-      <div className="mt-3">
-        <PackActions id={p.id} name={p.name} installed={p} latest={latest} reload={reload} />
-      </div>
-    </div>
+        {hasContents && (
+          <div className="px-3 py-3 sm:px-4">
+            <ContentsView pack={p} />
+          </div>
+        )}
+        <Row title="Where it goes, versions" control={<Link to={`/community/pack/${p.id}`} className="text-xs text-foreground underline-offset-2 hover:underline">Open pack</Link>} />
+      </Advanced>
+    </>
   );
 }

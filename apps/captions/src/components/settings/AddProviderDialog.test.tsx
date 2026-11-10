@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { DRIVERS, type DriverCatalog } from "@contracts/providers";
-import { DriverGrid, validateInstanceId } from "./AddProviderDialog";
+import { DRIVERS, type DriverCatalog, type MacReport } from "@contracts/providers";
+import { buildInstance, defaultName, instanceId, ToolGrid } from "./AddProviderDialog";
 
 /** The catalog as the server sends it: only Claude and Gemini run today; the rest carry the server's reason. */
 const catalog: DriverCatalog = {
@@ -12,66 +12,59 @@ const catalog: DriverCatalog = {
       label: d.label,
       featured: d.featured,
       runs,
-      ...(runs ? {} : { reason: d.id === "musecode" ? "Muse Code has no headless mode yet, so it can't answer a request." : `${d.label} can't run yet.` }),
+      ...(runs ? {} : { reason: d.id === "musecode" ? "The Creator Toolset Mac app can't run this CLI yet." : `${d.label} can't run yet.` }),
       devices: [],
     };
   }),
 };
 
-const grid = (showMore: boolean) =>
-  renderToStaticMarkup(<DriverGrid catalog={catalog} driver={null} showMore={showMore} onPick={() => {}} onToggleMore={() => {}} />);
+const grid = (report: MacReport | null, showMore: boolean) =>
+  renderToStaticMarkup(<ToolGrid catalog={catalog} report={report} driver={null} showMore={showMore} onPick={() => {}} onToggleMore={() => {}} />);
 
-describe("Add provider grid", () => {
-  it("lists the owner's featured drivers in order, then Show more, and hides Gemini until it is opened", () => {
-    const html = grid(false);
-    const order = ["Codex", "Claude", "Cursor", "Grok", "OpenCode", "Antigravity", "Muse Code", "Pi", "Show more"].map((s) => html.indexOf(`>${s}<`) >= 0 ? html.indexOf(`>${s}<`) : html.indexOf(`>${s}`));
+describe("Add provider tool grid", () => {
+  it("lists the featured tools in order, and hides Gemini and the local command behind Show more", () => {
+    const html = grid(null, false);
+    const order = ["Codex", "Claude", "Cursor", "Grok", "OpenCode", "Antigravity", "Muse Code", "Pi"].map((s) => html.indexOf(`>${s}<`));
     expect(order.every((i) => i >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
-    expect(html).not.toContain("Gemini");
-    expect(html).not.toContain("Local ACP command");
+    expect(html).not.toContain(">Gemini<");
+    expect(html).toContain("Show more");
   });
 
-  it("shows Gemini and the local ACP command under Show less once Show more is opened", () => {
-    const html = grid(true);
-    expect(html).toContain("Gemini");
-    expect(html).toContain("Local ACP command");
-    expect(html).toContain("Show less");
+  it("puts a tool the computer has first and marks it Installed, even when it sits behind Show more", () => {
+    const report: MacReport = { at: 1, drivers: [{ driver: "gemini", installed: true, version: "1.0" }], homes: [] };
+    const html = grid(report, false);
+    expect(html).toContain(">Installed<");
+    expect(html.indexOf(">Gemini<")).toBeLessThan(html.indexOf(">Codex<"));
   });
 
-  it("disables every driver the Mac app can't run, with the server's reason, and leaves the runnable ones enabled", () => {
-    const html = grid(false);
-    expect(html).toContain("Muse Code has no headless mode yet");
-    // Codex, Cursor, Grok, OpenCode, Antigravity, Muse Code, Pi: seven disabled tiles; Claude is not one of them
+  it("disables every tool the Mac app can't run, with the server's reason", () => {
+    const html = grid(null, false);
+    expect(html).toContain("The Creator Toolset Mac app can&#x27;t run this CLI yet.");
     expect((html.match(/disabled=""/g) ?? []).length).toBe(7);
   });
 });
 
-describe("validateInstanceId", () => {
-  it("accepts a letter-first id of letters, digits, - and _ that no provider has", () => {
-    expect(validateInstanceId("claude_work", ["claude"])).toBeNull();
-    expect(validateInstanceId("Claude-2", [])).toBeNull();
+describe("the one way an AI is built", () => {
+  it("names the AI from its folder and makes its id from the folder, unique among the taken ones", () => {
+    expect(defaultName("claude", "/Users/me/.claude-work")).toBe("Claude (work)");
+    expect(defaultName("codex", "")).toBe("Codex (default)");
+    expect(instanceId("claude", "/Users/me/.claude-work", [])).toBe("claude_work");
+    expect(instanceId("claude", "/Users/me/.claude-work", ["claude_work"])).toBe("claude_work_2");
+    expect(instanceId("grok", "", [])).toBe("grok");
   });
 
-  it("refuses an empty id, a leading digit, other characters, a taken id and more than 60 characters", () => {
-    expect(validateInstanceId("", [])).toMatch(/Give/);
-    expect(validateInstanceId("1work", [])).toMatch(/starts with a letter/);
-    expect(validateInstanceId("my id", [])).toMatch(/letters, digits/);
-    expect(validateInstanceId("claude", ["claude"])).toMatch(/already has/);
-    expect(validateInstanceId("a".repeat(60), [])).toBeNull();
-    expect(validateInstanceId("a".repeat(61), [])).toMatch(/at most 60/);
-  });
-});
-
-describe("plug-in providers in the grid", () => {
-  it("shows a plug-in preset as a row, and a plug-in driver kind as a disabled tile with the server's reason", () => {
-    const withPlugin: DriverCatalog = {
-      ...catalog,
-      drivers: [...catalog.drivers, { id: "tinycli", label: "Tiny CLI", featured: false, runs: false, reason: "The Creator Toolset Mac app can't run this CLI yet.", devices: [] }],
-      presets: [{ id: "tiny-hub", name: "Tiny (hub)", driver: "claude", badge: "Custom API endpoint" }],
-    };
-    const html = renderToStaticMarkup(<DriverGrid catalog={withPlugin} driver={null} showMore={true} onPick={() => {}} onToggleMore={() => {}} />);
-    expect(html).toContain("Tiny (hub)");
-    expect(html).toContain("Tiny CLI");
-    expect(html).toContain("The Creator Toolset Mac app can&#x27;t run this CLI yet.");
+  it("builds the instance with its computer, folder and, for a local command, its program", () => {
+    expect(buildInstance({ driver: "claude", home: "/Users/me/.claude-work", name: " Work ", device: "d1", takenIds: [] })).toEqual({
+      id: "claude_work",
+      driver: "claude",
+      name: "Work",
+      enabled: true,
+      device: "d1",
+      home: "/Users/me/.claude-work",
+    });
+    expect(buildInstance({ driver: "acp", name: "Agent", device: "d1", takenIds: [], command: "npx some-agent acp" })).toMatchObject({
+      acp: { command: "npx some-agent acp", args: [] },
+    });
   });
 });

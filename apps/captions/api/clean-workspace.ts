@@ -429,7 +429,7 @@ async function clipSpeech(source: StoredSource, username: string): Promise<ClipS
   } catch (e) {
     return {
       why: e instanceof NeedsKey
-        ? "Pictures only: add your Deepgram key in Settings → My API keys to compare voices too."
+        ? "Pictures only: add your Deepgram key in Settings → API keys to compare voices too."
         : "Pictures only: this upload's speech could not be transcribed.",
     };
   }

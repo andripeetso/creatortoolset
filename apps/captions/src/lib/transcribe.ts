@@ -1,6 +1,6 @@
 import type { Word } from "./types";
 
-/** Server-proxied Deepgram engine, on the account's own key (Settings → My API keys) or the server's when it serves them. */
+/** Server-proxied Deepgram engine, on the account's own key (Settings → API keys) or the server's when it serves them. */
 export const CLOUD_MODEL_ID = "cloud/deepgram";
 export const CLOUD_MODEL = {
   id: CLOUD_MODEL_ID,

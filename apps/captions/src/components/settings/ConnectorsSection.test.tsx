@@ -1,14 +1,7 @@
-import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
-import { ExtraSources } from "./ConnectorsSection";
+import { signInItems } from "./ConnectorsSection";
 
-it("shows nothing under extra things with no session source (the public build)", () => {
-  expect(renderToStaticMarkup(<ExtraSources sources={[]} />)).toBe("");
-});
-
-it("shows the section with each registered session source's own words", () => {
-  const html = renderToStaticMarkup(<ExtraSources sources={[{ id: "tinyacrobatics-session", label: "Tiny session reads", hint: "Set up on this server" }]} />);
-  expect(html).toContain("Turn on extra things");
-  expect(html).toContain("Tiny session reads");
-  expect(html).toContain("Set up on this server");
+it("offers only the sign-ins this server has an app for", () => {
+  expect(signInItems({ meta: false, google: true, tiktok: false })).toEqual([{ id: "google", label: "Sign in with YouTube" }]);
+  expect(signInItems({ meta: false, google: false, tiktok: false })).toEqual([]);
 });

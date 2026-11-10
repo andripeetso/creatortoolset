@@ -106,6 +106,18 @@ newest one. A release reaches everyone's Mac, so make one only when the maintain
 - Routes: each `api/*.ts` file exports a Hono app; `api/boot.ts` mounts them and applies the account gate.
 - Client: `src/App.tsx` lists the routes. Tools are switched per account in `api/users.ts` (`TOOLS`).
 - Types shared by client and server live in `contracts/`.
+- Where things live (the app's one system; put new work in the matching place):
+  - **Home** = the tools you use (`src/lib/tools.ts`). **Settings** = how the app is set up: General, Appearance,
+    AI (Providers, Scheduled tasks, Usage), Devices (Computers, Storage, Servers), Connections (Social accounts,
+    API keys, Your own AI), Team, Server (Admin). **The account button** = you.
+  - Inside a tool = that tool's own choices (its page, its Defaults dialog).
+  - **Community** = everything added to the app. Installed shows **Plug-ins** (code built into this server: they
+    make the install different) and then **Packs** (content you switch on per project and can remove).
+  - A plug-in's pieces show up where the built-in ones do: its Settings section in the matching group or Admin tab,
+    its tiles on Home, its pages in place of built-in ones. The Plug-ins list is the one place that names it.
+  - Plug-in authors: add each piece to the matching place above, and give the plug-in `name` and `about` (one line)
+    in both `plugin.ts` and `web.tsx` (`plugin-examples/hello` shows it). `GET /api/plugins` and Community read these.
+  - Settings groups and the sidebar: `src/components/settings/nav.ts`; kit: `src/components/settings/ui.tsx`.
 - Long-running work (exports, enhancement, the Mac relay) runs in background queues with concurrency limits set
   by environment variables; keep those limits when you add work to them.
 - Status fields (jobs, sessions, sources, exports): the union lives once (a `contracts/` file or the module's

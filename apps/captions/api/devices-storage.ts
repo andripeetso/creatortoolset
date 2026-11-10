@@ -9,7 +9,7 @@ import { env, hostedMode } from "./lib/env";
 import { libraryPath, localDisks, parseStorageFile, storageFilePath } from "./lib/storage";
 
 /**
- * Settings → Devices → Storage (contracts/storage.ts), mounted at /api/devices/storage by devices.ts:
+ * Settings → Storage (contracts/storage.ts), mounted at /api/devices/storage by devices.ts:
  *   GET    /                        → StorageView (this account's folders, and the server's own disks when CT_LOCAL=1)
  *   POST   /library   {host, disk}  → make the Library ("Creator Toolset") in `disk` on one of this account's computers
  *   POST   /folders   {role, host, path} → use a folder you already have as footage or music
@@ -58,14 +58,17 @@ storageApp.use("*", async (c, next) => {
   return next();
 });
 
-/** The server's own disks only on a server run on the owner's computer (CT_LOCAL=1); a hosted server reports none. The
- *  Library's disk is read here too when its computer reports no drives (the row then has nothing else to show). */
+/** The server's own disks only on a server run on the owner's computer (CT_LOCAL=1), and only for an admin (Drives is an
+ *  admin's Advanced view); a hosted server reports none. The Library's disk is read here too when its computer reports
+ *  no drives (the row then has nothing else to show). */
 storageApp.get("/", async (c) => {
-  const st = await readStorage(c.get("user").username);
+  const u = c.get("user");
+  const st = await readStorage(u.username);
   const lib = st.folders.find((f) => f.role === "library");
   const reported = lib ? deviceOf(lib.origin.host)?.report?.machine?.disks ?? [] : [];
   const libraryPath = lib && !reported.length ? lib.origin.path : undefined;
-  const view: StorageView = { ...st, serverDisks: process.env.CT_LOCAL === "1" ? await localDisks(libraryPath) : [] };
+  const local = process.env.CT_LOCAL === "1" && u.role === "admin";
+  const view: StorageView = { ...st, serverDisks: local ? await localDisks(libraryPath) : [] };
   return c.json(view);
 });
 

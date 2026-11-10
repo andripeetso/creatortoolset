@@ -14,7 +14,7 @@ import { findUser, type SessionUser } from "./users";
 /**
  * Every AI call in the app. It goes to a provider (contracts/providers.ts: a coding-agent CLI on a Mac,
  * through a paired Mac, signed in as that person). An Anthropic API key answers
- * an account with no provider that saved its own (Settings → My API keys); never the server's (my-keys.ts keyFor).
+ * an account with no provider that saved its own (Settings → API keys); never the server's (my-keys.ts keyFor).
  */
 
 export const OUT_OF_TOKENS_CODE = "OUT_OF_TOKENS";
@@ -84,7 +84,7 @@ export function aiFor(who: Who, job: JobId, label: string, own?: Selection): Pro
   // nobody named: never the server's providers (background work names whose work it is)
   if (!name || role === "visitor") return { only: [], off: "This AI call names no account" };
   const r = routeFor(name, role === "admin", job, own);
-  if (!r) return onApiKey(name, job, label) || onBudget(name, job, label) || { only: [], off: "No AI for your account: add one in Settings → Your AI, or your Anthropic key in Settings → My API keys" };
+  if (!r) return onApiKey(name, job, label) || onBudget(name, job, label) || { only: [], off: "No AI for your account: add one in Settings → Your own AI, or your Anthropic key in Settings → API keys" };
   const { selection, instance } = r;
   return {
     only: ["mac"],
@@ -93,14 +93,14 @@ export function aiFor(who: Who, job: JobId, label: string, own?: Selection): Pro
 }
 
 /**
- * An account with no provider: its own Anthropic key from Settings → My API keys (keyFor), at anthropicParams' model
+ * An account with no provider: its own Anthropic key from Settings → API keys (keyFor), at anthropicParams' model
  * and effort. Never the Workshop: a Workshop turn is Claude Code reading the session's folder, which a plain API call
  * can't (it needs their own AI).
  */
 function onApiKey(name: string, job: JobId, label: string): ProviderOpts | null {
   const k = keyFor(name, "ANTHROPIC_API_KEY");
   if (!k.key) return null;
-  if (job === "workshop") return { only: [], off: "Content Workshop runs on your own AI (it reads the whole project folder): connect yours in Settings → Your AI" };
+  if (job === "workshop") return { only: [], off: "Content Workshop runs on your own AI (it reads the whole project folder): connect yours in Settings → Your own AI" };
   return { only: ["anthropic"], retries: 1, apiKey: k.key, mac: { label } };
 }
 
@@ -113,7 +113,7 @@ function onBudget(name: string, job: JobId, label: string): ProviderOpts | null 
   if (!hostedMode()) return null;
   const left = budgetLeft(name);
   if (left === null) return null;
-  if (job === "workshop") return { only: [], off: "Content Workshop runs on your own AI (it reads the whole project folder): connect yours in Settings → Your AI" };
+  if (job === "workshop") return { only: [], off: "Content Workshop runs on your own AI (it reads the whole project folder): connect yours in Settings → Your own AI" };
   if (left <= 0) return { only: [], off: "Your AI budget for this month is used up: ask your workspace's owner or an admin for more" };
   const apiKey = process.env.ANTHROPIC_API_KEY || "";
   if (!apiKey) return { only: [], off: "The workspace's API key isn't set up: ask the owner" };

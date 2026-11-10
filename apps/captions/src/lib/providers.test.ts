@@ -1,36 +1,29 @@
 import { describe, expect, it } from "vitest";
-import type { ProvidersView } from "@contracts/providers";
-import { aiAnswerer } from "./providers";
+import { addInstanceTo, driverFields, type ProviderInstance } from "@contracts/providers";
 
-const view = (device: string | undefined, online: boolean, enabled = true): ProvidersView => ({
-  workspace: {
-    editable: true,
-    settings: {
-      instances: [{ id: "claude", driver: "claude", name: "Claude", enabled, device }],
-      default: { instance: "claude", model: "", effort: "xhigh" },
-      jobs: {},
-    },
-  },
-  own: null,
-  using: "workspace",
-  devices: [
-    { id: "d1", owner: "admin", name: "Studio", createdAt: 0, online },
-    { id: "d2", owner: "admin", name: "Laptop", createdAt: 0, online: true },
-  ],
-  checks: {},
-  models: {},
-  usage: [],
-  limits: [],
+const claude = (id: string, extra: Partial<ProviderInstance> = {}): ProviderInstance => ({ id, driver: "claude", name: id, enabled: true, device: "d1", ...extra });
+
+describe("addInstanceTo", () => {
+  it("makes the first AI the Default with its own model and thinking level", () => {
+    const s = addInstanceTo(null, claude("claude", { model: "claude-sonnet-5-5", effort: "high" }));
+    expect(s.instances.map((i) => i.id)).toEqual(["claude"]);
+    expect(s.default).toEqual({ instance: "claude", model: "claude-sonnet-5-5", effort: "high" });
+  });
+
+  it("keeps the Default when another AI is added, and replaces an AI with the same id", () => {
+    const first = addInstanceTo(null, claude("claude"));
+    const second = addInstanceTo(first, claude("claude_work"));
+    expect(second.default.instance).toBe("claude");
+    const again = addInstanceTo(second, claude("claude", { name: "Renamed" }));
+    expect(again.instances.map((i) => i.name)).toEqual(["Renamed", "claude_work"]);
+  });
 });
 
-describe("aiAnswerer", () => {
-  it("names this Mac, another Mac, or none", () => {
-    expect(aiAnswerer(view("d1", true), "d1")).toBe("This Mac (Studio) answers your AI.");
-    expect(aiAnswerer(view("d1", false), "d1")).toContain("its runner is off");
-    expect(aiAnswerer(view("d1", true), "d2")).toBe("Studio, another Mac, answers your AI.");
-    expect(aiAnswerer(view("d1", false))).toContain("It is offline");
-    expect(aiAnswerer(view(undefined, true), "d1")).toMatch(/^No Mac answers/);
-    expect(aiAnswerer(view("d1", true, false), "d1")).toMatch(/^No Mac answers/);
-    expect(aiAnswerer({ ...view("d1", true), using: "none" }, "d1")).toMatch(/^No Mac answers/);
+describe("driverFields", () => {
+  it("shows only the Advanced fields the Mac reads for the tool", () => {
+    expect(driverFields("codex")).toEqual({ home: true, program: false, args: false, env: false });
+    expect(driverFields("claude")).toEqual({ home: true, program: false, args: false, env: true });
+    expect(driverFields("grok")).toEqual({ home: false, program: false, args: false, env: false });
+    expect(driverFields("cursor")).toEqual({ home: false, program: true, args: true, env: true });
   });
 });

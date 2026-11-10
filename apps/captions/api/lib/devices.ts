@@ -2,8 +2,9 @@ import { createHash, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { Device, MacReport } from "../../contracts/providers";
+import type { Device, MacReport, ProviderSettings } from "../../contracts/providers";
 import { env } from "./env";
+import { dropOwnSettings, ownSettings, providerSettings, saveSettings } from "./providers";
 
 /**
  * The Macs that run AI jobs (contracts/providers.ts `Device`), in $DATA_DIR/devices.json. Any account pairs its
@@ -96,9 +97,10 @@ export function deviceForToken(authorization: string | undefined): Device | null
 /**
  * A new app device for `owner`; the token is returned once and never stored. An earlier device of the same owner
  * with the same name is the same Mac paired again (the app re-pairs when its token is lost): it is dropped, so its
- * token stops working and the list keeps one row per Mac.
+ * token stops working and the list keeps one row per Mac. `replaced` are the dropped ids: their providers move to the
+ * new one (moveProviders, called by the route).
  */
-export function pairDevice(owner: string, name: string, version?: string): { device: Device; token: string } {
+export function pairDevice(owner: string, name: string, version?: string): { device: Device; token: string; replaced: string[] } {
   const token = `ctd_${randomBytes(32).toString("base64url")}`;
   const d: Stored = {
     id: `dev_${randomBytes(8).toString("hex")}`,
@@ -108,10 +110,11 @@ export function pairDevice(owner: string, name: string, version?: string): { dev
     tokenHash: sha(token),
     ...(version ? { version } : {}),
   };
-  list = all().filter((x) => !(x.owner === owner && x.name === name));
+  const replaced = all().filter((x) => x.owner === owner && x.name === name).map((x) => x.id);
+  list = all().filter((x) => !replaced.includes(x.id));
   list.push(d);
   persist();
-  return { device: strip(d), token };
+  return { device: strip(d), token, replaced };
 }
 
 export const listDevices = (keep: (d: Device) => boolean): Device[] => all().filter((d) => keep(strip(d))).map(strip);
@@ -124,11 +127,41 @@ export function renameDevice(id: string, name: string): Device | undefined {
   return strip(d);
 }
 
-/** Revoking deletes the record: its token stops working at once. */
-export function revokeDevice(id: string): boolean {
-  const before = all().length;
-  list = all().filter((d) => d.id !== id);
-  if (list.length === before) return false;
+/**
+ * Moves every provider that runs on one of `from` to `to`, or drops them when `to` is null, in the workspace's set and
+ * in `owner`'s own set. A dropped provider that the default or a job points at: the default goes to the first one left,
+ * the job's pick goes (it then uses the default). An account left with no provider loses its own set (it uses the
+ * workspace's again). Writes go through providers.ts so its cache stays right.
+ */
+export async function moveProviders(owner: string, from: string[], to: string | null): Promise<void> {
+  for (const scope of ["workspace", owner]) {
+    const cur = scope === "workspace" ? providerSettings() : ownSettings(scope);
+    if (!cur || !cur.instances.some((i) => from.includes(i.device ?? ""))) continue;
+    if (to) {
+      await saveSettings({ ...cur, instances: cur.instances.map((i) => (from.includes(i.device ?? "") ? { ...i, device: to } : i)) }, scope);
+      continue;
+    }
+    const instances = cur.instances.filter((i) => !from.includes(i.device ?? ""));
+    if (instances.length === 0 && scope !== "workspace") {
+      await dropOwnSettings(scope);
+      continue;
+    }
+    const left = (id: string) => instances.some((i) => i.id === id);
+    const next: ProviderSettings = {
+      instances,
+      default: left(cur.default.instance) ? cur.default : { instance: instances[0]?.id ?? "", model: "", effort: cur.default.effort },
+      jobs: Object.fromEntries(Object.entries(cur.jobs).filter(([, s]) => s && left(s.instance))),
+    };
+    await saveSettings(next, scope);
+  }
+}
+
+/** Revoking deletes the record: its token stops working at once, and the providers that ran on it go with it. */
+export async function revokeDevice(id: string): Promise<boolean> {
+  const d = find(id);
+  if (!d) return false;
+  await moveProviders(d.owner, [id], null);
+  list = all().filter((x) => x.id !== id);
   persist();
   return true;
 }

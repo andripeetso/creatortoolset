@@ -51,9 +51,9 @@ describe("provider kinds and presets from a plug-in", () => {
 
   it("refuses a preset saved under another driver, drops an unknown preset, and does not count a kind that no Mac runs as a runnable provider", () => {
     const body = (inst: Record<string, unknown>) => ({ instances: [{ id: "x", enabled: true, device: alex.device.id, ...inst }], default: { instance: "x", model: "m", effort: "xhigh" } });
-    expect(() => parseSettings(body({ driver: "codex", name: "X", preset: "tiny-hub" }), "alex")).toThrow("that preset is for claude");
+    expect(() => parseSettings(body({ driver: "codex", name: "X", preset: "tiny-hub" }), "alex")).toThrow("comes from a preset for claude");
     const gone = parseSettings(body({ driver: "claude", name: "X", preset: "removed-preset" }), "alex");
     expect(gone.instances[0]).not.toHaveProperty("preset");
-    expect(() => parseSettings(body({ driver: "tinycli", name: "Tiny CLI" }), "alex")).toThrow("Keep at least one provider");
+    expect(() => parseSettings(body({ driver: "tinycli", name: "Tiny CLI" }), "alex")).toThrow("Turn on at least one AI");
   });
 });

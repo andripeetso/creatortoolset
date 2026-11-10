@@ -12,7 +12,7 @@ import { listSessions as listProjects } from "./persist";
 /**
  * Fills the saved lists of every screen this account can open (lib/local-cache), so even a first visit paints at once.
  * Run after sign-in and when the project changes. Keys must match the pages' own keys. A list that fails is skipped:
- * its screen fetches as before. Resolves when every list has been tried (Settings → Cache's Warm now waits for it).
+ * its screen fetches as before. Resolves when every list has been tried (Settings → General's Refresh waits for it).
  */
 export async function warmScreens(): Promise<void> {
   const me = useAuth.getState().me;

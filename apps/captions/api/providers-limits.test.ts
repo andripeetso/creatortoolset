@@ -96,6 +96,12 @@ describe("plan limits: an account sees the identities behind its own providers o
     expect(JSON.stringify((await view()).devices)).not.toContain("windows");
   });
 
+  it("a switched-off provider's login still shows its plan limits (Usage reads them whether or not it answers)", async () => {
+    await saveSettings(settings([{ id: "codex_ed", driver: "codex", name: "Codex", enabled: false, device: editor.device.id }], { instance: "codex_ed", model: "gpt-5-codex", effort: "high" }), "editor1");
+    as("editor1", "team");
+    expect((await view()).limits.map((l) => l.instances)).toEqual([["editor1:codex_ed"]]);
+  });
+
   it("a Mac that reports signed out shows as signed out, on the next report", async () => {
     await reportFrom(editor.token, { identities: [codexFolder("/Users/ed/.codex", "signed_out")] });
     as("editor1", "team");

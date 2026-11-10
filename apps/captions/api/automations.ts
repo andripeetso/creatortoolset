@@ -72,10 +72,10 @@ async function finish(username: string, id: string, status: AutomationResult["st
     a.lastResult = result;
     writeAll(username, list);
   }
-  const name = a?.name ?? "An automation";
+  const name = a?.name ?? "A scheduled task";
   await notifyWorkshopOwner(username, {
     kind: status === "done" ? "workshop" : "failed",
-    by: "Automations",
+    by: "Scheduled tasks",
     name,
     text: `${status === "done" ? "" : `${status}: `}${text}`,
     href: "/settings/automations",
@@ -84,6 +84,11 @@ async function finish(username: string, id: string, status: AutomationResult["st
 }
 
 /* ---- one run ---- */
+
+const NO_AI = "No Claude Code is set up for your AI here. Add it on a computer in Providers.";
+const NOT_CLAUDE = "Scheduled tasks run on Claude Code, and your AI here is another tool. Add Claude Code on a computer.";
+/** Why no task can run on this route, in plain words, or null. The page shows it before a task is built; a run records it. */
+export const blockOf = (route: ReturnType<typeof routeOf>): string | null => (!route ? NO_AI : route.instance.driver !== "claude" ? NOT_CLAUDE : null);
 
 const runPrompt = (a: Automation): string =>
   `This is a scheduled run of the automation "${a.name}". Nobody is at the screen: do the work with the app's tools, and don't open pages with navigate.${a.project ? ` Its Workshop project is ${a.project}.` : ""}\n\n${a.prompt}`;
@@ -94,12 +99,12 @@ const runPrompt = (a: Automation): string =>
  */
 export async function runAutomation(username: string, a: Automation): Promise<void> {
   const route = routeOf(username, findUser(username)?.role === "admin");
-  if (!route) return finish(username, a.id, "skipped", "Connect your AI first (Settings → Your AI), so this run could not start.");
-  if (route.instance.driver !== "claude") return finish(username, a.id, "skipped", "Automations need Claude Code on your Mac for now.");
+  if (!route) return finish(username, a.id, "skipped", NO_AI);
+  if (route.instance.driver !== "claude") return finish(username, a.id, "skipped", NOT_CLAUDE);
   if (!isOnline(route.device)) return finish(username, a.id, "skipped", `${deviceName(route.device)} is offline, so this run was skipped.`);
   // the tools' address: PUBLIC_ORIGIN, else the Mac app's own server on this Mac (CT_LOCAL), where the Mac's AI runs too
   const origin = process.env.PUBLIC_ORIGIN?.replace(/\/$/, "") || (process.env.CT_LOCAL === "1" && process.env.PORT ? `http://127.0.0.1:${process.env.PORT}` : "");
-  if (!origin) return finish(username, a.id, "skipped", "PUBLIC_ORIGIN isn't set on this server, so the app's tools can't be reached from a run.");
+  if (!origin) return finish(username, a.id, "skipped", "This server doesn't know its own address, so the task can't reach the app's tools. Ask whoever runs this server.");
   try {
     const text = await answerWithTools(username, route, `${origin}/api/mcp`, runPrompt(a), {
       label: "Automation",
@@ -195,7 +200,11 @@ function readFields(b: Input): { fields: Partial<Automation>; error?: string } {
   return { fields };
 }
 
-automationsApp.get("/", (c) => c.json({ items: readAll(c.get("user").username).map(view) }));
+/** The account's tasks, and why none can run for it now (`blocked`, null when one can): the page then builds none. */
+automationsApp.get("/", (c) => {
+  const username = c.get("user").username;
+  return c.json({ items: readAll(username).map(view), blocked: blockOf(routeOf(username, findUser(username)?.role === "admin")) });
+});
 
 automationsApp.post("/", async (c) => {
   const username = c.get("user").username;
@@ -259,7 +268,7 @@ automationsApp.post("/:id/run", (c) => {
   const username = c.get("user").username;
   const a = readAll(username).find((x) => x.id === c.req.param("id"));
   if (!a) return c.json({ error: "Not found" }, 404);
-  if (running.has(a.id)) return c.json({ error: "This automation is already running" }, 409);
+  if (running.has(a.id)) return c.json({ error: "This task is already running" }, 409);
   void start(username, a, Date.now(), runAutomation);
   return c.json({ ...view(a), running: true }, 202);
 });

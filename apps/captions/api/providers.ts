@@ -78,7 +78,6 @@ async function viewFor(u: SessionUser): Promise<ProvidersView> {
     ...(own?.instances ?? []).map((i) => ({ scope: u.username, i })),
     ...(admin ? ws.instances.map((i) => ({ scope: "workspace", i })) : []),
   ]
-    .filter(({ i }) => i.enabled)
     .map(({ scope, i }) => ({ key: `${scope}:${i.id}`, driver: i.driver, device: deviceIdOf(i), home: i.home }));
   const limits = limitsFor(refs, isOnline);
 
@@ -121,7 +120,7 @@ providersApp.put("/own", async (c) => {
 
 /**
  * One line through the instance's device, like the status check on the Mac: does it answer, with what model, how fast.
- * Kept on the instance as its `lastCheck`. Settings → Your AI and setup's Connect both run this.
+ * Kept on the instance as its `lastCheck`. Settings → Providers and setup's Connect both run this.
  */
 export async function checkInstance(scope: Scope, inst: ProviderInstance, s: ProviderSettings | null): Promise<ProviderCheck> {
   const device = inst.device ?? "";

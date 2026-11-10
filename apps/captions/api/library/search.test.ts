@@ -102,7 +102,7 @@ describe("transcribe job", () => {
     enqueueJob(libraryDb(), "lib_a", v, "transcribe", "local");
     expect(await tick()).toBe(true);
     expect(job(v).state).toBe("needs_key");
-    expect(job(v).error).toBe("Add your Deepgram (or OpenAI) key in Settings → My API keys");
+    expect(job(v).error).toBe("Add your Deepgram (or OpenAI) key in Settings → API keys");
     expect(versionState(v)).toBe("ready");
   });
 

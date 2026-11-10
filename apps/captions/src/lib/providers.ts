@@ -85,23 +85,6 @@ export function activeSet(view: ProvidersView): { settings: ProviderSettings; sc
 export const thisMacDevice = (): string | undefined =>
   typeof document === "undefined" ? undefined : document.documentElement.dataset.macDevice || undefined;
 
-/** Which machine answers this account's AI right now, in one sentence: the Mac of the default provider that answers it. */
-export function aiAnswerer(view: ProvidersView, thisMac?: string): string {
-  const set = activeSet(view)?.settings;
-  const inst = set?.instances.find((i) => i.id === set.default.instance);
-  if (!inst || !inst.enabled || !deviceOf(inst)) return "No Mac answers your AI right now. Connect a Mac and add an AI to it.";
-  const d = view.devices.find((x) => x.id === deviceOf(inst));
-  if (!d) return "A Mac you don't have here answers your AI.";
-  if (d.id === thisMac) {
-    return d.online
-      ? `This Mac (${d.name}) answers your AI.`
-      : `This Mac (${d.name}) answers your AI, but its runner is off: turn on Use this Mac for my AI in the menu bar.`;
-  }
-  return d.online
-    ? `${d.name}, another Mac, answers your AI.`
-    : `${d.name}, another Mac, answers your AI. It is offline, so AI jobs can't run until it's back.`;
-}
-
 /** The name of an instance in a scope, for usage rows. */
 export function instanceName(view: ProvidersView, scope: Scope, id: string): string {
   const set = scope === "workspace" ? view.workspace?.settings : view.own;

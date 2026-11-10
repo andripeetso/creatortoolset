@@ -25,6 +25,6 @@ describe("your own account", () => {
     expect(check.user).toMatchObject({ username: "tinyboss", name: "Tiny Boss" });
 
     await send("/api/auth/account", "PATCH", { name: "" }, cookie);
-    expect(await (await app.request("/api/auth/account", { headers: { cookie } })).json()).toEqual({ username: "tinyboss", name: "" });
+    expect(await (await app.request("/api/auth/account", { headers: { cookie } })).json()).toEqual({ username: "tinyboss", name: "", identities: [] });
   });
 });

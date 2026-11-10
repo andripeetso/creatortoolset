@@ -86,7 +86,7 @@ describe("routing: whose providers answer an account's job", () => {
     // old settings that shared the workspace's AI with the team are ignored
     await saveSettings(parseSettings({ ...workspace(), shareWithTeam: true, sharedWith: ["casey"] }, "workspace"));
     expect(providerSettings()).not.toHaveProperty("sharedWith");
-    expect(aiFor({ username: "casey", role: "team" }, "workshop", "Workshop")).toEqual({ only: [], off: "No AI for your account: add one in Settings → Your AI, or your Anthropic key in Settings → My API keys" });
+    expect(aiFor({ username: "casey", role: "team" }, "workshop", "Workshop")).toEqual({ only: [], off: "No AI for your account: add one in Settings → Your own AI, or your Anthropic key in Settings → API keys" });
     expect(aiFor({ username: "alex", role: "admin" }, "workshop", "Workshop").mac?.provider).toMatchObject({ scope: "workspace" });
     expect(aiFor(undefined, "notes", "Video Notes").off).toBe("This AI call names no account"); // nobody named: nobody's providers
     expect(aiFor({ username: "jordan", role: "team" }, "captions", "Caption Studio").mac?.provider).toMatchObject({ scope: "jordan" }); // own still answers
@@ -226,13 +226,13 @@ describe("saving settings: the device must exist and belong to the scope", () =>
     const body = { instances: [{ id: "codex_casey", driver: "codex", name: "Codex", enabled: true, device: jordan.device.id }], default: { instance: "codex_casey", model: "gpt-5", effort: "low" }, jobs: {} };
     const r = await app.request("/api/providers/own", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     expect(r.status).toBe(400);
-    expect(((await r.json()) as { error: string }).error).toMatch(/your own Macs/);
-    expect(() => parseSettings(body, "casey")).toThrow(/your own Macs/);
+    expect(((await r.json()) as { error: string }).error).toMatch(/not yours/);
+    expect(() => parseSettings(body, "casey")).toThrow(/not yours/);
   });
 
   it("the workspace's providers run on the Mac or an admin's Mac, not a team member's", () => {
     const body = { instances: [{ id: "codex", driver: "codex", name: "Codex", enabled: true, device: jordan.device.id }], default: { instance: "codex", model: "gpt-5", effort: "low" }, jobs: {} };
-    expect(() => parseSettings(body, "workspace")).toThrow(/an admin's Mac/);
+    expect(() => parseSettings(body, "workspace")).toThrow(/not an admin's/);
     expect(() => parseSettings({ ...body, instances: [{ ...body.instances[0], device: alex.device.id }] }, "workspace")).not.toThrow();
   });
 
@@ -269,7 +269,7 @@ describe("provider instance fields", () => {
     expect(parseSettings(JSON.parse(JSON.stringify(old)), "workspace")).toEqual(old);
   });
 
-  it("the new fields round-trip through a save and a re-read", () => {
+  it("the fields a driver reads round-trip through a save and a re-read; the rest are dropped", () => {
     const rich = body({
       id: "codex_work",
       driver: "codex",
@@ -278,18 +278,16 @@ describe("provider instance fields", () => {
       home: "/Users/me/.codex-work",
       binaryPath: "/opt/homebrew/bin/codex",
       shadowHomePath: "/Users/me/.codex-shared",
-      envNames: ["OPENAI_ORG", "CODEX_TRACE"],
+      envNames: ["OPENAI_ORG"],
       accentColor: "#1f8a70",
       featured: false,
+      model: "m",
+      effort: "low",
     });
     const once = parseSettings(rich, "workspace");
-    expect(once.instances[0]).toMatchObject({
-      binaryPath: "/opt/homebrew/bin/codex",
-      shadowHomePath: "/Users/me/.codex-shared",
-      envNames: ["OPENAI_ORG", "CODEX_TRACE"],
-      accentColor: "#1f8a70",
-      featured: false,
-    });
+    expect(once.instances[0]).toMatchObject({ home: "/Users/me/.codex-work", model: "m", effort: "low" });
+    // Codex's settings page shows no program, shadow folder, variables, colour or featured: none of them is saved
+    for (const k of ["binaryPath", "shadowHomePath", "envNames", "accentColor", "featured"]) expect(once.instances[0]).not.toHaveProperty(k);
     expect(once.instances[0]).not.toHaveProperty("launchArgs");
     expect(parseSettings(JSON.parse(JSON.stringify(once)), "workspace")).toEqual(once);
   });
@@ -298,8 +296,8 @@ describe("provider instance fields", () => {
     const acpInst = { id: "acp_local", driver: "acp", name: "Local", enabled: true, acp: { command: "/usr/local/bin/my-agent", args: [] } };
     const withHub = (inst: Record<string, unknown>) => ({ ...body(inst), instances: [{ ...hub, device: alex.device.id }, { ...inst, device: alex.device.id }] });
     expect(parseSettings(withHub({ ...acpInst, launchArgs: ["--verbose"] }), "workspace").instances[1]).toMatchObject({ launchArgs: ["--verbose"] });
-    expect(() => parseSettings(withHub({ ...acpInst, launchArgs: ["--x", 3] }), "workspace")).toThrow(/launch argument/);
-    expect(() => parseSettings(withHub({ ...acpInst, launchArgs: "--x" }), "workspace")).toThrow(/launch argument/);
+    expect(() => parseSettings(withHub({ ...acpInst, launchArgs: ["--x", 3] }), "workspace")).toThrow(/one line of text/);
+    expect(() => parseSettings(withHub({ ...acpInst, launchArgs: "--x" }), "workspace")).toThrow(/one line of text/);
   });
 
   it("drops launch arguments sent for any other kind, so an old file still loads", () => {
@@ -309,11 +307,12 @@ describe("provider instance fields", () => {
   });
 
   it("never keeps an environment value: only the names, and a name with a value in it is refused", () => {
-    const base = { id: "codex", driver: "codex", name: "Codex", enabled: true };
-    const kept = parseSettings(body({ ...base, envNames: ["OPENAI_ORG"], envValues: { OPENAI_ORG: "sk-secret" }, env: { OPENAI_ORG: "sk-secret" } }), "workspace");
-    expect(kept.instances[0]).toEqual({ id: "codex", driver: "codex", name: "Codex", enabled: true, device: alex.device.id, envNames: ["OPENAI_ORG"] });
-    expect(JSON.stringify(kept)).not.toContain("sk-secret");
-    expect(() => parseSettings(body({ ...base, envNames: ["OPENAI_ORG=sk-secret"] }), "workspace")).toThrow(/environment names/);
+    // Claude is one of the two tools the Mac reads variable names for (driverFields)
+    const base = { id: "claude", driver: "claude", name: "Claude", enabled: true };
+    const kept = parseSettings(body({ ...base, envNames: ["ANTHROPIC_LOG"], envValues: { ANTHROPIC_LOG: "secret" }, env: { ANTHROPIC_LOG: "secret" } }), "workspace");
+    expect(kept.instances[0]).toEqual({ id: "claude", driver: "claude", name: "Claude", enabled: true, device: alex.device.id, envNames: ["ANTHROPIC_LOG"] });
+    expect(JSON.stringify(kept)).not.toContain("secret");
+    expect(() => parseSettings(body({ ...base, envNames: ["ANTHROPIC_LOG=secret"] }), "workspace")).toThrow(/variable names/);
   });
 
   it("a local ACP command needs its program; other drivers can't carry one", () => {
@@ -321,15 +320,22 @@ describe("provider instance fields", () => {
     const withHub = (inst: Record<string, unknown>) => ({ ...body(inst), instances: [{ ...hub, device: alex.device.id }, { ...inst, device: alex.device.id }] });
     const acp = { id: "acp_local", driver: "acp", name: "Local", enabled: true, acp: { command: "/usr/local/bin/my-agent", args: ["acp"] } };
     expect(parseSettings(withHub(acp), "workspace").instances[1]).toMatchObject({ acp: { command: "/usr/local/bin/my-agent", args: ["acp"] } });
-    expect(() => parseSettings(withHub({ ...acp, acp: undefined }), "workspace")).toThrow(/ACP command needs/);
-    expect(() => parseSettings(withHub({ id: "codex", driver: "codex", name: "Codex", enabled: true, acp: { command: "x", args: [] } }), "workspace")).toThrow(/only a local ACP command/);
+    expect(() => parseSettings(withHub({ ...acp, acp: undefined }), "workspace")).toThrow(/needs the program/);
+    expect(() => parseSettings(withHub({ id: "codex", driver: "codex", name: "Codex", enabled: true, acp: { command: "x", args: [] } }), "workspace")).toThrow(/only a local command/);
   });
 
-  it("refuses a bad colour, an environment name that is not a name, and a relative binary path", () => {
-    const base = { id: "codex", driver: "codex", name: "Codex", enabled: true };
-    expect(() => parseSettings(body({ ...base, accentColor: "teal" }), "workspace")).toThrow(/#rrggbb/);
-    expect(() => parseSettings(body({ ...base, envNames: ["BAD NAME"] }), "workspace")).toThrow(/environment names/);
-    expect(() => parseSettings(body({ ...base, binaryPath: "codex" }), "workspace")).toThrow(/full path/);
+  it("refuses an environment name that is not a name, and a relative program path for an ACP kind", () => {
+    const base = { id: "claude", driver: "claude", name: "Claude", enabled: true };
+    expect(() => parseSettings(body({ ...base, envNames: ["BAD NAME"] }), "workspace")).toThrow(/variable names/);
+    const cursor = { id: "cursor_local", driver: "cursor", name: "Cursor", enabled: true };
+    expect(() => parseSettings(body({ ...cursor, binaryPath: "cursor" }), "workspace")).toThrow(/starts with \//);
+  });
+
+  it("an AI on a computer that was removed still saves: it comes back unassigned, and the other AIs save", () => {
+    const gone = { id: "claude_old", driver: "claude", name: "Claude (old)", enabled: true, device: "removed-mac" };
+    const kept = parseSettings({ instances: [gone, { id: "claude", driver: "claude", name: "Claude", enabled: true, device: alex.device.id }], default: { instance: "claude", model: "m", effort: "low" }, jobs: {} }, "workspace");
+    expect(kept.instances.find((i) => i.id === "claude_old")).toMatchObject({ device: "" });
+    expect(kept.instances.find((i) => i.id === "claude")).toMatchObject({ device: alex.device.id });
   });
 
   it("drops a base URL sent from the settings page: only a plug-in's instance may set one", () => {

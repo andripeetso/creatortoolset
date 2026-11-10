@@ -1,142 +1,196 @@
 import { useState } from "react";
-import { ConfirmButton } from "@/components/instagram/ConfirmButton";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { installCatalogPack } from "@/lib/pack-catalog";
 import { useWorkspace } from "@/lib/workspace";
 import { compareVersions, type InstalledPack } from "@contracts/packs";
 import { msg } from "../settings/helpers";
-import { Notice } from "../settings/ui";
+import { Card, ListRow, Row, RowMenu, saveFailed } from "@/components/settings/ui";
 import { removePack, setPackOn, setPackProjects } from "./packs-api";
 import { packProjects } from "./packs-helpers";
 import { ProjectsPicker } from "./ProjectsPicker";
-/**
- * What you can do with one pack. Not installed: install it for the projects picked. Installed: the on/off switches,
- * the projects it's in, update when a newer version is listed, remove (after a second click).
+
+/*
+ * The controls of one pack, shared by its row in Installed, its row in Discover and its detail page. The stored data:
+ * `off` holds "*" when the pack is off everywhere (On) and a project id for each project that switched it off; `projectIds`
+ * limits it to some projects (empty = all). Each control writes one of those and nothing else.
  */
-export function PackActions({
-  id,
-  name,
-  installed,
-  latest,
-  reload,
-}: {
-  id: string;
-  name: string;
-  installed?: InstalledPack;
-  /** The newest approved version, when known. */
-  latest?: string | null;
-  reload: () => Promise<void>;
-}) {
-  const currentId = useWorkspace((s) => s.currentProjectId);
-  const projects = useWorkspace((s) => s.projects);
-  const currentName = projects.find((p) => p.id === currentId)?.name ?? "this project";
-  const [scope, setScope] = useState<string[]>([]);
+
+/** Runs one change: its message is a toast, a failure is a toast too, and the list reloads after. */
+export function usePackRun(reload: () => Promise<void>) {
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const run = async (job: () => Promise<string | undefined>) => {
     setBusy(true);
-    setError(null);
-    setNotice(null);
     try {
       const said = await job();
-      if (said) setNotice(said);
+      if (said) toast(said);
     } catch (e) {
-      setError(msg(e));
+      saveFailed(msg(e));
     } finally {
       setBusy(false);
       await reload();
     }
   };
-  const feedback = (
-    <>
-      {notice && <div className="mt-2"><Notice>{notice}</Notice></div>}
-      {error && <div className="mt-2"><Notice tone="error">{error}</Notice></div>}
-    </>
-  );
-  if (!installed) {
-    return (
-      <div>
-        <div className="flex flex-wrap items-center gap-2">
-          <ProjectsPicker value={scope} onChange={setScope} disabled={busy} />
-          <Button
-            size="sm"
-            disabled={busy}
-            onClick={() =>
-              void run(async () => {
-                const r = await installCatalogPack(id, scope);
-                return `Installed.${r.kept ? ` Kept ${r.kept} you edited.` : ""}`;
-              })
-            }
-          >
-            {busy ? "Installing…" : "Install"}
-          </Button>
-        </div>
-        {feedback}
-      </div>
-    );
-  }
-  const ids = packProjects(installed);
-  const hasUpdate = !!latest && compareVersions(latest, installed.version) > 0;
-  const showHere = !!currentId && (ids.length === 0 || ids.includes(currentId));
+  return { busy, run };
+}
+
+/** Install a catalog pack for the projects given (none = all of them). */
+export function InstallButton({ id, scope = [], reload, size = "xs" }: { id: string; scope?: string[]; reload: () => Promise<void>; size?: "xs" | "sm" }) {
+  const { busy, run } = usePackRun(reload);
   return (
-    <div>
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <label className="flex items-center gap-2 text-xs text-foreground">
-          <Switch
-            checked={!installed.off.includes("*")}
-            disabled={busy}
-            onCheckedChange={(on) => void run(() => setPackOn(id, on).then(() => undefined))}
-            aria-label={`${name} on everywhere`}
-          />
-          On everywhere
-        </label>
-        {currentId && showHere && (
-          <label className="flex items-center gap-2 text-xs text-foreground">
-            <Switch
-              checked={!installed.off.includes(currentId)}
-              disabled={busy}
-              onCheckedChange={(on) => void run(() => setPackOn(id, on, currentId).then(() => undefined))}
-              aria-label={`${name} on in ${currentName}`}
-            />
-            On in {currentName}
-          </label>
-        )}
+    <Button
+      size={size}
+      disabled={busy}
+      onClick={() =>
+        void run(async () => {
+          const r = await installCatalogPack(id, scope);
+          return `Installed.${r.kept ? ` Kept ${r.kept} you edited.` : ""}`;
+        })
+      }
+    >
+      {busy ? "Installing…" : "Install"}
+    </Button>
+  );
+}
+
+/** "Update to 1.0.1" when a newer version is listed for an installed pack, else nothing. */
+export function PackUpdateButton({ id, installed, latest, reload }: { id: string; installed: InstalledPack; latest?: string | null; reload: () => Promise<void> }) {
+  const { busy, run } = usePackRun(reload);
+  if (!latest || compareVersions(latest, installed.version) <= 0) return null;
+  return (
+    <Button
+      size="xs"
+      variant="outline"
+      disabled={busy}
+      onClick={() =>
+        void run(async () => {
+          const r = await installCatalogPack(id, packProjects(installed));
+          return `Updated to ${latest}.${r.kept ? ` Kept ${r.kept} you edited.` : ""}`;
+        })
+      }
+    >
+      Update to {latest}
+    </Button>
+  );
+}
+
+/** On, everywhere: the switch that turns the pack off for every project (its "*" entry). */
+export function PackOnSwitch({ id, name, installed, reload }: { id: string; name: string; installed: InstalledPack; reload: () => Promise<void> }) {
+  const { busy, run } = usePackRun(reload);
+  return (
+    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+      <span>On</span>
+      <Switch
+        aria-label={`${name} on`}
+        checked={!installed.off.includes("*")}
+        disabled={busy}
+        onCheckedChange={(on) => void run(() => setPackOn(id, on).then(() => undefined))}
+      />
+    </div>
+  );
+}
+
+/** Used in: all of the person's projects, or the ones ticked. */
+export function PackUsedIn({ id, installed, reload }: { id: string; installed: InstalledPack; reload: () => Promise<void> }) {
+  const { busy, run } = usePackRun(reload);
+  return (
+    <Row
+      title="Used in"
+      control={
         <ProjectsPicker
-          value={ids}
+          value={packProjects(installed)}
           disabled={busy}
           onChange={(next) => void run(() => setPackProjects(id, next.length ? next : null).then(() => undefined))}
         />
-        {hasUpdate && (
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={busy}
-            onClick={() =>
-              void run(async () => {
-                const r = await installCatalogPack(id, ids);
-                return `Updated to ${latest}.${r.kept ? ` Kept ${r.kept} you edited.` : ""}`;
-              })
-            }
-          >
-            Update to {latest}
-          </Button>
-        )}
-        <ConfirmButton
-          label="Remove"
-          confirmLabel="Click again to remove"
+      }
+    />
+  );
+}
+
+/**
+ * On in the current project. Shown only when it can change something: the pack is on everywhere and the current project is
+ * one it is used in. Otherwise the row is not there.
+ */
+export function PackHereSwitch({ id, name, installed, reload }: { id: string; name: string; installed: InstalledPack; reload: () => Promise<void> }) {
+  const currentId = useWorkspace((s) => s.currentProjectId);
+  const projects = useWorkspace((s) => s.projects);
+  const { busy, run } = usePackRun(reload);
+  const ids = packProjects(installed);
+  if (!currentId || installed.off.includes("*") || (ids.length > 0 && !ids.includes(currentId))) return null;
+  const current = projects.find((p) => p.id === currentId)?.name ?? "this project";
+  return (
+    <Row
+      title={`On in ${current}`}
+      control={
+        <Switch
+          aria-label={`${name} on in ${current}`}
+          checked={!installed.off.includes(currentId)}
           disabled={busy}
-          onConfirm={() =>
-            void run(async () => {
-              const r = await removePack(id);
-              return r.kept ? `Removed. Kept ${r.kept} you edited.` : "Removed.";
-            })
-          }
-          className="text-xs text-red-600 underline dark:text-red-300"
+          onCheckedChange={(on) => void run(() => setPackOn(id, on, currentId).then(() => undefined))}
         />
-      </div>
-      {feedback}
-    </div>
+      }
+    />
+  );
+}
+
+/** The actions on an installed pack's row: its update (when one is listed), On, and `…` with Remove (confirmed). */
+export function InstalledPackActions({ id, name, installed, latest, reload }: { id: string; name: string; installed: InstalledPack; latest?: string | null; reload: () => Promise<void> }) {
+  const { run } = usePackRun(reload);
+  return (
+    <>
+      <PackUpdateButton id={id} installed={installed} latest={latest} reload={reload} />
+      <PackOnSwitch id={id} name={name} installed={installed} reload={reload} />
+      <RowMenu
+        label={`More for ${name}`}
+        items={[
+          {
+            label: "Remove",
+            destructive: true,
+            confirm: {
+              title: `Remove ${name}?`,
+              body: "Copies you haven't changed are deleted. Copies you edited stay.",
+              ok: "Remove",
+            },
+            onSelect: () =>
+              run(async () => {
+                const r = await removePack(id);
+                return r.kept ? `Removed. Kept ${r.kept} you edited.` : "Removed.";
+              }),
+          },
+        ]}
+      />
+    </>
+  );
+}
+
+/** The detail page's controls: Install (with the projects to put it in) before it is installed, the pack's own rows after. */
+export function PackActions({ id, name, installed, latest, reload }: { id: string; name: string; installed?: InstalledPack; latest?: string | null; reload: () => Promise<void> }) {
+  const [scope, setScope] = useState<string[]>([]);
+  if (!installed) {
+    return (
+      <Card>
+        <Row
+          title="Used in"
+          control={
+            <>
+              <ProjectsPicker value={scope} onChange={setScope} />
+              <InstallButton id={id} scope={scope} reload={reload} size="sm" />
+            </>
+          }
+        />
+      </Card>
+    );
+  }
+  return (
+    <Card>
+      <ListRow
+        title={name}
+        subtitle={`v${installed.version}`}
+        actions={<InstalledPackActions id={id} name={name} installed={installed} latest={latest} reload={reload} />}
+      />
+      <PackUsedIn id={id} installed={installed} reload={reload} />
+      <PackHereSwitch id={id} name={name} installed={installed} reload={reload} />
+    </Card>
   );
 }

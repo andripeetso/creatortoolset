@@ -192,6 +192,8 @@ describe("connect your AI", () => {
   });
 
   it("Check again finds a CLI installed since the last look, and reads its sign-in again (no cached 'not found')", async () => {
+    // no desktop app either: this Mac's real /Applications would add its rows (the test is about the CLIs only)
+    local.setDesktopAppsForTests(() => false);
     const present: string[] = [];
     world(present, (f, args) => {
       if (f.endsWith("/codex") && args[0] === "--version") return { stdout: "codex-cli 0.50.0\n" };
@@ -204,6 +206,7 @@ describe("connect your AI", () => {
     expect((await local.localAiView("ana", [])).rows.map((r) => r.id)).toEqual([]);
     const fresh = await local.localAiView("ana", [], true);
     expect(fresh.rows).toEqual([expect.objectContaining({ id: "codex", found: true, signedIn: true, version: "codex-cli 0.50.0" })]);
+    local.setDesktopAppsForTests();
   });
 
   it("updates the same instance on a second connect, and keeps its check through a Settings save", async () => {

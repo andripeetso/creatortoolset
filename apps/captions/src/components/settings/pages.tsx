@@ -4,14 +4,16 @@ import { AccountSection } from "./AccountSection";
 import { AdminSection } from "./AdminSection";
 import { AppearanceSection } from "./AppearanceSection";
 import { AutomationsSection } from "./AutomationsSection";
+import { ApiKeysSection } from "./ApiKeysSection";
 import { ConnectorsSection } from "./ConnectorsSection";
-import { OwnAiMcpSection } from "./OwnAiMcpSection";
+import { OwnAiSection } from "./OwnAiSection";
 import { ProvidersSection } from "./ProvidersSection";
 import { UsageSection } from "./UsageSection";
 import { WorkspaceSection } from "./WorkspaceSection";
-import { ComputersPage } from "./pages/ComputersPage";
-import { GeneralPage } from "./pages/GeneralPage";
-import { KeysPage } from "./pages/KeysPage";
+import { ComputersSection } from "./ComputersSection";
+import { FoldersSection } from "./FoldersSection";
+import { ServersSection } from "./ServersSection";
+import { GeneralSection } from "./GeneralSection";
 
 /**
  * Which component draws each Settings page. One line per page: a screen builder changes only the component on their own
@@ -20,18 +22,17 @@ import { KeysPage } from "./pages/KeysPage";
 type PageBody = ComponentType<{ sub?: string }>;
 
 export const PAGE_BODIES: Record<SettingsPageId, PageBody> = {
-  general: GeneralPage,
+  general: GeneralSection,
   appearance: AppearanceSection,
-  folders: ComputersPage,
+  folders: FoldersSection,
   providers: ProvidersSection,
-  devices: ComputersPage,
+  devices: ComputersSection,
   automations: AutomationsSection,
-  // ponytail: UsageSection and ConnectorsSection still take back/compact props (the setup dialog's); their builders drop these casts
-  usage: UsageSection as PageBody,
-  connectors: ConnectorsSection as PageBody,
-  keys: KeysPage,
-  "own-ai": OwnAiMcpSection,
-  servers: ComputersPage,
+  usage: UsageSection,
+  connectors: ConnectorsSection,
+  keys: ApiKeysSection,
+  "own-ai": OwnAiSection,
+  servers: ServersSection,
   team: WorkspaceSection,
   admin: AdminSection,
   account: AccountSection,

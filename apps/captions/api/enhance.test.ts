@@ -50,11 +50,11 @@ describe("Audio Enhancer engines", () => {
     expect(await read(app.request("/availability", as("local")))).toMatchObject({ elevenlabs: true });
     expect(await read(app.request("/availability", as("jordan")))).toMatchObject({ elevenlabs: false, default: "nvidia" });
     // a member without a key: told which key to add, the server's key never used for them
-    expect((await read(app.request("/availability", as("jordan")))).why).toMatchObject({ elevenlabs: "Add your ElevenLabs key in Settings → My API keys" });
+    expect((await read(app.request("/availability", as("jordan")))).why).toMatchObject({ elevenlabs: "Add your ElevenLabs key in Settings → API keys" });
     // no key: the session is parked as needs_key with the key to add, not refused
     expect(await read(app.request("/?engine=elevenlabs&name=b.wav", as("jordan", "POST", tone(1))))).toMatchObject({
       status: "needs_key",
-      error: "Add your ElevenLabs key in Settings → My API keys",
+      error: "Add your ElevenLabs key in Settings → API keys",
     });
     saveMyKey("jordan", "ELEVENLABS_API_KEY", "jordans-own");
     expect(await read(app.request("/availability", as("jordan")))).toMatchObject({ elevenlabs: true });

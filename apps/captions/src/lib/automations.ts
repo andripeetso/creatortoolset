@@ -1,8 +1,15 @@
-import type { Automation, Schedule, Weekday } from "@contracts/automations";
+import { DAY_NAMES, type Automation, type Schedule, type Weekday } from "@contracts/automations";
 
-/** Settings → Automations' calls (api/automations.ts). The form below makes the same body the MCP tool sends. */
+/** Settings → Scheduled tasks' calls (api/automations.ts). The form below makes the same body the MCP tool sends. */
 
 export type AutomationView = Automation & { running: boolean; nextRun: number | null };
+
+/** "Every Monday 09:00", "Every day 18:30", "Every 6 hours": the cadence in plain words. */
+export function cadenceOf(s: Schedule): string {
+  if (s.kind === "hours") return s.every === 1 ? "Every hour" : `Every ${s.every} hours`;
+  if (s.kind === "daily") return `Every day ${s.at}`;
+  return `Every ${DAY_NAMES[s.weekday]} ${s.at}`;
+}
 
 async function call<T>(path: string, method = "GET", body?: unknown): Promise<T> {
   const r = await fetch(`/api/automations${path}`, {
@@ -17,7 +24,7 @@ async function call<T>(path: string, method = "GET", body?: unknown): Promise<T>
   return data;
 }
 
-export const listAutomations = () => call<{ items: AutomationView[] }>("");
+export const listAutomations = () => call<{ items: AutomationView[]; blocked: string | null }>("");
 export const createAutomation = (body: AutomationFields & { enabled?: boolean }) => call<AutomationView>("", "POST", body);
 export const updateAutomation = (id: string, patch: Partial<AutomationFields> & { enabled?: boolean }) => call<AutomationView>(`/${id}`, "PATCH", patch);
 export const deleteAutomation = (id: string) => call<{ ok: true }>(`/${id}`, "DELETE");

@@ -4,7 +4,7 @@ import { Link } from "react-router";
 import { CatalogError, cachedCatalogPack } from "@/lib/pack-catalog";
 import type { CatalogDetail } from "@contracts/pack-catalog";
 import { msg } from "../settings/helpers";
-import { Loading, Notice } from "../settings/ui";
+import { Card, ErrorRow, LoadingRow } from "@/components/settings/ui";
 import { CaptionSample } from "./PackPreview";
 import { PackActions } from "./PackActions";
 import { ContentsSummary, ContentsView, OfficialBadge, WhereItGoes } from "./PacksShared";
@@ -32,11 +32,13 @@ export function PackDetailView({ id, installed, reload }: { id: string; installe
       <>
         {BACK}
         <div className="mt-3">
-          <Notice tone="error">{error}</Notice>
+          <Card>
+            <ErrorRow title={error} />
+          </Card>
         </div>
       </>
     );
-  if (!detail) return <Loading />;
+  if (!detail) return <Card><LoadingRow /></Card>;
   const { entry, pack, versions } = detail;
   const styles = pack.captionStyles ?? [];
   const kinds = kindLine(packKinds(entry.contains));

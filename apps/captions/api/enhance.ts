@@ -27,7 +27,7 @@ import { type Moves, move } from "./lib/transition";
  * - nvidia (the default): NVIDIA Studio Voice on NVIDIA's hosted API
  *   (lib/nvidia-voice.ts), in this process.
  * - elevenlabs: ElevenLabs Voice Isolator.
- * Each runs on the session owner's key (my-keys.ts keyFor: their own from Settings → My API keys; the server's only
+ * Each runs on the session owner's key (my-keys.ts keyFor: their own from Settings → API keys; the server's only
  * for the platform admin).
  * Admins can add a second pass (`?then=`): `meta.chain`, `meta.step`; a
  * pass's output feeds the next as pass-<step>.wav.
@@ -399,7 +399,7 @@ async function runElevenLabs(id: string, owner: string | undefined, wavPath: str
       throw new Error(outOfCreditsMessage("Audio enhancement"));
     }
     if (res.status === 401) {
-      throw new Error("ElevenLabs rejected the API key — check it in Settings → My API keys.");
+      throw new Error("ElevenLabs rejected the API key — check it in Settings → API keys.");
     }
     if (res.status === 429) {
       throw new Error("Audio enhancement is rate limited — try again in a minute.");

@@ -235,7 +235,7 @@ export function streamMacClaude(
   opts: MacOpts = {},
 ): Promise<string> {
   // ponytail: no device = nothing to run it: an unclaimed miss, so an API-key fallback may still answer
-  if (!opts.provider?.device) return Promise.reject(new MacClaudeError("No Mac runs this provider: pick one in Settings → Your AI", "unclaimed"));
+  if (!opts.provider?.device) return Promise.reject(new MacClaudeError("No Mac runs this provider: pick one in Settings → Your own AI", "unclaimed"));
   return new Promise((resolve, reject) => {
     const started = Date.now();
     const r: Req = {

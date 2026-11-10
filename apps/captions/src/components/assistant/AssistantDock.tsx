@@ -114,7 +114,7 @@ export function AssistantDock() {
     setSeenId((s) => (s === undefined ? (r.data.messages.at(-1)?.id ?? null) : s));
   }, []);
 
-  // the AI is read with the view: again on each page (back from Settings → Your AI) and when the window comes back
+  // the AI is read with the view: again on each page (back from Settings → Your own AI) and when the window comes back
   useEffect(() => {
     if (real) void load();
   }, [real, load, pathname]);

@@ -2228,7 +2228,7 @@ async function generateIdeaBoardNow(
   signal?: AbortSignal,
   projectId?: string,
 ): Promise<IdeaBoard> {
-  if (!anyAiConfigured(user)) throw new Error("No AI is set up for you (Settings → Your AI)");
+  if (!anyAiConfigured(user)) throw new Error("No AI is set up for you (Settings → Your own AI)");
   const metas = (await metasInProject(user, projectId)).filter((m) => !m.duplicateOf);
   const taken = await workshopSourcePostIds(user);
   const catalog = ideaCatalog(metas.filter((m) => !taken.has(m.id)));

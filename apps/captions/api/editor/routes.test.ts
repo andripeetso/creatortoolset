@@ -177,7 +177,7 @@ describe.skipIf(rootReplaced)("AI Editor: the worker", () => {
     const real = { ...STEPS };
     STEPS.analyze = async ({ job }) => void seen.push(`analyze:${job.actor}`);
     STEPS.script = async () => {
-      throw new NeedsKey("Add your Anthropic key in Settings → My API keys");
+      throw new NeedsKey("Add your Anthropic key in Settings → API keys");
     };
     try {
       const { id } = await json<{ id: string }>(create("maker", ["ver_a1"]));

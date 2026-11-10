@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2, Settings2, Trash2, TriangleAlert, Upload, X } from "lucide-react";
+import { toast } from "sonner";
 import { useStudio } from "@/lib/store";
-import { deleteSession } from "@/lib/persist";
+import { confirmDialog } from "@/lib/dialogs";
+import { deleteLocalRecoveryProject } from "@/lib/local-recovery";
 import { fmtClock } from "@/lib/ass";
 import { EnginePicker } from "./EnginePicker";
 import { FpsSelect } from "./FpsSelect";
@@ -92,10 +94,18 @@ export function ProjectSettingsDialog({ onClose }: { onClose: () => void }) {
 
   const removeOriginal = async () => {
     if (!projectId || !activeClipId) return;
-    await fetch(
-      `/api/projects/${projectId}/clips/${activeClipId}/original`,
-      { method: "DELETE" }
-    ).catch(() => {});
+    const ok = await confirmDialog({
+      title: "Free up space?",
+      body: "Captions stay. Full-quality export needs the video again.",
+      ok: "Free up space",
+      danger: true,
+    });
+    if (!ok) return;
+    const r = await fetch(`/api/projects/${projectId}/clips/${activeClipId}/original`, { method: "DELETE" }).catch(() => null);
+    if (!r?.ok) {
+      toast.error("The source file was not removed. Try again.");
+      return;
+    }
     setOriginal({ has: false, bytes: 0 });
     useStudio.setState((s) => ({
       clips: s.clips.map((c) =>
@@ -107,7 +117,13 @@ export function ProjectSettingsDialog({ onClose }: { onClose: () => void }) {
   const deleteProject = async () => {
     if (!projectId) return;
     setDeleting(true);
-    await deleteSession(projectId).catch(() => {});
+    const r = await fetch(`/api/projects/${projectId}`, { method: "DELETE" }).catch(() => null);
+    if (!r?.ok) {
+      setDeleting(false);
+      toast.error("The project was not deleted. Try again.");
+      return;
+    }
+    await deleteLocalRecoveryProject(projectId).catch(() => {});
     useStudio.getState().reset(); // back to the import screen
     onClose(); // Home keeps the open-flag; clear it for the next project
   };

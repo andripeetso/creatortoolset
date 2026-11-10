@@ -46,7 +46,7 @@ export function transcribeRoute(actor: string | null): { provider: "deepgram" | 
   if (!dg.missing) return { provider: "deepgram", ...dg };
   const oa = keyFor(actor, "OPENAI_API_KEY");
   if (!oa.missing) return { provider: "openai", ...oa };
-  throw new NeedsKey("Add your Deepgram (or OpenAI) key in Settings → My API keys");
+  throw new NeedsKey("Add your Deepgram (or OpenAI) key in Settings → API keys");
 }
 
 /** Words into segments: one per utterance when Deepgram marks them, else a new one after a pause or 30 words. */

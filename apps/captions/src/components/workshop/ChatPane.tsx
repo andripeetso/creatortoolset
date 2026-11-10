@@ -649,7 +649,7 @@ export function ChatPane({
             ))}
           </ul>
         )}
-        {!aiAvailable ? <Notice tone="warn" className="mb-2">No AI is set up for you yet: connect one in Settings → Your AI.</Notice> : null}
+        {!aiAvailable ? <Notice tone="warn" className="mb-2">No AI is set up for you yet: connect one in Settings → Your own AI.</Notice> : null}
         {macOff && aiAvailable ? <Notice tone="warn" className="mb-2">Your Mac is offline. Replies run on it, so they wait until it's back.</Notice> : null}
         {imageError ? <Notice className="mb-2" onDismiss={() => setImageError(null)}>{imageError}</Notice> : null}
         {pasted.length > 0 && (
@@ -826,7 +826,7 @@ export function ChatPane({
             onClick={() => (deep ? onDeep(false) : void confirmHeavy("research").then((go) => go && onDeep(true)))}
             disabled={!researchAvailable}
             className={`${chip} ${deep ? "border-violet-500/60 bg-violet-500/20 text-violet-950 dark:text-violet-100" : chipIdle} disabled:opacity-50`}
-            title={researchAvailable ? "Deep research: 5–15 minutes of web research on your message before the AI answers, sources included. Off after each send." : "Research needs your own AI, or your Perplexity key in Settings → My API keys"}
+            title={researchAvailable ? "Deep research: 5–15 minutes of web research on your message before the AI answers, sources included. Off after each send." : "Research needs your own AI, or your Perplexity key in Settings → API keys"}
             aria-pressed={deep}
           >
             <Telescope className="h-3.5 w-3.5" /> Deep research{deep ? " on" : ""}

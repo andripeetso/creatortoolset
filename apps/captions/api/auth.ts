@@ -395,7 +395,7 @@ authApp.get("/account", (c) => {
   const me = signedInAccount(c.req.header("cookie"));
   const user = me && findUser(me.username);
   if (!user) return c.json({ error: "Sign in with an account first" }, 401);
-  return c.json({ username: user.username, name: user.displayName ?? "" });
+  return c.json({ username: user.username, name: user.displayName ?? "", identities: (user.identities ?? []).map((i) => i.provider) });
 });
 
 authApp.patch("/account", async (c) => {

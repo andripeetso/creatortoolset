@@ -1,13 +1,14 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { DAY_NAMES, describeSchedule, type Weekday } from "@contracts/automations";
-import { Pencil, Plus } from "lucide-react";
-import { ConfirmButton } from "@/components/instagram/ConfirmButton";
+import { useNavigate } from "react-router";
+import { Pencil, Play, Plus } from "lucide-react";
+import { AUTOMATION_NAME_MAX, AUTOMATION_PROMPT_MAX, DAY_NAMES, type AutomationResult, type Weekday } from "@contracts/automations";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
   blankDraft,
+  cadenceOf,
   createAutomation,
   deleteAutomation,
   draftBody,
@@ -19,136 +20,193 @@ import {
   type AutomationDraft,
   type AutomationView,
 } from "@/lib/automations";
-import { Card, Loading, Notice } from "./ui";
-import { fmtAgo, msg, selectCls } from "./helpers";
+import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, SettingsSelect, Status, saveFailed } from "./ui";
+import { fmtAgo, msg } from "./helpers";
 
-const when = (ms: number) => new Date(ms).toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+const RELOAD_MS = 15_000; // a run in progress finishes here without a reload
 const zone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
+const WORD: Record<AutomationResult["status"], string> = { done: "Done", error: "Failed", skipped: "Skipped" };
+
+/** "Mon 16 Nov 09:00": when the next run is, on the task's own clock (the cadence above is on that clock too). */
+const nextLabel = (ms: number, tz: string) =>
+  new Intl.DateTimeFormat("en-GB", { timeZone: tz, weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(ms)).replace(",", "");
+
+const firstLine = (text: string) => {
+  const line = text.split("\n")[0] ?? "";
+  return line.length > 140 ? `${line.slice(0, 140)}…` : line;
+};
+
+/** The cadence and the next run; the zone is named only when it is not this browser's, and never for an every-N-hours task. */
+const subtitleOf = (a: AutomationView) => {
+  if (a.running) return "Running now";
+  const where = a.schedule.kind !== "hours" && a.timezone !== zone() ? ` (${a.timezone})` : "";
+  const cadence = `${cadenceOf(a.schedule)}${where}`;
+  if (!a.enabled) return `${cadence} · off`;
+  return a.nextRun ? `${cadence} · next ${nextLabel(a.nextRun, a.timezone)}` : cadence;
+};
+
+/** The last result on one line: red when it failed, amber when it was skipped (the person has to fix something). A failed or skipped result's words are below the row. */
+function lastLine(a: AutomationView): ReactNode {
+  const r = a.lastResult;
+  if (!r) return "Not run yet";
+  if (r.status === "done") return `${WORD[r.status]} ${fmtAgo(r.at)}: ${firstLine(r.text)}`;
+  return <Status tone={r.status === "error" ? "broken" : "attention"}>{`${WORD[r.status]} ${fmtAgo(r.at)}`}</Status>;
+}
 
 /**
- * Settings → Automations: each scheduled prompt with its on/off switch, its next run, its last result, Edit, Run now and
- * delete. New automation and Edit open the same form (the body the server's POST and PATCH take).
+ * Settings → Scheduled tasks: a prompt the account's AI runs on a schedule. The page builds none while no AI can run one
+ * (the server says why: `blocked`). A task's result shows on its row; a failed or skipped one shows its full text below.
  */
 export function AutomationsSection() {
-  const [items, setItems] = useState<AutomationView[] | null>(null);
+  const navigate = useNavigate();
+  const [list, setList] = useState<{ items: AutomationView[]; blocked: string | null } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // "new", an automation to edit, or nothing
+  // "new", a task to edit, or nothing open
   const [editing, setEditing] = useState<AutomationView | "new" | null>(null);
 
   const reload = () =>
     listAutomations()
       .then((r) => {
-        setItems(r.items);
+        setList(r);
         setError(null);
       })
       .catch((e) => setError(msg(e)));
 
   useEffect(() => {
     void reload();
-    const t = setInterval(() => void reload(), 15_000);   // a run in progress finishes here without a reload
+    const t = setInterval(() => void reload(), RELOAD_MS);
     return () => clearInterval(t);
   }, []);
 
-  const act = (fn: () => Promise<unknown>) => fn().then(reload).catch((e) => setError(msg(e)));
-
-  if (!items) return error ? <Notice tone="error">Could not load automations: {error}</Notice> : <Loading />;
+  const items = list?.items ?? [];
+  const blocked = list?.blocked ?? null;
 
   return (
-    <div className="space-y-3">
-      {!editing && (
-        <div className="flex justify-end">
-          <Button size="sm" onClick={() => setEditing("new")}>
-            <Plus /> New automation
-          </Button>
-        </div>
-      )}
-      {error && <Notice tone="error">{error}</Notice>}
-      {editing ? (
-        <AutomationForm
+    <>
+      <Section
+        id="scheduled-tasks"
+        title="Scheduled tasks"
+        action={
+          list && !blocked ? (
+            <Button size="xs" variant="ghost" onClick={() => setEditing("new")}>
+              <Plus className="size-3" /> New task
+            </Button>
+          ) : null
+        }
+      >
+        <Card>
+          {!list ? (
+            error ? (
+              <ErrorRow title="Could not load scheduled tasks" detail={error} retry={() => void reload()} />
+            ) : (
+              <LoadingRow title="Loading scheduled tasks…" />
+            )
+          ) : (
+            <>
+              {blocked && (
+                <Row
+                  title="Tasks can't run yet"
+                  status={<Status tone="attention">{blocked}</Status>}
+                  control={
+                    <Button size="sm" variant="outline" onClick={() => navigate("/settings/providers")}>
+                      Open Providers
+                    </Button>
+                  }
+                />
+              )}
+              {!blocked && items.length === 0 && (
+                <EmptyRow title="No scheduled tasks" description="A task is a prompt your AI runs on its own, daily, weekly or every few hours. Its last result shows on its row." />
+              )}
+              {items.map((a) => (
+                <TaskRow key={a.id} a={a} onEdit={() => setEditing(a)} onChanged={reload} />
+              ))}
+            </>
+          )}
+        </Card>
+      </Section>
+      {editing && (
+        <TaskDialog
           key={editing === "new" ? "new" : editing.id}
           initial={editing === "new" ? null : editing}
-          onDone={(saved) => {
+          onClose={() => setEditing(null)}
+          onSaved={() => {
             setEditing(null);
-            if (saved) void reload();
+            void reload();
           }}
         />
-      ) : items.length === 0 ? (
-        <Notice>No automations yet. For example: “every Monday at 9, pull my new Instagram posts and draft three hooks in the Workshop.”</Notice>
-      ) : (
-        <Card>
-          {items.map((a) => (
-            <div key={a.id} className="space-y-2 px-3 py-3">
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm text-foreground">
-                    {a.name}
-                    {a.running && <span className="ml-2 text-xs text-amber-400">running</span>}
-                  </div>
-                  <div className="mt-0.5 text-xs text-muted-foreground">
-                    {describeSchedule(a.schedule, a.timezone)}
-                    {a.enabled && a.nextRun ? ` · next ${when(a.nextRun)}` : a.enabled ? "" : " · off"}
-                  </div>
-                </div>
-                <Switch checked={a.enabled} onCheckedChange={(on) => void act(() => updateAutomation(a.id, { enabled: on }))} aria-label={`Turn ${a.name} on or off`} />
-                <Button variant="outline" size="sm" onClick={() => setEditing(a)} aria-label={`Edit ${a.name}`}>
-                  <Pencil /> Edit
-                </Button>
-                <Button variant="outline" size="sm" disabled={a.running} onClick={() => void act(() => runAutomationNow(a.id))}>
-                  Run now
-                </Button>
-                <ConfirmButton
-                  label="Delete"
-                  confirmLabel="Click again to delete"
-                  title="Delete this automation for good"
-                  onConfirm={() => act(() => deleteAutomation(a.id))}
-                  className="rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground hover:border-red-500/50 hover:text-red-600 dark:hover:text-red-300"
-                  armedClassName="border-red-500/60 text-red-600 dark:text-red-300"
-                />
-              </div>
-              <div className="text-xs text-muted-foreground">
-                {a.lastResult ? (
-                  <>
-                    <span className={a.lastResult.status === "done" ? "text-emerald-400" : a.lastResult.status === "error" ? "text-red-400" : "text-amber-400"}>
-                      {a.lastResult.status}
-                    </span>
-                    {` · ${fmtAgo(a.lastResult.at)}: ${a.lastResult.text.length > 280 ? `${a.lastResult.text.slice(0, 280)}…` : a.lastResult.text}`}
-                  </>
-                ) : (
-                  "Not run yet"
-                )}
-              </div>
-            </div>
-          ))}
-        </Card>
       )}
+    </>
+  );
+}
+
+function TaskRow({ a, onEdit, onChanged }: { a: AutomationView; onEdit: () => void; onChanged: () => Promise<void> }) {
+  const r = a.lastResult;
+  return (
+    <div>
+      <ListRow
+        title={a.name}
+        subtitle={subtitleOf(a)}
+        status={lastLine(a)}
+        actions={
+          <>
+            <Switch
+              checked={a.enabled}
+              onCheckedChange={(on) => updateAutomation(a.id, { enabled: on }).then(onChanged).catch((e) => saveFailed(msg(e)))}
+              aria-label={`Turn ${a.name} on or off`}
+            />
+            <RowMenu
+              label={`Actions for ${a.name}`}
+              items={[
+                { label: "Edit", icon: <Pencil />, onSelect: onEdit },
+                ...(a.running ? [] : [{ label: "Run now", icon: <Play />, onSelect: () => runAutomationNow(a.id).then(onChanged) }]),
+                {
+                  label: "Delete",
+                  destructive: true,
+                  confirm: { title: `Delete “${a.name}”?`, body: "Its schedule and last result are removed.", ok: "Delete" },
+                  onSelect: () => deleteAutomation(a.id).then(onChanged),
+                },
+              ]}
+            />
+          </>
+        }
+      />
+      {r && r.status !== "done" && <p className="px-3 pb-2.5 text-xs break-words text-muted-foreground sm:px-4">{r.text}</p>}
     </div>
   );
 }
 
-function Field({ label, hint, children }: { label: string; hint?: ReactNode; children: ReactNode }) {
+function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <label className="block space-y-1">
-      <span className="block text-xs font-medium text-foreground">{label}</span>
+    <div className="space-y-1.5">
+      <div className="text-xs font-medium text-foreground">{label}</div>
       {children}
-      {hint && <span className="block text-[11px] text-muted-foreground">{hint}</span>}
-    </label>
+    </div>
   );
 }
 
-/** The form for a new automation or an edit. Its fields are the server's: name, prompt, schedule, timezone. */
-function AutomationForm({ initial, onDone }: { initial: AutomationView | null; onDone: (saved: boolean) => void }) {
+/** New or edit. The fields are the server's: name, prompt, schedule, time zone (the browser's, as the server checks it). */
+function TaskDialog({ initial, onClose, onSaved }: { initial: AutomationView | null; onClose: () => void; onSaved: () => void }) {
   const [d, setD] = useState<AutomationDraft>(() => (initial ? draftOf(initial) : blankDraft()));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const set = (patch: Partial<AutomationDraft>) => setD((cur) => ({ ...cur, ...patch }));
   const timed = d.kind !== "hours";
-  // an empty or out-of-range "Every" reads as 0 (Number("")), so it is blocked here, not sent
-  const everyOk = timed || (Number.isInteger(d.every) && d.every >= 1 && d.every <= 168);
+  // the zone of a task that was made elsewhere shows only when it differs from this browser's
+  const elsewhere = initial && initial.timezone !== zone() ? initial.timezone : null;
 
   const save = async () => {
+    if (!d.name.trim() || !d.prompt.trim()) {
+      setError("Give the task a name and say what it should do.");
+      return;
+    }
+    if (!timed && !(Number.isInteger(d.every) && d.every >= 1 && d.every <= 168)) {
+      setError("Every: a whole number of hours, from 1 to 168.");
+      return;
+    }
     setBusy(true);
     setError(null);
-    const body = draftBody(d, zone());
+    // a new task runs on this browser's clock; an edit keeps its own zone
+    const body = draftBody(d, initial?.timezone ?? zone());
     try {
       if (!initial) await createAutomation({ ...body, enabled: true });
       else {
@@ -156,7 +214,7 @@ function AutomationForm({ initial, onDone }: { initial: AutomationView | null; o
         const same = JSON.stringify(draftSchedule(d)) === JSON.stringify(initial.schedule);
         await updateAutomation(initial.id, same ? { name: body.name, prompt: body.prompt } : body);
       }
-      onDone(true);
+      onSaved();
     } catch (e) {
       setError(msg(e));
       setBusy(false);
@@ -164,51 +222,57 @@ function AutomationForm({ initial, onDone }: { initial: AutomationView | null; o
   };
 
   return (
-    <div className="space-y-4 rounded-xl border border-border/60 bg-card/40 p-4">
+    <FormDialog
+      open
+      onOpenChange={(open) => !open && onClose()}
+      title={initial ? "Edit scheduled task" : "New scheduled task"}
+      submitLabel={initial ? "Save task" : "Create task"}
+      onSubmit={save}
+      busy={busy}
+      error={error}
+    >
       <Field label="Name">
-        <Input value={d.name} onChange={(e) => set({ name: e.target.value })} placeholder="e.g. Monday hooks" maxLength={80} aria-label="Name" className="h-8 max-w-sm text-xs" />
+        <Input value={d.name} onChange={(e) => set({ name: e.target.value })} placeholder="e.g. Monday hooks" maxLength={AUTOMATION_NAME_MAX} aria-label="Name" className="h-8" />
       </Field>
-      <Field label="What to do" hint="Runs with no one at the screen, with the chat's tools.">
-        <Textarea value={d.prompt} onChange={(e) => set({ prompt: e.target.value })} rows={4} maxLength={4000} aria-label="Prompt" className="text-xs" />
+      <Field label="What should it do?">
+        <Textarea value={d.prompt} onChange={(e) => set({ prompt: e.target.value })} rows={4} maxLength={AUTOMATION_PROMPT_MAX} aria-label="What should it do?" className="text-sm" />
       </Field>
       <div className="flex flex-wrap items-end gap-3">
         <Field label="Repeat">
-          <select value={d.kind} onChange={(e) => set({ kind: e.target.value as AutomationDraft["kind"] })} aria-label="Repeat" className={`h-8 ${selectCls}`}>
-            <option value="daily">Every day</option>
-            <option value="weekly">Every week</option>
-            <option value="hours">Every N hours</option>
-          </select>
+          <SettingsSelect
+            label="Repeat"
+            value={d.kind}
+            onValueChange={(v) => set({ kind: v as AutomationDraft["kind"] })}
+            options={[
+              { value: "daily", label: "Every day" },
+              { value: "weekly", label: "Every week" },
+              { value: "hours", label: "Every N hours" },
+            ]}
+            className="sm:w-32"
+          />
         </Field>
         {d.kind === "weekly" && (
           <Field label="Day">
-            <select value={d.weekday} onChange={(e) => set({ weekday: Number(e.target.value) as Weekday })} aria-label="Day" className={`h-8 ${selectCls}`}>
-              {DAY_NAMES.map((n, i) => (
-                <option key={n} value={i}>
-                  {n}
-                </option>
-              ))}
-            </select>
+            <SettingsSelect
+              label="Day"
+              value={String(d.weekday)}
+              onValueChange={(v) => set({ weekday: Number(v) as Weekday })}
+              options={DAY_NAMES.map((n, i) => ({ value: String(i), label: n }))}
+              className="sm:w-32"
+            />
           </Field>
         )}
         {timed ? (
-          <Field label="At" hint={`Your time zone: ${zone()}`}>
-            <Input type="time" value={d.at} onChange={(e) => set({ at: e.target.value })} aria-label="Time" className="h-8 w-32 text-xs" />
+          <Field label="Time">
+            <Input type="time" value={d.at} onChange={(e) => set({ at: e.target.value })} aria-label="Time" className="h-8 w-28" />
           </Field>
         ) : (
-          <Field label="Every" hint="Hours, 1 to 168">
-            <Input type="number" min={1} max={168} required value={d.every} onChange={(e) => set({ every: Number(e.target.value) })} aria-label="Hours" className="h-8 w-24 text-xs" />
+          <Field label="Hours">
+            <Input type="number" min={1} max={168} value={d.every} onChange={(e) => set({ every: Number(e.target.value) })} aria-label="Hours" className="h-8 w-24" />
           </Field>
         )}
       </div>
-      {error && <Notice tone="error">{error}</Notice>}
-      <div className="flex items-center gap-2">
-        <Button size="sm" disabled={busy || !d.name.trim() || !d.prompt.trim() || !everyOk} onClick={() => void save()}>
-          {initial ? "Save changes" : "Create automation"}
-        </Button>
-        <Button variant="outline" size="sm" onClick={() => onDone(false)} disabled={busy}>
-          Cancel
-        </Button>
-      </div>
-    </div>
+      {elsewhere && <p className="text-xs text-muted-foreground">Runs in the {elsewhere} time zone.</p>}
+    </FormDialog>
   );
 }

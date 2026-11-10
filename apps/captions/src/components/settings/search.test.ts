@@ -87,8 +87,8 @@ describe("search ranking", () => {
     expect(first("theme")).toMatchObject({ id: "theme", section: "appearance" });
   });
 
-  it("'apify' lands on the Apify key row in Social accounts", () => {
-    expect(first("apify")).toMatchObject({ id: "apify-key", section: "connectors" });
+  it("'apify' lands on the Apify row in API keys (the key leaves Social accounts)", () => {
+    expect(first("apify")).toMatchObject({ id: "apify-key", section: "keys" });
   });
 
   it("'sign out' lands on the Sign out row", () => {

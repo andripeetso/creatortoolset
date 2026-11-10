@@ -195,6 +195,9 @@ export interface SiteFrame {
 
 export interface WebPlugin {
   id: string;
+  // The name the Community → Plug-ins list shows (the id when absent) and one short line on what it does.
+  name?: string;
+  about?: string;
   // A product site on its own host(s), see SiteFrame. AuthGate shows it before the sign-in form.
   site?: SiteFrame;
   // Pages added to the app's Routes. Paths must not repeat a built-in page; the generator checks that.
@@ -285,6 +288,87 @@ export function siteFrameFor(hostname: string, pathname: string, search: string,
     if (s && s.hosts.includes(hostname) && s.claims(pathname, search)) return { element: s.element };
   }
   return null;
+}
+
+/** One line of "what a plug-in adds": its text, and the path it lives at when this person can open that path. */
+export interface PluginAdd {
+  text: string;
+  to?: string;
+}
+
+/** A loaded plug-in as Community lists it: name, about, and what it adds (web and server parts merged). */
+export interface PluginInfo {
+  id: string;
+  name: string;
+  about?: string;
+  adds: PluginAdd[];
+}
+
+/** A server plug-in as GET /api/plugins returns it (api/lib/plugin.ts describeServerPlugins). `adds` is for admins only. */
+export interface ServerPluginInfo {
+  id: string;
+  name: string;
+  about?: string;
+  adds?: PluginAdd[];
+}
+
+const linkable = (to: string) => (/[:*]/.test(to) ? undefined : to);
+
+/**
+ * What a web plug-in adds, one line per place, each linked to where it lives. Only what this person can open: admin tabs
+ * need the hosted server and an admin; a gated tile or menu item is left out while its gate is off for the account.
+ */
+export function webPluginAdds(p: WebPlugin, ctx: { me: Me | null; hosted: boolean }): PluginAdd[] {
+  const admin = ctx.me?.role === "admin";
+  const out: PluginAdd[] = [];
+  for (const t of p.tiles ?? []) if (canUse(ctx.me, t.gate)) out.push({ text: `Home: ${t.name}`, to: linkable(t.to) });
+  for (const s of p.settings ?? []) {
+    if (s.adminOnly && !admin) continue;
+    if (s.adminTab) {
+      if (admin && ctx.hosted) out.push({ text: `Settings → Admin → ${s.title}`, to: `/settings/admin/${s.id}` });
+    } else out.push({ text: s.group ? `Settings → ${s.group}: ${s.title}` : `Settings: ${s.title}`, to: `/settings/${s.id}` });
+  }
+  for (const d of p.devices ?? []) if (!d.adminOnly || admin) out.push({ text: `Settings → Storage: ${d.title}`, to: "/settings/folders" });
+  const r = p.replaces ?? {};
+  if (r.editor || r.editorEdit) out.push({ text: "Replaces the AI Editor page", to: "/editor" });
+  if (r.media) out.push({ text: "Replaces the Media Library page", to: "/library" });
+  if (r.finals) out.push({ text: "Replaces the Finals page", to: "/finals" });
+  for (const route of p.routes ?? []) out.push({ text: `Page at ${route.path}`, to: linkable(route.path) });
+  for (const a of p.accountMenu ?? []) if (!a.gate || canUse(ctx.me, a.gate)) out.push({ text: `Account menu: ${a.label}`, to: linkable(a.to) });
+  const places: Record<ItemKind, [string, string | undefined]> = {
+    export: ["exports", undefined],
+    review: ["Review versions", "/review"],
+    session: ["Workshop pieces", "/workshop"],
+    library: ["Media Library items", "/library"],
+  };
+  for (const [kind, actions] of Object.entries(p.itemActions ?? {}) as [ItemKind, PluginItemAction[]][]) {
+    const [noun, to] = places[kind];
+    for (const a of actions) if (!a.gate || canUse(ctx.me, a.gate)) out.push({ text: `Button on ${noun}: ${a.label}`, to });
+  }
+  for (const s of p.review?.panels ?? []) if (!s.gate || canUse(ctx.me, s.gate)) out.push({ text: `Review panel: ${s.id}`, to: "/review" });
+  for (const a of p.review?.actions ?? []) if (!a.gate || canUse(ctx.me, a.gate)) out.push({ text: `Review button: ${a.label}`, to: "/review" });
+  if (p.library) out.push({ text: "Media Library filters", to: "/library" });
+  if (p.site) out.push({ text: `Front page on ${p.site.hosts.join(", ")}` });
+  return out;
+}
+
+/**
+ * The plug-ins Community lists: every web plug-in and every server plug-in, merged by id (web first, then server-only ones).
+ * A name and about come from the web definition, then the server's. The adds are both halves, without repeats.
+ */
+export function mergePluginInfo(web: WebPlugin[], server: ServerPluginInfo[], ctx: { me: Me | null; hosted: boolean }): PluginInfo[] {
+  const byId = new Map<string, PluginInfo>();
+  for (const p of web) byId.set(p.id, { id: p.id, name: p.name ?? p.id, about: p.about, adds: webPluginAdds(p, ctx) });
+  for (const s of server) {
+    const have = byId.get(s.id);
+    if (!have) {
+      byId.set(s.id, { id: s.id, name: s.name, about: s.about, adds: s.adds ?? [] });
+      continue;
+    }
+    have.about ??= s.about;
+    for (const a of s.adds ?? []) if (!have.adds.some((x) => x.text === a.text)) have.adds.push(a);
+  }
+  return [...byId.values()];
 }
 
 /** The Settings sections this account sees: an adminOnly one (built-in or a plug-in's) only for an admin. */

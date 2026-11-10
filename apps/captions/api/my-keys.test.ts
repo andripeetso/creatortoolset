@@ -19,7 +19,7 @@ describe("keyFor: whose key pays", () => {
   it("own key wins; the server's key only for the admin, never for another account or a share-link visitor", () => {
     vi.stubEnv("DEEPGRAM_API_KEY", "server-dg");
     // an account with no key: nothing, and the message says where to add one
-    expect(keyFor("lee", "DEEPGRAM_API_KEY")).toEqual({ key: "", missing: "Add your Deepgram key in Settings → My API keys" });
+    expect(keyFor("lee", "DEEPGRAM_API_KEY")).toEqual({ key: "", missing: "Add your Deepgram key in Settings → API keys" });
     // their own key wins
     saveMyKey("lee", "DEEPGRAM_API_KEY", "lee-dg-1234");
     expect(keyFor("lee", "DEEPGRAM_API_KEY")).toEqual({ key: "lee-dg-1234" });
@@ -35,7 +35,7 @@ describe("keyFor: whose key pays", () => {
     vi.stubEnv("ANTHROPIC_API_KEY", "server-ai");
     const admin = { username: "admin", role: "admin" as const };
     // no provider of their own: no AI, and it says where to add one
-    expect(aiFor(admin, "captions", "Caption Studio")).toEqual({ only: [], off: expect.stringMatching(/^No AI for your account: add one in Settings → Your AI/) });
+    expect(aiFor(admin, "captions", "Caption Studio")).toEqual({ only: [], off: expect.stringMatching(/^No AI for your account: add one in Settings → Your own AI/) });
     expect(keyFor(admin, "ANTHROPIC_API_KEY").key).toBe("");
     // their own key is their choice
     saveMyKey("admin", "ANTHROPIC_API_KEY", "admin-own-1234");
@@ -43,7 +43,7 @@ describe("keyFor: whose key pays", () => {
     saveMyKey("admin", "ANTHROPIC_API_KEY", null);
   });
 
-  it("Settings → My API keys never sends a key back, and is not for a share-link visitor", async () => {
+  it("Settings → API keys never sends a key back, and is not for a share-link visitor", async () => {
     let who: SessionUser = { username: "lee", role: "user", cloud: true, off: [] };
     const app = new Hono<{ Variables: AuthVars }>();
     app.use("*", async (c, next) => (c.set("user", who), next()));
@@ -69,13 +69,13 @@ describe("keyFor: whose key pays", () => {
     const app = new Hono<{ Variables: AuthVars }>();
     app.use("*", async (c, next) => (c.set("user", kim), next()));
     app.route("/", transcribeApp);
-    expect(await (await app.request("/available")).json()).toMatchObject({ available: false, why: "Add your Deepgram key in Settings → My API keys" });
+    expect(await (await app.request("/available")).json()).toMatchObject({ available: false, why: "Add your Deepgram key in Settings → API keys" });
     const res = await app.request("/", { method: "POST", headers: { "content-type": "audio/wav" }, body: new Uint8Array(100) });
     expect(res.status).toBe(402);
-    expect(await res.json()).toEqual({ error: "Add your Deepgram key in Settings → My API keys", code: "NEEDS_KEY" });
+    expect(await res.json()).toEqual({ error: "Add your Deepgram key in Settings → API keys", code: "NEEDS_KEY" });
     expect(fetchMock).not.toHaveBeenCalled();
     // the Analyzer's and Clips' transcripts say the same
-    expect(cloudTranscribeBlock(kim)).toBe("Add your Deepgram key in Settings → My API keys");
+    expect(cloudTranscribeBlock(kim)).toBe("Add your Deepgram key in Settings → API keys");
     vi.unstubAllGlobals();
   });
 });

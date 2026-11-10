@@ -19,6 +19,8 @@ function HelloSettings() {
 
 export default defineWebPlugin({
   id: "hello",
+  name: "Hello",
+  about: "The example plug-in: a page, a Home tile and a Settings section.",
   routes: [{ path: "/hello", element: <HelloPage /> }],
   tiles: [{ stage: "Tools", to: "/hello", icon: Hand, name: "Hello", desc: "The example plug-in's page.", gate: "hello" }],
   settings: [{ id: "hello", title: "Hello plug-in", icon: Hand, adminOnly: true, body: <HelloSettings /> }],

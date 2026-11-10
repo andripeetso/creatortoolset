@@ -8,7 +8,7 @@ import {
   EFFORTS,
   JOBS,
   isAcpDriver,
-  launchArgsAllowed,
+  driverFields,
   runsOn,
   type Device,
   type Driver,
@@ -163,59 +163,47 @@ export function modelsFor(inst: ProviderInstance): string[] {
 function parseSelection(raw: unknown, instances: ProviderInstance[], what: string): Selection {
   const s = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   const inst = instances.find((i) => i.id === s.instance);
-  if (!inst) throw new Error(`${what}: pick one of the providers`);
-  if (typeof s.model !== "string" || !MODEL_RE.test(s.model)) throw new Error(`${what}: pick a model`);
-  if (!isEffort(s.effort)) throw new Error(`${what}: pick an effort`);
+  if (!inst) throw new Error(`${what}: choose one of the AIs`);
+  // "" = the tool's own default model (a tool with no list of models here)
+  if (typeof s.model !== "string" || (s.model !== "" && !MODEL_RE.test(s.model))) throw new Error(`${what}: that model name is not valid`);
+  if (!isEffort(s.effort)) throw new Error(`${what}: choose a thinking level`);
   return { instance: inst.id, model: s.model, effort: s.effort };
 }
 
 const HOME_RE = /^\/Users\/[^/]+\/[^\0]{1,200}$/;
 const ABS_PATH_RE = /^\/[^\0]{1,300}$/;
 const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
-const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 
 /**
- * The optional fields of a provider instance (binary, shadow folder, launch arguments, environment names, colour,
- * featured, ACP command), checked. Absent or blank fields are left out, so an old file parses unchanged.
+ * The optional fields of a provider instance, checked, and only the ones the driver's settings page shows (driverFields):
+ * a field with no reader is dropped, so an old file still loads. Absent or blank fields are left out.
  */
 function parseExtras(i: Record<string, unknown>, driver: Driver, name: string): Partial<ProviderInstance> {
   const out: Partial<ProviderInstance> = {};
-  const binaryPath = typeof i.binaryPath === "string" ? i.binaryPath.trim() : "";
+  const f = driverFields(driver);
+  const binaryPath = f.program && typeof i.binaryPath === "string" ? i.binaryPath.trim() : "";
   if (binaryPath) {
-    if (!ABS_PATH_RE.test(binaryPath)) throw new Error(`${name}: the program's path must be a full path`);
+    if (!ABS_PATH_RE.test(binaryPath)) throw new Error(`${name}: the program's path starts with /, like /opt/homebrew/bin/codex`);
     out.binaryPath = binaryPath;
   }
-  const shadow = typeof i.shadowHomePath === "string" ? i.shadowHomePath.trim() : "";
-  if (shadow) {
-    if (!HOME_RE.test(shadow)) throw new Error("A provider's folder must be in the Mac user's home folder");
-    out.shadowHomePath = shadow;
-  }
   // launch arguments only for a local ACP command; other kinds drop them (like baseUrl) so an old file still loads
-  if (i.launchArgs !== undefined && launchArgsAllowed(driver)) {
+  if (i.launchArgs !== undefined && f.args) {
     const args = i.launchArgs as unknown;
-    if (!Array.isArray(args) || args.some((a) => typeof a !== "string" || a.length > 500) || args.length > 32) throw new Error(`${name}: each launch argument is one piece of text, up to 32`);
+    if (!Array.isArray(args) || args.some((a) => typeof a !== "string" || a.length > 500) || args.length > 32) throw new Error(`${name}: each argument is one line of text, up to 32 lines`);
     out.launchArgs = [...(args as string[])];
   }
-  if (i.envNames !== undefined) {
+  if (f.env && i.envNames !== undefined) {
     const names = i.envNames as unknown;
-    if (!Array.isArray(names) || names.some((n) => typeof n !== "string" || !ENV_NAME_RE.test(n)) || names.length > 32) throw new Error(`${name}: environment names are letters, digits and _, up to 32`);
+    if (!Array.isArray(names) || names.some((n) => typeof n !== "string" || !ENV_NAME_RE.test(n)) || names.length > 32) throw new Error(`${name}: variable names are letters, digits and _, up to 32`);
     out.envNames = [...(names as string[])];
-  }
-  if (typeof i.accentColor === "string" && i.accentColor.trim()) {
-    if (!COLOR_RE.test(i.accentColor.trim())) throw new Error(`${name}: the colour is #rrggbb`);
-    out.accentColor = i.accentColor.trim();
-  }
-  if (i.featured !== undefined) {
-    if (typeof i.featured !== "boolean") throw new Error(`${name}: featured is yes or no`);
-    out.featured = i.featured;
   }
   if (driver === "acp") {
     const acp = i.acp && typeof i.acp === "object" ? (i.acp as Record<string, unknown>) : null;
     const args = acp?.args ?? [];
     if (!acp || typeof acp.command !== "string" || !acp.command.trim() || acp.command.length > 300 || !Array.isArray(args) || args.some((a) => typeof a !== "string"))
-      throw new Error(`${name}: a local ACP command needs its program and text arguments`);
+      throw new Error(`${name}: a local command needs the program to start and its arguments as text`);
     out.acp = { command: acp.command.trim(), args: [...(args as string[])] };
-  } else if (i.acp !== undefined && i.acp !== null) throw new Error(`${name}: only a local ACP command has a program to start`);
+  } else if (i.acp !== undefined && i.acp !== null) throw new Error(`${name}: only a local command has a program to start`);
   return out;
 }
 
@@ -223,25 +211,29 @@ function parseExtras(i: Record<string, unknown>, driver: Driver, name: string): 
  * A settings body from the page, checked for `scope`. Throws a sentence the page shows. Every instance's device must
  * exist and belong to the scope (the workspace: an admin's Mac; an account: its own Macs).
  */
-export function parseSettings(raw: unknown, scope: Scope = "workspace"): ProviderSettings {
+export function parseSettings(raw: unknown, scope: Scope = "workspace", opts: { trustedFolder?: boolean } = {}): ProviderSettings {
   if (!validScope(scope)) throw new Error("Not a provider scope");
   const b = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   const list = Array.isArray(b.instances) ? b.instances : [];
   const instances: ProviderInstance[] = [];
   for (const x of list) {
     const i = x && typeof x === "object" ? (x as Record<string, unknown>) : {};
-    if (typeof i.id !== "string" || !ID_RE.test(i.id) || instances.some((y) => y.id === i.id)) throw new Error("Each provider needs its own id");
-    if (!knownDriver(i.driver)) throw new Error(`Unknown provider: ${String(i.driver)}`);
+    if (typeof i.id !== "string" || !ID_RE.test(i.id) || instances.some((y) => y.id === i.id)) throw new Error("Each AI needs its own id");
+    if (!knownDriver(i.driver)) throw new Error(`"${String(i.driver)}" is not an AI tool this app knows`);
     const name = typeof i.name === "string" && i.name.trim() ? i.name.trim().slice(0, 60) : i.id;
     // a plug-in preset (an unknown one is dropped: the provider stays an ordinary one, with no endpoint)
     const preset = typeof i.preset === "string" ? providerPresets().find((p) => p.id === i.preset) : undefined;
-    if (preset && preset.driver !== i.driver) throw new Error(`${name}: that preset is for ${preset.driver}`);
-    const device = typeof i.device === "string" && i.device.trim() ? i.device.trim() : "";
-    if (!device || !ID_RE.test(device)) throw new Error(`${name}: pick one of your Macs`);
-    if (!deviceExists(device)) throw new Error(`${name}: its Mac is gone: pick another`);
-    if (!belongsTo(scope, device)) throw new Error(scope === "workspace" ? `${name}: the workspace's providers run on an admin's Mac` : `${name}: your providers run on your own Macs`);
+    if (preset && preset.driver !== i.driver) throw new Error(`${name} comes from a preset for ${preset.driver}`);
+    // a computer that was removed (or never picked) leaves the AI unassigned: it stays listed, runs nowhere, and the
+    // page asks for another computer. It does not stop the rest of the settings from saving.
+    const picked = typeof i.device === "string" && ID_RE.test(i.device.trim()) ? i.device.trim() : "";
+    const device = picked && deviceExists(picked) ? picked : "";
+    if (device && !belongsTo(scope, device)) throw new Error(scope === "workspace" ? `${name} runs on a computer that is not an admin's` : `${name} runs on a computer that is not yours`);
     const home = typeof i.home === "string" ? i.home.trim() : "";
-    if (home && !HOME_RE.test(home)) throw new Error("A provider's folder must be in the Mac user's home folder");
+    // a folder the server found on its own Mac (setup's Connect) is trusted; one from the page must sit in the user's home
+    if (home && !opts.trustedFolder && !HOME_RE.test(home)) throw new Error("The account folder must be a full path inside the Mac user's folder, like /Users/you/.claude-work");
+    const model = typeof i.model === "string" && (i.model === "" || MODEL_RE.test(i.model)) ? i.model : undefined;
+    const effort = isEffort(i.effort) ? i.effort : undefined;
     instances.push({
       id: i.id,
       driver: i.driver as Driver,
@@ -250,10 +242,12 @@ export function parseSettings(raw: unknown, scope: Scope = "workspace"): Provide
       ...(home ? { home } : {}),
       device,
       ...(preset ? { preset: preset.id } : {}),
+      ...(model ? { model } : {}),
+      ...(effort ? { effort } : {}),
       ...parseExtras(i, i.driver as Driver, name),
     });
   }
-  if (!instances.some((i) => i.enabled && runs(i.driver))) throw new Error("Keep at least one provider on that the Mac can run");
+  if (!instances.some((i) => i.enabled && runs(i.driver))) throw new Error("Turn on at least one AI that a computer can run");
   const def = parseSelection(b.default, instances, "Default");
   const jobsRaw = b.jobs && typeof b.jobs === "object" ? (b.jobs as Record<string, unknown>) : {};
   const jobs: ProviderSettings["jobs"] = {};
@@ -289,10 +283,13 @@ function pick(scope: Scope, s: ProviderSettings, job: JobId, own?: Selection, ow
     const instance = sel && runnable.find((i) => i.id === sel.instance);
     if (sel && instance) return { scope, selection: sel, instance, device: deviceIdOf(instance) };
   }
+  // nothing picked for it: the AI's own model and thinking level (the Default's when it is the Default)
   const instance = runnable[0]!;
   const device = deviceIdOf(instance);
-  const model = s.default.instance === instance.id ? s.default.model : (modelsFor(instance)[0] ?? s.default.model);
-  return { scope, selection: { instance: instance.id, model, effort: s.default.effort }, instance, device };
+  const isDefault = s.default.instance === instance.id;
+  const model = isDefault ? s.default.model : (instance.model ?? modelsFor(instance)[0] ?? "");
+  const effort = isDefault ? s.default.effort : (instance.effort ?? s.default.effort);
+  return { scope, selection: { instance: instance.id, model, effort }, instance, device };
 }
 
 /**

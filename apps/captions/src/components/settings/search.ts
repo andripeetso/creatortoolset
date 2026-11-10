@@ -1,4 +1,4 @@
-import { MY_KEYS, type MyKeyEnv } from "@contracts/service-keys";
+import { MY_KEYS, SERVICE_KEYS, type MyKeyEnv, type ServiceKeyEnv } from "@contracts/service-keys";
 import type { SettingsPageId } from "./nav";
 
 /**
@@ -21,16 +21,18 @@ export interface SearchRow {
 
 /** The API key rows are one per service in contracts/service-keys.ts (MY_KEYS), so their ids come from it. */
 export type ApiKeyRowId = `api-key-${MyKeyEnv}`;
+/** The admin's fallback keys: one per service in contracts/service-keys.ts (SERVICE_KEYS). */
+export type ServerKeyRowId = `server-key-${ServiceKeyEnv}`;
 
 const STATIC_ROWS = [
   // General: how the app behaves here, setup, this computer's saved data
   { section: "general", id: "confirm-deletes", title: "Ask before moving to trash or deleting a comment", keywords: ["trash", "delete", "confirm", "comment"] },
   { section: "general", id: "status-colours", title: "Colour bar beside each session in the Workshop", keywords: ["status", "colour", "color", "sidebar", "workshop"] },
   { section: "general", id: "read-aloud", title: "Read the assistant's replies aloud", keywords: ["voice", "speech", "speak", "audio"] },
-  { section: "general", id: "how-you-work", title: "How you work", keywords: ["assistant", "own ai", "setup", "chat"] },
-  { section: "general", id: "run-setup", title: "First-run setup", keywords: ["setup", "walk-through", "onboarding", "wizard"] },
+  { section: "general", id: "how-you-work", title: "How you use the app", keywords: ["assistant", "own ai", "setup", "chat", "how you work"] },
+  { section: "general", id: "run-setup", title: "Setup", description: "Run the first-run walk-through again", keywords: ["setup", "walk-through", "onboarding", "wizard", "first run"] },
   { section: "general", id: "saved-lists", title: "Saved lists", keywords: ["cache", "clear", "storage", "saved", "lists"] },
-  { section: "general", id: "screens", title: "Refresh saved screens", keywords: ["cache", "warm", "refresh", "reload"] },
+  { section: "general", id: "screens", title: "Saved screens", keywords: ["cache", "warm", "refresh", "reload"] },
   // Appearance
   { section: "appearance", id: "theme", title: "Theme", keywords: ["dark", "light", "system", "colour", "color", "look"] },
   { section: "appearance", id: "home-tools", title: "Tools on Home", keywords: ["home", "tools", "page", "tiles"] },
@@ -48,17 +50,16 @@ const STATIC_ROWS = [
   { section: "devices", id: "computers", title: "Computers", keywords: ["mac", "computer", "machine", "rename", "remove", "online"] },
   { section: "devices", id: "add-computer", title: "Add computer", keywords: ["mac", "pair", "link", "command line"] },
   { section: "devices", id: "use-this-mac", title: "Use this Mac for my AI", keywords: ["mac app", "this mac", "switch", "ai on this mac"] },
+  { section: "devices", id: "load-balancing", title: "Load balancing", description: "Start jobs on the computer with the most free CPU and memory", keywords: ["balance", "jobs", "cpu", "memory", "prefer", "less often", "advanced"] },
   // Scheduled tasks
   { section: "automations", id: "scheduled-tasks", title: "Scheduled tasks", keywords: ["automation", "schedule", "repeat", "daily", "weekly", "prompt"] },
-  { section: "automations", id: "task-time", title: "Repeat and time", keywords: ["time zone", "daily", "weekly", "monday", "every"] },
   // Usage
   { section: "usage", id: "plan-limits", title: "Plan limits", keywords: ["session", "weekly", "reset", "left", "quota", "limit", "plan"] },
   { section: "usage", id: "activity", title: "Activity", keywords: ["cost", "tokens", "calls", "tool", "api price", "usage"] },
-  // Social accounts (the Apify key moves to API keys later; the row id stays with it)
-  { section: "connectors", id: "apify-key", title: "Apify key", description: "Reads public profiles and posts", keywords: ["apify", "token", "instagram", "public", "posts"] },
-  { section: "connectors", id: "add-by-handle", title: "Follow by @handle", keywords: ["apify", "follow", "handle", "instagram", "tiktok", "youtube"] },
-  { section: "connectors", id: "your-accounts", title: "Your accounts", keywords: ["instagram", "youtube", "tiktok", "followers", "project"] },
-  { section: "connectors", id: "log-in-accounts", title: "Sign in with Instagram, YouTube or TikTok", keywords: ["login", "log in", "instagram", "youtube", "tiktok", "connect"] },
+  // Social accounts: sign in to one, or follow one by handle (the Add account menu on the section)
+  { section: "connectors", id: "your-accounts", title: "Your accounts", description: "Instagram, YouTube and TikTok accounts you sign in to or follow", keywords: ["instagram", "youtube", "tiktok", "sign in", "login", "log in", "follow", "handle", "followers", "project", "redirect url", "sign-in apps"] },
+  // API keys: the Apify key reads other creators' posts (its routes are the account's own, not api/my-keys.ts)
+  { section: "keys", id: "apify-key", title: "Apify", description: "Reads other creators' Instagram, TikTok and YouTube posts", keywords: ["apify", "token", "instagram", "tiktok", "youtube", "follow", "handle", "api key"] },
   // Own AI: the app gives your own AI a key
   { section: "own-ai", id: "connect-ai", title: "Connect your AI", keywords: ["claude", "chatgpt", "codex", "mcp", "script", "connector"] },
   { section: "own-ai", id: "access-keys", title: "Access keys", keywords: ["key", "api key", "mcp", "script", "review", "full access", "claude"] },
@@ -81,11 +82,10 @@ const STATIC_ROWS = [
   { section: "account", id: "password", title: "Password", keywords: ["change password", "sign in", "security", "reset"], needs: "sign-in" },
   { section: "account", id: "sign-in-with", title: "Sign in with Google or Apple", keywords: ["google", "apple", "github", "link", "unlink", "sign in"], needs: "sign-in" },
   { section: "account", id: "sign-out", title: "Sign out", keywords: ["log out", "logout", "session", "sign off"], needs: "sign-in" },
-  { section: "account", id: "ai-access-key", title: "AI access key", keywords: ["key", "mcp", "script", "claude", "own ai", "access"] },
 ] as const satisfies readonly SearchRow[];
 
-/** Every id a row may carry: the static ones, plus one per API key service. */
-export type SearchRowId = (typeof STATIC_ROWS)[number]["id"] | ApiKeyRowId;
+/** Every id a row may carry: the static ones, plus one per API key and per server key. */
+export type SearchRowId = (typeof STATIC_ROWS)[number]["id"] | ApiKeyRowId | ServerKeyRowId;
 
 export const SETTINGS_SEARCH_INDEX: readonly SearchRow[] = [
   ...STATIC_ROWS,
@@ -95,6 +95,13 @@ export const SETTINGS_SEARCH_INDEX: readonly SearchRow[] = [
     title: k.name,
     description: k.what,
     keywords: [k.env.toLowerCase().replace(/_/g, " "), "api key", "key", "paste"],
+  })),
+  ...SERVICE_KEYS.map((k) => ({
+    section: "admin" as const,
+    id: `server-key-${k.env}` as ServerKeyRowId,
+    title: k.name,
+    description: k.what,
+    keywords: [k.env.toLowerCase().replace(/_/g, " "), "server key", "fallback", "env", "api key"],
   })),
 ];
 
