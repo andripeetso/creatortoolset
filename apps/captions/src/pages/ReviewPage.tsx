@@ -186,15 +186,7 @@ export default function ReviewPage() {
     return out;
   }, [orderKey, loaded]);
 
-  const busy =
-    uploads.length > 0 || !!assets?.some((a) => a.versions.at(-1)?.status === "processing");
-  // the first load is the hook's (the saved list shows at once); this only polls while something processes
-  useEffect(() => {
-    if (!busy) return;
-    const t = window.setInterval(() => void load(), 3000);
-    return () => window.clearInterval(t);
-  }, [load, busy]);
-
+  // the first load is the hook's (the saved list shows at once); processing progress arrives as change notices
   const act: Act = (change, now) => {
     setError("");
     if (now) setAssets((list) => list && now(list));

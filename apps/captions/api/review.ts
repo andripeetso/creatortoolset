@@ -35,6 +35,8 @@ import { probe as probeSummary } from "./library/media/probe";
 import { indexAsset } from "./library/query";
 import { deleteAssets } from "./library/trash";
 import { emitEvent } from "./lib/events";
+import { announceSoon } from "./lib/announce-soon";
+import { announce } from "./lib/sync";
 import { importTimeline, MAX_TIMELINE_BYTES, TimelineError, type TimelineView } from "../contracts/timeline-import";
 import { payloadError } from "../contracts/review-payload";
 
@@ -424,13 +426,20 @@ function setVersion(id: string, n: number, patch: Partial<Version>) {
   });
 }
 
+/** A processing job's save: its owner's open Review screens follow it (live, at most about once a second). */
+async function jobVersion(id: string, n: number, patch: Partial<Version>) {
+  const m = await setVersion(id, n, patch);
+  announceSoon(m?.owner, "review");
+  return m;
+}
+
 async function processVersion(id: string, n: number): Promise<void> {
   const key = `${id}/${n}`;
   const src = sourcePath(id, n);
   try {
     const info = await probe(src);
     if (!info || (!info.vcodec && !info.acodec)) throw new Error("Not a video file ffmpeg can read");
-    await setVersion(id, n, {
+    await jobVersion(id, n, {
       duration: info.duration,
       fps: info.fps,
       width: info.width,
@@ -466,11 +475,11 @@ async function processVersion(id: string, n: number): Promise<void> {
         (f) => {
           if (Date.now() - last < 1500) return;
           last = Date.now();
-          void setVersion(id, n, { progress: 0.1 + f * 0.9 });
+          void jobVersion(id, n, { progress: 0.1 + f * 0.9 });
         },
       );
     }
-    await setVersion(id, n, {
+    await jobVersion(id, n, {
       status: "ready",
       progress: 1,
       proxy: existsSync(proxyPath(id, n)),
@@ -478,7 +487,7 @@ async function processVersion(id: string, n: number): Promise<void> {
     });
   } catch (e) {
     await rm(proxyPath(id, n), { force: true }).catch(() => {});
-    await setVersion(id, n, {
+    await jobVersion(id, n, {
       status: "error",
       error: e instanceof Error ? e.message.slice(0, 400) : String(e),
     });
@@ -506,7 +515,7 @@ function placeInBackground(id: string, n: number, placed: Promise<void>, onPlace
       },
       (e) => {
         console.error(`[review] relay ${id}/${n}:`, e);
-        return setVersion(id, n, { status: "error", error: "Couldn't fetch the upload from its relay. Upload it again." });
+        return jobVersion(id, n, { status: "error", error: "Couldn't fetch the upload from its relay. Upload it again." });
       },
     )
     .catch((e) => console.error(`[review] relay ${id}/${n}:`, e));
@@ -2057,6 +2066,16 @@ reviewApp.get("/p/:token", async (c) => {
 // a project's link (/p/:token/a/:id) ----------
 
 for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
+  // a reviewer's comment or approval on a link: the owner's open screens follow (the writer's own are told by the
+  // /api middleware)
+  if (base !== "/assets/:id") {
+    reviewApp.use(`${base}/*`, async (c, next) => {
+      await next();
+      if (c.req.method === "GET" || c.res.status < 200 || c.res.status >= 300) return;
+      const owner = (await viewer(c))?.meta.owner;
+      if (owner && owner !== c.get("user")?.username) announce(owner, "review");
+    });
+  }
   reviewApp.get(base, async (c) => {
     const v = await viewer(c);
     if (!v) return c.json({ error: "Not found" }, 404);
