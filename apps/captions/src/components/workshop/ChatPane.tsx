@@ -24,10 +24,10 @@ import { confirmHeavy } from "@/lib/setup";
  */
 /** How long the wait is, measured (Claude on the Mac, 2026-10-01: a draft ~35 s, quick research ~1 min, deep ~4 min). */
 function thinkingHint(m: ChatMessage): string {
-  if (m.review) return "· Fable reads it like a follower, about a minute";
-  // a Mac answer is named for its CLI ("Claude (Mac)", "Codex (Mac)")
+  // a Mac answer is named for its CLI ("Claude (Mac)", "Codex (Mac)"); the follower's read is Fable for Claude
   const mac = !!m.provider?.endsWith("(Mac)");
   const who = m.provider?.startsWith("Codex") ? "Codex" : "Claude";
+  if (m.review) return `· ${who === "Codex" ? "Codex" : "Fable"} reads it like a follower, about a minute`;
   const deep = m.audit?.depth === "deep" || m.research?.depth === "deep";
   if (m.audit || m.stage === "researching") {
     if (deep) return mac ? `· ${who} reads the sources, a few minutes` : "· deep research takes 5–15 min";
@@ -552,7 +552,7 @@ export function ChatPane({
                   <>
                     {m.review ? (
                       <p className="mb-1 flex items-center gap-1.5 text-[11px] text-violet-300" title="Another model read only the piece, who your followers are and your most saved posts: none of this conversation">
-                        <Eye className="h-3.5 w-3.5" /> A follower's read · Claude Fable · saw only the piece
+                        <Eye className="h-3.5 w-3.5" /> A follower's read · {m.provider ?? "Claude Fable (Mac)"} · saw only the piece
                       </p>
                     ) : null}
                     <div data-cite>

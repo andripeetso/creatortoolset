@@ -1587,6 +1587,10 @@ function fableProvider(user: SessionUser): MacOpts["provider"] {
   return c ? { instance: c.id, driver: c.driver, home: c.home, device: c.device ?? "", scope: "workspace", model: REVIEW_MODEL, effort: p?.effort ?? "xhigh" } : p;
 }
 
+/** The name of the CLI that reads a follower's review: Claude Fable for a Claude, else that CLI ("Codex (Mac)"). */
+const readerName = (reader: MacOpts["provider"]): string =>
+  reader && reader.driver !== "claude" ? `${DRIVERS.find((d) => d.id === reader.driver)?.label ?? reader.driver} (Mac)` : "Claude Fable (Mac)";
+
 /** "Read as a follower": Fable on the Mac reads the piece with only the piece, the audience and the author's best posts (review.ts). */
 async function runReview(session: SessionMeta, user: SessionUser, messageId: string, docId: string): Promise<void> {
   const signal = stopSignal(messageId);
@@ -1603,8 +1607,7 @@ async function runReview(session: SessionMeta, user: SessionUser, messageId: str
     const text = await streamMacClaude(system, prompt, signal, (t) => write({ text: t, stage: "writing" }), (u) => (usage = u), { label: "Workshop follower's read", provider: reader, model: REVIEW_MODEL });
     await write({}, true);
     // a non-Claude reader (a member whose only AI is Codex) keeps its own model: name the CLI that actually read it
-    const who = reader && reader.driver !== "claude" ? `${DRIVERS.find((d) => d.id === reader.driver)?.label ?? reader.driver} (Mac)` : "Claude Fable (Mac)";
-    await patchMessage(session.id, messageId, { status: "done", stage: undefined, text: text.trim(), provider: who, usage });
+    await patchMessage(session.id, messageId, { status: "done", stage: undefined, text: text.trim(), provider: readerName(reader), usage });
     bumpUsage(user.username, { aiRuns: 1 });
   } catch (e) {
     await patchMessage(session.id, messageId, { status: "error", stage: undefined, error: errorMessage(e).slice(0, 300) });
@@ -3239,11 +3242,11 @@ workshopApp.post("/sessions/:id/reviews", async (c) => {
   const body = (await c.req.json().catch(() => null)) as { docId?: unknown } | null;
   const doc = typeof body?.docId === "string" ? await readDoc(meta.id, body.docId) : null;
   if (!doc || doc.kind === "notes" || !doc.blocks.length) return c.json({ error: "Open a piece with some text first" }, 400);
-  if (!onMac(user)) return c.json({ error: "A follower's read runs on Claude Fable through your AI on the Mac" }, 503);
+  if (!onMac(user)) return c.json({ error: "A follower's read runs through your AI on the Mac" }, 503);
   await readChat(meta.id);
   const now = Date.now();
   const ask: ChatMessage = { id: randomUUID(), role: "user", text: "Read it as a follower would.", at: now, docId: doc.id, status: "done" };
-  const reply: ChatMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, docId: doc.id, status: "thinking", stage: "thinking", provider: "Claude Fable (Mac)", review: { model: REVIEW_MODEL } };
+  const reply: ChatMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, docId: doc.id, status: "thinking", stage: "thinking", provider: readerName(fableProvider(user)), review: { model: REVIEW_MODEL } };
   if (!(await startTurn(meta.id, [ask, reply]))) return c.json({ error: "Still working on the last message — wait for it" }, 409);
   void runReview(meta, user, reply.id, doc.id);
   return c.json({ ask, reply }, 202);

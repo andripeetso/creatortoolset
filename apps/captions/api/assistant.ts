@@ -390,8 +390,11 @@ const providerOf = (route: Route | null): AssistantProvider => (!route ? "none" 
 function view(username: string, admin: boolean): AssistantView {
   const conv = load(username);
   const pending = conv.pending ? MY_KEYS.find((k) => k.env === conv.pending!.env) : undefined;
+  const route = routeOf(username, admin);
   return {
-    provider: providerOf(routeOf(username, admin)),
+    provider: providerOf(route),
+    aiName: route?.instance.name ?? "",
+    tools: route?.instance.driver === "claude",
     messages: conv.messages.slice(-80),
     past: (conv.past ?? []).map((p) => ({ id: p.id, title: titleOf(p.messages), at: p.messages.at(-1)?.at ?? 0, count: p.messages.length })),
     pending: pending && conv.pending ? { env: pending.env, name: pending.name, why: conv.pending.why } : null,
