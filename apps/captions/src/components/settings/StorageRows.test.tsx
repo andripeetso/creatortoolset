@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { StorageFolder, StorageView } from "@contracts/storage";
-import { Storage, type Computer, driveLabel, driveOf, driveStart } from "./StorageRows";
+import { Storage, type Computer, driveLabel, driveOf, driveStart, shareAddress } from "./StorageRows";
 
 const mac = { id: "dev_1", name: "Sam's Mac Studio", owner: "sam", online: true } as unknown as Computer;
 const library: StorageFolder = {
@@ -57,5 +57,20 @@ describe("the Drive select", () => {
     expect(driveOf(disks, "~/Movies")).toBe(system);
     expect(driveOf(disks, "")).toBeUndefined();
     expect(driveOf([ssd], "~/Movies")).toBeUndefined();
+  });
+});
+
+describe("Connect network storage", () => {
+  it("takes a share the ways people write one and gives Finder's address", () => {
+    expect(shareAddress("smb://nas.local/Footage")).toBe("smb://nas.local/Footage");
+    expect(shareAddress("  nas.local/Footage/ ")).toBe("smb://nas.local/Footage");
+    expect(shareAddress("\\\\studio-nas\\My Footage")).toBe("smb://studio-nas/My%20Footage");
+    expect(shareAddress("smb://studio-nas.local/My%20Footage")).toBe("smb://studio-nas.local/My%20Footage"); // not encoded twice
+    expect(shareAddress("afp://old-nas.local/Archive")).toBe("afp://old-nas.local/Archive");
+    expect(shareAddress("studio-nas")).toBe("smb://studio-nas");
+  });
+
+  it("refuses anything that is not a share: the address becomes a link", () => {
+    for (const bad of ["", "   ", "javascript://alert(1)", "https://example.com/x", "file:///etc/passwd", "smb://", "smb:// spaced host/x", "smb://-bad/x"]) expect(shareAddress(bad)).toBeNull();
   });
 });
