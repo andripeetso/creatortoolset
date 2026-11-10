@@ -158,11 +158,15 @@ const inflight = new Map<string, Promise<unknown>>();
 const inflightAt = new Map<string, Meta>();
 const again = new Set<string>();
 
-/** Fetches a key now (or joins the fetch already running; one that lands meanwhile runs once more after). */
-function fetchInto<T>(k: string, load: () => Promise<T>): Promise<T> {
+/**
+ * Fetches a key now, or joins the fetch already running. `changedAt` is the seq of a change that must be in the
+ * answer: a running fetch that started before it runs once more after (a plain join never does).
+ */
+function fetchInto<T>(k: string, load: () => Promise<T>, changedAt?: number): Promise<T> {
   const running = inflight.get(k) as Promise<T> | undefined;
   if (running) {
-    again.add(k);
+    const at = inflightAt.get(k);
+    if (changedAt !== undefined && (!at || at.boot !== boot() || at.seq < changedAt)) again.add(k);
     return running;
   }
   const s = stamp(k); // taken now: a Clear while this waits for the stream must still win
@@ -187,6 +191,12 @@ function behind(k: string, latest: number): boolean {
   const m = inflightAt.get(k) ?? meta.get(k);
   return !m || m.boot !== boot() || m.seq < latest;
 }
+
+/**
+ * `topic`: the topic or topics whose changes refetch it (default: the one its key names). `own`: also this window's
+ * own writes (by default a window skips them: it already shows what it saved, and a refetch could undo typing).
+ */
+export type CacheOpts = { topic?: string | string[]; own?: boolean };
 
 /** The saved value of a list for this account, or null. Synchronous, so a screen can paint on its first frame. */
 export function readCached<T>(user: string | null | undefined, url: string): T | null {
@@ -213,10 +223,12 @@ export async function warmCached<T>(url: string, load: () => Promise<T>): Promis
  * also replaces the saved copy, so a deleted item can't come back from the cache; a refresh already in flight is
  * dropped). Without a signed-in account (public share pages) nothing is saved: the list is fetched for the page only.
  */
-export function useCachedLoad<T>(url: string | null, load: () => Promise<T>, opts?: { topic?: string }) {
+export function useCachedLoad<T>(url: string | null, load: () => Promise<T>, opts?: CacheOpts) {
   const user = useAuth((s) => s.me?.username ?? null);
   const k = url && user ? keyOf(user, url) : null;
-  const topic = opts?.topic ?? (url ? topicOf(url) : null);
+  const topics = [opts?.topic ?? (url ? topicOf(url) : null)].flat().filter((t): t is string => !!t);
+  const topicKey = topics.join(" ");
+  const own = !!opts?.own;
   const [local, setLocal] = useState<T | null>(null);
   const [, rerender] = useReducer((n: number) => n + 1, 0);
   const [error, setError] = useState("");
@@ -250,14 +262,23 @@ export function useCachedLoad<T>(url: string | null, load: () => Promise<T>, opt
     if (url) void refresh().catch(() => {});
   }, [url, refresh]);
 
-  // live: a change to this topic (from another tab, device or a background job) refetches it once
+  // live: a change to its topics (from another tab, device or a background job) refetches it once
   useEffect(() => {
-    if (!k || !topic) return;
-    return onTopic(topic, (latest) => {
-      // checked again when it runs: the fetch that was already going may have caught up meanwhile
-      if (behind(k, latest)) whenVisible(k, () => void (behind(k, latest) && refresh().catch(() => {})));
-    });
-  }, [k, topic, refresh]);
+    if (!k || !topicKey) return;
+    const refetch = (latest: number) =>
+      void fetchInto(k, () => loader.current(), latest).then(() => setError(""), (e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+    const offs = topicKey.split(" ").map((t) =>
+      onTopic(
+        t,
+        (latest) => {
+          // checked again when it runs: the fetch that was already going may have caught up meanwhile
+          if (behind(k, latest)) whenVisible(k, () => behind(k, latest) && refetch(latest));
+        },
+        { own },
+      ),
+    );
+    return () => offs.forEach((off) => off());
+  }, [k, topicKey, own]);
 
   const set = useCallback(
     (next: T | null | ((prev: T | null) => T | null)) => {
@@ -272,7 +293,7 @@ export function useCachedLoad<T>(url: string | null, load: () => Promise<T>, opt
 }
 
 /** useCachedLoad for a list: `items` is [] until something is known; `setItems` takes a list or an updater. */
-export function useCachedList<T>(url: string | null, load: () => Promise<T[]>, opts?: { topic?: string }) {
+export function useCachedList<T>(url: string | null, load: () => Promise<T[]>, opts?: CacheOpts) {
   const { data, set, refresh, error } = useCachedLoad<T[]>(url, load, opts);
   const setItems = useCallback(
     (next: T[] | ((prev: T[]) => T[])) => set((prev) => (typeof next === "function" ? next(prev ?? []) : next)),
