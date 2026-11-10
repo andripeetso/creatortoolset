@@ -30,6 +30,15 @@ export const step = (n: number): number => 293.66 * 2 ** ((Math.floor(n / 5) * 1
 
 /** How loud the whole of it is (a gain on everything): set by measuring a render, about -18 LUFS with peaks near -5 dBFS. */
 const LEVEL = 1.8;
+/** Nothing leaves louder than this (1 = full scale), whatever goes wrong before it: the usual peaks sit just under. */
+export const CEILING = 0.6;
+/**
+ * A beat's sounds are timed from this far ahead of the audio clock (s), never from "now". An envelope whose first
+ * steps are already in the past when the audio thread reads them starts from a gain's default, which is full volume:
+ * in WebKit that played a held chord at more than four times full scale (found 2026-11-10 with a tap on the live
+ * output; an offline render does not show it).
+ */
+const LEAD = 0.05;
 
 /** The notes held under each beat (Hz); a beat not named keeps what is sounding. D, then G under connect, then D again. */
 const CHORDS: Partial<Record<Beat, number[]>> = {
@@ -104,7 +113,10 @@ export function introSound(ctx: BaseAudioContext) {
   const guard = ctx.createDynamicsCompressor(); // only against a loud sum: nothing here is meant to reach it
   guard.threshold.value = -5;
   guard.ratio.value = 3;
-  out.connect(guard).connect(ctx.destination);
+  // the last thing before the speakers: a hard ceiling. Under it the sound passes as it is; over it, it is cut off flat
+  const cap = ctx.createWaveShaper();
+  cap.curve = Float32Array.from({ length: 2049 }, (_, i) => Math.max(-CEILING, Math.min(CEILING, i / 1024 - 1)));
+  out.connect(guard).connect(cap).connect(ctx.destination);
   const echo = ctx.createConvolver();
   echo.buffer = room(ctx);
   const wet = ctx.createGain();
@@ -118,9 +130,15 @@ export function introSound(ctx: BaseAudioContext) {
     s.gain.value = share;
     node.connect(s).connect(wet);
   };
+  /** A gain that is silent until told otherwise (a new gain's own default is full volume). */
+  const quiet = (): GainNode => {
+    const g = ctx.createGain();
+    g.gain.value = 0;
+    return g;
+  };
   /** A gain that rises to `peak` in `attack` s from `t` and dies away over about `tail` s. */
   const shape = (t: number, peak: number, attack: number, tail: number): GainNode => {
-    const g = ctx.createGain();
+    const g = quiet();
     g.gain.setValueAtTime(0, t);
     g.gain.linearRampToValueAtTime(peak, t + attack);
     g.gain.setTargetAtTime(0, t + attack, tail / 5);
@@ -140,6 +158,7 @@ export function introSound(ctx: BaseAudioContext) {
   const dark = ctx.createBiquadFilter();
   dark.type = "lowpass";
   dark.Q.value = 0.4;
+  dark.frequency.value = 320;
   send(dark, 0.6);
   let held: { g: GainNode; os: OscillatorNode[] }[] = [];
   const hold = (hz: number[], t: number) => {
@@ -148,8 +167,7 @@ export function introSound(ctx: BaseAudioContext) {
       for (const o of v.os) o.stop(t + 4);
     }
     held = hz.map((f) => {
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(0, t);
+      const g = quiet();
       g.gain.setTargetAtTime(0.026, t, 0.7); // quiet: the bed sits under the notes, and its lowest note must not drone
       const a = tone("triangle", f, t, t + 600);
       const b = tone("sawtooth", f * 1.004, t, t + 600);
@@ -182,7 +200,7 @@ export function introSound(ctx: BaseAudioContext) {
       band.Q.value = 1.1;
       band.frequency.setValueAtTime(420, t);
       band.frequency.exponentialRampToValueAtTime(3200, t + h.len);
-      const g = ctx.createGain();
+      const g = quiet();
       g.gain.setValueAtTime(0, t);
       g.gain.linearRampToValueAtTime(0.11, t + h.len * 0.6);
       g.gain.linearRampToValueAtTime(0, t + h.len);
@@ -217,9 +235,9 @@ export function introSound(ctx: BaseAudioContext) {
   };
 
   return {
-    /** A beat's sounds from `t`. `len` (s) and `last` let the final beat thin out before it ends. */
+    /** A beat's sounds from `t` (a moment ahead of now when not given). `len` (s) and `last` let the final beat thin out before it ends. */
     beat(id: Beat, n: IntroCounts, at: { t?: number; len?: number; last?: boolean } = {}) {
-      const t = at.t ?? ctx.currentTime;
+      const t = at.t ?? ctx.currentTime + LEAD;
       if (id === "hello") {
         dark.frequency.setValueAtTime(320, t);
         dark.frequency.exponentialRampToValueAtTime(1500, t + 2.4);
@@ -231,7 +249,7 @@ export function introSound(ctx: BaseAudioContext) {
       if (at.last && at.len) out.gain.setTargetAtTime(LEVEL * 0.4, t + Math.max(0, at.len - 1.6), 0.6);
     },
     /** Dies away from `t` (the end, or Skip). */
-    end(t = ctx.currentTime) {
+    end(t = ctx.currentTime + LEAD) {
       out.gain.cancelScheduledValues(t);
       out.gain.setTargetAtTime(0, t, 0.22);
     },
