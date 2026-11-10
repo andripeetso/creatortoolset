@@ -101,7 +101,8 @@ import { filterChip, segmentItem, segmentList } from "@/components/SegmentedTabs
 import { cn } from "@/lib/utils";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
 import { useWorkspace } from "@/lib/workspace";
-import { useCachedList } from "@/lib/local-cache";
+import { useCachedList, useCachedLoad } from "@/lib/local-cache";
+import { onTopic, whenVisible } from "@/lib/sync";
 import { IngestBox } from "@/components/instagram/IngestBox";
 import { RunJobsDialog } from "@/components/instagram/RunJobsDialog";
 import { TagsEditor } from "@/components/instagram/TagsEditor";
@@ -290,13 +291,12 @@ function PostView({
     };
   }, [post.id]);
 
+  // while it runs: read again each time its job saves (lib/sync.ts; a hidden window waits until shown)
   useEffect(() => {
     if (!processing) return;
-    const t = setInterval(async () => {
-      const next = await getPost(post.id).catch(() => null);
-      if (next) onChange(next);
-    }, 400);
-    return () => clearInterval(t);
+    return onTopic("instagram-jobs", () =>
+      whenVisible(`instagram-post:${post.id}`, () => void getPost(post.id).then(onChange, () => {})),
+    );
   }, [post.id, processing, onChange]);
 
   const wanted = post.slides
@@ -1001,7 +1001,10 @@ export default function InstagramPage() {
   const [pullAllError, setPullAllError] = useState<string | null>(null);
   const [mineError, setMineError] = useState<string | null>(null);
   const [stacks, setStacks] = useState<InstagramStack[]>([]);
-  const [current, setCurrent] = useState<InstagramPost | null>(null);
+  // the open post: saved copy (or its card in the list) at once, live (lib/local-cache)
+  const detail = useCachedLoad<InstagramPost>(postId ? `/api/instagram/${postId}` : null, () => getPost(postId!));
+  const current = detail.data;
+  const setCurrent = detail.set;
   const [avail, setAvail] = useState<InstagramAvailability | null>(null);
   const [q, setQ] = useState("");
   const [accountFilter, setAccountFilter] = useState("");
@@ -1029,7 +1032,6 @@ export default function InstagramPage() {
   const resultsRef = useRef<HTMLDivElement>(null);
   const pinTop = useRef<number | null>(null);
   const resultsFloor = useRef(0);
-  const [pageError, setPageError] = useState<{ id: string; message: string } | null>(null);
   const [sharePrefill] = useState(() => {
     const url = shareUrlFromSearch(window.location.search);
     if (url && window.location.search) {
@@ -1195,19 +1197,14 @@ export default function InstagramPage() {
   const anyProcessing = postsBusy || accountsBusy;
   useEffect(() => {
     if (!allowed || postId || !anyProcessing) return;
-    // Only the list with something running in it, and the next request only after the last one answered: an interval
-    // kept asking a slow server, and the requests piled up in front of everything else the page sent.
-    let stop = false;
-    let t = 0;
-    const tick = async () => {
-      await Promise.all([postsBusy ? loadPosts().catch(() => {}) : null, accountsBusy ? loadAccounts().catch(() => {}) : null]);
-      if (!stop) t = window.setTimeout(tick, 800);
-    };
-    t = window.setTimeout(tick, 800);
-    return () => {
-      stop = true;
-      window.clearTimeout(t);
-    };
+    // Only the list with something running in it, read again when its job saves (at most about once a second, and one
+    // read at a time: lib/local-cache joins a read already going). A new step or the end refetches them by itself.
+    return onTopic("instagram-jobs", () =>
+      whenVisible("instagram-busy-lists", () => {
+        if (postsBusy) void loadPosts().catch(() => {});
+        if (accountsBusy) void loadAccounts().catch(() => {});
+      }),
+    );
   }, [allowed, postId, anyProcessing, postsBusy, accountsBusy, loadPosts, loadAccounts]);
 
   const workshopBusy = workshopSessions.some((s) => s.generating);
@@ -1217,37 +1214,16 @@ export default function InstagramPage() {
     return () => window.clearInterval(t);
   }, [allowed, workshopBusy, refreshWorkshop]);
 
-  useEffect(() => {
-    if (!postId) return;
-    let cancelled = false;
-    getPost(postId)
-      .then((p) => {
-        if (!cancelled) setCurrent(p);
-      })
-      .catch((e) => {
-        if (!cancelled) {
-          setPageError({
-            id: postId,
-            message: e instanceof Error ? e.message : "Could not open post",
-          });
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [postId]);
 
   const applyPost = useCallback((p: InstagramPost) => {
-    setCurrent((prev) => {
-      if (!prev || prev.id !== p.id) return p;
-      return p.updatedAt >= prev.updatedAt ? p : prev;
-    });
+    // only the open post's own copy (a list card's job answers too)
+    if (p.id === postId) setCurrent((prev) => (prev && p.updatedAt < prev.updatedAt ? prev : p));
     setPosts((list) => {
       const known = list.some((x) => x.id === p.id);
       if (!known) return [p, ...list];
       return list.map((x) => (x.id === p.id && p.updatedAt >= x.updatedAt ? p : x));
     });
-  }, []);
+  }, [postId, setCurrent, setPosts]);
 
   useEffect(() => {
     if (!allowed || !avail?.ai) return;
@@ -1440,8 +1416,8 @@ export default function InstagramPage() {
     if (patch.ideaStatus) refreshList();
   };
 
-  const viewing = postId && current?.id === postId ? current : null;
-  const routeError = postId && pageError?.id === postId ? pageError.message : null;
+  const viewing = postId ? (current?.id === postId ? current : (posts.find((p) => p.id === postId) ?? null)) : null;
+  const routeError = postId && !viewing ? detail.error || null : null;
   const opening = Boolean(postId && !viewing && !routeError);
   const ownsCurrent =
     !!me && !!viewing && (me.role === "admin" || me.username === viewing.owner);
@@ -1551,7 +1527,6 @@ export default function InstagramPage() {
           <>
             <QueueMenu
               base={base}
-              busyHint={anyProcessing}
               onChange={() => {
                 refreshList();
                 refreshAccounts();
@@ -1578,9 +1553,8 @@ export default function InstagramPage() {
 
       <div className={viewing || postId ? "mt-6 w-full" : "w-[760px] max-w-[92vw]"}>
         {opening ? (
-          <div className="flex items-center justify-center gap-2 py-16 text-sm text-zinc-500">
-            <Loader2 className="h-4 w-4 animate-spin" /> Opening post…
-          </div>
+          // the post's frame, empty, so nothing jumps when it arrives
+          <div aria-busy="true" aria-label="Opening post" className="mx-auto h-[70vh] w-[760px] max-w-[92vw] rounded-xl bg-zinc-900/40" />
         ) : postId && !viewing ? (
           <div className="mx-auto w-[760px] max-w-[92vw]">
             <button

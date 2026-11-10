@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useCachedLoad } from "@/lib/local-cache";
+import { onTopic, whenVisible } from "@/lib/sync";
 import { Link } from "react-router";
 import { Activity, Image as ImageIcon, Loader2, RotateCcw, TriangleAlert, UserRound } from "lucide-react";
 import {
@@ -37,20 +39,18 @@ const ACCOUNT_JOBS = new Set<string>(["profile", "catalog", "stats", "tags"]);
 
 /**
  * Header button next to the user menu: what the workers are doing, what
- * waits, and what failed — with a one-click retry. Polls a cheap
- * in-memory endpoint, faster while anything is moving.
+ * waits, and what failed — with a one-click retry. A cheap in-memory endpoint, read again whenever a job saves
+ * ("instagram-jobs") or a post or account changes ("instagram").
  */
 export function QueueMenu({
   base,
-  busyHint,
   onChange,
 }: {
   base: string;
-  busyHint?: boolean;
   /** Called after a retry was queued so the page can refresh its lists. */
   onChange?: () => void;
 }) {
-  const [view, setView] = useState<QueueView | null>(null);
+  const { data: view, refresh: reload } = useCachedLoad<QueueView>("/api/instagram/queue", getQueue, { topic: "instagram-jobs" });
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [retryError, setRetryError] = useState<string | null>(null);
@@ -66,22 +66,15 @@ export function QueueMenu({
   const seen = useRef<string | null>(null);
   const changed = useRef(onChange);
   changed.current = onChange;
-  const refresh = useCallback(() => {
-    getQueue()
-      .then((next) => {
-        const now = next.items.map((i) => `${i.kind}:${i.id}:${i.state}`).sort().join(",");
-        if (seen.current !== null && seen.current !== now) changed.current?.();
-        seen.current = now;
-        setView(next);
-      })
-      .catch(() => {});
-  }, []);
-
+  const refresh = useCallback(() => void reload().catch(() => {}), [reload]);
+  const now = items.map((i) => `${i.kind}:${i.id}:${i.state}`).sort().join(",");
   useEffect(() => {
-    refresh();
-    const t = window.setInterval(refresh, moving || busyHint || open ? 2000 : 10000);
-    return () => window.clearInterval(t);
-  }, [refresh, moving, busyHint, open]);
+    if (!view) return;
+    if (seen.current !== null && seen.current !== now) changed.current?.();
+    seen.current = now;
+  }, [view, now]);
+  // a post or account queued elsewhere shows here before its job's first save
+  useEffect(() => onTopic("instagram", () => whenVisible("/api/instagram/queue", refresh)), [refresh]);
 
   useEffect(() => {
     if (!open) return;

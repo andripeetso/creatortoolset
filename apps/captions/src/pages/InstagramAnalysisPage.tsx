@@ -1,6 +1,7 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import { Link } from "react-router";
-import { ArrowLeft, Loader2, ScanSearch } from "lucide-react";
+import { ArrowLeft, ScanSearch } from "lucide-react";
+import { useCachedLoad } from "@/lib/local-cache";
 import { canUse, useAuth, useMe } from "@/lib/auth";
 import { toolsetHomePath } from "@/lib/mobile";
 import { useWorkspace } from "@/lib/workspace";
@@ -26,15 +27,12 @@ export default function InstagramAnalysisPage() {
   const required = useAuth((s) => s.required);
   const allowed = canUse(me, "instagram");
   const currentProjectId = useWorkspace((s) => s.currentProjectId);
-  const [data, setData] = useState<InstagramAnalysis | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!allowed) return;
-    getAnalysis()
-      .then(setData)
-      .catch((e) => setError(e instanceof Error ? e.message : "Could not load analysis"));
-  }, [allowed, currentProjectId]);
+  // the project's last analysis paints at once and follows the library (lib/local-cache)
+  const { data, error: loadError } = useCachedLoad<InstagramAnalysis>(
+    allowed ? `/api/instagram/analysis?p=${currentProjectId ?? ""}` : null,
+    getAnalysis,
+  );
+  const error = data ? null : loadError || null;
 
   return (
     <div className="relative flex min-h-dvh flex-col items-center bg-zinc-950 pb-[max(2.5rem,env(safe-area-inset-bottom))] text-zinc-200">
@@ -66,9 +64,12 @@ export default function InstagramAnalysisPage() {
         {error ? (
           <p className="text-sm text-red-400">{error}</p>
         ) : !data ? (
-          <p className="flex items-center gap-2 py-12 text-sm text-zinc-500">
-            <Loader2 className="h-4 w-4 animate-spin" /> Reading your library…
-          </p>
+          // the panels' frame, empty, while the library is read
+          <div aria-busy="true" aria-label="Reading your library" className="grid gap-4 lg:grid-cols-2">
+            {[0, 1, 2, 3].map((i) => (
+              <div key={i} className="h-64 rounded-xl border border-zinc-800 bg-zinc-900/30" />
+            ))}
+          </div>
         ) : (
           <div className="grid gap-4 lg:grid-cols-2">
             <Panel title="Opening hooks">
