@@ -17,6 +17,8 @@ final class Shell: NSObject, ObservableObject {
     @Published private(set) var pluginRows: [PluginRow] = []
     /// The menu items the server's plug-ins add (GET /api/activity/menu): the Go and gear menus (PluginMenu.swift).
     @Published private(set) var pluginMenu: [PluginMenuItem] = []
+    /// How many plug-ins the person has switched on (Plugins.swift, the record in the Keychain): This Mac's Plug-ins row.
+    @Published internal(set) var pluginCount = 0
     /// The Go menu's own tools (GET /api/activity/tools, PluginMenu.swift): the server's list for this account.
     @Published private(set) var appTools: [AppToolItem] = []
     @Published internal(set) var notice: String?
@@ -114,6 +116,8 @@ final class Shell: NSObject, ObservableObject {
         view.onThisMacCommand = { [weak self] in self?.thisMacCommand($0) }
         view.onThisMacAsk = { [weak self] ask, done in
             guard let self else { return done(["aiOn": false, "paired": false]) }
+            // plug-ins (Plugins.swift): answered before the default below, which turns the AI on
+            if isPluginAsk(ask) { return self.pluginAnswer(pluginAsk(ask), done: done) }
             // Headless access → Install: the open server into Claude Code or Codex on this Mac (off the main thread: a
             // command-line tool runs). The reply is { ok } or { ok: false, problem }.
             if let install = installAsk(ask) {
@@ -150,6 +154,7 @@ final class Shell: NSObject, ObservableObject {
         }
         server?.onReady = { [weak self] in self?.serverReady() }
         aiOn = UserDefaults.standard.bool(forKey: aiKey)
+        pluginCount = PluginRecord.live.load().count
         markDevice()
         if runsHere {
             startServer()   // the page and the AI runner wait for it

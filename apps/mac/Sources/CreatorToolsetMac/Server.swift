@@ -319,6 +319,7 @@ final class LocalServer: ObservableObject {
         env["CT_APP_FOLDER"] = appSupport.path
         env["CT_EXIT_WITH_PARENT"] = "1"
         env.merge(releaseEnv(Bundle.main.infoDictionary), uniquingKeysWith: { $1 })
+        env.merge(pluginEnvironment(approved: PluginRecord.live.load(), paused: UserDefaults.standard.bool(forKey: pluginsPausedKey)), uniquingKeysWith: { $1 })
         p.environment = env
         // stdin stays open while the app runs: a Finder launch's /dev/null would end the server at once
         let stdin = Pipe(), output = Pipe()
@@ -363,6 +364,12 @@ final class LocalServer: ObservableObject {
         p.terminate()
     }
 
+    /// Stop, then start again, for a change of settings (plug-ins). It is not a crash, so the crash list stays as it is.
+    func restart() {
+        stop()
+        start()
+    }
+
     private func ended(_ p: Process) {
         guard p === process else { return }   // stop() already handled it
         process = nil
@@ -372,6 +379,14 @@ final class LocalServer: ObservableObject {
         ServerLog.note("the server ended (status \(p.terminationStatus))")
         crashes.append(Date())
         guard let delay = restartDelay(crashes: crashes, now: Date()) else {
+            // five crashes: with a plug-in on and not paused, pause them once and start again (the likely cause)
+            if pluginsPauseInsteadOfStopping(on: PluginRecord.live.load().count, paused: UserDefaults.standard.bool(forKey: pluginsPausedKey)) {
+                UserDefaults.standard.set(true, forKey: pluginsPausedKey)
+                ServerLog.note("five crashes in five minutes: plug-ins paused, starting again")
+                crashes = []
+                start()
+                return
+            }
             state = .failed(serverStartFailed)
             return
         }

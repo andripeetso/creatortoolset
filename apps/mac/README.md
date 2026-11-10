@@ -104,7 +104,7 @@ for that host (signed in).
 its `PATH` (ffprobe), and `NODE_ENV=production`, `PORT`, `HOST=127.0.0.1`, `DATA_DIR`, `APP_SECRET`,
 `PLAYWRIGHT_BROWSERS_PATH`, `CT_LOCAL=1` and `CT_EXIT_WITH_PARENT=1`; a release build (one `build-app.sh` signed with
 `SIGN_IDENTITY`, marked `CTChannel` in its Info.plist) also passes `CT_CHANNEL=release` and `CT_VERSION` (the app's
-version). Ad-hoc builds and `swift run` leave both unset. The window shows "Starting the server
+version). Ad-hoc builds and `swift run` leave both unset. Plug-ins add `CT_PLUGINS_ON` and `CT_PLUGINS_PAUSED` (see "Plug-ins"). The window shows "Starting the server
 on this Mac…" and opens `http://127.0.0.1:43128` once `/api/health` answers (polled every 200 ms, up to 30 s).
 
 - **Data:** `~/Library/Application Support/Creator Toolset/data` by default (see "Data location"); Chromium goes
@@ -115,7 +115,8 @@ on this Mac…" and opens `http://127.0.0.1:43128` once `/api/health` answers (p
   `environment`: the same id as the data folder's `environment.json` and a pid in `DATA_DIR/server.pid` that is
   this app's `node` means a server left from an earlier run, which is stopped; anything else shows "Port 43128 is
   in use by another program". The app never picks another port by itself, because saved addresses carry it.
-- **Crashes:** restarted after 1, 2, 4, 8 s; the fifth crash in five minutes stops trying and the window and
+- **Crashes:** restarted after 1, 2, 4, 8 s. The fifth crash in five minutes pauses the plug-ins once, when one is
+  on and they are not paused yet, and starts again (see "Plug-ins"); otherwise it stops trying and the window and
   the menu say "The server stopped. Open server log".
 - **Quit:** the app closes the server's stdin, sends SIGTERM, waits up to 10 s, then SIGKILL. If the app itself
   dies, the closed stdin stops the server (`CT_EXIT_WITH_PARENT`).
@@ -146,6 +147,31 @@ The optional account sign-in is not part of this: the server on your Mac works w
 The app's window is the way in: it has no "open in browser". The server keeps one-time sign-in links
 (`POST /api/auth/link`, `GET /api/auth/link/<code>`: one use, 60 s, memory only, never logged) for pairing a phone
 later; nothing in the app uses them yet.
+
+### Plug-ins
+
+A plug-in is a folder the person's own AI writes into `~/Library/Application Support/Creator Toolset/plugins/<folder>/`
+(the `Creator Toolset (fresh)` folder for a copy). Its server half and web half run only when this app says they are on.
+
+- **Switch on** is this app's own alert, a sheet on the window, not a page's: the server takes a copy of the folder and
+  builds it (nothing runs yet), then the alert names the plug-in and what it can reach. Cancel is the default; Switch On
+  records it. The page asks with `plugin:on:<folder>`, `plugin:off:<id>`, `plugin:show:<folder>` and `plugins:resume`
+  over the `thisMac` handler, honoured only while This Mac shows this app's own server (`Plugins.swift`).
+- **The record** of the clicks is `id → fingerprint` in one Keychain generic-password item, service
+  `AppIdentity.keychain("plugins")` (`com.creatortoolset.mac.plugins`, a copy's own), account `approved`. A build with a provisioning profile keeps it in the data-protection Keychain, which no other
+  program can reach, and never reads the file-based one. A build without a profile can't write there
+  (errSecMissingEntitlement, -34018) and keeps the record in the file-based Keychain. That one is weaker: another
+  program can change an item there with no prompt (measured on a throwaway item), so it stops an edit to a file, not
+  a program that calls the Keychain on purpose. Nothing about plug-ins goes in UserDefaults or a file, except the
+  paused flag (`pluginsPaused`).
+- **Env:** `CT_PLUGINS_ON=id:fingerprint,…` (sorted by id, left out when none is on) and `CT_PLUGINS_PAUSED=1` when
+  paused. With paused the server lists the plug-ins that are on and loads none.
+- **Restart:** a change (switch on or off, paused or back on) stops and starts the server without counting a crash;
+  the window shows the starting page and loads the page again when the server answers, so it sees the new set.
+- **Five crashes:** with a plug-in on and not paused, the app pauses them once, logs a line, clears the crash list
+  and starts again. Otherwise the server stops trying, as above.
+- **This Mac:** a Plug-ins row, shown only while one is on: `N on`, or `Off` when paused, with Switch All Off or
+  Switch Back On.
 
 ### Access from other devices
 
@@ -322,6 +348,8 @@ reply finishing or an AI edit failing, so those notifications need a server chan
 - With the server: its data folder and log (see "The server on this Mac"), its `APP_SECRET` and, once you set one,
   the owner's password in the Keychain; the data folder's path, the old copy after a move, and whether other
   devices may connect, in `UserDefaults`.
+- Plug-ins: the record of the Switch On clicks (ids and fingerprints) in the Keychain (see "Plug-ins"); whether
+  they are paused, in `UserDefaults`.
 - The runner's folder: `relay/` in the data folder for the server on this Mac (so it moves with the data), else
   `~/Library/Application Support/Creator Toolset/relay/<site>`. In it, `workshop/` holds a Workshop session's
   folder while its Claude session is kept (14 days) and `blobs/` big files by their hash (30 days).
@@ -351,6 +379,8 @@ between launches; Sign out on the site clears it. The one secret the app keeps i
 - `Sources/CreatorToolsetMac/MacReport.swift`: the CLIs and config folders the Mac reports.
 - `Sources/CreatorToolsetMac/Server.swift`: the server on this Mac (start, health wait, port, crashes, log, stop,
   the owner's password, data location).
+- `Sources/CreatorToolsetMac/Plugins.swift`: plug-ins (the asks, Switch on's alert, the record in the Keychain, the
+  paused flag, the server's environment and the five-crash rule).
 - `Sources/CreatorToolsetMac/Logic.swift`: the pure helpers the tests cover.
 - `Tests/CreatorToolsetMacTests/LogicTests.swift`: the pure helpers (site address, cookies, downloads, notes).
 - `Tests/CreatorToolsetMacTests/ServersTests.swift`: the list (migration, This Mac, add, rename, remove, none picked),
@@ -360,6 +390,8 @@ between launches; Sign out on the site clears it. The one secret the app keeps i
   makes one real `claude` call through `~/.claude-work` (a fraction of a cent).
 - `Tests/CreatorToolsetMacTests/ServerTests.swift`: the restart backoff, the log rotation, the pid check, the
   missing disk, a move's checks, folder sizes and the runner's folder.
+- `Tests/CreatorToolsetMacTests/PluginsTests.swift`: the plug-in asks, the server's environment, the Switch on
+  alert's words, the five-crash rule, and the record (its Keychain round trip uses its own test service).
 - `scripts/build-app.sh`: builds the `.app` with its server (the environment variables above);
   `scripts/node.entitlements`: the JIT entitlement for the bundled `node`.
 
@@ -371,7 +403,9 @@ but not yet launched: the window's cookie landing in WebKit's store before the p
 window, auto-pairing on a fresh data folder, the Keychain prompt for `owner-password` on a signed build, a real
 `ditto` move to an external disk and back, and the unplugged-disk message still need a run on a Mac.
 
-The app has not been launched on a Mac in this build (so far it has been built and unit-tested).
+The app has not been launched on a Mac in this build (so far it has been built and unit-tested). The plug-ins'
+alert, the record's Keychain path on a signed build, the restart's page reload and the five-crash pause have not
+been run on a Mac either.
 Drag-and-drop, the notification banners and the menu bar item still need
 a manual check by the owner. The device runner has run one real Claude call and a full job against a
 local stand-in for the site's routes; pairing against the real site and the Keychain prompt on first
