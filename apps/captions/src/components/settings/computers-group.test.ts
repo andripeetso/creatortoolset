@@ -55,6 +55,13 @@ describe("groupComputers", () => {
     expect(groups[0]!.old).toBe(false);
   });
 
+  it("matches host names whatever their case: the worker reports 'Sams-Mac-Studio.local', the Mac app 'sams-mac-studio.local'", () => {
+    const worker = mac({ id: "w", owner: "workspace", host: "Sams-Mac-Studio.local", online: true });
+    const app = mac({ id: "a", owner: "andri", host: "sams-mac-studio.local" });
+    const groups = groupComputers([worker, app], "andri", { computer: "Sam's Mac Studio", host: "sams-mac-studio.local" }, () => false, NOW);
+    expect(groups.map((g) => [g.mine, g.records.map((r) => r.id).sort()])).toEqual([[true, ["a", "w"]]]);
+  });
+
   it("without the Mac app's names an old pairing stays its own group, and an old one with no AI is folded", () => {
     const worker = mac({ id: "w", owner: "workspace", host: "sams.local", online: true });
     const old = pairing({ id: "p" });

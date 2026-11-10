@@ -30,7 +30,7 @@ const DAY = 86_400_000;
  */
 const machineKey = (d: Listed): string => {
   const m = d.report?.machine;
-  return m?.host ? [m.host, m.cpu ?? "", m.cpus, m.memGb].join("|") : d.id;
+  return m?.host ? [m.host.toLowerCase(), m.cpu ?? "", m.cpus, m.memGb].join("|") : d.id;
 };
 
 /** What a record is, in a word: the team's AI worker (owner "workspace") or the Mac app's pairing. */
@@ -46,7 +46,9 @@ export const baseName = (name: string): string => name.replace(/\s\(\d+\)$/, "")
 export function isThisMac(d: Listed, me: string, names: ThisMacNames): boolean {
   if (names.device && d.id === names.device) return true;
   const host = d.report?.machine?.host;
-  if (host) return !!names.host && host === names.host;
+  // host names differ only in case between reporters: the AI Editor worker says "Sams-Mac-Studio.local", the Mac app
+  // "sams-mac-studio.local"
+  if (host) return !!names.host && host.toLowerCase() === names.host.toLowerCase();
   return !!names.computer && d.owner === me && baseName(d.name) === names.computer;
 }
 
