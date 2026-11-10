@@ -139,7 +139,8 @@ on this Mac…" and opens `http://127.0.0.1:43128` once `/api/health` answers (p
    "Which plan are you on?", filled in from what `claude auth status --json` itself says), then what's left for
    the ticked tools (all optional). The AI step looks again every 5 s, and the app reports its tools again
    whenever it comes to the front, so a tool installed in Terminal shows up without a reload. These are the same
-   screens as Settings; Settings → Setup shows every tool's readiness and runs setup again.
+   screens as Settings; Settings → Tools shows what each tool still needs, and after **Not now** Home keeps a
+   **Finish setting up** card that opens setup again.
 
 The optional account sign-in is not part of this: the server on your Mac works without one.
 

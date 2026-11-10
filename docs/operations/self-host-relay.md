@@ -145,13 +145,18 @@ also 401.
 
 On each computer that should join the account, the server runs the connect flow:
 
-1. Set `CT_CONNECT_URL=https://connect.example.com` in that server's `.env` and restart it.
-2. In the app, as the owner, open **Settings → Connect** and start the link. It shows a short code and the approve
-   link.
+1. Set `CT_CONNECT_URL=https://connect.example.com` in that server's `.env` and apply it (`docker compose up -d` in
+   the Docker kit).
+2. On that computer, run the connect command with your broker's address:
+   `docker compose exec app node dist/cli.js connect --broker https://connect.example.com` in the Docker kit, or
+   `node dist/cli.js connect --broker https://connect.example.com` in the folder you run `node dist/boot.js` from.
+   It prints the approve link and a short code, then waits. Without `--broker`, and with the variable not applied,
+   the command uses the address built into the app, not yours.
 3. Open `https://connect.example.com/connect` on any device, sign in, check the code and approve.
+4. Restart the server: its tunnel runs while the server runs.
 
-The computer then receives its tunnel, starts `cloudflared` (pinned, checked against its SHA-256 before it runs) and
-appears on the account. Check on the broker:
+The command saves the computer's tunnel. After the restart the server starts `cloudflared` (pinned, checked against
+its SHA-256 before it runs) and the computer appears on the account. Check on the broker:
 
 ```sh
 curl -fsS -H "Authorization: Bearer <account token>" https://connect.example.com/v1/computers
