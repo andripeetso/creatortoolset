@@ -1,13 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback } from "react";
 import { HardDrive } from "lucide-react";
 import { useAuth } from "@/lib/auth";
-import { getProviders } from "@/lib/providers";
+import { useCachedLoad } from "@/lib/local-cache";
+import { useProviders } from "@/lib/providers";
 import type { StorageView } from "@contracts/storage";
 import { devicesSectionsFor, replacementFor } from "@/lib/plugin";
 import { webPlugins } from "@/plugins.gen";
 import { Advanced, Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Section } from "./ui";
-import { msg } from "./helpers";
-import { AddStorageButton, Storage, driveList, getStorage, spaceOf, isFull, type Computer } from "./StorageRows";
+import { AddStorageButton, Storage, driveList, getStorage, spaceOf, isFull } from "./StorageRows";
 
 /**
  * Settings → Storage: where finished videos, footage and music live (one row each), "Add storage", and for an admin the
@@ -16,22 +16,19 @@ import { AddStorageButton, Storage, driveList, getStorage, spaceOf, isFull, type
 export function FoldersSection() {
   const me = useAuth((s) => s.me);
   const hosted = useAuth((s) => s.hosted);
-  const [devices, setDevices] = useState<Computer[] | null>(null);
-  const [storage, setStorage] = useState<StorageView | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
+  const providers = useProviders();
+  const store = useCachedLoad<StorageView>("/api/devices/storage", getStorage);
+  const devices = providers.data?.devices ?? null;
+  const storage = store.data;
+  const error = providers.error || store.error;
+  const refreshProviders = providers.refresh;
+  const refreshStore = store.refresh;
   const load = useCallback(() => {
-    setError(null);
-    Promise.all([getProviders(), getStorage()])
-      .then(([v, st]) => {
-        setDevices(v.devices);
-        setStorage(st);
-      })
-      .catch((e) => setError(msg(e)));
-  }, []);
-  useEffect(() => load(), [load]);
+    void refreshProviders().catch(() => {});
+    void refreshStore().catch(() => {});
+  }, [refreshProviders, refreshStore]);
 
-  if (!me || (!storage && !error)) {
+  if (!me || ((!storage || !devices) && !error)) {
     return (
       <Section title="Storage">
         <Card>

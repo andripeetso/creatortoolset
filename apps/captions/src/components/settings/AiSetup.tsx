@@ -3,6 +3,7 @@ import { Check, Copy } from "lucide-react";
 import type { CliId, ConnectResult, LocalAiRow, LocalAiView, SignInResult } from "@contracts/local-ai";
 import type { Driver } from "@contracts/providers";
 import { Button } from "@/components/ui/button";
+import { useCachedLoad } from "@/lib/local-cache";
 import { msg } from "./helpers";
 import { DriverMark } from "./ProviderInstanceCard";
 import { ListRow, Status } from "./ui";
@@ -76,8 +77,8 @@ const LOCAL_CLI: CliId[] = ["claude", "codex", "gemini"];
 /** Whether the local routes can install and sign in this tool (the three CLIs the server knows). */
 export const isLocalCli = (driver: string): driver is CliId => (LOCAL_CLI as string[]).includes(driver);
 
-async function call<T>(url: string, method: "GET" | "POST", body?: unknown): Promise<T> {
-  const r = await fetch(url, { method, ...(body ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}) });
+async function call<T>(url: string, method: "GET" | "POST", body?: unknown, ms?: number): Promise<T> {
+  const r = await fetch(url, { method, ...(body ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}), ...(ms ? { signal: AbortSignal.timeout(ms) } : {}) });
   const j = (await r.json().catch(() => null)) as (T & { error?: string }) | null;
   if (!j) throw new Error(`Request failed (${r.status})`);
   if (!r.ok && j.error) throw new Error(j.error);
@@ -85,7 +86,12 @@ async function call<T>(url: string, method: "GET" | "POST", body?: unknown): Pro
 }
 
 /** The AI apps on this computer: found or not, signed in or not (LocalAiView). `local` is false on a hosted server. */
-export const getLocalAi = () => call<LocalAiView>("/api/setup/ai", "GET");
+export const getLocalAi = () => call<LocalAiView>("/api/setup/ai", "GET", undefined, 20_000);
+/**
+ * The same list, its saved copy at once (Providers and Headless access share it). Read again when a computer of this
+ * account reports a tool installed or signed in ("devices"); nothing tells a page about a tool set up in Terminal.
+ */
+export const useLocalAi = () => useCachedLoad<LocalAiView>("/api/setup/ai", getLocalAi, { topic: "devices" });
 export const localSignIn = (id: CliId) => call<SignInResult>("/api/setup/ai/signin", "POST", { id });
 export const localInstall = (id: CliId) => call<SignInResult>("/api/setup/ai/install", "POST", { id });
 /** Connects it as this account's AI through this computer's Mac app (`device`); without one the answer says to open the app. */

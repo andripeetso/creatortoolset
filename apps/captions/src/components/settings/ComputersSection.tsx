@@ -4,16 +4,15 @@ import { Laptop, Monitor, Plus } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { promptDialog } from "@/lib/dialogs";
 import { allowOtherDevices, thisMacBridge } from "@/lib/thisMac";
-import { getProviders, removeDevice, renameDevice, thisMacDevice } from "@/lib/providers";
+import { removeDevice, renameDevice, thisMacDevice, useProviders } from "@/lib/providers";
 import { devicesSectionsFor } from "@/lib/plugin";
 import { webPlugins } from "@/plugins.gen";
-import type { ProvidersView } from "@contracts/providers";
 import { mintPhoneCode, type PhoneState } from "@/components/setup/ConnectStep";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import { Advanced, Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, Status } from "./ui";
-import { fmtAgo, msg } from "./helpers";
+import { fmtAgo } from "./helpers";
 import { groupComputers, kindOf, type ComputerGroup, type Listed, type ThisMacNames } from "./computers-group";
 import { hasThisMac, tell, useThisMac, type ThisMacState } from "./ThisMacSection";
 
@@ -44,20 +43,11 @@ export function ComputersSection() {
   const [params, setParams] = useSearchParams();
   const [adding, setAdding] = useState(false);
   const [phoning, setPhoning] = useState(false);
-  const [view, setView] = useState<ProvidersView | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { data: view, error, refresh } = useProviders();
   const inMac = hasThisMac();
   const bridge = useThisMac(inMac);
 
-  const load = useCallback(() => {
-    getProviders()
-      .then((v) => {
-        setView(v);
-        setError(null);
-      })
-      .catch((e) => setError(msg(e)));
-  }, []);
-  useEffect(() => load(), [load]);
+  const load = useCallback(() => void refresh().catch(() => {}), [refresh]);
 
   // `?add=1` and `?phone=1` open their dialog once, then the parameters go
   useEffect(() => {

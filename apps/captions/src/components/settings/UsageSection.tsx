@@ -4,17 +4,18 @@ import { DRIVERS, type LimitsIdentity, type LimitWindow, type ProviderInstance, 
 import { PLANS, type PlanId } from "@contracts/plans";
 import type { SetupView } from "@contracts/tools";
 import { Button } from "@/components/ui/button";
-import { USAGE_PERIODS, deviceOf, getProviders, thisMacDevice, usageSince, type UsageRow } from "@/lib/providers";
+import { USAGE_PERIODS, deviceOf, thisMacDevice, usageSince, useProviders, type UsageRow } from "@/lib/providers";
 import { countedWindow, identityKey, leftOf, noticeOf, resetsIn } from "@/lib/limits";
 import { useSetup } from "@/lib/setup";
 import { tokensLabel } from "@/lib/workshop";
 import { cn } from "@/lib/utils";
 import { ProviderLogo } from "./ProviderLogos";
 import { Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Row, Section, SettingsSelect, Status, saveFailed } from "./ui";
-import { msg } from "./helpers";
 import { hasThisMac, tell, useThisMac, type ThisMacState } from "./ThisMacSection";
 
-const RELOAD_MS = 5 * 60_000; // the Macs post their readings every five minutes
+// The Macs post their readings every five minutes, and nothing tells the page when one lands (a reading and an answer's
+// usage are saved by the computer's own calls, which announce nothing): the page reads again at the same pace.
+const RELOAD_MS = 5 * 60_000;
 const TICK_MS = 60_000; // the countdowns
 const STALE_MS = 15 * 60_000;
 const LOW = 20; // a window at or under this share left is amber
@@ -22,12 +23,11 @@ const API = " (API)"; // the tally's label for calls on the app's own Anthropic 
 const TOOL: Record<string, string> = { Automation: "Scheduled task" };
 
 /**
- * Settings → Usage: the plan left on each AI login (one fetch, every five minutes), then what the app used in the period
- * picked, as one table by tool and AI.
+ * Settings → Usage: the plan left on each AI login (its saved copy at once, read again every five minutes and when an AI
+ * or a computer changes), then what the app used in the period picked, as one table by tool and AI.
  */
 export function UsageSection() {
-  const [view, setView] = useState<ProvidersView | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { data: view, error, refresh } = useProviders();
   const [days, setDays] = useState(7);
   const [now, setNow] = useState(() => Date.now());
   // the Mac app's own Plan limits switch, read live (ThisMacSection's hook; a browser reads nothing)
@@ -40,20 +40,9 @@ export function UsageSection() {
     if (!setup) void useSetup.getState().load();
   }, [setup]);
 
-  const load = useCallback(
-    () =>
-      getProviders()
-        .then((v) => {
-          setView(v);
-          setError(null);
-          setNow(Date.now());
-        })
-        .catch((e) => setError(msg(e))),
-    [],
-  );
+  const load = useCallback(() => refresh().then(() => setNow(Date.now()), () => {}), [refresh]);
 
   useEffect(() => {
-    void load();
     const reload = setInterval(() => void load(), RELOAD_MS);
     const tick = setInterval(() => setNow(Date.now()), TICK_MS);
     return () => {
