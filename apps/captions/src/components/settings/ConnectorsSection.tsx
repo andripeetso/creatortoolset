@@ -102,7 +102,7 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
       )}
       {error && <Notice tone="error">{error}</Notice>}
 
-      <Group title="Apify key" hint="Reads public profiles and posts. Billed to your Apify account.">
+      <Group id="apify-key" title="Apify key" hint="Reads public profiles and posts. Billed to your Apify account.">
         <Card>
           <Row
             label={

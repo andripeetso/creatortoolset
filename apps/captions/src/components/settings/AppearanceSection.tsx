@@ -36,7 +36,7 @@ export function AppearanceSection() {
   const { projectTint, homeGlow } = useAppearance();
   return (
     <>
-      <Group title="Theme" hint="The app and the links you share. System follows the device.">
+      <Group id="theme" title="Theme" hint="The app and the links you share. System follows the device.">
         <div
           role="radiogroup"
           aria-label="Theme"

@@ -7,7 +7,7 @@ export function CornerNav() {
   if (!shown) return null;
   return (
     <nav
-      aria-label="Your settings"
+      aria-label="Updates"
       className="fixed bottom-2 left-2 z-40 flex items-center gap-2"
     >
       <UpdateButton />

@@ -21,5 +21,5 @@ export default defineWebPlugin({
   id: "hello",
   routes: [{ path: "/hello", element: <HelloPage /> }],
   tiles: [{ stage: "Tools", to: "/hello", icon: Hand, name: "Hello", desc: "The example plug-in's page.", gate: "hello" }],
-  settings: [{ id: "hello", title: "Hello plug-in", blurb: "A section a plug-in adds to Settings.", icon: Hand, adminOnly: true, body: <HelloSettings /> }],
+  settings: [{ id: "hello", title: "Hello plug-in", icon: Hand, adminOnly: true, body: <HelloSettings /> }],
 });

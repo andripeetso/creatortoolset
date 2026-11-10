@@ -25,18 +25,21 @@ export interface PluginTile {
 export interface SettingsEntry {
   id: string;
   title: string;
-  blurb?: string;
   icon: LucideIcon;
+  /** The sidebar block it sits in ("AI", "Connections", "Team", "Server"); none = the top block. */
   group?: string;
   adminOnly?: boolean;
-  // Shown only inside the Mac app (the page sets html data-mac-this-mac there).
-  macOnly?: boolean;
   body?: ReactNode;
 }
 
-/** A Settings section a plug-in adds. `adminOnly` shows it to admins only. */
+/**
+ * A Settings section a plug-in adds. `group` places it inside that sidebar block (after the block's last section).
+ * `adminTab: true` shows it as a tab in Admin instead, after the built-in tabs (see adminTabsFor). `adminOnly` hides it
+ * from everyone else.
+ */
 export interface PluginSettingsSection extends SettingsEntry {
   body: ReactNode;
+  adminTab?: boolean;
 }
 
 /** A section a plug-in adds to Settings → Devices, after Storage. `adminOnly` shows it to admins only. */
@@ -243,16 +246,37 @@ export function itemActionsFor(me: Me | null, plugins: WebPlugin[], kind: ItemKi
 }
 
 /**
- * The built-in Settings sections with each plug-in's sections added after them, before the pinned "Server" block (the
- * entries with group "Server"). A plug-in section may not reuse a built-in id (it would hide that section): throws.
+ * The built-in Settings sections with each plug-in's sidebar sections placed in them: a section with a `group` goes after
+ * the last section of that group; one without goes at the end of the top block (before the first headed group). Admin
+ * tabs (adminTab) are not sidebar sections and are left out (see adminTabsFor). A plug-in section may not reuse a
+ * built-in id (it would hide that section): throws.
  */
-export function settingsWithPlugins(builtin: ReadonlyArray<SettingsEntry>, plugins: { settings?: PluginSettingsSection[] }[]): SettingsEntry[] {
-  const extra = plugins.flatMap((p) => p.settings ?? []);
+export function settingsWithPlugins<T extends SettingsEntry>(
+  builtin: ReadonlyArray<T>,
+  plugins: ReadonlyArray<{ settings?: PluginSettingsSection[] }>,
+): Array<T | PluginSettingsSection> {
+  const extra = plugins.flatMap((p) => p.settings ?? []).filter((s) => !s.adminTab);
   for (const s of extra) {
     if (builtin.some((b) => b.id === s.id)) throw new Error(`plug-in settings section "${s.id}" is already a built-in section`);
   }
-  return [...builtin.filter((s) => s.group !== "Server"), ...extra, ...builtin.filter((s) => s.group === "Server")];
+  const out: Array<T | PluginSettingsSection> = [...builtin];
+  for (const s of extra) {
+    let at: number;
+    if (s.group) {
+      const last = out.map((x) => x.group).lastIndexOf(s.group);
+      at = last < 0 ? out.length : last + 1;
+    } else {
+      const firstHeaded = out.findIndex((x) => x.group);
+      at = firstHeaded < 0 ? out.length : firstHeaded;
+    }
+    out.splice(at, 0, s);
+  }
+  return out;
 }
+
+/** The Admin tabs the plug-ins add (adminTab), in plug-in order, for this account: admins only. Admin shows them after its own. */
+export const adminTabsFor = (me: { role: string } | null, plugins: WebPlugin[]): PluginSettingsSection[] =>
+  plugins.flatMap((p) => p.settings ?? []).filter((s) => s.adminTab && me?.role === "admin");
 
 /** The site frame a plug-in claims for this address, or null (the app). */
 export function siteFrameFor(hostname: string, pathname: string, search: string, plugins: WebPlugin[]): { element: ReactNode } | null {

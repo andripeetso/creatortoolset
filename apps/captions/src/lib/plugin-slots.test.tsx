@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Hand, Sparkles } from "lucide-react";
 import type { Me } from "./auth";
-import { accountItemsFor, defineWebPlugin, devicesSectionsFor, itemActionsFor, replacementFor, reviewSlotsFor, settingsWithPlugins, visibleSettings, type WebPlugin } from "./plugin";
+import { accountItemsFor, adminTabsFor, defineWebPlugin, devicesSectionsFor, itemActionsFor, replacementFor, reviewSlotsFor, settingsWithPlugins, visibleSettings, type WebPlugin } from "./plugin";
 import { shownTools, withPluginTiles } from "./tools";
 import hello from "../../plugin-examples/hello/web";
 
@@ -70,9 +70,22 @@ describe("Settings sections", () => {
     { id: "keys", title: "API keys", icon: Hand, adminOnly: true, group: "Server" },
   ];
 
-  it("lists a plug-in section after the built-in ones and before the pinned Server block", () => {
+  it("puts a plug-in section with no group at the end of the top block, before the first headed block", () => {
     const sections = settingsWithPlugins(builtin, [tiny]);
-    expect(sections.map((s) => s.id)).toEqual(["general", "providers", "tiny", "keys"]);
+    expect(sections.map((s) => s.id)).toEqual(["general", "tiny", "providers", "keys"]);
+  });
+
+  it("places a plug-in section inside its group, and an adminTab stays out of the sidebar", () => {
+    const grouped = defineWebPlugin({
+      id: "grouped",
+      settings: [
+        { id: "ai-extra", title: "AI extra", icon: Hand, group: "AI", body: null },
+        { id: "footage", title: "Footage", icon: Hand, adminOnly: true, adminTab: true, body: null },
+      ],
+    });
+    expect(settingsWithPlugins(builtin, [grouped]).map((s) => s.id)).toEqual(["general", "providers", "ai-extra", "keys"]);
+    expect(adminTabsFor(admin(), [grouped]).map((s) => s.id)).toEqual(["footage"]);
+    expect(adminTabsFor(member(), [grouped])).toEqual([]);
   });
 
   it("keeps the built-in order when no plug-in adds one", () => {
@@ -82,7 +95,7 @@ describe("Settings sections", () => {
   it("shows an adminOnly plug-in section to admins only", () => {
     const sections = settingsWithPlugins(builtin, [tiny]);
     expect(visibleSettings(sections, member()).map((s) => s.id)).toEqual(["general", "providers"]);
-    expect(visibleSettings(sections, admin()).map((s) => s.id)).toEqual(["general", "providers", "tiny", "keys"]);
+    expect(visibleSettings(sections, admin()).map((s) => s.id)).toEqual(["general", "tiny", "providers", "keys"]);
   });
 
   it("refuses a plug-in section that reuses a built-in id", () => {

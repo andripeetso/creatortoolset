@@ -456,7 +456,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
       if (missing.length)
         return {
           not_yet: `${TOOL_NAMES[tool]} needs these first; then call use_file again.`,
-          needs: missing.map((n) => ({ what: n.what, ...(n.form === "keys" ? { ask_secret: n.anyOf } : { open: n.form === "ai" ? "/settings/providers" : "/settings/setup" }) })),
+          needs: missing.map((n) => ({ what: n.what, ...(n.form === "keys" ? { ask_secret: n.anyOf } : { open: n.form === "ai" ? "/settings/providers" : "/settings/general" }) })),
         };
       if (!a.file && !a.path) throw new ToolError("Give the dropped file's id, or a path on this computer.");
       const file = a.path ? (await json(`/api/assistant/files/path`, "POST", { path: a.path })).id : a.file;

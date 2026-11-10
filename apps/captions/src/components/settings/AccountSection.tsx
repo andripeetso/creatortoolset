@@ -83,7 +83,7 @@ export function AccountSection() {
 
       <Group title="Session">
         <Card>
-          <Row label="Sign out" hint="On this device.">
+          <Row id="sign-out" label="Sign out" hint="On this device.">
             <Button variant="outline" size="sm" onClick={() => void logout()}>
               <LogOut className="h-3.5 w-3.5" /> Sign out
             </Button>
@@ -169,7 +169,7 @@ function PasswordRow() {
   const [open, setOpen] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   return (
-    <Row label="Password" hint={note ?? undefined}>
+    <Row id="password" label="Password" hint={note ?? undefined}>
       <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
         Change
       </Button>

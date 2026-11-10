@@ -37,6 +37,8 @@ import { AssistantDock } from "@/components/assistant/AssistantDock";
 import { AskAboutSelection } from "@/components/assistant/AskAboutSelection";
 import { AppDialogs } from "@/components/AppDialogs";
 import { ViewAsBanner } from "@/components/ViewAsBanner";
+import { Toaster } from "@/components/ui/sonner";
+import { useShareTheme } from "@/components/ShareTheme";
 import { canUse, useAuth, useMe } from "@/lib/auth";
 import { initTabGuard } from "@/lib/tabs";
 import { useStudio } from "@/lib/store";
@@ -156,6 +158,12 @@ function ProjectsRoute({ onClose }: { onClose: () => void }) {
     return <Navigate to="/" replace />;
   }
   return <ProjectsPage onClose={onClose} />;
+}
+
+/** The toasts (a failed save in Settings, and the rest), in the app's own theme rather than the device's. */
+function AppToaster() {
+  const { dark } = useShareTheme();
+  return <Toaster theme={dark ? "dark" : "light"} />;
 }
 
 /** Settings, a modal over the page behind it: every signed-in account. */
@@ -303,6 +311,7 @@ export default function App() {
       <WarmCaches />
       <SettingsShortcut />
       <AppDialogs />
+      <AppToaster />
       <ViewAsBanner />
       <main className="contents">
         <Routes location={page}>
