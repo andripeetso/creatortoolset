@@ -61,9 +61,18 @@ export function AgentsStepView({
   hosted?: boolean;
   mine: ReactNode;
 }) {
-  const shownOthers = others.filter((c) => picked.has(c.id));
+  // hosted: every computer of the account is shown (the Connect picks don't apply to them)
+  const shownOthers = hosted ? others : others.filter((c) => picked.has(c.id));
   const showHere = !hosted && picked.has(HERE);
-  if (!showHere && !shownOthers.length) return <p className="text-sm text-muted-foreground">No computer is picked. Go back and pick one to set up its agents.</p>;
+  if (!showHere && !shownOthers.length)
+    return hosted ? (
+      <p className="text-sm text-muted-foreground">
+        No computer is connected yet. Download the{" "}
+        <a className="text-foreground underline" href="https://creatortoolset.com/download">Creator Toolset Mac app</a> on the computer you work on, and its AI shows up here.
+      </p>
+    ) : (
+      <p className="text-sm text-muted-foreground">No computer is picked. Go back and pick one to set up its agents.</p>
+    );
   return (
     <div className="space-y-6">
       {showHere && (

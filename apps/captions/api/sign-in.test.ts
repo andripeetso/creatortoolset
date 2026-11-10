@@ -207,3 +207,54 @@ describe("GitHub sign-in (hosted mode, GitHub's endpoints faked)", () => {
     expect(findByIdentity("github", "4242")).toBeNull();
   });
 });
+
+describe("first sign-in makes the account (hosted mode, GitHub faked)", () => {
+  // a new person: GitHub id 5151, not linked to anyone here yet
+  const fakeGitHub = async (input: string | URL | Request): Promise<Response> => {
+    const url = String(input);
+    if (url === "https://github.com/login/oauth/access_token") return Response.json({ access_token: "gho_ada" });
+    if (url === "https://api.github.com/user") return Response.json({ id: 5151, login: "ada-gh", name: "Ada Tiny" });
+    if (url === "https://api.github.com/user/emails") return Response.json([{ email: "ada@tinyacrobatics.com", primary: true, verified: true }]);
+    throw new Error(`unexpected request to ${url}`);
+  };
+  const signIn = async () => {
+    const start = await app.request("/api/account/login/github?for=site");
+    const state = new URL(start.headers.get("location")!).searchParams.get("state")!;
+    return app.request(`/api/auth/github/callback?code=good-code&state=${state}`);
+  };
+
+  beforeAll(() => {
+    process.env.GITHUB_CLIENT_ID = "gh-client-first";
+    process.env.GITHUB_CLIENT_SECRET = "gh-secret-first";
+    process.env.SIGNIN_ORIGIN = "http://localhost";
+  });
+  afterAll(() => {
+    delete process.env.GITHUB_CLIENT_ID;
+    delete process.env.GITHUB_CLIENT_SECRET;
+    delete process.env.SIGNIN_ORIGIN;
+    vi.restoreAllMocks();
+  });
+  beforeEach(() => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(fakeGitHub as typeof fetch);
+  });
+
+  it("tells the login screen which providers have keys", async () => {
+    expect(await (await app.request("/api/account/providers")).json()).toEqual({ apple: false, google: false, github: true });
+  });
+
+  it("makes the account on the first sign-in, named from the person (a taken name takes the next)", async () => {
+    createUser("ada-tiny", "adapass12", { role: "user" });
+    const back = await signIn();
+    expect(back.status).toBe(302);
+    expect(back.headers.get("location")).toBe("/");
+    expect(cookieOf(back)).toMatch(/=/);
+    expect(findByIdentity("github", "5151")?.username).toBe("ada-tiny-2");
+  });
+
+  it("signs the same identity into that account next time, with no second account", async () => {
+    const again = await signIn();
+    expect(again.status).toBe(302);
+    expect(findByIdentity("github", "5151")?.username).toBe("ada-tiny-2");
+    expect(findUser("ada-tiny-3")).toBeNull();
+  });
+});

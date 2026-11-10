@@ -40,11 +40,17 @@ export function FoldersStep({ onNext, actions }: { onNext: () => void; actions: 
   const [customRole, setCustomRole] = useState<"footage" | "music">("footage");
 
   const reload = () => getStorage().then(setStorage).catch(() => setStorage(null));
+  // hosted: the folders of the person's own computers; a failed read offers Try again (Continue stays either way)
+  const [hostedError, setHostedError] = useState(false);
+  const loadHosted = () => {
+    setHostedError(false);
+    void getProviders().then(setProviders).catch(() => setHostedError(true));
+    void reload();
+  };
 
   useEffect(() => {
     if (hosted) {
-      void getProviders().then(setProviders).catch(() => setProviders(null));
-      void reload();
+      loadHosted();
       return;
     }
     void (async () => {
@@ -114,11 +120,21 @@ export function FoldersStep({ onNext, actions }: { onNext: () => void; actions: 
 
   if (hosted) {
     // a hosted server has no disks of its own: the folders are the ones on the person's own computers
-    if (!providers || !me) return <p className="text-sm text-muted-foreground">Looking for your computers…</p>;
-    const own = providers.devices.filter((d) => d.owner === me.username);
+    const own = providers && me ? providers.devices.filter((d) => d.owner === me.username) : [];
     return (
       <div className="space-y-4">
-        <Storage devices={own} storage={storage} onChanged={() => void reload()} />
+        {hostedError ? (
+          <div className="space-y-2 text-sm">
+            <p className="text-muted-foreground">Couldn't reach your computers.</p>
+            <Button variant="outline" size="sm" onClick={loadHosted}>
+              Try again
+            </Button>
+          </div>
+        ) : !providers || !me ? (
+          <p className="text-sm text-muted-foreground">Looking for your computers…</p>
+        ) : (
+          <Storage devices={own} storage={storage} onChanged={() => void reload()} />
+        )}
         {actions && createPortal(<Button onClick={onNext}>Continue</Button>, actions)}
       </div>
     );

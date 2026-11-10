@@ -104,3 +104,10 @@ it("allows plain http only on this network, and refuses other schemes and empty 
   expect(serverUrl("ftp://studio.example.com")).toBeNull();
   expect(serverUrl("   ")).toBeNull();
 });
+
+it("on a hosted server: no row for this server and no add-a-computer form, the Mac app line instead", () => {
+  const html = renderToStaticMarkup(<ConnectStepView {...base} hosted />);
+  expect(html).not.toContain('aria-label="Studio Mac"');
+  expect(html).not.toContain("Add a computer");
+  expect(html).toContain("Creator Toolset Mac app");
+});

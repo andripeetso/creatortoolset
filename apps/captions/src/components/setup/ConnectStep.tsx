@@ -4,6 +4,7 @@ import QRCode from "qrcode";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { AccountStep, hasAccountBridge } from "@/components/setup/AccountStep";
+import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { getComputers, serverUrl, type ComputerInfo, type ComputersView } from "./computers";
 
@@ -137,6 +138,7 @@ export function ConnectStepView({
   onJoin,
   joinNote,
   account,
+  hosted = false,
 }: {
   here: { name: string; address: string };
   others: ComputerInfo[];
@@ -155,10 +157,13 @@ export function ConnectStepView({
   joinNote?: { ok: boolean; text: string } | null;
   /** the account sign-in (AccountStep), when the Mac app can show it */
   account?: ReactNode;
+  /** hosted: this server is no computer of the person, so its own row and the add-a-computer form are left out */
+  hosted?: boolean;
 }) {
   const [signingIn, setSigningIn] = useState(false);
   return (
     <div className="space-y-3">
+      {!hosted && (
       <div className={CARD}>
         <ComputerCheck
           id={HERE}
@@ -169,6 +174,7 @@ export function ConnectStepView({
           icon={<Monitor className="size-4 shrink-0 text-muted-foreground" aria-hidden />}
         />
       </div>
+      )}
 
       <section className={CARD} aria-label="Creator Toolset Connect">
         <div className="flex items-center gap-3 px-4 py-3">
@@ -210,6 +216,14 @@ export function ConnectStepView({
 
       {phone}
 
+      {hosted ? (
+        <div className={CARD}>
+          <p className="px-4 py-3 text-sm text-muted-foreground">
+            Creator Toolset runs on the computer you work on. Download the{" "}
+            <a className="text-foreground underline" href="https://creatortoolset.com/download">Creator Toolset Mac app</a> there, and it joins this account.
+          </p>
+        </div>
+      ) : (
       <div className={CARD}>
         <button
           type="button"
@@ -279,6 +293,7 @@ export function ConnectStepView({
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }
@@ -288,6 +303,7 @@ export function ConnectStepView({
  * each, the phone's code, and the folded add-a-computer row. `picked` is the set the next stages work on.
  */
 export function ConnectStep({ picked, onPick }: { picked: ReadonlySet<string>; onPick: (id: string, on: boolean) => void }) {
+  const hosted = useAuth((s) => s.hosted);
   const [view, setView] = useState<ComputersView | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [server, setServer] = useState("");
@@ -326,6 +342,7 @@ export function ConnectStep({ picked, onPick }: { picked: ReadonlySet<string>; o
       picked={picked}
       onPick={onPick}
       phone={<PhoneRow />}
+      hosted={hosted}
       expanded={expanded}
       onExpand={() => setExpanded((v) => !v)}
       server={server}
