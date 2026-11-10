@@ -42,6 +42,22 @@ export async function chooseFolderOnMac(): Promise<string | null | undefined> {
 }
 
 /**
+ * Headless access → Install on a server that is not this computer: the Mac app adds the open server to Claude Code or
+ * Codex on this Mac itself (ThisMacBridge.swift installInAI), with the key the page just made for that app. true = done;
+ * a sentence = why not; undefined = no Mac app here, or one from before it could (the page then shows the line to run).
+ */
+export async function installInMacAi(app: "claude" | "codex", key: string): Promise<true | string | undefined> {
+  const bridge = thisMacBridge();
+  if (!bridge) return undefined;
+  try {
+    const r = ((await bridge.postMessage(`install:${app}:${key}`)) ?? {}) as unknown as { ok?: boolean; problem?: string };
+    return r.ok === true ? true : r.ok === false ? r.problem || "It didn't work. Try again." : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * "Access from other devices" on this Mac: the server starts listening beyond this computer (the Mac app asks for the
  * owner's password first, when there is none). Resolves to the problem to show, or null when it is on and the server
  * is restarting.

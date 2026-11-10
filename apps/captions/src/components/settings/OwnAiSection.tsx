@@ -1,11 +1,11 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import type { CliId, LocalAiRow, LocalAiView } from "@contracts/local-ai";
 import { Check, Copy, KeyRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 import { AccessKeysSection } from "./AccessKeys";
 import { ProviderLogo } from "./ProviderLogos";
-import { Advanced, Card, EmptyRow, ErrorRow, ListRow, LoadingRow, RowMenu, Section, Status, saveFailed } from "./ui";
+import { installInMacAi } from "@/lib/thisMac";
+import { Advanced, Card, ErrorRow, ListRow, LoadingRow, RowMenu, Section, Status, saveFailed } from "./ui";
 import { shortVersion } from "./ProvidersSection";
 import { fmtAgo, msg } from "./helpers";
 
@@ -87,14 +87,16 @@ export function useOwnAi() {
  * app (Claude Code, Codex, a script) use the app, as you, each with a key of its own.
  * On the computer the server runs on, each AI app found is a row and its button does the work (Sign in, Update, Install);
  * Command shows the same install as a line to run yourself.
- * On a hosted server nothing can be run on your computer, so the page gives the command to paste into Terminal.
+ * On a server that is not this computer the rows and their Install are the same: the Mac app adds it to the AI app on
+ * your Mac itself; in a browser, where nothing can run on your computer, the click shows the line to run in Terminal.
  */
 export function OwnAiSection() {
   const { keys, local, error, load, disconnect } = useOwnAi();
 
   const here = local?.local ? connectableRows(local) : [];
   // the apps with a row of their own above are not listed again under Installed in
-  const listed = (keys ?? []).filter((k) => !here.some((r) => r.name === k.name));
+  const rowed = local?.local ? here.map((r) => r.name) : REMOTE_APPS.map((a) => APPS[a].name);
+  const listed = (keys ?? []).filter((k) => !rowed.includes(k.name));
 
   return (
     <>
@@ -112,26 +114,21 @@ export function OwnAiSection() {
             <OtherAppRow onMade={load} />
           </Card>
         ) : (
-          <ConnectCard onMade={load} />
+          <Card>
+            {REMOTE_APPS.map((a) => (
+              <RemoteAppRow key={a} app={a} aiKey={keys.find((k) => k.name === APPS[a].name)} onDone={load} onDisconnect={disconnect} />
+            ))}
+            <OtherAppRow onMade={load} />
+          </Card>
         )}
       </Section>
 
-      {keys && (listed.length > 0 || !local?.local) && (
+      {keys && listed.length > 0 && (
         <Section title="Installed in">
           <Card>
-            {listed.length === 0 ? (
-              <EmptyRow title="Not installed in any app yet" />
-            ) : (
-              listed.map((k) => (
-                <ListRow
-                  key={k.id}
-                  icon={<AppIcon name={k.name} />}
-                  title={k.name}
-                  subtitle={usedText(k)}
-                  actions={<DisconnectMenu k={k} onDisconnect={disconnect} />}
-                />
-              ))
-            )}
+            {listed.map((k) => (
+              <ListRow key={k.id} icon={<AppIcon name={k.name} />} title={k.name} subtitle={usedText(k)} actions={<DisconnectMenu k={k} onDisconnect={disconnect} />} />
+            ))}
           </Card>
         </Section>
       )}
@@ -288,87 +285,83 @@ function AppIcon({ name }: { name: string }) {
   return logo ? <ProviderLogo driver={logo} className="size-4" /> : <KeyRound />;
 }
 
-/** Pick the app, get its command. The key is made on Get the command and is in the command only: shown once. */
-function ConnectCard({ onMade }: { onMade: () => void }) {
-  const [app, setApp] = useState<AiApp>("claude");
-  const [made, setMade] = useState<{ app: AiApp; command: string } | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const url = `${window.location.origin}/api/mcp`;
+/** The AI apps with a row of their own on a server that is not this computer. */
+const REMOTE_APPS = ["claude", "codex"] as const;
+// this browser's note of the key the Mac app installed for an app (its last four characters): the row then says
+// Installed after a reload too, before the AI app has used it once
+const MARK = (app: string) => `ct-own-ai-installed:${app}`;
+const marked = (app: string): string | null => {
+  try {
+    return localStorage.getItem(MARK(app));
+  } catch {
+    return null;
+  }
+};
 
-  const get = async () => {
+/**
+ * One AI app on a server that is not this computer. Install makes the app a key of its own, then the Mac app adds the
+ * server to that app on this Mac. In a browser nothing can run on your computer, so the same click shows the line to
+ * run in Terminal (the key is in it, shown this once); the row says Installed once the app has used its key.
+ */
+function RemoteAppRow({ app, aiKey, onDone, onDisconnect }: { app: (typeof REMOTE_APPS)[number]; aiKey?: AiKeyInfo; onDone: () => void; onDisconnect: (id: string) => Promise<unknown> }) {
+  const [busy, setBusy] = useState(false);
+  const [command, setCommand] = useState<string | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+  const [byMac, setByMac] = useState<string | null>(() => marked(app));
+  const installed = !!aiKey && (!!aiKey.usedAt || byMac === aiKey.last4);
+
+  const install = async () => {
     setBusy(true);
-    setError(null);
+    setFailed(null);
     try {
-      const { key } = await fetch("/api/auth/api-key", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: APPS[app].name }),
-      }).then((r) => json<{ key: string }>(r));
-      setMade({ app, command: commandFor(app, url, key) });
-      onMade();
+      const { key } = await fetch("/api/auth/api-key", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: APPS[app].name }) }).then((r) => json<{ key: string }>(r));
+      const done = await installInMacAi(app, key);
+      if (done === true) {
+        setCommand(null);
+        setByMac(key.slice(-4));
+        try {
+          localStorage.setItem(MARK(app), key.slice(-4));
+        } catch {
+          /* private mode: the row says Installed until the page is closed */
+        }
+      } else if (done) setFailed(done);
+      else setCommand(commandFor(app, `${window.location.origin}/api/mcp`, key));
     } catch (e) {
-      setError(msg(e));
+      setFailed(msg(e));
     } finally {
       setBusy(false);
+      onDone();
     }
   };
 
-  const shown = made?.app === app ? made : null;
   return (
-    <Card className="p-4 sm:p-5">
-      <div className="space-y-5">
-        <div role="tablist" aria-label="Your AI app" className="inline-flex max-w-full flex-wrap rounded-lg border border-border/60 p-0.5">
-          {(Object.keys(APPS) as AiApp[]).map((a) => (
-            <button
-              key={a}
-              role="tab"
-              aria-selected={a === app}
-              onClick={() => setApp(a)}
-              className={cn(
-                "flex items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-sm transition-colors",
-                a === app ? "bg-foreground/[0.07] font-medium text-foreground" : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {APPS[a].logo && <ProviderLogo driver={APPS[a].logo!} className="size-3.5" />}
-              {APPS[a].name}
-            </button>
-          ))}
+    <div>
+      <ListRow
+        icon={<ProviderLogo driver={app} className="size-4" />}
+        title={APPS[app].name}
+        subtitle={installed && aiKey ? usedText(aiKey) : command ? "Run this in Terminal, then open a new window of it." : undefined}
+        status={failed ? <Status tone="broken">{failed}</Status> : undefined}
+        actions={
+          installed && aiKey ? (
+            <>
+              <Status>Installed</Status>
+              <DisconnectMenu k={aiKey} onDisconnect={onDisconnect} />
+            </>
+          ) : (
+            !command && (
+              <Button size="xs" disabled={busy} onClick={() => void install()}>
+                {busy ? "Installing…" : failed ? "Try again" : "Install"}
+              </Button>
+            )
+          )
+        }
+      />
+      {command && !installed && (
+        <div className="px-3 pb-3 sm:px-4">
+          <CommandBox text={command} />
         </div>
-
-        <ol className="space-y-4">
-          <Step n={1} title={app === "other" ? "Get the address and a key" : "Get the command"}>
-            {shown ? (
-              <CommandBox text={shown.command} />
-            ) : (
-              <div className="space-y-1.5">
-                <Button size="sm" onClick={() => void get()} disabled={busy}>
-                  {busy ? "Making it…" : app === "other" ? "Get the address and key" : "Get the command"}
-                </Button>
-                {error && <p className="text-xs text-destructive">{error}</p>}
-              </div>
-            )}
-          </Step>
-          <Step n={2} title={app === "other" ? APPS.other.after : "Paste it into Terminal and press Return"}>
-            {shown && <p className="text-xs text-muted-foreground">It holds a key of its own, shown only here. Close this page and it's gone; get a new one any time.</p>}
-          </Step>
-          {app !== "other" && <Step n={3} title={APPS[app].after} />}
-          <Step n={app === "other" ? 3 : 4} title={<>Ask it: “What's in my Media Library?”</>} />
-        </ol>
-      </div>
-    </Card>
-  );
-}
-
-function Step({ n, title, children }: { n: number; title: ReactNode; children?: ReactNode }) {
-  return (
-    <li className="grid grid-cols-[1.5rem_minmax(0,1fr)] gap-x-3">
-      <span className="flex size-6 items-center justify-center rounded-full border border-border/70 text-xs font-medium text-muted-foreground">{n}</span>
-      <div className="min-w-0 space-y-2 pt-0.5">
-        <div className="text-sm font-medium text-foreground">{title}</div>
-        {children}
-      </div>
-    </li>
+      )}
+    </div>
   );
 }
 
