@@ -111,10 +111,10 @@ final class Shell: NSObject, ObservableObject {
         view.onThisMacCommand = { [weak self] in self?.thisMacCommand($0) }
         view.onThisMacAsk = { [weak self] ask, done in
             guard let self else { return done(["aiOn": false, "paired": false]) }
-            if ask == "state" {
-                done(self.thisMacState())
-            } else {
-                Task { done(await self.startThisMac()) }
+            switch ask {
+            case "state": done(self.thisMacState())
+            case "access": Task { done(await self.accessFromOtherDevices()) }
+            default: Task { done(await self.startThisMac()) }
             }
         }
         account.window = { [weak self] in self?.webView.window }
