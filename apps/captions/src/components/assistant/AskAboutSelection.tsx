@@ -3,7 +3,6 @@ import { MessageCircle } from "lucide-react";
 import { useMe } from "@/lib/auth";
 import { useAssistant } from "@/lib/assistant";
 import { DOCK } from "@/lib/page-context";
-import { setupFinished, useSetup, useWorkTalk } from "@/lib/setup";
 
 /** Places the selection can't be asked about from: the chat itself and form fields (a document editor is fine). */
 const NOT_HERE = `${DOCK},input,textarea,select`;
@@ -11,11 +10,10 @@ const NOT_HERE = `${DOCK},input,textarea,select`;
 const EDGE = 76;
 
 /**
- * The popup and its shortcut work only once setup is finished and an AI answers, outside the chat-only path, and with
- * no dialog open. A dialog open is checked where the selection shows (the popup never appears during setup).
+ * The popup and its shortcut work whenever an AI answers and no dialog is open, in every way of working and whether or
+ * not setup's Done was pressed (App.tsx keeps it away while the setup window is on screen).
  */
-export const popupAllowed = (o: { connected: boolean; finished: boolean; talk: string | null | undefined; dialogOpen: boolean }): boolean =>
-  o.connected && o.finished && o.talk !== "chat" && !o.dialogOpen;
+export const popupAllowed = (o: { connected: boolean; dialogOpen: boolean }): boolean => o.connected && !o.dialogOpen;
 
 /** The highlighted text and where it is, or null when there's nothing to ask about. */
 function currentSelection(): { text: string; rect: DOMRect } | null {
@@ -42,9 +40,7 @@ export function AskAboutSelection() {
   const me = useMe();
   const askAbout = useAssistant((s) => s.askAbout);
   const connected = useAssistant((s) => s.connected);
-  const view = useSetup((s) => s.view);
-  const { talk } = useWorkTalk();
-  const ok = !!me && popupAllowed({ connected, finished: !!view && setupFinished(view), talk, dialogOpen: false });
+  const ok = !!me && popupAllowed({ connected, dialogOpen: false });
   const [at, setAt] = useState<{ x: number; y: number; below: boolean } | null>(null);
   const text = useRef("");
 

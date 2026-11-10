@@ -45,7 +45,7 @@ import { useRootTint, useWorkspace } from "@/lib/workspace";
 import { warmScreens } from "@/lib/warm-cache";
 import { useAppearance } from "@/lib/settings";
 import { historyDepth } from "@/lib/history-depth";
-import { useSetupShown, useWorkTalk } from "@/lib/setup";
+import { useSetupShown } from "@/lib/setup";
 import { replacementFor } from "@/lib/plugin";
 import { webPlugins } from "./plugins.gen";
 
@@ -242,8 +242,6 @@ function InstagramAnalyzeRoute() {
 
 export default function App() {
   useRootTint(useAppearance().projectTint);
-  // "just chat" (talk === "chat") has no dock, no selection popup and no welcome
-  const { talk } = useWorkTalk();
   const location = useLocation();
   // the setup window on screen: no dock, no popup, no bubble behind it. Not "setup unfinished": an account that never
   // pressed Done but has projects gets no setup window, and lost its assistant with the old check
@@ -365,8 +363,10 @@ export default function App() {
       {!onMobile && !publicPage && !isPhoneHub() && <ExportTray />}
       {!publicPage && !inSettings && !inCommunity && <SetupDialog />}
       {!publicPage && !inSettings && !inCommunity && <FirstOpen />}
-      {!onMobile && !publicPage && talk !== "chat" && !setupUp && <AssistantDock />}
-      {!onMobile && !publicPage && talk !== "chat" && !setupUp && <AskAboutSelection />}
+      {/* the assistant is there in every way of working (owner, 2026-11-10: "it shouldn't be gone"); talk only says
+          whether the person's own AI also gets Creator Toolset */}
+      {!onMobile && !publicPage && !setupUp && <AssistantDock />}
+      {!onMobile && !publicPage && !setupUp && <AskAboutSelection />}
       {!onMobile && !publicPage && <CornerNav />}
       {inSettings && <SettingsModal onClose={closeSettings} />}
       {inCommunity && <CommunityModal onClose={closeSettings} />}
