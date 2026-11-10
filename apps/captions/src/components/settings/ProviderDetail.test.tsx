@@ -28,6 +28,11 @@ describe("providerStatus", () => {
     expect(providerStatus({ ...base, found: { driver: "codex", installed: true, signedIn: false } })).toEqual({ tone: "attention", text: "Not signed in", action: "sign-in" });
   });
 
+  it("a passing check with a note (a plan limit) reads as the note, with nothing to press", () => {
+    const note = "Weekly limit reached, resets Friday 09:00";
+    expect(providerStatus({ ...base, found: signedIn, check: { ok: true, ms: 0, at: 1, note } })).toEqual({ tone: "neutral", text: note });
+  });
+
   it("shows the plan for a signed-in tool, and nothing when it is fine and has no plan (no 'Ready' label)", () => {
     expect(providerStatus({ ...base, found: signedIn }).text).toBe("Max plan");
     expect(providerStatus({ ...base, found: { driver: "claude", installed: true, signedIn: true } }).text).toBe("");

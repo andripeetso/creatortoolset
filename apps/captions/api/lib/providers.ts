@@ -148,7 +148,7 @@ export async function recordCheck(key: string, c: ProviderCheck): Promise<void> 
   const id = at < 0 ? key : key.slice(at + 1);
   const s = scope === "workspace" ? providerSettings() : ownSettings(scope);
   if (!s?.instances.some((i) => i.id === id)) return;
-  const instances = s.instances.map((i) => (i.id === id ? { ...i, lastCheck: { ok: c.ok, at: c.at, ms: c.ms } } : i));
+  const instances = s.instances.map((i) => (i.id === id ? { ...i, lastCheck: { ok: c.ok, at: c.at, ms: c.ms, ...(c.note ? { note: c.note.slice(0, 200) } : {}) } } : i));
   await saveSettings({ ...s, instances }, scope);
 }
 
