@@ -68,6 +68,11 @@ if [ "$wipe" = 1 ]; then
     echo "  $p"
     rm -rf -- "$p"
   done
+  # the copy's own entry in Claude Code and Codex (api/lib/local-ai.ts mcpName: creator-toolset-fresh), added when
+  # Install is pressed in the copy; a login shell finds the tools the way Terminal does
+  MCP="creator-toolset-fresh"; guard "$MCP"
+  /bin/zsh -lic "command -v claude >/dev/null && claude mcp remove --scope user $MCP; command -v codex >/dev/null && codex mcp remove $MCP" >/dev/null 2>&1 || true
+  echo "  $MCP removed from Claude Code and Codex (if it was there)"
   for kind in server account device env; do
     svc="$ID.$kind"; guard "$svc"
     n=0
