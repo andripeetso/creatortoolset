@@ -134,3 +134,17 @@ func resolveScriptRunner(exists: (String) -> Bool) -> String? {
     let runner = "/Applications/DaVinci Resolve/DaVinci Resolve.app/Contents/Libraries/Fusion/fuscript"
     return exists(runner) ? runner : nil
 }
+
+/// Review notes and macOS's notification prompt: a fresh note waits while macOS is undecided and the app is in the
+/// background (nothing asked from behind), asks once with a line first when the app is in front, and posts otherwise
+/// (answered, or asked before: a declined prompt makes the post a no-op).
+enum NotePostStep: Equatable { case wait, askFirst, post }
+
+func notePostStep(undetermined: Bool, appActive: Bool, asked: Bool) -> NotePostStep {
+    guard undetermined, !asked else { return .post }
+    return appActive ? .askFirst : .wait
+}
+
+/// Closing the last window keeps the app in the menu bar, and says so once. Not while the app is quitting: quitting
+/// (and the relaunches that quit) closes the windows too.
+func closeNoticeNeeded(quitting: Bool, said: Bool) -> Bool { !quitting && !said }

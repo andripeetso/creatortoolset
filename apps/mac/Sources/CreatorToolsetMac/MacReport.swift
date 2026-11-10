@@ -19,11 +19,20 @@ let driverBinaries: [String: [String]] = [
 /// The folders a GUI app's PATH leaves out (launchd's PATH is short).
 private let extraBinDirs = ["/opt/homebrew/bin", "/usr/local/bin", "~/.local/bin", "/usr/bin", "/bin"]
 
-/// The PATH a login shell gives (zsh -lic also reads .zshrc, where nvm is set up). Read once per process; nil when the
-/// shell says nothing usable. A Finder-launched app does not inherit the Terminal's PATH, so this is how a CLI under nvm is found.
-let loginShellPath: String? = {
-    runQuick("/bin/zsh", ["-lic", "echo $PATH"], seconds: 5).flatMap(pathFromShellOutput)
-}()
+/// The PATH a login shell gives (zsh -lic also reads .zshrc, where nvm is set up). nil when the shell says nothing
+/// usable. A Finder-launched app does not inherit the Terminal's PATH, so this is how a CLI under nvm is found.
+/// Read again after a minute, so a CLI installed or an nvm Node changed while the app runs is seen on the next report.
+/// ponytail: one zsh per minute, shared by every which() in a report; per-report read if a report ever needs it fresh.
+private var shellPathCache: (value: String?, at: Date)?
+func loginShellPath(now: Date = Date()) -> String? {
+    if let cache = shellPathCache, shellPathFresh(readAt: cache.at, now: now) { return cache.value }
+    let value = runQuick("/bin/zsh", ["-lic", "echo $PATH"], seconds: 5).flatMap(pathFromShellOutput)
+    shellPathCache = (value, now)
+    return value
+}
+
+/// True while a login-shell PATH read is still within a minute.
+func shellPathFresh(readAt: Date, now: Date) -> Bool { now.timeIntervalSince(readAt) < 60 }
 
 /// The login shell's PATH from its output: the last line that starts with "/" (.zshrc may print other lines first).
 func pathFromShellOutput(_ text: String) -> String? {
@@ -39,7 +48,7 @@ func newestNvmBin() -> String? {
 
 /// Where a CLI may be, in order: the login shell's PATH, this process's PATH, the usual folders, the newest nvm Node.
 func searchDirs() -> [String] {
-    let shell = (loginShellPath ?? "").split(separator: ":").map(String.init)
+    let shell = (loginShellPath() ?? "").split(separator: ":").map(String.init)
     let own = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map(String.init)
     return shell + own + extraBinDirs.map { ($0 as NSString).expandingTildeInPath } + [newestNvmBin()].compactMap { $0 }
 }
