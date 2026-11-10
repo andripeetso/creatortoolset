@@ -100,6 +100,18 @@ describe("scheduled tasks: REST, per account", () => {
     expect(on.nextRun).toBeGreaterThan(Date.now());
   });
 
+  it("an account whose AI is Codex is told when it makes a task that tasks run on Claude Code, not skipped at every run", async () => {
+    const { pairDevice } = await import("./lib/devices");
+    const { saveSettings } = await import("./lib/providers");
+    const { DEFAULT_SETTINGS } = await import("../contracts/providers");
+    const erin = createUser("erin1", "password1");
+    const mac = pairDevice("erin1", "Erin's Mac");
+    await saveSettings({ ...structuredClone(DEFAULT_SETTINGS), instances: [{ id: "codex", driver: "codex", name: "Codex", enabled: true, device: mac.device.id }], default: { instance: "codex", model: "gpt-x", effort: "high" } }, "erin1");
+    const r = await req({ auth: `Bearer ${newApiKey(erin, "full")}` }, "POST", "/automations", { schedule: everyHour, prompt: "p" });
+    expect(r.status).toBe(409);
+    expect((await json(r)).error).toContain("Scheduled tasks run on Claude Code");
+  });
+
   it("keeps the AI it is given, and switching to a new chat each run forgets its chat", async () => {
     const ai = { instance: "claude", model: "claude-opus-5-5", effort: "max" };
     const a = await make("alice", { name: "Mine", schedule: everyHour, prompt: "p", ai, destination: "continue" });

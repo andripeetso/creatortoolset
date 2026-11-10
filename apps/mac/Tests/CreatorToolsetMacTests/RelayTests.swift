@@ -135,6 +135,8 @@ final class RelayTests: XCTestCase {
         // a token that isn't a job token, or another address, is ignored
         XCTAssertNil(RelayRequest(json: Data(#"{"id":"j2","mcp":{"url":"https://example.test/api/mcp","token":"ctk_x"}}"#.utf8))?.mcp)
         XCTAssertNil(RelayRequest(json: Data((#"{"id":"j3","mcp":{"url":"file:///etc/passwd","token":"ctj_"# + String(repeating: "a", count: 48) + #""}}"#).utf8))?.mcp)
+        // nor one with a quote, which would end Codex's TOML string
+        XCTAssertNil(RelayRequest(json: Data((#"{"id":"j4","mcp":{"url":"https://a.test/\",x=\"/api/mcp","token":"ctj_"# + String(repeating: "a", count: 48) + #""}}"#).utf8))?.mcp)
     }
 
     func testSessionKeepsItsTranscriptAndResumes() {
@@ -484,6 +486,20 @@ final class RelayTests: XCTestCase {
         XCTAssertEqual(usage["output_tokens"] as? Int, 5)
     }
 
+    func testCodexsCallToTheAppsToolIsNotTheAnswerNorAFailure() {
+        // codex-cli 0.163's own lines for an assistant turn (testRealCodexToolsRun, 2026-11-10): one MCP call, then the answer
+        let result = feedCodex([
+            #"{"type":"thread.started","thread_id":"01a1c72b-6818-70b3-8e3d-17cd284a25db"}"#,
+            #"{"type":"turn.started"}"#,
+            #"{"type":"item.started","item":{"id":"item_0","type":"mcp_tool_call","server":"creator-toolset","tool":"workshop_projects","arguments":{},"result":null,"error":null,"status":"in_progress"}}"#,
+            #"{"type":"item.completed","item":{"id":"item_0","type":"mcp_tool_call","server":"creator-toolset","tool":"workshop_projects","arguments":{},"result":{"content":[{"type":"text","text":"{\n \"projects\": [\n  {\n   \"id\": \"baa343fc-39f8-4afa-9db3-0e109298da28\",\n   \"name\": \"Tiny Acrobatics 845230\"\n  }\n ]\n}"}],"structured_content":null},"error":null,"status":"completed"}}"#,
+            #"{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"Your newest Workshop project is **Tiny Acrobatics 845230**."}}"#,
+            #"{"type":"turn.completed","usage":{"input_tokens":67050,"cached_input_tokens":40960,"cache_write_input_tokens":0,"output_tokens":88,"reasoning_output_tokens":0}}"#,
+        ]).result(err: "")
+        XCTAssertEqual(result["is_error"] as? Bool, false)
+        XCTAssertEqual(result["result"] as? String, "Your newest Workshop project is **Tiny Acrobatics 845230**.")
+    }
+
     func testCodexFailureInTodaysEventsIsTheTurnsError() {
         let refused = #"{\"type\":\"error\",\"status\":400,\"error\":{\"message\":\"The 'no-such-model' model is not supported when using Codex with a ChatGPT account.\"}}"#
         let result = feedCodex([
@@ -553,6 +569,43 @@ final class RelayTests: XCTestCase {
         XCTAssertTrue(args.contains("model_reasoning_effort=low"))
         XCTAssertEqual(args.last, "-")
         XCTAssertFalse(codexArguments(cwd: "/tmp/run", model: "", effort: "low").contains("-m"))
+        XCTAssertFalse(args.contains("--ignore-user-config"))
+        XCTAssertFalse(args.joined(separator: " ").contains("mcp_servers"))
+        // the assistant: the app's MCP server for this run, its token from the environment, its calls not asked about
+        let tools = codexArguments(cwd: "/tmp/run", model: "gpt-x", effort: "low", mcpURL: "http://127.0.0.1:5360/api/mcp")
+        XCTAssertTrue(tools.contains("--ignore-user-config"))
+        XCTAssertTrue(tools.contains(#"mcp_servers.creator-toolset.url="http://127.0.0.1:5360/api/mcp""#))
+        XCTAssertTrue(tools.contains(#"mcp_servers.creator-toolset.bearer_token_env_var="CREATOR_TOOLSET_MCP_TOKEN""#))
+        XCTAssertTrue(tools.contains(#"mcp_servers.creator-toolset.default_tools_approval_mode="approve""#))
+        XCTAssertEqual(tools[tools.firstIndex(of: "-s")! + 1], "read-only")
+        XCTAssertEqual(tools.last, "-")
+    }
+
+    func testCodexGetsTheTokenInItsEnvironmentAndAnOldCodexAnswersWithoutTools() throws {
+        let dir = temp()
+        let seen = dir.appendingPathComponent("seen.txt")
+        // a codex that prints `help` for `exec --help`, and for a run writes its arguments and the token it was given
+        func stub(_ name: String, help: String) throws -> String {
+            let file = dir.appendingPathComponent(name)
+            let script = "#!/bin/sh\nif [ \"$2\" = \"--help\" ]; then echo '\(help)'; exit 0; fi\ncat > /dev/null\n"
+                + "echo \"$* token=$\(codexTokenEnv)\" > '\(seen.path)'\n"
+                + #"echo '{"type":"item.completed","item":{"id":"i","type":"agent_message","text":"ok"}}'"# + "\n"
+            try script.write(to: file, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
+            return file.path
+        }
+        let token = "ctj_" + String(repeating: "b", count: 48)
+        let req = request(#"{"id":"c9","system":"s","user":"u","driver":"codex","effort":"low","mcp":{"url":"http://127.0.0.1:9/api/mcp","token":""# + token + #""}}"#)
+        let run = { (cli: String) in _ = try runAnswer(req, try requestOptions(req), cli: cli, work: self.temp(), send: { _ in true }, step: { _ in }) }
+        try run(try stub("codex", help: "      --ignore-user-config"))
+        let now = try String(contentsOf: seen, encoding: .utf8)
+        XCTAssertTrue(now.contains(#"mcp_servers.creator-toolset.url="http://127.0.0.1:9/api/mcp""#))
+        XCTAssertTrue(now.hasSuffix(" token=\(token)\n"))
+        XCTAssertEqual(now.components(separatedBy: token).count, 2)   // in the environment only, never an argument
+        try run(try stub("codex-0.39", help: "      --sandbox <SANDBOX_MODE>"))
+        let old = try String(contentsOf: seen, encoding: .utf8)
+        XCTAssertFalse(old.contains("mcp_servers"))
+        XCTAssertTrue(old.hasSuffix(" token=\n"))
     }
 
     func testCodexAndGrokOptionsAndHomes() throws {
@@ -708,6 +761,35 @@ final class RelayTests: XCTestCase {
         let answer = try runAnswer(req, try requestOptions(req), cli: cli, work: temp(), send: { _ in true }, step: { _ in })
         print("REAL CODEX: text=\(answer.text) usage=\(answer.usage)")
         XCTAssertTrue(answer.text.localizedCaseInsensitiveContains("OK"))
+    }
+
+    /// CT_REAL_CODEX=1 CT_REAL_SITE=<a server> CT_REAL_KEYS=<file> swift test --filter RealCodexTools: one assistant turn with
+    /// the app's tools on a real Creator Toolset server whose account's AI is Codex on this Mac. The file holds that account's
+    /// Full key and its paired device's token, one per line. The test makes a project with a new name, asks the assistant for
+    /// it, runs the turn as RelayRunner.job does, and checks the answer names it (only a tool call can know it).
+    func testRealCodexToolsRun() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard env["CT_REAL_CODEX"] == "1", let site = env["CT_REAL_SITE"].flatMap(URL.init(string:)), let keys = env["CT_REAL_KEYS"] else {
+            throw XCTSkip("set CT_REAL_CODEX=1, CT_REAL_SITE and CT_REAL_KEYS to run one real codex turn with the app's tools")
+        }
+        let lines = try String(contentsOfFile: keys, encoding: .utf8).split(separator: "\n").map(String.init)
+        let account = DeviceAPI(base: site, token: lines[0])
+        let device = DeviceAPI(base: site, token: lines[1])
+        let name = "Tiny Acrobatics " + UUID().uuidString.prefix(6)
+        XCTAssertLessThan(try account.call("POST", "/api/workshop/projects", ["name": name]).status, 300)
+        XCTAssertEqual(try account.call("POST", "/api/assistant/turn", ["text": "What is my newest Workshop project called?"]).status, 202)
+        let req = try XCTUnwrap(RelayRequest(json: try device.call("POST", "/api/devices/relay/wait", ["blobs": true]).data))
+        XCTAssertEqual(req.driver, "codex")
+        XCTAssertNotNil(req.mcp)
+        let cli = env["CT_REAL_CODEX_BIN"] ?? binary("codex", home: FileManager.default.homeDirectoryForCurrentUser) ?? "codex"
+        XCTAssertTrue(codexTakesMcp(cli))
+        let base = "/api/devices/relay/\(req.id)"
+        let answer = try runAnswer(req, try requestOptions(req), cli: cli, work: temp(), send: { text in
+            (try? device.call("POST", "\(base)/text", ["text": text]))?.status != 404   // the site waits only while it hears from the run
+        }, step: { label in _ = try? device.call("POST", "\(base)/step", ["label": label]) })
+        _ = try device.call("POST", "\(base)/done", ["text": answer.text, "usage": answer.usage, "session_id": "", "session_state": ""])
+        print("REAL CODEX TOOLS: \(cliVersion(cli) ?? cli) asked for \(name), answered: \(answer.text) usage=\(answer.usage)")
+        XCTAssertTrue(answer.text.contains(name))
     }
 
     /// CT_REAL_GROK=1 swift test --filter RealGrok: one tiny grok run through the grok on this Mac, the way the relay runs it.

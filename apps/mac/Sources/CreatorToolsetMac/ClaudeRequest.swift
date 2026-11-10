@@ -95,7 +95,7 @@ struct RelayRequest {
         launchArgs = obj["launchArgs"] as? [String] ?? []
         binaryPath = obj["binaryPath"] as? String ?? ""
         if let m = obj["mcp"] as? [String: Any], let url = m["url"] as? String, let token = m["token"] as? String,
-           matches(url, "^https?://[^\\s]+/api/mcp\\z"), matches(token, "^ctj_[a-f0-9]{48}\\z") {
+           matches(url, "^https?://[^\\s\"\\\\]+/api/mcp\\z"), matches(token, "^ctj_[a-f0-9]{48}\\z") {   // no quote: Codex gets it as a TOML string
             mcp = (url, token)
         } else {
             mcp = nil
@@ -542,12 +542,30 @@ func codexRunFolder() -> URL {
 /// (direct connections and DNS both failed in the sandbox). Its use of CODEX_HOME was not measured. Runs only ever carry the device owner's own prompts:
 /// unnamed calls are refused and no one else's login is used (providers-routing).
 /// ponytail: read access is not limited here; add a read allowlist when codex exposes one.
-func codexArguments(cwd: String, model: String, effort: String, pictures: [String] = []) -> [String] {
+/// `mcpURL`: the app's own MCP server for this run only (the assistant), its token read from `codexTokenEnv`. The person's
+/// config.toml is not read then, as --strict-mcp-config does for Claude: none of the MCP servers listed there are in the run,
+/// and a creator-toolset table saved there can't merge into this one (codex-cli 0.163 merges even an inline table).
+/// Its calls need no approval (exec has no one to ask); the shell stays read-only.
+func codexArguments(cwd: String, model: String, effort: String, pictures: [String] = [], mcpURL: String = "") -> [String] {
     var args = ["exec", "--json", "--skip-git-repo-check", "-C", cwd, "-s", "read-only", "-c", "model_reasoning_effort=" + effort]
+    if !mcpURL.isEmpty {
+        let server = "mcp_servers.creator-toolset."
+        args += ["--ignore-user-config", "-c", server + "url=\"\(mcpURL)\"", "-c", server + "bearer_token_env_var=\"\(codexTokenEnv)\"",
+                 "-c", server + "default_tools_approval_mode=\"approve\""]
+    }
     if !model.isEmpty { args += ["-m", model] }
     // one `--image=<file>` each: the list form would take the "-" (the prompt from stdin) as a picture
     args += pictures.map { "--image=" + $0 }
     return args + ["-"]
+}
+
+/// The variable the turn's job token goes in, so it is never on the command line.
+let codexTokenEnv = "CREATOR_TOOLSET_MCP_TOKEN"
+
+/// Whether this Codex takes an MCP server for one run (`--ignore-user-config`; codex-cli 0.39 has neither). An older one
+/// answers with the message alone, as before.
+func codexTakesMcp(_ cli: String) -> Bool {
+    runQuick(cli, ["exec", "--help"], seconds: 5)?.contains("--ignore-user-config") ?? false
 }
 
 /// The pictures in a run's folder (the Caption Studio and Vision passes write them there), as the paths Codex attaches.

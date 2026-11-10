@@ -292,7 +292,11 @@ safe runs at once, and each question it would ask a person arrives on its stdout
 it to `/api/devices/relay/<id>/ask` every 2 s until the person answers it in the chat (allowed / denied / expired after
 10 min) and writes the answer to claude's stdin; a no tells Claude not to try another way. Only the web and the app's MCP
 tools are allowed up front. An older server never sends `asks`, so its turns run as before.
-Claude and Gemini run here (Gemini with `gemini -o stream-json` in plan mode, the prompt on stdin, API keys left out of its environment, its own `~/.gemini`): a Grok or Codex request fails with "This Mac runs Claude and Gemini only for now".
+The other drivers in `runnableDrivers` run here too (Gemini with `gemini -o stream-json` in plan mode, the prompt on stdin, API keys left out of its environment, its own `~/.gemini`); any other driver fails with `onlyRunnableMessage`.
+Codex runs as `codex exec --json` in a read-only sandbox, the prompt on stdin. An assistant turn (`mcp`) gives it the app's
+MCP server for that run only: `--ignore-user-config` (none of the MCP servers in its `config.toml`),
+the server's address with `-c mcp_servers.creator-toolset.*`, its calls approved, and the job token in the
+`CREATOR_TOOLSET_MCP_TOKEN` variable, never an argument. A Codex whose `exec` lacks `--ignore-user-config` answers without the tools.
 Once at start and hourly the app posts `POST /api/devices/relay/report` (`MacReport.swift`): which
 CLIs are installed (with `--version`) and the Claude and Codex config folders, read only. Nothing is ever
 written there.

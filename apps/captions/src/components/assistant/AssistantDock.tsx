@@ -480,11 +480,7 @@ export function AssistantDock() {
           <span className={cn("relative size-2.5 rounded-full transition-colors duration-500", thinking ? "bg-[var(--tint)]" : connected ? "bg-emerald-500" : "bg-muted-foreground/50")} />
         </span>
         <span className="flex-1 text-sm font-semibold tracking-tight">Assistant</span>
-        {view?.provider === "other" && !view.tools && (
-          <span className="min-w-0 truncate text-[11px] text-muted-foreground" title={`${view.aiName} answers from your message only: it can't use Creator Toolset's tools or do things on your Mac for you. Claude Code can.`}>
-            {view.aiName} · no app tools
-          </span>
-        )}
+        <NoToolsNote view={view} />
         {/* read-aloud is an add-on (Settings → General): the dock only offers to stop a reply being read */}
         {readAloud.speaking && (
           <button type="button" onClick={stopSpeaking} className={cn(headBtn, "text-[var(--tint)] motion-safe:animate-pulse")} aria-label="Stop reading aloud" title="Stop reading">
@@ -705,6 +701,16 @@ export function AssistantDock() {
 /** "2 pictures, Pasted text": what a queued message carries besides its words. */
 const attachmentsLabel = (it: Queued) =>
   [it.images?.length ? `${it.images.length} picture${it.images.length === 1 ? "" : "s"}` : "", ...(it.pasted ?? []).map((p) => p.name), ...(it.files ?? []).map((f) => f.name)].filter(Boolean).join(", ");
+
+/** The header's "Gemini · no app tools", only for an AI that truly has none of the app's tools. */
+export function NoToolsNote({ view }: { view: AssistantView | null }) {
+  if (view?.provider !== "other" || view.tools) return null;
+  return (
+    <span className="min-w-0 truncate text-[11px] text-muted-foreground" title={`${view.aiName} answers from your message only: it can't use Creator Toolset's tools (Claude Code and Codex can) or do things on your Mac for you.`}>
+      {view.aiName} · no app tools
+    </span>
+  );
+}
 
 function Message({ m, onRetry }: { m: AssistantMessage; onRetry?: () => void }) {
   const [big, setBig] = useState<string | null>(null);

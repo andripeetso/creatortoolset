@@ -325,6 +325,9 @@ automationsApp.post("/", async (c) => {
     createdAt: now,
   };
   if (pastOnce(a, now)) return c.json({ error: PAST_ONCE }, 400);
+  // refused now rather than skipped at every run (readiness): the assistant on Codex has this route too
+  const route = routeOf(username, isAdminHere(username), a.ai);
+  if (route && route.instance.driver !== "claude") return c.json({ error: NOT_CLAUDE }, 409);
   writeAll(username, [...readAll(username), a]);
   return c.json(view(a), 201);
 });

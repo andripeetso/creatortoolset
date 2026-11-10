@@ -236,8 +236,12 @@ func codexAnswer(_ req: RelayRequest, _ opts: RelayOptions, cli: String, work: U
     let (cwd, system) = try prepareFolder(req, work: work, tmp: tmp, emptyFolder: emptyFolder)
     let prompt = "<instructions>\n\(system)\n</instructions>\n\n" + requestText(req.user, folder: folder)
     let pictures = codexPictures(req.files, cwd: cwd)
-    let outcome = try runStream(cli: cli, args: codexArguments(cwd: cwd.path, model: opts.model, effort: opts.effort, pictures: pictures), cwd: cwd,
-                                env: driverEnv(base: ProcessInfo.processInfo.environment, home: opts.home), prompt: prompt, folder: folder,
+    // the assistant: the app's MCP server for this run, its token only in this process's environment
+    let mcp = req.mcp.flatMap { codexTakesMcp(cli) ? $0 : nil }
+    var env = driverEnv(base: ProcessInfo.processInfo.environment, home: opts.home)
+    if let mcp { env[codexTokenEnv] = mcp.token }
+    let args = codexArguments(cwd: cwd.path, model: opts.model, effort: opts.effort, pictures: pictures, mcpURL: mcp?.url ?? "")
+    let outcome = try runStream(cli: cli, args: args, cwd: cwd, env: env, prompt: prompt, folder: folder,
                                 send: send, step: step, tmp: tmp, stream: CodexStream())
     if outcome.killed {
         throw ClaudeFailure(message: "the site stopped waiting", usage: stoppedRow(outcome.stream.seen), stopped: true)

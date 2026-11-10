@@ -146,7 +146,7 @@ export interface AssistantView {
   provider: AssistantProvider;
   /** The AI's name ("Codex", "Claude Code (work)"), "" when none is connected. */
   aiName: string;
-  /** Whether that AI has Creator Toolset's tools and the Mac's tools (Claude Code only; the others answer from the message). */
+  /** Whether that AI has Creator Toolset's tools (Claude Code and Codex; the others answer from the message). */
   tools: boolean;
   messages: AssistantMessage[];
   /** Earlier conversations, newest first. */

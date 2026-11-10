@@ -56,7 +56,7 @@ export const MAC_NOTE = `
 
 You also run on the user's own Mac, in a folder of your own there (the current folder), with Claude Code's tools: Bash, Read, Glob, Grep, Edit and Write. What Claude Code treats as safe runs at once; anything else (a command that changes something, a file write, a read outside your folder) is asked of the user in the chat first, and they allow or deny it. When they deny something, don't try it another way: say what you wanted to do and ask.`;
 
-/** Added for a turn whose AI is not Claude Code: the Creator Toolset tools and the Mac's tools are Claude Code's only. */
+/** Added for a turn whose AI has no tools (not Claude Code or Codex, which get Creator Toolset's; the Mac's are Claude Code's only). */
 export const NO_TOOLS_NOTE = `
 
 In this conversation you have no Creator Toolset tools and no tools on the user's Mac. Answer from the message and what it says. When doing a thing needs a tool, say so plainly and say what the user can do instead.`;
@@ -422,6 +422,8 @@ export const routeOf = (username: string, admin: boolean, ai?: Selection): Route
 };
 
 const providerOf = (route: Route | null): AssistantProvider => (!route ? "none" : route.instance.driver === "claude" ? "claude" : "other");
+/** Claude Code and Codex run with this server's MCP tools (under a job token); the other drivers answer from the message. */
+const hasTools = (route: Route | null) => route?.instance.driver === "claude" || route?.instance.driver === "codex";
 
 function view(username: string, admin: boolean): AssistantView {
   const conv = load(username);
@@ -431,7 +433,7 @@ function view(username: string, admin: boolean): AssistantView {
     id: conv.id!,
     provider: providerOf(route),
     aiName: route?.instance.name ?? "",
-    tools: route?.instance.driver === "claude",
+    tools: hasTools(route),
     messages: conv.messages.slice(-80),
     past: (conv.past ?? []).map((p) => ({ id: p.id, title: p.title ?? titleOf(p.messages), at: p.messages.at(-1)?.at ?? 0, count: p.messages.length })),
     pending: pending && conv.pending ? { env: pending.env, name: pending.name, why: conv.pending.why } : null,
@@ -474,7 +476,7 @@ function promptFor(messages: AssistantMessage[], input?: TurnInput): string {
 }
 
 /**
- * One answer from the account's Claude Code on its Mac, with this server's MCP tools under a job token made for
+ * One answer from the account's AI on its Mac, with this server's MCP tools (Claude Code, Codex) under a job token made for
  * this answer only (turn names it: the reply id). The token is revoked when the answer ends
  * either way, and never appears in a thrown message. Used by the dock's turns and by scheduled runs (runInChat).
  * streamMacClaude queues the job synchronously, so the Mac's next poll gets it.
@@ -495,11 +497,12 @@ export async function answerWithTools(
     onAsk?: (ask: MacAsk) => MacAskStatus;
   },
 ): Promise<string> {
-  // Claude Code gets Creator Toolset's MCP tools (under a job token for this answer) and the Mac's tools with asks; the
-  // other drivers (Codex, Gemini CLI…) answer with the message alone, so they get no token and no asks.
+  // Claude Code and Codex get Creator Toolset's MCP tools (under a job token for this answer); only Claude Code also gets
+  // the Mac's tools with asks. The other drivers (Gemini CLI…) answer with the message alone: no token, no asks.
+  // ponytail: an old Codex (no per-run MCP server) answers without the tools though the prompt names them (the Mac checks).
   const claude = route.instance.driver === "claude";
-  const token = claude ? mintJobToken(username, opts.turn) : undefined;
-  const system = !claude ? SYSTEM + NO_TOOLS_NOTE : opts.onAsk ? SYSTEM + MAC_NOTE : SYSTEM;
+  const token = hasTools(route) ? mintJobToken(username, opts.turn) : undefined;
+  const system = !token ? SYSTEM + NO_TOOLS_NOTE : claude && opts.onAsk ? SYSTEM + MAC_NOTE : SYSTEM;
   try {
     return await streamMacClaude(system, prompt, opts.cancel, (t) => opts.onDelta?.(t), undefined, {
       label: opts.label,

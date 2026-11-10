@@ -97,20 +97,25 @@ describe("before an AI is connected", () => {
     spy.mockRestore();
   });
 
-  it("a Codex-only user gets an answer: the turn runs on Codex's Mac with the message alone, and no job token", async () => {
+  it("a Codex-only user gets an answer with the app's tools: a job token for the turn, revoked after, and no asks", async () => {
+    const { NO_TOOLS_NOTE } = await import("./assistant");
     const nicoMac = pairDevice("nico", "Nico's Mac");
-    await saveSettings({ ...structuredClone(DEFAULT_SETTINGS), instances: [{ id: "codex", driver: "codex", name: "Codex", enabled: true, device: nicoMac.device.id }], default: { instance: "codex", model: "gpt-x", effort: "high" } }, "nico");
+    const ai = (driver: string, name: string) => saveSettings({ ...structuredClone(DEFAULT_SETTINGS), instances: [{ id: driver, driver, name, enabled: true, device: nicoMac.device.id }], default: { instance: driver, model: "gpt-x", effort: "high" } }, "nico");
+    await ai("codex", "Codex");
     const cookie = await cookieOf("nico");
     const r = await app.request("/api/assistant/turn", { method: "POST", ...json({ text: "hello" }, { cookie }) });
     expect(r.status).toBe(202);
     const device = { authorization: `Bearer ${nicoMac.token}` };
-    const job = (await (await app.request("/api/devices/relay/wait", { method: "POST", ...json({}, device) })).json()) as { id: string; driver?: string; model?: string; mcp?: unknown; asks?: boolean };
+    type Job = { id: string; driver?: string; model?: string; system: string; mcp?: { url: string; token: string }; asks?: boolean };
+    const job = (await (await app.request("/api/devices/relay/wait", { method: "POST", ...json({}, device) })).json()) as Job;
     expect(job.driver).toBe("codex");
     expect(job.model).toBe("gpt-x");
-    expect(job.mcp).toBeUndefined();
+    expect(job.mcp?.url).toMatch(/\/api\/mcp$/);
+    expect(jobTokenUser(`Bearer ${job.mcp!.token}`)?.username).toBe("nico");
     expect(job.asks).toBeUndefined();
-    // the dock says Codex answers without the app's tools (AssistantDock: "· no app tools")
-    expect(((await (await app.request("/api/assistant", { headers: { cookie } })).json()) as { aiName: string; tools: boolean })).toMatchObject({ aiName: "Codex", tools: false });
+    expect(job.system).not.toContain(NO_TOOLS_NOTE.trim());
+    // the dock shows no "· no app tools" (AssistantDock: only for an AI with none)
+    expect(((await (await app.request("/api/assistant", { headers: { cookie } })).json()) as { aiName: string; tools: boolean })).toMatchObject({ aiName: "Codex", tools: true });
     await app.request(`/api/devices/relay/${job.id}/done`, { method: "POST", ...json({ text: "Hi from Codex." }, device) });
     // the turn's reply is written once its promise settles, a tick after the Mac's answer
     let last: { role: string; text: string; status?: string } | undefined;
@@ -119,6 +124,15 @@ describe("before an AI is connected", () => {
       last = ((await (await app.request("/api/assistant", { headers: { cookie } })).json()) as { messages: Array<{ role: string; text: string; status?: string }> }).messages.at(-1);
     }
     expect(last).toMatchObject({ role: "assistant", text: "Hi from Codex.", status: "done" });
+    expect(jobTokenUser(`Bearer ${job.mcp!.token}`)).toBeNull();
+    // an AI with no tools (Gemini CLI) answers from the message alone: no token, the note, and the dock says so
+    await ai("gemini", "Gemini");
+    await app.request("/api/assistant/turn", { method: "POST", ...json({ text: "hello again" }, { cookie }) });
+    const plain = (await (await app.request("/api/devices/relay/wait", { method: "POST", ...json({}, device) })).json()) as Job;
+    expect(plain.mcp).toBeUndefined();
+    expect(plain.system).toContain(NO_TOOLS_NOTE.trim());
+    expect(((await (await app.request("/api/assistant", { headers: { cookie } })).json()) as { tools: boolean }).tools).toBe(false);
+    await app.request(`/api/devices/relay/${plain.id}/done`, { method: "POST", ...json({ text: "Hi." }, device) });
   });
 });
 
