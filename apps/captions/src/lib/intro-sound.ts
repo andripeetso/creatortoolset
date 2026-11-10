@@ -276,9 +276,20 @@ export function primeIntroSound(): void {
 /** Plays a beat's sounds now, once (a second call for the same beat does nothing). Silent when the page may not make sound. */
 export function playIntroBeat(id: Beat, n: IntroCounts, at: { len: number; last: boolean }): void {
   if (!live) primeIntroSound(); // the welcome started without a press (the replay link): it sounds only where the browser allows that
-  if (!live || live.ctx.state !== "running" || live.done.has(id)) return;
-  live.done.add(id);
-  live.score.beat(id, n, at);
+  const mine = live;
+  if (!mine || mine.done.has(id)) return;
+  mine.done.add(id);
+  const go = () => {
+    if (mine === live && mine.ctx.state === "running") mine.score.beat(id, n, at);
+  };
+  if (mine.ctx.state === "running") return go();
+  // the audio clock was started in this same press (Not now) and takes a moment to run: wait for it, but only a
+  // moment. A browser that will not start it answers much later or never, and a beat played late would land on the next
+  const asked = performance.now();
+  void mine.ctx
+    .resume()
+    .then(() => (performance.now() - asked < 400 ? go() : undefined))
+    .catch(() => {});
 }
 
 /** The welcome ended or was skipped: the sound dies away and the audio context is given back. */

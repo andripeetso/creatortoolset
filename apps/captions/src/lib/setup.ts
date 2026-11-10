@@ -96,8 +96,21 @@ export const useSetupShown = create<{ shown: boolean }>(() => ({ shown: false })
  */
 export const useIntro = create<{ on: boolean; after: (() => void) | null }>(() => ({ on: false, after: null }));
 
-/** Whether Done starts it: only the Done that finishes setup the first time, never on a phone or with motion turned down. */
-export const introPlays = (at: { finishedBefore: boolean; phone: boolean; still: boolean }): boolean => !at.finishedBefore && !at.phone && !at.still;
+/**
+ * Whether leaving setup starts it: the Done that finishes setup the first time, or Not now before that; once per
+ * browser (`seen`), never on a phone or with motion turned down.
+ */
+export const introPlays = (at: { finishedBefore: boolean; seen: boolean; phone: boolean; still: boolean }): boolean =>
+  !at.finishedBefore && !at.seen && !at.phone && !at.still;
+
+const INTRO_SEEN = "ct-intro-seen";
+let introSeenThisLoad = false;
+/** The welcome has played in this browser: Not now showed it, so the Done that finishes setup later does not show it again. */
+export function markIntroSeen(): void {
+  introSeenThisLoad = true;
+  write("local", INTRO_SEEN, "1");
+}
+export const introSeen = (): boolean => introSeenThisLoad || read("local", INTRO_SEEN) === "1";
 
 /** The system's Reduce motion. */
 export const stillMotion = (): boolean => globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  dismissSetup, DOWNLOAD_URL, endIntro, firstProjectName, introPlays, MAKE_NAMES, resumeStep, startIntro, useIntro, SETUP_PATH, SIDE_STEPS, setupDismissed, setupFinished, setupOpen, setupOpensItself,
+  dismissSetup, DOWNLOAD_URL, endIntro, firstProjectName, introPlays, introSeen, MAKE_NAMES, markIntroSeen, resumeStep, startIntro, useIntro, SETUP_PATH, SIDE_STEPS, setupDismissed, setupFinished, setupOpen, setupOpensItself,
   setupStepFromParam, shareDownload, stepsFor, toolForPath, toolsFor,
 } from "./setup";
 import { TOOLS } from "@contracts/tools";
@@ -73,10 +73,17 @@ describe("setupOpen", () => {
 
 describe("Home's welcome animation", () => {
   it("plays after the Done that finishes setup, and only then", () => {
-    expect(introPlays({ finishedBefore: false, phone: false, still: false })).toBe(true);
-    expect(introPlays({ finishedBefore: true, phone: false, still: false })).toBe(false); // the AI apps screen, opened again from Settings
-    expect(introPlays({ finishedBefore: false, phone: true, still: false })).toBe(false);
-    expect(introPlays({ finishedBefore: false, phone: false, still: true })).toBe(false); // Reduce motion
+    const first = { finishedBefore: false, seen: false, phone: false, still: false };
+    expect(introPlays(first)).toBe(true); // Done on the last screen, or Not now before it
+    expect(introPlays({ ...first, finishedBefore: true })).toBe(false); // the AI apps screen, opened again from Settings
+    expect(introPlays({ ...first, seen: true })).toBe(false); // Not now showed it: finishing setup later does not show it again
+    expect(introPlays({ ...first, phone: true })).toBe(false);
+    expect(introPlays({ ...first, still: true })).toBe(false); // Reduce motion
+  });
+  it("remembers that it has played, also where the browser keeps nothing", () => {
+    vi.stubGlobal("localStorage", { getItem: () => { throw new Error("blocked"); }, setItem: () => { throw new Error("blocked"); } });
+    markIntroSeen();
+    expect(introSeen()).toBe(true);
   });
   it("runs what waited for it once: at the end or on Skip, and at once when it does not play", () => {
     const after = vi.fn();

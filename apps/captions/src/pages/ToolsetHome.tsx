@@ -100,7 +100,7 @@ export default function ToolsetHome() {
   // the welcome after setup (components/HomeIntro.tsx): the beat it is on, as data-intro on the page. /?intro=1 plays it again
   const beat = useIntroBeat();
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).has("intro")) startIntro(introPlays({ finishedBefore: false, phone, still: stillMotion() }));
+    if (new URLSearchParams(window.location.search).has("intro")) startIntro(introPlays({ finishedBefore: false, seen: false, phone, still: stillMotion() }));
   }, [phone]);
   // the welcome brings the boxes' tiles in one at a time, in the order they are drawn (index.css .intro-tile)
   let nth = 0;
@@ -239,11 +239,13 @@ export default function ToolsetHome() {
           </div>
         )}
         {/* the way back after Not now; an account that never saw setup (it has projects, or signed in before) gets no card */}
-        {view && !setupFinished(view) && !phone && !setupUp && setupDismissed() && (
+        {/* while the welcome plays (after Not now) it is out of the picture: it takes its place unseen on the last beat,
+            behind the dimmed page, and fades in when the welcome ends */}
+        {view && !setupFinished(view) && !phone && !setupUp && setupDismissed() && (!beat || beat === "all") && (
           <button
             type="button"
             onClick={() => openSetupAt(resumeStep())}
-            className="flex items-center justify-between gap-3 rounded-xl border border-violet-500/30 bg-violet-500/5 px-4 py-3 text-left"
+            className="intro-late flex items-center justify-between gap-3 rounded-xl border border-violet-500/30 bg-violet-500/5 px-4 py-3 text-left"
           >
             <span>
               <span className="block text-sm text-zinc-100">Finish setting up</span>

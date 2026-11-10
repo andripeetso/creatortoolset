@@ -36,7 +36,9 @@ import {
   SETUP_PATH,
   dismissSetup,
   firstProjectName,
+  markIntroSeen,
   introPlays,
+  introSeen,
   rememberLater,
   setupFinished,
   setupOpen,
@@ -154,17 +156,24 @@ export function SetupDialog() {
   const to = (s: SetupStep) => setParams((p) => (p.set("setup", s), p), { replace: true });
   const leave = () => setParams((p) => (p.delete("setup"), p), { replace: true });
 
+  /** Whether leaving setup now plays Home's welcome (lib/setup.ts introPlays). */
+  const welcomes = () => introPlays({ finishedBefore: setupFinished(view), seen: introSeen(), phone: isPhoneHub(), still: stillMotion() });
   const close = () => {
     if (side) return leave();
     rememberLater(step);
-    setNote(true);
+    // Not now on Home gets the welcome too, in place of the note (its sound is started here, in the press)
+    const plays = window.location.pathname === "/" && welcomes();
+    if (plays) (primeIntroSound(), markIntroSeen());
+    else setNote(true);
     dismissSetup();
     leave();
+    startIntro(plays);
   };
-  const goHome = (finishedBefore: boolean) => {
+  const goHome = (plays: boolean) => {
     dismissSetup();
-    // Home plays its welcome first (once, after the Done that finishes setup); the assistant says hello when it ends
-    startIntro(introPlays({ finishedBefore, phone: isPhoneHub(), still: stillMotion() }), connected ? openAssistant : undefined);
+    // Home plays its welcome first (once: not again after a Not now that showed it); the assistant says hello when it ends
+    if (plays) markIntroSeen();
+    startIntro(plays, connected ? openAssistant : undefined);
     navigate("/");
   };
   const saveMakes = () => useWorkPrefs.getState().put({ makes });
@@ -174,17 +183,17 @@ export function SetupDialog() {
   };
   const next = async () => {
     // the welcome has sound, and a browser lets sound start only from a press: this one, before anything is awaited
-    if (at === path.length - 1 && introPlays({ finishedBefore: setupFinished(view), phone: isPhoneHub(), still: stillMotion() })) primeIntroSound();
+    const plays = at === path.length - 1 && welcomes(); // asked before the save below finishes setup
+    if (plays) primeIntroSound();
     setBusy(true);
     try {
       if (step === "make") await saveMakes();
       if (at === path.length - 1) {
         // the last screen: this is the end of setup, and it never opens by itself again
-        const finishedBefore = setupFinished(view); // the AI apps screen, opened again later, ends here too
         await save({ tools, done: true });
         const name = loaded ? firstProjectName(makes, projects.length) : null;
         if (name) await createProject({ name }).catch(() => {});
-        return goHome(finishedBefore);
+        return goHome(plays);
       }
       to(path[at + 1]!);
     } finally {
