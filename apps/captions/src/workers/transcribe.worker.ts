@@ -1,10 +1,31 @@
 /// <reference lib="webworker" />
 import { pipeline, env } from "@huggingface/transformers";
+import plainMjs from "ort-dist/ort-wasm-simd-threaded.mjs?url";
+import plainWasm from "ort-dist/ort-wasm-simd-threaded.wasm?url";
+import asyncMjs from "ort-dist/ort-wasm-simd-threaded.asyncify.mjs?url";
+import asyncWasm from "ort-dist/ort-wasm-simd-threaded.asyncify.wasm?url";
+import { spokenLanguage } from "./spoken-language";
 
 env.allowLocalModels = false;
 // Fetch model weights through the app's same-origin proxy — works even
 // where huggingface.co is unreachable, and lets the browser cache them.
 env.remoteHost = `${self.location.origin}/api/hf`;
+
+// The speech runtime's own files come from this app (vite.config.ts copies them from the library's dependency), not
+// from a CDN: once the model is downloaded, captions need no network. The library has already picked the pair this
+// browser runs; a name it ever adds that isn't copied here keeps its CDN address.
+const RUNTIME: Record<string, string> = {
+  "ort-wasm-simd-threaded.mjs": plainMjs,
+  "ort-wasm-simd-threaded.wasm": plainWasm,
+  "ort-wasm-simd-threaded.asyncify.mjs": asyncMjs,
+  "ort-wasm-simd-threaded.asyncify.wasm": asyncWasm,
+};
+const ortWasm = env.backends.onnx.wasm;
+const picked = ortWasm?.wasmPaths;
+if (ortWasm && picked && typeof picked === "object") {
+  const own = (u = "") => new URL(RUNTIME[u.split("/").pop() ?? ""] ?? u, self.location.href).href;
+  ortWasm.wasmPaths = { mjs: own(picked.mjs?.toString()), wasm: own(picked.wasm?.toString()) };
+}
 
 export interface WorkerWord {
   text: string;
@@ -44,12 +65,9 @@ async function createTranscriber(model: string, device: "webgpu" | "wasm") {
           file?: string;
           progress?: number;
         }) => {
-          if (p.status === "progress" && typeof p.progress === "number") {
-            post({
-              type: "load-progress",
-              progress: p.progress / 100,
-              detail: p.file ?? "model",
-            });
+          // every file together, so the bar climbs once instead of once per file
+          if (p.status === "progress_total" && typeof p.progress === "number") {
+            post({ type: "load-progress", progress: p.progress / 100 });
           }
         },
       });
@@ -64,16 +82,21 @@ async function createTranscriber(model: string, device: "webgpu" | "wasm") {
 self.onmessage = async (ev: MessageEvent<InMsg>) => {
   const { pcm, model, language, device } = ev.data;
   try {
-    post({ type: "load-progress", progress: 0, detail: "initializing" });
+    post({ type: "load-progress", progress: 0 });
     const transcriber = await createTranscriber(model, device);
 
     post({ type: "transcribe-start" });
+    // every word it writes is a sign of life: the page gives up on a graphics run that goes quiet (lib/transcribe.ts)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const alive: any = { put: () => post({ type: "alive" }), end: () => {} };
+    const spoken = language ?? (await spokenLanguage(transcriber, pcm));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const out: any = await transcriber(pcm, {
       chunk_length_s: 30,
       stride_length_s: 5,
       return_timestamps: "word",
-      ...(language ? { language, task: "transcribe" } : {}),
+      streamer: alive,
+      ...(spoken ? { language: spoken, task: "transcribe" } : {}),
     });
 
     const words: WorkerWord[] = [];

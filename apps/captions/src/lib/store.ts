@@ -44,6 +44,7 @@ import {
   persistEngine,
   storedEngine,
   CLOUD_MODEL_ID,
+  FIRST_JOB_MODEL,
   MODELS,
 } from "./transcribe";
 import {
@@ -1281,8 +1282,8 @@ async function transcribeClip(id: string): Promise<boolean> {
       const language: string | null = null;
       const attempt = (device: "webgpu" | "wasm") => {
         const { promise } = transcribeAudio(pcm!, model, language, device, {
-          onLoadProgress: (progress, detail) =>
-            setStatus({ phase: "loading", progress, detail }),
+          onLoadProgress: (progress) =>
+            setStatus({ phase: "loading", progress, detail: "" }),
           onTranscribeStart: () =>
             setStatus({ phase: "transcribing", progress: 0 }),
         });
@@ -1292,13 +1293,10 @@ async function transcribeClip(id: string): Promise<boolean> {
       if (device === "webgpu") {
         try {
           words = await attempt("webgpu");
-        } catch {
-          // WebGPU failed mid-way — fall back to WASM
-          setStatus({
-            phase: "loading",
-            progress: 0,
-            detail: "switching to CPU backend",
-          });
+        } catch (e) {
+          // the graphics card failed mid-way: the same run again on the processor
+          console.warn(`[cap-transcribe] clip=${id} graphics card run failed, on the processor now:`, e);
+          setStatus({ phase: "loading", progress: 0, detail: "" });
           words = await attempt("wasm");
         }
       } else {
@@ -1395,6 +1393,27 @@ async function transcribeClip(id: string): Promise<boolean> {
     console.error(`[cap-transcribe] clip=${id} failed:`, e);
     return false;
   }
+}
+
+/**
+ * The first job: one video in, captions out, nothing to press. The video becomes a new Caption Studio project (as a
+ * drop on the import screen does, replacing the open one), the setup dialog is skipped and transcription starts now,
+ * on this device with no key, in whatever language is spoken. The page is /captions: the caller goes there, or stays
+ * and reads `useStudio` (`status`, then `words` and `cues`). False when the file isn't a video; nothing changes then.
+ * The model is this run's only: no engine choice is stored, so a person's own choice and the cloud default stay.
+ * The AI cadence pass is off for this project, so the words are the end: its card, lock and Stop are a second job.
+ */
+export function captionThisVideo(file: File): boolean {
+  if (!prepareImport([file]).length) return false;
+  const st = useStudio.getState();
+  st.importFiles([file]);
+  st.setFileName(file.name.replace(/\.[a-z0-9]{2,5}$/i, ""));
+  useStudio.setState({ setupPending: false, model: FIRST_JOB_MODEL, autoCadence: false });
+  const id = useStudio.getState().activeClipId!;
+  // busy from the first frame: the editor never offers its own Transcribe button in between
+  setClipPhase(id, { phase: "extracting" });
+  enqueueTranscription([id]);
+  return true;
 }
 
 export const useStudio = create<StudioState>((rawSet, get) => {
@@ -2064,8 +2083,8 @@ export const useStudio = create<StudioState>((rawSet, get) => {
       } else {
         const attempt = (device: "webgpu" | "wasm") => {
           const { promise } = transcribeAudio(slice, model, null, device, {
-            onLoadProgress: (progress, detail) =>
-              setStatus({ phase: "loading", progress, detail }),
+            onLoadProgress: (progress) =>
+              setStatus({ phase: "loading", progress, detail: "" }),
             onTranscribeStart: () =>
               setStatus({ phase: "transcribing", progress: 0 }),
           });
@@ -2075,12 +2094,9 @@ export const useStudio = create<StudioState>((rawSet, get) => {
         if (device === "webgpu") {
           try {
             words = await attempt("webgpu");
-          } catch {
-            setStatus({
-              phase: "loading",
-              progress: 0,
-              detail: "switching to CPU backend",
-            });
+          } catch (e) {
+            console.warn(`[cap-transcribe] clip=${id} graphics card run failed, on the processor now:`, e);
+            setStatus({ phase: "loading", progress: 0, detail: "" });
             words = await attempt("wasm");
           }
         } else {
