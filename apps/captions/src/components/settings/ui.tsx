@@ -13,6 +13,7 @@
  *   SecretField  masked key, shows the last 4                             kit-controls.tsx
  *   SettingsSelect  the Radix select at size sm                           kit-controls.tsx
  *   Status / StatusDot  quiet status: amber = act, red = broken           kit-controls.tsx
+ *   InUse        the one in use or connected: green dot + green word      kit-controls.tsx
  *   RowMenu      the `…` menu, destructive last, confirmed                kit-controls.tsx
  *   saveFailed   the toast for a failed save                              kit-controls.tsx
  *   FormDialog   small form dialog shell (title, fields, one button)      kit-dialog.tsx

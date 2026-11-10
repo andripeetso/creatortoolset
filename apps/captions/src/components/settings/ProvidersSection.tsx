@@ -281,20 +281,20 @@ export function ProvidersSection({ sub }: { sub?: string }) {
   const detailOpen = (inst: ProviderInstance) => `/settings/providers/${encodeURIComponent(inst.id)}`;
   const actionOf = (inst: ProviderInstance, st: ProviderStatus): ReactNode => {
     if (st.action === "sign-in") {
-      if (localHere && isLocalCli(inst.driver)) return <Button size="xs" variant="outline" onClick={() => signInHere(inst)}>Sign in</Button>;
-      if (canSignIn(inst)) return <Button size="xs" variant="outline" onClick={() => signIn(inst)}>Sign in</Button>;
+      if (localHere && isLocalCli(inst.driver)) return <Button size="sm" variant="outline" onClick={() => signInHere(inst)}>Sign in</Button>;
+      if (canSignIn(inst)) return <Button size="sm" variant="outline" onClick={() => signIn(inst)}>Sign in</Button>;
       return undefined; // the detail beside the list says how
     }
     if (st.action === "install") {
       if (localHere && isLocalCli(inst.driver))
         return (
-          <Button size="xs" variant="outline" disabled={installing === inst.id} onClick={() => void installHere(inst)}>
+          <Button size="sm" variant="outline" disabled={installing === inst.id} onClick={() => void installHere(inst)}>
             {installing === inst.id ? "Installing…" : "Install"}
           </Button>
         );
       return undefined; // the detail beside the list says how
     }
-    if (st.action === "test") return <Button size="xs" variant="outline" disabled={checking !== null} onClick={() => void runCheck(inst)}>Test</Button>;
+    if (st.action === "test") return <Button size="sm" variant="outline" disabled={checking !== null} onClick={() => void runCheck(inst)}>Test</Button>;
     return undefined;
   };
 
@@ -401,7 +401,7 @@ export function ProvidersSection({ sub }: { sub?: string }) {
                   </>
                 }
                 actions={
-                  <Button size="xs" variant="outline" onClick={() => openAdd(d.driver)} aria-label={`Add ${nameOf(d.driver)}`}>
+                  <Button size="sm" variant="outline" onClick={() => openAdd(d.driver)} aria-label={`Add ${nameOf(d.driver)}`}>
                     Add
                   </Button>
                 }

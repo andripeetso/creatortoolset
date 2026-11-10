@@ -86,7 +86,8 @@ function RowBody({ id, title, description, status, control, children, className 
 
 /**
  * A thing in a list (a computer, a provider, an account, a key, a task, a member): icon, title, one subtitle line, one
- * status line, and the actions on the right (a `RowMenu` for the rest). One line each: long text truncates.
+ * status line, and the actions on the right: a `size="sm"` button or an `InUse` word, then the `RowMenu` last. One line
+ * each: long text truncates. (`size="xs"` is only the ghost "+ Add" beside a section's title.)
  */
 export function ListRow({ id, icon, title, subtitle, status, actions, className }: {
   id?: SearchRowId;
@@ -113,7 +114,8 @@ export function ListRow({ id, icon, title, subtitle, status, actions, className 
         {subtitle && <div className="line-clamp-2 break-words text-xs text-muted-foreground sm:line-clamp-1">{subtitle}</div>}
         {status && <div className="min-w-0 pt-0.5 text-xs text-muted-foreground">{status}</div>}
       </div>
-      {actions && <div className="flex shrink-0 items-center gap-1">{actions}</div>}
+      {/* as tall as a row button (sm), so a row whose right end is a word (InUse) is as tall as one with a button */}
+      {actions && <div className="flex min-h-8 shrink-0 items-center gap-2">{actions}</div>}
     </div>
   );
 }
@@ -147,7 +149,7 @@ export function ErrorRow({ title, detail, retry }: { title: ReactNode; detail?: 
         {detail && <div className="truncate text-xs text-muted-foreground">{detail}</div>}
       </div>
       {retry && (
-        <Button size="xs" variant="outline" onClick={retry}>
+        <Button size="sm" variant="outline" onClick={retry}>
           Try again
         </Button>
       )}

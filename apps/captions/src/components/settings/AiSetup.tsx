@@ -144,20 +144,20 @@ function LocalAiItem({ row, device, onChanged }: { row: LocalAiRow; device: stri
   if (!row.found) {
     status = <Status tone="attention">Not installed</Status>;
     action = (
-      <Button size="xs" variant="outline" disabled={!!busy} onClick={() => void run("install", () => localInstall(id))}>
+      <Button size="sm" variant="outline" disabled={!!busy} onClick={() => void run("install", () => localInstall(id))}>
         {busy === "install" ? "Installing…" : "Install"}
       </Button>
     );
   } else if (row.signedIn === false) {
     status = waiting ? <span className="text-muted-foreground">Finish signing in in your browser</span> : <Status tone="attention">Not signed in</Status>;
     action = (
-      <Button size="xs" variant="outline" disabled={!!busy} onClick={() => void run("sign-in", () => localSignIn(id))}>
+      <Button size="sm" variant="outline" disabled={!!busy} onClick={() => void run("sign-in", () => localSignIn(id))}>
         {busy === "sign-in" ? "Opening…" : "Sign in"}
       </Button>
     );
   } else if (!row.connected) {
     action = (
-      <Button size="xs" variant="outline" disabled={!!busy} onClick={() => void run("connect", () => localConnect(id, device))}>
+      <Button size="sm" variant="outline" disabled={!!busy} onClick={() => void run("connect", () => localConnect(id, device))}>
         {busy === "connect" ? "Connecting…" : "Connect"}
       </Button>
     );

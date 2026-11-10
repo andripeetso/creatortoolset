@@ -5,7 +5,7 @@ import { confirmDialog, promptDialog } from "@/lib/dialogs";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, RowMenu, Section, Status, StatusDot } from "./ui";
+import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, RowMenu, Section, Status, InUse } from "./ui";
 import { tell, useThisMac } from "./ThisMacSection";
 
 /** The server built into the Mac app (Servers.swift `thisMacID`). */
@@ -89,11 +89,8 @@ export function ServersSection() {
                   <>
                     <End className="w-[4.5rem]">
                       {v.current ? (
-                        // the kit's green dot, with the word itself green and as large as the row's title: this is
-                        // the server the window is on, not a quiet "fine"
-                        <span className="inline-flex items-center gap-1.5 text-sm font-medium text-emerald-700 dark:text-emerald-400">
-                          <StatusDot tone="ok" /> Active
-                        </span>
+                        // the server the window is on, not a quiet "fine": the kit's green state
+                        <InUse>Active</InUse>
                       ) : (
                         <Button size="sm" variant="outline" onClick={() => void switchTo(v)}>
                           Switch

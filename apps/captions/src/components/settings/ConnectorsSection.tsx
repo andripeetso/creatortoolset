@@ -23,7 +23,7 @@ import {
   type OwnInstagram,
   type SocialPlatform,
 } from "@/lib/connectors";
-import { Card, ErrorRow, ListRow, LoadingRow, RowMenu, Section, SettingsSelect, Status, saveFailed } from "./ui";
+import { Card, ErrorRow, ListRow, LoadingRow, RowMenu, Section, SettingsSelect, Status, saveFailed, InUse } from "./ui";
 import { ApifyKeyRow } from "./ApiKeysSection";
 import { PlatformLogo } from "./PlatformLogos";
 import { msg } from "./helpers";
@@ -128,7 +128,7 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
             title={SIGN_IN[l.id]}
             subtitle={l.gives}
             actions={
-              <Button asChild size="xs" variant="outline">
+              <Button asChild size="sm" variant="outline">
                 <a href={loginHref(l.id, { back, projectId: projectId() })}>Sign in</a>
               </Button>
             }
@@ -180,7 +180,7 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
                 subtitle={r.summary}
                 actions={
                   <>
-                  <Status tone="ok">Connected</Status>
+                  <InUse>Connected</InUse>
                   <RowMenu
                     label={`${at(r.own.handle)} actions`}
                     items={[
@@ -210,7 +210,7 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
                 subtitle={r.summary}
                 actions={
                   r.button && (
-                    <Button size="xs" variant="outline" aria-label={`${r.button} ${r.label}`} onClick={() => choose(r.platform)}>
+                    <Button size="sm" variant="outline" aria-label={`${r.button} ${r.label}`} onClick={() => choose(r.platform)}>
                       {r.button}
                     </Button>
                   )
@@ -381,9 +381,9 @@ function AccountRow({ row, a, back, onLink, onPull, onRemove }: {
       status={status}
       actions={
         <>
-          {!status && <Status tone="ok">Connected</Status>}
+          {!status && <InUse>Connected</InUse>}
           {needsSignIn && login && (
-            <Button asChild size="xs" variant="outline">
+            <Button asChild size="sm" variant="outline">
               <a href={loginHref(login, { back })}>Sign in again</a>
             </Button>
           )}

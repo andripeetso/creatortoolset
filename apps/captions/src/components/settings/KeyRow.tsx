@@ -82,7 +82,7 @@ export function KeyRow({ id, name, subtitle, where, set, last4, readOnly, readOn
       <RowMenu label={`${name} actions`} items={[{ label: "Use a different key", onSelect: () => setOpen(true) }]} />
     </>
   ) : (
-    <Button size="xs" variant="outline" onClick={() => setOpen(true)}>
+    <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
       Add key
     </Button>
   );

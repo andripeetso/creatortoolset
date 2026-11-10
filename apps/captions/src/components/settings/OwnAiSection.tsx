@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { AccessKeysSection } from "./AccessKeys";
 import { ProviderLogo } from "./ProviderLogos";
 import { installInMacAi } from "@/lib/thisMac";
-import { Advanced, Card, ErrorRow, ListRow, LoadingRow, RowMenu, Section, Status, saveFailed } from "./ui";
+import { Advanced, Card, ErrorRow, ListRow, LoadingRow, RowMenu, Section, Status, saveFailed, InUse } from "./ui";
 import { shortVersion } from "./ProvidersSection";
 import { fmtAgo, msg } from "./helpers";
 
@@ -206,7 +206,7 @@ export function LocalAppRow({ row, aiKey, onDone, onDisconnect }: { row: LocalAi
     : step === "signin" ? "Sign in to it first"
     : version ? `Version ${version}` : undefined;
   const button = (s: Exclude<typeof step, "connected">, primary: boolean, disabled = false) => (
-    <Button size="xs" variant={primary ? "default" : "outline"} disabled={disabled || !!busy} onClick={() => void go(s)}>
+    <Button size="sm" variant={primary ? "default" : "outline"} disabled={disabled || !!busy} onClick={() => void go(s)}>
       {busy === s ? STEP_LABEL[s][1] : failed && step === s ? "Try again" : STEP_LABEL[s][0]}
     </Button>
   );
@@ -219,7 +219,7 @@ export function LocalAppRow({ row, aiKey, onDone, onDisconnect }: { row: LocalAi
       actions={
         step === "connected" && aiKey ? (
           <>
-            <Status>Installed</Status>
+            <InUse>Installed</InUse>
             <DisconnectMenu k={aiKey} onDisconnect={onDisconnect} />
           </>
         ) : step === "update" ? (
@@ -264,7 +264,7 @@ function OtherAppRow({ onMade }: { onMade: () => void }) {
         subtitle="Anything that takes an MCP server address and a key."
         actions={
           !shown && (
-            <Button size="xs" variant="outline" disabled={busy} onClick={() => void get()}>
+            <Button size="sm" variant="outline" disabled={busy} onClick={() => void get()}>
               {busy ? "Making it…" : "Get address and key"}
             </Button>
           )
@@ -344,12 +344,12 @@ function RemoteAppRow({ app, aiKey, onDone, onDisconnect }: { app: (typeof REMOT
         actions={
           installed && aiKey ? (
             <>
-              <Status>Installed</Status>
+              <InUse>Installed</InUse>
               <DisconnectMenu k={aiKey} onDisconnect={onDisconnect} />
             </>
           ) : (
             !command && (
-              <Button size="xs" disabled={busy} onClick={() => void install()}>
+              <Button size="sm" disabled={busy} onClick={() => void install()}>
                 {busy ? "Installing…" : failed ? "Try again" : "Install"}
               </Button>
             )
@@ -372,7 +372,7 @@ function CommandBox({ text }: { text: string }) {
       <pre className="whitespace-pre-wrap break-all p-3 font-mono text-xs leading-relaxed text-foreground">{text}</pre>
       <div className="flex justify-end border-t border-border/50 px-2 py-1.5">
         <Button
-          size="xs"
+          size="sm"
           variant={copied ? "ghost" : "outline"}
           onClick={() =>
             void navigator.clipboard.writeText(text).then(

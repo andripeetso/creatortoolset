@@ -59,7 +59,7 @@ function EditorDefaultsDialog({ open, onOpenChange, initial }: { open: boolean; 
                 control={
                   <div className="flex items-center gap-2">
                     {picked && (
-                      <Button size="xs" variant="ghost" disabled={busy} onClick={() => change(slot, null)}>
+                      <Button size="sm" variant="ghost" disabled={busy} onClick={() => change(slot, null)}>
                         Use built-in
                       </Button>
                     )}

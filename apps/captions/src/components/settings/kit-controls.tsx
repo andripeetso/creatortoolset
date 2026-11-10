@@ -127,6 +127,20 @@ export function Status({ tone, children }: { tone?: "attention" | "broken" | "ok
   );
 }
 
+/**
+ * The one in use, or connected and working: a green dot and the word in green, as large as a row's title ("Active" on
+ * Servers, "Connected" on Social accounts, "Installed" on Headless access). It sits where the row's button would be, with
+ * the `…` menu after it. One word; a quiet fact (a version, a plan) is a Status, not this.
+ */
+export function InUse({ children }: { children: ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-sm font-medium text-emerald-700 dark:text-emerald-400">
+      <StatusDot tone="ok" />
+      {children}
+    </span>
+  );
+}
+
 /** The small dot of a Status: amber for "the person must act", red for "broken", green for "connected and working". */
 export function StatusDot({ tone }: { tone: "attention" | "broken" | "ok" }) {
   return <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", tone === "broken" ? "bg-red-500" : tone === "ok" ? "bg-emerald-500" : "bg-amber-500")} />;
