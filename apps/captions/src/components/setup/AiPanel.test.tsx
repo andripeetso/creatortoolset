@@ -36,18 +36,30 @@ describe("the rows: named by what a person knows, in order", () => {
     expect(html).toContain("<svg");
   });
 
-  it("shows no Gemini row unless Gemini CLI is installed", () => {
-    expect(panel(view([claude, codex]))).not.toContain("Gemini");
-    expect(panel(view([gemini]))).toContain(">Gemini<");
+  it("always shows Google third, with Gemini as its small second line, installed or not", () => {
+    for (const html of [panel(view([claude, codex])), panel(view([claude, codex, gemini]))]) {
+      expect(html.indexOf(">Claude<")).toBeLessThan(html.indexOf(">Google<"));
+      expect(html).toContain(">Gemini<");
+      expect(html).toContain("Uses your Google account (free, Google AI Pro or Ultra).");
+    }
   });
 
   it("every state before it is connected has the same one button, Connect: nothing installed, signed out, signed in", () => {
-    // nothing installed (no rows), a signed-out ChatGPT, a signed-in Claude
-    expect(buttons(panel(view([])))).toEqual(["Connect", "Connect"]);
-    expect(buttons(panel(view([codex, claude])))).toEqual(["Connect", "Connect"]);
+    // nothing installed (no rows), a signed-out ChatGPT, a signed-in Claude, a signed-out Google
+    expect(buttons(panel(view([])))).toEqual(["Connect", "Connect", "Connect"]);
+    expect(buttons(panel(view([codex, claude, gemini])))).toEqual(["Connect", "Connect", "Connect"]);
     const html = panel(view([codex, claude]));
     expect(html).toContain("Uses your ChatGPT plan (Plus or higher).");
     expect(html).toContain("Uses your Claude plan (Pro or higher).");
+  });
+
+  it("lists another AI the Mac app runs only once it is on this Mac, after Google, with Connect and no second line", () => {
+    expect(panel(view([claude]))).not.toMatch(/Grok|OpenCode/);
+    const html = panel({ ...view([claude]), others: [{ id: "grok", connected: false }, { id: "opencode", connected: true }] });
+    expect(html.indexOf(">Google<")).toBeLessThan(html.indexOf(">Grok<"));
+    expect(html).toContain("Uses Grok as it's set up on this Mac.");
+    expect(html).toContain('aria-label="OpenCode is connected"');
+    expect(buttons(html)).toEqual(["Connect", "Connect", "Connect", "Connect"]); // ChatGPT, Claude, Google, Grok
   });
 
   it("never says Use it, Install, Sign in or Check on a button, and shows no Details on a row that is fine", () => {
@@ -60,7 +72,7 @@ describe("the rows: named by what a person knows, in order", () => {
   it("a connected AI shows a quiet check and no button, never a Ready or Connected label", () => {
     const html = panel(view([connected("claude", "Claude Code")]));
     expect(html).toContain('aria-label="Claude is connected"');
-    expect(buttons(html)).toEqual(["Connect"]); // ChatGPT's row; Claude's has none
+    expect(buttons(html)).toEqual(["Connect", "Connect"]); // ChatGPT's and Google's rows; Claude's has none
     expect(html).not.toContain("Ready");
     expect(html).not.toContain(">Connected");
   });
@@ -108,6 +120,9 @@ describe("anyConnected", () => {
     expect(anyConnected(view([row({ id: "claude", name: "Claude Code", connected: true })]), {})).toBe(true);
     expect(anyConnected(view([codex]), { codex: { state: "ready", signedIn: true, answered: true } })).toBe(true);
     expect(anyConnected(view([claude]), { claude: { state: "failed", signedIn: true, answered: false } })).toBe(false);
+    // another AI on this Mac counts the same way
+    expect(anyConnected({ ...view([claude]), others: [{ id: "grok", connected: true }] }, {})).toBe(true);
+    expect(anyConnected({ ...view([claude]), others: [{ id: "grok", connected: false }] }, { grok: { state: "ready", signedIn: null, answered: true } })).toBe(true);
   });
 });
 
@@ -166,7 +181,7 @@ describe("what Connect does, one step at a time", () => {
 
 describe("the banned words", () => {
   it("the rows and a failure say none of CLI, PATH, Terminal, API key or MCP", () => {
-    const html = panel(view([codex, claude, gemini]), {
+    const html = panel({ ...view([codex, claude, gemini]), others: [{ id: "opencode", connected: false }] }, {
       results: { codex: { state: "failed", signedIn: false, answered: false, message: "Couldn't download Codex. Check the internet connection, then try again.", raw: "curl: (6) Could not resolve host" } },
       phases: { claude: "installing" },
     });

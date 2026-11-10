@@ -93,7 +93,7 @@ describe("install with the vendor's own route, no Terminal", () => {
     expect(calls.at(-1)).toMatchObject({ file: localBin("codex"), args: ["--version"] });
   });
 
-  it("Gemini CLI on a Mac with no Node: the pinned Node.js is checked against its SHA-256, then npm installs Gemini CLI with it", async () => {
+  it("Gemini CLI on a Mac with no Node: the pinned Node.js is checked against its SHA-256, then npm installs Gemini CLI beside it", async () => {
     rmSync(nodeRoot, { recursive: true, force: true });
     const tarball = Buffer.from("node tarball");
     const sha = createHash("sha256").update(tarball).digest("hex");
@@ -109,11 +109,12 @@ describe("install with the vendor's own route, no Terminal", () => {
         writeFileSync(path.join(nodeRoot, "bin", "npm"), "npm");
         return undefined;
       }
-      return file === localBin("gemini") ? versionOf(args, "0.5.0\n") : undefined;
+      // it lands in the managed Node's own bin folder, where the Mac app runs it with that node beside it
+      return file === path.join(nodeRoot, "bin", "gemini") ? versionOf(args, "0.5.0\n") : file.endsWith("/gemini") ? { code: "ENOENT" } : undefined;
     });
-    expect(await local.installCli("gemini")).toEqual({ ok: true, message: "Gemini CLI is installed." });
+    expect(await local.installCli("gemini")).toEqual({ ok: true, message: "Gemini is installed." });
     const npm = calls.find((c) => c.file === path.join(nodeRoot, "bin", "npm"));
-    expect(npm?.args).toEqual(expect.arrayContaining(["install", "-g", "--prefix", "@google/gemini-cli"]));
+    expect(npm?.args).toEqual(["install", "-g", "--prefix", nodeRoot, "@google/gemini-cli"]);
     expect(npm?.env?.PATH?.startsWith(path.join(nodeRoot, "bin"))).toBe(true);
   });
 
@@ -184,6 +185,5 @@ describe("sign in: the vendor's own sign-in runs as a child process, and the pag
       signedIn = (await local.probe("codex", true)).signedIn;
     }
     expect(signedIn).toBe(true);
-    expect(await local.signIn("gemini")).toMatchObject({ ok: false });
   });
 });

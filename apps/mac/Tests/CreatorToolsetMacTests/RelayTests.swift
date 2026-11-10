@@ -806,7 +806,28 @@ final class RelayTests: XCTestCase {
         XCTAssertTrue(answer.text.localizedCaseInsensitiveContains("OK"))
     }
 
+    /// CT_REAL_GEMINI=1 swift test --filter RealGemini: one tiny run through the Gemini CLI setup installed, the way the relay
+    /// runs it. It answers only once that home's ~/.gemini is signed in with Google: run it with HOME set to that home.
+    func testRealGeminiRun() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard env["CT_REAL_GEMINI"] == "1" else {
+            throw XCTSkip("set CT_REAL_GEMINI=1 to run one real gemini call")
+        }
+        // CT_REAL_GEMINI_BIN names another copy to run (one installed into a test home)
+        let cli = env["CT_REAL_GEMINI_BIN"] ?? binary("gemini", home: FileManager.default.homeDirectoryForCurrentUser) ?? "gemini"
+        print("REAL GEMINI: running \(cli), version \(cliVersion(cli))")
+        let req = request(#"{"id":"real-gemini","system":"Reply with just OK.","user":"Reply with just OK.","driver":"gemini","model":"gemini-3.8-flash","effort":"low"}"#)
+        let answer = try runAnswer(req, try requestOptions(req), cli: cli, work: temp(), send: { _ in true }, step: { _ in })
+        print("REAL GEMINI: text=\(answer.text) usage=\(answer.usage)")
+        XCTAssertTrue(answer.text.localizedCaseInsensitiveContains("OK"))
+    }
+
     // MARK: Gemini (the Mac relay GeminiRun and its checks)
+
+    func testGeminiSetupInstallIsFound() {
+        // setup installs Gemini CLI beside the app's own Node.js; the relay looks there too
+        XCTAssertEqual(driverBinaries["gemini"]?.last, appSupport.appendingPathComponent("node/bin/gemini").path)
+    }
 
     func testGeminiOptionsModelAndHome() throws {
         let root = temp()

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check } from "lucide-react";
-import type { CliId, ConnectResult, LocalAiRow, LocalAiView, SignInResult } from "@contracts/local-ai";
-import type { ProviderSettings, ProvidersView } from "@contracts/providers";
+import type { CliId, ConnectResult, LocalAiView, SignInResult } from "@contracts/local-ai";
+import { DRIVERS, type ProviderSettings, type ProvidersView } from "@contracts/providers";
 import { Button } from "@/components/ui/button";
 import { ProviderLogo } from "@/components/settings/ProviderLogos";
 import { Card, ListRow, Status } from "@/components/settings/ui";
@@ -10,8 +10,9 @@ import { startThisMac, thisMacBridge } from "@/lib/thisMac";
 
 /** What Connect is doing now, one step at a time. */
 export type Phase = "installing" | "updating" | "connecting" | "signingIn" | "timedOut";
-export type Results = Partial<Record<CliId, ConnectResult>>;
-export type Phases = Partial<Record<CliId, Phase>>;
+/** Keyed by the AI's id: ChatGPT, Claude and Google by their CLI's (CliId), another AI on this Mac by its driver's. */
+export type Results = Partial<Record<string, ConnectResult>>;
+export type Phases = Partial<Record<string, Phase>>;
 
 const WAIT_MS = 3 * 60_000;
 const POLL_MS = 3_000;
@@ -22,23 +23,35 @@ const TIMEOUT_MS = 90_000;
 /** An install downloads the vendor's program here (ChatGPT's is 108 MB): a slow connection gets half an hour. */
 const INSTALL_TIMEOUT_MS = 31 * 60_000;
 
-/** The rows, in order: ChatGPT, then Claude; Gemini only once its tool is on this Mac (see AiPanelView). */
+/**
+ * The rows, in order: ChatGPT, Claude and Google, always (Connect installs what is missing), then any other AI the Mac
+ * app runs that is already on this Mac (LocalAiView.others), which Connect only connects.
+ */
 const AGENTS: CliId[] = ["codex", "claude", "gemini"];
+const isAgent = (id: string): id is CliId => (AGENTS as string[]).includes(id);
 /** What a person knows each AI by: the row's name, and its small second line. */
-export const ROW_NAME: Record<CliId, string> = { codex: "ChatGPT", claude: "Claude", gemini: "Gemini" };
-export const ROW_SUB: Record<CliId, string> = { codex: "Codex", claude: "Claude Code", gemini: "Google's coding helper" };
-/** What Connect uses, said before the press: a free account isn't enough for ChatGPT or Claude (vendor docs, 2026-11-09). */
+export const ROW_NAME: Record<CliId, string> = { codex: "ChatGPT", claude: "Claude", gemini: "Google" };
+export const ROW_SUB: Record<CliId, string> = { codex: "Codex", claude: "Claude Code", gemini: "Gemini" };
+/**
+ * What Connect uses, said before the press: a free account isn't enough for ChatGPT or Claude (vendor docs, 2026-11-09);
+ * Gemini CLI takes any personal Google account, with more each day on Google AI Pro and Ultra (its quotas page, 2026-11-10).
+ */
 const USES: Record<CliId, string> = {
   codex: "Uses your ChatGPT plan (Plus or higher).",
   claude: "Uses your Claude plan (Pro or higher).",
-  gemini: "Uses your Google account.",
+  gemini: "Uses your Google account (free, Google AI Pro or Ultra).",
 };
+const nameOf = (id: string) => (isAgent(id) ? ROW_NAME[id] : (DRIVERS.find((d) => d.id === id)?.label ?? id));
+const usesOf = (id: string) => (isAgent(id) ? USES[id] : `Uses ${nameOf(id)} as it's set up on this Mac.`);
 
-const isConnected = (row: LocalAiRow | undefined, result?: ConnectResult) => !!row?.connected || result?.state === "ready";
+/** What a row knows of its AI: connected (a saved passing check), and the sign-in when the AI says it. */
+type Known = { connected: boolean; signedIn?: boolean | null; version?: string };
+const isConnected = (row: Known | undefined, result?: ConnectResult) => !!row?.connected || result?.state === "ready";
+const rowOf = (view: LocalAiView | null, id: string): Known | undefined => view?.rows.find((r) => r.id === id) ?? view?.others?.find((o) => o.id === id);
 
-/** The app's own AI is connected: saved from before, or this session's Connect. */
+/** The app's own AI is connected: saved from before, or this session's Connect, on any row. */
 export const anyConnected = (view: LocalAiView | null, results: Results): boolean =>
-  AGENTS.some((id) => isConnected(view?.rows.find((r) => r.id === id), results[id]));
+  [...AGENTS, ...(view?.others ?? []).map((o) => o.id)].some((id) => isConnected(rowOf(view, id), results[id]));
 
 export interface RowView {
   /** one plain line: what Connect uses, what it is doing now, or what went wrong */
@@ -56,12 +69,12 @@ const CONNECT = { label: "Connect" };
  * What one AI's row says. One button, Connect, does whatever is still missing (install, update, sign in, connect), and
  * the line names the step it is on. The check mark only once it is connected, and then there is no button.
  */
-export function rowView(id: CliId, row: LocalAiRow | undefined, result: ConnectResult | undefined, phase: Phase | undefined): RowView {
-  const name = ROW_NAME[id];
+export function rowView(id: string, row: Known | undefined, result: ConnectResult | undefined, phase: Phase | undefined): RowView {
+  const name = nameOf(id);
   if (phase === "installing") return { line: `Installing what ${name} needs on this Mac. This can take a few minutes.`, button: WORKING };
   if (phase === "updating") return { line: `Updating what ${name} needs on this Mac. This can take a few minutes.`, button: WORKING };
   if (phase === "signingIn") return { line: "Finish signing in in your browser.", button: WORKING };
-  if (phase === "connecting") return { line: USES[id], button: WORKING };
+  if (phase === "connecting") return { line: usesOf(id), button: WORKING };
   if (phase === "timedOut") return { line: "Still not signed in. Finish in your browser, or connect again.", button: CONNECT };
   if (result?.state === "mac" || result?.state === "unsupported")
     return { line: result.message ?? "Open the Creator Toolset Mac app to connect this.", button: null };
@@ -72,7 +85,7 @@ export function rowView(id: CliId, row: LocalAiRow | undefined, result: ConnectR
     // a plan at its limit is connected; the line says when it resets
     return { line: result?.message ?? "", button: null, connected: true };
   }
-  return { line: USES[id], button: CONNECT };
+  return { line: usesOf(id), button: CONNECT };
 }
 
 /** The AnswerPicker: which AI answers in the app and with which model (the default of the account's providers, as Settings → Your AI sets it). Only the AIs this account has connected are offered. Pure: `onPick` gets the whole new set to save. */
@@ -117,7 +130,7 @@ export function AnswerPicker({ view, onPick }: { view: ProvidersView; onPick: (s
  * One AI's row, in the same rows as Settings and setup's last screen: its logo, its name with the program's name small
  * beside it, one plain line, and its one button. A failure is the red line, with the program's own words under Details.
  */
-function AgentRow({ id, row, result, phase, onConnect }: { id: CliId; row?: LocalAiRow; result?: ConnectResult; phase?: Phase; onConnect: () => void }) {
+function AgentRow({ id, row, result, phase, onConnect }: { id: string; row?: Known; result?: ConnectResult; phase?: Phase; onConnect: () => void }) {
   const v = rowView(id, row, result, phase);
   const failed = !phase && !!result && result.state !== "ready" && result.state !== "mac" && result.state !== "unsupported";
   return (
@@ -125,8 +138,8 @@ function AgentRow({ id, row, result, phase, onConnect }: { id: CliId; row?: Loca
       icon={<ProviderLogo driver={id} className="size-4" />}
       title={
         <>
-          <span>{ROW_NAME[id]}</span>{" "}
-          <span className="ml-0.5 text-xs font-normal text-muted-foreground">{ROW_SUB[id]}</span>
+          <span>{nameOf(id)}</span>{" "}
+          {isAgent(id) && <span className="ml-0.5 text-xs font-normal text-muted-foreground">{ROW_SUB[id]}</span>}
         </>
       }
       subtitle={failed ? undefined : v.line || undefined}
@@ -146,7 +159,7 @@ function AgentRow({ id, row, result, phase, onConnect }: { id: CliId; row?: Loca
       }
       actions={
         <>
-          {v.connected && <Check aria-label={`${ROW_NAME[id]} is connected`} className="size-4 text-emerald-600 dark:text-emerald-400" />}
+          {v.connected && <Check aria-label={`${nameOf(id)} is connected`} className="size-4 text-emerald-600 dark:text-emerald-400" />}
           {v.button && (
             <Button size="xs" disabled={v.button.disabled} onClick={onConnect}>
               {v.button.label}
@@ -162,21 +175,19 @@ export interface AiPanelViewProps {
   view: LocalAiView | null;
   results: Results;
   phases: Phases;
-  onConnect: (id: CliId) => void;
+  onConnect: (id: string) => void;
 }
 
-/** The AIs this computer can connect: one row each (ChatGPT, Claude, and Gemini once installed). Pure, for tests. */
+/** The AIs this computer can connect: ChatGPT, Claude, Google, then the others already here. Pure, for tests. */
 export function AiPanelView({ view, results, phases, onConnect }: AiPanelViewProps) {
   if (!view) return <p className="text-sm text-muted-foreground">Looking for your AI on this computer…</p>;
   if (!view.local)
     return <p className="text-sm text-muted-foreground">Ask the owner of this server to connect the AI it runs on.</p>;
   return (
     <Card>
-      {AGENTS.map((id) => {
-        const row = view.rows.find((r) => r.id === id);
-        if (id === "gemini" && !row?.found) return null;
-        return <AgentRow key={id} id={id} row={row} result={results[id]} phase={phases[id]} onConnect={() => onConnect(id)} />;
-      })}
+      {[...AGENTS, ...(view.others ?? []).map((o) => o.id)].map((id) => (
+        <AgentRow key={id} id={id} row={rowOf(view, id)} result={results[id]} phase={phases[id]} onConnect={() => onConnect(id)} />
+      ))}
     </Card>
   );
 }
@@ -240,7 +251,8 @@ export function AiPanel({ onConnectedChange }: { onConnectedChange?: (on: boolea
   const loadProviders = useCallback(() => getProviders().then(setProviders, () => {}), []);
 
   const connect = useCallback(
-    async (id: CliId, did = { installed: false, updated: false, signedIn: false }) => {
+    // another AI on this Mac is connected as it is: nothing to install, update or sign in from here
+    async (id: string, did = isAgent(id) ? { installed: false, updated: false, signedIn: false } : { installed: true, updated: true, signedIn: true }) => {
       const setPhase = (p: Phase | undefined) => setPhases((s) => ({ ...s, [id]: p }));
       const end = async (r: ConnectResult) => {
         setResults((s) => ({ ...s, [id]: r }));
@@ -291,7 +303,8 @@ export function AiPanel({ onConnectedChange }: { onConnectedChange?: (on: boolea
           return;
         }
         // a step that was already done this press and is asked for again is a failure, said plainly
-        return end(r.state === "signin" ? failed("The sign-in didn't finish. Try again.", r.raw) : r.state === "missing" ? failed(r.message ?? "It didn't install. Try again.", r.raw) : r);
+        if (r.state === "signin" && isAgent(id)) return end(failed("The sign-in didn't finish. Try again.", r.raw));
+        return end(r.state === "missing" ? failed(r.message ?? "It didn't install. Try again.", r.raw) : r);
       }
     },
     [refresh, loadProviders],

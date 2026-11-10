@@ -1,4 +1,5 @@
 import type { PlanId } from "./plans";
+import type { Driver } from "./providers";
 
 /**
  * The AI command-line tools on this Mac that setup can connect (api/lib/local-ai.ts): what was found, whether it is
@@ -21,7 +22,7 @@ export type LocalAiId = CliId;
 
 export interface LocalAiRow {
   id: LocalAiId;
-  name: string; // "Claude Code" | "Codex" | "Gemini CLI"
+  name: string; // "Claude Code" | "Codex" | "Gemini"
   kind: "cli";
   found: boolean;
   version?: string; // first line of --version, max 120 chars
@@ -36,6 +37,8 @@ export interface LocalAiRow {
 export interface LocalAiView {
   local: boolean; // false when CT_LOCAL is not "1"; rows is then []
   rows: LocalAiRow[];
+  /** the other AIs the Mac app runs that are on this Mac (Grok, OpenCode…): setup only connects them, as they are set up */
+  others?: Array<{ id: Driver; connected: boolean }>;
 }
 
 /**

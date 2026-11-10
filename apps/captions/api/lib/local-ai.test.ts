@@ -1,6 +1,8 @@
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { ProviderCheck } from "../../contracts/providers";
 
@@ -508,6 +510,94 @@ function rmCodex() {
   rmSync(codexHome, { recursive: true, force: true });
   mkdirSync(codexHome, { recursive: true });
 }
+
+describe("Google (Gemini CLI) and the other AIs on this Mac", () => {
+  /** A machine whose login shell finds only what `onPath` maps a command line to; every other command answers nothing. */
+  const shell = (onPath: (line: string) => string, onDisk?: (p: string) => boolean) =>
+    local.setRunnerForTests(async (file, args) => (file === "/bin/zsh" ? { stdout: onPath(String(args[1])), stderr: "", code: 0 } : { stdout: "", stderr: "", code: "ENOENT" }), onDisk);
+
+  it("looks for Gemini beside the app's own Node.js, and for Grok and OpenCode in their installers' folders", () => {
+    expect(fallbackCandidates("gemini", "/Users/x", []).at(-1)).toMatch(/\/node\/bin\/gemini$/);
+    expect(fallbackCandidates("grok", "/Users/x", [])).toContain("/Users/x/.grok/bin/grok");
+    expect(fallbackCandidates("opencode", "/Users/x", [])).toContain("/Users/x/.opencode/bin/opencode");
+  });
+
+  it("reads Gemini's sign-in from the Google login it saves; no sign-in method chosen is signed out", async () => {
+    const h = path.join(root, "gemini-home");
+    mkdirSync(h, { recursive: true });
+    world(["gemini"], (_f, args) => (args[0] === "--version" ? { stdout: "0.67.0\n" } : undefined));
+    expect(await probeCli("gemini", h)).toMatchObject({ found: true, version: "0.67.0", signedIn: false });
+    mkdirSync(path.join(h, ".gemini"));
+    writeFileSync(path.join(h, ".gemini", "oauth_creds.json"), "{}");
+    expect(await probeCli("gemini", h)).toMatchObject({ signedIn: true });
+    expect(plainError("Please set an Auth method in your /Users/x/.gemini/settings.json or specify one of the following").state).toBe("signin");
+  });
+
+  it("signs Gemini in through its editor mode: initialize, then the Google-account sign-in; signed in only once it has answered", async () => {
+    const dir = path.join(root, "fake-gemini");
+    const h = path.join(dir, "home");
+    mkdirSync(h, { recursive: true });
+    const bin = path.join(dir, "gemini");
+    const asked = path.join(dir, "asked.txt");
+    const creds = path.join(h, ".gemini", "oauth_creds.json");
+    // notes what it was started with and asked; on authenticate it saves the login first and answers a moment later,
+    // as Gemini CLI does (the account is set up between the two)
+    writeFileSync(
+      bin,
+      `#!/usr/bin/env node
+const fs = require("fs");
+if (process.argv[2] === "--version") { console.log("0.67.0"); process.exit(0); }
+let buf = "";
+process.stdin.on("data", (d) => {
+  buf += d;
+  for (let i = buf.indexOf("\\n"); i >= 0; i = buf.indexOf("\\n")) {
+    const m = JSON.parse(buf.slice(0, i));
+    buf = buf.slice(i + 1);
+    fs.appendFileSync(${JSON.stringify(asked)}, [process.argv[2], m.method, JSON.stringify(m.params)].join(" ") + "\\n");
+    const answer = () => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: {} }) + "\\n");
+    if (m.method !== "authenticate") answer();
+    else { fs.mkdirSync(${JSON.stringify(path.dirname(creds))}, { recursive: true }); fs.writeFileSync(${JSON.stringify(creds)}, "{}"); setTimeout(answer, 1500); }
+  }
+});
+setTimeout(() => {}, 60000);
+`,
+      { mode: 0o755 },
+    );
+    const realExec = promisify(execFile);
+    local.setRunnerForTests(async (file, args) => {
+      if (file === "/bin/zsh") return { stdout: args[1] === "command -v gemini" ? `${bin}\n` : "", stderr: "", code: 0 };
+      const r = await realExec(file, args);
+      return { stdout: String(r.stdout), stderr: "", code: 0 };
+    });
+    expect(await local.signIn("gemini")).toEqual({ ok: true, message: "Your browser opens. Sign in there, then come back here." });
+    await vi.waitFor(() => expect(existsSync(creds)).toBe(true), { timeout: 5000 });
+    expect((await probeCli("gemini", h)).signedIn).toBe(false); // the login is saved, the sign-in has not answered yet
+    await vi.waitFor(async () => expect((await probeCli("gemini", h)).signedIn).toBe(true), { timeout: 5000 });
+    expect(readFileSync(asked, "utf8").split("\n").filter(Boolean)).toEqual([
+      '--acp initialize {"protocolVersion":1,"clientCapabilities":{}}',
+      '--acp authenticate {"methodId":"oauth-personal"}',
+    ]);
+  });
+
+  it("finds the other AIs the Mac app runs on the login shell's PATH or in their installers' folders", async () => {
+    shell((line) => (line.startsWith("command -v grok ") ? "/opt/homebrew/bin/grok\ncursor-agent not found\n" : ""), (p) => p === "/Users/x/.opencode/bin/opencode");
+    expect(await local.otherAis("/Users/x")).toEqual(["grok", "opencode"]);
+  });
+
+  it("connects another AI on this Mac as it is set up there: a real check, then a saved local-grok; nothing installed or signed in", async () => {
+    createUser("kai", "password1", { role: "user" });
+    const { device } = pairDevice("kai", "Studio Mac");
+    touchDevice(device.id);
+    shell((line) => (line.startsWith("command -v grok ") ? "/opt/homebrew/bin/grok\n" : ""));
+    mockCheck.next = { ok: true, ms: 9, error: undefined, note: undefined };
+    expect(await local.connectCli("kai", "grok", home, device.id)).toMatchObject({ state: "ready", answered: true });
+    expect(ownSettings("kai")?.instances).toEqual([expect.objectContaining({ id: "local-grok", driver: "grok", name: "Grok", device: device.id })]);
+    expect((await local.localAiView("kai", [])).others).toEqual([{ id: "grok", connected: true }]);
+    // not on this Mac: missing, and nothing changes
+    expect(await local.connectCli("kai", "opencode", home, device.id)).toMatchObject({ state: "missing" });
+    expect(ownSettings("kai")?.instances).toHaveLength(1);
+  });
+});
 
 describe("the app's entry name in the AI tools", () => {
   it("is creator-toolset for the app, and its own name for a copy beside it", async () => {

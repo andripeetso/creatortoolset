@@ -11,7 +11,7 @@ import { readConnectors } from "./lib/connectors/store";
 import { publicApifyStatus, readApify } from "./lib/instagram/apify";
 import { deviceTranscribes } from "./lib/device-transcribe";
 import { connectedOwn } from "./lib/providers";
-import { addMcp, connectCli, installCli, localAiView, signIn, updateCli, CLI_IDS, MAC_ONLY } from "./lib/local-ai";
+import { addMcp, connectCli, installCli, localAiView, signIn, updateCli, CLI_IDS, MAC_ONLY, OTHER_AIS } from "./lib/local-ai";
 import { ownedProjects } from "./lib/workshop/workspace";
 import { ensureLibrary, homeOf } from "./library/access";
 import { libraryDb } from "./library/db";
@@ -25,6 +25,7 @@ import {
 import { viaTunnel, type AuthVars } from "./auth";
 import { MY_KEYS } from "../contracts/service-keys";
 import type { CliId, LocalAiView } from "../contracts/local-ai";
+import type { Driver } from "../contracts/providers";
 import { isTool, TOOLS, type Have, type SetupView, type Tool, HOME_TILES, isHomeTile, type HomeTile } from "../contracts/tools";
 import { isPlan, planFromCli, type PlanId } from "../contracts/plans";
 
@@ -212,6 +213,8 @@ const port = () => Number(process.env.PORT || 3000);
 const cliOf = (v: unknown): CliId | null =>
   typeof v === "string" && (CLI_IDS as string[]).includes(v) ? (v as CliId) : null;
 const mcpToOf = (u: string): CliId[] => read(u)?.mcpTo ?? [];
+/** Connect also takes the other AIs the Mac app runs (local-ai.ts OTHER_AIS); only the three CLIs install and sign in here. */
+const aiOf = (v: unknown): Driver | null => cliOf(v) ?? (typeof v === "string" && Object.keys(OTHER_AIS).includes(v) ? (v as Driver) : null);
 
 setupApp.get("/ai", async (c) => {
   const u = c.get("user").username;
@@ -229,7 +232,7 @@ setupApp.post("/ai/signin", async (c) => {
 setupApp.post("/ai/connect", async (c) => {
   if (!ownComputer(c.get("user"))) return c.json({ state: "mac", signedIn: null, answered: null, message: MAC_ONLY });
   const b = (await c.req.json().catch(() => null)) as { id?: unknown; device?: unknown } | null;
-  const id = cliOf(b?.id);
+  const id = aiOf(b?.id);
   if (!id) return c.json({ error: "Pick Claude Code, Codex or Gemini CLI" }, 400);
   // device: this Mac's own id on this server (the Mac app's page reports it); the check runs through that Mac only
   return c.json(await connectCli(c.get("user").username, id, undefined, typeof b?.device === "string" ? b.device : undefined));

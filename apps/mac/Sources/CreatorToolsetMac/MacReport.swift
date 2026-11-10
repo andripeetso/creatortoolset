@@ -13,8 +13,11 @@ let reportDrivers: [(id: String, label: String)] = [
 /// Codex also counts the copy the ChatGPT app carries (OpenAI's own program, the same sign-in in ~/.codex): a person
 /// with the ChatGPT app connects with no download, and the newest copy runs (binary()).
 let chatGPTAppCodex = "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex"
+/// The Gemini CLI setup's Connect installs: beside this app's own Node.js (the server's api/lib/local-ai.ts installGemini),
+/// so the Node script finds its node in the folder put first on its PATH (withBinaryOnPath).
+let appGemini = appSupport.appendingPathComponent("node/bin/gemini").path
 let driverBinaries: [String: [String]] = [
-    "claude": ["claude"], "codex": ["codex", "/opt/homebrew/bin/codex", chatGPTAppCodex], "grok": ["grok", "~/.grok/bin/grok"], "gemini": ["gemini", "/opt/homebrew/bin/gemini"],
+    "claude": ["claude"], "codex": ["codex", "/opt/homebrew/bin/codex", chatGPTAppCodex], "grok": ["grok", "~/.grok/bin/grok"], "gemini": ["gemini", "/opt/homebrew/bin/gemini", appGemini],
     "cursor": ["cursor-agent"],
     "opencode": ["opencode", "~/.opencode/bin/opencode"], "antigravity": ["antigravity-acp"], "musecode": ["muse"], "pi": ["pi"],
 ]

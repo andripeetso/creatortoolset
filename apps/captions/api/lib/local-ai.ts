@@ -6,7 +6,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { type CliId, type ConnectResult, type LocalAiRow, type LocalAiView, type McpResult, type SignInResult } from "../../contracts/local-ai";
 import { planFromCli, type PlanId } from "../../contracts/plans";
-import { addInstanceTo, type ProviderInstance } from "../../contracts/providers";
+import { addInstanceTo, DRIVERS, type Driver, type ProviderInstance } from "../../contracts/providers";
 import { checkInstance } from "../providers";
 import { connectedOwn, modelsFor, ownSettings, parseSettings, saveSettings } from "./providers";
 import { deviceOf, isOnline } from "./devices";
@@ -23,7 +23,8 @@ import { dropAiKey, findUser, newAiKey, type UserRecord } from "../users";
  */
 
 export const CLI_IDS: CliId[] = ["claude", "codex", "gemini"];
-const NAMES: Record<CliId, string> = { claude: "Claude Code", codex: "Codex", gemini: "Gemini CLI" };
+const NAMES: Record<CliId, string> = { claude: "Claude Code", codex: "Codex", gemini: "Gemini" };
+const isCli = (id: string): id is CliId => (CLI_IDS as string[]).includes(id);
 /**
  * The name of this app's entry in the AI tools (claude mcp, codex). A copy of the Mac app beside the released one keeps
  * its data in "Creator Toolset (<name>)" (CT_APP_FOLDER): its entry is "creator-toolset-<name>", so trying the copy never
@@ -104,7 +105,7 @@ export function nvmVersionDirs(home: string): string[] {
 }
 
 /** Where a CLI is installed when the login shell can't say: the usual places, in order. The server may have started with a short PATH (the Mac app's), so the common global install folders are listed too. */
-export function fallbackCandidates(id: CliId, home: string, nvmDirs: string[]): string[] {
+export function fallbackCandidates(id: string, home: string, nvmDirs: string[]): string[] {
   return [
     `/opt/homebrew/bin/${id}`,
     `/usr/local/bin/${id}`,
@@ -116,6 +117,10 @@ export function fallbackCandidates(id: CliId, home: string, nvmDirs: string[]): 
     `/usr/bin/${id}`,
     // the Codex the ChatGPT app carries: OpenAI's own program with the same sign-in, so that person needs no download
     ...(id === "codex" ? ["/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex"] : []),
+    // the Gemini CLI Connect installed: beside the app's own Node.js, which it runs on (installGemini)
+    ...(id === "gemini" ? [geminiBin()] : []),
+    // Grok's and OpenCode's own installers put them in a folder of their own (the Mac app looks there too)
+    ...(id === "grok" || id === "opencode" ? [path.join(home, `.${id}`, "bin", id)] : []),
   ];
 }
 
@@ -130,6 +135,8 @@ export function forgetCli(id: CliId): void {
 // CT_APP_FOLDER: the Mac app's own Application Support folder (Server.swift); the default is the released app's.
 const nodeRoot = (): string =>
   path.join(process.env.CT_APP_FOLDER || path.join(os.homedir(), "Library", "Application Support", "Creator Toolset"), "node");
+/** Where Connect installs Gemini CLI: in the managed Node's own bin folder, so the Node script finds its node beside it. */
+const geminiBin = (): string => path.join(nodeRoot(), "bin", "gemini");
 /** PATH for a spawn: the binary's own folder, the managed Node's (once this server installed it), then the rest. */
 export const toolPath = (bin: string): string =>
   [path.dirname(bin), ...(existsSync(path.join(nodeRoot(), "bin")) ? [path.join(nodeRoot(), "bin")] : []), process.env.PATH ?? ""].join(":");
@@ -223,7 +230,8 @@ export const parseVersion = (text: string): string | undefined => text.split("\n
 
 /** The raw text, as the message a person sees (plain words; the raw text stays for Details). */
 export function plainError(raw: string): { state: "signin" | "missing" | "failed"; message: string } {
-  if (/not logged in|\/login|log in|authentication|unauthorized|401/i.test(raw)) return { state: "signin", message: "Not signed in yet." };
+  // "auth method": Gemini CLI with no sign-in chosen ("Please set an Auth method in your …/settings.json")
+  if (/not logged in|\/login|log in|authentication|auth method|unauthorized|401/i.test(raw)) return { state: "signin", message: "Not signed in yet." };
   if (/timed out|timeout|did not pick up/i.test(raw)) return { state: "failed", message: "It took too long to answer. Try again." };
   if (/ENOENT|command not found|no such file/i.test(raw)) return { state: "missing", message: MISSING };
   return { state: "failed", message: "It didn't answer. Try again." };
@@ -273,13 +281,17 @@ async function codexSupportsUrl(): Promise<boolean> {
 
 /** The state of one CLI on this Mac, read from the CLI itself. `home` is where Claude folders are looked for. */
 export async function probeCli(id: CliId, home = os.homedir()): Promise<Probe> {
-  const v = await runCli(id, ["--version"], 2000);
-  // found only when --version exits 0: a timeout or a crash is not a found CLI (M-53)
+  const v = await runCli(id, ["--version"], 10_000);
+  // found only when --version exits 0: a timeout or a crash is not a found CLI (M-53). 10 s: Gemini CLI, a Node
+  // script, took 2.7 s to answer on its first start after install
   if (!v || v.code !== 0) return { id, found: false, signedIn: null };
   const version = parseVersion(v.stdout || v.stderr);
   const bin = bins.get(id);
   const base: Probe = { id, found: true, version, signedIn: null, bin, real: bin ? safeReal(bin) : undefined };
-  if (id === "gemini") return base;
+  // Gemini CLI has no status command: its Google sign-in is the file it saves (existence only; GEMINI_CLI_HOME moves it).
+  // While our sign-in still runs, it is not done yet: the file lands before Gemini sets up the account and saves the
+  // sign-in method, and a run before that fails ("Please set an Auth method").
+  if (id === "gemini") return { ...base, signedIn: !logins.has("gemini") && existsSync(path.join(process.env.GEMINI_CLI_HOME || home, ".gemini", "oauth_creds.json")) };
   if (id === "codex") {
     const ls = await runCli("codex", ["login", "status"], 5000);
     return { ...base, signedIn: ls ? parseCodexLogin(ls.stdout + "\n" + ls.stderr) : null, supportsUrl: await codexSupportsUrl() };
@@ -318,14 +330,36 @@ export async function probe(id: CliId, fresh = false, home = os.homedir()): Prom
   return p;
 }
 
+/* ---- the other AIs the Mac app runs ---- */
+
+/**
+ * The other AIs the Mac app runs (ClaudeRequest.swift runnableDrivers), by the command it starts (MacReport.swift
+ * driverBinaries). Setup lists the ones on this Mac and connects them as they are set up there: it never installs one or
+ * signs one in.
+ */
+export const OTHER_AIS: Partial<Record<Driver, string>> = { grok: "grok", cursor: "cursor-agent", opencode: "opencode", antigravity: "antigravity-acp", pi: "pi" };
+
+/** The other AIs on this Mac: one login shell's `command -v` for all of them, then the usual folders (as lookup). */
+export async function otherAis(home = os.homedir()): Promise<Driver[]> {
+  const ids = Object.keys(OTHER_AIS) as Driver[];
+  const out = await run("/bin/zsh", ["-lic", `command -v ${ids.map((id) => OTHER_AIS[id]).join(" ")}`], { timeout: 5000 });
+  const onPath = new Set(out.stdout.split("\n").map((l) => l.trim()).filter((l) => l.startsWith("/")).map((l) => path.basename(l)));
+  const nvm = nvmVersionDirs(home);
+  return ids.filter((id) => onPath.has(OTHER_AIS[id]!) || fallbackCandidates(OTHER_AIS[id]!, home, nvm).some(copyAt));
+}
+
 /* ---- the view ---- */
 
 /** The rows setup shows: each CLI, found on this Mac or not. */
 export async function localAiView(username: string, mcpTo: CliId[], fresh = false): Promise<LocalAiView> {
   // fresh: Check again. Nothing cached is used, so a CLI installed a moment ago is found and its sign-in is read again.
   if (fresh) CLI_IDS.forEach(forgetCli);
-  const probed = await Promise.all(CLI_IDS.map((id) => probe(id, fresh)));
+  const [probed, found] = await Promise.all([Promise.all(CLI_IDS.map((id) => probe(id, fresh))), otherAis()]);
   const own = ownSettings(username)?.instances ?? [];
+  const connected = (id: string) => {
+    const inst = own.find((i) => i.id === `local-${id}`);
+    return !!(inst?.enabled && inst.lastCheck?.ok);
+  };
   const rows: LocalAiRow[] = [];
   for (const p of probed) {
     // not installed: still a row (Providers offers Install); the Own AI page lists only the found ones
@@ -344,13 +378,13 @@ export async function localAiView(username: string, mcpTo: CliId[], fresh = fals
       version: p.version,
       signedIn: p.signedIn,
       ...(p.plan ? { plan: p.plan } : {}),
-      connected: !!(inst?.enabled && lastCheck?.ok),
+      connected: connected(p.id),
       ...(lastCheck ? { lastCheck } : {}),
       mcp,
       ...(mcp === "update" ? { updateCommand: codexUpdateCommand(p.bin ?? "", p.real) } : {}),
     });
   }
-  return { local: true, rows };
+  return { local: true, rows, others: found.map((id) => ({ id, connected: connected(id) })) };
 }
 
 /* ---- install: the vendors' own routes, run here as child processes (no Terminal) ---- */
@@ -418,19 +452,26 @@ async function installNode(): Promise<Failed | null> {
     const tgz = path.join(dir, file);
     const sums = path.join(dir, "SHASUMS256.txt");
     const dl = "Couldn't download Node.js. Check the internet connection, then try again.";
-    const failed = (await step("/usr/bin/curl", ["-fL", "--retry", "2", "-o", tgz, `${base}/${file}`], process.env, dl)) ?? (await step("/usr/bin/curl", ["-fL", "-o", sums, `${base}/SHASUMS256.txt`], process.env, dl));
+    // 50 MB on a slow connection: half an hour, and a dropped download carries on where it stopped (as Codex's)
+    const failed =
+      (await step("/usr/bin/curl", ["-fL", "--retry", "5", "--retry-all-errors", "-C", "-", "-o", tgz, `${base}/${file}`], process.env, dl, 30 * 60_000)) ??
+      (await step("/usr/bin/curl", ["-fL", "--retry", "5", "-o", sums, `${base}/SHASUMS256.txt`], process.env, dl));
     if (failed) return failed;
     const want = readFileSync(sums, "utf8").split("\n").find((l) => l.endsWith(`  ${file}`))?.split(" ")[0];
     const got = createHash("sha256").update(readFileSync(tgz)).digest("hex");
     if (!want || want !== got) return { message: "The Node.js download didn't check out, so it wasn't used. Try again.", raw: `expected ${want ?? "no checksum"}, got ${got}` };
     mkdirSync(nodeRoot(), { recursive: true });
-    return step("/usr/bin/tar", ["-xzf", tgz, "-C", nodeRoot(), "--strip-components", "1"], process.env, "Couldn't unpack Node.js. Try again.");
+    // awaited here: `finally` removes the download, and tar must have read it by then
+    return await step("/usr/bin/tar", ["-xzf", tgz, "-C", nodeRoot(), "--strip-components", "1"], process.env, "Couldn't unpack Node.js. Try again.");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 }
 
-/** Gemini CLI: npm, from the managed Node.js when this Mac has none (npm itself needs Node). */
+/**
+ * Gemini CLI: Google's npm package, installed with the managed Node.js into that Node's own folder (geminiBin). The CLI
+ * is a Node script: beside its node it runs from the Mac app too, which puts only the program's folder first on PATH.
+ */
 async function installGemini(): Promise<Failed | null> {
   if (!existsSync(path.join(nodeRoot(), "bin", "node"))) {
     const node = await installNode();
@@ -438,9 +479,10 @@ async function installGemini(): Promise<Failed | null> {
   }
   return step(
     path.join(nodeRoot(), "bin", "npm"),
-    ["install", "-g", "--prefix", path.join(os.homedir(), ".local"), "@google/gemini-cli"],
-    envWith(path.join(nodeRoot(), "bin"), localBin()),
+    ["install", "-g", "--prefix", nodeRoot(), "@google/gemini-cli"],
+    envWith(path.join(nodeRoot(), "bin")),
     `Couldn't install ${NAMES.gemini}. Check the internet connection, then try again.`,
+    30 * 60_000,
   );
 }
 
@@ -451,7 +493,7 @@ async function installGemini(): Promise<Failed | null> {
 export async function installCli(id: CliId): Promise<SignInResult> {
   const failed = id === "claude" ? await installClaude() : id === "codex" ? await installCodex() : await installGemini();
   if (failed) return { ok: false, message: failed.message, raw: failed.raw };
-  const bin = path.join(localBin(), id);
+  const bin = id === "gemini" ? geminiBin() : path.join(localBin(), id);
   const v = await run(bin, ["--version"], { env: { ...process.env, PATH: toolPath(bin) }, timeout: 15_000 });
   forgetCli(id); // the next look reads the machine again
   if (v.code !== 0) return { ok: false, message: `${NAMES[id]} installed, but it didn't start. Try again.`, raw: tailOf(v) };
@@ -464,15 +506,43 @@ export async function installCli(id: CliId): Promise<SignInResult> {
 const logins = new Map<CliId, ChildProcess>();
 
 /**
- * Starts the vendor's sign-in (its browser opens) as a child process. The page checks the sign-in every few seconds
- * until it is done. Gemini CLI signs in from its own screen.
+ * Gemini CLI has no sign-in command. Its editor mode (`--acp`, the Agent Client Protocol: JSON lines on stdin and stdout)
+ * signs in when asked: `authenticate` with its Google-account method opens Google's sign-in in the browser, waits for it
+ * (five minutes at most), saves the login (probeCli reads that) and answers. The answer, either way, ends the child.
  */
+function geminiLogin(bin: string): ChildProcess {
+  const child = spawn(bin, ["--acp"], { env: { ...process.env, PATH: toolPath(bin) }, stdio: ["pipe", "pipe", "pipe"] });
+  const send = (id: number, method: string, params: object) => child.stdin?.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+  let buf = "";
+  child.stdout?.on("data", (d: Buffer) => {
+    buf += d.toString();
+    for (let nl = buf.indexOf("\n"); nl >= 0; nl = buf.indexOf("\n")) {
+      const line = buf.slice(0, nl);
+      buf = buf.slice(nl + 1);
+      let msg: { id?: unknown };
+      try {
+        msg = JSON.parse(line) as { id?: unknown };
+      } catch {
+        continue;
+      }
+      if (msg.id === 1) send(2, "authenticate", { methodId: "oauth-personal" });
+      else if (msg.id === 2) child.kill();
+    }
+  });
+  child.stdin?.on("error", () => {}); // a child that died early must not crash the server
+  send(1, "initialize", { protocolVersion: 1, clientCapabilities: {} });
+  return child;
+}
+
+/** Starts the vendor's sign-in (its browser opens) as a child process. The page checks the sign-in every few seconds until it is done. */
 export async function signIn(id: CliId): Promise<SignInResult> {
-  if (id === "gemini") return { ok: false, message: "Gemini CLI signs in on its own. Sign in there, then press Check." };
   const bin = await binFor(id);
   if (!bin) return { ok: false, message: MISSING };
   logins.get(id)?.kill();
-  const child = spawn(bin, id === "claude" ? ["auth", "login"] : ["login"], { env: { ...process.env, PATH: toolPath(bin) }, stdio: ["ignore", "pipe", "pipe"] });
+  const child =
+    id === "gemini"
+      ? geminiLogin(bin)
+      : spawn(bin, id === "claude" ? ["auth", "login"] : ["login"], { env: { ...process.env, PATH: toolPath(bin) }, stdio: ["ignore", "pipe", "pipe"] });
   logins.set(id, child);
   const started = await new Promise<boolean>((resolve) => {
     child.once("spawn", () => resolve(true));
@@ -500,8 +570,9 @@ export async function signIn(id: CliId): Promise<SignInResult> {
  * passing check saves the instance. The first AI that connects becomes the default; a later one never takes it over
  * (the AI step's picker does that). Mints no key.
  */
-export async function connectCli(username: string, id: CliId, home = os.homedir(), mac?: string): Promise<ConnectResult> {
-  const p = await probe(id, true, home);
+export async function connectCli(username: string, id: Driver, home = os.homedir(), mac?: string): Promise<ConnectResult> {
+  // another AI the Mac app runs: found on this Mac, never installed or signed in here; the check says whether it answers
+  const p = isCli(id) ? await probe(id, true, home) : { found: (await otherAis(home)).includes(id), signedIn: null, home: undefined };
   if (!p.found) return { state: "missing", signedIn: null, answered: null, message: MISSING };
   if (p.signedIn === false) return { state: "signin", signedIn: false, answered: null, message: "Not signed in yet." };
   // this server's own Mac: a device of this account that is answering now, never the first online one of its Macs
@@ -509,7 +580,8 @@ export async function connectCli(username: string, id: CliId, home = os.homedir(
   if (!device || device.owner !== username || !isOnline(device.id)) return { state: "mac", signedIn: p.signedIn, answered: null, message: MAC_ONLY };
 
   const instId = `local-${id}`;
-  const inst: ProviderInstance = { id: instId, driver: id, name: NAMES[id], enabled: true, device: device.id, ...(p.home ? { home: p.home } : {}) };
+  const name = isCli(id) ? NAMES[id] : (DRIVERS.find((d) => d.id === id)?.label ?? id);
+  const inst: ProviderInstance = { id: instId, driver: id, name, enabled: true, device: device.id, ...(p.home ? { home: p.home } : {}) };
   // the same writer as the Settings page's Add provider: addInstanceTo builds the set, parseSettings checks it.
   // A first AI becomes the default with the first model this login really has (modelsFor), not the catalogue's.
   const cur = ownSettings(username);

@@ -102,8 +102,8 @@ The Mac app (Apple silicon, macOS 14 or newer) has the whole server inside it, s
 2. **Open it.** It starts the server and makes your account. It doesn't ask for a password, because the
    account's secret is kept in your Keychain.
 3. **Follow the setup.** It starts with one question: do you want to work in the app, in your own AI, or both?
-   In the app, you pick your tools, make your first project and connect your AI. The app finds Claude Code or
-   Codex, or shows the official commands to install one. In your own AI, one click adds Creator Toolset to
+   In the app, you pick your tools, make your first project and connect your AI. The app connects your ChatGPT,
+   Claude or Google account: it installs what is missing and opens the sign-in. In your own AI, one click adds Creator Toolset to
    Claude Code. Sign-in, the Instagram login and other keys are optional.
 4. **Use it from other devices (optional).** Turn on **This Mac → Access from other devices** (Servers → This Mac…
    in the app's menu bar) and choose a password. Phones and other computers sign in with it.
