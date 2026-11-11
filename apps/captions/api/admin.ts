@@ -8,6 +8,7 @@ import { VIEW_AS } from "./lib/view-as";
 import { addMember, forgetAccount, ownedTeamWithMembers, workspaceOf } from "./lib/workspaces";
 import { forgetGrants } from "./library/grants";
 import { deleteUserContent } from "./retention";
+import { clearTries, codeRequired, setCodeRequired, waitFor } from "./lib/sign-in-code";
 import { isPluginGateId, isRetiredAppId, isTool } from "../contracts/tools";
 import {
   USERNAME_RE,
@@ -17,9 +18,11 @@ import {
   findUser,
   isRole,
   listUsers,
+  passwordProblem,
   setOff,
   setPassword,
   setRole,
+  setSignInCode,
 } from "./users";
 
 /**
@@ -163,6 +166,8 @@ adminApp.get("/users", async (c) => {
       off: u.off,
       createdAt: u.createdAt,
       usage: u.usage,
+      code: !!u.code,
+      locked: waitFor(u.username) > 0,
       projects: footprints.get(u.username)?.projects ?? 0,
       instagramPosts: ig.get(u.username)?.posts ?? 0,
       storageBytes: (footprints.get(u.username)?.bytes ?? 0) + (ig.get(u.username)?.bytes ?? 0),
@@ -182,6 +187,8 @@ adminApp.post("/users", async (c) => {
     return c.json({ error: "Username: 2–24 chars, letters/numbers/dash/underscore" }, 400);
   }
   try {
+    const problem = passwordProblem(body.password ?? "");
+    if (problem) throw new Error(problem);
     createUser(username, body.password ?? "", { role: isRole(body.role) ? body.role : "user" });
     // an account made here joins the admin's workspace as a member on their own AI (Settings → Team)
     const w = workspaceOf(c.get("user").username);
@@ -195,7 +202,8 @@ adminApp.post("/users", async (c) => {
 adminApp.patch("/users/:username", async (c) => {
   const user = findUser(c.req.param("username"));
   if (!user) return c.json({ error: "No such user" }, 404);
-  let body: { password?: string; role?: string; off?: unknown };
+  // `code: false` switches the account's sign-in code off (a lost phone); `unlock: true` lifts the lock on wrong tries
+  let body: { password?: string; role?: string; off?: unknown; code?: unknown; unlock?: unknown };
   try {
     body = await c.req.json();
   } catch {
@@ -203,6 +211,8 @@ adminApp.patch("/users/:username", async (c) => {
   }
   try {
     if (typeof body.password === "string") setPassword(user, body.password);
+    if (body.code === false && user.code) setSignInCode(user, null);
+    if (body.unlock === true) clearTries(user.username);
     if (body.role !== undefined) {
       if (!isRole(body.role)) return c.json({ error: "Role: user, team or admin" }, 400);
       setRole(user, body.role);
@@ -236,6 +246,20 @@ adminApp.delete("/users/:username", async (c) => {
   forgetAccount(target.username);
   forgetGrants(target.username);
   return c.json({ ok: true });
+});
+
+/**
+ * Every password sign-in on this server asks for a sign-in code ({ required }). Turning it on needs the admin's own code
+ * first, and signs out everyone who has none: they set one up at their next sign-in.
+ */
+adminApp.put("/sign-in-code", async (c) => {
+  const b = (await c.req.json().catch(() => ({}))) as { required?: unknown };
+  if (typeof b.required !== "boolean") return c.json({ error: "required: true or false" }, 400);
+  const me = findUser(c.get("user").username);
+  if (b.required && !me?.code) return c.json({ error: "Switch on your own sign-in code first, in Settings → Account" }, 400);
+  if (b.required && !codeRequired()) for (const u of listUsers()) if (!u.code) setSignInCode(u, null, true);
+  setCodeRequired(b.required);
+  return c.json({ required: codeRequired() });
 });
 
 /**
