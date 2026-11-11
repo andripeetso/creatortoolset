@@ -73,7 +73,8 @@ describe("what the builder refuses, in words a person or their AI can act on", (
     ["a file outside the app", { "plugin.ts": head + 'import { x } from "../../../secrets";\nexport default definePlugin({ id: "a", about: x });\n' }, /the app has no/],
     ["a ?url import", { "web.tsx": 'import u from "./a.png?url";\nexport default { id: "a", about: u };\n' }, /imports with \?… work only when the app is built from a checkout/],
     ["a page path the app has", { "web.tsx": 'export default { id: "a", routes: [{ path: "/library", element: null }] };\n' }, /\/library is already a page of the app/],
-    ["a syntax error", { "plugin.ts": head + "export default definePlugin({ id: \"a\", );\n" }, /plugin\.ts:2: /],
+    // the file is named from the plug-in's own folder, wherever the builder was started (the server starts it elsewhere)
+    ["a syntax error", { "plugin.ts": head + "export default definePlugin({ id: \"a\", );\n" }, /^plugin\.ts:2: /],
   ];
   it.each(cases)("refuses %s", async (what, files, why) => {
     await expect(build(folder(what.replace(/\W+/g, "-"), files))).rejects.toThrow(why);

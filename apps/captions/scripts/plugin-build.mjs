@@ -103,7 +103,8 @@ function ownFilesOnly(result, folder) {
 function problems(e, folder) {
   if (!Array.isArray(e?.errors)) return e instanceof Error ? e.message : String(e);
   return e.errors
-    .map((x) => (x.location ? `${path.relative(folder, path.resolve(x.location.file))}:${x.location.line}: ${x.text}` : x.text))
+    // esbuild names a file from the folder it was told to work in, not from where this program was started
+    .map((x) => (x.location ? `${path.relative(folder, path.resolve(folder, x.location.file))}:${x.location.line}: ${x.text}` : x.text))
     .slice(0, 12)
     .join("\n");
 }
