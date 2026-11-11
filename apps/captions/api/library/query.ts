@@ -24,6 +24,12 @@ export function ftsQuery(q: string): string | null {
 const SHOWN = (version: string) =>
   `(SELECT source || char(31) || text FROM descriptions dd WHERE dd.version_id = ${version} ORDER BY dd.source = 'user' DESC LIMIT 1)`;
 
+/**
+ * Finished work, which never has a roll (roll.ts): a file saved as finished (filed_roll 'none', an export) or an asset
+ * with a version in a Finals piece. Review's videos are told by their files (inReview): toCard and roll.ts check those.
+ */
+export const FINISHED = `(a.filed_roll IS 'none' OR EXISTS (SELECT 1 FROM piece_items fp JOIN asset_versions fv ON fv.id = fp.version_id WHERE fv.asset_id = a.id))`;
+
 /** Rewrites an asset's search row (FTS5 has no upsert): its title, tags and the shown description of its current version. */
 export function indexAsset(db: DatabaseSync, assetId: string): void {
   const a = db.prepare(`SELECT library_id, title, ${SHOWN("assets.current_version_id")} AS description FROM assets WHERE id = ?`).get(assetId) as
@@ -76,7 +82,7 @@ export const CARD = `a.id AS id, a.library_id AS library_id, a.kind AS kind, a.t
   EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'thumb') AS has_thumb,
   (SELECT group_concat(tag, char(31)) FROM asset_tags t WHERE t.asset_id = a.id) AS tags,
   (SELECT group_concat(tag, char(31)) FROM asset_tags t WHERE t.asset_id = a.id AND t.source = 'ai') AS ai_tags,
-  ${SHOWN("v.id")} AS description, a.roll AS roll`;
+  ${SHOWN("v.id")} AS description, CASE WHEN ${FINISHED} THEN NULL ELSE a.roll END AS roll, ${FINISHED} AS finished`;
 
 export interface CardRow {
   id: string;
@@ -94,6 +100,7 @@ export interface CardRow {
   ai_tags: string | null;
   description: string | null;
   roll: AssetCard["roll"] | null;
+  finished: number;
 }
 
 /** The SQL for one page of a library's assets, with `limit + 1` rows so the caller knows there is a next page. */
@@ -122,7 +129,7 @@ export function buildAssetQuery(libraryId: string, query: SearchQuery = {}): { s
     params.push(query.to);
   }
   if (query.roll) {
-    where.push("a.roll = ?");
+    where.push(`a.roll = ? AND NOT ${FINISHED}`);
     params.push(query.roll);
   }
   if (query.versions?.length) {
@@ -161,6 +168,7 @@ function cursorOf(c: string): { createdAt: number; id: string } | null {
 export function toCard(r: CardRow): AssetCard {
   const p = (r.probe ? JSON.parse(r.probe) : {}) as Partial<ProbeSummary>;
   const split = (s: string | null) => (s ? s.split("\x1f") : []);
+  const review = inReview(r.id);
   return {
     id: r.id,
     libraryId: r.library_id,
@@ -177,8 +185,9 @@ export function toCard(r: CardRow): AssetCard {
     state: r.state,
     ...(p.capturedAt ? { capturedAt: p.capturedAt } : {}),
     ...(r.trashed_at ? { trashedAt: r.trashed_at } : {}),
-    ...(r.roll ? { roll: r.roll } : {}),
-    ...(inReview(r.id) ? { review: true as const } : {}), // ponytail: two stats a card; a column when pages get big
+    ...(r.roll && !review ? { roll: r.roll } : {}),
+    ...(r.finished || review ? { finished: true as const } : {}),
+    ...(review ? { review: true as const } : {}), // ponytail: two stats a card; a column when pages get big
   };
 }
 

@@ -2,18 +2,24 @@ import type { DatabaseSync } from "node:sqlite";
 import type { AssetCard } from "../../contracts/library";
 import { libraryDb } from "./db";
 import type { ProbeSummary } from "./media/probe";
+import { FINISHED } from "./query";
 import type { Segment } from "./transcribe";
+import { inReview } from "./trash";
 
 /**
  * A-roll and B-roll. A-roll is a take where someone talks to the camera, the takes a video is built on; B-roll is
  * everything laid over them. Every video gets one while it is prepared, from what is there anyway: how much of the clip
  * is speech (the transcript's timed segments against its length), its length, and, when the AI describes the clip, the
  * AI's answer from that same call. A clip filed as A-roll (the AI Editor's footage, the A-roll folder) is A-roll.
- * A clip nobody can tell is B-roll: a wrong A-roll costs more than a missed one. Sound and pictures have no roll.
+ * A clip nobody can tell is B-roll: a wrong A-roll costs more than a missed one. Sound and pictures have no roll, and
+ * neither has finished work (a Review video, a version of a Finals piece, a saved export: query.ts FINISHED): only raw
+ * material is A-roll or B-roll, and a clip that becomes finished loses its roll then.
  * The roll lives on the clip (assets.roll); the A-roll folder is a smart folder that lists it ({"roll":"a"}).
  */
 
 export type Roll = "a" | "b";
+/** What a clip was filed as: a roll for good (the AI Editor's footage), or "none" for finished work. */
+export type Filed = Roll | "none";
 
 /**
  * Where the free signals call it. ponytail: thresholds set on made-up clips (roll.test.ts); tune them on real footage.
@@ -53,7 +59,8 @@ export function decideRoll(free: Roll | null, ai: Roll | null | undefined): Roll
 interface SortRow {
   asset_id: string;
   kind: string;
-  filed_roll: Roll | null;
+  filed_roll: Filed | null;
+  finished: number;
   current: number;
   probe: string | null;
   segments: string | null;
@@ -63,12 +70,12 @@ interface SortRow {
 
 /**
  * Sorts the clip of version `versionId` (its current version only) and stores the roll. Left as it is while the probe
- * or the transcript is still to come. Returns the roll, or null for no roll (sound, pictures, not ready).
+ * or the transcript is still to come. Returns the roll, or null for no roll (sound, pictures, finished work, not ready).
  */
 export function sortRoll(db: DatabaseSync, versionId: string): Roll | null {
   const r = db
     .prepare(
-      `SELECT a.id AS asset_id, a.kind, a.filed_roll, a.current_version_id = v.id AS current, v.probe,
+      `SELECT a.id AS asset_id, a.kind, a.filed_roll, ${FINISHED} AS finished, a.current_version_id = v.id AS current, v.probe,
         (SELECT segments FROM transcripts t WHERE t.version_id = v.id) AS segments,
         EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind = 'transcribe' AND j.state IN ('queued', 'running')) AS hearing,
         (SELECT roll FROM descriptions d WHERE d.version_id = v.id AND d.source = 'ai') AS ai
@@ -78,8 +85,8 @@ export function sortRoll(db: DatabaseSync, versionId: string): Roll | null {
   if (!r?.current || !r.probe) return null;
   const p = JSON.parse(r.probe) as ProbeSummary;
   let roll: Roll | null = null;
-  if (r.kind === "video" && p.vcodec && !p.cover) {
-    if (r.filed_roll) roll = r.filed_roll;
+  if (r.kind === "video" && p.vcodec && !p.cover && !r.finished && !inReview(r.asset_id)) {
+    if (r.filed_roll === "a" || r.filed_roll === "b") roll = r.filed_roll;
     else if (r.hearing) return null;
     else roll = decideRoll(rollFromSpeech(p.duration, !!p.acodec, r.segments ? (JSON.parse(r.segments) as Segment[]) : null), r.ai);
   }
@@ -100,11 +107,16 @@ export function sortAfter(job: { kind: string; version_id: string | null }): voi
   }
 }
 
-/** Every video not sorted yet, sorted from what it already has (no AI, no key): once when the worker starts. Returns how many got a roll. */
+/**
+ * Once when the worker starts: a clip that became finished work (a Finals version) loses its stored roll, and every
+ * video not sorted yet is sorted from what it already has (no AI, no key). Returns how many got a roll.
+ * ponytail: videos that never get one (Review's, Finals') are looked at on every start; mark them if starts get slow
+ */
 export async function sortUnsorted(db: DatabaseSync = libraryDb()): Promise<number> {
   let n = 0;
   let after = "";
   try {
+    db.prepare(`UPDATE assets AS a SET roll = NULL WHERE a.roll IS NOT NULL AND ${FINISHED}`).run();
     for (;;) {
       const rows = db
         .prepare(
@@ -130,18 +142,22 @@ export function rollFolder(db: DatabaseSync, libraryId: string, collectionId: st
   return q && Object.keys(q).length === 1 && (q.roll === "a" || q.roll === "b") ? q.roll : null;
 }
 
-/** Files a video as `roll` for good (the AI Editor's footage, a clip put in the A-roll folder): no sort changes it. */
-export function fileRoll(db: DatabaseSync, assetId: string, roll: Roll): void {
-  db.prepare("UPDATE assets SET filed_roll = ?, roll = ? WHERE id = ? AND kind = 'video'").run(roll, roll, assetId);
+/**
+ * Files an asset for good: a video as a roll (the AI Editor's footage, a clip put in the A-roll folder; never finished
+ * work), or anything as "none" (a finished file saved into the library). No sort changes it.
+ */
+export function fileRoll(db: DatabaseSync, assetId: string, filed: Filed): void {
+  if (filed === "none") db.prepare("UPDATE assets SET filed_roll = 'none', roll = NULL WHERE id = ?").run(assetId);
+  else if (!inReview(assetId)) db.prepare(`UPDATE assets AS a SET filed_roll = ?, roll = ? WHERE a.id = ? AND a.kind = 'video' AND NOT ${FINISHED}`).run(filed, filed, assetId);
 }
 
-type RollCard = Pick<AssetCard, "kind" | "roll" | "state" | "durationS" | "width">;
+type RollCard = Pick<AssetCard, "kind" | "roll" | "state" | "durationS" | "width" | "finished">;
 
-/** Cards counted: A-roll, B-roll, clips still being sorted (a video not failed, before its probe or with a picture), other files. */
+/** Cards counted: A-roll, B-roll, clips still being sorted (raw video not failed, before its probe or with a picture), other files. */
 export function rollCount(cards: RollCard[]): { a: number; b: number; left: number; other: number } {
   const a = cards.filter((c) => c.roll === "a").length;
   const b = cards.filter((c) => c.roll === "b").length;
-  const left = cards.filter((c) => c.kind === "video" && !c.roll && c.state !== "failed" && (!c.durationS || !!c.width)).length;
+  const left = cards.filter((c) => c.kind === "video" && !c.roll && !c.finished && c.state !== "failed" && (!c.durationS || !!c.width)).length;
   return { a, b, left, other: cards.length - a - b - left };
 }
 

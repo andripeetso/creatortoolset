@@ -28,6 +28,8 @@ export interface AssetCard {
   review?: true;
   /** A-roll (someone talks to the camera) or B-roll (the rest), as the library sorted it (api/library/roll.ts); videos only, once sorted */
   roll?: "a" | "b";
+  /** finished work (a Review video, a version of a Finals piece, a saved export): it never has a roll */
+  finished?: true;
 }
 
 export interface AssetDetail extends AssetCard {

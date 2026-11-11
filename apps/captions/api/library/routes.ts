@@ -133,6 +133,7 @@ export async function saveToLibrary(
   filename: string,
   sources: string[],
   libraryId?: string,
+  footage = false,
 ): Promise<{ assetId: string; versionId: string } | { duplicateOf: string } | { error: string; code: "disk_reserve" } | null> {
   const lib =
     libraryId ??
@@ -158,6 +159,7 @@ export async function saveToLibrary(
     d.exec("BEGIN");
     try {
       const assetId = recordVersion(d, { libraryId: lib, versionId, sourceKey, filename, size, sha256, by: username });
+      if (!footage) fileRoll(d, assetId, "none"); // a finished file (an export, a Finals file) is never A-roll or B-roll
       for (const from of new Set(sources)) {
         const src = d.prepare("SELECT a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(from) as
           | { library_id: string }

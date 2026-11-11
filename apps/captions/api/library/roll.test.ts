@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -15,10 +15,10 @@ const { libraryDb, openLibraryDb } = await import("./db");
 const { MIGRATIONS } = await import("./schema");
 const { buildAssetQuery, pageOf } = await import("./query");
 const { expandCollection, collectionApp } = await import("./collections");
-const { recordVersion } = await import("./routes");
+const { recordVersion, saveToLibrary } = await import("./routes");
 const { saveTranscript } = await import("./transcribe");
 const { saveDescribed } = await import("./describe");
-const { decideRoll, rollFromSpeech, rollLine, sortAfter, sortRoll, sortUnsorted } = await import("./roll");
+const { decideRoll, fileRoll, rollFromSpeech, rollLine, sortAfter, sortRoll, sortUnsorted } = await import("./roll");
 const { footageTargetFor } = await import("../editor/ingest");
 const { searchApp } = await import("./search");
 const { brollRows } = await import("../editor/broll");
@@ -159,39 +159,113 @@ describe("sorting the clips in a library", () => {
     expect(pool.length).toBeGreaterThan(1);
   });
 
+  describe("finished work has no roll: only raw material is A-roll or B-roll", () => {
+    const assetOf = (ver: string) => (d().prepare("SELECT id FROM assets WHERE current_version_id = ?").get(ver) as { id: string }).id;
+    const cardOf = (ver: string) => {
+      const q = buildAssetQuery("lib_r", { versions: [ver] });
+      return pageOf(d().prepare(q.sql).all(...q.params) as never, q.limit).items[0]!;
+    };
+    const listed = (roll: "a" | "b", ver: string) => {
+      const q = buildAssetQuery("lib_r", { roll });
+      return (d().prepare(q.sql).all(...q.params) as { version_id: string }[]).some((r) => r.version_id === ver);
+    };
+    const talking = () => {
+      const v = clip();
+      saveTranscript(d(), v, "device", "en", talk);
+      return v;
+    };
+
+    it("a Review video (and an AI Editor draft filed in Review) is never sorted, also when it is talked through", () => {
+      const v = talking();
+      mkdirSync(path.join(dir, "review", assetOf(v)), { recursive: true });
+      writeFileSync(path.join(dir, "review", assetOf(v), "meta.json"), "{}");
+      expect(sortRoll(d(), v)).toBe(null);
+      expect(cardOf(v)).toMatchObject({ review: true, finished: true });
+      expect(cardOf(v).roll).toBeUndefined();
+      expect(listed("a", v) || listed("b", v)).toBe(false);
+    });
+
+    it("a raw clip that becomes a Finals version loses its roll then; the AI Editor's footage too", async () => {
+      const v = talking();
+      const filed = clip("video", probe(12, false), (await footageTargetFor("ana"))!.collectionId);
+      expect([sortRoll(d(), v), sortRoll(d(), filed)]).toEqual(["a", "a"]);
+      d().prepare("INSERT INTO pieces (id, library_id, collection_id, label, created_by, created_at) VALUES ('pce_1', 'lib_r', NULL, 'Reel', 'ana', 0)").run();
+      d().prepare("INSERT INTO piece_items (id, piece_id, version_id, position) VALUES ('pi_1', 'pce_1', ?, 1), ('pi_2', 'pce_1', ?, 2)").run(v, filed);
+      for (const x of [v, filed]) {
+        expect(cardOf(x).roll).toBeUndefined(); // at once, before any sort
+        expect(cardOf(x).finished).toBe(true);
+        expect(listed("a", x)).toBe(false);
+      }
+      const aroll = expandCollection("lib_r", { collectionId: (await footageTargetFor("ana"))!.collectionId })!;
+      const q = buildAssetQuery("lib_r", aroll);
+      expect((d().prepare(q.sql).all(...q.params) as { version_id: string }[]).map((r) => r.version_id)).not.toContain(filed);
+      await sortUnsorted(d()); // the next start: the stored roll goes too
+      expect([rollOf(v), rollOf(filed)]).toEqual([null, null]);
+      expect(sortRoll(d(), v)).toBe(null);
+    });
+
+    it("a finished file saved into the library (a Caption Studio export, a Finals file) is never sorted; footage the assistant adds is", async () => {
+      const file = path.join(dir, "export.mp4");
+      writeFileSync(file, "captioned reel");
+      const saved = (await saveToLibrary("ana", file, "Reel captioned.mp4", [], "lib_r")) as { versionId: string };
+      writeFileSync(file, "a raw take");
+      const raw = (await saveToLibrary("ana", file, "Take.mp4", [], "lib_r", true)) as { versionId: string };
+      for (const x of [saved.versionId, raw.versionId]) {
+        d().prepare("UPDATE asset_versions SET probe = ? WHERE id = ?").run(probe(30), x);
+        saveTranscript(d(), x, "device", "en", talk);
+      }
+      expect(sortRoll(d(), saved.versionId)).toBe(null);
+      expect(cardOf(saved.versionId).finished).toBe(true);
+      expect(sortRoll(d(), raw.versionId)).toBe("a");
+      // and putting the export in the A-roll folder does not make it A-roll
+      fileRoll(d(), assetOf(saved.versionId), "a");
+      expect(sortRoll(d(), saved.versionId)).toBe(null);
+    });
+  });
+
   it("clips from before are sorted from what they have, with no job run", async () => {
     const old = clip();
     saveTranscript(d(), old, "deepgram", "en", talk);
     d().prepare("UPDATE assets SET roll = NULL").run();
     expect(await sortUnsorted(d())).toBeGreaterThan(1);
     expect(rollOf(old)).toBe("a");
-    expect(d().prepare("SELECT COUNT(*) AS n FROM jobs").get()).toEqual({ n: 1 }); // only the first test's transcribe
+    expect(d().prepare("SELECT COUNT(*) AS n FROM jobs WHERE kind = 'transcribe'").get()).toEqual({ n: 1 }); // only the first test's
   });
 });
 
 describe("the A-roll folder people already have", () => {
-  it("becomes the smart folder of A-roll: its videos filed as A-roll, a picture in it is listed under All only, other folders untouched", () => {
+  it("one of videos only becomes the smart A-roll folder, its videos filed as A-roll; one holding anything else stays as it is", () => {
     const at = MIGRATIONS.findIndex((m) => m.includes("filed_roll"));
     const file = path.join(dir, "before.db");
     const old = new DatabaseSync(file);
     for (const m of MIGRATIONS.slice(0, at)) old.exec(m);
     old.exec(`PRAGMA user_version = ${at}`);
     old.exec(`
-      INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_o', 'bo', 'O', 'local', 0);
-      INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES ('take', 'lib_o', 'video', 'Take', 'bo', 0), ('still', 'lib_o', 'image', 'Still', 'bo', 0), ('sea', 'lib_o', 'video', 'Sea', 'bo', 0);
-      INSERT INTO collections (id, library_id, parent_id, name, kind, query, created_at, created_by) VALUES ('col_a', 'lib_o', NULL, 'A-roll', 'manual', NULL, 0, 'bo'), ('col_b', 'lib_o', NULL, 'B-roll', 'manual', NULL, 0, 'bo');
-      INSERT INTO collection_items (collection_id, asset_id, position, added_by) VALUES ('col_a', 'take', 1, 'bo'), ('col_a', 'still', 2, 'bo'), ('col_b', 'sea', 1, 'bo');
+      INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_o', 'bo', 'O', 'local', 0), ('lib_m', 'mo', 'M', 'local', 0);
+      INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES
+        ('take', 'lib_o', 'video', 'Take', 'bo', 0), ('sea', 'lib_o', 'video', 'Sea', 'bo', 0), ('reel', 'lib_o', 'video', 'Reel', 'bo', 0),
+        ('mtake', 'lib_m', 'video', 'Take', 'mo', 0), ('still', 'lib_m', 'image', 'Still', 'mo', 0);
+      INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at) VALUES ('v_take', 'take', 1, 'k1', 1, 's1', 'ready', 'bo', 0), ('v_reel', 'reel', 1, 'k2', 1, 's2', 'ready', 'bo', 0);
+      INSERT INTO derived_from (version_id, source_version_id, note) VALUES ('v_reel', 'v_take', 'export');
+      INSERT INTO collections (id, library_id, parent_id, name, kind, query, created_at, created_by) VALUES
+        ('col_a', 'lib_o', NULL, 'A-roll', 'manual', NULL, 0, 'bo'), ('col_b', 'lib_o', NULL, 'B-roll', 'manual', NULL, 0, 'bo'), ('col_m', 'lib_m', NULL, 'A-roll', 'manual', NULL, 0, 'mo');
+      INSERT INTO collection_items (collection_id, asset_id, position, added_by) VALUES ('col_a', 'take', 1, 'bo'), ('col_b', 'sea', 1, 'bo'), ('col_m', 'mtake', 1, 'mo'), ('col_m', 'still', 2, 'mo');
     `);
     old.close();
     const db = openLibraryDb(file);
-    expect(db.prepare("SELECT kind, query FROM collections WHERE id = 'col_a'").get()).toEqual({ kind: "smart", query: '{"roll":"a"}' });
-    expect(db.prepare("SELECT kind FROM collections WHERE id = 'col_b'").get()).toEqual({ kind: "manual" });
+    expect(db.prepare("SELECT id, kind, query FROM collections ORDER BY id").all()).toEqual([
+      { id: "col_a", kind: "smart", query: '{"roll":"a"}' },
+      { id: "col_b", kind: "manual", query: null }, // a person's own B-roll folder is theirs
+      { id: "col_m", kind: "manual", query: null }, // a picture in it: left exactly as it is
+    ]);
     expect(db.prepare("SELECT id, filed_roll FROM assets ORDER BY id").all()).toEqual([
+      { id: "mtake", filed_roll: null },
+      { id: "reel", filed_roll: "none" }, // an export saved before: finished work
       { id: "sea", filed_roll: null },
       { id: "still", filed_roll: null },
       { id: "take", filed_roll: "a" },
     ]);
-    expect(db.prepare("SELECT COUNT(*) AS n FROM collection_items").get()).toEqual({ n: 3 }); // kept, unread by a smart folder
+    expect(db.prepare("SELECT COUNT(*) AS n FROM collection_items").get()).toEqual({ n: 4 }); // every row kept
     db.close();
   });
 });
@@ -204,5 +278,6 @@ describe("the line the assistant says", () => {
     expect(rollLine([card(), card()])).toBe("2 clips added: still being sorted into A-roll and B-roll");
     expect(rollLine([card("b"), card(undefined, "audio")])).toBe("1 clip added: 1 B-roll. 1 other file added too");
     expect(rollLine([card(undefined, "audio")])).toBe("1 file added");
+    expect(rollLine([card("a"), { ...card(), finished: true as const }])).toBe("1 clip added: 1 A-roll. 1 other file added too"); // a Finals reel: never waited for
   });
 });
