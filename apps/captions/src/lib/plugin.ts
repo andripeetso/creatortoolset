@@ -73,8 +73,8 @@ export interface PluginReplacements {
 
 export type ReplaceSlot = keyof PluginReplacements;
 
-/** The kinds of item a plug-in can put buttons on (a session in Content Workshop, a review upload, an export, a library item). */
-export type ItemKind = "export" | "review" | "session" | "library";
+/** The kinds of item a plug-in can put buttons on (a session in Content Workshop, a review upload, an export, a library item, the project open in Caption Studio). */
+export type ItemKind = "export" | "review" | "session" | "library" | "captions";
 
 /** A button a plug-in puts on an item. `onRun` gets the item's id. A gated one is left out while its gate is off for the account. */
 export interface PluginItemAction {
@@ -353,6 +353,7 @@ export function webPluginAdds(p: WebPlugin, ctx: { me: Me | null; hosted: boolea
     review: ["Review versions", "/review"],
     session: ["Workshop pieces", "/workshop"],
     library: ["Media Library items", "/library"],
+    captions: ["Caption Studio projects", "/captions"],
   };
   for (const [kind, actions] of Object.entries(p.itemActions ?? {}) as [ItemKind, PluginItemAction[]][]) {
     const [noun, to] = places[kind];

@@ -36,6 +36,26 @@ import { ProjectSettingsDialog } from "@/components/ProjectSettingsDialog";
 import { AppBar } from "@/components/AppBar";
 import { confirmDiscardUnsavedProject, guardLeaveLink } from "@/lib/persistence-guard";
 import { PersistenceBadge } from "@/components/PersistenceStatus";
+import { useMe } from "@/lib/auth";
+import { itemActionsFor } from "@/lib/plugin";
+import { webPlugins } from "@/plugins.gen";
+
+/** Buttons a plug-in puts on the open project (itemActions.captions in its web.tsx), gated per account. `onRun` gets the project's id. */
+function ProjectActions() {
+  const me = useMe();
+  const projectId = useStudio((s) => s.projectId);
+  if (!projectId) return null;
+  return itemActionsFor(me, webPlugins, "captions").map((a) => (
+    <button
+      key={a.label}
+      type="button"
+      onClick={() => void a.onRun(projectId)}
+      className="flex items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800"
+    >
+      {a.icon ? <a.icon className="h-3.5 w-3.5" /> : null} {a.label}
+    </button>
+  ));
+}
 
 /** Header dropdown: jump between saved projects or back to all projects. */
 function ProjectSwitcher() {
@@ -386,6 +406,7 @@ export default function Home() {
               }}
             />
           </label>
+          <ProjectActions />
           <SendToCleanerButton />
           <button
             onClick={() => setExportOpen(true)}
