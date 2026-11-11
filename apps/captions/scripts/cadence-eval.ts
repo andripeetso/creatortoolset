@@ -15,9 +15,14 @@
  * its address and model name in CADENCE_EVAL_URL and CADENCE_EVAL_MODEL (the default when both are set);
  * `anthropic` is the key in ANTHROPIC_API_KEY. A score says how close the lines are to the reference file, which is
  * one draft of the lines and not a verdict on them.
+ *
+ * CADENCE_EVAL_FIXTURES names another folder to read cadence-clip-01.json and cadence-clip-01.reference.txt from
+ * (the same shape): the clip here has scrambled placeholder words, so a score on it says nothing about meaning.
  */
 import "dotenv/config";
 import { readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 import type { ProviderId, ProviderOpts } from "../api/ai-complete";
 import { layoutCues } from "../src/lib/captions";
 import { cueLineCounts, sliceLines, unplannedBreaks } from "../src/lib/caption-layout";
@@ -29,7 +34,9 @@ import {
   type Mark,
 } from "../api/lib/cadence-lines";
 
-const FIXTURES = new URL("../src/lib/__fixtures__/", import.meta.url);
+const FIXTURES = process.env.CADENCE_EVAL_FIXTURES
+  ? pathToFileURL(path.resolve(process.env.CADENCE_EVAL_FIXTURES) + path.sep)
+  : new URL("../src/lib/__fixtures__/", import.meta.url);
 const fx = JSON.parse(readFileSync(new URL("cadence-clip-01.json", FIXTURES), "utf8")) as {
   approved: string[];
   windowStepS: number;
