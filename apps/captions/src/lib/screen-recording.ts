@@ -52,6 +52,15 @@ export type ScreenLook = {
   /** In a frame of another shape: fill it (crop, the view follows the pointer) instead of fitting the whole screen. */
   fill: boolean;
   /**
+   * What a zoom does to the window the recording sits in (a look without it: "inside", as it always was).
+   * - "inside": the window stays as it is and the picture is zoomed within it, cropped on every side.
+   * - "space": the window grows into the empty space around it, up to the padding, and only then crops. A square
+   *   recording in a wide frame keeps its whole width at 1.5× where "inside" would cut a third of it off.
+   * - "frame": the window itself is zoomed, corners and all, past the padding to the frame's edges.
+   * Only where the whole recording is shown at rest: a frame that is filled (`fill`) has no window to grow.
+   */
+  zoomFit?: "inside" | "space" | "frame";
+  /**
    * The camera beside the screen, when the recording has one. A look without `camera` gets `defaultCamera()` when a
    * camera exists, so old looks show the camera as a bubble.
    */
@@ -232,6 +241,7 @@ export function defaultLook(events: ScreenEvents, duration: number): ScreenLook 
     shadow: true,
     shape: "source",
     fill: false,
+    zoomFit: "space",
   };
 }
 
@@ -259,6 +269,8 @@ export function normalizeLook(saved: Partial<ScreenLook> | null | undefined, eve
     zooms.push({ start, end, x: num(z.x, 0, 1, 0.5), y: num(z.y, 0, 1, 0.5), scale: num(z.scale, 1.2, 4, DEFAULT_ZOOM) });
   }
   look.zooms = zooms;
+  // a look saved before a zoom could make its window grow keeps the window as it was
+  look.zoomFit = saved.zoomFit === "space" || saved.zoomFit === "frame" ? saved.zoomFit : "inside";
   if (saved.trim) look.trim = trimOf(saved, duration);
   return look;
 }
@@ -422,11 +434,47 @@ export function layout(
     const p = smoothPointer(path, t, 1.5); // a cropped frame keeps the pointer in view
     if (p) [cx, cy] = [p.x, p.y];
   }
-  const sw = baseW / cam.scale;
-  const sh = baseH / cam.scale;
-  const sx = Math.min(srcW - sw, Math.max(0, cx * srcW - sw / 2));
-  const sy = Math.min(srcH - sh, Math.max(0, cy * srcH - sh / 2));
-  return { box, src: { x: sx, y: sy, w: sw, h: sh } as Rect };
+  const grows = zoomGrows(look) && cam.scale > 1;
+  if (!grows) {
+    const sw = baseW / cam.scale;
+    const sh = baseH / cam.scale;
+    const sx = Math.min(srcW - sw, Math.max(0, cx * srcW - sw / 2));
+    const sy = Math.min(srcH - sh, Math.max(0, cy * srcH - sh / 2));
+    return { box, src: { x: sx, y: sy, w: sw, h: sh } as Rect, window: box, grown: 1 };
+  }
+  // The window grows with the zoom, as far as `limit` lets it: the padded area ("space") or the whole frame
+  // ("frame", not over a camera beside it). The point looked at goes to the limit's middle; a window that does not
+  // cover the limit yet stays centred in it, one that does never leaves a gap. What is drawn is the part of the grown
+  // window inside the limit.
+  const whole = look.zoomFit === "frame" && camera?.layout !== "side";
+  const limit: Rect = whole ? { x: 0, y: 0, w: outW, h: outH } : inner;
+  const W = box.w * cam.scale;
+  const H = box.h * cam.scale;
+  const place = (size: number, from: number, room: number, at: number) =>
+    size <= room ? from + (room - size) / 2 : Math.min(from, Math.max(from + room - size, from + room / 2 - at * size));
+  const grownBox: Rect = { x: place(W, limit.x, limit.w, cx), y: place(H, limit.y, limit.h, cy), w: W, h: H };
+  const x0 = Math.max(grownBox.x, limit.x);
+  const y0 = Math.max(grownBox.y, limit.y);
+  const seen: Rect = { x: x0, y: y0, w: Math.min(grownBox.x + W, limit.x + limit.w) - x0, h: Math.min(grownBox.y + H, limit.y + limit.h) - y0 };
+  const src: Rect = { x: ((seen.x - grownBox.x) / W) * srcW, y: ((seen.y - grownBox.y) / H) * srcH, w: (seen.w / W) * srcW, h: (seen.h / H) * srcH };
+  // "space": the window is what is seen (its corners stay at the padding). "frame": the window is the grown one,
+  // its corners and shadow growing with it and leaving the frame.
+  return { box: seen, src, window: whole ? grownBox : seen, grown: whole ? cam.scale : 1 };
+}
+
+/** A zoom makes the window grow: the look says so, and the whole recording is shown at rest. */
+export function zoomGrows(look: Pick<ScreenLook, "zoomFit" | "fill" | "shape">): boolean {
+  return (look.zoomFit === "space" || look.zoomFit === "frame") && (!look.fill || look.shape === "source");
+}
+
+/**
+ * The part of the recording a zoom shows when it is all the way in and looks at its own aim (0–1 of the picture), in
+ * a frame `outW`×`outH`: the box the zoom's aim pad draws.
+ */
+export function zoomView(look: ScreenLook, zoom: Zoom, srcW: number, srcH: number, outW: number, outH: number): Rect {
+  const still = { ...look, follow: false, zooms: [{ ...zoom, start: -10, end: 10 }] };
+  const { src } = layout(still, [], 0, srcW, srcH, outW, outH);
+  return { x: src.x / srcW, y: src.y / srcH, w: src.w / srcW, h: src.h / srcH };
 }
 
 // the macOS-style arrow, 0–1 of its height (tip at 0,0)
@@ -526,8 +574,8 @@ export function drawFrame(
     return;
   }
 
-  const { box, src } = layout(look, path, t, srcW, srcH, outW, outH, cam);
-  const radius = look.radius * short;
+  const { box, src, window, grown } = layout(look, path, t, srcW, srcH, outW, outH, cam);
+  const radius = look.radius * short * grown;
   const shadow = shadowOf(look);
   if (shadow > 0 && look.padding > 0) {
     ctx.save();
@@ -535,12 +583,12 @@ export function drawFrame(
     ctx.shadowBlur = short * 0.04;
     ctx.shadowOffsetY = short * 0.012;
     ctx.fillStyle = "#000";
-    roundRect(ctx, box, radius);
+    roundRect(ctx, window, radius);
     ctx.fill();
     ctx.restore();
   }
   ctx.save();
-  roundRect(ctx, box, radius);
+  roundRect(ctx, window, radius);
   ctx.clip();
   ctx.imageSmoothingQuality = opts.quality ?? "high";
   const pw = Math.max(1, Math.round(box.w));

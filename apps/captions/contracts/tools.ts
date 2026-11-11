@@ -155,7 +155,7 @@ const OWN_COMPUTER = "the Mac app transcribes without one; a key is faster";
 export const TOOL_NEEDS: Record<Tool, readonly Need[]> = {
   instagram: [
     { what: "A project", anyOf: ["project"], form: "project" },
-    { what: "Posts to read: your own Apify key (Apify bills you for each read)", anyOf: ["apify", "instagram"], form: "apify" },
+    { what: "Posts to read: your own Apify key", anyOf: ["apify", "instagram"], form: "apify" },
     { what: "AI to read posts and slides", anyOf: ["ai"], form: "ai", optional: true },
     { what: "TypeSafe Jev: sharper picks", anyOf: ["TYPESAFE_API_KEY"], form: "keys", optional: true },
   ],

@@ -104,8 +104,8 @@ for that host (signed in).
 its `PATH` (ffprobe), and `NODE_ENV=production`, `PORT`, `HOST=127.0.0.1`, `DATA_DIR`, `APP_SECRET`,
 `PLAYWRIGHT_BROWSERS_PATH`, `CT_LOCAL=1` and `CT_EXIT_WITH_PARENT=1`; a release build (one `build-app.sh` signed with
 `SIGN_IDENTITY`, marked `CTChannel` in its Info.plist) also passes `CT_CHANNEL=release` and `CT_VERSION` (the app's
-version). Ad-hoc builds and `swift run` leave both unset. Plug-ins add `CT_PLUGINS_ON` and `CT_PLUGINS_PAUSED` (see "Plug-ins"). The window shows "Starting the server
-on this Mac…" and opens `http://127.0.0.1:43128` once `/api/health` answers (polled every 200 ms, up to 30 s).
+version). Ad-hoc builds and `swift run` leave both unset. Plug-ins add `CT_PLUGINS_ON` and `CT_PLUGINS_PAUSED` (see "Plug-ins"). The window shows the CT mark drawing itself
+and opens `http://127.0.0.1:43128` once `/api/health` answers (polled every 200 ms, up to 30 s).
 
 - **Data:** `~/Library/Application Support/Creator Toolset/data` by default (see "Data location"); Chromium goes
   to `…/Creator Toolset/runtime/chromium`.

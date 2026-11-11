@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { LimitsIdentity, LimitWindow } from "@contracts/providers";
-import { claudeLimitReset, countedWindow, formatDuration, leftOf, noticeOf, resetsIn } from "./limits";
+import type { LimitsIdentity, LimitWindow, ProvidersView } from "@contracts/providers";
+import { claudeLimitReset, countedWindow, formatDuration, leftOf, noticeOf, planAlert, resetsIn } from "./limits";
 
 const NOW = 1_800_000_000_000;
 const H = 3_600_000;
@@ -83,5 +83,25 @@ describe("when a Claude limit comes back", () => {
   it("says nothing when a used-up window has no reset time, or only Codex is used up", () => {
     expect(claudeLimitReset([claude([session(100)])], NOW)).toBeNull();
     expect(claudeLimitReset([id([session(100, NOW + H)], { driver: "codex" })], NOW)).toBeNull();
+  });
+});
+
+describe("the bar's plan line", () => {
+  const view = (limits: LimitsIdentity[], checks: ProvidersView["checks"] = {}) => ({ limits, checks }) as unknown as ProvidersView;
+  const weekly = (usedPercent: number) => w({ id: "seven_day", kind: "weekly", label: "Weekly", usedPercent, resetsAt: NOW + 2 * H });
+  const note = "Your Claude plan's weekly limit is reached; it resets 5pm.";
+
+  it("says nothing while every plan has room", () => {
+    expect(planAlert(view([id([weekly(50)])]), NOW)).toBeNull();
+  });
+
+  it("says a plan that is nearly used up, and one that is used up", () => {
+    expect(planAlert(view([id([weekly(88)])]), NOW)?.text).toBe("Claude · Weekly: 12% left");
+    expect(planAlert(view([id([weekly(100)])]), NOW)?.text).toBe("Claude · Weekly used up · resets in 2h 0m");
+  });
+
+  it("a call that met the limit shows with no reading, and a newer reading wins over it", () => {
+    expect(planAlert(view([], { "me:claude_hub": { ok: true, ms: 0, at: NOW - H, note } }), NOW)).toEqual({ text: "Claude weekly limit reached · resets 5pm", full: note });
+    expect(planAlert(view([id([weekly(30)])], { "me:claude_hub": { ok: true, ms: 0, at: NOW - H, note } }), NOW)).toBeNull();
   });
 });

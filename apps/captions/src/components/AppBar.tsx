@@ -2,6 +2,7 @@ import { Fragment, type ReactNode } from "react";
 import { Link, useLocation } from "react-router";
 import { Check, ChevronDown, ChevronRight } from "lucide-react";
 import { HistoryArrows, HomeLink } from "@/components/HomeLink";
+import { PlanLimitPill } from "@/components/PlanLimitPill";
 import { UserMenu } from "@/components/UserMenu";
 import {
   DropdownMenu,
@@ -73,6 +74,7 @@ export function AppBar({
       </nav>
       <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5 sm:shrink-0 sm:flex-nowrap sm:gap-2">
         {children}
+        {account && <PlanLimitPill />}
         {account && <UserMenu />}
       </div>
     </header>

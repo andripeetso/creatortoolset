@@ -11,10 +11,17 @@ let codexUsageURL = "https://chatgpt.com/backend-api/wham/usage"
 /// The limits at start and then this often (seconds).
 let limitsInterval = 300
 
-/// The opt-in per Mac (UserDefaults): off by default. Reading the limits uses the Claude login in the keychain and the
-/// undocumented usage pages, so nothing is read or called until the owner of this Mac turns it on (Settings → This Mac).
+/// The switch per Mac (UserDefaults). Reading the limits uses the Claude login in the keychain and the undocumented usage
+/// pages, so nothing is read or called before Claude or Codex first runs for the site here (the person connected it:
+/// limitsOnFirstRun); after that it stays as the person set it (Settings → This Mac, Settings → Usage).
 let limitsReadingKey = "limitsReading"
 func limitsReadingOn(_ defaults: UserDefaults = .standard) -> Bool { defaults.bool(forKey: limitsReadingKey) }
+
+/// A Claude or Codex run for the site turns the reading on, once: a switch the person turned off stays off.
+func limitsOnFirstRun(driver: String, _ defaults: UserDefaults = .standard) {
+    guard driver == "claude" || driver == "codex", defaults.object(forKey: limitsReadingKey) == nil else { return }
+    defaults.set(true, forKey: limitsReadingKey)
+}
 
 /// Codex window names by seconds.
 let codexLabels: [Double: String] = [18000: "Session", 604800: "Weekly", 2592000: "Monthly"]
@@ -243,7 +250,9 @@ func limitsForever(api: DeviceAPI, home: URL, stopped: () -> Bool, enabled: () -
         } catch {
             AppLog.write("relay limits: \(error.localizedDescription)")
         }
-        for _ in 0..<limitsInterval where !stopped() {
+        // switched on or off meanwhile: the next pass goes now, so a Turn on shows a reading at once
+        let was = enabled()
+        for _ in 0..<limitsInterval where !stopped() && enabled() == was {
             Thread.sleep(forTimeInterval: 1)
         }
     }

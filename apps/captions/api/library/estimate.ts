@@ -209,9 +209,15 @@ export async function progress(libraryId: string, username: string): Promise<Lib
        FROM jobs WHERE library_id = ? AND state IN ('queued', 'running', 'needs_key') GROUP BY kind, state`,
     )
     .all(libraryId) as { kind: string; state: string; n: number; clips: number; first: number; error: string | null }[];
-  const pending = rows.filter((r) => r.state !== "needs_key");
+  // descriptions held back by the plan's limit (worker.ts holdForLimit) wait, and take no time until it resets
+  const held = db
+    .prepare(`SELECT COUNT(*) AS n, MAX(error) AS error FROM jobs WHERE library_id = ? AND kind = 'describe' AND state = 'queued' AND run_after > ? AND error LIKE '%limit is reached%'`)
+    .get(libraryId, Date.now()) as { n: number; error: string | null };
+  for (const r of rows) if (r.kind === "describe" && r.state === "queued") r.n -= held.n;
+  const pending = rows.filter((r) => r.state !== "needs_key" && r.n > 0);
   const left = pending.reduce((n, r) => n + r.n, 0);
-  const waiting = rows.filter((r) => r.state === "needs_key").map((r) => ({ step: STEP_OF[r.kind] ?? "files", count: r.n, missing: r.error ?? "" }));
+  const waiting: LibraryProgress["waiting"] = rows.filter((r) => r.state === "needs_key").map((r) => ({ step: STEP_OF[r.kind] ?? "files", count: r.n, missing: r.error ?? "" }));
+  if (held.n) waiting.unshift({ step: "describe", count: held.n, missing: `${held.error} They carry on by themselves then.`, limit: true });
   if (!left) return { done: 0, left: 0, clips: 0, seconds: 0, waiting };
   // done since the queue was last empty: jobs after the oldest one still to do
   const first = Math.min(...pending.map((r) => r.first));
