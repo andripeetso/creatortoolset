@@ -24,21 +24,37 @@ const sources = new Map<string, LibrarySource>([[LIBRARY_SOURCE, { id: LIBRARY_S
 const policies = new Map<string, LibraryPolicy[]>([[LIBRARY_SOURCE, [{ sourceId: LIBRARY_SOURCE, canSee: ownerOrGranted }]]]);
 const facets = new Map<string, LibraryFacet>();
 
+/**
+ * Throws what registering these slots, in this order, on top of what is registered now would throw: a repeated source or
+ * facet, or a policy for an unknown source. Registers nothing, so a plug-in can be refused before anything is mounted.
+ */
+export function checkLibrarySlots(slots: [plugin: string, slot: LibrarySlot][]): void {
+  const haveSources = new Set(sources.keys());
+  const haveFacets = new Set(facets.keys());
+  for (const [plugin, slot] of slots) {
+    if (slot.source) {
+      if (haveSources.has(slot.source.id)) throw new Error(`plug-in ${plugin}: library source "${slot.source.id}" is already registered`);
+      haveSources.add(slot.source.id);
+    }
+    for (const p of slot.policies ?? []) {
+      if (!haveSources.has(p.sourceId)) throw new Error(`plug-in ${plugin}: library policy for unknown source "${p.sourceId}"`);
+    }
+    for (const f of slot.facets ?? []) {
+      if (haveFacets.has(f.key)) throw new Error(`plug-in ${plugin}: library facet "${f.key}" is already registered`);
+      haveFacets.add(f.key);
+    }
+  }
+}
+
 /** Adds a plug-in's source, policies and facets. Throws on a repeated source or facet, or a policy for an unknown source. */
 export function registerLibrarySlot(plugin: string, slot: LibrarySlot): void {
+  checkLibrarySlots([[plugin, slot]]);
   if (slot.source) {
-    if (sources.has(slot.source.id)) throw new Error(`plug-in ${plugin}: library source "${slot.source.id}" is already registered`);
     sources.set(slot.source.id, slot.source);
     policies.set(slot.source.id, []);
   }
-  for (const p of slot.policies ?? []) {
-    if (!sources.has(p.sourceId)) throw new Error(`plug-in ${plugin}: library policy for unknown source "${p.sourceId}"`);
-    policies.get(p.sourceId)!.push(p);
-  }
-  for (const f of slot.facets ?? []) {
-    if (facets.has(f.key)) throw new Error(`plug-in ${plugin}: library facet "${f.key}" is already registered`);
-    facets.set(f.key, f);
-  }
+  for (const p of slot.policies ?? []) policies.get(p.sourceId)!.push(p);
+  for (const f of slot.facets ?? []) facets.set(f.key, f);
 }
 
 /**

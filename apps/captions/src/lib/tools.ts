@@ -177,9 +177,9 @@ export function withPluginTiles(plugins: WebPlugin[]): { workflow: { stage: stri
   return { workflow, other };
 }
 
-const layout = withPluginTiles(webPlugins);
-export const WORKFLOW = layout.workflow;
-export const OTHER = layout.other;
+let layout: ReturnType<typeof withPluginTiles> | undefined;
+/** The app's own layout with every loaded plug-in's tiles. Read when drawn: the Mac app's folder plug-ins join the list just before the first render. */
+export const toolLayout = () => (layout ??= withPluginTiles(webPlugins));
 
 /** The tools Home draws for an account: a plug-in tile whose gate is off is left out; built-in tools stay (locked). */
 export const shownTools = (tools: Tool[], me: Me | null): Tool[] => tools.filter((t) => !t.pluginTile || t.can(me));

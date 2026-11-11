@@ -9,6 +9,7 @@ struct ThisMacView: View {
     @Environment(\.openWindow) private var openWindow
     @State private var port = ""
     @AppStorage(limitsReadingKey) private var readLimits = false
+    @AppStorage(pluginsPausedKey) private var pluginsPaused = false
     @State private var password = ""
     @State private var again = ""
     @State private var askPassword = false
@@ -46,6 +47,12 @@ struct ThisMacView: View {
                 }
                 if shell.pairedHere {
                     Button("Remove this Mac from my account", role: .destructive) { shell.forgetThisMac() }
+                }
+            }
+            if shell.pluginCount > 0 {
+                Section {
+                    LabeledContent("Plug-ins", value: pluginsPaused ? "Off" : "\(shell.pluginCount) on")
+                    Button(pluginsPaused ? "Switch Back On" : "Switch All Off") { shell.setPluginsPaused(!pluginsPaused) }
                 }
             }
             Section("Plan limits") {

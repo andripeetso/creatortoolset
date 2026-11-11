@@ -4,9 +4,11 @@ import { webPlugins } from "../plugins.gen";
 
 /**
  * The Media Library's plug-in slots in the browser: the facets and badges each web plug-in adds (LibraryWebSlot).
- * Read once from the generated registry; with no plug-in folder both lists are empty and the page is the generic one.
+ * Read once from the registry; with no plug-in both lists are empty and the page is the generic one.
  */
-const SLOTS: LibraryWebSlot[] = webPlugins.flatMap((p) => (p.library ? [p.library] : []));
+let slots: LibraryWebSlot[] | undefined;
+// read when a page first asks, not when this file loads: the Mac app's folder plug-ins join the list before the first render
+const SLOTS = () => (slots ??= webPlugins.flatMap((p) => (p.library ? [p.library] : [])));
 
 type Facet = NonNullable<LibraryWebSlot["facets"]>[number];
 
@@ -17,7 +19,7 @@ const inScope = (f: Facet, page: "library" | "finals") => {
 };
 
 /** The sidebar facets a page shows: the Media Library's ("library") or Finals' ("finals"). */
-export const libraryFacets = (page: "library" | "finals") => SLOTS.flatMap((s) => s.facets ?? []).filter((f) => inScope(f, page));
+export const libraryFacets = (page: "library" | "finals") => SLOTS().flatMap((s) => s.facets ?? []).filter((f) => inScope(f, page));
 
 /** The picks that belong to a page: a pick on a facet the page does not show is dropped, so it never narrows that page. */
 export function pickedFor(picked: Record<string, string[]>, page: "library" | "finals"): Record<string, string[]> {
@@ -25,4 +27,4 @@ export function pickedFor(picked: Record<string, string[]>, page: "library" | "f
   return Object.fromEntries(Object.entries(picked).filter(([k]) => keys.has(k)));
 }
 
-export const libraryBadges = (card: AssetCard) => SLOTS.flatMap((s) => s.badges?.(card) ?? []);
+export const libraryBadges = (card: AssetCard) => SLOTS().flatMap((s) => s.badges?.(card) ?? []);

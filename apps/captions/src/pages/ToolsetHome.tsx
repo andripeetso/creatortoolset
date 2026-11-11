@@ -52,12 +52,13 @@ const NAME: Record<Key, string> = { ...TOOL_NAMES, record: "Screen Recorder", fi
 const ICON: Record<Key, LucideIcon> = { ...TOOL_ICONS, record: ScreenShare, finals: Star };
 
 /** The plug-in tiles (lib/tools.ts): each joins the box its stage names; a stage with no box here (Distribute) goes to Extras. */
-const plugged = withPluginTiles(webPlugins);
+let tiles: ReturnType<typeof withPluginTiles> | undefined;
+const plugged = () => (tiles ??= withPluginTiles(webPlugins));
 const pluginTilesFor = (stage: string, me: Me | null): HomeTool[] =>
   shownTools(
     stage === "Extras"
-      ? [...plugged.workflow.filter((s) => !["Plan", "Make", "Distribute"].includes(s.stage)).flatMap((s) => s.tools), ...plugged.other]
-      : plugged.workflow.find((s) => s.stage === stage)?.tools ?? [],
+      ? [...plugged().workflow.filter((s) => !["Plan", "Make", "Distribute"].includes(s.stage)).flatMap((s) => s.tools), ...plugged().other]
+      : plugged().workflow.find((s) => s.stage === stage)?.tools ?? [],
     me,
   ).filter((t) => t.pluginTile);
 

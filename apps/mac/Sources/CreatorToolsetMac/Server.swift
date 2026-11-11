@@ -115,6 +115,12 @@ func releaseEnv(_ info: [String: Any]?) -> [String: String] {
     return ["CT_CHANNEL": "release", "CT_VERSION": info?["CFBundleShortVersionString"] as? String ?? ""]
 }
 
+/// Whether a process has started programs that still run (the server's ffmpeg, a plug-in being built).
+func hasChildPrograms(_ pid: pid_t) -> Bool {
+    var pids = [pid_t](repeating: 0, count: 64)
+    return proc_listchildpids(pid, &pids, Int32(pids.count * MemoryLayout<pid_t>.size)) > 0
+}
+
 /// The path of a running process's program (to tell our own node from another program before stopping it).
 func processPath(_ pid: pid_t) -> String? {
     var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
@@ -237,12 +243,17 @@ final class LocalServer: ObservableObject {
         }
     }
 
-    /// On quit or when switched off: close its stdin (CT_EXIT_WITH_PARENT), SIGTERM, up to 10 s, then SIGKILL.
+    /// On quit or when switched off: close its stdin (CT_EXIT_WITH_PARENT) and give it half a second to end by itself,
+    /// then SIGTERM, up to 10 s, then SIGKILL. The half second is for a plug-in that is loading right then: the server
+    /// takes down the mark that would blame it at the next start (api/boot.ts), which SIGTERM sent in the same instant
+    /// never let it do. A server that is stuck does not end by itself and gets the SIGTERM as before, mark and all.
     func stop() {
         stopping = true
         guard let p = process else { return }
         try? input?.fileHandleForWriting.close()
-        p.terminate()
+        let grace = Date().addingTimeInterval(0.5)
+        while p.isRunning && Date() < grace { usleep(20_000) }
+        if p.isRunning { p.terminate() }
         let deadline = Date().addingTimeInterval(10)
         while p.isRunning && Date() < deadline { usleep(50_000) }
         if p.isRunning {
@@ -321,6 +332,7 @@ final class LocalServer: ObservableObject {
         if let service = connectService { env["CT_CONNECT_URL"] = service.absoluteString }
         env["CT_EXIT_WITH_PARENT"] = "1"
         env.merge(releaseEnv(Bundle.main.infoDictionary), uniquingKeysWith: { $1 })
+        env.merge(pluginEnvironment(approved: PluginRecord.live.load(), paused: UserDefaults.standard.bool(forKey: pluginsPausedKey)), uniquingKeysWith: { $1 })
         p.environment = env
         // stdin stays open while the app runs: a Finder launch's /dev/null would end the server at once
         let stdin = Pipe(), output = Pipe()
@@ -365,6 +377,15 @@ final class LocalServer: ObservableObject {
         p.terminate()
     }
 
+    /// The server is running another program right now (Plugins.swift: a changed plug-in waits for it to end).
+    var runsPrograms: Bool { process.map { hasChildPrograms($0.processIdentifier) } ?? false }
+
+    /// Stop, then start again, for a change of settings (plug-ins). It is not a crash, so the crash list stays as it is.
+    func restart() {
+        stop()
+        start()
+    }
+
     private func ended(_ p: Process) {
         guard p === process else { return }   // stop() already handled it
         process = nil
@@ -374,6 +395,15 @@ final class LocalServer: ObservableObject {
         ServerLog.note("the server ended (status \(p.terminationStatus))")
         crashes.append(Date())
         guard let delay = restartDelay(crashes: crashes, now: Date()) else {
+            // five crashes: with a plug-in on and not paused, pause them once and start again (the likely cause)
+            if pluginsPauseInsteadOfStopping(on: PluginRecord.live.load().on.count, paused: UserDefaults.standard.bool(forKey: pluginsPausedKey)) {
+                UserDefaults.standard.set(true, forKey: pluginsPausedKey)
+                UserDefaults.standard.set(true, forKey: pluginsPausedByCrashesKey)
+                ServerLog.note("five crashes in five minutes: plug-ins paused, starting again")
+                crashes = []
+                start()
+                return
+            }
             state = .failed(serverStartFailed)
             return
         }

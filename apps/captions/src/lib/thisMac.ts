@@ -72,3 +72,57 @@ export async function allowOtherDevices(): Promise<string | null> {
     return "The Creator Toolset Mac app did not answer. Try again.";
   }
 }
+
+/** The Mac app's answer to a plug-in ask: done, or why not. No `problem` on a plain no (the person pressed Cancel). */
+export type PluginReply = { ok: boolean; problem?: string };
+
+/**
+ * Plug-ins from the person's folder are switched on and off by the Mac app, never by a page: Switch on is the app's own
+ * dialog, and the app keeps the record of that click (apps/mac Plugins.swift). After a yes the app restarts its server
+ * and reloads this window. null in a browser, where there is no switch.
+ */
+async function pluginAsk(ask: string): Promise<PluginReply | null> {
+  const bridge = thisMacBridge();
+  if (!bridge) return null;
+  try {
+    const r = ((await bridge.postMessage(ask)) ?? {}) as unknown as Partial<PluginReply>;
+    return { ok: r.ok === true, problem: typeof r.problem === "string" ? r.problem : undefined };
+  } catch {
+    return { ok: false, problem: "The Creator Toolset Mac app did not answer. Try again." };
+  }
+}
+/** Switch on (or take the new version of) the plug-in in this folder of the plug-ins folder. */
+export const switchPluginOn = (folder: string) => pluginAsk(`plugin:on:${folder}`);
+export const switchPluginOff = (id: string) => pluginAsk(`plugin:off:${id}`);
+/** After the app switched every plug-in off (its server stopped five times): on again. */
+export const resumePlugins = () => pluginAsk("plugins:resume");
+/**
+ * Update automatically, as the Mac app keeps it (with the record of the clicks): whether a plug-in that is on takes up
+ * the changes to its folder by itself, the folder each one was switched on from (only that folder's changes come in
+ * by themselves), which plug-ins have a new version waiting for the server to have nothing running, and why a folder's
+ * newest state was not taken. null in a browser, or when the Mac app does not answer.
+ */
+export type PluginsAuto = {
+  auto: boolean;
+  folders: Record<string, string>;
+  waiting: string[];
+  notes: Record<string, string>;
+  /** The app switched every plug-in off itself, after its server stopped five times (not the person, in This Mac). */
+  crashed: boolean;
+};
+export async function pluginsAuto(): Promise<PluginsAuto | null> {
+  const bridge = thisMacBridge();
+  if (!bridge) return null;
+  try {
+    const r = ((await bridge.postMessage("plugins:state")) ?? {}) as unknown as Partial<PluginsAuto> & { ok?: boolean };
+    if (r.ok !== true || typeof r.auto !== "boolean") return null;
+    const map = (x: unknown) => (x && typeof x === "object" ? (x as Record<string, string>) : {});
+    return { auto: r.auto, folders: map(r.folders), waiting: Array.isArray(r.waiting) ? r.waiting : [], notes: map(r.notes), crashed: r.crashed === true };
+  } catch {
+    return null;
+  }
+}
+/** Switching it on is answered by the Mac app's own dialog (a plug-in's pages run in this page too); off needs none. */
+export const setPluginsAuto = (on: boolean) => pluginAsk(`plugins:auto:${on ? "on" : "off"}`);
+/** Shows the plug-in's folder in Finder ("" = the plug-ins folder). */
+export const showPluginFolder = (folder: string) => pluginAsk(`plugin:show:${folder}`);
