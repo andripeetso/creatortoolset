@@ -24,17 +24,19 @@ any AI it uses runs on your own account.
 
 ## The tools
 
-The home screen follows how a video gets made: **Plan → Make → Distribute**, with everyday tools underneath.
+The home screen follows how a video gets made: **Plan → Make → Distribute**, with the **Extras** underneath.
 
 ### Caption Studio
 
 <img src="docs/screenshots/captions.webp" alt="Caption Studio: transcript on the left, the video with word-highlighted captions in the middle, caption style on the right, caption blocks on the timeline" />
 
-Drop in a video and Whisper transcribes the speech in your browser. The audio is sent to a transcription service
-only if you set up cloud transcription with your own key. The video itself is saved on the server the app runs on,
+Drop in a video and Whisper transcribes the speech in your browser. Once a cloud transcription key serves your
+account (your own, or the server's if you are its admin), that service becomes the default and gets the audio. The
+browser model stays in the list, and the engine you pick yourself is kept. The video itself is saved on the server the app runs on,
 which in the Mac app is your own Mac. Each line of the transcript
-becomes a caption you can edit, restyle and move on the timeline. The export is a transparent overlay (ProRes 4444,
-VP9 WebM or a PNG sequence) that goes on top of your edit, plus SRT, WebVTT and ASS files.
+becomes a caption you can edit, restyle and move on the timeline. You export the video with the captions burned in
+(MP4, H.264 or H.265), or the captions alone: a transparent overlay (ProRes 4444, VP9 WebM or a PNG sequence) that
+goes on top of your edit, or an SRT, WebVTT or ASS file.
 
 ### Review
 
@@ -45,32 +47,40 @@ for changes, all without an account. Reviewers have to be able to reach the serv
 from: a link from the Mac app opens on that Mac, and on your own network once **Access from other devices** is on
 and you put the Mac's address in the link in place of `127.0.0.1`, so for a reviewer on the internet you need
 [your own server](SELF_HOSTING.md). Each new version stacks on the same video, so you can compare V1 with V2.
-Upload the timeline file too (OTIO, XML, FCPXML or EDL) and its tracks show under the player.
+Upload the timeline file too (OTIO, FCP 7 XML, FCPXML or EDL) and its tracks show under the player.
 
 ### Content Workshop
 
 <img src="docs/screenshots/workshop.webp" alt="Content Workshop: the storytelling frameworks list, each with its steps and when to use it" />
 
-This is where you write reel scripts, carousels and ads. Research a topic across the posts you've saved, keep
-notes, and draft with AI in your own voice, using a storytelling framework you pick. Before you post, the
-accuracy check tests the claims against the web. Each project keeps its own audience, voice and call to action,
-and the AI reads only the project you're in.
+This is where you write reel scripts, carousels, ads, YouTube scripts, newsletters, X threads and articles.
+Research a topic across the posts you've saved, keep notes, and draft with AI in your own voice, using a
+storytelling framework you pick. Before you post, the accuracy check tests the claims against the web. Each project
+keeps its own instructions (who you write for, how you sound, what never to say), and the AI reads only the
+project you're in.
 
 ### And the rest
 
 | Stage | Tool | What you do with it |
 |---|---|---|
-| Plan | **Content Analyzer** | Save Instagram accounts and posts, with captions, transcripts, comments and numbers, then search them and rank what worked. |
-| Make | **AI Editor** | Pick raw takes from the Media Library and say what the video is. The AI picks the best take of each line and cuts the restarts and pauses. You get draft timelines for your own editor, with a preview in Review. |
-| Distribute | **Video Cleaner** | Edit and compare versions of a video, measure how similar they look (PDQ, TMK, SSCD), see and strip metadata, and export in batches. |
-| Distribute | **Story Splitter** | Cut a video into stories of about 20 seconds, on its own cuts, pauses and beats, and download them as one zip. |
-| Tool | **Media Library** | Your footage and finals, with watch folders, folders, smart folders, share links and a trash. |
-| Tool | **Audio Enhancer** | Clean up the sound of a recording, with a before-and-after player. |
-| Tool | **Video Notes** | Screen and camera recordings. With cloud transcription on, each one gets a transcript, title, summary and chapters. |
-| Tool | **Guide Builder** | Put recordings in order, have AI draft a step-by-step page, and publish it as an unlisted link. |
+| Plan | **Content Analyzer** | Save Instagram accounts and posts, and YouTube videos, with captions, transcripts, comments and numbers. Search them, rate each from one to five stars, and sort by rating or plays. With a TypeSafe Jev key, an account's page adds **What works**: how its posts did by hook, format and call to action. |
+| Make | **Media Library** | Your footage in one place, with search, watch folders, folders, smart folders, share links and a trash. |
+| Make | **AI Editor** | Pick raw takes from the Media Library, or add files from your computer, and say what the video is. The AI picks the best take of each line and cuts the restarts and pauses. You get draft timelines for your own editor, with a preview in Review. |
+| Distribute | **Finals** | Your finished reels, carousels and other pieces: the versions of each, the winner, and where it was posted. |
+| Extras | **Audio Enhancer** | Clean up the sound of a recording, with a before-and-after player. |
+| Extras | **Video Cleaner** | Edit and compare versions of a video, measure how similar they look (PDQ, TMK, SSCD), see and strip metadata, and export in batches. |
+| Extras | **Story Splitter** | Cut a video into stories of about 20 seconds, on its own cuts, pauses and beats, and download them as one zip. |
+| Extras | **Video Notes** | Screen and camera recordings. Each one gets a transcript (through your cloud transcription key when you have one; without a key the Mac app makes it on your Mac, and a server makes none) and, with an AI connected, a title, a summary and chapters. |
+| Extras | **Guide Builder** | Put recordings in order, have AI draft a step-by-step page, and publish it as an unlisted link. |
+| Extras | **Screen Recorder** | In the Mac app, on macOS 15 or newer: record your screen, a window or an area, with your camera and voice. Make a version that zooms where you clicked, and send it to Review, Video Notes or the Guide Builder. |
+
+On the home screen Review sits in Make, the Content Workshop in Plan and Caption Studio in the Extras.
 
 Around the tools there are also a **Mac app** (below), an **[Obsidian plugin](apps/obsidian/README.md)** that keeps
-vault notes and Workshop sessions in step, and an **assistant** that helps you set things up.
+vault notes and Workshop sessions in step, and an **assistant**: a chat docked in the app that answers on the AI
+app you connected on your own computer (Settings → Providers), never on an API key. With Claude Code, Codex, Gemini
+or Grok it works with the app's own tools: it sets things up with you, reads and changes your Workshop, Review and
+AI Editor work, schedules tasks, and sends a video you drop on it to Video Notes, Review or Caption Studio.
 
 ## Make it work your way
 
@@ -92,24 +102,27 @@ a key you add, and that provider bills you. Instagram is read only through the o
 and your own Apify key (for other creators), never by scraping web pages.
 
 You can also skip the window and work from the AI chat you already use. Creator Toolset adds itself to Claude
-Code as an MCP server, with a key that only works for you, so from that chat you can draft and edit Workshop pieces,
-read and resolve Review comments, and change your setup.
+Code or Codex as an MCP server, with a key that only works for you, and Settings → Headless access shows the
+address and key for any other MCP app. From that chat you can draft and edit Workshop pieces, read and resolve
+Review comments, run AI Editor steps and schedule tasks.
 
 Without any AI, the rest still works. Captions transcribe in the browser, and Review, Video Cleaner, Story Splitter
 and the Media Library need no AI at all.
 
 ## Run it on your Mac
 
-The Mac app (Apple silicon, macOS 14 or newer) has the whole server inside it, so there's nothing else to install.
+The Mac app (Apple silicon, macOS 14 or newer; its Screen Recorder needs macOS 15) has the whole server inside it,
+so there's nothing else to install.
 
 1. **Download it** from [Releases](../../releases/latest): open the disk image and drag Creator Toolset to
    Applications. It updates itself after that.
 2. **Open it.** It starts the server and makes your account. It doesn't ask for a password, because the
    account's secret is kept in your Keychain.
-3. **Follow the setup.** It starts with one question: do you want to work in the app, in your own AI, or both?
-   In the app, you pick your tools, make your first project and connect your AI. The app connects your ChatGPT,
-   Claude or Google account: it installs what is missing and opens the sign-in. In your own AI, one click adds Creator Toolset to
-   Claude Code. Sign-in, the Instagram login and other keys are optional.
+3. **Follow the setup.** It has three screens. **Connect your AI** lists the AI apps on this Mac for the ChatGPT,
+   Claude, Google, Grok or Meta plan you already have: Install, Sign in or Connect on a row does that step for you.
+   **What do you make?** turns on the tools that fit and makes your first project. **How do you work best?** asks
+   whether you talk to your AI in the app, in your own AI, or both; for your own AI, a last screen adds Creator
+   Toolset to Claude Code or Codex with one click. Sign-in, the Instagram login and other keys are optional.
 4. **Use it from other devices (optional).** Turn on **This Mac → Access from other devices** (Servers → This Mac…
    in the app's menu bar) and choose a password. Phones and other computers sign in with it.
 

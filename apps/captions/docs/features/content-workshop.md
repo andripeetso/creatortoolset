@@ -1,6 +1,6 @@
 # Content Workshop
 
-The Workshop turns research into pieces (reel, carousel, ad, free and YouTube scripts). A **project** is one brand (audience, voice, CTA). A **session** is one idea: its sources, notes, pieces and chat. A **piece** is one document with blocks (lines or slides), hook variations, a caption (post description) and a pinned comment.
+The Workshop turns research into pieces (reel, carousel, ad, YouTube script, newsletter, X post or thread, article, or anything else). A **project** is one brand (its instructions: who it writes for, how it sounds, what never to say). A **session** is one idea: its sources, notes, pieces and chat. A **piece** is one document with blocks (lines or slides), hook variations, a caption (post description) and a pinned comment.
 
 ## The writer and what it reads
 
@@ -76,7 +76,7 @@ Code: `api/workshop.ts` (routes), `api/lib/workshop/notes.ts` (rules, templates,
 
 ## Projects
 
-A project is one brand. Its form holds the audience, voice, CTA and notes. "Draft from my posts" drafts the project's instructions from the linked account's bio and most-viewed posts, for the author to rewrite. Records with no project are shared by every project; once a second project exists, older records go to the project linked to the account, else to the oldest one.
+A project is one brand. Its form holds a name, a colour, one handle per platform and Instructions; an older project's audience, voice and CTA are folded into Instructions when the form opens (`foldProjectInstructions`). "Draft from my posts" drafts the project's instructions from the linked account's bio and most-viewed posts, for the author to rewrite. Records with no project are shared by every project; once a second project exists, older records go to the project linked to the account, else to the oldest one.
 
 ## Knowledge
 

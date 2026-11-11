@@ -101,24 +101,26 @@ What the tests showed:
 
 ## Duplicate check
 
-Admins get **Check against my posts** under the preview: the upload measured
-against every reel you've posted, with the five closest, what they share and
-what to change.
+**Check against my library**, under the score cards, compares this video's
+pictures, second by second, with the videos in your Media Library and with
+your posted reels (read through the Instagram login in Settings → Social
+accounts). A video or reel is listed when at least 30% of this video's seconds
+match it, the closest first, ten at most in each list. Videos that have no
+fingerprint yet are counted as "being fingerprinted": check again in a few
+minutes.
 
-| Measure | Read it as |
+| Shown on a row | Read it as |
 | --- | --- |
-| **Same voiceover** | Share of this video's audio that is the same recording as the post, and the longest stretch in a row. One take through another microphone still matches; a new take doesn't. |
-| **Same frames** | Share of its frames that are near-identical to the post's. For reference: reused b-roll under a new voiceover is fine. |
-| **First 3 s** | The same, for the opening. |
-| **Spoken phrases** | Share of its spoken 4-word phrases already said in the post. |
+| **% of this video** | Share of this video's seconds whose picture is also in that library video. |
+| **% of pictures** | The same, against a posted reel. |
+| **% of voice · s run** | Share of this video's spoken words that sit in runs of five words the reel also says, and the longest such run in seconds. It compares the words, so the same script read again still counts. |
 
-Instagram says it matches on visual and audio signals and names a new
-voiceover as a real change, so re-record or use different takes for a variant.
-The verdict looks at the voice: red when half of it is the same recording as a
-post, amber past 20%, one 5-second stretch, or 60% of the same words. The
-cutoffs are ours; Meta publishes none. The line above the posts counts how
-many of your last 30 days' posts re-use an earlier one: Instagram wants most of
-them original. How it works: docs/VIDEO-CLEANER.md "Duplicate check".
+The voice is compared when this video's speech can be transcribed; when it
+can't, the note under the list starts "Pictures only" and says why. A posted
+reel is also listed for its voice alone: more than 20% of this video's words
+shared, or one shared run longer than 5 seconds. Instagram says it matches on
+visual and audio signals and names a new voiceover as a real change. The
+cutoffs are ours; Meta publishes none.
 
 ## Clip editor workspace
 

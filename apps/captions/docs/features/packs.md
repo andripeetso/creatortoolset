@@ -90,8 +90,10 @@ catalog were reviewed before they were listed.
 
 ## Default packs
 
-Four of the team's packs are installed for every account: Writing basics, Editing basics, Analyzer basics and
-Caption styles. Accounts made before packs existed get them switched off, so nothing changes for them unasked.
+Five of the team's packs are installed for every account: Writing basics, Editing basics, Analyzer basics,
+Caption styles and Storytelling frameworks. The last one copies nothing: it only links the Workshop's starter
+frameworks you already have. Accounts made before packs existed get them switched off, so nothing changes for them
+unasked.
 Switch a default off, or remove it, to use a community pack instead. A removed default doesn't come back.
 
 ## The community catalog
