@@ -25,9 +25,11 @@ for (const i of [1, 2, 3]) {
      VALUES (?, ?, 1, 'k', 1000, ?, '{"duration":10,"vcodec":"h264"}', 'ready', 'tiny', 1)`,
   ).run(`v${i}`, `a${i}`, `s${i}`);
 }
-// clip 2's thumbnail is still to make, clip 1's is made since, clip 3's description waits for the plan's limit (worker.ts holdForLimit)
+// clip 1's thumbnail is made (first, as the files lane takes them), clip 2's is still to make, clip 3's description waits
+// for the plan's limit (worker.ts holdForLimit); an older clip's thumbnail from before this run does not count
+d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor, done_at) VALUES ('lib_a', 'v0', 'thumb', 'done', 'tiny', 0)").run();
+d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor, done_at) VALUES ('lib_a', 'v1', 'thumb', 'done', 'tiny', ?)").run(now);
 d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor) VALUES ('lib_a', 'v2', 'thumb', 'queued', 'tiny')").run();
-d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor) VALUES ('lib_a', 'v1', 'thumb', 'done', 'tiny')").run();
 d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor, run_after, error) VALUES ('lib_a', 'v3', 'describe', 'queued', 'tiny', ?, ?)").run(
   now + 15 * 60_000,
   "Your Claude plan's weekly limit is reached; it resets 5pm.",

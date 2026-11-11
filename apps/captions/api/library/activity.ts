@@ -47,7 +47,16 @@ export async function libraryWork(user: SessionUser, now = Date.now()): Promise<
         )
         .get(id, user.username, now + STAGE_MS - RECENT_MS) as { files: number; received: number; size: number };
       const folders = (await watchOf(user, id)).map(({ path, files, adding }) => ({ path, files, adding }));
-      return { id, progress: await progress(id, user.username), folders, uploading: up.files ? { ...up } : null };
+      // done in this run: since the oldest clip still being worked on came in. progress() counts the jobs after the
+      // oldest one left, and the files lane takes them oldest first, so a run of file steps alone stays at 0 there.
+      const { done } = db
+        .prepare(
+          `SELECT COUNT(*) AS done FROM jobs WHERE library_id = ? AND state = 'done' AND done_at >= (SELECT MIN(v.created_at) FROM asset_versions v
+           WHERE v.id IN (SELECT version_id FROM jobs WHERE library_id = ? AND state IN ('queued', 'running')))`,
+        )
+        .get(id, id) as { done: number };
+      const p = await progress(id, user.username);
+      return { id, progress: { ...p, done }, folders, uploading: up.files ? { ...up } : null };
     }),
   );
 }

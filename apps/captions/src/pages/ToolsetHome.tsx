@@ -384,7 +384,7 @@ function Running({ chip }: { chip: Chip }) {
   return (
     <span
       title={chip.title}
-      className="intro-late absolute -bottom-1.5 -right-1.5 flex items-center gap-1 whitespace-nowrap rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] leading-none text-zinc-300 ring-2 ring-[#0b0b10]"
+      className="intro-late absolute -bottom-1.5 -right-1.5 flex items-center gap-1 whitespace-nowrap rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] leading-none text-zinc-300 ring-2 ring-zinc-950"
     >
       {chip.moving && <Loader2 className="h-2.5 w-2.5 animate-spin" />} {chip.text}
     </span>

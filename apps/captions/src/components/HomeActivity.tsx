@@ -126,7 +126,11 @@ export function runningByTile(server: ActivityRow[], writing: number): Record<st
     const moving = rows.filter((r) => !r.reason);
     const title = rows.map((r) => r.reason ?? r.detail).join("\n");
     if (verb) out[tile] = { text: `${rows.length} ${verb}`, title, moving: moving.length > 0 };
-    else if (moving.length) out[tile] = { text: moving[0].progress !== undefined ? `${Math.round(moving[0].progress * 100)}%` : "working", title, moving: true };
+    else if (moving.length) {
+      // the stage furthest behind: a folder still being taken in at 92% while its clips are prepared at 39% says 39%
+      const far = Math.min(...moving.map((r) => r.progress ?? 1));
+      out[tile] = { text: moving.some((r) => r.progress !== undefined) ? `${Math.round(far * 100)}%` : "working", title, moving: true };
+    }
     else out[tile] = { text: until(rows[0].reason!), title, moving: false };
   }
   return out;
@@ -178,7 +182,7 @@ function ActivityButton({ me }: { me: Me }) {
           )}
         </button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-96 max-w-[94vw] p-0">
+      <PopoverContent align="end" collisionPadding={12} className="w-96 max-w-[calc(100vw-24px)] p-0">
         <p className="border-b px-3 py-2 text-sm font-medium">Activity</p>
         <div className="max-h-96 overflow-y-scroll pb-1">
           {!running.length && !waiting.length && <p className="px-3 py-8 text-center text-xs text-muted-foreground">Nothing is running or waiting on you.</p>}
@@ -201,9 +205,9 @@ function Part({ label, lines }: { label: string; lines: Line[] }) {
           <Link key={l.key} to={l.to} className="flex min-w-0 items-start gap-2 px-3 py-2 text-xs hover:bg-accent">
             <Icon className={`mt-px h-3.5 w-3.5 shrink-0 ${TONE[l.icon]} ${l.icon === "running" && !l.reason ? "motion-safe:animate-spin" : ""}`} />
             <span className="flex min-w-0 flex-1 flex-col gap-1">
-              <span className="flex min-w-0 items-baseline gap-2">
-                <span className="truncate">{l.title}</span>
-                {l.detail && <span className="min-w-0 flex-1 truncate text-muted-foreground">{l.detail}</span>}
+              <span className="line-clamp-3 min-w-0 break-words">
+                {l.title}
+                {l.detail && <span className="text-muted-foreground">{` ${l.detail}`}</span>}
               </span>
               {l.progress !== undefined && !l.reason && <Progress value={l.progress * 100} className="h-1" />}
               {l.reason && <span className="text-amber-700 dark:text-amber-300">{l.reason}</span>}

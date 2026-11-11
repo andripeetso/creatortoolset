@@ -58,6 +58,8 @@ describe("runningByTile", () => {
       2,
     );
     expect(chips["/library"]).toMatchObject({ text: "45%", moving: true });
+    // a folder still being taken in and its clips being prepared: the stage furthest behind
+    expect(runningByTile([row("a", "/library", { progress: 0.92 }), row("p", "/library", { progress: 0.39 })], 0)["/library"]?.text).toBe("39%");
     expect(chips["/editor"]).toMatchObject({ text: "2 editing", moving: true });
     expect(chips["/captions?view=projects"]?.text).toBe("1 exporting");
     expect(chips["/workshop"]?.text).toBe("2 writing");
