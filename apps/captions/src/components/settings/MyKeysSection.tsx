@@ -11,7 +11,7 @@ async function json<T>(res: Response): Promise<T> {
 }
 export const getMyKeys = () => fetch("/api/my-keys").then((r) => json<MyKeyView[]>(r));
 /** The person's keys as the server lists them (set or not, the last 4 characters, never a key): the saved copy at once. */
-export const useMyKeys = () => useCachedLoad<MyKeyView[]>("/api/my-keys", getMyKeys);
+export const useMyKeys = () => useCachedLoad<MyKeyView[]>("/api/my-keys", getMyKeys, { own: true });
 export const saveMyKey = (name: MyKeyEnv, value: string | null) =>
   fetch(`/api/my-keys/${name}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value }) }).then((r) => json(r));
 

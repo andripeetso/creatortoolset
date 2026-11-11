@@ -23,7 +23,7 @@ const saveServerKey = (name: ServiceKeyEnv, value: string | null) =>
 export function ServerKeysTab() {
   const hosted = useAuth((s) => s.hosted);
   // where each key is set and its last 4 characters, never a key
-  const { data: keys, error, refresh } = useCachedLoad<ServiceKeyView[]>(hosted ? "/api/service-keys" : null, getServerKeys);
+  const { data: keys, error, refresh } = useCachedLoad<ServiceKeyView[]>(hosted ? "/api/service-keys" : null, getServerKeys, { own: true });
   const load = () => refresh().catch(() => {});
   if (!hosted) return null;
   if (!keys)

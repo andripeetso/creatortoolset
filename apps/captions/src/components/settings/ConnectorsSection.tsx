@@ -92,7 +92,7 @@ export function platformRows(view: Pick<ConnectorsView, "logins" | "apify" | "ac
 export function ConnectorsSection({ back = "/settings/connectors", compact }: { sub?: string; back?: string; compact?: boolean }) {
   const projects = useWorkspace((s) => s.projects);
   const current = useWorkspace((s) => s.currentProjectId);
-  const { data: view, error, refresh } = useCachedLoad<ConnectorsView>("/api/connectors", getConnectors);
+  const { data: view, error, refresh } = useCachedLoad<ConnectorsView>("/api/connectors", getConnectors, { own: true });
   const [dlg, setDlg] = useState<{ platform: SocialPlatform; step: "choose" | "handle"; seq: number }>({ platform: "tiktok", step: "handle", seq: 0 });
   const [open, setOpen] = useState(false);
   const [params, setParams] = useSearchParams();

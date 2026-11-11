@@ -46,7 +46,7 @@ export function WorkspaceSection() {
   const me = useMe();
   const navigate = useNavigate();
   // "not in a team" is an answer too (team: null), kept apart from "not known yet"
-  const saved = useCachedLoad<{ team: WorkspaceView | null }>("/api/workspace", () => getWorkspace().then((team) => ({ team })));
+  const saved = useCachedLoad<{ team: WorkspaceView | null }>("/api/workspace", () => getWorkspace().then((team) => ({ team })), { own: true });
   const view: WorkspaceView | null | undefined = saved.data ? saved.data.team : undefined;
   const failed = !saved.data && !!saved.error;
   const [inviting, setInviting] = useState(false);

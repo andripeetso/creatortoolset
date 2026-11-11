@@ -31,6 +31,8 @@ import { listProjects, type WorkshopProject } from "@/lib/workshop";
 import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, SettingsSelect, Status, saveFailed } from "./ui";
 import { msg } from "./helpers";
 
+/** This window's own saves read the list again too: the read after a save is never one that started before it. */
+const OWN_TOO = { own: true };
 const TICK_MS = 30_000; // "Next run in 5 min" counts down; the list itself is read again only when it changes
 const zone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
 
@@ -70,7 +72,7 @@ function defaultAi(view: ProvidersView, ais: ProviderInstance[]): Selection | nu
 export function AutomationsSection() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
-  const tasks = useCachedLoad<{ items: AutomationView[]; blocked: string | null }>("/api/automations", listAutomations);
+  const tasks = useCachedLoad<{ items: AutomationView[]; blocked: string | null }>("/api/automations", listAutomations, OWN_TOO);
   const list = tasks.data;
   const error = tasks.error;
   // the providers give the form its computers and AIs, and the row its usage-limit reset; a failed read leaves those out

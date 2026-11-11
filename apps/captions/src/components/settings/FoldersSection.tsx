@@ -17,7 +17,7 @@ export function FoldersSection() {
   const me = useAuth((s) => s.me);
   const hosted = useAuth((s) => s.hosted);
   const providers = useProviders();
-  const store = useCachedLoad<StorageView>("/api/devices/storage", getStorage);
+  const store = useCachedLoad<StorageView>("/api/devices/storage", getStorage, { own: true });
   const devices = providers.data?.devices ?? null;
   const storage = store.data;
   const error = providers.error || store.error;

@@ -89,9 +89,11 @@ async function call<T>(url: string, method: "GET" | "POST", body?: unknown, ms?:
 export const getLocalAi = () => call<LocalAiView>("/api/setup/ai", "GET", undefined, 20_000);
 /**
  * The same list, its saved copy at once (Providers and Headless access share it). Read again when a computer of this
- * account reports a tool installed or signed in ("devices"); nothing tells a page about a tool set up in Terminal.
+ * account reports a tool installed or signed in ("devices") and after an install, sign-in or connect started here
+ * ("setup", this window's own too: the list takes seconds to read, and the read after an action must not be the one
+ * already on its way). Nothing tells a page about a tool set up in Terminal.
  */
-export const useLocalAi = () => useCachedLoad<LocalAiView>("/api/setup/ai", getLocalAi, { topic: "devices" });
+export const useLocalAi = () => useCachedLoad<LocalAiView>("/api/setup/ai", getLocalAi, { topic: ["devices", "setup"], own: true });
 export const localSignIn = (id: CliId) => call<SignInResult>("/api/setup/ai/signin", "POST", { id });
 export const localInstall = (id: CliId) => call<SignInResult>("/api/setup/ai/install", "POST", { id });
 /** Connects it as this account's AI through this computer's Mac app (`device`); without one the answer says to open the app. */
