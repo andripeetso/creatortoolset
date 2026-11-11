@@ -74,7 +74,7 @@ struct AddServerView: View {
     @State private var problem: String?
     /// The computer added to the account whose own password is asked.
     @State private var asked: Computer?
-    @FocusState private var typingPassword: Bool
+    @FocusState private var typing: Field?
     @State private var scanning = false
     @State private var busy = false
     @State private var error: String?
@@ -101,6 +101,9 @@ struct AddServerView: View {
                     if computers == nil, busy { ProgressView() }
                     if computers?.isEmpty == true { Text("No computers on this account yet").foregroundStyle(.secondary) }
                     if let problem { Problem(text: problem) }
+                }
+                .disabled(busy)
+                Section {
                     AccountRow(profile: profile) {
                         account.signOut()
                         problem = nil
@@ -108,13 +111,20 @@ struct AddServerView: View {
                 }
                 .disabled(busy)
             } else {
+                // a section each, so each button gets the row's whole shape
                 Section {
-                    AccountButtons { provider in Task { await run { try await signIn(provider) } } }
-                        .disabled(busy)
+                    SignInButton(provider: "apple") { Task { await run { try await signIn("apple") } } }
+                }
+                .listRowInsets(EdgeInsets())
+                .listSectionSpacing(12)
+                .disabled(busy)
+                Section {
+                    SignInButton(provider: "google") { Task { await run { try await signIn("google") } } }
+                } footer: {
                     if let problem { Problem(text: problem) }
                 }
                 .listRowInsets(EdgeInsets())
-                .listRowBackground(Color.clear)
+                .disabled(busy)
             }
             Section {
                 if CodeScanner.supported {
@@ -142,14 +152,21 @@ struct AddServerView: View {
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .textContentType(.username)
+                            .focused($typing, equals: .username)
+                            .submitLabel(.next)
+                            .onSubmit { typing = .password }
                     }
-                    SecureField("Password", text: $password).textContentType(.password).focused($typingPassword)
+                    // the keyboard covers the button below, so its own key signs in
+                    SecureField("Password", text: $password)
+                        .textContentType(.password)
+                        .focused($typing, equals: .password)
+                        .submitLabel(.go)
+                        .onSubmit { if !blocked { Task { await connect() } } }
                 }
             }
             if let error { Problem(text: error) }
             Button(needsPassword == nil && asked == nil ? "Connect" : "Sign in") { Task { await connect() } }
-                .disabled(busy || (asked != nil ? password.isEmpty
-                                   : address.isEmpty || (needsPassword != nil && (username.isEmpty || password.isEmpty))))
+                .disabled(blocked)
         }
         .navigationTitle(first ? "Creator Toolset" : "Add a computer")
         .toolbar {
@@ -187,6 +204,14 @@ struct AddServerView: View {
     }
 
     /// One job at a time with the account; what goes wrong is said in one line under it.
+    private enum Field { case username, password }
+
+    /// Nothing to send yet: a job is running, or what the form asks for is not filled in.
+    private var blocked: Bool {
+        busy || (asked != nil ? password.isEmpty
+                 : address.isEmpty || (needsPassword != nil && (username.isEmpty || password.isEmpty)))
+    }
+
     private func run(_ work: () async throws -> Void) async {
         busy = true
         problem = nil
@@ -235,7 +260,7 @@ struct AddServerView: View {
         password = ""
         error = nil
         asked = computer
-        typingPassword = true
+        typing = .password
     }
 
     /// A hosted server that does not sign in with the account: its address is filled in and the form asks for the
@@ -243,7 +268,8 @@ struct AddServerView: View {
     private func usePassword(_ computer: Computer) {
         address = computer.name
         needsPassword = SignIn.parse(address)
-        error = "\(computer.name) takes its username and password"
+        error = nil
+        typing = .username
     }
 
     private func forget(_ computer: Computer) async throws {

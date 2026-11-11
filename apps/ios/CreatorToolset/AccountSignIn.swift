@@ -389,23 +389,24 @@ final class WebSheet: NSObject, ASWebAuthenticationPresentationContextProviding 
     }
 }
 
-/// The two sign-in buttons: the system's own Sign in with Apple button, and a plain one of the same size for Google.
-struct AccountButtons: View {
-    let press: (String) -> Void
+/// A sign-in button that fills its row, which gives it the row's own shape: the system's Sign in with Apple button,
+/// and a plain one in the same colours for Google.
+struct SignInButton: View {
+    let provider: String
+    let press: () -> Void
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        VStack(spacing: 12) {
-            AppleButton(dark: scheme == .dark) { press("apple") }
-                .frame(height: 50)
-                // made again when the look changes: the system's button takes its colours once
-                .id(scheme)
-            Button { press("google") } label: {
-                Text("Sign in with Google")
-                    .font(.system(size: 19, weight: .medium))
+        if provider == "apple" {
+            // made again when the look changes: the system's button takes its colours once
+            AppleButton(dark: scheme == .dark, press: press).frame(height: 52).id(scheme)
+        } else {
+            Button(action: press) {
+                Text("Sign in with \(provider.capitalized)")
+                    .font(.system(size: 20.5, weight: .medium))   // the size the system's button draws at this height
                     .foregroundStyle(Color(.systemBackground))
-                    .frame(maxWidth: .infinity, minHeight: 50)
-                    .background(Color.primary, in: RoundedRectangle(cornerRadius: 10))
+                    .frame(maxWidth: .infinity, minHeight: 52)
+                    .background(Color.primary)
             }
             .buttonStyle(.plain)
         }
@@ -419,7 +420,7 @@ private struct AppleButton: UIViewRepresentable {
 
     func makeUIView(context: Context) -> ASAuthorizationAppleIDButton {
         let button = ASAuthorizationAppleIDButton(type: .signIn, style: dark ? .white : .black)
-        button.cornerRadius = 10
+        button.cornerRadius = 0   // the row rounds it, the same as the Google one
         button.addTarget(context.coordinator, action: #selector(Coordinator.pressed), for: .touchUpInside)
         return button
     }
