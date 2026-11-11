@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { openLibraryDb } from "../library/db";
 import { enqueueJob } from "../library/jobs";
 import { STEPS, NEXT } from "./worker";
-import { claimableBy, claimStep, registerDeviceKinds } from "./engine";
+import { claimableBy, claimStep, nextFor, registerDeviceKinds } from "./engine";
 
 const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "editor-engine-"));
 let db: DatabaseSync;
@@ -22,10 +22,16 @@ afterAll(() => {
 
 describe("editor step registry", () => {
   it("the server's STEPS and NEXT come from the registry: core kinds have handlers, device kinds do not", () => {
-    expect(Object.keys(STEPS).sort()).toEqual(["analyze", "broll", "draft", "file", "post", "preview", "script"]);
+    expect(Object.keys(STEPS).sort()).toEqual(["analyze", "broll", "cards", "draft", "file", "post", "preview", "script"]);
     expect(NEXT.analyze).toEqual(["script"]);
     expect(NEXT.draft).toEqual(["broll"]);
     expect(NEXT.broll).toEqual(["post"]);
+    expect(NEXT.cards).toEqual(["post"]);
+    // the cards come after the B-roll only for an edit whose style names an animation style: every other edit's chain is the table's
+    for (const kind of Object.keys(NEXT)) expect(nextFor(kind, {}, NEXT)).toEqual(NEXT[kind]);
+    for (const kind of Object.keys(NEXT)) expect(nextFor(kind, { style: { id: "s", name: "Plain", notes: "", pace: "tight" } }, NEXT)).toEqual(NEXT[kind]);
+    expect(nextFor("broll", { style: { id: "s", name: "With cards", notes: "", pace: "tight", animation: "a" } }, NEXT)).toEqual(["cards"]);
+    expect(nextFor("draft", { style: { id: "s", name: "With cards", notes: "", pace: "tight", animation: "a" } }, NEXT)).toEqual(["broll"]);
     expect(NEXT.post).toEqual(["preview"]);
     expect(NEXT.preview).toEqual(["file"]);
     expect(STEPS["fake-kind"]).toBeUndefined();

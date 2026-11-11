@@ -60,6 +60,10 @@ export const setEyeline = (id: string, versionId: string, y: number) => send<Edi
 export const getSentences = (id: string) => send<Sentence[]>(`${base(id)}/sentences`);
 export const putLines = (id: string, body: PlansPatch) => send<Edit>(`${base(id)}/lines`, "PUT", body);
 export const reviewDraft = (id: string, name: string) => send<Edit>(`${base(id)}/drafts/${name}/review`, "POST");
+/** A version's cards (contracts/editor.ts): a card's still, the 👍 that keeps it in the animation style, and making them again. */
+export const cardStillUrl = (id: string, variant: string, card: string) => `${base(id)}/cards/${variant}/${card}/still`;
+export const likeCard = (id: string, variant: string, card: string) => send<Edit>(`${base(id)}/cards/${variant}/${card}/like`, "POST");
+export const makeCardsAgain = (id: string, variant: string) => send<Edit>(`${base(id)}/cards/${variant}/again`, "POST");
 export const exportUrl = (id: string, name: string, format: "otio" | "fcpxml" | "zip") => `${base(id)}/drafts/${name}/export?format=${format}`;
 
 /** The PUT lines body that gives line `index` of `version` the take `take`, the rest of its lines as they are. */

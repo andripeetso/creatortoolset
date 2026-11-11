@@ -4,10 +4,10 @@ import { HOME_TILES, HOME_TILE_NAMES } from "@contracts/tools";
 
 export const LICENCES = ["CC-BY-4.0", "CC0-1.0", "MIT"] as const;
 
-/** The slots this app adds to a prompt, in order. editor.cards is in the format but this app draws no cards. */
-export const USED_SLOTS: PackSlot[] = (Object.keys(PACK_SLOTS) as PackSlot[]).filter((s) => s !== "editor.cards");
+/** The slots this app adds to a prompt, in order: every one in the format. */
+export const USED_SLOTS: PackSlot[] = Object.keys(PACK_SLOTS) as PackSlot[];
 
-/** What a pack adds here, in the order the screens show it (design systems and unused slots are left out). */
+/** What a pack adds here, in the order the screens show it (design systems are left out). */
 export interface PackContents {
   slots: Array<{ slot: PackSlot; label: string; text: string }>;
   frameworks: Array<{ name: string; role: string }>;
@@ -87,7 +87,7 @@ export interface Destination {
   does: string;
 }
 
-/** The places this app reads a pack (design systems and editor.cards are left out, as in USED_SLOTS). */
+/** The places this app reads a pack (design systems are left out). */
 export function destinations(c: CatalogEntry["contains"]): Destination[] {
   const has = (s: PackSlot) => c.instructions.includes(s);
   const out: Destination[] = [];
@@ -110,6 +110,8 @@ export function destinations(c: CatalogEntry["contains"]): Destination[] {
     out.push({ ...captions, spot: "Where captions break into lines", does: "Added to what the AI is told when it splits a transcript into caption lines." });
   if (has("editor.script"))
     out.push({ ...editor, spot: "The script", does: "Added to what the AI is told when it plans an edit's script." });
+  if (has("editor.cards"))
+    out.push({ ...editor, spot: "The cards", does: "Added to what the AI is told when it picks the lines that get a card, in an edit whose style has an animation style." });
   if (c.home)
     out.push({ stage: "Home", tool: "Settings", to: "/settings/tools", spot: "Shown on Home", does: "Sets which tools Home shows, when you press Use on Home. Every switch stays yours to change." });
   return out;

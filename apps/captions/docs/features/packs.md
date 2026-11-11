@@ -38,8 +38,8 @@ side). Official packs live in `packs/`.
 - Everything else is optional, but a pack needs at least one of instructions, frameworks, caption styles, a Home
   layout or editor items.
 - A caption style's values are plain: text of one line, numbers, on/off.
-- The format also has `designSystems` and an `editor.cards` slot, for apps that draw animated cards. This app
-  accepts files that have them and leaves those parts out.
+- The format also has `designSystems`, for apps with a card designer. This app accepts files that have them and
+  leaves that part out. The `editor.cards` slot is read: the AI Editor adds it when it picks the lines that get a card.
 
 Check a file before you share it: `pnpm --filter @creator-toolset/captions pack:check my-pack.ctpack.json`.
 

@@ -20,6 +20,9 @@
  *   PUT    /api/editor/defaults/:slot      { id: string | null } (null = back to the built-in one) → EditorDefaults
  *   GET, POST /api/editor/styles, PUT, DELETE /api/editor/styles/:id   the person's editing styles (contracts/editor-styles.ts)
  *   /api/editor/animation-styles…        the person's animation styles and their pictures (contracts/editor-styles.ts)
+ *   GET    /api/editor/:id/cards/:variant/:card/still   a card's middle frame, as the Mac drew it (PNG)
+ *   POST   /api/editor/:id/cards/:variant/:card/like    its still goes into the animation style's Made & liked → Edit
+ *   POST   /api/editor/:id/cards/:variant/again         the version's cards are made again from nothing → Edit
  * Every step runs as the edit's creator, on their own keys and AI: a workspace owner sees, stops and deletes, never runs.
  */
 
@@ -164,6 +167,16 @@ export interface Edit extends EditSummary, EditBrief {
   previews: Record<string, ReviewPreview>;
   /** the flags the loaded plug-ins declare, shown as chips; `flags` above holds this edit's state for each */
   flagDefs: EditFlag[];
+  /** each version's cards, for an edit whose style names an animation style and whose card step has run; else absent */
+  cards?: Record<string, EditCards>;
+}
+
+/** One version's cards as the edit page shows them. */
+export interface EditCards {
+  /** the cards with a clip, in the order planned */
+  cards: { id: string; text: string; liked: boolean }[];
+  /** why there are none, or fewer than planned ("Cards: no Mac with Creator Toolset is on") */
+  note?: string;
 }
 
 /** A preview video in Review: its asset and version number. */
@@ -214,6 +227,8 @@ export interface TimelineSource {
   /** picture size as shown (rotation applied); 0 for sound only */
   w: number;
   h: number;
+  /** a clip that is the edit's own file and not footage from the library (a card): its path inside the edit's folder */
+  file?: string;
 }
 
 /** A draft: one version's cut, the single model every export and check reads. */

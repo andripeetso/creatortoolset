@@ -8,7 +8,7 @@ import { HOME_TILES, type HomeTile } from "./tools.ts";
  * A pack carries material (frameworks, caption styles, design systems) and may carry instructions that go on top of
  * the app's own prompts at a named slot. The user's own words win over a pack's, and the app's safety steps are never
  * a slot. The format is the same everywhere packs are made; this app installs frameworks, caption styles and
- * instructions, and leaves design systems and the editor.cards slot alone (it has no card designer).
+ * instructions, and leaves design systems alone (an animation style is its own, smaller thing: contracts/editor-styles.ts).
  */
 
 /** Where a pack's instructions are added. Each is one prompt that exists today. */

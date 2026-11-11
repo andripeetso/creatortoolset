@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { link, mkdir, rename, symlink } from "node:fs/promises";
 import path from "node:path";
+import type { TimelineSource } from "../../contracts/editor";
 import { blobs, libraryDb } from "../library/db";
 import { editDir, type EditMeta } from "./store";
 
@@ -72,17 +74,32 @@ export interface MediaPaths {
   files: Record<string, string>;
   /** for a bucket library: each file's name and a download link (LINK_TTL_S) */
   downloads: { name: string; url: string }[];
+  /** the edit's own clips (cards) a zip carries: the name under media/ and the file on this server */
+  own: { name: string; file: string }[];
 }
 
-/** Paths for the sources `keys` (library version ids) of `edit`, making the media/ links they need. */
-export async function mediaPaths(edit: EditMeta, keys: string[]): Promise<MediaPaths> {
+/**
+ * Paths for the sources `keys` of `edit`, making the media/ links they need: its footage, and whatever else the cut
+ * plays from the library (B-roll). With `sources` (the timeline's), a clip that is the edit's own file (a card) gets its
+ * place in the edit's folder, or, for a `zip`, a media/ path and a line in `own` so the zip carries the file itself.
+ */
+export async function mediaPaths(edit: EditMeta, keys: string[], sources?: Record<string, TimelineSource>, zip = false): Promise<MediaPaths> {
   const q = libraryDb().prepare(
     `SELECT v.id, a.title, v.source_key, v.source_path, v.mime, l.storage_kind FROM asset_versions v
      JOIN assets a ON a.id = v.asset_id JOIN libraries l ON l.id = a.library_id WHERE v.id = ?`,
   );
-  const rows = edit.sources.map((id) => q.get(id) as Row | undefined).filter((r): r is Row => !!r);
+  // the edit's footage first, in the order picked, so its names never change; then the clips only the cut names
+  const rows = [...new Set([...edit.sources, ...keys])].map((id) => q.get(id) as Row | undefined).filter((r): r is Row => !!r);
   const names = namesOf(rows);
-  const out: MediaPaths = { files: {}, downloads: [] };
+  const out: MediaPaths = { files: {}, downloads: [], own: [] };
+  for (const k of keys) {
+    const file = sources?.[k]?.file;
+    if (!file) continue;
+    const at = path.join(editDir(edit.id), file);
+    const name = `${k}${path.extname(file)}`;
+    out.files[k] = zip ? `media/${name}` : at;
+    if (zip && existsSync(at)) out.own.push({ name, file: at });
+  }
   const dir = path.join(editDir(edit.id), "media");
   for (const r of rows.filter((x) => keys.includes(x.id))) {
     const name = names[r.id]!;

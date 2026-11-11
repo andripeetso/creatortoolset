@@ -8,6 +8,7 @@ import { listInstalled, packOn } from "../lib/packs";
 import { pluginEditFlags } from "../lib/plugin";
 import type { EditStepChoice } from "../../contracts/editor-steps";
 import type { EditStyleCopy } from "../../contracts/editor-styles";
+import { cardsView } from "./cards/state";
 import { chosenSteps } from "./steps";
 import { findStyle, rememberStyle, styleCopy } from "./styles";
 import type { Cdl } from "./grade";
@@ -362,6 +363,7 @@ export function viewOf(e: EditMeta): Edit {
   const { trashedAt: _, ...meta } = e;
   const a = readStep(e.id, "analysis");
   const p = readStep(e.id, "plan");
+  const cards = cardsView(e.id, draftNames(e.id));
   return {
     ...meta,
     ...summaryOf(e),
@@ -374,6 +376,7 @@ export function viewOf(e: EditMeta): Edit {
     notes: [...(a?.notes ?? []), ...(p?.notes ?? [])],
     previews: readStep(e.id, "review") ?? {},
     flagDefs: pluginEditFlags(),
+    ...(cards ? { cards } : {}),
   };
 }
 

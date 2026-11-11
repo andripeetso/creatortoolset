@@ -11,6 +11,7 @@ import { toOtio } from "./otio";
 import { qaOf } from "./qa";
 import { allEdits, cleanBrief, createEdit, draftNames, editorDefaults, editRole, gradeOf, NoCollection, NoStyle, readDraft, readEdit, postFiles, readStep, saveEdit, saveStep, setChosenDefault, sourcesWorkspace, styleFields, summaryOf, viewOf, type EditMeta } from "./store";
 import { animationApp } from "./animation-styles";
+import { cardsApp } from "./cards/routes";
 import { createStyle, deleteStyle, stylesView, updateStyle } from "./styles";
 import { stopEdit } from "./worker";
 
@@ -99,6 +100,8 @@ editorApp.delete("/styles/:id", (c) => (deleteStyle(c.get("user").username, c.re
 
 // the person's animation styles and their pictures (animation-styles.ts); before /:id, as the styles are
 editorApp.route("/animation-styles", animationApp);
+// a version's cards on the edit page: a still, the 👍, Make cards again (cards/routes.ts)
+editorApp.route("/", cardsApp);
 
 editorApp.get("/:id", (c) => {
   const r = load(c);
@@ -239,8 +242,9 @@ editorApp.get("/:id/drafts/:name/export", async (c) => {
   if (!["otio", "fcpxml", "zip"].includes(format)) return c.json({ error: "format is otio, fcpxml or zip", code: "invalid" }, 400);
   const tl = d.timeline;
   // read again, as the worker does: footage trashed or a library left since means no new links or download URLs
-  if (sourcesWorkspace(c.get("user").username, Object.keys(tl.sources)) !== r.e.workspaceId) return notFound(c);
-  const m = await mediaPaths(r.e, Object.keys(tl.sources));
+  // (a card is the edit's own file, not footage: TimelineSource.file)
+  if (sourcesWorkspace(c.get("user").username, Object.keys(tl.sources).filter((k) => !tl.sources[k]!.file)) !== r.e.workspaceId) return notFound(c);
+  const m = await mediaPaths(r.e, Object.keys(tl.sources), tl.sources, format === "zip");
   Object.assign(m.files, postFiles(r.e.id, name));   // the post-processing copies, as the preview plays them
   const base = `${r.e.name} ${name}`.replace(/[^\w .-]+/g, "_").trim() || name;
   const otio = async () => JSON.stringify(toOtio(tl, m.files, await gradeOf(r.e.createdBy, r.e.bundle)), null, 2);
@@ -252,6 +256,7 @@ editorApp.get("/:id/drafts/:name/export", async (c) => {
   const at = { mtime: new Date("2000-01-01T00:00:00Z") };
   zip.addBuffer(Buffer.from(await otio()), `${base}/${base}.otio`, at);
   zip.addBuffer(Buffer.from(toFcpxml(tl, m.files)), `${base}/${base}.fcpxml`, at);
+  for (const o of m.own) zip.addFile(o.file, `${base}/media/${o.name}`, at);
   if (m.downloads.length) {
     const hours = LINK_TTL_S / 3600;
     const list = [`Download these into the media folder next to the timeline, then open the timeline (links work for ${hours} hours):`, ""];

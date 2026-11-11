@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { Download, ExternalLink, Loader2, Play, RotateCcw, Square, Trash2 } from "lucide-react";
+import { Download, ExternalLink, Loader2, Play, RotateCcw, Square, ThumbsUp, Trash2 } from "lucide-react";
 import { DEFAULT_EYELINE, type Draft, type Edit, type Sentence } from "@contracts/editor";
 import { AppBar } from "@/components/AppBar";
 import { Button } from "@/components/ui/button";
-import { createStyle, deleteEdit, exportUrl, getEdit, getSentences, patchEdit, putLines, retryJob, reviewDraft, runEdit, setEyeline, stopEdit, swapTake, takeSpan } from "@/lib/editor";
+import { cardStillUrl, createStyle, deleteEdit, exportUrl, getEdit, getSentences, likeCard, makeCardsAgain, patchEdit, putLines, retryJob, reviewDraft, runEdit, setEyeline, stopEdit, swapTake, takeSpan } from "@/lib/editor";
 import { useCachedLoad } from "@/lib/local-cache";
+import { cn } from "@/lib/utils";
 import { confirmHeavy } from "@/lib/setup";
 import { StateBadge, thumb } from "./EditorPage";
 import { confirmDialog, promptDialog } from "@/lib/dialogs";
@@ -20,7 +21,7 @@ import { STYLE_NAME_MAX } from "@contracts/editor-styles";
  */
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
-const STEP_NAME: Record<string, string> = { analyze: "Analyze", script: "Script", draft: "Draft", preview: "Preview", file: "File in Review", broll: "B-roll" };
+const STEP_NAME: Record<string, string> = { analyze: "Analyze", script: "Script", draft: "Draft", preview: "Preview", file: "File in Review", broll: "B-roll", cards: "Cards", "cards-draw": "Draw cards" };
 /** The setting a needs-key message names: a key in API keys, else (a provider, a Mac that is off) AI providers. */
 const settingFor = (why: string) => (/Settings → API keys/.test(why) && !/Settings → Providers/.test(why) ? "/settings/keys" : "/settings/providers");
 
@@ -270,6 +271,7 @@ export default function EditorEditPage() {
                 const pv = edit.previews[n];
                 const d = drafts[n];
                 const title = edit.plans.find((p) => p.name === n)?.title ?? n;
+                const cards = edit.cards?.[n];
                 return (
                   <article key={n} aria-label={title} className="flex flex-col gap-2 rounded-xl border border-zinc-500/20 p-3">
                     <div className="flex items-center justify-between gap-2">
@@ -287,6 +289,30 @@ export default function EditorEditPage() {
                           <li key={i}>{x}</li>
                         ))}
                       </ul>
+                    )}
+                    {cards && (
+                      <section aria-label={`Cards of ${title}`} className="flex flex-col gap-1.5">
+                        {cards.cards.length > 0 && (
+                          <ul className="flex flex-wrap gap-2">
+                            {cards.cards.map((card) => (
+                              <li key={card.id} className="relative w-20">
+                                <img src={cardStillUrl(id, n, card.id)} alt={card.text} title={card.text} className="block w-full rounded-md bg-zinc-800" />
+                                <button
+                                  type="button"
+                                  aria-label={`Like the card “${card.text}”`}
+                                  aria-pressed={card.liked}
+                                  disabled={card.liked}
+                                  onClick={() => void act(likeCard(id, n, card.id))}
+                                  className={cn("absolute bottom-1 right-1 rounded-full p-1.5 text-white", card.liked ? "bg-violet-500" : "bg-black/70 hover:bg-black")}
+                                >
+                                  <ThumbsUp className="h-3 w-3" />
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        {cards.note && <p className="text-xs text-zinc-500">{cards.note}</p>}
+                      </section>
                     )}
                     <div className="flex flex-wrap gap-1.5">
                       {(["otio", "fcpxml", "zip"] as const).map((f) => (
@@ -308,6 +334,11 @@ export default function EditorEditPage() {
                       <Button size="sm" variant="ghost" disabled={busy} onClick={() => void act(reviewDraft(id, n))}>
                         Render preview again
                       </Button>
+                      {edit.style?.animation && (
+                        <Button size="sm" variant="ghost" disabled={busy} onClick={() => void act(makeCardsAgain(id, n))}>
+                          Make cards again
+                        </Button>
+                      )}
                     </div>
                   </article>
                 );

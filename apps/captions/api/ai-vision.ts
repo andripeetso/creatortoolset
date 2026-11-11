@@ -12,6 +12,7 @@ import {
   requestSignal,
   wrapFetchError,
 } from "./ai-complete";
+import type { JobId } from "../contracts/providers";
 import { recordUsage } from "./lib/mac-claude";
 import { addSpend } from "./lib/workspaces";
 
@@ -41,13 +42,15 @@ export async function completeVisionWithFallback<T>(
   /**
    * `label`: what the usage tally counts it as. `background`: nobody waits on it, so it queues behind what a person does.
    * `preferKey`: the account's own Anthropic key first, when it has one (bulk work: many at once, where a provider runs two).
+   * `job`: whose provider answers (the Analyzer's unless said: the AI Editor's cards run as "editor").
    */
-  opts: { label?: string; background?: boolean; preferKey?: boolean } = {},
+  opts: { label?: string; background?: boolean; preferKey?: boolean; job?: JobId } = {},
 ): Promise<{ value: T; provider: string }> {
   if (!images.length) throw new AiProviderError("No image to analyze", "FAILED", false);
   const label = opts.label ?? "Image reading";
   const name = typeof who === "string" ? who : who?.username;
-  const route = (opts.preferKey && name && onApiKey(name, "analyzer", label)) || aiFor(who, "analyzer", label);
+  const job = opts.job ?? "analyzer";
+  const route = (opts.preferKey && name && onApiKey(name, job, label)) || aiFor(who, job, label);
   if (route.off) throw new AiProviderError(route.off, "FAILED", false);
   if (route.only?.includes("mac")) {
     const files = Object.fromEntries(images.map((im, i) => [`attached/${i + 1}.jpg`, `base64:${im.jpegBase64}`]));

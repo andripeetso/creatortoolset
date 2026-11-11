@@ -149,11 +149,19 @@ export async function renderPreview(tl: Timeline, files: Record<string, string>,
   }
 }
 
-/** Local files for a timeline's sources (a bucket library's are downloaded into the library's cache once). */
-export async function localFiles(tl: Timeline): Promise<Record<string, string>> {
+/**
+ * Local files for a timeline's sources (a bucket library's are downloaded into the library's cache once). With `editId`
+ * the edit's own clips (a card, TimelineSource.file) are in the answer too; without it they are left out.
+ */
+export async function localFiles(tl: Timeline, editId?: string): Promise<Record<string, string>> {
   const q = libraryDb().prepare("SELECT source_key FROM asset_versions WHERE id = ?");
   const out: Record<string, string> = {};
   for (const id of Object.keys(tl.sources)) {
+    const own = tl.sources[id]!.file;
+    if (own) {
+      if (editId) out[id] = path.join(editDir(editId), own);
+      continue;
+    }
     const row = q.get(id) as { source_key: string } | undefined;
     if (!row) throw new Error("Some footage is gone from the library");
     out[id] = await blobs.localCopy(row.source_key);
@@ -167,7 +175,7 @@ export async function previewStep({ edit, variant, signal }: StepContext): Promi
   if (!d) throw new Error(`Draft ${variant || "the versions"} first`);
   const out = path.join(editDir(edit.id), "previews", `${variant}.mp4`);
   await mkdir(path.dirname(out), { recursive: true });
-  await renderPreview(d.timeline, { ...(await localFiles(d.timeline)), ...postFiles(edit.id, variant) }, out, signal, await gradeOf(edit.createdBy, edit.bundle));
+  await renderPreview(d.timeline, { ...(await localFiles(d.timeline, edit.id)), ...postFiles(edit.id, variant) }, out, signal, await gradeOf(edit.createdBy, edit.bundle));
   if (signal.aborted) return;
   const v = { owner: edit.createdBy, name: `${edit.name} ${variant}.mp4`, mime: "video/mp4", bytes: (await stat(out)).size };
   const place = (dest: string) => rename(out, dest);

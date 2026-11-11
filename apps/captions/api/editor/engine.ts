@@ -1,9 +1,10 @@
 import type { DatabaseSync } from "node:sqlite";
 import { MAX_ATTEMPTS, type JobRow, type JobTable } from "../library/jobs";
-import { RESOLVE_KIND } from "../../contracts/devices";
+import { CARDS_DRAW_KIND, RESOLVE_KIND } from "../../contracts/devices";
 import { announce } from "../lib/sync";
 import { analyzeStep } from "./analyze";
 import { brollStep } from "./broll";
+import { cardsStep } from "./cards/step";
 import { postStep } from "./post";
 import { fileStep, previewStep } from "./preview";
 import { scriptStep } from "./script";
@@ -39,12 +40,16 @@ const KINDS: Record<string, EditKind> = {
   script: { source: "core", next: ["draft"], run: scriptStep },
   draft: { source: "core", next: ["broll"], run: draftStep },
   broll: { source: "core", next: ["post"], run: brollStep },
+  // the cards of an edit whose style names an animation style: queued after its B-roll by nextFor, and for no other edit
+  cards: { source: "core", next: ["post"], run: cardsStep },
   // the post-processing steps the edit uses (plug-ins, Settings → AI Editor); with none it only clears its notes
   post: { source: "core", next: ["preview"], run: postStep },
   preview: { source: "core", next: ["file"], run: previewStep },
   file: { source: "core", next: [], run: fileStep },
   // the Resolve bridge (Mac app): handed out only with a Resolve pack installed (api/devices.ts)
   [RESOLVE_KIND]: { source: "device", next: [] },
+  // a Mac draws an edit's cards in its sandbox (cards/step.ts asks, cards/device.ts answers)
+  [CARDS_DRAW_KIND]: { source: "device", next: [] },
 };
 
 /** Registers kinds that a device runs. Called once per kind (at boot, or by tests). */
@@ -63,6 +68,10 @@ export function coreSteps(): Record<string, StepRun> {
 export function nextKinds(): Record<string, string[]> {
   return Object.fromEntries(Object.entries(KINDS).map(([k, v]) => [k, v.next]));
 }
+
+/** What a finished step queues for this edit: `next`'s list, except that the cards come after the B-roll when the edit's style names an animation style. */
+export const nextFor = (kind: string, edit: Pick<EditMeta, "style">, next: Record<string, string[]>): string[] =>
+  kind === "broll" && edit.style?.animation ? ["cards"] : (next[kind] ?? []);
 
 const deviceKinds = (): string[] => Object.keys(KINDS).filter((k) => KINDS[k]!.source === "device");
 

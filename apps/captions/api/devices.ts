@@ -5,6 +5,7 @@ import { LOAD_PREFERENCES, type Balance, type Device } from "../contracts/provid
 import { parseKinds, RESOLVE_KIND, type DeviceClaim } from "../contracts/devices";
 import type { AuthVars } from "./auth";
 import { claimableBy } from "./editor/engine";
+import { cardsDraw, saveCard } from "./editor/cards/device";
 import { beatForDevice, claimForDevice, doneForDevice, failForDevice } from "./editor/worker";
 import { mayClaim, type WorkerSeen } from "./lib/balance";
 import { env } from "./lib/env";
@@ -22,6 +23,7 @@ import { storageApp } from "./devices-storage";
  *   DELETE /api/devices/:id                                      owner or admin
  *   POST /api/devices/relay/editor/claim {kinds}                 the device declares its editor step kinds and takes one (contracts/devices.ts)
  *   POST /api/devices/relay/editor/job/:id/beat | /done | /fail  the device's step, same token
+ *   GET /api/devices/relay/editor/job/:id/cards, POST …/cards/:cardId   a cards-draw step: what to draw, and each card drawn
  *   POST /api/devices/relay/wait | /report | /:id/text | /:id/step | /:id/done | /:id/fail
  *       the Mac app's side, Authorization: Bearer ctd_… (boot.ts checks it before the cookie gate); the same bodies
  *       as the relay routes in mac-claude.ts (relayRoutes)
@@ -71,6 +73,20 @@ devicesApp.post("/relay/editor/job/:id/fail", async (c) => {
   const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   const why = typeof b?.error === "string" && b.error ? b.error : "The device could not run this step";
   return c.json({ ok: failForDevice(d.id, jobId(c), why) });
+});
+// a cards-draw step (contracts/devices.ts): what the Mac that holds it is to draw, and each card it drew
+devicesApp.get("/relay/editor/job/:id/cards", (c) => {
+  const d = deviceCaller(c);
+  if (!d) return c.json({ error: "Unauthorized" }, 401);
+  const draw = cardsDraw(d.id, jobId(c));
+  return draw ? c.json(draw) : c.json({ error: "Not found" }, 404);
+});
+devicesApp.post("/relay/editor/job/:id/cards/:cardId", async (c) => {
+  const d = deviceCaller(c);
+  if (!d) return c.json({ error: "Unauthorized" }, 401);
+  const form = await c.req.parseBody({ all: true }).catch(() => ({}) as Record<string, unknown>);
+  const wrong = await saveCard(d.id, jobId(c), c.req.param("cardId"), form.clip, form.still);
+  return wrong ? c.json({ error: wrong }, wrong === "Not found" ? 404 : 400) : c.json({ ok: true });
 });
 
 devicesApp.route("/relay", relayRoutes((c) => deviceForToken(c.req.header("authorization"))?.id ?? null));

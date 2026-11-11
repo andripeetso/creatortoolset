@@ -16,6 +16,7 @@ const ffmpegFiles = [
   "api/clean.test.ts",
   "api/editor/analyze.test.ts",
   "api/editor/animation-styles.test.ts",
+  "api/editor/cards/step.test.ts",
   "api/editor/editor-ui.e2e.test.ts",
   "api/editor/grade.test.ts",
   "api/editor/preview.test.ts",
