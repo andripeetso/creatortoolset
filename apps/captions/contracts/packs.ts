@@ -234,6 +234,17 @@ const inRange = (v: unknown, lo: number, hi: number): number | null => (typeof v
 const triple = (v: unknown, lo: number, hi: number): [number, number, number] | null =>
   Array.isArray(v) && v.length === 3 && v.every((n) => inRange(n, lo, hi) !== null) ? (v as [number, number, number]) : null;
 
+/**
+ * A caption style's values are written into the subtitle file and the page's styles as they are (the font's name goes
+ * on a line of its own format), so each is one plain value: a number, on/off, or text of one line. Nothing nested, and
+ * no line break or control character that could start a line of its own there.
+ */
+const plainStyle = (style: Record<string, unknown>): boolean => {
+  const values = Object.values(style);
+  // eslint-disable-next-line no-control-regex
+  return values.length <= 60 && values.every((v) => typeof v === "boolean" || (typeof v === "number" && Number.isFinite(v)) || (typeof v === "string" && v.length <= 200 && !/[\u0000-\u001f\u007f{}\\]/.test(v)));
+};
+
 /** Each entry of a list field goes through `fn`; a field that isn't a list, or is too long, is one problem. */
 function eachItem<T>(raw: Record<string, unknown>, key: string, problems: string[], fn: (item: Record<string, unknown>, at: string) => T | null): T[] {
   const out: T[] = [];
@@ -346,6 +357,7 @@ export function checkPack(raw: unknown): PackCheck {
         const name = isObj(s) ? str(s.name, 40) : null;
         const kind = isObj(s) && (s.kind === "caption" || s.kind === "text") ? s.kind : null;
         if (!name || !kind || !isObj(s) || !isObj(s.style)) return problems.push(`captionStyles[${i}]: name (≤40), kind caption|text and a style object`);
+        if (!plainStyle(s.style)) return problems.push(`captionStyles[${i}].style: up to 60 plain values (text of one line, numbers, on/off)`);
         captionStyles.push({ name, kind, style: s.style });
       });
   }

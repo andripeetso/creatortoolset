@@ -68,7 +68,8 @@ What is different from a checkout:
   of the example has no test file. Look up an icon's or a component's exact name in the app's source before you use
   it: one the app doesn't have is refused when the plug-in loads, with the piece named on its row.
 - **Not there:** `?url` imports, web workers and `import.meta.glob` in `web.tsx`; `env: […]` names with a `.env`
-  file (keep a plug-in's own settings in its Settings section, saved under its data folder); a `site`.
+  file (keep a plug-in's own settings in its Settings section, saved under its data folder); a `site`; routes
+  ahead of the sign-in (`openRoutes`, `publicRoutes`: put them in `routes`).
 - **When it fails**, the app starts without it and its row says why: it doesn't build, it throws while loading,
   it uses a name another plug-in has, or it stopped the app's server. A page that throws while it is drawn shows
   one line in its place. `~/Library/Logs/Creator Toolset Server.log` has the `[plugins]` lines. After a fix, they
@@ -132,7 +133,7 @@ both before you decide a slot is missing.
 - **It is code with the whole server's access**: every account's data and keys on that install. In the Mac app
   that is the person's own files, their saved keys, the internet, and what macOS has allowed the app. The switch
   is their consent, not a cage. Install a plug-in only from someone you trust, and read it first, or have your AI
-  read it.
+  read it. A plug-in with pages only is no lesser kind: its page is the app's own page, signed in as the person.
 - **The app's own rules still hold** ([AGENTS.md](AGENTS.md)): a paid service is called with the key from `keyFor`,
   social platforms are read only through the official logins and the person's own Apify key, and one account never
   reaches another account's data or AI.
@@ -174,6 +175,8 @@ In the downloaded Mac app the check is step 4 above. The rest of this section is
   the plug-in imports, `pnpm check` names the line.
 - **Sharing:** a plug-in is a folder. Put it in its own git repository. Someone else puts it in their Mac app's
   plug-ins folder and switches it on themselves, or clones it into `apps/captions/plugins/<id>` of their checkout.
+  Community lists no plug-ins. What people share there has no code: packs
+  ([packs.md](apps/captions/docs/features/packs.md)). A tool many people want is built into the app: open an issue.
 
 ## When no slot fits
 

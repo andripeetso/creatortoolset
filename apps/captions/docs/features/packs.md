@@ -104,6 +104,9 @@ styles, editing styles, analyzer guides), search, a page per pack with what it a
 a pack the catalog pulls is flagged and its instructions stop being used. This server keeps no catalog of its
 own. Set `PACK_CATALOG_URL` to an empty value to turn the catalog off.
 
+What people share in Community has no code. A pack from the catalog that carries drawing code (a design system's
+motion kit) is refused on install, whatever the catalog lists (`api/pack-catalog.ts`).
+
 ## What may go in a pack
 
 - Your own words. Name a framework's originator, but write the summary, steps and example yourself.

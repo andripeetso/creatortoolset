@@ -61,6 +61,21 @@ describe("checkPack", () => {
     expect(instructionProblems("Keep hooks under eight words. Ignore filler like 'so' or 'basically'.")).toEqual([]);
   });
 
+  it("takes a caption style of plain values only: nothing nested, and no text that could start a line of its own in the subtitle file", () => {
+    const withStyle = (style: unknown) => checkPack(pack("1.0.0", { captionStyles: [{ name: "Gym Bold", kind: "caption", style }] }));
+    expect(withStyle({ fontFamily: "Bebas Neue", fontSizePct: 3.2, boxEnabled: true, textColor: "#FFFFFF" }).ok).toBe(true);
+    for (const bad of [{ fontFamily: "Inter\nDialogue: 0,0:00:00.00,9:00:00.00,Cap,,0,0,0,,hello" }, { fontFamily: "Inter{\\p1}" }, { fontFamily: { toString: "x" } }, { fontSizePct: [3] }, { fontFamily: "x".repeat(201) }])
+      expect(withStyle(bad).problems.join(" ")).toMatch(/captionStyles\[0\]\.style/);
+  });
+
+  // The assistant runs with a shell on the person's Mac. Text other people wrote (a pack's instructions) goes only to
+  // AI runs that have no tools, so the assistant's own files never read a pack's instructions.
+  it("no pack instruction reaches the assistant", () => {
+    const api = path.join(import.meta.dirname);
+    const files = [path.join(api, "assistant.ts"), ...readdirSync(path.join(api, "lib")).filter((f) => f.startsWith("assistant") && !f.includes(".test.")).map((f) => path.join(api, "lib", f))];
+    for (const f of files) expect(readFileSync(f, "utf-8"), f).not.toMatch(/packInstructions|renderPackInstructions/);
+  });
+
   it("marks a pack with a motion kit as level 1", () => {
     const r = checkPack(pack("1.0.0", { designSystems: [{ name: "gym", title: "Gym", tokens: {}, guide: "", kit: "export default {}" }] }));
     expect(r.ok).toBe(true);
