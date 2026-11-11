@@ -29,7 +29,14 @@
  *   That is why the catalog login is pending, not passing.
  * - editor.worker: the Mac worker status endpoint; it goes with the legacy
  *   worker sunset, so it stays on the list until then.
- * - editor.chat-*: the AI Editor chat; it is in the plug-in editor only.
+ * - editor.chat-*: the AI Editor chat; it is in the plug-in editor only. chat-edit is one edit's messages (`?edit=<id>`;
+ *   an empty value is no edit, so the probe reads the whole chat's shape).
+ * - editor.todo, todo-read, job-go, feedback: the to-do list, a waiting job's go and feedback for new versions; in the
+ *   plug-in editor only (the built-in editor has no job that waits for a go).
+ * - assistant.*: the in-app assistant as the phone's chat calls it: the conversation, a turn, stop, a new chat, an
+ *   earlier chat, an approval's answer, a picture, and a video's upload (start, parts, complete).
+ * - sync.events: the live change stream (server-sent events), so it is a route probe: a GET would never end.
+ * - review.comments-post is also how a reply is sent (`parentId` in the body); a route probe cannot see the body.
  * - finals.* : the app's Finals screen calls the old `/api/library` paths with
  *   the Finals shape. The public app mounts the storage library at the same
  *   base path with a different meaning (`{ libraries }`, and `/media/:versionId/:kind`),
@@ -75,6 +82,11 @@ const PENDING: Record<string, string> = {
   "editor.chat-get": "AI Editor chat moves into the plug-in: ba-editor-plugin",
   "editor.chat-post": "AI Editor chat moves into the plug-in: ba-editor-plugin",
   "editor.chat-delete": "AI Editor chat moves into the plug-in: ba-editor-plugin",
+  "editor.chat-edit": "AI Editor chat moves into the plug-in: ba-editor-plugin",
+  "editor.todo": "the to-do list is the plug-in editor's: the built-in editor has no job that waits for a go",
+  "editor.todo-read": "the to-do list is the plug-in editor's: the built-in editor has no job that waits for a go",
+  "editor.job-go": "the built-in editor has no job that waits for a go: the plug-in editor's",
+  "editor.feedback": "feedback for new versions is the plug-in editor's",
   // The four media and cover entries answer only when the old-path router is mounted (a plug-in); the public build has none.
   "finals.media-thumb": "finals old-path router: a plug-in mounts it (the iPhone's Finals paths)",
   "finals.media-play": "finals old-path router: a plug-in mounts it (the iPhone's Finals paths)",
