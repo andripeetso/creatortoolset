@@ -1,5 +1,7 @@
 /**
- * Golden contract for the server paths the companion iPhone app calls.
+ * Golden contract for the server paths the iPhone apps call: the public one in this repository (`apps/ios`,
+ * `__fixtures__/ios-public-paths.json`, every entry must pass) and a companion app a plug-in serves
+ * (`__fixtures__/ios-paths.json`, below).
  *
  * The list lives in `__fixtures__/ios-paths.json` (method, path, and the shape
  * the app decodes). This test boots the app in-process and checks each entry:
@@ -198,5 +200,16 @@ describe("the iPhone app's server paths", () => {
     if (oldPathRouter() && editorRoot()) {
       expect(pending.map((r) => `${r.e.method} ${r.e.path}`)).toEqual([]);
     }
+  });
+});
+
+describe("the public iPhone app's server paths (apps/ios)", () => {
+  const paths = JSON.parse(
+    readFileSync(fileURLToPath(new URL("./__fixtures__/ios-public-paths.json", import.meta.url)), "utf8"),
+  ) as Entry[];
+
+  it("every path is mounted with the shape the app decodes", async () => {
+    const results = await Promise.all(paths.map(async (e) => `${e.method} ${e.path} (${e.id}): ${(await check(e)) ?? "ok"}`));
+    expect(results.filter((r) => !r.endsWith(": ok"))).toEqual([]);
   });
 });
