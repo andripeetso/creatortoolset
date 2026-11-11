@@ -1,10 +1,12 @@
+import WebKit
 import XCTest
 @testable import CreatorToolset
 
 /// Against a real server, skipped without one:
 ///   TEST_RUNNER_CT_TEST_SERVER=http://127.0.0.1:43127 TEST_RUNNER_CT_TEST_PASSWORD=<APP_SECRET> xcodebuild … test
 /// Signs in as `admin`, uploads a 70 MB file in three chunks through the background session, uploads it again (the
-/// server says it is a duplicate), and reads the screens' routes.
+/// server says it is a duplicate), and reads the screens' routes. `testRealContent` seeds a script, a post and a Finals
+/// piece of a real video, and loads them the way the screens do.
 @MainActor
 final class ServerTests: XCTestCase {
     private var origin: URL!
@@ -90,5 +92,88 @@ final class ServerTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(300))
         }
         return try XCTUnwrap(engine.store.item(id))
+    }
+
+    func testRealContent() async throws {
+        let cookie = try await signIn()
+        let server = Server(url: origin, username: "admin")
+        Servers.shared.add(server, cookie: cookie)
+        let api = try XCTUnwrap(Servers.shared.api)
+
+        // a script to film and a post that is ready
+        struct Made: Decodable { let id: String }
+        let film: Made = try JSONDecoder().decode(Made.self, from: try await api.send(
+            "/api/workshop/sessions", json: ["title": "Tiny Acrobatics: first roll", "status": "ready"]))
+        try await api.send("/api/workshop/sessions/\(film.id)/docs",
+                           json: ["kind": "reel", "title": "Script", "text": "Hook: three rolls in one take."])
+        let post: Made = try JSONDecoder().decode(Made.self, from: try await api.send(
+            "/api/workshop/sessions", json: ["title": "Tiny Acrobatics: posted", "status": "toPost"]))
+        let sessions: [WorkshopSession] = try await api.get("/api/workshop/sessions")
+        XCTAssertTrue(sessions.contains { $0.id == film.id && $0.toFilm })
+        XCTAssertTrue(sessions.contains { $0.id == post.id && $0.toPost })
+        let docs = try await api.sessionDocs(film.id)
+        XCTAssertEqual(docs.first?.blocks.first.map { scriptText($0.text) }, "Hook: three rolls in one take.")
+
+        // a real video: uploaded, then its picture and its playback
+        let video = try Data(contentsOf: try XCTUnwrap(Bundle(for: Self.self).url(forResource: "tiny", withExtension: "mp4")))
+        let name = "tinyacrobatics-final.mp4"
+        let item = try await upload(video, name: name, engine: UploadEngine.shared, server: server)
+        XCTAssertEqual(item.state, .done, item.note ?? "")
+        let found = try await api.firstLibrary()
+        let library = try XCTUnwrap(found)
+        struct Page: Decodable { let items: [Asset] }
+        var asset: Asset?
+        for _ in 0..<60 {
+            let page: Page = try await api.get("/api/library/\(library.id)/assets?limit=60")
+            asset = page.items.first { $0.title.hasPrefix("tinyacrobatics-final") }
+            if asset?.thumbUrl != nil, asset?.state == "ready" { break }
+            try await Task.sleep(for: .seconds(1))
+        }
+        let ready = try XCTUnwrap(asset, "the upload is not in the library")
+        let thumb = try XCTUnwrap(ready.thumbUrl, "no picture after a minute (state \(ready.state))")
+        let picture = try await api.data(api.request(thumb))
+        XCTAssertNotNil(UIImage(data: picture), "the picture does not decode")
+        let player = api.player("/api/library/media/\(ready.versionId)/play")
+        let media = try XCTUnwrap(player.currentItem?.asset)
+        let playable = try await media.load(.isPlayable)
+        XCTAssertTrue(playable, "the player can't open the video with the sign-in cookie")
+
+        // a Finals piece of it
+        struct Collections: Decodable { struct C: Decodable { let id: String; let name: String }; let collections: [C] }
+        let all: Collections = try await api.get("/api/library/\(library.id)/collections")
+        let finalsId: String
+        if let existing = all.collections.first(where: { $0.name == "Finals" }) {
+            finalsId = existing.id
+        } else {
+            let made: Made = try JSONDecoder().decode(Made.self, from: try await api.send(
+                "/api/library/\(library.id)/collections", json: ["name": "Finals"]))
+            finalsId = made.id
+        }
+        let piece: Made = try JSONDecoder().decode(Made.self, from: try await api.send(
+            "/api/library/\(library.id)/pieces", json: ["label": "Tiny Acrobatics reel", "collectionId": finalsId]))
+        try await api.send("/api/library/\(library.id)/pieces/\(piece.id)/items", json: ["versionId": ready.versionId])
+        let finals = try await api.finals()
+        let shown = try XCTUnwrap(finals.first { $0.id == piece.id }, "the piece is not in Finals")
+        XCTAssertEqual(shown.main?.versionId, ready.versionId)
+        let cover = try XCTUnwrap(shown.cover)
+        let coverData = try await api.data(api.request(cover))
+        XCTAssertNotNil(UIImage(data: coverData), "the Finals cover does not decode")
+    }
+
+    /// The web view ("Everything else") is signed in with the phone's cookie, on http as on https.
+    func testWebViewSignedIn() async throws {
+        let cookie = try await signIn()
+        guard cookie != nil else { throw XCTSkip("a server without sign-in needs no cookie") }
+        let api = API(server: origin, cookie: cookie)
+        let web = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 800),
+                            configuration: { let c = WKWebViewConfiguration(); c.websiteDataStore = .nonPersistent(); return c }())
+        await web.configuration.websiteDataStore.httpCookieStore.setCookie(try XCTUnwrap(api.webCookie))
+        web.load(URLRequest(url: api.url("/api/auth/check")))
+        var text = ""
+        for _ in 0..<50 where !text.contains("authed") {
+            try await Task.sleep(for: .milliseconds(200))
+            text = (try? await web.evaluateJavaScript("document.body ? document.body.innerText : ''") as? String) ?? ""
+        }
+        XCTAssertTrue(text.contains("\"authed\":true"), text)
     }
 }

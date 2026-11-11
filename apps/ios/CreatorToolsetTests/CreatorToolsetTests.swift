@@ -30,6 +30,7 @@ final class RulesTests: XCTestCase {
         XCTAssertEqual(after(.finish, 200, body: #"{"assetId":"a","versionId":"v"}"#), .done(duplicate: false))
         XCTAssertEqual(after(.finish, 200, body: #"{"duplicateOf":"a"}"#), .done(duplicate: true))
         XCTAssertEqual(after(.finish, 409, body: #"{"error":"The upload is incomplete","offset":10}"#), .send(from: 10))
+        XCTAssertEqual(after(.finish, 409, body: #"{"error":"Already finished","code":"conflict"}"#), .startOver("Checking that the server has it"))
         XCTAssertEqual(after(.finish, 413, body: #"{"error":"Too large"}"#), .failed("Too large"))
         XCTAssertEqual(after(.finish, 500, body: #"{"error":"disk"}"#), .startOver("disk"))
     }
@@ -61,6 +62,12 @@ final class SignInTests: XCTestCase {
         let target = SignIn.parse("http://192.0.2.20:43127/api/auth/link/AbC-123_x")
         XCTAssertEqual(target?.origin.absoluteString, "http://192.0.2.20:43127/")
         XCTAssertEqual(target?.linkPath, "/api/auth/link/AbC-123_x")
+    }
+
+    func testWebCookieIsSecureOnlyOnHttps() {
+        XCTAssertEqual(API(server: URL(string: "http://192.0.2.20:43127/")!, cookie: "c").webCookie?.isSecure, false)
+        XCTAssertEqual(API(server: URL(string: "https://studio.example.com/")!, cookie: "c").webCookie?.isSecure, true)
+        XCTAssertNil(API(server: URL(string: "http://192.0.2.20:43127/")!, cookie: nil).webCookie)
     }
 
     func testCookieFromRedirect() {

@@ -180,6 +180,9 @@ enum Rules {
                 if json?["assetId"] != nil { return .done(duplicate: false) }
             }
             if status == 409, let at = bodyOffset { return at >= size ? .finish : .send(from: at) }
+            // "Already finished": the answer to an earlier finish was lost. Sent again, the server answers that it
+            // has the file (duplicateOf), so the upload ends either way.
+            if status == 409 { return .startOver("Checking that the server has it") }
             // gone, or the bucket refused the parts: the server marked it failed
             if status == 404 || status == 400 || status == 500 { return .startOver(message) }
         }

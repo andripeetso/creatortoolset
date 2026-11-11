@@ -71,8 +71,16 @@ struct AddServerView: View {
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .keyboardType(.URL)
-                if CodeScanner.available {
-                    Button("Scan the code on your computer", systemImage: "qrcode.viewfinder") { scanning = true }
+                if CodeScanner.supported {
+                    Button("Scan the code on your computer", systemImage: "qrcode.viewfinder") {
+                        Task {
+                            if await CodeScanner.cameraAllowed() {
+                                scanning = true
+                            } else {
+                                error = "Camera access is off: Settings → Creator Toolset → Camera"
+                            }
+                        }
+                    }
                 }
             } footer: {
                 Text("On the computer: Settings → Computers → Add your phone.")

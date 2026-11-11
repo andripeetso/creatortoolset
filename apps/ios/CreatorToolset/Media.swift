@@ -62,6 +62,17 @@ struct NativePlayer: UIViewControllerRepresentable {
     }
 }
 
+extension API {
+    /// The sign-in cookie for the web view. Secure only on https: the `.secure` key makes a cookie secure whatever
+    /// its value, and a secure cookie is never sent to an http server (the one on the person's own computer).
+    var webCookie: HTTPCookie? {
+        guard let cookie, let host = server.host() else { return nil }
+        var properties: [HTTPCookiePropertyKey: Any] = [.name: "cap_auth", .value: cookie, .domain: host, .path: "/"]
+        if server.scheme == "https" { properties[.secure] = "TRUE" }
+        return HTTPCookie(properties: properties)
+    }
+}
+
 /// The server's own web app, signed in with this phone's cookie: every tool the app has no screen for.
 struct WebAppView: UIViewRepresentable {
     let api: API
@@ -73,9 +84,7 @@ struct WebAppView: UIViewRepresentable {
         view.isOpaque = false
         view.backgroundColor = .black
         let url = api.url(path)
-        guard let cookie = api.cookie, let host = api.server.host(),
-              let c = HTTPCookie(properties: [.name: "cap_auth", .value: cookie, .domain: host, .path: "/",
-                                              .secure: api.server.scheme == "https" ? "TRUE" : "FALSE"]) else {
+        guard let c = api.webCookie else {
             view.load(URLRequest(url: url))
             return view
         }
@@ -91,7 +100,11 @@ struct WebAppView: UIViewRepresentable {
 struct CodeScanner: UIViewControllerRepresentable {
     let found: (String) -> Void
 
-    static var available: Bool { DataScannerViewController.isSupported && DataScannerViewController.isAvailable }
+    /// The device can scan. `isAvailable` stays false until camera access is granted, so it is not asked here.
+    static var supported: Bool { DataScannerViewController.isSupported }
+
+    /// Camera access, asked the first time.
+    static func cameraAllowed() async -> Bool { await AVCaptureDevice.requestAccess(for: .video) }
 
     func makeUIViewController(context: Context) -> DataScannerViewController {
         let scanner = DataScannerViewController(recognizedDataTypes: [.barcode(symbologies: [.qr])],

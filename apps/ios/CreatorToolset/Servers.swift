@@ -150,7 +150,8 @@ struct API {
         let (data, response) = try await Self.session.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         if status == 401 {
-            await MainActor.run { Servers.shared.sessionExpired() }
+            // only the server in use: an upload to another server failing must not sign this one out
+            await MainActor.run { if Servers.shared.currentId == server.absoluteString { Servers.shared.sessionExpired() } }
             throw APIError.signedOut
         }
         guard (200..<300).contains(status) else { throw APIError.server(status, Self.message(data, status: status)) }
