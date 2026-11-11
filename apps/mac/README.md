@@ -254,7 +254,7 @@ SIGN_IDENTITY="Developer ID Application: …" NOTARY_PROFILE=… apps/mac/script
 
 A release build reads its feed at `releases/latest/download/appcast.xml`, so publishing a release updates every
 installed copy. Builds you make yourself have no updater unless you set both `SPARKLE_PUBLIC_KEY` and `FEED_URL`.
-With them set, Sparkle reads the appcast every 4 hours, downloads a
+With them set, Sparkle reads the appcast every hour, downloads a
 newer build, checks its EdDSA signature and installs it when the app quits (Check for Updates… in the app
 menu and the menu bar item). The page inside the window updates with every site deploy: it offers a Reload
 when one lands.
