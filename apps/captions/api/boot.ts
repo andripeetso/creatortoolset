@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { bodyLimit } from "hono/body-limit";
 import type { HttpBindings } from "@hono/node-server";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { appRouter } from "./router";
@@ -122,7 +121,7 @@ app.use(async (c, next) => {
 });
 
 // 50 MB body cap, except video uploads and transcription audio
-const limit = bodyLimit({ maxSize: 50 * 1024 * 1024 });
+const MAX_BODY = 50 * 1024 * 1024;
 const BODY_METHODS = new Set(["POST", "PUT", "PATCH"]);
 app.use(async (c, next) => {
   if (
@@ -142,16 +141,17 @@ app.use(async (c, next) => {
   ) {
     return next();
   }
-  // Without a Content-Length, hono's bodyLimit re-wraps the request via
-  // `new Request(...)`, which the node adapters choke on. Browser JSON
-  // fetches always declare a length; refuse chunked bodies and let
+  // Browser JSON fetches always declare a length; refuse chunked bodies and let
   // body-less POSTs (logout) through untouched.
   if (!c.req.raw.headers.has("content-length")) {
     return c.req.raw.headers.has("transfer-encoding")
       ? c.json({ error: "Length Required" }, 411)
       : next();
   }
-  return limit(c, next);
+  // The cap is read from the header alone, never from the body: asking the request for its body starts the node
+  // request flowing into a web stream nobody reads, and a route that then streams the request itself (an upload
+  // part, a Review reference) stalls after the first socket read (about 64 KB).
+  return Number(c.req.raw.headers.get("content-length")) > MAX_BODY ? c.text("Payload Too Large", 413) : next();
 });
 
 const PUBLIC_UUID =
