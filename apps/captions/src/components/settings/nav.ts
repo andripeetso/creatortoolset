@@ -1,4 +1,4 @@
-import { Bot, CalendarClock, Cpu, HardDrive, Gauge, KeyRound, LayoutGrid, Monitor, Palette, Server, ShieldCheck, Share2, SlidersHorizontal, UserRound, Users } from "lucide-react";
+import { Bookmark, Bot, CalendarClock, Cpu, HardDrive, Gauge, KeyRound, LayoutGrid, Monitor, Palette, Server, ShieldCheck, Share2, SlidersHorizontal, UserRound, Users } from "lucide-react";
 import { settingsWithPlugins, visibleSettings, type PluginSettingsSection, type SettingsEntry } from "@/lib/plugin";
 import { webPlugins } from "@/plugins.gen";
 
@@ -11,7 +11,7 @@ type PluginList = ReadonlyArray<{ settings?: PluginSettingsSection[]; replaces?:
 
 /** Every page id a Settings route can open. Adding one: add it here, to BUILTIN, and to PAGE_BODIES (pages.tsx). */
 export const SETTINGS_PAGE_IDS = [
-  "general", "appearance", "tools", "folders", "providers", "devices", "automations", "usage", "connectors", "keys", "own-ai",
+  "general", "appearance", "tools", "folders", "providers", "devices", "automations", "memory", "usage", "connectors", "keys", "own-ai",
   "servers", "team", "admin", "account",
 ] as const;
 export type SettingsPageId = (typeof SETTINGS_PAGE_IDS)[number];
@@ -40,6 +40,7 @@ const BUILTIN: ReadonlyArray<BuiltinEntry> = [
   { id: "tools", title: "Tools", icon: LayoutGrid },
   { id: "providers", title: "Providers", icon: Cpu, group: "AI" },
   { id: "automations", title: "Scheduled tasks", icon: CalendarClock, group: "AI" },
+  { id: "memory", title: "Memory", icon: Bookmark, group: "AI" },
   { id: "usage", title: "Usage", icon: Gauge, group: "AI" },
   { id: "devices", title: "Devices", icon: Monitor, group: "Hardware" },
   { id: "folders", title: "Storage", icon: HardDrive, group: "Hardware" },

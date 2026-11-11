@@ -6,6 +6,7 @@ import { AppearanceSection } from "./AppearanceSection";
 import { AutomationsSection } from "./AutomationsSection";
 import { ApiKeysSection } from "./ApiKeysSection";
 import { ConnectorsSection } from "./ConnectorsSection";
+import { MemorySection } from "./MemorySection";
 import { OwnAiSection } from "./OwnAiSection";
 import { ProvidersSection } from "./ProvidersSection";
 import { UsageSection } from "./UsageSection";
@@ -30,6 +31,7 @@ export const PAGE_BODIES: Record<SettingsPageId, PageBody> = {
   providers: ProvidersSection,
   devices: ComputersSection,
   automations: AutomationsSection,
+  memory: MemorySection,
   usage: UsageSection,
   connectors: ConnectorsSection,
   keys: ApiKeysSection,
