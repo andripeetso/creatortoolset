@@ -1,7 +1,9 @@
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { Timeline } from "../../contracts/editor";
 import type { EditorStep } from "../lib/plugin";
-import { POST_NOTE, runSteps } from "./post";
+import { POST_NOTE, prune, runSteps } from "./post";
 
 const timeline = { sources: { a: {}, b: {} }, tracks: {} } as unknown as Timeline;
 const base = { a: "/footage/a.mov", b: "/footage/b.mov" };
@@ -31,5 +33,17 @@ describe("the post step's chain", () => {
     const out = await runSteps([{ id: "blur", values: {} }], [], input);
     expect(out.files).toEqual({});
     expect(out.notes).toEqual([`${POST_NOTE}blur is not switched on in this app, so it was skipped`]);
+  });
+});
+
+describe("one post copy per version", () => {
+  it("keeps the copy that plays and removes the earlier steps' and older drafts' copies", async () => {
+    const root = mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "post-prune-"));
+    const file = (rel: string) => (mkdirSync(path.dirname(path.join(root, rel)), { recursive: true }), writeFileSync(path.join(root, rel), "x"), path.join(root, rel));
+    const face = file("face-refine/a-1.mov");
+    const voice = file("voice/a-2.mov");
+    const older = file("voice/a-0.mov");
+    await prune(root, new Set([voice]));
+    expect([existsSync(face), existsSync(voice), existsSync(older)]).toEqual([false, true, false]);
   });
 });

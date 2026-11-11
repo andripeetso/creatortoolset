@@ -2,6 +2,7 @@ import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import type { Timeline } from "../../contracts/editor";
 import { ffmpegCommand } from "../../api/ffmpeg-runtime";
@@ -9,6 +10,7 @@ import { env } from "../../api/lib/env";
 import { definePlugin, type EditorStepInput } from "../../api/lib/plugin";
 import { ffmpegSlot } from "../../api/library/media/run";
 import { ENGINE } from "./engine";
+import { REQUIREMENTS } from "./requirements";
 
 /**
  * Face refinement, an AI Editor step: the speaker's skin evened out and the dark circles under the eyes lifted, on the
@@ -27,7 +29,6 @@ export const LOOKS: Record<string, { smooth: number; undereye: number }> = {
   medium: { smooth: 0.28, undereye: 0.6 },
   strong: { smooth: 0.4, undereye: 0.8 },
 };
-const PACKAGES = ["mediapipe==1.2.2", "opencv-contrib-python==5.0.0.93"];
 const MODELS = [
   {
     name: "face_landmarker.task",
@@ -94,7 +95,7 @@ function run(cmd: string, args: string[], opts: { env?: NodeJS.ProcessEnv; timeo
   );
 }
 
-/** A Python 3.9+ with venv. On a Mac, /usr/bin/python3 is a stub that opens an installer unless the developer tools are there. */
+/** A Python 3.9 to 3.14 (the versions requirements.ts is pinned for) with venv. On a Mac, /usr/bin/python3 is a stub that opens an installer unless the developer tools are there. */
 async function findPython(): Promise<string | null> {
   const mac = process.platform === "darwin";
   const devTools = mac ? await run("xcode-select", ["-p"], { timeout: 5000 }).then(() => true, () => false) : true;
@@ -105,7 +106,7 @@ async function findPython(): Promise<string | null> {
   ];
   for (const py of candidates) {
     if (py.startsWith("/") && !existsSync(py)) continue;
-    const ok = await run(py, ["-I", "-c", "import sys, venv, ensurepip; assert sys.version_info >= (3, 9)"], { timeout: 20_000 }).then(() => true, () => false);
+    const ok = await run(py, ["-I", "-c", "import sys, venv, ensurepip; assert (3, 9) <= sys.version_info[:2] <= (3, 14)"], { timeout: 20_000 }).then(() => true, () => false);
     if (ok) return py;
   }
   return null;
@@ -128,8 +129,11 @@ async function fetchModel(m: (typeof MODELS)[number], dir: string): Promise<void
  */
 async function setUp(): Promise<{ python: string; engine: string; models: string }> {
   if (process.platform === "darwin" && process.arch !== "arm64") throw new Error("Face refinement needs a Mac with Apple silicon (its face models have no Intel build)");
+  // Darwin 22 is macOS 13: OpenCV 5's Mac build starts there
+  if (process.platform === "darwin" && Number(os.release().split(".")[0]) < 22) throw new Error("Face refinement needs macOS 13 or newer");
   const dir = home();
-  const venv = path.join(dir, `venv-${sha1(PACKAGES.join(" ")).slice(0, 8)}`);
+  const venv = path.join(dir, `venv-${sha1(REQUIREMENTS).slice(0, 8)}`);
+  const reqFile = path.join(dir, `requirements-${sha1(REQUIREMENTS).slice(0, 8)}.txt`);
   const python = path.join(venv, "bin", "python");
   const engine = path.join(dir, `engine-${sha1(ENGINE).slice(0, 8)}.py`);
   const models = path.join(dir, "models");
@@ -142,15 +146,17 @@ async function setUp(): Promise<{ python: string; engine: string; models: string
   for (const m of MODELS) await fetchModel(m, models);
   if (existsSync(ready)) return { python, engine, models };
   const system = await findPython();
-  if (!system) throw new Error("Face refinement needs Python 3 on this Mac: install it from python.org (or run xcode-select --install), then run the edit again");
+  if (!system) throw new Error("Face refinement needs Python 3.9 to 3.14 on this Mac: install it from python.org (or run xcode-select --install), then run the edit again");
   await rm(venv, { recursive: true, force: true });
   const step = (what: string) => (e: Error) => {
     throw new Error(`Face refinement could not ${what}: ${e.message}`);
   };
   await run(system, ["-m", "venv", venv]).catch(step(`make its own Python (with ${system})`));
-  await run(python, ["-m", "pip", "install", "--no-cache-dir", "--disable-pip-version-check", "-q", ...PACKAGES], { timeout: 30 * 60_000 }).catch(step("install MediaPipe and OpenCV in its own Python"));
+  await writeFile(reqFile, REQUIREMENTS);
+  // exactly the packages it was tested with: every one, dependencies too, by version and hash, wheels only
+  await run(python, ["-m", "pip", "install", "--no-cache-dir", "--disable-pip-version-check", "-q", "--require-hashes", "--only-binary=:all:", "-r", reqFile], { timeout: 30 * 60_000 }).catch(step("install MediaPipe and OpenCV in its own Python"));
   await run(python, ["-I", engine, "--selftest"], { env: { ...process.env, FACE_REFINE_MODELS: models } }).catch(step("start its engine"));
-  await writeFile(ready, PACKAGES.join("\n"));
+  await writeFile(ready, REQUIREMENTS);
   return { python, engine, models };
 }
 let setting: Promise<{ python: string; engine: string; models: string }> | undefined;
@@ -221,13 +227,13 @@ export async function refineFaces({ files, timeline, values, workDir, signal }: 
 export default definePlugin({
   id: "editor-face-refine",
   name: "Face refinement",
-  about: "Evens out the speaker's skin and lifts dark circles in every edit, on this computer",
+  about: "Evens out the speaker's skin and lifts dark circles in every edit, on this computer. About 1.4 GB of disk for each minute of video",
   editor: {
     steps: [
       {
         id: "face-refine",
         title: "Face refinement",
-        about: "Evens out the skin and lifts the dark circles under the eyes, and leaves beard, brows, eyes and lips alone. The first run sets up its own Python (MediaPipe).",
+        about: "Evens out the skin and lifts the dark circles under the eyes, and leaves beard, brows, eyes and lips alone. The first run sets up its own Python (MediaPipe). About 1.4 GB of disk for each minute of video.",
         order: 20,
         options: [
           {
