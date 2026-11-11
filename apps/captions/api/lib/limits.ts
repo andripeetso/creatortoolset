@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { codexPlan } from "../../contracts/plans";
 import type { Driver, LimitWindow, LimitsIdentity } from "../../contracts/providers";
 import { env } from "./env";
 
@@ -17,6 +18,8 @@ export interface Reported {
   state: LimitsIdentity["state"];
   error?: string;
   windows: LimitWindow[];
+  /** the plan type the usage page named (Codex's plan_type), as it said it */
+  plan?: string;
 }
 
 /** A provider instance that runs on a device, for the view: its key, driver, device and folder. */
@@ -85,7 +88,8 @@ export function parseLimits(body: unknown): Reported[] {
       return [{ id, label: name, kind, usedPercent: used, ...(resetsAt !== undefined ? { resetsAt } : {}), ...(windowMs !== undefined ? { windowMs } : {}) }];
     });
     const error = text(o.error, 200);
-    return [{ driver, home, isDefault: o.isDefault === true, label, state, ...(error ? { error } : {}), windows }];
+    const plan = text(o.plan, 40);
+    return [{ driver, home, isDefault: o.isDefault === true, label, state, ...(error ? { error } : {}), windows, ...(plan ? { plan } : {}) }];
   });
 }
 
@@ -94,6 +98,10 @@ export function saveLimits(device: string, body: unknown, now = Date.now()): voi
   store().set(device, { at: now, identities: parseLimits(body) });
   persist();
 }
+
+/** The plan type a device's Codex login reported (its default folder first), as the usage page said it. */
+export const reportedPlan = (device: string, driver: Driver): string | undefined =>
+  [...(store().get(device)?.identities ?? [])].sort((a, b) => Number(b.isDefault) - Number(a.isDefault)).find((x) => x.driver === driver && x.plan)?.plan;
 
 /**
  * The identities behind the given instances, one entry per identity (two instances on one folder share it). An
@@ -112,10 +120,12 @@ export function limitsFor(refs: LimitRef[], online: (device: string) => boolean)
       cur.instances.push(r.key);
       continue;
     }
+    const plan = hit.driver === "codex" ? codexPlan(hit.plan) : null;
     out.set(key, {
       driver: hit.driver,
       label: hit.label,
       state: hit.state,
+      ...(plan ? { plan } : {}),
       ...(hit.error ? { error: hit.error } : {}),
       windows: hit.windows,
       at: stored.at,

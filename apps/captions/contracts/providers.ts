@@ -8,6 +8,7 @@
  * with no provider: its own key from Settings → API keys (api/my-keys.ts keyFor).
  */
 
+import type { PlanId } from "./plans";
 import type { Disk } from "./storage";
 
 export type BuiltinDriver = "claude" | "codex" | "cursor" | "grok" | "gemini" | "opencode" | "antigravity" | "musecode" | "pi" | "acp";
@@ -295,6 +296,8 @@ export interface LimitsIdentity {
   label: string;
   /** ok; no_login = no sign-in in that folder; signed_out = sign in again there; error = could not read it */
   state: "ok" | "no_login" | "signed_out" | "error";
+  /** the plan the usage page names, when it is one PLANS has (Codex's plan_type, contracts/plans.ts codexPlan) */
+  plan?: PlanId;
   error?: string;
   windows: LimitWindow[];
   /** when the server got the reading (ms) */

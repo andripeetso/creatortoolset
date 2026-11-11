@@ -94,10 +94,10 @@ describe("the rows: named by what a person knows, in order", () => {
     expect(panel(v)).not.toContain(">Cursor<");
   });
 
-  it("never says Use it or Check on a button, and shows no Details on a row that is fine", () => {
+  it("never says Use it or Check on a button, and shows no What it said on a row that is fine", () => {
     for (const html of [panel(view([])), panel(view([codex, claude])), panel(view([connected("claude", "Claude Code")]))]) {
       expect(html).not.toMatch(/>(Use it|In use|Check(ing…| again)?)<\/button>/);
-      expect(html).not.toContain("Details");
+      expect(html).not.toContain("What it said");
     }
   });
 
@@ -192,13 +192,13 @@ describe("what Connect does, one step at a time", () => {
     expect(rowView("claude", claude, undefined, "timedOut")).toEqual({ line: "Still not signed in. Finish in your browser, or sign in again.", button: { label: "Sign in" } });
   });
 
-  it("a check that comes back not signed in is the sign-in state, never a failure: Sign in, no red line, no Details", () => {
+  it("a check that comes back not signed in is the sign-in state, never a failure: Sign in, no red line, no What it said", () => {
     // Grok's own words when it is signed out (grok 1.0.77, 2026-11-10)
     const raw = "Grok: Not signed in. To authenticate without a browser, run:\n  grok login --device-code\n\nAlternatively, set the XAI_API_KEY environment variable or run `grok login` on a machine with a browser.";
     const signin: ConnectResult = { state: "signin", signedIn: false, answered: false, message: "Not signed in yet.", raw };
     expect(rowView("grok", other("grok", { signedIn: true }), signin, undefined)).toEqual({ line: "Not signed in yet. Uses your Grok account.", button: { label: "Sign in" } });
     const html = panel({ ...view([claude]), others: [other("grok", { signedIn: true })] }, { results: { grok: signin } });
-    expect(html).not.toContain("Details");
+    expect(html).not.toContain("What it said");
     expect(html).not.toContain("grok login");
     expect(html).not.toContain("text-red-600");
     // Meta signed out, in its own words: Sign in, and its "run /login" never shows
@@ -209,7 +209,7 @@ describe("what Connect does, one step at a time", () => {
     expect(rowView("opencode", other("opencode"), signin, undefined)).toEqual({ line: "Not signed in to OpenCode on this Mac yet.", button: { label: "Connect" } });
   });
 
-  it("no text a row shows, Details included, holds a command to run: the program's instructions are left out", () => {
+  it("no text a row shows, What it said included, holds a command to run: the program's instructions are left out", () => {
     const real = [
       // Grok signed out, Cursor signed out (its print run and its editor mode), the installers' last words
       "Not signed in. To authenticate without a browser, run:\n  grok login --device-code\n\nAlternatively, set the XAI_API_KEY environment variable or run `grok login` on a machine with a browser.",
@@ -226,9 +226,16 @@ describe("what Connect does, one step at a time", () => {
     expect(withoutCommands(real[0])).toBe("Not signed in.");
     expect(withoutCommands(real[1])).toBe("Not logged in.");
     expect(withoutCommands("curl: (6) Could not resolve host: x.ai")).toBe("curl: (6) Could not resolve host: x.ai");
+    // the programs' own words, as the Mac sends them, stay: they start with the program's name, not a command
+    expect(withoutCommands("Claude on the Mac: Claude: API Error: 403 This organization has been disabled.")).toBe("Claude on the Mac: Claude: API Error: 403 This organization has been disabled.");
+    expect(withoutCommands("Muse Code couldn't answer. Muse Code said: overloaded.")).toBe("Muse Code couldn't answer. Muse Code said: overloaded.");
+    // no file's path: a program's words can name its own files; an address on the web stays
+    expect(withoutCommands("Claude gave no result: Error reading /Users/tiny/.claude/settings.json (EACCES)")).toBe("Claude gave no result: Error reading … (EACCES)");
+    expect(withoutCommands("Grok 1.0.77 installed to /Users/x/.grok/bin/grok")).toBe("Grok 1.0.77 installed to …");
+    expect(withoutCommands("upgrade to Plus: https://chatgpt.com/explore/plus.")).toBe("upgrade to Plus: https://chatgpt.com/explore/plus.");
   });
 
-  it("a failure is one plain sentence said once, Try again, and the program's own words under Details", () => {
+  it("a failure is one plain sentence said once, Try again, and the program's own words under What it said", () => {
     const failed: ConnectResult = { state: "failed", signedIn: true, answered: false, message: "It took too long to answer. Try again.", raw: "timed out" };
     const v = rowView("claude", claude, failed, undefined);
     expect(v.line).toBe("It took too long to answer. Try again.");
@@ -236,9 +243,42 @@ describe("what Connect does, one step at a time", () => {
     expect(v.raw).toBe("timed out");
     expect(v.connected).toBeFalsy();
     const html = panel(view([claude]), { results: { claude: failed } });
-    expect(html).toContain("Details");
+    expect(html).toContain("What it said");
     expect(html).toContain("timed out");
     expect(html).not.toContain("It didn't answer: It didn't answer");
+  });
+
+  it("an account with no plan for this AI says what it needs, in amber, with no Try again and its own words a press away", () => {
+    const raw = "Codex: To use Codex with your ChatGPT plan, upgrade to Plus: https://chatgpt.com/explore/plus.";
+    const noPlan: ConnectResult = { state: "plan", signedIn: true, answered: false, message: "Codex needs ChatGPT Plus or higher, which this account doesn't have.", raw };
+    expect(rowView("codex", codex, noPlan, undefined)).toEqual({ line: "Codex needs ChatGPT Plus or higher, which this account doesn't have.", button: null, raw });
+    const html = panel(view([codex]), { results: { codex: noPlan } });
+    expect(html).toContain("Codex needs ChatGPT Plus or higher");
+    expect(html).toContain("What it said");
+    expect(buttons(html)).not.toContain("Try again");
+    expect(html).not.toContain("text-red-600");
+    expect(nextStep("plan", { installed: false, updated: false, signedIn: false })).toBe("done");
+  });
+
+  it("a refusal it does not know keeps its line, with the program's words under What it said; none when they are only a command", () => {
+    const odd: ConnectResult = { state: "failed", signedIn: true, answered: false, message: "It didn't answer. Try again.", raw: "Codex: unexpected status 418 I'm a teapot" };
+    const html = panel(view([codex]), { results: { codex: odd } });
+    expect(html).toContain("It didn't answer. Try again.");
+    expect(html).toContain("What it said");
+    expect(html).toContain("unexpected status 418");
+    // a program that says only what to run leaves nothing to show: the line and Try again stay, no empty control
+    const onlyCommand: ConnectResult = { ...odd, raw: "Please run /login" };
+    expect(rowView("codex", codex, onlyCommand, undefined).raw).toBeUndefined();
+    expect(panel(view([codex]), { results: { codex: onlyCommand } })).not.toContain("What it said");
+  });
+
+  it("a connected row names the plan its AI says it is on, quietly; nothing when no plan is known", () => {
+    expect(rowView("codex", row({ id: "codex", name: "Codex", connected: true, plan: "chatgpt_plus" }), undefined, undefined)).toEqual({ line: "ChatGPT Plus plan", button: null, connected: true });
+    expect(rowView("claude", row({ id: "claude", name: "Claude Code", connected: true, plan: "claude_max5" }), undefined, undefined).line).toBe("Claude Max 5x plan");
+    expect(rowView("claude", connected("claude", "Claude Code"), undefined, undefined).line).toBe("");
+    // the limit's sentence says more than the plan
+    const limited: ConnectResult = { state: "ready", signedIn: true, answered: false, message: "Your Codex plan's limit is reached; it resets 5:00 PM." };
+    expect(rowView("codex", row({ id: "codex", name: "Codex", connected: true, plan: "chatgpt_plus" }), limited, undefined).line).toBe("Your Codex plan's limit is reached; it resets 5:00 PM.");
   });
 
   it("a plan at its limit is connected: the check mark, no button, and when it resets", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { limitLine, limitMessage, planFromCli, planWarning, shareOfWindow, WARN_SHARE } from "./plans";
+import { codexPlan, limitLine, limitMessage, noPlanLine, planFromCli, planWarning, shareOfWindow, WARN_SHARE } from "./plans";
 
 describe("plan warnings", () => {
   it("warn before an AI Editor run on Pro and Plus, never on Max or ChatGPT Pro", () => {
@@ -28,6 +28,26 @@ describe("plan from the CLI", () => {
     expect(planFromCli("max")).toBe("claude_max5");
     expect(planFromCli("ChatGPT")).toBeNull();
     expect(planFromCli(undefined)).toBeNull();
+  });
+
+  it("reads Codex's plan type as a ChatGPT plan, only the two it knows", () => {
+    expect(codexPlan("plus")).toBe("chatgpt_plus");
+    expect(codexPlan("pro")).toBe("chatgpt_pro"); // never Claude Pro
+    for (const other of ["promax", "prolite", "free", "go", "team", "edu_pro", "", undefined]) expect(codexPlan(other)).toBeNull();
+  });
+});
+
+describe("no plan for this AI", () => {
+  it("names what the account needs, from each AI's own words", () => {
+    expect(noPlanLine("Codex: To use Codex with your ChatGPT plan, upgrade to Plus: https://chatgpt.com/explore/plus.")).toBe("Codex needs ChatGPT Plus or higher, which this account doesn't have.");
+    expect(noPlanLine("Gemini: This client is no longer supported for Gemini Code Assist for individuals.")).toMatch(/^Google turned this account away/);
+    expect(noPlanLine("Claude on the Mac: Your account is on hold and can't use Claude Code. View details or appeal: https://claude.ai/restricted")).toBe("Claude put this account on hold, so it can't use Claude Code.");
+    expect(noPlanLine("Grok gave no result: Grok Build is not yet available for this account.")).toBe("Grok Build isn't available for this Grok account yet.");
+  });
+
+  it("leaves everything else alone: a limit, a sign-in, a plain failure", () => {
+    for (const raw of ["Codex: You've hit your usage limit. Upgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus), or try again at 5:00 PM.", "Claude: Not logged in · Please run /login", "muse: subscription allowance unavailable: the server sent no usage data", "model not found for this plan"])
+      expect(noPlanLine(raw)).toBeNull();
   });
 });
 

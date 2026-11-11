@@ -49,12 +49,10 @@ describe("plan limits that are off on a Mac", () => {
 });
 
 describe("your plan", () => {
-  it("is asked when no reading tells the plan", () => {
-    expect(page(null, setup({ plan: "claude_pro" }))).toContain("Your plan");
-  });
-
-  it("is not asked when a reading already tells it", () => {
-    expect(page(null, setup({ detected: "claude_max5" }))).not.toContain("Your plan");
+  // the plan a big job warns by is planToWarnBy's (the pick, else the plan the AI names), tested in lib/plan-warning.test.ts
+  it("is shown when nothing names the plan, and when the AI names it", () => {
+    expect(page(null, setup())).toContain("Your plan");
+    expect(page(null, setup({ detected: "chatgpt_plus" }))).toContain("Your plan");
   });
 });
 
@@ -79,7 +77,13 @@ describe("a server AI's login", () => {
     expect(html).toContain("Claude (hub)");
     expect(html).not.toContain("Team");
     expect(html).not.toContain("sam");
-    expect(html).toContain("Max plan");
+    expect(html).toContain("Claude Max 5x plan");
+  });
+
+  it("names a ChatGPT plan from Codex's own reading", () => {
+    const login = { driver: "codex", label: "default", state: "ok", plan: "chatgpt_plus", at: 0, device: "dev_1", online: true, instances: ["sam:codex"], windows: [] };
+    const v = { limits: [login], devices: [{ ...mac, report: { drivers: [], homes: [] } }], own: null, workspace: null } as unknown as ProvidersView;
+    expect(renderToStaticMarkup(<PlanLimits view={v} now={0} bridge={null} setup={setup()} />)).toContain("ChatGPT Plus plan");
   });
 });
 

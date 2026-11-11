@@ -47,9 +47,10 @@ export interface LocalAiView {
 /**
  * "unsupported": this CLI can't be the app's own AI (the Mac relay has no runner for it). "outdated": the copy on this
  * Mac is too old for today's models; the page installs the current one and connects again. "ready" with a `message`:
- * connected, and the plan's limit is reached until the time the message names.
+ * connected, and the plan's limit is reached until the time the message names. "plan": the AI turned the account itself
+ * away (no plan that includes it, contracts/plans.ts noPlanLine); trying again won't change that.
  */
-export type ConnectState = "missing" | "mac" | "signin" | "failed" | "ready" | "unsupported" | "outdated";
+export type ConnectState = "missing" | "mac" | "signin" | "failed" | "ready" | "unsupported" | "outdated" | "plan";
 
 export interface ConnectResult {
   state: ConnectState;
