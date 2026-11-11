@@ -310,7 +310,12 @@ one at most once a minute). A crash of the app itself is macOS's report in
   each switch and pairing), so Settings → Providers can say "This Mac (*name*) answers your AI" rather than
   another Mac's name.
 - File inputs open the Mac's own open panel. Downloads land in `~/Downloads` (a name taken
-  gets ` (2)`). `target=_blank`, `window.open` and links to other sites open in the default
+  gets ` (2)`). One download is not kept as it is: the screen recording editor's export with no background
+  (`….ctalpha.mp4`: every frame's colours and its matte in one H.264 picture) is made into a see-through
+  `.mov` (ProRes 4444 with an alpha channel, the sound copied) and shown in Finder (`AlphaVideo.swift`; the page
+  offers it where `<html data-mac-record-alpha>` is set). It is large, about 3 GB a minute, so a Save dialog asks
+  where it goes and everything is written in that folder; the page hears how far it is (`mac-alpha` events) and its
+  Stop ends it (`record-alpha-stop`). `target=_blank`, `window.open` and links to other sites open in the default
   browser.
 - Drag and drop: a drop zone on the page gets the files as on the web. A file dropped
   anywhere else is ignored, so it can't replace the page.
@@ -432,6 +437,8 @@ between launches; Sign out on the site clears it. The one secret the app keeps i
   paused flag, the server's environment and the five-crash rule).
 - `Sources/CreatorToolsetMac/Logic.swift`: the pure helpers the tests cover.
 - `Tests/CreatorToolsetMacTests/LogicTests.swift`: the pure helpers (site address, cookies, downloads, notes).
+- `Tests/CreatorToolsetMacTests/AlphaVideoTests.swift`: the see-through video (the packed download's name and
+  halves, one frame joined by hand, a small packed file converted for real with its sound, a file that is no video).
 - `Tests/CreatorToolsetMacTests/ServersTests.swift`: the list (migration, This Mac, add, rename, remove, none picked),
   Add server's input, the guide's health reading, the menu bar status and the page's device marker.
 - `Tests/CreatorToolsetMacTests/RelayTests.swift`: the relay offline (request checks, command line,
