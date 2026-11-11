@@ -28,6 +28,9 @@ let model: Promise<Extractor> | null = null;
 let line: Promise<unknown> = Promise.resolve();
 let idle: NodeJS.Timeout | undefined;
 let current: { key: string; text: string } | null = null;
+let running = false;
+/** Whether a run has the search model open now (loading, fetching or reading texts). */
+export const searchModelInUse = (): boolean => running;
 
 /** What the run for `key` (a library version) is doing, in words for its owner, while the model is fetched; else undefined. */
 export const deviceEmbedStatus = (key: string): string | undefined => (current?.key === key ? current.text : undefined);
@@ -68,6 +71,7 @@ function run(texts: string[], key: string, load: typeof loadModel, search: boole
     // a search never loads this model beside the speech model: the caller then searches by words alone
     if (search && speechModelInUse()) throw new Error("This computer is making a transcript");
     clearTimeout(idle);
+    running = true;
     try {
       model ??= load((text) => void (current = { key, text }));
       const m = await model.catch(async (e) => {
@@ -86,6 +90,7 @@ function run(texts: string[], key: string, load: typeof loadModel, search: boole
       return out;
     } finally {
       current = null;
+      running = false;
       idle = setTimeout(() => void giveBack(), IDLE_MS);
       idle.unref();
     }

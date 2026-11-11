@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import type { AuthVars } from "../auth";
 
 const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "library-space-"));
@@ -105,6 +105,14 @@ describe("the library's space", () => {
     d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor) VALUES ('lib_s', 'v2', 'transcribe', 'running', 'owner-s')").run();
     expect((await clear("models")).status).toBe(409);
     d.prepare("DELETE FROM jobs WHERE kind = 'transcribe'").run();
+    // nor while another tool's transcript has the model open (Caption Studio, Video Notes: no library job says so)
+    const { speechModelInUse, transcribeOnDevice } = await import("../lib/device-transcribe");
+    let stop = (_: Error) => {};
+    const other = transcribeOnDevice("no-file", "other-tool", () => new Promise((_, no) => (stop = no)));
+    await vi.waitFor(() => expect(speechModelInUse()).toBe(true));
+    expect((await clear("models")).status).toBe(409);
+    stop(new Error("stopped"));
+    await expect(other).rejects.toThrow();
     expect(await (await clear("models")).json()).toEqual({ cleared: 7, kept: 0 });
     expect(existsSync(path.join(dir, "models"))).toBe(false);
     expect(existsSync(blob("libraries/lib_s/v/v2/source"))).toBe(true);

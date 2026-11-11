@@ -4,7 +4,8 @@ import { Hono } from "hono";
 import type { LibrarySpace } from "../../contracts/library";
 import type { AuthVars } from "../auth";
 import { env } from "../lib/env";
-import { deviceTranscribes } from "../lib/device-transcribe";
+import { searchModelInUse } from "../lib/device-embed";
+import { deviceTranscribes, speechModelInUse } from "../lib/device-transcribe";
 import { libraryChanged, libraryRole } from "./access";
 import { blobs, libraryDb } from "./db";
 
@@ -80,11 +81,12 @@ spaceApp.post("/:id/space/clear", async (c) => {
   }
   if (what === "models") {
     if (!mayClearModels()) return c.json({ error: "Not on this server", code: "forbidden" }, 403);
-    // a transcript or a search entry being made has its model open
-    if (db.prepare("SELECT 1 FROM jobs WHERE kind IN ('transcribe', 'embed') AND state = 'running'").get()) {
-      return c.json({ error: "A transcript is being made: clear the models when it is done", code: "conflict" }, 409);
-    }
     const cleared = await folderBytes(modelsDir());
+    // a model that is open is left alone, whoever opened it (the library, Caption Studio, Video Notes, the AI Editor, a
+    // search): deleting the folder while the model library writes a download into it ends the server
+    // (device-transcribe.ts). Nothing is awaited between this check and the delete.
+    const open = speechModelInUse() || searchModelInUse() || db.prepare("SELECT 1 FROM jobs WHERE kind IN ('transcribe', 'embed') AND state = 'running'").get();
+    if (open) return c.json({ error: "A model is in use right now: clear the models when that work is done", code: "conflict" }, 409);
     await rm(modelsDir(), { recursive: true, force: true });
     return c.json({ cleared, kept: 0 });
   }
