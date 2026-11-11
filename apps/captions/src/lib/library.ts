@@ -84,6 +84,7 @@ export function listAssets(libraryId: string, q: SearchQuery & { cursor?: string
   if (q.collectionId) p.set("collectionId", q.collectionId);
   if (q.limit) p.set("limit", String(q.limit));
   if (q.trashed) p.set("trashed", "1");
+  if (q.roll) p.set("roll", q.roll);
   if (q.cursor) p.set("cursor", q.cursor);
   // a plug-in source's cards instead of the library's (the Sources group in the sidebar)
   if (q.source) p.set("source", q.source);

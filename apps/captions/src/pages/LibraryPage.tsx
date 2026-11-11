@@ -52,9 +52,9 @@ const KINDS: { value: AssetKind | "all"; label: string }[] = [
 ];
 const KIND_ICON: Record<AssetKind, typeof Video> = { video: Video, audio: AudioLines, image: ImageIcon, doc: FileText };
 
-/** A-roll or B-roll, when the server has sorted the clip (the "roll" work fills AssetCard.roll; read as optional here). */
+/** A-roll or B-roll, as the server sorted the clip (api/library/roll.ts); finished work and unsorted clips have none. */
 type Roll = "a" | "b";
-const rollOf = (a: AssetCard) => (a as AssetCard & { roll?: Roll }).roll;
+const rollOf = (a: AssetCard) => a.roll;
 const ROLLS: { value: Roll | null; label: string }[] = [
   { value: null, label: "All" },
   { value: "a", label: "A-roll" },
@@ -130,7 +130,7 @@ export default function LibraryPage() {
 
   // the first page for the current library, search, kind and folder, kept per view; "Load more" pages add to it
   const folder = scope === "all" ? {} : scope === "trash" ? { trashed: true } : { collectionId: scope };
-  const query = { q: term || undefined, kind: kind === "all" ? undefined : [kind], facets, ...folder, source: source || undefined };
+  const query = { q: term || undefined, kind: kind === "all" ? undefined : [kind], facets, ...folder, source: source || undefined, roll: roll ?? undefined };
   const pageKey = libId ? `/api/library/${libId}/assets?view=${encodeURIComponent(JSON.stringify(query))}` : null;
   const first = useCachedLoad<AssetPage>(pageKey, () => listAssets(libId!, query));
   const reload = () => void first.refresh().catch((e) => setError(message(e)));
@@ -139,9 +139,9 @@ export default function LibraryPage() {
   const shownIds = new Set(first.data?.items.map((a) => a.id));
   const items = [...(first.data?.items ?? []), ...(extra?.items.filter((a) => !shownIds.has(a.id)) ?? [])];
   const next = extra ? extra.next : first.data?.next;
-  // ponytail: A-roll / B-roll narrows the pages loaded so far; a server query when the roll work adds one
+  // A-roll / B-roll is the server's filter (the whole library, not only the pages loaded); the row shows once clips are sorted
   const hasRoll = items.some((a) => rollOf(a));
-  const shown = roll ? items.filter((a) => rollOf(a) === roll) : items;
+  const shown = items;
   const narrowed = !!term || kind !== "all" || !!roll || Object.values(facets).some((v) => v.length) || !!source;
 
   // an empty library is one screen (what it is for, the folder to choose): nothing in it, nothing in its trash, no
