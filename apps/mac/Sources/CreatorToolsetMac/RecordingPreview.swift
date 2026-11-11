@@ -3,7 +3,7 @@ import SwiftUI
 
 // The small panel that pops up when a recording stops, at the bottom right corner of the recorded window or area (of
 // the screen for a whole display). It shows the thumbnail and the file's size and length; hovering it shows Save,
-// Copy, Share and Edit. It stays until the user acts or closes it, and does nothing with the recording itself: the
+// Copy, Share and Edit; its corners hold Close, Throw away and Show in Finder. It stays until the user acts or closes it, and does nothing with the recording itself: the
 // caller (Recorder) runs each action and calls close() when done.
 
 @MainActor
@@ -142,6 +142,16 @@ private struct PreviewView: View {
                     .buttonStyle(.plain)
                     .help("Close (the recording stays)")
                     Spacer()
+                    // in sight, not in a menu: a take that is not wanted goes with one press (the app asks once)
+                    Button(action: actions.discard) {
+                        Image(systemName: "trash")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 22, height: 22)
+                            .background(Circle().fill(Color.black.opacity(0.5)))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Throw away (to the Trash)")
                 }
                 Spacer()
                 HStack {
@@ -149,17 +159,13 @@ private struct PreviewView: View {
                         .font(.system(size: 11, weight: .medium).monospacedDigit())
                         .foregroundStyle(.white.opacity(0.9))
                     Spacer()
-                    Menu {
-                        Button("Show in Finder", action: actions.reveal)
-                        Divider()
-                        Button("Throw Away", role: .destructive, action: actions.discard)
-                    } label: {
-                        Image(systemName: "ellipsis")
+                    Button(action: actions.reveal) {
+                        Image(systemName: "folder")
                             .foregroundStyle(.white)
                             .frame(width: 26, height: 22)
                     }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
+                    .buttonStyle(.plain)
+                    .help("Show in Finder")
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)

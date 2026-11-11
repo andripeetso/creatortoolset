@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router";
-import { ChevronDown, FolderOpen, Send } from "lucide-react";
+import { ChevronDown, FolderOpen, Send, Trash2 } from "lucide-react";
 import { AppBar } from "@/components/AppBar";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,7 +24,8 @@ const SHARES: { dest: ShareDest; label: string }[] = [
 
 /**
  * One recording on this Mac (`/record/<id>`, app only): its editor on the local file. Export saves the edited video
- * or uploads it to Review; the menu beside it sends the recording as it was made, or shows its file.
+ * or uploads it to Review; the menu beside it sends the recording as it was made, or shows its file; the bin throws
+ * the recording away (the app asks once, then it is in the Trash) and goes back to the recordings.
  */
 export default function ScreenProjectPage() {
   const { id = "" } = useParams();
@@ -34,6 +35,12 @@ export default function ScreenProjectPage() {
   const source = useMemo(() => (rec ? localSource(rec) : null), [rec]);
   // the editor's Export sits in this page's bar
   const [slot, setSlot] = useState<HTMLElement | null>(null);
+
+  // thrown away from here: once the app's list no longer has it, back to the recordings
+  const [leaving, setLeaving] = useState(false);
+  useEffect(() => {
+    if (leaving && list && !rec) navigate("/record", { replace: true });
+  }, [leaving, list, rec, navigate]);
 
   if (!canRecordScreen()) return <Navigate to="/record" replace />;
 
@@ -80,6 +87,20 @@ export default function ScreenProjectPage() {
           meta={{ name: rec.name, duration: rec.durationMs / 1000, width: rec.width, height: rec.height }}
           actions={actions}
           extra={
+            <>
+            <Button
+              size="icon"
+              variant="ghost"
+              aria-label="Throw this recording away"
+              title="Throw this recording away (to the Trash)"
+              className="hover:bg-red-950/60 hover:text-red-300"
+              onClick={() => {
+                setLeaving(true);
+                tellRecorder(`delete:${rec.id}`);
+              }}
+            >
+              <Trash2 />
+            </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button size="sm" variant="outline">
@@ -99,6 +120,7 @@ export default function ScreenProjectPage() {
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+            </>
           }
         />
       )}
