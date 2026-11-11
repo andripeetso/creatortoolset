@@ -28,7 +28,7 @@ import { speak, stopSpeaking, unlockAudio, useReadAloud } from "@/lib/read-aloud
 import { onTopic } from "@/lib/sync";
 import { cn } from "@/lib/utils";
 import { Composer, PictureOverlay } from "./Composer";
-import { EMPTY_DRAFT, MAX_PICTURES, isLongPaste, isMediaFile, isPicture, toPicture, type Draft } from "./draft";
+import { EMPTY_DRAFT, MAX_FILES, MAX_PICTURES, droppedFiles, isLongPaste, isMediaFile, isPicture, toPicture, type Draft } from "./draft";
 import { chunkedUpload } from "@/lib/uploads";
 import { useThrow } from "./useThrow";
 import { Elapsed, WorkCards } from "./WorkCards";
@@ -243,6 +243,8 @@ export function AssistantDock() {
   // The queue, as in the Workshop's chat: Enter while a reply runs adds the message here, and the first one sends
   // when the reply is done. Steer stops the reply and sends that one now; Edit puts it back in the box.
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
   const [queue, setQueue] = useState<Queued[]>(storedQueue);
   // a queued message the server refused stays first and waits for a click (no retry loop)
   const [held, setHeld] = useState(false);
@@ -271,10 +273,18 @@ export function AssistantDock() {
     });
   }, []);
   const addFiles = useCallback(
-    async (files: File[]) => {
+    async (files: File[], folder = false) => {
       const pics = files.filter(isPicture);
-      const media = files.filter((f) => !isPicture(f) && isMediaFile(f));
-      if (pics.length + media.length < files.length) setError("Pictures, videos and recordings can go with a message: paste text into the box");
+      let media = files.filter((f) => !isPicture(f) && isMediaFile(f));
+      // a folder's other files (a camera's sidecars, notes) are passed over without a word
+      const other = files.find((f) => !isPicture(f) && !isMediaFile(f));
+      if (folder ? !pics.length && !media.length : other)
+        setError(folder ? "That folder has no pictures, videos or recordings" : `"${other?.name}" can't go with a message: only pictures, videos and recordings can`);
+      const room = MAX_FILES - draftRef.current.files.length;
+      if (media.length > room) {
+        setError(`At most ${MAX_FILES} videos go with one message: the first ${Math.max(room, 0)} were added`);
+        media = media.slice(0, Math.max(room, 0));
+      }
       // a video uploads at once; the message waits for it (Send is off until it's in)
       for (const f of media) {
         const key = `${Date.now()}-${f.name}-${f.size}`;
@@ -482,12 +492,12 @@ export function AssistantDock() {
         setDropping(false);
         if (!connectedNow || !e.dataTransfer.files.length) return;
         e.preventDefault();
-        void addFiles(Array.from(e.dataTransfer.files));
+        droppedFiles(e.dataTransfer).then((d) => addFiles(d.files, d.folder), (err) => setError(err instanceof Error ? err.message : String(err)));
       }}
     >
       {dropping && (
         <div className="pointer-events-none absolute inset-1.5 z-10 flex items-center justify-center rounded-[14px] border-2 border-dashed border-[var(--tint)] bg-[color-mix(in_srgb,var(--tint)_10%,transparent)] text-sm font-medium text-[var(--tint)] motion-safe:animate-in motion-safe:fade-in">
-          Drop pictures to add them
+          Drop pictures, videos or a folder
         </div>
       )}
       <header
