@@ -28,13 +28,16 @@ import { confirmDiscardUnsavedProject, guardLeaveLink } from "@/lib/persistence-
 import { PersistenceBadge } from "./PersistenceStatus";
 import { AppBar, ToolIntro } from "./AppBar";
 import { DropZoneText, dropZoneClass } from "./DropZone";
-import { ViewSwitch as ViewToggle, type BrowseView } from "./browse/Bar";
+import { BrowseBar, ViewSwitch as ViewToggle, type BrowseView } from "./browse/Bar";
+import { byName, matches, persistSort, storedSort, useBrowseView } from "./browse/views";
 import { alertDialog, confirmDialog } from "@/lib/dialogs";
 
 /** Recent projects shown on the import screen; the rest lives in "All projects". */
 const RECENT_COUNT = 6;
 const TRASH_KEEP_DAYS = 5;
-const VIEW_KEY = "cap-projects-view";
+// the view's pick keeps its old key "cap-projects-view" (browse/views.ts)
+const SORTS = ["recent", "name"] as const;
+const SORT_KEY = "captions:sort";
 type View = BrowseView;
 
 /** Clip thumbnail with a film-icon fallback when none exists. */
@@ -293,22 +296,12 @@ export function ImportScreen() {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [showAll, setShowAll] = useState(false);
-  const [view, setView] = useState<View>(() => {
-    try {
-      return localStorage.getItem(VIEW_KEY) === "list" ? "list" : "grid";
-    } catch {
-      return "grid";
-    }
-  });
-
-  const changeView = (v: View) => {
-    setView(v);
-    try {
-      localStorage.setItem(VIEW_KEY, v);
-    } catch {
-      /* storage unavailable */
-    }
-  };
+  // cards or rows: the pick is remembered (its old key), Settings → Appearance sets what it opens with
+  const [view, changeView] = useBrowseView("captions");
+  // All projects: a search and a sort (the server sends them newest change first)
+  const [find, setFind] = useState("");
+  const [sort, setSort] = useState(() => storedSort(SORT_KEY, SORTS));
+  const everything = sessions.filter((s) => matches(find, s.name)).sort((a, b) => (sort === "name" ? byName(a, b) : 0));
 
   useEffect(() => {
     void listDeletedSessions().then(setDeletedSessions).catch(() => {});
@@ -573,7 +566,23 @@ export function ImportScreen() {
                 view === "grid" ? "mx-auto max-w-5xl" : "mx-auto max-w-2xl"
               }
             >
-              <SessionsBlock sessions={sessions} view={view} h={handlers} />
+              <BrowseBar
+                search={{ value: find, onChange: setFind, placeholder: "Search projects (⌘K)" }}
+                sort={{
+                  value: sort,
+                  onChange: (v) => {
+                    setSort(v);
+                    persistSort(SORT_KEY, v);
+                  },
+                  label: "Sort projects",
+                  options: [
+                    { id: "recent", label: "Recent" },
+                    { id: "name", label: "Name" },
+                  ],
+                }}
+              />
+              {everything.length === 0 && <p className="py-10 text-center text-sm text-zinc-500">No matches.</p>}
+              <SessionsBlock sessions={everything} view={view} h={handlers} />
             </div>
           </div>
         </div>
