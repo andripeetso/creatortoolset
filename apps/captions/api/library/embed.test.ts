@@ -5,6 +5,12 @@ import { Hono } from "hono";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AuthVars } from "../auth";
 
+// this computer's model, stood in for: every text becomes (0, 0, 1, 0)
+vi.mock("../lib/device-embed", async (real) => ({
+  ...(await real<typeof import("../lib/device-embed")>()),
+  embedOnDevice: async (texts: string[]) => texts.map(() => Float32Array.from([0, 0, 1, 0])),
+}));
+
 const scratch = process.env.CT_SCRATCH_DIR ?? tmpdir();
 mkdirSync(scratch, { recursive: true });
 const dir = mkdtempSync(path.join(scratch, "library-embed-"));
@@ -15,12 +21,15 @@ const { libraryDb } = await import("./db");
 const { searchApp } = await import("./search");
 const { indexAsset } = await import("./query");
 const { saveTranscript } = await import("./transcribe");
-const { cosineTop, embedChunks, embedModel, embedVersion, rrf } = await import("./embed");
+const { catchUpEmbeds, cosineTop, embedChunks, embedModel, embedRoute, embedVersion, rrf } = await import("./embed");
+const { DEVICE_EMBED_MODEL } = await import("../lib/device-embed");
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 afterEach(() => {
   vi.unstubAllGlobals();
   delete process.env.OPENAI_API_KEY;
+  delete process.env.CT_LOCAL;
+  delete process.env.CT_MODE;
 });
 
 const app = new Hono<{ Variables: AuthVars }>();
@@ -135,5 +144,70 @@ describe("embed job", () => {
       { chunk: 0, start_s: 0, dims: 4 },
       { chunk: 1, start_s: 0, dims: 4 },
     ]);
+  });
+});
+
+describe("on this computer", () => {
+  const models = (id: string) => (libraryDb().prepare("SELECT DISTINCT model FROM embeddings WHERE version_id = ?").all(`ver-${id}`) as { model: string }[]).map((r) => r.model);
+  const queued = (lib: string) =>
+    (libraryDb().prepare("SELECT version_id FROM jobs WHERE library_id = ? AND kind = 'embed' AND state = 'queued' ORDER BY version_id").all(lib) as { version_id: string }[]).map((r) => r.version_id);
+
+  it("a key first, else this computer when the server is on it, and a hosted server still asks for the key", () => {
+    process.env.CT_LOCAL = "1";
+    expect(embedRoute("local")).toEqual({ model: DEVICE_EMBED_MODEL, device: true });
+    process.env.OPENAI_API_KEY = "test-key";
+    expect(embedRoute("local")).toEqual({ model: embedModel(), key: "test-key" });
+    delete process.env.OPENAI_API_KEY;
+    process.env.CT_MODE = "hosted";
+    expect(() => embedRoute("local")).toThrow("Add your OpenAI key in Settings → API keys");
+  });
+
+  it("with no key, a version's vectors are made here and replace the key's; a search compares only the same model", async () => {
+    process.env.CT_LOCAL = "1";
+    expect(models("ast-new")).toEqual([embedModel()]);
+    await embedVersion(libraryDb(), "ver-ast-new", "local");
+    expect(models("ast-new")).toEqual([DEVICE_EMBED_MODEL]);
+    // the other clips still hold the key's vectors: never compared with a query made here
+    expect((await search("local", "upside down")).map((h) => [h.asset.id, h.seconds])).toEqual([
+      ["ast-new", undefined],
+      ["ast-new", 0],
+    ]);
+  });
+
+  it("catch-up queues the clips with no vectors of the route's model, once, and leaves a failed one for its Retry", () => {
+    const d = libraryDb();
+    d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_b', 'local', 'B', 'local', 0)").run();
+    const add = (id: string, said: boolean) => {
+      d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at) VALUES (?, 'lib_b', 'video', ?, ?, 'local', 1)").run(id, id, `ver-${id}`);
+      d.prepare(
+        `INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, probe, state, created_by, created_at)
+         VALUES (?, ?, 1, 'k', 1, ?, '{"duration":60}', 'ready', 'local', 1)`,
+      ).run(`ver-${id}`, id, `sha-${id}`);
+      if (said) saveTranscript(d, `ver-${id}`, "device", "et", [{ start: 0, end: 2, text: "Tere." }]);
+    };
+    add("b-old", true); // made before search by meaning ran without a key: no vectors
+    add("b-key", true); // the key's vectors, and the key is gone
+    add("b-here", true); // already this computer's
+    add("b-failed", true);
+    add("b-song", false); // nothing said or described (music): never
+    add("b-parked", true); // a Retry that found no key: parked, though its vectors are this computer's
+    putVec("b-key", 0, 0, vec(1, 0, 0));
+    for (const v of ["ver-b-here", "ver-b-parked"])
+      d.prepare("INSERT INTO embeddings (version_id, chunk, start_s, model, dims, vec) VALUES (?, 0, 0, ?, 4, ?)").run(v, DEVICE_EMBED_MODEL, new Uint8Array(16));
+    d.prepare(
+      `INSERT INTO jobs (library_id, version_id, kind, state, actor) VALUES ('lib_b', 'ver-b-key', 'embed', 'done', 'local'),
+       ('lib_b', 'ver-b-failed', 'embed', 'failed', 'local'), ('lib_b', 'ver-b-parked', 'embed', 'needs_key', 'local')`,
+    ).run();
+    // a hosted server with no key: nothing to make them with
+    catchUpEmbeds(d);
+    expect(queued("lib_b")).toEqual([]);
+    process.env.CT_LOCAL = "1";
+    catchUpEmbeds(d);
+    expect(queued("lib_b")).toEqual(["ver-b-key", "ver-b-old", "ver-b-parked"]);
+    // a key added: the key's model is the one to have, so this computer's go again too
+    process.env.OPENAI_API_KEY = "test-key";
+    d.prepare("DELETE FROM jobs WHERE library_id = 'lib_b' AND state = 'queued'").run();
+    catchUpEmbeds(d);
+    expect(queued("lib_b")).toEqual(["ver-b-here", "ver-b-old", "ver-b-parked"]);
   });
 });

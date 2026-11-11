@@ -21,7 +21,7 @@ const MODEL_MB = 291;
 export const GETTING_MODEL = `Getting the speech model ready (${MODEL_MB} MB, only the first time)`;
 export const LISTENING = "Listening to your video";
 /** Kept with the person's data, never beside the server's own files (the library's default), which are part of a signed app. */
-const modelsDir = () => path.join(env.dataDir, "models");
+export const modelsDir = () => path.join(env.dataDir, "models");
 
 /** What a caller's ffmpeg writes for `transcribeOnDevice`: 16 kHz mono 32-bit float samples, no header. */
 export const DEVICE_AUDIO = ["-vn", "-ac", "1", "-ar", "16000", "-f", "f32le"];
@@ -44,6 +44,15 @@ let current: { key: string; text: string } | null = null;
 
 /** What the transcript `key` names (a library version, a clip) is doing right now, in words for its owner; undefined when it is not running here. */
 export const deviceStatus = (key: string): string | undefined => (current?.key === key ? current.text : undefined);
+
+// the speech model and search by meaning's (device-embed.ts) never sit in memory side by side: together they took
+// 2.9 GB against 2.1 GB for the speech model alone (measured), so the other one is given back before a transcript
+let speaking = false;
+let freeOther: () => Promise<void> = async () => {};
+/** Whether the speech model is in memory now. */
+export const speechModelInUse = (): boolean => speaking;
+/** `free` gives the other model back (and waits for a run of it to end): called before the speech model loads. */
+export const beforeSpeechModel = (free: () => Promise<void>): void => void (freeOther = free);
 
 const half = (c: Chunk) => Math.floor(c.timestamp[0] / 30);
 const noLength = (c: Chunk) => (c.timestamp[1] ?? c.timestamp[0]) - c.timestamp[0] <= 0.05;
@@ -163,15 +172,21 @@ export async function relisten(first: DeviceWord[], pcm: Float32Array, hear: (fr
   return words.sort((x, y) => x.start - y.start);
 }
 
-async function loadModel(say: (text: string) => void): Promise<Transcriber> {
-  const { pipeline, env: lib } = await import("@huggingface/transformers");
-  lib.cacheDir = modelsDir();
-  lib.allowLocalModels = false;
+/** The model library, keeping its models in the person's data (modelsDir) and fetching them through this server. */
+export async function modelLibrary() {
+  const lib = await import("@huggingface/transformers");
+  lib.env.cacheDir = modelsDir();
+  lib.env.allowLocalModels = false;
   // through this server's own model route, without the network hop: its mirror fallback, and a model Caption Studio
   // already fetched is copied from that route's files instead of downloaded again
-  lib.remoteHost = "http://server/api/hf/";
-  lib.fetch = (async (url: string | URL | Request, init?: RequestInit) => hfApp.request(new URL(String(url)).pathname, init)) as typeof fetch;
-  const kept = existsSync(path.join(lib.cacheDir, MODEL, "onnx", "decoder_model_merged.onnx"));
+  lib.env.remoteHost = "http://server/api/hf/";
+  lib.env.fetch = (async (url: string | URL | Request, init?: RequestInit) => hfApp.request(new URL(String(url)).pathname, init)) as typeof fetch;
+  return lib;
+}
+
+async function loadModel(say: (text: string) => void): Promise<Transcriber> {
+  const { pipeline } = await modelLibrary();
+  const kept = existsSync(path.join(modelsDir(), MODEL, "onnx", "decoder_model_merged.onnx"));
   if (!kept) say(GETTING_MODEL);
   let shown = 0;
   const t = await pipeline("automatic-speech-recognition", MODEL, {
@@ -195,6 +210,8 @@ async function loadModel(say: (text: string) => void): Promise<Transcriber> {
 export function transcribeOnDevice(pcmFile: string, key: string, load = loadModel): Promise<{ words: DeviceWord[]; language: string | null }> {
   return ffmpegSlot(async () => {
     const say = (text: string) => void (current = { key, text });
+    speaking = true;
+    await freeOther();
     try {
       const model = await load(say).catch(async (e) => {
         console.warn("[transcribe] the speech model did not load:", e);
@@ -219,6 +236,7 @@ export function transcribeOnDevice(pcmFile: string, key: string, load = loadMode
       }
     } finally {
       current = null;
+      speaking = false;
     }
   });
 }

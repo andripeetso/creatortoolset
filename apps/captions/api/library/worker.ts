@@ -5,10 +5,9 @@ import { env } from "../lib/env";
 import { libraryChanged } from "./access";
 import { blobs, libraryDb, librarySetting } from "./db";
 import { describeSlot, describeVersion } from "./describe";
-import { embedVersion } from "./embed";
+import { canEmbed, embedVersion, startEmbedCatchUp } from "./embed";
 import { fingerprint } from "./fingerprint";
 import { claimJob, defer, enqueueJob, extendLease, finishJob, parkJob, requeueExpired, type JobRow } from "./jobs";
-import { keyFor } from "../my-keys";
 import { isInside, musicFolders } from "../lib/storage";
 import { isThisMachine } from "../lib/devices";
 import { AiProviderError } from "../ai-complete";
@@ -112,6 +111,7 @@ export async function tick(now = Date.now(), kinds?: readonly string[]): Promise
 /** Starts every lane's loops; the returned function stops them after their current jobs. */
 export function startLibraryWorker(): () => void {
   let stopped = false;
+  const stopCatchUp = startEmbedCatchUp();
   for (const lane of LANES)
     for (let i = 0; i < lane.size; i++) {
       const loop = async () => {
@@ -127,6 +127,7 @@ export function startLibraryWorker(): () => void {
     }
   return () => {
     stopped = true;
+    stopCatchUp();
   };
 }
 
@@ -182,8 +183,8 @@ async function run(job: JobRow): Promise<void> {
   } else if (job.kind === "transcribe" || job.kind === "describe") {
     if (job.kind === "transcribe") await transcribeVersion(db, v.id, src, job.actor, dir);
     else await describeVersion(db, v.id, src, p.duration, job.actor, dir);
-    // new words to search by meaning: embed (again) when the library has semantic search on and the actor a key for it
-    if (librarySetting(v.library_id, "embed") && !keyFor(job.actor, "OPENAI_API_KEY").missing) enqueueJob(db, v.library_id, v.id, "embed", job.actor, true);
+    // new words to search by meaning: embed (again) when the library has semantic search on and the actor a route for it
+    if (librarySetting(v.library_id, "embed") && canEmbed(job.actor)) enqueueJob(db, v.library_id, v.id, "embed", job.actor, true);
   } else if (job.kind === "fingerprint") {
     const f = JSON.stringify(await fingerprint(src, p.duration, dir));
     db.prepare("INSERT OR REPLACE INTO derivatives (version_id, kind, inline, bytes) VALUES (?, 'fingerprint', ?, ?)").run(v.id, f, Buffer.byteLength(f));

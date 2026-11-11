@@ -1,17 +1,21 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { SearchHit } from "../../contracts/library";
+import { DEVICE_EMBED_MODEL, embedOnDevice } from "../lib/device-embed";
+import { deviceTranscribes } from "../lib/device-transcribe";
 import { libraryDb, librarySetting } from "./db";
+import { enqueueJob } from "./jobs";
 import { CARD, toCard, type CardRow } from "./query";
 import { keyFor } from "../my-keys";
-import { needKey, segmentsOf, type Segment } from "./transcribe";
+import { NeedsKey, segmentsOf, type Segment } from "./transcribe";
 
 /**
  * Optional semantic search (tasks/media-library-plan.md, section 6): the library's owner switches it on
  * (settings.embed); the `embed` job turns a version's title and shown description (chunk 0) and its transcript in
- * about 30 s windows (chunks 1…) into vectors with an OpenAI-compatible /embeddings endpoint, as its actor (their own
- * key, or the server's for a platform admin; otherwise needs_key). A search embeds the query the same way
- * for the searcher, takes the 50 closest chunks by cosine and merges them with the full-text hits by reciprocal rank
- * fusion (k = 60). No key or no vectors: the full-text hits alone.
+ * about 30 s windows (chunks 1…) into vectors, as its actor (embedRoute): their own OpenAI-compatible key (or the
+ * server's for a platform admin), else this computer's own model when the server runs on it, else needs_key. A search
+ * embeds the query the same way for the searcher, compares it only with vectors of the same model, takes the 50
+ * closest chunks by cosine and merges them with the full-text hits by reciprocal rank fusion (k = 60). No route or no
+ * vectors: the full-text hits alone.
  */
 
 const WINDOW_S = 30;
@@ -30,13 +34,35 @@ export function embedChunks(title: string, description: string | null, segments:
   return out;
 }
 
-/** Vectors for `texts`, in order, on the OpenAI-compatible key from keyFor. */
-export async function embedTexts(texts: string[], { key }: { key: string }): Promise<Float32Array[]> {
+/** What makes the vectors: a key's endpoint or this computer, and the model, which is stored with them. */
+export type EmbedRoute = { model: string; key: string } | { model: string; device: true };
+
+/** What makes vectors for `actor`: their OpenAI key, else this computer when the server is on it. Throws NeedsKey when there is neither. */
+export function embedRoute(actor: string | null): EmbedRoute {
+  const k = keyFor(actor, "OPENAI_API_KEY");
+  if (!k.missing) return { model: embedModel(), key: k.key };
+  if (deviceTranscribes()) return { model: DEVICE_EMBED_MODEL, device: true };
+  throw new NeedsKey(k.missing);
+}
+
+/** The model `actor`'s vectors are made with now, or null when they have no route. */
+const modelFor = (actor: string | null): string | null => {
+  try {
+    return embedRoute(actor).model;
+  } catch {
+    return null;
+  }
+};
+export const canEmbed = (actor: string | null): boolean => modelFor(actor) !== null;
+
+/** Vectors for `texts`, in order, on the route's key or this computer (`job`: a clip's, see embedOnDevice; else a search's). */
+export async function embedTexts(texts: string[], route: EmbedRoute, job?: { key: string }): Promise<Float32Array[]> {
+  if ("device" in route) return embedOnDevice(texts, job);
   const base = (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "");
   const r = await fetch(`${base}/embeddings`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: embedModel(), input: texts }),
+    headers: { Authorization: `Bearer ${route.key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ model: route.model, input: texts }),
     signal: AbortSignal.timeout(60_000),
   });
   if (!r.ok) throw new Error(`Embeddings ${r.status}: ${(await r.text().catch(() => "")).slice(0, 200)}`);
@@ -46,9 +72,9 @@ export async function embedTexts(texts: string[], { key }: { key: string }): Pro
   return rows.map((x) => Float32Array.from(x.embedding));
 }
 
-/** Embeds one version's chunks as its job's actor and replaces its rows for this model. */
+/** Embeds one version's chunks as its job's actor and replaces all its rows: a version's vectors are of one model. */
 export async function embedVersion(db: DatabaseSync, versionId: string, actor: string | null): Promise<void> {
-  const route = needKey(actor, "OPENAI_API_KEY");
+  const route = embedRoute(actor);
   const row = db
     .prepare(
       `SELECT a.title, (SELECT text FROM descriptions d WHERE d.version_id = v.id ORDER BY d.source = 'user' DESC LIMIT 1) AS description
@@ -57,13 +83,12 @@ export async function embedVersion(db: DatabaseSync, versionId: string, actor: s
     .get(versionId) as { title: string; description: string | null };
   // ponytail: one request per version; a very long transcript would need batches under the endpoint's input limit
   const chunks = embedChunks(row.title, row.description, segmentsOf(db, versionId));
-  const vecs = await embedTexts(chunks.map((c) => c.text), route);
-  const model = embedModel();
+  const vecs = await embedTexts(chunks.map((c) => c.text), route, { key: versionId });
   db.exec("BEGIN");
   try {
-    db.prepare("DELETE FROM embeddings WHERE version_id = ? AND model = ?").run(versionId, model);
+    db.prepare("DELETE FROM embeddings WHERE version_id = ?").run(versionId);
     const add = db.prepare("INSERT INTO embeddings (version_id, chunk, start_s, model, dims, vec) VALUES (?, ?, ?, ?, ?, ?)");
-    chunks.forEach((c, i) => add.run(versionId, i, c.start, model, vecs[i]!.length, new Uint8Array(vecs[i]!.buffer)));
+    chunks.forEach((c, i) => add.run(versionId, i, c.start, route.model, vecs[i]!.length, new Uint8Array(vecs[i]!.buffer)));
     db.exec("COMMIT");
   } catch (e) {
     db.exec("ROLLBACK");
@@ -110,13 +135,18 @@ export const hitKey = (h: SearchHit) => `${h.asset.id}@${h.seconds ?? ""}`;
 
 /**
  * The 50 chunks closest to `q` in the library, as search hits (chunk 0 = the asset, later chunks = the second they
- * start at), with the searcher paying for the query. Null when semantic search is off, has no vectors yet, or the
- * searcher has no key route: the caller then shows the full-text hits alone.
+ * start at), with the query made on the searcher's route, against the vectors of that route's model only. Null when
+ * semantic search is off, has no vectors of that model yet, or the searcher has no route: the caller then shows the
+ * full-text hits alone.
  */
 export async function semanticHits(libraryId: string, q: string, username: string): Promise<SearchHit[] | null> {
   if (!librarySetting(libraryId, "embed")) return null;
-  const route = keyFor(username, "OPENAI_API_KEY");
-  if (route.missing) return null;
+  let route: EmbedRoute;
+  try {
+    route = embedRoute(username);
+  } catch {
+    return null;
+  }
   const db = libraryDb();
   // ponytail: every chunk of the library read and scanned in memory per search; fine to about 100k chunks, then sqlite-vec
   const rows = (
@@ -125,7 +155,7 @@ export async function semanticHits(libraryId: string, q: string, username: strin
         `SELECT e.version_id, e.chunk, e.start_s, e.vec FROM embeddings e JOIN assets a ON a.current_version_id = e.version_id
          WHERE a.library_id = ? AND a.trashed_at IS NULL AND e.model = ? ORDER BY e.version_id, e.chunk`,
       )
-      .all(libraryId, embedModel()) as { version_id: string; chunk: number; start_s: number; vec: Uint8Array }[]
+      .all(libraryId, route.model) as { version_id: string; chunk: number; start_s: number; vec: Uint8Array }[]
   ).map((r) => ({ ...r, vec: new Float32Array(Uint8Array.from(r.vec).buffer) }));
   if (!rows.length) return null;
   const [qv] = await embedTexts([q], route).catch(() => [undefined]);
@@ -148,4 +178,53 @@ export async function semanticHits(libraryId: string, q: string, username: strin
     const said = segs.get(r.version_id)!.find((s) => s.start >= r.start_s);
     return [{ asset, seconds: r.start_s, ...(said ? { snippet: said.text } : {}) }];
   });
+}
+
+/**
+ * Queues `embed` for the current versions whose vectors are missing or of another model than their actor's route makes
+ * now, and the ones parked for a key once there is a route: clips from before search by meaning ran without a key, and
+ * the whole library after a key is added or removed (until each is done, a search compares only the vectors of its own
+ * model). Only versions with a transcript or a description: the worker queues the others when they get one. A failed
+ * job waits for its Retry. Returns how many.
+ * ponytail: every current version of every library is read once a minute; a changed flag on key and setting writes if that shows up
+ */
+export function catchUpEmbeds(db = libraryDb()): number {
+  const rows = db
+    .prepare(
+      `SELECT a.library_id, v.id AS version_id, j.state,
+         COALESCE(j.actor, (SELECT t.actor FROM jobs t WHERE t.version_id = v.id AND t.kind = 'transcribe'), a.created_by) AS actor,
+         (SELECT e.model FROM embeddings e WHERE e.version_id = v.id LIMIT 1) AS model
+       FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
+       LEFT JOIN jobs j ON j.version_id = v.id AND j.kind = 'embed'
+       WHERE a.trashed_at IS NULL AND (j.state IS NULL OR j.state IN ('done', 'needs_key'))
+         AND (EXISTS (SELECT 1 FROM transcripts t WHERE t.version_id = v.id) OR EXISTS (SELECT 1 FROM descriptions d WHERE d.version_id = v.id))`,
+    )
+    .all() as { library_id: string; version_id: string; state: string | null; actor: string | null; model: string | null }[];
+  const on = new Map<string, boolean>();
+  const models = new Map<string | null, string | null>();
+  let n = 0;
+  for (const r of rows) {
+    if (!on.has(r.library_id)) on.set(r.library_id, librarySetting(r.library_id, "embed"));
+    if (!models.has(r.actor)) models.set(r.actor, modelFor(r.actor));
+    const model = models.get(r.actor);
+    if (!on.get(r.library_id) || !model || (model === r.model && r.state !== "needs_key")) continue;
+    enqueueJob(db, r.library_id, r.version_id, "embed", r.actor, true);
+    n++;
+  }
+  return n;
+}
+
+/** catchUpEmbeds now and every minute; the returned function stops it. */
+export function startEmbedCatchUp(): () => void {
+  const run = () => {
+    try {
+      catchUpEmbeds();
+    } catch (e) {
+      console.error("[library] search by meaning catch-up:", e);
+    }
+  };
+  run();
+  const t = setInterval(run, 60_000);
+  t.unref();
+  return () => clearInterval(t);
 }
