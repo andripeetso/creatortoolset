@@ -364,15 +364,21 @@ final class KitSandboxTests: XCTestCase {
         XCTAssertEqual(KitRunner.cardLimit, 20, "a card gets 20 s")
     }
 
-    func testAPageThatIsNotLockedDownDrawsNoCard() async throws {
-        // Lockdown Mode is the one wall that could fail to take without saying so, so a page with no card's script in
-        // it is asked first: behind every wall WebRTC is gone, and without Lockdown Mode it is there and nothing is drawn
+    func testAPageWhoseWallsDidNotTakeDrawsNoCard() async throws {
+        // Two walls could fail to take without saying so (Lockdown Mode, and the preconnect switch on a macOS whose
+        // WebKit has the switch but does not heed it). So before the first card a page with no card's script in it is
+        // asked: behind every wall it passes; without one of the two it is refused and nothing is drawn.
         try await KitRunner.probe()
-        do {
-            try await KitRunner.probe(walls: [.stay, .noPreconnect, .deadProxy])
-            XCTFail("a page without Lockdown Mode passed for locked down")
-        } catch {
-            XCTAssertEqual(error as? KitRunnerError, .unsafe("Lockdown Mode did not take on a card's page (WebRTC is still there)"))
+        for (walls, sentence) in [
+            ([.stay, .noPreconnect, .deadProxy] as KitWalls, "Lockdown Mode did not take on a card's page (WebRTC is still there)"),
+            ([.stay, .lockdown, .deadProxy] as KitWalls, "link preconnect is still on in a card's page"),
+        ] {
+            do {
+                try await KitRunner.probe(walls: walls)
+                XCTFail("a page without one of its walls passed")
+            } catch {
+                XCTAssertEqual(error as? KitRunnerError, .unsafe(sentence))
+            }
         }
     }
 

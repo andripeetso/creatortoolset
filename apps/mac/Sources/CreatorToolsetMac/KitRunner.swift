@@ -92,11 +92,14 @@ enum KitRunner {
     static let deadPort: UInt16 = 1
     /// The private WebKit calls a card's page uses (a test changes a name to one that is not there).
     @MainActor static var calls = KitCalls()
-    /// Whether a page behind the walls was found locked down on this Mac. Asked once, before the first card:
-    /// Lockdown Mode is the one wall that could fail to take without saying so, and WebRTC would then be there.
-    @MainActor private static var lockedDown = false
+    /// Whether a page behind the walls was asked, on this Mac, if the two walls that could fail to take without
+    /// saying so did take. Asked once, before the first card.
+    @MainActor private static var checked = false
 
-    /// Loads a card's page with no card's script in it and throws unless WebRTC is gone from it.
+    /// Loads a card's page with no card's script in it and asks the page's own engine two things: is WebRTC gone
+    /// (Lockdown Mode took), and does it no longer know `preconnect` as a link type (the switch took: that answer and
+    /// the preconnect of a clicked link read the same setting in WebKit's source). Throws unless both are so, and then
+    /// no card is drawn. No network and no waiting: the page is only asked.
     @MainActor
     static func probe(walls: KitWalls = .all) async throws {
         let page = try KitWebView(width: 16, height: 16, walls: walls)
@@ -107,8 +110,12 @@ enum KitRunner {
             page.end()
         }
         try await page.load(try self.page(for: KitCard(kit: "", width: 16, height: 16, seconds: 1, fps: 1, content: [:])))
-        guard try await page.run("typeof RTCPeerConnection") == "undefined" else {
+        let said = try await page.run("typeof RTCPeerConnection + ' ' + document.createElement('link').relList.supports('preconnect')")
+        guard said.hasPrefix("undefined ") else {
             throw KitRunnerError.unsafe("Lockdown Mode did not take on a card's page (WebRTC is still there)")
+        }
+        guard said == "undefined false" else {
+            throw KitRunnerError.unsafe("link preconnect is still on in a card's page")
         }
     }
 
@@ -154,9 +161,9 @@ enum KitRunner {
     /// Past it the card fails with `timedOut`.
     @MainActor
     static func draw(_ card: KitCard, limit: TimeInterval = cardLimit, frame: @MainActor (Int, CGImage) async throws -> Void) async throws {
-        if !lockedDown {
+        if !checked {
             try await probe()
-            lockedDown = true
+            checked = true
         }
         try await draw(card, on: try KitWebView(width: card.width, height: card.height), limit: limit, frame: frame)
     }

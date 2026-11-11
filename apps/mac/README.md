@@ -416,9 +416,12 @@ opposite against a listener on this Mac (`KitSandboxTests.swift`):
   refuses the frame's own navigations, forms and new windows before the app is asked.
 - The web view refuses every navigation but that page and that frame. It has no message handlers, cookies or storage
   of the app's, and its own data store is gone with the card. It can read no file.
-- Lockdown Mode is on for the page, because the policy does not govern WebRTC. It is the one wall that could fail
-  to take without saying so, so before the first card a page with no card's script in it is asked whether WebRTC is
-  gone; if not, nothing is drawn. A card's script therefore has no WebRTC, WebAssembly, WebGL or Web Audio. It has the DOM, CSS, SVG and a 2D canvas, the system's fonts and `data:`
+- Lockdown Mode is on for the page, because the policy does not govern WebRTC. A card's script therefore has no
+  WebRTC, WebAssembly, WebGL or Web Audio.
+- Lockdown Mode and the preconnect switch below could fail to take without saying so. So before the first card a
+  page with no card's script in it is asked two things of its own engine: is WebRTC gone, and does it no longer know
+  `preconnect` as a link type (`relList.supports`, which reads the setting the click's preconnect reads). If either
+  answer is wrong, nothing is drawn. It has the DOM, CSS, SVG and a 2D canvas, the system's fonts and `data:`
   images.
 - WebKit's link preconnect is switched off for the page: a link with `target="_blank"` that the script clicks, or a
   `<link rel="preconnect">`, otherwise opens a connection whatever the policy says. WebKit has no public switch for
