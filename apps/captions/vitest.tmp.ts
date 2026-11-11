@@ -10,5 +10,12 @@ import path from "node:path";
 export default function setup() {
   const dir = mkdtempSync(path.join(tmpdir(), "ct-test-"));
   process.env.TMPDIR = dir;
-  return () => rmSync(dir, { recursive: true, force: true });
+  // a test's own server may still be writing as the run ends: try a few times, and leave the folder rather than fail the run
+  return () => {
+    try {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    } catch {
+      // left behind; the next run makes its own
+    }
+  };
 }

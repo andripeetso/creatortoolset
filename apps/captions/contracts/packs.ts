@@ -1,3 +1,6 @@
+// the ending is written out: scripts/pack-check.ts runs this file with plain Node, which resolves no bare "./tools"
+import { HOME_TILES, type HomeTile } from "./tools.ts";
+
 /**
  * Packs: one JSON file anyone can make in the app ("Share as pack") or by hand, and install into their account.
  * Shared by the API and the browser.
@@ -151,8 +154,18 @@ export interface PackEditorItems {
 export const PACK_PERMISSIONS = ["grade", "voice", "sfx", "resolve", "motion-kit"] as const;
 export type PackPermission = (typeof PACK_PERMISSIONS)[number];
 
+/**
+ * A Home layout: the tiles its maker switched off under Settings → Tools, from the app's own list (contracts/tools.ts
+ * HOME_TILES). It is a list of choices and nothing else: it can't add a tile, name a page or change who may open a
+ * tool. Installing a pack never changes Home; the person presses Use on Home, and every switch stays theirs after.
+ */
+export interface PackHome {
+  hidden: HomeTile[];
+}
+
 export interface Pack extends PackManifest, PackEditorItems {
   format: 1;
+  home?: PackHome;
   instructions?: Partial<Record<PackSlot, string>>;
   frameworks?: PackFramework[];
   captionStyles?: PackCaptionStyle[];
@@ -177,6 +190,8 @@ export interface InstalledPack extends PackManifest, PackEditorItems {
   /** Projects that switched the pack's instructions off. */
   off: string[];
   instructions: Partial<Record<PackSlot, string>>;
+  /** The pack's Home layout, kept so Use on Home can apply it (never applied by install or update). */
+  home?: PackHome;
   /** What install copied into the account, so update and remove find it again. */
   items: { frameworks: string[]; presets: string[]; designSystems?: string[] };
   /** Items the pack carries that this install did not put in place (see HeldDesignSystems). */
@@ -233,6 +248,17 @@ const itemName = (v: unknown): string | null => (typeof v === "string" && SYSTEM
 const inRange = (v: unknown, lo: number, hi: number): number | null => (typeof v === "number" && v >= lo && v <= hi ? v : null);
 const triple = (v: unknown, lo: number, hi: number): [number, number, number] | null =>
   Array.isArray(v) && v.length === 3 && v.every((n) => inRange(n, lo, hi) !== null) ? (v as [number, number, number]) : null;
+
+/**
+ * A caption style's values are written into the subtitle file and the page's styles as they are (the font's name goes
+ * on a line of its own format), so each is one plain value: a number, on/off, or text of one line. Nothing nested, and
+ * no line break or control character that could start a line of its own there.
+ */
+const plainStyle = (style: Record<string, unknown>): boolean => {
+  const values = Object.values(style);
+  // eslint-disable-next-line no-control-regex
+  return values.length <= 60 && values.every((v) => typeof v === "boolean" || (typeof v === "number" && Number.isFinite(v)) || (typeof v === "string" && v.length <= 200 && !/[\u0000-\u001f\u007f{}\\]/.test(v)));
+};
 
 /** Each entry of a list field goes through `fn`; a field that isn't a list, or is too long, is one problem. */
 function eachItem<T>(raw: Record<string, unknown>, key: string, problems: string[], fn: (item: Record<string, unknown>, at: string) => T | null): T[] {
@@ -346,8 +372,17 @@ export function checkPack(raw: unknown): PackCheck {
         const name = isObj(s) ? str(s.name, 40) : null;
         const kind = isObj(s) && (s.kind === "caption" || s.kind === "text") ? s.kind : null;
         if (!name || !kind || !isObj(s) || !isObj(s.style)) return problems.push(`captionStyles[${i}]: name (≤40), kind caption|text and a style object`);
+        if (!plainStyle(s.style)) return problems.push(`captionStyles[${i}].style: up to 60 plain values (text of one line, numbers, on/off)`);
         captionStyles.push({ name, kind, style: s.style });
       });
+  }
+
+  // a Home layout: only tile ids this app has are kept, in Home's order (one made on a newer app may name a tile this one lacks)
+  let home: PackHome | undefined;
+  if (raw.home !== undefined) {
+    const hidden = isObj(raw.home) ? raw.home.hidden : null;
+    if (!Array.isArray(hidden) || hidden.length > 100 || !hidden.every((t) => typeof t === "string")) problems.push('"home": { hidden: a list of Home tiles }');
+    else home = { hidden: HOME_TILES.filter((t) => hidden.includes(t)) };
   }
 
   const designSystems: PackDesignSystem[] = [];
@@ -476,9 +511,9 @@ export function checkPack(raw: unknown): PackCheck {
     }
   }
 
-  if (!Object.keys(instructions).length && !frameworks.length && !captionStyles.length && !designSystems.length
+  if (!Object.keys(instructions).length && !frameworks.length && !captionStyles.length && !designSystems.length && !home
     && !grades.length && !voiceMixes.length && !sfxSets.length && !resolve.length)
-    problems.push("Empty: a pack needs instructions, frameworks, caption styles, design systems or editor items");
+    problems.push("Empty: a pack needs instructions, frameworks, caption styles, a Home layout, design systems or editor items");
 
   if (problems.length) return { ok: false, problems };
   const pack: Pack = {
@@ -488,6 +523,7 @@ export function checkPack(raw: unknown): PackCheck {
     ...(Object.keys(instructions).length ? { instructions } : {}),
     ...(frameworks.length ? { frameworks } : {}),
     ...(captionStyles.length ? { captionStyles } : {}),
+    ...(home ? { home } : {}),
     ...(designSystems.length ? { designSystems } : {}),
     ...(grades.length ? { grades } : {}),
     ...(voiceMixes.length ? { voiceMixes } : {}),

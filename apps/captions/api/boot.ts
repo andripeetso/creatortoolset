@@ -24,6 +24,7 @@ import { startTrashPurge } from "./library/trash";
 import { startWatchFolders, watchApp } from "./library/watch";
 import { storageApp } from "./library/usage";
 import { editorApp } from "./editor/routes";
+import { editStepsApp } from "./editor/steps";
 import { foldersApp } from "./folders";
 import { startEditorWorker } from "./editor/worker";
 import { presetsApp } from "./presets";
@@ -40,6 +41,7 @@ import { workspaceApp } from "./workspace";
 import { viewAsTarget } from "./lib/view-as";
 import { grantsApp } from "./library/grants";
 import { assistantApp } from "./assistant";
+import { memoryApp } from "./memory";
 import { automationsApp, startAutomations } from "./automations";
 import { providersApp } from "./providers";
 import { mcpApp, pluginToolsOf } from "./mcp";
@@ -198,6 +200,7 @@ export const TOOL_GATES: [string, Tool[]][] = [
   ["/api/clean", ["clean"]],
   ["/api/library", ["media"]],
   ["/api/editor", ["editor"]],
+  ["/api/edit-steps", ["editor"]],
   ["/api/folders/editor", ["editor"]],
   // the Analyzer and the Workshop read each other's APIs
   ["/api/instagram", ["instagram", "workshop"]],
@@ -343,6 +346,8 @@ app.route("/api/providers", providersApp);
 // Creator Toolset as a remote MCP server (Full key only: not on the key routes): its tools call these same routes
 app.route("/api/mcp", mcpApp((path, init) => Promise.resolve(app.request(path, init)), serverPlugins));
 app.route("/api/assistant", assistantApp);
+// what the assistant keeps from one chat to the next (memory.ts): only a reply being written can add to it
+app.route("/api/memory", memoryApp);
 // automations (automations.ts): scheduled prompts for the account's own assistant; REST here, and the MCP tools in mcp.ts
 app.route("/api/automations", automationsApp);
 startAutomations();
@@ -417,6 +422,7 @@ app.route("/api/library", grantsApp);
 // a plug-in that replaces the AI Editor answers its root paths first (the old URLs the Mac worker posts to)
 mountReplacedRoutes(app, serverPlugins);
 app.route("/api/editor", editorApp);
+app.route("/api/edit-steps", editStepsApp);
 // the library's worker: probes, thumbs and proxies queued uploads; and the trash purge (not under tests, which call them)
 if (process.env.NODE_ENV !== "test") {
   startLibraryWorker();

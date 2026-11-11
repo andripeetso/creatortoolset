@@ -14,13 +14,10 @@ import { exportPack } from "./packs-api";
 import { LICENCES, slugify } from "./packs-helpers";
 
 /** One of the person's own items, published on its own. */
-export interface PublishItem {
-  kind: "framework" | "captionStyle";
-  /** The framework id or the caption style's preset id. */
-  id: string;
-  defaultName: string;
-  defaultDescription?: string;
-}
+export type PublishItem = { defaultName: string; defaultDescription?: string } & (
+  | { kind: "framework" | "captionStyle"; /** The framework id or the caption style's preset id. */ id: string }
+  | { kind: "home"; /** The Home tiles switched off (Settings → Tools). */ hidden: string[] }
+);
 
 type Licence = (typeof LICENCES)[number];
 
@@ -92,7 +89,7 @@ export function PublishDialog({ item, onClose }: { item: PublishItem; onClose: (
           description: description.trim(),
           license,
           niche: niche.trim() || undefined,
-          [FIELD[item.kind]]: [item.id],
+          ...(item.kind === "home" ? { home: { hidden: item.hidden } } : { [FIELD[item.kind]]: [item.id] }),
         })
       ).pack;
       await submitPack(pack);

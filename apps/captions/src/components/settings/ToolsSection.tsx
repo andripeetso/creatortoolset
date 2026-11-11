@@ -6,6 +6,7 @@ import { canUseTile, useMe } from "@/lib/auth";
 import { useSetup, useSetupLive } from "@/lib/setup";
 import { MY_KEYS, type MyKeyEnv } from "@contracts/service-keys";
 import { HOME_TILES, HOME_TILE_LINES, HOME_TILE_NAMES, NEED_SHORT, readiness, type Have, type HomeTile, type Need } from "@contracts/tools";
+import { PublishButton } from "@/components/community/PublishDialog";
 import { Card, LoadingRow, Section, Status, saveFailed } from "./ui";
 
 /** The hidden list after one tile's switch changes: on removes it from the list, off adds it. */
@@ -61,7 +62,10 @@ export function ToolsSection() {
     });
   };
   return (
-    <Section title="Shown on Home">
+    <Section
+      title="Shown on Home"
+      action={view && <PublishButton item={{ kind: "home", hidden, defaultName: "" }} className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground" />}
+    >
       <Card>
         {!view ? (
           <LoadingRow />

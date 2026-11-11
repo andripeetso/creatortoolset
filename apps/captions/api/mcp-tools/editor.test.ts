@@ -115,7 +115,7 @@ describe.skipIf(rootReplaced)("an edit the assistant started ends in the chat", 
     standIn();
     const { id, from } = await started("Tiny tumbles");
     await drain();
-    expect((await editOf(id)).jobs.map((j) => `${j.kind}:${j.variant} ${j.state}`)).toEqual(["analyze: done", "script: done", "draft: done", "draft:v1 done", "broll:v1 done", "preview:v1 done", "file:v1 done"]);
+    expect((await editOf(id)).jobs.map((j) => `${j.kind}:${j.variant} ${j.state}`)).toEqual(["analyze: done", "script: done", "draft: done", "draft:v1 done", "broll:v1 done", "post:v1 done", "preview:v1 done", "file:v1 done"]);
     expect(await cardOf(`edit:${id}:new`)).toEqual({ id: `edit:${id}:new`, kind: "edit", title: "Tiny tumbles", href: `/editor/${id}`, status: "done", detail: "Done" });
     const last = (await chat()).at(-1)!;
     expect(last).toMatchObject({ role: "assistant", status: "done", text: "The first draft of “Tiny tumbles” is ready.", choices: ["Show me", "Open in Review"] });

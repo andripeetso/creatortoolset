@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, Navigate, useLocation, useNavigate } from "react-router";
-import { BarChart3, Compass, Layers, Package, PenLine, Scissors, Search, Type, X, type LucideIcon } from "lucide-react";
+import { BarChart3, Compass, LayoutGrid, Layers, Package, PenLine, Scissors, Search, Type, X, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -21,6 +21,7 @@ const KIND_ICONS: Record<KindId, LucideIcon> = {
   captions: Type,
   editing: Scissors,
   analyzer: BarChart3,
+  home: LayoutGrid,
 };
 const KINDS = Object.keys(PACK_KINDS) as KindId[];
 const SECTIONS = ["explore", ...KINDS, "installed"];
