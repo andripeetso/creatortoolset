@@ -5,9 +5,12 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { getEditorDefaults, setEditorDefault } from "@/lib/editor";
 import { Card, Row, SettingsSelect, saveFailed } from "./ui";
 
-/** The slots with more than one item: only these get a select (a slot with one item has nothing to choose). */
-export function choosableSlots(data: Pick<EditorDefaults, "items">): EditSlot[] {
-  return EDIT_SLOTS.filter((s) => data.items[s].length > 1);
+/**
+ * The slots with more than one item: only these get a select (a slot with one item has nothing to choose). A page whose
+ * editor reads only some slots passes them as `slots`; with none passed it is every slot.
+ */
+export function choosableSlots(data: Pick<EditorDefaults, "items">, slots: readonly EditSlot[] = EDIT_SLOTS): EditSlot[] {
+  return slots.filter((s) => data.items[s].length > 1);
 }
 
 /**
@@ -15,25 +18,25 @@ export function choosableSlots(data: Pick<EditorDefaults, "items">): EditSlot[] 
  * drawn only when some slot has more than one choice, and the dialog lists only those slots. An edit keeps the set it
  * was made with, so a change here never changes an edit that exists.
  */
-export function EditorDefaultsButton() {
+export function EditorDefaultsButton({ slots }: { slots?: readonly EditSlot[] }) {
   const [data, setData] = useState<EditorDefaults | null>(null);
   const [open, setOpen] = useState(false);
   useEffect(() => {
     getEditorDefaults().then(setData, () => setData(null));
   }, []);
-  const choosable = data ? choosableSlots(data) : [];
+  const choosable = data ? choosableSlots(data, slots) : [];
   if (!data || choosable.length === 0) return null;
   return (
     <>
       <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
         Defaults
       </Button>
-      <EditorDefaultsDialog open={open} onOpenChange={setOpen} initial={data} />
+      <EditorDefaultsDialog open={open} onOpenChange={setOpen} initial={data} slots={slots} />
     </>
   );
 }
 
-function EditorDefaultsDialog({ open, onOpenChange, initial }: { open: boolean; onOpenChange: (o: boolean) => void; initial: EditorDefaults }) {
+function EditorDefaultsDialog({ open, onOpenChange, initial, slots }: { open: boolean; onOpenChange: (o: boolean) => void; initial: EditorDefaults; slots?: readonly EditSlot[] }) {
   const [data, setData] = useState(initial);
   const [busy, setBusy] = useState(false);
   const change = useCallback((slot: EditSlot, id: string | null) => {
@@ -43,7 +46,7 @@ function EditorDefaultsDialog({ open, onOpenChange, initial }: { open: boolean; 
       .catch(() => saveFailed("That default did not save. Try again."))
       .finally(() => setBusy(false));
   }, []);
-  const choosable = choosableSlots(data);
+  const choosable = choosableSlots(data, slots);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent aria-describedby={undefined} className="sm:max-w-lg">

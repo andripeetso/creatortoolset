@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, readdir, unlink } from "node:fs/promises";
 import path from "node:path";
 import type { EditStepChoice } from "../../contracts/editor-steps";
 import type { Timeline } from "../../contracts/editor";
@@ -42,6 +42,19 @@ export async function runSteps(
   return { files, notes };
 }
 
+/**
+ * Keeps one copy per source in a version's post folder: the one that plays. An earlier step's copy (a later step made its
+ * own from it) and the copies of an older draft of this version go, so a ten-minute video holds one post copy, not one
+ * per step (about 1.4 GB a minute in ProRes). The edit's folder goes whole when the edit leaves the trash (purgeEdits).
+ */
+export async function prune(root: string, keep: Set<string>): Promise<void> {
+  const all = await readdir(root, { recursive: true, withFileTypes: true }).catch(() => []);
+  for (const e of all) {
+    const file = path.join(e.parentPath, e.name);
+    if (e.isFile() && !keep.has(file)) await unlink(file).catch(() => {});
+  }
+}
+
 export async function postStep({ edit, variant, signal }: StepContext): Promise<void> {
   const d = readDraft(edit.id, variant);
   if (!d) throw new Error(`Draft ${variant || "the versions"} first`);
@@ -57,6 +70,7 @@ export async function postStep({ edit, variant, signal }: StepContext): Promise<
       })
     : { files: {}, notes: [] };
   if (signal.aborted) return;
+  await prune(path.join(editDir(edit.id), "post", variant || "_"), new Set(Object.values(result.files)));
   await saveStep(edit.id, "post", { ...readStep(edit.id, "post"), [variant]: result });
   const notes = [...d.notes.filter((n) => !n.startsWith(POST_NOTE)), ...result.notes];
   if (notes.join("\n") !== d.notes.join("\n")) await saveDraft(edit.id, variant, { ...d, notes });

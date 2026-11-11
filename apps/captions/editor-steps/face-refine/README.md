@@ -33,9 +33,15 @@ encoder's ffmpeg lays over the source it decodes itself, so every pixel outside 
 The first time the step runs (never before it is switched on), it sets itself up in
 `<data dir>/plugins/editor-face-refine/`:
 
-1. It finds a Python 3.9+ (Homebrew, python.org, or the developer tools' `/usr/bin/python3`, which it tries only
+1. It finds a Python 3.9 to 3.14 (Homebrew, python.org, or the developer tools' `/usr/bin/python3`, which it tries only
    when the developer tools are installed, so the macOS install dialog never opens).
-2. It makes its own venv and installs `mediapipe==1.2.2` and `opencv-contrib-python==5.0.0.93` (about 400 MB).
+2. It makes its own venv and installs exactly the packages in `requirements.ts` (about 400 MB): `mediapipe==1.2.2`,
+   `opencv-contrib-python==5.0.0.93` and every package they need, each pinned by version and SHA-256 hash, wheels only
+   (`pip install --require-hashes --only-binary=:all:`), so what lands on a Mac is what was tested. The list was made
+   with `pip download --only-binary=:all: --platform macosx_<13_0|15_0|26_0>_arm64 --python-version <3.9 … 3.14>` for
+   those two packages, then each wheel hashed; a dependency whose version differs between Pythons has one line per set,
+   with a `python_version` marker. OpenCV 5 has no build for macOS 11 or 12, so the step needs macOS 13 or newer. To move
+   to new versions, make the list again the same way and run the step's real edits again.
 3. It downloads the two models from Google's MediaPipe model storage and checks their SHA-256.
 4. It writes `ready` only after the engine's self-test passes.
 
@@ -72,3 +78,10 @@ copy of it.
 node scripts/plugin-build.mjs check editor-steps/face-refine
 pnpm exec vitest run editor-steps/face-refine   # the engine test runs once the step has set itself up in DATA_DIR
 ```
+
+## Disk
+
+Each copy is the whole recording in ProRes 422 HQ, about 1.4 GB for each minute of video at 1080x1920 (the row in
+Settings → AI Editor says so). After the steps of a draft run, its version keeps only the copy that plays: an earlier
+step's copy (Voice makes its own from this one) and an older draft's go (`prune` in api/editor/post.ts). The edit's
+whole folder, post copies included, goes when the edit leaves the trash.

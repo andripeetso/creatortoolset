@@ -7,7 +7,9 @@ import { env } from "../lib/env";
 import { listInstalled, packOn } from "../lib/packs";
 import { pluginEditFlags } from "../lib/plugin";
 import type { EditStepChoice } from "../../contracts/editor-steps";
+import type { EditStyleCopy } from "../../contracts/editor-styles";
 import { chosenSteps } from "./steps";
+import { findStyle, rememberStyle, styleCopy } from "./styles";
 import type { Cdl } from "./grade";
 import { libraryRole } from "../library/access";
 import { libraryDb } from "../library/db";
@@ -32,6 +34,8 @@ export interface EditMeta extends EditBrief {
   bundle: EditBundle;
   /** the post-processing steps it was made with (Settings → AI Editor at the time), run by post.ts */
   steps?: EditStepChoice[];
+  /** the editing style it was made with, as it was then (styles.ts); an edit made with none has no such key */
+  style?: EditStyleCopy;
   trashedAt?: number;
 }
 
@@ -275,6 +279,29 @@ export function cleanBrief(body: Record<string, unknown>, username: string, ws: 
   return out;
 }
 
+/** An editing style that is not there: the routes answer 404. */
+export class NoStyle extends Error {}
+
+/**
+ * What an editing style gives an edit in workspace `ws`: its choices, and the copy the edit keeps. A B-roll folder the
+ * edit cannot read and a grade the person no longer has are left out, not an error. `on` is an edit that already
+ * exists (PATCH): where the style names no folder or grade, that edit keeps its own.
+ */
+export async function styleFields(username: string, ws: string, id: string, on?: Pick<EditMeta, "bundle" | "brollCollectionId">): Promise<Partial<EditMeta>> {
+  const s = findStyle(username, id);
+  if (!s) throw new NoStyle("No such style");
+  const d = await editorDefaults(username);
+  return {
+    versions: s.versions,
+    targetS: s.targetS,
+    framing: { punch: s.punch },
+    brollCollectionId: s.brollCollectionId && collectionOk(username, ws, s.brollCollectionId) ? s.brollCollectionId : (on?.brollCollectionId ?? null),
+    bundle: { ...(on?.bundle ?? d.bundle), ...(s.grade && d.items.grade.some((i) => i.id === s.grade) ? { grade: s.grade } : {}) },
+    ...(s.steps ? { steps: s.steps } : {}),
+    style: styleCopy(s),
+  };
+}
+
 /** A new edit of `sources` for `username`, or null when a source is not theirs to read. */
 export async function createEdit(username: string, body: Record<string, unknown>): Promise<EditMeta | null> {
   const sources = Array.isArray(body.sources) ? [...new Set(body.sources.filter((s): s is string => typeof s === "string"))] : [];
@@ -283,6 +310,8 @@ export async function createEdit(username: string, body: Record<string, unknown>
   if (!ws) return null;
   const now = Date.now();
   const brief = cleanBrief(body, username, ws);
+  // `style` names an editing style: its choices go under the request's own. No `style` key at all: none, as before.
+  const styled = typeof body.style === "string" ? await styleFields(username, ws, body.style) : {};
   const e: EditMeta = {
     id: randomUUID(),
     workspaceId: ws,
@@ -299,11 +328,14 @@ export async function createEdit(username: string, body: Record<string, unknown>
     framing: { punch: 1.15 },
     bundle: (await editorDefaults(username)).bundle,
     steps: chosenSteps(username),
+    ...styled,
     ...brief,
     flags: { ...defaultFlags(), ...brief.flags },
   };
   mkdirSync(path.dirname(fileOf(e.id)), { recursive: true });
   await saveEdit(e);
+  // New edit opens on the style used last; an explicit null (None picked there) forgets it
+  if (e.style || body.style === null) rememberStyle(username, e.style?.id ?? null);
   return e;
 }
 

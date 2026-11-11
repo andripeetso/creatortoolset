@@ -4,11 +4,13 @@ import { Download, ExternalLink, Loader2, Play, RotateCcw, Square, Trash2 } from
 import { DEFAULT_EYELINE, type Draft, type Edit, type Sentence } from "@contracts/editor";
 import { AppBar } from "@/components/AppBar";
 import { Button } from "@/components/ui/button";
-import { deleteEdit, exportUrl, getEdit, getSentences, patchEdit, putLines, retryJob, reviewDraft, runEdit, setEyeline, stopEdit, swapTake, takeSpan } from "@/lib/editor";
+import { createStyle, deleteEdit, exportUrl, getEdit, getSentences, patchEdit, putLines, retryJob, reviewDraft, runEdit, setEyeline, stopEdit, swapTake, takeSpan } from "@/lib/editor";
 import { useCachedLoad } from "@/lib/local-cache";
 import { confirmHeavy } from "@/lib/setup";
 import { StateBadge, thumb } from "./EditorPage";
-import { confirmDialog } from "@/lib/dialogs";
+import { confirmDialog, promptDialog } from "@/lib/dialogs";
+import { toast } from "sonner";
+import { STYLE_NAME_MAX } from "@contracts/editor-styles";
 
 /**
  * One edit (/editor/:id): its steps (a step that needs a key or provider links to the setting), an eye line per source
@@ -79,9 +81,24 @@ export default function EditorEditPage() {
     }
   };
 
+  /** This edit's choices under a name, as a new editing style (its brief, script and footage stay here). */
+  const saveAsStyle = async () => {
+    const name = (await promptDialog({ title: "Save as style", ok: "Save", value: (edit.style?.name ?? edit.name).slice(0, STYLE_NAME_MAX) }))?.trim();
+    if (!name) return;
+    try {
+      const s = await createStyle({ fromEdit: id, name });
+      toast.success(`Saved “${s.name}” in Editing styles`);
+    } catch (e) {
+      setError(message(e));
+    }
+  };
+
   return (
     <div className="flex min-h-dvh flex-col">
       <AppBar tool="AI Editor" to="/editor" trail={edit.name}>
+        <Button size="sm" variant="outline" onClick={() => void saveAsStyle()}>
+          Save as style
+        </Button>
         {busy && (
           <Button size="sm" variant="outline" onClick={() => void act(stopEdit(id))}>
             <Square className="h-3.5 w-3.5" />
