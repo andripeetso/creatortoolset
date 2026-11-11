@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 @testable import CreatorToolsetMac
 
@@ -9,6 +10,21 @@ final class ThisMacAsksTests: XCTestCase {
         XCTAssertTrue(thisMacAsks.contains("state"))
         XCTAssertFalse(thisMacAsks.contains("forget"))
         XCTAssertFalse(thisMacAsks.contains("ai:on"))
+    }
+
+    func testADragsFinderItemsComeWithTheirPathAndWhetherEachIsAFolder() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("ct-drop-\(UUID().uuidString)")
+        let file = dir.appendingPathComponent("clip 1.mov")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data().write(to: file)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let board = NSPasteboard(name: NSPasteboard.Name("ct-drop-test"))
+        board.clearContents()
+        board.writeObjects([dir as NSURL, file as NSURL, NSString(string: "some text")])
+        let items = droppedItems(board)
+        XCTAssertEqual(items.map { $0["path"] as? String }, [dir.path, file.path])
+        XCTAssertEqual(items.map { $0["folder"] as? Bool }, [true, false])
+        XCTAssertTrue(thisMacAsks.contains("dropped"))
     }
 
     func testInstallIsAskedWithAnAiAppAndAKeyAndNothingElse() {

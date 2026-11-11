@@ -23,6 +23,12 @@ describe("droppedFiles", () => {
 
   it("keeps plain files as the drop gave them", async () => {
     const f = new File(["x"], "a.mov");
-    expect(await droppedFiles(drop([file("a.mov")], [f]))).toEqual({ files: [f], folder: false });
+    expect(await droppedFiles(drop([file("a.mov")], [f]))).toEqual({ files: [f], folder: false, folders: [] });
+  });
+
+  it("in the Mac app a folder comes as its path and is not read; the loose files beside it still are", async () => {
+    const got = await droppedFiles(drop([dir("Shoot", [file("clip.mov")]), file("notes.mov")]), async () => ["/Users/you/Movies/Shoot"]);
+    expect(got).toMatchObject({ folder: false, folders: ["/Users/you/Movies/Shoot"] });
+    expect(got.files.map((f) => f.name)).toEqual(["notes.mov"]);
   });
 });
