@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ChevronDown,
   ChevronUp,
@@ -116,28 +116,52 @@ export const wantsChapters = (session: ClipSession, owns: boolean): boolean =>
   owns && !isProcessing(session) && session.hasTranscript && !clipChapters(session).length;
 
 /**
- * Generate the chapter rail as soon as a transcript exists. True while that runs, from the first frame the clip is
- * drawn (the line that says so is there at once, not added a frame later), until the request ends, chapters or not.
+ * Generate the chapter rail as soon as a transcript exists. `pending` while that runs, from the first frame the clip is
+ * drawn (the line that says so is there at once, not added a frame later) until the request ends. `failed`: this
+ * visit's request ended with no chapters, with what the server said; the row that said "Generating…" stays to say so,
+ * so nothing under it moves, and `retry` asks again.
  */
-export function useAutoChapters(
-  session: ClipSession,
-  owns: boolean,
-  onChange: (s: ClipSession) => void,
-): boolean {
+export function useChapters(session: ClipSession, owns: boolean, onChange: (s: ClipSession) => void) {
   const tried = useRef<string | null>(null);
-  const [ended, setEnded] = useState<string | null>(null);
+  const [end, setEnd] = useState<{ id: string; error?: string } | null>(null);
+  const [again, setAgain] = useState(false);
   const wants = wantsChapters(session, owns);
   const id = session.id;
-  useEffect(() => {
-    if (!wants || tried.current === id) return;
+  const ask = useCallback(() => {
     tried.current = id;
     addClipBlock(id, "chapters")
-      .then(onChange)
-      .catch(() => {})
-      .finally(() => setEnded(id));
-  }, [wants, id, onChange]);
-  return wants && ended !== id;
+      .then(
+        (s) => {
+          onChange(s);
+          return clipChapters(s).length ? undefined : NO_CHAPTERS;
+        },
+        (e: unknown) => (e instanceof Error && e.message ? e.message : NO_CHAPTERS),
+      )
+      .then((error) => {
+        setEnd({ id, error });
+        setAgain(false);
+      });
+  }, [id, onChange]);
+  useEffect(() => {
+    if (wants && tried.current !== id) ask();
+  }, [wants, id, ask]);
+  // what the request of this clip ended with, when it ended with none
+  const error = end?.id === id ? end.error : undefined;
+  return {
+    // until the page's clip has its chapters (an answer with chapters is not shown as nothing in between), or it failed
+    pending: again || (wants && !error),
+    failed: wants && !again && error ? error : null,
+    retry: () => {
+      setAgain(true);
+      ask();
+    },
+  };
 }
+const NO_CHAPTERS = "Couldn't make chapters.";
+
+/** True while the chapters are being made (useChapters, for a page that only shows that). */
+export const useAutoChapters = (session: ClipSession, owns: boolean, onChange: (s: ClipSession) => void): boolean =>
+  useChapters(session, owns, onChange).pending;
 
 function jump(id: string) {
   document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
