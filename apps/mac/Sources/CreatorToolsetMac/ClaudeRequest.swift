@@ -662,35 +662,46 @@ func codexPictures(_ files: [String: String], cwd: URL) -> [String] {
         .map { cwd.appendingPathComponent($0).path }
 }
 
-/// grok's tool ids for its read tools and its web tools (the Mac relay GROK_READ, GROK_WEB). The read tools take any path:
-/// no permission rule or tool switch keeps them in the folder. Its `--sandbox strict` keeps reads to the folder, the system
-/// folders, ~/.grok and the temp folders, but it refuses to start where /var/run/docker.sock links outside the places it
-/// knows, and it can't write in ~/.grok outside its sessions, where its sign-in is saved (measured 2026-11-10, grok 1.0.77),
-/// so it is not used.
-let grokReadTools = "read_file,grep,list_dir"
+/// grok's tool ids for its web tools (the Mac relay GROK_WEB).
 let grokWebTools = "web_search,web_fetch"
 
-/// the Mac relay grok_cmd: `grok -p`'s headless stream, the prompt in `promptFile`. Tools are only the read tools of a folder
-/// (plus web when asked), no shell, no editing and no subagents. It never asks (dontAsk).
+/// What a request that brings Grok a picture or another file is answered with.
+let grokNoFiles = "Grok can't take pictures or files yet. Paste the text itself, or use another AI for this."
+
+/// A Grok run has no folder of files. Its read tools take any path on the Mac and no permission rule or tool switch keeps
+/// them in a folder (grokArguments), so it gets none of them: the request's text files go into the prompt whole, each under
+/// its path. nil when one of them is bytes (a picture, another file), which Grok can't be given then (grokNoFiles).
+/// ponytail: every text file goes in whole; trim to what the request names if a Workshop folder outgrows Grok's context.
+func grokInline(_ user: String, files: [String: String]) -> String? {
+    if files.isEmpty { return user }
+    if files.values.contains(where: { $0.hasPrefix("base64:") }) { return nil }
+    let blocks = files.keys.sorted().map { "<file path=\"\($0)\">\n\(files[$0] ?? "")\n</file>" }
+    return "The files this request needs are below, each whole under its path.\n\n" + blocks.joined(separator: "\n\n") + "\n\n" + user
+}
+
+/// the Mac relay grok_cmd: `grok -p`'s headless stream, the prompt in `promptFile`. Its only tools are the web's when asked:
+/// no file tools, no shell, no editing and no subagents. It never asks (dontAsk).
 /// `mcp`: the app's own MCP server is in this run (runMcpFiles); its calls are allowed, every other MCP server's are refused.
 /// Measured 2026-11-10 (grok 1.0.4 and 1.0.77, a stand-in model calling tools): an empty `--tools` list is no list, so a run
-/// with no folder and no web was offered every built-in. Its read_file, list_dir and grep ran on any path (outside the run
-/// folder, `../`, `~/`), and `monitor` ran `tail -f` on a file outside and handed its lines to the model; writes, image tools
-/// and workflows stopped only because dontAsk has nobody to say yes. So the list is never empty (todo_write touches no file),
-/// and deny rules, which hold whatever a version's tool names are, refuse reads of any path without a folder (`Read(**)`, which
-/// covers grep too; a bare `Read` would also refuse search_tool, how grok finds this server's tools) and edits, writes and
-/// shell always (grok counts monitor as shell; writes, image tools and workflows as edits). With both, none of those calls
-/// ran on either version; this server's MCP calls and the web tools still ran. A folder run's reads are not kept in its
-/// folder (grokReadTools).
-func grokArguments(cwd: String, model: String, effort: String, system: String, web: Bool, folder: Bool, promptFile: String, mcp: Bool = false) -> [String] {
+/// with no tools named was offered every built-in. Its read_file, list_dir and grep ran on any path (outside the run
+/// folder, `../`, `~/`), named in the list or not, and `monitor` ran `tail -f` on a file outside and handed its lines to the
+/// model; writes, image tools and workflows stopped only because dontAsk has nobody to say yes. Nothing keeps a read in a
+/// folder: its `--sandbox strict` keeps reads to the folder, the system folders, ~/.grok and the temp folders, but it refuses
+/// to start where /var/run/docker.sock links outside the places it knows, and it can't write in ~/.grok outside its
+/// sessions, where its sign-in is saved, so it is not used until it has run through here with a real sign-in. So a run
+/// never has a folder (grokInline), the list is never empty (todo_write touches no file), and deny rules, which hold
+/// whatever a version's tool names are, refuse reads of any path (`Read(**)`, which covers grep too; a bare `Read` would also
+/// refuse search_tool, how grok finds this server's tools) and edits, writes and shell (grok counts monitor as shell;
+/// writes, image tools and workflows as edits). With both, none of those calls ran on either version; this server's MCP
+/// calls and the web tools still ran.
+func grokArguments(cwd: String, model: String, effort: String, system: String, web: Bool, promptFile: String, mcp: Bool = false) -> [String] {
     var args = ["--prompt-file", promptFile, "--verbatim",
                 "--output-format", "streaming-messages-json", "--include-partial-messages", "--no-memory", "--no-subagents",
                 "--cwd", cwd, "--reasoning-effort", effort, "--permission-mode", "dontAsk",
                 "--system-prompt-override", system, "--disallowed-tools", "run_terminal_cmd,search_replace,Agent"]
     if !model.isEmpty { args += ["-m", model] }
-    let tools = (folder ? [grokReadTools] : []) + (web ? [grokWebTools] : [])
-    args += ["--tools", tools.isEmpty ? "todo_write" : tools.joined(separator: ",")]
-    for rule in (folder ? [] : ["Read(**)"]) + ["Edit", "Write", "Bash"] { args += ["--deny", rule] }
+    args += ["--tools", web ? grokWebTools : "todo_write"]
+    for rule in ["Read(**)", "Edit", "Write", "Bash"] { args += ["--deny", rule] }
     if !web { args.append("--disable-web-search") }
     if mcp { args += ["--allow", "MCPTool(creator-toolset__*)"] }
     return args

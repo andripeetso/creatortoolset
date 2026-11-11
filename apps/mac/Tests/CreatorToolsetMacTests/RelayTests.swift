@@ -621,8 +621,8 @@ final class RelayTests: XCTestCase {
         XCTAssertFalse(geminiPolicy(mcp: false).contains("creator-toolset"))
         // Grok: that server's calls allowed; the rest of its command line as without it
         let prompt = "/tmp/p.txt"
-        let plain = grokArguments(cwd: "/tmp/run", model: "", effort: "low", system: "S", web: false, folder: false, promptFile: prompt)
-        let tools = grokArguments(cwd: "/tmp/run", model: "", effort: "low", system: "S", web: false, folder: false, promptFile: prompt, mcp: true)
+        let plain = grokArguments(cwd: "/tmp/run", model: "", effort: "low", system: "S", web: false, promptFile: prompt)
+        let tools = grokArguments(cwd: "/tmp/run", model: "", effort: "low", system: "S", web: false, promptFile: prompt, mcp: true)
         XCTAssertEqual(tools, plain + ["--allow", "MCPTool(creator-toolset__*)"])
         XCTAssertFalse(plain.contains("--allow"))
         // the files name the server and the variable the token is in, never the token
@@ -706,27 +706,64 @@ final class RelayTests: XCTestCase {
         XCTAssertNil(driverEnv(base: base)["OPENAI_API_KEY"])
     }
 
-    func testGrokCommandLineHasTheReadToolsOnlyInAFolder() {
+    func testGrokCommandLineNeverHasFileTools() {
         let prompt = "/tmp/p.txt"
-        let folder = grokArguments(cwd: "/tmp/run", model: "", effort: "low", system: "S", web: false, folder: true, promptFile: prompt)
-        XCTAssertEqual(folder[folder.firstIndex(of: "--prompt-file")! + 1], prompt)
-        XCTAssertEqual(folder[folder.firstIndex(of: "--tools")! + 1], "read_file,grep,list_dir")
-        XCTAssertTrue(folder.contains("--disable-web-search"))
-        XCTAssertEqual(folder[folder.firstIndex(of: "--permission-mode")! + 1], "dontAsk")
-        XCTAssertEqual(folder[folder.firstIndex(of: "--disallowed-tools")! + 1], "run_terminal_cmd,search_replace,Agent")
-        let web = grokArguments(cwd: "/tmp/run", model: "grok-4", effort: "high", system: "S", web: true, folder: true, promptFile: prompt)
-        XCTAssertEqual(web[web.firstIndex(of: "--tools")! + 1], "read_file,grep,list_dir,web_search,web_fetch")
+        let plain = grokArguments(cwd: "/tmp/run", model: "", effort: "low", system: "S", web: false, promptFile: prompt)
+        XCTAssertEqual(plain[plain.firstIndex(of: "--prompt-file")! + 1], prompt)
+        // no web: one built-in that touches no file (an empty list would offer them all)
+        XCTAssertEqual(plain[plain.firstIndex(of: "--tools")! + 1], "todo_write")
+        XCTAssertTrue(plain.contains("--disable-web-search"))
+        XCTAssertEqual(plain[plain.firstIndex(of: "--permission-mode")! + 1], "dontAsk")
+        XCTAssertEqual(plain[plain.firstIndex(of: "--disallowed-tools")! + 1], "run_terminal_cmd,search_replace,Agent")
+        let web = grokArguments(cwd: "/tmp/run", model: "grok-4", effort: "high", system: "S", web: true, promptFile: prompt)
+        XCTAssertEqual(web[web.firstIndex(of: "--tools")! + 1], "web_search,web_fetch")
         XCTAssertFalse(web.contains("--disable-web-search"))
         XCTAssertEqual(web[web.firstIndex(of: "-m")! + 1], "grok-4")
-        let plain = grokArguments(cwd: "/tmp/run", model: "", effort: "low", system: "S", web: false, folder: false, promptFile: prompt)
-        // no folder, no web: one built-in that touches no file (an empty list would offer them all)
-        XCTAssertEqual(plain[plain.firstIndex(of: "--tools")! + 1], "todo_write")
+        // reads of any path, edits, writes and shell are refused in every run: there is no folder run
         func denied(_ args: [String]) -> [String] { args.indices.filter { args[$0] == "--deny" }.map { args[$0 + 1] } }
-        XCTAssertEqual(denied(plain), ["Read(**)", "Edit", "Write", "Bash"])
-        XCTAssertEqual(denied(grokArguments(cwd: "/tmp/run", model: "", effort: "low", system: "S", web: true, folder: false, promptFile: prompt)),
-                       ["Read(**)", "Edit", "Write", "Bash"])
-        XCTAssertEqual(denied(folder), ["Edit", "Write", "Bash"])   // a folder's own files are read
-        XCTAssertEqual(denied(web), ["Edit", "Write", "Bash"])
+        for args in [plain, web] {
+            XCTAssertEqual(denied(args), ["Read(**)", "Edit", "Write", "Bash"])
+            XCTAssertFalse(args.joined(separator: " ").contains("read_file"))
+        }
+    }
+
+    func testGrokGetsItsTextFilesInThePromptAndNoOtherFile() {
+        XCTAssertEqual(grokInline("Do it.", files: [:]), "Do it.")
+        let text = grokInline("Do it.", files: ["notes/b.md": "second", "a.md": "first"])
+        XCTAssertEqual(text, "The files this request needs are below, each whole under its path.\n\n"
+            + "<file path=\"a.md\">\nfirst\n</file>\n\n<file path=\"notes/b.md\">\nsecond\n</file>\n\nDo it.")
+        XCTAssertNil(grokInline("Look.", files: ["a.md": "first", "shot.png": "base64:iVBORw0KGgo="]))
+    }
+
+    /// A Grok run never sits in a folder of files: a Workshop session's files reach it in the prompt, it runs in an empty
+    /// folder of its own, and a picture is refused before the program starts.
+    func testAGrokRunHasNoFolderOfFiles() throws {
+        let dir = temp()
+        let seen = dir.appendingPathComponent("seen.txt")
+        let file = dir.appendingPathComponent("grok")
+        // a program that writes where it runs, what is in that folder, its arguments and its prompt, then answers as Grok does
+        let script = "#!/bin/sh\nfor a in \"$@\"; do if [ \"$p\" = 1 ]; then f=\"$a\"; p=0; fi; [ \"$a\" = --prompt-file ] && p=1; done\n"
+            + "{ pwd; ls -A; echo \"ARGS $*\"; cat \"$f\"; } > '\(seen.path)'\n"
+            + #"echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'"# + "\n"
+        try script.write(to: file, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
+        let work = temp()
+        let run = { (body: String) in
+            let req = self.request(#"{"id":"gf","system":"s","user":"Sum it up.","driver":"grok","effort":"low","session":"sess-1","web":true,"# + body + "}")
+            return try runAnswer(req, try requestOptions(req), cli: file.path, work: work, send: { _ in true }, step: { _ in }).text
+        }
+        XCTAssertEqual(try run(#""files":{"sources/talk.md":"CANARY in the session"}"#), "ok")
+        let now = try String(contentsOf: seen, encoding: .utf8)
+        XCTAssertTrue(now.contains("<file path=\"sources/talk.md\">\nCANARY in the session\n</file>\n\nSum it up."))
+        XCTAssertFalse(now.contains("read them there"))                       // no folder note: there is nothing to read
+        XCTAssertFalse(now.components(separatedBy: "ARGS")[0].contains("talk.md"))   // the folder it runs in holds no file of the request
+        XCTAssertFalse(now.contains(work.path))                               // and it is not the Workshop session's folder
+        XCTAssertTrue(now.contains("--tools web_search,web_fetch") && now.contains("--deny Read(**)"))
+        // nothing of the session was written on this Mac for it
+        XCTAssertFalse(FileManager.default.fileExists(atPath: work.appendingPathComponent("workshop").path))
+        try FileManager.default.removeItem(at: seen)
+        XCTAssertThrowsError(try run(#""files":{"shot.png":"base64:iVBORw0KGgo="}"#)) { XCTAssertEqual(($0 as? ClaudeFailure)?.message, grokNoFiles) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: seen.path))
     }
 
     /// Lines captured from grok on this Mac when it was not signed in: an init line, then the error result.
@@ -914,9 +951,9 @@ final class RelayTests: XCTestCase {
     /// CT_REAL_GROK_BIN=<a grok> CT_REAL_GROK_HOME=<a scratch folder> swift test --filter GrokStandIn: real grok runs the way the
     /// relay runs them, needing no account: grok runs in a home of its own made under CT_REAL_GROK_HOME, whose model is a
     /// stand-in on 127.0.0.1 that answers with tool calls on a file outside the run folder (a read, a listing, a search, a
-    /// `tail -f` through monitor, a write), then the app's MCP tool (a stand-in server too). Without a folder or web, none of
-    /// those file calls may run and the MCP call must; with a folder (the assistant with a pasted file, web on) the folder's
-    /// file is read and nothing is written. Whether that run's read reached the file outside is printed: grok can't keep it in.
+    /// `tail -f` through monitor, a write), then the app's MCP tool (a stand-in server too). In neither run may one of those
+    /// file calls run, and the MCP call must: plain, and the assistant with a pasted text file and the web on, whose file
+    /// reaches the model in the prompt (a Grok run has no folder of files).
     func testRealGrokStandInRun() throws {
         let env = ProcessInfo.processInfo.environment
         guard let cli = env["CT_REAL_GROK_BIN"], let base = env["CT_REAL_GROK_HOME"] else {
@@ -950,7 +987,7 @@ final class RelayTests: XCTestCase {
             if let tmp = old.1 { setenv("TMPDIR", tmp, 1) } else { unsetenv("TMPDIR") }
         }
         let mcp = #","mcp":{"url":"http://127.0.0.1:\#(server.port)/api/mcp","token":"\#(token)"}"#
-        for (name, extra) in [("plain", #","web":false"#), ("folder", #","web":true,"files":{"notes.md":"Tiny Acrobatics notes"}"#)] {
+        for (name, extra) in [("plain", #","web":false"#), ("pasted", #","web":true,"files":{"notes.md":"Tiny Acrobatics notes"}"#)] {
             server.reset()
             let req = request(#"{"id":"standin","system":"S","user":"Do the task.","driver":"grok","effort":"low""# + extra + mcp + "}")
             let answer = try runAnswer(req, try requestOptions(req), cli: cli, work: root, send: { _ in true }, step: { _ in })
@@ -961,11 +998,12 @@ final class RelayTests: XCTestCase {
             XCTAssertTrue(server.results.contains { $0.contains("Look up the newest Workshop project.") }, name)
             XCTAssertTrue(server.results.contains { $0.contains("MCP-LOOKUP-RESULT") }, name)
             XCTAssertFalse(fm.fileExists(atPath: written), name)
+            XCTAssertFalse(seen.contains(canary), name)   // the file outside never reached the model
+            XCTAssertTrue(server.offered.isDisjoint(with: ["read_file", "list_dir", "grep", "write", "monitor"]), "\(name): \(server.offered)")
             if name == "plain" {
-                XCTAssertFalse(seen.contains(canary))
                 XCTAssertTrue(server.offered.isSubset(of: ["todo_write", "search_tool", "use_tool", "session_title"]), "\(server.offered)")
             } else {
-                XCTAssertTrue(seen.contains("Tiny Acrobatics notes"))
+                XCTAssertTrue(seen.contains("<file path=\\\"notes.md\\\">\\nTiny Acrobatics notes"), name)   // in the prompt, as the model got it (JSON)
             }
         }
         try? fm.removeItem(at: root)
