@@ -5,7 +5,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { Button } from "@/components/ui/button";
 import { useMe } from "@/lib/auth";
 import { showAssistantNotice, useAssistant } from "@/lib/assistant";
-import { openSetupAt, toolForPath, useSetup, useSetupLive, useWorkTalk } from "@/lib/setup";
+import { openSetupAt, toolForPath, useSetup, useSetupLive, useSetupShown, useWorkTalk } from "@/lib/setup";
 import { ToolNeeds } from "./ToolNeeds";
 
 /** "an Apify key and a Deepgram key" (8.3): the short names of the missing required rows, joined. */
@@ -37,7 +37,9 @@ export function FirstOpen() {
   const [shown, setShown] = useState<Tool | null>(null);
   const [dismissed, setDismissed] = useState<Tool | null>(null); // closed for this visit to that tool
   const tool = toolForPath(pathname);
-  const inSetup = params.has("setup");
+  // the setup window is up: asked for by a link, or by itself on a first run (which has no link). The card waits for it
+  const setupUp = useSetupShown((s) => s.shown);
+  const inSetup = params.has("setup") || setupUp;
 
   useEffect(() => {
     if (real && !view) void load();
@@ -56,7 +58,8 @@ export function FirstOpen() {
   }, [real, inSetup, tool, view, dismissed]);
   useSetupLive(!!shown);
 
-  if (!shown || !view) return null;
+  // never over the setup window: a card that was already up waits behind it and shows when setup closes
+  if (!shown || !view || setupUp) return null;
 
   const r = readiness(shown, view.have);
   const close = () => {
