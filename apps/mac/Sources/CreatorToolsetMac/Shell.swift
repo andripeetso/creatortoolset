@@ -120,6 +120,10 @@ final class Shell: NSObject, ObservableObject {
             return try await self.client().uploadRecording(project, to: destination, progress: progress)
         }
         recorder.onRecordingsChanged = { [weak self] in self?.pushRecordings() }
+        recorder.pageAlert = { [weak self] title, text, done in
+            guard let self else { return done(false) }
+            self.pageAlert(title, text, done)
+        }
         if Recorder.available { RecordShortcut.shared.install(recorder) }
         recorder.openPage = { [weak self] in self?.showWindow(href: $0) }
         view.onThisMacCommand = { [weak self] in self?.thisMacCommand($0) }
@@ -490,6 +494,15 @@ final class Shell: NSObject, ObservableObject {
         let items = recorder.recordings.map(\.listing)
         guard let data = try? JSONSerialization.data(withJSONObject: ["items": items]), let json = String(data: data, encoding: .utf8) else { return }
         webView.evaluateJavaScript("window.dispatchEvent(new CustomEvent('mac-recordings', {detail: \(json)}))")
+    }
+
+    /// A message in the app's own dialog instead of the system's alert: the window comes forward and the page draws
+    /// it (AppDialogs sets window.ctAlert). `done` hears false when no page can: no server, or a page without it.
+    private func pageAlert(_ title: String, _ text: String, _ done: @escaping (Bool) -> Void) {
+        guard hasServer, let data = try? JSONSerialization.data(withJSONObject: [title, text]),
+              let said = String(data: data, encoding: .utf8) else { return done(false) }
+        showWindow()
+        webView.evaluateJavaScript("window.ctAlert ? (window.ctAlert(...\(said)), true) : false") { shown, _ in done(shown as? Bool == true) }
     }
 
     /// How the see-through video stands, for the editor that waits on it ('mac-alpha'): "making" (`part` 0 to 1),
