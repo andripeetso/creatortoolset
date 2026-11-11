@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router";
-import { ChevronDown, Diff, Eye, Highlighter, LayoutGrid, Pencil } from "lucide-react";
+import { ChevronDown, Diff, Eye, Highlighter, LayoutGrid, ListChecks, Pencil, Shapes } from "lucide-react";
 import {
   FRAMEWORK_ROLES,
   type FrameworkRole,
@@ -22,6 +22,8 @@ const roleOf = (fws: WorkshopFramework[], id: string): FrameworkRole => fws.find
 const sortByRole = (ids: string[], fws: WorkshopFramework[]) => [...ids].sort((a, b) => ROLE_RANK[roleOf(fws, a)] - ROLE_RANK[roleOf(fws, b)]);
 
 const barBtn = "flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50";
+/** A tool's name on the writing header: left out where the header is narrow, where the icon stands alone (DocumentTabs). */
+const barName = "docbar-narrow:hidden";
 
 /** Preview / Visualize — same header row as type and versions. */
 export function DocView({
@@ -56,7 +58,7 @@ export function DocView({
           title={changes ? "Showing what the AI's last reply changed (in green). Click to hide." : "Show what the AI's last reply changed on the piece (in green)"}
           aria-label="AI changes"
         >
-          <Diff className="h-3 w-3" /> Changes
+          <Diff className="h-3 w-3" /> <span className={barName}>Changes</span>
         </button>
       ) : null}
       {kind !== "notes" && onNotMine ? (
@@ -72,12 +74,12 @@ export function DocView({
         </button>
       ) : null}
       {kind === "carousel" && onVisualize ? (
-        <button type="button" onClick={onVisualize} className={barBtn}>
-          <LayoutGrid className="h-3 w-3" /> Visualize
+        <button type="button" onClick={onVisualize} className={barBtn} title="Visualize: the slides side by side" aria-label="Visualize">
+          <LayoutGrid className="h-3 w-3" /> <span className={barName}>Visualize</span>
         </button>
       ) : null}
-      <button type="button" onClick={onPreview} className={barBtn}>
-        {preview ? <Pencil className="h-3 w-3" /> : <Eye className="h-3 w-3" />} {preview ? "Edit" : "Preview"}
+      <button type="button" onClick={onPreview} className={barBtn} title={preview ? "Back to editing" : "Preview: the piece as it reads"} aria-label={preview ? "Edit" : "Preview"}>
+        {preview ? <Pencil className="h-3 w-3" /> : <Eye className="h-3 w-3" />} <span className={barName}>{preview ? "Edit" : "Preview"}</span>
       </button>
     </div>
   );
@@ -113,6 +115,7 @@ export function DocShapeRules({
   return (
     <div className="flex items-center gap-0.5">
       <CraftMenu
+        icon={<Shapes className="h-3 w-3" />}
         label="Shape"
         summary={shapeNames.length ? shapeNames.join(", ") : "none"}
         open={open === "shape"}
@@ -147,6 +150,7 @@ export function DocShapeRules({
         </div>
       </CraftMenu>
       <CraftMenu
+        icon={<ListChecks className="h-3 w-3" />}
         label="Rules"
         summary={`${activeRules.length}/${rules.length}`}
         open={open === "rules"}
@@ -170,12 +174,15 @@ export function DocShapeRules({
 }
 
 function CraftMenu({
+  icon,
   label,
   summary,
   open,
   onToggle,
   children,
 }: {
+  /** stands for the name where the header is narrow */
+  icon: ReactNode;
   label: string;
   summary: string;
   open: boolean;
@@ -184,9 +191,10 @@ function CraftMenu({
 }) {
   return (
     <span className="relative shrink-0">
-      <button type="button" onClick={onToggle} className={barBtn} aria-expanded={open} title={`${label}: ${summary}`}>
-        {label}
-        <ChevronDown className={`h-3 w-3 shrink-0 ${open ? "rotate-180" : ""}`} />
+      <button type="button" onClick={onToggle} className={barBtn} aria-expanded={open} aria-label={label} title={`${label}: ${summary}`}>
+        <span className="hidden docbar-narrow:inline">{icon}</span>
+        <span className={barName}>{label}</span>
+        <ChevronDown className={`h-3 w-3 shrink-0 ${barName} ${open ? "rotate-180" : ""}`} />
       </button>
       {open ? (
         <div className="absolute right-0 top-full z-40 mt-1 w-[22rem] rounded-lg border border-border bg-popover p-2 text-popover-foreground shadow-xl">{children}</div>
