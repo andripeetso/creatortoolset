@@ -12,6 +12,13 @@ const acct = (platform: ConnectedAccount["platform"], handle: string, projectId?
 const view = (o: Partial<Pick<ConnectorsView, "logins" | "apify" | "accounts" | "instagram">>) => ({ logins: none, apify: { configured: true, valid: true }, accounts: [], instagram: [], ...o });
 const row = (rows: ReturnType<typeof platformRows>, id: string) => rows.find((r) => r.platform === id);
 
+it("a tool's setup form offers a sign-in only where this server has its own app: one the sign-in service would give is left out", () => {
+  const all = { meta: true, google: true, tiktok: true };
+  expect(signInItems(all, ["google", "tiktok"]).map((s) => s.id)).toEqual(["meta"]);
+  // the downloaded app on a person's computer has no app of its own: the form is the Apify key alone
+  expect(signInItems(all, ["meta", "google", "tiktok"])).toEqual([]);
+});
+
 it("the platform list: one row per platform, in order, with the one button each row does", () => {
   // the owner's server: no sign-in app, an Apify key, his own Instagram in the Analyzer
   const rows = platformRows(view({ instagram: [{ id: "a1", handle: "tinyacrobatics", followers: 4120, mine: true }] }));
