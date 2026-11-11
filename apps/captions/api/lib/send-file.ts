@@ -5,9 +5,15 @@ import { Readable } from "node:stream";
 
 const RANGE_CAP = 8 * 1024 * 1024;
 
-/** A download's Content-Disposition: any name (õ, ä, emoji) as UTF-8, with a plain one for clients that read only that. */
-export const attachment = (name: string) =>
-  `attachment; filename="${name.replace(/[^\x20-\x7e]|["\\]/g, "_")}"; filename*=UTF-8''${encodeURIComponent(name).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)}`;
+/**
+ * A download's Content-Disposition. A name the plain form can't hold (õ, ä, emoji, a quote) also goes as UTF-8, beside
+ * a plain one for clients that read only that; a plain name's header is the plain form alone.
+ */
+export const attachment = (name: string) => {
+  const plain = name.replace(/[^\x20-\x7e]|["\\]/g, "_");
+  const utf8 = encodeURIComponent(name).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `attachment; filename="${plain}"${plain === name ? "" : `; filename*=UTF-8''${utf8}`}`;
+};
 
 /** Range-aware file response. An open range (`bytes=0-` on a 20 GB
  *  master) is capped; a closed one is answered exactly, since Apple's
