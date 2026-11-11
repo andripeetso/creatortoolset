@@ -18,8 +18,11 @@
  *   DELETE /api/editor/:id                 to the trash (kept LIBRARY_TRASH_DAYS)
  *   GET    /api/editor/defaults            → EditorDefaults (the set a new edit gets, and the items each slot can take)
  *   PUT    /api/editor/defaults/:slot      { id: string | null } (null = back to the built-in one) → EditorDefaults
+ *   GET, POST /api/editor/styles, PUT, DELETE /api/editor/styles/:id   the person's editing styles (contracts/editor-styles.ts)
  * Every step runs as the edit's creator, on their own keys and AI: a workspace owner sees, stops and deletes, never runs.
  */
+
+import type { EditStyleCopy } from "./editor-styles";
 
 export const EDIT_STEPS = ["analyze", "script", "draft", "broll"] as const;
 export type EditStep = (typeof EDIT_STEPS)[number];
@@ -75,8 +78,9 @@ export interface EditorDefaults {
   items: Record<EditSlot, EditItem[]>;
 }
 
-export type NewEdit = Partial<EditBrief> & { sources: string[] };
-export type EditPatch = Partial<Omit<EditBrief, "framing">>;
+/** `style`: an editing style's id (its choices go under the ones sent here), or null for none. Left out: none. */
+export type NewEdit = Partial<EditBrief> & { sources: string[]; style?: string | null };
+export type EditPatch = Partial<Omit<EditBrief, "framing">> & { style?: string | null };
 
 export interface EditJob {
   id: number;
@@ -142,6 +146,8 @@ export interface Edit extends EditSummary, EditBrief {
   workspaceId: string;
   /** the items the edit was made with, recorded when it was created: changing the default later does not change it */
   bundle: EditBundle;
+  /** the editing style it was made with, as it was then; absent for an edit made with none */
+  style?: EditStyleCopy;
   /** per source version: the speaker's eye line, a fraction of the picture's height from the top (punch-ins keep it in place) */
   eyeline: Record<string, number>;
   /** the versions with a draft timeline, by name */

@@ -50,6 +50,9 @@ const REPLY: Components = {
   h3: ({ children }) => <p className="mb-1 mt-3 font-semibold first:mt-0">{children}</p>,
   strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
   a: ({ href, children }) => <ReplyLink href={href}>{children}</ReplyLink>,
+  // A picture from another site is never loaded: the request itself would hand that site whatever the address
+  // carries, and an AI can be talked into writing one (a pasted source, a page it read). It shows as a link.
+  img: ({ src, alt }) => (inApp(src) ? <img src={src} alt={alt ?? ""} className="my-2 max-w-full rounded-md" /> : <ReplyLink href={src}>{alt || src}</ReplyLink>),
   code: ({ children }) => <code className="rounded bg-muted px-1 py-0.5 text-[0.9em]">{children}</code>,
   blockquote: ({ children }) => <blockquote className="my-2 border-l-2 border-border pl-3 text-muted-foreground">{children}</blockquote>,
   table: ({ children }) => (

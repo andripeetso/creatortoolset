@@ -8,7 +8,7 @@ describe("the sidebar per install and role", () => {
   it("a local browser: General, Appearance, Tools, the AI block, the devices, the connections; no servers, team or admin", () => {
     expect(listed(at(false, true))).toEqual([
       "general", "appearance", "tools",
-      "providers", "automations", "memory", "usage",
+      "providers", "automations", "skills", "memory", "usage",
       "devices", "folders",
       "connectors", "keys", "own-ai",
     ]);

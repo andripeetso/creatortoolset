@@ -76,16 +76,18 @@ export function expandCollection(libraryId: string, query: SearchQuery): SearchQ
   return col.kind === "smart" ? { ...savedQuery(JSON.parse(col.query ?? "{}")), ...query, collectionId: undefined } : query;
 }
 
-const toCollection = (r: Row, count?: number): Collection => ({
+const toCollection = (r: Row, count?: number, covers?: string[]): Collection => ({
   id: r.id,
   name: r.name,
   parentId: r.parent_id,
   kind: r.kind,
   createdBy: r.created_by,
   ...(r.kind === "smart" ? { query: savedQuery(JSON.parse(r.query ?? "{}")) } : count !== undefined ? { count } : {}),
+  ...(covers?.length ? { covers } : {}),
 });
 
-// GET /api/library/:id/collections → every folder and collection, flat; the client nests them by parentId
+// GET /api/library/:id/collections → every folder and collection, flat; the client nests them by parentId. A folder's
+// card shows up to four pictures of its clips (the media route checks each viewer, as it does for the grid)
 collectionApp.get("/:id/collections", (c) => {
   const libraryId = c.req.param("id");
   if (!libraryRole(c.get("user").username, libraryId)) return notFound(c);
@@ -96,7 +98,15 @@ collectionApp.get("/:id/collections", (c) => {
        FROM collections c WHERE c.library_id = ? ORDER BY c.created_at, c.id`,
     )
     .all(libraryId) as unknown as (Row & { n: number })[];
-  return c.json({ collections: rows.map((r) => toCollection(r, r.n)) });
+  const pictures = db().prepare(
+    `SELECT a.current_version_id AS v FROM collection_items i JOIN assets a ON a.id = i.asset_id
+     WHERE i.collection_id = ? AND a.trashed_at IS NULL
+       AND EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = a.current_version_id AND d.kind = 'thumb')
+     ORDER BY i.position, i.asset_id LIMIT 4`,
+  );
+  const coversOf = (r: Row) =>
+    r.kind === "manual" ? (pictures.all(r.id) as { v: string }[]).map((p) => `/api/library/media/${p.v}/thumb`) : undefined;
+  return c.json({ collections: rows.map((r) => toCollection(r, r.n, coversOf(r))) });
 });
 
 // is `cid` the same as `parent` or somewhere above it? (a folder can't move inside itself)

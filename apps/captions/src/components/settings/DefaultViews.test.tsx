@@ -34,6 +34,7 @@ describe("Default view", () => {
     const el = render();
     expect(rows(el)).toEqual([
       ["Review", "Cards"],
+      ["Media Library", "Cards"],
       ["Finals", "Cards"],
       ["AI Editor", "List"],
       ["Caption Studio", "Cards"],
@@ -49,6 +50,7 @@ describe("Default view", () => {
     const names = rows(el).map((r) => r[0]);
     expect(names).not.toContain("AI Editor");
     expect(names).not.toContain("Finals");
+    expect(names).not.toContain("Media Library");
     expect(names).toContain("Review");
   });
 

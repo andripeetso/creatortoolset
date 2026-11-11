@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { createHash, createPrivateKey, randomBytes, sign as cryptoSign } from "node:crypto";
-import { getSessionUser, setLoginCookie, type AuthVars } from "./auth";
+import { APP_CHALLENGE, getSessionUser, mintAppCode, setLoginCookie, type AuthVars } from "./auth";
 import { writeFileSync, readFileSync, renameSync } from "node:fs";
 import path from "node:path";
 import { env, hostedMode } from "./lib/env";
@@ -17,6 +17,11 @@ import { SIGNIN_NAME, bumpUsage, createUser, findByIdentity, findByLogin, findUs
  *
  * Sign-in start: GET /api/account/login/<apple|google|github>?for=link|site. Callbacks: /api/auth/<kind>/callback. A
  * callback for a sign-in this module did not start calls next(), so the plug-in that started it can answer.
+ *
+ * An app's sign-in (a phone app opens the start in the system's sign-in sheet): ?for=site&app=1&challenge=<base64url
+ * sha256 of a verifier the app keeps>. It sets no cookie in that sheet: it ends on creatortoolset://signin?code=<a
+ * one-time code> (or ?error=<the words the login screen would show>), and the app swaps the code for its session with
+ * POST /api/auth/app { code, verifier } (auth.ts).
  */
 export type Kind = SignInProvider;
 export interface Who {
@@ -136,7 +141,10 @@ export function signinUrl(kind: Kind, redirect: string, state: string): string |
   return g && "https://github.com/login/oauth/authorize?" + new URLSearchParams({ client_id: g.id, redirect_uri: redirect, scope: "read:user user:email", state });
 }
 
-type Mode = { type: "site" } | { type: "link"; username: string };
+/** `app`: an app started this site sign-in (`app=1`); the value is its challenge, kept for the code it ends with. */
+type Mode = { type: "site"; app?: string } | { type: "link"; username: string };
+/** Where an app's sign-in ends: the link the app registers, with ?code= or ?error=. */
+const APP_LINK = "creatortoolset://signin";
 /**
  * A map kept in the data folder, so a restart (every deploy) between a sign-in's start and its way back loses nothing.
  * Small and short-lived: each entry is single use and swept after 15 minutes.
@@ -204,8 +212,14 @@ signInStartApp.get("/login/:kind", (c, next) => {
     const me = getSessionUser(c.req.header("cookie"));
     if (!me || !findUser(me.username)) return c.json({ error: "Sign in with an account first" }, 401);
     mode = { type: "link", username: me.username };
-  } else if (forWhat === "site") mode = { type: "site" };
-  else return next();
+  } else if (forWhat === "site") {
+    if (c.req.query("app") === "1") {
+      // an app's sign-in: refused outright without a challenge, never turned into a browser's sign-in
+      const challenge = c.req.query("challenge") ?? "";
+      if (!APP_CHALLENGE.test(challenge)) return c.json({ error: "The app's sign-in challenge is missing" }, 400);
+      mode = { type: "site", app: challenge };
+    } else mode = { type: "site" };
+  } else return next();
   const origin = originOf(c);
   const redirect = `${origin}/api/auth/${kind}/callback`;
   const via = signinVia(origin, kind);
@@ -308,13 +322,14 @@ const EXPIRED = plainPage("That sign-in expired", "Start it again from Creator T
 const sessionHere = (c: Context, username: string) => getSessionUser(c.req.header("cookie"))?.username === username;
 
 /**
- * Where a failed sign-in goes: the login screen, or Settings → Account for a link. A link whose way back reached a
- * browser without that account's session (the Mac app finishes sign-ins in the system browser) gets a plain page,
- * since Settings would only show that browser the login screen.
+ * Where a failed sign-in goes: the login screen (an app's sign-in: the app's own link, with the same words), or
+ * Settings → Account for a link. A link whose way back reached a browser without that account's session (the Mac app
+ * finishes sign-ins in the system browser) gets a plain page, since Settings would only show that browser the login
+ * screen.
  */
 const failTo = (c: Context, mode: Mode, withCookie = false) => (msg: string) =>
   mode.type !== "link"
-    ? c.redirect(`/login?error=${encodeURIComponent(msg)}`)
+    ? c.redirect(`${mode.app ? APP_LINK : "/login"}?error=${encodeURIComponent(msg)}`)
     : withCookie && !sessionHere(c, mode.username)
       ? c.html(plainPage("That didn't link", `${escHtml(msg)}. Go back to Creator Toolset and try again.`), 400)
       : c.redirect(`/settings/account?signin=${encodeURIComponent(msg)}`);
@@ -379,6 +394,8 @@ function finish(c: Context, mode: Mode, who: Who, withCookie: boolean) {
   if (!known && process.env.SIGN_UPS !== "open") return fail("There is no account here for that sign-in. This server takes new people by invitation");
   if (known) refreshPicture(known, who);
   const user = known ?? newAccountFor(who);
+  // an app started this sign-in: no cookie for the sign-in sheet; the app swaps this code for its own session
+  if (mode.app) return c.redirect(`${APP_LINK}?code=${mintAppCode(user, mode.app)}`);
   setLoginCookie(c, user);
   bumpUsage(user.username, { logins: 1 });
   return c.redirect("/");

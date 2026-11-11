@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { Captions, Clapperboard, Download, FileText, Loader2, MessageSquare, Pencil, RotateCcw, Share2, Sparkles, Trash2 } from "lucide-react";
-import { NEEDS, type AssetCard, type AssetDetail, type Collection, type SimilarMatch } from "@contracts/library";
+import { NEEDS, type AssetCard, type AssetDetail, type SimilarMatch } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { SheetTitle } from "@/components/ui/sheet";
 import { canUse, useMe } from "@/lib/auth";
@@ -26,11 +26,11 @@ type Props = {
   /** the second the player opens at (a line said in the clip) */
   startAt: number;
   inTrash: boolean;
-  /** the library's own folders the clip can be put in */
-  folders: Collection[];
+  /** where Move to can take the clip: the top level (id null) and the folders, `depth` under their parents */
+  moveTo: { id: string | null; name: string; depth: number }[];
   /** true: to the trash; false: back out of it */
   onTrash: (trash: boolean) => void;
-  onAddToFolder: (folderId: string) => void;
+  onMove: (folderId: string | null) => Promise<void>;
   onSaved: (a: AssetCard) => void;
   onError: (e: string) => void;
   /** the clip before and after this one in the page's grid (← and →); absent at either end */
@@ -43,13 +43,12 @@ export function ClipPanel(props: Props) {
   return <Panel key={props.asset.id} {...props} />;
 }
 
-function Panel({ libraryId, asset, startAt, inTrash, folders, onTrash, onAddToFolder, onSaved, onError, onPrev, onNext }: Props) {
+function Panel({ libraryId, asset, startAt, inTrash, moveTo, onTrash, onMove, onSaved, onError, onPrev, onNext }: Props) {
   const media = useRef<(HTMLVideoElement & HTMLAudioElement) | null>(null);
   const [detail, setDetail] = useState<AssetDetail | null>(null);
   const [reread, setReread] = useState(0);
   const [sharing, setSharing] = useState(false);
   const [now, setNow] = useState(-1);
-  const [addedTo, setAddedTo] = useState<{ id: string; name: string }[]>([]);
   const [opening, setOpening] = useState(false);
   const [making, setMaking] = useState(false);
   const [same, setSame] = useState<SimilarMatch[]>([]);
@@ -138,11 +137,8 @@ function Panel({ libraryId, asset, startAt, inTrash, folders, onTrash, onAddToFo
       .catch((e) => onError(message(e)))
       .finally(() => setMaking(false));
   };
-  const addToFolder = (id: string) => {
-    onAddToFolder(id);
-    const f = folders.find((c) => c.id === id);
-    if (f) setAddedTo((all) => [...all, { id: f.id, name: f.name }]);
-  };
+  // the folders it is in are read again after the move: its Folder line says where it is now
+  const move = (id: string | null) => void onMove(id).then(() => setReread((n) => n + 1));
 
   const playable = a.kind === "video" || a.kind === "audio";
   const facts = factsOf(a);
@@ -152,7 +148,7 @@ function Panel({ libraryId, asset, startAt, inTrash, folders, onTrash, onAddToFo
     </Button>
   );
   const file = original(a, detail);
-  const inFolders = [...(detail?.collections ?? []), ...addedTo.filter((x) => !detail?.collections.some((c) => c.id === x.id))];
+  const inFolders = detail?.collections ?? [];
   const userTags = a.tags.filter((t) => !a.aiTags.includes(t));
   const aiTags = a.tags.filter((t) => a.aiTags.includes(t));
 
@@ -230,17 +226,17 @@ function Panel({ libraryId, asset, startAt, inTrash, folders, onTrash, onAddToFo
               New edit
             </Button>
           )}
-          {folders.length > 0 && (
+          {moveTo.length > 0 && (
             <select
-              aria-label="Add to folder"
+              aria-label="Move to"
               value=""
-              onChange={(e) => e.target.value && addToFolder(e.target.value)}
+              onChange={(e) => e.target.value && move(e.target.value === "top" ? null : e.target.value)}
               className="h-8 rounded-md border border-zinc-500/30 bg-transparent px-2 text-sm"
             >
-              <option value="">Add to folder…</option>
-              {folders.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
+              <option value="">Move to…</option>
+              {moveTo.map((o) => (
+                <option key={o.id ?? "top"} value={o.id ?? "top"}>
+                  {`${"\u00a0".repeat(3 * o.depth)}${o.name}`}
                 </option>
               ))}
             </select>
