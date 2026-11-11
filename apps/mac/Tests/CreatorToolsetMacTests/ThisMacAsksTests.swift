@@ -27,6 +27,27 @@ final class ThisMacAsksTests: XCTestCase {
         XCTAssertTrue(thisMacAsks.contains("dropped"))
     }
 
+    func testThePageGetsADragsPathsOnlyOnceItIsDroppedAndOnlyOnce() {
+        let items: [[String: Any]] = [["path": "/Users/you/Movies/Shoot", "folder": true]]
+        var drag = DragPaths()
+        // passing over without a drop leaves nothing, during the drag or after it left
+        drag.entered(items)
+        XCTAssertTrue(drag.take().isEmpty)
+        drag.exited()
+        drag.dropped()
+        XCTAssertTrue(drag.take().isEmpty)
+        // a drop: its items once
+        drag.entered(items)
+        drag.dropped()
+        XCTAssertEqual(drag.take().first?["path"] as? String, "/Users/you/Movies/Shoot")
+        XCTAssertTrue(drag.take().isEmpty)
+        // a drop nobody asked about soon goes stale
+        let then = Date()
+        drag.entered(items)
+        drag.dropped(at: then)
+        XCTAssertTrue(drag.take(at: then.addingTimeInterval(11)).isEmpty)
+    }
+
     func testInstallIsAskedWithAnAiAppAndAKeyAndNothingElse() {
         let key = "ctk_" + String(repeating: "a1b2", count: 8)   // made up: the shape of a key, not one
         XCTAssertEqual(installAsk("install:claude:\(key)")?.app, "claude")
