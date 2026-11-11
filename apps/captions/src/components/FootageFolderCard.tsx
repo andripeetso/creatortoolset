@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useCachedLoad } from "@/lib/local-cache";
 import { chooseFolderOnMac } from "@/lib/thisMac";
-import { BIG_DROP, BigUploadDialog } from "@/components/LibraryProcessing";
+import { BIG_DROP, BigUploadDialog, dropOf, type FolderSize } from "@/components/LibraryProcessing";
 
 /**
  * "Where are your videos?": shown by the Media Library and the AI Editor while the account has no footage folder yet.
@@ -44,7 +44,7 @@ export function FootageFolderCard({ libraryId, onUpload }: { libraryId: string; 
   const [typing, setTyping] = useState(false);
   const [path, setPath] = useState("");
   const [busy, setBusy] = useState(false);
-  const [asking, setAsking] = useState<{ folder: string; files: number; bytes: number } | null>(null); // a big folder, waiting for its go
+  const [asking, setAsking] = useState<{ folder: string; size: FolderSize } | null>(null); // a big folder, waiting for its go
   const [error, setError] = useState<string | null>(null);
 
   if (skipped || added || !status || status.folders.length > 0) return null;
@@ -71,8 +71,8 @@ export function FootageFolderCard({ libraryId, onUpload }: { libraryId: string; 
   // a big folder says first what importing it takes; a size the server can't read adds the folder as before
   const check = async (folder: string) => {
     const r = await fetch(`/api/library/${libraryId}/watch/size?path=${encodeURIComponent(folder)}`).catch(() => null);
-    const size = r?.ok ? ((await r.json()) as { files: number; bytes: number }) : null;
-    if (size && size.files >= BIG_DROP) setAsking({ folder, ...size });
+    const size = r?.ok ? ((await r.json()) as FolderSize) : null;
+    if (size && size.files >= BIG_DROP) setAsking({ folder, size });
     else await add(folder);
   };
 
@@ -85,9 +85,8 @@ export function FootageFolderCard({ libraryId, onUpload }: { libraryId: string; 
   const dialog = asking && (
     <BigUploadDialog
       libraryId={libraryId}
-      clips={asking.files}
-      bytes={asking.bytes}
-      title={`Add ${asking.files.toLocaleString()} clips from this folder?`}
+      drop={dropOf(asking.size)}
+      title={`Add ${asking.size.files.toLocaleString()} clips from this folder?`}
       go="Add folder"
       onClose={() => setAsking(null)}
       onUpload={() => {

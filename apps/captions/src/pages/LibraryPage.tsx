@@ -27,6 +27,7 @@ import {
   updateAsset,
   updateLibrary,
   uploadFile,
+  audioOf,
 } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
 import { cn } from "@/lib/utils";
@@ -293,8 +294,7 @@ export default function LibraryPage() {
       {asking && libId && (
         <BigUploadDialog
           libraryId={libId}
-          clips={asking.length}
-          bytes={asking.reduce((n, f) => n + f.size, 0)}
+          drop={{ clips: asking.length, bytes: asking.reduce((n, f) => n + f.size, 0), ...audioOf(asking) }}
           title={`Upload ${asking.length.toLocaleString()} clips?`}
           go="Upload"
           onClose={() => setAsking(null)}

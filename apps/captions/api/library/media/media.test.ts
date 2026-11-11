@@ -63,6 +63,15 @@ describe("probe", () => {
     expect(parseProbe(video({ tags: { rotate: "270" } })).rotation).toBe(270);
     expect(parseProbe(video({})).rotation).toBe(0);
   });
+
+  it("a song's album art is a cover, not video; a real picture stream wins over a cover", () => {
+    const art = { codec_type: "video", codec_name: "mjpeg", disposition: { attached_pic: 1 } };
+    const song = parseProbe({ format: { format_name: "mp3" }, streams: [{ codec_type: "audio", codec_name: "mp3" }, art] });
+    expect(song).toMatchObject({ vcodec: "mjpeg", cover: true, acodec: "mp3" });
+    const film = parseProbe({ format: { format_name: "mov,mp4" }, streams: [art, { codec_type: "video", codec_name: "h264", disposition: { attached_pic: 0 } }] });
+    expect(film.vcodec).toBe("h264");
+    expect(film.cover).toBeUndefined();
+  });
 });
 
 describe("start timecode", () => {

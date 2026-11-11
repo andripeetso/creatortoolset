@@ -112,7 +112,7 @@ watchApp.get("/:id/watch", async (c) => {
   return c.json(await withFound(status(c.req.param("id"))));
 });
 
-// GET /api/library/:id/watch/size?path → { files, bytes }: the media files a folder holds, so the card can say what
+// GET /api/library/:id/watch/size?path → { files, bytes, audio, audioBytes }: the media files a folder holds (and how many are sound only), so the card can say what
 // importing it takes before it is added (estimate.ts). The same checks as adding it: a server on the person's computer.
 watchApp.get("/:id/watch/size", async (c) => {
   const user = c.get("user");
@@ -123,8 +123,17 @@ watchApp.get("/:id/watch/size", async (c) => {
   if (typeof f === "string") return c.json({ error: f, code: "invalid" }, 400);
   const files = await filesIn(f.path);
   let bytes = 0;
-  for (const file of files) bytes += (await stat(file).catch(() => null))?.size ?? 0;
-  return c.json({ files: files.length, bytes });
+  let audio = 0;
+  let audioBytes = 0;
+  for (const file of files) {
+    const size = (await stat(file).catch(() => null))?.size ?? 0;
+    bytes += size;
+    if (kindOf(file) === "audio") {
+      audio++;
+      audioBytes += size;
+    }
+  }
+  return c.json({ files: files.length, bytes, audio, audioBytes });
 });
 
 // PUT /api/library/:id/watch { folders: [{ path, mode, collectionId? }] } → WatchStatus. Replaces the list; refused on a hosted server.

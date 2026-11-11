@@ -9,6 +9,7 @@ import { embedVersion } from "./embed";
 import { fingerprint } from "./fingerprint";
 import { claimJob, defer, enqueueJob, extendLease, finishJob, parkJob, requeueExpired, type JobRow } from "./jobs";
 import { keyFor } from "../my-keys";
+import { isInside, musicFolders } from "../lib/storage";
 import { AiProviderError } from "../ai-complete";
 import { MacClaudeError } from "../lib/mac-claude";
 import { makeProxy, needsProxy } from "./media/proxy";
@@ -49,6 +50,7 @@ interface VersionRow {
   id: string;
   library_id: string;
   source_key: string;
+  source_path: string | null;
   probe: string | null;
 }
 
@@ -131,7 +133,7 @@ async function run(job: JobRow): Promise<void> {
   const db = libraryDb();
   const v = db
     .prepare(
-      `SELECT v.id, a.library_id, v.source_key, v.probe FROM asset_versions v
+      `SELECT v.id, a.library_id, v.source_key, v.source_path, v.probe FROM asset_versions v
        JOIN assets a ON a.id = v.asset_id WHERE v.id = ?`,
     )
     .get(job.version_id ?? "") as VersionRow | undefined;
@@ -150,18 +152,23 @@ async function run(job: JobRow): Promise<void> {
   if (job.kind === "probe") {
     p = await probe(src);
     db.prepare("UPDATE asset_versions SET probe = ? WHERE id = ?").run(JSON.stringify(p), v.id);
+    // a file from the account's music folders is music: a thumbnail and a waveform, no transcript, no description,
+    // no search by meaning (each would spend their AI or keys on a song nobody asked about)
+    const music = !!v.source_path && isInside(v.source_path, await musicFolders(env.dataDir, job.actor));
+    // a song's album art is a picture, not video: its thumbnail, no duplicate check and no description
+    const video = !!p.vcodec && !p.cover;
     if (p.vcodec) enqueueJob(db, v.library_id, v.id, "thumb", job.actor);
     enqueueJob(db, v.library_id, v.id, "wave", job.actor);
     if (needsProxy(p)) enqueueJob(db, v.library_id, v.id, "proxy", job.actor);
-    if (p.acodec) enqueueJob(db, v.library_id, v.id, "transcribe", job.actor);
-    if (p.vcodec) enqueueJob(db, v.library_id, v.id, "fingerprint", job.actor);
+    if (p.acodec && !music) enqueueJob(db, v.library_id, v.id, "transcribe", job.actor);
+    if (video && !music) enqueueJob(db, v.library_id, v.id, "fingerprint", job.actor);
     // after transcribe in the queue, so the description reads what is said
-    if (p.vcodec && librarySetting(v.library_id, "describe")) enqueueJob(db, v.library_id, v.id, "describe", job.actor);
+    if (video && !music && librarySetting(v.library_id, "describe")) enqueueJob(db, v.library_id, v.id, "describe", job.actor);
   } else if (!p) {
     throw new Error("Not probed yet");
   } else if (job.kind === "thumb") {
     const file = out("jpg");
-    await makeThumb(src, file, p.duration);
+    await makeThumb(src, file, p.duration, !!p.cover);
     await keep("thumb", file, `${base}/thumb.jpg`);
   } else if (job.kind === "wave") {
     const file = out("json");
@@ -169,7 +176,7 @@ async function run(job: JobRow): Promise<void> {
     await keep("wave", file, `${base}/wave.json`);
   } else if (job.kind === "proxy") {
     const file = out("mp4");
-    await makeProxy(src, file);
+    await makeProxy(src, file, !!p.cover);
     await keep("proxy", file, `${base}/proxy.mp4`);
   } else if (job.kind === "transcribe" || job.kind === "describe") {
     if (job.kind === "transcribe") await transcribeVersion(db, v.id, src, job.actor, dir);

@@ -17,6 +17,7 @@ export interface ProbeSummary {
   acodec: string;
   capturedAt?: number; // ms, from the container's creation_time
   timecode?: string; // start timecode "HH:MM:SS:FF" (";" before FF for drop frame), when the file carries one
+  cover?: true; // the only picture is a cover (a song's album art): a still for the thumbnail, not video to describe
 }
 
 const TIMECODE = /^\d\d:\d\d:\d\d[:;]\d\d$/;
@@ -30,7 +31,9 @@ const rate = (r: unknown) => {
 };
 
 export function parseProbe(json: { format?: Json; streams?: Json[] }): ProbeSummary {
-  const v = json.streams?.find((s) => s.codec_type === "video");
+  const pictures = json.streams?.filter((s) => s.codec_type === "video") ?? [];
+  const isCover = (s: Json) => s.disposition?.attached_pic === 1;
+  const v = pictures.find((s) => !isCover(s)) ?? pictures[0];
   const a = json.streams?.find((s) => s.codec_type === "audio");
   // Clockwise degrees to show the picture upright. ffmpeg 7 writes the display matrix as side data, where
   // rotation is the negative of that; older builds wrote a `rotate` tag already clockwise. Read both, copy neither.
@@ -53,6 +56,7 @@ export function parseProbe(json: { format?: Json; streams?: Json[] }): ProbeSumm
     acodec: String(a?.codec_name ?? ""),
     ...(Number.isFinite(capturedAt) ? { capturedAt } : {}),
     ...(timecode ? { timecode } : {}),
+    ...(v && isCover(v) ? { cover: true as const } : {}),
   };
 }
 

@@ -4,7 +4,7 @@ import type { LibraryEstimate, LibraryProgress, LibraryStepEstimate } from "@con
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
-import { getEstimate, getProgress, listLibraries } from "@/lib/library";
+import { getEstimate, getProgress, type Drop, listLibraries } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
 
 /**
@@ -14,6 +14,16 @@ import { useCachedLoad } from "@/lib/local-cache";
 
 /** Uploads of this many files or more ask first, with the estimate. */
 export const BIG_DROP = 20;
+
+/** GET /api/library/:id/watch/size: the media files a folder holds. */
+export interface FolderSize {
+  files: number;
+  bytes: number;
+  audio: number;
+  audioBytes: number;
+}
+
+export const dropOf = (s: FolderSize, music = false): Drop => ({ clips: s.files, bytes: s.bytes, audio: s.audio, audioBytes: s.audioBytes, music });
 
 export function aboutTime(s: number): string {
   if (s < 60) return "under a minute";
@@ -81,16 +91,14 @@ export function LibraryProgressBar({ libraryId }: { libraryId: string }) {
 /** Before a big upload or folder: what preparing `clips` files of `bytes` in all takes, and the go (`go` names it). */
 export function BigUploadDialog({
   libraryId,
-  clips,
-  bytes,
+  drop,
   title,
   go,
   onUpload,
   onClose,
 }: {
   libraryId: string;
-  clips: number;
-  bytes: number;
+  drop: Drop;
   title: string;
   go: string;
   onUpload: () => void;
@@ -98,9 +106,10 @@ export function BigUploadDialog({
 }) {
   const [e, setE] = useState<LibraryEstimate | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
+  const { clips, bytes, audio, audioBytes, music } = drop;
   useEffect(() => {
-    getEstimate(libraryId, clips, bytes).then(setE, (x: unknown) => setFailed(x instanceof Error ? x.message : String(x)));
-  }, [libraryId, clips, bytes]);
+    getEstimate(libraryId, { clips, bytes, audio, audioBytes, music }).then(setE, (x: unknown) => setFailed(x instanceof Error ? x.message : String(x)));
+  }, [libraryId, clips, bytes, audio, audioBytes, music]);
   const guess = e?.steps.some((s) => !s.measured && s.route !== "off" && s.route !== "none");
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -145,21 +154,21 @@ export function BigUploadDialog({
  * more) shows the same dialog first, where Add folder runs `add` and Cancel adds nothing. A folder the server can't
  * size (not on this computer, not a folder) goes to `add` as before, which says why. `dialog` is rendered by the caller.
  */
-export function useBigFolder(): { check: (path: string, add: () => unknown) => Promise<void>; dialog: ReactNode } {
-  const [asking, setAsking] = useState<{ libraryId: string; files: number; bytes: number; add: () => unknown } | null>(null);
-  const check = async (path: string, add: () => unknown) => {
+export function useBigFolder(): { check: (path: string, add: () => unknown, opts?: { music?: boolean }) => Promise<void>; dialog: ReactNode } {
+  const [asking, setAsking] = useState<{ libraryId: string; files: number; drop: Drop; add: () => unknown } | null>(null);
+  // `music`: a music folder, whose files get no transcript, description or search by meaning (api/library/worker.ts)
+  const check = async (path: string, add: () => unknown, opts: { music?: boolean } = {}) => {
     // the account's own library is the first of its own (api/library/watch.ts addWatchFolder takes the same one)
     const libraryId = (await listLibraries().catch(() => []))[0]?.id;
     const r = libraryId ? await fetch(`/api/library/${libraryId}/watch/size?path=${encodeURIComponent(path)}`).catch(() => null) : null;
-    const size = r?.ok ? ((await r.json()) as { files: number; bytes: number }) : null;
-    if (libraryId && size && size.files >= BIG_DROP) setAsking({ libraryId, ...size, add });
+    const size = r?.ok ? ((await r.json()) as FolderSize) : null;
+    if (libraryId && size && size.files >= BIG_DROP) setAsking({ libraryId, files: size.files, drop: dropOf(size, opts.music), add });
     else await add();
   };
   const dialog = asking && (
     <BigUploadDialog
       libraryId={asking.libraryId}
-      clips={asking.files}
-      bytes={asking.bytes}
+      drop={asking.drop}
       title={`Add ${asking.files.toLocaleString()} files from this folder?`}
       go="Add folder"
       onClose={() => setAsking(null)}

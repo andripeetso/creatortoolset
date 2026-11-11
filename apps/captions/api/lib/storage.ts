@@ -1,7 +1,7 @@
-import { statfs } from "node:fs/promises";
+import { readFile, realpath, statfs } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
-import { LIBRARY_NAME, okFolderPath, sourcesOf, UPLOAD_RELAY_IDS, type Disk, type StorageFolder, type StorageReport, type StorageState, type UploadRelayId, type UploadRelayView } from "../../contracts/storage";
+import { LIBRARY_NAME, okFolderPath, sourcesOf, THIS_COMPUTER, UPLOAD_RELAY_IDS, type Disk, type StorageFolder, type StorageReport, type StorageState, type UploadRelayId, type UploadRelayView } from "../../contracts/storage";
 
 /** The Library's folder for a chosen disk folder: "/" or "~" is the home folder, trailing slashes do not count. */
 export function libraryPath(disk: string): string {
@@ -127,3 +127,21 @@ export function uploadRelayView(
     ],
   };
 }
+
+/**
+ * The account's music folders on this computer (setup's Music rows and the Library's own Music/), as real paths: the
+ * Media Library takes their files in like any other (thumbnail, waveform), but spends nobody's AI or keys on them.
+ */
+export async function musicFolders(dataDir: string, user: string | null): Promise<string[]> {
+  if (!user) return [];
+  const st = parseStorageFile(await readFile(storageFilePath(dataDir, user), "utf-8").catch(() => "{}"));
+  const dirs = sourcesOf(st.folders).filter((f) => f.role === "music" && f.origin.host === THIS_COMPUTER).map((f) => f.origin.path);
+  return Promise.all(dirs.map((d) => realpath(d).catch(() => d)));
+}
+
+/** Whether `file` is inside one of `dirs`. */
+export const isInside = (file: string, dirs: string[]) =>
+  dirs.some((d) => {
+    const r = path.relative(d, file);
+    return r !== "" && !r.startsWith("..") && !path.isAbsolute(r);
+  });
