@@ -162,8 +162,15 @@ rm -rf "$server/node_modules/fsevents"   # a file watcher's native part: the bui
 # from, with PLUGINS.md). Listed by name, so nothing else in a checkout (plugins/, .env, runtime/) can ride along.
 src_out="$server/source"
 mkdir -p "$src_out/scripts"
+# HELD_STEPS: steps that are in the repo but not offered by a released app yet (the app lists the folders it finds
+# here). face-refine waits for three things asked on 2026-11-11: one post copy per edit and its removal with the edit
+# (a copy is about 1.4 GB a minute), finding Python without running Apple's stub (it opens a system dialog), and an
+# install pinned with hashes. Take its name out of this list in the commit that settles them.
+HELD_STEPS="face-refine"
+held=(); for s in $HELD_STEPS; do held+=(--exclude "/$s"); done
 for d in api src contracts db plugin-examples editor-steps; do   # editor-steps: the AI Editor's steps, put in on Turn on
-  rsync -a --exclude '*.test.*' --exclude '*.spec.*' --exclude '*.gen.ts' --exclude 'node_modules' "$captions/$d/" "$src_out/$d/"
+  more=(); [ "$d" = editor-steps ] && more=("${held[@]}")
+  rsync -a --exclude '*.test.*' --exclude '*.spec.*' --exclude '*.gen.ts' --exclude 'node_modules' ${more[@]+"${more[@]}"} "$captions/$d/" "$src_out/$d/"
 done
 cp "$captions/scripts/plugin-build.mjs" "$captions/scripts/plugin-host.mjs" "$src_out/scripts/"
 cp "$captions/package.json" "$captions/tailwind.config.js" "$captions/index.html" "$captions/render.html" "$src_out/"
