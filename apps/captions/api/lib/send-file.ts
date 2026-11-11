@@ -5,6 +5,10 @@ import { Readable } from "node:stream";
 
 const RANGE_CAP = 8 * 1024 * 1024;
 
+/** A download's Content-Disposition: any name (õ, ä, emoji) as UTF-8, with a plain one for clients that read only that. */
+export const attachment = (name: string) =>
+  `attachment; filename="${name.replace(/[^\x20-\x7e]|["\\]/g, "_")}"; filename*=UTF-8''${encodeURIComponent(name).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)}`;
+
 /** Range-aware file response. An open range (`bytes=0-` on a 20 GB
  *  master) is capped; a closed one is answered exactly, since Apple's
  *  player (the iPhone app, Safari) rejects any other length. */
@@ -19,7 +23,7 @@ export async function sendFile(c: Context, p: string, type: string, download?: s
     "Last-Modified": new Date(st.mtimeMs).toUTCString(),
   };
   if (download) {
-    headers["Content-Disposition"] = `attachment; filename="${download}"`;
+    headers["Content-Disposition"] = attachment(download);
   }
   let start = 0;
   let end = size - 1;

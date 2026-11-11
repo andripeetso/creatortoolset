@@ -152,8 +152,9 @@ function Panel({ libraryId, asset, startAt, inTrash, folders, onTrash, onAddToFo
   const aiTags = a.tags.filter((t) => a.aiTags.includes(t));
 
   return (
-    // focusable first, so the sheet puts the focus here and Space is the player's, not the first button's
-    <div tabIndex={0} className="flex flex-col gap-4 p-4 pt-12 outline-none">
+    // focusable first, so the sheet puts the focus here and Space is the player's, not the first button's. Its end
+    // scrolls clear of the assistant's button while that is in a bottom corner (it stands over the sheet)
+    <div tabIndex={0} className="flex flex-col gap-4 p-4 pt-12 outline-none [html:has(button[data-assistant-dock][data-corner^=b])_&]:pb-24">
       {playable ? (
         <ClipPlayer asset={a} detail={detail} media={media} startAt={startAt} onPrev={onPrev} onNext={onNext} onTime={setNow} />
       ) : a.kind === "image" ? (

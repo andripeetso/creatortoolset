@@ -1,14 +1,16 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { applyS3Preset, S3_PRESETS, type LibraryStorage, type LibraryStorageInput, type S3PresetId } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, Section } from "@/components/settings/ui";
+import { Card, Row, Section } from "@/components/settings/ui";
 import { getLibraryStorage, setLibraryStorage } from "@/lib/library";
 
 /**
  * Where a library keeps its files, for its owner, in the library's settings (api/library/usage.ts): this server's disk,
  * the server's bucket, or the library's own S3-compatible bucket. A bucket library shows what it holds. Saved keys are
- * never shown again. `onThisComputer`: the server runs on the person's own computer, so its disk is called that.
+ * never shown again. `onThisComputer`: the server runs on the person's own computer, so its disk is called that. A library
+ * that holds files keeps where they are: then it says where in one line, with no choice to make (an own bucket's keys
+ * and region can still change). `children`: more rows of the same card (the space its made files take).
  */
 
 type Choice = "local" | "server" | "own";
@@ -19,10 +21,12 @@ export function LibraryStorageSettings({
   libraryId,
   onSaved,
   onThisComputer = false,
+  children,
 }: {
   libraryId: string;
   onSaved: (kind: LibraryStorage["kind"]) => void;
   onThisComputer?: boolean;
+  children?: ReactNode;
 }) {
   const [s, setS] = useState<LibraryStorage | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -62,8 +66,10 @@ export function LibraryStorageSettings({
   };
 
   const disk = onThisComputer ? "This computer's disk" : "This server's disk";
-  // a bucket says what it holds; this disk is the chosen option below, said once
-  const where = s?.kind === "s3" ? `Kept in ${s.mode === "server" ? "the server's bucket" : s.bucket} · ${gb(s.storedBytes ?? 0)}` : "";
+  // a bucket says what it holds; this disk is the chosen option below, said once, or the one line when it can't change
+  const where = s?.kind === "s3" ? `Kept in ${s.mode === "server" ? "the server's bucket" : s.bucket} · ${gb(s.storedBytes ?? 0)}` : s?.locked ? `Kept on ${onThisComputer ? "this computer's" : "this server's"} disk` : "";
+  // what can still change: everything, an own bucket's keys and region, or nothing
+  const changeable = !!s && (!s.locked || choice === "own");
   const field = (key: "endpoint" | "region" | "bucket" | "accessKey" | "secretKey", label: string, placeholder: string, locked = false) => (
     <label className="flex flex-col gap-1">
       <span className="text-zinc-500">{label}</span>
@@ -93,14 +99,18 @@ export function LibraryStorageSettings({
   return (
     <Section title="Storage">
       <Card>
+        {where && !changeable && <Row title={where} />}
+        {/* nothing until it is known what can change, so no choice shows and then goes */}
+        {changeable && (
         <div className="flex flex-col gap-3 px-3 py-3 text-sm sm:px-4">
           {where && <p className="font-medium">{where}</p>}
-          {s?.locked && <p className="text-zinc-500">This library holds files, so where they live stays as it is. A new library can use other storage.</p>}
-          <div className="flex flex-wrap gap-x-5 gap-y-1">
-            {option("local", disk)}
-            {(s?.serverBucket || choice === "server") && option("server", "The server's bucket")}
-            {option("own", "Your own S3-compatible bucket")}
-          </div>
+          {!s?.locked && (
+            <div className="flex flex-wrap gap-x-5 gap-y-1">
+              {option("local", disk)}
+              {(s?.serverBucket || choice === "server") && option("server", "The server's bucket")}
+              {option("own", "Your own S3-compatible bucket")}
+            </div>
+          )}
           {choice === "own" && (
             <div className="grid gap-2 sm:grid-cols-2">
               <label className="flex flex-col gap-1 sm:col-span-2">
@@ -150,6 +160,9 @@ export function LibraryStorageSettings({
             {error && <p className="text-red-400">{error}</p>}
           </div>
         </div>
+        )}
+        {!changeable && error && <p className="px-3 py-3 text-sm text-red-400 sm:px-4">{error}</p>}
+        {children}
       </Card>
     </Section>
   );

@@ -240,8 +240,11 @@ describe("a folder brought in for the AI (POST /api/library/import-folder)", () 
   });
 
   it("brings in the files that arrived since the date, returns the script's text, and remembers them as seen", async () => {
-    await new Promise((r) => setTimeout(r, 10));
-    since = Date.now();
+    await new Promise((r) => setTimeout(r, 100));
+    // a file's times come from the system's coarse clock (Linux: one timer tick, up to 10 ms behind Date.now()), so the
+    // take written right after `since` can carry a time just before it: `since` leaves that much room, still long after
+    // the old file arrived
+    since = Date.now() - 20;
     writeFileSync(take, "frame data take");
     writeFileSync(script, "Hook: the handstand, then the reveal");
     const r = await importFolder("owner-w", { path: importDir, since, libraryId: "lib_w" });

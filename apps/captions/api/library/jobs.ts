@@ -62,11 +62,21 @@ export function claimJob(db: DatabaseSync, leaseSeconds = 300, now = Date.now(),
 /** Libraries whose watch folders are handing clips over right now (watch.ts): their slower steps wait (worker.ts). */
 export const takingClips = new Set<string>();
 
+/** What the last walk of each watch folder found, by `${libraryId}\0${folder}` (watch.ts writes it): its media files and how many are still to be taken in. */
+export const folderWalks = new Map<string, { files: number; adding: number }>();
+
+/** Clips a library's watch folders have found and not yet taken in (estimate.ts counts them among the clips being prepared). */
+export function stillToCome(libraryId: string): number {
+  let n = 0;
+  for (const [k, w] of folderWalks) if (k.startsWith(`${libraryId}\0`)) n += w.adding;
+  return n;
+}
+
 // clips someone waits on (the person opened one, an AI Editor edit needs it), newest last: their steps go first (worker.ts)
 const waitedOn = new Map<string, number>();
 const WAITED_MS = 10 * 60_000;
 
-/** Someone waits on this clip: its steps go before the other clips' for ten minutes. */
+/** Someone waits on this clip: for ten minutes its picture goes before the other pictures, and its slow steps before the other slow steps. */
 export function prepareFirst(versionId: string, now = Date.now()): void {
   waitedOn.delete(versionId);
   waitedOn.set(versionId, now);

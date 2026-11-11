@@ -5,6 +5,7 @@ import type {
   Collection,
   LibraryEstimate,
   LibraryProgress,
+  LibrarySpace,
   LibrarySettings,
   LibraryStorage,
   LibraryStorageInput,
@@ -70,6 +71,11 @@ export const updateLibrary = (libraryId: string, patch: { name?: string; setting
 
 /** Where the library's files live and how much its bucket holds (the owner only). */
 export const getLibraryStorage = (libraryId: string) => send<LibraryStorage>(`/api/library/${libraryId}/usage`, "GET");
+
+/** What the library's own made files take (the owner only), and clearing the ones it makes again. */
+export const getLibrarySpace = (libraryId: string) => send<LibrarySpace>(`/api/library/${libraryId}/space`, "GET");
+export const clearLibrarySpace = (libraryId: string, what: "proxies" | "models") =>
+  send<{ cleared: number; kept: number }>(`/api/library/${libraryId}/space/clear`, "POST", { what });
 
 export const setLibraryStorage = (libraryId: string, input: LibraryStorageInput) => send<LibraryStorage>(`/api/library/${libraryId}/storage`, "PUT", input);
 

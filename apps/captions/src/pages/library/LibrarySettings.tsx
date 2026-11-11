@@ -1,18 +1,21 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router";
 import { Settings2 } from "lucide-react";
-import type { Collection, LibraryEstimate, LibraryStep, LibraryStepRoute, LibrarySummary, WatchStatus } from "@contracts/library";
+import { NEEDS, type Collection, type LibraryEstimate, type LibrarySpace, type LibraryStep, type LibraryStepRoute, type LibrarySummary, type WatchStatus } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { Card, Row, Section, StatusDot } from "@/components/settings/ui";
-import { getEstimate, updateLibrary } from "@/lib/library";
+import { confirmDialog } from "@/lib/dialogs";
+import { clearLibrarySpace, getEstimate, getLibrarySpace, updateLibrary } from "@/lib/library";
 import { LibraryStorageSettings } from "../LibraryStorage";
 import { LibraryWatchFolders } from "../LibraryWatchFolders";
 
 /**
  * The Media Library's settings, behind one button beside its search (the owner's: the footage folders and where the
- * files are kept are theirs only): the footage folders (on the person's own computer), storage, and the two AI
- * switches, each saying where it runs. The button carries an amber dot while a folder or clip is not found.
+ * files are kept are theirs only): the footage folders (on the person's own computer), storage with the space the
+ * library's own made files take, and the two AI switches, each saying where it runs. The button carries an amber dot
+ * while a folder or clip is not found.
  */
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -59,10 +62,13 @@ export function LibrarySettings({
       </Button>
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetContent side="right" className="w-full overflow-y-scroll p-0 sm:max-w-lg">
-          <div className="flex flex-col gap-6 p-4 pt-12 sm:p-6 sm:pt-12">
+          {/* its end scrolls clear of the assistant's button while that is in a bottom corner (it stands over the sheet) */}
+          <div className="flex flex-col gap-6 p-4 pt-12 sm:p-6 sm:pt-12 [html:has(button[data-assistant-dock][data-corner^=b])_&]:pb-24">
             <SheetTitle className="text-base">Library settings</SheetTitle>
             {watch.allowed && <LibraryWatchFolders libraryId={library.id} folders={folders} />}
-            <LibraryStorageSettings libraryId={library.id} onThisComputer={watch.allowed} onSaved={(storage) => onChange({ ...library, storage })} />
+            <LibraryStorageSettings libraryId={library.id} onThisComputer={watch.allowed} onSaved={(storage) => onChange({ ...library, storage })}>
+              {open && <SpaceRows library={library} onChange={onChange} onError={onError} />}
+            </LibraryStorageSettings>
             {open && <AiSwitches library={library} onChange={onChange} onError={onError} />}
           </div>
         </SheetContent>
@@ -91,14 +97,16 @@ function AiSwitches({ library, onChange, onError }: { library: LibrarySummary; o
   const where = (step: LibraryStep) => {
     const s = routes?.find((r) => r.step === step);
     if (!s || s.route === "off") return null;
-    // what needs the person, said whole (a Status line would cut it off)
+    // what needs the person, in a few words, with the page that gives it
     if (s.route === "none")
-      return s.missing ? (
+      return (
         <span className="flex items-baseline gap-1.5">
           <StatusDot tone="attention" />
-          {s.missing}
+          <Link to={NEEDS[step].href} className="underline-offset-4 hover:underline">
+            Needs {NEEDS[step].needs}
+          </Link>
         </span>
-      ) : null;
+      );
     return WHERE[s.route] ?? null;
   };
   const row = (key: "describe" | "embed", step: LibraryStep, title: string) => (
@@ -116,5 +124,65 @@ function AiSwitches({ library, onChange, onError }: { library: LibrarySummary; o
         {row("embed", "embed", "Search by meaning")}
       </Card>
     </Section>
+  );
+}
+
+const size = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n >= 1e6 ? `${Math.round(n / 1e6)} MB` : n > 0 ? "under 1 MB" : "nothing");
+
+/**
+ * The library's own made files (api/library/space.ts): the proxies switch, what the proxies take with Clear, the cards'
+ * pictures, and the downloaded speech and search models with Clear. The person's own files are never in it.
+ */
+function SpaceRows({ library, onChange, onError }: { library: LibrarySummary; onChange: (l: LibrarySummary) => void; onError: (e: string) => void }) {
+  const [space, setSpace] = useState<LibrarySpace | null>(null);
+  const read = () => getLibrarySpace(library.id).then(setSpace, (e: unknown) => onError(message(e)));
+  useEffect(() => void read(), [library.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const clear = async (what: "proxies" | "models", bytes: number) => {
+    const ok = await confirmDialog(
+      what === "proxies"
+        ? { title: "Clear the proxies?", body: `They take ${size(bytes)}. Each is made again when a clip that needs one is opened. Your own footage is not touched.`, ok: "Clear" }
+        : { title: "Clear the speech and search models?", body: `They take ${size(bytes)} and download again the next time they are needed. Your own footage is not touched.`, ok: "Clear" },
+    );
+    if (!ok) return;
+    await clearLibrarySpace(library.id, what).catch((e: unknown) => onError(message(e)));
+    await read();
+  };
+  const flip = (on: boolean) =>
+    updateLibrary(library.id, { settings: { proxy: on } })
+      .then(onChange)
+      .catch((e) => onError(message(e)));
+  return (
+    <>
+      <Row
+        title="Make proxies"
+        description="For videos this window can't play as they are"
+        control={<Switch aria-label="Make proxies" checked={library.settings.proxy} onCheckedChange={(on) => void flip(on)} />}
+      />
+      {space && (
+        <Row
+          title="Proxies"
+          description={size(space.proxies.bytes)}
+          control={
+            space.proxies.files > 0 && (
+              <Button size="sm" variant="outline" onClick={() => void clear("proxies", space.proxies.bytes)}>
+                Clear
+              </Button>
+            )
+          }
+        />
+      )}
+      {space && space.pictures.files > 0 && <Row title="Pictures" description={size(space.pictures.bytes)} />}
+      {space?.models && space.models.bytes > 0 && (
+        <Row
+          title="Speech and search models"
+          description={size(space.models.bytes)}
+          control={
+            <Button size="sm" variant="outline" onClick={() => void clear("models", space.models!.bytes)}>
+              Clear
+            </Button>
+          }
+        />
+      )}
+    </>
   );
 }

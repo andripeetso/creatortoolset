@@ -61,7 +61,9 @@ beforeAll(async () => {
   await server.listen();
   base = server.resolvedUrls?.local?.[0] ?? `http://127.0.0.1:${server.config.server.port}/`;
 
-  const { startLibraryWorker } = await import("./worker");
+  // the worker runs in the server's own copy of the modules (boot.ts leaves it off under tests), as it does in the app:
+  // a copy of this test's own would tell nobody when a clip is ready, and the page reads the clip again only when told
+  const { startLibraryWorker } = (await server.ssrLoadModule("/api/library/worker.ts")) as typeof import("./worker");
   stopWorker = startLibraryWorker();
 
   const { chromium } = await import("playwright-chromium");

@@ -6,6 +6,7 @@ import { keyFor } from "../my-keys";
 import { libraryDb, librarySetting } from "./db";
 import { DESCRIBE_LABEL, whoFor } from "./describe";
 import { NeedsKey, transcribeRoute } from "./transcribe";
+import { stillToCome } from "./jobs";
 import { LANES, LIMIT_LIKE } from "./worker";
 
 /**
@@ -180,7 +181,9 @@ export async function estimate(libraryId: string, username: string, drop: Drop):
   const { clips, music = false } = drop;
   const audio = Math.min(clips, drop.audio ?? 0);
   const audioBytes = Math.min(drop.bytes, drop.audioBytes ?? 0);
-  const { secondsPerByte, proxyShare } = footageOf(db, libraryId);
+  const proxies = librarySetting(libraryId, "proxy");
+  const { secondsPerByte, proxyShare: share } = footageOf(db, libraryId);
+  const proxyShare = proxies ? share : 0;
   const footage = (drop.bytes - audioBytes) * secondsPerByte + audioBytes / AUDIO_BYTES_PER_S;
   const clipSeconds = clips ? footage / clips : 0;
   const routes = routesOf(libraryId, username);
@@ -198,7 +201,7 @@ export async function estimate(libraryId: string, username: string, drop: Drop):
     steps.push({ step, route, ...(missing ? { missing } : {}), usd: p.usd * n, seconds, measured: p.measured });
   }
   const seconds = total(steps);
-  const out: LibraryEstimate = { clips, minutes: footage / 60, steps, seconds };
+  const out: LibraryEstimate = { clips, minutes: footage / 60, steps, seconds, proxies };
   if (count.describe && routes.describe.route === "provider") {
     const api = await perClip(db, "describe", "api", clipSeconds, proxyShare);
     const faster = total(steps.map((s) => (s.step === "describe" ? { ...s, seconds: (api.seconds * count.describe) / api.at } : s)));
@@ -215,30 +218,55 @@ const STAGES: LibraryStage["kind"][] = ["thumb", "proxy", "fingerprint", "transc
 // ponytail: in memory; a restart counts from the clips with work left then
 const runs = new Map<string, Set<string>>();
 
-/** The library's processing still to do, for `username`'s view of the pace. */
+// a description held back by the plan's limit (worker.ts holdForLimit): it waits, and takes no time, until one gets through
+const HELD = "(kind = 'describe' AND state != 'needs_key' AND IFNULL(error, '') LIKE ?)";
+
+/**
+ * The library's processing still to do, for `username`'s view of the pace. The library page, Home's tile and the Activity
+ * list all show these numbers, so they say the same. A step held back (for a key, an AI or the plan's limit) is not work
+ * left: `waiting` says it, and a clip whose only step left is held is not being prepared.
+ */
 export async function progress(libraryId: string, username: string): Promise<LibraryProgress> {
   const db = libraryDb();
-  // a description held back by the plan's limit (worker.ts holdForLimit) waits, and takes no time, until one gets through
   const rows = db
     .prepare(
-      `SELECT kind, state, kind = 'describe' AND state != 'needs_key' AND IFNULL(error, '') LIKE ? AS held, COUNT(*) AS n, MIN(error) AS error
+      `SELECT kind, state, ${HELD} AS held, COUNT(*) AS n, MIN(error) AS error
        FROM jobs WHERE library_id = ? AND state IN ('queued', 'running', 'needs_key') GROUP BY kind, state, held`,
     )
     .all(LIMIT_LIKE, libraryId) as { kind: string; state: string; held: number; n: number; error: string | null }[];
   const pending = rows.filter((r) => r.state !== "needs_key" && !r.held);
-  const left = pending.reduce((n, r) => n + r.n, 0);
+  // the files a watch folder has found and not handed over yet: each is a clip still to prepare, from the moment it is seen
+  const toCome = stillToCome(libraryId);
+  const left = pending.reduce((n, r) => n + r.n, 0) + toCome;
   const waiting: LibraryProgress["waiting"] = rows.filter((r) => r.state === "needs_key").map((r) => ({ step: STEP_OF[r.kind] ?? "files", count: r.n, missing: r.error ?? "" }));
   const held = rows.filter((r) => r.held);
   const heldN = held.reduce((n, r) => n + r.n, 0);
   if (heldN) waiting.unshift({ step: "describe", count: heldN, missing: `${held[0]!.error} They carry on by themselves then.`, limit: true });
   if (!left) {
     runs.delete(libraryId);
-    return { done: 0, left: 0, clips: 0, seconds: 0, waiting, stages: [] };
+    return { done: 0, left: 0, clips: 0, share: 0, seconds: 0, waiting, stages: [] };
   }
-  const open = db.prepare("SELECT DISTINCT version_id AS v FROM jobs WHERE library_id = ? AND state IN ('queued', 'running')").all(libraryId) as { v: string }[];
+  const open = db
+    .prepare(`SELECT DISTINCT version_id AS v FROM jobs WHERE library_id = ? AND state IN ('queued', 'running') AND NOT ${HELD}`)
+    .all(libraryId, LIMIT_LIKE) as { v: string }[];
   const run = runs.get(libraryId) ?? new Set<string>();
   runs.set(libraryId, run);
+  // the run before is through (nobody looked while the queue was empty): this one counts from nothing
+  if (![...run].some((v) => open.some((o) => o.v === v))) run.clear();
   for (const { v } of open) run.add(v);
+  // how far: each clip of the run counts the same, by the share of its steps that are through (a held one is not counted:
+  // it is not work here); a clip still to come, or not read yet, counts as not started. A clip's steps are only known once
+  // it is read (probe), so counting clips, not steps, keeps the share from going back when ten clips' steps appear at once.
+  // ponytail: search by meaning is queued after a transcript, so a clip's share steps back by one step of its six then
+  const through = db
+    .prepare(
+      `SELECT SUM(CASE WHEN unread THEN 0 ELSE CAST(fin AS REAL) / n END) AS s, COUNT(*) AS clips FROM (SELECT SUM(state IN ('done', 'failed')) AS fin,
+         COUNT(*) AS n, MAX(kind = 'probe' AND state IN ('queued', 'running')) AS unread FROM jobs
+       WHERE library_id = ? AND version_id IN (SELECT value FROM json_each(?)) AND state != 'needs_key' AND NOT ${HELD} GROUP BY version_id)`,
+    )
+    .get(libraryId, JSON.stringify([...run]), LIMIT_LIKE) as { s: number | null; clips: number };
+  // a clip of the run whose every step left is held is through, as far as this computer goes
+  const share = ((through.s ?? 0) + run.size - through.clips) / (run.size + toCome);
   const counts = db
     .prepare(
       // still to do counts what waits for a key or a limit too (`waiting` says why), so a line never shrinks when one parks
@@ -282,5 +310,6 @@ export async function progress(libraryId: string, username: string): Promise<Lib
     const p = await perClip(db, step, route, secondsPerClip, proxyShare);
     parts.push({ step, route, seconds: (p.seconds * n) / p.at });
   }
-  return { done, left, clips: open.length, seconds: total(parts), waiting, stages };
+  // ponytail: a clip still to come adds no time until it is in; the time grows by its steps then
+  return { done, left, clips: open.length + toCome, share, seconds: total(parts), waiting, stages };
 }

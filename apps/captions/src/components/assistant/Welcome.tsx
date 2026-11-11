@@ -142,12 +142,12 @@ export function NoticeLine({ notice, onChip }: { notice: AssistantNotice; onChip
   );
 }
 
-/** Beside the collapsed bubble, on the page's side of its corner. */
+/** Beside the collapsed bubble, on the page's side of its corner, in a box as tall as the bubble and where it is (AssistantDock BUBBLE_AT): the line is centred on it. */
 const PILL_AT: Record<Corner, string> = {
   tl: "left-[5.25rem] top-16",
-  tr: "right-[5.25rem] top-16",
+  tr: "right-[calc(5.25rem+var(--edge-room,0px))] top-16",
   bl: "left-[5.25rem] bottom-14",
-  br: "right-[5.25rem] bottom-4",
+  br: "right-[calc(5.25rem+var(--edge-room,0px))] bottom-[calc(1rem+var(--corner-taken,0px))]",
 };
 
 type PillPhase = "wait" | "in" | "shown" | "out";
@@ -179,7 +179,7 @@ export function WelcomePill({ corner, onOpen, onDone }: { corner: Corner; onOpen
   // starts 8 px further from the bubble and slides toward it
   const away = corner.endsWith("r") ? "-translate-x-2" : "translate-x-2";
   return (
-    <div role="status" aria-live="polite" className={cn("fixed z-40", PILL_AT[corner])}>
+    <div role="status" aria-live="polite" className={cn("fixed z-40 flex h-14 items-center", PILL_AT[corner])}>
       <button
         type="button"
         onClick={onOpen}

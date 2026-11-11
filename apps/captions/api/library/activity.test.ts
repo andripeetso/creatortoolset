@@ -47,12 +47,11 @@ describe("libraryWork and its rows", () => {
     const work = await libraryWork(tiny);
     expect(work).toHaveLength(1);
     expect(work[0].uploading).toEqual({ files: 1, received: 40, size: 100 });
-    expect(work[0].folders).toEqual([]);
     const rows = appRows({ libraries: work, edits: [], exports: [] });
     expect(rows.map((r) => [r.detail, r.state, r.reason ?? null])).toEqual([
       ["Uploading 1 file · 40%", "working", null],
-      // ponytail: progress() counts the held clip among the clips (estimate.ts), not among the jobs left
-      ["Preparing 2 clips · 50%", "working", null],
+      // clip 2 is the one being prepared (clip 3 only waits, clip 1 was through before anyone looked): its one step is to do
+      ["Preparing 1 clip · 0%", "working", null],
       ["1 AI description waits", "working", "Your Claude plan's weekly limit is reached; it resets 5pm. They carry on by themselves then."],
     ]);
     expect(rows.every((r) => r.href === "/library" && r.title === "Media Library")).toBe(true);

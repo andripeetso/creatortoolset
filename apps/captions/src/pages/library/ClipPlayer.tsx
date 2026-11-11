@@ -142,7 +142,7 @@ function Note({ note, file }: { note: PlayerNote; file: { href: string; name: st
     return (
       <div className="flex flex-col items-center gap-1.5">
         <Loader2 className="h-5 w-5 animate-spin" />
-        <p className="text-sm font-medium">Making a copy that plays here</p>
+        <p className="text-sm font-medium">Making a proxy</p>
         <p className="text-xs text-white/70">It starts playing when it's ready.</p>
       </div>
     );

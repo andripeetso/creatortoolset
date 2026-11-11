@@ -18,7 +18,7 @@ import { makeProxy, needsProxy } from "./media/proxy";
 import { probe, type ProbeSummary } from "./media/probe";
 import { makeThumb } from "./media/thumb";
 import { makeWave } from "./media/wave";
-import { NeedsKey, transcribeVersion } from "./transcribe";
+import { NeedsKey, transcribeRoute, transcribeVersion } from "./transcribe";
 import { sortAfter, sortUnsorted } from "./roll";
 
 /**
@@ -30,7 +30,7 @@ import { sortAfter, sortUnsorted } from "./roll";
  * The order is what a person sees (nextJob): every clip in, a picture for each, then the slow steps. A lane takes its
  * kinds in the order LANES lists them (all lighter copies before the duplicate checks), oldest first within a kind; a
  * library's slow steps wait while one of its pictures can run or its watch folders are handing clips over; a clip the
- * person opened (prepareFirst) goes before the others.
+ * person opened (prepareFirst) goes before the others, its picture among the pictures and its slow steps after them.
  */
 
 const IDLE_MS = 2000;
@@ -103,14 +103,16 @@ export function nextJob(db: ReturnType<typeof libraryDb>, now: number, kinds: re
       .all(...PICTURES, now) as { library_id: string }[]).map((r) => r.library_id),
   ];
   const first = firstClips();
+  // an opened clip's own picture goes before the other pictures, and its slow steps (a 4K proxy takes as long as many
+  // pictures) before the other slow steps: never before another clip's picture
   const row = db
     .prepare(
       `SELECT id FROM jobs j WHERE state = 'queued' AND run_after <= ? AND kind IN (${marks(kinds)})
-         AND (kind IN (${marks(PICTURES)}) OR version_id IN (${marks(first)}) OR library_id NOT IN (${marks(held)}))
+         AND (kind IN (${marks(PICTURES)}) OR library_id NOT IN (${marks(held)}))
          AND NOT (kind = 'describe' AND EXISTS (SELECT 1 FROM jobs t WHERE t.version_id = j.version_id AND t.kind = 'transcribe' AND t.state IN ('queued', 'running')))
-       ORDER BY version_id IN (${marks(first)}) DESC, CASE kind ${kinds.map((_, i) => `WHEN ? THEN ${i}`).join(" ")} END, id LIMIT 1`,
+       ORDER BY kind IN (${marks(PICTURES)}) DESC, version_id IN (${marks(first)}) DESC, CASE kind ${kinds.map((_, i) => `WHEN ? THEN ${i}`).join(" ")} END, id LIMIT 1`,
     )
-    .get(now, ...kinds, ...PICTURES, ...first, ...held, ...first, ...kinds) as { id: number } | undefined;
+    .get(now, ...kinds, ...PICTURES, ...held, ...PICTURES, ...first, ...kinds) as { id: number } | undefined;
   return row?.id ?? null;
 }
 
@@ -119,13 +121,30 @@ export function releaseLimit(db: ReturnType<typeof libraryDb>, actor: string | n
   db.prepare("UPDATE jobs SET error = NULL WHERE kind = 'describe' AND state = 'queued' AND actor IS ? AND error LIKE ?").run(actor, LIMIT_LIKE);
 }
 
+// this computer's transcripts run one at a time (lib/device-transcribe.ts): the next is claimed when the one before ends,
+// so a clip is "running" (its card and the step line say Transcribing) only while it really is
+// ponytail: one device transcript first in the queue holds back a key's transcript behind it (another account's)
+let onDevice = 0;
+const onThisComputer = (db: ReturnType<typeof libraryDb>, id: number) => {
+  const j = db.prepare("SELECT kind, actor FROM jobs WHERE id = ?").get(id) as { kind: string; actor: string | null };
+  if (j.kind !== "transcribe") return false;
+  try {
+    return transcribeRoute(j.actor).provider === "device";
+  } catch {
+    return false; // no route: it parks as needs_key when it runs
+  }
+};
+
 /** Runs one queued job (of `kinds`, when given), if there is one. Returns false when there is none. */
 export async function tick(now = Date.now(), kinds: readonly string[] = LANES.flatMap((l) => l.kinds)): Promise<boolean> {
   const db = libraryDb();
   requeueExpired(db, now);
   const id = nextJob(db, now, kinds);
+  const device = id !== null && onThisComputer(db, id);
+  if (device && onDevice > 0) return false;
   const job = id === null ? null : claimJob(db, LEASE_S, now, "jobs", kinds, id);
   if (!job) return false;
+  if (device) onDevice++;
   // on a connected AI, two descriptions at a time: the others wait in the queue (describe.ts describeSlot)
   const release = job.kind === "describe" ? describeSlot(job.actor) : () => {};
   if (!release) {
@@ -158,6 +177,7 @@ export async function tick(now = Date.now(), kinds: readonly string[] = LANES.fl
     const after = db.prepare("SELECT state FROM jobs WHERE id = ?").get(job.id) as { state: string };
     if (after.state === "failed" && !EXTRA.has(job.kind)) db.prepare("UPDATE asset_versions SET state = 'failed' WHERE id = ?").run(job.version_id);
   } finally {
+    if (device) onDevice--;
     clearInterval(beat);
     release();
     sortAfter(job); // A-roll or B-roll, again with what this job added (roll.ts)
@@ -223,7 +243,7 @@ async function run(job: JobRow): Promise<void> {
     const video = !!p.vcodec && !p.cover;
     if (p.vcodec) enqueueJob(db, v.library_id, v.id, "thumb", job.actor);
     enqueueJob(db, v.library_id, v.id, "wave", job.actor);
-    if (needsProxy(p)) enqueueJob(db, v.library_id, v.id, "proxy", job.actor);
+    if (needsProxy(p) && librarySetting(v.library_id, "proxy")) enqueueJob(db, v.library_id, v.id, "proxy", job.actor);
     if (p.acodec && !music) enqueueJob(db, v.library_id, v.id, "transcribe", job.actor);
     if (video && !music) enqueueJob(db, v.library_id, v.id, "fingerprint", job.actor);
     // after transcribe in the queue, so the description reads what is said

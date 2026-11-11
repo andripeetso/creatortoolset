@@ -4,7 +4,7 @@ import { AudioLines, Quote, FileText, Image as ImageIcon, Upload, Video } from "
 import type { AssetCard, AssetKind, AssetPage, Collection, LibrarySummary, SearchHit, WatchStatus } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
 import { FootageFolderCard } from "@/components/FootageFolderCard";
-import { BIG_DROP, BigUploadDialog, ClipStage, LibraryProgressBar } from "@/components/LibraryProcessing";
+import { BIG_DROP, BigUploadDialog, ClipStage, LibraryProgressBar, MovingBar } from "@/components/LibraryProcessing";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
@@ -26,6 +26,7 @@ import {
   audioOf,
 } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
+import { pathOnMac } from "@/lib/thisMac";
 import { cn } from "@/lib/utils";
 import { LibraryFacetBar } from "@/components/LibraryFacetBar";
 import { libraryBadges, libraryFacets } from "@/lib/library-slots";
@@ -67,7 +68,7 @@ interface Upload {
   sent: number;
   /** the manual folder open when the file was dropped: it goes in there */
   folderId?: string;
-  status: "uploading" | "added" | "duplicate" | "failed";
+  status: "waiting" | "uploading" | "added" | "duplicate" | "failed";
   error?: string;
   inPlace?: boolean; // added where it is on this Mac, not uploaded
   final?: boolean; // refused for good (too large for this server): no Retry
@@ -90,6 +91,7 @@ export default function LibraryPage() {
   const [facets, setFacets] = useState<Record<string, string[]>>({}); // plug-in sidebar filters picked so far
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [asking, setAsking] = useState<File[] | null>(null); // a big upload, waiting for its go after the estimate
+  const [askingHere, setAskingHere] = useState(false); // those files are on this computer: added where they are, not uploaded
   const [preview, setPreview] = useState<AssetCard | null>(null);
   const [startAt, setStartAt] = useState(0); // the second the preview opens at (a line said in it)
   const [said, setSaid] = useState<SearchHit[]>([]);
@@ -210,17 +212,21 @@ export default function LibraryPage() {
   };
 
   // a big upload says first what preparing it takes (time, and money on whose AI and keys)
-  const addFiles = (files: FileList | null) => {
+  const addFiles = async (files: FileList | null) => {
     if (!files?.length) return;
-    const all = Array.from(files);
-    if (all.length >= BIG_DROP) setAsking(all);
-    else start(all);
+    const all = Array.from(files); // before the picker is cleared
+    // picked in the Mac app on its own server: they are added where they are (lib/library.ts uploadFile)
+    const here = !!(await pathOnMac(all[0]!));
+    if (all.length >= BIG_DROP) {
+      setAskingHere(here);
+      setAsking(all);
+    } else start(all, here);
   };
 
   // one file after another: the server's disk and the phone's data are both easier on that
-  const start = (files: File[]) => {
+  const start = (files: File[], here = false) => {
     const folderId = collections.find((c) => c.id === scope && c.kind === "manual")?.id;
-    const added = files.map((file) => ({ key: ++keys.current, file, sent: 0, folderId, status: "uploading" as const }));
+    const added = files.map((file) => ({ key: ++keys.current, file, sent: 0, folderId, status: "waiting" as const, inPlace: here }));
     setUploads((prev) => [...prev, ...added]);
     void (async () => {
       for (const u of added) await send(u);
@@ -286,7 +292,9 @@ export default function LibraryPage() {
   };
 
   const label = (u: Upload) =>
-    u.status === "uploading"
+    u.status === "waiting"
+      ? "Waiting"
+      : u.status === "uploading"
       ? u.inPlace ? "Adding" : `Uploading ${Math.round((u.sent / Math.max(1, u.file.size)) * 100)}%`
       : u.status === "added"
         ? "Added"
@@ -311,11 +319,11 @@ export default function LibraryPage() {
         <BigUploadDialog
           libraryId={libId}
           drop={{ clips: asking.length, bytes: asking.reduce((n, f) => n + f.size, 0), ...audioOf(asking) }}
-          title={`Upload ${asking.length.toLocaleString()} clips?`}
-          go="Upload"
+          title={`${askingHere ? "Add" : "Upload"} ${asking.length.toLocaleString()} clips?`}
+          go={askingHere ? "Add" : "Upload"}
           onClose={() => setAsking(null)}
           onUpload={() => {
-            start(asking);
+            start(asking, askingHere);
             setAsking(null);
           }}
         />
@@ -326,7 +334,7 @@ export default function LibraryPage() {
         multiple
         className="hidden"
         onChange={(e) => {
-          addFiles(e.target.files);
+          void addFiles(e.target.files);
           e.target.value = "";
         }}
       />
@@ -431,8 +439,8 @@ export default function LibraryPage() {
             {uploads.length > 0 && (
               <section aria-label="Uploads" className="flex flex-col gap-2 rounded-xl border border-zinc-500/20 p-3">
                 <div className="flex items-center justify-between text-sm">
-                  <span className="font-medium">Uploads</span>
-                  <Button variant="ghost" size="sm" onClick={() => setUploads((prev) => prev.filter((u) => u.status === "uploading"))}>
+                  <span className="font-medium">{uploads.every((u) => u.inPlace) ? "Adding" : "Uploads"}</span>
+                  <Button variant="ghost" size="sm" onClick={() => setUploads((prev) => prev.filter((u) => u.status === "uploading" || u.status === "waiting"))}>
                     Clear finished
                   </Button>
                 </div>
@@ -442,7 +450,8 @@ export default function LibraryPage() {
                       <span className="truncate">{u.file.name}</span>
                       <span className="shrink-0 text-xs text-zinc-500">{label(u)}</span>
                     </div>
-                    {u.status === "uploading" && <Progress value={(u.sent / Math.max(1, u.file.size)) * 100} className="h-1.5" />}
+                    {/* a file added where it is has no bytes to count: its bar moves until it is in */}
+                    {u.status === "uploading" && (u.inPlace ? <MovingBar /> : <Progress value={(u.sent / Math.max(1, u.file.size)) * 100} className="h-1.5" />)}
                     {u.status === "failed" && (
                       <div className="flex items-center gap-2 text-xs text-red-400">
                         <span className="min-w-0">{u.error}</span>

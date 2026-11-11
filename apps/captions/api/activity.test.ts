@@ -88,29 +88,34 @@ describe("GET /api/activity", () => {
 });
 
 describe("appRows", () => {
-  const progress = { done: 0, left: 0, clips: 0, seconds: 0, waiting: [] };
-  it("says a folder still being taken in, then clips being prepared, then a step that waits for a key", () => {
+  const progress = { done: 0, left: 0, clips: 0, share: 0, seconds: 0, waiting: [] };
+  it("says the clips being prepared with how far, then in a few words what waits for the person, opening where they add it", () => {
     const rows = appRows({
       libraries: [{
         id: "l",
-        folders: [{ path: "/Volumes/Card/Trip", files: 17, adding: 14 }, { path: "/Volumes/Card/Old", files: 4, adding: 0 }],
         uploading: null,
-        progress: { done: 9, left: 27, clips: 3, seconds: 60, waiting: [{ step: "transcript", count: 2, missing: "Add a Tiny key" }] },
+        progress: {
+          done: 9, left: 27, clips: 17, share: 0.25, seconds: 60,
+          waiting: [
+            { step: "transcript", count: 2, missing: "Add a Tiny key" },
+            { step: "describe", count: 5, missing: "No AI for your account: add one in Settings → Providers, or your Anthropic key in Settings → API keys" },
+          ],
+        },
       }],
       edits: [],
       exports: [],
     });
-    expect(rows.map((r) => [r.detail, r.state])).toEqual([
-      ["Adding clips from Trip · 3 of 17", "working"],
-      ["Preparing 3 clips · 25%", "working"],
-      ["2 transcripts wait: Add a Tiny key", "ready"],
+    expect(rows.map((r) => [r.detail, r.state, r.href])).toEqual([
+      ["Preparing 17 clips · 25%", "working", "/library"],
+      ["2 transcripts need a transcription key", "ready", "/settings/keys"],
+      ["5 AI descriptions need an AI", "ready", "/settings/providers"],
     ]);
-    expect(rows[0].progress).toBeCloseTo(3 / 17);
+    expect(rows[0].progress).toBe(0.25);
   });
 
   it("lists running edits and renders, each opening its own page", () => {
     const rows = appRows({
-      libraries: [{ id: "l", folders: [], uploading: null, progress }],
+      libraries: [{ id: "l", uploading: null, progress }],
       edits: [{ id: "e1", name: "Tiny vlog" }],
       exports: [
         { id: "x1", filename: "tiny.mp4", status: "running", progress: 0.4, projectId: "p 1" },
