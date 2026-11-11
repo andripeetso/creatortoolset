@@ -7,7 +7,7 @@ type Contents = Parameters<typeof packContents>[0];
 /** The full list of what a pack adds: instruction text per slot (with its label), frameworks and caption styles. */
 export function ContentsView({ pack }: { pack: Contents }) {
   const c = packContents(pack);
-  if (!c.slots.length && !c.frameworks.length && !c.captionStyles.length) return <p className="text-xs text-muted-foreground">Nothing this app uses.</p>;
+  if (!c.slots.length && !c.frameworks.length && !c.captionStyles.length && !c.home) return <p className="text-xs text-muted-foreground">Nothing this app uses.</p>;
   return (
     <div className="space-y-3 text-sm">
       {c.slots.map((s) => (
@@ -25,6 +25,7 @@ export function ContentsView({ pack }: { pack: Contents }) {
         </div>
       )}
       {c.captionStyles.length > 0 && <ListLine label={`Caption styles (${c.captionStyles.length})`} items={c.captionStyles} />}
+      {c.home && <ListLine label={`Shown on Home (${c.home.length})`} items={c.home} />}
     </div>
   );
 }
@@ -97,6 +98,7 @@ export function ContentsSummary({ pack }: { pack: Contents }) {
     c.slots.length ? `instructions for ${c.slots.length} ${c.slots.length === 1 ? "place" : "places"}` : "",
     c.frameworks.length ? `${c.frameworks.length} ${c.frameworks.length === 1 ? "framework" : "frameworks"}` : "",
     c.captionStyles.length ? `${c.captionStyles.length} caption ${c.captionStyles.length === 1 ? "style" : "styles"}` : "",
+    c.home ? "a Home layout" : "",
   ].filter(Boolean);
   return <span>{parts.length ? parts.join(", ") : "nothing"}</span>;
 }

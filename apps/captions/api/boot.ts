@@ -40,6 +40,7 @@ import { workspaceApp } from "./workspace";
 import { viewAsTarget } from "./lib/view-as";
 import { grantsApp } from "./library/grants";
 import { assistantApp } from "./assistant";
+import { memoryApp } from "./memory";
 import { automationsApp, startAutomations } from "./automations";
 import { providersApp } from "./providers";
 import { mcpApp, pluginToolsOf } from "./mcp";
@@ -344,6 +345,8 @@ app.route("/api/providers", providersApp);
 // Creator Toolset as a remote MCP server (Full key only: not on the key routes): its tools call these same routes
 app.route("/api/mcp", mcpApp((path, init) => Promise.resolve(app.request(path, init)), serverPlugins));
 app.route("/api/assistant", assistantApp);
+// what the assistant keeps from one chat to the next (memory.ts): only a reply being written can add to it
+app.route("/api/memory", memoryApp);
 // automations (automations.ts): scheduled prompts for the account's own assistant; REST here, and the MCP tools in mcp.ts
 app.route("/api/automations", automationsApp);
 startAutomations();
