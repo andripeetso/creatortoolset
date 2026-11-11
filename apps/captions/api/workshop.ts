@@ -39,6 +39,7 @@ import { setSessionStatus, TURN_STOPPED } from "./lib/workshop/types";
 import { readWorkPrefs } from "./work-prefs";
 import { emitEvent, onEvent } from "./lib/events";
 import { announce } from "./lib/sync";
+import { workEnded } from "./assistant";
 import { inJob, keepJob, saved } from "./lib/workshop/job";
 import { IllegalTransition } from "./lib/transition";
 import { pluginCheckPosted, pluginFinalsVersions } from "./lib/plugin";
@@ -619,7 +620,13 @@ async function updateSession(
   });
 }
 
+/**
+ * A session's notes: its Notes document once the session has one (what the page shows and edits), else notes.md.
+ * A notes.md written after that document last changed (before writeNotes kept the two in step) is still the newer text.
+ */
 async function readNotes(id: string): Promise<string> {
+  const doc = (await listDocs(id)).find((d) => d.kind === "notes");
+  if (doc && doc.updatedAt >= Math.floor(await stat(notesPath(id)).then((s) => s.mtimeMs, () => 0))) return docToMarkdown(doc).trim();
   try {
     return await readFile(notesPath(id), "utf-8");
   } catch {
@@ -627,11 +634,14 @@ async function readNotes(id: string): Promise<string> {
   }
 }
 
-async function writeNotes(id: string, text: string): Promise<void> {
+async function writeNotes(id: string, text: string, by: "user" | "ai" = "user"): Promise<void> {
   await mkdir(sessionDir(id), { recursive: true });
   const tmp = `${notesPath(id)}.tmp-${process.pid}`;
   await writeFile(tmp, text);
   await rename(tmp, notesPath(id));
+  // an opened session shows its Notes document, so the notes go there too (never called inside chained: updateDoc is)
+  const doc = (await listDocs(id)).find((d) => d.kind === "notes");
+  if (doc) await updateDoc(id, doc.id, (d) => void userEdit(d, [{ id: d.blocks[0]?.id, text }], Date.now(), {}, by));
 }
 
 async function readDraftMarkdown(id: string, draftId: string): Promise<string | null> {
@@ -1002,10 +1012,25 @@ function resumableClaude(session: SessionMeta, before: string | undefined, sourc
 const projectAccount = (project: Project | null | undefined): string | null | undefined => (project ? (project.accountId ?? null) : undefined);
 const contextKey = (project: Project | null, frameworks: Framework[]) => createHash("sha1").update(JSON.stringify([project, frameworks])).digest("hex");
 
+/**
+ * A reply of the writer's has ended. When the assistant asked for it (workshop_chat; the card is api/mcp.ts workFor's)
+ * that card gets its end and the assistant's chat one line with a button. A reply asked on this page left no card, so
+ * nothing is said; a Stop is the person's own press, so the card ends without a line.
+ */
+async function writerEnded(session: SessionMeta, user: SessionUser, docId: string, failed?: string): Promise<void> {
+  // the name workshop_sessions lists, so the assistant can find what "Show me" means; an unnamed session goes by its piece
+  const named = (await readSession(session.id))?.title.trim() ?? "";
+  const title = UNTITLED.test(named) ? ((await readDoc(session.id, docId))?.title ?? "your piece") : named;
+  const say = failed === TURN_STOPPED ? {} : { say: failed ? `The writer could not finish “${title}”.` : `The writer finished “${title}”.`, choices: ["Show me"] };
+  for (const username of new Set([session.owner, user.username])) workEnded(username, `workshop:${session.id}`, { status: failed ? "failed" : "done", detail: failed ?? "The writer is done", ...say });
+}
+
 async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage, assistantId: string): Promise<void> {
   const progress = progressWriter(session.id, assistantId);
   const signal = stopSignal(assistantId);
   let outcome = "Reply ready";
+  /** Why the reply did not finish (a Stop, or the error), for the assistant's card. */
+  let failed: string | undefined;
   // Edits applied while the answer streams; undone if the provider fails or the turn does.
   let versionBefore: string | undefined;
   let applied = 0;
@@ -1556,12 +1581,14 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
     // a Claude session a stop or a failure cut short may hold half a turn: the next turn starts over
     if (macStarted) await updateSession(session.id, (m) => { m.claudeSession = undefined; }).catch(() => {});
     outcome = signal.aborted ? "Stopped" : "Failed";
+    failed = signal.aborted ? TURN_STOPPED : errorMessage(e).slice(0, 300);
     await patchMessage(session.id, assistantId, { status: "error", stage: undefined, error: signal.aborted ? TURN_STOPPED : errorMessage(e).slice(0, 300), usage });
     console.warn(`[workshop] turn ${assistantId} failed: ${errorMessage(e)}`);
   } finally {
     chatting.delete(assistantId);
     stops.delete(assistantId);
     liveEnd(assistantId);
+    await writerEnded(session, user, ask.docId, failed).catch(() => {});
     const title = session.title || "Untitled";
     await notifyWorkshopOwner(session.owner, { kind: "workshop", by: "Content Workshop", name: title, text: `${outcome}: ${title}`, href: `/workshop/sessions/${session.id}`, ref: session.id }).catch(() => {});
   }
@@ -2436,7 +2463,7 @@ workshopApp.patch("/sessions/:id", async (c) => {
       else if (patch.ai) m.ai = patch.ai;
     }, { touch: patch.notes !== undefined || !!patch.sources });
     if (!next) return c.json({ error: "Not found" }, 404);
-    if (patch.notes !== undefined) await writeNotes(meta.id, patch.notes); // after the status check: a refused PATCH writes nothing
+    if (patch.notes !== undefined) await writeNotes(meta.id, patch.notes, fromAiKey(c) ? "ai" : "user"); // after the status check: a refused PATCH writes nothing
     // a video just added starts its transcript now, so it's there by the time a reply reads the folder
     const added = (patch.sources ?? []).map((x) => x.postId).filter((id) => !meta.sources.some((x) => x.postId === id));
     if (added.length) void transcribeForUser(added, user, 0).catch(() => {});
