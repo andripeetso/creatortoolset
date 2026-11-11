@@ -33,7 +33,8 @@ const idOf = (v: unknown, what: string): string => {
  */
 const clip = (ctx: ToolContext, lib: string, id: string, method = "GET", body?: unknown) =>
   ctx.json<Partial<AssetDetail> & Args>(`/api/library/${enc(lib)}/assets/${enc(id)}`, method, body).catch((e: unknown) => {
-    if (!fromSource(id) || !(e instanceof ToolError)) throw e;
+    // only "not there": what the plug-in itself refuses with (its source cannot be reached, say) is passed on in its words
+    if (!fromSource(id) || !(e instanceof ToolError) || !e.message.startsWith("Not found")) throw e;
     throw new ToolError(
       method === "GET"
         ? "This clip is from a source a plug-in adds, and that source has no more to read than media_search shows."

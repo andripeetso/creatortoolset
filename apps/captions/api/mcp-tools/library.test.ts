@@ -10,7 +10,7 @@ process.env.APP_SECRET = "mcp-library-secret";
 
 /**
  * A made-up plug-in, built into this server as scripts/plugins.mjs would build one in: it adds a second source to the
- * Media Library ("Tiny archive": two clips, hidden from nico) and answers the library's own path for one of them.
+ * Media Library ("Tiny archive": three clips, hidden from nico) and answers the library's own path for one of them.
  * `seen` keeps what its list was handed, `late` makes it slow.
  */
 const tiny = vi.hoisted(() => ({ seen: [] as Array<{ user: string; q: string | null; authorization: string; cookie: string | null }>, late: 0 }));
@@ -19,6 +19,7 @@ vi.mock("../plugins.gen", async () => {
   const clips = [
     { n: "1", kind: "video" as const, title: "Beach cartwheel from the archive", durationS: 12 },
     { n: "2", kind: "image" as const, title: "Beach photo from the archive" },
+    { n: "3", kind: "video" as const, title: "Offline reel" },
   ];
   const refOf = async (c: (typeof clips)[number]) => (await import("../library/refs")).externalRefFor("tiny-archive", "clip", c.n, c.title)!;
   const cardOf = async (c: (typeof clips)[number]): Promise<AssetCard> => ({
@@ -30,6 +31,7 @@ vi.mock("../plugins.gen", async () => {
     const id = c.req.param("id");
     if (!id.startsWith("ext_")) return next();
     const first = await cardOf(clips[0]!);
+    if (id === (await refOf(clips[2]!)).id) return c.json({ error: "The tiny archive can't be reached." }, 502);
     if (id !== first.id || c.get("user").username === "nico") return next();
     return c.json({ ...first, libraryId: c.req.param("lib"), description: { text: "A cartwheel on wet sand.", source: "ai" }, versions: [], collections: [], jobs: [], link: "/x/tiny/clips/1" });
   });
@@ -234,6 +236,9 @@ describe("media_get", () => {
     expect(await tool(key, "media_get", { id: second!.id })).toMatchObject({ error: true, text: plain });
     // the plug-in's own rule holds on that path: the account its source is hidden from reads nothing
     expect(await tool(nicoKey, "media_get", { id: first!.id })).toMatchObject({ error: true, text: plain });
+    // what the plug-in refuses with for another reason comes through in its own words
+    const offline = ((await tool(key, "media_search", { q: "offline" })).value.files as Array<{ id: string }>)[0]!.id;
+    expect(await tool(key, "media_get", { id: offline })).toMatchObject({ error: true, text: "The tiny archive can't be reached." });
   });
 });
 
@@ -339,7 +344,7 @@ describe("media_share", () => {
   it("in the assistant it asks first, naming the clip: no link until Yes, the link on the card after it, none on No", async () => {
     const cookie = await cookieOf("ana");
     const before = (await shares()).length;
-    const t = await turn(cookie, "Send Mia a link to the beach talk");
+    const t = await turn(cookie, "Send my editor a link to the beach talk");
     // the assistant's own search reaches the plug-in's source too, as the account the reply is for
     tiny.seen.length = 0;
     expect((await tool(t.token, "media_search", { q: "archive" })).value.sources).toEqual(["Library", "Tiny archive"]);
