@@ -7,7 +7,7 @@ import { routeFor } from "./lib/providers";
 import { deviceName } from "./lib/devices";
 import { readConnectors } from "./lib/connectors/store";
 import { myKeys } from "./my-keys";
-import { askSecret, navigateTo, noteMedia, noteStep, noteWork } from "./assistant";
+import { askSecret, navigateTo, noteChoices, noteMedia, noteStep, noteWork } from "./assistant";
 import { FILE_USES, type AssistantMedia, type AssistantWork } from "../contracts/assistant";
 import { SESSION_STATUSES } from "./lib/workshop/types";
 import { innerCall, jobTurn, type AuthVars } from "./auth";
@@ -42,7 +42,7 @@ function setupView(v: SetupView) {
 }
 
 /** The tools only the assistant's job token may call (the dock, assistant.ts). */
-const ASSISTANT_TOOLS = new Set(["setup_status", "save_setup", "ask_secret", "navigate", "show_video", "use_file", "notes_get"]);
+const ASSISTANT_TOOLS = new Set(["setup_status", "save_setup", "ask_secret", "navigate", "show_video", "use_file", "notes_get", "offer_choices"]);
 const isJob = (auth: Headers) => /^Bearer ctj_/.test(auth.get("authorization") ?? "");
 
 /** MCP clients give up on a tool call after about a minute: a reply still thinking hands back its id to wait on. */
@@ -78,7 +78,8 @@ user the answer's said line.
 AI Editor: edits made from footage in the Media Library; each runs steps (analyze, script, draft, broll) into drafts,
 one per version, which can be filed in Review. editor_create makes a new one from the takes' version ids and starts it:
 "edit what I put in this folder today" = media_import_folder (since today), then editor_create with its version ids and
-the script file's text.
+the script file's text. Asked to edit a folder, first say which video it looks like (its script file, a Workshop session
+that fits its name) and ask once, in one short question, whether that's right and whether to use the usual setup.
 
 Instagram comments: instagram_comments reads what people write under an account's posts (the user's, or another
 creator's added with instagram_add_account), to find the questions they ask most.
@@ -263,6 +264,11 @@ const ASSISTANT_DEFS = [
     name: "ask_secret",
     description: "Ask the user for one API key. It opens a secure box in the chat; the key goes straight to the server, never to you. Pass only the key's name and why it's needed.",
     inputSchema: { type: "object", properties: { env: { type: "string", enum: MY_KEYS.map((k) => k.env) }, why: str }, required: ["env", "why"] },
+  },
+  {
+    name: "offer_choices",
+    description: "Put 2 to 4 short answers under your reply as buttons, for a question the user answers in one tap (\"Start with my usual setup\" / \"Change the setup\"). A press sends that answer as their next message. Ask the question in your reply too.",
+    inputSchema: { type: "object", properties: { choices: { type: "array", items: str } }, required: ["choices"] },
   },
   { name: "navigate", description: "Open a page of the app for the user: a relative path such as /workshop or /settings/connectors.", inputSchema: { type: "object", properties: { path: str }, required: ["path"] } },
   {
@@ -813,6 +819,13 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
       await askSecret(user.username, env.env, String(a.why ?? "").slice(0, 300));
       return { status: "asked", note: "The user will type the key into a secure box in the chat. It does not come to you; carry on without it until it's saved." };
     },
+    offer_choices: async (a) => {
+      const choices = (Array.isArray(a.choices) ? a.choices : []).map((x) => String(x).replace(/\s+/g, " ").trim().slice(0, 60)).filter(Boolean);
+      if (choices.length < 2 || choices.length > 4) throw new ToolError("Give 2 to 4 short answers.");
+      const turn = jobTurn(auth.get("authorization") ?? undefined);
+      if (turn) noteChoices(user.username, turn, [...new Set(choices)]);
+      return { status: "shown", note: "The buttons are under your reply: end the reply and wait for the answer." };
+    },
     navigate: async (a) => ({ status: "opening", path: await navigateTo(user.username, String(a.path ?? "")) }),
     // the card's src and href are the site's own routes, so the browser's cookie passes the same checks this call did
     show_video: async (a) => {
@@ -857,6 +870,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
 const STEPS: Record<string, string> = {
   setup_status: "Checking what's set up",
   show_video: "Showing the video",
+  offer_choices: "Offering answers",
   use_file: "Sending your file",
   notes_get: "Reading the Video Note",
   save_setup: "Saving your setup",
