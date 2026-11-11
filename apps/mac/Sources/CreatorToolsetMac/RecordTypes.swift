@@ -38,3 +38,57 @@ func recorderVideoSettings(width: Int, height: Int, bitRate: Int, frameRate: Int
         ],
     ]
 }
+
+/// A sound track's buffers in the one layout it is written in: 32-bit float samples, interleaved, at the track's own
+/// rate and channel count. The writer reads every buffer of a track as laid out like its first one, and an audio
+/// interface can hand over its first buffers in another layout than the rest (measured on a USB interface: 24-bit
+/// samples in 4 bytes each for one or two buffers, then in 3, in about half of the takes). Read by the first
+/// layout, the rest came out as noise at three quarters of its length: the whole voice track.
+struct SoundLayout {
+    private var converter: AVAudioConverter?
+    private var plain: AVAudioFormat?
+    private var rate = 0.0
+    private var channels: AVAudioChannelCount = 0
+    /// Buffers that could not be read or came at another rate or channel count than the track's, for the log.
+    private(set) var leftOut = 0
+
+    /// `buffer` as float samples at the same time, or nil when it is left out. A track whose layout cannot be made
+    /// (more channels than a layout is known for) is written as it comes.
+    mutating func take(_ buffer: CMSampleBuffer) -> CMSampleBuffer? {
+        guard let description = buffer.formatDescription else { return nil }
+        let from = AVAudioFormat(cmAudioFormatDescription: description)
+        if rate == 0 {
+            rate = from.sampleRate
+            channels = from.channelCount
+            plain = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: rate, channels: channels, interleaved: true)
+        }
+        guard let plain else { return buffer }
+        let frames = AVAudioFrameCount(buffer.numSamples)
+        if converter?.inputFormat != from { converter = AVAudioConverter(from: from, to: plain) }
+        var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: CMTimeScale(rate)),
+                                        presentationTimeStamp: buffer.presentationTimeStamp, decodeTimeStamp: .invalid)
+        var made: CMSampleBuffer?
+        guard from.sampleRate == rate, from.channelCount == channels, let converter,
+              let input = AVAudioPCMBuffer(pcmFormat: from, frameCapacity: frames),
+              let output = AVAudioPCMBuffer(pcmFormat: plain, frameCapacity: frames) else {
+            leftOut += 1
+            return nil
+        }
+        input.frameLength = frames
+        guard CMSampleBufferCopyPCMDataIntoAudioBufferList(buffer, at: 0, frameCount: Int32(frames),
+                                                           into: input.mutableAudioBufferList) == noErr,
+              (try? converter.convert(to: output, from: input)) != nil,
+              CMSampleBufferCreate(allocator: nil, dataBuffer: nil, dataReady: false, makeDataReadyCallback: nil,
+                                   refcon: nil, formatDescription: plain.formatDescription,
+                                   sampleCount: CMItemCount(output.frameLength), sampleTimingEntryCount: 1,
+                                   sampleTimingArray: &timing, sampleSizeEntryCount: 0, sampleSizeArray: nil,
+                                   sampleBufferOut: &made) == noErr, let made,
+              CMSampleBufferSetDataBufferFromAudioBufferList(made, blockBufferAllocator: nil, blockBufferMemoryAllocator: nil,
+                                                             flags: 0, bufferList: output.audioBufferList) == noErr
+        else {
+            leftOut += 1
+            return nil
+        }
+        return made
+    }
+}
