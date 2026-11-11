@@ -1,9 +1,9 @@
-import path from "node:path";
 import { Hono } from "hono";
 import type { ActivityAction, ActivityRow, ActivityState, AgentRun } from "../contracts/activity";
 import type { AuthVars } from "./auth";
 import type { activeExports } from "./exports";
 import type { LibraryWork } from "./library/activity";
+import { waitingLine } from "../contracts/library";
 import type { ServerPlugin } from "./lib/plugin";
 import type { SessionUser } from "./users";
 
@@ -162,28 +162,28 @@ const STEP: Record<string, [string, string]> = {
 };
 
 /**
- * The app's own rows. The Media Library: a footage folder still being taken in, uploads, clips being prepared, AI
- * descriptions held back by the plan's limit (running, with the limit as the reason: nothing for the person to do), and
- * steps that wait for a key (waiting on you). Then edits with a step queued or running, then renders.
+ * The app's own rows. The Media Library: uploads, clips being prepared (a footage folder's clips still to come among
+ * them), AI descriptions held back by the plan's limit (running, with the limit as the reason: nothing for the person to
+ * do), and steps that wait for a key or an AI (waiting on you: a few words, opening the page that gives it). Then edits
+ * with a step queued or running, then renders.
  */
 export function appRows(w: AppWork): ActivityRow[] {
   const rows: ActivityRow[] = [];
   for (const lib of w.libraries) {
     const add = (id: string, detail: string, more: Partial<ActivityRow> = {}) =>
       rows.push({ id: `library:${lib.id}:${id}`, title: "Media Library", detail, state: "working", href: "/library", ...more });
-    lib.folders.filter((f) => f.adding > 0).forEach((f, i) => {
-      const done = f.files - f.adding;
-      add(`add${i}`, `Adding clips from ${path.basename(f.path)} · ${done.toLocaleString()} of ${f.files.toLocaleString()}`, { progress: done / Math.max(1, f.files) });
-    });
     const up = lib.uploading;
     if (up) add("upload", `Uploading ${count(up.files, "file")} · ${pct(up.received / Math.max(1, up.size))}`, { progress: up.received / Math.max(1, up.size) });
     const p = lib.progress;
-    if (p.left > 0) add("prepare", `Preparing ${count(p.clips, "clip")} · ${pct(p.done / (p.done + p.left))}`, { progress: p.done / (p.done + p.left) });
+    if (p.left > 0) add("prepare", `Preparing ${count(p.clips, "clip")} · ${pct(p.share)}`, { progress: p.share });
     for (const x of p.waiting) {
       const [one, many] = STEP[x.step] ?? ["file", "files"];
       const what = `${count(x.count, one, many)} ${x.count === 1 ? "waits" : "wait"}`;
       if (x.limit) add("limit", what, { reason: x.missing });
-      else add(`key:${x.step}`, `${what}: ${x.missing}`, { state: "ready" });
+      else {
+        const { text, href } = waitingLine(x);
+        add(`key:${x.step}`, text, { state: "ready", href });
+      }
     }
   }
   for (const e of w.edits) rows.push({ id: `editor:${e.id}`, title: e.name, detail: "AI Editor", state: "working", href: `/editor/${e.id}` });

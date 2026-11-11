@@ -81,6 +81,36 @@ export interface ShareInput {
 export interface LibrarySettings {
   describe: boolean; // the AI writes a description and tags for each new video
   embed: boolean; // semantic search: search by meaning as well as by words
+  proxy: boolean; // a proxy for each video the window cannot play as it is (4K, 10-bit, a camera's own format)
+}
+
+/** GET /api/library/:id/space: what the library's own made files take (the person's own files are not in it). */
+export interface LibrarySpace {
+  proxies: { bytes: number; files: number };
+  /** the cards' pictures and sound pictures: made at once again, so they are said, not cleared */
+  pictures: { bytes: number; files: number };
+  /** the downloaded speech and search models, on a server on the person's own computer only */
+  models: { bytes: number } | null;
+}
+
+/** What a step held for the person needs, in a few words, and the page where they add it. */
+export const NEEDS: Record<LibraryStep, { needs: string; href: string }> = {
+  files: { needs: "a look", href: "/library" },
+  transcript: { needs: "a transcription key", href: "/settings/keys" },
+  describe: { needs: "an AI", href: "/settings/providers" },
+  embed: { needs: "an OpenAI key", href: "/settings/keys" },
+};
+
+/** "5 AI descriptions need an AI", and where to add it. */
+export function waitingLine(w: { step: LibraryStep; count: number }): { text: string; href: string } {
+  const one = w.count === 1;
+  const [thing, things] = {
+    files: ["file", "files"],
+    transcript: ["transcript", "transcripts"],
+    describe: ["AI description", "AI descriptions"],
+    embed: ["search entry", "search entries"],
+  }[w.step];
+  return { text: `${w.count.toLocaleString()} ${one ? thing : things} ${one ? "needs" : "need"} ${NEEDS[w.step].needs}`, href: NEEDS[w.step].href };
 }
 
 /** One of the caller's libraries. */
@@ -113,6 +143,8 @@ export interface LibraryEstimate {
   steps: LibraryStepEstimate[];
   /** the whole run: the slowest step (steps run side by side) */
   seconds: number;
+  /** the library makes proxies (its settings): the files step counts them */
+  proxies?: boolean;
   /** describe on the person's own Anthropic key instead (it runs six at once; a connected AI runs two): when that is faster */
   withApiKey?: { seconds: number; usd: number };
 }
@@ -131,11 +163,13 @@ export interface LibraryStage {
 
 /** GET /api/library/:id/progress: the processing still to do in a library. Nothing to do = `left` 0. */
 export interface LibraryProgress {
-  /** jobs done and still to do since the queue was last empty */
+  /** steps done since the queue was last empty, and steps still to do (a file a watch folder has found counts as one) */
   done: number;
   left: number;
-  /** clips with work left */
+  /** clips with a step still to run here (a held one does not count), and the files a watch folder has found and not handed over */
   clips: number;
+  /** how far this run is, 0 to 1: each clip counts the same, by the share of its steps through; a clip still to come counts 0 */
+  share: number;
   /** time left at this server's pace */
   seconds: number;
   /** jobs waiting for a key or an AI, with what to add */

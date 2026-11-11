@@ -10,7 +10,7 @@ import { env, hostedMode } from "../lib/env";
 import { freeBytes, sha256File } from "../lib/uploads";
 import { ensureLibrary, homeOf, libraryChanged, libraryRole } from "./access";
 import { blobs, libraryDb } from "./db";
-import { enqueueJob, takingClips } from "./jobs";
+import { enqueueJob, folderWalks, takingClips } from "./jobs";
 import { kindOf, recordVersion } from "./routes";
 import { findUser } from "../users";
 
@@ -349,7 +349,7 @@ export async function removeWatchFolder(username: string, folderPath: string): P
 const pending = new Map<string, { size: number; mtime: number; since: number }>();
 // what the last walk of each folder found, by library and folder path: its media files, and how many are still to be
 // taken (the status reads it; a walk per status read would be a walk per file taken). In memory: a restart walks again.
-const walked = new Map<string, { files: number; adding: number }>();
+const walked = folderWalks;
 // files that failed to come in: tried again, but not counted as still to come (the count would never reach zero)
 const stuck = new Set<string>();
 /** The wait before a file is taken: short when it was already old the first time it was seen (or seen changed). */

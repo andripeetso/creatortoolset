@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router";
-import type { AssetCard, LibraryEstimate, LibraryProgress, LibraryStage, LibraryStepEstimate, WatchStatus } from "@contracts/library";
+import { ChevronDown } from "lucide-react";
+import { NEEDS, waitingLine, type AssetCard, type LibraryEstimate, type LibraryProgress, type LibraryStage, type LibraryStepEstimate, type WatchStatus } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
@@ -42,11 +43,11 @@ export function aboutUsd(usd: number): string {
   return `about $${usd < 10 ? usd.toFixed(2) : Math.round(usd).toLocaleString()}`;
 }
 
-/** One line per step that runs or waits; a step switched off says nothing. */
-export function stepLine(s: LibraryStepEstimate): string | null {
+/** One line per step that runs or waits; a step switched off says nothing. `proxies`: the library makes them (its settings). */
+export function stepLine(s: LibraryStepEstimate, proxies = true): ReactNode {
   if (s.route === "off") return null;
-  const what = { files: "Thumbnails and playable copies", transcript: "Transcripts", describe: "AI descriptions", embed: "Search by meaning" }[s.step];
-  if (s.route === "none") return s.step === "embed" ? null : `${what} wait: ${s.missing}`;
+  const what = { files: proxies ? "Thumbnails and proxies" : "Thumbnails", transcript: "Transcripts", describe: "AI descriptions", embed: "Search by meaning" }[s.step];
+  if (s.route === "none") return s.step === "embed" ? null : <Needs step={s.step} what={what} />;
   const on = {
     server: "on this server, free",
     device: "on this computer, free",
@@ -65,7 +66,7 @@ export const folderName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() 
 /** Each step of preparing, in the words of the person who watches it go by (api/library/estimate.ts STAGES). */
 const STAGE_NAME: Record<LibraryStage["kind"], string> = {
   thumb: "Pictures",
-  proxy: "Lighter copies",
+  proxy: "Proxies",
   fingerprint: "Duplicate checks",
   transcribe: "Transcripts",
   describe: "AI descriptions",
@@ -93,47 +94,105 @@ function StageRow({ name, done, of, now, busy = !!now, failed = 0 }: { name: str
   );
 }
 
+/** What a step waiting for the person needs, in a few words, with the page that gives it one click away. */
+function Needs({ step, what, count = 0 }: { step: LibraryStepEstimate["step"]; what?: string; count?: number }) {
+  // the estimate names the step ("AI descriptions need an AI"), the progress line counts its clips
+  const text = what ? `${what} need ${NEEDS[step].needs}` : waitingLine({ step, count }).text;
+  return (
+    <Link to={NEEDS[step].href} className="underline-offset-4 hover:underline">
+      {text}
+    </Link>
+  );
+}
+
 /**
- * While a library has work left: a footage folder still being read (how many of its clips are in), then one line per
- * step of the preparing, in the order they run (pictures, lighter copies, duplicate checks, transcripts, descriptions),
- * each counting up as its clips go through, with the time the rest takes; plus anything waiting for a key or a limit.
+ * A thin bar that moves the whole time work runs, also while no count changes: its fill is how far (`value`, 0 to 1,
+ * when known), and a light passes along it. With reduced motion the light stays and breathes instead of travelling.
+ */
+export function MovingBar({ value, className }: { value?: number; className?: string }) {
+  return (
+    <div
+      role="progressbar"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={value === undefined ? undefined : Math.round(value * 100)}
+      className={cn("relative h-1 w-full overflow-hidden rounded-full bg-zinc-500/20", className)}
+    >
+      {value !== undefined && (
+        <div className="absolute inset-y-0 left-0 rounded-full bg-zinc-500 transition-[width] duration-700 dark:bg-zinc-400" style={{ width: `${Math.min(100, Math.max(3, value * 100))}%` }} />
+      )}
+      <div className="absolute inset-y-0 w-1/3 bg-gradient-to-r from-transparent via-zinc-400/70 to-transparent motion-safe:animate-[processing-progress-shimmer_1.6s_ease-in-out_infinite] motion-reduce:left-1/3 motion-reduce:animate-pulse dark:via-white/50" />
+    </div>
+  );
+}
+
+const OPEN_KEY = "library-processing-open";
+const remembered = () => {
+  try {
+    return localStorage.getItem(OPEN_KEY) === "1";
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * While a library has work left: one line, "Preparing 10 clips · about 1 min left", over a bar that keeps moving, and
+ * the folder's clips still to come among them. Opened (the person's choice is remembered), one line per step in the
+ * order they run (pictures, proxies, duplicate checks, transcripts, descriptions), each counting up, and what waits.
+ * When nothing runs, what waits for a key, an AI or the plan's limit is said by itself: it is why nothing moves.
  */
 export function LibraryProgressBar({ libraryId }: { libraryId: string }) {
   const p = useCachedLoad<LibraryProgress>(`/api/library/${libraryId}/progress`, () => getProgress(libraryId)).data;
   // the same saved status as the folder card and the watch list; only the owner gets one
   const watch = useCachedLoad<WatchStatus>(`/api/library/${libraryId}/watch`, () => getWatch(libraryId)).data;
+  const [open, setOpen] = useState(remembered);
   const adding = (watch?.folders ?? []).filter((f) => f.adding > 0);
-  if (!adding.length && (!p || (!p.left && !p.waiting.length))) return null;
-  const what = { files: ["file", "files"], transcript: ["transcript", "transcripts"], describe: ["AI description", "AI descriptions"], embed: ["search entry", "search entries"] };
+  const moving = !!p && p.left > 0;
+  if (!moving && !p?.waiting.length) return null;
+  const toggle = () => {
+    setOpen(!open);
+    try {
+      localStorage.setItem(OPEN_KEY, open ? "0" : "1");
+    } catch {
+      // a private window keeps it for this page only
+    }
+  };
+  const needsYou = !!p?.waiting.some((w) => !w.limit);
+  const waiting = p?.waiting.map((w) => (
+    <div
+      key={`${w.step}${w.limit ? "-limit" : ""}`}
+      // the plan's limit stops the AI for every tool, so it is said plainly, not as a footnote
+      className={w.limit ? "flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300" : "flex items-center gap-2 text-xs text-zinc-500"}
+    >
+      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
+      {w.limit ? <span>{w.count.toLocaleString()} {w.count === 1 ? "AI description waits" : "AI descriptions wait"}: {w.missing}</span> : <Needs step={w.step} count={w.count} />}
+    </div>
+  ));
   return (
     <section aria-label="Processing" className="flex flex-col gap-1.5 text-sm">
-      {p && p.left > 0 && (
-        <div className="flex items-center justify-between gap-3">
-          <span>
-            Preparing {p.clips.toLocaleString()} {p.clips === 1 ? "clip" : "clips"}
+      {moving && (
+        <button type="button" aria-expanded={open} onClick={toggle} className="flex flex-col gap-1.5 text-left">
+          <span className="flex w-full items-center gap-2">
+            <span className="min-w-0 flex-1 truncate">
+              Preparing {p.clips.toLocaleString()} {p.clips === 1 ? "clip" : "clips"}
+              <span className="text-zinc-500"> · {aboutTime(p.seconds)} left</span>
+            </span>
+            {needsYou && !open && <span aria-label="Something waits for you" className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />}
+            <ChevronDown className={cn("h-4 w-4 shrink-0 text-zinc-500 transition-transform", open && "rotate-180")} />
           </span>
-          <span className="shrink-0 text-xs text-zinc-500">{aboutTime(p.seconds)} left</span>
-        </div>
+          <MovingBar value={p.share} />
+        </button>
       )}
-      {/* one grid for every line, so the bars start and end together */}
-      <ul className="grid grid-cols-[minmax(0,11rem)_minmax(3rem,1fr)_auto] gap-x-3 gap-y-1">
-        {adding.map((f) => (
-          <StageRow key={f.path} name={`Adding clips from ${folderName(f.path)}`} done={f.files - f.adding} of={f.files} busy />
-        ))}
-        {p && p.left > 0 && p.stages?.map((s) => <StageRow key={s.kind} name={STAGE_NAME[s.kind]} done={s.done} of={s.of} now={s.now} failed={s.failed} />)}
-      </ul>
-      {p?.waiting.map((w) => (
-        <div
-          key={`${w.step}${w.limit ? "-limit" : ""}`}
-          // the plan's limit stops the AI for every tool, so it is said plainly, not as a footnote
-          className={w.limit ? "flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300" : "flex items-center gap-2 text-xs text-zinc-400"}
-        >
-          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
-          <span>
-            {w.count.toLocaleString()} {what[w.step][w.count === 1 ? 0 : 1]} {w.count === 1 ? "waits" : "wait"}: {w.missing}
-          </span>
-        </div>
-      ))}
+      {moving && open && (
+        // one grid for every line, so the bars start and end together
+        <ul className="grid grid-cols-[minmax(0,11rem)_minmax(3rem,1fr)_auto] gap-x-3 gap-y-1 pt-1">
+          {adding.map((f) => (
+            <StageRow key={f.path} name={`Adding clips from ${folderName(f.path)}`} done={f.files - f.adding} of={f.files} busy />
+          ))}
+          {p.stages?.map((s) => <StageRow key={s.kind} name={STAGE_NAME[s.kind]} done={s.done} of={s.of} now={s.now} failed={s.failed} />)}
+        </ul>
+      )}
+      {(!moving || open) && waiting}
     </section>
   );
 }
@@ -143,7 +202,7 @@ const STEP_WORDS: Record<NonNullable<AssetCard["preparing"]>["step"], string> = 
   probe: "Getting its picture",
   thumb: "Getting its picture",
   wave: "Getting its picture",
-  proxy: "Making a lighter copy",
+  proxy: "Making a proxy",
   fingerprint: "Checking for duplicates",
   transcribe: "Transcribing",
   describe: "Describing",
@@ -153,7 +212,7 @@ const FAILED_WORDS: Record<NonNullable<AssetCard["failed"]>["step"], string> = {
   probe: "This file can't be read as video or sound",
   thumb: "Its picture could not be made",
   wave: "Its sound could not be read",
-  proxy: "Its lighter copy could not be made",
+  proxy: "Its proxy could not be made",
 };
 
 /**
@@ -211,8 +270,8 @@ export function BigUploadDialog({
         {e && (
           <div className="flex flex-col gap-2 text-sm">
             <ul className="flex flex-col gap-1">
-              {e.steps.map(stepLine).filter(Boolean).map((line) => (
-                <li key={line}>{line}</li>
+              {e.steps.map((st) => [st.step, stepLine(st, e.proxies !== false)] as const).filter(([, line]) => line).map(([key, line]) => (
+                <li key={key}>{line}</li>
               ))}
             </ul>
             <p>

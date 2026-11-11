@@ -6,15 +6,18 @@ import type { DatabaseSync } from "node:sqlite";
 import type { AuthVars } from "../auth";
 import { env } from "../lib/env";
 import { appendBody, freeBytes, sha256File } from "../lib/uploads";
-import { ensureLibrary, homeOf, libraryRole, mayWrite } from "./access";
+import { ensureLibrary, homeOf, libraryChanged, libraryRole, mayWrite } from "./access";
 import { expandCollection } from "./collections";
-import { blobs, libraryDb, libraryStore, meter, SETTING_DEFAULTS } from "./db";
+import { blobs, libraryDb, librarySetting, libraryStore, meter, SETTING_DEFAULTS } from "./db";
 import { estimate, progress } from "./estimate";
 import { sendFile } from "../lib/send-file";
 import { notifyLibraryChanges } from "../lib/events";
 import type { AssetCard, LibrarySettings, LibrarySummary } from "../../contracts/library";
 import type { LibraryViewer } from "../../contracts/library-source";
-import { enqueueJob } from "./jobs";
+import { enqueueJob, prepareFirst } from "./jobs";
+import { needsProxy } from "./media/proxy";
+import type { ProbeSummary } from "./media/probe";
+import { spaceApp } from "./space";
 import { inReview } from "./trash";
 import { similar } from "./similar";
 import { assetRef, canSee, sourceById, sourcesVisibleTo } from "./sources";
@@ -33,6 +36,7 @@ import { IMPORT_WAIT_MS, takeFile, watchAllowed } from "./watch";
 
 export const libraryApp = new Hono<{ Variables: AuthVars }>();
 libraryApp.use("*", notifyLibraryChanges);
+libraryApp.route("/", spaceApp); // GET /:id/space, POST /:id/space/clear
 
 const CHUNK_BYTES = 32 * 1024 * 1024;
 const STAGE_DAYS = 7;
@@ -75,6 +79,35 @@ const MIME: [RegExp, string][] = [
   [/\.gif$/i, "image/gif"],
 ];
 export const mimeOf = (filename: string) => MIME.find(([re]) => re.test(filename))?.[1] ?? "application/octet-stream";
+const EXT: Record<string, string> = { "video/mp4": ".mp4", "video/quicktime": ".mov", "video/webm": ".webm", "video/x-matroska": ".mkv", "video/x-msvideo": ".avi",
+  "audio/mp4": ".m4a", "audio/mpeg": ".mp3", "audio/wav": ".wav", "audio/ogg": ".ogg", "audio/flac": ".flac", "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif" };
+
+/**
+ * The library's read videos (or `versionId` alone) that need a proxy and have none, nor one on its way, while the
+ * library makes proxies (its settings).
+ */
+function unproxied(libraryId: string, versionId?: string): { id: string; created_by: string }[] {
+  if (!librarySetting(libraryId, "proxy")) return [];
+  const rows = db()
+    .prepare(
+      `SELECT v.id, v.created_by, v.probe FROM asset_versions v JOIN assets a ON a.id = v.asset_id
+       WHERE a.library_id = ? AND (? IS NULL OR v.id = ?) AND v.probe IS NOT NULL AND v.state != 'missing'
+         AND NOT EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'proxy')
+         AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind = 'proxy' AND j.state IN ('queued', 'running', 'failed'))`,
+    )
+    .all(libraryId, versionId ?? null, versionId ?? null) as { id: string; created_by: string; probe: string }[];
+  return rows.filter((r) => needsProxy(JSON.parse(r.probe) as ProbeSummary));
+}
+
+/** The name an original downloads as: the file's own name when it is read where it is, else its title with its type's extension. */
+export function downloadName(versionId: string): string {
+  const v = db().prepare("SELECT a.title, v.source_path, v.mime FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(versionId) as
+    | { title: string; source_path: string | null; mime: string | null }
+    | undefined;
+  if (!v) return "download";
+  const name = v.source_path ? path.basename(v.source_path) : `${v.title}${EXT[v.mime ?? ""] ?? ""}`;
+  return name.replace(/[\\/:\x00-\x1f]/g, "_") || "download";
+}
 
 /**
  * One new version's rows, inside the caller's transaction: a new asset titled after the file (or version n+1 of
@@ -541,7 +574,7 @@ libraryApp.get("/", (c) => {
 
 const settingsOf = (json: string): LibrarySettings => {
   const s = JSON.parse(json || "{}") as Partial<LibrarySettings>;
-  return { describe: s.describe ?? SETTING_DEFAULTS.describe, embed: s.embed ?? SETTING_DEFAULTS.embed };
+  return { describe: s.describe ?? SETTING_DEFAULTS.describe, embed: s.embed ?? SETTING_DEFAULTS.embed, proxy: s.proxy ?? SETTING_DEFAULTS.proxy };
 };
 
 // GET /api/library/:id/estimate?clips&bytes&audio&audioBytes&music → LibraryEstimate: what processing that many clips would take, for the caller
@@ -562,7 +595,8 @@ libraryApp.get("/:id/progress", async (c) => {
   return c.json(await progress(libraryId, user.username));
 });
 
-// PATCH /api/library/:id { name?, settings?: { describe?, embed? } } → LibrarySummary; the owner only
+// PATCH /api/library/:id { name?, settings?: { describe?, embed?, proxy? } } → LibrarySummary; the owner only. Proxies
+// off: the ones still queued are dropped; on: the clips that need one and have none get one
 libraryApp.patch("/:id", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
@@ -572,10 +606,14 @@ libraryApp.patch("/:id", async (c) => {
   const name = typeof b?.name === "string" ? b.name.trim().slice(0, 80) : "";
   if (name) db().prepare("UPDATE libraries SET name = ? WHERE id = ?").run(name, libraryId);
   // one key at a time: other settings (watch folders) are written by other code
-  for (const key of ["describe", "embed"] as const) {
+  for (const key of ["describe", "embed", "proxy"] as const) {
     const on = b?.settings?.[key];
     if (typeof on === "boolean") db().prepare(`UPDATE libraries SET settings = json_set(settings, '$.${key}', json(?)) WHERE id = ?`).run(String(on), libraryId);
   }
+  const proxy = b?.settings?.proxy;
+  if (proxy === false) db().prepare("DELETE FROM jobs WHERE library_id = ? AND kind = 'proxy' AND state IN ('queued', 'failed')").run(libraryId);
+  if (proxy === true) for (const v of unproxied(libraryId)) enqueueJob(db(), libraryId, v.id, "proxy", v.created_by, true);
+  if (typeof proxy === "boolean") libraryChanged(libraryId);
   const r = db().prepare("SELECT name, storage_kind, settings FROM libraries WHERE id = ?").get(libraryId) as {
     name: string;
     storage_kind: LibrarySummary["storage"];
@@ -710,7 +748,13 @@ export async function libraryMedia(c: Context, username: string, versionId: stri
   const file = mediaFile(versionId, kind);
   if (!file) return c.json({ error: "Not found", code: "not_found" }, 404);
   if (!file.key) return c.json({ error: "Not ready", code: "conflict" }, 409);
-  return serveBlob(c, file.key, file.type);
+  // a clip whose proxy was cleared (Library settings → Storage) gets it again when it is opened
+  if (kind === "play" && unproxied(v.library_id, versionId).length) {
+    enqueueJob(db(), v.library_id, versionId, "proxy", username, true);
+    prepareFirst(versionId);
+    libraryChanged(v.library_id);
+  }
+  return serveBlob(c, file.key, file.type, kind === "source" ? downloadName(versionId) : undefined);
 }
 
 // GET /api/library/versions/:versionId/similar → the videos in the caller's libraries that share its pictures

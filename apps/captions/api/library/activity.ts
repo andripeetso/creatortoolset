@@ -1,39 +1,24 @@
-import { Hono } from "hono";
-import type { LibraryProgress, WatchStatus } from "../../contracts/library";
-import type { AuthVars } from "../auth";
+import type { LibraryProgress } from "../../contracts/library";
 import type { SessionUser } from "../users";
 import { homeOf } from "./access";
 import { libraryDb } from "./db";
 import { progress } from "./estimate";
-import { watchApp } from "./watch";
 
 /**
  * What each of an account's libraries is doing, for Home's list and the Mac's menu bar (api/activity.ts). Read only.
- * `folders`: its watch folders' files and how many are still to be taken in (watch.ts keeps those in memory, so they are
- * read through its own route, as the account). `uploading`: this account's uploads that took a part in the last two
- * minutes. ponytail: a bucket library's uploads go straight to the bucket and are not counted.
+ * `progress`: the library page's own numbers, a watch folder's clips still to come among them. `uploading`: this
+ * account's uploads that took a part in the last two minutes. ponytail: a bucket library's uploads go straight to the
+ * bucket and are not counted.
  */
 export interface LibraryWork {
   id: string;
   progress: LibraryProgress;
-  folders: { path: string; files: number; adding: number }[];
   uploading: { files: number; received: number; size: number } | null;
 }
 
 const RECENT_MS = 2 * 60_000;
 // ponytail: routes.ts STAGE_DAYS: each part moves an upload's expiry this far ahead, so the expiry says when it last moved
 const STAGE_MS = 7 * 86_400_000;
-
-async function watchOf(user: SessionUser, libraryId: string): Promise<WatchStatus["folders"]> {
-  const app = new Hono<{ Variables: AuthVars }>();
-  app.use(async (c, next) => {
-    c.set("user", user);
-    await next();
-  });
-  app.route("/", watchApp);
-  const r = await app.request(`/${libraryId}/watch`);
-  return r.ok ? ((await r.json()) as WatchStatus).folders : [];
-}
 
 export async function libraryWork(user: SessionUser, now = Date.now()): Promise<LibraryWork[]> {
   const db = libraryDb();
@@ -46,17 +31,8 @@ export async function libraryWork(user: SessionUser, now = Date.now()): Promise<
            WHERE library_id = ? AND created_by = ? AND state = 'open' AND direct_upload_id IS NULL AND expires_at > ?`,
         )
         .get(id, user.username, now + STAGE_MS - RECENT_MS) as { files: number; received: number; size: number };
-      const folders = (await watchOf(user, id)).map(({ path, files, adding }) => ({ path, files, adding }));
-      // done in this run: since the oldest clip still being worked on came in. progress() counts the jobs after the
-      // oldest one left, and the files lane takes them oldest first, so a run of file steps alone stays at 0 there.
-      const { done } = db
-        .prepare(
-          `SELECT COUNT(*) AS done FROM jobs WHERE library_id = ? AND state = 'done' AND done_at >= (SELECT MIN(v.created_at) FROM asset_versions v
-           WHERE v.id IN (SELECT version_id FROM jobs WHERE library_id = ? AND state IN ('queued', 'running')))`,
-        )
-        .get(id, id) as { done: number };
-      const p = await progress(id, user.username);
-      return { id, progress: { ...p, done }, folders, uploading: up.files ? { ...up } : null };
+      // the library page's own numbers (estimate.ts progress), so Home and the Activity list say the same
+      return { id, progress: await progress(id, user.username), uploading: up.files ? { ...up } : null };
     }),
   );
 }

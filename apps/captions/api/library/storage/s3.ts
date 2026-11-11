@@ -13,6 +13,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { createReadStream } from "node:fs";
 import { open, rm, stat, utimes } from "node:fs/promises";
 import type { Readable } from "node:stream";
+import { attachment } from "../../lib/send-file";
 import { cachedPath, saveToCache } from "./cache";
 import { keyParts, type BlobStore, type DirectUpload } from "./types";
 
@@ -156,7 +157,7 @@ export function s3Blobs(
         Bucket: bucket,
         Key: key,
         ResponseContentType: o?.contentType,
-        ResponseContentDisposition: o?.download ? `attachment; filename="${o.download}"` : undefined,
+        ResponseContentDisposition: o?.download ? attachment(o.download) : undefined,
       });
       return { kind: "url", url: await getSignedUrl(client, cmd, { expiresIn: ttlSeconds }) };
     },

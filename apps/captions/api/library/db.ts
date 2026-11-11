@@ -169,9 +169,9 @@ export const blobs: Omit<BlobStore, "kind" | "caps"> = {
  * Both start on: describing runs on the uploader's own AI (or parks until they connect one), and a big upload says
  * first what it will take (estimate.ts); search by meaning runs on an OpenAI key, else on this computer (embed.ts).
  */
-export const SETTING_DEFAULTS = { describe: true, embed: true } as const;
+export const SETTING_DEFAULTS = { describe: true, embed: true, proxy: true } as const;
 
-export const librarySetting = (libraryId: string, key: "describe" | "embed"): boolean => {
+export const librarySetting = (libraryId: string, key: keyof typeof SETTING_DEFAULTS): boolean => {
   const on = (libraryDb().prepare(`SELECT json_extract(settings, '$.${key}') AS on_ FROM libraries WHERE id = ?`).get(libraryId) as { on_: number | null } | undefined)?.on_;
   return on === null || on === undefined ? SETTING_DEFAULTS[key] : !!on;
 };

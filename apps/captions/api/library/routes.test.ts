@@ -113,6 +113,19 @@ describe("library uploads", () => {
     expect(count()).toBe(before);
   });
 
+  it("downloads the original under its own name, letters like õ included; the picture to play has no name", async () => {
+    const data = clip(1200, 9);
+    const up = await read(create("owner-a", data.length, { filename: "Õhtune hüpe.MOV" }));
+    expect((await patch("owner-a", up.id, 0, data, data.length)).status).toBe(204);
+    const { versionId } = await read(finish("owner-a", up.id));
+    const source = await app.request(`/api/library/media/${versionId}/source`, { headers: who("owner-a") });
+    expect(source.status).toBe(200);
+    expect(source.headers.get("content-disposition")).toBe(`attachment; filename="_htune h_pe.mov"; filename*=UTF-8''%C3%95htune%20h%C3%BCpe.mov`);
+    expect(Buffer.from(await source.arrayBuffer()).equals(data)).toBe(true);
+    const play = await app.request(`/api/library/media/${versionId}/play`, { headers: who("owner-a") });
+    expect(play.headers.get("content-disposition")).toBeNull();
+  });
+
   it("refuses to start an upload when it would leave less than the disk reserve free", async () => {
     process.env.LIBRARY_DISK_RESERVE_GB = "1000000000";
     try {
@@ -241,6 +254,9 @@ describe("library: a file added where it is (picked in the Mac app on its own se
     expect(v.source_path).toBe(file);
     expect(lstatSync(path.join(dir, "library", "blobs", v.source_key)).isSymbolicLink()).toBe(true);
     expect(libraryDb().prepare("SELECT 1 FROM collection_items WHERE collection_id = 'col_folder' AND asset_id = ?").get(assetId)).toBeTruthy();
+    // its download is the file's own name
+    const got = await app.request(`/api/library/media/${versionId}/source`, { headers: who("owner-a") });
+    expect(got.headers.get("content-disposition")).toContain(`filename="${path.basename(file)}"`);
     // picked again: no second asset; the page's second ask for a file still being read gets it as added
     expect(await read(add({ path: file, size: 5000 }))).toEqual({ duplicateOf: assetId });
     expect(await read(add({ path: file, size: 5000, again: true }))).toEqual({ assetId, versionId });

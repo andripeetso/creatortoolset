@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { Captions, Clapperboard, Download, FileText, Loader2, MessageSquare, Pencil, RotateCcw, Share2, Sparkles, Trash2 } from "lucide-react";
-import type { AssetCard, AssetDetail, Collection, SimilarMatch } from "@contracts/library";
+import { NEEDS, type AssetCard, type AssetDetail, type Collection, type SimilarMatch } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { SheetTitle } from "@/components/ui/sheet";
 import { canUse, useMe } from "@/lib/auth";
@@ -289,7 +289,18 @@ function Panel({ libraryId, asset, startAt, inTrash, folders, onTrash, onAddToFo
     .filter((j) => (j.kind === "describe" || j.kind === "embed") && (j.state === "needs_key" || j.state === "failed"))
     .map((j) => (
       <p key={j.kind} className="text-xs text-zinc-500">
-        {j.kind === "describe" ? "AI description" : "Search by meaning"}: {j.error ?? "failed"}
+        {j.kind === "describe" ? "AI description" : "Search by meaning"}
+        {/* waiting for an AI or a key: a few words, the place to add it one click away */}
+        {j.state === "needs_key" ? (
+          <>
+            {" "}
+            <Link to={NEEDS[j.kind === "describe" ? "describe" : "embed"].href} className="underline-offset-4 hover:underline">
+              needs {NEEDS[j.kind === "describe" ? "describe" : "embed"].needs}
+            </Link>
+          </>
+        ) : (
+          `: ${j.error ?? "failed"}`
+        )}
       </p>
     ));
 
@@ -320,15 +331,17 @@ function Panel({ libraryId, asset, startAt, inTrash, folders, onTrash, onAddToFo
             {similar}
             {jobs}
           </div>
-          {/* on a phone the assistant's round button sits at the bottom right: the actions leave it room */}
-          <div className="border-t border-border p-4 max-md:pr-20">{actions}</div>
+          {/* the assistant's round button sits over the window's bottom right (on a phone, and on a computer while it is in
+              that corner): the actions leave it room */}
+          <div className="border-t border-border p-4 max-md:pr-20 [html:has(button[data-assistant-dock][data-corner=br])_&]:pr-20">{actions}</div>
         </aside>
         {share}
       </div>
     );
 
   return (
-    <div tabIndex={0} className="flex flex-col gap-4 p-4 pt-12 outline-none">
+    // its end scrolls clear of the assistant's button while that is in a bottom corner (it stands over the panel)
+    <div tabIndex={0} className="flex flex-col gap-4 p-4 pt-12 outline-none [html:has(button[data-assistant-dock][data-corner^=b])_&]:pb-24">
       {picture}
       {head}
       {actions}
