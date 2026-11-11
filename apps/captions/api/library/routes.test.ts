@@ -1,4 +1,4 @@
-import { lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
@@ -245,6 +245,8 @@ describe("library: a file added where it is (picked in the Mac app on its own se
     writeFileSync(path.join(footage, "notes.txt"), "a script");
     mkdirSync(path.join(dir, "inside"), { recursive: true });
     writeFileSync(path.join(dir, "inside", "own.mp4"), clip(100, 31));
+    writeFileSync(path.join(footage, "kept out.mp4"), clip(100, 33));
+    chmodSync(path.join(footage, "kept out.mp4"), 0); // as macOS keeps a server out of Desktop or Downloads
     for (const body of [
       { path: "C0001.MP4", size: 5000 }, // not a full path
       { path: path.join(footage, "nope.mp4"), size: 1 },
@@ -252,6 +254,7 @@ describe("library: a file added where it is (picked in the Mac app on its own se
       { path: file, size: 4999 }, // changed since it was picked
       { path: path.join(footage, "notes.txt"), size: 8 },
       { path: path.join(dir, "inside", "own.mp4"), size: 100 }, // the app's own data
+      { path: path.join(footage, "kept out.mp4"), size: 100 }, // this server may not read it
     ]) {
       const r = await add(body);
       expect(r.status, JSON.stringify(body)).toBe(400);

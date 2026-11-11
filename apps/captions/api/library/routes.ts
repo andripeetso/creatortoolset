@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import { randomUUID } from "node:crypto";
-import { copyFile, mkdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, open, realpath, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type { AuthVars } from "../auth";
@@ -388,6 +388,10 @@ libraryApp.post("/:id/in-place", async (c) => {
   if (!real || !s?.isFile()) return refuse(`No such file on this computer: ${given}`);
   if (s.size !== Number(body.size)) return refuse("The file changed since it was picked");
   if (kindOf(real) === "doc") return refuse("Only videos, sound and pictures are added in place");
+  // macOS may keep this server out of a folder the app itself may read (Desktop, Downloads): the page uploads it then
+  const readable = await open(real, "r").catch(() => null);
+  if (!readable) return refuse("This server may not read that file");
+  await readable.close();
   const data = await realpath(env.dataDir).catch(() => path.resolve(env.dataDir));
   const fromData = path.relative(data, real);
   if (fromData.split(path.sep)[0] !== ".." && !path.isAbsolute(fromData)) return refuse("That file is in the app's own data");

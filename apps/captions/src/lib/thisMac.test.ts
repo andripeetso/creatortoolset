@@ -63,6 +63,9 @@ describe("where a picked file is on this Mac", () => {
     expect(await pathOnMac(file("C0001.MP4", 10))).toBe("/a/C0001.MP4");
     expect(await pathOnMac(file("C0001.MP4", 10, 1_600_000_000_500))).toBe("/b/C0001.MP4");
     expect(await pathOnMac(file("C0001.MP4", 11))).toBeUndefined(); // another file of that name
+    // the Mac may spell an accented letter as two characters, the page as one
+    withBridge({ files: [at("/a/Jõgi.mp4".normalize("NFD"), 30)] });
+    expect(await pathOnMac(file("Jõgi.mp4".normalize("NFC"), 30))).toBe("/a/Jõgi.mp4".normalize("NFD"));
   });
 
   it("leaves it to an upload when it is not sure, in a browser, and in a Mac app from before it could say", async () => {
