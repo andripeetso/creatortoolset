@@ -356,7 +356,7 @@ describe("pictures, pastes and the page a message comes from", () => {
     const folder = "/Users/you/Movies/Tiny Acrobatics shoot";
     expect((await app.request("/api/assistant/turn", { method: "POST", ...json({ text: "Edit this", paths: [folder] }, { cookie }) })).status).toBe(202);
     const job = await claim();
-    expect(job.user).toContain(`The user dropped a folder from their computer: ${JSON.stringify(folder)} (its path there; nothing was uploaded).`);
+    expect(job.user).toContain(`The user dropped a folder from their computer: ${JSON.stringify(folder)} (its path there).`);
     expect(job.files).toBeUndefined();
     const view = (await (await app.request("/api/assistant", { headers: { cookie } })).json()) as { messages: Array<{ folders?: string[] }> };
     expect(view.messages.at(-2)?.folders).toEqual([folder]);
