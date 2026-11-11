@@ -5,7 +5,7 @@ import { PLANS, type PlanId } from "@contracts/plans";
 import type { SetupView } from "@contracts/tools";
 import { Button } from "@/components/ui/button";
 import { USAGE_PERIODS, deviceOf, thisMacDevice, usageSince, useProviders, type UsageRow } from "@/lib/providers";
-import { countedWindow, identityKey, leftOf, noticeOf, resetsIn } from "@/lib/limits";
+import { LOW, countedWindow, identityKey, leftOf, noticeOf, resetsIn } from "@/lib/limits";
 import { useSetup } from "@/lib/setup";
 import { tokensLabel } from "@/lib/workshop";
 import { cn } from "@/lib/utils";
@@ -18,7 +18,6 @@ import { hasThisMac, tell, useThisMac, type ThisMacState } from "./ThisMacSectio
 const RELOAD_MS = 5 * 60_000;
 const TICK_MS = 60_000; // the countdowns
 const STALE_MS = 15 * 60_000;
-const LOW = 20; // a window at or under this share left is amber
 const API = " (API)"; // the tally's label for calls on the app's own Anthropic key
 const TOOL: Record<string, string> = { Automation: "Scheduled task" };
 
