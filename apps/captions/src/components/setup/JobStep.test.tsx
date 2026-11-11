@@ -25,8 +25,9 @@ describe("setup's What do you want to do first?", () => {
 
   it("under a picked job: one row for each thing it still needs, each with its one button", () => {
     const write = show("write");
-    expect(write).toContain("Your own AI");
-    expect(buttons(write)).toEqual(["Set up"]);
+    expect(write).toContain("Your AI");
+    expect(write).not.toMatch(/AI that answers|Your own AI/);
+    expect(buttons(write)).toEqual(["Connect"]);
     expect(buttons(show("ideas"))).toEqual(["Set up"]);
     expect(show("write", [...fresh, "ownAi"])).toContain("You're ready to write.");
     expect(show("captions")).toContain("You're ready to add captions.");
