@@ -190,6 +190,12 @@ export default function WorkshopSessionPage() {
   // ?doc= opens on that piece (a Convert to copy opens on the piece being written)
   const [searchParams] = useSearchParams();
   const [activeDocId, setActiveDocId] = useState<string | null>(() => searchParams.get("doc") ?? pickActive(docs, null));
+  // and follows it: a link to another piece of the session that is open shows that piece, once the list has it
+  const linkedDoc = searchParams.get("doc");
+  const linkedHere = docs.some((d) => d.id === linkedDoc);
+  useEffect(() => {
+    if (linkedDoc && linkedHere) setActiveDocId(linkedDoc);
+  }, [linkedDoc, linkedHere]);
   const [closed, setClosed] = useState<Array<{ doc: WorkshopDocument; index: number }>>([]);
   const setChatData = chatLoad.set;
   const messages = useMemo(() => chatLoad.data ?? [], [chatLoad.data]);
