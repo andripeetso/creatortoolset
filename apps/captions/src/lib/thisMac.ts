@@ -102,7 +102,14 @@ export const resumePlugins = () => pluginAsk("plugins:resume");
  * by themselves), which plug-ins have a new version waiting for the server to have nothing running, and why a folder's
  * newest state was not taken. null in a browser, or when the Mac app does not answer.
  */
-export type PluginsAuto = { auto: boolean; folders: Record<string, string>; waiting: string[]; notes: Record<string, string> };
+export type PluginsAuto = {
+  auto: boolean;
+  folders: Record<string, string>;
+  waiting: string[];
+  notes: Record<string, string>;
+  /** The app switched every plug-in off itself, after its server stopped five times (not the person, in This Mac). */
+  crashed: boolean;
+};
 export async function pluginsAuto(): Promise<PluginsAuto | null> {
   const bridge = thisMacBridge();
   if (!bridge) return null;
@@ -110,7 +117,7 @@ export async function pluginsAuto(): Promise<PluginsAuto | null> {
     const r = ((await bridge.postMessage("plugins:state")) ?? {}) as unknown as Partial<PluginsAuto> & { ok?: boolean };
     if (r.ok !== true || typeof r.auto !== "boolean") return null;
     const map = (x: unknown) => (x && typeof x === "object" ? (x as Record<string, string>) : {});
-    return { auto: r.auto, folders: map(r.folders), waiting: Array.isArray(r.waiting) ? r.waiting : [], notes: map(r.notes) };
+    return { auto: r.auto, folders: map(r.folders), waiting: Array.isArray(r.waiting) ? r.waiting : [], notes: map(r.notes), crashed: r.crashed === true };
   } catch {
     return null;
   }

@@ -14,6 +14,9 @@ import Security
 
 /// UserDefaults key: plug-ins paused (CT_PLUGINS_PAUSED). It can only make less code run, so it needs no protection.
 let pluginsPausedKey = "pluginsPaused"
+/// UserDefaults key: the app paused them itself, after its server stopped five times (Server.swift), not the person with
+/// Switch All Off. Only what the list says about the pause depends on it.
+let pluginsPausedByCrashesKey = "pluginsPausedByCrashes"
 
 /// Where this copy's plug-ins are written (the folder the person's AI fills).
 let pluginsFolder = appSupport.appendingPathComponent("plugins")
@@ -397,7 +400,8 @@ extension Shell {
         case .state:
             let record = PluginRecord.live.load()
             done(["ok": true, "auto": !record.waits, "folders": record.on.mapValues(\.folder),
-                  "waiting": pluginWatch.waiting.keys.sorted(), "notes": pluginWatch.notes])
+                  "waiting": pluginWatch.waiting.keys.sorted(), "notes": pluginWatch.notes,
+                  "crashed": UserDefaults.standard.bool(forKey: pluginsPausedByCrashesKey)])
         case .auto(false):
             // less runs by itself: no question asked
             var approved = PluginRecord.live.load()
@@ -415,6 +419,7 @@ extension Shell {
     /// This Mac's Switch All Off and Switch Back On (ThisMac.swift): the flag, then the server starts again with it.
     func setPluginsPaused(_ paused: Bool) {
         UserDefaults.standard.set(paused, forKey: pluginsPausedKey)
+        UserDefaults.standard.set(false, forKey: pluginsPausedByCrashesKey)   // the person's own switch, either way
         restartServerHere()
     }
 

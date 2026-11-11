@@ -69,7 +69,8 @@ export function FolderPluginRows({ folder, plugins }: { folder: FolderPlugins; p
       {folder.paused && (
         <ListRow
           title="Plug-ins are off"
-          status={<Status tone="attention">The app's server stopped five times with them on</Status>}
+          // only when that is why: Switch All Off in This Mac pauses them too, and then nothing stopped
+          status={auto?.crashed && <Status tone="attention">The app's server stopped five times with them on</Status>}
           actions={mac && <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => run("resume", resumePlugins)}>Switch back on</Button>}
         />
       )}

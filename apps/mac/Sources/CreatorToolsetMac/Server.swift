@@ -398,6 +398,7 @@ final class LocalServer: ObservableObject {
             // five crashes: with a plug-in on and not paused, pause them once and start again (the likely cause)
             if pluginsPauseInsteadOfStopping(on: PluginRecord.live.load().on.count, paused: UserDefaults.standard.bool(forKey: pluginsPausedKey)) {
                 UserDefaults.standard.set(true, forKey: pluginsPausedKey)
+                UserDefaults.standard.set(true, forKey: pluginsPausedByCrashesKey)
                 ServerLog.note("five crashes in five minutes: plug-ins paused, starting again")
                 crashes = []
                 start()
