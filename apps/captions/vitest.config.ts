@@ -57,6 +57,7 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    globalSetup: "./vitest.tmp.ts",
     projects: [
       {
         extends: true,
