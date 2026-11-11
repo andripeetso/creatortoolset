@@ -83,6 +83,9 @@ import {
   keepSession,
   sessionKeys,
   type ChangeScope,
+  sessionStatusLabel,
+  sessionStatusOf,
+  statusSteps,
 } from "@/lib/workshop";
 import { exportFilename } from "@/lib/workshop-markdown";
 import { useDeskLayout } from "@/lib/workshop-desk";
@@ -95,6 +98,7 @@ import { WorkshopSidebar } from "@/components/workshop/WorkshopSidebar";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import InstagramAccountPage from "@/pages/InstagramAccountPage";
 import { markSeen, patchSummary, refreshSummaries } from "@/lib/workshop-summary";
+import { undoable } from "@/lib/undo";
 import { useCachedList, useCachedLoad } from "@/lib/local-cache";
 import { useWorkspace } from "@/lib/workspace";
 
@@ -610,9 +614,22 @@ export default function WorkshopSessionPage() {
   };
   const setStatus = (status: SessionStatus) => {
     if (!session) return;
-    setSession({ ...session, status });
-    patchSummary(session.id, { status });
-    patchSession(session.id, { status }).catch(fail);
+    const id = session.id;
+    // an old record with no status counts as an idea
+    const was = sessionStatusOf(session.status);
+    const put = (to: SessionStatus) => {
+      setSession((s) => (s && s.id === id ? { ...s, status: to } : s));
+      patchSummary(id, { status: to });
+      return patchSession(id, { status: to });
+    };
+    put(status).then(
+      () =>
+        was !== status &&
+        undoable(`set to ${sessionStatusLabel(status)}`, async () => {
+          for (const s of statusSteps(status, was)) await put(s);
+        }),
+      fail,
+    );
   };
   const setPosted = (posted: SessionPatch["posted"]) => {
     if (!session) return;

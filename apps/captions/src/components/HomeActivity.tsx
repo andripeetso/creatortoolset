@@ -9,6 +9,7 @@ import type { EditSummary } from "@contracts/editor";
 import type { ActivityRow } from "@contracts/activity";
 import { listEdits } from "@/lib/editor";
 import { listReviewAssets, reviewApi, type ReviewAsset } from "@/lib/review";
+import { undoable } from "@/lib/undo";
 import { useSessionSummaries, type SessionSummary } from "@/lib/workshop-summary";
 
 export interface TodoRow {
@@ -57,13 +58,23 @@ export function useTodoLists(me: Me | null) {
     /**
      * "Not waiting on me": these videos go back to No status, so they leave the list and Home's badge on every device.
      * The saved copy is changed at once (a refresh could join a read already going and bring them back); a video the
-     * server refused comes back.
+     * server refused comes back. Undo puts the ones it took back to Needs review.
      */
     clear: async (ids: string[]) => {
-      assets.set((prev) => prev && withStatus(prev, ids, "none"));
-      const done = await Promise.allSettled(ids.map((id) => reviewApi(`/api/review/assets/${id}`).approve("none")));
-      const failed = ids.filter((_, i) => done[i].status === "rejected");
-      if (failed.length) assets.set((prev) => prev && withStatus(prev, failed, "needs_review"));
+      /** Sets the status here and on the server; answers the videos the server took. The others are shown as `else`. */
+      const put = async (these: string[], status: "none" | "needs_review", otherwise: "none" | "needs_review") => {
+        assets.set((prev) => prev && withStatus(prev, these, status));
+        const done = await Promise.allSettled(these.map((id) => reviewApi(`/api/review/assets/${id}`).approve(status)));
+        const failed = these.filter((_, i) => done[i].status === "rejected");
+        if (failed.length) assets.set((prev) => prev && withStatus(prev, failed, otherwise));
+        return these.filter((id) => !failed.includes(id));
+      };
+      const cleared = await put(ids, "none", "needs_review");
+      if (!cleared.length) return;
+      undoable("cleared", async () => {
+        const back = await put(cleared, "needs_review", "none");
+        if (back.length < cleared.length) throw new Error(`${cleared.length - back.length} could not be put back`);
+      }, cleared.length);
     },
   };
 }

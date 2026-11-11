@@ -168,6 +168,10 @@ newest one. A release reaches everyone's Mac, so make one only when the maintain
   loads what the Mac app says is on (`apps/mac` `Plugins.swift` keeps the person's Switch on clicks) and
   `src/lib/folder-plugins.tsx` adds the page halves before the first render. A screen reads the plug-in list when it
   is drawn, never when its file loads. A folder plug-in that fails is left out and named; it never stops the app.
+- A move with an opposite (a status, a place, the trash, a pin) can be taken back: once the server has it, call
+  `undoable(what, back, count)` (`src/lib/undo.ts`). It shows the notice with Undo and owns ⌘Z while the notice is up.
+  `back` puts each thing where it was through the routes that exist; a move with no way back (a delete that removes
+  files) gets none.
 - Long-running work (exports, enhancement, the Mac relay) runs in background queues with concurrency limits set
   by environment variables; keep those limits when you add work to them.
 - Status fields (jobs, sessions, sources, exports): the union lives once (a `contracts/` file or the module's

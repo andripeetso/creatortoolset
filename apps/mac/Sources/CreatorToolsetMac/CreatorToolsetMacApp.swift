@@ -143,6 +143,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 shell.accountLink(code)
                 continue
             }
+            if isConnectDone(url) {
+                shell.showWindow()
+                continue
+            }
             if let href = appHref(from: url, site: shell.base) { shell.showWindow(href: href) }
         }
     }

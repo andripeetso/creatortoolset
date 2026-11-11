@@ -37,7 +37,7 @@ connectApp.post("/start", async (c) => {
   try {
     const g = await startDeviceGrant(url);
     pending = { deviceCode: g.device_code, brokerUrl: url, localUser: c.get("user").username, expires: Date.now() + g.expires_in * 1000 };
-    return c.json({ user_code: g.user_code, verification_uri: g.verification_uri, expires_in: g.expires_in, interval: g.interval });
+    return c.json({ user_code: g.user_code, verification_uri: g.verification_uri, verification_uri_complete: g.verification_uri_complete, expires_in: g.expires_in, interval: g.interval });
   } catch (e) {
     return c.json({ error: e instanceof BrokerError ? e.code : "broker_unreachable" }, 502);
   }

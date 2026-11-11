@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router";
 import { Archive, ArchiveRestore, ChevronRight, CircleDot, Copy, CopyPlus, Link2, Pencil, Pin, PinOff, Repeat2, Sparkles, Trash2 } from "lucide-react";
-import { createDocument, deleteSession, docKindLabel, duplicateSession, listDocuments, patchSession, regenerateSessionTitle, sendTurn, sessionPath, useDocKinds, WORKSHOP_HOME, type PieceKind, type SessionPatch, type SessionStatus } from "@/lib/workshop";
+import { createDocument, deleteSession, docKindLabel, duplicateSession, listDocuments, patchSession, regenerateSessionTitle, sendTurn, sessionPath, statusSteps, useDocKinds, WORKSHOP_HOME, type PieceKind, type SessionPatch, type SessionStatus } from "@/lib/workshop";
 import { markUnread, patchSummary, refreshSummaries, useSessionSummaries, type SessionSummary } from "@/lib/workshop-summary";
+import { undoable } from "@/lib/undo";
 import { alertDialog, confirmDialog } from "@/lib/dialogs";
 
 /** A row that opens its own menu beside it on hover, like a Mac submenu; a click works too, for touch. */
@@ -83,17 +84,28 @@ export function SessionMenu({
   }, [onClose]);
 
   const fail = (e: unknown) => void alertDialog({ title: e instanceof Error ? e.message : String(e) });
-  // shows at once, saved on the server; a failed save brings the sidebar back to the server's word
-  const change = (patch: Partial<SessionSummary>, server: SessionPatch) => {
-    onClose();
+  /** Shows at once, saved on the server; a failed save brings the sidebar back to the server's word. */
+  const put = (patch: Partial<SessionSummary> & SessionPatch) => {
     patchSummary(id, patch);
-    patchSession(id, server)
-      .then(() => onChanged?.())
-      .catch((e) => {
-        fail(e);
+    return patchSession(id, patch).then(
+      () => onChanged?.(),
+      (e) => {
         void refreshSummaries();
         onChanged?.();
-      });
+        throw e;
+      },
+    );
+  };
+  /** `back` is what the session had before, as the patches that put it there: ⌘Z sends them (lib/undo.ts). */
+  const change = (what: string, patch: Partial<SessionSummary> & SessionPatch, back: (Partial<SessionSummary> & SessionPatch)[]) => {
+    onClose();
+    put(patch).then(
+      () =>
+        undoable(what, async () => {
+          for (const was of back) await put(was);
+        }),
+      fail,
+    );
   };
   const copy = (text: string | Promise<string>) => {
     onClose();
@@ -169,7 +181,7 @@ export function SessionMenu({
       className="fixed z-[60] w-56 rounded-xl border border-zinc-700 bg-zinc-900 p-1 text-[13px] shadow-2xl"
       style={{ left, top }}
     >
-      <button type="button" role="menuitem" className={item} onClick={() => change({ pinned: !pinned }, { pinned: !pinned })}>
+      <button type="button" role="menuitem" className={item} onClick={() => change(pinned ? "unpinned" : "pinned", { pinned: !pinned }, [{ pinned: !!pinned }])}>
         {pinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
         {pinned ? "Unpin" : "Pin"}
       </button>
@@ -206,7 +218,7 @@ export function SessionMenu({
           </button>
         ))}
       </Sub>
-      <button type="button" role="menuitem" className={item} onClick={() => change({ status: shelved ? "writing" : "shelved" }, { status: shelved ? "writing" : "shelved" })}>
+      <button type="button" role="menuitem" className={item} onClick={() => change(shelved ? "unshelved" : "shelved", { status: shelved ? "writing" : "shelved" }, statusSteps(shelved ? "writing" : "shelved", status ?? "draft").map((s) => ({ status: s })))}>
         {shelved ? <ArchiveRestore className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}
         {shelved ? "Unshelve" : "Shelve"}
       </button>
