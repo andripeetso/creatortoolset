@@ -185,6 +185,9 @@ export interface AssistantView {
   /** Earlier conversations, newest first. */
   past: AssistantPast[];
   pending: AssistantPending | null;
+  /** This server takes a message whose videos are still uploading (POST /turn with their ids) and queues messages sent
+   *  while a reply runs. Absent on older servers: there a client posts only after its uploads are done. */
+  sendNow?: true;
   /** A page the assistant opened for the user (navigate); the dock moves there and acks it. */
   navigate: string | null;
 }

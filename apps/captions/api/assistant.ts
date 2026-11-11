@@ -635,6 +635,7 @@ function view(username: string, admin: boolean): AssistantView {
     past: (conv.past ?? []).map((p) => ({ id: p.id, title: p.title ?? titleOf(p.messages), at: p.messages.at(-1)?.at ?? 0, count: p.messages.length })),
     pending: pending && conv.pending ? { env: pending.env, name: pending.name, why: conv.pending.why } : null,
     navigate: conv.navigate ?? null,
+    sendNow: true,
   };
 }
 
