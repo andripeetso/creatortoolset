@@ -74,8 +74,13 @@ export function AppBar({
       </nav>
       <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5 sm:shrink-0 sm:flex-nowrap sm:gap-2">
         {children}
-        {account && <PlanLimitPill />}
-        {account && <UserMenu />}
+        {/* the pill sits on the account button's corner on a phone, so it never takes the bar's room (PlanLimitPill) */}
+        {account && (
+          <span className="relative flex items-center gap-1.5 sm:gap-2">
+            <PlanLimitPill />
+            <UserMenu />
+          </span>
+        )}
       </div>
     </header>
     {/* the page fades out directly under the bar once it has scrolled (index.css); below anything else that sticks */}
