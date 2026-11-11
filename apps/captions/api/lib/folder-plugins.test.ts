@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { Hono } from "hono";
 import { definePlugin, type ServerPlugin } from "./plugin";
@@ -37,7 +37,8 @@ const start = (compiled: ServerPlugin[] = []) => {
 const row = (id: string) => folderPluginRows().find((r) => r.id === id)!;
 
 beforeEach(() => {
-  root = path.join(process.cwd(), "node_modules", ".tmp", `folder-plugins-${process.pid}-${Math.random().toString(36).slice(2)}`);
+  // a space in the path, as every real install has ("Application Support")
+  root = path.join(process.cwd(), "node_modules", ".tmp", `folder plugins ${process.pid}-${Math.random().toString(36).slice(2)}`);
   mkdirSync(root, { recursive: true });
   Object.assign(process.env, { CT_LOCAL: "1", CT_APP_FOLDER: root });
   delete process.env.CT_PLUGINS_ON;
@@ -267,5 +268,52 @@ describe("plug-ins from the person's folder", () => {
   it("finds the plug-in whose file is in a crash's stack", () => {
     expect(blamedPlugin("Error: x\n    at f (/app/plugins-run/sponsors/out/server.js:3:1)", "/app/plugins-run")).toBe("sponsors");
     expect(blamedPlugin("Error: x\n    at f (/app/dist/boot.js:3:1)", "/app/plugins-run")).toBeNull();
+    // an imported module is named by its file: address, where the space of "Application Support" is %20
+    const run = "/Users/t/Library/Application Support/Creator Toolset/plugins-run";
+    expect(blamedPlugin("Error: x\n    at f (file:///Users/t/Library/Application%20Support/Creator%20Toolset/plugins-run/sponsors/out/server.js:3:1)", run)).toBe("sponsors");
+  });
+
+  it("finds the plug-in in the real stack of an error it throws later, from a folder with a space in its path", async () => {
+    expect(root).toContain(" ");
+    write("late", "plugin.ts", server("late").replace("routes: app", 'routes: app, activity: () => { throw new Error("later"); }'));
+    await switchOn("late");
+    const [plugin] = await start();
+    let stack = "";
+    try {
+      (plugin!.activity as unknown as () => void)();
+    } catch (e) {
+      stack = (e as Error).stack ?? "";
+    }
+    expect(stack).toContain("later");
+    expect(blamedPlugin(stack)).toBe("late");
+  });
+
+  // an install that never used plug-ins runs this loader too: nothing in it may stop the app's start
+  it("starts the app with no plug-ins when its notes can't be written, with nothing switched on and with one on", async () => {
+    mkdirSync(path.join(root, "plugins-state.json")); // a folder where the notes file goes: every write fails
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await start()).toEqual([]);
+    write("a", "plugin.ts", server("a"));
+    await switchOn("a");
+    expect(await start()).toEqual([]);
+    expect(row("a")).toMatchObject({ on: true, running: false, error: "The app's folder can't be written, so it was not loaded" });
+    process.env.CT_PLUGINS_PAUSED = "1";
+    expect(await start()).toEqual([]);
+    quiet.mockRestore();
+  });
+
+  it("starts the app with no plug-ins when the app's folder is read-only", async () => {
+    write("a", "plugin.ts", server("a"));
+    await switchOn("a");
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+    chmodSync(root, 0o555);
+    try {
+      expect(await start()).toEqual([]);
+      expect(row("a")).toMatchObject({ on: true, running: false });
+      expect(row("a").error).toBeTruthy();
+    } finally {
+      chmodSync(root, 0o755);
+      quiet.mockRestore();
+    }
   });
 });

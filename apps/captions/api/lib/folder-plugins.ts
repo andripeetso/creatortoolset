@@ -78,9 +78,16 @@ const readState = (): State => {
     return { loading: null, stopped: {} };
   }
 };
-const writeState = (s: State) => {
-  mkdirSync(appFolder(), { recursive: true });
-  writeFileSync(stateFile(), JSON.stringify(s, null, 1));
+/** Writes the notes, or says false: a folder that can't be written (a full disk, a read-only disk) must never stop the app. */
+const writeState = (s: State): boolean => {
+  try {
+    mkdirSync(appFolder(), { recursive: true });
+    writeFileSync(stateFile(), JSON.stringify(s, null, 1));
+    return true;
+  } catch (e) {
+    console.error(`[plugins] ${stateFile()} could not be written: ${message(e)}`);
+    return false;
+  }
 };
 
 /** A folder's files (hidden ones and node_modules left out), in a fixed order. Throws when it is too big to be a plug-in. */
@@ -173,11 +180,26 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
  * The server halves of the plug-ins the person switched on, each admitted by itself against `compiled` and the ones
- * before it. Called once by boot.ts before anything is mounted. Never throws: a plug-in that can't load is in `failures`.
+ * before it. Called once by boot.ts before anything is mounted, under a top-level await: a throw here would stop the
+ * app for everyone, plug-ins or not. So it never throws. A plug-in that can't load is in `failures`, and when the
+ * loader itself fails (the app's folder can't be read or written) the app starts with no plug-ins from the folder.
  */
 export async function loadFolderPlugins(compiled: ServerPlugin[], more?: (all: ServerPlugin[]) => void): Promise<ServerPlugin[]> {
+  if (!folderPluginsEnabled()) return [];
+  try {
+    return await load(compiled, more);
+  } catch (e) {
+    console.error(`[plugins] the plug-ins from the folder were not loaded: ${message(e)}`);
+    running.clear();
+    webFiles.clear();
+    fromFolder.clear();
+    for (const id of parseOn(process.env.CT_PLUGINS_ON).keys()) failures.set(id, `Plug-ins could not be loaded: ${message(e)}`);
+    return [];
+  }
+}
+
+async function load(compiled: ServerPlugin[], more?: (all: ServerPlugin[]) => void): Promise<ServerPlugin[]> {
   const loaded: ServerPlugin[] = [];
-  if (!folderPluginsEnabled()) return loaded;
   const on = parseOn(process.env.CT_PLUGINS_ON);
   const state = readState();
   if (state.loading) {
@@ -186,9 +208,13 @@ export async function loadFolderPlugins(compiled: ServerPlugin[], more?: (all: S
   }
   // switched off, or approved again in another version: its old record no longer holds
   for (const id of Object.keys(state.stopped)) if (on.get(id) !== state.stopped[id]!.fingerprint) delete state.stopped[id];
-  writeState(state);
-  rmSync(dir("plugins-run"), { recursive: true, force: true });
+  const notes = writeState(state);
   if (!on.size || paused()) return loaded;
+  try {
+    rmSync(dir("plugins-run"), { recursive: true, force: true });
+  } catch {
+    // each plug-in's own folder there is made again below, and says so when it can't be
+  }
 
   // build them all at once, then load one at a time
   const builds = await Promise.all(
@@ -222,7 +248,8 @@ export async function loadFolderPlugins(compiled: ServerPlugin[], more?: (all: S
     try {
       if ([...compiled, ...loaded].some((p) => p.id === b.id)) throw new Error(`the app already has a plug-in called ${b.id}`);
       if (b.built.server) {
-        writeState({ ...state, loading: { id: b.id, fingerprint: b.fingerprint } });
+        // without the mark, a plug-in that ends the server here would do it again at every start, unnamed
+        if (!notes || !writeState({ ...state, loading: { id: b.id, fingerprint: b.fingerprint } })) throw new Error("The app's folder can't be written, so it was not loaded");
         const plugin = await Promise.race([
           (async () => {
             for (const need of b.built!.needs.server) {
@@ -296,9 +323,13 @@ export function startFolderPlugin(plugin: ServerPlugin, run: () => void): void {
 
 /** The plug-in whose built file is in an error's stack, or null. */
 export function blamedPlugin(stack: string | undefined, runDir = dir("plugins-run")): string | null {
-  const at = (stack ?? "").indexOf(runDir + path.sep);
-  if (at < 0) return null;
-  return (stack ?? "").slice(at + runDir.length + 1).split(/[/\\]/)[0] || null;
+  // a stack names a file by its path or, for a module that was imported, by its file: address, where a space is
+  // %20: every real install has one ("Application Support")
+  const text = stack ?? "";
+  const hits = [runDir + path.sep, pathToFileURL(runDir).href + "/"].map((base) => ({ base, at: text.indexOf(base) })).filter((h) => h.at >= 0);
+  const first = hits.sort((a, b) => a.at - b.at)[0];
+  if (!first) return null;
+  return text.slice(first.at + first.base.length).split(/[/\\]/)[0] || null;
 }
 
 /**
@@ -309,11 +340,15 @@ function watchCrashes(): void {
   if (process.env.NODE_ENV === "test") return; // a test's own failure is the test runner's to report
   const on = parseOn(process.env.CT_PLUGINS_ON);
   const die = (e: unknown) => {
-    const id = blamedPlugin(e instanceof Error ? e.stack : undefined);
-    if (id && on.has(id)) {
-      const state = readState();
-      state.stopped[id] = { fingerprint: on.get(id)!, error: `It stopped the app's server: ${message(e)}` };
-      writeState(state);
+    try {
+      const id = blamedPlugin(e instanceof Error ? e.stack : undefined);
+      if (id && on.has(id)) {
+        const state = readState();
+        state.stopped[id] = { fingerprint: on.get(id)!, error: `It stopped the app's server: ${message(e)}` };
+        writeState(state);
+      }
+    } catch {
+      // the error below is still printed and the server still ends
     }
     console.error(e);
     process.exit(1);
@@ -427,7 +462,12 @@ export function mountFolderPlugins(app: Hono<any, any, any>): void {
   const admin = (c: { get: (k: "user") => unknown }) => (c.get("user") as { role?: string } | undefined)?.role === "admin";
   app.get("/api/plugins/folder", (c) => {
     if (!folderPluginsEnabled() || !admin(c)) return c.json({ enabled: false, paused: false, folder: "", rows: [] });
-    return c.json({ enabled: true, paused: paused(), folder: dir("plugins"), rows: folderPluginRows() });
+    try {
+      return c.json({ enabled: true, paused: paused(), folder: dir("plugins"), rows: folderPluginRows() });
+    } catch (e) {
+      console.error(`[plugins] the plug-ins folder could not be read: ${message(e)}`);
+      return c.json({ enabled: true, paused: paused(), folder: dir("plugins"), rows: [] });
+    }
   });
   app.post("/api/plugins/folder/:name/prepare", async (c) => {
     if (!folderPluginsEnabled() || !admin(c)) return c.json({ error: "Plug-ins are switched on in the Creator Toolset Mac app, on the Mac that runs it." }, 403);
