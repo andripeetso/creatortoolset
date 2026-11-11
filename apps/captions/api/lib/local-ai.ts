@@ -779,6 +779,10 @@ export async function connectCli(username: string, id: Driver, home = os.homedir
     // today's models refuse an old Codex ("requires a newer version of Codex"): the page installs the current one and connects again
     if (id === "codex" && /requires a newer version|not supported when using Codex|model_not_found/i.test(check.error ?? ""))
       return { state: "outdated", signedIn: p.signedIn, answered: false, ms: check.ms, message: "ChatGPT didn't accept this. Try again later.", raw: check.error };
+    // a Gemini CLI too old for the Mac app's rules is not run (the Mac app's words, ClaudeRequest.swift geminiTooOld): the page
+    // installs the current one the same way
+    if (id === "gemini" && /too old to run here/i.test(check.error ?? ""))
+      return { state: "outdated", signedIn: p.signedIn, answered: false, ms: check.ms, message: "Google needs a newer Gemini than the one on this Mac. Try again.", raw: check.error };
     const plain = plainError(check.error ?? "");
     if (plain.state === "signin") return { state: "signin", signedIn: false, answered: false, message: plain.message, raw: check.error };
     return { state: "failed", signedIn: p.signedIn, answered: false, ms: check.ms, message: plain.message, raw: check.error };

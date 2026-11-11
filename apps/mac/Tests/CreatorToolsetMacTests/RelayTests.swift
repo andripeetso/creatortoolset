@@ -669,13 +669,11 @@ final class RelayTests: XCTestCase {
             XCTAssertEqual(now.components(separatedBy: token).count, 2, driver)   // in the environment only: no argument, no file
             XCTAssertTrue(now.contains("http://127.0.0.1:9/api/mcp"), driver)
             XCTAssertTrue(now.contains(driver == "gemini" ? "--allowed-mcp-server-names creator-toolset --policy" : "--allow MCPTool(creator-toolset__*)"), driver)
-            // a Gemini too old for a policy file answers with the message alone
+            // a Gemini too old for a policy file is not run at all: nothing else holds its rules
             if let old {
-                XCTAssertEqual(try run(old), "ok")
-                let then = try String(contentsOf: seen, encoding: .utf8)
-                XCTAssertFalse(then.contains("creator-toolset"))
-                XCTAssertTrue(then.contains(" token=\n"))
-                XCTAssertTrue(then.hasPrefix("gca=true browser=true "))   // a run without the app's tools too
+                try FileManager.default.removeItem(at: seen)
+                XCTAssertThrowsError(try run(old)) { XCTAssertEqual(($0 as? ClaudeFailure)?.message, geminiTooOld) }
+                XCTAssertFalse(FileManager.default.fileExists(atPath: seen.path))
                 // a current Gemini without the app's tools still gets the rules (no file writes), and no MCP server
                 let plain = request(#"{"id":"g8","system":"s","user":"u","driver":"gemini","effort":"low"}"#)
                 XCTAssertEqual(try runAnswer(plain, try requestOptions(plain), cli: cli, work: temp(), send: { _ in true }, step: { _ in }).text, "ok")
@@ -864,7 +862,7 @@ final class RelayTests: XCTestCase {
     func testRealGeminiToolsRun() throws {
         guard ProcessInfo.processInfo.environment["CT_REAL_GEMINI_TOOLS"] == "1" else { throw XCTSkip("set CT_REAL_GEMINI_TOOLS=1, CT_REAL_SITE and CT_REAL_KEYS") }
         let cli = ProcessInfo.processInfo.environment["CT_REAL_GEMINI_BIN"] ?? binary("gemini", home: FileManager.default.homeDirectoryForCurrentUser) ?? "gemini"
-        XCTAssertTrue(geminiTakesPolicy(cli))
+        XCTAssertEqual(geminiTakesPolicy(cli), true)
         try realToolsRun("gemini", cli: cli)
     }
 

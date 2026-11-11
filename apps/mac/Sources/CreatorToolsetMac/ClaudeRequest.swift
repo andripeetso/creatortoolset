@@ -534,15 +534,21 @@ func geminiArguments(model: String, policy: String = "", mcp: Bool = false) -> [
     return args
 }
 
-/// Whether this Gemini CLI takes a policy file for one run (`--policy`); an older one runs without (and without the app's
-/// tools). Asked once per program file, so a run doesn't wait for a second Gemini start (about a second).
-func geminiTakesPolicy(_ cli: String) -> Bool {
+/// Whether this Gemini CLI takes a policy file for one run (`--policy`); an older one is not run (geminiAnswer), since
+/// nothing else holds its rules. Asked once per program file, so a run doesn't wait for a second Gemini start (about a
+/// second). nil: the ask got no answer (a busy Mac), which is not remembered and not "too old".
+func geminiTakesPolicy(_ cli: String) -> Bool? {
     let key = cli + "@" + "\((try? FileManager.default.attributesOfItem(atPath: realPath(cli)))?[.modificationDate] ?? "")"
     if let known = geminiPolicyLock.withLock({ geminiPolicyCLIs[key] }) { return known }
-    let takes = runQuick(cli, ["--help"], seconds: 15)?.contains("--policy") ?? false
+    guard let help = runQuick(cli, ["--help"], seconds: 15) else { return nil }
+    let takes = help.contains("--policy")
     geminiPolicyLock.withLock { geminiPolicyCLIs[key] = takes }
     return takes
 }
+
+/// What a Gemini CLI too old for a policy file is answered with. The site reads these words and installs the current one
+/// (local-ai.ts connectCli).
+let geminiTooOld = "The Gemini on this Mac is too old to run here. Update it."
 private let geminiPolicyLock = NSLock()
 private var geminiPolicyCLIs: [String: Bool] = [:]
 

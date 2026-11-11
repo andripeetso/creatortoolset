@@ -209,18 +209,17 @@ func geminiAnswer(_ req: RelayRequest, _ opts: RelayOptions, cli: String, work: 
     let prompt = "<instructions>\n\(system)\n</instructions>\n\n" + requestText(req.user, folder: folder)
     // the assistant: the app's MCP server for this run, in the run's own fresh folder (never a Workshop session's)
     var env = driverEnv(base: ProcessInfo.processInfo.environment).merging(geminiSignInEnv) { _, new in new }
-    var policy = ""
-    let takesPolicy = geminiTakesPolicy(cli)
-    let mcp = req.mcp.flatMap { cwd.path.hasPrefix(tmp.path) && takesPolicy ? $0 : nil }
+    // its rules live in a policy file: a Gemini CLI that takes none could leave plan mode and run a shell command, so it is not run
+    guard let takesPolicy = geminiTakesPolicy(cli) else { throw ClaudeFailure(message: "Gemini didn't start in time. Try again.") }
+    guard takesPolicy else { throw ClaudeFailure(message: geminiTooOld) }
+    let mcp = req.mcp.flatMap { cwd.path.hasPrefix(tmp.path) ? $0 : nil }
     if let mcp {
         try runMcpFiles(driver: "gemini", url: mcp.url, cwd: cwd)
         env.merge(runMcpEnv(driver: "gemini", token: mcp.token)) { _, new in new }
     }
-    if takesPolicy {
-        let file = tmp.appendingPathComponent("policy.toml")
-        try geminiPolicy(mcp: mcp != nil).write(to: file, atomically: true, encoding: .utf8)
-        policy = file.path
-    }
+    let file = tmp.appendingPathComponent("policy.toml")
+    try geminiPolicy(mcp: mcp != nil).write(to: file, atomically: true, encoding: .utf8)
+    let policy = file.path
     let outcome = try runStream(cli: cli, args: geminiArguments(model: opts.model, policy: policy, mcp: mcp != nil), cwd: cwd,
                                 env: env, prompt: prompt, folder: folder,
                                 send: send, step: step, tmp: tmp, stream: GeminiStream(cwd: cwd.path))
