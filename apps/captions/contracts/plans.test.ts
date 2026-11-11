@@ -41,5 +41,8 @@ describe("limit reached", () => {
     // a row shows the sentence alone: no "Claude said: …" tail, no time zone name
     expect(limitLine(limitMessage("You've hit your weekly limit · resets Nov 11 at 5pm (America/Costa_Rica)"))).toBe("Your Claude plan's weekly limit is reached; it resets Nov 11 at 5pm.");
     expect(limitLine(limitMessage("You've hit your limit"))).toBe("Your Claude plan's limit is reached.");
+    // Muse Code's: the Mac writes the reset time last (MuseStream.failure), formatted on that Mac
+    const muse = "Your Muse Code plan's usage limit is reached. Muse Code said: usage limit reached. It resets Nov 11, 2026 at 5:00 AM.";
+    expect(limitLine(limitMessage(muse, "Muse Code"))).toBe("Your Muse Code plan's limit is reached; it resets Nov 11, 2026 at 5:00 AM.");
   });
 });

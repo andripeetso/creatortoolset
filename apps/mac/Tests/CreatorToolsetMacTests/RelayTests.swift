@@ -33,13 +33,13 @@ final class RelayTests: XCTestCase {
 
     func testClaudeGeminiCodexAndTheAcpKindsRunHereAndOthersFailWithTheSameWords() throws {
         let root = temp()
-        for driver in ["musecode", "muse", "wat"] {
+        for driver in ["muse", "wat"] {
             let r = request(#"{"id":"j","system":"","user":"","driver":"\#(driver)"}"#)
             XCTAssertThrowsError(try requestOptions(r, root: root)) { error in
                 XCTAssertEqual((error as? RelayError)?.message, onlyRunnableMessage)
             }
         }
-        for driver in ["claude", "gemini", "codex", "grok", "cursor", "opencode", "antigravity", "pi"] {
+        for driver in ["claude", "gemini", "codex", "grok", "musecode", "cursor", "opencode", "antigravity", "pi"] {
             XCTAssertEqual(try requestOptions(request(#"{"id":"j","system":"","user":"","driver":"\#(driver)"}"#), root: root).driver, driver)
         }
     }
@@ -804,6 +804,63 @@ final class RelayTests: XCTestCase {
         let answer = try runAnswer(req, try requestOptions(req), cli: cli, work: temp(), send: { _ in true }, step: { _ in })
         print("REAL GROK: text=\(answer.text) usage=\(answer.usage)")
         XCTAssertTrue(answer.text.localizedCaseInsensitiveContains("OK"))
+    }
+
+    /// CT_REAL_MUSE=1 swift test --filter RealMuse: real runs through Muse Code, the way the relay runs it. CT_REAL_MUSE_BIN names
+    /// the copy (default: the one on this Mac) and CT_REAL_MUSE_HOME the home it runs in (its sign-in is that home's
+    /// ~/.config/muse). The runs go out with HOME set to it, so nothing lands in this Mac's own home.
+    private func withMuse(_ body: (String) throws -> Void) throws {
+        let env = ProcessInfo.processInfo.environment
+        guard env["CT_REAL_MUSE"] == "1" else { throw XCTSkip("set CT_REAL_MUSE=1 to run real Muse Code calls") }
+        let cli = env["CT_REAL_MUSE_BIN"] ?? binary("musecode", home: FileManager.default.homeDirectoryForCurrentUser) ?? "muse"
+        let old = env["HOME"]
+        if let home = env["CT_REAL_MUSE_HOME"] {
+            setenv("HOME", home, 1)
+            XCTAssertEqual(ProcessInfo.processInfo.environment["HOME"], home)   // what the run's environment is built from
+        }
+        defer { if let old { setenv("HOME", old, 1) } }
+        print("REAL MUSE: running \(cli), version \(cliVersion(cli) ?? "?")")
+        try body(cli)
+    }
+
+    /// Needs a signed-in home: one tiny answer from Meta's model on that plan. In a home that never signed in it fails with
+    /// the words a person sees.
+    func testRealMuseRun() throws {
+        try withMuse { cli in
+            let req = request(#"{"id":"real-muse","system":"Reply with just OK.","user":"Reply with just OK.","driver":"musecode","effort":"low"}"#)
+            do {
+                let answer = try runAnswer(req, try requestOptions(req), cli: cli, work: temp(), send: { _ in true }, step: { _ in })
+                print("REAL MUSE: text=\(answer.text) usage=\(answer.usage)")
+                XCTAssertTrue(answer.text.localizedCaseInsensitiveContains("OK"))
+            } catch let failure as ClaudeFailure {
+                print("REAL MUSE: failed: \(failure.message) limit=\(limitFlag("musecode", failure.message)) usage=\(failure.usage ?? [:])")
+                XCTFail(failure.message)
+            }
+        }
+    }
+
+    /// Needs no account: the same runs on Muse Code's echo provider (it says the prompt back), through a copy of the program
+    /// that swaps `--provider meta` for `--provider echo`. An answer with no folder (no tools), one with a folder (shell and
+    /// writes off), and one the site stops at its first text.
+    func testRealMuseEchoRun() throws {
+        try withMuse { cli in
+            let dir = temp()
+            let echo = dir.appendingPathComponent("muse-echo")
+            try "#!/bin/bash\nargs=(); for a in \"$@\"; do [ \"$a\" = meta ] && a=echo; args+=(\"$a\"); done\nexec \(shellQuote(cli)) \"${args[@]}\"\n"
+                .write(to: echo, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: echo.path)
+            for files in [#"{}"#, #"{"notes.md":"Tiny Acrobatics"}"#] {
+                let req = request(#"{"id":"real-muse-echo","system":"Reply with just OK.","user":"Say hello.","driver":"musecode","effort":"low","files":\#(files)}"#)
+                let answer = try runAnswer(req, try requestOptions(req), cli: echo.path, work: temp(), send: { _ in true }, step: { _ in })
+                print("REAL MUSE ECHO: files=\(files) text=\(answer.text.debugDescription) usage=\(answer.usage)")
+                XCTAssertTrue(answer.text.hasPrefix("echo: <instructions>\nReply with just OK.\n</instructions>"))
+                XCTAssertTrue(answer.text.hasSuffix("Say hello."))
+            }
+            let req = request(#"{"id":"real-muse-stop","system":"S","user":"U","driver":"musecode","effort":"low"}"#)
+            XCTAssertThrowsError(try runAnswer(req, try requestOptions(req), cli: echo.path, work: temp(), send: { _ in false }, step: { _ in })) { error in
+                XCTAssertEqual((error as? ClaudeFailure)?.stopped, true)
+            }
+        }
     }
 
     /// CT_REAL_GEMINI=1 swift test --filter RealGemini: one tiny run through the Gemini CLI setup installed, the way the relay

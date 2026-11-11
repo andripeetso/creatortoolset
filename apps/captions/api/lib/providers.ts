@@ -386,11 +386,6 @@ export function limitFallbacks(scope: Scope, after: ProviderInstance, model: str
 /** The instance of a scope's settings a check runs on (admins: any scope; others: their own). */
 export const instanceIn = (scope: Scope, id: string): ProviderInstance | undefined => (scope === "workspace" ? providerSettings() : ownSettings(scope))?.instances.find((i) => i.id === id);
 
-/** Why a driver the Mac app can't run yet is shown disabled; the rest share the general line. */
-const NOT_RUN_REASON: Partial<Record<Driver, string>> = {
-  musecode: "Not in the Mac app yet.",
-};
-
 /**
  * The instance fields a job carries to its Mac, each only when set: the plug-in endpoint, the environment names, the
  * launch arguments, and the ACP command (or the program a manual setup gave, for an ACP kind).
@@ -428,7 +423,7 @@ export function driverCatalog(devices: Array<Device & { online: boolean }>): Dri
       label: d.label,
       featured: d.featured,
       runs,
-      ...(runs ? {} : { reason: NOT_RUN_REASON[d.id] ?? "The Creator Toolset Mac app can't run this CLI yet." }),
+      ...(runs ? {} : { reason: "The Creator Toolset Mac app can't run this CLI yet." }),
       devices: perDevice(d.id),
     };
   });

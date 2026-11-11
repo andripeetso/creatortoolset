@@ -68,7 +68,8 @@ describe("the driver catalog (GET /api/providers/drivers)", () => {
     expect(by("acp")).toMatchObject({ featured: false, runs: true });
     expect(by("pi")).toMatchObject({ featured: true, runs: true });
     expect(by("pi")).not.toHaveProperty("reason");
-    expect(by("musecode").reason).toMatch(/Not in the Mac app yet/); // shown disabled with its reason
+    expect(by("musecode")).toMatchObject({ featured: true, runs: true }); // Muse Code runs in the Mac app (MuseStream)
+    expect(by("musecode")).not.toHaveProperty("reason");
     expect(by("claude")).not.toHaveProperty("reason");
   });
 

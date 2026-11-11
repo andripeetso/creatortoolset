@@ -175,12 +175,16 @@ func signInFrom(driver: String, output: String) -> (signedIn: Bool, plan: String
         return (o["loggedIn"] as? Bool ?? false, plan.isEmpty ? nil : String(plan.prefix(80)))
     case "codex":
         return (output.localizedCaseInsensitiveContains("logged in") && !output.localizedCaseInsensitiveContains("not logged in"), nil)
+    case "musecode":   // `muse usage --json`: "not logged in: run `muse login` first" signed out; the plan's allowance (its tier) signed in
+        if output.localizedCaseInsensitiveContains("not logged in") { return (false, nil) }
+        guard let data = output.data(using: .utf8), let o = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
+        return (true, (o["tier"] as? String).flatMap { $0.isEmpty ? nil : String($0.prefix(80)) })
     default:
         return nil
     }
 }
 
-private let signInArgs: [String: [String]] = ["claude": ["auth", "status", "--json"], "codex": ["login", "status"]]
+private let signInArgs: [String: [String]] = ["claude": ["auth", "status", "--json"], "codex": ["login", "status"], "musecode": ["usage", "--json"]]
 
 /// the Mac relay drivers(): each driver's CLI, installed, its version and path.
 /// The sign-in probe reads each CLI's login (Claude's from the keychain), so it runs only with the plan-limits opt-in on

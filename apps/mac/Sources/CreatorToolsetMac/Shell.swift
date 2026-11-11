@@ -57,6 +57,7 @@ final class Shell: NSObject, ObservableObject {
     private let aiKey = "aiOnThisMac"
     private var runner: RelayRunner?
     private var runnerID = UUID()
+    private let museLogin = MuseLogin()
 
     private var lastBlankReload = Date.distantPast
 
@@ -519,9 +520,21 @@ final class Shell: NSObject, ObservableObject {
     /// The provider page's Sign in button: writes the CLI's login as a .command file under Application Support and opens
     /// it, so Terminal runs it. Only the CLIs in signInCommands; the home must be a folder under the user's home.
     /// Terminal needs no Apple Events permission for this. Coming back to the app re-reports this Mac's sign-ins (init's
-    /// didBecomeActive observer), which the page reads while it waits.
+    /// didBecomeActive observer), which the page reads while it waits. Muse Code needs no Terminal: Meta's page opens in
+    /// the browser, and a sheet says the code that page asks to confirm.
     func signIn(driver: String, home: String) {
         let userHome = FileManager.default.homeDirectoryForCurrentUser
+        if driver == "musecode", let path = binary(driver, home: userHome) {
+            return museLogin.start(binary: path) { page, code in
+                DispatchQueue.main.async { [weak self] in
+                    NSWorkspace.shared.open(page)
+                    let a = NSAlert()
+                    a.messageText = "Sign in to Muse Code in your browser"
+                    a.informativeText = "Meta's page asks you to confirm this code: \(code)"
+                    if let window = self?.webView.window { a.beginSheetModal(for: window) } else { a.runModal() }
+                }
+            }
+        }
         do {
             let folder = home.isEmpty ? "" : try checkedHome(home, root: userHome)
             guard let path = binary(driver, home: userHome),

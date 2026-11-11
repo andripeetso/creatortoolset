@@ -30,8 +30,8 @@ import { getLocalAi, isLocalCli, LocalAiRows, localInstall, localSignIn } from "
 import { Advanced, Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Row, Section, SettingsSelect, saveFailed, Status, StatusDot } from "./ui";
 import type { SearchRowId } from "./search";
 
-/** The tools the Mac app can open a sign-in for in Terminal (the Mac's signInCommands). */
-const SIGN_IN_DRIVERS: string[] = ["claude", "codex", "grok"];
+/** The tools the Mac app can start a sign-in for: in Terminal (the Mac's signInCommands), Muse Code's in the browser. */
+const SIGN_IN_DRIVERS: string[] = ["claude", "codex", "grok", "musecode"];
 /** The "Use the Default" choice of a job (a select's option needs a value; "" is not allowed). */
 const USE_DEFAULT = "use-default";
 
@@ -240,7 +240,7 @@ export function ProvidersSection({ sub }: { sub?: string }) {
 
   const runCheck = (inst: ProviderInstance) => testOne(scope, inst.id);
 
-  // The Mac app's bridge (TitleBar.swift, handler "signIn") opens the CLI's sign-in in Terminal, then the page re-reads.
+  // The Mac app's bridge (TitleBar.swift, handler "signIn") opens the CLI's sign-in (Terminal, or the browser for Muse Code), then the page re-reads.
   const signIn = (inst: ProviderInstance) => {
     (window as unknown as { webkit?: { messageHandlers?: { signIn?: { postMessage: (m: unknown) => void } } } }).webkit?.messageHandlers?.signIn?.postMessage({
       driver: inst.driver,

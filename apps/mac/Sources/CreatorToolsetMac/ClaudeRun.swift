@@ -1,4 +1,4 @@
-// One run of a CLI on this Mac (Claude, Gemini, Codex or Grok): the Mac relay answer() and stream(). The folder, the
+// One run of a CLI on this Mac (Claude, Gemini, Codex, Grok or Muse Code): the Mac relay answer() and stream(). The folder, the
 // session and the command line come from ClaudeRequest.swift; this file starts the process, follows its output,
 // and says how it ended. Blocking code: it runs on the relay's own threads, never on the main thread.
 import Foundation
@@ -71,6 +71,7 @@ func runAnswer(_ req: RelayRequest, _ opts: RelayOptions, cli: String, work: URL
     case "gemini": return try geminiAnswer(req, opts, cli: cli, work: work, send: send, step: step)
     case "codex": return try codexAnswer(req, opts, cli: cli, work: work, send: send, step: step)
     case "grok": return try grokAnswer(req, opts, cli: cli, work: work, send: send, step: step)
+    case "musecode": return try museAnswer(req, opts, cli: cli, work: work, send: send, step: step)
     case "cursor", "opencode", "antigravity", "pi", "acp": return try acpAnswer(req, opts, work: work, send: send)
     default: return try claudeAnswer(req, opts, cli: cli, work: work, send: send, step: step, ask: ask)
     }
@@ -285,6 +286,33 @@ func grokAnswer(_ req: RelayRequest, _ opts: RelayOptions, cli: String, work: UR
     return ClaudeAnswer(text: text, usage: usage, session: "", state: "")
 }
 
+/// the Mac relay answer() for Muse Code: one `muse serve` for one session and one turn, in a fresh folder or the Workshop
+/// session's; then its stdin closes and it exits. Its turns have no system slot, so the instructions go in front of the request
+/// text, as for Gemini. A stop kills it, as for the others. No session is kept (state "").
+func museAnswer(_ req: RelayRequest, _ opts: RelayOptions, cli: String, work: URL,
+                send: @escaping (String) -> Bool, step: @escaping (String) -> Void) throws -> ClaudeAnswer {
+    let fm = FileManager.default
+    let folder = !req.files.isEmpty || !req.session.isEmpty
+    let tmp = fm.temporaryDirectory.appendingPathComponent("relay-\(UUID().uuidString)")
+    try fm.createDirectory(at: tmp, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: tmp) }
+
+    let (cwd, system) = try prepareFolder(req, work: work, tmp: tmp)
+    let prompt = "<instructions>\n\(system)\n</instructions>\n\n" + requestText(req.user, folder: folder)
+    let stream = MuseStream(prompt: prompt, model: opts.model, effort: opts.effort, cwd: realPath(cwd.path))
+    let outcome = try runStream(cli: cli, args: museArguments(tools: folder || req.web), cwd: cwd, env: driverEnv(base: ProcessInfo.processInfo.environment),
+                                prompt: stream.opening, folder: folder, send: send, step: step, tmp: tmp, stream: stream, held: true)
+    if outcome.killed {
+        throw ClaudeFailure(message: "the site stopped waiting", usage: stoppedRow(outcome.stream.seen), stopped: true)
+    }
+    let result = outcome.stream.result(err: outcome.err)
+    let usage = genericUsageRow(result, model: opts.model)
+    if result["is_error"] as? Bool == true {
+        throw ClaudeFailure(message: resultText(result), usage: usage)
+    }
+    return ClaudeAnswer(text: result["result"] as? String ?? "", usage: usage, session: "", state: "")
+}
+
 /// the Mac relay answer()'s folder: a Workshop session keeps one folder (the same path every turn, under `work`); else a
 /// fresh one in `tmp`. With a folder, the request's files are written into it. Returns the folder and the system text.
 func prepareFolder(_ req: RelayRequest, work: URL, tmp: URL, emptyFolder: URL? = nil) throws -> (cwd: URL, system: String) {
@@ -314,10 +342,11 @@ func prepareFolder(_ req: RelayRequest, work: URL, tmp: URL, emptyFolder: URL? =
 
 /// the Mac relay stream(): one CLI run followed as it streams. Text goes out at most every 0.4 s and at least every 20 s;
 /// with a folder only the JSON answer streams (the CLI may talk between reads). With `ask` the prompt is one stream-json
-/// message and stdin stays open for the answers to Claude Code's questions until its result line.
+/// message and stdin stays open for the answers to Claude Code's questions until its result line. `held`: the prompt is the
+/// first protocol line, and stdin stays open for the stream's own lines (`.write`) until its result (Muse Code).
 private func runStream<S: RunStream>(cli: String, args: [String], cwd: URL, env: [String: String], prompt: String, folder: Bool,
                                      send: @escaping (String) -> Bool, step: @escaping (String) -> Void, tmp: URL,
-                                     stream: S, ask: AskSite? = nil) throws -> StreamOutcome<S> {
+                                     stream: S, ask: AskSite? = nil, held: Bool = false) throws -> StreamOutcome<S> {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: cli)
     process.arguments = args
@@ -344,7 +373,7 @@ private func runStream<S: RunStream>(cli: String, args: [String], cwd: URL, env:
     DispatchQueue.global(qos: .utility).async {
         if ask == nil {
             stdin.write(Data(prompt.utf8))
-            stdin.close()
+            if !held { stdin.close() }
         } else {
             stdin.write(userMessageLine(prompt))
         }
@@ -408,7 +437,9 @@ private func runStream<S: RunStream>(cli: String, args: [String], cwd: URL, env:
                 case .cancelAsk(let id):
                     state.with { _ = $0.cancelled.insert(id) }
                 case .result:
-                    if ask != nil { stdin.close() }   // nothing more to answer: the CLI ends
+                    if ask != nil || held { stdin.close() }   // nothing more to answer: the CLI ends
+                case .write(let line):
+                    stdin.write(line)
                 case .text(let text):
                     let go = state.with { s -> Bool in
                         guard !(folder && !looksLikeJSON(text)), Date().timeIntervalSince(s.lastSend) > sendEverySeconds else { return false }
