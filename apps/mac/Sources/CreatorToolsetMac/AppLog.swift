@@ -49,9 +49,46 @@ private let pageHead = """
     </style>
     """
 
-/// A one-line page for the window while the server on this Mac starts, or after it stopped.
+/// A one-line page for the window after the server on this Mac stopped.
 func messagePage(_ text: String) -> String {
     pageHead + "<div><p>\(esc(text))</p></div>"
+}
+
+/// The CT mark's three strokes (the same mark as the app icon, HomeLink.tsx's ToolsetLogo), class `k` on each.
+private func ctStrokes(_ k: String) -> String {
+    """
+    <path class="\(k) c" pathLength="1" d="M412 285A235 235 0 1 0 582 682" stroke-width="130"/>
+    <path class="\(k) b" pathLength="1" d="M410 285H910" stroke-width="130"/>
+    <path class="\(k) t" pathLength="1" d="M726 350V820" stroke-width="128"/>
+    """
+}
+
+/// The window while it waits (the server on this Mac starting, data moving): the CT mark draws itself, C then T, and
+/// a soft light runs through it until the site opens. A line under it only when the person asked for the wait.
+func splashPage(_ line: String? = nil) -> String {
+    pageHead + """
+    <style>
+    .mark{width:120px;height:120px;display:block;margin:0 auto;overflow:visible}
+    .s{fill:none;stroke-dasharray:1 1;stroke-dashoffset:1;animation:draw .5s cubic-bezier(.3,0,.2,1) forwards}
+    .c{animation-duration:.65s} .b{animation-delay:.5s} .t{animation-delay:.75s}
+    .r{fill:none;stroke-dasharray:.22 1.3;stroke-dashoffset:.22;animation:run 2.8s cubic-bezier(.45,0,.35,1) 1.2s infinite}
+    .r.b{animation-delay:1.75s} .r.t{animation-delay:2s}
+    .glow{position:fixed;inset:0;background:radial-gradient(circle,#4a28d045 0,transparent 30%);opacity:0;animation:show 1s ease .3s forwards,breathe 2.6s ease-in-out 1.3s infinite}
+    .line{margin-top:28px;color:#a1a1aa;opacity:0;animation:show .4s ease 1s forwards}
+    @keyframes draw{to{stroke-dashoffset:0}} @keyframes run{45%,100%{stroke-dashoffset:-1}}
+    @keyframes show{to{opacity:1}} @keyframes breathe{50%{opacity:.5}}
+    @media (prefers-reduced-motion:reduce){.s{animation:none;stroke-dashoffset:0}.shine{display:none}}
+    </style>
+    <div class="glow"></div>
+    <div role="status" aria-label="\(esc(line ?? "Opening Creator Toolset"))">
+    <svg class="mark" viewBox="111 120 800 800" aria-hidden="true">
+    <linearGradient id="w" gradientUnits="userSpaceOnUse" x1="0" y1="200" x2="0" y2="840"><stop offset="0" stop-color="#ece7ff"/><stop offset="1" stop-color="#b3a1ff"/></linearGradient>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="22"/></filter>
+    <g stroke="url(#w)">\(ctStrokes("s"))</g>
+    <g class="shine" stroke="#fff" opacity=".8" filter="url(#soft)">\(ctStrokes("r"))</g>
+    </svg>\(line.map { "<p class=\"line\">\(esc($0))</p>" } ?? "")
+    </div>
+    """
 }
 
 /// The page shown when the site can't be reached; it retries by itself.

@@ -1,23 +1,29 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { drawFrame, outputSize, trimOf, type CameraImage, type ScreenEvents, type ScreenLook } from "@/lib/screen-recording";
 import { frameReader, type FrameReader } from "@/lib/frame-reader";
+import { Deck } from "./deck";
 
 type Path = [number, number, number][];
 
 /** The preview of the screen recording editor: the video, its picture on the canvas, and where it is in time. */
 export type Player = {
-  video: RefObject<HTMLVideoElement | null>;
-  cam: RefObject<HTMLVideoElement | null>;
+  /** Where the player keeps its <video> elements (out of sight). */
+  holder: RefObject<HTMLDivElement | null>;
   canvas: RefObject<HTMLCanvasElement | null>;
   /** The box the canvas is fitted into. */
   stage: RefObject<HTMLDivElement | null>;
   playing: boolean;
   /** The first frame is on the canvas. */
   ready: boolean;
+  /** The video could not be opened. */
+  failed: boolean;
   /** The recording's length as the file itself reports it (0 until known). */
   mediaDuration: number;
   muted: boolean;
   setMuted: (muted: boolean) => void;
+  /** At the end of the kept part it starts again (on unless switched off; remembered). */
+  loop: boolean;
+  setLoop: (loop: boolean) => void;
   /** Where the playhead is (the place a scrub is heading for, while the video catches up). */
   time: () => number;
   /** Called with the time whenever it moves: every painted frame while playing, every seek. */
@@ -27,39 +33,48 @@ export type Player = {
   seek: (t: number) => void;
   toggle: () => void;
   pause: () => void;
+  /** The recording's width over its height, as the file has it (0 until known). */
+  ratio: () => number;
   /** The recording's current frame, whole, into a small canvas (the zoom's aim pad). False before the first frame. */
   drawSource: (ctx: CanvasRenderingContext2D) => boolean;
-  /** Spread on the screen <video>. */
-  videoProps: {
-    onPlay: () => void;
-    onPause: () => void;
-    onSeeked: () => void;
-    onLoadedData: () => void;
-    onLoadedMetadata: () => void;
-  };
 };
 
-const MUTED_KEY = "screen-editor-muted";
-const readMuted = () => {
+const stored = (key: string, fallback: boolean) => {
   try {
-    return localStorage.getItem(MUTED_KEY) === "1";
+    const v = localStorage.getItem(key);
+    return v === null ? fallback : v === "1";
   } catch {
-    return false;
+    return fallback;
   }
 };
+const store = (key: string, on: boolean) => {
+  try {
+    localStorage.setItem(key, on ? "1" : "0");
+  } catch {
+    // kept for this visit only
+  }
+};
+const MUTED_KEY = "screen-editor-muted";
+const LOOP_KEY = "screen-editor-loop";
 
 /**
  * Plays the recording and paints it with its look. What keeps it light (measured in WebKit on a 3008×3130 recording,
  * where drawing the <video> itself onto a 2D canvas takes 23 to 58 ms a frame):
  * - while it plays, or while a control is being dragged, the graphics card reads the frame (lib/frame-reader.ts,
- *   about 3 ms), and only when the video shows a new one;
+ *   about 3 ms), when the video's clock has moved;
  * - once things have stood still for a moment, one frame is painted with the 2D canvas's own best scaling, from a
  *   bitmap of the frame (33 ms, once);
  * - nothing is painted while it is paused and nothing changes;
  * - the time goes to listeners (the playhead, the clock), never through React state.
+ * What keeps it steady: the video is never asked to announce its frames (requestVideoFrameCallback made every start
+ * stand still after 0.3 s), and each video is on two elements that take turns (deck.ts), because one that has played
+ * and is then moved stands still for a quarter of a second soon after it starts again.
+ * It plays round and round (the kept part) unless that is switched off.
  * `o` is read through a ref, so a new look never restarts the loop.
  */
 export function usePlayer(o: {
+  url: string;
+  cameraUrl: string | null;
   look: ScreenLook | null;
   events: ScreenEvents | null;
   path: Path;
@@ -67,14 +82,21 @@ export function usePlayer(o: {
   width: number;
   height: number;
 }): Player {
-  const video = useRef<HTMLVideoElement>(null);
-  const cam = useRef<HTMLVideoElement>(null);
+  const holder = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const stage = useRef<HTMLDivElement>(null);
+  const screen = useRef<Deck | null>(null);
+  const camera = useRef<Deck | null>(null);
   const [playing, setPlaying] = useState(false);
   const [ready, setReady] = useState(false);
+  const [failed, setFailed] = useState(false);
   const [mediaDuration, setMediaDuration] = useState(0);
-  const [muted, setMutedState] = useState(readMuted);
+  const [muted, setMutedState] = useState(() => stored(MUTED_KEY, false));
+  const [loop, setLoopState] = useState(() => stored(LOOP_KEY, true));
+  const loopRef = useRef(loop);
+  loopRef.current = loop;
+  const mutedRef = useRef(muted);
+  mutedRef.current = muted;
   const live = useRef(o);
   live.current = o;
 
@@ -94,12 +116,11 @@ export function usePlayer(o: {
     dirty: true,
     /** When the careful paint is due (0 = not owed). */
     settle: 0,
-    /** The video tells us about each new frame (requestVideoFrameCallback); false = look at its clock instead. */
-    frameCalls: false,
-    frameCallSeen: 0,
-    playedSince: 0,
     /** A seek waiting for the one in flight to land. */
     target: null as number | null,
+    /** It is playing as far as the person is concerned, while the videos are held for a jump or a takeover. */
+    held: false,
+    resume: 0,
     started: false,
     box: { w: 0, h: 0 },
     times: new Set<(t: number) => void>(),
@@ -107,10 +128,97 @@ export function usePlayer(o: {
   }).current;
 
   const emit = useCallback((t: number) => s.times.forEach((fn) => fn(t)), [s]);
+  const length = useCallback(() => live.current.duration || screen.current?.el.duration || 0, []);
 
   useEffect(() => {
     s.dirty = true;
   }, [o.look, o.events, o.path, s]);
+
+  /** Plays from where it stands (from the start of the kept part when it stands at its end or outside it). */
+  const play = useCallback(() => {
+    const deck = screen.current;
+    const look = live.current.look;
+    if (!deck || !look) return;
+    const { start, end } = trimOf(look, length());
+    const t = deck.el.currentTime;
+    if (t >= end - 0.05 || t < start - 0.05) {
+      deck.seek(start);
+      camera.current?.seek(start);
+    }
+    s.held = true;
+    setPlaying(true);
+    const stopped = () => {
+      s.held = false;
+      setPlaying(false);
+    };
+    deck.play().then((mine) => {
+      if (mine) s.held = false;
+    }, stopped);
+    void camera.current?.play().catch(() => {});
+  }, [length, s]);
+
+  const pause = useCallback(() => {
+    window.clearTimeout(s.resume);
+    s.held = false;
+    screen.current?.pause();
+    camera.current?.pause();
+    setPlaying(false);
+    s.dirty = true;
+  }, [s]);
+
+  // the videos: two elements each (deck.ts), made here so that they can take turns
+  useEffect(() => {
+    const box = holder.current;
+    if (!box) return;
+    setFailed(false);
+    const deck = new Deck(box, o.url, true, mutedRef.current, {
+      play: () => setPlaying(true),
+      pause: () => {
+        // held for a jump or a takeover, or at its end with the spare already started: it is still playing
+        if (s.held || deck.turning) return;
+        setPlaying(false);
+        s.fresh = true; // the frame it stopped on
+        s.dirty = true;
+      },
+      seeked: () => {
+        const next = s.target;
+        s.target = null;
+        if (next !== null && Math.abs(next - deck.el.currentTime) > 0.01) {
+          deck.seek(next);
+          camera.current?.seek(next);
+          return;
+        }
+        s.fresh = true;
+        s.dirty = true;
+        emit(deck.el.currentTime);
+      },
+      loaded: () => {
+        s.fresh = true;
+        s.dirty = true;
+      },
+      // it reached its own end after all (the loop turns a little before it): round again
+      ended: () => {
+        if (deck.turning) return; // the spare is on its way: the next frame's turn takes it over
+        if (loopRef.current) play();
+        else setPlaying(false);
+      },
+      duration: (d) => setMediaDuration(d),
+      error: () => setFailed(true),
+    });
+    screen.current = deck;
+    const quiet = () => {};
+    camera.current = o.cameraUrl
+      ? new Deck(box, o.cameraUrl, false, true, { play: quiet, pause: quiet, seeked: quiet, loaded: quiet, ended: quiet, duration: quiet, error: quiet })
+      : null;
+    s.fresh = true;
+    s.dirty = true;
+    return () => {
+      window.clearTimeout(s.resume);
+      deck.dispose();
+      camera.current?.dispose();
+      screen.current = camera.current = null;
+    };
+  }, [o.url, o.cameraUrl, emit, play, s]);
 
   useEffect(() => {
     let raf = 0;
@@ -123,12 +231,12 @@ export function usePlayer(o: {
 
     /** A bitmap of the frame the video is on, for the careful paint. */
     const grab = async () => {
-      const v = video.current;
+      const v = screen.current?.el;
       if (!v || v.readyState < 2 || s.grabbing || s.direct) return;
       s.grabbing = true;
       const at = v.currentTime;
       try {
-        const k = cam.current;
+        const k = camera.current?.el;
         const [frame, camFrame] = await Promise.all([createImageBitmap(v), k && k.readyState >= 2 ? createImageBitmap(k) : null]);
         if (!alive) {
           frame.close();
@@ -150,7 +258,7 @@ export function usePlayer(o: {
 
     const paint = (t: number, careful: boolean) => {
       const c = canvas.current;
-      const v = video.current;
+      const v = screen.current?.el;
       const { look, events, path, width, height } = live.current;
       if (!c || !v || !look || !events || v.readyState < 2) return false;
       // the canvas: the output's shape, as large as the stage allows, in the screen's own pixels
@@ -171,12 +279,12 @@ export function usePlayer(o: {
       if (c.style.height !== `${cssH}px`) c.style.height = `${cssH}px`;
       const ctx = c.getContext("2d", { alpha: false });
       if (!ctx) return false;
-      const camEl = cam.current;
+      const camEl = camera.current?.el;
       const liveCamera: CameraImage | null =
         camEl && camEl.readyState >= 2 ? { image: camEl, width: camEl.videoWidth, height: camEl.videoHeight } : null;
       if (careful && s.frame && !s.direct) {
-        const camera: CameraImage | null = s.camFrame ? { image: s.camFrame, width: s.camFrame.width, height: s.camFrame.height } : liveCamera;
-        drawFrame(ctx, s.frame, s.frame.width, s.frame.height, t, look, path, events.clicks, camera);
+        const cam: CameraImage | null = s.camFrame ? { image: s.camFrame, width: s.camFrame.width, height: s.camFrame.height } : liveCamera;
+        drawFrame(ctx, s.frame, s.frame.width, s.frame.height, t, look, path, events.clicks, cam);
         return true;
       }
       const reader = s.reader;
@@ -198,21 +306,50 @@ export function usePlayer(o: {
 
     const tick = () => {
       raf = requestAnimationFrame(tick);
-      const v = video.current;
+      const deck = screen.current;
       const { look, duration } = live.current;
-      if (!v || !look) return;
-      const t = v.currentTime;
-      const moving = !v.paused && !v.ended;
+      if (!deck || !look) return;
+      let v = deck.el;
+      let t = v.currentTime;
+      // at its own end with the spare already started for the turn, it still counts as running
+      const running = (!v.paused && !v.ended) || deck.turning;
+      const moving = running || s.held;
       const now = performance.now();
-      if (moving) {
-        if (t >= trimOf(look, duration || v.duration || 0).end) v.pause();
-        const k = cam.current;
-        if (k && Math.abs(k.currentTime - t) > 0.15) k.currentTime = t;
-        if (!s.playedSince) s.playedSince = now;
-        // no word from the video about its frames after half a second of playing: go by its clock instead
-        if (s.frameCalls && now - s.playedSince > 500 && s.frameCallSeen < s.playedSince) s.frameCalls = false;
-        if (!s.frameCalls && t !== s.takenAt && now - s.takenWhen >= 15) s.fresh = true;
-      } else s.playedSince = 0;
+      if (running && !s.held) {
+        const cam = camera.current;
+        const kept = trimOf(look, duration || v.duration || 0);
+        if (loopRef.current) {
+          deck.park(kept.start);
+          cam?.park(kept.start);
+          // a video takes a moment to get going: the spare is started a little before the end, and takes over at it
+          if (!deck.turning && t >= kept.end - 0.25 && deck.canTurn()) {
+            deck.beginTurn();
+            if (cam?.canTurn()) cam.beginTurn();
+          }
+          if (t >= kept.end - 0.04 || v.ended) {
+            if (deck.turning) {
+              deck.finishTurn();
+              if (cam?.turning) cam.finishTurn();
+              else if (cam) {
+                cam.seek(kept.start);
+                void cam.play().catch(() => {});
+              }
+              v = deck.el;
+              t = v.currentTime;
+              s.fresh = true;
+            } else {
+              // no spare ready (a kept part shorter than a video takes to load): held, moved, played again
+              s.held = true;
+              v.pause();
+              cam?.el.pause();
+              deck.seek(kept.start);
+              cam?.seek(kept.start);
+              s.resume = window.setTimeout(play, 200);
+            }
+          }
+        } else if (t >= kept.end - 0.03) pause();
+        if (t !== s.takenAt && now - s.takenWhen >= 12) s.fresh = true;
+      }
 
       if (s.dirty || moving) {
         if (paint(s.target ?? t, false)) {
@@ -223,27 +360,14 @@ export function usePlayer(o: {
             setReady(true);
           }
         }
-        if (moving) emit(t);
+        if (running) emit(t);
       } else if (s.settle && now >= s.settle && !v.seeking) {
-        // it stands still: the frame once more, the way the export draws it
+        // it stands still: the frame once more, with the canvas's best scaling
         if (!s.direct && s.frameAt !== t) void grab().then(() => alive && (s.settle = s.settle && performance.now()));
         else if (paint(t, true)) s.settle = 0;
       }
     };
     raf = requestAnimationFrame(tick);
-
-    // the video says when it shows a new frame, so a still screen costs nothing
-    const v = video.current;
-    let frameCall = 0;
-    if (v && "requestVideoFrameCallback" in v) {
-      s.frameCalls = true;
-      const onFrame = () => {
-        s.frameCallSeen = performance.now();
-        s.fresh = true;
-        frameCall = v.requestVideoFrameCallback(onFrame);
-      };
-      frameCall = v.requestVideoFrameCallback(onFrame);
-    }
 
     const box = stage.current;
     const watch = box
@@ -260,7 +384,6 @@ export function usePlayer(o: {
     return () => {
       alive = false;
       cancelAnimationFrame(raf);
-      if (v && frameCall) v.cancelVideoFrameCallback(frameCall);
       watch?.disconnect();
       s.reader?.dispose();
       s.reader = null;
@@ -270,40 +393,37 @@ export function usePlayer(o: {
       s.frameAt = -1;
       s.fresh = true;
     };
-  }, [emit, s]);
+  }, [emit, pause, play, s]);
 
   useEffect(() => {
-    if (video.current) video.current.muted = muted;
+    screen.current?.setMuted(muted);
   }, [muted]);
 
-  const length = useCallback(() => live.current.duration || video.current?.duration || 0, []);
-  const jump = useCallback((t: number) => {
-    const v = video.current;
-    if (!v) return;
-    v.currentTime = t;
-    if (cam.current) cam.current.currentTime = t;
-  }, []);
   const seek = useCallback(
     (t: number) => {
-      const v = video.current;
-      if (!v) return;
+      const deck = screen.current;
+      if (!deck) return;
       const at = Math.max(0, Math.min(length(), t));
       emit(at);
       s.dirty = true;
+      // while it plays: held for the jump (the picture follows a drag), and played again a moment after the last one
+      const v = deck.el;
+      if ((!v.paused && !v.ended) || s.held) {
+        s.held = true;
+        deck.pause();
+        camera.current?.pause();
+        window.clearTimeout(s.resume);
+        s.resume = window.setTimeout(play, 180);
+      }
       // one seek at a time: the newest waits for the one in flight (a 4K frame takes a while to reach)
-      if (v.seeking) s.target = at;
-      else jump(at);
+      if (deck.el.seeking) s.target = at;
+      else {
+        deck.seek(at);
+        camera.current?.seek(at);
+      }
     },
-    [emit, jump, length, s],
+    [emit, length, play, s],
   );
-  const play = useCallback(() => {
-    const v = video.current;
-    const look = live.current.look;
-    if (!v || !look) return;
-    const { start, end } = trimOf(look, length());
-    if (v.currentTime >= end - 0.05 || v.currentTime < start - 0.05) jump(start);
-    void v.play().catch(() => {});
-  }, [jump, length]);
 
   // it opens playing, from the start of the kept part; a refused play() leaves it on its first frame
   const opened = useRef(false);
@@ -316,23 +436,24 @@ export function usePlayer(o: {
 
   return useMemo<Player>(
     () => ({
-      video,
-      cam,
+      holder,
       canvas,
       stage,
       playing,
       ready,
+      failed,
       mediaDuration,
       muted,
       setMuted: (m) => {
         setMutedState(m);
-        try {
-          localStorage.setItem(MUTED_KEY, m ? "1" : "0");
-        } catch {
-          // kept for this visit only
-        }
+        store(MUTED_KEY, m);
       },
-      time: () => s.target ?? video.current?.currentTime ?? 0,
+      loop,
+      setLoop: (on) => {
+        setLoopState(on);
+        store(LOOP_KEY, on);
+      },
+      time: () => s.target ?? screen.current?.el.currentTime ?? 0,
       onTime: (fn) => {
         s.times.add(fn);
         return () => void s.times.delete(fn);
@@ -342,10 +463,19 @@ export function usePlayer(o: {
         return () => void s.frames.delete(fn);
       },
       seek,
-      toggle: () => (video.current?.paused ? play() : video.current?.pause()),
-      pause: () => video.current?.pause(),
+      toggle: () => {
+        const v = screen.current?.el;
+        if (!v) return;
+        if ((v.paused || v.ended) && !s.held) play();
+        else pause();
+      },
+      pause,
+      ratio: () => {
+        const v = screen.current?.el;
+        return v && v.videoWidth && v.videoHeight ? v.videoWidth / v.videoHeight : 0;
+      },
       drawSource: (ctx) => {
-        const v = video.current;
+        const v = screen.current?.el;
         // the bitmap when it is of this very frame (it is, once the picture has stood still); else the video itself
         const source = s.frame && v && s.frameAt === v.currentTime ? s.frame : v && v.readyState >= 2 ? v : null;
         if (!source) return false;
@@ -353,37 +483,7 @@ export function usePlayer(o: {
         ctx.drawImage(source, 0, 0, ctx.canvas.width, ctx.canvas.height);
         return true;
       },
-      videoProps: {
-        onPlay: () => {
-          setPlaying(true);
-          if (cam.current) void cam.current.play().catch(() => {});
-        },
-        onPause: () => {
-          setPlaying(false);
-          cam.current?.pause();
-          s.fresh = true; // the frame it stopped on
-          s.dirty = true;
-        },
-        onSeeked: () => {
-          const v = video.current;
-          if (!v) return;
-          const next = s.target;
-          s.target = null;
-          if (next !== null && Math.abs(next - v.currentTime) > 0.01) return jump(next);
-          s.fresh = true;
-          s.dirty = true;
-          emit(v.currentTime);
-        },
-        onLoadedData: () => {
-          s.fresh = true;
-          s.dirty = true;
-        },
-        onLoadedMetadata: () => {
-          const d = video.current?.duration ?? 0;
-          if (Number.isFinite(d) && d > 0) setMediaDuration(d);
-        },
-      },
     }),
-    [emit, jump, mediaDuration, muted, play, playing, ready, s, seek],
+    [failed, loop, mediaDuration, muted, pause, play, playing, ready, s, seek],
   );
 }

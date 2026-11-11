@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { Film, MoveHorizontal, Pause, Play, Plus, Redo2, SkipBack, SkipForward, Undo2, Volume2, VolumeX, ZoomIn } from "lucide-react";
+import { Film, MoveHorizontal, Pause, Play, Plus, Redo2, Repeat, SkipBack, SkipForward, Undo2, Volume2, VolumeX, ZoomIn } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 import { trimOf, type ScreenEvents, type ScreenLook, type Zoom } from "@/lib/screen-recording";
@@ -190,6 +190,16 @@ export function Timeline({
               className="w-28 [&_[data-slot=slider-range]]:bg-zinc-500 [&_[data-slot=slider-thumb]]:size-3 [&_[data-slot=slider-thumb]]:border-zinc-400 [&_[data-slot=slider-track]]:h-1 [&_[data-slot=slider-track]]:bg-zinc-800"
             />
           )}
+          <button
+            type="button"
+            className={cn(icon, player.loop && "bg-zinc-800 text-zinc-50")}
+            onClick={() => player.setLoop(!player.loop)}
+            aria-pressed={player.loop}
+            aria-label="Play round and round"
+            title={player.loop ? "Plays round and round: press to stop at the end" : "Stops at the end: press to play round and round"}
+          >
+            <Repeat />
+          </button>
           <button
             type="button"
             className={icon}

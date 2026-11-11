@@ -88,6 +88,14 @@ describe("a real call's outcome is the AI's check, written only when it changes 
     expect(ownSettings("ana")?.instances[0]?.lastCheck?.at).toBe(first?.at);
   });
 
+  it("a plan's limit is kept as the AI's note at once, and the next answer clears it at once", async () => {
+    const line = "Your Claude plan's weekly limit is reached; it resets 5pm.";
+    await noteCallOutcome("ana", "claude_ana", true, undefined, line);
+    expect(ownSettings("ana")?.instances[0]?.lastCheck).toMatchObject({ ok: true, note: line });
+    await noteCallOutcome("ana", "claude_ana", true);
+    expect(ownSettings("ana")?.instances[0]?.lastCheck?.note).toBeUndefined();
+  });
+
   it("the same answer is written again once the saved one is over ten minutes old", async () => {
     providerChecks()[KEY] = { ok: false, at: Date.now() - 11 * 60_000, ms: 0, error: "Claude took over 20 minutes" };
     await noteCallOutcome("ana", "claude_ana", false, "Claude took over 20 minutes");

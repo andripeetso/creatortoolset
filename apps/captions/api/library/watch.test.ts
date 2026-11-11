@@ -11,7 +11,7 @@ process.env.DATA_DIR = path.join(dir, "data");
 process.env.LIBRARY_WATCH_FOLDERS = "1";
 process.env.LIBRARY_DISK_RESERVE_GB = "0";
 const { libraryDb } = await import("./db");
-const { watchApp, scanWatchFolders, SETTLE_MS } = await import("./watch");
+const { watchApp, scanWatchFolders, SETTLE_MS, QUICK_SETTLE_MS } = await import("./watch");
 
 afterAll(() => {
   delete process.env.LIBRARY_WATCH_FOLDERS;
@@ -149,6 +149,41 @@ describe("watch folder scan", () => {
     expect(await scanWatchFolders(t3 + SETTLE_MS)).toBe(0);
     process.env.LIBRARY_WATCH_FOLDERS = "1";
     expect(versions()).toHaveLength(2);
+  });
+
+  it("takes footage that was already in the folder after a short look, and says how many are still to come", async () => {
+    const t4 = t0 + 400 * SETTLE_MS;
+    // what the earlier tests left waiting comes in first
+    await scanWatchFolders(t4 - 2 * SETTLE_MS);
+    await scanWatchFolders(t4 - SETTLE_MS);
+    const had = versions().length;
+    const folder = async () => {
+      const r = await app.request("/api/library/lib_w/watch", { headers: { "x-user": "owner-w" } });
+      return ((await r.json()) as { folders: { mode: string; files: number; adding: number }[] }).folders.find((f) => f.mode === "reference")!;
+    };
+    expect(await folder()).toMatchObject({ files: 2, adding: 0 });
+
+    // shot ten minutes before the folder is looked at: nobody is still writing it
+    const old = path.join(watched, "Last summer.mp4");
+    writeFileSync(old, "shot long ago");
+    utimesSync(old, new Date(t4 - 10 * SETTLE_MS), new Date(t4 - 10 * SETTLE_MS));
+    expect(await scanWatchFolders(t4)).toBe(0); // first sight: counted, not taken
+    expect(await folder()).toMatchObject({ files: 3, adding: 1 });
+    expect(await scanWatchFolders(t4 + QUICK_SETTLE_MS - 1)).toBe(0);
+    expect(await scanWatchFolders(t4 + QUICK_SETTLE_MS)).toBe(1);
+    expect(await folder()).toMatchObject({ files: 3, adding: 0 });
+    expect(versions()).toHaveLength(had + 1);
+
+    // an old file that is still growing (a copy that kept the original's date) waits like any other
+    const copying = path.join(watched, "Still copying.mp4");
+    const t5 = t4 + 10 * SETTLE_MS;
+    writeFileSync(copying, "part one");
+    utimesSync(copying, new Date(t4 - 10 * SETTLE_MS), new Date(t4 - 10 * SETTLE_MS));
+    expect(await scanWatchFolders(t5)).toBe(0);
+    appendFileSync(copying, " part two");
+    utimesSync(copying, new Date(t4 - 10 * SETTLE_MS), new Date(t4 - 10 * SETTLE_MS));
+    expect(await scanWatchFolders(t5 + QUICK_SETTLE_MS)).toBe(0); // it grew: the wait starts again
+    expect(await scanWatchFolders(t5 + 2 * QUICK_SETTLE_MS)).toBe(1);
   });
 });
 

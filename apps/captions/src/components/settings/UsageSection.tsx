@@ -5,7 +5,7 @@ import { PLANS, type PlanId } from "@contracts/plans";
 import type { SetupView } from "@contracts/tools";
 import { Button } from "@/components/ui/button";
 import { USAGE_PERIODS, deviceOf, thisMacDevice, usageSince, useProviders, type UsageRow } from "@/lib/providers";
-import { countedWindow, identityKey, leftOf, noticeOf, resetsIn } from "@/lib/limits";
+import { LOW, countedWindow, identityKey, leftOf, noticeOf, resetsIn } from "@/lib/limits";
 import { useSetup } from "@/lib/setup";
 import { tokensLabel } from "@/lib/workshop";
 import { cn } from "@/lib/utils";
@@ -18,7 +18,6 @@ import { hasThisMac, tell, useThisMac, type ThisMacState } from "./ThisMacSectio
 const RELOAD_MS = 5 * 60_000;
 const TICK_MS = 60_000; // the countdowns
 const STALE_MS = 15 * 60_000;
-const LOW = 20; // a window at or under this share left is amber
 const API = " (API)"; // the tally's label for calls on the app's own Anthropic key
 const TOOL: Record<string, string> = { Automation: "Scheduled task" };
 
@@ -101,8 +100,8 @@ export function PlanLimits({ view, now, bridge, setup }: { view: ProvidersView; 
       ))}
       {unread.length > 0 && (
         <Card>
-          {unread.map(({ inst, device }, n) => (
-            <Unread key={n} inst={inst} device={device} view={view} bridge={bridge} />
+          {unread.map(({ inst, device, hit }, n) => (
+            <Unread key={n} inst={inst} device={device} view={view} bridge={bridge} hit={hit} />
           ))}
         </Card>
       )}
@@ -141,11 +140,16 @@ function YourPlan({ setup }: { setup: SetupView | null }) {
 }
 
 /** The enabled Claude and Codex AIs this account sees that have no reading (a login names its instances in `instances`). */
-function missingReadings(view: ProvidersView): Array<{ inst: ProviderInstance; device: string }> {
-  const sets = [...(view.own?.instances ?? []), ...(view.workspace?.settings.instances ?? [])];
+function missingReadings(view: ProvidersView): Array<{ inst: ProviderInstance; device: string; hit?: string }> {
+  // the AI's check is keyed by scope: "workspace:<id>", or the account's own "<username>:<id>"
+  const hitOf = (id: string, own: boolean) => Object.entries(view.checks ?? {}).find(([k]) => k.endsWith(`:${id}`) && k.startsWith("workspace:") !== own)?.[1].note;
+  const sets = [
+    ...(view.own?.instances ?? []).map((inst) => ({ inst, hit: hitOf(inst.id, true) })),
+    ...(view.workspace?.settings.instances ?? []).map((inst) => ({ inst, hit: hitOf(inst.id, false) })),
+  ];
   return sets
-    .filter((i) => i.enabled && (i.driver === "claude" || i.driver === "codex"))
-    .map((inst) => ({ inst, device: deviceOf(inst) }))
+    .filter(({ inst: i }) => i.enabled && (i.driver === "claude" || i.driver === "codex"))
+    .map(({ inst, hit }) => ({ inst, hit, device: deviceOf(inst) }))
     .filter(({ inst, device }) => !view.limits.some((l) => l.driver === inst.driver && l.device === device && l.instances.some((k) => k.endsWith(`:${inst.id}`))));
 }
 
@@ -180,7 +184,7 @@ function LoginCard({ i, view, now }: { i: LimitsIdentity; view: ProvidersView; n
  * An AI with no reading: the true reason for its computer, and the fix where the person can make one. On this Mac, a Mac
  * app that reports its switch (`bridge.limits`) turns it on from the row; elsewhere the row names the fix.
  */
-function Unread({ inst, device, view, bridge }: { inst: ProviderInstance; device: string; view: ProvidersView; bridge: ThisMacState | null }) {
+function Unread({ inst, device, view, bridge, hit }: { inst: ProviderInstance; device: string; view: ProvidersView; bridge: ThisMacState | null; hit?: string }) {
   const mac = view.devices.find((d) => d.id === device);
   const who = mac?.name ?? "another Mac";
   const here = thisMacDevice() === device;
@@ -212,6 +216,8 @@ function Unread({ inst, device, view, bridge }: { inst: ProviderInstance; device
         ? "Turn on Read this Mac's Claude and Codex limits under This Mac."
         : `Open the Mac app on ${who} and turn on Read this Mac's Claude and Codex limits under This Mac.`;
   }
+  // its last call met the plan's limit (the AI's check note, mac-claude.ts): that, in amber, says more than "no reading"
+  if (hit) return <Row title={`${inst.name} on ${who}`} status={<Status tone="attention">{hit}</Status>} description={off ? "Turn on plan limits to see how much is left." : undefined} control={control} />;
   return <Row title={`${inst.name} on ${who}`} description={reason} status={fix} control={control} />;
 }
 

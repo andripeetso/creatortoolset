@@ -273,7 +273,7 @@ final class Shell: NSObject, ObservableObject {
     // MARK: the server on this Mac (Server.swift)
 
     private func startServer() {
-        webView.loadHTMLString(messagePage("Starting the server on this Mac…"), baseURL: nil)
+        webView.loadHTMLString(splashPage(), baseURL: nil)
         server?.start()
     }
 
@@ -361,7 +361,7 @@ final class Shell: NSObject, ObservableObject {
     func moveData(to dest: URL) async -> String? {
         guard let server else { return nil }
         stopRunner()
-        webView.loadHTMLString(messagePage("Moving your data…"), baseURL: nil)
+        webView.loadHTMLString(splashPage("Moving your data…"), baseURL: nil)
         let problem = await server.move(to: dest)
         if problem != nil, server.state == .running { open("/") }
         return problem
@@ -470,7 +470,8 @@ final class Shell: NSObject, ObservableObject {
                 Task { await recorder.share(project, to: destination) }
             }
         case "reveal": if let project { NSWorkspace.shared.activateFileViewerSelecting([project.screenURL]) }
-        case "delete": if let project { recorder.delete(project) }
+        case "trash": if let project { recorder.delete(project) }   // the page has asked
+        case "delete": if let project { recorder.delete(project, asking: true) }   // a page from before "trash"
         default: break   // "state": only the answer
         }
         pushRecorderState()

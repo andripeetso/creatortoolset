@@ -91,11 +91,16 @@ struct ActivityPanel: View {
                     .padding(.horizontal, 14).padding(.top, rows.active.isEmpty ? 2 : 10).padding(.bottom, 2)
                 ForEach(rows.forYou.prefix(12)) { RowView(row: $0, shell: shell) }
             }
-            if rows.active.isEmpty && rows.forYou.isEmpty {
+            // the plan's usage limit is a state, not an error: said on its own line, in place of "Nothing waits for you."
+            let limit = shell.ai.lastError.flatMap(plainLimitLine)
+            if let limit {
+                Text(limit).font(.system(size: 12, weight: .medium)).foregroundStyle(.orange)
+                    .padding(.horizontal, 14).padding(.vertical, 6)
+            } else if rows.active.isEmpty && rows.forYou.isEmpty {
                 Text(shell.hasServer ? "Nothing waits for you." : "Pick a server in the window to see your work.")
                     .font(.system(size: 12)).foregroundStyle(.secondary).padding(.horizontal, 14).padding(.vertical, 6)
             }
-            ForEach([shell.ai.lastError.map { "Last AI error: \($0)" }, shell.notice, shell.spaceLine].compactMap { $0 }, id: \.self) {
+            ForEach([limit == nil ? shell.ai.lastError.map { "Last AI error: \($0)" } : nil, shell.notice, shell.spaceLine].compactMap { $0 }, id: \.self) {
                 Text($0).font(.system(size: 11)).foregroundStyle(.orange).padding(.horizontal, 14).padding(.top, 4)
             }
 

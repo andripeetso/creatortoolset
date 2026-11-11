@@ -34,10 +34,12 @@ describe("plan from the CLI", () => {
 describe("limit reached", () => {
   it("says when the window opens again, in the CLI's words", () => {
     expect(limitMessage("You've hit your limit · resets 2pm (Europe/Tallinn)")).toBe(
-      "Your Claude plan's limit is reached; it resets 2pm (Europe/Tallinn). Claude said: You've hit your limit · resets 2pm (Europe/Tallinn)",
+      "Your Claude plan's limit is reached; it resets 2pm.",
     );
     expect(limitMessage("You've hit your weekly limit · resets Oct 12", "Codex")).toMatch(/^Your Codex plan's weekly limit is reached; it resets Oct 12\./);
-    expect(limitMessage("You've hit your limit")).toBe("Your Claude plan's limit is reached. Claude said: You've hit your limit");
+    expect(limitMessage("You've hit your limit")).toBe("Your Claude plan's limit is reached.");
+    // the assistant's case: one sentence, never the CLI's words again after it
+    expect(limitMessage("Claude: You've hit your weekly limit · resets 5pm (America/Costa_Rica)")).toBe("Your Claude plan's weekly limit is reached; it resets 5pm.");
     // a row shows the sentence alone: no "Claude said: …" tail, no time zone name
     expect(limitLine(limitMessage("You've hit your weekly limit · resets Nov 11 at 5pm (America/Costa_Rica)"))).toBe("Your Claude plan's weekly limit is reached; it resets Nov 11 at 5pm.");
     expect(limitLine(limitMessage("You've hit your limit"))).toBe("Your Claude plan's limit is reached.");

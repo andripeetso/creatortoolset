@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { autoZooms, backgroundStops, bubbleRect, cameraAt, defaultCamera, defaultLook, drawFrame, layout, normalizeLook, outputSize, pointerAt, pointerPath, shadowOf, sideRects, trimOf, type ScreenEvents, type ScreenLook } from "./screen-recording";
+import { zoomView, autoZooms, backgroundStops, bubbleRect, cameraAt, defaultCamera, defaultLook, drawFrame, layout, normalizeLook, outputSize, pointerAt, pointerPath, shadowOf, sideRects, trimOf, type ScreenEvents, type ScreenLook } from "./screen-recording";
 
 const events: ScreenEvents = {
   v: 1,
@@ -74,6 +74,7 @@ describe("screen recording", () => {
     const look = normalizeLook(old, events, 30);
     expect(look).toMatchObject(old);
     expect(shadowOf(look)).toBe(0.45); // the shadow it always had
+    expect(look.zoomFit).toBe("inside"); // and a zoom keeps its window as it was
     expect(shadowOf({ shadow: false })).toBe(0);
     expect(backgroundStops(look)).toEqual(["#7c3aed", "#db2777"]);
     expect(trimOf(look, 30)).toEqual({ start: 0, end: 30 });
@@ -93,6 +94,37 @@ describe("screen recording", () => {
     expect(backgroundStops({ background: "custom", stops: ["#000000", "#ffffff"] })).toEqual(["#000000", "#ffffff"]);
     expect(backgroundStops({ background: "custom", stops: ["red", "#ffffff"] as [string, string] })).toEqual(["#7c3aed", "#db2777"]);
     expect(backgroundStops({ background: "gone" })).toEqual(["#7c3aed", "#db2777"]);
+  });
+
+  it("lets a zoom's window grow into the space beside it before it crops, or zooms the whole frame", () => {
+    // a square recording in a wide frame, no padding: at rest a 1080 square in the middle of 1920×1080
+    const base = { ...defaultLook(events, 30), shape: "16:9" as const, padding: 0, follow: false };
+    const at = (zoomFit: "inside" | "space" | "frame", scale: number, x = 0.5, y = 0.5) =>
+      layout({ ...base, zoomFit, zooms: [{ start: -10, end: 10, x, y, scale }] }, [], 0, 2000, 2000, 1920, 1080);
+    // inside: the window stays 1080 wide and half of each side is cut off at 2×
+    expect(at("inside", 2)).toMatchObject({ box: { x: 420, y: 0, w: 1080, h: 1080 }, src: { w: 1000, h: 1000 } });
+    // space at 1.5×: the window is 1620 wide and shows the recording's whole width; only the height is cut
+    const grown = at("space", 1.5);
+    expect(grown.box).toEqual({ x: 150, y: 0, w: 1620, h: 1080 });
+    expect(grown.src.w).toBeCloseTo(2000);
+    expect(grown.src.h).toBeCloseTo(2000 / 1.5);
+    // space at 2×: it has reached the frame's sides and shows 1920 of 2160, not 1080
+    const full = at("space", 2);
+    expect(full.box).toEqual({ x: 0, y: 0, w: 1920, h: 1080 });
+    expect(full.src.w).toBeCloseTo((1920 / 2160) * 2000);
+    // looking at the left edge: no gap opens on the left
+    expect(at("space", 2, 0, 0.5).src.x).toBe(0);
+    // with padding, space stops at the padding and frame goes past it, growing its corners
+    const padded = (zoomFit: "space" | "frame") =>
+      layout({ ...base, padding: 0.1, zoomFit, zooms: [{ start: -10, end: 10, x: 0.5, y: 0.5, scale: 3 }] }, [], 0, 2000, 2000, 1920, 1080);
+    expect(padded("space").box).toEqual({ x: 108, y: 108, w: 1704, h: 864 });
+    expect(padded("space").grown).toBe(1);
+    expect(padded("frame").box).toEqual({ x: 0, y: 0, w: 1920, h: 1080 });
+    expect(padded("frame").grown).toBe(3);
+    // a frame that is filled has no window to grow: as before
+    expect(layout({ ...base, fill: true, zoomFit: "frame", zooms: [{ start: -10, end: 10, x: 0.5, y: 0.5, scale: 2 }] }, [], 0, 2000, 2000, 1920, 1080).box).toEqual({ x: 0, y: 0, w: 1920, h: 1080 });
+    // the aim pad's box is the part shown
+    expect(zoomView({ ...base, zoomFit: "space" }, { start: 1, end: 5, x: 0.5, y: 0.5, scale: 1.5 }, 2000, 2000, 1920, 1080)).toMatchObject({ x: 0, w: 1 });
   });
 
   it("keeps the trim inside the recording", () => {

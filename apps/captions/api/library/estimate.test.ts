@@ -19,7 +19,7 @@ const { libraryDb } = await import("./db");
 const { claimJob, enqueueJob } = await import("./jobs");
 const { estimate, progress } = await import("./estimate");
 const { describeSlot } = await import("./describe");
-const { tick } = await import("./worker");
+const { holdForLimit, tick } = await import("./worker");
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -68,6 +68,27 @@ describe("estimate", () => {
     expect(p).toMatchObject({ left: 1, clips: 1 });
     expect(p.seconds).toBeGreaterThan(0);
     d.prepare("DELETE FROM jobs WHERE kind = 'thumb'").run();
+  });
+});
+
+describe("the plan's usage limit", () => {
+  it("holds every queued description, says why, and counts them as waiting, not as work left", async () => {
+    d.prepare("DELETE FROM jobs WHERE state != 'done'").run();
+    d.prepare("DELETE FROM jobs WHERE kind = 'describe'").run();
+    for (const v of ["v1", "v2", "v3"]) enqueueJob(d, "lib_e", v, "describe", "local");
+    enqueueJob(d, "lib_e", "v1", "describe", "someone-else"); // already queued: stays local's
+    holdForLimit(d, "local", "Your Claude plan's weekly limit is reached; it resets 5pm.", Date.now() + 60_000);
+    const p = await progress("lib_e", "local");
+    expect(p.left).toBe(0);
+    expect(p.waiting).toEqual([
+      { step: "describe", count: 3, missing: "Your Claude plan's weekly limit is reached; it resets 5pm. They carry on by themselves then.", limit: true },
+    ]);
+    expect(claimJob(d, 300, Date.now(), "jobs", ["describe"])).toBeNull(); // none asks the closed plan meanwhile
+    // past the hold they are work again
+    expect((await progress("lib_e", "local")).waiting).toHaveLength(1);
+    d.prepare("UPDATE jobs SET run_after = 0 WHERE kind = 'describe'").run();
+    expect(await progress("lib_e", "local")).toMatchObject({ left: 3, waiting: [] });
+    d.prepare("DELETE FROM jobs WHERE state != 'done'").run();
   });
 });
 

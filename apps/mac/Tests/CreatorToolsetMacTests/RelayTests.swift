@@ -297,6 +297,11 @@ final class RelayTests: XCTestCase {
         XCTAssertTrue(isLimitError("Claude AI usage limit reached|1700000000"))
         XCTAssertTrue(isLimitError("You've hit your session limit"))
         XCTAssertFalse(isLimitError("API Error 500"))
+        // the menu's line for it: plain words, no time zone, nothing for a real failure
+        XCTAssertEqual(plainLimitLine("Claude: You've hit your weekly limit · resets 5pm (America/Costa_Rica)"), "Claude's weekly limit is reached · resets 5pm")
+        XCTAssertEqual(plainLimitLine("Codex: You've hit your usage limit"), "Codex's limit is reached")
+        XCTAssertEqual(plainLimitLine("You've hit your session limit · resets Nov 11 at 2pm"), "Your AI's 5-hour limit is reached · resets Nov 11 at 2pm")
+        XCTAssertNil(plainLimitLine("Claude: API Error 500"))
         XCTAssertTrue(isGone(text: "", result: nil, err: "No conversation found with session ID: x"))
         XCTAssertFalse(isGone(text: "some answer", result: nil, err: "No conversation found"))
         XCTAssertTrue(isGone(text: "", result: ["is_error": true, "result": "No conversation found"], err: ""))
