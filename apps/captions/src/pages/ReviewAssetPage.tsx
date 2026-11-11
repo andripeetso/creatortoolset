@@ -976,7 +976,8 @@ function Review({
             ))}
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-scroll px-3 py-2">
+          {/* with the assistant's bubble on screen (it sits over this list's end), the last comment can be scrolled clear of it */}
+          <div className="min-h-0 flex-1 overflow-y-scroll px-3 py-2 [html:has(button[data-assistant-dock])_&]:pb-20">
             {shown.length === 0 ? (
               <p className="px-2 py-10 text-center text-sm text-zinc-600">
                 {threads.length ? "Nothing here." : "No comments yet. Pause on a frame and write one below."}

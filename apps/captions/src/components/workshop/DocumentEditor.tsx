@@ -528,9 +528,10 @@ function NotesEditor({
       {(locked && !quiet) || saving ? (
         <span className="absolute right-4 top-2 z-10 rounded-full border border-border bg-background/90 px-2 py-0.5 text-[10px] text-muted-foreground">{locked && !quiet ? "AI is editing…" : "saving…"}</span>
       ) : null}
-      <div className="min-h-0 flex-1 overflow-hidden px-5 pb-8 pt-8">
+      {/* the text box and the preview keep their bar's 8px at all times, out of this right padding (index.css) */}
+      <div className="min-h-0 flex-1 overflow-hidden px-5 pb-8 pt-8 bars:pr-3">
         {preview ? (
-          <div className="h-full overflow-y-auto px-1 py-2">
+          <div className="h-full overflow-y-scroll px-1 py-2">
             <MarkdownBody source={withPictureUrls(text, doc.sessionId)} media={false} />
           </div>
         ) : (
@@ -541,7 +542,7 @@ function NotesEditor({
             spellCheck
             aria-label="Notes"
             placeholder="Write anything — scraps, quotes, a list. This isn't the piece."
-            className="h-full w-full resize-none bg-transparent text-[15px] leading-[1.7] text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-60"
+            className="h-full w-full resize-none overflow-y-scroll bg-transparent text-[15px] leading-[1.7] text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-60"
           />
         )}
       </div>
@@ -782,7 +783,8 @@ function PieceEditor({
       {(locked && !quiet) || saving ? (
         <span className="absolute right-4 top-2 z-10 rounded-full border border-border bg-background/90 px-2 py-0.5 text-[10px] text-muted-foreground">{locked && !quiet ? "AI is editing…" : "saving…"}</span>
       ) : null}
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-10 pt-8">
+      {/* the bar's 8px at all times, out of the right padding (index.css): the text does not move when the piece outgrows its card */}
+      <div className="min-h-0 flex-1 overflow-y-scroll px-5 pb-10 pt-8 bars:pr-3">
         {preview ? (
           <div className="px-1 py-2">
             <MarkdownBody source={withPictureUrls(documentMarkdown(doc, { frontmatter: false }), doc.sessionId)} media={false} />

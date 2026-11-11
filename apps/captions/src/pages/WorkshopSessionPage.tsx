@@ -1136,7 +1136,7 @@ export default function WorkshopSessionPage() {
                       <X className="h-4 w-4" />
                     </button>
                   </div>
-                  <div className="min-h-0 flex-1 overflow-y-auto p-3">
+                  <div className="min-h-0 flex-1 overflow-y-scroll p-3 bars:pr-1">
                     <SelectionToContext onPin={pin}>
                       <SourceReader
                         key={peek.id}
@@ -1357,7 +1357,7 @@ export default function WorkshopSessionPage() {
                   <div className="flex h-full items-center px-3 text-sm font-medium text-foreground">Browse</div>
                 ),
                 body: (
-                  <div className="min-h-0 flex-1 overflow-y-auto p-3">
+                  <div className="min-h-0 flex-1 overflow-y-scroll p-3 bars:pr-1">
                       <div className="flex flex-col gap-4">
                         <section>
                           <p className="mb-1.5 text-[11px] font-medium text-muted-foreground">

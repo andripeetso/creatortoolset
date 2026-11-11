@@ -39,10 +39,13 @@ import { openSetupAt, setupFinished, useSetup, useWorkTalk } from "@/lib/setup";
 /** Width of the chat docked to the right edge; the page moves over by as much. */
 const DOCK_W = 400;
 /** Below the pages' top bars, above the corner buttons bottom left. */
-const AT: Record<Corner, string> = { tl: "left-4 top-16", tr: "right-4 top-16", bl: "left-4 bottom-14", br: "right-4 bottom-4" };
+/** On the right it stands in from the window's edge by what a page's scrollbar takes, where a screen has none
+ *  (--edge-room, index.css): the same place on every screen. */
+const RIGHT = "right-[calc(1rem+var(--edge-room,0px))]";
+const AT: Record<Corner, string> = { tl: "left-4 top-16", tr: `${RIGHT} top-16`, bl: "left-4 bottom-14", br: `${RIGHT} bottom-4` };
 /** The bubble's own place. Bottom right it sits above what a screen keeps in that corner: the screen says how high that
  *  stands (--corner-taken on <html>: a Review video's comment box, whose Send button the bubble used to cover). */
-const BUBBLE_AT: Record<Corner, string> = { ...AT, br: "right-4 bottom-[calc(1rem+var(--corner-taken,0px))] motion-safe:transition-[bottom]" };
+const BUBBLE_AT: Record<Corner, string> = { ...AT, br: `${RIGHT} bottom-[calc(1rem+var(--corner-taken,0px))] motion-safe:transition-[bottom]` };
 const ORIGIN: Record<Corner, string> = { tl: "origin-top-left", tr: "origin-top-right", bl: "origin-bottom-left", br: "origin-bottom-right" };
 
 const QUEUE_KEY = "ct-assistant:queue";

@@ -229,7 +229,16 @@ html { overflow-y: scroll; }
 html:has([data-fills-window]) { overflow-y: hidden; }
 @media (hover: hover) and (pointer: fine) {
   [data-fills-window]:not([data-fills-window="scrolls"]) [data-titlebar] { border-right: 8px solid transparent; }
+  /* What floats in a right-hand corner (the assistant) is placed from the window's edge, which on these screens lies
+     8px further right than beside a page's bar: it stands in by as much (--edge-room), so it is in one place on
+     every screen. */
+  html:has([data-fills-window]) { --edge-room: 8px; }
 }
+/* A pane inside a card (a Workshop session's piece, notes, chat and Browse) keeps its bar's 8px at all times too
+   (overflow-y-scroll), taken out of its own right padding in its class list (bars:pr-*, the variant for where a bar
+   takes room, tailwind.config.js): the text is as wide as before, stays in the middle of the card and does not move
+   when it outgrows the card. No rule here. */
+
 html body[data-scroll-locked] { overflow: visible !important; padding-right: 0 !important; margin-right: 0 !important; }
 /* The dim behind a dialog covers the window but not the page's own bar beside it, where the window's backdrop shows
    (the body's colour). While a dialog is open the backdrop is that colour as the dim leaves it (half black over it), so
