@@ -146,6 +146,7 @@ describe("appRows", () => {
       review: [{ id: "r1/2", assetId: "r1", name: "Tiny cut", progress: 0.5 }],
       guides: [{ id: "g1", name: "Tiny walkthrough" }],
       captioning: [{ id: "c1", name: "Tiny talk" }],
+      knowledge: [{ id: "k1", name: "Tiny handbook" }],
     });
     expect(rows.map((r) => [r.title, r.detail, r.href, r.progress])).toEqual([
       ["@tinyacrobatics", "Content Analyzer · reading the post", "/instagram/p1", undefined],
@@ -159,6 +160,7 @@ describe("appRows", () => {
       ["Tiny cut", "Review · preparing the video", "/review/r1", 0.5],
       ["Tiny walkthrough", "Guide Builder · writing", "/documents", undefined],
       ["Tiny talk", "Caption Studio · captioning", "/captions?view=projects", undefined],
+      ["Tiny handbook", "Content Workshop · reading the source", "/workshop", undefined],
     ]);
     expect(rows.every((r) => r.state === "working")).toBe(true);
     expect(new Set(rows.map((r) => r.id)).size).toBe(rows.length);
@@ -167,7 +169,7 @@ describe("appRows", () => {
 
 describe("GET /api/activity", () => {
   it("adds no row for a tool the account has switched off", async () => {
-    const tiny: SessionUser = { ...admin, username: "tiny-activity", role: "user", off: ["instagram", "notes", "enhance", "review", "guides", "captions"] };
+    const tiny: SessionUser = { ...admin, username: "tiny-activity", role: "user", off: ["instagram", "notes", "enhance", "review", "guides", "captions", "workshop"] };
     const app = new Hono<any>();
     app.use("*", async (c, next) => { c.set("user", tiny); await next(); });
     app.route("/api/activity", activityApp([]));

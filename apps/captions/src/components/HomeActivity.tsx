@@ -52,7 +52,7 @@ const loadActivity = () =>
   fetch("/api/activity").then((r) => (r.ok ? (r.json() as Promise<ActivityRow[]>) : Promise.reject(new Error(`Request failed (${r.status})`))));
 
 /** The topics of the tools whose work has a row (api/activity.ts): a change to one reads the rows again. */
-const WORK_TOPICS = ["library", "editor", "exports", "instagram", "clips", "enhance", "review", "documents", "projects"];
+const WORK_TOPICS = ["library", "editor", "exports", "instagram", "clips", "enhance", "review", "documents", "projects", "workshop"];
 
 /** GET /api/activity: the app's own background work and the plug-ins' rows, live: read again when a tool with running
  *  work changes (lib/sync.ts), never on a timer, this window's own writes included (a stop pressed here ends a row).
@@ -121,6 +121,7 @@ const TILE: [string, string, string][] = [
   ["/enhance", "/enhance", "enhancing"],
   ["/review", "/review", "preparing"],
   ["/documents", "/documents", "writing"],
+  ["/workshop", "/workshop", "reading"],
 ];
 const lineOf = (href: string) => TILE.find(([p]) => href === p || href.startsWith(`${p}/`) || href.startsWith(`${p}?`));
 

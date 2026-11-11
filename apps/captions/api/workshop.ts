@@ -284,6 +284,9 @@ function patchSource(id: string, change: (s: KnowledgeSource) => KnowledgeSource
 }
 /** Sources being read in this process: a second read of one waits for the first. */
 const inRead = new Set<string>();
+/** This account's sources its AI is reading, for Home (api/activity.ts); inJob tells "workshop" as they start and end. */
+export const knowledgeWork = async (username: string) =>
+  (await Promise.all([...inRead].map((id) => readJson<KnowledgeSource>(sourcePath(id))))).flatMap((s) => (s?.owner === username && s.status === "reading" ? [{ id: s.id, name: s.title || s.name }] : []));
 
 /**
  * The account's sources, oldest first. A project's context files from before (Project.knowledge) move in once,

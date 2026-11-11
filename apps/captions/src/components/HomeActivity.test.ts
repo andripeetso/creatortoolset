@@ -87,6 +87,9 @@ describe("runningByTile", () => {
     // captions being made and an export at once: one count, one word
     const both = runningByTile([row("c1", "/captions?view=projects"), row("x", "/captions?project=p")], 0);
     expect(both["/captions?view=projects"]).toMatchObject({ text: "2 working", moving: true });
+    // a Workshop source being read while a reply is written: one count, one word
+    expect(runningByTile([row("k1", "/workshop")], 1)["/workshop"]).toMatchObject({ text: "2 working", moving: true });
+    expect(runningByTile([row("k1", "/workshop")], 0)["/workshop"]?.text).toBe("1 reading");
     // a row that is not working (it failed, it ended) gives no chip
     expect(runningByTile([row("n1", "/clips/n1", { state: "ready" })], 0)).toEqual({});
   });

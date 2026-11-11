@@ -8,6 +8,7 @@ import type { enhancing } from "./enhance";
 import type { reviewWork } from "./review";
 import type { guidesWork } from "./documents";
 import type { captioningWork } from "./captions-job";
+import type { knowledgeWork } from "./workshop";
 import type { LibraryWork } from "./library/activity";
 import { waitingLine } from "../contracts/library";
 import type { ServerPlugin } from "./lib/plugin";
@@ -152,6 +153,7 @@ export interface AppWork {
   review?: Awaited<ReturnType<typeof reviewWork>>;
   guides?: ReturnType<typeof guidesWork>;
   captioning?: ReturnType<typeof captioningWork>;
+  knowledge?: Awaited<ReturnType<typeof knowledgeWork>>;
 }
 
 const may = (user: SessionUser, tool: string) => user.role === "admin" || !user.off.includes(tool);
@@ -174,15 +176,16 @@ async function appWork(user: SessionUser): Promise<AppWork> {
     ? allEdits().filter((e) => !e.trashedAt && e.createdBy === user.username).map(summaryOf).filter((e) => e.last?.state === "queued" || e.last?.state === "running")
     : [];
   const u = user.username;
-  const [analyzer, notes, enhance, review, guides, captioning] = await Promise.all([
+  const [analyzer, notes, enhance, review, guides, captioning, knowledge] = await Promise.all([
     soft(may(user, "instagram"), async () => (await import("./instagram")).analyzerWork(u)),
     soft(may(user, "notes"), async () => (await import("./clips")).notesWork(u)),
     soft(may(user, "enhance"), async () => (await import("./enhance")).enhancing(u)),
     soft(may(user, "review"), async () => (await import("./review")).reviewWork(u)),
     soft(may(user, "guides"), async () => (await import("./documents")).guidesWork(u)),
     soft(may(user, "captions"), async () => (await import("./captions-job")).captioningWork(u)),
+    soft(may(user, "workshop"), async () => (await import("./workshop")).knowledgeWork(u)),
   ]);
-  return { libraries: may(user, "media") ? await libraryWork(user) : [], edits, exports: activeExports(u), analyzer, notes, enhance, review, guides, captioning };
+  return { libraries: may(user, "media") ? await libraryWork(user) : [], edits, exports: activeExports(u), analyzer, notes, enhance, review, guides, captioning, knowledge };
 }
 
 const count = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
@@ -199,7 +202,7 @@ const STEP: Record<string, [string, string]> = {
  * them), AI descriptions held back by the plan's limit (running, with the limit as the reason: nothing for the person to
  * do), and steps that wait for a key or an AI (waiting on you: a few words, opening the page that gives it). Then edits
  * with a step queued or running, the other tools' running work (Content Analyzer, Video Notes, Audio Enhancer, Review,
- * Guide Builder, the assistant's captions), then renders.
+ * Guide Builder, the assistant's captions, Workshop sources being read), then renders.
  */
 export function appRows(w: AppWork): ActivityRow[] {
   const rows: ActivityRow[] = [];
@@ -235,6 +238,7 @@ export function appRows(w: AppWork): ActivityRow[] {
   for (const g of w.guides ?? []) work(`guides:${g.id}`, g.name, "Guide Builder", "writing", "/documents");
   // the project list, not the project: it is opened once its captions are in (api/captions-job.ts)
   for (const c of w.captioning ?? []) work(`captions:${c.id}`, c.name, "Caption Studio", "captioning", "/captions?view=projects");
+  for (const k of w.knowledge ?? []) work(`knowledge:${k.id}`, k.name, "Content Workshop", "reading the source", "/workshop");
   for (const j of w.exports) {
     const running = j.status === "running";
     rows.push({
