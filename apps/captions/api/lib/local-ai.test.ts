@@ -722,7 +722,17 @@ setTimeout(() => {}, 60000);
     mkdirSync(dir, { recursive: true });
     writeFileSync(path.join(dir, "muse"), `#!/bin/sh\nprintf '%s\\n' 'Open this page to sign in:' '  https://auth.meta.com/oauth/device/?code=TINY-2468' 'confirm this code matches:' '  TINY-2468'\nsleep 30\n`, { mode: 0o755 });
     shell((line) => (line.startsWith("command -v grok ") ? `${dir}/muse\n` : ""));
-    expect(await local.signIn("musecode")).toEqual({ ok: true, message: "Confirm this code on Meta's page: TINY-2468", code: "TINY-2468" });
+    // a fake `open` first on PATH: the real one would open Meta's page in the browser of whoever runs the tests
+    const opened = path.join(dir, "opened");
+    writeFileSync(path.join(dir, "open"), `#!/bin/sh\necho "$*" >> ${JSON.stringify(opened)}\n`, { mode: 0o755 });
+    const pathBefore = process.env.PATH;
+    process.env.PATH = `${dir}:${pathBefore}`;
+    try {
+      expect(await local.signIn("musecode")).toEqual({ ok: true, message: "Confirm this code on Meta's page: TINY-2468", code: "TINY-2468" });
+      await vi.waitFor(() => expect(readFileSync(opened, "utf8").trim()).toBe("https://auth.meta.com/oauth/device/?code=TINY-2468"), { timeout: 5000 });
+    } finally {
+      process.env.PATH = pathBefore;
+    }
   });
 
   it("connects another AI on this Mac as it is set up there: a real check, then a saved local-grok; nothing installed or signed in", async () => {
