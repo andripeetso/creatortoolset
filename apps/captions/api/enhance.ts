@@ -154,6 +154,11 @@ const apiCalls = new Map<string, AbortController>();
 export const cancelled = new Set<string>();
 const queue: string[] = [];
 let running = 0;
+/** A plug-in engine's passes waiting for or on its own worker (out of `active`), as their saves say. ponytail: a restart forgets them until they next save. */
+const away = new Map<string, Meta>();
+/** This account's files being enhanced, here or by a plug-in engine's worker, for Home (api/activity.ts). */
+export const enhancing = (username: string) =>
+  [...new Map([...away, ...active]).values()].filter((m) => m.owner === username && (m.status === "queued" || m.status === "running")).map((m) => ({ id: m.id, name: m.name, waits: m.status === "queued", progress: m.progress }));
 
 void mkdir(ENHANCE_DIR, { recursive: true }).catch(() => {});
 
@@ -164,6 +169,11 @@ async function persist(meta: Meta): Promise<void> {
   } catch {
     /* session may have been deleted mid-job */
   }
+  // a plug-in engine's pass saves with this: Home hears when one goes to its worker and when it is back
+  const was = away.has(meta.id);
+  if (meta.remote && (meta.status === "queued" || meta.status === "running")) away.set(meta.id, meta);
+  else away.delete(meta.id);
+  if (was !== away.has(meta.id)) announceSoon(meta.owner, "enhance");
 }
 
 /** A background job's save: the owner's open screens follow it (at most about once a second, the last save always). */
@@ -635,6 +645,7 @@ function pump(): void {
 /** Kill a queued/running job, the Mac's included (files stay). */
 function cancel(id: string): void {
   active.delete(id); // runJob checks this before writing results
+  away.delete(id);
   cancelled.add(id);
   const qi = queue.indexOf(id);
   if (qi >= 0) queue.splice(qi, 1);
