@@ -280,6 +280,30 @@ describe("a file dropped for the Media Library", () => {
   });
 });
 
+describe("a search a plug-in's Media Library refuses", () => {
+  // with the real plug-in loaded its own source is the main one: this test's made-up source would not be the one searched
+  it.skipIf(pluggedLibrary)("says the source's own reason instead of finding nothing; any other failure still lists nothing", async () => {
+    const { registerLibrarySlot, resetLibrarySlots, SourceRefusal } = await import("./library/sources");
+    let fail: Error = new SourceRefusal("This account's AI has no footage access: an admin turns it on in Settings.");
+    registerLibrarySlot("tiny", {
+      source: { id: "catalog", label: "Footage catalog", main: true, list: async () => { throw fail; } },
+      policies: [{ sourceId: "catalog", canSee: () => true }],
+    });
+    try {
+      const refused = JSON.parse((await tool(fullKey, "media_search", { q: "mat" })).text) as { files: unknown[]; note?: string };
+      expect(refused.files).toEqual([]);
+      expect(refused.note).toBe("Footage catalog: This account's AI has no footage access: an admin turns it on in Settings.");
+      // an error that is no refusal keeps its words to itself
+      fail = new Error("catalog.internal:8080 ECONNREFUSED");
+      const broken = JSON.parse((await tool(fullKey, "media_search", { q: "mat" })).text) as { files: unknown[]; note?: string };
+      expect(broken.files).toEqual([]);
+      expect(broken.note).toBeUndefined();
+    } finally {
+      resetLibrarySlots();
+    }
+  });
+});
+
 describe("the assistant asks for a folder", () => {
   it("in the Mac app the reply gets a Choose a folder button; anywhere else the AI is told to ask for a drop or a typed path", async () => {
     const cookie = await cookieOf("ana");
