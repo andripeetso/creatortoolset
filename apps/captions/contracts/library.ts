@@ -30,6 +30,10 @@ export interface AssetCard {
   preparing?: { step: LibraryStage["kind"] | "probe" | "wave"; running: boolean };
   /** a `failed` clip: the step that failed and the tool's own error (ClipStage says it in words) */
   failed?: { step: "probe" | "thumb" | "wave" | "proxy"; error: string };
+  /** A-roll (someone talks to the camera) or B-roll (the rest), as the library sorted it (api/library/roll.ts); videos only, once sorted */
+  roll?: "a" | "b";
+  /** finished work (a Review video, a version of a Finals piece, a saved export): it never has a roll */
+  finished?: true;
 }
 
 export interface AssetDetail extends AssetCard {
@@ -49,6 +53,10 @@ export interface SearchQuery {
   from?: number;
   to?: number;
   hasTranscript?: boolean;
+  /** only A-roll or only B-roll (`?roll=a|b`) */
+  roll?: "a" | "b";
+  /** only these versions' assets (`?versions=id,id`, at most 200) */
+  versions?: string[];
   /** plug-in sidebar filters: facet key → chosen values (api/library/sources.ts) */
   facets?: Record<string, string[]>;
   trashed?: boolean; // the trash instead of the library

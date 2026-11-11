@@ -591,6 +591,33 @@ describe("a video dropped in the chat", () => {
     expect((await toolOf(other, "use_file", { file: file.id, to: "review" })).text).toMatch(/isn't here/);
     revokeJobToken(other);
   });
+
+  it("use_file puts dropped files in the Media Library and says in one line how they were sorted", async () => {
+    const { SORT_WAIT_S } = await import("./mcp");
+    const { libraryDb } = await import("./library/db");
+    SORT_WAIT_S.added = 0; // the line as it is the moment they are in
+    const cookie = await cookieOf("ana");
+    const talk = await upload(cookie, "Talk.mp4", "video/mp4", Buffer.alloc(4096, 3));
+    const sea = await upload(cookie, "Sea.mp4", "video/mp4", Buffer.alloc(4096, 4));
+    const token = mintJobToken("ana", "turn-library");
+    type Added = { said: string; href: string; files: { name: string; version_id: string; note?: string }[] };
+    const out = JSON.parse((await toolOf(token, "use_file", { files: [talk.id, sea.id], to: "library" })).text) as Added;
+    expect(out.said).toBe("2 clips added: still being sorted into A-roll and B-roll");
+    expect(out.files.map((f) => f.name)).toEqual(["Talk.mp4", "Sea.mp4"]);
+    expect(out.href).toMatch(/^\/library\?library=/);
+    // the worker sorts them (library/roll.ts); here the rolls are set as it would
+    const [a, b] = out.files.map((f) => f.version_id);
+    libraryDb().prepare("UPDATE assets SET roll = CASE current_version_id WHEN ? THEN 'a' ELSE 'b' END WHERE current_version_id IN (?, ?)").run(a!, a!, b!);
+    expect(JSON.parse((await toolOf(token, "media_search", { versions: [a, b] })).text).said).toBe("2 clips added: 1 A-roll, 1 B-roll");
+    // the same file again is the same clip
+    const again = JSON.parse((await toolOf(token, "use_file", { file: talk.id, to: "library" })).text) as Added;
+    expect(again.files[0]).toMatchObject({ version_id: a, note: "Already in the Media Library" });
+    expect(again.said).toBe("1 clip added: 1 A-roll");
+    // a file on this computer is never copied in: its folder is read in place
+    expect((await toolOf(token, "use_file", { path: "/Users/tiny/Movies/take.mov", to: "library" })).text).toMatch(/media_import_folder/);
+    revokeJobToken(token);
+    SORT_WAIT_S.added = 10;
+  });
 });
 
 describe("a file on this computer, by its path", () => {

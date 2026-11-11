@@ -20,6 +20,7 @@ import { similar } from "./similar";
 import { assetRef, canSee, sourceById, sourcesVisibleTo } from "./sources";
 import { externalAssetRef, externalRefById } from "./refs";
 import { buildAssetQuery, indexAsset, pageOf, parseSearch, type CardRow } from "./query";
+import { fileRoll, rollFolder } from "./roll";
 
 /**
  * Media Library routes (tasks/media-library-plan.md, sections 4 and 7). Mounted at /api/library.
@@ -114,6 +115,8 @@ export function recordVersion(
        SELECT ?, ?, COALESCE(MAX(position), 0) + 1, ? FROM collection_items WHERE collection_id = ?`,
     ).run(o.collectionId, assetId, o.by, o.collectionId);
   }
+  const roll = o.collectionId ? rollFolder(d, o.libraryId, o.collectionId) : null; // uploaded into the A-roll folder: filed as A-roll
+  if (roll) fileRoll(d, assetId, roll);
   indexAsset(d, assetId);
   enqueueJob(d, o.libraryId, o.versionId, "probe", o.by);
   return assetId;
@@ -130,6 +133,7 @@ export async function saveToLibrary(
   filename: string,
   sources: string[],
   libraryId?: string,
+  footage = false,
 ): Promise<{ assetId: string; versionId: string } | { duplicateOf: string } | { error: string; code: "disk_reserve" } | null> {
   const lib =
     libraryId ??
@@ -155,6 +159,7 @@ export async function saveToLibrary(
     d.exec("BEGIN");
     try {
       const assetId = recordVersion(d, { libraryId: lib, versionId, sourceKey, filename, size, sha256, by: username });
+      if (!footage) fileRoll(d, assetId, "none"); // a finished file (an export, a Finals file) is never A-roll or B-roll
       for (const from of new Set(sources)) {
         const src = d.prepare("SELECT a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(from) as
           | { library_id: string }
@@ -317,7 +322,7 @@ libraryApp.post("/:id/uploads", async (c) => {
   if (collection) {
     const col = db().prepare("SELECT kind FROM collections WHERE id = ? AND library_id = ?").get(collection, libraryId) as { kind: string } | undefined;
     if (!col) return c.json({ error: "Not found", code: "not_found" }, 404);
-    if (col.kind !== "manual") return c.json({ error: "A smart collection takes its items from its query", code: "conflict" }, 409);
+    if (col.kind !== "manual" && !rollFolder(db(), libraryId, collection)) return c.json({ error: "A smart collection takes its items from its query", code: "conflict" }, 409);
   }
   await sweepStale();
   const id = randomUUID();
