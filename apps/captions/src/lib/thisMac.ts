@@ -42,6 +42,22 @@ export async function chooseFolderOnMac(): Promise<string | null | undefined> {
 }
 
 /**
+ * The Finder folders of the drag just dropped on the window (AppWebView.dragItems): their paths, so a folder is pointed
+ * at where it lies instead of uploaded. undefined in a browser or a Mac app from before it could; [] when none.
+ */
+export async function droppedFoldersOnMac(): Promise<string[] | undefined> {
+  const bridge = thisMacBridge();
+  if (!bridge) return undefined;
+  try {
+    const r = ((await bridge.postMessage("dropped")) ?? {}) as unknown as { items?: Array<{ path?: unknown; folder?: unknown }> };
+    if (!Array.isArray(r.items)) return undefined;
+    return r.items.filter((x) => x.folder === true && typeof x.path === "string").map((x) => x.path as string);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Headless access → Install on a server that is not this computer: the Mac app adds the open server to Claude Code or
  * Codex on this Mac itself (ThisMacBridge.swift installInAI), with the key the page just made for that app. true = done;
  * a sentence = why not; undefined = no Mac app here, or one from before it could (the page then shows the line to run).

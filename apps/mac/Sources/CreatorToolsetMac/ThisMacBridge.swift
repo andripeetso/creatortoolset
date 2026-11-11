@@ -5,8 +5,9 @@ import AppKit
 import Foundation
 
 /// The questions the page may ask over the "thisMac" handler (TitleBar.swift); any other is answered as off.
-/// One more has parts of its own: "install:<claude|codex>:<key>" (installAsk).
-let thisMacAsks = ["state", "start", "access", "folder"]
+/// "dropped" is answered by the window itself (AppWebView.dragItems). One more has parts of its own:
+/// "install:<claude|codex>:<key>" (installAsk).
+let thisMacAsks = ["state", "start", "access", "folder", "dropped"]
 
 /// "install:<claude|codex>:<key>" from Settings → Headless access, as its parts; nil for anything else. The key is the
 /// one the page just made for that AI app (ctk_ and letters or digits), so nothing else can be put on a command line.
