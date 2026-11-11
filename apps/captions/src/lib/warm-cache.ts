@@ -81,7 +81,7 @@ export async function warmScreens(): Promise<void> {
     const qs = pid ? `?projectId=${encodeURIComponent(pid)}` : "";
     job(`workshop/summary?p=${pid}`, () => fetch(`/api/workshop/sessions/summary${qs}`).then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status))))));
   }
-  // Home's to-do and badges (HomeTodo.tsx useTodoLists)
+  // Home's Activity list and badges (HomeActivity.tsx useTodoLists)
   if (canUse(me, "editor")) job("/api/editor", listEdits);
   if (canUse(me, "captions")) job("caption-projects", listProjects);
   if (canUse(me, "notes")) {
