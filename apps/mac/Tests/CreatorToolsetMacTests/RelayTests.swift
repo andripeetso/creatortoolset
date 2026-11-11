@@ -1398,13 +1398,16 @@ final class RelayTests: XCTestCase {
     }
 
 
-    /// CT_REAL_CLAUDE=1 swift test --filter RealRun: one tiny claude run through ~/.claude-work, the way the relay runs it.
+    /// CT_REAL_CLAUDE=1 swift test --filter RealRun: one tiny claude run through a signed-in Claude home, the way the relay
+    /// runs it. CT_REAL_CLAUDE_HOME names that home's folder under the person's home folder (default .claude-work). Run it
+    /// with the shell's own CLAUDE* and ANTHROPIC* variables unset: the Mac app's environment has none of them.
     func testRealRunThroughTheHubHome() throws {
-        guard ProcessInfo.processInfo.environment["CT_REAL_CLAUDE"] == "1" else {
+        let env = ProcessInfo.processInfo.environment
+        guard env["CT_REAL_CLAUDE"] == "1" else {
             throw XCTSkip("set CT_REAL_CLAUDE=1 to run one real claude call")
         }
         let home = FileManager.default.homeDirectoryForCurrentUser
-        let hub = home.appendingPathComponent(".claude-work").path
+        let hub = home.appendingPathComponent(env["CT_REAL_CLAUDE_HOME"] ?? ".claude-work").path
         let req = request(#"{"id":"real-1","system":"Reply with just OK.","user":"Reply with just OK.","driver":"claude","model":"claude-opus-5-5","effort":"low","home":"\#(hub)"}"#)
         let opts = try requestOptions(req)
         let cli = binary("claude", home: home) ?? "claude"
@@ -1416,6 +1419,34 @@ final class RelayTests: XCTestCase {
         XCTAssertFalse(answer.text.isEmpty)
         XCTAssertTrue(answer.text.localizedCaseInsensitiveContains("OK"))
         XCTAssertEqual(answer.usage["models"] as? [String], ["claude-opus-5-5"])
+    }
+
+    /// CT_REAL_CLAUDE=1 [CT_REAL_CLAUDE_HOME=…] swift test --filter RealClaudeFolderAndTool: two more short real runs through
+    /// the same home, for the two things the folder fence must not break. A run with a folder reads a file inside it (reads
+    /// are not allowed up front: Claude Code's own rule lets them run inside its folder, and dontAsk refuses the rest). An
+    /// assistant run calls the app's MCP tool (a stand-in server on 127.0.0.1) and answers with what it returned.
+    func testRealClaudeFolderAndToolRuns() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard env["CT_REAL_CLAUDE"] == "1" else { throw XCTSkip("set CT_REAL_CLAUDE=1 to run real claude calls") }
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let hub = home.appendingPathComponent(env["CT_REAL_CLAUDE_HOME"] ?? ".claude-work").path
+        let cli = binary("claude", home: home) ?? "claude"
+        let base = #""driver":"claude","model":"claude-opus-5-5","effort":"low","home":"\#(hub)""#
+        var steps: [String] = []
+
+        let word = "TINY-" + UUID().uuidString.prefix(8)
+        let folder = request(#"{"id":"real-folder","system":"Answer from the files in the current folder.","user":"What is the code word in notes.md? Reply with just the code word.","files":{"notes.md":"The code word is \#(word)."},"# + base + "}")
+        let read = try runAnswer(folder, try requestOptions(folder), cli: cli, work: temp(), send: { _ in true }, step: { steps.append($0) })
+        print("REAL CLAUDE folder: text=\(read.text) steps=\(steps) cli=\(cli)")
+        XCTAssertTrue(read.text.contains(word))
+
+        let token = "ctj_" + String(repeating: "7", count: 48)
+        let server = try GrokStandIn(token: token, steps: [])
+        let tools = request(#"{"id":"real-tools","system":"Use the creator-toolset tools when the user asks for a lookup.","user":"Call the lookup tool and reply with exactly the text it returns, nothing else.","mcp":{"url":"http://127.0.0.1:\#(server.port)/api/mcp","token":"\#(token)"},"# + base + "}")
+        steps = []
+        let used = try runAnswer(tools, try requestOptions(tools), cli: cli, work: temp(), send: { _ in true }, step: { steps.append($0) })
+        print("REAL CLAUDE tools: text=\(used.text) steps=\(steps)")
+        XCTAssertTrue(used.text.contains("MCP-LOOKUP-RESULT"))
     }
 }
 
