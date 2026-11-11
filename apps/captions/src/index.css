@@ -238,6 +238,16 @@ html:has([data-fills-window]) { overflow-y: hidden; }
    puts it over the end of the list above that box: the list keeps room there, so its last item can be scrolled clear
    of the bubble (a Review video's comments, a Workshop session's chat). */
 html[data-corner-taken]:has(button[data-assistant-dock]) .clears-bubble { padding-bottom: 5rem; }
+/* A short message (a toast) stands in the bottom right corner, which is where the assistant's button is by default, and
+   it used to lie on top of the button for as long as it showed. While the button is in that corner the message stands
+   above it, and above a box that lifted the button (--corner-taken). In the other corners the two are apart already.
+   Under 600px a message is as wide as the screen, so there it stands above the button in either bottom corner. These
+   are the toast library's own offsets (it sets them inline, hence !important). */
+html:has(button[data-assistant-dock][data-corner="br"]) [data-sonner-toaster] {
+  --offset-bottom: calc(5.5rem + var(--corner-taken, 0px)) !important;
+  --mobile-offset-bottom: calc(5.5rem + var(--corner-taken, 0px)) !important;
+}
+html:has(button[data-assistant-dock][data-corner="bl"]) [data-sonner-toaster] { --mobile-offset-bottom: 8rem !important; }
 /* On a phone the pages scroll under the bubble. A page keeps room at its end, so its last row and its bottom controls
    can be scrolled clear of the bubble: every page with the shared bar, and a phone page or sheet marked .ends-clear.
    Not while a box in the corner has lifted the bubble (above): that box is the page's end. */

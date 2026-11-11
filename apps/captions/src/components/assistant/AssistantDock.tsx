@@ -418,6 +418,8 @@ export function AssistantDock() {
           style={tint}
           title="Assistant · drag to move"
           data-assistant-dock
+          // which corner it is in, for what else stands in the corners (a toast keeps clear of it, index.css)
+          data-corner={corner}
           className={cn(
             "group pointer-events-auto fixed z-[55] size-14 touch-none rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--tint)] focus-visible:ring-offset-2 focus-visible:ring-offset-background",
             "motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-50 motion-safe:duration-300",
