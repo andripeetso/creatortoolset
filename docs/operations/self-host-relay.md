@@ -12,7 +12,8 @@ to bottom. Each step ends with a check. If a check fails, fix it before going on
 
 - A Linux server with a public address and Docker Engine, or Node.js 22.13 or newer if you run it
   without Docker. The broker is light: it keeps a SQLite file and makes a few Cloudflare calls per link.
-- A domain on Cloudflare, with its DNS managed by Cloudflare. Example below: `example.com`.
+- A domain on Cloudflare, with its DNS managed by Cloudflare, for the broker (`example.com` below), and a second
+  zone on Cloudflare used only for the computers' names (`example-tunnels.com` below).
 - A public HTTPS name for the broker, for example `connect.example.com`, reaching the server on port 443. A reverse
   proxy such as Caddy does the certificate.
 - A site that signs your users in (see §4). The broker has no sign-in page of its own.
@@ -23,16 +24,17 @@ broker for video. This guide does not give that answer; you must check it for yo
 
 ## 1. Cloudflare: zone, tunnel hostnames and a token
 
-Each computer gets its own name under a tunnel domain in your zone, such as `<computer-id>.tunnels.example.com`. The
+Each computer gets its own name under a tunnel domain in your zone, such as `<computer-id>.example-tunnels.com`. The
 broker creates that name when a computer links and deletes it when the computer unlinks. It adds and removes only
 those per-computer records.
 
-1. Pick the tunnel domain, for example `tunnels.example.com`. Its zone is `example.com`.
+1. Pick the tunnel domain: a zone of its own on Cloudflare, for example `example-tunnels.com`. Cloudflare's free
+   certificate covers its first-level names, which is what each computer gets (see §4).
 2. Copy the **Account ID** (Cloudflare dashboard, right sidebar of any account page) and the **Zone ID** of
-   `example.com` (Overview page of the zone).
+   `example-tunnels.com` (Overview page of the zone).
 3. Create an API token at **My Profile → API Tokens → Create Token → Custom token** with two permissions:
    - **Account → Cloudflare Tunnel → Edit**, for your account.
-   - **Zone → DNS → Edit**, limited to the zone `example.com` only.
+   - **Zone → DNS → Edit**, limited to the zone `example-tunnels.com` only.
 
    Do not reuse a token that has other access. This one can create tunnels and DNS records and nothing more.
 
@@ -56,7 +58,7 @@ Fill in `apps/relay/.env`:
 |---|---|
 | `RELAY_ACCOUNT_SECRET` | 32 or more random bytes, for example `openssl rand -base64 48`. Your sign-in site uses the same value (§4) |
 | `RELAY_PUBLIC_URL` | `https://connect.example.com`. The approve page is `<this>/connect` |
-| `RELAY_TUNNEL_DOMAIN` | `tunnels.example.com` |
+| `RELAY_TUNNEL_DOMAIN` | `example-tunnels.com` |
 | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_ZONE_ID`, `CLOUDFLARE_API_TOKEN` | from §1 |
 | `RELAY_SIGNING_KEY` | leave empty: the broker makes an Ed25519 key on first start and keeps it in the data folder |
 | `RELAY_FREE_LIMIT` | computers linked per account; the default is 3 |
@@ -134,6 +136,15 @@ site you already run there:
    ```
 
    The reply is 204. An unknown or expired code is 404; a bad or missing token is 401.
+
+3. **A token for the Mac app.** The Mac app lists the account's other computers. To do that it calls
+   `POST /api/account/relay-token` on its account server with its own sign-in (`Authorization: Bearer <its token>`),
+   and expects `{"token":"<account token>"}` back. Its own sign-in token never goes to the broker. Without this
+   route, the computers list in the Mac app stays empty.
+4. **Use a tunnel domain whose certificate covers `<id>.<RELAY_TUNNEL_DOMAIN>`.** Cloudflare's free certificate covers
+   a zone's root and its first-level names only. So `tunnels.example.com` as the tunnel domain needs Cloudflare's paid
+   Advanced Certificate Manager. A zone of its own used as the tunnel domain (`example-tunnels.com`) works on the free
+   plan. Keep that zone apart from your main site, so nobody's computer answers under your site's own name.
 
 Choose your own sign-in methods. The rules that matter are these: the account token is minted only after sign-in,
 and `RELAY_ACCOUNT_SECRET` never reaches a browser or a computer.
