@@ -18,3 +18,11 @@ it("a link to a page of this app opens here, and a link to another site opens in
 it("with no router around it (a share page), every link opens in a new tab as before", () => {
   expect(renderToStaticMarkup(<ReplyText text={text} />)).toMatch(/<a href="\/editor\/e1\/V1A_D1" target="_blank"/);
 });
+
+it("a picture from another site is not loaded: it shows as a link, and one of this app's own is shown", () => {
+  const html = renderToStaticMarkup(<ReplyText text={"Here ![the chart](https://example.com/p.png?q=secret) and ![a still](/api/review/r1/thumb) and ![](//example.com/x.png)"} />);
+  expect(html).not.toMatch(/<img[^>]+src="(https?:)?\/\/example\.com/);
+  expect(html).not.toMatch(/<link[^>]+example\.com/); // no preload of it either
+  expect(html).toMatch(/<a href="https:\/\/example.com\/p.png\?q=secret" target="_blank" rel="noreferrer"[^>]*>the chart<\/a>/);
+  expect(html).toMatch(/<img src="\/api\/review\/r1\/thumb" alt="a still"/);
+});

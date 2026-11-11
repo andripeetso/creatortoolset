@@ -71,6 +71,7 @@ import { applyEdits, docToMarkdown, keep, markEditsSeen, newDocument, onVersion,
 import { captionExamplesFor } from "./lib/workshop/caption-examples";
 import { askedForCaption, askedOnlyForCaption, editsForNewDocument, isAccountFetchSource, gateCompanionEdits, parseTurn, type TurnPlan } from "./lib/workshop/chat-plans";
 import { packInstructions } from "./lib/packs";
+import { skillFiles, skillLines, skillsFor } from "./lib/skills";
 import { buildTurnPrompt, wantsComments } from "./lib/workshop/chat-prompt";
 import { REVIEW_MODEL, audienceOf, buildReviewPrompt, type ReviewPost } from "./lib/workshop/review";
 import { readThrough } from "./lib/workshop/readthrough";
@@ -1221,7 +1222,11 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
 
     // The Mac's Claude session for this conversation, when it holds the reply before this message (see the Mac relay).
     const askAt = chat.messages.findIndex((m) => m.id === ask.id);
-    const context = contextKey(project, frameworks);
+    // The author's own skills for this project (lib/skills.ts): a file each in the folder, a line each in the prompt, and
+    // a change to them starts the Mac's session over. Not for Grok, whose prompt gets the folder's files whole.
+    const skills = folder && workshopAi(user, session.ai).mac?.provider?.driver !== "grok" ? await skillsFor(user.username, session.projectId) : [];
+    Object.assign(folder ?? {}, skillFiles(skills));
+    const context = contextKey(project, frameworks) + skills.map((s) => `:${s.id}@${s.updatedAt}`).join("");
     const claude = folder ? resumableClaude(session, askAt > 0 ? chat.messages[askAt - 1]!.id : undefined, ids, context, providerKey(user, session.ai)) : undefined;
     // say what sits next to the piece, before the thinking step (a resumed session has it from its first turn)
     if (!captionOnly && !(claude && folder) && (nearPosts.length || rewrites.pieces.length)) {
@@ -1262,7 +1267,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
       }
       // Tagged sources first, then the open one, then the most recently pulled ones.
       views.sort((a, b) => Number(!!b.tagged) - Number(!!a.tagged) || Number(!!b.open) - Number(!!a.open) || b.at - a.at);
-      const packText = await packInstructions(user.username, "workshop.write", project?.id ?? null);
+      const packText = [await packInstructions(user.username, "workshop.write", project?.id ?? null), skillLines(skills, "folder")].filter(Boolean).join("\n\n");
       const prompt = buildTurnPrompt({
         project: project ?? undefined,
         account: account ?? undefined,
