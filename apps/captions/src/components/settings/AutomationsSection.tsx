@@ -97,6 +97,13 @@ export function AutomationsSection() {
     if (linked) setParams((p) => (p.delete("task"), p), { replace: true });
   };
 
+  // `?add=1` opens the New task form once, where the page has that button, then the parameter goes
+  useEffect(() => {
+    if (params.get("add") !== "1" || !list) return;
+    if (!list.blocked) setEditing("new");
+    setParams((p) => (p.delete("add"), p), { replace: true });
+  }, [params, setParams, list]);
+
   const items = list?.items ?? [];
   const blocked = list?.blocked ?? null;
 

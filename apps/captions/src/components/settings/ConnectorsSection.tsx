@@ -166,6 +166,17 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
     setParams((p) => (p.delete("connected"), p.delete("error"), p), { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // `?add=<platform>` opens that platform's Add dialog once, where its row has Add, then the parameter goes. A link is
+  // not the person's press, so it never asks the sign-in service: a platform whose sign-in comes from there stays closed.
+  useEffect(() => {
+    const add = params.get("add");
+    if (!add || compact || !view) return;
+    const row = platformRows(view, current ?? undefined, off).find((r) => r.platform === add && r.button);
+    const login = row && loginOf(row.platform);
+    if (row && !(login && view.logins[login] && view.viaService?.includes(login))) void choose(row.platform);
+    setParams((p) => (p.delete("add"), p), { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `choose` is below the two returns this effect also stops at
+  }, [params, view]);
 
   if (compact) {
     return (
