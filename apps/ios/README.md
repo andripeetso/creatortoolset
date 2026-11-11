@@ -52,7 +52,8 @@ TEST_RUNNER_CT_TEST_SERVER=http://127.0.0.1:43127 TEST_RUNNER_CT_TEST_PASSWORD=<
 
 Run the server with a scratch `DATA_DIR` for this: the test signs in as `admin` and adds files to its library.
 `-startTab <0-4>` as a launch argument opens that tab (for simulator screenshots); in a debug build
-`-signinDemo list|none|password|old|add` shows the sign-in screen with a made-up account and asks no server anything.
+`-signinDemo list|none|password|old|add|problem|partly` shows the sign-in screen with a made-up account and asks no server anything
+(`-servers '<hex of a saved list's JSON>'` gives one launch a connected computer, so the tabs show).
 
 The server side of the contract is `apps/captions/api/ios-contract.test.ts` with
 `apps/captions/api/__fixtures__/ios-public-paths.json`: every path the app calls. Add a path there when the app

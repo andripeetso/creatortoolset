@@ -142,6 +142,10 @@ final class AccountSignInTests: XCTestCase {
         XCTAssertEqual(saved[0].name, "studio.example.test")
         let mac = Server(url: URL(string: "https://\(sam).tunnels.example.com/")!, username: "admin", label: "Sam's Mac")
         XCTAssertEqual(try JSONDecoder().decode(Server.self, from: JSONEncoder().encode(mac)).name, "Sam's Mac")
+        // signed in again by its address, it is still "Sam's Mac", and it is on the phone once
+        let again = Servers.adding(Server(url: mac.url, username: "sam"), to: saved + [mac])
+        XCTAssertEqual(again.map(\.name), ["studio.example.test", "Sam's Mac"])
+        XCTAssertEqual(again.last?.username, "sam")
     }
 
     func testWhatGoesWrongInPlainWords() {

@@ -114,16 +114,16 @@ struct AddServerView: View {
                 // a section each, so each button gets the row's whole shape
                 Section {
                     SignInButton(provider: "apple") { Task { await run { try await signIn("apple") } } }
+                        .listRowInsets(EdgeInsets())
                 }
-                .listRowInsets(EdgeInsets())
                 .listSectionSpacing(12)
                 .disabled(busy)
                 Section {
                     SignInButton(provider: "google") { Task { await run { try await signIn("google") } } }
+                        .listRowInsets(EdgeInsets())
                 } footer: {
                     if let problem { Problem(text: problem) }
                 }
-                .listRowInsets(EdgeInsets())
                 .disabled(busy)
             }
             Section {
@@ -186,6 +186,9 @@ struct AddServerView: View {
         }
         .refreshable { if account.profile != nil { await run { try await load() } } }
         .task {
+            #if DEBUG
+            if Account.demo == "problem" { problem = AccountError.unreachable("creatortoolset.com").localizedDescription }
+            #endif
             guard account.profile != nil, computers == nil else { return }
             await run { try await load() }
             #if DEBUG
@@ -196,6 +199,9 @@ struct AddServerView: View {
         .sheet(isPresented: $scanning) {
             CodeScanner { text in
                 scanning = false
+                // the code is what connects now, whatever was being asked before
+                asked = nil
+                needsPassword = nil
                 address = text
                 Task { await connect() }
             }

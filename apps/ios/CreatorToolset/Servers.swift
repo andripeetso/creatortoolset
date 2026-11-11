@@ -39,10 +39,17 @@ final class Servers: ObservableObject {
     var api: API? { current.map { API(server: $0.url, cookie: Keychain.get($0.id)) } }
 
     func add(_ server: Server, cookie: String?) {
-        list.removeAll { $0.id == server.id }
-        list.append(server)
+        list = Self.adding(server, to: list)
         Keychain.set(server.id, cookie)
         use(server.id)
+    }
+
+    /// The list with a server added, in place of the one with the same address. Signed in again by its address, a
+    /// computer keeps the name it had.
+    static func adding(_ server: Server, to list: [Server]) -> [Server] {
+        var server = server
+        if server.label == nil { server.label = list.first { $0.id == server.id }?.label }
+        return list.filter { $0.id != server.id } + [server]
     }
 
     func use(_ id: String) {

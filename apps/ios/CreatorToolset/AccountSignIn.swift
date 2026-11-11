@@ -22,12 +22,14 @@ final class Account: ObservableObject {
     }
 
     @Published private(set) var profile: Profile?
+    private static let addedDidntLoad = "Your other computers didn't load. Pull down to try again."
     private let key = "account"
     private var token: String? { Keychain.get(key) }
 
     #if DEBUG
-    /// `-signinDemo list|none|password|old|add` at launch: a made-up account and its computers, for simulator
-    /// screenshots (`add` opens Add a computer from More). No server is asked anything.
+    /// `-signinDemo list|none|password|old|add|problem|partly` at launch: a made-up account and its computers, for
+    /// simulator screenshots (`add` opens Add a computer from More; `problem` is a sign-in that failed, `partly` a list
+    /// whose added computers didn't load). No server is asked anything.
     static let demo = UserDefaults.standard.string(forKey: "signinDemo")
     #endif
 
@@ -36,7 +38,7 @@ final class Account: ObservableObject {
             profile = try? JSONDecoder().decode(Profile.self, from: data)
         }
         #if DEBUG
-        if Self.demo != nil { profile = Profile(name: "Sam Tiny", email: "sam@tinyacrobatics.com", provider: "apple") }
+        if let demo = Self.demo, demo != "problem" { profile = Profile(name: "Sam Tiny", email: "sam@tinyacrobatics.com", provider: "apple") }
         #endif
     }
 
@@ -68,6 +70,7 @@ final class Account: ObservableObject {
     /// when the added computers could not be read; the hosted servers still show.
     func computers() async throws -> (list: [Computer], problem: String?) {
         #if DEBUG
+        if Self.demo == "partly" { return (Array(Computer.demo.prefix(1)), Self.addedDidntLoad) }
         if let demo = Self.demo { return (demo == "none" ? [] : Computer.demo, nil) }
         #endif
         let me = try JSONDecoder().decode(AccountMe.self, from: try await ask("/api/account/me"))
@@ -81,14 +84,14 @@ final class Account: ObservableObject {
         } catch AccountError.signedOut {
             throw AccountError.signedOut
         } catch {
-            problem = "Your other computers didn't load: \(error.localizedDescription)"
+            problem = Self.addedDidntLoad
         }
         return (Computer.list(hosted: me.servers?.map(\.host) ?? [], added: added), problem)
     }
 
-    /// A hosted server, signed in to with the account's own Apple or Google in a second sheet (the first sheet's
-    /// sign-in is remembered, so it asks nothing again). Nil = the person closed the sheet; `.needsPassword` = a
-    /// server that does not sign in this way, which takes a username and password.
+    /// A hosted server, signed in to with the account's own Apple or Google in a second sheet (the sheets share the
+    /// phone's browser sign-ins, so Apple or Google should not ask a second time). Nil = the person closed the sheet;
+    /// `.needsPassword` = a server that does not sign in this way, which takes a username and password.
     func signIn(to computer: Computer) async throws -> SignIn.Outcome? {
         guard let provider = profile?.provider, Self.providers.contains(provider) else { return .needsPassword }
         let pkce = Pkce.make()
