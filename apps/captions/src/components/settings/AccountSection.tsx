@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, EmptyRow, FormDialog, LoadingRow, Row, RowMenu, Section } from "./ui";
+import { MacAccountSection } from "@/components/setup/AccountStep";
 
 type Provider = "google" | "apple" | "github";
 const PROVIDER_NAME: Record<Provider, string> = { google: "Google", apple: "Apple", github: "GitHub" };
@@ -183,6 +184,8 @@ export function AccountSection() {
           </Card>
         </Section>
       )}
+      {/* in the Mac app, when this Mac is signed in to a Creator Toolset account: who, and Sign out; else nothing */}
+      <MacAccountSection />
       {required && (
         <Section title="Session">
           <Card>

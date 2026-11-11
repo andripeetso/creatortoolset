@@ -136,8 +136,10 @@ final class Shell: NSObject, ObservableObject {
         account.signedIn = { [weak self] profile in self?.ownerProfile(profile) }
         view.onAccount = { [weak self] ask, done in
             guard let self else { return done(["state": "off"]) }
-            if ask == "status" {
+            if ask == "status" || ask == "offered" {
                 Task { done(await self.account.status()) }
+            } else if ask == "signout" {
+                Task { done(await self.account.signOut()) }
             } else {
                 self.account.signIn(ask, done: done)
             }

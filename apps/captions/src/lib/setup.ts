@@ -20,11 +20,20 @@ export type { SetupView };
 export const SETUP_PATH = ["theme", "agents", "make", "job", "how"] as const;
 /** Screens that open alone from a `?setup=` link and close with Done. `own` is also the path's last screen (stepsFor). */
 export const SIDE_STEPS = ["connect", "folders", "own"] as const;
-export const SETUP_STEPS = [...SETUP_PATH, ...SIDE_STEPS] as const;
+/** The last screen of the path when the Mac app offers a sign-in (stepsFor): the person's Creator Toolset account, skippable. */
+export const ACCOUNT_STEP = "account";
+export const SETUP_STEPS = [...SETUP_PATH, ...SIDE_STEPS, ACCOUNT_STEP] as const;
 export type SetupStep = (typeof SETUP_STEPS)[number];
 
-/** The click path: the five screens, and `own` after them when the answer to the last is "In my own AI" or "Both". */
-export const stepsFor = (talk?: string | null): readonly SetupStep[] => (talk === "chat" || talk === "both" ? [...SETUP_PATH, "own"] : SETUP_PATH);
+/**
+ * The click path: the five screens, `own` after them when the answer to the last is "In my own AI" or "Both", and last
+ * of all `account` when the Mac app offers a sign-in that works (`account`; today none does, so the path ends before it).
+ */
+export const stepsFor = (talk?: string | null, account = false): readonly SetupStep[] => [
+  ...SETUP_PATH,
+  ...(talk === "chat" || talk === "both" ? (["own"] as const) : []),
+  ...(account ? ([ACCOUNT_STEP] as const) : []),
+];
 
 /** Ids from the older, longer setups still open the screen they now belong to. */
 const OLD_STEP: Record<string, SetupStep> = { tools: "make", ai: "agents", project: "make", left: "make", done: "make", try: "make" };

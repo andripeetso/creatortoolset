@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
+import { Check, Loader2, LogIn } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Card, ListRow, Row, Section, Status } from "@/components/settings/ui";
 
 /**
  * The person's Creator Toolset account, signed in with Apple, Google or GitHub: optional, in setup's What's left and Settings → Setup. The Mac app does the sign-in
@@ -20,8 +22,8 @@ export type AccountState =
 export type Provider = "apple" | "google" | "github";
 const PROVIDERS: Provider[] = ["apple", "google", "github"];
 const PROVIDER_NAME: Record<Provider, string> = { apple: "Apple", google: "Google", github: "GitHub" };
-/** The providers a reply names, in the order above; unknown names are dropped. */
-export const parseProviders = (list: string) => PROVIDERS.filter((p) => list.split(",").includes(p));
+/** The providers a reply names, in the order it names them (the Mac app decides which comes first); unknown names and repeats are dropped. */
+export const parseProviders = (list: string) => [...new Set(list.split(","))].filter((p): p is Provider => (PROVIDERS as string[]).includes(p));
 
 type Bridge = { postMessage: (m: string) => Promise<AccountState & { providers?: string }> };
 const bridge = (): Bridge | undefined =>
@@ -73,33 +75,122 @@ export function AccountStepView({ account, busy, providers = [], onSignIn, onDon
   );
 }
 
-/** Without `onDone` (What's left, Settings → Setup) it is an optional row: no Continue button. */
-export function AccountStep({ onDone }: { onDone?: () => void }) {
-  const [account, setAccount] = useState<AccountState>({ state: "checking" });
+/**
+ * The Mac app's account, as this page knows it. It is asked once when the screen opens and again after a sign-in that
+ * ended in a link; everything else follows a press here. Signed out, the Mac app answers from its own list and asks the
+ * account server nothing (Account.swift accountLive), so nothing leaves this computer before a press. `providers` keeps
+ * the last list the app named: an answer without one (signed in, cancelled) leaves the buttons where they were.
+ * `first`: the opening question. Setup's screen and Settings ask "offered", which a Mac app from before 2026-11-10 answers
+ * "off" (so it shows nothing there); "status" is the older question, which such an app answers by asking its server.
+ * `on`: ask only while this is true (the setup window is up).
+ */
+export function useMacAccount({ on = true, first = "status" }: { on?: boolean; first?: "status" | "offered" } = {}) {
+  const [account, setAccount] = useState<AccountState>(() => (bridge() ? { state: "checking" } : { state: "off" }));
   const [providers, setProviders] = useState<Provider[]>([]);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<Provider | "signout" | null>(null);
   const ask = useCallback(async (m: string) => {
     const b = bridge();
     if (!b) return setAccount({ state: "off" });
     try {
       const reply = await b.postMessage(m);
-      // no `providers` field (an older Mac app) means no buttons: a provider is offered only when the server names it
-      setProviders(parseProviders(reply.providers ?? ""));
+      // a provider is offered only when the app names it; no list at all (an older Mac app) never adds a button
+      if (reply.providers !== undefined) setProviders(parseProviders(reply.providers));
       setAccount(reply);
     } catch (e) {
       setAccount({ state: "error", message: e instanceof Error ? e.message : String(e) });
     }
   }, []);
   useEffect(() => {
-    void ask("status");
+    if (!on) return;
+    void ask(first);
     // a sign-in finished through a creatortoolset:// link rather than the sheet: the app says so
-    const again = () => void ask("status");
+    const again = () => void ask(first);
     window.addEventListener("ct-account", again);
     return () => window.removeEventListener("ct-account", again);
-  }, [ask]);
+  }, [ask, on, first]);
   const signIn = (provider: Provider) => {
-    setBusy(true);
-    void ask(provider).finally(() => setBusy(false));
+    setBusy(provider);
+    void ask(provider).finally(() => setBusy(null));
   };
-  return <AccountStepView account={account} busy={busy} providers={providers} onSignIn={signIn} onDone={onDone} />;
+  const signOut = () => {
+    setBusy("signout");
+    void ask("signout").finally(() => setBusy(null));
+  };
+  return { account, providers, busy, signIn, signOut };
+}
+export type MacAccount = ReturnType<typeof useMacAccount>;
+
+/** Without `onDone` (What's left, Settings → Setup) it is an optional row: no Continue button. */
+export function AccountStep({ onDone }: { onDone?: () => void }) {
+  const { account, providers, busy, signIn } = useMacAccount();
+  return <AccountStepView account={account} busy={!!busy} providers={providers} onSignIn={signIn} onDone={onDone} />;
+}
+
+/** Whether setup has an account screen: the Mac app names a sign-in and the person is not signed in yet. */
+export const offersAccount = (a: Pick<MacAccount, "account" | "providers">) =>
+  a.providers.length > 0 && a.account.state !== "signedIn" && a.account.state !== "off" && a.account.state !== "checking";
+
+/**
+ * Setup's last screen, which anyone can skip: one row for each sign-in the Mac app names, each with its one button
+ * (Sign in, Signing in… while the system's sheet is up). Signed in, the rows give way to who it is. A sheet that was
+ * closed is nothing to report; a sign-in that failed says so in one line and the buttons stay. Pure, for tests.
+ */
+export function AccountSetupView({ account, providers, busy, onSignIn }: Pick<MacAccount, "account" | "providers" | "busy"> & { onSignIn: (p: Provider) => void }) {
+  if (account.state === "signedIn")
+    return (
+      <Card>
+        <ListRow title={`Signed in as ${account.name || account.email || "you"}`} subtitle={account.name && account.email ? account.email : undefined} actions={<Check aria-label="Signed in" className="size-4 text-emerald-600 dark:text-emerald-400" />} />
+      </Card>
+    );
+  // opened with nothing to offer (an old link to this screen): said in one line, and Done closes it
+  if (providers.length === 0) return <p className="text-sm text-muted-foreground">Sign-in is not available right now.</p>;
+  const failed =
+    account.state === "error" ? account.message || "The sign-in didn't work. Try again."
+    : account.state === "notSetUp" ? "Sign-in is not available right now."
+    : account.state === "unreachable" ? "Couldn't reach the account server. Check the internet connection, then try again."
+    : null;
+  return (
+    <div className="space-y-2">
+      <Card>
+        {providers.map((p) => (
+          <ListRow
+            key={p}
+            title={PROVIDER_NAME[p]}
+            actions={
+              <Button size="xs" variant="outline" disabled={!!busy} onClick={() => onSignIn(p)}>
+                {busy === p ? <Loader2 aria-hidden className="size-3 animate-spin" /> : <LogIn aria-hidden className="size-3" />}
+                {busy === p ? "Signing in…" : "Sign in"}
+              </Button>
+            }
+          />
+        ))}
+      </Card>
+      {failed && !busy && <Status tone="broken">{failed}</Status>}
+    </div>
+  );
+}
+
+/**
+ * Settings → Account, in the Mac app only: the Creator Toolset account this Mac is signed in to, with Sign out. Nothing
+ * at all when there is no Mac app, or nobody is signed in: the section is the connection and its one action, never a
+ * prompt to sign in.
+ */
+export function MacAccountSection() {
+  const { account, busy, signOut } = useMacAccount({ first: "offered" });
+  if (account.state !== "signedIn") return null;
+  return (
+    <Section title="Creator Toolset account">
+      <Card>
+        <Row
+          title={account.name || account.email || "Signed in"}
+          description={account.name && account.email ? account.email : undefined}
+          control={
+            <Button size="sm" variant="outline" disabled={busy === "signout"} onClick={signOut}>
+              {busy === "signout" ? "Signing out…" : "Sign out"}
+            </Button>
+          }
+        />
+      </Card>
+    </Section>
+  );
 }

@@ -15,6 +15,11 @@ let defaultAccountServer = URL(string: "https://creatortoolset.com")!
 /// no keys for is not offered (its sign-in page answers 404 or 501), so its button is not shown.
 let accountProviders = ["apple", "google", "github"]
 
+/// The sign-ins proven to work end to end on the default account server, in the order setup's last screen shows them.
+/// Empty until one has: setup then has no account screen, and a signed-out person's status asks that server nothing, so
+/// the app makes no call there before a press. Add a provider only after a real sign-in with it has gone through.
+let accountLive: [String] = []
+
 /// The account server from This Mac → Account: never set = defaultAccountServer; "" = none (forks, own servers).
 func accountServerURL(_ saved: String?) -> URL? {
     guard let saved else { return defaultAccountServer }
@@ -158,10 +163,12 @@ private final class NoRedirects: NSObject, URLSessionTaskDelegate {
                     newRequest request: URLRequest) async -> URLRequest? { nil }
 }
 
-/// The page's account message: "status", "apple", "google" or "github", and only from the window's own page, never from a
-/// frame inside it (an embed would read the name and email, or open a sign-in).
+/// The page's account message: "status" or "offered" (the same question; setup's account screen and Settings ask
+/// "offered", which an app from before 2026-11-10 answers "off" without asking its server which sign-ins exist),
+/// "signout", "apple", "google" or "github", and only from the window's own page, never from a frame inside it (an
+/// embed would read the name and email, open a sign-in or sign the person out).
 func accountAsk(_ body: Any, mainFrame: Bool) -> String? {
-    guard mainFrame, let ask = body as? String, ["status"].contains(ask) || accountProviders.contains(ask) else { return nil }
+    guard mainFrame, let ask = body as? String, ["status", "offered", "signout"].contains(ask) || accountProviders.contains(ask) else { return nil }
     return ask
 }
 
@@ -225,11 +232,30 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
             }
         }
         do {
-            let up = try await client.offeredProviders()
+            let up = try await offered(client)
             return up.isEmpty ? ["state": "notSetUp", "server": host] : ["state": "signedOut", "providers": up.joined(separator: ",")]
         } catch {
             return unreachable(error)
         }
+    }
+
+    /// The sign-ins a signed-out person is offered. The default account server is asked nothing (accountLive); a server
+    /// the person set themselves (This Mac → Account) is theirs, so it is asked which of its sign-ins are set up.
+    private func offered(_ client: AccountClient) async throws -> [String] {
+        server?.absoluteString == defaultAccountServer.absoluteString ? accountLive : try await client.offeredProviders()
+    }
+
+    /// Sign out: the token leaves the Keychain and the kept name and email go with it. The name this Mac's own server
+    /// shows stays as it is. Answers as `status` does for a signed-out person.
+    /// ponytail: the token is only forgotten here; call the account server's revoke when it has one.
+    func signOut() async -> AccountReply {
+        session?.cancel()
+        session = nil
+        answer(["state": "cancelled"])
+        pkce = nil
+        DeviceVault.remove(for: host, service: Self.vault)
+        UserDefaults.standard.removeObject(forKey: profileKey)
+        return await status()
     }
 
     /// "Continue with Apple" / "Google" / "GitHub": the server's sign-in in the system sheet, then the code exchange.

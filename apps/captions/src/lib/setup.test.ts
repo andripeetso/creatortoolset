@@ -15,10 +15,14 @@ describe("setup steps", () => {
     // Pick your look, Connect your AI, What do you make?, What do you want to do first?, How do you work best?
     const five = ["theme", "agents", "make", "job", "how"];
     expect(stepsFor()).toEqual(five);
-    expect(stepsFor()).toBe(SETUP_PATH);
+    expect(stepsFor()).toEqual(SETUP_PATH);
     for (const talk of ["app", null, undefined]) expect(stepsFor(talk)).toEqual(five);
     // the owner picked Both and setup "ended abruptly": the answer is carried out on a screen of its own, last
     for (const talk of ["chat", "both"]) expect(stepsFor(talk)).toEqual([...five, "own"]);
+    // the account screen is last of all, and only when the Mac app offers a sign-in that works
+    expect(stepsFor("app", true)).toEqual([...five, "account"]);
+    expect(stepsFor("both", true)).toEqual([...five, "own", "account"]);
+    expect(stepsFor("both", false)).not.toContain("account");
   });
 
   it("opens the two new screens from a link, and no old id lands on them", () => {

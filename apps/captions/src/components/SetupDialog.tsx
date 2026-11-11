@@ -20,6 +20,7 @@ import { TOOLS, type Tool } from "@contracts/tools";
 import { MAKES, type Job, type Make } from "@contracts/work-prefs";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { AccountSetupView, offersAccount, useMacAccount } from "@/components/setup/AccountStep";
 import { AgentsStep } from "@/components/setup/AgentsStep";
 import { Choice } from "@/components/setup/Choice";
 import { ConnectStep, HERE } from "@/components/setup/ConnectStep";
@@ -76,6 +77,8 @@ const STEP: Record<SetupStep, { title: string; hint: string }> = {
   },
   how: { title: "How do you work best?", hint: "Pick where you talk to your AI." },
   own: { title: "Add Creator Toolset to your AI", hint: "Install it once. Your AI app can then find your clips, start edits and work in your projects, as you." },
+  // only what a sign-in does today: this Mac's server takes the account's name and email as its owner's
+  account: { title: "Create your account", hint: "Optional. Sign in and the app shows your name. Nothing else is read from that account." },
 };
 
 const MAKE_ICONS: Record<Make, LucideIcon> = {
@@ -123,6 +126,7 @@ export function SetupDialog() {
   const [footerSlot, setFooterSlot] = useState<HTMLElement | null>(null); // the folders screen portals its buttons in
   const [ownSlot, setOwnSlot] = useState<HTMLElement | null>(null); // where the AI apps screen shows its rows
   const [unsure, setUnsure] = useState<boolean | null>(null); // "Not sure yet" ticked here; null = read it from the saved answers
+  const [accountStep, setAccountStep] = useState(false); // the Mac app offered a sign-in during this setup: its screen stays in the path
   const asked = params.get("setup");
   // by itself only on a first sign-in (setupOpensItself); Settings → Setup and ?setup= always open it; never on a phone
   const firstRun = setupOpensItself({ logins: me?.logins, loaded, projects: projects.length });
@@ -150,6 +154,13 @@ export function SetupDialog() {
     return () => window.clearTimeout(t);
   }, [note]);
   useSetupLive(open);
+  // the person's Creator Toolset account, asked of the Mac app only while setup is up; once a sign-in was offered the
+  // screen stays the path's last one, so signing in on it does not take it away from under her
+  const account = useMacAccount({ on: open, first: "offered" });
+  const accountOffered = offersAccount(account);
+  useEffect(() => {
+    if (accountOffered) setAccountStep(true);
+  }, [accountOffered]);
   // the AI panel connected one: read the setup again now, so Continue lights up without waiting for the next look
   const onConnected = useCallback((on: boolean) => void (on && load()), [load]);
 
@@ -165,7 +176,7 @@ export function SetupDialog() {
   const mine = TOOLS.filter((t) => canUse(me, t));
   const makes = prefs.makes;
   const tools = ticked ?? view.tools ?? toolsFor(makes, mine);
-  const path = stepsFor(prefs.talk);
+  const path = stepsFor(prefs.talk, accountStep);
   const at = path.indexOf(step);
   const side = at < 0;
   const connected = view.have.includes("ai");
@@ -235,7 +246,7 @@ export function SetupDialog() {
   const closeLabel = side ? "Close" : "Not now";
   const { hint } = STEP[step];
   // "What do you want to do first?" with nothing picked has Skip for now in place of Continue, as Connect your AI has
-  const skips = (step === "agents" && !connected) || (step === "job" && !prefs.job);
+  const skips = (step === "agents" && !connected) || (step === "job" && !prefs.job) || (at >= 0 && step === "account" && account.account.state !== "signedIn");
 
   return (
     <Dialog open onOpenChange={(o) => !o && close()}>
@@ -314,6 +325,8 @@ export function SetupDialog() {
           )}
 
           {step === "how" && <HowPicker value={prefs.talk} onChange={(t) => void setTalk(t)} />}
+
+          {step === "account" && <AccountSetupView account={account.account} providers={account.providers} busy={account.busy} onSignIn={account.signIn} />}
 
           {/* its rows are put here by the one OwnAiStep below */}
           {step === "own" && <div ref={setOwnSlot} />}
