@@ -71,6 +71,10 @@ it("the account screen is a sign-in screen: one button for each sign-in offered,
   expect(html.match(/<svg/g)).toHaveLength(2); // each carries its provider's mark
   expect(html).toContain("#4285F4"); // Google's, in its own colours
   expect(html).not.toMatch(/GitHub|phone|settings|sync/i);
+  // a sign-in card: its own title and one line, and only what a sign-in does today
+  expect(html).toContain("Sign in to Creator Toolset");
+  expect(html).toContain("Optional. Sign in and the app shows your name.");
+  expect(html).toContain("Nothing else is read from that account.");
   // while the system's sheet is up: that button says so, and no second sign-in can be started
   const busy = setup({ state: "signedOut" }, ["google", "apple"], "google");
   expect(buttons(busy)).toEqual(["Signing in…", "Continue with Apple"]);

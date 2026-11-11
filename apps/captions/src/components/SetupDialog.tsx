@@ -77,8 +77,8 @@ const STEP: Record<SetupStep, { title: string; hint: string }> = {
   },
   how: { title: "How do you work best?", hint: "Pick where you talk to your AI." },
   own: { title: "Add Creator Toolset to your AI", hint: "Install it once. Your AI app can then find your clips, start edits and work in your projects, as you." },
-  // only what a sign-in does today: this Mac's server takes the account's name and email as its owner's
-  account: { title: "Create your account", hint: "Optional. Sign in and the app shows your name. Nothing else is read from that account." },
+  // the screen is a sign-in card with its own title and words (setup/AccountStep.tsx): this title is read out, not shown
+  account: { title: "Create your account", hint: "" },
 };
 
 const MAKE_ICONS: Record<Make, LucideIcon> = {
@@ -277,7 +277,7 @@ export function SetupDialog() {
               <X className="size-4" />
             </button>
           </div>
-          <DialogTitle className="mt-4 text-2xl font-semibold tracking-tight">{STEP[step].title}</DialogTitle>
+          <DialogTitle className={cn("mt-4 text-2xl font-semibold tracking-tight", step === "account" && "sr-only")}>{STEP[step].title}</DialogTitle>
           {hint && <DialogDescription className="mt-1.5 text-sm">{hint}</DialogDescription>}
         </header>
 

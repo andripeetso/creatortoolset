@@ -188,6 +188,8 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
     private var pending: ((AccountReply) -> Void)?
     /// The verifier of the sign-in in flight: a code is swapped only with it.
     private var pkce: Pkce?
+    /// The provider of the sign-in in flight, kept with the account once it goes through.
+    private var signingInWith = ""
 
     var server: URL? { accountServerURL(UserDefaults.standard.string(forKey: serverKey)) }
     /// The text This Mac shows ("" when off).
@@ -206,8 +208,14 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
         return try? JSONDecoder().decode(AccountProfile.self, from: data)
     }
 
+    /// Which sign-in this Mac's account was made with ("google", "apple"…), kept beside the profile so Settings can show
+    /// its mark; "" for a sign-in from before this was kept.
+    private var providerKey: String { "accountProvider.\(host)" }
+
     private func reply(_ profile: AccountProfile) -> AccountReply {
-        ["state": "signedIn", "name": profile.name, "email": profile.email]
+        var reply = ["state": "signedIn", "name": profile.name, "email": profile.email]
+        if let provider = UserDefaults.standard.string(forKey: providerKey), !provider.isEmpty { reply["provider"] = provider }
+        return reply
     }
 
     private func reply(_ error: Error) -> AccountReply {
@@ -255,6 +263,7 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
         pkce = nil
         DeviceVault.remove(for: host, service: Self.vault)
         UserDefaults.standard.removeObject(forKey: profileKey)
+        UserDefaults.standard.removeObject(forKey: providerKey)
         return await status()
     }
 
@@ -266,6 +275,7 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
         session?.cancel()
         pending?(["state": "cancelled"])
         pending = done
+        signingInWith = provider
         let pair = Pkce.make()
         pkce = pair
         Task { () -> Void in
@@ -321,6 +331,7 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
             guard DeviceVault.save(token, for: host, service: Self.vault) else {
                 return answer(["state": "error", "message": "The Keychain didn't keep the sign-in."])
             }
+            UserDefaults.standard.set(signingInWith, forKey: providerKey)
             keep(profile)
             return answer(reply(profile))
         } catch {
