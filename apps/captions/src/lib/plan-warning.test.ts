@@ -3,16 +3,16 @@ import { planWarning } from "@contracts/plans";
 import { planToWarnBy } from "./setup";
 
 describe("the plan a heavy run is checked against", () => {
-  it("prefers the plan a reading tells over the one the person picked", () => {
-    // picked Pro, the Mac's CLI says Max 5x: no warning, since the bigger plan is the real one
+  it("keeps the plan the person picked over the one their AI names", () => {
+    // picked Pro, the Mac's CLI says Max 5x: Usage shows their pick, and the warning goes by the same plan
     const view = { detected: "claude_max5" as const, plan: "claude_pro" as const };
-    expect(planWarning(planToWarnBy(view), "editor")).toBeNull();
-    expect(planToWarnBy(view)).toBe("claude_max5");
+    expect(planToWarnBy(view)).toBe("claude_pro");
+    expect(planWarning(planToWarnBy(view), "editor")).not.toBeNull();
   });
 
-  it("falls back to the person's answer, then to none", () => {
+  it("falls back to the plan the AI names, then to none", () => {
+    expect(planToWarnBy({ detected: "chatgpt_plus", plan: null })).toBe("chatgpt_plus");
     expect(planToWarnBy({ detected: null, plan: "claude_pro" })).toBe("claude_pro");
-    expect(planWarning(planToWarnBy({ detected: null, plan: "claude_pro" }), "editor")).not.toBeNull();
     expect(planToWarnBy({ detected: null, plan: null })).toBeNull();
     expect(planToWarnBy(null)).toBeNull();
   });

@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import { DRIVERS, type LimitsIdentity, type LimitWindow, type ProviderInstance, type ProvidersView } from "@contracts/providers";
-import { PLANS, type PlanId } from "@contracts/plans";
+import { PLANS, planFromCli, type PlanId } from "@contracts/plans";
 import type { SetupView } from "@contracts/tools";
 import { Button } from "@/components/ui/button";
 import { USAGE_PERIODS, deviceOf, thisMacDevice, usageSince, useProviders, type UsageRow } from "@/lib/providers";
 import { LOW, countedWindow, identityKey, leftOf, noticeOf, resetsIn } from "@/lib/limits";
-import { useSetup } from "@/lib/setup";
+import { planToWarnBy, useSetup } from "@/lib/setup";
 import { tokensLabel } from "@/lib/workshop";
 import { cn } from "@/lib/utils";
 import { ProviderLogo } from "./ProviderLogos";
@@ -105,20 +105,18 @@ export function PlanLimits({ view, now, bridge, setup }: { view: ProvidersView; 
           ))}
         </Card>
       )}
-      {/* a computer that reports the plan (shown on the card above) answers the question itself */}
-      {(logins.length > 0 || unread.length > 0) && !logins.some((i) => view.devices.find((d) => d.id === i.device)?.report?.drivers.some((d) => d.driver === i.driver && d.plan)) && (
-        <YourPlan setup={setup} />
-      )}
+      {(logins.length > 0 || unread.length > 0) && <YourPlan setup={setup} />}
     </Section>
   );
 }
 
 /**
- * "Your plan", asked only when no reading tells the plan (setup's detected plan). The answer is what a heavy run reads
- * before it starts (confirmHeavy in lib/setup.ts; it asks first on Pro and Plus).
+ * "Your plan": the person's pick, else the plan their AI names (setup's `detected`: Claude's sign-in, Codex's usage
+ * page), else Not sure. It is what a heavy run reads before it starts (confirmHeavy in lib/setup.ts; it asks first on
+ * Pro and Plus). Picking one saves it as theirs; nothing the AI says replaces it.
  */
 function YourPlan({ setup }: { setup: SetupView | null }) {
-  if (!setup || setup.detected) return null;
+  if (!setup) return null;
   const save = (v: string) => void useSetup.getState().save({ plan: v === "none" ? null : (v as PlanId) }).catch(() => saveFailed("That did not save. Try again."));
   return (
     <Card>
@@ -129,7 +127,7 @@ function YourPlan({ setup }: { setup: SetupView | null }) {
         control={
           <SettingsSelect
             label="Your plan"
-            value={setup.plan ?? "none"}
+            value={planToWarnBy(setup) ?? "none"}
             onValueChange={save}
             options={[{ value: "none", label: "Not sure" }, ...PLANS.map((p) => ({ value: p.id, label: p.label }))]}
           />
@@ -156,7 +154,9 @@ function missingReadings(view: ProvidersView): Array<{ inst: ProviderInstance; d
 /** One AI login: its logo, name, computer and plan, then a bar per window with the share left and when it resets. */
 function LoginCard({ i, view, now }: { i: LimitsIdentity; view: ProvidersView; now: number }) {
   const mac = view.devices.find((d) => d.id === i.device);
-  const plan = mac?.report?.drivers.find((d) => d.driver === i.driver)?.plan;
+  // Codex's plan comes with its reading; Claude's from its sign-in, in the Mac's report
+  const planId = i.plan ?? (i.driver === "claude" ? planFromCli(mac?.report?.drivers.find((d) => d.driver === "claude")?.plan) : null);
+  const plan = PLANS.find((p) => p.id === planId)?.label;
   const driver = DRIVERS.find((d) => d.id === i.driver)?.label ?? i.driver;
   // the Mac reports each Claude folder with whether it has a custom endpoint; the folder is named ".claude" or ".claude-<label>"
   const folder = i.label === "default" ? `.${i.driver}` : `.${i.driver}-${i.label}`;
@@ -171,7 +171,7 @@ function LoginCard({ i, view, now }: { i: LimitsIdentity; view: ProvidersView; n
       <ListRow
         icon={<ProviderLogo driver={i.driver} className="size-4" />}
         title={title}
-        subtitle={[plan ? `${plan[0]!.toUpperCase()}${plan.slice(1)} plan` : null, mac?.name].filter(Boolean).join(" · ") || undefined}
+        subtitle={[plan ? `${plan} plan` : null, mac?.name].filter(Boolean).join(" · ") || undefined}
         status={staleLine(i, now)}
       />
       {i.state === "ok" && i.windows.map((w) => <WindowBar key={w.id} w={countedWindow(i, w, now)} now={now} />)}
