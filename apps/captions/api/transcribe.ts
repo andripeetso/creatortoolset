@@ -4,6 +4,7 @@ import type { SessionUser } from "./users";
 import { bumpUsage } from "./users";
 import { isOutOfCredits, outOfCreditsMessage } from "./credits";
 import { keyFor } from "./my-keys";
+import { captioning } from "./projects";
 
 /**
  * Optional cloud transcription via Deepgram nova-3, on the key that serves the caller (my-keys.ts keyFor: their own
@@ -305,6 +306,11 @@ export async function transcribeWav(
 
 transcribeApp.post("/", async (c) => {
   const user = c.get("user");
+  // the page says which project it transcribes for: one the server is captioning by itself (captions-job.ts, whose
+  // own request names none) gets no second transcript, paid for a second time
+  if (captioning.has(c.req.query("project") ?? "")) {
+    return c.json({ error: "This project's captions are already being made: they show here when they are ready", code: "CAPTIONING" }, 409);
+  }
   const accessError = cloudTranscribeBlock(user);
   if (accessError) {
     const locked = !mayUseCloud(user);

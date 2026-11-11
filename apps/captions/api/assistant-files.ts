@@ -183,15 +183,15 @@ export async function useFile(
     return { to, id: of.id, name: added.meta.name, href: `/review/${of.id}?v=${added.n}`, version: added.n, note: `Version ${added.n} of “${added.meta.name}”` };
   }
   // Caption Studio: the project is there at once, with its id; its editing copy and its captions are made behind the
-  // answer (captions-job.ts), and the chat says when they are ready. "Open it only then": an open, untouched project
-  // takes the captions when they land (src/lib/persist.ts), but Transcribe pressed on the page meanwhile would be refused
+  // answer (captions-job.ts), and the chat says when they are ready. It can be opened at once: the page shows that
+  // the captions are being made instead of Transcribe, and takes them when they land (src/lib/persist.ts)
   const made = await createProjectFromFile({ owner: user.username, name: title, clipName: meta.name, file, duration: await probeDuration(file), later: true });
   const project = { to, id: made.projectId, name: title, href: `/captions?project=${made.projectId}` };
   const route = captionEngine(user);
   // nothing on this server transcribes for them: said in the route's own words (on the page, their browser still can)
   if ("refused" in route) return { ...project, note: `Not transcribed: ${route.refused}. On the project's page, Transcribe runs in the browser and needs no key.` };
   captionInBackground(user, made.projectId, made.clipId, title, route.engine);
-  return { ...project, captioning: true, note: "Being prepared and transcribed: the chat says when the captions are ready. Open the project only then." };
+  return { ...project, captioning: true, note: "Being prepared and transcribed: the chat says when the captions are ready." };
 }
 
 assistantFilesApp.post("/:id/use", async (c) => {

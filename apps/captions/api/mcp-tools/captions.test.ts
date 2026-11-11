@@ -43,6 +43,19 @@ vi.mock("../ai-complete", async (real) => ({
     return parse('{"lines":["Tiny Acrobatics","starts with a roll."]}');
   },
 }));
+// each change notice a background job asks for, with the projects the server was captioning at that moment (the
+// notice goes out then or up to a second later, never before)
+const notices: Array<{ topic: string; captioning: string[] }> = [];
+let beingCaptioned = (): string[] => [];
+vi.mock("../lib/announce-soon", async (real) => {
+  const { announceSoon } = await real<typeof import("../lib/announce-soon")>();
+  return {
+    announceSoon: (owner: string | null | undefined, topic: string, ms?: number) => {
+      notices.push({ topic, captioning: beingCaptioned() });
+      announceSoon(owner, topic, ms);
+    },
+  };
+});
 vi.stubGlobal("fetch", async (url: string | URL, init?: RequestInit) => {
   if (!String(url).startsWith("https://api.deepgram.com/")) throw new Error(`No network in this test: ${String(url)}`);
   engine.cloud.push({ auth: new Headers(init?.headers).get("authorization") ?? "", wav: Buffer.from(init!.body as ArrayBuffer) });
@@ -62,6 +75,15 @@ const { DEFAULT_SETTINGS } = await import("../../contracts/providers");
 const { cadenceFitOf, segmentCues } = await import("../../src/lib/captions");
 const { DEFAULT_STYLE } = await import("../../src/lib/types");
 const { clock } = await import("./types");
+const { captioning } = await import("../projects");
+beingCaptioned = () => [...captioning.keys()];
+/** The page's own Transcribe for a project, as it asks the cloud route (src/lib/transcribe.ts): the status and what it was told. */
+const pageTranscribes = async (cookie: string, project: string) => {
+  const r = await app.request(`/api/transcribe?project=${project}`, { method: "POST", headers: { cookie, "content-type": "audio/wav" }, body: new Uint8Array(64) });
+  return [r.status, ((await r.json()) as { error?: string }).error];
+};
+/** The "projects" notices asked for since `from` (a count of `notices`): a page that has the project open reads it again on each. */
+const noticesSince = (from: number) => notices.slice(from).filter((n) => n.topic === "projects");
 import type { AssistantView } from "../../contracts/assistant";
 import type { CaptionStyle, Cue, Word } from "../../src/lib/types";
 
@@ -155,16 +177,21 @@ describe("a video dropped in the chat and sent to Caption Studio", () => {
     const cookie = await cookieOf("ana");
     const letGo = held(engine);
     const { sent, card, token, end } = await captionThis(cookie, "Tiny tumbles");
+    const heard = notices.length;
     expect(sent).toMatchObject({ to: "captions", name: "Tiny tumbles", href: `/captions?project=${sent.id}`, captioning: true });
     expect(sent.id).toMatch(/^[0-9a-f-]{36}$/);
-    // while the captions are made the card leads to the project list, never into the project (Transcribe pressed there meanwhile would be refused)
-    expect(await card()).toEqual({ id: `captions:${sent.id}`, kind: "captions", title: "Tiny tumbles", href: "/captions?view=projects", status: "running", detail: "Making the captions" });
+    // the project can be opened at once: the AI is not told to wait
+    expect(sent.note).toBe("Being prepared and transcribed: the chat says when the captions are ready.");
+    expect(await card()).toMatchObject({ id: `captions:${sent.id}`, kind: "captions", title: "Tiny tumbles", status: "running", detail: "Making the captions" });
     // read back while they are being made: the state, and no captions yet
     const early = JSON.parse((await tool(token, "captions_get", { project: sent.id })).text);
     expect(early.state).toMatch(/^Still being (prepared|transcribed)/);
     expect(early.clips).toEqual([{ name: "tumbles.mp4", captions: "None yet" }]);
     await until(async () => expect(engine.cloud).toHaveLength(1));
     expect((await projectOf(cookie, sent.id)).captioning).toBe("transcribing");
+    // opened meanwhile, the page's own Transcribe gets no second transcript: the route refuses it for this project
+    expect(await pageTranscribes(cookie, sent.id)).toEqual([409, "This project's captions are already being made: they show here when they are ready"]);
+    expect(engine.cloud).toHaveLength(1);
 
     // the engine got what the browser posts: 16 kHz mono WAV, on her own key
     expect(engine.cloud[0]!.auth).toBe("Token ana-own-key");
@@ -188,8 +215,14 @@ describe("a video dropped in the chat and sent to Caption Studio", () => {
     expect(c.peaks).toHaveLength(500);
     expect(Math.max(...c.peaks!)).toBeGreaterThan(0);
 
+    // the open page is told once the project no longer says it is being captioned: it reads it again and has the captions
+    await until(async () => expect(noticesSince(heard).at(-1)?.captioning.includes(sent.id)).toBe(false));
+    // from here Transcribe on the page is the person's own again (re-transcribe)
+    expect((await pageTranscribes(cookie, sent.id))[0]).toBe(200);
+    expect(engine.cloud).toHaveLength(2);
+
     // the card ended; the line waits for the reply to end, then stands under it with its buttons
-    expect(await card()).toMatchObject({ status: "done", detail: "Captions are ready" });
+    expect(await card()).toMatchObject({ status: "done", detail: "Captions are ready", href: `/captions?project=${sent.id}` });
     await end();
     const said = (await viewOf(cookie)).messages.at(-1)!;
     expect([said.role, said.text, said.choices]).toEqual(["assistant", "The captions for “Tiny tumbles” are ready.", ["Show me", "What do they say?"]]);
@@ -206,6 +239,17 @@ describe("a video dropped in the chat and sent to Caption Studio", () => {
     // the page opens it and saves on: its next save, at the revision the server left, is taken
     const save = await sync(cookie, sent.id, p.revision, { ...c, done: true });
     expect([save.status, ((await save.json()) as { revision: number }).revision]).toEqual([200, 2]);
+  });
+
+  it("the card under the reply leads to the project from the start, while the captions are still being made", async () => {
+    const cookie = await cookieOf("ana");
+    const letGo = held(engine);
+    const { sent, card, end } = await captionThis(cookie, "Opened at once");
+    const early = await card();
+    letGo();
+    await end();
+    await until(async () => expect((await card()).status).toBe("done"));
+    expect(early).toEqual({ id: `captions:${sent.id}`, kind: "captions", title: "Opened at once", href: `/captions?project=${sent.id}`, status: "running", detail: "Making the captions" });
   });
 
   it("lists the projects newest first, to an AI key from outside too, and never another account's", async () => {
@@ -309,11 +353,14 @@ describe("a video dropped in the chat and sent to Caption Studio", () => {
       return [m.text, m.choices];
     };
     engine.fail = "quota";
+    const heard = notices.length;
     const refused = await captionThis(cookie, "Loud");
     await refused.end();
     await until(async () => expect(await refused.card()).toMatchObject({ status: "failed", detail: "Deepgram 500: quota" }));
     expect(await lastLine()).toEqual(["The captions for “Loud” were not made: Deepgram 500: quota.", ["Show me"]]);
     expect((await projectOf(cookie, refused.sent.id)).revision).toBe(0);
+    // nothing was saved, and the open page is told all the same: it offers Transcribe again
+    await until(async () => expect(noticesSince(heard).at(-1)?.captioning.includes(refused.sent.id)).toBe(false));
 
     engine.fail = "";
     const mute = await captionThis(cookie, "Mute", muteClip);

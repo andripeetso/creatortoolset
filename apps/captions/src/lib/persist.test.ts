@@ -105,6 +105,8 @@ const server = {
   /** Runs while a read is under way (the person does something meanwhile). */
   duringRead: null as null | (() => void),
   fps: null as number | null,
+  /** The server itself is making the project's captions (api/captions-job.ts): GET /:id says so while it is. */
+  captioning: false,
 };
 /** The server's own save for the project, on top of what it holds: the captions job (captions-job.ts), or "no words were heard". */
 const serverMakesCaptions = (words = said, cues = lines) => {
@@ -124,7 +126,7 @@ const debounce = () => vi.advanceTimersByTimeAsync(5000);
 
 beforeEach(async () => {
   vi.useFakeTimers();
-  Object.assign(server, { revision: 0, clip: {}, reads: 0, puts: [], duringRead: null, fps: null });
+  Object.assign(server, { revision: 0, clip: {}, reads: 0, puts: [], duringRead: null, fps: null, captioning: false });
   vi.stubGlobal("fetch", async (url: string | URL, init?: RequestInit) => {
     const u = String(url);
     if (u === `/api/projects/${ID}/sync`) {
@@ -137,7 +139,7 @@ beforeEach(async () => {
     }
     if (u === `/api/projects/${ID}`) {
       server.reads++;
-      const answer = { id: ID, name: "Tiny tumbles", revision: server.revision, fps: server.fps, model: null, autoCadence: null, script: "", clips: [{ id: "c1", name: "tumbles.mp4", duration: 2.4, srcWidth: 360, srcHeight: 640, srcFps: 30, hasOriginal: true, ...structuredClone(server.clip) }] };
+      const answer = { id: ID, name: "Tiny tumbles", revision: server.revision, fps: server.fps, model: null, autoCadence: null, script: "", clips: [{ id: "c1", name: "tumbles.mp4", duration: 2.4, srcWidth: 360, srcHeight: 640, srcFps: 30, hasOriginal: true, ...structuredClone(server.clip) }], ...(server.captioning ? { captioning: "transcribing" } : {}) };
       server.duringRead?.();
       return Response.json(answer);
     }
@@ -173,6 +175,36 @@ describe("an open project and the captions the server makes for it", () => {
     expect(server.puts).toHaveLength(1);
     expect(server.puts[0]).toMatchObject({ baseRevision: 1, snapshot: { clip: { originalWords: said, cues: lines, style: { fontFamily: "Poppins" } } } });
     expect(useStudio.getState()).toMatchObject({ serverRevision: 2, saveState: "saved", serverConflict: false });
+  });
+
+  it("opened while the server is making them: Transcribe starts nothing here, and when they land the project takes them and Transcribe is the person's again", async () => {
+    server.captioning = true;
+    expect(await loadSession(ID, { server: true })).toBe(true);
+    expect(useStudio.getState().serverCaptioning).toBe(true);
+    // every way to start one on the page ends here: nothing runs, so no second transcript and no save for the server to refuse
+    await useStudio.getState().runTranscription();
+    useStudio.getState().transcribeAll();
+    await debounce();
+    expect(useStudio.getState()).toMatchObject({ status: { phase: "idle" }, clips: [{ status: { phase: "idle" } }], cues: [] });
+    // a notice while they are still being made changes nothing
+    expect(await takeServerCopy(ID)).toBe(false);
+    expect(useStudio.getState().serverCaptioning).toBe(true);
+    serverMakesCaptions();
+    server.captioning = false;
+    expect(await takeServerCopy(ID)).toBe(true);
+    expect(useStudio.getState()).toMatchObject({ serverCaptioning: false, serverRevision: 1 });
+    expect(useStudio.getState().cues).toHaveLength(2);
+    expect(server.puts).toEqual([]);
+  });
+
+  it("when the server's captions were not made (a file with no sound), Transcribe is offered again on the notice, whatever was done on the page meanwhile", async () => {
+    server.captioning = true;
+    expect(await loadSession(ID, { server: true })).toBe(true);
+    // something of the person's own on the page: the project is no longer one that takes the server's copy
+    useStudio.setState({ status: { phase: "error", message: "No sound" } });
+    server.captioning = false;
+    expect(await takeServerCopy(ID)).toBe(false);
+    expect(useStudio.getState()).toMatchObject({ serverCaptioning: false, serverRevision: 0, status: { phase: "error" } });
   });
 
   it("keeps the person's place: the playhead, the project list if that is on screen", async () => {
