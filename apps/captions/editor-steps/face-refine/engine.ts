@@ -21,6 +21,7 @@ import json
 import os
 import queue
 import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
@@ -33,6 +34,7 @@ import numpy as np
 MODELS = Path(os.environ.get("FACE_REFINE_MODELS") or Path(__file__).parent)
 TRACK_SCALE = 0.5   # landmarks run on half-size frames: plenty for a face this big, 4x faster
 FFMPEG, FFPROBE = "ffmpeg", "ffprobe"
+HW = ["-hwaccel", "videotoolbox"] if sys.platform == "darwin" else []   # VideoToolbox decode on a Mac
 
 # Strengths and sizes. Sizes are fractions of the face width (outer eye corners x 2.2).
 DEFAULTS = dict(
@@ -96,8 +98,8 @@ def tc_add(tc, n, fps):
 
 
 def decode(video, args):
-    """ffmpeg reading the whole file from its first frame, in order (VideoToolbox decode where there is one)."""
-    return subprocess.Popen([FFMPEG, "-v", "error", "-nostdin", "-hwaccel", "videotoolbox", "-i", str(video),
+    """ffmpeg reading the whole file from its first frame, in order."""
+    return subprocess.Popen([FFMPEG, "-v", "error", "-nostdin", *HW, "-i", str(video),
                              "-fps_mode", "passthrough", *args, "-f", "rawvideo", "-"], stdout=subprocess.PIPE)
 
 
@@ -455,7 +457,7 @@ def render(video, out, ranges, work, k, workers):
     fr_ = Fraction(fps).limit_denominator(100000)
     ts = f"settb={fr_.denominator}/{fr_.numerator},setpts=N"
     col = info["col"]   # the source's own tags, on the patch too: an untagged input next to tagged output gets converted
-    enc = subprocess.Popen([FFMPEG, "-v", "error", "-y", "-nostdin", "-hwaccel", "videotoolbox", "-i", str(video),
+    enc = subprocess.Popen([FFMPEG, "-v", "error", "-y", "-nostdin", *HW, "-i", str(video),
                             "-f", "rawvideo", "-pix_fmt", "yuv420p10le", "-s", f"{uw}x{uh}", "-r", str(fps), *col, "-i", "-",
                             "-filter_complex", f"[0:v]{ts},format=yuv420p10le[m];[1:v]{ts}[p];"
                             # the frames come out upright: a phone file's rotation must not go on them a second time

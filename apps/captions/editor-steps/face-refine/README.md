@@ -52,7 +52,19 @@ the original look exactly:
 - On a fresh venv (Python 3.14, the newest NumPy), it was within 0.6 of a code value (8-bit).
 
 A clean venv from the system's own Python installed and ran it in under two minutes. The cost is a one-time download
-and a Python on the Mac.
+and a Python on the Mac. The ONNX route was not tried: the reasons above were enough to pick Python first.
+
+## Disk
+
+Each copy is the whole recording in ProRes 422 HQ, about 1.4 GB a minute at 1080x1920 25p and about 5.5 GB a minute
+at 2160x3840. It is written in the edit's folder in the data folder, and Voice, when it runs after, makes one more
+copy of it.
+
+## Not checked yet
+
+- the no-Python and Intel Mac messages (the code paths are there, but no such Mac was tried)
+- variable-frame-rate phone files: the copy is written at the file's nominal rate
+- HDR and full-range sources: the retouch maths assumes BT.709 limited range (the source's own tags are kept)
 
 ## Check it
 

@@ -78,8 +78,10 @@ copy each one's licence next to the files they install.
   - `opencv-contrib-python` 5.0.0.93: OpenCV under Apache-2.0, its packaging MIT. The wheel bundles FFmpeg (LGPL
     2.1) and other libraries; their licences are in the wheel's `cv2/LICENSE-3RD-PARTY.txt`.
   - their dependencies: NumPy (BSD-3-Clause and others, as its metadata lists), matplotlib (the matplotlib licence,
-    PSF-based), Pillow (MIT-CMU), absl-py and flatbuffers (Apache-2.0), sounddevice (MIT), and smaller packages
-    under MIT, BSD or Apache-2.0.
+    PSF-based), Pillow (MIT-CMU), certifi (MPL-2.0, unmodified, source at https://github.com/certifi/python-certifi),
+    absl-py, flatbuffers and tzdata (Apache-2.0), sounddevice and pyparsing (MIT), cffi (MIT-0), and contourpy,
+    cycler, kiwisolver, pycparser, python-dateutil and packaging (BSD, packaging also Apache-2.0). Versions are
+    what pip picks for that Python, so check `pip freeze` in the venv for the exact set.
 
   It then downloads two MediaPipe models from Google's model storage (URLs and SHA-256 in the step's `plugin.ts`),
   both under Apache-2.0 according to their model cards:

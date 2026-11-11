@@ -114,8 +114,8 @@ async function findPython(): Promise<string | null> {
 async function fetchModel(m: (typeof MODELS)[number], dir: string): Promise<void> {
   const dest = path.join(dir, m.name);
   if (existsSync(dest)) return;
-  const res = await fetch(m.url);
-  if (!res.ok) throw new Error(`Face refinement could not download its face model (${m.name}): HTTP ${res.status}`);
+  const res = await fetch(m.url).catch(() => null);
+  if (!res?.ok) throw new Error(`Face refinement could not download its face model (${m.name}) from Google's MediaPipe storage: ${res ? `HTTP ${res.status}` : "no internet connection?"}`);
   const bytes = Buffer.from(await res.arrayBuffer());
   if (createHash("sha256").update(bytes).digest("hex") !== m.sha256) throw new Error(`Face refinement's face model (${m.name}) did not match its checksum`);
   await writeFile(`${dest}.part`, bytes);
@@ -144,11 +144,12 @@ async function setUp(): Promise<{ python: string; engine: string; models: string
   const system = await findPython();
   if (!system) throw new Error("Face refinement needs Python 3 on this Mac: install it from python.org (or run xcode-select --install), then run the edit again");
   await rm(venv, { recursive: true, force: true });
-  await run(system, ["-m", "venv", venv]);
-  await run(python, ["-m", "pip", "install", "--no-cache-dir", "--disable-pip-version-check", "-q", ...PACKAGES], { timeout: 30 * 60_000 }).catch((e) => {
-    throw new Error(`Face refinement could not install MediaPipe and OpenCV in its own Python: ${(e as Error).message}`);
-  });
-  await run(python, ["-I", engine, "--selftest"], { env: { ...process.env, FACE_REFINE_MODELS: models } });
+  const step = (what: string) => (e: Error) => {
+    throw new Error(`Face refinement could not ${what}: ${e.message}`);
+  };
+  await run(system, ["-m", "venv", venv]).catch(step(`make its own Python (with ${system})`));
+  await run(python, ["-m", "pip", "install", "--no-cache-dir", "--disable-pip-version-check", "-q", ...PACKAGES], { timeout: 30 * 60_000 }).catch(step("install MediaPipe and OpenCV in its own Python"));
+  await run(python, ["-I", engine, "--selftest"], { env: { ...process.env, FACE_REFINE_MODELS: models } }).catch(step("start its engine"));
   await writeFile(ready, PACKAGES.join("\n"));
   return { python, engine, models };
 }
@@ -158,6 +159,7 @@ const ensure = () => (setting ??= setUp().catch((e) => ((setting = undefined), P
 /** Runs the engine on one file; its own process group, so an abort ends its ffmpeg and workers too. */
 function engineRun(rt: { python: string; engine: string; models: string }, args: string[], signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
+    if (signal.aborted) return reject(new Error("stopped")); // stopped while it waited for its turn
     const p = spawn(rt.python, ["-I", rt.engine, ...args], { detached: true, stdio: ["ignore", "ignore", "pipe"], env: { ...process.env, FACE_REFINE_MODELS: rt.models } });
     let err = "";
     p.stderr.on("data", (d) => (err = (err + d.toString()).slice(-3000)));
