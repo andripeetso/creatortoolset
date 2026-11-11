@@ -158,7 +158,7 @@ describe("an account with no skills", () => {
     expect(withSkill.job.user).toBe(before.job.user);
     expect(skillPaths(withSkill.job)).toEqual(["skills/hook-rules.md"]);
     const { "skills/hook-rules.md": file, ...rest } = folderOf(withSkill.job);
-    expect(file).toBe(`# Hook rules\n\n${HOOKS.body}\n`);
+    expect(file).toBe(`${HOOKS.body}\n`);
     expect(rest).toEqual(folderOf(before.job));
     expect(Object.keys(withSkill.job.files!).filter((p) => !p.startsWith("skills/")).sort()).toEqual(Object.keys(before.job.files!).sort());
 
@@ -270,7 +270,7 @@ describe("where a skill reaches", () => {
     await call(me, `/api/skills/${skill.id}`, "PATCH", { body: "Open on the mistake." });
     const edited = await writerTurn(w);
     expect(edited.job.resume).toBeUndefined();
-    expect(edited.job.files!["skills/hook-rules.md"]).toBe("# Hook rules\n\nOpen on the mistake.\n");
+    expect(edited.job.files!["skills/hook-rules.md"]).toBe("Open on the mistake.\n");
     await fail(w, edited);
   });
 });
@@ -349,7 +349,7 @@ describe("what a skill may hold", () => {
     for (const l of lines.slice(1)) expect(l.length).toBeLessThanOrEqual(SKILL_LIMITS.name + SKILL_LIMITS.when + 100);
     const files = Object.values(skillFiles(all));
     expect(files).toHaveLength(SKILL_LIMITS.perTurn);
-    for (const f of files) expect(f.length).toBeLessThanOrEqual(SKILL_LIMITS.body + SKILL_LIMITS.name + 10);
+    for (const f of files) expect(f).toHaveLength(SKILL_LIMITS.body + 1);
     const dock = await dockTurn();
     await dock.end();
     expect(dock.job.system.match(/\[Skill "/g)).toHaveLength(SKILL_LIMITS.perTurn);

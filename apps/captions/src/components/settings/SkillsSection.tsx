@@ -69,9 +69,10 @@ function SkillRow({ skill: s, onEdit, onChanged }: { skill: Skill; onEdit: () =>
     <ListRow
       title={s.name}
       subtitle={s.when}
+      // under the text, not beside it: on a phone the row's right end has room for the switch and the menu only
+      status={<ProjectsPicker value={s.projectIds ?? []} onChange={(ids) => void save({ projectIds: ids.length ? ids : null })} />}
       actions={
         <>
-          <ProjectsPicker value={s.projectIds ?? []} onChange={(ids) => void save({ projectIds: ids.length ? ids : null })} />
           <Switch checked={s.on} onCheckedChange={(on) => void save({ on })} aria-label={`Turn ${s.name} on or off`} />
           <RowMenu
             label={`Actions for ${s.name}`}

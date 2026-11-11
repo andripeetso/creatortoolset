@@ -159,9 +159,9 @@ const nameOf = (s: Skill) => oneLine(s.name).slice(0, SKILL_LIMITS.name);
 const fileName = (s: Skill) => `skills/${slug(s.name, SKILL_LIMITS.name)}.md`;
 const bodyOf = (s: Skill) => s.body.slice(0, SKILL_LIMITS.body);
 
-/** A Workshop turn's skill files (path → text): each body under its name, for the AI to open when the job fits. */
+/** A Workshop turn's skill files (path → text): each body as the person wrote it, for the AI to open when the job fits. */
 export const skillFiles = (skills: Skill[]): Record<string, string> =>
-  Object.fromEntries(skills.slice(0, SKILL_LIMITS.perTurn).map((s) => [fileName(s), `# ${nameOf(s)}\n\n${bodyOf(s)}\n`]));
+  Object.fromEntries(skills.slice(0, SKILL_LIMITS.perTurn).map((s) => [fileName(s), `${bodyOf(s)}\n`]));
 
 /**
  * The lines a prompt gets, one per skill, under a label that says whose they are and where they stand: the person's
