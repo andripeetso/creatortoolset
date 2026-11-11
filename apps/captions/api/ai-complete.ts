@@ -392,8 +392,8 @@ const localLine = new Map<string, Promise<unknown>>();
  * answer's tokens are passed on at no price, whatever the model is called, and are not in the paid (API) tally.
  *
  * It asks for the answer without thinking first, as the Anthropic request asks for the least. Measured on a 16 GB
- * video card with the caption eval: models left to think filled the server's default context before they wrote a
- * line, and most runs failed with four times that context; told not to, the same models answered every run.
+ * video card with the caption eval: three models left to think filled the server's default context before they wrote
+ * a line; told not to, two of them answered every run (the third thinks whatever it is told, and needs more context).
  */
 function completeLocalModel(system: string, user: string, cancelSignal?: AbortSignal, opts: ProviderOpts = {}): Promise<string> {
   const local = opts.localModel;

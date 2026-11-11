@@ -63,6 +63,7 @@ const key = ["not", "a", "real", "key"].join("-");
 const noAi = { only: [], off: "No AI for your account: add one in Settings → Providers, or your Anthropic key in Settings → API keys" };
 
 afterEach(async () => {
+  vi.unstubAllEnvs(); // first: while a test's CT_MODE=hosted is still set, the box refuses to be cleared
   await as(admin).put({ url: null });
   saveMyKey("admin", "ANTHROPIC_API_KEY", null);
   got.length = 0;
