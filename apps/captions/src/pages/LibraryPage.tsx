@@ -69,6 +69,8 @@ interface Upload {
   folderId?: string;
   status: "uploading" | "added" | "duplicate" | "failed";
   error?: string;
+  inPlace?: boolean; // added where it is on this Mac, not uploaded
+  final?: boolean; // refused for good (too large for this server): no Retry
 }
 
 const clock = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
@@ -198,12 +200,12 @@ export default function LibraryPage() {
     if (!libId) return;
     patch(u.key, { status: "uploading", sent: 0, error: undefined });
     try {
-      const r = await uploadFile(libId, u.file, (sent) => patch(u.key, { sent }), u.folderId);
+      const r = await uploadFile(libId, u.file, (sent, inPlace) => patch(u.key, { sent, inPlace }), u.folderId);
       patch(u.key, r.duplicateOf ? { status: "duplicate", sent: u.file.size } : { status: "added", sent: u.file.size });
       reload();
       if (u.folderId) reloadFolders(); // the folder's count
     } catch (e) {
-      patch(u.key, { status: "failed", error: message(e) });
+      patch(u.key, { status: "failed", error: message(e), final: (e as { code?: string }).code === "too_large" });
     }
   };
 
@@ -285,7 +287,7 @@ export default function LibraryPage() {
 
   const label = (u: Upload) =>
     u.status === "uploading"
-      ? `Uploading ${Math.round((u.sent / Math.max(1, u.file.size)) * 100)}%`
+      ? u.inPlace ? "Adding" : `Uploading ${Math.round((u.sent / Math.max(1, u.file.size)) * 100)}%`
       : u.status === "added"
         ? "Added"
         : u.status === "duplicate"
@@ -443,10 +445,12 @@ export default function LibraryPage() {
                     {u.status === "uploading" && <Progress value={(u.sent / Math.max(1, u.file.size)) * 100} className="h-1.5" />}
                     {u.status === "failed" && (
                       <div className="flex items-center gap-2 text-xs text-red-400">
-                        <span className="truncate">{u.error}</span>
+                        <span className="min-w-0">{u.error}</span>
+                        {!u.final && (
                         <Button variant="outline" size="sm" onClick={() => void send(u)}>
                           Retry
                         </Button>
+                        )}
                       </div>
                     )}
                   </div>

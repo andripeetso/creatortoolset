@@ -42,6 +42,28 @@ export async function chooseFolderOnMac(): Promise<string | null | undefined> {
 }
 
 /**
+ * Where a file picked in the Mac app's own open panel is on this Mac (ThisMacBridge.swift pickedFilesReply), so the
+ * server can add it in place instead of taking an upload. Matched by name and size (and the time it was last changed
+ * when two picked files share both). undefined in a browser, in a Mac app from before it could say (it answers every
+ * unknown question with its state), on a server that is not this Mac, or when the match is not sure: then the page uploads.
+ */
+export async function pathOnMac(file: File): Promise<string | undefined> {
+  const bridge = thisMacBridge();
+  if (!bridge) return undefined;
+  try {
+    const r = ((await bridge.postMessage("files")) ?? {}) as unknown as { files?: unknown };
+    const picked = Array.isArray(r.files) ? (r.files as { path?: unknown; name?: unknown; size?: unknown; modified?: unknown }[]) : [];
+    // one form of accented letters on both sides: the Mac's file names and the page's may differ (õ, ä)
+    const name = file.name.normalize("NFC");
+    const same = picked.filter((f) => typeof f?.path === "string" && typeof f.name === "string" && f.name.normalize("NFC") === name && f.size === file.size);
+    const one = same.length > 1 ? same.filter((f) => Math.abs(Number(f.modified) - file.lastModified) < 2000) : same;
+    return one.length === 1 ? (one[0].path as string) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * The Finder folders of the drag just dropped on the window (AppWebView.dragItems): their paths, so a folder is pointed
  * at where it lies instead of uploaded. undefined in a browser or a Mac app from before it could; [] when none.
  */
