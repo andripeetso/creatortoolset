@@ -93,6 +93,7 @@ function SearchBox({ value, onChange, placeholder, hotkey = true }: { value: str
       <input
         ref={input}
         role="searchbox"
+        aria-label="Search"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}

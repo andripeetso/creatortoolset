@@ -157,26 +157,17 @@ collectionApp.patch("/:id/collections/:cid", async (c) => {
   return c.json(toCollection({ ...row, name, parent_id: parent }));
 });
 
-// DELETE /api/library/:id/collections/:cid → gone; what was in it moves up one level: its folders, and its items into the
-// folder above (none above: they are at the library's top level). The assets themselves are never touched.
+// DELETE /api/library/:id/collections/:cid → gone, its items kept in the library, its folders move up one level
 collectionApp.delete("/:id/collections/:cid", (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
   const role = libraryRole(user.username, libraryId);
   const row = role ? rowIn(libraryId, c.req.param("cid")) : undefined;
   if (!role || !row) return notFound(c);
-  const above = row.parent_id ? rowIn(libraryId, row.parent_id) : undefined;
   const d = db();
   d.exec("BEGIN");
   try {
     d.prepare("UPDATE collections SET parent_id = ? WHERE parent_id = ?").run(row.parent_id, row.id);
-    if (row.kind === "manual" && above?.kind === "manual") {
-      d.prepare(
-        `INSERT OR IGNORE INTO collection_items (collection_id, asset_id, position, added_by)
-         SELECT ?, asset_id, position + (SELECT COALESCE(MAX(position), 0) FROM collection_items WHERE collection_id = ?), added_by
-         FROM collection_items WHERE collection_id = ?`,
-      ).run(above.id, above.id, row.id);
-    }
     d.prepare("DELETE FROM collection_items WHERE collection_id = ?").run(row.id);
     d.prepare("DELETE FROM collections WHERE id = ?").run(row.id);
     d.exec("COMMIT");

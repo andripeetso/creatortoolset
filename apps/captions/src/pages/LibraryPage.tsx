@@ -48,8 +48,8 @@ import { LibrarySettings } from "./library/LibrarySettings";
  * folders (the library's collections, ./library/folders.ts) are the app's folder cards and rows (components/browse/):
  * the top level shows the folders and the clips in none, `?f=` opens one, `?trash=1` the Trash. Above them: the trail
  * back up, the bar (search, sort, cards or list, the kind, the settings button), then one row to narrow (A-roll and
- * B-roll first), then the progress while there is any. Search looks in the whole library from the top, in the folder
- * when one is open: titles and tags (FTS5, api/library/query.ts) and what is said in the clips (api/library/search.ts),
+ * B-roll first), then the progress while there is any. Search and that row look in the whole library from the top, in
+ * the folder when one is open: titles and tags (FTS5, api/library/query.ts) and what is said in the clips (api/library/search.ts),
  * where a line said opens the preview at its second. A card opens its preview; dragged onto a folder it moves there.
  * Uploads go in one at a time, from the tray. A card being prepared updates when the server finishes it (the change
  * stream), without polling. Finals has its own tool (/finals): its folder is not shown here.
@@ -157,8 +157,9 @@ export default function LibraryPage() {
   }, [q]);
 
   // the first page for the current library, search, kind and folder, kept per view; "Load more" pages add to it. The top
-  // level lists the clips in no folder
-  const folder = trash ? { trashed: true } : open ? { collectionId: open } : { unfiled: true };
+  // level lists the clips in no folder; narrowed there (a kind, a roll, a facet), the whole library
+  const picked = kind !== "all" || !!roll || Object.values(facets).some((v) => v.length);
+  const folder = trash ? { trashed: true } : open ? { collectionId: open } : picked ? {} : { unfiled: true };
   const query = { q: term || undefined, kind: kind === "all" ? undefined : [kind], facets, ...folder, source: source || undefined, roll: roll ?? undefined };
   const pageKey = libId ? `/api/library/${libId}/assets?view=${encodeURIComponent(JSON.stringify(query))}` : null;
   const first = useCachedLoad<AssetPage>(pageKey, () => listAssets(libId!, query));
@@ -175,8 +176,14 @@ export default function LibraryPage() {
     : [...(first.data?.items ?? []), ...(extra?.items.filter((a) => !shownIds.has(a.id)) ?? [])];
   const said = found?.hits.filter((h) => h.seconds !== undefined) ?? [];
   const next = searching ? undefined : extra ? extra.next : first.data?.next;
-  // A-roll / B-roll is the server's filter (the whole library, not only the pages loaded); the row shows once clips are sorted
-  const hasRoll = items.some((a) => rollOf(a));
+  // A-roll / B-roll is the server's filter (the whole library, not only the pages loaded); the row shows once clips are
+  // sorted. At the top level with no sorted clip on screen (all of them in folders), one look asks whether any is
+  const rollOnScreen = items.some((a) => rollOf(a));
+  const askRolls = !rollOnScreen && !open && !trash && !source && !!first.data && collections.length > 0;
+  const rolled = useCachedLoad<boolean>(askRolls && libId ? `/api/library/${libId}/assets?view=any-roll` : null, () =>
+    Promise.all((["a", "b"] as const).map((r) => listAssets(libId!, { roll: r, limit: 1 }))).then((pages) => pages.some((p) => p.items.length > 0)),
+  );
+  const hasRoll = rollOnScreen || (askRolls && !!rolled.data);
   // ponytail: Name orders the pages loaded so far (the server pages newest first); a server-side order when a folder
   // holds more than a page or two
   const shown = sort === "name" && !searching ? [...items].sort((x, y) => byName({ name: x.title }, { name: y.title })) : items;
@@ -305,11 +312,14 @@ export default function LibraryPage() {
     const name = await askRename("Rename folder", c.name);
     if (name && libId) await renameCollection(libId, c.id, name).then(reloadFolders, (e) => setError(message(e)));
   };
-  // the clips in it stay in the library (api/library/collections.ts): they and its folders move up one level
+  // api/library/collections.ts: its folders move up one level, its clips stay in the library. They do not go into the
+  // folder above: a share or a grant on that one would then show them to someone new
   const removeFolder = async (c: Collection) => {
     const yes = await confirmDialog({
       title: `Delete the folder “${c.name}”?`,
-      ...(holdsClips(c) ? { body: "What is in it moves up one level." } : {}),
+      ...(holdsClips(c)
+        ? { body: `Its clips stay in the library.${collections.some((x) => x.parentId === c.id) ? " The folders in it move up one level." : ""}` }
+        : {}),
       ok: "Delete folder",
       danger: true,
     });

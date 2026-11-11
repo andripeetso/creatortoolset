@@ -111,7 +111,7 @@ describe("folders and collections", () => {
     d.prepare("DELETE FROM collections WHERE id = 'col_fin'").run();
   });
 
-  it("a folder's card gets up to four of its clips' pictures; deleting a folder moves its clips up and never touches them", async () => {
+  it("a folder's card gets up to four of its clips' pictures; deleting a folder keeps its clips in the library, out of the folder above", async () => {
     const d = libraryDb();
     for (const n of [1, 2, 3, 4, 5]) {
       seed(`pic${n}`, `Picture ${n}`, "owner-a");
@@ -128,9 +128,11 @@ describe("folders and collections", () => {
 
     const assets = () => d.prepare("SELECT id, title, trashed_at FROM assets ORDER BY id").all();
     const before = assets();
-    // Day 1 (inside Trip) goes: its clips are in Trip now, its folder Morning moves up to Trip
+    // Day 1 (inside Trip) goes: its folder Morning moves up to Trip; its clips are not put in Trip (a share or grant on Trip
+    // would then cover them): e3, in no other folder, is at the top level
     expect(await data(call("owner-a", "DELETE", `/api/library/lib_a/collections/${day.id}`))).toEqual({ ok: true });
-    expect(ids(await data(call("owner-a", "GET", `/api/library/lib_a/assets?collectionId=${trip.id}`)))).toEqual(["e3", "pic1", "pic2", "pic3", "pic4", "pic5"]);
+    expect(ids(await data(call("owner-a", "GET", `/api/library/lib_a/assets?collectionId=${trip.id}`)))).toEqual(["pic1", "pic2", "pic3", "pic4", "pic5"]);
+    expect(ids(await data(call("owner-a", "GET", "/api/library/lib_a/assets?unfiled=1&limit=200")))).toContain("e3");
     const after = (await data(call("owner-a", "GET", "/api/library/lib_a/collections"))).collections;
     expect(after.find((c: any) => c.id === inner.id).parentId).toBe(trip.id);
     // Trip (at the top) goes: its clips are at the library's top level, in no folder

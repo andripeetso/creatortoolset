@@ -149,8 +149,8 @@ export function buildAssetQuery(libraryId: string, query: SearchQuery = {}): { s
   }
   if (query.unfiled) {
     // a folder is a plain collection; Finals (finals.ts) and a saved search's old item rows are not
-    where.push(`NOT EXISTS (SELECT 1 FROM collection_items fi JOIN collections fc ON fc.id = fi.collection_id
-      WHERE fi.asset_id = a.id AND fc.kind = 'manual' AND NOT (fc.parent_id IS NULL AND fc.name = 'Finals'))`);
+    where.push(`a.id NOT IN (SELECT fi.asset_id FROM collection_items fi JOIN collections fc ON fc.id = fi.collection_id
+      WHERE fc.kind = 'manual' AND NOT (fc.parent_id IS NULL AND fc.name = 'Finals'))`);
   }
   for (const f of facetClauses(query.facets ?? {})) {
     where.push(f.sql);

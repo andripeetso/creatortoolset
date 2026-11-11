@@ -126,7 +126,7 @@ export const changeFolderItems = (libraryId: string, collectionId: string, asset
 export const renameCollection = (libraryId: string, collectionId: string, name: string) =>
   send<Collection>(`/api/library/${libraryId}/collections/${collectionId}`, "PATCH", { name });
 
-/** The folder goes; what was in it moves up one level (api/library/collections.ts). Its clips stay in the library. */
+/** The folder goes (api/library/collections.ts): its folders move up one level, its clips stay in the library. */
 export const deleteCollection = (libraryId: string, collectionId: string) =>
   send<{ ok: true }>(`/api/library/${libraryId}/collections/${collectionId}`, "DELETE");
 

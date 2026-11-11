@@ -37,15 +37,18 @@ const server = vi.hoisted(() => ({
   asked: [] as Record<string, unknown>[],
   changed: [] as unknown[][],
   searched: [] as string[],
+  /** clips in a folder: the top level's listing (unfiled) leaves them out */
+  filed: new Set<string>(),
 }));
 
 vi.mock("@/lib/library", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/library")>()),
   listLibraries: async () => [{ id: "lib_tiny", name: "Tiny", storage: "local", settings: { describe: true, embed: false } }],
   // the stand-in narrows by roll the way the server does (api/library/query.ts): the page asks, it does not filter
-  listAssets: async (_: string, q: { trashed?: boolean; roll?: "a" | "b" }) => {
+  listAssets: async (_: string, q: { trashed?: boolean; roll?: "a" | "b"; unfiled?: boolean }) => {
     server.asked.push(q);
-    return { items: (q.trashed ? server.trash : server.items).filter((x) => !q.roll || (x as { roll?: string }).roll === q.roll), next: null };
+    const items = (q.trashed ? server.trash : server.items) as Card[];
+    return { items: items.filter((x) => (!q.roll || x.roll === q.roll) && !(q.unfiled && server.filed.has(x.id))), next: null };
   },
   searchLibrary: async (_: string, q: string) => {
     server.searched.push(q);
@@ -74,6 +77,7 @@ beforeEach(() => {
   server.asked = [];
   server.changed = [];
   server.searched = [];
+  server.filed = new Set();
 });
 afterEach(() => {
   act(() => root?.unmount());
@@ -197,6 +201,20 @@ describe("Media Library page", () => {
     await act(async () => b.click());
     expect(host.textContent).toContain("Tiny Acrobatics cover");
     expect(host.textContent).not.toContain("Tiny Acrobatics talk");
+    expect(server.asked.at(-1)).not.toHaveProperty("unfiled"); // at the top level: from every folder too
+  });
+
+  it("with every clip in a folder the top level still offers A-roll and B-roll, and they reach into the folders", async () => {
+    server.items = [clip("talk", { roll: "a" }), clip("cover", { roll: "b" })];
+    server.filed = new Set(["talk", "cover"]);
+    server.folders = [{ id: "col_t", name: "Trip", parentId: null, kind: "manual", count: 2, createdBy: "admin" }];
+    const host = await mount();
+    await act(async () => new Promise((r) => setTimeout(r, 0)));
+    expect(host.textContent).not.toContain("Tiny Acrobatics cover"); // filed: not loose at the top
+    const b = [...host.querySelectorAll('[aria-label="Roll"] button')].find((x) => x.textContent === "B-roll") as HTMLButtonElement;
+    await act(async () => b.click());
+    expect(host.textContent).toContain("Tiny Acrobatics cover");
+    expect(host.textContent).not.toContain("Tiny Acrobatics talk");
   });
 
   it("offers no roll row when no clip has been sorted", async () => {
@@ -244,7 +262,7 @@ describe("Media Library folders", () => {
     expect(link(host, "Beach")).toBeUndefined();
     const names = [...host.querySelectorAll('a[href^="/library?f="]')].map((a) => a.textContent);
     expect(names.findIndex((n) => n?.includes("Apples"))).toBeGreaterThan(names.findIndex((n) => n?.includes("Trip")));
-    expect(server.asked.at(-1)).toMatchObject({ unfiled: true });
+    expect(server.asked).toContainEqual(expect.objectContaining({ unfiled: true }));
     expect(host.querySelector('a[aria-label="Trash"]')?.getAttribute("href")).toBe("/library?trash=1");
     expect(buttons(host)).toContain("New folder");
   });
