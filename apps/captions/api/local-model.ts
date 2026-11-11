@@ -42,6 +42,28 @@ export function addressOf(typed: unknown): string | null {
   return (u.origin + u.pathname).replace(/\/+$/, "").replace(/\/v1$/, "");
 }
 
+/**
+ * The fewest tokens a request's text can be, whatever the model. A model server whose context is shorter than the
+ * prompt cuts it and answers as if nothing happened; the count of tokens it says it read is the one sign in the answer.
+ * A count under this number means it read only part.
+ *
+ * Two floors, the higher one counts: nine tokens for every ten words, and one token for every 7 characters (every 3
+ * for Chinese, Japanese and Korean characters). A run of spaces, or of any one character, counts once.
+ *
+ * Measured on two models of one server (local-model.test.ts keeps the numbers). Whole requests: speech with no
+ * punctuation is 1.005 tokens a word, English prose 1.3, text full of digits 4; English is 4 to 4.5 characters a token,
+ * digits and Chinese 1.5, a rule of 2,000 dashes 35. A cut request kept half the server's context. So prose is caught
+ * the moment it is cut, and text that is many tokens a word (digits, tables, one word to a line) only once it is two
+ * to three times the context: half its tokens are still more than its words. No count closes that gap without
+ * failing whole requests of plain speech.
+ */
+export function fewestTokens(text: string): number {
+  const t = text.replace(/\s+/g, " ").replace(/(\S)\1{2,}/gu, "$1").trim();
+  if (!t) return 0;
+  const dense = t.match(/[\p{sc=Han}\p{sc=Hiragana}\p{sc=Katakana}\p{sc=Hangul}]/gu)?.length ?? 0;
+  return Math.floor(Math.max(t.split(" ").length * 0.9, (t.length - dense) / 7 + dense / 3));
+}
+
 const cache = new Map<string, LocalModel | null>();
 
 function saved(username: string): LocalModel | null {

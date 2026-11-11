@@ -9,7 +9,7 @@ import { completeLocal } from "./lib/local-claude";
 import { hostedMode } from "./lib/env";
 import { addSpend, budgetLeft } from "./lib/workspaces";
 import { keyFor } from "./my-keys";
-import { localModelOf } from "./local-model";
+import { fewestTokens, localModelOf } from "./local-model";
 import type { LocalModel } from "../contracts/service-keys";
 import { findUser, type SessionUser } from "./users";
 
@@ -421,9 +421,15 @@ function completeLocalModel(system: string, user: string, cancelSignal?: AbortSi
     }
     if (!resp.ok || data.error) throw localFailed(local, `answered ${resp.status}: ${data.error?.message || body.slice(0, 200)}`);
     if (data.usage) opts.onUsage?.(apiUsage(data.usage, ""));
+    // what the server read: the tokens it read now plus those it reused from a request before (a repeat reads almost none anew)
+    const read = (data.usage?.input_tokens ?? 0) + (data.usage?.cache_read_input_tokens ?? 0) + (data.usage?.cache_creation_input_tokens ?? 0);
+    // a prompt longer than the server's context is cut without a word, and the answer looks like any other: the count
+    // is the one sign. A server that gives no count can't be checked.
+    if (read > 0 && read < fewestTokens(`${system} ${user}`))
+      throw localFailed(local, `read only part of the request (${read} tokens for a request of ${system.length + user.length} characters): give it a longer context on its server`);
     // cut off: a model that thinks first can fill a short context before it writes a word, and half an answer is none
     if (data.stop_reason === "max_tokens")
-      throw localFailed(local, `ran out of room before it finished (${data.usage?.input_tokens ?? "?"} tokens in, ${data.usage?.output_tokens ?? "?"} out): give it a longer context on its server`);
+      throw localFailed(local, `ran out of room before it finished (${read || "?"} tokens in, ${data.usage?.output_tokens ?? "?"} out): give it a longer context on its server`);
     const text = (data.content ?? []).filter((b) => b.type === "text" && b.text).map((b) => b.text as string).join("\n").trim();
     if (!text) throw localFailed(local, "returned an empty answer");
     return text;
