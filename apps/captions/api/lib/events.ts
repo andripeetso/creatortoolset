@@ -9,6 +9,8 @@ import type { SessionStatus } from "./workshop/types";
 export interface CoreEvents {
   "export.finished": { id: string; owner?: string; kind: string; format: string; bytes: number };
   "review.version.added": { asset: string; n: number; owner: string };
+  /** A Review video was approved or sent to Finals. `by`: the signed-in account that pressed ("" for a guest on a share link); `key`: the request came with an AI key. */
+  "review.finished": { asset: string; owner: string; by: string; key: boolean };
   "session.published": { id: string; owner: string; from: SessionStatus };
   "session.status": { id: string; owner: string; from: SessionStatus; to: SessionStatus };
   /** Something in a Media Library changed (a piece, an item, a collection, a file): open Finals and Library pages refetch. */

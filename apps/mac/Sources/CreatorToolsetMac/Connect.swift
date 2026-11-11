@@ -45,6 +45,8 @@ func isPlainHostname(_ host: String) -> Bool {
 struct ConnectStart: Decodable, Equatable {
     let user_code: String
     let verification_uri: String
+    /// The same page with the code filled in, when the broker gives one: nothing to type.
+    let verification_uri_complete: String?
     let expires_in: Int
     let interval: Int
 }
@@ -199,8 +201,8 @@ extension Shell {
         guard let server, runsHere else { notice = "Turn on This Mac's server first"; return }
         do {
             let start = try JSONDecoder().decode(ConnectStart.self, from: try await client().postData("/api/connect/start", [:]))
-            notice = "Enter \(start.user_code) on creatortoolset.com to add this Mac to your account"
-            if let url = URL(string: start.verification_uri) { NSWorkspace.shared.open(url) }
+            notice = "Check that the page in your browser shows \(start.user_code), then add this Mac"
+            if let url = URL(string: start.verification_uri_complete ?? start.verification_uri) { NSWorkspace.shared.open(url) }
             let deadline = Date().addingTimeInterval(TimeInterval(start.expires_in))
             while Date() < deadline {
                 try await Task.sleep(for: .seconds(Double(max(start.interval, 2))))

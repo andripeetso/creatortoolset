@@ -42,7 +42,7 @@ async function fakeBroker(req: Request): Promise<Response> {
   const json = (status: number, body: unknown) =>
     new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
   if (req.method === "POST" && u.pathname === "/oauth/device") {
-    return json(200, { device_code: "device-1", user_code: "BCDF-GHJK", verification_uri: "https://broker.test/connect", interval: 5, expires_in: 600 });
+    return json(200, { device_code: "device-1", user_code: "BCDF-GHJK", verification_uri: "https://broker.test/connect", verification_uri_complete: "https://broker.test/connect?code=BCDF-GHJK", interval: 5, expires_in: 600 });
   }
   if (req.method === "POST" && u.pathname === "/oauth/token") {
     if (!broker.approved) return json(400, { error: "authorization_pending" });
@@ -102,7 +102,7 @@ beforeAll(async () => {
   expect(adminCookie).not.toBe("");
   const started = await call("POST", "/api/connect/start", { cookie: adminCookie });
   expect(started.status).toBe(200);
-  expect(await started.json()).toMatchObject({ user_code: "BCDF-GHJK" });
+  expect(await started.json()).toMatchObject({ user_code: "BCDF-GHJK", verification_uri_complete: "https://broker.test/connect?code=BCDF-GHJK" });
   // still waiting for approval
   expect(await (await call("POST", "/api/connect/poll", { cookie: adminCookie })).json()).toEqual({ status: "pending" });
   broker.approved = true;

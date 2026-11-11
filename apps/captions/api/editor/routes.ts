@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import { EDIT_SLOTS, EDIT_STEPS, type EditSlot, type EditStep, type VersionPlan } from "../../contracts/editor";
 import { MEMORY_QUOTE_MIN, tidy } from "../../contracts/memory";
 import { foundIn, saidInChat } from "../assistant";
-import { jobTurn, type AuthVars } from "../auth";
+import { innerCall, jobTurn, type AuthVars } from "../auth";
 import { libraryDb } from "../library/db";
 import { enqueueJob } from "../library/jobs";
 import { onUploadDone } from "../library/routes";
@@ -12,7 +12,8 @@ import { footageTargetFor } from "./ingest";
 import { LINK_TTL_S, mediaPaths } from "./media";
 import { toOtio } from "./otio";
 import { qaOf } from "./qa";
-import { allEdits, cleanBrief, createEdit, uploadFinished, draftNames, editorDefaults, editRole, gradeOf, NoCollection, NoStyle, readDraft, readEdit, postFiles, readStep, saveEdit, saveStep, setChosenDefault, sourcesWorkspace, styleFields, summaryOf, viewOf, type EditMeta } from "./store";
+import { forgetFinished, finishedOf, removeFinished } from "./finished";
+import { allEdits, byToolAfter, cleanBrief, createEdit, uploadFinished, draftNames, editorDefaults, editRole, gradeOf, NoCollection, NoStyle, readDraft, readEdit, POST_UNFINISHED, postFiles, postUnfinished, readStep, saveEdit, saveStep, setChosenDefault, sourcesWorkspace, styleFields, summaryOf, viewOf, type EditMeta } from "./store";
 import { createStyle, deleteStyle, findStyle, stylesView, updateStyle } from "./styles";
 import { stopEdit } from "./worker";
 
@@ -31,6 +32,9 @@ const body = async (c: C): Promise<Record<string, unknown>> => {
   return b && typeof b === "object" && !Array.isArray(b) ? (b as Record<string, unknown>) : {};
 };
 
+/** A request an AI makes (one of its tools' own calls, or one with an AI key), not the person at their own screen. */
+const viaTool = (c: C) => !!innerCall.getStore() || !!c.req.header("authorization");
+
 /** The caller's own edit, or null (answer 404). */
 function load(c: C): { e: EditMeta } | null {
   const e = readEdit(c.req.param("id") ?? "");
@@ -43,7 +47,7 @@ onUploadDone.push((id, version) => void uploadFinished(id, version));
 editorApp.post("/", async (c) => {
   const user = c.get("user").username;
   try {
-    const e = await createEdit(user, await body(c));
+    const e = await createEdit(user, await body(c), viaTool(c));
     return e ? c.json({ id: e.id }) : notFound(c);
   } catch (e) {
     if (e instanceof NoCollection) return notFound(c);
@@ -134,7 +138,22 @@ editorApp.put("/styles/:id", async (c) => {
   return typeof changed === "string" ? c.json({ error: changed, code: "invalid" }, 400) : c.json(changed);
 });
 
-editorApp.delete("/styles/:id", (c) => (deleteStyle(c.get("user").username, c.req.param("id")) ? c.json({ ok: true }) : notFound(c)));
+// a deleted style takes the edits finished with it along (finished.ts)
+editorApp.delete("/styles/:id", (c) => {
+  const user = c.get("user").username;
+  if (!deleteStyle(user, c.req.param("id"))) return notFound(c);
+  forgetFinished(user, c.req.param("id"));
+  return c.json({ ok: true });
+});
+
+// the edits the person finished in a style, newest first, and × on one: it never counts for a style again
+editorApp.get("/styles/:id/finished", (c) => {
+  const user = c.get("user").username;
+  return findStyle(user, c.req.param("id")) ? c.json(finishedOf(user, c.req.param("id"))) : notFound(c);
+});
+
+editorApp.delete("/styles/:id/finished/:editId", async (c) =>
+  (await removeFinished(c.get("user").username, c.req.param("id"), c.req.param("editId"))) ? c.json({ ok: true }) : notFound(c));
 
 editorApp.get("/:id", (c) => {
   const r = load(c);
@@ -160,6 +179,10 @@ editorApp.patch("/:id", async (c) => {
   // a flag the patch leaves out keeps its state
   const e = { ...r.e, ...styled, ...patch, flags: { ...r.e.flags, ...patch.flags } };
   if (b.style === null) delete e.style;
+  // whose words the name and the brief are now: an AI's tool's, or the person's own (finished.ts keeps only theirs)
+  const byTool = byToolAfter(r.e.byTool, patch, viaTool(c)).byTool;
+  if (byTool) e.byTool = byTool;
+  else delete e.byTool;
   await saveEdit(e);
   return c.json(viewOf(readEdit(e.id)!));
 });
@@ -276,6 +299,7 @@ editorApp.get("/:id/drafts/:name/export", async (c) => {
   const tl = d.timeline;
   // read again, as the worker does: footage trashed or a library left since means no new links or download URLs
   if (sourcesWorkspace(c.get("user").username, Object.keys(tl.sources)) !== r.e.workspaceId) return notFound(c);
+  if (postUnfinished(r.e.id, name)) return c.json({ error: POST_UNFINISHED, code: "post_unfinished" }, 409);
   const m = await mediaPaths(r.e, Object.keys(tl.sources));
   Object.assign(m.files, postFiles(r.e.id, name));   // the post-processing copies, as the preview plays them
   const base = `${r.e.name} ${name}`.replace(/[^\w .-]+/g, "_").trim() || name;

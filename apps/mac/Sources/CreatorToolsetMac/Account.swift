@@ -26,6 +26,12 @@ func accountServerURL(_ saved: String?) -> URL? {
     return saved.trimmingCharacters(in: .whitespaces).isEmpty ? nil : siteURL(from: saved)
 }
 
+/// creatortoolset://connect: the site's "Added" page handing back to the app. It only brings the window forward (the
+/// wait in Shell.connectThisComputer sees the link within seconds); never loaded as a page.
+func isConnectDone(_ url: URL) -> Bool {
+    url.scheme?.lowercased() == "creatortoolset" && url.host?.lowercased() == "connect"
+}
+
 /// The one-time code from creatortoolset://account?code=…, or nil for any other link.
 func accountCode(from url: URL) -> String? {
     guard url.scheme?.lowercased() == "creatortoolset", url.host?.lowercased() == "account",

@@ -80,6 +80,7 @@ import {
   type ReviewView,
   type Stroke,
 } from "@/lib/review";
+import { undoable } from "@/lib/undo";
 import { TIMELINE_ACCEPT } from "@contracts/timeline-import";
 import { cn } from "@/lib/utils";
 import { cornerTaken } from "@/lib/dock-place";
@@ -577,8 +578,14 @@ function Review({
   const approve = async (status: Approval) => {
     if (needName()) return;
     if (guest) setReviewerName(name.trim());
-    const a = await api.approve(status, guest ? name.trim() : undefined);
-    setView((v) => (v ? { ...v, asset: { ...v.asset, approval: a.approval } } : v));
+    const was = asset.approval.status;
+    const put = async (to: Approval) => {
+      const a = await api.approve(to, guest ? name.trim() : undefined);
+      setView((v) => (v ? { ...v, asset: { ...v.asset, approval: a.approval } } : v));
+    };
+    await put(status);
+    // a reviewer on a share link may only approve or ask for changes, so there is no way back for them to take
+    if (manage && was !== status) undoable(`set to ${APPROVAL[status].label}`, () => put(was));
   };
 
   // ---- fit the video box to the stage so drawings line up with the picture ----
