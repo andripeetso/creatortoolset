@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import {
   AtSign,
@@ -162,6 +162,15 @@ export function SetupDialog() {
   useEffect(() => {
     if (accountOffered) setAccountStep(true);
   }, [accountOffered]);
+  // signing in on the account screen is the end of setup: no second screen to confirm it and no Done to press
+  const finish = useRef(() => {});
+  const signedIn = account.account.state === "signedIn";
+  const wasSignedOut = useRef(false);
+  useEffect(() => {
+    if (signedIn && wasSignedOut.current && step === "account") finish.current();
+    // "checking" is not signed out: someone already signed in who opens this screen keeps it
+    wasSignedOut.current = !signedIn && account.account.state !== "checking";
+  }, [signedIn, account.account.state, step]);
   // the AI panel connected one: read the setup again now, so Continue lights up without waiting for the next look
   const onConnected = useCallback((on: boolean) => void (on && load()), [load]);
 
@@ -231,6 +240,7 @@ export function SetupDialog() {
       setBusy(false);
     }
   };
+  finish.current = () => void (at === path.length - 1 && next());
   const setMakes = (next: Make[]) => {
     useWorkPrefs.setState({ prefs: { ...prefs, makes: next } });
     setTicked(toolsFor(next, mine));
