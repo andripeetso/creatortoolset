@@ -78,8 +78,10 @@ export function cornerTaken(box: HTMLElement | null) {
     root.style.setProperty("--corner-taken", `${height}px`);
     root.dataset.cornerTaken = "";
   };
+  // the box's own size, and the page's: a page that grows moves a box that sticks to the bottom into the corner
   const sized = new ResizeObserver(say);
   sized.observe(box);
+  sized.observe(document.body);
   window.addEventListener("resize", say);
   return () => {
     sized.disconnect();

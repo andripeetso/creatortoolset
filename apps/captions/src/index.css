@@ -238,6 +238,12 @@ html:has([data-fills-window]) { overflow-y: hidden; }
    puts it over the end of the list above that box: the list keeps room there, so its last item can be scrolled clear
    of the bubble (a Review video's comments, a Workshop session's chat). */
 html[data-corner-taken]:has(button[data-assistant-dock]) .clears-bubble { padding-bottom: 5rem; }
+/* On a phone the pages scroll under the bubble. A page keeps room at its end, so its last row and its bottom controls
+   can be scrolled clear of the bubble: every page with the shared bar, and a phone page or sheet marked .ends-clear.
+   Not while a box in the corner has lifted the bubble (above): that box is the page's end. */
+@media (max-width: 639px) {
+  html:not([data-corner-taken]):has(button[data-assistant-dock]) :is(.ends-clear, :has(> [data-appbar]):not([data-fills-window])) { padding-bottom: 5.5rem; }
+}
 /* A pane inside a card (a Workshop session's piece, notes, chat and Browse) keeps its bar's 8px at all times too
    (overflow-y-scroll), taken out of its own right padding in its class list (bars:pr-*, the variant for where a bar
    takes room, tailwind.config.js): the text is as wide as before, stays in the middle of the card and does not move

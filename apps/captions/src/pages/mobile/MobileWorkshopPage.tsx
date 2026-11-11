@@ -11,6 +11,7 @@ import { MarkdownBody } from "@/components/MarkdownBody";
 import { canUse, useAuth, useMe } from "@/lib/auth";
 import { timeAgo } from "@/lib/exports";
 import { toolsetHomePath } from "@/lib/mobile";
+import { cornerTaken } from "@/lib/dock-place";
 import { useWorkspace } from "@/lib/workspace";
 import { keepSession, sessionKeys } from "@/lib/workshop";
 import { useCachedLoad } from "@/lib/local-cache";
@@ -33,7 +34,7 @@ import {
 } from "@/lib/workshop";
 
 const shell =
-  "relative flex min-h-dvh flex-col bg-zinc-950 px-4 pb-[max(2rem,env(safe-area-inset-bottom))] pt-[max(3.5rem,calc(env(safe-area-inset-top)+2.75rem))] text-zinc-200";
+  "ends-clear relative flex min-h-dvh flex-col bg-zinc-950 px-4 pb-[max(2rem,env(safe-area-inset-bottom))] pt-[max(3.5rem,calc(env(safe-area-inset-top)+2.75rem))] text-zinc-200";
 const back =
   "absolute left-3 top-[max(0.75rem,env(safe-area-inset-top))] flex items-center gap-1 rounded-md px-2 py-2 text-sm text-zinc-500 active:bg-zinc-900 active:text-zinc-200";
 
@@ -323,7 +324,11 @@ export function MobileWorkshopSessionPage() {
         )}
 
         {active && (
-          <div className="sticky bottom-[max(0.5rem,env(safe-area-inset-bottom))] rounded-2xl border border-zinc-800 bg-zinc-950/95 p-2 backdrop-blur">
+          <div
+            // it stays in the window's bottom right corner: the assistant's bubble sits above it, not over Send (dock-place.ts)
+            ref={cornerTaken}
+            className="sticky bottom-[max(0.5rem,env(safe-area-inset-bottom))] rounded-2xl border border-zinc-800 bg-zinc-950/95 p-2 backdrop-blur"
+          >
             <textarea
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
