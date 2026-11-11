@@ -45,13 +45,18 @@ const MIN_RUNS = 3;
 
 const laneSize = (name: (typeof LANES)[number]["name"]) => LANES.find((l) => l.name === name)!.size;
 
-/** The average seconds a finished `kind` job took here, by what ran it, or null under MIN_RUNS runs. */
-function paceOf(db: DatabaseSync, kind: string, by?: { table: "transcripts" | "descriptions"; provider: string; not?: boolean }): number | null {
+/**
+ * The average seconds a finished `kind` job took here, by what ran it, or null under MIN_RUNS runs. `serial`: the jobs
+ * run one at a time however many are claimed (this computer's transcripts), so each counts from when the one before it
+ * ended, not the time it waited.
+ */
+function paceOf(db: DatabaseSync, kind: string, by?: { table: "transcripts" | "descriptions"; provider: string; not?: boolean }, serial = false): number | null {
   const join = by ? `JOIN ${by.table} t ON t.version_id = j.version_id` : "";
   const where = by ? `AND t.provider ${by.not ? "!=" : "="} ?` : "";
+  const from = serial ? "MAX(j.started_at, IFNULL(LAG(j.done_at) OVER (ORDER BY j.done_at), 0))" : "j.started_at";
   const r = db
     .prepare(
-      `SELECT AVG(d) AS s, COUNT(*) AS n FROM (SELECT j.done_at - j.started_at AS d FROM jobs j ${join}
+      `SELECT AVG(d) AS s, COUNT(*) AS n FROM (SELECT j.done_at - ${from} AS d FROM jobs j ${join}
        WHERE j.kind = ? AND j.state = 'done' AND j.started_at IS NOT NULL AND j.done_at >= j.started_at ${where}
        ORDER BY j.done_at DESC LIMIT 200)`,
     )
@@ -122,7 +127,7 @@ async function perClip(db: DatabaseSync, step: LibraryStep, route: LibraryStepRo
     return { seconds, usd: 0, measured, at: laneSize("files") };
   }
   if (step === "transcript") {
-    const pace = paceOf(db, "transcribe", { table: "transcripts", provider: route });
+    const pace = paceOf(db, "transcribe", { table: "transcripts", provider: route }, route === "device");
     const guess = route === "device" ? clipSeconds * DEVICE_PACE : GUESS_S[route]!;
     const usd = route === "deepgram" || route === "openai" ? (clipSeconds / 60) * PER_MIN_USD[route] : 0;
     return { seconds: pace ?? guess, usd, measured: pace !== null, at: route === "device" ? 1 : laneSize("transcripts") };
@@ -235,11 +240,11 @@ export async function progress(libraryId: string, username: string): Promise<Lib
   for (const { v } of open) run.add(v);
   const counts = db
     .prepare(
-      `SELECT kind, SUM(state = 'done') AS done, SUM(state = 'failed') AS failed,
-         SUM(state IN ('queued', 'running') AND NOT (kind = 'describe' AND IFNULL(error, '') LIKE ?)) AS open
+      // still to do counts what waits for a key or a limit too (`waiting` says why), so a line never shrinks when one parks
+      `SELECT kind, SUM(state = 'done') AS done, SUM(state = 'failed') AS failed, SUM(state IN ('queued', 'running', 'needs_key')) AS open
        FROM jobs WHERE library_id = ? AND version_id IN (SELECT value FROM json_each(?)) GROUP BY kind`,
     )
-    .all(LIMIT_LIKE, libraryId, JSON.stringify([...run])) as { kind: string; done: number; failed: number; open: number }[];
+    .all(libraryId, JSON.stringify([...run])) as { kind: string; done: number; failed: number; open: number }[];
   const working = db
     .prepare(
       `SELECT j.kind, a.title FROM jobs j JOIN asset_versions v ON v.id = j.version_id JOIN assets a ON a.id = v.asset_id

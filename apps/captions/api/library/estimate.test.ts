@@ -71,6 +71,27 @@ describe("estimate", () => {
   });
 });
 
+describe("this computer's transcripts", () => {
+  it("are paced by the time each took, not the time it waited for the one before (they run one at a time)", async () => {
+    process.env.CT_LOCAL = "1";
+    delete process.env.DEEPGRAM_API_KEY;
+    try {
+      // four claimed at once, each done 10 s after the one before: 10 s each, not 10, 20, 30 and 40
+      for (const [i, v] of ["v1", "v2", "v3"].entries()) {
+        d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor, started_at, done_at) VALUES ('lib_e', ?, 'transcribe', 'done', 'local', 0, ?)").run(v, (i + 1) * 10_000);
+        d.prepare("INSERT INTO transcripts (version_id, provider, language, text, segments, created_at) VALUES (?, 'device', 'en', '', '[]', 1)").run(v);
+      }
+      const e = await estimate("lib_e", "local", { clips: 6, bytes: 6 * 30_000_000 });
+      expect(e.steps.find((s) => s.step === "transcript")).toMatchObject({ route: "device", seconds: 60, measured: true });
+    } finally {
+      process.env.DEEPGRAM_API_KEY = "dg-test";
+      delete process.env.CT_LOCAL;
+      d.prepare("DELETE FROM jobs WHERE kind = 'transcribe'").run();
+      d.prepare("DELETE FROM transcripts").run();
+    }
+  });
+});
+
 describe("what the page counts", () => {
   it("each step since this run began, in the order they run: a clip that is through stays counted, so no number goes down", async () => {
     d.prepare("DELETE FROM jobs WHERE state != 'done'").run();
@@ -85,6 +106,9 @@ describe("what the page counts", () => {
     expect((await progress("lib_e", "local")).stages!.find((s) => s.kind === "proxy")).toMatchObject({ done: 1, of: 3, now: "c" });
     d.prepare("UPDATE jobs SET state = 'failed' WHERE id = ?").run(running.id);
     expect((await progress("lib_e", "local")).stages!.find((s) => s.kind === "proxy")).toMatchObject({ done: 1, of: 3, failed: 1 });
+    // one that parks for a key is still to do on its line (and said in `waiting`): the line does not shrink
+    d.prepare("UPDATE jobs SET state = 'needs_key', error = 'Add your Deepgram key' WHERE kind = 'transcribe' AND version_id = 'v2'").run();
+    expect((await progress("lib_e", "local")).stages!.find((s) => s.kind === "transcribe")).toMatchObject({ done: 1, of: 3 });
     // the queue empties: the next run counts from nothing
     d.prepare("UPDATE jobs SET state = 'done' WHERE state = 'queued'").run();
     expect(await progress("lib_e", "local")).toMatchObject({ left: 0, stages: [] });

@@ -240,14 +240,15 @@ async function run(job: JobRow): Promise<void> {
     await makeProxy(src, file, !!p.cover || !p.vcodec);
     await keep("proxy", file, `${base}/proxy.mp4`);
   } else if (job.kind === "transcribe" || job.kind === "describe") {
-    // the sound from the original (cut from it in under a second, and the lighter copy's is re-encoded); the frames
-    // from the lighter copy, the same pictures at a fraction of the decoding
+    // the sound from the original (cut from a 4K clip in 0.2 s at most, and the lighter copy's is re-encoded); the
+    // frames from the lighter copy, the same pictures in 0.3 to 0.5 s where the original took 1 to 5.5 s
     if (job.kind === "transcribe") await transcribeVersion(db, v.id, src, job.actor, dir);
     else await describeVersion(db, v.id, await lighter(), p.duration, job.actor, dir);
     // new words to search by meaning: embed (again) when the library has semantic search on and the actor a key for it
     if (librarySetting(v.library_id, "embed") && !keyFor(job.actor, "OPENAI_API_KEY").missing) enqueueJob(db, v.library_id, v.id, "embed", job.actor, true);
   } else if (job.kind === "fingerprint") {
-    // the lighter copy's frames hash as the original's do (fingerprint.test.ts), and decode many times faster
+    // the lighter copy's frames hash as the original's do (within 6 bits of the 10 a match allows, fingerprint.test.ts)
+    // and decode many times faster: 0.3 to 2 s a 4K clip, where its original took 1.4 to 91 s
     const f = JSON.stringify(await fingerprint(await lighter(), p.duration, dir));
     db.prepare("INSERT OR REPLACE INTO derivatives (version_id, kind, inline, bytes) VALUES (?, 'fingerprint', ?, ?)").run(v.id, f, Buffer.byteLength(f));
   } else if (job.kind === "embed") {
