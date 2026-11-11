@@ -102,7 +102,7 @@ export default function MobileWorkshopPage() {
           {list.data === null ? (
             <div aria-hidden className="flex flex-col gap-1.5">
               {[0, 1, 2].map((i) => (
-                <div key={i} className="h-[62px] rounded-xl border border-zinc-800 bg-zinc-900/30" />
+                <div key={i} className="h-[64.5px] rounded-xl border border-zinc-800 bg-zinc-900/30" />
               ))}
             </div>
           ) : sessions.length === 0 ? (
@@ -138,7 +138,8 @@ export default function MobileWorkshopPage() {
           )}
         </section>
 
-        <ProjectList />
+        {/* a first visit: the projects take their place under the sessions once those are known (or their read failed), so they never move */}
+        {(!allowed || list.data !== null || !!list.error) && <ProjectList />}
       </div>
     </div>
   );

@@ -31,8 +31,13 @@ export interface PhoneCode {
  */
 export type PhoneState = PhoneCode | "local" | "signin" | null;
 const isCode = (c: PhoneState | undefined): c is PhoneCode => typeof c === "object" && c !== null;
-/** Whether the last answer in this browser was a code (lib/local-cache.ts): its space is then held while one is made. */
+/**
+ * The last answer in this browser (lib/local-cache.ts). `true`: a code, whose space is held while the next one is made.
+ * "local": shown again at once while it is checked, since it says how this server is set up and rarely changes.
+ */
 const HAD_CODE = "setup/phone-code";
+/** After the phone's row in the step: not drawn while that row's height is not known yet (PhoneRowView's data-unplaced). */
+const UNDER_PHONE = "peer-data-[unplaced]/phone:hidden";
 
 /**
  * Mints a code on this server and draws it, at the address the server says a phone can reach (its tunnel, the address
@@ -70,25 +75,27 @@ async function afterRestart(): Promise<PhoneState> {
  * "Add your phone": a QR code the phone's camera reads. The code is one-time and lasts about a minute, so a new one is
  * drawn when it runs out (on its own, and by the button). Only one code is live: the server ends the older ones.
  */
-export function PhoneRow() {
-  const [code, setCode] = useState<PhoneState | undefined>(undefined); // undefined: making one
+export function PhoneRow({ wait = false }: { wait?: boolean }) {
+  const user = useAuth((s) => s.me?.username);
+  const had = readCached<boolean | "local">(user, HAD_CODE);
+  const [code, setCode] = useState<PhoneState | undefined>(had === "local" ? "local" : undefined); // undefined: making one
   const [now, setNow] = useState(() => Date.now());
   const [turningOn, setTurningOn] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const latest = useRef(0);
-  const user = useAuth((s) => s.me?.username);
   useEffect(() => {
-    if (code !== undefined) putCached(user, HAD_CODE, isCode(code));
+    if (code !== undefined) putCached(user, HAD_CODE, isCode(code) || (code === "local" && "local"));
   }, [user, code]);
-  // a reply to an older request is dropped, so the screen shows the newest code only
-  const fresh = useCallback((mint: () => Promise<PhoneState> = mintPhoneCode) => {
+  // a reply to an older request is dropped, so the screen shows the newest code only. `keep`: what is on screen
+  // stays until the reply (the first request, which may be showing the last answer)
+  const fresh = useCallback((mint: () => Promise<PhoneState> = mintPhoneCode, keep = false) => {
     const mine = ++latest.current;
-    setCode(undefined);
+    if (!keep) setCode(undefined);
     void mint().then((c) => {
       if (mine === latest.current) setCode(c);
     });
   }, []);
-  useEffect(() => fresh(), [fresh]);
+  useEffect(() => fresh(mintPhoneCode, true), [fresh]);
   useEffect(() => {
     if (!isCode(code) || code.expiresAt === Infinity) return;
     const t = window.setInterval(() => setNow(Date.now()), 1000);
@@ -111,7 +118,8 @@ export function PhoneRow() {
   return (
     <PhoneRowView
       code={code}
-      hold={readCached<boolean>(user, HAD_CODE) === true}
+      hold={had === true}
+      wait={wait}
       now={now}
       canTurnOn={!!thisMacBridge()}
       turningOn={turningOn}
@@ -124,6 +132,7 @@ export function PhoneRow() {
 export function PhoneRowView({
   code,
   hold = false,
+  wait = false,
   now,
   canTurnOn,
   turningOn,
@@ -133,6 +142,8 @@ export function PhoneRowView({
   code: PhoneState | undefined;
   /** the last answer was a code: the line that says one is being made is as tall as the code, so nothing under it moves */
   hold?: boolean;
+  /** what is above this row in the step is not known yet (a first visit): the row is not drawn until it is */
+  wait?: boolean;
   now: number;
   /** the Mac app is here to turn Access from other devices on */
   canTurnOn: boolean;
@@ -141,7 +152,9 @@ export function PhoneRowView({
   onTurnOn: () => void;
 }) {
   return (
-    <div className={cn(CARD, "space-y-3 px-4 py-3")}>
+    // unplaced: this row is waiting, or a code is being made with no space held for it. What comes after it in the step
+    // is not drawn then (UNDER_PHONE), so nothing moves when the answer arrives
+    <div data-unplaced={wait || (code === undefined && !hold) ? "" : undefined} className={cn(CARD, "peer/phone space-y-3 px-4 py-3", wait && "hidden")}>
       <div className="flex items-start gap-3">
         <Smartphone className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
         <div className="min-w-0">
@@ -305,14 +318,14 @@ export function ConnectStepView({
       {phone}
 
       {hosted ? (
-        <div className={CARD}>
+        <div className={cn(CARD, UNDER_PHONE)}>
           <p className="px-4 py-3 text-sm text-muted-foreground">
             Creator Toolset runs on the computer you work on. Download the{" "}
             <a className="text-foreground underline" href="https://creatortoolset.com/download">Creator Toolset Mac app</a> there, and it joins this account.
           </p>
         </div>
       ) : (
-      <div className={CARD}>
+      <div className={cn(CARD, UNDER_PHONE)}>
         <button
           type="button"
           aria-expanded={expanded}
@@ -403,7 +416,7 @@ export function ConnectStepView({
  */
 export function ConnectStep({ picked, onPick }: { picked: ReadonlySet<string>; onPick: (id: string, on: boolean) => void }) {
   const hosted = useAuth((s) => s.hosted);
-  const { data: view, refresh } = useComputers();
+  const { data: view, error, refresh } = useComputers();
   const [expanded, setExpanded] = useState(false);
   const [server, setServer] = useState("");
   const [serverBad, setServerBad] = useState(false);
@@ -437,7 +450,8 @@ export function ConnectStep({ picked, onPick }: { picked: ReadonlySet<string>; o
       others={view?.others ?? []}
       picked={picked}
       onPick={onPick}
-      phone={<PhoneRow />}
+      // a first visit: the phone's row and what is under it take their place once the other computers are known (or their read failed)
+      phone={<PhoneRow wait={view === null && !error} />}
       hosted={hosted}
       pasteCommand={SHOW_CONNECT_COMMAND ? CONNECT_COMMAND : undefined}
       expanded={expanded}

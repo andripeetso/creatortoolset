@@ -73,17 +73,21 @@ export default function MobileInstagramPage() {
     () => listPosts(ALL),
     LISTS_LIVE,
   );
-  const { items: allAccounts, setItems: setAccounts, refresh: loadAccounts } = useCachedList<InstagramAccount>(
+  const { items: allAccounts, known: accountsKnown, error: accountsError, setItems: setAccounts, refresh: loadAccounts } = useCachedList<InstagramAccount>(
     allowed ? `instagram/accounts?p=${pid}` : null,
     () => listAccounts(),
     LISTS_LIVE,
   );
-  const accounts = allAccounts.slice(0, 8);
-  const { data: avail, refresh: loadAvail } = useCachedLoad<InstagramAvailability>(
+  const { data: avail, error: availError, refresh: loadAvail } = useCachedLoad<InstagramAvailability>(
     allowed ? "instagram/availability" : null,
     getInstagramAvailability,
     AVAILABILITY_LIVE,
   );
+  // A first visit has nothing saved. What is under the paste box (the accounts, the list) takes its place from two
+  // answers: whether links can crawl (the warning above it) and the accounts. It is drawn once both are in, so it
+  // never moves after; a read that failed counts as an answer, and a reload has both saved.
+  const placed = !allowed || ((avail !== null || !!availError) && (accountsKnown || !!accountsError));
+  const accounts = placed ? allAccounts.slice(0, 8) : [];
   const [busy, setBusy] = useState<RunWhen | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [savedFor, setSavedFor] = useState<SavedFor[]>(["content"]);
@@ -305,13 +309,13 @@ export default function MobileInstagramPage() {
         {accounts
           .filter((a) => a.mine)
           .map((a) => (
-            // the card reads its account itself and shows a moment later: its closed height is held for it
+            // on a first visit the card's own numbers come after the list: its closed height is held for them
             <div key={a.id} className="min-h-[42px]">
               <AccountStatsCard id={a.id} />
             </div>
           ))}
 
-        <MobileAnalyzerLibrary posts={posts} known={postsKnown} onChanged={refresh} />
+        {placed && <MobileAnalyzerLibrary posts={posts} known={postsKnown} onChanged={refresh} />}
       </div>
     </div>
   );

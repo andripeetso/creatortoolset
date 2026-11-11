@@ -141,6 +141,15 @@ it("draws the live code with its QR, and drops it once it has run out", () => {
   expect(phone(code, { now: 61_000 })).not.toContain("<img");
 });
 
+it("marks the phone row unplaced only while its height is not known: making a code with no space held, or waiting for the list above", () => {
+  const unplaced = (html: string) => html.includes("data-unplaced");
+  expect(unplaced(phone(undefined))).toBe(true); // a first visit: a code is being made
+  expect(unplaced(phone(undefined, { hold: true }))).toBe(false); // the last answer was a code: its space is held
+  expect(unplaced(phone("local"))).toBe(false);
+  expect(unplaced(phone({ url: "https://studio.example.com/l/abc", qr: "data:image/png;base64,AAAA", expiresAt: 9_000 }))).toBe(false);
+  expect(unplaced(phone("local", { wait: true }))).toBe(true); // the other computers are not known yet
+});
+
 it("maps the server's answers: a code, local, sign in first (401), or no code", async () => {
   const answer = (status: number, body?: unknown) => vi.stubGlobal("fetch", async () => new Response(body === undefined ? null : JSON.stringify(body), { status }));
   answer(401, { error: "Sign in with an account first" });
