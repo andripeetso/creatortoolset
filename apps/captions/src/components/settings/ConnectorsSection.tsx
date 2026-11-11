@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { RefreshCw } from "lucide-react";
 import { toast } from "sonner";
@@ -34,16 +34,26 @@ import type { SearchRowId } from "./search";
 const SIGN_IN: Record<LoginKind, string> = { meta: "Sign in with Facebook", google: "Sign in with YouTube", tiktok: "Sign in with TikTok" };
 const n = (v?: number) => (v === undefined ? "" : v >= 10_000 ? `${Math.round(v / 1000).toLocaleString("en-US")}k` : v.toLocaleString("en-US"));
 /** "@name", whether the handle was stored with its @ or without. */
+const NO_LOGINS: Record<LoginKind, boolean> = { meta: false, google: false, tiktok: false };
 const at = (handle: string) => `@${handle.replace(/^@+/, "")}`;
 const NOUN: Record<SocialPlatform, string> = { instagram: "an Instagram", facebook: "a Facebook", youtube: "a YouTube", tiktok: "a TikTok", x: "an X" };
 const loginOf = (p: SocialPlatform): LoginKind | undefined => PLATFORMS.find((x) => x.id === p)?.login;
 
+/** The time of the newest platform sign-in in the list (the server's clock), 0 with none. */
+export const newestSignIn = (accounts: readonly ConnectedAccount[]) => Math.max(0, ...accounts.filter((a) => a.via === "login").map((a) => a.connectedAt));
+/** The accounts a platform sign-in connected after `since` (a time from newestSignIn, so one clock is compared with itself). */
+export const signedInSince = (accounts: readonly ConnectedAccount[], since: number) => accounts.filter((a) => a.via === "login" && a.connectedAt > since);
+
 /** What a row says when the sign-in service was asked for its platform and does not offer it (or could not be reached). */
 export const SIGN_IN_OFF = "Sign-in is not available right now";
 
-/** The sign-in items this server has an app for (the login is the platform's own: Meta covers Facebook and Instagram). */
-export function signInItems(logins: Record<LoginKind, boolean>): Array<{ id: LoginKind; label: string }> {
-  return LOGINS.filter((l) => logins[l.id]).map((l) => ({ id: l.id, label: SIGN_IN[l.id] }));
+/**
+ * The sign-in items this server has its own app for (the login is the platform's own: Meta covers Facebook and
+ * Instagram). `viaService`: the ones only the sign-in service could give are left out, since nothing here knows
+ * whether they can finish (the service is asked only when a person presses Add on the Social accounts page).
+ */
+export function signInItems(logins: Record<LoginKind, boolean>, viaService: readonly LoginKind[] = []): Array<{ id: LoginKind; label: string }> {
+  return LOGINS.filter((l) => logins[l.id] && !viaService.includes(l.id)).map((l) => ({ id: l.id, label: SIGN_IN[l.id] }));
 }
 
 /** One platform for one project: its account, or the one way this server can add one (its sign-in, a public @handle). */
@@ -93,7 +103,9 @@ export function platformRows(view: Pick<ConnectorsView, "logins" | "apify" | "ac
 /**
  * Settings → Social accounts: the platforms the app reads for the project picked above them, one row each with the
  * project's account (its … menu) or one button. `back` = where a sign-in returns (the setup dialog passes its own step). `compact` = the
- * setup dialog's version: the Apify row and the sign-ins, nothing else.
+ * form behind a tool's "An Apify key" need (setup/ToolNeeds.tsx): the Apify key row, and a sign-in row only for a
+ * platform this server has its own app for. A sign-in that would come from the sign-in service is not offered there:
+ * that form cannot know it will finish, and a row that ends nowhere is worse than no row.
  */
 export function ConnectorsSection({ back = "/settings/connectors", compact }: { sub?: string; back?: string; compact?: boolean }) {
   const projects = useWorkspace((s) => s.projects);
@@ -118,6 +130,18 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
   };
 
   const reload = useCallback(() => refresh().catch(() => {}), [refresh]);
+  // A sign-in started from the Add dialog finishes somewhere else: the Mac app sends it to the computer's browser. The
+  // server tells this window when the account is saved (it announces "connectors"), the list reads itself again, and
+  // the dialog that was waiting closes by itself. `waiting`: the newest sign-in there was when the dialog opened.
+  const waiting = useRef<number | null>(null);
+  useEffect(() => {
+    if (!view || !open || waiting.current === null) return;
+    const fresh = signedInSince(view.accounts, waiting.current);
+    if (!fresh.length) return;
+    waiting.current = null;
+    setOpen(false);
+    toast(`${fresh.map((a) => at(a.handle)).join(", ")} connected. Reading ${fresh.length > 1 ? "their" : "its"} numbers now.`);
+  }, [view, open]);
   // a sign-in from the Mac app finishes in the computer's browser: coming back to the window shows the new account
   useEffect(() => {
     const onFocus = () => void reload();
@@ -147,19 +171,14 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
     return (
       <Card>
         <ApifyKeyRow onChanged={() => void reload()} />
-        {LOGINS.filter((l) => view?.logins[l.id]).map((l) => (
+        {signInItems(view?.logins ?? NO_LOGINS, view?.viaService).map((l) => (
           <ListRow
             key={l.id}
-            title={SIGN_IN[l.id]}
-            subtitle={off.includes(l.id) ? SIGN_IN_OFF : l.gives}
+            title={l.label}
+            subtitle={LOGINS.find((x) => x.id === l.id)!.gives}
             actions={
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={asking === l.id}
-                onClick={() => void offered(l.id, view!).then((on) => on && window.location.assign(loginHref(l.id, { back, projectId: projectId() })))}
-              >
-                Sign in
+              <Button asChild size="sm" variant="outline">
+                <a href={loginHref(l.id, { back, projectId: projectId() })}>Sign in</a>
               </Button>
             }
           />
@@ -181,6 +200,7 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
     const login = loginOf(platform);
     const loginOn = !!login && (await offered(login, view));
     setDlg((d) => ({ platform, step: loginOn ? "choose" : "handle", seq: d.seq + 1 }));
+    waiting.current = newestSignIn(view.accounts);
     setOpen(true);
   };
 

@@ -55,6 +55,7 @@ import { useCachedList, useCachedLoad } from "@/lib/local-cache";
 import { onSettingsClosed } from "@/lib/setup";
 import { warmRecentSessions } from "@/lib/warm-cache";
 import { useWorkspace } from "@/lib/workspace";
+import { promptDialog } from "@/lib/dialogs";
 
 type Tab = "sessions" | "projects" | "knowledge" | "frameworks" | "rules";
 
@@ -336,9 +337,9 @@ export default function WorkshopPage() {
             x={menu.x}
             y={menu.y}
             onClose={() => setMenu(null)}
-            onRename={() => {
+            onRename={async () => {
               const s = menu.s;
-              const next = window.prompt("Session name", s.title)?.trim();
+              const next = (await promptDialog({ title: "Session name", value: s.title, ok: "Rename" }))?.trim();
               if (!next || next === s.title) return;
               patchSummary(s.id, { title: next });
               window.dispatchEvent(new CustomEvent("workshop:renamed", { detail: { id: s.id, title: next } }));

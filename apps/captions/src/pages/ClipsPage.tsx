@@ -63,6 +63,7 @@ import {
   MobileClipSplash,
   MobileClipView,
 } from "@/pages/mobile/MobileClipView";
+import { confirmDialog } from "@/lib/dialogs";
 
 function fmtMmSs(t: number): string {
   const m = Math.floor(Math.max(0, t) / 60);
@@ -266,7 +267,7 @@ function ClipView({
 
   const remove = async () => {
     if (
-      !window.confirm(`Delete “${session.name}”?\n\nThis cannot be undone.`)
+!(await confirmDialog({ title: `Delete “${session.name}”?`, body: "This cannot be undone.", ok: "Delete", danger: true }))
     ) {
       return;
     }
@@ -977,12 +978,10 @@ export default function ClipsPage() {
                         <Pencil className="h-3.5 w-3.5" />
                       </button>
                       <button
-                        onClick={(e) => {
+                        onClick={async (e) => {
                           e.stopPropagation();
                           if (
-                            !window.confirm(
-                              `Delete “${s.name}”?\n\nThis cannot be undone.`,
-                            )
+                            !(await confirmDialog({ title: `Delete “${s.name}”?`, body: "This cannot be undone.", ok: "Delete", danger: true }))
                           ) {
                             return;
                           }

@@ -85,8 +85,8 @@ export const onHome = (hidden: readonly HomeTile[] | null | undefined, t: HomeTi
 /** What each thing a tool needs is called in a row's heading (plain, no vendor-first wording). */
 export const NEED_SHORT: Record<Have, string> = {
   project: "a project",
-  ai: "an AI that answers",
-  ownAi: "your own AI",
+  ai: "your AI",
+  ownAi: "your AI",
   library: "a Media Library",
   instagram: "an Instagram login",
   apify: "an Apify key",
@@ -105,8 +105,8 @@ export const NEED_SHORT: Record<Have, string> = {
 /** One plain sentence per need: what it is for and who bills (section 11.2 of the onboarding spec). */
 export const NEED_SENTENCE: Record<Have, string> = {
   project: "A project keeps this tool's work together. Making one takes a moment.",
-  ai: "Runs on the AI you connect (ChatGPT, Claude and others), on your own plan.",
-  ownAi: "Runs on the AI you connect (ChatGPT, Claude and others), on your own plan.",
+  ai: "ChatGPT, Claude or another AI plan you already have.",
+  ownAi: "ChatGPT, Claude or another AI plan you already have.",
   library: "The Media Library is where your footage lives. Make one to start.",
   instagram: "Lets this tool read your own Instagram posts. You sign in yourself.",
   apify: "Apify reads public posts for you. Apify bills you for each read, to your own account.",

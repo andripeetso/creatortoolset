@@ -60,7 +60,7 @@ function NeedRow({ need, met, welcome, focus }: { need: Need; met: boolean; welc
         </span>
         {!met && (
           <Button size="sm" variant="outline" className="h-7" autoFocus={focus} onClick={() => setOpen(!open)}>
-            {open ? "Close" : need.form === "keys" ? "Add key" : "Set up"}
+            {open ? "Close" : need.form === "keys" ? "Add key" : need.form === "ai" ? "Connect" : "Set up"}
           </Button>
         )}
       </div>

@@ -40,6 +40,7 @@ import {
 import { EnhancePlayer } from "@/components/EnhancePlayer";
 import { AppBar, ToolIntro } from "@/components/AppBar";
 import { DropZoneText, dropZoneClass } from "@/components/DropZone";
+import { confirmDialog } from "@/lib/dialogs";
 
 /**
  * The Audio Enhancer — a standalone tool at /enhance inside Creator
@@ -321,7 +322,7 @@ function SessionView({
 
   const remove = async () => {
     if (
-      !window.confirm(`Delete “${session.name}”?\n\nThis cannot be undone.`)
+!(await confirmDialog({ title: `Delete “${session.name}”?`, body: "This cannot be undone.", ok: "Delete", danger: true }))
     ) {
       return;
     }
@@ -659,12 +660,10 @@ export default function EnhancePage() {
                       </div>
                       <StatusChip s={s} />
                       <button
-                        onClick={(e) => {
+                        onClick={async (e) => {
                           e.stopPropagation();
                           if (
-                            !window.confirm(
-                              `Delete “${s.name}”?\n\nThis cannot be undone.`,
-                            )
+                            !(await confirmDialog({ title: `Delete “${s.name}”?`, body: "This cannot be undone.", ok: "Delete", danger: true }))
                           ) {
                             return;
                           }

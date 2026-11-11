@@ -158,10 +158,16 @@ describe("the sign-in service", () => {
       challenge = start.searchParams.get("challenge")!;
       const state = start.searchParams.get("state")!;
 
+      const { currentSeq } = await import("./lib/sync");
+      const seqBefore = currentSeq();
+      const startedAt = Date.now();
       const done = await app.request(`/api/connectors/callback/google?state=${state}&ticket=T1`);
       expect(done.headers.get("location")).toBe("/settings/connectors?connected=1");
       const yt = readConnectors("ana").accounts.find((a) => a.platform === "youtube")!;
       expect(yt).toMatchObject({ handle: "tinyacrobatics", token: "t1", refresh: "r1", issuer: "service" });
+      // the person's open windows are told (the way back is no write of theirs), and the account carries this sign-in's time
+      expect(currentSeq()).toBeGreaterThan(seqBefore);
+      expect(yt.connectedAt).toBeGreaterThanOrEqual(startedAt);
       // no tokens in any address the browser saw
       expect(asked.join(" ")).not.toContain("t1");
 

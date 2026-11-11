@@ -32,6 +32,7 @@ import {
 import { useCachedLoad } from "@/lib/local-cache";
 import { createSession, listSessions, sessionPath, type SessionRow } from "@/lib/workshop";
 import { finalsTiles } from "./FinalsPage";
+import { confirmDialog } from "@/lib/dialogs";
 
 /**
  * One piece of Finals (/finals/:pieceId): its versions in drag order, the winner (its frame is the cover on the list),
@@ -195,7 +196,7 @@ export function PieceEditor({
   };
 
   const trash = async () => {
-    if (!window.confirm("Move this piece to the Finals trash? Its versions stay in the library. It is gone for good after 5 days.")) return;
+    if (!(await confirmDialog({ title: "Move this piece to the Finals trash?", body: "Its versions stay in the library. It is gone for good after 5 days.", ok: "Move to trash", danger: true, deleting: true }))) return;
     setBusy(true);
     setError(null);
     try {

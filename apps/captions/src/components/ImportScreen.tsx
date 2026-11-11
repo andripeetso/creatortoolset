@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type Ref } from "react";
+import { useNavigate } from "react-router";
 import {
   ArrowLeft,
   Captions,
@@ -25,10 +26,11 @@ import {
   type SessionMeta,
 } from "@/lib/persist";
 import { fmtClock } from "@/lib/ass";
-import { confirmDiscardUnsavedProject } from "@/lib/persistence-guard";
+import { confirmDiscardUnsavedProject, guardLeaveLink } from "@/lib/persistence-guard";
 import { PersistenceBadge } from "./PersistenceStatus";
 import { AppBar, ToolIntro } from "./AppBar";
 import { DropZoneText, dropZoneClass } from "./DropZone";
+import { alertDialog, confirmDialog } from "@/lib/dialogs";
 
 /** Recent projects shown on the import screen; the rest lives in "All projects". */
 const RECENT_COUNT = 6;
@@ -297,6 +299,7 @@ function SessionsBlock({
 }
 
 export function ImportScreen() {
+  const navigate = useNavigate();
   const importFiles = useStudio((s) => s.importFiles);
   const hasCurrentProject = useStudio((s) => s.clips.length > 0);
   const [drag, setDrag] = useState(false);
@@ -342,7 +345,7 @@ export function ImportScreen() {
   }, [refreshSessions]);
 
   const open = async (id: string) => {
-    if (!confirmDiscardUnsavedProject("Open another project")) return;
+    if (!(await confirmDiscardUnsavedProject("Open another project"))) return;
     setOpening(id);
     try {
       const ok = await loadSession(id);
@@ -359,9 +362,12 @@ export function ImportScreen() {
   const remove = async (id: string) => {
     const project = sessions.find((session) => session.id === id);
     if (
-      !window.confirm(
-        `Delete “${project?.name ?? "this project"}”?\n\nThe cloud copy can be recovered for ${TRASH_KEEP_DAYS} days. This browser's local copy will be removed now.`,
-      )
+      !(await confirmDialog({
+        title: `Delete “${project?.name ?? "this project"}”?`,
+        body: `The cloud copy can be recovered for ${TRASH_KEEP_DAYS} days. This browser's local copy is removed now.`,
+        ok: "Delete",
+        danger: true,
+      }))
     ) {
       return;
     }
@@ -382,9 +388,12 @@ export function ImportScreen() {
 
   const permanentlyDelete = async (project: DeletedSessionMeta) => {
     if (
-      !window.confirm(
-        `Permanently delete “${project.name}”?\n\nThis cannot be undone. Its video, captions, exports, and uploaded source will be deleted now.`,
-      )
+      !(await confirmDialog({
+        title: `Delete “${project.name}” for good?`,
+        body: "Its video, captions, exports and uploaded source are deleted now. This cannot be undone.",
+        ok: "Delete for good",
+        danger: true,
+      }))
     ) {
       return;
     }
@@ -392,7 +401,7 @@ export function ImportScreen() {
     const deleted = await permanentlyDeleteSession(project.id);
     setDeletingForever(null);
     if (!deleted) {
-      window.alert("Could not permanently delete this project. Please retry.");
+      void alertDialog({ title: "Could not delete this project", body: "Please try again." });
       return;
     }
     setDeletedSessions((sessions) =>
@@ -433,9 +442,8 @@ export function ImportScreen() {
       e.preventDefault();
       setDrag(false);
       const files = Array.from(e.dataTransfer.files ?? []);
-      if (files.length && confirmDiscardUnsavedProject("Start a new project")) {
-        importFiles(files);
-      }
+      if (files.length)
+        void confirmDiscardUnsavedProject("Start a new project").then((yes) => yes && importFiles(files));
     },
     [importFiles],
   );
@@ -447,11 +455,7 @@ export function ImportScreen() {
     <div data-fills-window="scrolls" className="relative flex h-full flex-col overflow-y-scroll bg-zinc-950 text-zinc-200">
       <AppBar
         tool="Caption Studio"
-        onHome={(event) => {
-          if (!confirmDiscardUnsavedProject("Leave this project")) {
-            event.preventDefault();
-          }
-        }}
+        onHome={(event) => guardLeaveLink(event, "Leave this project", navigate)}
       >
         {hasCurrentProject && <PersistenceBadge />}
       </AppBar>
@@ -478,13 +482,9 @@ export function ImportScreen() {
           className="hidden"
           onChange={(e) => {
             const files = Array.from(e.target.files ?? []);
-            if (
-              files.length &&
-              confirmDiscardUnsavedProject("Start a new project")
-            ) {
-              importFiles(files);
-            }
             e.target.value = "";
+            if (files.length)
+              void confirmDiscardUnsavedProject("Start a new project").then((yes) => yes && importFiles(files));
           }}
         />
       </label>

@@ -56,6 +56,7 @@ import {
 } from "@/lib/clips";
 import { useChapters } from "@/components/ClipBlocks";
 import { ShareThemeSwitch } from "@/components/ShareTheme";
+import { confirmDialog } from "@/lib/dialogs";
 
 function fmtMmSs(t: number): string {
   const m = Math.floor(Math.max(0, t) / 60);
@@ -636,7 +637,7 @@ export function MobileClipView({
 
   const remove = async () => {
     if (
-      !window.confirm(`Delete “${session.name}”?\n\nThis cannot be undone.`)
+!(await confirmDialog({ title: `Delete “${session.name}”?`, body: "This cannot be undone.", ok: "Delete", danger: true }))
     ) {
       return;
     }

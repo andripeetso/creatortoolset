@@ -102,9 +102,13 @@ func acpAnswer(_ req: RelayRequest, _ opts: RelayOptions, work: URL, send: @esca
     try fm.createDirectory(at: tmp, withIntermediateDirectories: true)
     defer { try? fm.removeItem(at: tmp) }
 
-    let (cwd, system) = try prepareFolder(req, work: work, tmp: tmp)
+    // always a fresh folder of the run's own in the temporary folder, never a Workshop session's kept one: these agents
+    // keep no session, the request's files are written each turn, and OpenCode reads up to the top of a git repository
+    // its folder sits in (measured; a home folder that is one would open the whole home)
+    let (cwd, system) = try prepareFolder(req, work: work, tmp: tmp, fresh: true)
     let prompt = "<instructions>\n\(system)\n</instructions>\n\n" + requestText(req.user, folder: folder)
     let environment = driverEnv(base: ProcessInfo.processInfo.environment).merging(opts.env) { _, value in value }
+        .merging(acpRules(driver: opts.driver, web: req.web)) { _, rule in rule }
     let speech = AcpSpeech()
     let run: AcpRun
     do {
@@ -250,8 +254,15 @@ func codexAnswer(_ req: RelayRequest, _ opts: RelayOptions, cli: String, work: U
     let (cwd, system) = try prepareFolder(req, work: work, tmp: tmp, emptyFolder: emptyFolder)
     let prompt = "<instructions>\n\(system)\n</instructions>\n\n" + requestText(req.user, folder: folder)
     let pictures = codexPictures(req.files, cwd: cwd)
+    // its fence is a permission profile: a Codex without profiles is not run, and neither is one that gave no answer in
+    // time (never unfenced by a slow start). A program that isn't there fails below, in runStream's words
+    switch codexTakesProfile(cli) {
+    case .some(false): throw ClaudeFailure(message: codexTooOld)
+    case .none where FileManager.default.isExecutableFile(atPath: cli): throw ClaudeFailure(message: "Codex didn't start in time. Try again.")
+    default: break
+    }
     // the assistant: the app's MCP server for this run, its token only in this process's environment
-    let mcp = req.mcp.flatMap { codexTakesMcp(cli) ? $0 : nil }
+    let mcp = req.mcp
     var env = driverEnv(base: ProcessInfo.processInfo.environment, home: opts.home)
     if let mcp { env[codexTokenEnv] = mcp.token }
     let args = codexArguments(cwd: cwd.path, model: opts.model, effort: opts.effort, pictures: pictures, mcpURL: mcp?.url ?? "")
@@ -339,12 +350,14 @@ func museAnswer(_ req: RelayRequest, _ opts: RelayOptions, cli: String, work: UR
 
 /// the Mac relay answer()'s folder: a Workshop session keeps one folder (the same path every turn, under `work`); else a
 /// fresh one in `tmp`. With a folder, the request's files are written into it. Returns the folder and the system text.
-func prepareFolder(_ req: RelayRequest, work: URL, tmp: URL, emptyFolder: URL? = nil) throws -> (cwd: URL, system: String) {
+func prepareFolder(_ req: RelayRequest, work: URL, tmp: URL, emptyFolder: URL? = nil, fresh: Bool = false) throws -> (cwd: URL, system: String) {
     let fm = FileManager.default
     let folder = !req.files.isEmpty || !req.session.isEmpty
     var system = req.system
     let cwd: URL
-    if let workdir = req.workdir {
+    if fresh {
+        cwd = tmp.appendingPathComponent("folder")
+    } else if let workdir = req.workdir {
         cwd = workdir
     } else if !req.session.isEmpty {
         let root = work.appendingPathComponent("workshop")
@@ -357,10 +370,9 @@ func prepareFolder(_ req: RelayRequest, work: URL, tmp: URL, emptyFolder: URL? =
         cwd = emptyFolder ?? tmp.appendingPathComponent("folder")
     }
     try fm.createDirectory(at: cwd, withIntermediateDirectories: true)
-    if folder {
-        if req.files["sessions/INDEX.md"] != nil { system += piecesNote }
-        try syncFolder(cwd, req.files, prune: req.workdir == nil)   // the assistant's folder keeps what's in it
-    }
+    if folder && req.files["sessions/INDEX.md"] != nil { system += piecesNote }
+    // the assistant's folder keeps what's in it, and is synced on a turn with no file too, so no link stays there either
+    if folder || req.workdir != nil { try syncFolder(cwd, req.files, prune: req.workdir == nil) }
     return (cwd, system)
 }
 

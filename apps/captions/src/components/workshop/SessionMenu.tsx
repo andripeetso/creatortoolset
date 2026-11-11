@@ -4,6 +4,7 @@ import { useNavigate } from "react-router";
 import { Archive, ArchiveRestore, ChevronRight, CircleDot, Copy, CopyPlus, Link2, Pencil, Pin, PinOff, Repeat2, Sparkles, Trash2 } from "lucide-react";
 import { createDocument, deleteSession, docKindLabel, duplicateSession, listDocuments, patchSession, regenerateSessionTitle, sendTurn, sessionPath, useDocKinds, WORKSHOP_HOME, type PieceKind, type SessionPatch, type SessionStatus } from "@/lib/workshop";
 import { markUnread, patchSummary, refreshSummaries, useSessionSummaries, type SessionSummary } from "@/lib/workshop-summary";
+import { alertDialog, confirmDialog } from "@/lib/dialogs";
 
 /** A row that opens its own menu beside it on hover, like a Mac submenu; a click works too, for touch. */
 function Sub({ icon, label, item, flip, children }: { icon: React.ReactNode; label: string; item: string; flip: boolean; children: React.ReactNode }) {
@@ -81,7 +82,7 @@ export function SessionMenu({
     };
   }, [onClose]);
 
-  const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
+  const fail = (e: unknown) => void alertDialog({ title: e instanceof Error ? e.message : String(e) });
   // shows at once, saved on the server; a failed save brings the sidebar back to the server's word
   const change = (patch: Partial<SessionSummary>, server: SessionPatch) => {
     onClose();
@@ -89,7 +90,7 @@ export function SessionMenu({
     patchSession(id, server)
       .then(() => onChanged?.())
       .catch((e) => {
-        window.alert(msg(e));
+        fail(e);
         void refreshSummaries();
         onChanged?.();
       });
@@ -98,7 +99,7 @@ export function SessionMenu({
     onClose();
     void Promise.resolve(text)
       .then((t) => navigator.clipboard.writeText(t))
-      .catch((e) => window.alert(msg(e)));
+      .catch(fail);
   };
   const mainPieceText = () =>
     listDocuments(id).then((docs) => {
@@ -114,7 +115,7 @@ export function SessionMenu({
         window.dispatchEvent(new CustomEvent("workshop:renamed", { detail: { id, title: next } }));
         onChanged?.();
       })
-      .catch((e) => window.alert(msg(e)));
+      .catch(fail);
   };
   const duplicate = () => {
     onClose();
@@ -124,7 +125,7 @@ export function SessionMenu({
         onChanged?.();
         navigate(sessionPath(s.id));
       })
-      .catch((e) => window.alert(msg(e)));
+      .catch(fail);
   };
   // Convert to: a copy of the session with a new piece in that format, written by the AI from the
   // session's written piece, which it reads beside the new one. Opens the copy on the new piece while it writes.
@@ -140,18 +141,17 @@ export function SessionMenu({
       void refreshSummaries();
       onChanged?.();
       navigate(`${sessionPath(copy.id)}?doc=${doc.id}`);
-    })().catch((e) => window.alert(msg(e)));
+    })().catch(fail);
   };
   const remove = () => {
     onClose();
-    if (!window.confirm(`Delete "${title || "Untitled session"}" for good?`)) return;
-    deleteSession(id)
-      .then(() => {
-        if (open) navigate(WORKSHOP_HOME);
-        void refreshSummaries();
-        onChanged?.();
-      })
-      .catch((e) => window.alert(msg(e)));
+    void (async () => {
+      if (!(await confirmDialog({ title: `Delete “${title || "Untitled session"}” for good?`, body: "This cannot be undone.", ok: "Delete", danger: true }))) return;
+      await deleteSession(id);
+      if (open) navigate(WORKSHOP_HOME);
+      void refreshSummaries();
+      onChanged?.();
+    })().catch(fail);
   };
 
   const shelved = status === "shelved";

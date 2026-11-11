@@ -34,7 +34,7 @@ import { HelpDialog } from "@/components/HelpDialog";
 import { ProjectSetupDialog } from "@/components/ProjectSetupDialog";
 import { ProjectSettingsDialog } from "@/components/ProjectSettingsDialog";
 import { AppBar } from "@/components/AppBar";
-import { confirmDiscardUnsavedProject } from "@/lib/persistence-guard";
+import { confirmDiscardUnsavedProject, guardLeaveLink } from "@/lib/persistence-guard";
 import { PersistenceBadge } from "@/components/PersistenceStatus";
 
 /** Header dropdown: jump between saved projects or back to all projects. */
@@ -55,7 +55,7 @@ function ProjectSwitcher() {
   const switchTo = async (id: string) => {
     setOpen(false);
     if (id === projectId || busy) return;
-    if (!confirmDiscardUnsavedProject("Switch projects")) return;
+    if (!(await confirmDiscardUnsavedProject("Switch projects"))) return;
     setBusy(true);
     await flushPendingSave();
     await loadSession(id);
@@ -64,7 +64,7 @@ function ProjectSwitcher() {
 
   const goHome = async () => {
     setOpen(false);
-    if (!confirmDiscardUnsavedProject("Leave this project")) return;
+    if (!(await confirmDiscardUnsavedProject("Leave this project"))) return;
     await flushPendingSave();
     reset();
   };
@@ -203,8 +203,8 @@ export default function Home() {
       !cleanerClipRequested
     )
       return;
-    if (!confirmDiscardUnsavedProject("Open another project")) return;
     void (async () => {
+      if (!(await confirmDiscardUnsavedProject("Open another project"))) return;
       await flushPendingSave();
       if (
         await loadSession(projectRequested, { server: !!cleanerClipRequested })
@@ -250,9 +250,8 @@ export default function Home() {
       : MIN_TRANSCRIPT_W;
   });
 
-  const backToToolset = (e: React.MouseEvent<HTMLAnchorElement>) => {
-    if (!confirmDiscardUnsavedProject("Leave this project")) e.preventDefault();
-  };
+  const backToToolset = (e: React.MouseEvent<HTMLAnchorElement>) =>
+    guardLeaveLink(e, "Leave this project", navigate);
 
   const startResize = (e: React.PointerEvent) => {
     e.preventDefault();
@@ -377,15 +376,13 @@ export default function Home() {
               className="hidden"
               onChange={(e) => {
                 const files = Array.from(e.target.files ?? []);
-                if (files.length) {
-                  if (!confirmDiscardUnsavedProject("Start a new project")) {
-                    e.target.value = "";
-                    return;
-                  }
-                  reset();
-                  importFiles(files);
-                }
                 e.target.value = "";
+                if (files.length)
+                  void confirmDiscardUnsavedProject("Start a new project").then((yes) => {
+                    if (!yes) return;
+                    reset();
+                    importFiles(files);
+                  });
               }}
             />
           </label>

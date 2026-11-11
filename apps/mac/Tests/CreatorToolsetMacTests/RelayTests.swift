@@ -116,8 +116,12 @@ final class RelayTests: XCTestCase {
         let tools = [readTools, webTools].joined(separator: ",")
         let args = claudeArguments(model: "claude-opus-5-5", effort: "low", systemFile: "/tmp/s.txt", tools: tools, session: false, resume: "")
         XCTAssertEqual(args[args.firstIndex(of: "--tools")! + 1], "Read,Glob,Grep,WebSearch,WebFetch")
-        XCTAssertEqual(args[args.firstIndex(of: "--allowedTools")! + 1], "Read,Glob,Grep,WebSearch,WebFetch")
+        // the read tools are not allowed up front: Claude Code's own rule keeps them in the folder, and dontAsk refuses the rest
+        XCTAssertEqual(args[args.firstIndex(of: "--allowedTools")! + 1], "WebSearch,WebFetch")
         XCTAssertEqual(args[args.firstIndex(of: "--permission-mode")! + 1], "dontAsk")
+        let folder = claudeArguments(model: "claude-opus-5-5", effort: "low", systemFile: "/tmp/s.txt", tools: readTools, session: true, resume: "")
+        XCTAssertFalse(folder.contains("--allowedTools"))
+        XCTAssertEqual(folder[folder.firstIndex(of: "--permission-mode")! + 1], "dontAsk")
     }
 
     func testAssistantRunGetsTheAppsMcpToolsOnly() throws {
@@ -351,6 +355,23 @@ final class RelayTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("stale.txt").path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.deletingLastPathComponent().appendingPathComponent("escape.txt").path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: "/abs.txt"))
+        // a link left in the folder goes, the file and folder it pointed to stay, and the site's file lands inside
+        let outside = temp()
+        try "secret".write(to: outside.appendingPathComponent("secret.txt"), atomically: true, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("link.txt"), withDestinationURL: outside.appendingPathComponent("secret.txt"))
+        try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("sources"), withDestinationURL: outside)
+        try syncFolder(root, ["sources/talk.md": "talk"], prune: false)
+        XCTAssertNil(try? FileManager.default.destinationOfSymbolicLink(atPath: root.appendingPathComponent("link.txt").path))
+        XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("sources/talk.md"), encoding: .utf8), "talk")
+        XCTAssertNil(try? FileManager.default.destinationOfSymbolicLink(atPath: root.appendingPathComponent("sources").path))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: outside.path), ["secret.txt"])
+        // the assistant's folder, on a turn that brings no file
+        try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("link.txt"), withDestinationURL: outside.appendingPathComponent("secret.txt"))
+        var req = request(#"{"id":"j","system":"","user":""}"#)
+        req.workdir = root
+        _ = try prepareFolder(req, work: temp(), tmp: temp())
+        XCTAssertNil(try? FileManager.default.destinationOfSymbolicLink(atPath: root.appendingPathComponent("link.txt").path))
+        XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("sources/talk.md"), encoding: .utf8), "talk")
     }
 
     func testTheFolderNoteAndTheRequestText() {
@@ -560,52 +581,100 @@ final class RelayTests: XCTestCase {
         XCTAssertEqual(none["result"] as? String, "ERROR: something on stderr")
     }
 
-    func testCodexCommandLineIsReadOnlyInTheFolderWithThePromptOnStdin() {
+    func testCodexCommandLineReadsOnlyItsFolderWithThePromptOnStdin() {
         let args = codexArguments(cwd: "/tmp/run", model: "gpt-x", effort: "low")
         XCTAssertEqual(args.prefix(2), ["exec", "--json"])
-        XCTAssertEqual(args[args.firstIndex(of: "-s")! + 1], "read-only")
         XCTAssertEqual(args[args.firstIndex(of: "-C")! + 1], "/tmp/run")
         XCTAssertEqual(args[args.firstIndex(of: "-m")! + 1], "gpt-x")
         XCTAssertTrue(args.contains("model_reasoning_effort=low"))
         XCTAssertEqual(args.last, "-")
         XCTAssertFalse(codexArguments(cwd: "/tmp/run", model: "", effort: "low").contains("-m"))
-        XCTAssertFalse(args.contains("--ignore-user-config"))
         XCTAssertFalse(args.joined(separator: " ").contains("mcp_servers"))
         // the assistant: the app's MCP server for this run, its token from the environment, its calls not asked about
         let tools = codexArguments(cwd: "/tmp/run", model: "gpt-x", effort: "low", mcpURL: "http://127.0.0.1:5360/api/mcp")
-        XCTAssertTrue(tools.contains("--ignore-user-config"))
         XCTAssertTrue(tools.contains(#"mcp_servers.creator-toolset.url="http://127.0.0.1:5360/api/mcp""#))
         XCTAssertTrue(tools.contains(#"mcp_servers.creator-toolset.bearer_token_env_var="CREATOR_TOOLSET_MCP_TOKEN""#))
         XCTAssertTrue(tools.contains(#"mcp_servers.creator-toolset.default_tools_approval_mode="approve""#))
-        XCTAssertEqual(tools[tools.firstIndex(of: "-s")! + 1], "read-only")
         XCTAssertEqual(tools.last, "-")
+        // every run: its own permission profile (reads in its folder only; no -s, which would win over it), and none of the
+        // person's own config, so no MCP server of theirs is in it
+        for run in [args, tools] {
+            XCTAssertFalse(run.contains("-s"))
+            XCTAssertTrue(run.contains("--ignore-user-config"))
+            XCTAssertTrue(run.contains(#"default_permissions="creator-toolset-folder""#))
+            XCTAssertTrue(run.contains(#"permissions.creator-toolset-folder.filesystem={":minimal"="read",":project_roots"="read"}"#))
+            XCTAssertTrue(run.contains(#"shell_environment_policy.inherit="core""#))
+        }
     }
 
-    func testCodexGetsTheTokenInItsEnvironmentAndAnOldCodexAnswersWithoutTools() throws {
+    /// Codex's own help decides: one that names permission profiles runs in its folder's profile, an older one is not run.
+    func testACodexThatTakesAProfileRunsFencedAndAnOlderOneIsNotRun() throws {
         let dir = temp()
         let seen = dir.appendingPathComponent("seen.txt")
-        // a codex that prints `help` for `exec --help`, and for a run writes its arguments and the token it was given
         func stub(_ name: String, help: String) throws -> String {
             let file = dir.appendingPathComponent(name)
-            let script = "#!/bin/sh\nif [ \"$2\" = \"--help\" ]; then echo '\(help)'; exit 0; fi\ncat > /dev/null\n"
-                + "echo \"$* token=$\(codexTokenEnv)\" > '\(seen.path)'\n"
+            let script = "#!/bin/sh\nif [ \"$1\" = sandbox ]; then echo '\(help)'; exit 0; fi\ncat > /dev/null\necho \"$*\" > '\(seen.path)'\n"
                 + #"echo '{"type":"item.completed","item":{"id":"i","type":"agent_message","text":"ok"}}'"# + "\n"
             try script.write(to: file, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
             return file.path
         }
+        let req = request(#"{"id":"c10","system":"s","user":"u","driver":"codex","effort":"low","files":{"notes.md":"x"}}"#)
+        let run = { (cli: String) in try runAnswer(req, try requestOptions(req), cli: cli, work: self.temp(), send: { _ in true }, step: { _ in }).text }
+        let current = try stub("codex-current", help: "  -P, --permission-profile <NAME>")
+        XCTAssertEqual(codexTakesProfile(current), true)
+        XCTAssertEqual(try run(current), "ok")
+        let args = try String(contentsOf: seen, encoding: .utf8)
+        XCTAssertTrue(args.contains("default_permissions=") && args.contains("--ignore-user-config") && !args.contains("-s read-only"))
+        try FileManager.default.removeItem(at: seen)
+        let old = try stub("codex-old", help: "  -c, --config <key=value>")
+        XCTAssertEqual(codexTakesProfile(old), false)
+        XCTAssertThrowsError(try run(old)) { XCTAssertEqual(($0 as? ClaudeFailure)?.message, codexTooOld) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: seen.path))   // it never started
+    }
+
+    func testAnOpenCodeRunGetsRulesThatKeepItInItsFolder() throws {
+        func parsed(_ text: String?) throws -> [String: Any] {
+            try XCTUnwrap(JSONSerialization.jsonObject(with: Data(try XCTUnwrap(text).utf8)) as? [String: Any])
+        }
+        let env = acpRules(driver: "opencode", web: false)
+        let rules = try parsed(env["OPENCODE_PERMISSION"]) as? [String: String]
+        XCTAssertEqual(rules, ["*": "deny", "external_directory": "deny", "read": "allow", "glob": "allow", "grep": "allow", "list": "allow",
+                               "todowrite": "allow", "webfetch": "deny"])
+        XCTAssertTrue(env["OPENCODE_PERMISSION"]!.hasPrefix(#"{"*":"deny""#))   // the catch-all first, the tools it allows after
+        // the same rules for the build agent, which every run uses, over the person's own config
+        let config = try parsed(env["OPENCODE_CONFIG_CONTENT"])
+        XCTAssertEqual(config["default_agent"] as? String, "build")
+        XCTAssertEqual(((config["agent"] as? [String: Any])?["build"] as? [String: Any])?["permission"] as? [String: String], rules)
+        XCTAssertEqual((try parsed(acpRules(driver: "opencode", web: true)["OPENCODE_PERMISSION"]))["webfetch"] as? String, "allow")
+        XCTAssertEqual(acpRules(driver: "pi", web: true), [:])
+    }
+
+    /// A Codex that isn't there fails in the words for that, not as a slow start.
+    func testAMissingCodexSaysItIsNotInstalled() throws {
+        let req = request(#"{"id":"c11","system":"s","user":"u","driver":"codex","effort":"low"}"#)
+        XCTAssertThrowsError(try runAnswer(req, try requestOptions(req), cli: temp().appendingPathComponent("codex").path, work: temp(), send: { _ in true }, step: { _ in })) {
+            XCTAssertTrue(($0 as? ClaudeFailure)?.message.contains("is not installed on this Mac") == true, "\($0)")
+        }
+    }
+
+    func testCodexGetsTheTokenInItsEnvironmentNeverAsAnArgument() throws {
+        let dir = temp()
+        let seen = dir.appendingPathComponent("seen.txt")
+        // a codex that names permission profiles in its help, and for a run writes its arguments and the token it was given
+        let file = dir.appendingPathComponent("codex")
+        let script = "#!/bin/sh\nif [ \"$2\" = \"--help\" ]; then echo '  -P, --permission-profile <NAME>'; exit 0; fi\ncat > /dev/null\n"
+            + "echo \"$* token=$\(codexTokenEnv)\" > '\(seen.path)'\n"
+            + #"echo '{"type":"item.completed","item":{"id":"i","type":"agent_message","text":"ok"}}'"# + "\n"
+        try script.write(to: file, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
         let token = "ctj_" + String(repeating: "b", count: 48)
         let req = request(#"{"id":"c9","system":"s","user":"u","driver":"codex","effort":"low","mcp":{"url":"http://127.0.0.1:9/api/mcp","token":""# + token + #""}}"#)
-        let run = { (cli: String) in _ = try runAnswer(req, try requestOptions(req), cli: cli, work: self.temp(), send: { _ in true }, step: { _ in }) }
-        try run(try stub("codex", help: "      --ignore-user-config"))
+        _ = try runAnswer(req, try requestOptions(req), cli: file.path, work: temp(), send: { _ in true }, step: { _ in })
         let now = try String(contentsOf: seen, encoding: .utf8)
         XCTAssertTrue(now.contains(#"mcp_servers.creator-toolset.url="http://127.0.0.1:9/api/mcp""#))
         XCTAssertTrue(now.hasSuffix(" token=\(token)\n"))
         XCTAssertEqual(now.components(separatedBy: token).count, 2)   // in the environment only, never an argument
-        try run(try stub("codex-0.39", help: "      --sandbox <SANDBOX_MODE>"))
-        let old = try String(contentsOf: seen, encoding: .utf8)
-        XCTAssertFalse(old.contains("mcp_servers"))
-        XCTAssertTrue(old.hasSuffix(" token=\n"))
     }
 
     func testGeminiAndGrokGetTheAppsServerForOneRunInTheirOwnFolder() throws {
@@ -782,10 +851,14 @@ final class RelayTests: XCTestCase {
         XCTAssertEqual(row["input"] as? Int, 0)
     }
 
+    /// What a stand-in Codex says to `codex sandbox --help`, as a current one does (it names permission profiles): the first
+    /// line of a stand-in's script, since a Codex without profiles is not run.
+    private let codexHelp = "if [ \"$1\" = sandbox ]; then echo '  -P, --permission-profile <NAME>'; exit 0; fi\n"
+
     /// A stand-in CLI that ignores its arguments and prints `lines` (one per line) after reading its prompt.
     private func stubStreamCLI(_ name: String, _ lines: [String]) throws -> String {
         let file = temp().appendingPathComponent(name)
-        let script = "#!/bin/sh\ncat > /dev/null\ncat <<'STUBEOF'\n" + lines.joined(separator: "\n") + "\nSTUBEOF\n"
+        let script = "#!/bin/sh\n\(codexHelp)cat > /dev/null\ncat <<'STUBEOF'\n" + lines.joined(separator: "\n") + "\nSTUBEOF\n"
         try script.write(to: file, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
         return file.path
@@ -813,7 +886,7 @@ final class RelayTests: XCTestCase {
         let dir = temp()
         let file = dir.appendingPathComponent("codex")
         let argv = dir.appendingPathComponent("argv.txt").path
-        let script = "#!/bin/sh\nprintf '%s\\n' \"$@\" > \(argv)\nprompt=$(cat)\nprintf '{\"id\":\"0\",\"msg\":{\"type\":\"agent_message\",\"message\":\"ok\"}}\\n'\n"
+        let script = "#!/bin/sh\n\(codexHelp)printf '%s\\n' \"$@\" > \(argv)\nprompt=$(cat)\nprintf '{\"id\":\"0\",\"msg\":{\"type\":\"agent_message\",\"message\":\"ok\"}}\\n'\n"
         try script.write(to: file, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
         let req = request(#"{"id":"c4","system":"","user":"look","driver":"codex","model":"gpt-6-luna","effort":"xhigh","files":{"attached/1.jpg":"base64:/9j/","notes.md":"x"}}"#)
@@ -829,7 +902,7 @@ final class RelayTests: XCTestCase {
     func testCodexWithNoFolderStartsInItsOwnEmptyFolderUnderApplicationSupport() throws {
         // A stand-in codex that answers with its working folder, so the test can see where the run started.
         let file = temp().appendingPathComponent("codex")
-        let script = "#!/bin/sh\ncat > /dev/null\nprintf '{\"id\":\"0\",\"msg\":{\"type\":\"agent_message\",\"message\":\"%s\"}}\\n' \"$(pwd -P)\"\n"
+        let script = "#!/bin/sh\n\(codexHelp)cat > /dev/null\nprintf '{\"id\":\"0\",\"msg\":{\"type\":\"agent_message\",\"message\":\"%s\"}}\\n' \"$(pwd -P)\"\n"
         try script.write(to: file, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
         let req = request(#"{"id":"c3","system":"","user":"where","driver":"codex","effort":"low"}"#)
@@ -889,7 +962,7 @@ final class RelayTests: XCTestCase {
     func testRealCodexToolsRun() throws {
         guard ProcessInfo.processInfo.environment["CT_REAL_CODEX"] == "1" else { throw XCTSkip("set CT_REAL_CODEX=1, CT_REAL_SITE and CT_REAL_KEYS") }
         let cli = ProcessInfo.processInfo.environment["CT_REAL_CODEX_BIN"] ?? binary("codex", home: FileManager.default.homeDirectoryForCurrentUser) ?? "codex"
-        XCTAssertTrue(codexTakesMcp(cli))
+        XCTAssertEqual(codexTakesProfile(cli), true)
         try realToolsRun("codex", cli: cli)
     }
 
@@ -1325,13 +1398,16 @@ final class RelayTests: XCTestCase {
     }
 
 
-    /// CT_REAL_CLAUDE=1 swift test --filter RealRun: one tiny claude run through ~/.claude-work, the way the relay runs it.
+    /// CT_REAL_CLAUDE=1 swift test --filter RealRun: one tiny claude run through a signed-in Claude home, the way the relay
+    /// runs it. CT_REAL_CLAUDE_HOME names that home's folder under the person's home folder (default .claude-work). Run it
+    /// with the shell's own CLAUDE* and ANTHROPIC* variables unset: the Mac app's environment has none of them.
     func testRealRunThroughTheHubHome() throws {
-        guard ProcessInfo.processInfo.environment["CT_REAL_CLAUDE"] == "1" else {
+        let env = ProcessInfo.processInfo.environment
+        guard env["CT_REAL_CLAUDE"] == "1" else {
             throw XCTSkip("set CT_REAL_CLAUDE=1 to run one real claude call")
         }
         let home = FileManager.default.homeDirectoryForCurrentUser
-        let hub = home.appendingPathComponent(".claude-work").path
+        let hub = home.appendingPathComponent(env["CT_REAL_CLAUDE_HOME"] ?? ".claude-work").path
         let req = request(#"{"id":"real-1","system":"Reply with just OK.","user":"Reply with just OK.","driver":"claude","model":"claude-opus-5-5","effort":"low","home":"\#(hub)"}"#)
         let opts = try requestOptions(req)
         let cli = binary("claude", home: home) ?? "claude"
@@ -1343,6 +1419,34 @@ final class RelayTests: XCTestCase {
         XCTAssertFalse(answer.text.isEmpty)
         XCTAssertTrue(answer.text.localizedCaseInsensitiveContains("OK"))
         XCTAssertEqual(answer.usage["models"] as? [String], ["claude-opus-5-5"])
+    }
+
+    /// CT_REAL_CLAUDE=1 [CT_REAL_CLAUDE_HOME=…] swift test --filter RealClaudeFolderAndTool: two more short real runs through
+    /// the same home, for the two things the folder fence must not break. A run with a folder reads a file inside it (reads
+    /// are not allowed up front: Claude Code's own rule lets them run inside its folder, and dontAsk refuses the rest). An
+    /// assistant run calls the app's MCP tool (a stand-in server on 127.0.0.1) and answers with what it returned.
+    func testRealClaudeFolderAndToolRuns() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard env["CT_REAL_CLAUDE"] == "1" else { throw XCTSkip("set CT_REAL_CLAUDE=1 to run real claude calls") }
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let hub = home.appendingPathComponent(env["CT_REAL_CLAUDE_HOME"] ?? ".claude-work").path
+        let cli = binary("claude", home: home) ?? "claude"
+        let base = #""driver":"claude","model":"claude-opus-5-5","effort":"low","home":"\#(hub)""#
+        var steps: [String] = []
+
+        let word = "TINY-" + UUID().uuidString.prefix(8)
+        let folder = request(#"{"id":"real-folder","system":"Answer from the files in the current folder.","user":"What is the code word in notes.md? Reply with just the code word.","files":{"notes.md":"The code word is \#(word)."},"# + base + "}")
+        let read = try runAnswer(folder, try requestOptions(folder), cli: cli, work: temp(), send: { _ in true }, step: { steps.append($0) })
+        print("REAL CLAUDE folder: text=\(read.text) steps=\(steps) cli=\(cli)")
+        XCTAssertTrue(read.text.contains(word))
+
+        let token = "ctj_" + String(repeating: "7", count: 48)
+        let server = try GrokStandIn(token: token, steps: [])
+        let tools = request(#"{"id":"real-tools","system":"Use the creator-toolset tools when the user asks for a lookup.","user":"Call the lookup tool and reply with exactly the text it returns, nothing else.","mcp":{"url":"http://127.0.0.1:\#(server.port)/api/mcp","token":"\#(token)"},"# + base + "}")
+        steps = []
+        let used = try runAnswer(tools, try requestOptions(tools), cli: cli, work: temp(), send: { _ in true }, step: { steps.append($0) })
+        print("REAL CLAUDE tools: text=\(used.text) steps=\(steps)")
+        XCTAssertTrue(used.text.contains("MCP-LOOKUP-RESULT"))
     }
 }
 

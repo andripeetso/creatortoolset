@@ -131,6 +131,13 @@ const statusLabel = (id: IdeaStatus) => IDEA_STATUSES.find((s) => s.id === id)!.
  * A post in the grid. At rest it is the post: the picture, its numbers, who and when, the first line. Rating and
  * Skip / To make come up under the pointer (or the keyboard's focus); everything else is on the post's page.
  */
+/** The picture's width over its height on the card. */
+export function cardRatio(post: InstagramPost): number {
+  const first = post.slides[0];
+  if (first?.width && first?.height) return clamp(first.width / first.height, 0.5625, 1.25);
+  return post.kind === "reel" ? 0.5625 : 0.8;
+}
+
 export function PostCard({
   post,
   selected,
@@ -163,12 +170,7 @@ export function PostCard({
   const [active, setActive] = useState(false);
   const [refused, setRefused] = useState(false);
   const first = post.slides[0];
-  const ratio =
-    first?.width && first?.height
-      ? clamp(first.width / first.height, 0.5625, 1.25)
-      : post.kind === "reel"
-        ? 0.5625
-        : 0.8;
+  const ratio = cardRatio(post);
   const processing = isProcessing(post);
   const failed = post.status === "error";
   const stepLabel = PROCESS_STEPS.find((s) => s.id === post.step)?.label ?? "Working";

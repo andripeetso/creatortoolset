@@ -350,7 +350,8 @@ the Mac relay runs a Claude request (`ClaudeRun.swift`, `ClaudeRequest.swift`):
 the official `claude` command-line tool (Claude Code) found on PATH or in `~/.local/bin`, `/opt/homebrew/bin` or
 `/usr/local/bin`, never a copy inside another app, signed in through the request's
 home folder (its `settings.json` `env` rides along, the API key is dropped), `--permission-mode dontAsk`,
-the Workshop folder read with Read, Glob and Grep, streamed text posted to `/api/devices/relay/<id>/text`
+the Workshop folder read with Read, Glob and Grep (never allowed up front, so Claude Code's own rule keeps them in the
+folder and dontAsk refuses any other path; no link stays in a run folder), streamed text posted to `/api/devices/relay/<id>/text`
 (at most every 0.4 s, at least every 20 s), tool calls to `/step`, then `/done` with the answer and its
 usage, or `/fail` with the error (and `limit` / `gone` flags). A text post that answers 404 stops the run.
 The assistant's turns (`asks` with `mcp`) also get this Mac's tools, Bash, Read, Glob, Grep, Edit and Write, in
@@ -361,10 +362,14 @@ it to `/api/devices/relay/<id>/ask` every 2 s until the person answers it in the
 10 min) and writes the answer to claude's stdin; a no tells Claude not to try another way. Only the web and the app's MCP
 tools are allowed up front. An older server never sends `asks`, so its turns run as before.
 The other drivers in `runnableDrivers` run here too (Gemini with `gemini -o stream-json` in plan mode, the prompt on stdin, API keys left out of its environment, its own `~/.gemini`); any other driver fails with `onlyRunnableMessage`.
-Codex runs as `codex exec --json` in a read-only sandbox, the prompt on stdin. An assistant turn (`mcp`) gives it the app's
-MCP server for that run only: `--ignore-user-config` (none of the MCP servers in its `config.toml`),
+Codex runs as `codex exec --json`, the prompt on stdin, in a permission profile of its own that reads only its folder
+and the system's own files, writes nothing and has no network, and with `--ignore-user-config`, so none of the MCP
+servers in the person's `config.toml` are in an app run (`codexArguments`). A Codex without profiles is not run: it is
+answered with "too old to run here", which Connect your AI reads as outdated and updates. OpenCode and the other ACP
+kinds always run in a fresh folder of the run's own; OpenCode's rules leave it its read, search and listing tools
+inside that folder (`acpRules`). An assistant turn (`mcp`) gives Codex the app's MCP server for that run only:
 the server's address with `-c mcp_servers.creator-toolset.*`, its calls approved, and the job token in the
-`CREATOR_TOOLSET_MCP_TOKEN` variable, never an argument. A Codex whose `exec` lacks `--ignore-user-config` answers without the tools.
+`CREATOR_TOOLSET_MCP_TOKEN` variable, never an argument.
 Once at start and hourly the app posts `POST /api/devices/relay/report` (`MacReport.swift`): which
 CLIs are installed (with `--version`) and the Claude and Codex config folders, read only. Nothing is ever
 written there.

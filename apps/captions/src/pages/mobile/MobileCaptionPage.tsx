@@ -54,8 +54,8 @@ export default function MobileCaptionPage() {
   const fileName = useStudio((s) => s.fileName);
   const hasCurrent = useStudio((s) => s.clips.length > 0);
 
-  const startWithFile = useCallback((file: File, script: string) => {
-    if (!confirmDiscardUnsavedProject("Start a new project")) return;
+  const startWithFile = useCallback(async (file: File, script: string) => {
+    if (!(await confirmDiscardUnsavedProject("Start a new project"))) return;
     void flushPendingSave();
     const st = useStudio.getState();
     st.reset();
@@ -125,8 +125,8 @@ export default function MobileCaptionPage() {
       {step === "transcribe" && (
         <MobileTranscribe
           onDone={() => setStep("edit")}
-          onRestart={() => {
-            if (!confirmDiscardUnsavedProject("Restart this project")) return;
+          onRestart={async () => {
+            if (!(await confirmDiscardUnsavedProject("Restart this project"))) return;
             void flushPendingSave();
             useStudio.getState().reset();
             setStep("import");
