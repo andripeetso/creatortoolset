@@ -115,6 +115,9 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Send
     private var last: [ObjectIdentifier: CMTime] = [:]
     private var lastMove = -1.0
     private var failed: Error?
+    /// Each sound track is written in one layout, whatever layout its buffers come in (SoundLayout).
+    private var micLayout = SoundLayout()
+    private var systemLayout = SoundLayout()
     private(set) var events: ScreenEvents
     /// The stream stopped by itself (display gone, permission taken away): called once, on `queue`.
     var onStop: ((Error) -> Void)?
@@ -176,6 +179,8 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Send
                     done.resume(throwing: self.failed ?? self.writer.error ?? RecorderError.nothingRecorded)
                     return
                 }
+                let leftOut = self.micLayout.leftOut + self.systemLayout.leftOut
+                if leftOut > 0 { AppLog.write("recording: \(leftOut) sound buffers that could not be read left out") }
                 [self.video, self.mic, self.system].compactMap { $0 }.forEach { $0.markAsFinished() }
                 self.writer.endSession(atSourceTime: max((self.pausedAt ?? now) - offset, self.last[ObjectIdentifier(self.video)] ?? .zero))
                 self.writer.finishWriting {
@@ -227,8 +232,8 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Send
                 onFirstFrame?(buffer.presentationTimeStamp)
             }
             append(buffer, to: video)
-        case .microphone: if let mic { append(buffer, to: mic) }
-        case .audio: if let system { append(buffer, to: system) }
+        case .microphone: if let mic, let plain = micLayout.take(buffer) { append(plain, to: mic) }
+        case .audio: if let system, let plain = systemLayout.take(buffer) { append(plain, to: system) }
         @unknown default: break
         }
     }
@@ -466,7 +471,8 @@ final class Recorder: ObservableObject {
             config.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
             config.colorSpaceName = CGColorSpace.sRGB
             config.capturesAudio = setup.systemAudio
-            config.excludesCurrentProcessAudio = true
+            // "Mac sound" is everything the Mac plays, this app's too: a recording of the app itself has its sound
+            config.excludesCurrentProcessAudio = false
             config.sampleRate = 48_000
             config.channelCount = 2
             config.captureMicrophone = micDevice != nil
