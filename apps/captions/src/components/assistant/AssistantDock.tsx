@@ -30,7 +30,7 @@ import { cn } from "@/lib/utils";
 import { Composer, PictureOverlay } from "./Composer";
 import { EMPTY_DRAFT, MAX_FILES, MAX_FOLDERS, MAX_PICTURES, droppedFiles, folderName, isLongPaste, isMediaFile, isPicture, toPicture, type Draft } from "./draft";
 import { chunkedUpload } from "@/lib/uploads";
-import { droppedFoldersOnMac } from "@/lib/thisMac";
+import { chooseFolderOnMac, droppedFoldersOnMac, thisMacBridge } from "@/lib/thisMac";
 import { useThrow } from "./useThrow";
 import { Elapsed, WorkCards } from "./WorkCards";
 import { VideoCards } from "./VideoCard";
@@ -665,7 +665,12 @@ export function AssistantDock() {
                   : undefined;
               // the newest reply's buttons (offer_choices) answer it in one press, until something else is said
               const choose = i === all.length - 1 && m.status === "done" && m.choices?.length && !thinking && !busy ? chipSend : undefined;
-              return <Message key={m.id} m={m} onRetry={retry} onChoose={choose} onView={setView} />;
+              // the newest reply asked for a folder (ask_folder): the Mac app's own open panel, and the choice goes as the next message
+              const folder =
+                i === all.length - 1 && m.status === "done" && m.folderAsk && !thinking && !busy && thisMacBridge()
+                  ? () => void chooseFolderOnMac().then((p) => p && submit({ ...EMPTY_DRAFT, folders: [p] }))
+                  : undefined;
+              return <Message key={m.id} m={m} onRetry={retry} onChoose={choose} onFolder={folder} onView={setView} />;
             })}
             {notice && <NoticeLine notice={notice} onChip={chipSend} />}
           </div>
@@ -772,7 +777,7 @@ export function NoToolsNote({ view }: { view: AssistantView | null }) {
   );
 }
 
-function Message({ m, onRetry, onChoose, onView }: { m: AssistantMessage; onRetry?: () => void; onChoose?: (text: string) => void; onView: (v: AssistantView) => void }) {
+function Message({ m, onRetry, onChoose, onFolder, onView }: { m: AssistantMessage; onRetry?: () => void; onChoose?: (text: string) => void; onFolder?: () => void; onView: (v: AssistantView) => void }) {
   const [big, setBig] = useState<string | null>(null);
   const enter = "motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300";
   if (m.role === "note") return <p className={cn("mx-auto max-w-[90%] text-center text-xs text-muted-foreground", enter)}>{m.text}</p>;
@@ -885,6 +890,16 @@ function Message({ m, onRetry, onChoose, onView }: { m: AssistantMessage; onRetr
       {/* a used-up plan is a wait, said in amber; a real failure in red */}
       {m.status === "error" ? <p className={isLimitLine(m.text) ? "text-amber-600 dark:text-amber-400" : "text-destructive"}>{m.text}</p> : <ReplyText text={m.text} />}
       {again}
+      {onFolder && (
+        <button
+          type="button"
+          onClick={onFolder}
+          title={m.folderAsk!.why}
+          className="mt-2 flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors hover:border-[color-mix(in_srgb,var(--tint)_50%,transparent)] hover:text-[var(--tint)] motion-safe:animate-in motion-safe:fade-in"
+        >
+          <Folder className="size-3.5" aria-hidden /> Choose a folder
+        </button>
+      )}
       {onChoose && (
         <div className="mt-2 flex flex-wrap gap-1.5">
           {m.choices!.map((c) => (

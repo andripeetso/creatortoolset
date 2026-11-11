@@ -1,3 +1,4 @@
+import { thisMacBridge } from "./thisMac";
 import type { AssistantContext, AssistantImage } from "@contracts/assistant";
 
 /**
@@ -59,7 +60,7 @@ export function pageContext(): AssistantContext {
     .filter(Boolean)
     .slice(0, 30);
   const visible = describePage({ crumb: crumbEl ? textOf(crumbEl) : undefined, dialog, headings });
-  return { path: location.pathname + location.search, title: document.title, ...(visible ? { visible } : {}), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone };
+  return { path: location.pathname + location.search, title: document.title, ...(visible ? { visible } : {}), ...(thisMacBridge() ? { mac: true } : {}), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone };
 }
 
 type SnapshotHandler = { postMessage: (body: unknown) => Promise<unknown> };
