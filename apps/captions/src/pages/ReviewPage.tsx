@@ -9,7 +9,6 @@ import {
   Download,
   Film,
   Folder,
-  FolderPlus,
   GripVertical,
   Layers,
   Link2,
@@ -27,7 +26,11 @@ import { canRecordScreen, openRecorder } from "@/lib/mac-record";
 import { ToolIntro } from "@/components/AppBar";
 import { AppBar } from "@/components/AppBar";
 import { ReviewShareButton } from "@/components/ReviewShareButton";
-import { confirmDialog, promptDialog } from "@/lib/dialogs";
+import { confirmDialog } from "@/lib/dialogs";
+import { NewFolderButton, TrashLink } from "@/components/browse/Bar";
+import { FolderCard } from "@/components/browse/Folder";
+import { FolderGrid, GridFrame } from "@/components/browse/Grid";
+import { askRename } from "@/components/browse/browse";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import {
@@ -100,7 +103,7 @@ const markFinished = (list: ReviewAsset[], finished: boolean): Parameters<Act> =
 /** dragleave also fires when the pointer moves onto a child: only leaving the element itself counts. */
 const leftFor = (e: React.DragEvent) => !e.currentTarget.contains(e.relatedTarget as Node | null);
 
-const media = (list: FileList | null | undefined) =>
+const media = (list: FileList | File[] | null | undefined) =>
   [...(list ?? [])].filter((f) => f.type.startsWith("video/") || f.type.startsWith("audio/") || !f.type);
 
 /** Review library: projects (folders) and videos, newest activity first.
@@ -310,17 +313,8 @@ export default function ReviewPage() {
       <AppBar tool="Review" to={project || trash ? "/review" : undefined} trail={project?.name ?? (trash ? "Trash" : undefined)}>
           {!project && !trash && (
             <>
-              <Link
-                to="/review?trash=1"
-                title="Trash: deleted videos, restorable for 30 days"
-                aria-label="Trash"
-                className="rounded-md p-2 text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200"
-              >
-                <Trash2 className="h-4 w-4" />
-              </Link>
-              <Button size="sm" variant="outline" onClick={() => setAdding({ newProject: true })} className="border-zinc-800 bg-transparent">
-                <FolderPlus /> <span className="hidden sm:inline">New project</span>
-              </Button>
+              <TrashLink to="/review?trash=1" title="Trash: deleted videos, restorable for 30 days" />
+              <NewFolderButton label="New project" onClick={() => setAdding({ newProject: true })} />
             </>
           )}
           {project && (
@@ -410,15 +404,7 @@ export default function ReviewPage() {
         {trash ? (
           <TrashView onRestored={() => void load()} />
         ) : shown === null || (projectsList.data === null && !projectsList.error) ? (
-          // no saved list yet: cards in their final size, empty (no spinner; nothing moves when they fill)
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-hidden="true">
-            {[0, 1, 2, 3, 4, 5].map((i) => (
-              <div key={i} className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/50">
-                <div className="aspect-video bg-zinc-950" />
-                <div className="h-16" />
-              </div>
-            ))}
-          </div>
+          <GridFrame />
         ) : done && shown.length === 0 && shownProjects.length === 0 ? (
           <p className="mt-16 text-center text-sm text-zinc-500">
             Nothing finished yet. A video lands here once it's marked finished.
@@ -442,7 +428,7 @@ export default function ReviewPage() {
             </p>
           </button>
         ) : (
-          <div ref={grid} className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <FolderGrid ref={grid}>
             {shownProjects.map((p) => (
               <ProjectCard
                 key={p.id}
@@ -476,7 +462,7 @@ export default function ReviewPage() {
                 reveal={reveal}
               />
             ))}
-          </div>
+          </FolderGrid>
         )}
       </main>
 
@@ -536,7 +522,7 @@ export default function ReviewPage() {
   );
 }
 
-/** A project: open it, drop videos (from here or the desktop) into it. */
+/** A project (Review's folder): open it, drop videos (from here or the desktop) into it. */
 function ProjectCard({
   project: p,
   assets,
@@ -557,95 +543,39 @@ function ProjectCard({
   onMove: (ids: string[]) => void;
   onDropFiles: (files: File[]) => void;
 }) {
-  const [over, setOver] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const covers = assets.filter((a) => a.versions.at(-1)?.status === "ready").slice(0, 4);
   const finished = assets.filter(isFinished).length;
   const allDone = assets.length > 0 && finished === assets.length;
-  const to = `/review?p=${p.id}`;
   return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>
-        <Link
-          to={to}
-          draggable={false}
-          onDragOver={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            setOver(true);
-          }}
-          onDragLeave={(e) => leftFor(e) && setOver(false)}
-          onDrop={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            setOver(false);
-            const ids = e.dataTransfer.getData(DRAG);
-            if (ids) onMove(ids.split(","));
-            else onDropFiles(media(e.dataTransfer.files));
-          }}
-          className={cn(
-            "group overflow-hidden rounded-xl border bg-zinc-900/50 transition-colors hover:border-violet-500/60",
-            over ? "border-violet-500 ring-2 ring-violet-500/40" : "border-zinc-800",
-          )}
-        >
-          <div className="relative aspect-video overflow-hidden bg-zinc-950">
-            {covers.length > 0 ? (
-              // fixed rows: a tall (9:16) thumbnail must not grow past the box
-              <div
-                className={cn(
-                  "absolute inset-0 grid gap-px",
-                  covers.length > 1 ? "grid-cols-2" : "grid-cols-1",
-                  covers.length > 2 ? "grid-rows-2" : "grid-rows-1",
-                )}
-              >
-                {covers.map((a) => (
-                  <Picture key={a.id} src={thumbUrl(a)} alt="" className="h-full min-h-0 w-full object-cover"
-                    style={reveal.has(thumbUrl(a)) ? undefined : { opacity: 0 }} />
-                ))}
-              </div>
-            ) : (
-              <Folder className="absolute inset-0 m-auto h-10 w-10 text-zinc-700" />
-            )}
-            {over && (
-              <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-violet-950/70 text-sm font-medium">
-                {!dragId ? "Upload into this project" : dragCount > 1 ? `Move ${dragCount} videos into this project` : "Move into this project"}
-              </div>
-            )}
-          </div>
-          <div className="flex items-center gap-2 px-3.5 py-3">
-            <Folder className="h-4 w-4 shrink-0 text-violet-400" />
-            <p className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-100">{p.name}</p>
-            <span className="text-xs tabular-nums text-zinc-500">
-              {assets.length} {assets.length === 1 ? "video" : "videos"}
-              {finished > 0 && !allDone && ` · ${finished} finished`}
-            </span>
-          </div>
-        </Link>
-      </ContextMenuTrigger>
-      <ContextMenuContent className="w-48">
-        <ContextMenuItem asChild>
-          <Link to={to}>Open</Link>
-        </ContextMenuItem>
-        <ContextMenuItem
-          onClick={() => {
-            void promptDialog({ title: "Rename project", value: p.name, ok: "Rename" }).then((v) => {
-              const name = v?.trim();
-              if (name && name !== p.name) act(patchReviewProject(p.id, { name }));
-            });
-          }}
-        >
-          Rename…
-        </ContextMenuItem>
-        {assets.length > 0 && (
-          <ContextMenuItem onClick={() => act(...markFinished(assets, !allDone))}>
-            {allDone ? <><Undo2 /> Move to In progress</> : <><Check /> Mark finished</>}
-          </ContextMenuItem>
-        )}
-        <ContextMenuSeparator />
-        <ContextMenuItem className="text-red-400" onClick={() => setDeleting(true)}>
-          <Trash2 /> Delete project
-        </ContextMenuItem>
-      </ContextMenuContent>
+    <>
+      <FolderCard
+        name={p.name}
+        to={`/review?p=${p.id}`}
+        covers={covers.map((a) => ({ key: a.id, src: thumbUrl(a), hidden: !reveal.has(thumbUrl(a)) }))}
+        meta={
+          <>
+            {assets.length} {assets.length === 1 ? "video" : "videos"}
+            {finished > 0 && !allDone && ` · ${finished} finished`}
+          </>
+        }
+        drop={{
+          type: DRAG,
+          onItems: onMove,
+          onFiles: (files) => onDropFiles(media(files)),
+          label: !dragId ? "Upload into this project" : dragCount > 1 ? `Move ${dragCount} videos into this project` : "Move into this project",
+        }}
+        onRename={() => void askRename("Rename project", p.name).then((name) => name && act(patchReviewProject(p.id, { name })))}
+        menu={
+          assets.length > 0 && (
+            <ContextMenuItem onClick={() => act(...markFinished(assets, !allDone))}>
+              {allDone ? <><Undo2 /> Move to In progress</> : <><Check /> Mark finished</>}
+            </ContextMenuItem>
+          )
+        }
+        onDelete={() => setDeleting(true)}
+        deleteLabel="Delete project"
+      />
       {deleting && (
         <DeleteProjectDialog
           project={p}
@@ -654,7 +584,7 @@ function ProjectCard({
           onDelete={() => act(deleteReviewProject(p.id), (l) => l.filter((x) => x.projectId !== p.id))}
         />
       )}
-    </ContextMenu>
+    </>
   );
 }
 
@@ -927,12 +857,7 @@ function AssetCard({
           </ContextMenuItem>
         )}
         <ContextMenuItem
-          onClick={() => {
-            void promptDialog({ title: "Rename video", value: a.name, ok: "Rename" }).then((v) => {
-              const name = v?.trim();
-              if (name && name !== a.name) act(patchReviewAsset(a.id, { name }));
-            });
-          }}
+          onClick={() => void askRename("Rename video", a.name).then((name) => name && act(patchReviewAsset(a.id, { name })))}
         >
           Rename…
         </ContextMenuItem>
