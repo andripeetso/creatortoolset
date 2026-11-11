@@ -500,6 +500,7 @@ describe("Creator Toolset as a remote MCP server", () => {
     // that counts how they were sorted), roll on each hit; media_import_folder returns that said line
     // 14660 -> 15032: the Workshop's current project, unlinking one post (and what linking does to the status), and the writer's two
     // options (my words only, deep research). Tools added since then live in api/mcp-tools/ and are not counted here.
-    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(15032);
+    // 15032 -> 15164: set_work_prefs job (what they want to do first, from setup; the assistant can change it)
+    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(15164);
   });
 });

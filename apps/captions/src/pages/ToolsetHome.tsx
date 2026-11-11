@@ -256,7 +256,7 @@ export default function ToolsetHome() {
           >
             <span>
               <span className="block text-sm text-zinc-100">Finish setting up</span>
-              <span className="block text-xs text-zinc-400">Three short screens. Your answers are saved.</span>
+              <span className="block text-xs text-zinc-400">A few short questions. Your answers are saved.</span>
             </span>
             <ChevronRight className="h-4 w-4 shrink-0 text-zinc-500" />
           </button>

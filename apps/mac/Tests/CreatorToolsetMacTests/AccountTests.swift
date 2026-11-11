@@ -169,8 +169,31 @@ final class AccountTests: XCTestCase {
         XCTAssertEqual(none, [])
     }
 
+    /// Signed out on the default account server: the answer comes from the app's own list of proven sign-ins, with no
+    /// call to that server (a call there would hang or fail in this test: nothing answers a request here). An empty list
+    /// means no sign-in is offered, which setup reads as "no account screen".
+    @MainActor func testASignedOutStatusAsksTheDefaultAccountServerNothing() async {
+        XCTAssertTrue(Set(accountLive).isSubset(of: Set(accountProviders)))
+        let account = Account()
+        guard account.server?.absoluteString == defaultAccountServer.absoluteString, account.profile == nil else { return }   // this Mac's own setting, or a kept sign-in
+        let started = Date()
+        let reply = await account.status()
+        XCTAssertLessThan(Date().timeIntervalSince(started), 1)
+        if accountLive.isEmpty {
+            XCTAssertEqual(reply["state"], "notSetUp")
+        } else {
+            XCTAssertEqual(reply, ["state": "signedOut", "providers": accountLive.joined(separator: ",")])
+        }
+        // signing out with nothing signed in is the same answer, and still no call
+        let out = await account.signOut()
+        XCTAssertEqual(out, reply)
+    }
+
     func testAccountMessagesOnlyFromTheWindowsOwnPage() {
         XCTAssertEqual(accountAsk("status", mainFrame: true), "status")
+        XCTAssertEqual(accountAsk("signout", mainFrame: true), "signout")
+        XCTAssertEqual(accountAsk("offered", mainFrame: true), "offered")
+        XCTAssertNil(accountAsk("signout", mainFrame: false))
         XCTAssertEqual(accountAsk("google", mainFrame: true), "google")
         XCTAssertEqual(accountAsk("github", mainFrame: true), "github")
         XCTAssertNil(accountAsk("microsoft", mainFrame: true))   // not a provider here

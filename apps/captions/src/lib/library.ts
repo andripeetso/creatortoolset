@@ -1,4 +1,5 @@
 import type {
+  AssetKind,
   AssetCard,
   AssetDetail,
   AssetPage,
@@ -125,11 +126,23 @@ export const changeFolderItems = (libraryId: string, collectionId: string, asset
 export const setTrashed = (libraryId: string, assetId: string, trash: boolean) =>
   send<unknown>(`/api/library/${libraryId}/assets/${assetId}${trash ? "" : "/restore"}`, trash ? "DELETE" : "POST");
 
-/** Titles, tags and what is said in the clips: a hit with `seconds` is a line said at that second. */
-export const searchLibrary = (libraryId: string, q: string, facets?: Record<string, string[]>) => {
+/**
+ * Titles, tags, descriptions, what is said in the clips and, when it is on, what they mean, best first: a hit with
+ * `seconds` is a line said at that second. `meaningGettingReady`: search by meaning is not ready yet (its model is
+ * fetched the first time), so these hits are by words.
+ */
+export const searchLibrary = async (
+  libraryId: string,
+  q: string,
+  narrow: { facets?: Record<string, string[]>; kind?: AssetKind; collectionId?: string; roll?: "a" | "b" } = {},
+): Promise<{ hits: SearchHit[]; meaningGettingReady: boolean }> => {
   const p = new URLSearchParams({ q });
-  setFacets(p, facets);
-  return send<SearchHit[]>(`/api/library/${libraryId}/search?${p}`, "GET");
+  if (narrow.kind) p.set("kind", narrow.kind);
+  if (narrow.collectionId) p.set("collectionId", narrow.collectionId);
+  if (narrow.roll) p.set("roll", narrow.roll);
+  setFacets(p, narrow.facets);
+  const r = await fetch(`/api/library/${libraryId}/search?${p}`);
+  return { hits: await json<SearchHit[]>(r), meaningGettingReady: r.headers.get("x-search-meaning") === "getting-ready" };
 };
 
 /** Plug-in facet picks as `f.<key>=a,b` (api/library/query.ts reads them back). */

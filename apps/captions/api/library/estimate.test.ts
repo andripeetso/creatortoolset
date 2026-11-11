@@ -48,6 +48,11 @@ describe("estimate", () => {
     expect(step("describe")).toMatchObject({ route: "provider", seconds: 1000 });
     expect(step("embed").route).toBe("none"); // on by default, no OpenAI key
     expect(e.seconds).toBe(Math.max(...e.steps.map((s) => s.seconds)));
+    // the person's own computer makes them with no key
+    process.env.CT_LOCAL = "1";
+    const here = await estimate("lib_e", "local", { clips: 100, bytes: 100 * 30_000_000 });
+    delete process.env.CT_LOCAL;
+    expect(here.steps.find((x) => x.step === "embed")).toMatchObject({ route: "device", seconds: 200 });
   });
 
   it("a music folder costs nobody AI or keys; sound-only files are never described", async () => {

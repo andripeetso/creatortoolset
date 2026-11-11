@@ -5,10 +5,9 @@ import { env } from "../lib/env";
 import { libraryChanged } from "./access";
 import { blobs, libraryDb, librarySetting } from "./db";
 import { describeSlot, describeVersion } from "./describe";
-import { embedVersion } from "./embed";
+import { canEmbed, embedRoute, embedVersion, startEmbedCatchUp } from "./embed";
 import { fingerprint } from "./fingerprint";
 import { claimJob, defer, enqueueJob, extendLease, finishJob, firstClips, parkJob, requeueExpired, takingClips, type JobRow } from "./jobs";
-import { keyFor } from "../my-keys";
 import { isInside, musicFolders } from "../lib/storage";
 import { isThisMachine } from "../lib/devices";
 import { AiProviderError } from "../ai-complete";
@@ -121,18 +120,20 @@ export function releaseLimit(db: ReturnType<typeof libraryDb>, actor: string | n
   db.prepare("UPDATE jobs SET error = NULL WHERE kind = 'describe' AND state = 'queued' AND actor IS ? AND error LIKE ?").run(actor, LIMIT_LIKE);
 }
 
-// this computer's transcripts run one at a time (lib/device-transcribe.ts): the next is claimed when the one before ends,
-// so a clip is "running" (its card and the step line say Transcribing) only while it really is
-// ponytail: one device transcript first in the queue holds back a key's transcript behind it (another account's)
+// this computer's transcripts and search entries run one at a time (lib/device-transcribe.ts, lib/device-embed.ts: the
+// one line every ffmpeg runs in): the next is claimed when the one before ends, so a clip is "running" (its card and the
+// step line say Transcribing, Adding to search) only while it really is
+// ponytail: one such job first in its lane holds back a key's job behind it (another account's)
 let onDevice = 0;
 const onThisComputer = (db: ReturnType<typeof libraryDb>, id: number) => {
   const j = db.prepare("SELECT kind, actor FROM jobs WHERE id = ?").get(id) as { kind: string; actor: string | null };
-  if (j.kind !== "transcribe") return false;
   try {
-    return transcribeRoute(j.actor).provider === "device";
+    if (j.kind === "transcribe") return transcribeRoute(j.actor).provider === "device";
+    if (j.kind === "embed") return "device" in embedRoute(j.actor);
   } catch {
-    return false; // no route: it parks as needs_key when it runs
+    // no route: it parks as needs_key when it runs
   }
+  return false;
 };
 
 /** Runs one queued job (of `kinds`, when given), if there is one. Returns false when there is none. */
@@ -189,6 +190,7 @@ export async function tick(now = Date.now(), kinds: readonly string[] = LANES.fl
 /** Starts every lane's loops; the returned function stops them after their current jobs. */
 export function startLibraryWorker(): () => void {
   let stopped = false;
+  const stopCatchUp = startEmbedCatchUp();
   void sortUnsorted(); // clips from before A-roll and B-roll, from what they already have
   for (const lane of LANES)
     for (let i = 0; i < lane.size; i++) {
@@ -205,6 +207,7 @@ export function startLibraryWorker(): () => void {
     }
   return () => {
     stopped = true;
+    stopCatchUp();
   };
 }
 
@@ -267,8 +270,8 @@ async function run(job: JobRow): Promise<void> {
     // frames from the lighter copy, the same pictures in 0.3 to 0.5 s where the original took 1 to 5.5 s
     if (job.kind === "transcribe") await transcribeVersion(db, v.id, src, job.actor, dir);
     else await describeVersion(db, v.id, await lighter(), p.duration, job.actor, dir);
-    // new words to search by meaning: embed (again) when the library has semantic search on and the actor a key for it
-    if (librarySetting(v.library_id, "embed") && !keyFor(job.actor, "OPENAI_API_KEY").missing) enqueueJob(db, v.library_id, v.id, "embed", job.actor, true);
+    // new words to search by meaning: embed (again) when the library has semantic search on and the actor a route for it
+    if (librarySetting(v.library_id, "embed") && canEmbed(job.actor)) enqueueJob(db, v.library_id, v.id, "embed", job.actor, true);
   } else if (job.kind === "fingerprint") {
     // the lighter copy's frames hash as the original's do (within 6 bits of the 10 a match allows, fingerprint.test.ts)
     // and decode many times faster: 0.3 to 2 s a 4K clip, where its original took 1.4 to 91 s

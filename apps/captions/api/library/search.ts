@@ -1,10 +1,11 @@
 import { Hono, type Context } from "hono";
 import type { AuthVars } from "../auth";
-import type { AssetDetail, SearchHit } from "../../contracts/library";
+import type { AssetDetail, SearchHit, SearchQuery } from "../../contracts/library";
+import { deviceEmbedStatus } from "../lib/device-embed";
 import { deviceStatus } from "../lib/device-transcribe";
 import { libraryRole, mayWrite, versionSource } from "./access";
 import { libraryDb } from "./db";
-import { hitKey, rrf, semanticHits } from "./embed";
+import { hitKey, meaningGettingReady, rrf, semanticHits } from "./embed";
 import { enqueueJob, prepareFirst } from "./jobs";
 import { CARD, ftsQuery, indexAsset, parseSearch, toCard, type CardRow } from "./query";
 import { viewerOf, visibleCards } from "./routes";
@@ -25,12 +26,21 @@ const db = () => libraryDb();
 const notFound = (c: Ctx) => c.json({ error: "Not found", code: "not_found" }, 404);
 const LIMIT = 50;
 
+type Clause = { sql: string; params: (string | number)[] };
+
+/** What narrows a search, as the asset list narrows its page: a folder, kinds, and the plug-in facets (sources.ts). */
+export function searchClauses(query: SearchQuery): Clause[] {
+  return [
+    ...(query.collectionId ? [{ sql: "a.id IN (SELECT asset_id FROM collection_items WHERE collection_id = ?)", params: [query.collectionId] }] : []),
+    ...(query.kind?.length ? [{ sql: `a.kind IN (${query.kind.map(() => "?").join(",")})`, params: query.kind }] : []),
+    ...facetClauses(query.facets ?? {}),
+  ];
+}
+
 /** Asset hits first (title weighs most), then the lines said in clips, each with the second it starts at. */
-export function searchLibrary(libraryId: string, q: string, limit = LIMIT, facets: Record<string, string[]> = {}): SearchHit[] {
+export function searchLibrary(libraryId: string, q: string, limit = LIMIT, fx: Clause[] = []): SearchHit[] {
   const fts = ftsQuery(q);
   if (!fts) return [];
-  // the plug-in facets narrow both lists the same way the asset list does (sources.ts)
-  const fx = facetClauses(facets);
   const fsql = fx.map((f) => ` AND ${f.sql}`).join("");
   const fparams = fx.flatMap((f) => f.params);
   const assets = db()
@@ -78,8 +88,9 @@ export function assetDetail(libraryId: string, assetId: string): AssetDetail | n
       error: string | null;
     }[]
   ).map((j) => {
-    // a transcript being made on this computer says what it is doing (the speech model's first download, listening)
-    const error = j.kind === "transcribe" && j.state === "running" ? deviceStatus(row.version_id) : j.error;
+    // a transcript or a search entry being made on this computer says what it is doing (a model's first download, listening)
+    const status = j.kind === "transcribe" ? deviceStatus : j.kind === "embed" ? deviceEmbedStatus : null;
+    const error = status && j.state === "running" ? status(row.version_id) : j.error;
     return { kind: j.kind, state: j.state, ...(error ? { error } : {}) };
   });
   const t = db().prepare("SELECT provider FROM transcripts WHERE version_id = ?").get(row.version_id) as { provider: string } | undefined;
@@ -92,8 +103,9 @@ export function assetDetail(libraryId: string, assetId: string): AssetDetail | n
   };
 }
 
-// GET /api/library/:id/search?q&f.<key> → SearchHit[]: full text, fused with the closest chunks by meaning when semantic
-// search is on. Hits the viewer may not see are left out.
+// GET /api/library/:id/search?q&collectionId&kind&f.<key> → SearchHit[], best first: full text, fused with the chunks
+// close in meaning when semantic search is on. Hits the viewer may not see are left out. While search by meaning is
+// still getting ready (its model fetched the first time), the hits are by words and X-Search-Meaning says getting-ready.
 searchApp.get("/:id/search", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
@@ -101,10 +113,13 @@ searchApp.get("/:id/search", async (c) => {
   if (!viewer) return notFound(c);
   const q = (c.req.query("q") ?? "").trim().slice(0, 200);
   if (!q) return c.json({ error: "Type something to search for", code: "invalid" }, 400);
-  const { facets = {}, roll } = parseSearch(c.req.query());
-  const text = searchLibrary(libraryId, q, LIMIT, facets);
-  const meaning = await semanticHits(libraryId, q, user.username).catch(() => null);
+  const query = parseSearch(c.req.query());
+  const { roll } = query;
+  const where = searchClauses(query);
+  const text = searchLibrary(libraryId, q, LIMIT, where);
+  const meaning = await semanticHits(libraryId, q, user.username, where).catch(() => null);
   const hits = meaning ? rrf([text, meaning], hitKey).slice(0, 2 * LIMIT) : text;
+  if (!meaning && meaningGettingReady(libraryId, user.username)) c.header("X-Search-Meaning", "getting-ready");
   const seen = await visibleCards(viewer, libraryId, hits.map((h) => h.asset));
   const shown = new Set(seen.map((a) => a.id));
   return c.json(hits.filter((h) => shown.has(h.asset.id) && (!roll || h.asset.roll === roll))); // ponytail: narrowed after the top hits
