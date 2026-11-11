@@ -6,8 +6,8 @@ import { describe, expect, it } from "vitest";
 // What the assistant is sent for an account with no editing style: the dock's tool list, an outside AI key's tool list
 // and the prompt, compared character for character with a golden file. The golden was written by this same test on
 // the commit before the assistant could save a style, so this file must keep running as it is on an older checkout: it
-// imports nothing newer than the assistant itself. UPDATE_GOLDEN=1 writes the file: only in a checkout of main that
-// has none of the style tools (copy this file there, run it, copy the golden back), never on a branch that adds a tool.
+// imports nothing newer than the assistant itself. UPDATE_GOLDEN=1 writes the file from what this checkout sends, with
+// the tools in ADDED taken out (so it stays "main without the style tools"); never on a branch that adds a tool.
 
 process.env.DATA_DIR = mkdtempSync(path.join(tmpdir(), "same-tools-"));
 process.env.APP_SECRET = "same-tools-secret";
@@ -45,9 +45,9 @@ describe.skipIf(serverPlugins.length > 0)("an account with no editing style", ()
     const outside = await toolsOf(fullKey);
     await app.request(`/api/devices/relay/${job.id}/done`, json({ text: "Done." }, { authorization: `Bearer ${mac.token}` }));
 
-    if (process.env.UPDATE_GOLDEN) writeFileSync(file, `${JSON.stringify({ system: job.system, user: job.user, dock, outside: outside.map((t) => t.name) } satisfies Golden, null, 1)}\n`);
-    const golden = JSON.parse(readFileSync(file, "utf8")) as Golden;
     const main = (list: Tool[]) => list.filter((t) => !ADDED.includes(t.name));
+    if (process.env.UPDATE_GOLDEN) writeFileSync(file, `${JSON.stringify({ system: job.system, user: job.user, dock: main(dock), outside: main(outside).map((t) => t.name) } satisfies Golden, null, 1)}\n`);
+    const golden = JSON.parse(readFileSync(file, "utf8")) as Golden;
 
     expect(job.system).toBe(golden.system);
     expect(job.user).toBe(golden.user);
