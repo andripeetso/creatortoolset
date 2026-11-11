@@ -90,7 +90,7 @@ export default function LibraryPage() {
   const [asking, setAsking] = useState<File[] | null>(null); // a big upload, waiting for its go after the estimate
   const [preview, setPreview] = useState<AssetCard | null>(null);
   const [startAt, setStartAt] = useState(0); // the second the preview opens at (a line said in it)
-  const [said, setSaid] = useState<SearchHit[]>([]);
+  const [found, setFound] = useState<{ hits: SearchHit[]; meaningGettingReady: boolean } | null>(null); // a search's answer
   const [error, setError] = useState<string | null>(null);
   const [scope, setScope] = useState("all"); // "all", "trash", or a collection id
   const [source, setSource] = useState(""); // "" = this library, else a plug-in source's id (its cards only)
@@ -135,8 +135,13 @@ export default function LibraryPage() {
   const [more, setMore] = useState<{ key: string; items: AssetCard[]; next?: string } | null>(null);
   const extra = more && more.key === pageKey ? more : null;
   const shownIds = new Set(first.data?.items.map((a) => a.id));
-  const items = [...(first.data?.items ?? []), ...(extra?.items.filter((a) => !shownIds.has(a.id)) ?? [])];
-  const next = extra ? extra.next : first.data?.next;
+  // while a term is typed the grid is the search's own answer, best first: by words, by what is said, or by meaning
+  const searching = !!term && scope !== "trash" && !source;
+  const items = searching
+    ? [...new Map((found?.hits ?? []).map((h) => [h.asset.id, h.asset])).values()]
+    : [...(first.data?.items ?? []), ...(extra?.items.filter((a) => !shownIds.has(a.id)) ?? [])];
+  const said = found?.hits.filter((h) => h.seconds !== undefined) ?? [];
+  const next = searching ? undefined : extra ? extra.next : first.data?.next;
   // ponytail: A-roll / B-roll narrows the pages loaded so far; a server query when the roll work adds one
   const hasRoll = items.some((a) => rollOf(a));
   const shown = roll ? items.filter((a) => rollOf(a) === roll) : items;
@@ -161,15 +166,16 @@ export default function LibraryPage() {
       .catch(() => setSources([]));
   }, [libId]);
 
-  // lines said in the clips that match the search
+  // the search: the clips found for the grid, and the lines said in them
   useEffect(() => {
-    if (!libId || !term || scope === "trash") return setSaid([]);
+    setFound(null);
+    if (!libId || !searching) return;
     let live = true;
-    searchLibrary(libId, term, facets)
-      .then((hits) => live && setSaid(hits.filter((h) => h.seconds !== undefined)))
-      .catch(() => live && setSaid([]));
+    searchLibrary(libId, term, { facets, kind: kind === "all" ? undefined : kind, collectionId: scope === "all" ? undefined : scope })
+      .then((r) => live && setFound(r))
+      .catch((e) => live && (setFound({ hits: [], meaningGettingReady: false }), setError(message(e))));
     return () => void (live = false);
-  }, [libId, term, scope, facets]);
+  }, [libId, term, scope, facets, kind, searching]);
 
   const open = (a: AssetCard, at = 0) => {
     // a plug-in source's item (external ref) has no library asset to open here yet: its own page holds it
@@ -454,6 +460,8 @@ export default function LibraryPage() {
               </section>
             )}
 
+            {found?.meaningGettingReady && <p className="text-xs text-zinc-500">Search by meaning is getting ready.</p>}
+
             {said.length > 0 && (
               <section aria-label="Said in clips" className="flex flex-col gap-1 rounded-xl border border-zinc-500/20 p-3">
                 <span className="text-sm font-medium">Said in clips</span>
@@ -473,7 +481,7 @@ export default function LibraryPage() {
               </section>
             )}
 
-            {!first.data || settling ? (
+            {(searching ? !found : !first.data) || settling ? (
               <TileFrame />
             ) : shown.length > 0 ? (
               <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
