@@ -1,18 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router";
-import { AudioLines, Captions, MessageSquare, Quote, Share2, FileText, Folder, Image as ImageIcon, Loader2, RotateCcw, Star, Trash2, Upload, Video } from "lucide-react";
-import type { AssetCard, AssetDetail, AssetKind, AssetPage, Collection, LibrarySummary, SearchHit, WatchStatus } from "@contracts/library";
+import { useSearchParams } from "react-router";
+import { AudioLines, Quote, FileText, Folder, Image as ImageIcon, Star, Trash2, Upload, Video } from "lucide-react";
+import type { AssetCard, AssetKind, AssetPage, Collection, LibrarySummary, SearchHit, WatchStatus } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
 import { FootageFolderCard } from "@/components/FootageFolderCard";
 import { BIG_DROP, BigUploadDialog, LibraryProgressBar } from "@/components/LibraryProcessing";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
-import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
 import {
   createCollection,
   createLibrary,
-  createShare,
   getAsset,
   getWatch,
   listAssets,
@@ -20,11 +19,8 @@ import {
   listLibraries,
   listSources,
   changeFolderItems,
-  openInCaptions,
-  rerunJobs,
   searchLibrary,
   setTrashed,
-  updateAsset,
   updateLibrary,
   uploadFile,
   audioOf,
@@ -35,6 +31,7 @@ import { LibraryFacetBar } from "@/components/LibraryFacetBar";
 import { libraryBadges, libraryFacets } from "@/lib/library-slots";
 import { LibraryStorageSettings } from "./LibraryStorage";
 import { LibraryWatchFolders } from "./LibraryWatchFolders";
+import { AiBadge, ClipPanel } from "./library/ClipPanel";
 
 /**
  * Media Library (/library): one library's footage as a grid of 16:9 cards. Search runs over titles and tags
@@ -518,91 +515,24 @@ export default function LibraryPage() {
 
       <Sheet open={preview !== null} onOpenChange={(open) => !open && setPreview(null)}>
         <SheetContent side="right" className="w-full overflow-y-scroll p-0 sm:max-w-xl">
-          {preview && (
-            <div className="flex flex-col gap-3 p-4 pt-12">
-              <SheetTitle className="truncate text-base">{preview.title}</SheetTitle>
-              <SheetDescription className="text-xs text-zinc-500">
-                {[
-                  preview.durationS !== undefined && clock(preview.durationS),
-                  preview.width && `${preview.width}×${preview.height}`,
-                  `version ${preview.versionN}`,
-                  preview.state !== "ready" && preview.state,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </SheetDescription>
-              <div className="flex flex-wrap items-center gap-2">
-                {preview.review ? (
-                  // Review owns its versions and its trash (one in Review's trash opens there): the library's trash answers 409 for it
-                  <Button size="sm" variant="outline" asChild>
-                    <Link to={preview.trashedAt ? "/review?trash=1" : `/review/${preview.id}`}>
-                      <MessageSquare className="h-4 w-4" />
-                      Open in Review
-                    </Link>
-                  </Button>
-                ) : scope === "trash" ? (
-                  <Button size="sm" variant="outline" onClick={() => void moveAsset(preview, false)}>
-                    <RotateCcw className="h-4 w-4" />
-                    Restore
-                  </Button>
-                ) : (
-                  <Button size="sm" variant="outline" onClick={() => void moveAsset(preview, true)}>
-                    <Trash2 className="h-4 w-4" />
-                    Move to trash
-                  </Button>
-                )}
-                {scope !== "trash" && (
-                  <Button size="sm" variant="outline" onClick={() => void finalsId().then((id) => addToFolder(preview, id), (e) => setError(message(e)))}>
-                    <Star className="h-4 w-4" />
-                    Add to {FINALS}
-                  </Button>
-                )}
-                {collections.some((c) => c.kind === "manual") && (
-                  <select
-                    aria-label="Add to folder"
-                    value=""
-                    onChange={(e) => void addToFolder(preview, e.target.value)}
-                    className="h-9 rounded-md border border-zinc-500/30 bg-transparent px-2 text-sm"
-                  >
-                    <option value="">Add to folder…</option>
-                    {collections
-                      .filter((c) => c.kind === "manual")
-                      .map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name}
-                        </option>
-                      ))}
-                  </select>
-                )}
-              </div>
-              {preview.state === "missing" && (
-                <p className="text-sm text-zinc-400">
-                  The original is gone from its watch folder: moved, renamed, or the drive is unplugged. Nothing was deleted; it comes back
-                  when the file does.
-                </p>
-              )}
-              {libId && (
-                <DescriptionBox
-                  key={preview.versionId}
-                  libraryId={libId}
-                  asset={preview}
-                  readOnly={scope === "trash"}
-                  onSaved={(a) => {
-                    setPreview(a);
-                    const fix = (all: AssetCard[]) => all.map((x) => (x.id === a.id ? { ...x, description: a.description, tags: a.tags, aiTags: a.aiTags } : x));
-                    first.set((page) => page && { ...page, items: fix(page.items) });
-                    setMore((m) => m && { ...m, items: fix(m.items) });
-                  }}
-                  onError={setError}
-                />
-              )}
-              {libId && scope !== "trash" && <ShareBox libraryId={libId} assetId={preview.id} />}
-              {preview.kind === "image" ? (
-                <img src={`/api/library/media/${preview.versionId}/play`} alt={preview.title} className="w-full rounded-lg" />
-              ) : (
-                libId && <Player libraryId={libId} asset={preview} startAt={startAt} inTrash={scope === "trash"} onError={setError} />
-              )}
-            </div>
+          {preview && libId && (
+            <ClipPanel
+              libraryId={libId}
+              asset={preview}
+              startAt={startAt}
+              inTrash={scope === "trash"}
+              folders={collections.filter((c) => c.kind === "manual")}
+              onTrash={(trash) => void moveAsset(preview, trash)}
+              onAddToFinals={() => void finalsId().then((id) => addToFolder(preview, id), (e) => setError(message(e)))}
+              onAddToFolder={(id) => void addToFolder(preview, id)}
+              onSaved={(a) => {
+                setPreview(a);
+                const fix = (all: AssetCard[]) => all.map((x) => (x.id === a.id ? { ...x, description: a.description, tags: a.tags, aiTags: a.aiTags } : x));
+                first.set((p) => p && { ...p, items: fix(p.items) });
+                setMore((m) => m && { ...m, items: fix(m.items) });
+              }}
+              onError={setError}
+            />
           )}
         </SheetContent>
       </Sheet>
@@ -660,12 +590,6 @@ function AssetTile({ asset: a, onOpen }: { asset: AssetCard; onOpen: () => void 
   );
 }
 
-const AiBadge = () => (
-  <span title="Written by AI" className="mr-1 rounded bg-zinc-500/20 px-1 py-px text-[10px] font-medium uppercase text-zinc-400">
-    AI
-  </span>
-);
-
 /** The owner's switches, both on to start (api/library/db.ts SETTING_DEFAULTS): a big upload says first what they will take. */
 function AiSwitches({ library, onChange, onError }: { library: LibrarySummary; onChange: (l: LibrarySummary) => void; onError: (e: string) => void }) {
   const flip = (key: "describe" | "embed", on: boolean) =>
@@ -683,224 +607,5 @@ function AiSwitches({ library, onChange, onError }: { library: LibrarySummary; o
       {row("describe", "AI describes new videos")}
       {row("embed", "Search by meaning (OpenAI key)")}
     </div>
-  );
-}
-
-/**
- * The asset's description: a person's text wins over the AI's, which shows (marked AI) until someone writes one.
- * Saving an empty box removes the person's text. "Describe with AI" queues the describe job as the caller.
- */
-function DescriptionBox({
-  libraryId,
-  asset,
-  readOnly,
-  onSaved,
-  onError,
-}: {
-  libraryId: string;
-  asset: AssetCard;
-  readOnly: boolean;
-  onSaved: (a: AssetCard) => void;
-  onError: (e: string) => void;
-}) {
-  const mine = asset.description?.source === "user" ? asset.description.text : "";
-  const [text, setText] = useState(mine);
-  const [queued, setQueued] = useState(false);
-  const save = () =>
-    updateAsset(libraryId, asset.id, { description: text.trim() })
-      .then(onSaved)
-      .catch((e) => onError(message(e)));
-  const describe = () =>
-    rerunJobs(libraryId, asset.id, ["describe"])
-      .then(() => setQueued(true))
-      .catch((e) => onError(message(e)));
-  return (
-    <section aria-label="Description" className="flex flex-col gap-1.5 text-sm">
-      {asset.description?.source === "ai" && (
-        <p className="text-zinc-400">
-          <AiBadge />
-          {asset.description.text}
-        </p>
-      )}
-      {readOnly ? (
-        mine && <p>{mine}</p>
-      ) : (
-        <>
-          <textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            rows={3}
-            placeholder={asset.description ? "Your own description (shown instead of the AI's)" : "Describe this clip"}
-            aria-label="Description"
-            className="w-full rounded-md border border-zinc-500/30 bg-transparent p-2"
-          />
-          <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" variant="outline" disabled={text.trim() === mine} onClick={() => void save()}>
-              Save description
-            </Button>
-            {(asset.kind === "video" || asset.kind === "image") && (
-              <Button size="sm" variant="ghost" disabled={queued} onClick={() => void describe()}>
-                {queued ? "Queued: the AI's description shows when it is done" : "Describe with AI"}
-              </Button>
-            )}
-          </div>
-        </>
-      )}
-    </section>
-  );
-}
-
-/** A share link for one asset: watch only or watch and download, optional password, days to live. The link shows once. */
-function ShareBox({ libraryId, assetId }: { libraryId: string; assetId: string }) {
-  const [scope, setScope] = useState<"view" | "download">("view");
-  const [days, setDays] = useState("7");
-  const [password, setPassword] = useState("");
-  const [link, setLink] = useState<string | null>(null);
-  const [failed, setFailed] = useState<string | null>(null);
-
-  const make = () => {
-    setFailed(null);
-    createShare(libraryId, {
-      target: { kind: "asset", id: assetId },
-      scope,
-      expiresInDays: Number(days) || 7,
-      ...(password ? { password } : {}),
-    })
-      .then((s) => setLink(`${location.origin}${s.url}`))
-      .catch((e) => setFailed(message(e)));
-  };
-
-  return (
-    <section aria-label="Share link" className="flex flex-col gap-2 rounded-xl border border-zinc-500/20 p-3">
-      <div className="flex flex-wrap items-center gap-2 text-sm">
-        <Share2 className="h-4 w-4 text-zinc-500" />
-        <select
-          aria-label="Link scope"
-          value={scope}
-          onChange={(e) => setScope(e.target.value as "view" | "download")}
-          className="h-9 rounded-md border border-zinc-500/30 bg-transparent px-2"
-        >
-          <option value="view">Watch only</option>
-          <option value="download">Watch and download</option>
-        </select>
-        <Input type="number" min={1} max={90} value={days} onChange={(e) => setDays(e.target.value)} aria-label="Days to live" className="h-9 w-20" />
-        <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password (optional)" aria-label="Link password" className="h-9 w-44" />
-        <Button size="sm" onClick={make}>
-          Create link
-        </Button>
-      </div>
-      {link && (
-        <div className="flex items-center gap-2">
-          <Input readOnly value={link} aria-label="Share link address" onFocus={(e) => e.currentTarget.select()} className="h-9 text-xs" />
-          <Button size="sm" variant="outline" onClick={() => void navigator.clipboard?.writeText(link)}>
-            Copy
-          </Button>
-        </div>
-      )}
-      {failed && <p className="text-xs text-red-400">{failed}</p>}
-    </section>
-  );
-}
-
-/**
- * The preview's player with what is said in it: the media opens at `startAt` (a #t= media fragment), a transcript line
- * seeks there. Below: the transcript's state (a key missing says so, with Retry) and Open in Caption Studio.
- */
-function Player({
-  libraryId,
-  asset,
-  startAt,
-  inTrash,
-  onError,
-}: {
-  libraryId: string;
-  asset: AssetCard;
-  startAt: number;
-  inTrash: boolean;
-  onError: (e: string) => void;
-}) {
-  const media = useRef<HTMLVideoElement & HTMLAudioElement>(null);
-  const [detail, setDetail] = useState<AssetDetail | null>(null);
-  const [reread, setReread] = useState(0);
-  const [opening, setOpening] = useState(false);
-  const navigate = useNavigate();
-
-  useEffect(() => {
-    let live = true;
-    getAsset(libraryId, asset.id)
-      .then((d) => live && setDetail(d))
-      .catch(() => live && setDetail(null));
-    return () => void (live = false);
-  }, [libraryId, asset.id, reread]);
-
-  // a transcript still being made: look again in three seconds
-  const job = detail?.jobs.find((j) => j.kind === "transcribe");
-  const waiting = job?.state === "queued" || job?.state === "running";
-  useEffect(() => {
-    if (!waiting) return;
-    const t = setTimeout(() => setReread((n) => n + 1), 3000);
-    return () => clearTimeout(t);
-  }, [waiting, detail]);
-
-  const seek = (s: number) => {
-    if (!media.current) return;
-    media.current.currentTime = s;
-    void media.current.play().catch(() => {});
-  };
-  const src = `/api/library/media/${asset.versionId}/play${startAt ? `#t=${startAt}` : ""}`;
-  const retry = () =>
-    rerunJobs(libraryId, asset.id, ["transcribe"])
-      .then(() => setReread((n) => n + 1))
-      .catch((e) => onError(message(e)));
-  const captions = () => {
-    setOpening(true);
-    openInCaptions(libraryId, asset.id)
-      .then(({ projectId }) => navigate(`/captions?project=${projectId}`))
-      .catch((e) => onError(message(e)))
-      .finally(() => setOpening(false));
-  };
-
-  return (
-    <>
-      {asset.kind === "video" ? (
-        <video key={src} ref={media} src={src} controls playsInline preload="metadata" className="w-full rounded-lg bg-black" />
-      ) : (
-        <audio key={src} ref={media} src={src} controls preload="metadata" className="w-full" />
-      )}
-      {asset.kind === "video" && !inTrash && (
-        <Button size="sm" variant="outline" className="w-fit" disabled={opening} onClick={captions}>
-          {opening ? <Loader2 className="h-4 w-4 animate-spin" /> : <Captions className="h-4 w-4" />}
-          Open in Caption Studio
-        </Button>
-      )}
-      {detail?.transcript ? (
-        <section aria-label="Transcript" className="flex max-h-80 flex-col gap-0.5 overflow-y-auto rounded-xl border border-zinc-500/20 p-2">
-          {detail.transcript.segments.map((seg, i) => (
-            <button key={i} type="button" onClick={() => seek(seg.start)} className="flex gap-2 rounded px-1 py-0.5 text-left text-sm hover:bg-zinc-500/10">
-              <span className="shrink-0 font-mono text-xs leading-5 text-zinc-500">{clock(seg.start)}</span>
-              <span>{seg.text}</span>
-            </button>
-          ))}
-        </section>
-      ) : (
-        job && (
-          <p className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-            {waiting ? (job.state === "running" && job.error) || "Transcribing…" : job.state === "done" ? "Nothing is said in this clip." : job.error ?? "The transcript failed."}
-            {(job.state === "needs_key" || job.state === "failed") && !inTrash && (
-              <Button size="sm" variant="outline" onClick={retry}>
-                Retry
-              </Button>
-            )}
-          </p>
-        )
-      )}
-      {detail?.jobs
-        .filter((j) => (j.kind === "describe" || j.kind === "embed") && (j.state === "needs_key" || j.state === "failed"))
-        .map((j) => (
-          <p key={j.kind} className="text-xs text-zinc-500">
-            {j.kind === "describe" ? "AI description" : "Search by meaning"}: {j.error ?? "failed"}
-          </p>
-        ))}
-    </>
   );
 }
