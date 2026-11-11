@@ -33,7 +33,8 @@ export const isMedia = (mime: string, name: string) => /^(video|audio)\//.test(m
 
 const rootOf = (user: string) => path.join(env.dataDir, "assistant", "files", user);
 const dirOf = (user: string, id: string) => path.join(rootOf(user), id);
-const fileOf = (user: string, id: string) => path.join(dirOf(user, id), "file");
+/** Where a dropped file is kept (a plug-in hands it on, e.g. to a Mac that fetches it). */
+export const fileOf = (user: string, id: string) => path.join(dirOf(user, id), "file");
 
 /** One of this account's dropped files, or null (a strict id only, never a path; gone after 7 days). */
 export async function readFileMeta(user: string, id: string): Promise<AssistantFile | null> {
