@@ -613,6 +613,7 @@ final class RelayTests: XCTestCase {
         XCTAssertEqual(geminiArguments(model: "", mcpPolicy: "/t/p.toml"),
                        ["-o", "stream-json", "--approval-mode", "plan", "--skip-trust", "--allowed-mcp-server-names", "creator-toolset", "--policy", "/t/p.toml"])
         XCTAssertTrue(geminiMcpPolicy.contains(#"mcpName = "creator-toolset""#) && geminiMcpPolicy.contains(#"modes = ["plan"]"#))
+        XCTAssertTrue(geminiMcpPolicy.contains(#"toolName = ["write_file", "replace"]\#ndecision = "deny""#))   // no plan files either
         // Grok: that server's calls allowed; the rest of its command line as without it
         let prompt = "/tmp/p.txt"
         let plain = grokArguments(cwd: "/tmp/run", model: "", effort: "low", system: "S", web: false, folder: false, promptFile: prompt)
@@ -707,7 +708,14 @@ final class RelayTests: XCTestCase {
         XCTAssertFalse(web.contains("--disable-web-search"))
         XCTAssertEqual(web[web.firstIndex(of: "-m")! + 1], "grok-4")
         let plain = grokArguments(cwd: "/tmp/run", model: "", effort: "low", system: "S", web: false, folder: false, promptFile: prompt)
-        XCTAssertEqual(plain[plain.firstIndex(of: "--tools")! + 1], "")   // no folder, no web: no built-in tools at all
+        // no folder, no web: one built-in that touches no file (an empty list would offer them all)
+        XCTAssertEqual(plain[plain.firstIndex(of: "--tools")! + 1], "todo_write")
+        func denied(_ args: [String]) -> [String] { args.indices.filter { args[$0] == "--deny" }.map { args[$0 + 1] } }
+        XCTAssertEqual(denied(plain), ["Read(**)", "Edit", "Write", "Bash"])
+        XCTAssertEqual(denied(grokArguments(cwd: "/tmp/run", model: "", effort: "low", system: "S", web: true, folder: false, promptFile: prompt)),
+                       ["Read(**)", "Edit", "Write", "Bash"])
+        XCTAssertEqual(denied(folder), ["Edit", "Write", "Bash"])   // a folder's own files are read
+        XCTAssertEqual(denied(web), ["Edit", "Write", "Bash"])
     }
 
     /// Lines captured from grok on this Mac when it was not signed in: an init line, then the error result.
@@ -890,6 +898,66 @@ final class RelayTests: XCTestCase {
         let answer = try runAnswer(req, try requestOptions(req), cli: cli, work: temp(), send: { _ in true }, step: { _ in })
         print("REAL GROK: text=\(answer.text) usage=\(answer.usage)")
         XCTAssertTrue(answer.text.localizedCaseInsensitiveContains("OK"))
+    }
+
+    /// CT_REAL_GROK_BIN=<a grok> CT_REAL_GROK_HOME=<a scratch folder> swift test --filter GrokStandIn: real grok runs the way the
+    /// relay runs them, needing no account: grok runs in a home of its own made under CT_REAL_GROK_HOME, whose model is a
+    /// stand-in on 127.0.0.1 that answers with tool calls on a file outside the run folder (a read, a listing, a search, a
+    /// `tail -f` through monitor, a write), then the app's MCP tool (a stand-in server too). Without a folder or web, none of
+    /// those file calls may run and the MCP call must; with a folder (the assistant with a pasted file, web on) the folder's
+    /// file is read and nothing is written. Whether that run's read reached the file outside is printed: grok can't keep it in.
+    func testRealGrokStandInRun() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let cli = env["CT_REAL_GROK_BIN"], let base = env["CT_REAL_GROK_HOME"] else {
+            throw XCTSkip("set CT_REAL_GROK_BIN and CT_REAL_GROK_HOME to run grok against a stand-in model")
+        }
+        let fm = FileManager.default
+        let root = URL(fileURLWithPath: base).appendingPathComponent("standin-\(UUID().uuidString)")
+        let home = root.appendingPathComponent("home"), outside = root.appendingPathComponent("outside")
+        for dir in [home.appendingPathComponent(".grok"), home.appendingPathComponent("tmp"), outside] {
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
+        let canary = "CANARY-" + UUID().uuidString, canaryFile = outside.appendingPathComponent("canary.txt").path
+        let written = outside.appendingPathComponent("written.txt").path
+        try canary.write(toFile: canaryFile, atomically: true, encoding: .utf8)
+        let token = "ctj_" + String(repeating: "5", count: 48)
+        func call(_ name: String, _ input: [String: Any]) -> [String: Any] { ["name": name, "arguments": input] }
+        let server = try GrokStandIn(token: token, steps: [
+            [call("read_file", ["target_file": canaryFile]), call("read_file", ["target_file": "notes.md"]),
+             call("list_dir", ["target_directory": outside.path]), call("grep", ["pattern": "CANARY", "path": outside.path]),
+             call("monitor", ["command": "tail -n 1 -f " + canaryFile, "description": "watch", "timeout_ms": 5000]),
+             call("write", ["file_path": written, "content": "WRITTEN"]), call("search_tool", ["query": "creator-toolset lookup"])],
+            [call("use_tool", ["tool_name": "creator-toolset__lookup", "tool_input": [String: Any]()])],
+        ])
+        try "[models]\ndefault = \"standin\"\n\n[model.standin]\nmodel = \"standin\"\nbase_url = \"http://127.0.0.1:\(server.port)/v1\"\napi_key = \"standin\"\n"
+            .write(to: home.appendingPathComponent(".grok/config.toml"), atomically: true, encoding: .utf8)
+        let old = (env["HOME"], env["TMPDIR"])
+        setenv("HOME", home.path, 1)
+        setenv("TMPDIR", home.appendingPathComponent("tmp").path, 1)   // the run folders too
+        defer {
+            if let home = old.0 { setenv("HOME", home, 1) }
+            if let tmp = old.1 { setenv("TMPDIR", tmp, 1) } else { unsetenv("TMPDIR") }
+        }
+        let mcp = #","mcp":{"url":"http://127.0.0.1:\#(server.port)/api/mcp","token":"\#(token)"}"#
+        for (name, extra) in [("plain", #","web":false"#), ("folder", #","web":true,"files":{"notes.md":"Tiny Acrobatics notes"}"#)] {
+            server.reset()
+            let req = request(#"{"id":"standin","system":"S","user":"Do the task.","driver":"grok","effort":"low""# + extra + mcp + "}")
+            let answer = try runAnswer(req, try requestOptions(req), cli: cli, work: root, send: { _ in true }, step: { _ in })
+            let seen = server.bodies
+            print("GROK STAND-IN \(cliVersion(cli) ?? cli) \(name): offered \(server.offered.sorted()), outside file read: \(seen.contains(canary))")
+            XCTAssertEqual(answer.text, "DONE", name)
+            // the app's tool is still found and runs
+            XCTAssertTrue(server.results.contains { $0.contains("Look up the newest Workshop project.") }, name)
+            XCTAssertTrue(server.results.contains { $0.contains("MCP-LOOKUP-RESULT") }, name)
+            XCTAssertFalse(fm.fileExists(atPath: written), name)
+            if name == "plain" {
+                XCTAssertFalse(seen.contains(canary))
+                XCTAssertTrue(server.offered.isSubset(of: ["todo_write", "search_tool", "use_tool", "session_title"]), "\(server.offered)")
+            } else {
+                XCTAssertTrue(seen.contains("Tiny Acrobatics notes"))
+            }
+        }
+        try? fm.removeItem(at: root)
     }
 
     /// CT_REAL_MUSE=1 swift test --filter RealMuse: real runs through Muse Code, the way the relay runs it. CT_REAL_MUSE_BIN names
@@ -1226,5 +1294,113 @@ final class RelayTests: XCTestCase {
         XCTAssertFalse(answer.text.isEmpty)
         XCTAssertTrue(answer.text.localizedCaseInsensitiveContains("OK"))
         XCTAssertEqual(answer.usage["models"] as? [String], ["claude-opus-5-5"])
+    }
+}
+
+/// A stand-in model (chat completions, streamed) and MCP server on 127.0.0.1 for testRealGrokStandInRun. A chat request with
+/// tools gets the calls of the next step (one step per tool-call message it already carries), then "DONE"; one without
+/// tools gets "ok". The MCP side has one tool, `lookup`, and answers only the bearer token. Every request body is kept.
+private final class GrokStandIn {
+    private(set) var port = 0
+    private let fd = socket(AF_INET, SOCK_STREAM, 0)
+    private let token: String
+    private let steps: [[[String: Any]]]
+    private let lock = NSLock()
+    private var kept: [String] = []
+    private var tools: Set<String> = []
+    private var answers: [String] = []
+
+    init(token: String, steps: [[[String: Any]]]) throws {
+        self.token = token
+        self.steps = steps
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+        var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let ok = withUnsafeMutablePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, len) == 0 && listen(fd, 16) == 0 && getsockname(fd, $0, &len) == 0 }
+        }
+        guard ok else { throw RelayError(message: "the stand-in got no port") }
+        port = Int(UInt16(bigEndian: addr.sin_port))
+        Thread { [fd] in
+            while case let client = accept(fd, nil, nil), client >= 0 { Thread { self.serve(client) }.start() }
+        }.start()
+    }
+
+    deinit { close(fd) }
+
+    var bodies: String { lock.withLock { kept.joined(separator: "\n") } }
+    var offered: Set<String> { lock.withLock { tools } }
+    /// what the tools answered, as the model was sent it
+    var results: [String] { lock.withLock { answers } }
+    func reset() { lock.withLock { kept = []; tools = []; answers = [] } }
+
+    /// One request on `client`, answered with Connection: close.
+    private func serve(_ client: Int32) {
+        defer { close(client) }
+        var data = Data(), buf = [UInt8](repeating: 0, count: 65536)
+        let gap = Data("\r\n\r\n".utf8)
+        func more() -> Bool { let n = read(client, &buf, buf.count); if n > 0 { data.append(buf, count: n) }; return n > 0 }
+        while data.range(of: gap) == nil { guard more() else { return } }
+        let split = data.range(of: gap)!
+        let head = String(decoding: data[..<split.lowerBound], as: UTF8.self)
+        let length = head.components(separatedBy: "\r\n").first { $0.lowercased().hasPrefix("content-length:") }
+            .flatMap { Int($0.dropFirst(15).trimmingCharacters(in: .whitespaces)) } ?? 0
+        while data.count - split.upperBound < length { guard more() else { return } }
+        let body = data.subdata(in: split.upperBound..<split.upperBound + length)
+        let line = head.prefix { $0 != "\r" }.split(separator: " ")
+        let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:]
+        lock.withLock { kept.append(String(decoding: body, as: UTF8.self)) }
+        let (status, type, reply): (String, String, Data)
+        if line.first != "POST" {
+            (status, type, reply) = ("405 Method Not Allowed", "text/plain", Data())
+        } else if line.dropFirst().first?.hasPrefix("/api/mcp") == true {
+            (status, type, reply) = mcp(json, authorized: head.contains("Bearer " + token))
+        } else {
+            (status, type, reply) = ("200 OK", "text/event-stream", chat(json))
+        }
+        let out = Data("HTTP/1.1 \(status)\r\nContent-Type: \(type)\r\nContent-Length: \(reply.count)\r\nConnection: close\r\n\r\n".utf8) + reply
+        _ = out.withUnsafeBytes { write(client, $0.baseAddress, out.count) }
+    }
+
+    private func chat(_ req: [String: Any]) -> Data {
+        let names = (req["tools"] as? [[String: Any]] ?? []).compactMap { ($0["function"] as? [String: Any])?["name"] as? String }
+        let messages = req["messages"] as? [[String: Any]] ?? []
+        lock.withLock {
+            tools.formUnion(names)
+            answers += messages.filter { $0["role"] as? String == "tool" }.map { "\($0["content"] ?? "")" }
+        }
+        let step = messages.filter { $0["role"] as? String == "assistant" && $0["tool_calls"] != nil }.count
+        var delta: [String: Any] = ["role": "assistant", "content": names.isEmpty ? "ok" : "DONE"]
+        if !names.isEmpty, step < steps.count {
+            delta = ["role": "assistant", "tool_calls": steps[step].enumerated().map { i, call in
+                ["index": i, "id": "call_\(step)_\(i)", "type": "function",
+                 "function": ["name": call["name"]!, "arguments": String(decoding: try! JSONSerialization.data(withJSONObject: call["arguments"]!), as: UTF8.self)]]
+            }]
+        }
+        let finish = delta["tool_calls"] == nil ? "stop" : "tool_calls"
+        let chunks: [[String: Any]] = [["choices": [["index": 0, "delta": delta]]],
+                                       ["choices": [["index": 0, "delta": [String: Any](), "finish_reason": finish]],
+                                        "usage": ["prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12]]]
+        let lines = chunks.map { "data: " + String(decoding: try! JSONSerialization.data(withJSONObject: $0.merging(["id": "c", "object": "chat.completion.chunk", "created": 0, "model": "standin"]) { a, _ in a }), as: UTF8.self) }
+        return Data((lines + ["data: [DONE]"]).map { $0 + "\n\n" }.joined().utf8)
+    }
+
+    private func mcp(_ msg: [String: Any], authorized: Bool) -> (String, String, Data) {
+        guard authorized else { return ("401 Unauthorized", "text/plain", Data()) }
+        guard let id = msg["id"] else { return ("202 Accepted", "text/plain", Data()) }
+        var reply: [String: Any] = ["jsonrpc": "2.0", "id": id]
+        switch msg["method"] as? String {
+        case "initialize":
+            let version = (msg["params"] as? [String: Any])?["protocolVersion"] ?? "2025-06-18"
+            reply["result"] = ["protocolVersion": version, "capabilities": ["tools": [String: Any]()], "serverInfo": ["name": "standin", "version": "1"]]
+        case "tools/list":
+            reply["result"] = ["tools": [["name": "lookup", "description": "Look up the newest Workshop project.", "inputSchema": ["type": "object", "properties": [String: Any]()]]]]
+        case "tools/call":
+            reply["result"] = ["content": [["type": "text", "text": "MCP-LOOKUP-RESULT: Tiny Acrobatics"]]]
+        default:
+            reply["error"] = ["code": -32601, "message": "no such method"]
+        }
+        return ("200 OK", "application/json", try! JSONSerialization.data(withJSONObject: reply))
     }
 }

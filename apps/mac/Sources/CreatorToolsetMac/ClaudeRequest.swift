@@ -537,12 +537,21 @@ func geminiTakesMcp(_ cli: String) -> Bool {
     runQuick(cli, ["--help"], seconds: 15)?.contains("--policy") ?? false
 }
 
-/// The rule that lets the app's own MCP server's calls run in Gemini's plan mode (its policy engine, a user-tier rule).
+/// The rules for a Gemini run with the app's MCP server, in its policy engine (user-tier rules): that server's calls run unasked
+/// in plan mode, which otherwise refuses them, and the file writes are taken away. Plan mode alone still let a run write a
+/// Markdown plan into Gemini's own ~/.gemini/tmp/<project>/<session>/plans (measured 2026-11-10, Gemini CLI 0.68); with the
+/// second rule write_file and replace are not tools at all.
 let geminiMcpPolicy = """
     [[rule]]
     mcpName = "creator-toolset"
     toolName = "*"
     decision = "allow"
+    priority = 100
+    modes = ["plan"]
+
+    [[rule]]
+    toolName = ["write_file", "replace"]
+    decision = "deny"
     priority = 100
     modes = ["plan"]
 
@@ -554,9 +563,10 @@ let geminiMcpPolicy = """
 /// is trusted, so the run trusts its own folder for itself alone (runMcpEnv); nothing is written to the person's settings.
 /// Measured 2026-11-10 with Gemini CLI 0.68 and grok 1.0.4 and 1.0.77, their models' answers replayed or a stand-in model,
 /// against stand-in servers and a real Creator Toolset server: this server's calls (a lookup and a change) ran unasked with
-/// the job token, a server in the person's own settings got none, and nothing was written to the person's settings. Gemini's
-/// file write was refused by plan mode and it has no shell there. With the assistant's flags (web on) grok offers only its
-/// two MCP tools: a write and a read outside the folder were not tools at all.
+/// the job token, a server in the person's own settings got none, and nothing was written to the person's settings. Gemini,
+/// with or without a folder of files: a read, listing, search or glob outside the run folder was refused ("Path not in
+/// workspace"), it has no shell or web_fetch in plan mode, and writes go only to its own plans folder (geminiMcpPolicy takes
+/// that away too). Grok's tools: grokArguments.
 func runMcpFiles(driver: String, url: String, cwd: URL) throws {
     let fm = FileManager.default
     if driver == "gemini" {
@@ -631,21 +641,34 @@ func codexPictures(_ files: [String: String], cwd: URL) -> [String] {
         .map { cwd.appendingPathComponent($0).path }
 }
 
-/// grok's tool ids for its read tools and its web tools (the Mac relay GROK_READ, GROK_WEB).
+/// grok's tool ids for its read tools and its web tools (the Mac relay GROK_READ, GROK_WEB). The read tools take any path:
+/// no permission rule or tool switch keeps them in the folder. Its `--sandbox strict` keeps reads to the folder, the system
+/// folders, ~/.grok and the temp folders, but it refuses to start where Docker's socket links outside the places it knows,
+/// and it can't save a renewed sign-in in ~/.grok (measured 2026-11-10, grok 1.0.77), so it is not used.
 let grokReadTools = "read_file,grep,list_dir"
 let grokWebTools = "web_search,web_fetch"
 
 /// the Mac relay grok_cmd: `grok -p`'s headless stream, the prompt in `promptFile`. Tools are only the read tools of a folder
-/// (plus web when asked); with no folder there is no shell, no editing and no subagents. It never asks (dontAsk).
+/// (plus web when asked), no shell, no editing and no subagents. It never asks (dontAsk).
 /// `mcp`: the app's own MCP server is in this run (runMcpFiles); its calls are allowed, every other MCP server's are refused.
+/// Measured 2026-11-10 (grok 1.0.4 and 1.0.77, a stand-in model calling tools): an empty `--tools` list is no list, so a run
+/// with no folder and no web was offered every built-in. Its read_file, list_dir and grep ran on any path (outside the run
+/// folder, `../`, `~/`), and `monitor` ran `tail -f` on a file outside and handed its lines to the model; writes, image tools
+/// and workflows stopped only because dontAsk has nobody to say yes. So the list is never empty (todo_write touches no file),
+/// and deny rules, which hold whatever a version's tool names are, refuse reads of any path without a folder (`Read(**)`, which
+/// covers grep too; a bare `Read` would also refuse search_tool, how grok finds this server's tools) and edits, writes and
+/// shell always (grok counts monitor as shell; writes, image tools and workflows as edits). With both, none of those calls
+/// ran on either version; this server's MCP calls and the web tools still ran. A folder run's reads are not kept in its
+/// folder (grokReadTools).
 func grokArguments(cwd: String, model: String, effort: String, system: String, web: Bool, folder: Bool, promptFile: String, mcp: Bool = false) -> [String] {
     var args = ["--prompt-file", promptFile, "--verbatim",
                 "--output-format", "streaming-messages-json", "--include-partial-messages", "--no-memory", "--no-subagents",
                 "--cwd", cwd, "--reasoning-effort", effort, "--permission-mode", "dontAsk",
                 "--system-prompt-override", system, "--disallowed-tools", "run_terminal_cmd,search_replace,Agent"]
     if !model.isEmpty { args += ["-m", model] }
-    // Always passed: without a folder the list is empty (grok's default built-ins would read any file on this Mac).
-    args += ["--tools", ((folder ? [grokReadTools] : []) + (web ? [grokWebTools] : [])).joined(separator: ",")]
+    let tools = (folder ? [grokReadTools] : []) + (web ? [grokWebTools] : [])
+    args += ["--tools", tools.isEmpty ? "todo_write" : tools.joined(separator: ",")]
+    for rule in (folder ? [] : ["Read(**)"]) + ["Edit", "Write", "Bash"] { args += ["--deny", rule] }
     if !web { args.append("--disable-web-search") }
     if mcp { args += ["--allow", "MCPTool(creator-toolset__*)"] }
     return args
