@@ -81,10 +81,11 @@ describe.skipIf(!enabled)("Media Library in the browser", () => {
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
     const errors: string[] = [];
     page.on("pageerror", (e: Error) => errors.push(e.message));
+    await page.addInitScript(() => localStorage.setItem("ct-setup-dismissed", "1")); // setup's Not now: its window would cover the page
     await page.goto(new URL("/library", base).toString());
 
-    await page.getByRole("heading", { name: "Media Library" }).waitFor({ timeout: 60_000 });
-    await page.getByText("Where are your videos?").waitFor();
+    // the empty library's first screen (the top bar's tool name sits inside its menu button, so it is not a heading)
+    await page.getByText("Where are your videos?").waitFor({ timeout: 60_000 });
 
     await page.locator('input[type="file"]').setInputFiles(fixture);
     const card = page.getByRole("button", { name: /Tiny Acrobatics clip/ });
