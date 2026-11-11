@@ -1,6 +1,6 @@
 import { useCachedLoad } from "@/lib/local-cache";
 import { Link } from "react-router";
-import { Activity, CircleAlert, Eye, KeyRound, Loader2, MessageSquare, Pause, type LucideIcon } from "lucide-react";
+import { CircleAlert, Eye, Inbox, KeyRound, Loader2, MessageSquare, Pause, type LucideIcon } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Progress } from "@/components/ui/progress";
 import { canUse, useMe, type Me } from "@/lib/auth";
@@ -174,7 +174,7 @@ function ActivityButton({ me }: { me: Me }) {
           aria-label={label}
           className="relative rounded-lg p-2 text-muted-foreground outline-none hover:bg-accent hover:text-foreground data-[state=open]:bg-accent"
         >
-          {moving ? <Loader2 className="h-4 w-4 motion-safe:animate-spin" /> : <Activity className="h-4 w-4" />}
+          {moving ? <Loader2 className="h-4 w-4 motion-safe:animate-spin" /> : <Inbox className="h-4 w-4" />}
           {waiting.length > 0 && (
             <span className="absolute right-0.5 top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-semibold text-white">
               {waiting.length > 9 ? "9+" : waiting.length}
