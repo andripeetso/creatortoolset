@@ -12,6 +12,7 @@ import { isInside, musicFolders } from "../lib/storage";
 import { isThisMachine } from "../lib/devices";
 import { AiProviderError } from "../ai-complete";
 import { MacClaudeError } from "../lib/mac-claude";
+import { limitLine } from "../../contracts/plans";
 import { makeProxy, needsProxy } from "./media/proxy";
 import { probe, type ProbeSummary } from "./media/probe";
 import { makeThumb } from "./media/thumb";
@@ -62,6 +63,19 @@ function waitFor(e: unknown): number {
   return e instanceof AiProviderError && e.code === "RATE_LIMIT" ? 60 : 0;
 }
 
+const isLimit = (e: unknown) => {
+  const under = e instanceof AiProviderError && e.cause ? e.cause : e;
+  return under instanceof MacClaudeError && under.kind === "limit";
+};
+
+/**
+ * The plan's limit is reached: every description queued for the same account waits with it, saying why (the progress
+ * bar shows it, estimate.ts), instead of each one asking the closed plan. The first to run after `until` asks again.
+ */
+export function holdForLimit(db: ReturnType<typeof libraryDb>, actor: string | null, why: string, until: number): void {
+  db.prepare("UPDATE jobs SET error = ?, run_after = MAX(run_after, ?) WHERE kind = 'describe' AND state = 'queued' AND actor IS ?").run(why, until, actor);
+}
+
 /** Runs one queued job (of `kinds`, when given), if there is one. Returns false when there is none. */
 export async function tick(now = Date.now(), kinds?: readonly string[]): Promise<boolean> {
   const db = libraryDb();
@@ -95,6 +109,7 @@ export async function tick(now = Date.now(), kinds?: readonly string[]): Promise
     const wait = job.kind === "describe" ? waitFor(e) : 0;
     if (wait) {
       defer(db, job.id, wait);
+      if (isLimit(e)) holdForLimit(db, job.actor, limitLine((e as Error).message), Date.now() + wait * 1000);
       return true;
     }
     finishJob(db, job.id, false, e instanceof Error ? e.message : String(e), Math.max(now, Date.now()));

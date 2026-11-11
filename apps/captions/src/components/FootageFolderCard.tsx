@@ -126,7 +126,7 @@ export function FootageFolderCard({ libraryId, onUpload }: { libraryId: string; 
     <section aria-label="Footage folder" className="flex flex-col gap-3 rounded-xl border border-zinc-500/20 p-4">
       <div className="flex flex-col gap-1">
         <h2 className="text-sm font-medium">Where are your videos?</h2>
-        <p className="text-sm text-zinc-500">Creator Toolset reads the folder you pick, where it is. Nothing is moved or uploaded.</p>
+        <p className="text-sm text-zinc-500">Creator Toolset reads the folder you pick, where it is. Nothing is moved.</p>
       </div>
       {typing && (
         <form

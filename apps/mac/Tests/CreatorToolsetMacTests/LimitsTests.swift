@@ -109,8 +109,13 @@ final class LimitsTests: XCTestCase {
         defaults.removePersistentDomain(forName: suite)
         defer { defaults.removePersistentDomain(forName: suite) }
         XCTAssertFalse(limitsReadingOn(defaults))
-        defaults.set(true, forKey: limitsReadingKey)
-        XCTAssertTrue(limitsReadingOn(defaults))
+        limitsOnFirstRun(driver: "gemini", defaults)
+        XCTAssertFalse(limitsReadingOn(defaults))   // only the two whose limits it reads
+        limitsOnFirstRun(driver: "claude", defaults)
+        XCTAssertTrue(limitsReadingOn(defaults))    // the first Claude run turns it on
+        defaults.set(false, forKey: limitsReadingKey)
+        limitsOnFirstRun(driver: "codex", defaults)
+        XCTAssertFalse(limitsReadingOn(defaults))   // turned off by the person: stays off
     }
 
     /// A fixture home on the scratch disk (CT_SCRATCH_DIR), never the Mac's temporary folder. The caller removes it.

@@ -453,7 +453,7 @@ extension Shell {
     func restartServerHere() {
         guard runsHere, let server else { return }
         if let url = webView.url, isSite(url, base) { pluginWatch.returnTo = url }
-        webView.loadHTMLString(messagePage("Starting the server on this Mac…"), baseURL: nil)
+        webView.loadHTMLString(splashPage(), baseURL: nil)
         server.restart()
     }
 

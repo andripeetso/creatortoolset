@@ -103,7 +103,7 @@ extension Shell {
         open.canChooseFiles = false
         open.canCreateDirectories = true
         open.prompt = "Choose"
-        open.message = "Choose the folder with your videos. Nothing is moved or uploaded."
+        open.message = "Choose the folder with your videos. Nothing is moved."
         guard open.runModal() == .OK, let url = open.url else { return ["path": NSNull()] }
         return ["path": url.path]
     }

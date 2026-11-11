@@ -14,6 +14,7 @@ import type {
   SearchQuery,
   ShareCreated,
   ShareInput,
+  WatchStatus,
 } from "@contracts/library";
 import { useEffect, useRef } from "react";
 import { putDirect } from "@/lib/uploads";
@@ -295,6 +296,13 @@ export function reorderedPositions(items: { id: string; position: number }[], fr
   const [moved] = order.splice(from, 1);
   order.splice(to, 0, moved);
   return order.flatMap((it, i) => (it.position === i + 1 ? [] : [{ id: it.id, position: i + 1 }]));
+}
+
+/** The library's footage folders as its owner sees them (anyone else: an error, so no status). */
+export async function getWatch(libraryId: string): Promise<WatchStatus> {
+  const r = await fetch(`/api/library/${libraryId}/watch`);
+  if (!r.ok) throw new Error(`Request failed (${r.status})`);
+  return (await r.json()) as WatchStatus;
 }
 
 let watchers = 0;
