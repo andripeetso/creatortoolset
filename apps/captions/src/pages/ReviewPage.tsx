@@ -26,7 +26,8 @@ import { AppBar } from "@/components/AppBar";
 import { ReviewShareButton } from "@/components/ReviewShareButton";
 import { confirmDialog } from "@/lib/dialogs";
 import { BrowseBar, NewFolderButton, TrashLink } from "@/components/browse/Bar";
-import { FolderCard } from "@/components/browse/Folder";
+import { FolderCard, FolderRow, type FolderProps } from "@/components/browse/Folder";
+import { useBrowseView } from "@/components/browse/views";
 import { FolderGrid, GridFrame } from "@/components/browse/Grid";
 import { askRename } from "@/components/browse/browse";
 import { Button } from "@/components/ui/button";
@@ -172,6 +173,7 @@ export default function ReviewPage() {
   const [adding, setAdding] = useState<{ newProject?: boolean; files?: File[] } | null>(null);
   const [find, setFind] = useState("");
   const [sort, setSort] = useState<ReviewSort>(savedSort);
+  const [view, setView] = useBrowseView("review");
   useEffect(() => {
     try {
       localStorage.setItem(SORT_KEY, sort);
@@ -454,12 +456,21 @@ export default function ReviewPage() {
                 { id: "name", label: "Name" },
               ],
             }}
+            view={{ value: view, onChange: setView }}
           />
         )}
         {trash ? (
           <TrashView onRestored={() => void load()} />
         ) : shown === null || (projectsList.data === null && !projectsList.error) ? (
-          <GridFrame />
+          view === "list" ? (
+            <div aria-hidden="true" className="flex flex-col gap-1.5">
+              {[0, 1, 2, 3, 4].map((i) => (
+                <div key={i} className="h-[62px] rounded-lg border border-zinc-800 bg-zinc-900/50" />
+              ))}
+            </div>
+          ) : (
+            <GridFrame />
+          )
         ) : q && shown.length === 0 && shownProjects.length === 0 ? (
           <p className="mt-16 text-center text-sm text-zinc-500">No matches.</p>
         ) : done && shown.length === 0 && shownProjects.length === 0 ? (
@@ -485,10 +496,11 @@ export default function ReviewPage() {
             </p>
           </button>
         ) : (
-          <FolderGrid ref={grid}>
+          <ListOrGrid view={view} grid={grid}>
             {shownProjects.map((p) => (
               <ProjectCard
                 key={p.id}
+                row={view === "list"}
                 project={p}
                 assets={assets!.filter((a) => folderOf(a) === p.id)}
                 dragId={dragId}
@@ -502,6 +514,7 @@ export default function ReviewPage() {
             {shown.map((a) => (
               <AssetCard
                 key={a.id}
+                row={view === "list"}
                 asset={a}
                 projects={projects}
                 dragId={dragId}
@@ -519,7 +532,7 @@ export default function ReviewPage() {
                 reveal={reveal}
               />
             ))}
-          </FolderGrid>
+          </ListOrGrid>
         )}
       </main>
 
@@ -579,8 +592,20 @@ export default function ReviewPage() {
   );
 }
 
-/** A project (Review's folder): open it, drop videos (from here or the desktop) into it. */
+/** The folders view's grid, or the list view's column: the cards are its children either way (the steady list's). */
+function ListOrGrid({ view, grid, children }: { view: "grid" | "list"; grid: React.RefObject<HTMLDivElement | null>; children: React.ReactNode }) {
+  return view === "list" ? (
+    <div ref={grid} className="flex flex-col gap-1.5">
+      {children}
+    </div>
+  ) : (
+    <FolderGrid ref={grid}>{children}</FolderGrid>
+  );
+}
+
+/** A project (Review's folder): open it, drop videos (from here or the desktop) into it. A card, or a row (`row`). */
 function ProjectCard({
+  row = false,
   project: p,
   assets,
   dragId,
@@ -590,6 +615,7 @@ function ProjectCard({
   onDropFiles,
   reveal,
 }: {
+  row?: boolean;
   project: ReviewProject;
   reveal: Set<string>;
   assets: ReviewAsset[];
@@ -604,35 +630,37 @@ function ProjectCard({
   const covers = assets.filter((a) => a.versions.at(-1)?.status === "ready").slice(0, 4);
   const finished = assets.filter(isFinished).length;
   const allDone = assets.length > 0 && finished === assets.length;
+  const folder: FolderProps = {
+    name: p.name,
+    to: `/review?p=${p.id}`,
+    meta: (
+      <>
+        {assets.length} {assets.length === 1 ? "video" : "videos"}
+        {finished > 0 && !allDone && ` · ${finished} finished`}
+      </>
+    ),
+    drop: {
+      type: DRAG,
+      onItems: onMove,
+      onFiles: (files) => onDropFiles(media(files)),
+      label: !dragId ? "Upload into this project" : dragCount > 1 ? `Move ${dragCount} videos into this project` : "Move into this project",
+    },
+    onRename: () => void askRename("Rename project", p.name).then((name) => name && act(patchReviewProject(p.id, { name }))),
+    menu: assets.length > 0 && (
+      <ContextMenuItem onClick={() => act(...markFinished(assets, !allDone))}>
+        {allDone ? <><Undo2 /> Move to In progress</> : <><Check /> Mark finished</>}
+      </ContextMenuItem>
+    ),
+    onDelete: () => setDeleting(true),
+    deleteLabel: "Delete project",
+  };
   return (
     <>
-      <FolderCard
-        name={p.name}
-        to={`/review?p=${p.id}`}
-        covers={covers.map((a) => ({ key: a.id, src: thumbUrl(a), hidden: !reveal.has(thumbUrl(a)) }))}
-        meta={
-          <>
-            {assets.length} {assets.length === 1 ? "video" : "videos"}
-            {finished > 0 && !allDone && ` · ${finished} finished`}
-          </>
-        }
-        drop={{
-          type: DRAG,
-          onItems: onMove,
-          onFiles: (files) => onDropFiles(media(files)),
-          label: !dragId ? "Upload into this project" : dragCount > 1 ? `Move ${dragCount} videos into this project` : "Move into this project",
-        }}
-        onRename={() => void askRename("Rename project", p.name).then((name) => name && act(patchReviewProject(p.id, { name })))}
-        menu={
-          assets.length > 0 && (
-            <ContextMenuItem onClick={() => act(...markFinished(assets, !allDone))}>
-              {allDone ? <><Undo2 /> Move to In progress</> : <><Check /> Mark finished</>}
-            </ContextMenuItem>
-          )
-        }
-        onDelete={() => setDeleting(true)}
-        deleteLabel="Delete project"
-      />
+      {row ? (
+        <FolderRow {...folder} />
+      ) : (
+        <FolderCard {...folder} covers={covers.map((a) => ({ key: a.id, src: thumbUrl(a), hidden: !reveal.has(thumbUrl(a)) }))} />
+      )}
       {deleting && (
         <DeleteProjectDialog
           project={p}
@@ -720,6 +748,7 @@ function DeleteProjectDialog({
 /** A video: drag it onto another to stack it, drop files on it for a new
  *  version, Shift/⌘-click to pick it with others, right-click for everything else. */
 function AssetCard({
+  row = false,
   asset: a,
   projects,
   dragId,
@@ -754,6 +783,8 @@ function AssetCard({
   onDropVersion: (files: File[]) => void;
   onCaption?: () => void;
   onEditStack: () => void;
+  /** a row of the list view, with the card's drags, drops, picks and menu */
+  row?: boolean;
 }) {
   const v = a.versions.at(-1);
   const [over, setOver] = useState(false);
@@ -765,44 +796,141 @@ function AssetCard({
   };
   const moveTo = projects.filter((p) => p.id !== a.projectId);
   const many = carried().length;
+  const statusMenu = (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        className="-mx-1 flex items-center gap-1.5 rounded px-1 hover:bg-zinc-800 hover:text-zinc-200"
+        title="Change status"
+      >
+        <span className={cn("h-2 w-2 rounded-full", APPROVAL[a.approval.status].dot)} />
+        {APPROVAL[a.approval.status].label}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start">
+        {STATUSES.map((s) => (
+          <DropdownMenuItem key={s} onClick={() => setStatus(s)} className="gap-2">
+            <span className={cn("h-2 w-2 rounded-full", APPROVAL[s].dot)} /> {APPROVAL[s].label}
+            {s === a.approval.status && <Check className="ml-auto h-3.5 w-3.5" />}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+  const badges = (
+    <>
+              {a.versions.length > 1 && (
+                <span className="flex items-center gap-1 rounded bg-black/70 px-1.5 py-0.5 text-[11px] font-medium">
+                  <Layers className="h-3 w-3" /> V{v?.n}
+                </span>
+              )}
+              {isFinished(a) && (
+                  <span className="flex items-center gap-1 rounded bg-black/70 px-1.5 py-0.5 text-[11px] font-semibold" title="Marked finished">
+                    <Check className="h-3 w-3" /> Finished
+                  </span>
+              )}
+              {v?.captioned && (
+                <span className="rounded bg-black/70 px-1.5 py-0.5 text-[11px] font-semibold" title="Captions burned in">
+                  CC
+                </span>
+              )}
+              {a.share?.enabled && (
+                <span className="flex items-center rounded bg-black/70 px-1.5 py-0.5" title="Share link is on">
+                  <Link2 className="h-3 w-3" />
+                </span>
+              )}
+    </>
+  );
+  // the drags, drops and picks of a card and of a row
+  const trigger = {
+    draggable: true,
+    // Shift / ⌘ / Ctrl-click picks instead of opening
+    onClickCapture: (e: React.MouseEvent) => {
+      if (!e.shiftKey && !e.metaKey && !e.ctrlKey) return;
+      e.preventDefault();
+      e.stopPropagation();
+      onPick(e.shiftKey);
+    },
+    onDragStart: (e: React.DragEvent) => {
+      e.dataTransfer.setData(DRAG, carried().join(","));
+      e.dataTransfer.effectAllowed = "move";
+      // dim it after the browser has taken the drag picture, not in it
+      requestAnimationFrame(() => setDragId(a.id));
+    },
+    onDragEnd: () => setDragId(null),
+    onDragOver: (e: React.DragEvent) => {
+      // a video stacks on one other; several go into a project, never onto a video
+      if (dragged || (dragId && dragCount > 1)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setOver(true);
+    },
+    onDragLeave: (e: React.DragEvent) => leftFor(e) && setOver(false),
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setOver(false);
+      const from = e.dataTransfer.getData(DRAG);
+      if (from) {
+        if (from !== a.id && !from.includes(",")) act(stackReviewAssets(a.id, from), (l) => l.filter((x) => x.id !== from));
+      } else {
+        onDropVersion(media(e.dataTransfer.files));
+      }
+    },
+  };
+  const comments = !!a.comments && (
+    <span
+      className={cn(
+        "flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs tabular-nums",
+        a.newComments ? "bg-violet-600 text-white" : "text-zinc-500",
+      )}
+      title={a.newComments ? `${a.newComments} new` : undefined}
+    >
+      <MessageSquare className="h-3.5 w-3.5" /> {a.comments}
+    </span>
+  );
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
+        {row ? (
         <div
-          draggable
-          // Shift / ⌘ / Ctrl-click picks instead of opening
-          onClickCapture={(e) => {
-            if (!e.shiftKey && !e.metaKey && !e.ctrlKey) return;
-            e.preventDefault();
-            e.stopPropagation();
-            onPick(e.shiftKey);
-          }}
-          onDragStart={(e) => {
-            e.dataTransfer.setData(DRAG, carried().join(","));
-            e.dataTransfer.effectAllowed = "move";
-            // dim it after the browser has taken the drag picture, not in it
-            requestAnimationFrame(() => setDragId(a.id));
-          }}
-          onDragEnd={() => setDragId(null)}
-          onDragOver={(e) => {
-            // a video stacks on one other; several go into a project, never onto a video
-            if (dragged || (dragId && dragCount > 1)) return;
-            e.preventDefault();
-            e.stopPropagation();
-            setOver(true);
-          }}
-          onDragLeave={(e) => leftFor(e) && setOver(false)}
-          onDrop={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            setOver(false);
-            const from = e.dataTransfer.getData(DRAG);
-            if (from) {
-              if (from !== a.id && !from.includes(",")) act(stackReviewAssets(a.id, from), (l) => l.filter((x) => x.id !== from));
-            } else {
-              onDropVersion(media(e.dataTransfer.files));
-            }
-          }}
+          {...trigger}
+          className={cn(
+            "group relative flex items-center gap-3 rounded-lg border bg-zinc-900/50 py-1.5 pl-1.5 pr-3 transition-colors hover:border-violet-500/60",
+            over || picked ? "border-violet-500 ring-2 ring-violet-500/40" : "border-zinc-800",
+            dragged && "opacity-40",
+          )}
+        >
+          <Link to={to} draggable={false} className="relative block h-12 w-20 shrink-0 overflow-hidden rounded bg-black">
+            {v?.status === "ready" && (
+              <Picture src={thumbUrl(a)} alt="" className="h-full w-full object-contain"
+                style={reveal.has(thumbUrl(a)) ? undefined : { opacity: 0 }} />
+            )}
+            {v?.status === "processing" && <Loader2 className="absolute inset-0 m-auto h-4 w-4 animate-spin text-violet-400" />}
+            {v?.status === "error" && <TriangleAlert className="absolute inset-0 m-auto h-4 w-4 text-red-400" />}
+            {picked && (
+              <span className="pointer-events-none absolute left-1 top-1 flex h-4 w-4 items-center justify-center rounded-full bg-violet-600 text-white shadow">
+                <Check className="h-3 w-3" />
+              </span>
+            )}
+          </Link>
+          <div className="min-w-0 flex-1">
+            <Link to={to} draggable={false} className="block truncate text-sm font-medium text-zinc-100">
+              {over ? `${dragId ? "Stack on top" : "Add"} as version ${a.versions.length + 1}` : a.name}
+            </Link>
+            <div className="mt-1 flex items-center gap-1.5 text-xs text-zinc-500">
+              {statusMenu}
+              <span className="text-zinc-700">·</span>
+              {timeAgo(a.updatedAt ?? a.createdAt)}
+              {v?.status === "processing" && <span className="text-zinc-400">· Preparing {Math.round(v.progress * 100)}%</span>}
+              {v?.status === "error" && <span className="truncate text-red-400">· {v.error}</span>}
+            </div>
+          </div>
+          <div className="hidden shrink-0 gap-1.5 text-zinc-200 sm:flex [&>span]:bg-zinc-800">{badges}</div>
+          {v && v.duration > 0 && <span className="shrink-0 text-xs tabular-nums text-zinc-500">{timecode(v.duration, 0)}</span>}
+          {comments}
+        </div>
+        ) : (
+        <div
+          {...trigger}
           className={cn(
             "group relative overflow-hidden rounded-xl border bg-zinc-900/50 transition-colors hover:border-violet-500/60",
             over || picked ? "border-violet-500 ring-2 ring-violet-500/40" : "border-zinc-800",
@@ -836,26 +964,7 @@ function AssetCard({
               </div>
             )}
             <div className="absolute bottom-2 left-2 flex gap-1.5">
-              {a.versions.length > 1 && (
-                <span className="flex items-center gap-1 rounded bg-black/70 px-1.5 py-0.5 text-[11px] font-medium">
-                  <Layers className="h-3 w-3" /> V{v?.n}
-                </span>
-              )}
-              {isFinished(a) && (
-                  <span className="flex items-center gap-1 rounded bg-black/70 px-1.5 py-0.5 text-[11px] font-semibold" title="Marked finished">
-                    <Check className="h-3 w-3" /> Finished
-                  </span>
-              )}
-              {v?.captioned && (
-                <span className="rounded bg-black/70 px-1.5 py-0.5 text-[11px] font-semibold" title="Captions burned in">
-                  CC
-                </span>
-              )}
-              {a.share?.enabled && (
-                <span className="flex items-center rounded bg-black/70 px-1.5 py-0.5" title="Share link is on">
-                  <Link2 className="h-3 w-3" />
-                </span>
-              )}
+              {badges}
             </div>
             {v && v.duration > 0 && (
               <span className="absolute bottom-2 right-2 rounded bg-black/70 px-1.5 py-0.5 text-[11px] tabular-nums">
@@ -869,40 +978,15 @@ function AssetCard({
                 {a.name}
               </Link>
               <div className="mt-1 flex items-center gap-1.5 text-xs text-zinc-500">
-                <DropdownMenu>
-                  <DropdownMenuTrigger
-                    className="-mx-1 flex items-center gap-1.5 rounded px-1 hover:bg-zinc-800 hover:text-zinc-200"
-                    title="Change status"
-                  >
-                    <span className={cn("h-2 w-2 rounded-full", APPROVAL[a.approval.status].dot)} />
-                    {APPROVAL[a.approval.status].label}
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start">
-                    {STATUSES.map((s) => (
-                      <DropdownMenuItem key={s} onClick={() => setStatus(s)} className="gap-2">
-                        <span className={cn("h-2 w-2 rounded-full", APPROVAL[s].dot)} /> {APPROVAL[s].label}
-                        {s === a.approval.status && <Check className="ml-auto h-3.5 w-3.5" />}
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                {statusMenu}
                 <span className="text-zinc-700">·</span>
                 {timeAgo(a.updatedAt ?? a.createdAt)}
               </div>
             </div>
-            {!!a.comments && (
-              <span
-                className={cn(
-                  "flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs tabular-nums",
-                  a.newComments ? "bg-violet-600 text-white" : "text-zinc-500",
-                )}
-                title={a.newComments ? `${a.newComments} new` : undefined}
-              >
-                <MessageSquare className="h-3.5 w-3.5" /> {a.comments}
-              </span>
-            )}
+            {comments}
           </div>
         </div>
+        )}
       </ContextMenuTrigger>
       <ContextMenuContent className="w-56">
         <ContextMenuItem asChild>
