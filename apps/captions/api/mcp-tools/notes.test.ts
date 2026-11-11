@@ -253,6 +253,12 @@ describe("a fix dropped in the chat", () => {
     // and the route makes nothing else of a file sent with a video to add to
     expect(await (await app.request(`/api/assistant/files/${theirs}/use`, { method: "POST", ...json({ to: "notes", version_of: v1.id }, { cookie: nicoCookie }) })).json()).toEqual({ error: "Only a Review video takes a next version." });
     expect(await versions()).toEqual([1, 2]);
+    // someone who commented hears of the next version, as when it is uploaded on the page
+    expect((await tool(nicoToken, "review_comment", { link: share, text: "Nice roll" })).error).toBeFalsy();
+    const third = await drop(cookie, "Tumble reel again.mp4", "video/mp4", Buffer.alloc(4096, 5));
+    expect((await tool(`Bearer ${mintJobToken("ana", "turn-ana-v3")}`, "use_file", { file: third, to: "review", version_of: v1.id })).out.version).toBe(3);
+    const inbox = ((await (await app.request("/api/review/notifications", { headers: { cookie: nicoCookie } })).json()) as { items: Array<{ kind: string; text?: string }> }).items;
+    expect(inbox.some((n) => n.kind === "version" && n.text === "V3")).toBe(true);
   });
 });
 
