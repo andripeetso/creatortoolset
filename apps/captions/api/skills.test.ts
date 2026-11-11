@@ -232,6 +232,8 @@ describe("where a skill reaches", () => {
     expect(job.system.startsWith(SYSTEM)).toBe(true);
     expect(job.system).not.toContain("[Skill ");
     expect((await toolsOf(`Bearer ${job.mcp!.token}`)).map((t) => t.name)).not.toContain("skill_read");
+    // not listed, and called by its name anyway it opens nothing
+    expect(await tool(`Bearer ${job.mcp!.token}`, "skill_read", { name: "Hook rules" })).toEqual({ error: true, text: "A scheduled run reads no skills: carry on without one." });
     await relay(`${job.id}/done`, { text: "Done." });
     await run;
   });

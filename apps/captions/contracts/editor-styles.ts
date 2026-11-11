@@ -8,7 +8,7 @@ import type { EditStepChoice } from "./editor-steps";
  * Routes (api/editor/routes.ts, inside /api/editor):
  *   GET    /api/editor/styles          → EditingStylesView
  *   POST   /api/editor/styles          EditingStyleInput, or { fromEdit: <edit id>, name } → EditingStyle
- *   PUT    /api/editor/styles/:id      EditingStyleInput (the fields sent change) → EditingStyle
+ *   PUT    /api/editor/styles/:id      EditingStyleInput (the fields sent change), or `addNotes`: a line added under its notes → EditingStyle
  *   DELETE /api/editor/styles/:id      → { ok: true }
  *   GET    /api/editor/styles/:id/finished            → FinishedEdit[] (newest first)
  *   DELETE /api/editor/styles/:id/finished/:editId    → { ok: true }; that edit is never kept for the style again

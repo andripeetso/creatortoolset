@@ -54,7 +54,7 @@ const cookieOf = async (username: string) => {
 const json = (body: unknown, extra: Record<string, string> = {}) => ({ headers: { "content-type": "application/json", ...extra }, body: JSON.stringify(body) });
 const rpc = async (authorization: string, method: string, params: unknown = {}) =>
   (await (await app.request("/api/mcp", { method: "POST", ...json({ jsonrpc: "2.0", id: 1, method, params }, { authorization }) })).json()) as {
-    result: { tools?: Array<Record<string, unknown>>; content?: Array<{ text: string }>; isError?: boolean };
+    result: { tools?: Array<Record<string, unknown>>; content?: Array<{ text: string }>; isError?: boolean; instructions?: string };
   };
 const tool = async (authorization: string, name: string, args: Record<string, unknown> = {}) => {
   const r = (await rpc(authorization, "tools/call", { name, arguments: args })).result;
@@ -298,6 +298,27 @@ describe("a search a plug-in's Media Library refuses", () => {
       const broken = JSON.parse((await tool(fullKey, "media_search", { q: "mat" })).text) as { files: unknown[]; note?: string };
       expect(broken.files).toEqual([]);
       expect(broken.note).toBeUndefined();
+    } finally {
+      resetLibrarySlots();
+    }
+  });
+});
+
+describe("the built-in Finals tools", () => {
+  const FINALS = ["finals_pieces", "finals_piece_update", "finals_piece_trash"];
+  const listed = async () => (await rpc(fullKey, "tools/list")).result.tools!.map((t) => String(t.name));
+  const guide = async () => String((await rpc(fullKey, "initialize")).result.instructions);
+
+  it.skipIf(pluggedLibrary)("are left out, with their paragraph, where a plug-in's source is the Media Library (its page never shows the app's own pieces)", async () => {
+    const { registerLibrarySlot, resetLibrarySlots } = await import("./library/sources");
+    expect(await listed()).toEqual(expect.arrayContaining(FINALS));
+    expect(await guide()).toContain("finals_pieces lists them");
+    registerLibrarySlot("tiny", { source: { id: "catalog", label: "Footage catalog", main: true } });
+    try {
+      expect((await listed()).filter((n) => FINALS.includes(n))).toEqual([]);
+      expect(await guide()).not.toContain("finals_pieces");
+      // and a call by name is not served either
+      expect((await tool(fullKey, "finals_pieces")).error).toBe(true);
     } finally {
       resetLibrarySlots();
     }
