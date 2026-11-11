@@ -121,6 +121,22 @@ describe("the list", () => {
     expect(html).not.toContain("Check again");
   });
 
+  it("before the first answer the rows are already up, each saying what it uses and claiming nothing about this Mac", () => {
+    const html = panel(null);
+    for (const name of ["ChatGPT", "Claude", "Google", "Grok", "Meta"]) expect(html).toContain(`>${name}<`);
+    expect(html).toContain("Uses your ChatGPT plan (Plus or higher).");
+    expect(html).not.toMatch(/Looking for|Not on this Mac|Not signed in/);
+    // nothing to press on a row until its state is known; Show more is there as it will be
+    expect(buttons(html).filter((b) => /Install|Sign in|Connect|Try again/.test(b))).toEqual([]);
+    expect(html).toContain("Show more");
+  });
+
+  it("before the first answer an account this server connects no AI for has its line at once, with no rows", () => {
+    const html = panel(null, { own: false });
+    expect(html).toContain("Ask the owner of this server");
+    expect(html).not.toContain(">ChatGPT<");
+  });
+
   it("asks the owner of a server that is not this computer to connect its AI, with no rows", () => {
     const html = panel(view([], false));
     expect(html).toContain("Ask the owner of this server to connect the AI it runs on.");

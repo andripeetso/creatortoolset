@@ -5,6 +5,8 @@ import { DRIVERS, type ProviderSettings, type ProvidersView } from "@contracts/p
 import { Button } from "@/components/ui/button";
 import { ProviderLogo } from "@/components/settings/ProviderLogos";
 import { Card, ListRow, Status } from "@/components/settings/ui";
+import { useAuth } from "@/lib/auth";
+import { putCached, readCached } from "@/lib/local-cache";
 import { getProviders, modelsOf, saveOwn, thisMacDevice } from "@/lib/providers";
 import { startThisMac, thisMacBridge } from "@/lib/thisMac";
 import { cn } from "@/lib/utils";
@@ -23,6 +25,9 @@ const RECHECK_MS = 20_000;
 const TIMEOUT_MS = 90_000;
 /** An install downloads the vendor's program here (Meta's is about 470 MB): a slow connection gets an hour. */
 const INSTALL_TIMEOUT_MS = 61 * 60_000;
+/** The saved copies this screen opens with, under the addresses Settings keeps them (AiSetup's useLocalAi, useProviders). */
+const LOCAL_AI = "/api/setup/ai";
+const PROVIDERS = "/api/providers";
 
 /**
  * The AIs this screen sets up, in order: what a person knows each by, the program's name small beside it, and what it
@@ -158,8 +163,9 @@ export function AnswerPicker({ view, onPick }: { view: ProvidersView; onPick: (s
  * One AI's row, in the same rows as Settings and setup's last screen: its logo, its name with the program's name small
  * beside it, one plain line, and its one button. A failure is the red line, with the program's own words under Details.
  */
-function AgentRow({ id, row, result, phase, code, onConnect }: { id: string; row?: Known; result?: ConnectResult; phase?: Phase; code?: string; onConnect: () => void }) {
-  const v = rowView(id, row, result, phase, code);
+function AgentRow({ id, row, result, phase, code, unread, onConnect }: { id: string; row?: Known; result?: ConnectResult; phase?: Phase; code?: string; unread?: boolean; onConnect: () => void }) {
+  // not read yet: the row says what it uses and claims nothing about this Mac; its state and button follow the answer
+  const v: RowView = unread ? { line: usesOf(id), button: null } : rowView(id, row, result, phase, code);
   const failed = !phase && !!result && !["ready", "mac", "unsupported", "signin"].includes(result.state);
   return (
     <ListRow
@@ -208,20 +214,23 @@ export interface AiPanelViewProps {
   onConnect: (id: string) => void;
   showMore?: boolean;
   onShowMore?: () => void;
+  /** this account's own computer runs the server (not hosted, an admin): the server will answer with rows */
+  own?: boolean;
 }
 
 /**
  * The AIs this computer can connect: ChatGPT, Claude, Google and Grok up front, the rest behind Show more. One that is
  * connected, working or failed is always up front. Pure, for tests.
  */
-export function AiPanelView({ view, results, phases, codes = {}, onConnect, showMore = false, onShowMore }: AiPanelViewProps) {
-  if (!view) return <p className="text-sm text-muted-foreground">Looking for your AI on this computer…</p>;
-  if (!view.local)
+export function AiPanelView({ view, results, phases, codes = {}, onConnect, showMore = false, onShowMore, own = true }: AiPanelViewProps) {
+  // Before the first answer (a first open; later the saved copy is there) nothing stands in for the list: the rows are
+  // up at once, each with what it uses, and an account the server connects no AI for has its line at once.
+  if (view ? !view.local : !own)
     return <p className="text-sm text-muted-foreground">Ask the owner of this server to connect the AI it runs on.</p>;
   const behind = (id: string) => (!aiOf(id) || !!aiOf(id)?.more) && !phases[id] && !results[id] && !isConnected(rowOf(view, id));
   const ids = idsOf(view);
   const hidden = ids.some(behind);
-  const row = (id: string) => <AgentRow key={id} id={id} row={rowOf(view, id)} result={results[id]} phase={phases[id]} code={codes[id]} onConnect={() => onConnect(id)} />;
+  const row = (id: string) => <AgentRow key={id} id={id} row={rowOf(view, id)} result={results[id]} phase={phases[id]} code={codes[id]} unread={!view} onConnect={() => onConnect(id)} />;
   return (
     <div className="space-y-2">
       <Card>{ids.filter((id) => showMore || !behind(id)).map(row)}</Card>
@@ -279,21 +288,38 @@ export function nextStep(state: ConnectResult["state"], did: { installed: boolea
  * to the front and every RECHECK_MS while it is on screen.
  */
 export function AiPanel({ onConnectedChange }: { onConnectedChange?: (on: boolean) => void }) {
-  const [view, setView] = useState<LocalAiView | null>(null);
+  const user = useAuth((s) => s.me?.username ?? null);
+  // what the server decides the rows by (api/setup.ts ownComputer), known here before it answers
+  const own = useAuth((s) => !s.hosted && s.me?.role === "admin");
+  // the list and the answering AI open with what they showed last (the same saved copies Settings reads)
+  const [view, setView] = useState<LocalAiView | null>(() => readCached<LocalAiView>(user, LOCAL_AI));
   const [results, setResults] = useState<Results>({});
   const [phases, setPhases] = useState<Phases>({});
-  const [providers, setProviders] = useState<ProvidersView | null>(null);
+  const [providers, setProviders] = useState<ProvidersView | null>(() => readCached<ProvidersView>(user, PROVIDERS));
   const [showMore, setShowMore] = useState(false);
   const [codes, setCodes] = useState<Partial<Record<string, string>>>({});
   const timers = useRef<number[]>([]);
 
   // fresh: the server re-reads PATH and the sign-in; a plain read may answer from its last look.
   const refresh = useCallback(async (fresh = false) => {
-    const v = await getJson<LocalAiView>(fresh ? "/api/setup/ai?fresh=1" : "/api/setup/ai");
-    if (v) setView(v);
+    const v = await getJson<LocalAiView>(fresh ? `${LOCAL_AI}?fresh=1` : LOCAL_AI);
+    if (v) {
+      setView(v);
+      putCached(user, LOCAL_AI, v);
+    }
     return v;
-  }, []);
-  const loadProviders = useCallback(() => getProviders().then(setProviders, () => {}), []);
+  }, [user]);
+  const loadProviders = useCallback(
+    () =>
+      getProviders().then(
+        (p) => {
+          setProviders(p);
+          putCached(user, PROVIDERS, p);
+        },
+        () => {},
+      ),
+    [user],
+  );
 
   const connect = useCallback(
     // another AI on this Mac is connected as it is: nothing to install, update or sign in from here
@@ -393,7 +419,7 @@ export function AiPanel({ onConnectedChange }: { onConnectedChange?: (on: boolea
       {providers && (providers.own?.instances.filter((i) => i.enabled).length ?? 0) > 1 && (
         <AnswerPicker view={providers} onPick={(s) => void saveOwn(s).then(setProviders, () => {})} />
       )}
-      <AiPanelView view={view} results={results} phases={phases} codes={codes} onConnect={(id) => void connect(id)} showMore={showMore} onShowMore={() => setShowMore((o) => !o)} />
+      <AiPanelView view={view} results={results} phases={phases} codes={codes} onConnect={(id) => void connect(id)} showMore={showMore} onShowMore={() => setShowMore((o) => !o)} own={own} />
     </div>
   );
 }
