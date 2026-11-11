@@ -907,8 +907,11 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
         // this editor files each draft's preview in Review: the draft plays from there
         if (!a.edit || !a.draft) throw new ToolError("An AI Editor preview needs edit and draft (editor_get lists them).");
         const e = await json(`/api/editor/${encodeURIComponent(String(a.edit))}`);
-        const p = ((e.previews as Record<string, { assetId: string; n: number }> | undefined) ?? {})[String(a.draft)];
-        if (!p) throw new ToolError("That draft has no preview yet: editor_run kind preview renders one.");
+        const previews = (e.previews as Record<string, { assetId: string; n: number }> | undefined) ?? {};
+        // an editor plug-in answering this path has no previews map: a draft it filed in Review carries review { asset, n }
+        const filed = ((e.drafts as Args[] | undefined) ?? []).find((d) => d.name === a.draft)?.review as { asset: string; n: number } | undefined;
+        const p = previews[String(a.draft)] ?? (filed ? { assetId: filed.asset, n: filed.n } : undefined);
+        if (!p) throw new ToolError("That draft is not in Review yet: editor_run kind send_to_review files it, then it plays here.");
         [link, version] = [p.assetId, p.n];
       }
       if (!link) throw new ToolError("Give the Review video's link or id, or an edit and draft.");
