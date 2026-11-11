@@ -1,11 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
-import { ArrowUp, Camera, Check, FileText, Film, Loader2, Mic, Paperclip, Quote, Square, X } from "lucide-react";
+import { ArrowUp, Camera, Check, FileText, Film, Folder, Loader2, Mic, Paperclip, Quote, Square, X } from "lucide-react";
 import { BARS, useVoiceInput } from "@/lib/voice-input";
 import { attachScreen } from "@/lib/assistant";
 import { canSnapshot } from "@/lib/page-context";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { MAX_PICTURES, draftEmpty, filesPending, lineCount, type Draft } from "./draft";
+import { MAX_PICTURES, draftEmpty, filesPending, folderName, lineCount, type Draft } from "./draft";
 import { cn } from "@/lib/utils";
 
 const MAX_ROWS_PX = 160;
@@ -119,8 +119,23 @@ export function Composer({
         </div>
       )}
 
-      {(draft.images.length > 0 || draft.pasted.length > 0 || draft.files.length > 0) && (
+      {(draft.images.length > 0 || draft.pasted.length > 0 || draft.files.length > 0 || draft.folders.length > 0) && (
         <div className="flex flex-wrap gap-2 px-1 pt-1.5">
+          {/* a folder dropped in the Mac app: its path goes with the message, nothing uploads */}
+          {draft.folders.map((p) => (
+            <div key={p} className="group/chip relative motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95" title={p}>
+              <div className="flex h-14 max-w-52 items-center gap-1.5 rounded-lg border bg-muted px-2.5 text-[11px]">
+                <Folder className="size-4 shrink-0 text-[var(--tint)]" aria-hidden />
+                <span className="min-w-0">
+                  <span className="block truncate font-medium">{folderName(p)}</span>
+                  <span className="block text-muted-foreground">Folder</span>
+                </span>
+              </div>
+              <button type="button" onClick={() => setDraft((d) => ({ ...d, folders: d.folders.filter((x) => x !== p) }))} className={chipX} aria-label={`Remove ${folderName(p)}`}>
+                <X className="size-3" />
+              </button>
+            </div>
+          ))}
           {draft.files.map((f) => (
             <div key={f.key} className="group/chip relative motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95" title={f.error ?? f.name}>
               <div className={cn("flex h-14 max-w-52 items-center gap-1.5 rounded-lg border bg-muted px-2.5 text-[11px]", f.error && "border-destructive/60")}>
