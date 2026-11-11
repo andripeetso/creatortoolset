@@ -82,6 +82,12 @@ signed in with their own subscription, paired through the Mac app. They answer o
 of the account that owns them. Never add a path that runs one person's subscription for another person, and never
 let a request from one account reach another account's provider.
 
+**What other people share carries no code.** What people share with each other through Community is text and
+settings: packs (prompts, frameworks, caption styles, a Home layout), each read as data. Never add a way for someone
+outside the team to list, install or update code through Community, and never put a pack's text into an AI run that
+has tools on someone's computer (the assistant). A plug-in a person makes is their own, on their own Mac, with the
+app's full access. Code that Community offers is the team's own, reviewed like the app's code.
+
 **Whose keys pay.** Every paid service call (AI on an API key, transcription, audio engines, research, Apify)
 gets its key from `keyFor` in `apps/captions/api/my-keys.ts`; never read a service key from `process.env` in a
 feature. Each user adds their own keys, Apify included, in Settings → API keys and pays their

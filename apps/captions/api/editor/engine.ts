@@ -4,6 +4,7 @@ import { RESOLVE_KIND } from "../../contracts/devices";
 import { announce } from "../lib/sync";
 import { analyzeStep } from "./analyze";
 import { brollStep } from "./broll";
+import { postStep } from "./post";
 import { fileStep, previewStep } from "./preview";
 import { scriptStep } from "./script";
 import { draftStep } from "./timeline";
@@ -37,7 +38,9 @@ const KINDS: Record<string, EditKind> = {
   analyze: { source: "core", next: ["script"], run: analyzeStep },
   script: { source: "core", next: ["draft"], run: scriptStep },
   draft: { source: "core", next: ["broll"], run: draftStep },
-  broll: { source: "core", next: ["preview"], run: brollStep },
+  broll: { source: "core", next: ["post"], run: brollStep },
+  // the post-processing steps the edit uses (plug-ins, Settings → AI Editor); with none it only clears its notes
+  post: { source: "core", next: ["preview"], run: postStep },
   preview: { source: "core", next: ["file"], run: previewStep },
   file: { source: "core", next: [], run: fileStep },
   // the Resolve bridge (Mac app): handed out only with a Resolve pack installed (api/devices.ts)

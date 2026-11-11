@@ -43,6 +43,8 @@ const appFolder = () => process.env.CT_APP_FOLDER ?? "";
  */
 export const folderPluginsEnabled = (): boolean => process.env.CT_LOCAL === "1" && !!appFolder() && !hostedMode();
 const dir = (name: "plugins" | "plugins-approved" | "plugins-run") => path.join(appFolder(), name);
+/** The person's plug-ins folder (<app folder>/plugins), where a folder put in is only switched on by the Mac app. */
+export const pluginsFolder = () => dir("plugins");
 const stateFile = () => path.join(appFolder(), "plugins-state.json");
 
 /** The builder: beside the app's source in the Mac app (Resources/server/source), in scripts/ in a checkout. */
@@ -300,6 +302,8 @@ async function load(compiled: ServerPlugin[], more?: (all: ServerPlugin[]) => vo
         const problem = admissionProblem([...compiled, ...loaded], plugin, more);
         if (problem) throw new Error(problem);
         if (plugin.id !== b.id) throw new Error(`plugin.ts loaded as ${plugin.id}`);
+        // with other devices on, this server answers the whole network: routes ahead of the sign-in would be open to it
+        if (plugin.openRoutes || plugin.publicRoutes?.length) throw new Error("It answers before the sign-in (openRoutes, publicRoutes), which a plug-in from the folder can't. Put its routes in `routes`.");
         contain(plugin);
         loaded.push(plugin);
         fromFolder.add(plugin);

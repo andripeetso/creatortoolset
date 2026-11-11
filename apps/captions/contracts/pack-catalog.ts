@@ -20,7 +20,8 @@ export interface CatalogEntry {
   installs: number;
   /** When the listed version was approved (built-in packs: the file's time). Newest first in the list. */
   publishedAt: number;
-  contains: { instructions: PackSlot[]; frameworks: number; captionStyles: number; designSystems: number };
+  /** `home`: it carries a Home layout (a catalog from before layouts leaves it out). */
+  contains: { instructions: PackSlot[]; frameworks: number; captionStyles: number; designSystems: number; home?: boolean };
 }
 
 /** GET /api/pack-catalog/public/:id. A delisted pack answers 410 with `{error, reason}` instead. */

@@ -9,7 +9,7 @@ import { footageTargetFor } from "./ingest";
 import { LINK_TTL_S, mediaPaths } from "./media";
 import { toOtio } from "./otio";
 import { qaOf } from "./qa";
-import { allEdits, cleanBrief, createEdit, draftNames, editorDefaults, editRole, gradeOf, NoCollection, readDraft, readEdit, readStep, saveEdit, saveStep, setChosenDefault, sourcesWorkspace, summaryOf, viewOf, type EditMeta } from "./store";
+import { allEdits, cleanBrief, createEdit, draftNames, editorDefaults, editRole, gradeOf, NoCollection, readDraft, readEdit, postFiles, readStep, saveEdit, saveStep, setChosenDefault, sourcesWorkspace, summaryOf, viewOf, type EditMeta } from "./store";
 import { stopEdit } from "./worker";
 
 /**
@@ -208,6 +208,7 @@ editorApp.get("/:id/drafts/:name/export", async (c) => {
   // read again, as the worker does: footage trashed or a library left since means no new links or download URLs
   if (sourcesWorkspace(c.get("user").username, Object.keys(tl.sources)) !== r.e.workspaceId) return notFound(c);
   const m = await mediaPaths(r.e, Object.keys(tl.sources));
+  Object.assign(m.files, postFiles(r.e.id, name));   // the post-processing copies, as the preview plays them
   const base = `${r.e.name} ${name}`.replace(/[^\w .-]+/g, "_").trim() || name;
   const otio = async () => JSON.stringify(toOtio(tl, m.files, await gradeOf(r.e.createdBy, r.e.bundle)), null, 2);
   const send = (body: string | Buffer, file: string, type: string) =>

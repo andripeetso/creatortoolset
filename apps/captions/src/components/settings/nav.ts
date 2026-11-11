@@ -1,4 +1,4 @@
-import { Bookmark, Bot, CalendarClock, Cpu, HardDrive, Gauge, KeyRound, LayoutGrid, Monitor, Palette, Server, ShieldCheck, Share2, SlidersHorizontal, UserRound, Users } from "lucide-react";
+import { Bookmark, Bot, CalendarClock, Cpu, HardDrive, Gauge, KeyRound, LayoutGrid, Monitor, Palette, Server, ShieldCheck, Share2, SlidersHorizontal, UserRound, Users, WandSparkles } from "lucide-react";
 import { settingsWithPlugins, visibleSettings, type PluginSettingsSection, type SettingsEntry } from "@/lib/plugin";
 import { webPlugins } from "@/plugins.gen";
 
@@ -11,7 +11,7 @@ type PluginList = ReadonlyArray<{ settings?: PluginSettingsSection[]; replaces?:
 
 /** Every page id a Settings route can open. Adding one: add it here, to BUILTIN, and to PAGE_BODIES (pages.tsx). */
 export const SETTINGS_PAGE_IDS = [
-  "general", "appearance", "tools", "folders", "providers", "devices", "automations", "memory", "usage", "connectors", "keys", "own-ai",
+  "general", "appearance", "tools", "editor", "folders", "providers", "devices", "automations", "memory", "usage", "connectors", "keys", "own-ai",
   "servers", "team", "admin", "account",
 ] as const;
 export type SettingsPageId = (typeof SETTINGS_PAGE_IDS)[number];
@@ -29,6 +29,8 @@ interface BuiltinEntry extends SettingsEntry {
   hostedOnly?: boolean;
   /** Only in the Mac app, where this computer's own settings are (servers). */
   macOnly?: boolean;
+  /** Only on the Mac app's own server (not hosted): what it holds is switched on by that Mac app (the editor's steps). */
+  localOnly?: boolean;
   /** False: routable but not in the sidebar (account: the account button is its entry). */
   listed?: false;
 }
@@ -38,6 +40,8 @@ const BUILTIN: ReadonlyArray<BuiltinEntry> = [
   { id: "general", title: "General", icon: SlidersHorizontal },
   { id: "appearance", title: "Appearance", icon: Palette },
   { id: "tools", title: "Tools", icon: LayoutGrid },
+  // the AI Editor's post-processing steps: plug-ins the Mac app switches on (EditorStepsSection)
+  { id: "editor", title: "AI Editor", icon: WandSparkles, macOnly: true, localOnly: true },
   { id: "providers", title: "Providers", icon: Cpu, group: "AI" },
   { id: "automations", title: "Scheduled tasks", icon: CalendarClock, group: "AI" },
   { id: "memory", title: "Memory", icon: Bookmark, group: "AI" },
@@ -59,7 +63,6 @@ export const RETIRED_PATHS: Readonly<Record<string, string>> = {
   cache: "/settings/general",
   "this-mac": "/settings/devices",
   "my-keys": "/settings/keys",
-  editor: "/editor",
   packs: "/community/installed",
 };
 
@@ -69,7 +72,7 @@ export function sectionsFor(ctx: NavContext, plugins: PluginList = webPlugins): 
   // folder list would be read by nothing there, so a member has no Storage page on such a server
   const pluginStorage = plugins.some((p) => !!p.replaces?.storage);
   const allowed = BUILTIN.filter(
-    (s) => (ctx.hosted || !s.hostedOnly) && (ctx.mac || !s.macOnly) && (ctx.admin || !s.adminOnly) && !(s.id === "folders" && pluginStorage && !ctx.admin),
+    (s) => (ctx.hosted || !s.hostedOnly) && (ctx.mac || !s.macOnly) && !(ctx.hosted && s.localOnly) && (ctx.admin || !s.adminOnly) && !(s.id === "folders" && pluginStorage && !ctx.admin),
   );
   return visibleSettings(settingsWithPlugins(allowed, plugins), { role: ctx.admin ? "admin" : "user" });
 }
@@ -96,5 +99,6 @@ export type SectionResolution = { kind: "page"; id: string } | { kind: "redirect
 export function resolveSection(section: string, ctx: NavContext, plugins: PluginList = webPlugins): SectionResolution {
   if (RETIRED_PATHS[section]) return { kind: "redirect", to: RETIRED_PATHS[section] };
   if (sectionsFor(ctx, plugins).some((s) => s.id === section)) return { kind: "page", id: section };
-  return { kind: "redirect", to: "/settings/general" };
+  // the editor's old id (its defaults moved to the AI Editor page) where its steps page is not shown
+  return { kind: "redirect", to: section === "editor" ? "/editor" : "/settings/general" };
 }

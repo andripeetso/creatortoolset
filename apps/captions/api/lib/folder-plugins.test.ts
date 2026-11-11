@@ -276,6 +276,9 @@ describe("plug-ins from the person's folder", () => {
     ["a path that can't be replaced", 'replaces: { paths: ["/api/review"], routes: new Hono() }', null, /not a replaceable path/],
     ["a path that can't be answered", 'answers: [{ path: "/api/nope", routes: new Hono() }]', null, /not an answerable path/],
     ["a public route without its slash", 'publicRoutes: [{ path: "nope", app: new Hono() }]', null, /must start with \//],
+    // ahead of the sign-in = open to the whole network once other devices are on
+    ["a public route", 'publicRoutes: [{ path: "/hook", app: new Hono() }]', null, /answers before the sign-in/],
+    ["open routes", 'openRoutes: new Hono().post("/hook", (c) => c.text("ok"))', null, /answers before the sign-in/],
     ["routes that are not a Hono app", "routes: { nope: true }", null, /./],
     ["a start that is not a function", 'start: "soon"', null, /start must be a function/],
     // these two passed the check and then stopped the whole server when it mounted them

@@ -55,7 +55,7 @@ export function AccountStepView({ account, busy, providers = [], onSignIn, onDon
       {account.state === "off" && <p>No account is needed here.</p>}
       {(account.state === "signedOut" || account.state === "cancelled" || account.state === "error") && (
         <>
-          <p className="text-foreground">Sign in to set up your account. Your Apple, Google or GitHub account gives your name and email, nothing else.</p>
+          <p className="text-foreground">Sign in to set up your Creator Toolset account.</p>
           {account.state === "cancelled" && <p>The sign-in was closed before it finished.</p>}
           {account.state === "error" && <p className="text-destructive">{account.message || "The sign-in didn't work."}</p>}
           <div className="flex flex-col gap-2 sm:w-72">
@@ -140,9 +140,11 @@ export const SIGN_IN_BUTTON =
 /**
  * Setup's last screen, which anyone can skip: a sign-in card in the middle of the window. Its title and one line at the
  * left, then one button for each sign-in the Mac app names, as wide as the card, with the provider's mark and
- * "Continue with …" (the system's sign-in sheet opens; the button it came from says Signing in… meanwhile), and a quiet
- * band under them. Signed in, the buttons give way to who it is. A sheet that was closed is nothing to report; a sign-in
- * that failed says so in one line and the buttons stay. Only what a sign-in does today is said. Pure, for tests.
+ * "Continue with …" (the system's sign-in sheet opens; the button it came from says Signing in… meanwhile). Signing in
+ * finishes setup (SetupDialog), so "You're signed in" with who it is shows only for the moment that takes, or when the
+ * screen is opened by someone already signed in. A sheet that was closed is nothing to report; a sign-in that failed
+ * says so in one line and the buttons stay. The line says what the account is and never what is or is not read from
+ * the Apple or Google account (the owner, 2026-11-11: such a promise was untrue). Pure, for tests.
  */
 export function AccountSetupView({ account, providers, busy, onSignIn }: Pick<MacAccount, "account" | "providers" | "busy"> & { onSignIn: (p: Provider) => void }) {
   const signedIn = account.state === "signedIn";
@@ -158,7 +160,7 @@ export function AccountSetupView({ account, providers, busy, onSignIn }: Pick<Ma
         <div className="space-y-6 p-8">
           <div className="space-y-1">
             <h3 className="text-xl font-semibold tracking-tight text-foreground">{signedIn ? "You're signed in" : "Sign in to Creator Toolset"}</h3>
-            <p className="text-sm text-muted-foreground">{signedIn ? "The app shows your name from now on." : "Optional. Sign in and the app shows your name."}</p>
+            {!signedIn && <p className="text-sm text-muted-foreground">Optional. One account for this app and creatortoolset.com.</p>}
           </div>
           {signedIn ? (
             <div className="flex items-center gap-3">
@@ -190,7 +192,6 @@ export function AccountSetupView({ account, providers, busy, onSignIn }: Pick<Ma
             </div>
           )}
         </div>
-        <p className="border-t border-border bg-muted/40 px-8 py-3.5 text-center text-xs text-muted-foreground">Nothing else is read from that account.</p>
       </section>
     </div>
   );

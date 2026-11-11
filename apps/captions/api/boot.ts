@@ -24,6 +24,7 @@ import { startTrashPurge } from "./library/trash";
 import { startWatchFolders, watchApp } from "./library/watch";
 import { storageApp } from "./library/usage";
 import { editorApp } from "./editor/routes";
+import { editStepsApp } from "./editor/steps";
 import { foldersApp } from "./folders";
 import { startEditorWorker } from "./editor/worker";
 import { presetsApp } from "./presets";
@@ -198,6 +199,7 @@ export const TOOL_GATES: [string, Tool[]][] = [
   ["/api/clean", ["clean"]],
   ["/api/library", ["media"]],
   ["/api/editor", ["editor"]],
+  ["/api/edit-steps", ["editor"]],
   ["/api/folders/editor", ["editor"]],
   // the Analyzer and the Workshop read each other's APIs
   ["/api/instagram", ["instagram", "workshop"]],
@@ -417,6 +419,7 @@ app.route("/api/library", grantsApp);
 // a plug-in that replaces the AI Editor answers its root paths first (the old URLs the Mac worker posts to)
 mountReplacedRoutes(app, serverPlugins);
 app.route("/api/editor", editorApp);
+app.route("/api/edit-steps", editStepsApp);
 // the library's worker: probes, thumbs and proxies queued uploads; and the trash purge (not under tests, which call them)
 if (process.env.NODE_ENV !== "test") {
   startLibraryWorker();

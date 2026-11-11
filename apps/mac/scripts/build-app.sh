@@ -162,7 +162,7 @@ rm -rf "$server/node_modules/fsevents"   # a file watcher's native part: the bui
 # from, with PLUGINS.md). Listed by name, so nothing else in a checkout (plugins/, .env, runtime/) can ride along.
 src_out="$server/source"
 mkdir -p "$src_out/scripts"
-for d in api src contracts db plugin-examples; do
+for d in api src contracts db plugin-examples editor-steps; do   # editor-steps: the AI Editor's steps, put in on Turn on
   rsync -a --exclude '*.test.*' --exclude '*.spec.*' --exclude '*.gen.ts' --exclude 'node_modules' "$captions/$d/" "$src_out/$d/"
 done
 cp "$captions/scripts/plugin-build.mjs" "$captions/scripts/plugin-host.mjs" "$src_out/scripts/"

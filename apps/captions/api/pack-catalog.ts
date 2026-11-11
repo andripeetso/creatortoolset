@@ -88,6 +88,9 @@ export const packCatalogApp = new Hono<{ Variables: AuthVars }>()
     if ("delisted" in r) return c.json({ error: "This pack was removed from the catalog", reason: r.delisted }, 410);
     const check = checkPack(r.listed.pack);
     if (!check.ok || !check.pack) return c.json({ error: "This pack didn't pass the checks", problems: check.problems }, 400);
+    // what the community shares is text and settings, never code: whatever the catalog lists, a pack with drawing
+    // code (level 1) is not installed from it
+    if (check.level) return c.json({ error: "This pack carries code, and packs from the community never do" }, 400);
     const out = await installPack(user.username, check.pack, check.level ?? 0, {
       projectIds: parseProjectIds(await c.req.json().catch(() => null)),
       admin: user.role === "admin",

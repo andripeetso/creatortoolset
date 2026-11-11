@@ -16,6 +16,81 @@ final class RecorderTests: XCTestCase {
         }
     }
 
+    /// A sound buffer of 512 frames at half of full level: 24-bit samples, two channels, each sample in `bytes`
+    /// bytes (3 = packed, 4 = in the high bits of 32).
+    private func sound(bytes: Int, at seconds: Double = 0) throws -> CMSampleBuffer {
+        let asbd = AudioStreamBasicDescription(
+            mSampleRate: 48_000, mFormatID: kAudioFormatLinearPCM,
+            mFormatFlags: kAudioFormatFlagIsSignedInteger | (bytes == 3 ? kAudioFormatFlagIsPacked : kAudioFormatFlagIsAlignedHigh),
+            mBytesPerPacket: UInt32(bytes * 2), mFramesPerPacket: 1, mBytesPerFrame: UInt32(bytes * 2), mChannelsPerFrame: 2,
+            mBitsPerChannel: 24, mReserved: 0)
+        let format = try CMAudioFormatDescription(audioStreamBasicDescription: asbd)
+        let sample: [UInt8] = bytes == 3 ? [0, 0, 0x40] : [0, 0, 0, 0x40]   // 0x400000 of 0x800000, little-endian
+        let data = Data((0..<1024).flatMap { _ in sample })
+        let block = try CMBlockBuffer(length: data.count)
+        try data.withUnsafeBytes { try block.replaceDataBytes(with: $0) }
+        return try CMSampleBuffer(dataBuffer: block, formatDescription: format, numSamples: 512,
+                                  presentationTimeStamp: CMTime(seconds: seconds, preferredTimescale: 48_000), packetDescriptions: [])
+    }
+
+    private func floats(_ buffer: CMSampleBuffer) throws -> [Float] {
+        try XCTUnwrap(buffer.dataBuffer).dataBytes().withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
+    }
+
+    func testASoundTrackIsWrittenInOneLayoutWhateverLayoutItsBuffersComeIn() throws {
+        // an audio interface's first buffers in another layout than the rest: the track reads each by its own layout
+        var layout = SoundLayout()
+        let odd = try XCTUnwrap(layout.take(try sound(bytes: 4)))
+        let oddToo = try XCTUnwrap(layout.take(try sound(bytes: 4, at: 0.01)))
+        let rest = try XCTUnwrap(layout.take(try sound(bytes: 3, at: 0.02)))
+        XCTAssertTrue(CMFormatDescriptionEqual(try XCTUnwrap(odd.formatDescription), otherFormatDescription: try XCTUnwrap(rest.formatDescription)))
+        XCTAssertEqual(rest.formatDescription?.audioStreamBasicDescription?.mBytesPerFrame, 8)   // two float samples
+        for made in [odd, oddToo, rest] {
+            XCTAssertEqual(made.numSamples, 512)
+            let samples = try floats(made)
+            XCTAssertEqual(samples.count, 1024)
+            XCTAssertTrue(samples.allSatisfy { abs($0 - 0.5) < 0.0001 }, "read by the wrong layout: \(samples.prefix(4))")
+        }
+        XCTAssertEqual(rest.presentationTimeStamp.seconds, 0.02, accuracy: 0.0001)
+        XCTAssertEqual(layout.leftOut, 0)
+    }
+
+    /// Float samples at half level, `channels` of them, each channel in its own buffer or all in one.
+    private func floatSound(rate: Double, channels: Int, interleaved: Bool) throws -> CMSampleBuffer {
+        let format = try XCTUnwrap(AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: rate, channels: AVAudioChannelCount(channels), interleaved: interleaved))
+        let pcm = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 512))
+        pcm.frameLength = 512
+        for buffer in UnsafeMutableAudioBufferListPointer(pcm.mutableAudioBufferList) {
+            let samples = UnsafeMutableBufferPointer<Float>(buffer)
+            for i in samples.indices { samples[i] = 0.5 }
+        }
+        var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: CMTimeScale(rate)), presentationTimeStamp: .zero, decodeTimeStamp: .invalid)
+        var made: CMSampleBuffer?
+        XCTAssertEqual(CMSampleBufferCreate(allocator: nil, dataBuffer: nil, dataReady: false, makeDataReadyCallback: nil, refcon: nil,
+                                            formatDescription: format.formatDescription, sampleCount: 512, sampleTimingEntryCount: 1,
+                                            sampleTimingArray: &timing, sampleSizeEntryCount: 0, sampleSizeArray: nil, sampleBufferOut: &made), noErr)
+        let buffer = try XCTUnwrap(made)
+        XCTAssertEqual(CMSampleBufferSetDataBufferFromAudioBufferList(buffer, blockBufferAllocator: nil, blockBufferMemoryAllocator: nil,
+                                                                      flags: 0, bufferList: pcm.audioBufferList), noErr)
+        return buffer
+    }
+
+    func testEveryUsualMicrophoneAndTheMacsSoundComeThroughWhole() throws {
+        // a built-in or wireless microphone (one channel, float), 44.1 kHz, and the Mac's sound (two channels, each in its own buffer)
+        for (rate, channels, interleaved) in [(48_000.0, 1, true), (44_100.0, 1, false), (24_000.0, 1, true), (48_000.0, 2, false), (44_100.0, 2, true)] {
+            var layout = SoundLayout()
+            let made = try XCTUnwrap(layout.take(try floatSound(rate: rate, channels: channels, interleaved: interleaved)), "\(rate) Hz, \(channels) ch")
+            let asbd = try XCTUnwrap(made.formatDescription?.audioStreamBasicDescription)
+            XCTAssertEqual(asbd.mSampleRate, rate)
+            XCTAssertEqual(Int(asbd.mChannelsPerFrame), channels)
+            XCTAssertEqual(made.numSamples, 512)
+            let samples = try floats(made)
+            XCTAssertEqual(samples.count, 512 * channels)
+            XCTAssertTrue(samples.allSatisfy { abs($0 - 0.5) < 0.0001 }, "\(rate) Hz, \(channels) ch: \(samples.prefix(4))")
+            XCTAssertEqual(layout.leftOut, 0)
+        }
+    }
+
     func testPointerOnTheMainDisplay() {
         // main display 1512×982 points: bottom-left origin in, top-left 0–1 out
         let main = CGRect(x: 0, y: 0, width: 1512, height: 982)

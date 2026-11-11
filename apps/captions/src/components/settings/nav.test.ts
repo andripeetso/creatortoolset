@@ -19,6 +19,12 @@ describe("the sidebar per install and role", () => {
     expect(listed(at(true, false, true))).toContain("servers");
   });
 
+  it("AI Editor (its post-processing steps) is on the Mac app's own server only: they are switched on there", () => {
+    expect(listed(at(false, true, true))).toEqual(expect.arrayContaining(["tools", "editor"]));
+    expect(listed(at(false, true))).not.toContain("editor");
+    expect(listed(at(true, true, true))).not.toContain("editor");
+  });
+
   it("a hosted member sees Team but not Admin", () => {
     const ids = listed(at(true, false));
     expect(ids).toContain("team");

@@ -76,6 +76,14 @@ describe("community catalog", () => {
     expect((await call("POST", "/api/pack-catalog/punchy-hooks/install")).status).toBe(410);
   });
 
+  it("installs no pack that carries code, whatever the catalog lists", async () => {
+    const kit = { ...pack("1.0.0"), permissions: ["motion-kit"], designSystems: [{ name: "tiny-look", title: "Tiny look", tokens: {}, guide: "Soft.", kit: "export const draw = () => {}" }] };
+    hosted = { "/api/pack-catalog/public/punchy-hooks": () => Response.json({ ...detail("1.0.0"), pack: kit }) };
+    const res = await call("POST", "/api/pack-catalog/punchy-hooks/install");
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toMatch(/carries code/);
+  });
+
   it("publishing answers with the catalog's address; share-link visitors can't install or publish", async () => {
     const res = await call("POST", "/api/pack-catalog/submit", { pack: pack("2.0.0"), rights: true });
     expect(res.status).toBe(409);

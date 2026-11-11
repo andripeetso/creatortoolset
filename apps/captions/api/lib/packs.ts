@@ -240,6 +240,7 @@ async function installInto(state: State, username: string, pack: Pack, level: Pa
       })(),
       off: prev?.off ?? [],
       instructions: pack.instructions ?? {},
+      ...(pack.home ? { home: pack.home } : {}),
       items: { frameworks, presets, designSystems },
       ...(held ? { held } : {}),
       ...(prev?.default ? { default: true } : {}),

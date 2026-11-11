@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { installCatalogPack } from "@/lib/pack-catalog";
+import { useSetup } from "@/lib/setup";
 import { useWorkspace } from "@/lib/workspace";
 import { compareVersions, type InstalledPack } from "@contracts/packs";
 import { msg } from "../settings/helpers";
@@ -134,6 +135,42 @@ export function PackHereSwitch({ id, name, installed, reload }: { id: string; na
   );
 }
 
+/** Whether Home already shows what the pack's layout does: the same tiles switched off, in any order. */
+export const homeInUse = (hidden: readonly string[] | undefined, pack: readonly string[]): boolean =>
+  !!hidden && hidden.length === pack.length && pack.every((t) => hidden.includes(t));
+
+/**
+ * A pack's Home layout: Use on Home sets the account's own switches (Settings → Tools, PUT /api/setup, which takes only
+ * the app's own tile ids). Nothing applies it but this press; an install or an update never does.
+ */
+export function PackHomeRow({ installed }: { installed: InstalledPack }) {
+  const hidden = useSetup((s) => s.view?.hidden);
+  const save = useSetup((s) => s.save);
+  const [busy, setBusy] = useState(false);
+  if (!installed.home) return null;
+  const layout = installed.home.hidden;
+  return (
+    <Row
+      title="Home layout"
+      control={
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={busy || homeInUse(hidden, layout)}
+          onClick={() => {
+            setBusy(true);
+            save({ hidden: layout })
+              .catch(() => saveFailed("Home did not change. Try again."))
+              .finally(() => setBusy(false));
+          }}
+        >
+          {homeInUse(hidden, layout) ? "In use" : "Use on Home"}
+        </Button>
+      }
+    />
+  );
+}
+
 /** The actions on an installed pack's row: its update (when one is listed), On, and `…` with Remove (confirmed). */
 export function InstalledPackActions({ id, name, installed, latest, reload }: { id: string; name: string; installed: InstalledPack; latest?: string | null; reload: () => Promise<void> }) {
   const { run } = usePackRun(reload);
@@ -191,6 +228,7 @@ export function PackActions({ id, name, installed, latest, reload }: { id: strin
       />
       <PackUsedIn id={id} installed={installed} reload={reload} />
       <PackHereSwitch id={id} name={name} installed={installed} reload={reload} />
+      <PackHomeRow installed={installed} />
     </Card>
   );
 }
