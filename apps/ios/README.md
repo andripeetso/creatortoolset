@@ -6,7 +6,11 @@ or a hosted one.
 
 Tabs:
 
-- **Chats**: the app's Assistant, the same chat as on the computer.
+- **Chats**: the app's Assistant, the same chat as on the computer. **New edit** at the top: pick clips from Photos (in
+  the order picked), then Start. The clips' uploads are made first, then the AI Editor edit from them, then the bytes go
+  by background transfers; the server starts the edit when the last clip is in, with the phone locked or the app
+  closed. Its row shows how far it is (uploaded, Editing, Ready to review) and opens the edit's page or its Review
+  video; a clip the server never got shows Try again (a fresh edit from the clips still on the phone).
 - **Upload**: pick clips from Photos or Files, then Upload. Each file is copied into the app first, then sent in
   32 MB chunks (or straight to the library's storage bucket) by background transfers: uploads carry on with the
   phone locked or the app closed, and resume from the server's own byte count after a dropped connection. The server
@@ -33,14 +37,16 @@ pnpm test:ios                          # unit tests (IOS_SIMULATOR=… picks the
 ```
 
 The tests in `ServerTests.swift` run against a real server when one is given, and are skipped otherwise: sign-in,
-the one-time sign-in link, a 70 MB upload in three chunks, the duplicate answer, and the routes each screen reads.
+the one-time sign-in link, a 70 MB upload in three chunks, the duplicate answer, a New edit of two clips (waiting
+on its uploads, then started with both as its sources), and the routes each screen reads.
 
 ```sh
 TEST_RUNNER_CT_TEST_SERVER=http://127.0.0.1:43127 TEST_RUNNER_CT_TEST_PASSWORD=<APP_SECRET> pnpm test:ios
 ```
 
 Run the server with a scratch `DATA_DIR` for this: the test signs in as `admin` and adds files to its library.
-`-startTab <0-4>` as a launch argument opens that tab (for simulator screenshots).
+`-startTab <0-4>` as a launch argument opens that tab (for simulator screenshots); `-newEdit YES` opens New edit, and
+in a debug build `-newEditFiles <path>,<path>` picks those files.
 
 The server side of the contract is `apps/captions/api/ios-contract.test.ts` with
 `apps/captions/api/__fixtures__/ios-public-paths.json`: every path the app calls. Add a path there when the app

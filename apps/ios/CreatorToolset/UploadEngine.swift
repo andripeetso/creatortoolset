@@ -22,13 +22,15 @@ final class UploadEngine: ObservableObject {
     // MARK: What the screens call
 
     /// A file picked on the phone, already moved to `AppFiles.upload(id)`. Nothing is sent until Upload.
-    func add(id: UUID, filename: String, size: Int64, server: Server) {
-        store.add(UploadItem(id: id, filename: filename, size: size, server: server.id))
+    func add(id: UUID, filename: String, size: Int64, server: Server, edit: UUID? = nil) {
+        var item = UploadItem(id: id, filename: filename, size: size, server: server.id)
+        item.edit = edit
+        store.add(item)
     }
 
-    /// Upload everything picked, and everything that failed before.
+    /// Upload everything picked, and everything that failed before (a New edit's clips go with their edit).
     func uploadAll() {
-        for item in store.items where item.state == .picked || item.state == .failed {
+        for item in store.items where (item.state == .picked || item.state == .failed) && item.edit == nil {
             store.update(item.id) {
                 $0.state = .sending
                 $0.attempts = 0
@@ -47,7 +49,47 @@ final class UploadEngine: ObservableObject {
     }
 
     func clearDone() {
-        for item in store.items where item.state == .done { store.remove(item.id) }
+        for item in store.items where item.state == .done && item.edit == nil { store.remove(item.id) }
+    }
+
+    /// A New edit's clips: each one's upload made on the server, its bytes not sent yet. The upload ids in the order
+    /// given; a clip that has one already keeps it.
+    func prepare(_ ids: [UUID]) async throws -> [String] {
+        for id in ids where store.item(id)?.uploadId == nil {
+            guard let item = store.item(id), let api = api(for: item) else { throw APIError.server(404, "Its server was removed") }
+            try await makeUpload(id, api)
+        }
+        return ids.compactMap { store.item($0)?.uploadId }
+    }
+
+    /// Then their bytes, through the background session.
+    func send(_ ids: [UUID]) {
+        for id in ids {
+            store.update(id) {
+                $0.state = .sending
+                $0.attempts = 0
+                $0.nextAttemptAt = nil
+                $0.note = nil
+            }
+        }
+        kick()
+    }
+
+    /// Clips sent again from their copies on the phone, as new uploads (a New edit's Try again).
+    func restart(_ ids: [UUID]) async {
+        for id in ids {
+            await transfers.cancel(itemId: id)
+            store.update(id) {
+                $0.uploadId = nil
+                $0.direct = nil
+                $0.sent = 0
+                $0.state = .picked
+                $0.duplicate = false
+                $0.attempts = 0
+                $0.nextAttemptAt = nil
+                $0.note = nil
+            }
+        }
     }
 
     func kick() { Task { await reconcile() } }
@@ -136,11 +178,17 @@ final class UploadEngine: ObservableObject {
         let libraries: [Library]
     }
 
-    /// POST /api/library/:id/uploads into the account's first library.
     private func create(_ id: UUID, _ api: API) async throws {
+        try await makeUpload(id, api)
+        guard let item = store.item(id) else { return }
+        if item.direct != nil { startPart(id, 1) } else { startPatch(id, from: item.sent) }
+    }
+
+    /// POST /api/library/:id/uploads into the account's first library.
+    private func makeUpload(_ id: UUID, _ api: API) async throws {
         guard let item = store.item(id) else { return }
         let libraries: Libraries = try await api.get("/api/library")
-        guard let library = libraries.libraries.first else { return fail(id, "This server has no Media Library") }
+        guard let library = libraries.libraries.first else { throw APIError.server(404, "This server has no Media Library") }
         let data = try await api.send("/api/library/\(library.id)/uploads",
                                       json: ["filename": item.filename, "size": item.size])
         let created = try JSONDecoder().decode(Created.self, from: data)
@@ -148,9 +196,8 @@ final class UploadEngine: ObservableObject {
             $0.uploadId = created.id
             $0.chunkSize = created.chunkSize
             $0.direct = created.direct.map { UploadItem.Direct(partSize: $0.partSize, urls: $0.urls) }
-            $0.sent = 0
+            $0.sent = created.offset
         }
-        if created.direct != nil { startPart(id, 1) } else { startPatch(id, from: created.offset) }
     }
 
     private func startPatch(_ id: UUID, from offset: Int64) {
@@ -259,8 +306,11 @@ final class UploadEngine: ObservableObject {
                 $0.sent = $0.size
                 $0.note = nil
             }
-            try? FileManager.default.removeItem(at: AppFiles.upload(id))
+            // a New edit's copy stays until its edit has started: Try again sends it once more
+            if store.item(id)?.edit == nil { try? FileManager.default.removeItem(at: AppFiles.upload(id)) }
         case .startOver(let why):
+            // a new upload id is one the edit never hears of: its row says so and offers Try again
+            if store.item(id)?.edit != nil { return fail(id, why) }
             let attempts = (store.item(id)?.attempts ?? 0) + 1
             if attempts > 5 { return fail(id, why) }
             store.update(id) {

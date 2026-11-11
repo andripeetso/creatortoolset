@@ -17,7 +17,10 @@ struct ChatView: View {
     }
 
     @EnvironmentObject private var servers: Servers
+    @EnvironmentObject private var edits: PhoneEdits
     @State private var chat: Chat?
+    /// `-newEdit YES` opens New edit at launch (simulator screenshots).
+    @State private var newEdit = UserDefaults.standard.bool(forKey: "newEdit")
     @State private var draft = ""
     @State private var sending = false
     @State private var error: String?
@@ -46,10 +49,37 @@ struct ChatView: View {
                 ContentUnavailableView("Ask your AI", systemImage: "bubble.left.and.bubble.right")
             }
         }
+        .safeAreaInset(edge: .top) { editRows }
         .safeAreaInset(edge: .bottom) { composer }
         .navigationTitle(chat?.aiName.isEmpty == false ? chat!.aiName : "Assistant")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("New edit") { newEdit = true }
+            }
+        }
+        .sheet(isPresented: $newEdit) { NewEditView() }
         .task { await follow() }
+        .task {
+            // ponytail: polls like the chat; the change stream when the phone keeps a live connection
+            while !Task.isCancelled {
+                await edits.refresh()
+                try? await Task.sleep(for: .seconds(15))
+            }
+        }
+    }
+
+    /// The phone's New edits, newest first.
+    @ViewBuilder private var editRows: some View {
+        let mine = edits.list.filter { $0.server == servers.currentId }
+        if !mine.isEmpty {
+            VStack(spacing: 8) {
+                ForEach(mine) { PhoneEditRow(edit: $0) }
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+            .background(.bar)
+        }
     }
 
     private var composer: some View {
