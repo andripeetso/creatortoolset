@@ -7,7 +7,7 @@ import { env } from "./lib/env";
 import { assembleParts, MAX_UPLOAD_BYTES, PART_SIZE, partsStatus, readUploadState, receivePart, startUpload } from "./lib/uploads";
 import { mayUse, type SessionUser } from "./users";
 import { notesFromFile, probeDuration } from "./clips";
-import { addVersion, readMeta as readReview } from "./review";
+import { addVersion, notifyNewVersion, readMeta as readReview } from "./review";
 import { createProjectFromFile, linkOrCopy } from "./projects";
 import { ensureLibrary } from "./library/access";
 import { libraryDb } from "./library/db";
@@ -177,6 +177,8 @@ export async function useFile(
     const added = await addVersion(of?.id, { owner: user.username, name: title, mime: meta.mime, bytes: meta.size }, (dest) => linkOrCopy(file, dest));
     if (!added) throw new Error("Review couldn't take it.");
     if (!of) return { to, id: added.meta.id, name: title, href: `/review/${added.meta.id}` };
+    // the people who commented hear of the new version, as they do when it is uploaded on the page
+    await notifyNewVersion(added.meta, user.username, added.n);
     return { to, id: of.id, name: added.meta.name, href: `/review/${of.id}?v=${added.n}`, version: added.n, note: `Version ${added.n} of “${added.meta.name}”` };
   }
   // Caption Studio builds its editing copy first: a long file can take minutes, so the answer doesn't wait past 40 s

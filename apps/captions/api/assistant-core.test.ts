@@ -182,19 +182,29 @@ describe("work the assistant started ends", () => {
     const cookie = await cookieOf("ana");
     const t = await turn(cookie, "Start the tiny edit");
     await tool(t.token, "tiny_card", { id: "e9" });
-    // while the reply is still being written the line waits, so the reply keeps the last word until it ends
+    await t.end();
+    // the reply that started it has ended; while ANOTHER reply is being written in that chat the line waits for it to end
+    const other = await turn(cookie, "And something else meanwhile");
     expect(workEnded("ana", "edit:e9", { status: "done", detail: "First cut is ready", say: "The first cut of Tiny edit is ready.", choices: ["Show me", "Carry on"] })).toBe(true);
     let messages = (await viewOf(cookie)).messages;
     expect(messages.at(-1)!.status).toBe("thinking");
-    expect(messages.at(-1)!.work![0]).toMatchObject({ status: "done", detail: "First cut is ready" });
-    await t.end();
+    expect(messages.at(-3)!.work![0]).toMatchObject({ status: "done", detail: "First cut is ready" });
+    await other.end();
     messages = (await viewOf(cookie)).messages;
     expect(messages.slice(-2).map((m: AssistantMessage) => [m.role, m.text, m.status])).toEqual([["assistant", "Done.", "done"], ["assistant", "The first cut of Tiny edit is ready.", "done"]]);
     expect(messages.at(-1)!.choices).toEqual(["Show me", "Carry on"]);
+
+    // work that ends while the reply that started it is still being written: that reply is following it and says so itself
+    const same = await turn(cookie, "Start another and wait for it");
+    await tool(same.token, "tiny_card", { id: "e10" });
+    expect(workEnded("ana", "edit:e10", { status: "done", detail: "Ready", say: "Not said: the reply says it" })).toBe(true);
+    await same.end();
+    messages = (await viewOf(cookie)).messages;
+    expect(messages.at(-1)).toMatchObject({ text: "Done.", work: [{ id: "edit:e10:new", status: "done", detail: "Ready" }] });
     // ended already, or never started from the chat: nothing more is said
     expect(workEnded("ana", "edit:e9", { status: "done", say: "Again" })).toBe(false);
     expect(workEnded("ana", "edit:e", { status: "done", say: "Not this one" })).toBe(false);
-    expect((await viewOf(cookie)).messages.at(-1)!.text).toBe("The first cut of Tiny edit is ready.");
+    expect((await viewOf(cookie)).messages.at(-1)!.text).toBe("Done.");
   });
 });
 

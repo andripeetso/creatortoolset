@@ -50,7 +50,7 @@ Your reply is shown in a small chat dock. You act in the app only through its to
 - navigate opens a page of the app for the user, given as a relative path such as /workshop. It can put these dialogs up for them to fill in: /settings/providers?add=1 (add an AI), /settings/connectors?add=<instagram|facebook|youtube|tiktok|x> (add a social account), /settings/devices?add=1 (add a computer) or ?phone=1 (a phone), /settings/automations?add=1 (a new scheduled task), /projects?add=1 (a new project), /settings/team?add=1 (invite someone, on a team's server).
 - A name in your reply opens its page when it is a markdown link to a path of this app: [its title](/review/<id>?v=<n>), [its name](/editor/<id>), [its title](/workshop/sessions/<id>). When you list reviews, edits or sessions the user can open, link each that way (a tool's link ends in that path).
 - show_video plays a Review video (or an AI Editor draft's preview) inside the chat, with a link to its page.
-- use_file sends a video or recording (dropped in the chat, or by its path on this computer when the server runs here) to Video Notes (transcript, summary, takeaways, action items, chapters), Review (a video page with comments and a share link), Caption Studio (captions on the video) or the Media Library (footage to keep, sorted into A-roll and B-roll; several dropped files in one call; a folder on this computer goes in with media_import_folder). notes_get follows a Video Note until it's ready and reads what it found. With version_of (a Review video's link) the file becomes that video's next version instead of a new video. notes_list lists the user's Video Notes; notes_get with add writes the takeaways, the action plan or the quotes a note does not have yet.
+- use_file sends a video or recording (dropped in the chat, or by its path on this computer when the server runs here) to Video Notes (transcript, summary, takeaways, an action plan, chapters), Review (a video page with comments and a share link), Caption Studio (captions on the video) or the Media Library (footage to keep, sorted into A-roll and B-roll; several dropped files in one call; a folder on this computer goes in with media_import_folder). notes_get follows a Video Note until it's ready and reads what it found. With version_of (a Review video's link) the file becomes that video's next version instead of a new video. notes_list lists the user's Video Notes; notes_get with add writes the takeaways, the action plan or the quotes a note does not have yet.
 - offer_choices puts 2 to 4 short answers under your reply as buttons; a press sends that answer as the user's next message.
 - A tool that deletes, publishes or sends asks the user itself, with a Yes / No card under your reply. When a tool answers that it asked, say so in a few words and end your reply: it is done when they press Yes.
 - ask_secret asks the user for one API key. The app shows a secure box in the chat; the key goes straight to the app and never to you. Never ask the user to paste a key, token or password into the chat, and never repeat one back.
@@ -404,18 +404,22 @@ const later = new Map<string, AssistantMessage[]>();
  * whatever chat they sit, get their end; the cards are found by the start of their id ("edit:<id>" ends
  * "edit:<id>:new" and "edit:<id>:draft"). With `say`, one line is posted in that chat as the assistant's, with
  * answer buttons under it (`choices`: a press sends that answer). Nothing is said when no card was running: work
- * started on its own page tells nobody in the chat. Returns whether a card was running.
+ * started on its own page tells nobody in the chat. Nor when the reply that holds the card is still being written:
+ * it is following the work itself (waiting on it with a tool), so it says the end in its own words, once.
+ * Returns whether a card was running.
  */
 export function workEnded(username: string, idStart: string, end: { status: "done" | "failed"; detail?: string; say?: string; choices?: string[] }): boolean {
   const conv = load(username);
   let hit = false;
   let said = false;
   for (const list of everyChat(conv)) {
-    const cards = list.flatMap((m) => m.work ?? []).filter((w) => w.status === "running" && (w.id === idStart || w.id.startsWith(`${idStart}:`)));
-    if (!cards.length) continue;
+    const mine = (w: NonNullable<AssistantMessage["work"]>[number]) => w.status === "running" && (w.id === idStart || w.id.startsWith(`${idStart}:`));
+    const holders = list.filter((m) => m.work?.some(mine));
+    if (!holders.length) continue;
     hit = true;
-    for (const w of cards) Object.assign(w, { status: end.status, ...(end.detail ? { detail: end.detail } : {}) });
-    if (!end.say || said) continue;
+    const following = holders.some((m) => m.status === "thinking");
+    for (const w of holders.flatMap((m) => m.work!.filter(mine))) Object.assign(w, { status: end.status, ...(end.detail ? { detail: end.detail } : {}) });
+    if (!end.say || said || following) continue;
     said = true;
     const line: AssistantMessage = { id: randomUUID(), role: "assistant", text: end.say, at: Date.now(), status: "done", ...(end.choices?.length ? { choices: end.choices.slice(0, 4) } : {}) };
     const last = list.at(-1);

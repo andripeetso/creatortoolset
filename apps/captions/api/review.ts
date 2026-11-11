@@ -1923,6 +1923,9 @@ async function openPath(user: string, m: Meta): Promise<string | null> {
   return p?.share?.enabled ? `/rp/${p.share.token}/${m.id}` : null;
 }
 
+/** A new version of a video, told to the people who commented on it: the page's upload says it, and so does a file added as the next version from the assistant's chat. */
+export const notifyNewVersion = (m: Meta, by: string, n: number): Promise<void> => notify(m, { name: by, user: by }, { kind: "version", text: `V${n}`, query: `?v=${n}` });
+
 /** Tell the owner and every signed-in person who commented on this video,
  *  except whoever did it. Never fails the request that triggered it. */
 async function notify(
