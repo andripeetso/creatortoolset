@@ -1,5 +1,6 @@
 import { MODULES } from "./mcp-tools";
 import { ToolError, type ToolContext, type ToolDef, type ToolHandler, type WorkCard } from "./mcp-tools/types";
+import { reviewOf } from "./mcp-tools/review";
 import { Hono } from "hono";
 import { MY_KEYS } from "../contracts/service-keys";
 import { TOOLS as APP_TOOLS, TOOL_NAMES, readiness, type SetupView } from "../contracts/tools";
@@ -570,11 +571,13 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
     workshop_wait: wait,
     finals_link_session: async (a) =>
       ws(`/sessions/${a.session}/finals`, "POST", { pieceId: a.piece, ...(a.workshop_piece ? { docId: a.workshop_piece } : {}) }),
-    list_reviews: async () => ({
-      reviews: (await json<Args[]>("/api/review")).map((r) => {
+    list_reviews: async () => {
+      const folders = new Map((await json<Args[]>("/api/review/projects")).map((p) => [p.id, p.name]));
+      return { reviews: (await json<Args[]>("/api/review")).map((r) => {
         const versions = (r.versions as Args[] | undefined) ?? [];
         return {
           ...pick(r, ["id", "name"]),
+          ...(folders.has(r.projectId) ? { folder: folders.get(r.projectId) } : {}),
           approval: (r.approval as Args | undefined)?.status,
           versions: versions.length,
           latest_file: versions.at(-1)?.name,
@@ -583,8 +586,8 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
           updated: when(r.updatedAt),
           link: `${origin}/review/${r.id}`,
         };
-      }),
-    }),
+      }) };
+    },
     get_review: async (a) => {
       const path = reviewPath(String(a.link), origin);
       const view = await json(path);
@@ -610,7 +613,11 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
         ...pick(asset, ["id", "name"]),
         link: `${origin}/review/${asset.id}`,
         approval: (asset.approval as Args | undefined)?.status,
-        versions: [...versions.values()].map((v) => pick(v, ["n", "name", "duration", "fps", "width", "height", "status", "removed"])),
+        versions: [...versions.values()].map((v) => ({
+          ...pick(v, ["n", "name", "duration", "fps", "width", "height", "status", "removed"]),
+          // the file itself, where this caller may have it: a link the person presses (the owner's needs their sign-in)
+          ...(asset.download && !v.removed && v.status !== "error" ? { download: `${origin}${path}/v/${v.n}/download` } : {}),
+        })),
         open_comments: threads.filter((t) => !t.resolved).length,
         comments: threads,
       };
@@ -625,8 +632,11 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       return out;
     },
     resolve_comment: async (a) => {
-      const id = ((await json(reviewPath(String(a.link), origin))).asset as Args).id;
-      const cm = await json(`/api/review/assets/${id}/comments/${encodeURIComponent(String(a.comment_id))}`, "PATCH", { resolved: a.resolved !== false });
+      const r = await reviewOf({ json, origin }, a.link);
+      const had = r.comments.find((c) => c.id === a.comment_id);
+      if (!had) throw new ToolError("No comment with that id on this video: get_review lists them.");
+      if (!r.manage && !had.mine) throw new ToolError("That video is someone else's: on its share link you can resolve only the comments you wrote.");
+      const cm = await json(`${r.path}/comments/${encodeURIComponent(String(a.comment_id))}`, "PATCH", { resolved: a.resolved !== false });
       return { id: cm.id, resolved: !!cm.resolved, text: cm.text };
     },
     use_file: async (a) => {
@@ -673,14 +683,16 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       };
     },
     review_set_approval: async (a) => {
-      const id = ((await json(reviewPath(String(a.link), origin))).asset as Args).id;
-      const r = await json(`/api/review/assets/${id}/approval`, "POST", { status: a.status });
+      const at = await reviewOf({ json, origin }, a.link);
+      if (!at.manage && a.status !== "approved" && a.status !== "changes") throw new ToolError("That video is someone else's: on its share link you can approve it or ask for changes (approved, changes), nothing else.");
+      const r = await json(`${at.path}/approval`, "POST", { status: a.status });
       return { id: r.id, name: r.name, approval: (r.approval as Args | undefined)?.status };
     },
     review_share: async (a) => {
-      const id = ((await json(reviewPath(String(a.link), origin))).asset as Args).id;
+      const at = await reviewOf({ json, origin }, a.link);
+      if (!at.manage) throw new ToolError("That video is someone else's: only its owner can change its share link.");
       const share = { enabled: a.on !== false, ...(typeof a.download === "boolean" ? { download: a.download } : {}) };
-      const r = await json(`/api/review/assets/${id}`, "PATCH", { share });
+      const r = await json(at.path, "PATCH", { share });
       const s = r.share as { token: string; enabled: boolean; download: boolean };
       if (!s.enabled) return { name: r.name, shared: false };
       // a server on this Mac with no address on the internet: the link opens here only
