@@ -162,6 +162,8 @@ describe("the dock's prompt", () => {
     expect(SYSTEM).toContain("Creator Toolset");
     expect(SYSTEM).toContain("ask_secret");
     expect(SYSTEM).not.toMatch(/one sentence|one step|one thing/i);
+    // what it lists is linked by its app path, so a phone or the dock can open it
+    for (const page of ["/review/<id>", "/editor/<id>", "/workshop/sessions/<id>"]) expect(SYSTEM).toContain(`(${page}`);
   });
 });
 

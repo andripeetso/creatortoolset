@@ -837,6 +837,7 @@ const STEPS: Record<string, string> = {
   delete_scheduled_task: "Deleting the scheduled task",
   editor_get: "Opening the edit",
   editor_run: "Starting an AI Editor job",
+  editor_go: "Carrying on the edit",
   instagram_posts: "Reading your Instagram posts",
   instagram_refresh: "Refreshing Instagram",
   editor_create: "Starting a new edit",
