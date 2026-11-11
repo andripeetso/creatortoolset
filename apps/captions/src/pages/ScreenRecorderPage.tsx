@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { Circle, FolderOpen, MoreHorizontal, Trash2 } from "lucide-react";
 import { AppBar } from "@/components/AppBar";
@@ -7,6 +8,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { canUse, useMe } from "@/lib/auth";
 import { useCachedList } from "@/lib/local-cache";
 import { canRecordScreen, openRecorder, tellRecorder, useLocalRecordings, useRecorderState, type LocalRecording, type RecorderPhase, type ShareDest } from "@/lib/mac-record";
+import { localFileUrl, localFilesOverlap } from "@/lib/local-files";
 import { listReviewAssets, thumbUrl } from "@/lib/review";
 import { timeAgo } from "@/lib/exports";
 import { cn } from "@/lib/utils";
@@ -29,6 +31,32 @@ const duration = (ms: number) => {
   const s = Math.round(ms / 1000);
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 };
+
+/** A recording's thumbnail: the app's own file, or in an older app a copy read in its turn (lib/local-files.ts). */
+function LocalThumb({ id }: { id: string }) {
+  const file = `ctlocal://${id}/thumb.jpg`;
+  const direct = localFilesOverlap();
+  const [copy, setSrc] = useState("");
+  const src = direct ? file : copy;
+  useEffect(() => {
+    if (direct) return;
+    let gone = false;
+    let release = () => {};
+    localFileUrl(file).then(
+      (f) => {
+        if (gone) return f.release();
+        release = f.release;
+        setSrc(f.url);
+      },
+      () => {},
+    );
+    return () => {
+      gone = true;
+      release();
+    };
+  }, [file, direct]);
+  return src ? <Picture src={src} alt="" className="h-full w-full object-cover object-top" /> : null;
+}
 
 /** The folder's path as the Finder says it: the home folder is ~. */
 const shortPath = (folder: string) => folder.replace(/^\/Users\/[^/]+/, "~");
@@ -105,7 +133,7 @@ export default function ScreenRecorderPage() {
                     <div key={r.id} className="group relative overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/40 hover:border-zinc-600">
                       <Link to={`/record/${r.id}`} className="block">
                         <div className="relative aspect-video w-full bg-zinc-900">
-                          <Picture src={`ctlocal://${r.id}/thumb.jpg`} alt="" className="h-full w-full object-cover object-top" />
+                          <LocalThumb id={r.id} />
                           <span className="absolute bottom-1.5 right-1.5 rounded bg-black/70 px-1.5 py-0.5 text-[11px] tabular-nums text-white">
                             {duration(r.durationMs)}
                           </span>

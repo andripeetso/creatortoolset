@@ -245,6 +245,9 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
         if Recorder.available {
             scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macRecord = '1';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         }
+        // ctlocal:// takes several requests at once from this version on (ProjectScheme.swift); in an older app the
+        // page reads a recording's files one after another instead (src/lib/local-files.ts)
+        scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macLocalFiles = '2';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         let device = macDeviceScript(macDevice)
         scripts.addUserScript(WKUserScript(source: device, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         evaluateJavaScript(device)   // the page already open learns it too (after pairing)

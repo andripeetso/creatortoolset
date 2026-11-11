@@ -10,6 +10,8 @@ export type ScreenEvents = {
   height: number;
   moves: [number, number, number][];
   clicks: [number, number, number][];
+  /** Where a button came up again (a drag lasts from its press to here). Logged from Mac app 0.14.2 on. */
+  releases?: [number, number, number][];
   /** The sound tracks in file order ("mic", "system"); the export keeps the first. */
   audio?: string[];
 };
@@ -121,38 +123,104 @@ const IDLE = 2; // seconds still before the pointer fades
 
 export const DEFAULT_ZOOM = 2;
 
-/** Zooms where you clicked: clicks under 3 s apart share one, which starts 1 s before the first and ends 1.5 s after
- *  the last (at least 2.5 s long), aimed at their middle. A click in the last half second is the press that stopped
- *  the recording, not something to look at. */
-export function autoZooms(clicks: ScreenEvents["clicks"], duration: number, scale = DEFAULT_ZOOM): Zoom[] {
-  const groups: [number, number, number][][] = [];
-  for (const c of [...clicks].sort((a, b) => a[0] - b[0])) {
-    if (c[1] < 0 || c[1] > 1 || c[2] < 0 || c[2] > 1) continue; // outside the recorded picture
-    if (duration > 0 && duration - c[0] < 0.5) continue;
-    const g = groups.at(-1);
-    if (g && c[0] - g.at(-1)![0] < 3) g.push(c);
-    else groups.push([c]);
+const CLICKS_SHARE = 5; // presses and releases closer than this (s) share a zoom
+const BEFORE_CLICK = 0.6; // a zoom starts this long before its first press: it is all the way in as the press lands
+const AFTER_CLICK = 2.5; // and stays this long after its last press or release, to show what that did
+const PAUSE = 2; // a pointer still for this long has stopped working
+
+const inPicture = (p: [number, number, number]) => p[1] >= 0 && p[1] <= 1 && p[2] >= 0 && p[2] <= 1;
+
+/**
+ * The zooms a new recording opens with.
+ * - Where you clicked: presses and releases less than 5 s apart share one zoom, from just before the first to 2.5 s
+ *   after the last, aimed at the middle of the presses (with "follow the pointer" on, the view then moves with the
+ *   pointer inside it). A drag holds its zoom from press to release. The times are measured on a recording people
+ *   were happy with: 236 clicks laid out as five zooms, each starting 0.3 s before its first press and ending 2.5 s
+ *   after its last release; presses 4.6 s after a release shared a zoom, 5.7 s after one did not. Ours starts 0.6 s
+ *   before, so that its 0.7 s of zooming in is over when the press lands.
+ * - With no click in the picture: where the pointer was at work. A stretch counts when the pointer keeps moving
+ *   inside the picture for 2.5 s or more, never still for 2 s, and covers some ground; a pointer left lying, or
+ *   outside the recorded window, makes no zoom.
+ * A click in the last half second is the press that stopped the recording, not something to look at.
+ */
+export function autoZooms(events: Pick<ScreenEvents, "clicks" | "moves" | "releases">, duration: number, scale = DEFAULT_ZOOM): Zoom[] {
+  const last = duration > 0 ? duration : Infinity;
+  type Span = { from: number; to: number; x: number; y: number; n: number };
+  const spans: Span[] = [];
+  const counts = (c: [number, number, number]) => inPicture(c) && last - c[0] >= 0.5;
+  const presses = events.clicks.filter(counts);
+  let before = BEFORE_CLICK;
+  let after = AFTER_CLICK;
+  if (presses.length) {
+    const marks = [
+      ...presses.map((c) => ({ c, press: true })),
+      ...(events.releases ?? []).filter(counts).map((c) => ({ c, press: false })),
+    ].sort((a, b) => a.c[0] - b.c[0]);
+    for (const { c, press } of marks) {
+      let s = spans.at(-1);
+      if (!s || c[0] - s.to >= CLICKS_SHARE) {
+        if (!press) continue; // a release far from any press starts nothing
+        s = { from: c[0], to: c[0], x: 0, y: 0, n: 0 };
+        spans.push(s);
+      }
+      s.to = c[0];
+      if (press) {
+        s.x += c[1];
+        s.y += c[2];
+        s.n++;
+      }
+    }
+  } else {
+    before = 0.5;
+    after = 1;
+    let open: Span | undefined;
+    let ground = 0;
+    let prev: [number, number, number] | null = null;
+    const close = () => {
+      if (open && (open.to - open.from < 2.5 || ground < 0.15)) spans.pop();
+      open = undefined;
+      ground = 0;
+    };
+    for (const m of [...events.moves].sort((a, b) => a[0] - b[0])) {
+      if (!inPicture(m) || (prev && m[0] - prev[0] >= PAUSE)) close();
+      if (!inPicture(m)) {
+        prev = null;
+        continue;
+      }
+      if (open && prev) ground += Math.hypot(m[1] - prev[1], m[2] - prev[2]);
+      if (!open) {
+        open = { from: m[0], to: m[0], x: 0, y: 0, n: 0 };
+        spans.push(open);
+      }
+      open.to = m[0];
+      open.x += m[1];
+      open.y += m[2];
+      open.n++;
+      prev = m;
+    }
+    close();
   }
   const zooms: Zoom[] = [];
-  for (const g of groups) {
-    const start = Math.max(0, g[0][0] - 1);
-    const end = Math.min(duration || Infinity, Math.max(g.at(-1)![0] + 1.5, start + 2.5));
-    const x = g.reduce((s, c) => s + c[1], 0) / g.length;
-    const y = g.reduce((s, c) => s + c[2], 0) / g.length;
-    const prev = zooms.at(-1);
-    // a zoom that would start before the last one has ramped out joins it
-    if (prev && start < prev.end + RAMP) {
-      prev.end = end;
-      prev.x = (prev.x + x) / 2;
-      prev.y = (prev.y + y) / 2;
-    } else zooms.push({ start, end, x, y, scale });
+  for (const s of spans) {
+    const start = Math.max(0, s.from - before);
+    const end = Math.min(last, Math.max(s.to + after, start + 2.5));
+    const x = s.x / s.n;
+    const y = s.y / s.n;
+    const prevZoom = zooms.at(-1);
+    // two that would stand closer than a zoom-out and a zoom-in take become one
+    if (prevZoom && start < prevZoom.end + 2 * RAMP) {
+      prevZoom.end = Math.max(prevZoom.end, end);
+      prevZoom.x = (prevZoom.x + x) / 2;
+      prevZoom.y = (prevZoom.y + y) / 2;
+    } else if (end - start >= MIN_ZOOM) zooms.push({ start, end, x, y, scale });
   }
-  return zooms;
+  const ms = (v: number) => Math.round(v * 1000) / 1000;
+  return zooms.map((z) => ({ ...z, start: ms(z.start), end: ms(z.end), x: ms(z.x), y: ms(z.y) }));
 }
 
 export function defaultLook(events: ScreenEvents, duration: number): ScreenLook {
   return {
-    zooms: autoZooms(events.clicks, duration),
+    zooms: autoZooms(events, duration),
     follow: true,
     pointer: 1.6,
     smooth: 0.15,

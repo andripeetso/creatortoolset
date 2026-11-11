@@ -213,7 +213,8 @@ function ZoomTab({
 }) {
   const zoom = picked !== null ? look.zooms[picked] : undefined;
   const setZoom = (patch: Partial<Zoom>) => change({ zooms: look.zooms.map((z, i) => (i === picked ? { ...z, ...patch } : z)) });
-  const fromClicks = autoZooms(events.clicks, duration, zoom?.scale ?? look.zooms[0]?.scale);
+  // where the clicks were or, with none, where the pointer was at work (lib/screen-recording.ts autoZooms)
+  const laidOut = autoZooms(events, duration, zoom?.scale ?? look.zooms[0]?.scale);
   const add = () => {
     const slot = zoomSlot(look.zooms, player.time(), duration, "start");
     if (!slot) return;
@@ -274,15 +275,15 @@ function ZoomTab({
         <PanelButton tone="accent" onClick={add}>
           <Plus /> Add a zoom at the playhead
         </PanelButton>
-        {fromClicks.length > 0 && (
+        {laidOut.length > 0 && (
           <PanelButton
             onClick={() => {
-              change({ zooms: fromClicks });
+              change({ zooms: laidOut });
               onPick(null);
             }}
-            title="One zoom wherever you clicked; replaces the zooms there are"
+            title="One zoom around each run of clicks (with no clicks, where the pointer was at work); replaces the zooms there are"
           >
-            <Sparkles /> {look.zooms.length ? "Remake them from my clicks" : "Zoom where I clicked"}
+            <Sparkles /> {look.zooms.length ? "Lay them out again" : "Lay out zooms"}
           </PanelButton>
         )}
       </Group>

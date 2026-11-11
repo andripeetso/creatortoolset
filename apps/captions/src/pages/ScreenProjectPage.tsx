@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router";
 import { ChevronDown, FolderOpen, Send, Trash2 } from "lucide-react";
 import { AppBar } from "@/components/AppBar";
@@ -14,7 +14,7 @@ import {
 import { ScreenRecordingEditor, type EditorAction } from "@/components/ScreenRecordingEditor";
 import { canRecordScreen, tellRecorder, useLocalRecordings, type ShareDest } from "@/lib/mac-record";
 import { uploadReviewFile } from "@/lib/review";
-import { localSource } from "@/lib/screen-source";
+import { openLocalRecording } from "@/lib/screen-source";
 
 const SHARES: { dest: ShareDest; label: string }[] = [
   { dest: "review", label: "Send to Review" },
@@ -32,7 +32,33 @@ export default function ScreenProjectPage() {
   const navigate = useNavigate();
   const list = useLocalRecordings();
   const rec = list?.find((r) => r.id === id);
-  const source = useMemo(() => (rec ? localSource(rec) : null), [rec]);
+  // The recording made ready: at once in an app whose local files take requests at once; in an older app its video is
+  // read whole first (lib/local-files.ts). Opened once per recording: the list is pushed again on every change.
+  type Opened = Awaited<ReturnType<typeof openLocalRecording>>;
+  const [source, setSource] = useState<Opened | null>(null);
+  const [unreadable, setUnreadable] = useState(false);
+  const recId = rec?.id;
+  useEffect(() => {
+    if (!rec) return;
+    let gone = false;
+    let opened: Opened | null = null;
+    openLocalRecording(rec).then(
+      (s) => {
+        if (gone) return s.close();
+        opened = s;
+        setSource(s);
+      },
+      () => !gone && setUnreadable(true),
+    );
+    return () => {
+      gone = true;
+      opened?.close();
+      setSource(null);
+      setUnreadable(false);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per recording: every push of the list brings a new object for the same one
+  }, [recId]);
+
   // the editor's Export sits in this page's bar
   const [slot, setSlot] = useState<HTMLElement | null>(null);
 
@@ -75,7 +101,7 @@ export default function ScreenProjectPage() {
       </AppBar>
       {!rec || !source ? (
         <div className="flex flex-1 items-center justify-center text-sm text-zinc-400">
-          {list === null ? "Opening…" : "This recording isn't on this Mac any more."}
+          {unreadable ? "This recording's video can't be read." : list === null || rec ? "Opening…" : "This recording isn't on this Mac any more."}
         </div>
       ) : (
         <ScreenRecordingEditor

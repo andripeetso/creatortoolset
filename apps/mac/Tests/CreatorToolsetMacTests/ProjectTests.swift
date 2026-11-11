@@ -1,6 +1,30 @@
 import Foundation
+import WebKit
 import XCTest
 @testable import CreatorToolsetMac
+
+/// A scheme task that only writes down what it is told, and on which thread.
+private final class WrittenTask: NSObject, WKURLSchemeTask {
+    let request: URLRequest
+    let done: XCTestExpectation
+    private(set) var calls: [String] = []
+    private(set) var offMain = 0
+    private(set) var bytes = 0
+
+    init(_ url: URL, _ done: XCTestExpectation) {
+        request = URLRequest(url: url)
+        self.done = done
+    }
+
+    private func note(_ what: String) {
+        calls.append(what)
+        if !Thread.isMainThread { offMain += 1 }
+    }
+    func didReceive(_ response: URLResponse) { note("response") }
+    func didReceive(_ data: Data) { note("data"); bytes += data.count }
+    func didFinish() { note("finish"); done.fulfill() }
+    func didFailWithError(_ error: Error) { note("fail"); done.fulfill() }
+}
 
 final class ProjectTests: XCTestCase {
     // Scratch in CT_SCRATCH_DIR (an external disk) or the temporary folder; each test removes its own folder.
@@ -80,5 +104,37 @@ final class ProjectTests: XCTestCase {
         try older.markReady(durationMs: 1, width: 2, height: 2, tracks: [], camera: false)
         try newer.markReady(durationMs: 1, width: 2, height: 2, tracks: [], camera: false)
         XCTAssertEqual(ProjectStore.list(root: root).map(\.id), [newer.id, older.id])
+    }
+
+    /// The freeze of 0.13.1 and before: answers were made from the reading thread under a lock that start and stop
+    /// took too, and WebKit makes an answer from another thread wait for the main thread. Two requests at once (the
+    /// editor plays the video and reads the pointer log) left each waiting for the other. Every answer is made on the
+    /// main thread now, so two requests overlap, and a stopped one hears nothing more.
+    @MainActor
+    func testEveryAnswerIsMadeOnTheMainThreadAndRequestsOverlap() throws {
+        let project = try LocalProject.create(in: root, at: Date())
+        try Data(count: 3 << 20).write(to: project.screenURL)
+        try project.writeEvents(Data(#"{"v":1,"width":2,"height":2,"moves":[],"clicks":[]}"#.utf8))
+        let folder = root!
+        let scheme = ProjectScheme(root: { folder })
+        let web = WKWebView(frame: .zero)
+
+        let video = WrittenTask(ProjectScheme.url(projectID: project.id, file: "screen.mp4"), expectation(description: "video"))
+        let log = WrittenTask(ProjectScheme.url(projectID: project.id, file: "screen-events.json"), expectation(description: "log"))
+        scheme.webView(web, start: video)
+        scheme.webView(web, start: log)
+        wait(for: [video.done, log.done], timeout: 10)
+        XCTAssertEqual(video.calls, ["response", "data", "data", "data", "finish"])   // 3 MB in 1 MB pieces
+        XCTAssertEqual(video.bytes, 3 << 20)
+        XCTAssertEqual(log.calls, ["response", "data", "finish"])
+        XCTAssertEqual(video.offMain + log.offMain, 0, "an answer made off the main thread waits for it inside WebKit")
+
+        let unwanted = expectation(description: "stopped")
+        unwanted.isInverted = true
+        let stopped = WrittenTask(ProjectScheme.url(projectID: project.id, file: "screen.mp4"), unwanted)
+        scheme.webView(web, start: stopped)
+        scheme.webView(web, stop: stopped)
+        wait(for: [unwanted], timeout: 0.5)
+        XCTAssertEqual(stopped.calls, [])
     }
 }

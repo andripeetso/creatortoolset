@@ -240,6 +240,8 @@ export function ScreenRecordingEditor({
       const blob = await renderScreenVideo({
         url: sourceRef.current.url,
         cameraUrl: sourceRef.current.cameraUrl ?? undefined,
+        file: sourceRef.current.file,
+        cameraFile: sourceRef.current.cameraFile,
         events,
         look,
         ...out,

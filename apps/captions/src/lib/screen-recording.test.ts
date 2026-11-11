@@ -11,17 +11,61 @@ const events: ScreenEvents = {
 
 describe("screen recording", () => {
   it("makes one zoom per burst of clicks, ignoring clicks on another display", () => {
-    const zooms = autoZooms(events.clicks, 30);
+    const zooms = autoZooms(events, 30);
     expect(zooms).toHaveLength(2);
-    expect(zooms[0]).toMatchObject({ start: 4, end: 7.5, scale: 2 });
+    expect(zooms[0]).toMatchObject({ start: 4.4, end: 8.5, scale: 2 }); // just before the first click, 2.5 s after the last
     expect(zooms[0].x).toBeCloseTo(0.85);
-    expect(zooms[1]).toMatchObject({ start: 19, end: 21.5 }); // at least 2.5 s
+    expect(zooms[1]).toMatchObject({ start: 19.4, end: 22.5 }); // the click at 21 s was on another display
   });
 
   it("makes no zoom for the press that stopped the recording", () => {
     // his 3.5 s recording: one press, 0.1 s before the end
-    expect(autoZooms([[3.379, 0.5, 0.5]], 3.485)).toEqual([]);
-    expect(autoZooms([[1, 0.5, 0.5], [3.379, 0.5, 0.5]], 3.485)).toHaveLength(1);
+    expect(autoZooms({ clicks: [[3.379, 0.5, 0.5]], moves: [] }, 3.485)).toEqual([]);
+    expect(autoZooms({ clicks: [[1, 0.5, 0.5], [3.379, 0.5, 0.5]], moves: [] }, 3.485)).toHaveLength(1);
+  });
+
+  it("lays click zooms out by the measured times: 4.6 s apart share one, 5.7 s apart do not", () => {
+    const at = (...ts: number[]) => ({ clicks: ts.map((t) => [t, 0.5, 0.5] as [number, number, number]), moves: [] });
+    const spans = (ts: number[]) => autoZooms(at(...ts), 240).map((z) => [z.start, z.end]);
+    // from the measured recording: two clicks, then a run of seven, then the next run 8 s later
+    expect(spans([27.06, 28.09])).toEqual([[26.46, 30.59]]);
+    expect(spans([39.41, 39.7, 41.3, 42.2, 42.5, 46.1, 46.64, 54.69])).toEqual([[38.81, 49.14], [54.09, 57.19]]);
+    expect(spans([10, 14.6])).toHaveLength(1);
+    expect(spans([10, 15.7])).toHaveLength(2);
+    expect(spans([0.2])).toEqual([[0, 2.7]]); // never before the start
+    expect(spans([238])).toEqual([[237.4, 240]]); // never past the end
+  });
+
+  it("holds a zoom through a drag: the release counts, and the next press is measured from it", () => {
+    const press = (t: number): [number, number, number] => [t, 0.4, 0.4];
+    // a press at 10 s held until 14.7 s, the next press at 15.75 s: 5.75 s after the press, 1 s after the release
+    const dragged = autoZooms({ clicks: [press(10), press(15.75)], releases: [[14.7, 0.6, 0.6], [15.9, 0.4, 0.4]], moves: [] }, 60);
+    expect(dragged.map((z) => [z.start, z.end])).toEqual([[9.4, 18.4]]);
+    expect(dragged[0].x).toBeCloseTo(0.4); // aimed by the presses
+    // the same presses from an app that logs no releases: two zooms
+    expect(autoZooms({ clicks: [press(10), press(15.75)], moves: [] }, 60)).toHaveLength(2);
+    // a release with no press near it starts nothing
+    expect(autoZooms({ clicks: [press(10)], releases: [[30, 0.5, 0.5]], moves: [] }, 60)).toHaveLength(1);
+  });
+
+  it("with no click in the picture, zooms where the pointer was at work", () => {
+    const line = (from: number, to: number, x0: number, x1: number, y = 0.5) =>
+      Array.from({ length: Math.round((to - from) * 10) + 1 }, (_, i) => {
+        const k = i / Math.round((to - from) * 10);
+        return [from + (to - from) * k, x0 + (x1 - x0) * k, y] as [number, number, number];
+      });
+    // 5 s of moving across the picture: one zoom, from half a second before to a second after, aimed at its middle
+    const worked = autoZooms({ clicks: [], moves: line(2, 7, 0.2, 0.6) }, 20);
+    expect(worked.map((z) => [z.start, z.end])).toEqual([[1.5, 8]]);
+    expect(worked[0].x).toBeCloseTo(0.4);
+    // a pointer left lying makes none, however long
+    expect(autoZooms({ clicks: [], moves: line(2, 12, 0.5, 0.5) }, 20)).toEqual([]);
+    // nor does one outside the recorded window (his 3.5 s recording: the pointer sat on the recorder's own bar)
+    expect(autoZooms({ clicks: [], moves: line(0.2, 3.3, 1.02, 1.04, 0.04) }, 3.485)).toEqual([]);
+    // a 2 s pause ends a stretch; two stretches far enough apart are two zooms
+    expect(autoZooms({ clicks: [], moves: [...line(1, 4, 0.2, 0.5), ...line(9, 13, 0.6, 0.9)] }, 20)).toHaveLength(2);
+    // a click in the picture decides alone: movement elsewhere adds nothing
+    expect(autoZooms({ clicks: [[15, 0.5, 0.5]], moves: line(2, 7, 0.2, 0.6) }, 20).map((z) => [z.start, z.end])).toEqual([[14.4, 17.5]]);
   });
 
   it("reads a look saved before the newer fields existed as it was", () => {
@@ -58,7 +102,7 @@ describe("screen recording", () => {
   });
 
   it("joins zooms that would overlap their ramps", () => {
-    expect(autoZooms([[5, 0.5, 0.5], [8, 0.5, 0.5]], 30)).toHaveLength(1);
+    expect(autoZooms({ clicks: [[5, 0.5, 0.5], [8, 0.5, 0.5]], moves: [] }, 30)).toHaveLength(1);
   });
 
   it("interpolates the pointer and holds it across a pause", () => {

@@ -83,6 +83,12 @@ final class RecorderTests: XCTestCase {
         XCTAssertFalse(logsClick(.leftMouseDown, on: bar, own: [bar]))         // Stop on the bar
         XCTAssertFalse(logsClick(.mouseMoved, on: nil, own: [bar]))
         XCTAssertFalse(logsClick(.leftMouseDragged, on: main, own: []))
+        // a release is logged by the same rule, and never as a click
+        XCTAssertTrue(logsRelease(.leftMouseUp, on: nil, own: [bar]))
+        XCTAssertTrue(logsRelease(.rightMouseUp, on: main, own: [bar]))
+        XCTAssertFalse(logsRelease(.leftMouseUp, on: bar, own: [bar]))
+        XCTAssertFalse(logsRelease(.leftMouseDown, on: nil, own: [bar]))
+        XCTAssertFalse(logsClick(.leftMouseUp, on: nil, own: [bar]))
     }
 
     func testClockText() {
