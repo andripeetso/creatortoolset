@@ -9,8 +9,8 @@ import { useCachedLoad } from "@/lib/local-cache";
 import { cn } from "@/lib/utils";
 
 /**
- * The Media Library's processing, said in time and money: a bar with the time left while clips are being prepared, and
- * before a big upload what it will take (api/library/estimate.ts). Both read this server's own pace.
+ * The Media Library's processing, said in time and money: a line per step with the time left while clips are being
+ * prepared, and before a big upload what it will take (api/library/estimate.ts). Both read this server's own pace.
  */
 
 /** Uploads of this many files or more ask first, with the estimate. */
@@ -76,7 +76,7 @@ const STAGE_NAME: Record<LibraryStage["kind"], string> = {
 function StageRow({ name, done, of, now, busy = !!now, failed = 0 }: { name: string; done: number; of: number; now?: string; busy?: boolean; failed?: number }) {
   const through = done + failed >= of;
   return (
-    <li className="grid grid-cols-[minmax(0,11rem)_minmax(3rem,1fr)_auto] items-center gap-x-3 text-sm">
+    <li className="col-span-3 grid grid-cols-subgrid items-center text-sm">
       <span className="flex min-w-0 items-center gap-1.5">
         <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", busy ? "bg-zinc-400 motion-safe:animate-pulse dark:bg-zinc-300" : "bg-transparent")} />
         <span className={cn("truncate", through && "text-zinc-500")}>
@@ -115,7 +115,8 @@ export function LibraryProgressBar({ libraryId }: { libraryId: string }) {
           <span className="shrink-0 text-xs text-zinc-500">{aboutTime(p.seconds)} left</span>
         </div>
       )}
-      <ul className="flex flex-col gap-1">
+      {/* one grid for every line, so the bars start and end together */}
+      <ul className="grid grid-cols-[minmax(0,11rem)_minmax(3rem,1fr)_auto] gap-x-3 gap-y-1">
         {adding.map((f) => (
           <StageRow key={f.path} name={`Adding clips from ${folderName(f.path)}`} done={f.files - f.adding} of={f.files} busy />
         ))}

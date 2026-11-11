@@ -28,7 +28,8 @@ const STEP_OF: Record<string, LibraryStep> = {
 };
 
 // ponytail: starting guesses (seconds a job, dollars a description) until this server has finished its own
-const GUESS_S: Record<string, number> = { probe: 1, thumb: 2, wave: 3, fingerprint: 4, embed: 2, deepgram: 5, openai: 15, provider: 30, api: 12 };
+// (a duplicate check reads the lighter copy: under 2 s a 4K clip, measured)
+const GUESS_S: Record<string, number> = { probe: 1, thumb: 2, wave: 3, fingerprint: 1, embed: 2, deepgram: 5, openai: 15, provider: 30, api: 12 };
 const GUESS_USD = { provider: 0.05, api: 0.02 };
 /** On this computer, the speech model takes about a third of the clip's length. */
 const DEVICE_PACE = 0.3;
