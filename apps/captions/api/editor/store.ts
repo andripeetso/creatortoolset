@@ -377,6 +377,7 @@ export function summaryOf(e: EditMeta): EditSummary {
 
 export function viewOf(e: EditMeta): Edit {
   const { trashedAt: _, ...meta } = e;
+  delete meta.byTool; // the server's own mark (finished.ts): `meta` is this call's own copy
   const a = readStep(e.id, "analysis");
   const p = readStep(e.id, "plan");
   return {

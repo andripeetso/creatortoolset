@@ -225,6 +225,8 @@ describe.skipIf(rootReplaced)("Finished edits: what is kept, and whose words", (
           ? (await tool("maker", "editor_create", { sources: ["ver_a", "ver_b"], ...words, start: false })).value.id
           : (await json(req({ authorization: keys.maker! }, "POST", "/api/editor", { sources: ["ver_a", "ver_b"], ...words }))).id;
       expect(readEdit(id)).toMatchObject({ ...words, byTool: ["name", "brief"] });
+      // the mark is the server's own: the edit as the pages and the tools read it does not carry it
+      expect("byTool" in (await json(call("maker", "GET", `/api/editor/${id}`)))).toBe(false);
       // the person puts the style on it themselves: the words are still the tool's
       expect((await call("maker", "PATCH", `/api/editor/${id}`, { style: s.id })).status).toBe(200);
       await script("maker", id);

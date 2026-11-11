@@ -197,6 +197,17 @@ describe("The style sheet: a skill, and the edits finished with the style", () =
     expect("skill" in (await save()).body).toBe(false);
   });
 
+  it("a style that names a skill switched off for now keeps it through a Save that does not touch the select", async () => {
+    has.skills = [skill("sk_hooks", "Hooks"), skill("sk_off", "Switched off", { on: false })];
+    const named = { ...style, skill: "sk_off" };
+    await render([named], named);
+    expect(field<HTMLSelectElement>("style-skill")!.value).toBe(""); // shown as None: an edit made now would get none
+    await type("style-name", "Renamed");
+    const put = await save();
+    expect(put.body.name).toBe("Renamed");
+    expect("skill" in put.body).toBe(false);
+  });
+
   it("the finished edits are listed under Save, each with an ×; a press takes one off at once", async () => {
     has.finished = [
       { editId: "e_two", variant: "v1", name: "Tiny Acrobatics hook", at: Date.UTC(2026, 10, 11, 12), brief: "", targetS: 45, seconds: 41, said: "Said.", cut: [] },

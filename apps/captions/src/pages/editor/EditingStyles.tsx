@@ -90,7 +90,8 @@ async function brollFolders(): Promise<{ id: string; name: string }[]> {
  * One style's sheet. The grade and the steps are sent only when changed here: a style that says nothing about them
  * takes the person's own defaults when an edit is made. A select with nothing to choose is not drawn (one grade, no
  * folder, no step in this app, no skill). The skills offered are the ones an edit's script step would get: switched
- * on, for every project. Under Save, the edits finished with the style, each with an × that takes it off for good.
+ * on, for every project; the skill is sent only when changed here, so one the style names that is switched off for
+ * now is kept. Under Save, the edits finished with the style, each with an × that takes it off for good.
  */
 function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; onClose: () => void; onSaved: () => Promise<unknown> }) {
   const [name, setName] = useState(style?.name ?? "");
@@ -105,7 +106,7 @@ function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; o
   const [defaults, setDefaults] = useState<EditorDefaults | null>(null);
   const [folders, setFolders] = useState<{ id: string; name: string }[]>([]);
   const [rows, setRows] = useState<StepRow[]>([]);
-  const [skill, setSkill] = useState(style?.skill ?? "");
+  const [skill, setSkill] = useState<string | null>(null); // null: not changed here
   const [skills, setSkills] = useState<Skill[]>([]);
   const [finished, setFinished] = useState<FinishedEdit[]>([]);
   const [busy, setBusy] = useState(false);
@@ -122,7 +123,7 @@ function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; o
   const grades = defaults?.items.grade ?? [];
   const gradeShown = grade ?? (grades.some((g) => g.id === style?.grade) ? style!.grade! : (defaults?.bundle.grade ?? ""));
   const folderShown = folders.some((f) => f.id === folder) ? folder : "";
-  const skillShown = skills.some((s) => s.id === skill) ? skill : "";
+  const skillShown = skill ?? (skills.some((s) => s.id === style?.skill) ? style!.skill! : "");
   // the steps as an edit made now would get them: this style's, else the ones in use in Settings → AI Editor
   const stepsShown = steps ?? style?.steps ?? rows.filter((r) => r.use).map((r) => ({ id: r.id, values: r.values }));
   const setStep = (row: StepRow, on: boolean, values?: Record<string, string>) => {
@@ -142,7 +143,7 @@ function StyleSheet({ style, onClose, onSaved }: { style: EditingStyle | null; o
       pace,
       punch,
       ...(folders.length ? { brollCollectionId: folderShown || null } : {}),
-      ...(skills.length ? { skill: skillShown || null } : {}),
+      ...(skill !== null ? { skill: skill || null } : {}),
       ...(grade !== null ? { grade } : {}),
       ...(steps ? { steps } : {}),
     };
