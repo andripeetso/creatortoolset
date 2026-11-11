@@ -9,7 +9,7 @@ import { listReviewAssets, listReviewProjects } from "./review";
 import { getSession, keepSession, listChat, listDocuments as listPieces, listSessions, listFrameworks, listRules, getWorkshopAvailability, sessionKeys, type SessionRecord, type SessionRow } from "./workshop";
 import { listAccounts, listPosts, type ListPostsQuery } from "./instagram";
 import { listEdits } from "./editor";
-import { listClips } from "./clips";
+import { CLIPS_AVAILABILITY, getClipsAvailability, listClips } from "./clips";
 import { listDocuments } from "./documents";
 import { listEnhance } from "./enhance";
 import { PROJECT_ACCOUNTS_KEY, useWorkspace } from "./workspace";
@@ -84,7 +84,11 @@ export async function warmScreens(): Promise<void> {
   // Home's to-do and badges (HomeTodo.tsx useTodoLists)
   if (canUse(me, "editor")) job("/api/editor", listEdits);
   if (canUse(me, "captions")) job("caption-projects", listProjects);
-  if (canUse(me, "notes")) job("/api/clips", listClips);
+  if (canUse(me, "notes")) {
+    job("/api/clips", listClips);
+    // whether an AI is connected: a clip's page decides by it, before it draws, whether to ask for chapters
+    job(CLIPS_AVAILABILITY, getClipsAvailability);
+  }
   if (canUse(me, "guides")) job("/api/documents", listDocuments);
   if (canUse(me, "enhance")) job("/api/enhance", listEnhance);
   await Promise.all(jobs);

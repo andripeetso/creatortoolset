@@ -6,6 +6,7 @@
 
 import { chunkedUpload, json } from "@/lib/uploads";
 import { onTopic } from "@/lib/sync";
+import { useCachedLoad } from "@/lib/local-cache";
 
 export interface ClipChapter {
   t: number;
@@ -219,6 +220,11 @@ export const isProcessing = (s: ClipSession | null | undefined) =>
 
 export const getClipsAvailability = () =>
   fetch("/api/clips/availability").then((r) => json<ClipsAvailability>(r));
+/** Where its saved copy is kept (the app's warm-up fills it, lib/warm-cache.ts). */
+export const CLIPS_AVAILABILITY = "/api/clips/availability";
+/** What the clips can use, as last read and kept live: a page knows before it draws whether an AI is connected. */
+export const useClipsAvailability = () =>
+  useCachedLoad<ClipsAvailability>(CLIPS_AVAILABILITY, getClipsAvailability, { topic: ["clips", "devices", "providers"] });
 
 export const listClips = () =>
   fetch("/api/clips").then((r) => json<ClipSession[]>(r));

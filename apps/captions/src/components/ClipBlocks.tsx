@@ -17,6 +17,7 @@ import {
   isProcessing,
   reorderClipBlocks,
   retryClipBlock,
+  useClipsAvailability,
   type ClipBlock,
   type ClipBlockKind,
   type ClipChapter,
@@ -37,6 +38,7 @@ export function ChapterRail({
   playhead,
   seek,
   pending,
+  failed,
   onRetry,
   retrying,
 }: {
@@ -44,6 +46,8 @@ export function ChapterRail({
   playhead: number;
   seek: (t: number) => void;
   pending?: boolean;
+  /** this visit's request ended with no chapters: what went wrong. The rail stays, so the page does not move */
+  failed?: string | null;
   onRetry?: () => void;
   retrying?: boolean;
 }) {
@@ -75,11 +79,13 @@ export function ChapterRail({
           </button>
         ) : null}
       </h2>
-      {pending && !chapters.length ? (
+      {chapters.length ? null : pending ? (
         <p className="flex items-center gap-2 px-3 py-3 text-sm text-muted-foreground">
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
           Generating…
         </p>
+      ) : failed ? (
+        <p className="px-3 py-3 text-sm text-muted-foreground">{failed}</p>
       ) : null}
       <nav className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2 pt-1">
         {chapters.map((ch, i) => {
@@ -111,9 +117,12 @@ export function ChapterRail({
   );
 }
 
-/** Chapters are made for this clip without being asked: your own, processed, with a transcript and no chapters yet. */
-export const wantsChapters = (session: ClipSession, owns: boolean): boolean =>
-  owns && !isProcessing(session) && session.hasTranscript && !clipChapters(session).length;
+/**
+ * Chapters are made for this clip without being asked: your own, processed, with a transcript and no chapters yet, on
+ * an install with an AI connected. With none there is nothing to ask and no row is drawn for it (`ai` false).
+ */
+export const wantsChapters = (session: ClipSession, owns: boolean, ai = true): boolean =>
+  ai && owns && !isProcessing(session) && session.hasTranscript && !clipChapters(session).length;
 
 /**
  * Generate the chapter rail as soon as a transcript exists. `pending` while that runs, from the first frame the clip is
@@ -125,7 +134,9 @@ export function useChapters(session: ClipSession, owns: boolean, onChange: (s: C
   const tried = useRef<string | null>(null);
   const [end, setEnd] = useState<{ id: string; error?: string } | null>(null);
   const [again, setAgain] = useState(false);
-  const wants = wantsChapters(session, owns);
+  // known from the saved copy before the first frame; not read yet (a first-ever visit) counts as connected
+  const ai = useClipsAvailability().data?.ai ?? true;
+  const wants = wantsChapters(session, owns, ai);
   const id = session.id;
   const ask = useCallback(() => {
     tried.current = id;
@@ -149,7 +160,7 @@ export function useChapters(session: ClipSession, owns: boolean, onChange: (s: C
   const error = end?.id === id ? end.error : undefined;
   return {
     // until the page's clip has its chapters (an answer with chapters is not shown as nothing in between), or it failed
-    pending: again || (wants && !error),
+    pending: wants && (again || !error),
     failed: wants && !again && error ? error : null,
     retry: () => {
       setAgain(true);
@@ -294,7 +305,7 @@ export function ClipBlocks({
   hasTranscript: boolean;
   onChange: (s: ClipSession) => void;
 }) {
-  const [avail, setAvail] = useState<{ ai: boolean } | null>(null);
+  const avail = useClipsAvailability().data;
   const [busy, setBusy] = useState<Set<ClipBlockKind>>(() => new Set());
   const busyRef = useRef<Set<ClipBlockKind>>(new Set());
   const [removed, setRemoved] = useState<Set<ClipBlockKind>>(() => new Set());
@@ -303,14 +314,6 @@ export function ClipBlocks({
   const [error, setError] = useState<string | null>(null);
   const [dragKind, setDragKind] = useState<ClipBlockKind | null>(null);
   const blocks = displayBlocks(session).filter((b) => !removed.has(b.kind));
-
-  useEffect(() => {
-    if (!owns) return;
-    fetch("/api/clips/availability")
-      .then((r) => r.json())
-      .then((d: { ai?: boolean }) => setAvail({ ai: !!d.ai }))
-      .catch(() => setAvail({ ai: false }));
-  }, [owns]);
 
   const present = new Set(blocks.map((b) => b.kind));
   if (clipChapters(session).length) present.add("chapters");

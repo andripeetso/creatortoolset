@@ -17,7 +17,7 @@ import {
   Circle,
 } from "lucide-react";
 import { canRecordScreen, openRecorder } from "@/lib/mac-record";
-import { canUse, useAuth } from "@/lib/auth";
+import { useAuth } from "@/lib/auth";
 import { putCached, useCachedList, useCachedLoad } from "@/lib/local-cache";
 import { useSteadyList } from "@/lib/steady-list";
 import { Picture } from "@/components/Picture";
@@ -33,7 +33,6 @@ import {
   getClipTranscript,
   cleanupClipTranscript,
   restoreClipTranscript,
-  getClipsAvailability,
   isProcessing,
   listClips,
   retryClip,
@@ -44,14 +43,14 @@ import {
   thumbClipUrl,
   type ClipSession,
   type ClipWord,
-  type ClipsAvailability,
+  useClipsAvailability,
 } from "@/lib/clips";
 import { ClipAgentDiscovery } from "@/components/ClipAgentDiscovery";
 import { ClipPlayer, type ClipPlayerHandle } from "@/components/ClipPlayer";
 import {
   ChapterRail,
   ClipBlocks,
-  useAutoChapters,
+  useChapters,
 } from "@/components/ClipBlocks";
 import { AppBar, ToolIntro } from "@/components/AppBar";
 import { ToolSetupLine } from "@/components/setup/ToolSetupLine";
@@ -227,7 +226,7 @@ function ClipView({
     return () => window.clearTimeout(t);
   }, [theater]);
 
-  const chaptersPending = useAutoChapters(session, owns, onChange);
+  const making = useChapters(session, owns, onChange);
 
   const retry = async () => {
     setError(null);
@@ -279,7 +278,8 @@ function ClipView({
   const seek = (t: number) => playerRef.current?.seek(t);
   const chapters = clipChapters(session);
   const cinema = theater && !isProcessing(session);
-  const showChapters = chapters.length > 0 || chaptersPending;
+  // the rail stays when the request ended with none (it says why): the page around it does not move
+  const showChapters = chapters.length > 0 || making.pending || !!making.failed;
   const col = "mx-auto w-[1080px] max-w-[96vw]";
 
   const copyLink = async () => {
@@ -438,7 +438,8 @@ function ClipView({
                 chapters={chapters}
                 playhead={playhead}
                 seek={seek}
-                pending={chaptersPending}
+                pending={making.pending}
+                failed={making.failed}
                 onRetry={owns ? retryChapters : undefined}
                 retrying={chapterBusy}
               />
@@ -455,7 +456,8 @@ function ClipView({
               chapters={chapters}
               playhead={playhead}
               seek={seek}
-              pending={chaptersPending}
+              pending={making.pending}
+              failed={making.failed}
               onRetry={owns ? retryChapters : undefined}
               retrying={chapterBusy}
             />
@@ -571,14 +573,7 @@ export default function ClipsPage() {
   const setDetail = detail.set;
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
-  const [avail, setAvail] = useState<ClipsAvailability | null>(null);
-
-  useEffect(() => {
-    if (!canUse(me, "notes")) return;
-    getClipsAvailability()
-      .then(setAvail)
-      .catch(() => {});
-  }, [me]);
+  const avail = useClipsAvailability().data;
 
   const refreshList = useCallback(() => {
     loadSessions().catch(() => {});

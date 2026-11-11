@@ -2,11 +2,14 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
-import type { ClipSession } from "@/lib/clips";
+import { useAuth } from "@/lib/auth";
+import { CLIPS_AVAILABILITY, type ClipSession } from "@/lib/clips";
+import { putCached } from "@/lib/local-cache";
 import { useChapters } from "./ClipBlocks";
 
 // The chapters row of a clip: what it holds from the first frame until the request has ended. A request that ends with
-// no chapters must leave the row saying so (with Try again), never nothing: the page under it would jump up.
+// no chapters must leave the row saying so (with Try again), never nothing: the page under it would jump up. With no AI
+// connected there is nothing to ask and no row at all.
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -27,6 +30,9 @@ const clip: ClipSession = {
 let root: Root | undefined;
 let host: HTMLDivElement | undefined;
 let replies: Array<{ status: number; body: unknown }> = [];
+let asked: string[] = [];
+/** what the server says of this install: is an AI connected */
+let ai = true;
 const flush = () => act(async () => new Promise<void>((done) => setTimeout(done, 0)));
 
 function Row() {
@@ -39,7 +45,10 @@ function Row() {
   );
 }
 const mount = () => {
-  vi.stubGlobal("fetch", async () => {
+  asked = [];
+  vi.stubGlobal("fetch", async (url: string) => {
+    asked.push(String(url));
+    if (String(url).endsWith("/availability")) return new Response(JSON.stringify({ cloud: false, ai }), { status: 200 });
     const r = replies.shift() ?? { status: 400, body: { error: "No more replies" } };
     return new Response(JSON.stringify(r.body), { status: r.status });
   });
@@ -50,6 +59,8 @@ const mount = () => {
 const says = () => host!.querySelector("p")!.firstChild!.textContent;
 
 afterEach(() => {
+  ai = true;
+  useAuth.getState().setAuth(true, null);
   if (root) act(() => root!.unmount());
   host?.remove();
   vi.unstubAllGlobals();
@@ -77,4 +88,15 @@ it("an answer without chapters is a failure too, in plain words", async () => {
   mount();
   await flush();
   expect(says()).toBe("failed: Couldn't make chapters.");
+});
+
+it("with no AI connected, as the saved copy says before the first frame, it asks for nothing and draws no row", async () => {
+  ai = false;
+  useAuth.getState().setAuth(true, { username: "tiny-owner", role: "admin", cloud: false, off: [] });
+  putCached("tiny-owner", CLIPS_AVAILABILITY, { cloud: false, ai: false });
+  mount();
+  expect(says()).toBe("nothing"); // the first frame
+  await flush();
+  expect(says()).toBe("nothing");
+  expect(asked.filter((u) => u.includes("/blocks"))).toEqual([]);
 });
