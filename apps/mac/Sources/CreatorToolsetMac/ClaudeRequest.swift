@@ -519,6 +519,21 @@ func isLimitError(_ text: String) -> Bool {
     text.range(of: "hit your .{0,20}limit|usage limit|session limit", options: [.regularExpression, .caseInsensitive]) != nil
 }
 
+/// A closed usage window as the menu says it: "Claude: You've hit your weekly limit · resets 5pm (America/Costa_Rica)"
+/// → "Claude's weekly limit is reached · resets 5pm". Nil when the text is not a limit (the site's limitLine, plans.ts).
+func plainLimitLine(_ text: String) -> String? {
+    guard isLimitError(text) else { return nil }
+    let head = text.components(separatedBy: ": ").first ?? ""
+    let who = head.count <= 20 && head != text ? "\(head)'s" : "Your AI's"
+    let window = text.range(of: "weekly", options: .caseInsensitive) != nil ? "weekly limit"
+        : text.range(of: "session|5-hour", options: [.regularExpression, .caseInsensitive]) != nil ? "5-hour limit" : "limit"
+    var line = "\(who) \(window) is reached"
+    if let r = text.range(of: "resets\\s+(?:at\\s+)?[^·\\n(]+", options: [.regularExpression, .caseInsensitive]) {
+        line += " · " + text[r].trimmingCharacters(in: .whitespaces)
+    }
+    return line
+}
+
 /// the Mac relay gone: the CLI does not have the --resume session it was asked for (no answer came, and it says so).
 func isGone(text: String, result: [String: Any]?, err: String) -> Bool {
     if !text.isEmpty { return false }

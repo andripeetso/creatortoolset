@@ -24,11 +24,15 @@ export interface AssistantMessage {
   approvals?: AssistantApproval[];
   /** Videos the reply shows in the chat (show_video): a small player each. */
   media?: AssistantMedia[];
+  /** Answers the reply offers as buttons (offer_choices): a press sends that one as the user's message. */
+  choices?: string[];
   /** A user message's attachments as shown in the chat: pictures by name (served by GET /api/assistant/images/:id), pastes by name. */
   images?: Array<{ id: string; name: string }>;
   pasted?: string[];
   /** Videos and recordings sent with a user message (api/assistant-files.ts), by name. */
   files?: Array<{ id: string; name: string }>;
+  /** Folders dropped in the Mac app with a user message: their paths on the user's computer (nothing uploaded). */
+  folders?: string[];
   /** The highlighted text a user message asked about. */
   quote?: string;
   /** A scheduled task's run: its prompt, posted as the user's message (api/automations.ts). */
@@ -115,6 +119,8 @@ export interface AssistantTurnInput {
   pasted?: AssistantPaste[];
   /** Ids of videos or recordings uploaded first (POST /api/assistant/files, parts, complete). */
   files?: string[];
+  /** Folders dropped in the Mac app: their absolute paths on the user's computer, pointed at where they lie. */
+  paths?: string[];
   context?: AssistantContext;
 }
 
@@ -126,8 +132,8 @@ export interface AssistantFile {
   size: number;
 }
 
-/** Where the assistant's use_file can send a dropped file: Video Notes, Review or Caption Studio. */
-export const FILE_USES = ["notes", "review", "captions"] as const;
+/** Where the assistant's use_file can send a dropped file: Video Notes, Review, Caption Studio or the Media Library. */
+export const FILE_USES = ["notes", "review", "captions", "library"] as const;
 export type AssistantFileUse = (typeof FILE_USES)[number];
 
 /** An earlier conversation, kept when a new one starts (Earlier chats in the dock). */

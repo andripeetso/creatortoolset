@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import { DRIVERS, type LimitsIdentity, type LimitWindow, type ProviderInstance, type ProvidersView } from "@contracts/providers";
-import { PLANS, type PlanId } from "@contracts/plans";
+import { PLANS, planFromCli, type PlanId } from "@contracts/plans";
 import type { SetupView } from "@contracts/tools";
 import { Button } from "@/components/ui/button";
 import { USAGE_PERIODS, deviceOf, thisMacDevice, usageSince, useProviders, type UsageRow } from "@/lib/providers";
-import { countedWindow, identityKey, leftOf, noticeOf, resetsIn } from "@/lib/limits";
+import { LOW, countedWindow, identityKey, leftOf, noticeOf, resetsIn } from "@/lib/limits";
 import { useSetup } from "@/lib/setup";
 import { tokensLabel } from "@/lib/workshop";
 import { cn } from "@/lib/utils";
@@ -18,7 +18,6 @@ import { hasThisMac, tell, useThisMac, type ThisMacState } from "./ThisMacSectio
 const RELOAD_MS = 5 * 60_000;
 const TICK_MS = 60_000; // the countdowns
 const STALE_MS = 15 * 60_000;
-const LOW = 20; // a window at or under this share left is amber
 const API = " (API)"; // the tally's label for calls on the app's own Anthropic key
 const TOOL: Record<string, string> = { Automation: "Scheduled task" };
 
@@ -34,13 +33,13 @@ export function UsageSection() {
   const bridge = useThisMac(hasThisMac());
   const limitsOn = bridge?.limits;
   const wasOff = useRef(false);
-  // the plan the person picked (setup's answer); "Your plan" reads it, and the warning before a heavy run does too
+  // the plan the person picked (setup's answer), else the one their AI names: "Your plan" reads it, and the warning
+  // before a heavy run does too. Read again with the page (on open and each reload): a reading that names the plan can
+  // come in after setup was first read
   const setup = useSetup((s) => s.view);
-  useEffect(() => {
-    if (!setup) void useSetup.getState().load();
-  }, [setup]);
+  useEffect(() => void useSetup.getState().load(), []);
 
-  const load = useCallback(() => refresh().then(() => setNow(Date.now()), () => {}), [refresh]);
+  const load = useCallback(() => Promise.all([refresh(), useSetup.getState().load()]).then(() => setNow(Date.now()), () => {}), [refresh]);
 
   useEffect(() => {
     const reload = setInterval(() => void load(), RELOAD_MS);
@@ -101,26 +100,27 @@ export function PlanLimits({ view, now, bridge, setup }: { view: ProvidersView; 
       ))}
       {unread.length > 0 && (
         <Card>
-          {unread.map(({ inst, device }, n) => (
-            <Unread key={n} inst={inst} device={device} view={view} bridge={bridge} />
+          {unread.map(({ inst, device, hit }, n) => (
+            <Unread key={n} inst={inst} device={device} view={view} bridge={bridge} hit={hit} />
           ))}
         </Card>
       )}
-      {/* a computer that reports the plan (shown on the card above) answers the question itself */}
-      {(logins.length > 0 || unread.length > 0) && !logins.some((i) => view.devices.find((d) => d.id === i.device)?.report?.drivers.some((d) => d.driver === i.driver && d.plan)) && (
-        <YourPlan setup={setup} />
-      )}
+      {(logins.length > 0 || unread.length > 0) && <YourPlan setup={setup} />}
     </Section>
   );
 }
 
 /**
- * "Your plan", asked only when no reading tells the plan (setup's detected plan). The answer is what a heavy run reads
- * before it starts (confirmHeavy in lib/setup.ts; it asks first on Pro and Plus).
+ * "Your plan": the person's pick, else the plan their AI names (setup's `detected`: Claude's sign-in, Codex's usage
+ * page), else Not sure. It is what a heavy run reads before it starts (confirmHeavy in lib/setup.ts; it asks first on
+ * Pro and Plus). Picking one saves it as theirs; nothing the AI says replaces it.
  */
 function YourPlan({ setup }: { setup: SetupView | null }) {
-  if (!setup || setup.detected) return null;
+  if (!setup) return null;
   const save = (v: string) => void useSetup.getState().save({ plan: v === "none" ? null : (v as PlanId) }).catch(() => saveFailed("That did not save. Try again."));
+  // the first choice follows the account: the plan it names, or Not sure when it names none. Choosing it drops a pick
+  // made by hand, so every choice in the list does something (Not sure beside a found plan used to jump straight back)
+  const found = PLANS.find((x) => x.id === setup.detected);
   return (
     <Card>
       <Row
@@ -132,7 +132,7 @@ function YourPlan({ setup }: { setup: SetupView | null }) {
             label="Your plan"
             value={setup.plan ?? "none"}
             onValueChange={save}
-            options={[{ value: "none", label: "Not sure" }, ...PLANS.map((p) => ({ value: p.id, label: p.label }))]}
+            options={[{ value: "none", label: found ? `${found.label}, read from your account` : "Not sure" }, ...PLANS.map((p) => ({ value: p.id, label: p.label }))]}
           />
         }
       />
@@ -141,18 +141,25 @@ function YourPlan({ setup }: { setup: SetupView | null }) {
 }
 
 /** The enabled Claude and Codex AIs this account sees that have no reading (a login names its instances in `instances`). */
-function missingReadings(view: ProvidersView): Array<{ inst: ProviderInstance; device: string }> {
-  const sets = [...(view.own?.instances ?? []), ...(view.workspace?.settings.instances ?? [])];
+function missingReadings(view: ProvidersView): Array<{ inst: ProviderInstance; device: string; hit?: string }> {
+  // the AI's check is keyed by scope: "workspace:<id>", or the account's own "<username>:<id>"
+  const hitOf = (id: string, own: boolean) => Object.entries(view.checks ?? {}).find(([k]) => k.endsWith(`:${id}`) && k.startsWith("workspace:") !== own)?.[1].note;
+  const sets = [
+    ...(view.own?.instances ?? []).map((inst) => ({ inst, hit: hitOf(inst.id, true) })),
+    ...(view.workspace?.settings.instances ?? []).map((inst) => ({ inst, hit: hitOf(inst.id, false) })),
+  ];
   return sets
-    .filter((i) => i.enabled && (i.driver === "claude" || i.driver === "codex"))
-    .map((inst) => ({ inst, device: deviceOf(inst) }))
+    .filter(({ inst: i }) => i.enabled && (i.driver === "claude" || i.driver === "codex"))
+    .map(({ inst, hit }) => ({ inst, hit, device: deviceOf(inst) }))
     .filter(({ inst, device }) => !view.limits.some((l) => l.driver === inst.driver && l.device === device && l.instances.some((k) => k.endsWith(`:${inst.id}`))));
 }
 
 /** One AI login: its logo, name, computer and plan, then a bar per window with the share left and when it resets. */
 function LoginCard({ i, view, now }: { i: LimitsIdentity; view: ProvidersView; now: number }) {
   const mac = view.devices.find((d) => d.id === i.device);
-  const plan = mac?.report?.drivers.find((d) => d.driver === i.driver)?.plan;
+  // Codex's plan comes with its reading; Claude's from its sign-in, in the Mac's report
+  const planId = i.plan ?? (i.driver === "claude" ? planFromCli(mac?.report?.drivers.find((d) => d.driver === "claude")?.plan) : null);
+  const plan = PLANS.find((p) => p.id === planId)?.label;
   const driver = DRIVERS.find((d) => d.id === i.driver)?.label ?? i.driver;
   // the Mac reports each Claude folder with whether it has a custom endpoint; the folder is named ".claude" or ".claude-<label>"
   const folder = i.label === "default" ? `.${i.driver}` : `.${i.driver}-${i.label}`;
@@ -167,7 +174,7 @@ function LoginCard({ i, view, now }: { i: LimitsIdentity; view: ProvidersView; n
       <ListRow
         icon={<ProviderLogo driver={i.driver} className="size-4" />}
         title={title}
-        subtitle={[plan ? `${plan[0]!.toUpperCase()}${plan.slice(1)} plan` : null, mac?.name].filter(Boolean).join(" · ") || undefined}
+        subtitle={[plan ? `${plan} plan` : null, mac?.name].filter(Boolean).join(" · ") || undefined}
         status={staleLine(i, now)}
       />
       {i.state === "ok" && i.windows.map((w) => <WindowBar key={w.id} w={countedWindow(i, w, now)} now={now} />)}
@@ -180,7 +187,7 @@ function LoginCard({ i, view, now }: { i: LimitsIdentity; view: ProvidersView; n
  * An AI with no reading: the true reason for its computer, and the fix where the person can make one. On this Mac, a Mac
  * app that reports its switch (`bridge.limits`) turns it on from the row; elsewhere the row names the fix.
  */
-function Unread({ inst, device, view, bridge }: { inst: ProviderInstance; device: string; view: ProvidersView; bridge: ThisMacState | null }) {
+function Unread({ inst, device, view, bridge, hit }: { inst: ProviderInstance; device: string; view: ProvidersView; bridge: ThisMacState | null; hit?: string }) {
   const mac = view.devices.find((d) => d.id === device);
   const who = mac?.name ?? "another Mac";
   const here = thisMacDevice() === device;
@@ -212,6 +219,8 @@ function Unread({ inst, device, view, bridge }: { inst: ProviderInstance; device
         ? "Turn on Read this Mac's Claude and Codex limits under This Mac."
         : `Open the Mac app on ${who} and turn on Read this Mac's Claude and Codex limits under This Mac.`;
   }
+  // its last call met the plan's limit (the AI's check note, mac-claude.ts): that, in amber, says more than "no reading"
+  if (hit) return <Row title={`${inst.name} on ${who}`} status={<Status tone="attention">{hit}</Status>} description={off ? "Turn on plan limits to see how much is left." : undefined} control={control} />;
   return <Row title={`${inst.name} on ${who}`} description={reason} status={fix} control={control} />;
 }
 

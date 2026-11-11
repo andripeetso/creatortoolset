@@ -42,13 +42,21 @@ export const SYSTEM = `You are the assistant built into Creator Toolset, a web a
 Your reply is shown in a small chat dock. You act in the app only through its tools (the creator-toolset MCP server):
 - setup_status: what is set up (the AI, logins, which keys are saved, the project count). Call it before you walk someone through setup.
 - The workshop_* tools (projects, sessions, pieces), list_reviews, get_review, resolve_comment, review_set_approval and review_share (a video's public share link) work on the user's own content.
-- instagram_posts and instagram_refresh: the user's Instagram posts in the Analyzer and their numbers.
-- editor_list, editor_get and editor_run: the AI Editor's edits, their drafts and jobs.
+- instagram_posts and instagram_refresh: the user's Instagram posts in the Analyzer and their numbers. instagram_comments reads the comments under an account's posts (what people ask most); instagram_add_account adds the user's own account or another creator's.
+- media_import_folder brings a folder on this computer into the Media Library (only files changed since a time, like today) and returns the script files' text there; media_search and media_folders find footage and folders. Each video sorts itself as A-roll (someone talks to the camera) or B-roll (the rest): media_search's roll narrows to one. After adding files, tell the user the answer's said line.
+- editor_list, editor_get and editor_run: the AI Editor's edits, their drafts and jobs. editor_create makes a new edit from the takes' version ids (with the script and a B-roll folder) and starts it.
 - schedule_task, list_scheduled_tasks, run_scheduled_task_now and delete_scheduled_task: scheduled tasks. A task is a prompt the user's AI runs on its own on a schedule (at a time on chosen weekdays, once at a date and time, or every few minutes or hours), and each run posts the prompt and its answer in an assistant chat: by default this chat. When the user asks for something to happen regularly or later, make one; say the next run, and that they can change it in Settings, Scheduled tasks.
 - navigate opens a page of the app for the user, given as a relative path such as /workshop.
+- A name in your reply opens its page when it is a markdown link to a path of this app: [its title](/review/<id>?v=<n>), [its name](/editor/<id>), [its title](/workshop/sessions/<id>). When you list reviews, edits or sessions the user can open, link each that way (a tool's link ends in that path).
 - show_video plays a Review video (or an AI Editor draft's preview) inside the chat, with a link to its page.
-- use_file sends a video or recording (dropped in the chat, or by its path on this computer when the server runs here) to Video Notes (transcript, summary, takeaways, action items, chapters), Review (a video page with comments and a share link) or Caption Studio (captions on the video). notes_get follows a Video Note until it's ready and reads what it found.
+- use_file sends a video or recording (dropped in the chat, or by its path on this computer when the server runs here) to Video Notes (transcript, summary, takeaways, action items, chapters), Review (a video page with comments and a share link), Caption Studio (captions on the video) or the Media Library (footage to keep, sorted into A-roll and B-roll; several dropped files in one call; a folder on this computer goes in with media_import_folder). notes_get follows a Video Note until it's ready and reads what it found.
+- offer_choices puts 2 to 4 short answers under your reply as buttons; a press sends that answer as the user's next message.
 - ask_secret asks the user for one API key. The app shows a secure box in the chat; the key goes straight to the app and never to you. Never ask the user to paste a key, token or password into the chat, and never repeat one back.
+
+A folder the user dropped comes as its path on their computer. Asked to edit it, keep it to a tap or two:
+1. Find what it is: a script file in the folder (look in the folder yourself when you run on their computer; media_import_folder returns the script files' text where the server is on that computer, and refuses elsewhere: then go by the other clues), a Workshop session or piece whose title or script fits the folder's name, or an edit already made from it (editor_list). Nothing fits by name and the editor can sort footage first: start it sorting, say you are reading the clips, and match what is said in them (the editor tool says how). If one fits, say which in one line and offer_choices "Yes, that's it" / "No, it's a new video".
+2. Then offer_choices "Start with my usual setup" / "Change the setup". The usual setup is how their newest edit was set up. Change the setup = navigate to the AI Editor's New edit with the footage chosen (/editor?new=1&folder=<Media Library folder id>&name=<name>, unless the editor tool says another link).
+After the go, start the edit at once and say where to follow it.
 
 The keys the app takes, and what each one is for:
 ${MY_KEYS.map((k) => `- ${k.env} (${k.name}): ${k.what}`).join("\n")}`;
@@ -128,6 +136,7 @@ const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_PASTES = 5;
 const MAX_PASTED = 200_000;
 const MAX_FILES = 5;
+const MAX_PATHS = 5;
 const CONTEXT_CAPS = { path: 300, title: 200, selection: 4000, visible: 2000 } as const;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -166,6 +175,8 @@ interface TurnInput {
   /** Dropped videos and recordings: ids from the body, resolved to this account's files by POST /turn. */
   fileIds: string[];
   files: AssistantFile[];
+  /** Folders dropped in the Mac app: absolute paths, only told to the AI (its tools read them on that computer). */
+  paths: string[];
   context?: AssistantContext;
 }
 
@@ -203,7 +214,10 @@ function parseTurn(raw: unknown): TurnInput {
   });
   if (b.files !== undefined && (!Array.isArray(b.files) || b.files.length > MAX_FILES || b.files.some((x) => typeof x !== "string"))) throw new Error(`Send up to ${MAX_FILES} videos at a time.`);
   const fileIds = (b.files ?? []) as string[];
-  if (!text && !images.length && !pasted.length && !fileIds.length) throw new Error("Write a message, or add a picture or pasted text.");
+  if (b.paths !== undefined && (!Array.isArray(b.paths) || b.paths.length > MAX_PATHS || b.paths.some((x) => typeof x !== "string" || !x.startsWith("/") || x.length > 1000 || /[\n\r\0]/.test(x))))
+    throw new Error(`Drop up to ${MAX_PATHS} folders at a time.`);
+  const paths = (b.paths ?? []) as string[];
+  if (!text && !images.length && !pasted.length && !fileIds.length && !paths.length) throw new Error("Write a message, or add a picture or pasted text.");
   const c = (b.context && typeof b.context === "object" ? b.context : null) as Record<string, unknown> | null;
   const where = c && capped(c.path, CONTEXT_CAPS.path);
   const context: AssistantContext | undefined = c && where
@@ -215,7 +229,7 @@ function parseTurn(raw: unknown): TurnInput {
         ...(typeof c.timezone === "string" && validTimezone(c.timezone) ? { timezone: c.timezone } : {}),
       }
     : undefined;
-  return { text, images, pasted, fileIds, files: [], context };
+  return { text, images, pasted, fileIds, files: [], paths, context };
 }
 
 /** Where the newest message's pictures and pastes sit in the folder the Mac's Claude reads. */
@@ -318,6 +332,14 @@ export function noteMedia(username: string, turn: string, card: AssistantMedia):
   if (at >= 0) media[at] = card;
   else if (media.length < 10) media.push(card);
   else return;
+  saveSoon(username);
+}
+
+/** Answers the reply offers as buttons (offer_choices, mcp.ts): the newest offer replaces an earlier one. */
+export function noteChoices(username: string, turn: string, choices: string[]): void {
+  const m = messageOf(username, turn);
+  if (m?.status !== "thinking") return;
+  m.choices = choices;
   saveSoon(username);
 }
 
@@ -459,7 +481,7 @@ function view(username: string, admin: boolean): AssistantView {
 
 /** An earlier message's attachments, by count and name only: their files went with that turn. */
 const marks = (m: AssistantMessage) =>
-  [m.images?.length ? `[${m.images.length === 1 ? "1 picture" : `${m.images.length} pictures`}]` : "", ...(m.pasted ?? []).map((n) => `[pasted: ${n}]`), ...(m.files ?? []).map((f) => `[video: ${f.name}, file id ${f.id}]`)].filter(Boolean).join(" ");
+  [m.images?.length ? `[${m.images.length === 1 ? "1 picture" : `${m.images.length} pictures`}]` : "", ...(m.pasted ?? []).map((n) => `[pasted: ${n}]`), ...(m.files ?? []).map((f) => `[video: ${f.name}, file id ${f.id}]`), ...(m.folders ?? []).map((p) => `[folder: ${p}]`)].filter(Boolean).join(" ");
 
 /** What came with the newest message, as facts: its files in the folder, the page it was sent from, what was highlighted. */
 function newestFacts(input: TurnInput): string[] {
@@ -467,6 +489,7 @@ function newestFacts(input: TurnInput): string[] {
   const n = input.images.length;
   if (n) out.push(`The user attached ${n === 1 ? "a picture" : `${n} pictures`}: ${input.images.map((im, i) => attachedName(im.name, i, IMAGE_EXT[im.type])).join(", ")} (the Read tool shows a picture).`);
   for (const f of input.files) out.push(`The user attached ${f.mime.startsWith("audio/") ? "a recording" : "a video"}: "${f.name}" (${(f.size / 1048576).toFixed(f.size < 10485760 ? 1 : 0)} MB), file id ${f.id}.`);
+  for (const p of input.paths) out.push(`The user dropped a folder from their computer: ${JSON.stringify(p)} (its path there; nothing was uploaded).`);
   for (const [i, p] of input.pasted.entries()) out.push(`The user pasted "${p.name}" (${p.text.length.toLocaleString("en-US")} characters), in ${pastedName(p.name, i)}.`);
   const c = input.context;
   if (c) {
@@ -697,6 +720,7 @@ assistantApp.post("/turn", async (c) => {
     ...(images.length ? { images } : {}),
     ...(input.pasted.length ? { pasted: input.pasted.map((p) => p.name) } : {}),
     ...(input.files.length ? { files: input.files.map((f) => ({ id: f.id, name: f.name })) } : {}),
+    ...(input.paths.length ? { folders: input.paths } : {}),
     ...(input.context?.selection ? { quote: input.context.selection } : {}),
   });
   const reply: AssistantMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, status: "thinking" };

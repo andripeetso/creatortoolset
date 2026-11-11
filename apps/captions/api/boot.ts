@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { bodyLimit } from "hono/body-limit";
 import type { HttpBindings } from "@hono/node-server";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { appRouter } from "./router";
@@ -41,7 +40,7 @@ import { grantsApp } from "./library/grants";
 import { assistantApp } from "./assistant";
 import { automationsApp, startAutomations } from "./automations";
 import { providersApp } from "./providers";
-import { mcpApp } from "./mcp";
+import { mcpApp, pluginToolsOf } from "./mcp";
 import { connectorsApp, connectorsCallbackApp, startConnectorPulls, tiktokVerifyFile } from "./connectors";
 import { ownerProfileApp } from "./owner-profile";
 import { devicesApp } from "./devices";
@@ -56,6 +55,7 @@ import { workPrefsApp } from "./work-prefs";
 import { captionLayoutApp } from "./caption-layout";
 import { mountAdminRoutes, mountAnsweredRoutes, mountGatedRoutes, mountLibraryRoutes, mountOpenRoutes, mountPlugins, mountPluginsList, mountPublicRoutes, mountReplacedRoutes, pluginBodyLimitExempt, replacedLargeBody, startPlugins } from "./lib/plugin";
 import { serverPlugins } from "./plugins.gen";
+import { clearLoadingMark, loadFolderPlugins, mountFolderPlugins, startFolderPlugin } from "./lib/folder-plugins";
 import { announceWrites, syncApp } from "./lib/sync";
 import { signInCallbackApp, signInStartApp } from "./sign-in";
 import { activityApp } from "./activity";
@@ -121,7 +121,7 @@ app.use(async (c, next) => {
 });
 
 // 50 MB body cap, except video uploads and transcription audio
-const limit = bodyLimit({ maxSize: 50 * 1024 * 1024 });
+const MAX_BODY = 50 * 1024 * 1024;
 const BODY_METHODS = new Set(["POST", "PUT", "PATCH"]);
 app.use(async (c, next) => {
   if (
@@ -141,16 +141,17 @@ app.use(async (c, next) => {
   ) {
     return next();
   }
-  // Without a Content-Length, hono's bodyLimit re-wraps the request via
-  // `new Request(...)`, which the node adapters choke on. Browser JSON
-  // fetches always declare a length; refuse chunked bodies and let
+  // Browser JSON fetches always declare a length; refuse chunked bodies and let
   // body-less POSTs (logout) through untouched.
   if (!c.req.raw.headers.has("content-length")) {
     return c.req.raw.headers.has("transfer-encoding")
       ? c.json({ error: "Length Required" }, 411)
       : next();
   }
-  return limit(c, next);
+  // The cap is read from the header alone, never from the body: asking the request for its body starts the node
+  // request flowing into a web stream nobody reads, and a route that then streams the request itself (an upload
+  // part, a Review reference) stalls after the first socket read (about 64 KB).
+  return Number(c.req.raw.headers.get("content-length")) > MAX_BODY ? c.text("Payload Too Large", 413) : next();
 });
 
 const PUBLIC_UUID =
@@ -227,6 +228,18 @@ app.get("/api/health", (c) =>
 );
 
 // plug-ins' open routes (machine callers with their own check): before the account gate, as the health check is
+// The Mac app closing our stdin means the app is gone or is restarting us. That can happen while a plug-in from the
+// folder is loading, and it is not that plug-in's doing: the mark that would blame it at the next start comes down
+// first. So this is set up before the first plug-in loads, not after the server is listening.
+if (process.env.CT_EXIT_WITH_PARENT === "1") {
+  exitWithParent(process.stdin, () => {
+    clearLoadingMark();
+    process.exit(0);
+  });
+}
+// plug-ins from the person's own folder (the Mac app's server only, lib/folder-plugins.ts): each is built, loaded and
+// checked by itself before anything is mounted, so one that fails is left out and the app starts without it
+serverPlugins.push(...(await loadFolderPlugins(serverPlugins, (all) => void pluginToolsOf(all))));
 mountOpenRoutes(app, serverPlugins);
 // hosted mode only: Apple / Google sign-in to a site account and linking one (sign-in.ts). A sign-in a plug-in started falls through.
 if (hostedMode()) {
@@ -405,13 +418,14 @@ if (process.env.NODE_ENV !== "test") {
   startEditorWorker();
   startTrashPurge();
   startWatchFolders();
-  startPlugins(serverPlugins);
+  startPlugins(serverPlugins, startFolderPlugin);
 }
 app.route("/api/stories", storiesApp);
 app.route("/api/account-profile", accountProfileApp);
 // plug-ins (plugins/<id>/plugin.ts, generated into api/plugins.gen.ts) mount under /api/x/<id>, behind the same login
 mountPlugins(app, serverPlugins);
 mountPluginsList(app);
+mountFolderPlugins(app);
 mountGatedRoutes(app, serverPlugins);
 // hosted mode only (CT_MODE=hosted): the platform admin, the team and invite links. On one person's Mac they don't exist.
 if (hostedMode()) {
@@ -463,5 +477,4 @@ if (env.isProduction) {
     },
   );
   if ("requestTimeout" in server) disableRequestTimeouts(server);
-  if (process.env.CT_EXIT_WITH_PARENT === "1") exitWithParent(process.stdin, () => process.exit(0));
 }

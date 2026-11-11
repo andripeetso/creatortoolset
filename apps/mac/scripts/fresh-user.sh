@@ -73,7 +73,7 @@ if [ "$wipe" = 1 ]; then
   MCP="creator-toolset-fresh"; guard "$MCP"
   /bin/zsh -lic "command -v claude >/dev/null && claude mcp remove --scope user $MCP; command -v codex >/dev/null && codex mcp remove $MCP" >/dev/null 2>&1 || true
   echo "  $MCP removed from Claude Code and Codex (if it was there)"
-  for kind in server account device env; do
+  for kind in server account device env plugins; do
     svc="$ID.$kind"; guard "$svc"
     n=0
     while [ "$n" -lt 100 ] && security delete-generic-password -s "$svc" >/dev/null 2>&1; do n=$((n + 1)); done

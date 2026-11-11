@@ -3,7 +3,8 @@ import AppKit
 /// What a recording captures: a whole display, one window, or an area of a display.
 enum RecordSource: Equatable {
     case display(CGDirectDisplayID)
-    case window(CGWindowID)
+    /// The window's frame when it was picked: global points, top-left origin.
+    case window(CGWindowID, CGRect)
     /// `rect` in the display's points, top-left origin.
     case area(CGDirectDisplayID, CGRect)
 }

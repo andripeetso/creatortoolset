@@ -1,9 +1,9 @@
-import type { Hono, MiddlewareHandler } from "hono";
+import { Hono as HonoApp, type Hono, type MiddlewareHandler } from "hono";
 import { isPluginGateId, isTool, type PluginGateId, type Tool } from "../../contracts/tools";
 import type { LibrarySlot } from "../../contracts/library-source";
 import type { EditFlag, FootageTarget } from "../../contracts/editor";
 import { DRIVERS, type DriverKind, type ProviderPreset } from "../../contracts/providers";
-import { registerLibrarySlot } from "../library/sources";
+import { checkLibrarySlots, registerLibrarySlot } from "../library/sources";
 import type { ActivityFn, MenuFn } from "../activity";
 import type { FinalsAdd, FinalsOutcome, FinalsSource } from "../library/finals";
 import { readers, registerPublicGridReader, registerReader, type PublicGridReader, type SocialReader } from "./connectors/provider";
@@ -408,9 +408,12 @@ export function mountGatedRoutes(app: Hono<any, any, any>, plugins: ServerPlugin
   }
 }
 
-/** Runs each loaded plug-in's start hook, once, in load order. */
-export function startPlugins(plugins: ServerPlugin[]): void {
-  for (const plugin of plugins) plugin.start?.();
+/**
+ * Runs each loaded plug-in's start hook, once, in load order. `around` runs the hook of a plug-in it knows how to
+ * contain (one from the person's folder, lib/folder-plugins.ts): there a hook that throws is recorded, not fatal.
+ */
+export function startPlugins(plugins: ServerPlugin[], around: (plugin: ServerPlugin, run: () => void) => void = (_p, run) => run()): void {
+  for (const plugin of plugins) if (plugin.start) around(plugin, () => plugin.start!());
 }
 
 /** True when a plug-in lets this request's body go past the 50 MB cap. */
@@ -474,6 +477,9 @@ export function mountPluginsList(app: Hono<any, any, any>): void {
   );
 }
 
+/** True when the app already has a route at `base` or under it. */
+const pathServed = (app: Hono<any, any, any>, base: string): boolean => app.routes.some((r) => r.path === base || r.path.startsWith(base + "/"));
+
 /**
  * Mount each plug-in's routes at /api/x/<id>. Throws when that path is already served, so a boot never answers one path twice,
  * and when a gate is declared badly. The loaded plug-ins are then the ones new accounts get their default-off gates from.
@@ -490,9 +496,7 @@ export function mountPlugins(app: Hono<any, any, any>, plugins: ServerPlugin[]):
     if (plugin.library) registerLibrarySlot(plugin.id, plugin.library);
     if (!plugin.routes) continue;
     const base = `/api/x/${plugin.id}`;
-    if (app.routes.some((r) => r.path === base || r.path.startsWith(base + "/"))) {
-      throw new Error(`plug-in ${plugin.id}: ${base} is already served`);
-    }
+    if (pathServed(app, base)) throw new Error(`plug-in ${plugin.id}: ${base} is already served`);
     app.route(base, plugin.routes);
   }
 }
@@ -500,8 +504,8 @@ export function mountPlugins(app: Hono<any, any, any>, plugins: ServerPlugin[]):
 /** The built-in root paths a plug-in may answer before the built-in router (a plug-in's `answers[].path` must be one of these). */
 export const ANSWERABLE_PATHS = ["/api/instagram", "/api/media", "/api/enhance", "/api/review", "/api/clean"] as const;
 
-/** Mount each plug-in's answered routes ahead of the built-in router of their path (boot.ts calls it before that router). */
-export function mountAnsweredRoutes(app: Hono<any, any, any>, plugins: ServerPlugin[]): void {
+/** Refuses an answered path that is not in ANSWERABLE_PATHS, or that two plug-ins both answer. */
+function checkAnswers(plugins: ServerPlugin[]): void {
   const owner = new Map<string, string>();
   for (const plugin of plugins) {
     for (const a of plugin.answers ?? []) {
@@ -510,7 +514,68 @@ export function mountAnsweredRoutes(app: Hono<any, any, any>, plugins: ServerPlu
       owner.set(a.path, plugin.id);
     }
   }
+}
+
+/** Mount each plug-in's answered routes ahead of the built-in router of their path (boot.ts calls it before that router). */
+export function mountAnsweredRoutes(app: Hono<any, any, any>, plugins: ServerPlugin[]): void {
+  checkAnswers(plugins);
   for (const plugin of plugins) for (const a of plugin.answers ?? []) app.route(a.path, a.routes);
+}
+
+/**
+ * Why a plug-in can't join the ones already in, or null. It runs, on this one plug-in, every check that otherwise stops
+ * the server when it starts: an id, gate, edit flag, provider, upload relay, pack kind, replaced or answered path, or
+ * Media Library source or filter that another plug-in has, a route path without its /, and routes that are not a Hono app. So a plug-in from the person's own
+ * folder (lib/folder-plugins.ts) is left out with this sentence and the app starts without it. `more` is for the checks
+ * this file can't import (the AI tools, api/mcp.ts).
+ */
+export function admissionProblem(admitted: ServerPlugin[], candidate: ServerPlugin, more?: (all: ServerPlugin[]) => void): string | null {
+  try {
+    if (!candidate || typeof candidate !== "object") throw new Error("its file must export definePlugin({ … }) as the default");
+    if (typeof candidate.id !== "string" || !/^[a-z0-9][a-z0-9-]{0,39}$/.test(candidate.id)) throw new Error("its id must be lowercase letters, digits and dashes");
+    if (admitted.some((p) => p.id === candidate.id)) throw new Error(`the app already has a plug-in called ${candidate.id}`);
+    const all = [...admitted, candidate];
+    checkGates(all);
+    checkEditFlags(all);
+    checkProviders(all);
+    checkUploadRelays(all);
+    checkPackItems(all);
+    checkReplaces(all);
+    checkAnswers(all);
+    checkLibrarySlots(all.flatMap((p) => (p.library ? [[p.id, p.library] as [string, LibrarySlot]] : [])));
+    // read on every request (replacedLargeBody): anything but a RegExp there would fail them all
+    for (const re of candidate.replaces?.largeBodies ?? []) if (!(re instanceof RegExp)) throw new Error("replaces.largeBodies must be regular expressions");
+    const paths = [...(candidate.publicRoutes ?? []), ...(candidate.gatedRoutes ?? [])];
+    for (const r of paths) if (typeof r?.path !== "string" || !r.path.startsWith("/")) throw new Error(`route "${String(r?.path)}" must start with /`);
+    // one public-grid reader for the whole app (registerPublicGridReader throws on a second one, at mount)
+    const grids = all.filter((p) => p.connectors?.publicGrid);
+    if (candidate.connectors?.publicGrid && grids.length > 1) throw new Error(`plug-in ${grids[0]!.id} already reads public grids, and only one can`);
+    // Every set of routes is mounted on a throwaway app the way boot.ts mounts the real ones, in its order, with the
+    // check mountPlugins makes. So what isn't a Hono app fails here, and so does a plug-in whose open or public
+    // routes already serve /api/x/<id> (a webhook written there): at mount that stops the whole server.
+    const trial = new HonoApp();
+    for (const p of all) {
+      if (p.openRoutes) trial.route("/", p.openRoutes);
+      for (const r of p.publicRoutes ?? []) trial.route(r.path, r.app);
+      for (const a of p.answers ?? []) trial.route(a.path, a.routes);
+      if (p.libraryRoutes) trial.route("/api/library", p.libraryRoutes);
+      for (const at of p.replaces?.paths ?? []) trial.route(at, p.replaces!.routes);
+    }
+    for (const p of all) {
+      if (!p.routes) continue;
+      const base = `/api/x/${p.id}`;
+      if (pathServed(trial, base)) throw new Error(`${base} is already served by open or public routes, so the routes of ${p.id} can't be mounted there`);
+      trial.route(base, p.routes);
+    }
+    for (const r of [candidate.adminRoutes, ...(candidate.gatedRoutes ?? []).map((g) => g.app)]) if (r !== undefined) trial.route("/x", r);
+    for (const key of ["start", "activity", "menu", "bodyLimitExempt"] as const) {
+      if (candidate[key] !== undefined && typeof candidate[key] !== "function") throw new Error(`${key} must be a function`);
+    }
+    more?.(all);
+    return null;
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e);
+  }
 }
 
 /** The first loaded plug-in's footage target for this account (editor.ingest), or null for the default. */

@@ -16,3 +16,5 @@ runtime/sscd/
 /plugins/
 api/plugins.gen.ts
 src/plugins.gen.ts
+api/plugin-host.gen.ts
+src/plugin-host.gen.ts

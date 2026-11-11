@@ -2,6 +2,7 @@ import { Fragment, type ReactNode } from "react";
 import { Link, useLocation } from "react-router";
 import { Check, ChevronDown, ChevronRight } from "lucide-react";
 import { HistoryArrows, HomeLink } from "@/components/HomeLink";
+import { PlanLimitPill } from "@/components/PlanLimitPill";
 import { UserMenu } from "@/components/UserMenu";
 import {
   DropdownMenu,
@@ -12,7 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useMe } from "@/lib/auth";
 import { isPhoneHub } from "@/lib/mobile";
-import { OTHER, WORKFLOW, useOpenTool } from "@/lib/tools";
+import { toolLayout, useOpenTool } from "@/lib/tools";
 import { cn } from "@/lib/utils";
 
 /**
@@ -73,6 +74,7 @@ export function AppBar({
       </nav>
       <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5 sm:shrink-0 sm:flex-nowrap sm:gap-2">
         {children}
+        {account && <PlanLimitPill />}
         {account && <UserMenu />}
       </div>
     </header>
@@ -96,7 +98,7 @@ function ToolMenu({ tool, to, dim, onLeave }: {
   const name = cn("max-w-[40%] shrink-0 truncate", dim && "text-zinc-500");
   if (!me) return <h1 className={name}>{tool}</h1>;
   const phone = isPhoneHub();
-  const groups = [WORKFLOW.flatMap((s) => s.tools), OTHER].map((g) => g.filter((t) => t.can(me))).filter((g) => g.length);
+  const groups = [toolLayout().workflow.flatMap((s) => s.tools), toolLayout().other].map((g) => g.filter((t) => t.can(me))).filter((g) => g.length);
   const here = (path: string) => {
     const base = path.split("?")[0];
     return pathname === base || pathname.startsWith(`${base}/`);

@@ -6,30 +6,38 @@ import type { PluginInfo } from "@/lib/plugin";
 import { ContentsView } from "./PacksShared";
 import { firstSentence, packContents } from "./packs-helpers";
 import { InstalledPackActions, PackHereSwitch, PackUsedIn } from "./PackActions";
-import { PluginRows } from "./PluginsInstalled";
+import type { FolderPlugins } from "@/lib/folder-plugins";
+import { FolderPluginRows, PluginRows } from "./PluginsInstalled";
 
 /**
- * Installed: the plug-ins this server is built with (they make the install different), then the packs the person has
+ * Installed: the plug-ins (the ones this server is built with, and on the Mac app's own server the ones in the person's
+ * plug-ins folder, each with its switch), then the packs the person has
  * switched on. Each pack is one row: its name, who made it, one line, the On switch and `…` (Remove). "What it adds" folds.
  */
 export function InstalledView({
   plugins,
+  folderPlugins,
   installed,
   updates,
   reload,
   error,
 }: {
   plugins: PluginInfo[];
+  folderPlugins: FolderPlugins | null;
   installed: InstalledPack[] | null;
   updates: UpdateRow[];
   reload: () => Promise<void>;
   error: string | null;
 }) {
+  // a plug-in from the person's folder has its own row (with its switch); the rest are built into this server
+  const fromFolder = folderPlugins?.rows ?? [];
+  const builtIn = plugins.filter((p) => !fromFolder.some((r) => r.id === p.id));
   return (
     <>
-      {plugins.length > 0 && (
+      {(builtIn.length > 0 || fromFolder.length > 0) && (
         <Section title="Plug-ins">
-          <PluginRows plugins={plugins} />
+          {builtIn.length > 0 && <PluginRows plugins={builtIn} />}
+          {folderPlugins && fromFolder.length > 0 && <FolderPluginRows folder={folderPlugins} plugins={plugins} />}
         </Section>
       )}
       <Section title="Packs">

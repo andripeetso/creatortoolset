@@ -90,6 +90,16 @@ describe("transcripts made on this computer", () => {
     expect((await transcribeOnDevice(pcm, "clip-1", fakeModel().load)).words).toHaveLength(1);
   });
 
+  it("a clip where nothing is said has no words, not a failure: the library throws on the model's empty answer", async () => {
+    const load = async () => {
+      const model = async () => Promise.reject(new Error("token_ids must be a non-empty array of integers."));
+      return Object.assign(model, { dispose: async () => {}, model: { generation_config: {} } });
+    };
+    expect(await transcribeOnDevice(pcm, "clip-1", load)).toEqual({ words: [], language: null });
+    const other = async () => Object.assign(async () => Promise.reject(new Error("out of memory")), { dispose: async () => {}, model: { generation_config: {} } });
+    await expect(transcribeOnDevice(pcm, "clip-1", other)).rejects.toThrow("out of memory"); // a real failure still fails
+  });
+
   it("runs one at a time, however many are asked for at once", async () => {
     const fake = fakeModel();
     await Promise.all([transcribeOnDevice(pcm, "clip-1", fake.load), transcribeOnDevice(pcm, "clip-2", fake.load), transcribeOnDevice(pcm, "clip-3", fake.load)]);

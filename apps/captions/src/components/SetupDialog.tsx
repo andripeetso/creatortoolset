@@ -73,7 +73,7 @@ const STEP: Record<SetupStep, { title: string; hint: string }> = {
   connect: { title: "Connect your computers", hint: "Add your phone or another computer." },
   folders: {
     title: "Where are your videos?",
-    hint: "Pick the folders where you keep your footage and music. The AI Editor and Media Library find your clips there. Nothing is moved or uploaded.",
+    hint: "Pick the folders where you keep your footage and music. The AI Editor and Media Library find your clips there. Nothing is moved.",
   },
   how: { title: "How do you work best?", hint: "Pick where you talk to your AI." },
   own: { title: "Add Creator Toolset to your AI", hint: "Install it once. Your AI app can then find your clips, start edits and work in your projects, as you." },

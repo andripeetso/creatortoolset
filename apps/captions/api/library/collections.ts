@@ -16,6 +16,7 @@ import { ffmpegTo } from "./media/run";
 import { externalCanSee, externalRefById } from "./refs";
 import { KINDS } from "./query";
 import { assetRef, canSee } from "./sources";
+import { fileRoll, rollFolder } from "./roll";
 
 /**
  * Folders and collections (tasks/media-library-plan.md, sections 2, 7 and 9). One table: a folder is a collection with
@@ -60,6 +61,7 @@ export function savedQuery(raw: unknown): SearchQuery {
     ...(tag ? { tag } : {}),
     ...(from !== undefined ? { from } : {}),
     ...(to !== undefined ? { to } : {}),
+    ...(r.roll === "a" || r.roll === "b" ? { roll: r.roll } : {}),
   };
 }
 
@@ -176,13 +178,21 @@ async function changeItems(c: Ctx, add: boolean) {
   if (!libraryRole(user.username, libraryId)) return notFound(c);
   const row = rowIn(libraryId, c.req.param("cid") ?? "");
   if (!row) return notFound(c);
-  if (row.kind !== "manual") return c.json({ error: "A smart collection takes its items from its query", code: "conflict" }, 409);
+  const roll = add ? rollFolder(db(), libraryId, row.id) : null;
+  if (row.kind !== "manual" && !roll) return c.json({ error: "A smart collection takes its items from its query", code: "conflict" }, 409);
   const body = (await c.req.json().catch(() => null)) as { assetIds?: unknown } | null;
   const asked = Array.isArray(body?.assetIds) ? body.assetIds.filter((x): x is string => typeof x === "string").slice(0, 500) : [];
   if (!asked.length) return c.json({ error: "No assets given", code: "invalid" }, 400);
   // only the assets the policies let this account change; the rest are skipped, as trashed or foreign ones are
   const ids = await writableAssets(user.username, libraryId, asked);
   const d = db();
+  if (roll) {
+    // the A-roll folder lists the clips sorted or filed as A-roll: a clip put in it is filed so (roll.ts)
+    const video = d.prepare("SELECT 1 FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL AND kind = 'video'");
+    const filed = ids.filter((id) => video.get(id, libraryId));
+    for (const id of filed) fileRoll(d, id, roll);
+    return c.json({ added: filed.length });
+  }
   if (!add) {
     const del = d.prepare("DELETE FROM collection_items WHERE collection_id = ? AND asset_id = ?");
     let removed = 0;

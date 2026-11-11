@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, Download, Loader2, LogIn } from "lucide-react";
 import type { ConnectResult, LocalAiView, SignInResult } from "@contracts/local-ai";
+import { PLANS, type PlanId } from "@contracts/plans";
 import { DRIVERS, type ProviderSettings, type ProvidersView } from "@contracts/providers";
 import { Button } from "@/components/ui/button";
 import { ProviderLogo } from "@/components/settings/ProviderLogos";
@@ -21,6 +22,8 @@ const WAIT_MS = 3 * 60_000;
 const POLL_MS = 3_000;
 /** How often the list looks again by itself while it is on screen (each look runs the CLIs' status commands). */
 const RECHECK_MS = 20_000;
+/** Away from the window this long, an account turned away (no plan) may have bought one: its row offers Connect again. */
+const AWAY_MS = 30_000;
 /** How long a request may take before it gives up with a plain message (no wait spins forever). */
 const TIMEOUT_MS = 90_000;
 /** An install downloads the vendor's program here (Meta's is about 470 MB): a slow connection gets an hour. */
@@ -34,8 +37,8 @@ const PROVIDERS = "/api/providers";
  * runs on. Each one installs, signs in and connects from its one button. `more` puts it behind Show more, where any other
  * AI the Mac app runs that is already on this Mac (LocalAiView.others) is listed too, which the button only connects.
  * Plans: a free account isn't enough for ChatGPT or Claude (vendor docs, 2026-11-09), nor for Google: its quotas page
- * lists free, Google AI Pro and Ultra, but a real run on a free account was turned away (2026-11-10; local-ai.ts
- * plainError), and no run of ours was on a paid one; Grok's and Cursor's sign-ins take
+ * lists free, Google AI Pro and Ultra, but a real run on a free account was turned away (2026-11-10; contracts/plans.ts
+ * noPlanLine), and no run of ours was on a paid one; Grok's and Cursor's sign-ins take
  * the person's account, whose plans their vendors don't list for these programs; Muse Code has no free tier (Everyday,
  * High, Power and Maximum Usage plans). `size`: what its install downloads, said while it runs (measured 2026-11-10).
  */
@@ -54,8 +57,11 @@ export const ROW_SUB: Record<string, string> = Object.fromEntries(AIS.map((a) =>
 const nameOf = (id: string) => aiOf(id)?.name ?? DRIVERS.find((d) => d.id === id)?.label ?? id;
 const usesOf = (id: string) => aiOf(id)?.uses ?? `Uses ${nameOf(id)} as it's set up on this Mac.`;
 
-/** What a row knows of its AI: found on this Mac, signed in (when that can be read), connected (a saved passing check). */
-type Known = { found?: boolean; connected: boolean; signedIn?: boolean | null; version?: string };
+/**
+ * What a row knows of its AI: found on this Mac, signed in (when that can be read), connected (a saved passing check),
+ * and the plan its own tools name (api/lib/local-ai.ts knownPlans).
+ */
+type Known = { found?: boolean; connected: boolean; signedIn?: boolean | null; version?: string; plan?: PlanId };
 const isConnected = (row: Known | undefined, result?: ConnectResult) => !!row?.connected || result?.state === "ready";
 const rowOf = (view: LocalAiView | null, id: string): Known | undefined => view?.rows.find((r) => r.id === id) ?? view?.others?.find((o) => o.id === id);
 /** Every AI on the screen: the ones above, then the other AIs found on this Mac. */
@@ -80,13 +86,17 @@ const CONNECT = { label: "Connect" };
 
 /**
  * A program's own words without the instructions in them to run something: a `command`, a line to type, "run: …", a
- * sentence that leads into one. Details shows the rest; the row itself says the plain thing.
+ * sentence that leads into one. What it said shows the rest; the row itself says the plain thing. A command line is
+ * typed in small letters: "Claude on the Mac: …", the way every Claude error starts, is the program's words, not one.
  */
-const COMMAND = /`|\b(run|type|paste)\b|environment variable|:\s*$|^\s*(\$|export|source|sudo|curl|npm|npx|brew|echo|mkdir|grok|agent|cursor-agent|codex|claude|gemini|muse)(\s|$)/i;
+const COMMAND = /`|\b(run|type|paste)\b|environment variable|:\s*$/i;
+const COMMAND_LINE = /^\s*(\$|export|source|sudo|curl|npm|npx|brew|echo|mkdir|grok|agent|cursor-agent|codex|claude|gemini|muse)(\s|$)/;
+/** A file's path in the words ("/Users/x/.grok/bin/grok", "~/.zshrc"): shown as "…", never the file itself. */
+const FILE_PATH = /(^|[\s'"(=])(?:~|\/)[\w.@-]*(?:\/[\w.@-]+)+\/?/g;
 export const withoutCommands = (raw?: string): string | undefined =>
   raw
     ?.split("\n")
-    .map((line) => line.split(/(?<=[.!?])\s+/).filter((s) => !COMMAND.test(s)).join(" "))
+    .map((line) => line.split(/(?<=[.!?])\s+/).filter((s) => !COMMAND.test(s) && !COMMAND_LINE.test(s)).join(" ").replace(FILE_PATH, "$1…"))
     .filter((line) => line.trim())
     .join("\n") || undefined;
 
@@ -109,12 +119,16 @@ export function rowView(id: string, row: Known | undefined, result: ConnectResul
     return { line: result.message ?? "Open the Creator Toolset Mac app to connect this.", button: null };
   if (result?.state === "signin")
     return ours ? { line: `Not signed in yet. ${usesOf(id)}`, button: SIGN_IN } : { line: `Not signed in to ${name} on this Mac yet.`, button: CONNECT };
+  // the account has no plan for this AI: the line says what it needs, and no Try again (coming back to the window after
+  // a while clears it, so a plan bought meanwhile connects from the row's Connect)
+  if (result?.state === "plan") return { line: result.message ?? "", button: null, raw: withoutCommands(result.raw) };
   if (result && result.state !== "ready") return { line: result.message ?? "It didn't connect. Try again.", button: { label: "Try again" }, raw: withoutCommands(result.raw) };
   if (isConnected(row, result)) {
     // signed out since it was connected: the button signs in again
     if (row?.signedIn === false && result?.state !== "ready") return { line: "Signed out since last time.", button: ours ? SIGN_IN : CONNECT };
-    // a plan at its limit is connected; the line says when it resets
-    return { line: result?.message ?? "", button: null, connected: true };
+    // a plan at its limit is connected; the line says when it resets. Else the plan, when the AI names it
+    const plan = PLANS.find((p) => p.id === row?.plan)?.label;
+    return { line: result?.message ?? (plan ? `${plan} plan` : ""), button: null, connected: true };
   }
   if (ours && !row?.found) return { line: `Not on this Mac yet. ${usesOf(id)}`, button: INSTALL };
   if (ours && row?.signedIn === false) return { line: `Not signed in yet. ${usesOf(id)}`, button: SIGN_IN };
@@ -161,12 +175,14 @@ export function AnswerPicker({ view, onPick }: { view: ProvidersView; onPick: (s
 
 /**
  * One AI's row, in the same rows as Settings and setup's last screen: its logo, its name with the program's name small
- * beside it, one plain line, and its one button. A failure is the red line, with the program's own words under Details.
+ * beside it, one plain line, and its one button. A failure is the red line, an account with no plan for it the amber one,
+ * each with the program's own words under What it said.
  */
 function AgentRow({ id, row, result, phase, code, unread, onConnect }: { id: string; row?: Known; result?: ConnectResult; phase?: Phase; code?: string; unread?: boolean; onConnect: () => void }) {
   // not read yet: the row says what it uses and claims nothing about this Mac; its state and button follow the answer
   const v: RowView = unread ? { line: usesOf(id), button: null } : rowView(id, row, result, phase, code);
   const failed = !phase && !!result && !["ready", "mac", "unsupported", "signin"].includes(result.state);
+  const noPlan = result?.state === "plan";
   return (
     <ListRow
       icon={<ProviderLogo driver={id} className="size-4" />}
@@ -180,11 +196,11 @@ function AgentRow({ id, row, result, phase, code, unread, onConnect }: { id: str
       status={
         failed ? (
           <>
-            <Status tone="broken">{v.line}</Status>
-            {/* Details only when something went wrong: the program's version and its own words */}
+            <Status tone={noPlan ? "attention" : "broken"}>{v.line}</Status>
+            {/* only when something went wrong: the program's version and its own words */}
             {v.raw && (
               <details className="pt-0.5">
-                <summary className="cursor-pointer">Details</summary>
+                <summary className="cursor-pointer">What it said</summary>
                 <pre className="mt-1 whitespace-pre-wrap font-mono text-[11px]">{[row?.version, v.raw].filter(Boolean).join("\n")}</pre>
               </details>
             )}
@@ -410,10 +426,22 @@ export function AiPanel({ onConnectedChange }: { onConnectedChange?: (on: boolea
     const again = () => {
       if (document.visibilityState === "visible") void refresh(true);
     };
-    window.addEventListener("focus", again);
+    // back in front after a while elsewhere, an account turned away may have its plan now: its row offers Connect again.
+    // Only after a while: a web view can take focus just after the press, which would wipe the sentence unread
+    let away = 0;
+    const leave = () => (away = Date.now());
+    const front = () => {
+      if (away && Date.now() - away >= AWAY_MS)
+        setResults((s) => (Object.values(s).some((r) => r?.state === "plan") ? Object.fromEntries(Object.entries(s).filter(([, r]) => r?.state !== "plan")) : s));
+      away = 0;
+      again();
+    };
+    window.addEventListener("blur", leave);
+    window.addEventListener("focus", front);
     const t = window.setInterval(again, RECHECK_MS);
     return () => {
-      window.removeEventListener("focus", again);
+      window.removeEventListener("blur", leave);
+      window.removeEventListener("focus", front);
       window.clearInterval(t);
     };
   }, [refresh]);

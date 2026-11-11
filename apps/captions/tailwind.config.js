@@ -142,5 +142,8 @@ module.exports = {
     addVariant("hub", "@container hub (min-width: 900px)");
     addVariant("hub-2xl", "@container hub (min-width: 1536px)");
     addVariant("hub-narrow", "@container hub (max-width: 899.98px)");
+    // the Workshop's writing header (DocumentTabs): narrower than its tabs and its tools' names need side by side.
+    // There the tools show their icons only, so the header stays one row at any width and nothing is cut off
+    addVariant("docbar-narrow", "@container docbar (max-width: 43.99rem)");
   })],
 }

@@ -114,6 +114,18 @@ describe("proxy", () => {
     expect(needsProxy(await probe(h264))).toBe(false);
   });
 
+  it("a sound file plays as it is when its sound does, else gets an AAC copy of its sound only", async () => {
+    const wav = path.join(dir, "song.wav");
+    const mp3 = path.join(dir, "song.mp3");
+    ff(["-f", "lavfi", "-i", "sine=frequency=440:duration=1", wav]);
+    ff(["-f", "lavfi", "-i", "sine=frequency=440:duration=1", mp3]);
+    expect(needsProxy(await probe(mp3))).toBe(false);
+    expect(needsProxy(await probe(wav))).toBe(true);
+    const out = path.join(dir, "song-proxy.mp4");
+    await makeProxy(wav, out, true);
+    expect(await probe(out)).toMatchObject({ acodec: "aac", vcodec: "" });
+  });
+
   it.skipIf(!hevcOk)("is needed for HEVC and makes H.264 without upscaling", async () => {
     const src = await probe(hevc);
     expect(needsProxy(src)).toBe(true);

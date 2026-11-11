@@ -77,6 +77,14 @@ final class LimitsTests: XCTestCase {
         XCTAssertEqual(rows[1]["usedPercent"] as? Double, 100)
     }
 
+    func testCodexPlanIsTheUsagePagesOwnWord() {
+        // the answer's shape as Codex's own client reads it (codex-rs RateLimitStatusPayload: plan_type beside rate_limit)
+        XCTAssertEqual(codexPlan(object(#"{"plan_type":"plus","rate_limit":{"primary_window":{"used_percent":3}}}"#)), "plus")
+        XCTAssertEqual(codexPlan(object(#"{"plan_type":"self_serve_business_usage_based_and_then_some_more_words"}"#))?.count, 40)
+        XCTAssertNil(codexPlan(object(#"{"plan_type":""}"#)))
+        XCTAssertNil(codexPlan(object(#"{"rate_limit":{}}"#)))   // an answer without one (an older page): nothing
+    }
+
     // MARK: readings
 
     func testStatusMapsToState() {
@@ -109,8 +117,13 @@ final class LimitsTests: XCTestCase {
         defaults.removePersistentDomain(forName: suite)
         defer { defaults.removePersistentDomain(forName: suite) }
         XCTAssertFalse(limitsReadingOn(defaults))
-        defaults.set(true, forKey: limitsReadingKey)
-        XCTAssertTrue(limitsReadingOn(defaults))
+        limitsOnFirstRun(driver: "gemini", defaults)
+        XCTAssertFalse(limitsReadingOn(defaults))   // only the two whose limits it reads
+        limitsOnFirstRun(driver: "claude", defaults)
+        XCTAssertTrue(limitsReadingOn(defaults))    // the first Claude run turns it on
+        defaults.set(false, forKey: limitsReadingKey)
+        limitsOnFirstRun(driver: "codex", defaults)
+        XCTAssertFalse(limitsReadingOn(defaults))   // turned off by the person: stays off
     }
 
     /// A fixture home on the scratch disk (CT_SCRATCH_DIR), never the Mac's temporary folder. The caller removes it.

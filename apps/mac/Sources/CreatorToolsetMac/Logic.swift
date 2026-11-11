@@ -14,9 +14,14 @@ func siteURL(from text: String) -> URL? {
     return URL(string: "\(scheme)://\(host)\(port)")
 }
 
-/// Same host as the site: the window keeps these links, anything else opens in the default browser.
+/// Same host and port as the site: the window keeps these links, anything else opens in the default browser, and only
+/// such a page may ask the app for anything (the snapshot and thisMac handlers, TitleBar.swift). The port counts: the
+/// server on this Mac is 127.0.0.1 on one port, and any other program on the Mac can serve a page on another.
 func isSite(_ url: URL, _ site: URL) -> Bool {
-    url.host?.lowercased() == site.host?.lowercased()
+    func port(_ u: URL) -> Int? {
+        u.port ?? ["https": 443, "http": 80][u.scheme?.lowercased() ?? ""]
+    }
+    return url.host?.lowercased() == site.host?.lowercased() && port(url) == port(site)
 }
 
 /// A link the window should open: creatortoolset://review/<id>?v=2 (the scheme the app registers), or the site's own

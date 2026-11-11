@@ -16,7 +16,6 @@ import {
 } from "lucide-react";
 import { canUse, type Me } from "@/lib/auth";
 import { useStudio } from "@/lib/store";
-import { canRecordScreen, openRecorder } from "@/lib/mac-record";
 import type { WebPlugin } from "@/lib/plugin";
 import { webPlugins } from "@/plugins.gen";
 
@@ -178,9 +177,9 @@ export function withPluginTiles(plugins: WebPlugin[]): { workflow: { stage: stri
   return { workflow, other };
 }
 
-const layout = withPluginTiles(webPlugins);
-export const WORKFLOW = layout.workflow;
-export const OTHER = layout.other;
+let layout: ReturnType<typeof withPluginTiles> | undefined;
+/** The app's own layout with every loaded plug-in's tiles. Read when drawn: the Mac app's folder plug-ins join the list just before the first render. */
+export const toolLayout = () => (layout ??= withPluginTiles(webPlugins));
 
 /** The tools Home draws for an account: a plug-in tile whose gate is off is left out; built-in tools stay (locked). */
 export const shownTools = (tools: Tool[], me: Me | null): Tool[] => tools.filter((t) => !t.pluginTile || t.can(me));
@@ -193,8 +192,6 @@ export function useOpenTool() {
   return (e: React.MouseEvent<HTMLAnchorElement>, to: string) => {
     if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
     e.preventDefault();
-    // in the Mac app, Screen Recorder is its toolbar, not a page (the recordings list is /record, from the Record menu)
-    if (to === "/record" && canRecordScreen()) return openRecorder();
     if (to.startsWith("/captions")) openProjectLibrary();
     navigate(to);
   };

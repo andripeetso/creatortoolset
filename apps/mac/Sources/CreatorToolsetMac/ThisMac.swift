@@ -9,6 +9,7 @@ struct ThisMacView: View {
     @Environment(\.openWindow) private var openWindow
     @State private var port = ""
     @AppStorage(limitsReadingKey) private var readLimits = false
+    @AppStorage(pluginsPausedKey) private var pluginsPaused = false
     @State private var password = ""
     @State private var again = ""
     @State private var askPassword = false
@@ -48,9 +49,15 @@ struct ThisMacView: View {
                     Button("Remove this Mac from my account", role: .destructive) { shell.forgetThisMac() }
                 }
             }
+            if shell.pluginCount > 0 {
+                Section {
+                    LabeledContent("Plug-ins", value: pluginsPaused ? "Off" : "\(shell.pluginCount) on")
+                    Button(pluginsPaused ? "Switch Back On" : "Switch All Off") { shell.setPluginsPaused(!pluginsPaused) }
+                }
+            }
             Section("Plan limits") {
                 Toggle("Read this Mac's Claude and Codex limits", isOn: $readLimits)
-                Text("Undocumented: reads each CLI's login on this Mac (the Claude login from the Keychain, Codex's auth.json) and asks the CLI's usage page every five minutes. Off by default; off sends nothing and reads nothing.")
+                Text("Undocumented: reads each CLI's login on this Mac (the Claude login from the Keychain, Codex's auth.json) and asks the CLI's usage page every five minutes. On once Claude or Codex first runs here; off sends nothing and reads nothing.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             if shell.server != nil {
@@ -177,7 +184,7 @@ struct ThisMacView: View {
                     Task { accessMessage = await shell.setOtherDevices(on) }
                 }
             }))
-            Text("Off: only this Mac reaches the server. On: devices on your network sign in at http://\(ProcessInfo.processInfo.hostName):\(server.port) as \(LocalServer.ownerName) with this computer's password. macOS may ask to allow incoming connections for node: allow it, or phones can't connect.")
+            Text("Off: only this Mac reaches the server. On: devices on your network sign in at http://\(macHostName()):\(server.port) as \(LocalServer.ownerName) with this computer's password. macOS may ask to allow incoming connections for node: allow it, or phones can't connect.")
                 .font(.caption).foregroundStyle(.secondary)
             if askPassword {
                 SecureField("This computer's password (6 characters or more)", text: $password)

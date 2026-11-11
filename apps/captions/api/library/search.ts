@@ -5,7 +5,7 @@ import { deviceStatus } from "../lib/device-transcribe";
 import { libraryRole, mayWrite, versionSource } from "./access";
 import { libraryDb } from "./db";
 import { hitKey, rrf, semanticHits } from "./embed";
-import { enqueueJob } from "./jobs";
+import { enqueueJob, prepareFirst } from "./jobs";
 import { CARD, ftsQuery, indexAsset, parseSearch, toCard, type CardRow } from "./query";
 import { viewerOf, visibleCards } from "./routes";
 import { assetRef, canSee, facetClauses } from "./sources";
@@ -101,13 +101,13 @@ searchApp.get("/:id/search", async (c) => {
   if (!viewer) return notFound(c);
   const q = (c.req.query("q") ?? "").trim().slice(0, 200);
   if (!q) return c.json({ error: "Type something to search for", code: "invalid" }, 400);
-  const facets = parseSearch(c.req.query()).facets ?? {};
+  const { facets = {}, roll } = parseSearch(c.req.query());
   const text = searchLibrary(libraryId, q, LIMIT, facets);
   const meaning = await semanticHits(libraryId, q, user.username).catch(() => null);
   const hits = meaning ? rrf([text, meaning], hitKey).slice(0, 2 * LIMIT) : text;
   const seen = await visibleCards(viewer, libraryId, hits.map((h) => h.asset));
   const shown = new Set(seen.map((a) => a.id));
-  return c.json(hits.filter((h) => shown.has(h.asset.id)));
+  return c.json(hits.filter((h) => shown.has(h.asset.id) && (!roll || h.asset.roll === roll))); // ponytail: narrowed after the top hits
 });
 
 // GET /api/library/:id/assets/:assetId → AssetDetail (404 for a viewer the policies refuse)
@@ -117,6 +117,7 @@ searchApp.get("/:id/assets/:assetId", async (c) => {
   if (!viewer) return notFound(c);
   const detail = assetDetail(libraryId, c.req.param("assetId"));
   if (!detail || !(await canSee(viewer, assetRef(libraryId, detail.id, detail.versionId)))) return notFound(c);
+  if (detail.state === "processing") prepareFirst(detail.versionId); // opened while it is prepared: it goes first (worker.ts)
   return c.json(detail);
 });
 

@@ -26,6 +26,14 @@ export interface AssetCard {
   trashedAt?: number;
   /** a Review video (same id): Review owns its versions and its trash, so the library opens it there */
   review?: true;
+  /** while the clip is being prepared: the step it is on (running) or waits for next (LibraryProcessing.tsx ClipStage draws it) */
+  preparing?: { step: LibraryStage["kind"] | "probe" | "wave"; running: boolean };
+  /** a `failed` clip: the step that failed and the tool's own error (ClipStage says it in words) */
+  failed?: { step: "probe" | "thumb" | "wave" | "proxy"; error: string };
+  /** A-roll (someone talks to the camera) or B-roll (the rest), as the library sorted it (api/library/roll.ts); videos only, once sorted */
+  roll?: "a" | "b";
+  /** finished work (a Review video, a version of a Finals piece, a saved export): it never has a roll */
+  finished?: true;
 }
 
 export interface AssetDetail extends AssetCard {
@@ -45,6 +53,10 @@ export interface SearchQuery {
   from?: number;
   to?: number;
   hasTranscript?: boolean;
+  /** only A-roll or only B-roll (`?roll=a|b`) */
+  roll?: "a" | "b";
+  /** only these versions' assets (`?versions=id,id`, at most 200) */
+  versions?: string[];
   /** plug-in sidebar filters: facet key → chosen values (api/library/sources.ts) */
   facets?: Record<string, string[]>;
   trashed?: boolean; // the trash instead of the library
@@ -105,6 +117,18 @@ export interface LibraryEstimate {
   withApiKey?: { seconds: number; usd: number };
 }
 
+/** One step of a library's preparing, as the person sees it go by: how many clips have it, of how many. */
+export interface LibraryStage {
+  /** thumb = pictures, proxy = lighter copies, fingerprint = duplicate checks, transcribe, describe, embed = search by meaning */
+  kind: "thumb" | "proxy" | "fingerprint" | "transcribe" | "describe" | "embed";
+  done: number;
+  /** done, failed and still to do since this run of the queue began: neither number goes down while it runs */
+  of: number;
+  failed: number;
+  /** the clip it is on right now */
+  now?: string;
+}
+
 /** GET /api/library/:id/progress: the processing still to do in a library. Nothing to do = `left` 0. */
 export interface LibraryProgress {
   /** jobs done and still to do since the queue was last empty */
@@ -115,7 +139,9 @@ export interface LibraryProgress {
   /** time left at this server's pace */
   seconds: number;
   /** jobs waiting for a key or an AI, with what to add */
-  waiting: { step: LibraryStep; count: number; missing: string }[];
+  waiting: { step: LibraryStep; count: number; missing: string; /** held back by the AI plan's usage limit */ limit?: boolean }[];
+  /** each step's count, in the order they run; only the steps this run has */
+  stages?: LibraryStage[];
 }
 
 export interface LibrarySummary {
@@ -216,7 +242,8 @@ export interface WatchFolder {
 /** GET /api/library/:id/watch. `allowed` is false on a hosted server: it cannot see the folders on your computer. */
 export interface WatchStatus {
   allowed: boolean;
-  folders: (WatchFolder & { found: boolean; imported: number })[];
+  /** `files`: the media files the last look at the folder found; `adding`: how many of them are still to be taken in. */
+  folders: (WatchFolder & { found: boolean; imported: number; files: number; adding: number })[];
   missing: number; // versions whose original is gone from its folder
 }
 

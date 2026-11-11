@@ -14,16 +14,19 @@ import type {
   SearchQuery,
   ShareCreated,
   ShareInput,
+  WatchStatus,
 } from "@contracts/library";
 import { useEffect, useRef } from "react";
 import { putDirect } from "@/lib/uploads";
 import { boot, onTopic, seqNow, whenVisible } from "@/lib/sync";
+import { pathOnMac } from "@/lib/thisMac";
 
 /** The Media Library's calls to api/library/routes.ts, and the chunked upload that follows its offset protocol. */
 
+/** The body, or the server's error with its `code` ("too_large": a refusal that a retry cannot change). */
 async function json<T>(r: Response): Promise<T> {
-  const body = (await r.json().catch(() => ({}))) as T & { error?: string };
-  if (!r.ok) throw new Error(body.error ?? `Request failed (${r.status})`);
+  const body = (await r.json().catch(() => ({}))) as T & { error?: string; code?: string };
+  if (!r.ok) throw Object.assign(new Error(body.error ?? `Request failed (${r.status})`), { code: body.code });
   return body;
 }
 
@@ -81,6 +84,7 @@ export function listAssets(libraryId: string, q: SearchQuery & { cursor?: string
   if (q.collectionId) p.set("collectionId", q.collectionId);
   if (q.limit) p.set("limit", String(q.limit));
   if (q.trashed) p.set("trashed", "1");
+  if (q.roll) p.set("roll", q.roll);
   if (q.cursor) p.set("cursor", q.cursor);
   // a plug-in source's cards instead of the library's (the Sources group in the sidebar)
   if (q.source) p.set("source", q.source);
@@ -181,11 +185,41 @@ export interface UploadResult {
 const pause = (ms: number) => new Promise((done) => setTimeout(done, ms));
 
 /**
- * One file into the library: create the upload, then PATCH chunks from the offset the server reports. A 409 gives the
+ * A file the Mac app knows the place of, added where it is (api/library/routes.ts in-place): asked again while the
+ * server is still reading it. null when this server or library cannot take it in place: it is uploaded instead.
+ */
+async function addInPlace(libraryId: string, where: string, size: number, collectionId?: string): Promise<UploadResult | null> {
+  for (let again = false; ; again = true) {
+    const r = await fetch(`/api/library/${libraryId}/in-place`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: where, size, collectionId, again }),
+    });
+    if (r.status === 202) continue;
+    if (r.status === 400 || r.status === 403) return null;
+    return json<UploadResult>(r);
+  }
+}
+
+/**
+ * One file into the library. Picked in the Mac app on its own server: added where it is, no copy (`onProgress(0, true)`
+ * says so). Otherwise uploaded: create the upload, then PATCH chunks from the offset the server reports. A 409 gives the
  * offset to resume from; a dropped request asks HEAD where the server stopped. Five failures in a row give up.
  * With `collectionId` (a manual folder) the server puts the new asset in that folder when it finishes.
  */
-export async function uploadFile(libraryId: string, file: File, onProgress: (sent: number) => void, collectionId?: string): Promise<UploadResult> {
+export async function uploadFile(
+  libraryId: string,
+  file: File,
+  onProgress: (sent: number, inPlace?: boolean) => void,
+  collectionId?: string,
+): Promise<UploadResult> {
+  const where = await pathOnMac(file);
+  if (where) {
+    onProgress(0, true);
+    const kept = await addInPlace(libraryId, where, file.size, collectionId);
+    if (kept) return kept;
+    onProgress(0, false);
+  }
   const init = await fetch(`/api/library/${libraryId}/uploads`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -295,6 +329,13 @@ export function reorderedPositions(items: { id: string; position: number }[], fr
   const [moved] = order.splice(from, 1);
   order.splice(to, 0, moved);
   return order.flatMap((it, i) => (it.position === i + 1 ? [] : [{ id: it.id, position: i + 1 }]));
+}
+
+/** The library's footage folders as its owner sees them (anyone else: an error, so no status). */
+export async function getWatch(libraryId: string): Promise<WatchStatus> {
+  const r = await fetch(`/api/library/${libraryId}/watch`);
+  if (!r.ok) throw new Error(`Request failed (${r.status})`);
+  return (await r.json()) as WatchStatus;
 }
 
 let watchers = 0;

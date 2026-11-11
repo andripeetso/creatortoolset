@@ -17,6 +17,10 @@ final class Shell: NSObject, ObservableObject {
     @Published private(set) var pluginRows: [PluginRow] = []
     /// The menu items the server's plug-ins add (GET /api/activity/menu): the Go and gear menus (PluginMenu.swift).
     @Published private(set) var pluginMenu: [PluginMenuItem] = []
+    /// How many plug-ins the person has switched on (Plugins.swift, the record in the Keychain): This Mac's Plug-ins row.
+    @Published internal(set) var pluginCount = 0
+    /// What the look at the plug-ins' folders remembers between looks (Plugins.swift pluginLook).
+    let pluginWatch = PluginWatch()
     /// The Go menu's own tools (GET /api/activity/tools, PluginMenu.swift): the server's list for this account.
     @Published private(set) var appTools: [AppToolItem] = []
     @Published internal(set) var notice: String?
@@ -30,6 +34,8 @@ final class Shell: NSObject, ObservableObject {
     /// The server on this Mac (Server.swift), when this build has one; runsHere = the window uses it, not a site.
     let server: LocalServer? = LocalServer.folder == nil ? nil : LocalServer()
     @Published private(set) var runsHere = false
+    /// The files picked in the open panel for the page (rememberPicks, ThisMacBridge.swift): the page's "files" ask.
+    private var pickedFiles: [URL] = []
     /// The servers added by address (Servers.swift) and the one the window shows: thisMacID, an added one's id, or nil
     /// (no server picked: the window asks to pick or add one).
     @Published private(set) var servers: [ServerEntry] = []
@@ -60,6 +66,10 @@ final class Shell: NSObject, ObservableObject {
     private let museLogin = MuseLogin()
 
     private var lastBlankReload = Date.distantPast
+    /// The editor's packed see-through videos on their way in (AlphaVideo.swift): where each is kept, and the video it becomes.
+    private var alphaDownloads: [WKDownload: (file: URL, final: URL, stacked: Bool)] = [:]
+    /// The see-through video being made; the page's Stop ends it ("record-alpha-stop").
+    private var alphaTask: Task<Void, Never>?
 
     override init() {
         AppLog.trim()
@@ -115,6 +125,8 @@ final class Shell: NSObject, ObservableObject {
         view.onThisMacCommand = { [weak self] in self?.thisMacCommand($0) }
         view.onThisMacAsk = { [weak self] ask, done in
             guard let self else { return done(["aiOn": false, "paired": false]) }
+            // plug-ins (Plugins.swift): answered before the default below, which turns the AI on
+            if isPluginAsk(ask) { return self.pluginAnswer(pluginAsk(ask), done: done) }
             // Headless access → Install: the open server into Claude Code or Codex on this Mac (off the main thread: a
             // command-line tool runs). The reply is { ok } or { ok: false, problem }.
             if let install = installAsk(ask) {
@@ -129,6 +141,7 @@ final class Shell: NSObject, ObservableObject {
             case "state": done(self.thisMacState())
             case "access": Task { done(await self.accessFromOtherDevices()) }
             case "folder": done(self.chooseFolder())
+            case "files": done(pickedFilesReply(self.pickedFiles, here: self.runsHere && self.server != nil))
             default: Task { done(await self.startThisMac()) }
             }
         }
@@ -153,6 +166,7 @@ final class Shell: NSObject, ObservableObject {
         }
         server?.onReady = { [weak self] in self?.serverReady() }
         aiOn = UserDefaults.standard.bool(forKey: aiKey)
+        pluginCount = PluginRecord.live.load().on.count
         markDevice()
         if runsHere {
             startServer()   // the page and the AI runner wait for it
@@ -166,6 +180,10 @@ final class Shell: NSObject, ObservableObject {
         }
         timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             Task { @MainActor in await self?.refresh() }
+        }
+        // a plug-in that is on takes up the changes to its folder (Plugins.swift)
+        Timer.scheduledTimer(withTimeInterval: pluginLookSeconds, repeats: true) { [weak self] _ in
+            Task { @MainActor in await self?.pluginLook() }
         }
         Task { await refresh() }
     }
@@ -264,7 +282,7 @@ final class Shell: NSObject, ObservableObject {
     // MARK: the server on this Mac (Server.swift)
 
     private func startServer() {
-        webView.loadHTMLString(messagePage("Starting the server on this Mac…"), baseURL: nil)
+        webView.loadHTMLString(splashPage(), baseURL: nil)
         server?.start()
     }
 
@@ -274,7 +292,12 @@ final class Shell: NSObject, ObservableObject {
         if let server { tunnel.start(server: LocalServer.folder, dataDir: server.dataDir) }   // a linked Mac's tunnel comes back
         Task {
             await signIn()
-            if !(webView.url.map { isSite($0, base) } ?? false) { open("/") }
+            // after a restart for the plug-ins (Plugins.swift) the window goes back to the page it was on
+            let back = pluginWatch.returnTo
+            pluginWatch.returnTo = nil
+            if !(webView.url.map { isSite($0, base) } ?? false) {
+                if let back, isSite(back, base) { webView.load(URLRequest(url: back)) } else { open("/") }
+            }
             // ponytail: aiOn is one flag for every site; per environment when the Mac app keeps several (slice 8)
             if startsAIWhenReady(aiOn: aiOn, running: runner != nil) { startAI() }
         }
@@ -347,7 +370,7 @@ final class Shell: NSObject, ObservableObject {
     func moveData(to dest: URL) async -> String? {
         guard let server else { return nil }
         stopRunner()
-        webView.loadHTMLString(messagePage("Moving your data…"), baseURL: nil)
+        webView.loadHTMLString(splashPage("Moving your data…"), baseURL: nil)
         let problem = await server.move(to: dest)
         if problem != nil, server.state == .running { open("/") }
         return problem
@@ -456,7 +479,9 @@ final class Shell: NSObject, ObservableObject {
                 Task { await recorder.share(project, to: destination) }
             }
         case "reveal": if let project { NSWorkspace.shared.activateFileViewerSelecting([project.screenURL]) }
-        case "delete": if let project { recorder.delete(project) }
+        case "trash": if let project { recorder.delete(project) }   // the page has asked
+        case "delete": if let project { recorder.delete(project, asking: true) }   // a page from before "trash"
+        case "alpha-stop": alphaTask?.cancel()   // the editor's Stop while its see-through video is made
         default: break   // "state": only the answer
         }
         pushRecorderState()
@@ -467,6 +492,12 @@ final class Shell: NSObject, ObservableObject {
         let items = recorder.recordings.map(\.listing)
         guard let data = try? JSONSerialization.data(withJSONObject: ["items": items]), let json = String(data: data, encoding: .utf8) else { return }
         webView.evaluateJavaScript("window.dispatchEvent(new CustomEvent('mac-recordings', {detail: \(json)}))")
+    }
+
+    /// How the see-through video stands, for the editor that waits on it ('mac-alpha'): "making" (`part` 0 to 1),
+    /// then "done", "failed" or "cancelled".
+    private func pushAlpha(_ state: String, part: Double = 0) {
+        webView.evaluateJavaScript("window.dispatchEvent(new CustomEvent('mac-alpha', {detail: {state: '\(state)', part: \(part)}}))")
     }
 
     private func pushRecorderState(_ phase: Recorder.Phase? = nil) {
@@ -617,7 +648,7 @@ final class Shell: NSObject, ObservableObject {
     private func pairThisMac() async throws {
         let host = base.host ?? ""
         let client = await client()
-        let name = Host.current().localizedName ?? ProcessInfo.processInfo.hostName
+        let name = Host.current().localizedName ?? macHostName()
         let data = try await client.postData("/api/devices", ["name": name, "version": appVersion])
         let pair = try JSONDecoder().decode(PairReply.self, from: data)
         guard DeviceVault.save(pair.token, for: host) else { throw SiteError.keychain }
@@ -830,12 +861,57 @@ extension Shell: WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
 
     func download(_ download: WKDownload, decideDestinationUsing response: URLResponse,
                   suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
+        // The screen recording editor's packed picture is not a video to keep: it becomes a see-through video
+        // (downloadDidFinish). That one is about 3 GB a minute, so where it goes is asked (the dialog remembers the
+        // folder), and the packed picture waits in that same folder: nothing of it lands on another disk.
+        if let alpha = alphaDownload(named: suggestedFilename) {
+            let panel = NSSavePanel()
+            panel.nameFieldStringValue = alpha.name + ".mov"
+            panel.allowedContentTypes = [.quickTimeMovie]
+            let chosen = { [weak self] (response: NSApplication.ModalResponse) in
+                guard let self, response == .OK, let final = panel.url else {
+                    self?.pushAlpha("cancelled")
+                    return completionHandler(nil)
+                }
+                let file = alphaWorkFile(beside: final, ext: "mp4")
+                self.alphaDownloads[download] = (file, final, alpha.stacked)
+                completionHandler(file)
+            }
+            if let window = webView.window { panel.beginSheetModal(for: window, completionHandler: chosen) } else { panel.begin(completionHandler: chosen) }
+            return
+        }
         let folder = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
         completionHandler(uniqueURL(in: folder, named: suggestedFilename))
     }
 
     func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
+        if let alpha = alphaDownloads.removeValue(forKey: download) { try? FileManager.default.removeItem(at: alpha.file) }
+        pushAlpha("failed")   // an editor waiting on its see-through video stops waiting (one that failed before it had a place too)
         _ = dialog("The download failed: \(error.localizedDescription)", buttons: ["OK"])
+    }
+
+    /// A packed see-through video has arrived: it becomes the .mov that was asked for, shown in Finder when it is
+    /// there. The editor hears how far it is, and its Stop ends it.
+    func downloadDidFinish(_ download: WKDownload) {
+        guard let alpha = alphaDownloads.removeValue(forKey: download) else { return }
+        alphaTask = Task {
+            do {
+                try await makeAlphaVideo(packed: alpha.file, stacked: alpha.stacked, to: alpha.final) { [weak self] part in
+                    DispatchQueue.main.async { self?.pushAlpha("making", part: part) }
+                }
+                pushAlpha("done")
+                NSWorkspace.shared.activateFileViewerSelecting([alpha.final])
+            } catch where Task.isCancelled || error is CancellationError {
+                pushAlpha("cancelled")   // Stop in the editor: nothing is left of it, and nothing failed
+            } catch {
+                pushAlpha("failed")
+                // the system's own errors say little alone ("Cannot Open"): its reason goes with it ("This media may be damaged.")
+                let e = error as NSError
+                let why = [e.localizedDescription, e.localizedFailureReason].compactMap { $0 }.joined(separator: ". ")
+                _ = dialog("The transparent video could not be made: \(why)", buttons: ["OK"])
+            }
+            alphaTask = nil
+        }
     }
 
     /// The assistant's mic: the open server's page gets it without a second WebKit prompt; macOS still asks once
@@ -860,7 +936,11 @@ extension Shell: WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
         panel.allowsMultipleSelection = parameters.allowsMultipleSelection
         panel.canChooseFiles = true
         panel.canChooseDirectories = parameters.allowsDirectories
-        let done: (NSApplication.ModalResponse) -> Void = { completionHandler($0 == .OK ? panel.urls : nil) }
+        let done: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            // remembered first: the page asks where they are ("files") as soon as it has them
+            if response == .OK, let self { self.pickedFiles = rememberPicks(panel.urls, in: self.pickedFiles) }
+            completionHandler(response == .OK ? panel.urls : nil)
+        }
         if let window = webView.window {
             panel.beginSheetModal(for: window, completionHandler: done)
         } else {

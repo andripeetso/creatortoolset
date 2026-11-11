@@ -1,9 +1,36 @@
 import { useEffect, useState } from "react";
 
+import { confirmDialog } from "./dialogs";
+
 /** The Mac app's screen recorder (apps/mac Recorder.swift): offered only where the app can record (macOS 15+;
  *  it sets <html data-mac-record>). Record buttons open its toolbar; recordings are local projects on this Mac
  *  (see LocalRecording) until they are sent somewhere. */
 export const canRecordScreen = () => typeof document !== "undefined" && document.documentElement.dataset.macRecord === "1";
+
+/** The app turns the editor's packed download into a see-through video (apps/mac AlphaVideo.swift; it sets
+ *  <html data-mac-record-alpha>). In a browser or an older app there is no such video, so no "None" background. */
+export const canSaveTransparent = () => typeof document !== "undefined" && document.documentElement.dataset.macRecordAlpha === "1";
+
+/**
+ * Waits while the app makes the see-through video from the packed download it is handed next: it asks where the
+ * video goes, writes it and says how far it is ('mac-alpha' events; `onProgress` gets 0 to 1). Resolves when the
+ * video is there, when Cancel was pressed in the Save dialog, when `signal` stopped it, or when it failed (the app
+ * says why in a dialog of its own). Call it before the download is handed over.
+ */
+export function transparentVideoMade(onProgress: (part: number) => void, signal: AbortSignal): Promise<void> {
+  return new Promise((done) => {
+    const stop = () => tellRecorder("alpha-stop");
+    const on = (e: Event) => {
+      const { state, part } = (e as CustomEvent<{ state: "making" | "done" | "failed" | "cancelled"; part: number }>).detail;
+      if (state === "making") return onProgress(part);
+      window.removeEventListener("mac-alpha", on);
+      signal.removeEventListener("abort", stop);
+      done();
+    };
+    window.addEventListener("mac-alpha", on);
+    signal.addEventListener("abort", stop);
+  });
+}
 
 /** Where a local recording is sent from the page or the /record list. */
 export type ShareDest = "review" | "notes" | "guide";
@@ -16,9 +43,11 @@ export type RecorderMessage =
   | "show"
   | "state"
   | "list"
+  | "alpha-stop"
   | `share:${string}:${ShareDest}`
   | `reveal:${string}`
-  | `delete:${string}`;
+  | `delete:${string}`
+  | `trash:${string}`;
 
 /** Posts a raw message to the app (no-op outside it). */
 export function postToApp(message: string) {
@@ -29,6 +58,19 @@ export function postToApp(message: string) {
 /** `record-<message>` to the app. */
 export function tellRecorder(message: RecorderMessage) {
   postToApp(`record-${message}`);
+}
+
+/** Throws a recording on this Mac away (to the Trash), asking first in the app's own dialog; true when it goes. An app
+ *  from before `trash:` (no <html data-mac-record-trash>) asks in its own alert instead, so the page leaves it to it. */
+export async function throwAwayRecording(r: { id: string; name: string }): Promise<boolean> {
+  if (document.documentElement.dataset.macRecordTrash !== "1") {
+    tellRecorder(`delete:${r.id}`);
+    return true;
+  }
+  if (!(await confirmDialog({ title: `Throw “${r.name}” away?`, body: "It goes to the Trash.", ok: "Throw away", danger: true, deleting: true })))
+    return false;
+  tellRecorder(`trash:${r.id}`);
+  return true;
 }
 
 /** Opens the app's recording toolbar (nothing starts until the user picks a source and Start). */

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link, useNavigate, useSearchParams } from "react-router";
 import { Check, Folder, Loader2, Plus } from "lucide-react";
 import type { EditSummary } from "@contracts/editor";
 import { MAX_VERSIONS } from "@contracts/editor";
@@ -45,7 +45,10 @@ export default function EditorPage() {
   const list = useCachedLoad<EditSummary[]>("/api/editor", listEdits);
   const edits = list.data;
   const error = edits ? null : list.error || null;
-  const [creating, setCreating] = useState(false);
+  // /editor?new=1&folder=<Media Library folder id>&name=<name>: New edit opens with them (the assistant's "Change the setup")
+  const [params] = useSearchParams();
+  const start = params.get("new") ? { folder: params.get("folder") ?? "", name: params.get("name") ?? "" } : undefined;
+  const [creating, setCreating] = useState(!!start);
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -95,24 +98,24 @@ export default function EditorPage() {
         )}
         {error && <p className="text-sm text-red-400">{error}</p>}
       </main>
-      <NewEditSheet open={creating} onClose={() => setCreating(false)} />
+      <NewEditSheet open={creating} onClose={() => setCreating(false)} start={start} />
     </div>
   );
 }
 
 /** The New edit sheet: footage from the library (search, a folder, several at once or the whole folder), then the brief. */
-function NewEditSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+function NewEditSheet({ open, onClose, start }: { open: boolean; onClose: () => void; start?: { folder: string; name: string } }) {
   const navigate = useNavigate();
   const [libraries, setLibraries] = useState<LibrarySummary[]>([]);
   const [libId, setLibId] = useState("");
   const [folders, setFolders] = useState<Collection[]>([]);
-  const [folder, setFolder] = useState("");
+  const [folder, setFolder] = useState(start?.folder ?? "");
   const [q, setQ] = useState("");
   const [term, setTerm] = useState("");
   const [items, setItems] = useState<AssetCard[]>([]);
   const [next, setNext] = useState<string | undefined>();
   const [picked, setPicked] = useState<Map<string, string>>(new Map()); // version id → title, in the order picked
-  const [name, setName] = useState("");
+  const [name, setName] = useState(start?.name ?? "");
   const [brief, setBrief] = useState("");
   const [script, setScript] = useState("");
   const [versions, setVersions] = useState(1);
@@ -191,11 +194,12 @@ function NewEditSheet({ open, onClose }: { open: boolean; onClose: () => void })
   /** Files from this computer: filed in the library (the A-roll folder, or a plug-in\'s), then picked for this edit. */
   const fromComputer = async (files: FileList | null) => {
     if (!files?.length) return;
+    const picked = Array.from(files); // before any await: clearing the input empties this very list in WebKit
     setBusy(true);
     setError(null);
     try {
       const target = await footageTarget();
-      for (const file of Array.from(files)) {
+      for (const file of picked) {
         const up = await uploadFile(target.libraryId, file, () => {}, target.collectionId);
         const assetId = up.assetId ?? up.duplicateOf;
         if (!assetId) throw new Error(`${file.name} was not filed in the library`);

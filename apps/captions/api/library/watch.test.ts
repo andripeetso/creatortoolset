@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
@@ -11,7 +11,7 @@ process.env.DATA_DIR = path.join(dir, "data");
 process.env.LIBRARY_WATCH_FOLDERS = "1";
 process.env.LIBRARY_DISK_RESERVE_GB = "0";
 const { libraryDb } = await import("./db");
-const { watchApp, scanWatchFolders, SETTLE_MS } = await import("./watch");
+const { watchApp, scanWatchFolders, SETTLE_MS, QUICK_SETTLE_MS } = await import("./watch");
 
 afterAll(() => {
   delete process.env.LIBRARY_WATCH_FOLDERS;
@@ -150,6 +150,41 @@ describe("watch folder scan", () => {
     process.env.LIBRARY_WATCH_FOLDERS = "1";
     expect(versions()).toHaveLength(2);
   });
+
+  it("takes footage that was already in the folder after a short look, and says how many are still to come", async () => {
+    const t4 = t0 + 400 * SETTLE_MS;
+    // what the earlier tests left waiting comes in first
+    await scanWatchFolders(t4 - 2 * SETTLE_MS);
+    await scanWatchFolders(t4 - SETTLE_MS);
+    const had = versions().length;
+    const folder = async () => {
+      const r = await app.request("/api/library/lib_w/watch", { headers: { "x-user": "owner-w" } });
+      return ((await r.json()) as { folders: { mode: string; files: number; adding: number }[] }).folders.find((f) => f.mode === "reference")!;
+    };
+    expect(await folder()).toMatchObject({ files: 2, adding: 0 });
+
+    // shot ten minutes before the folder is looked at: nobody is still writing it
+    const old = path.join(watched, "Last summer.mp4");
+    writeFileSync(old, "shot long ago");
+    utimesSync(old, new Date(t4 - 10 * SETTLE_MS), new Date(t4 - 10 * SETTLE_MS));
+    expect(await scanWatchFolders(t4)).toBe(0); // first sight: counted, not taken
+    expect(await folder()).toMatchObject({ files: 3, adding: 1 });
+    expect(await scanWatchFolders(t4 + QUICK_SETTLE_MS - 1)).toBe(0);
+    expect(await scanWatchFolders(t4 + QUICK_SETTLE_MS)).toBe(1);
+    expect(await folder()).toMatchObject({ files: 3, adding: 0 });
+    expect(versions()).toHaveLength(had + 1);
+
+    // an old file that is still growing (a copy that kept the original's date) waits like any other
+    const copying = path.join(watched, "Still copying.mp4");
+    const t5 = t4 + 10 * SETTLE_MS;
+    writeFileSync(copying, "part one");
+    utimesSync(copying, new Date(t4 - 10 * SETTLE_MS), new Date(t4 - 10 * SETTLE_MS));
+    expect(await scanWatchFolders(t5)).toBe(0);
+    appendFileSync(copying, " part two");
+    utimesSync(copying, new Date(t4 - 10 * SETTLE_MS), new Date(t4 - 10 * SETTLE_MS));
+    expect(await scanWatchFolders(t5 + QUICK_SETTLE_MS)).toBe(0); // it grew: the wait starts again
+    expect(await scanWatchFolders(t5 + 2 * QUICK_SETTLE_MS)).toBe(1);
+  });
 });
 
 describe("a folder chosen from the Media Library card", () => {
@@ -179,5 +214,94 @@ describe("a folder chosen from the Media Library card", () => {
     mkdirSync(other, { recursive: true });
     expect((await post("owner-w", { path: other, libraryId: "lib_nope" })).status).toBe(400); // not a library of theirs
     expect(await listed()).toEqual(before);
+  });
+});
+
+describe("a folder brought in for the AI (POST /api/library/import-folder)", () => {
+  const importDir = path.join(dir, "Tiny Acrobatics import");
+  const old = path.join(importDir, "Last year.mp4");
+  const take = path.join(importDir, "Handstand take.mp4");
+  const script = path.join(importDir, "script.txt");
+  let since = 0;
+  const importFolder = (user: string, body: unknown) =>
+    app.request("/api/library/import-folder", {
+      method: "POST",
+      headers: { "x-user": user, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  const read = async (r: Response) => (await r.json()) as { libraryId: string; imported: { file: string; versionId?: string; error?: string }[]; scripts: { file: string; text: string }[] };
+  const assets = () => (libraryDb().prepare("SELECT COUNT(*) AS n FROM assets").get() as { n: number }).n;
+
+  beforeAll(() => {
+    mkdirSync(importDir, { recursive: true });
+    writeFileSync(old, "last year's take");
+    // an old file: its mtime is years back, and it arrived before `since`
+    utimesSync(old, new Date("2020-01-01T00:00:00Z"), new Date("2020-01-01T00:00:00Z"));
+  });
+
+  it("brings in the files that arrived since the date, returns the script's text, and remembers them as seen", async () => {
+    await new Promise((r) => setTimeout(r, 10));
+    since = Date.now();
+    writeFileSync(take, "frame data take");
+    writeFileSync(script, "Hook: the handstand, then the reveal");
+    const r = await importFolder("owner-w", { path: importDir, since, libraryId: "lib_w" });
+    expect(r.status).toBe(200);
+    const body = await read(r);
+    expect(body.libraryId).toBe("lib_w");
+    expect(body.imported.map((x) => x.file)).toEqual([take]); // the old file is not taken
+    expect(body.imported[0]!.error).toBeUndefined();
+    expect(body.scripts).toEqual([{ file: script, text: "Hook: the handstand, then the reveal" }]);
+    const made = versions().filter((v) => v.source_path === take);
+    expect(made).toHaveLength(1);
+    expect(made[0]!.state).toBe("processing");
+    expect(body.imported[0]!.versionId).toBe(made[0]!.id);
+    expect(versions().some((v) => v.source_path === old)).toBe(false);
+    expect(libraryDb().prepare("SELECT version_id FROM watch_seen WHERE library_id = ? AND path = ?").get("lib_w", take)).toEqual({ version_id: made[0]!.id });
+  });
+
+  it("a second call takes nothing new: the same version, no second asset", async () => {
+    const assetsBefore = assets();
+    const versionsBefore = versions().length;
+    const body = await read(await importFolder("owner-w", { path: importDir, since, libraryId: "lib_w" }));
+    expect(body.imported.map((x) => x.file)).toEqual([take]);
+    expect(body.imported[0]!.versionId).toBe(versions().find((v) => v.source_path === take)!.id);
+    expect(versions()).toHaveLength(versionsBefore);
+    expect(assets()).toBe(assetsBefore);
+  });
+
+  it("the watch scan does not take the same file again once the folder is watched", async () => {
+    const added = await app.request("/api/library/watch/folder", {
+      method: "POST",
+      headers: { "x-user": "owner-w", "content-type": "application/json" },
+      body: JSON.stringify({ path: importDir }),
+    });
+    expect(added.status).toBe(200);
+    await scanWatchFolders(Date.now());
+    await scanWatchFolders(Date.now() + SETTLE_MS);
+    expect(versions().filter((v) => v.source_path === take)).toHaveLength(1);
+    expect(libraryDb().prepare("SELECT COUNT(*) AS n FROM watch_seen WHERE library_id = ? AND path = ?").get("lib_w", take)).toEqual({ n: 1 });
+  });
+
+  it("refuses on a server that may not read folders, a relative path, and someone else's library", async () => {
+    process.env.LIBRARY_WATCH_FOLDERS = "0";
+    try {
+      const hosted = await importFolder("owner-w", { path: importDir, libraryId: "lib_w" });
+      expect(hosted.status).toBe(403);
+      expect(((await hosted.json()) as { error: string }).error).toMatch(/not on your computer/);
+    } finally {
+      process.env.LIBRARY_WATCH_FOLDERS = "1";
+    }
+    expect((await importFolder("owner-w", { path: "footage", libraryId: "lib_w" })).status).toBe(400);
+    expect((await importFolder("stranger", { path: importDir, libraryId: "lib_w" })).status).toBe(404);
+  });
+
+  it("never brings back a file the user trashed, and refuses a whole home folder", async () => {
+    const v = versions().find((x) => x.source_path === take)!;
+    libraryDb().prepare("UPDATE assets SET trashed_at = ? WHERE id = (SELECT asset_id FROM asset_versions WHERE id = ?)").run(Date.now(), v.id);
+    const assetsBefore = assets();
+    const body = await read(await importFolder("owner-w", { path: importDir, since, libraryId: "lib_w" }));
+    expect(body.imported).toEqual([{ file: take, error: expect.stringMatching(/trash/) }]);
+    expect(assets()).toBe(assetsBefore);
+    expect((await importFolder("owner-w", { path: "~", libraryId: "lib_w" })).status).toBe(400);
   });
 });

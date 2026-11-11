@@ -1,8 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterAll, describe, expect, it } from "vitest";
 import { Hono } from "hono";
-import { definePlugin } from "./lib/plugin";
-import { activityApp, appTools, pluginActivity, pluginMenu, type ActivityRow, type ActivityState } from "./activity";
+import type { ActivityRow, ActivityState } from "./activity";
 import type { SessionUser } from "./users";
+
+// GET /api/activity reads the app's own tools: an empty data folder of its own
+const scratch = process.env.CT_SCRATCH_DIR ?? tmpdir();
+mkdirSync(scratch, { recursive: true });
+const dir = mkdtempSync(path.join(scratch, "activity-"));
+process.env.DATA_DIR = dir;
+afterAll(() => rmSync(dir, { recursive: true, force: true }));
+const { definePlugin } = await import("./lib/plugin");
+const { activityApp, appRows, appTools, pluginActivity, pluginMenu } = await import("./activity");
 
 const admin: SessionUser = { username: "tiny", role: "admin", cloud: true, off: [] };
 const row = (id: string, state: ActivityState = "working", href = "/editor"): ActivityRow => ({ id, title: `Row ${id}`, detail: "Tiny", state, href });
@@ -41,6 +52,18 @@ describe("pluginActivity", () => {
     expect(rows[2].actions).toBeUndefined();
   });
 
+  it("passes a row's progress and reason only when well-formed, and no other field", async () => {
+    const plugins = [definePlugin({ id: "tiny", activity: () => [
+      { ...row("a"), progress: 0.5, reason: "Waits for Tiny" },
+      { ...row("b"), progress: 2, reason: "  " },
+      { ...row("c"), extra: "x" } as ActivityRow,
+    ] })];
+    const rows = await pluginActivity(plugins, admin);
+    expect(rows[0]).toMatchObject({ progress: 0.5, reason: "Waits for Tiny" });
+    expect(rows[1]).toEqual({ id: "tiny:b", title: "Row b", detail: "Tiny", state: "working", href: "/editor" });
+    expect(rows[2]).not.toHaveProperty("extra");
+  });
+
   it("gives visitors nothing and skips a plug-in that throws or hangs", async () => {
     const plugins = [
       definePlugin({ id: "boom", activity: () => { throw new Error("no"); } }),
@@ -61,6 +84,45 @@ describe("GET /api/activity", () => {
     const res = await app.request("/api/activity");
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual([{ id: "tiny:a", title: "Row a", detail: "Tiny", state: "working", href: "/editor" }]);
+  });
+});
+
+describe("appRows", () => {
+  const progress = { done: 0, left: 0, clips: 0, seconds: 0, waiting: [] };
+  it("says a folder still being taken in, then clips being prepared, then a step that waits for a key", () => {
+    const rows = appRows({
+      libraries: [{
+        id: "l",
+        folders: [{ path: "/Volumes/Card/Trip", files: 17, adding: 14 }, { path: "/Volumes/Card/Old", files: 4, adding: 0 }],
+        uploading: null,
+        progress: { done: 9, left: 27, clips: 3, seconds: 60, waiting: [{ step: "transcript", count: 2, missing: "Add a Tiny key" }] },
+      }],
+      edits: [],
+      exports: [],
+    });
+    expect(rows.map((r) => [r.detail, r.state])).toEqual([
+      ["Adding clips from Trip · 3 of 17", "working"],
+      ["Preparing 3 clips · 25%", "working"],
+      ["2 transcripts wait: Add a Tiny key", "ready"],
+    ]);
+    expect(rows[0].progress).toBeCloseTo(3 / 17);
+  });
+
+  it("lists running edits and renders, each opening its own page", () => {
+    const rows = appRows({
+      libraries: [{ id: "l", folders: [], uploading: null, progress }],
+      edits: [{ id: "e1", name: "Tiny vlog" }],
+      exports: [
+        { id: "x1", filename: "tiny.mp4", status: "running", progress: 0.4, projectId: "p 1" },
+        { id: "x2", filename: "next.mp4", status: "queued", progress: 0, projectId: undefined },
+      ],
+    });
+    expect(rows.map((r) => [r.title, r.detail, r.href])).toEqual([
+      ["Tiny vlog", "AI Editor", "/editor/e1"],
+      ["tiny.mp4", "Exporting · 40%", "/captions?project=p%201"],
+      ["next.mp4", "Export · waits its turn", "/captions"],
+    ]);
+    expect(rows[2]).not.toHaveProperty("progress");
   });
 });
 

@@ -355,13 +355,13 @@ export function useWorkTalk(): { talk: WorkPrefs["talk"] | null; setTalk: (v: Wo
   return { talk: prefs?.talk ?? null, setTalk: (v) => useWorkPrefs.getState().put({ talk: v }) };
 }
 
-/** The plan the warning reads: the one a reading tells, else the person's answer, else none. */
-export const planToWarnBy = (view: Pick<SetupView, "detected" | "plan"> | null | undefined): PlanId | null => view?.detected ?? view?.plan ?? null;
+/** The plan the warning reads: the person's own pick, else the one their AI names (`detected`), else none. */
+export const planToWarnBy = (view: Pick<SetupView, "detected" | "plan"> | null | undefined): PlanId | null => view?.plan ?? view?.detected ?? null;
 
 /**
  * Before a heavy AI run: on a Pro or Plus plan, says how much of the 5-hour window it usually takes and asks first.
- * True = go ahead (no plan given, a bigger plan, a light run, or they said so). The plan a reading tells (`detected`)
- * wins over the one the person picked.
+ * True = go ahead (no plan given, a bigger plan, a light run, or they said so). A plan the person picked stays theirs:
+ * it wins over the one their AI names (`detected`).
  */
 export async function confirmHeavy(feature: Feature, count = 1): Promise<boolean> {
   const view = useSetup.getState().view ?? (await useSetup.getState().load());

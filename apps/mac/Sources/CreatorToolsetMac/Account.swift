@@ -139,6 +139,17 @@ struct AccountClient {
         return try await send(request)
     }
 
+    /// POST /api/account/relay-token with the token: a short token the connect service (the broker) trusts for this
+    /// account. The account server mints it; this Mac's own token never goes to the broker.
+    func relayToken(_ token: String) async throws -> String {
+        var request = URLRequest(url: URL(string: "/api/account/relay-token", relativeTo: server)!)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        struct Reply: Decodable { let token: String }
+        let reply: Reply = try await send(request)
+        return reply.token
+    }
+
     private func send<T: Decodable>(_ request: URLRequest) async throws -> T {
         var request = request
         request.timeoutInterval = 15

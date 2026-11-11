@@ -1,9 +1,10 @@
 import AppKit
 import SwiftUI
 
-// The small panel that pops up at the bottom right of the screen when a recording stops. It shows the thumbnail and
-// the file's size and length; hovering it shows Save, Copy, Share and Edit. It stays until the user acts or closes it,
-// and does nothing with the recording itself: the caller (Recorder) runs each action and calls close() when done.
+// The small panel that pops up when a recording stops, at the bottom right corner of the recorded window or area (of
+// the screen for a whole display). It shows the thumbnail and the file's size and length; hovering it shows Save,
+// Copy, Share and Edit; its corners hold Close, Throw away and Show in Finder. It stays until the user acts or closes it, and does nothing with the recording itself: the
+// caller (Recorder) runs each action and calls close() when done.
 
 @MainActor
 final class RecordingPreviewBusy: ObservableObject {
@@ -26,13 +27,11 @@ final class RecordingPreviewBusy: ObservableObject {
     /// The panel on screen, nil when none is open.
     static var window: NSWindow? { current?.panel }
 
-    static func show(_ project: LocalProject, on screen: NSScreen, actions: Actions) {
+    /// `recorded`: the recorded window or area in AppKit's global points, nil for a whole display.
+    static func show(_ project: LocalProject, on screen: NSScreen, near recorded: CGRect?, actions: Actions) {
         close()
         let controller = Controller(project: project, actions: actions)
-        let margin: CGFloat = 16
-        let area = screen.visibleFrame
-        let origin = NSPoint(x: area.maxX - Controller.size.width - margin, y: area.minY + margin)
-        controller.panel.setFrameOrigin(origin)
+        controller.panel.setFrameOrigin(previewOrigin(recorded: recorded, visible: screen.visibleFrame, size: Controller.size))
         controller.panel.alphaValue = 0
         controller.panel.orderFrontRegardless()
         NSAnimationContext.runAnimationGroup { context in
@@ -88,6 +87,8 @@ private struct PreviewView: View {
     let actions: RecordingPreview.Actions
     let close: () -> Void
     @State private var hovering = false
+    /// The trash was pressed: the panel asks over the picture until Throw Away or Cancel.
+    @State private var asking = false
 
     var body: some View {
         ZStack {
@@ -101,7 +102,7 @@ private struct PreviewView: View {
             .frame(width: 340, height: 210)
             .clipped()
 
-            if hovering && busy.text == nil {
+            if hovering && busy.text == nil && !asking {
                 Color.black.opacity(0.55)
                 VStack(spacing: 10) {
                     HStack(spacing: 10) {
@@ -131,7 +132,21 @@ private struct PreviewView: View {
                 }
             }
 
-            VStack {
+            if asking {
+                Color.black.opacity(0.75)
+                VStack(spacing: 6) {
+                    Text("Throw it away?").font(.system(size: 14, weight: .semibold))
+                    Text("It goes to the Trash.").font(.system(size: 12)).foregroundStyle(.white.opacity(0.7))
+                    HStack(spacing: 10) {
+                        pill("Cancel", fill: .white.opacity(0.14)) { asking = false }
+                        pill("Throw Away", fill: .red.opacity(0.85), action: actions.discard)
+                    }
+                    .padding(.top, 8)
+                }
+                .foregroundStyle(.white)
+            }
+
+            if !asking { VStack {
                 HStack {
                     Button(action: close) {
                         Image(systemName: "xmark")
@@ -143,6 +158,16 @@ private struct PreviewView: View {
                     .buttonStyle(.plain)
                     .help("Close (the recording stays)")
                     Spacer()
+                    // in sight, not in a menu: a take that is not wanted goes with one press (the panel asks once, over the picture)
+                    Button { asking = true } label: {
+                        Image(systemName: "trash")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 22, height: 22)
+                            .background(Circle().fill(Color.black.opacity(0.5)))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Throw away (to the Trash)")
                 }
                 Spacer()
                 HStack {
@@ -150,23 +175,19 @@ private struct PreviewView: View {
                         .font(.system(size: 11, weight: .medium).monospacedDigit())
                         .foregroundStyle(.white.opacity(0.9))
                     Spacer()
-                    Menu {
-                        Button("Show in Finder", action: actions.reveal)
-                        Divider()
-                        Button("Throw Away", role: .destructive, action: actions.discard)
-                    } label: {
-                        Image(systemName: "ellipsis")
+                    Button(action: actions.reveal) {
+                        Image(systemName: "folder")
                             .foregroundStyle(.white)
                             .frame(width: 26, height: 22)
                     }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
+                    .buttonStyle(.plain)
+                    .help("Show in Finder")
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
                 .background(LinearGradient(colors: [.clear, .black.opacity(0.7)], startPoint: .top, endPoint: .bottom))
             }
-            .padding(8)
+            .padding(8) }
         }
         .frame(width: 340, height: 210)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -185,6 +206,15 @@ private struct PreviewView: View {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.writeObjects([project.screenURL as NSURL])
         actions.copy()
+    }
+
+    private func pill(_ title: String, fill: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title).font(.system(size: 12, weight: .medium))
+                .padding(.horizontal, 14).frame(height: 28)
+                .background(Capsule().fill(fill))
+        }
+        .buttonStyle(.plain)
     }
 
     private func tile(_ title: String, _ symbol: String, _ action: @escaping () -> Void) -> some View {

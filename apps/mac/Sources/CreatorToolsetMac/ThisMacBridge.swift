@@ -5,8 +5,31 @@ import AppKit
 import Foundation
 
 /// The questions the page may ask over the "thisMac" handler (TitleBar.swift); any other is answered as off.
-/// One more has parts of its own: "install:<claude|codex>:<key>" (installAsk).
-let thisMacAsks = ["state", "start", "access", "folder"]
+/// "dropped" is answered by the window itself (AppWebView.dragItems). One more has parts of its own:
+/// "install:<claude|codex>:<key>" (installAsk).
+let thisMacAsks = ["state", "start", "access", "folder", "dropped", "files"]
+
+/// The files picked in this app's open panel for the page (Shell runOpenPanelWith), newest first, each once, at most
+/// `cap`: the page asks where they are after the panel closes, and a second pick must not lose the first's while that
+/// one is still being added.
+func rememberPicks(_ new: [URL], in old: [URL], cap: Int = 1000) -> [URL] {
+    let fresh = new.map(\.standardizedFileURL)
+    return Array((fresh + old.filter { !fresh.contains($0) }).prefix(cap))
+}
+
+/// "files" from the page (src/lib/thisMac.ts pathOnMac): where each picked file is, so This Mac's server adds it in
+/// place instead of taking an upload. { files: [{ path, name, size, modified (ms) }] }; none for a server that is not
+/// this Mac (it cannot read them), and none for folders or files that are gone.
+func pickedFilesReply(_ urls: [URL], here: Bool) -> [String: Any] {
+    guard here else { return ["files": []] }
+    let files: [[String: Any]] = urls.compactMap { url in
+        guard let v = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]),
+              v.isRegularFile == true, let size = v.fileSize else { return nil }
+        return ["path": url.path, "name": url.lastPathComponent, "size": size,
+                "modified": ((v.contentModificationDate?.timeIntervalSince1970 ?? 0) * 1000).rounded()]
+    }
+    return ["files": files]
+}
 
 /// "install:<claude|codex>:<key>" from Settings → Headless access, as its parts; nil for anything else. The key is the
 /// one the page just made for that AI app (ctk_ and letters or digits), so nothing else can be put on a command line.
@@ -103,7 +126,7 @@ extension Shell {
         open.canChooseFiles = false
         open.canCreateDirectories = true
         open.prompt = "Choose"
-        open.message = "Choose the folder with your videos. Nothing is moved or uploaded."
+        open.message = "Choose the folder with your videos. Nothing is moved."
         guard open.runModal() == .OK, let url = open.url else { return ["path": NSNull()] }
         return ["path": url.path]
     }
@@ -137,8 +160,8 @@ extension Shell {
             "notice": notice ?? NSNull(),
             "paired": pairedHere,
             // this Mac's names as the site matches its records: the name it pairs with, and the host name its worker reports
-            "computer": Host.current().localizedName ?? ProcessInfo.processInfo.hostName,
-            "host": ProcessInfo.processInfo.hostName,
+            "computer": Host.current().localizedName ?? macHostName(),
+            "host": macHostName(),
             // this Mac's device id on the open server: the page's Connect binds its AI to it (setup's AI step)
             "device": DeviceVault.deviceID(for: base.host ?? "") ?? NSNull(),
             "problem": problem ?? NSNull(),

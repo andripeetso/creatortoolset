@@ -133,13 +133,13 @@ const NOTE_MS = 10 * 60_000;
  * A real AI call's outcome is the instance's check: "Answered" or the plain failure. Written only when it changed, or the
  * saved one is older than NOTE_MS, so a busy AI does not rewrite the settings file on every call.
  */
-export async function noteCallOutcome(scope: Scope, instance: string, ok: boolean, error?: string): Promise<void> {
+export async function noteCallOutcome(scope: Scope, instance: string, ok: boolean, error?: string, note?: string): Promise<void> {
   const key = `${scope}:${instance}`;
   const saved = (scope === "workspace" ? providerSettings() : ownSettings(scope))?.instances.find((i) => i.id === instance)?.lastCheck;
   const prev = checks[key] ?? saved;
-  const sameResult = prev?.ok === ok && (ok || (checks[key]?.error ?? "") === (error ?? "").slice(0, 300));
+  const sameResult = prev?.ok === ok && (prev.note ?? "") === (note ?? "") && (ok || (checks[key]?.error ?? "") === (error ?? "").slice(0, 300));
   if (prev && sameResult && Date.now() - prev.at < NOTE_MS) return;
-  await recordCheck(key, { ok, ms: 0, at: Date.now(), ...(error ? { error: error.slice(0, 300) } : {}) });
+  await recordCheck(key, { ok, ms: 0, at: Date.now(), ...(error ? { error: error.slice(0, 300) } : {}), ...(note ? { note } : {}) });
 }
 /** Keeps a check (Settings shows it) and, on the instance it was for, its `lastCheck` (kept across restarts). */
 export async function recordCheck(key: string, c: ProviderCheck): Promise<void> {
@@ -149,12 +149,13 @@ export async function recordCheck(key: string, c: ProviderCheck): Promise<void> 
   const id = at < 0 ? key : key.slice(at + 1);
   const s = scope === "workspace" ? providerSettings() : ownSettings(scope);
   if (!s?.instances.some((i) => i.id === id)) return;
-  const was = s.instances.find((i) => i.id === id)?.lastCheck?.ok;
+  const was = s.instances.find((i) => i.id === id)?.lastCheck;
   const instances = s.instances.map((i) => (i.id === id ? { ...i, lastCheck: { ok: c.ok, at: c.at, ms: c.ms, ...(c.note ? { note: c.note.slice(0, 200) } : {}) } } : i));
   await saveSettings({ ...s, instances }, scope);
-  // an AI that starts or stops answering is what Settings, setup and Home show; a same result again is not news. The
+  // an AI that starts or stops answering, or meets its plan's limit, is what Settings, setup and Home show; a same result again is not news. The
   // team's AI is shown to the admins only (api/providers.ts viewFor), so they are the ones told
-  if (was === c.ok) return;
+  // a plan's limit reached or over (the note) is news too
+  if (was?.ok === c.ok && (was.note ?? "") === (c.note ?? "")) return;
   if (scope === "workspace") announceAdmins("providers");
   else announce(scope, "providers");
 }

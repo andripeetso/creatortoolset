@@ -122,6 +122,28 @@ describe("a server on this Mac signs in from other devices only once a password 
   });
 });
 
+describe("the routes of plug-ins from the person's folder are behind the sign-in", () => {
+  const routes: [string, string][] = [
+    ["GET", "/api/plugins/folder"],
+    ["POST", "/api/plugins/folder/tiny/prepare"],
+    ["GET", "/api/plugins/web"],
+    ["GET", "/api/plugins/web/tiny/web.js"],
+  ];
+  it("answers none of them to a browser that is not signed in", async () => {
+    for (const [method, p] of routes) expect((await from("127.0.0.1", p, { method })).status, `${method} ${p}`).toBe(401);
+  });
+
+  it("answers the owner, and on a server that is not the Mac app's own it lists and prepares nothing", async () => {
+    const cookie = cookieOf(await login("127.0.0.1", "tinyacrobatics1")); // the password the test above chose
+    const list = await from("127.0.0.1", "/api/plugins/folder", { headers: { cookie } });
+    expect(list.status).toBe(200);
+    expect(await list.json()).toMatchObject({ enabled: false, rows: [] });
+    expect((await from("127.0.0.1", "/api/plugins/folder/tiny/prepare", { method: "POST", headers: { cookie } })).status).toBe(403);
+    expect(await (await from("127.0.0.1", "/api/plugins/web", { headers: { cookie } })).json()).toEqual({ plugins: [] });
+    expect((await from("127.0.0.1", "/api/plugins/web/tiny/web.js", { headers: { cookie } })).status).toBe(404);
+  });
+});
+
 describe("the Mac app pairs itself on a server on this Mac", () => {
   it("pairs a Mac and adds no provider: nothing is connected until the person presses Connect", async () => {
     vi.stubEnv("CT_LOCAL", "1");

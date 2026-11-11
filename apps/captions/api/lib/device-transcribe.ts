@@ -89,6 +89,8 @@ export const RELISTEN = {
 };
 const RATE = 16000;
 const READS = 100;
+/** What the speech library throws when the model wrote no words at all (a clip where nothing is said): none heard, not a failure. */
+const NO_WORDS = /token_ids must be a non-empty array/;
 
 /** Loudness READS times a second, as a share of the 90th percentile of the reads inside `words`. */
 function loudness(pcm: Float32Array, words: DeviceWord[]): Float32Array {
@@ -210,7 +212,10 @@ export function transcribeOnDevice(pcmFile: string, key: string, load = loadMode
         const language = await spokenLanguage(model, pcm);
         const options = { chunk_length_s: 30, stride_length_s: 5, return_timestamps: "word", ...(language ? { language, task: "transcribe" } : {}) };
         const hear = async (from: number, to: number) => {
-          const out = await model(pcm.subarray(Math.round(from * RATE), Math.round(to * RATE)), options);
+          const out = await model(pcm.subarray(Math.round(from * RATE), Math.round(to * RATE)), options).catch((e: unknown) => {
+            if (e instanceof Error && NO_WORDS.test(e.message)) return { chunks: [] };
+            throw e;
+          });
           return wordsOf(out.chunks ?? [], to - from).map((w) => ({ text: w.text, start: w.start + from, end: w.end + from }));
         };
         return { words: await relisten(await hear(0, pcm.length / RATE), pcm, hear), language };
