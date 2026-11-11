@@ -638,12 +638,12 @@ final class RelayTests: XCTestCase {
     func testGeminiAndGrokRunsGetTheTokenInTheirEnvironmentAndTheServerInTheirFolder() throws {
         let dir = temp()
         let seen = dir.appendingPathComponent("seen.txt")
-        // a program that prints `help` for --help, and for a run writes its arguments, the token it was given and the
-        // server file in its folder, then answers as Gemini or Grok does
+        // a program that prints `help` for --help, and for a run writes its sign-in variables, its arguments, the token it was
+        // given and the server file in its folder, then answers as Gemini or Grok does
         func stub(_ name: String, help: String, answer: String) throws -> String {
             let file = dir.appendingPathComponent(name)
             let script = "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then echo '\(help)'; exit 0; fi\ncat > /dev/null\n"
-                + "{ echo \"$* token=$\(codexTokenEnv)\"; cat .gemini/settings.json .grok/config.toml 2>/dev/null; } > '\(seen.path)'\n"
+                + "{ echo \"gca=$GOOGLE_GENAI_USE_GCA browser=$NO_BROWSER $* token=$\(codexTokenEnv)\"; cat .gemini/settings.json .grok/config.toml 2>/dev/null; } > '\(seen.path)'\n"
                 + "echo '\(answer)'\n"
             try script.write(to: file, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
@@ -659,6 +659,8 @@ final class RelayTests: XCTestCase {
             XCTAssertEqual(try run(cli), "ok")
             let now = try String(contentsOf: seen, encoding: .utf8)
             XCTAssertTrue(now.contains(" token=\(token)\n"), driver)
+            // Gemini's Google-account sign-in for the run, never an API key; Grok gets neither
+            XCTAssertTrue(now.hasPrefix(driver == "gemini" ? "gca=true browser=true " : "gca= browser= "), driver)
             XCTAssertEqual(now.components(separatedBy: token).count, 2, driver)   // in the environment only: no argument, no file
             XCTAssertTrue(now.contains("http://127.0.0.1:9/api/mcp"), driver)
             XCTAssertTrue(now.contains(driver == "gemini" ? "--allowed-mcp-server-names creator-toolset --policy" : "--allow MCPTool(creator-toolset__*)"), driver)
@@ -668,6 +670,7 @@ final class RelayTests: XCTestCase {
                 let then = try String(contentsOf: seen, encoding: .utf8)
                 XCTAssertFalse(then.contains("creator-toolset"))
                 XCTAssertTrue(then.contains(" token=\n"))
+                XCTAssertTrue(then.hasPrefix("gca=true browser=true "))   // a run without the app's tools too
             }
         }
     }

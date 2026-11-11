@@ -674,6 +674,13 @@ func grokArguments(cwd: String, model: String, effort: String, system: String, w
     return args
 }
 
+/// Gemini's sign-in for every run: its Google-account sign-in when the person's settings name no method. The app's own Google
+/// sign-in (`gemini --acp`'s authenticate) can leave the login file but no chosen method, and then every run stopped at
+/// "Please set an Auth method"; Gemini reads the method from GOOGLE_GENAI_USE_GCA then (before any API key). With NO_BROWSER a
+/// run whose login is gone says it needs a sign-in and stops, instead of asking on stdin to open a browser (measured
+/// 2026-11-10 on Gemini CLI 0.68 with a made-up login: past "auth method", then "Manual authorization is required…").
+let geminiSignInEnv = ["GOOGLE_GENAI_USE_GCA": "true", "NO_BROWSER": "true"]
+
 /// the Mac relay driver_env: the environment without API keys (the subscription only, never API billing), and
 /// CODEX_HOME for a Codex home (the folder codex keeps its sign-in in).
 func driverEnv(base: [String: String], home: String = "") -> [String: String] {

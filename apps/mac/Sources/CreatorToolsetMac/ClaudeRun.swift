@@ -208,7 +208,7 @@ func geminiAnswer(_ req: RelayRequest, _ opts: RelayOptions, cli: String, work: 
     let (cwd, system) = try prepareFolder(req, work: work, tmp: tmp)
     let prompt = "<instructions>\n\(system)\n</instructions>\n\n" + requestText(req.user, folder: folder)
     // the assistant: the app's MCP server for this run, in the run's own fresh folder (never a Workshop session's)
-    var env = driverEnv(base: ProcessInfo.processInfo.environment)
+    var env = driverEnv(base: ProcessInfo.processInfo.environment).merging(geminiSignInEnv) { _, new in new }
     var policy = ""
     if let mcp = req.mcp, cwd.path.hasPrefix(tmp.path), geminiTakesMcp(cli) {
         try runMcpFiles(driver: "gemini", url: mcp.url, cwd: cwd)
