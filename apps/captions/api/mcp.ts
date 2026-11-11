@@ -8,6 +8,7 @@ import { CHECK, EDITORS, JOBS, MAKES, TALK } from "../contracts/work-prefs";
 import { EDIT_STEPS } from "../contracts/editor";
 import { routeFor } from "./lib/providers";
 import { deviceName } from "./lib/devices";
+import { dockSkills } from "./lib/skills";
 import { readConnectors } from "./lib/connectors/store";
 import { myKeys } from "./my-keys";
 import { askConfirm, askFolder, askSecret, navigateTo, noteChoices, noteMedia, noteStep, noteWork, setConfirmRunner, setInstallGuide, unattended } from "./assistant";
@@ -1269,8 +1270,10 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
     case "tools/list": {
       const dock = isJob(auth);
       const listed = [...TOOLS, ...MODULE_DEFS.filter((d) => dock || !d.dockOnly), ...(dock ? ASSISTANT_DEFS : [])];
+      // skill_read (mcp-tools/skills.ts): only while the account has a skill on, in a reply someone is there for
+      const skills = dock && !unattended(user.username, jobTurn(auth.get("authorization") ?? undefined) ?? "") && (await dockSkills(user.username)).length > 0;
       // dockOnly says who gets a tool; it is not part of the listing
-      return ok({ tools: [...listed.filter((t) => !plugged.replaced.has(t.name) && !notHere(t.name)), ...plugged.defs].map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) });
+      return ok({ tools: [...listed.filter((t) => !plugged.replaced.has(t.name) && !notHere(t.name) && (skills || t.name !== "skill_read")), ...plugged.defs].map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) });
     }
     case "tools/call":
       return ok(await callTool(call, auth, origin, user, String(params.name), (params.arguments ?? {}) as Args, plugged));

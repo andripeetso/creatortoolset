@@ -12,6 +12,7 @@ import type { Selection } from "../contracts/providers";
 import { validTimezone } from "../contracts/automations";
 import { streamMacClaude, type MacAsk, type MacAskStatus } from "./lib/mac-claude";
 import { announce } from "./lib/sync";
+import { dockSkills, skillLines } from "./lib/skills";
 import { slug } from "./lib/workshop/folder";
 import { myKeys } from "./my-keys";
 import { MY_KEYS, type MyKeyEnv } from "../contracts/service-keys";
@@ -673,7 +674,10 @@ export async function answerWithTools(
   const claude = route.instance.driver === "claude";
   const token = hasTools(route) ? mintJobToken(username, opts.turn) : undefined;
   const guide = SYSTEM + installGuide;
-  const system = !token ? guide + NO_TOOLS_NOTE : claude && opts.onAsk ? guide + MAC_NOTE : guide;
+  let system = !token ? guide + NO_TOOLS_NOTE : claude && opts.onAsk ? guide + MAC_NOTE : guide;
+  // the person's own skills, a line each (lib/skills.ts): only where the reply has the tool that opens one and someone is there
+  const skills = token && !unattended(username, opts.turn) ? skillLines(await dockSkills(username), "tool") : "";
+  if (skills) system += `\n\n${skills}`;
   try {
     return await streamMacClaude(system, prompt, opts.cancel, (t) => opts.onDelta?.(t), undefined, {
       label: opts.label,

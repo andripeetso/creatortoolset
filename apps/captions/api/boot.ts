@@ -29,6 +29,7 @@ import { startEditorWorker } from "./editor/worker";
 import { presetsApp } from "./presets";
 import { packCatalogApp } from "./pack-catalog";
 import { packsApp } from "./packs";
+import { skillsApp } from "./skills";
 import { projectsApp } from "./projects";
 import { storiesApp } from "./stories";
 import { accountProfileApp } from "./account-profile";
@@ -377,6 +378,8 @@ app.route("/api/export", exportApp);
 app.route("/api/hf", hfApp);
 app.route("/api/presets", presetsApp);
 app.route("/api/packs", packsApp);
+// Settings → Skills: a person's own skills (skills.ts)
+app.route("/api/skills", skillsApp);
 app.route("/api/pack-catalog", packCatalogApp);
 app.route("/api/projects", projectsApp);
 app.route("/api/enhance", enhanceApp);
