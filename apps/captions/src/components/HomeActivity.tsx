@@ -1,4 +1,5 @@
 import { useCachedLoad } from "@/lib/local-cache";
+import { useState } from "react";
 import { Link } from "react-router";
 import { CircleAlert, Eye, Inbox, KeyRound, Loader2, MessageSquare, Pause, X, type LucideIcon } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -215,8 +216,12 @@ function ActivityButton({ me }: { me: Me }) {
   );
 }
 
-/** `onClear`: the rows that wait on a Review video get a button that takes them off the list, and the part one for all of them. */
+/**
+ * `onClear`: the rows that wait on a Review video get a button that takes them off the list, and the part one for all of
+ * them. The one for all asks once more in its own place ("Clear 11?"): it sits above the rows' buttons, where a miss lands.
+ */
 function Part({ label, lines, onClear }: { label: string; lines: Line[]; onClear?: (assets: string[]) => void }) {
+  const [sure, setSure] = useState(false);
   if (!lines.length) return null;
   const clearable = onClear ? lines.flatMap((l) => l.asset ?? []) : [];
   return (
@@ -224,8 +229,16 @@ function Part({ label, lines, onClear }: { label: string; lines: Line[]; onClear
       <div className="flex items-center justify-between px-3 pb-1 pt-2.5">
         <h3 className="text-[11px] font-medium text-muted-foreground">{label}</h3>
         {clearable.length > 1 && (
-          <button onClick={() => onClear!(clearable)} className="rounded text-[11px] font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring">
-            {clearable.length === lines.length ? "Clear all" : `Clear ${clearable.length} reviews`}
+          <button
+            onClick={() => {
+              if (sure) onClear!(clearable);
+              setSure(!sure);
+            }}
+            onBlur={() => setSure(false)}
+            onMouseLeave={() => setSure(false)}
+            className={`rounded text-[11px] font-medium outline-none focus-visible:ring-1 focus-visible:ring-ring ${sure ? "text-red-500" : "text-muted-foreground hover:text-foreground"}`}
+          >
+            {sure ? `Clear ${clearable.length}?` : clearable.length === lines.length ? "Clear all" : `Clear ${clearable.length} reviews`}
           </button>
         )}
       </div>

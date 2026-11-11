@@ -18,7 +18,7 @@ import { postedFromUrl } from "./lib/workshop/posted";
 import { innerCall, jobTurn, type AuthVars } from "./auth";
 import type { SessionUser } from "./users";
 import { pluginReplaces, type ServerPlugin } from "./lib/plugin";
-import { editorTools } from "./mcp-tools/editor";
+import { editorTools, hasStyle } from "./mcp-tools/editor";
 import { finalsTools } from "./mcp-tools/finals";
 import { mainSource } from "./library/sources";
 import type { AssetCard } from "../contracts/library";
@@ -767,6 +767,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
     review_share: async (a) => {
       const at = await reviewOf({ json, origin }, a.link);
       if (!at.manage) throw new ToolError("That video is someone else's: only its owner can change its share link.");
+      if (a.on !== false && !(at.asset.share as { enabled?: boolean } | null)?.enabled) await sure(`Turn on the share link of "${String(at.asset.name).slice(0, 80)}"? Anyone with the link can watch${a.download === true ? ", comment and download the file" : " and comment"}, no account needed.`);
       const share = { enabled: a.on !== false, ...(typeof a.download === "boolean" ? { download: a.download } : {}) };
       const r = await json(at.path, "PATCH", { share });
       const s = r.share as { token: string; enabled: boolean; download: boolean };
@@ -1298,7 +1299,7 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
       // skill_read (mcp-tools/skills.ts): only while the account has a skill on, in a reply someone is there for
       const skills = dock && !unattended(user.username, jobTurn(auth.get("authorization") ?? undefined) ?? "") && (await dockSkills(user.username)).length > 0;
       // dockOnly says who gets a tool; it is not part of the listing
-      return ok({ tools: [...listed.filter((t) => !plugged.replaced.has(t.name) && !notHere(t.name) && (skills || t.name !== "skill_read")), ...plugged.defs].map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) });
+      return ok({ tools: [...listed.filter((t) => !plugged.replaced.has(t.name) && !notHere(t.name) && (skills || t.name !== "skill_read") && (t.name !== "editor_style_use" || hasStyle(user.username))), ...plugged.defs].map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) });
     }
     case "tools/call":
       return ok(await callTool(call, auth, origin, user, String(params.name), (params.arguments ?? {}) as Args, plugged));

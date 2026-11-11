@@ -51,7 +51,8 @@ export async function prune(root: string, keep: Set<string>): Promise<void> {
   const all = await readdir(root, { recursive: true, withFileTypes: true }).catch(() => []);
   for (const e of all) {
     const file = path.join(e.parentPath, e.name);
-    if (e.isFile() && !keep.has(file)) await unlink(file).catch(() => {});
+    // a kept copy's own files beside it (<copy>.counts.json, say) stay with it
+    if (e.isFile() && !keep.has(file) && ![...keep].some((k) => file.startsWith(`${k}.`))) await unlink(file).catch(() => {});
   }
 }
 
