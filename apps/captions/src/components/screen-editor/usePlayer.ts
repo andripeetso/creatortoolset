@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { drawFrame, outputSize, trimOf, type CameraImage, type ScreenEvents, type ScreenLook } from "@/lib/screen-recording";
-import { frameReader, type FrameReader } from "./frame-reader";
+import { frameReader, type FrameReader } from "@/lib/frame-reader";
 
 type Path = [number, number, number][];
 
@@ -51,10 +51,10 @@ const readMuted = () => {
 /**
  * Plays the recording and paints it with its look. What keeps it light (measured in WebKit on a 3008×3130 recording,
  * where drawing the <video> itself onto a 2D canvas takes 23 to 58 ms a frame):
- * - while it plays, or while a control is being dragged, the graphics card reads the frame (frame-reader.ts, about
- *   3 ms), and only when the video shows a new one;
- * - once things have stood still for a moment, one frame is painted the careful way the export paints it, from a
- *   bitmap of the frame, so the still picture is exactly what Export makes;
+ * - while it plays, or while a control is being dragged, the graphics card reads the frame (lib/frame-reader.ts,
+ *   about 3 ms), and only when the video shows a new one;
+ * - once things have stood still for a moment, one frame is painted with the 2D canvas's own best scaling, from a
+ *   bitmap of the frame (33 ms, once);
  * - nothing is painted while it is paused and nothing changes;
  * - the time goes to listeners (the playhead, the clock), never through React state.
  * `o` is read through a ref, so a new look never restarts the loop.

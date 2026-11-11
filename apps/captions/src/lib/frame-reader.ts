@@ -1,13 +1,17 @@
-// The preview's fast way to a video frame. Drawing a <video> onto a 2D canvas makes WebKit convert the whole frame on
-// the processor first: about 23 ms for a 3008×3130 recording, 38 ms through an ImageBitmap, every frame. The graphics
-// card takes the same frame in about 1 ms, and cuts out and scales the part the picture shows (2 to 3.5 ms in all,
-// measured in WebKit while playing). The 2D canvas then copies that part as it is.
+// The fast, and in WebKit the only right, way from a video frame to the part of it a picture shows.
+// - The preview: drawing a <video> onto a 2D canvas makes WebKit convert the whole frame on the processor first, about
+//   23 to 59 ms for a 3008×3130 recording, every frame. The graphics card takes the same frame in about 2 ms and cuts
+//   out and scales the part wanted (2.5 ms in all, measured in the Mac's own WebKit).
+// - The export: the Mac's WebKit ignores the source rectangle when a decoded frame (VideoFrame) is drawn on a 2D
+//   canvas, so the whole frame came out whatever was asked for and no zoom ever reached the file. Through here the
+//   part asked for is the part drawn (0.8 of 255 away from the same part cut from a bitmap, which takes 60 ms).
+// The 2D canvas then copies that part as it is.
 
 type Part = { x: number; y: number; w: number; h: number };
 
 export type FrameReader = {
-  /** Takes the video's current frame. False when the graphics context is gone: draw the video itself instead. */
-  take: (video: HTMLVideoElement) => boolean;
+  /** Takes a video's current frame, or a decoded frame. False when the graphics context is gone: draw it another way. */
+  take: (frame: HTMLVideoElement | VideoFrame) => boolean;
   /**
    * The part `src` of the taken frame (in the frame's own pixels), drawn `w`×`h`: the canvas it is on, with the part
    * at its top left. Null before a frame was taken, or when the context is gone.
@@ -78,14 +82,14 @@ export function frameReader(): FrameReader | null {
   canvas.addEventListener("webglcontextlost", lost);
 
   return {
-    take(video) {
-      if (gone || video.readyState < 2) return false;
+    take(frame) {
+      if (gone || (frame instanceof HTMLVideoElement && frame.readyState < 2)) return false;
       try {
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, frame);
         gl.generateMipmap(gl.TEXTURE_2D);
         taken = true;
       } catch {
-        gone = true; // a video the page may not read: never again
+        gone = true; // a frame the page may not read: never again
       }
       return !gone;
     },
