@@ -35,11 +35,10 @@ export const editorStyleTools: ToolModule = {
   defs: [
     {
       name: "editor_style_save",
-      description:
-        "Make or change one of the user's AI Editor editing styles: id changes one, from_edit copies an edit's choices, punch is 1 (none), 1.15 (light) or 1.3 (strong). notes = how it is cut, only in words the user typed in this chat; a change adds them.",
+      description: "Make or change an AI Editor editing style (id: change one; from_edit: copy an edit). notes: only words the user typed in this chat.",
       inputSchema: {
         type: "object",
-        properties: { id: str, name: str, notes: str, versions: { type: "integer" }, target_s: { type: "integer" }, pace: { type: "string", enum: ["tight", "natural"] }, punch: { type: "number" }, from_edit: str },
+        properties: { id: str, name: str, notes: str, versions: { type: "integer" }, target_s: { type: "integer" }, pace: { enum: ["tight", "natural"] }, punch: { enum: [1, 1.15, 1.3] }, from_edit: str },
       },
     },
     {

@@ -62,9 +62,9 @@ describe.skipIf(serverPlugins.length > 0)("an account with no editing style", ()
     // what every turn of every person now carries: say so in the commit when a number moves
     const def = dock.find((t) => t.name === "editor_style_save")!;
     expect(Buffer.byteLength(def.description)).toBeLessThanOrEqual(300);
-    expect(Buffer.byteLength(def.description)).toBe(245);
+    expect(Buffer.byteLength(def.description)).toBe(131);
     // the description, the name and eight typed fields (those alone are 307 bytes), and the comma before it in the list
-    expect(bytes(dock) - bytes(main(dock))).toBe(580);
-    expect(bytes(outside) - bytes(main(outside))).toBe(580);
+    expect(bytes(dock) - bytes(main(dock))).toBe(453);
+    expect(bytes(outside) - bytes(main(outside))).toBe(453);
   });
 });
