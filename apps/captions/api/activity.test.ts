@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import type { ActivityRow, ActivityState } from "./activity";
 import type { SessionUser } from "./users";
@@ -168,14 +168,39 @@ describe("appRows", () => {
 });
 
 describe("GET /api/activity", () => {
-  it("adds no row for a tool the account has switched off", async () => {
-    const tiny: SessionUser = { ...admin, username: "tiny-activity", role: "user", off: ["instagram", "notes", "enhance", "review", "guides", "captions", "workshop"] };
+  const rowsFor = async (off: string[]) => {
+    const tiny: SessionUser = { ...admin, username: "tiny-activity", role: "user", off };
     const app = new Hono<any>();
     app.use("*", async (c, next) => { c.set("user", tiny); await next(); });
     app.route("/api/activity", activityApp([]));
     const res = await app.request("/api/activity");
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual([]);
+    return (await res.json()) as ActivityRow[];
+  };
+
+  it("reads a tool's rows while its gate is on, none when it is off, and a tool that fails to read hides nobody else's", async () => {
+    vi.doMock("./clips", () => ({ notesWork: async () => [{ id: "n1", name: "Tiny walkthrough", progress: 0.5, section: false }] }));
+    vi.doMock("./review", () => ({ reviewWork: async () => { throw new Error("tiny read failed"); } }));
+    const others = ["instagram", "enhance", "guides", "captions", "workshop", "media", "editor"];
+    try {
+      expect((await rowsFor(others)).map((r) => [r.id, r.detail])).toEqual([["notes:n1", "Video Notes · making the note"]]);
+      expect(await rowsFor([...others, "notes"])).toEqual([]);
+    } finally {
+      vi.doUnmock("./clips");
+      vi.doUnmock("./review");
+    }
+  });
+
+  it("counts an Audio Enhancer pass on a plug-in engine's own worker until it is back", async () => {
+    const { enhanceHost, enhancing } = await import("./enhance");
+    const meta = { id: "tiny-away-1", name: "voice.wav", owner: "tiny", hasVideo: false, duration: 1, bytes: 1, status: "queued" as const, remote: { state: "waiting" as const, at: 1 }, progress: 0.05, createdAt: 1, updatedAt: 1 };
+    await enhanceHost.persist(meta);
+    expect(enhancing("tiny")).toEqual([{ id: "tiny-away-1", name: "voice.wav", waits: true, progress: 0.05 }]);
+    expect(enhancing("someone-else")).toEqual([]);
+    await enhanceHost.persist({ ...meta, status: "running", remote: { state: "claimed", at: 2 } });
+    expect(enhancing("tiny")[0]?.waits).toBe(false);
+    await enhanceHost.persist({ ...meta, status: "done", remote: undefined });
+    expect(enhancing("tiny")).toEqual([]);
   });
 });
 
