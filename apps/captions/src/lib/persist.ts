@@ -23,7 +23,6 @@ import {
   restoreLocalRecoveryProject,
 } from "./local-recovery";
 import {
-  BUSY_PHASES,
   DEFAULT_STYLE,
   type CaptionStyle,
   type Cue,
@@ -284,37 +283,48 @@ export type OpenProject = Pick<
 
 /**
  * A project on the server in which the person has made no captions and has nothing running: no transcript on any
- * clip, no transcription, cadence pass or apply under way, no clip still on its way to the server.
+ * clip, no clip still on its way to the server, and every clip at rest (`idle` or `done`, the only phases in which
+ * the autosave sends what the person does: after a transcription that failed, their changes are not sent, so the
+ * page cannot know the server has them).
  */
 export function untouched(s: OpenProject): boolean {
-  const busy = (status: OpenProject["status"]) => BUSY_PHASES.has(status.phase);
+  const atRest = (status: OpenProject["status"]) => status.phase === "idle" || status.phase === "done";
   return (
     s.serverProjectReady &&
-    !s.serverConflict &&
     !s.setupPending &&
     !s.refining &&
     !s.applyingMaster &&
-    !busy(s.status) &&
+    atRest(s.status) &&
     s.words.length === 0 &&
     s.cues.length === 0 &&
-    s.clips.every((c) => !c.transcribed && !busy(c.status) && c.uploadState === "done")
+    s.clips.every((c) => !c.transcribed && atRest(c.status) && c.uploadState === "done")
   );
 }
 
 /**
- * Whether the open project takes the server's copy at `revision`. The rule: what the person did on the page is theirs
+ * What the open project does with a newer copy on the server. The rule: what the person did on the page is theirs
  * and is never replaced; a project they have not touched takes what the server made for it (captions for a video sent
- * from the assistant's chat, api/captions-job.ts). So: only a newer copy, only over an `untouched` project, and only
- * when the page has nothing left to send. A look or a text the person added is then in that newer copy already: it
- * was saved on top of theirs.
+ * from the assistant's chat, api/captions-job.ts).
+ * - "take": the project is `untouched` and the page has nothing left to send. The server's copy is shown as it is: a
+ *   look or a text the person added is in it already, it was saved on top of theirs.
+ * - "join": the project is `untouched`, the page still has a change the server did not take (`unsent`: waiting to be
+ *   sent, or refused), and the server is exactly one save ahead, the save that brought a transcript. The captions
+ *   come in under the person's changes and the page saves both on top. Without this the page's save is refused
+ *   for good, because the captions happened to land a second before it.
+ * - "keep": everything else. Captions made on the page, anything running, and a server that is ahead by more than
+ *   that one save (another tab or device was at work: the page says so, as it always did).
  */
-export function takesServerCopy(s: OpenProject, revision: number): boolean {
-  return revision > s.serverRevision && (s.saveState === "saved" || s.saveState === "idle") && untouched(s);
+export function serverCopyChoice(s: OpenProject, unsent: boolean, server: { revision: number; transcript: boolean }): "take" | "join" | "keep" {
+  if (!untouched(s) || server.revision <= s.serverRevision) return "keep";
+  const waiting = unsent || s.serverConflict || s.saveState === "saving" || s.saveState === "error";
+  if (!waiting) return "take";
+  return server.revision === s.serverRevision + 1 && server.transcript ? "join" : "keep";
 }
 
 /**
- * The open project takes what the server has made for it since, when the rule above allows: on a change notice, after
- * this browser's own stored copy was opened, and when its link is pressed while it is open. True when it did.
+ * The open project takes what the server has made for it since, as the rule above says: on a change notice, after
+ * this browser's own stored copy was opened, when its link is pressed while it is open, and when the server refuses
+ * a save of it. True when the project changed.
  */
 export async function takeServerCopy(id: string): Promise<boolean> {
   const open = () => {
@@ -323,15 +333,52 @@ export async function takeServerCopy(id: string): Promise<boolean> {
   };
   const before = open();
   if (!before || !untouched(before)) return false;
-  // what the page still has to send goes first, so the server's revision check judges it and the read includes it
-  await flushPendingSave();
-  const p = await readServerProject(id);
+  // A save on its way lands first (the server judges it), and the read comes after it: a read that started before a
+  // save would bring the older copy. A save still waiting is not sent early: with the captions one save ahead it
+  // would only be refused.
+  let p: ProjectData | null = null;
+  for (let round = 0; round < 3; round++) {
+    await syncTails.get(id);
+    p = await readServerProject(id);
+    if (!syncTails.has(id)) break;
+  }
   // the person may have done something while that was under way: looked at again, now
   const s = open();
-  if (!p || !s || pendingSave || syncTails.has(id) || !takesServerCopy(s, p.revision ?? 0)) return false;
+  if (!p || !s || syncTails.has(id)) return false;
   // a file of this computer's stays with its clip (upload, export without the server)
   if (s.clips.some((c) => getClipSnapshot(c.id)?.file)) return false;
+  // a transcript the server has and the page does not: lines or words, or the record of a run that heard none
+  const transcript = p.clips.some(
+    (c) => (c.cues?.length ?? 0) > 0 || (c.words?.length ?? 0) > 0 || (Array.isArray(c.originalWords) && !getClipSnapshot(c.id)?.originalWords),
+  );
+  const choice = serverCopyChoice(s, !!pendingSave, { revision: p.revision ?? 0, transcript });
+  if (choice === "keep") return false;
+  if (choice === "take") {
+    applyServerProject(id, p, s);
+    return true;
+  }
+  // "join". What waits to be sent was built before the captions: it is dropped, and the project as it is after the
+  // join is sent instead (the changes below are edits to the autosave).
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = null;
+  pendingSave = null;
   applyServerProject(id, p, s);
+  bumpTextIdCounter(s.texts.reduce((a, t) => Math.max(a, t.id + 1), 0));
+  bumpPosIdCounter(s.posSegments.reduce((a, g) => Math.max(a, g.id + 1), 0));
+  useStudio.setState({
+    fileName: s.fileName,
+    // a frame rate the page only assumed is not theirs: the server's, read from the file, stays
+    ...(s.fpsManual ? { fps: s.fps, fpsManual: true } : {}),
+    autoCadence: s.autoCadence,
+    script: s.script,
+    texts: s.texts,
+    posSegments: s.posSegments,
+    done: s.done,
+    selectedTextId: s.selectedTextId,
+    editingTextId: s.editingTextId,
+  });
+  // their look through the page's own action, so the lines are laid out for their box as if they had chosen it now
+  if (JSON.stringify(s.style) !== JSON.stringify(useStudio.getState().style)) useStudio.getState().setStyle(s.style);
   return true;
 }
 
@@ -571,6 +618,9 @@ async function syncData(id: string, payload: string): Promise<void> {
             "A newer server version exists. Your local edits are still safe; reload or duplicate before resolving it.",
           serverConflict: true,
         });
+        // unless the newer copy is only the captions the server made for this project: then they join what was
+        // refused here and it is sent again (takeServerCopy; not awaited, it waits for this very save to end)
+        void takeServerCopy(id);
         return;
       }
       if (!res.ok || !Number.isSafeInteger(body?.revision)) {

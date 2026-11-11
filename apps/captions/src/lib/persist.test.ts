@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getClipSnapshot, useStudio } from "./store";
-import { initPersistence, loadSession, takeServerCopy, takesServerCopy, untouched, type OpenProject } from "./persist";
+import { initPersistence, loadSession, serverCopyChoice, takeServerCopy, untouched, type OpenProject } from "./persist";
 import { openedInSync } from "./local-recovery";
 import { DEFAULT_STYLE, type Cue, type Word } from "./types";
 
@@ -26,43 +26,60 @@ const open = (over: Partial<OpenProject> = {}): OpenProject => ({
 });
 const word: Word = { id: 1, text: "Tiny", start: 0.1, end: 0.4 };
 
-describe("whether an open project takes the server's copy", () => {
-  it("takes a newer copy when the person has not touched the project, whether that copy has captions or says no words were heard", () => {
-    expect(takesServerCopy(open(), 1)).toBe(true);
-    expect(takesServerCopy(open({ serverRevision: 3 }), 7)).toBe(true);
+const newer = { revision: 1, transcript: true };
+
+describe("what an open project does with a newer copy on the server", () => {
+  it("takes it when the person has not touched the project and the page has nothing left to send, whether that copy has captions or says no words were heard", () => {
+    expect(serverCopyChoice(open(), false, newer)).toBe("take");
+    expect(serverCopyChoice(open(), false, { revision: 1, transcript: false })).toBe("take");
+    expect(serverCopyChoice(open({ serverRevision: 3 }), false, { revision: 7, transcript: true })).toBe("take");
     // a project opened here before, never saved from here
-    expect(takesServerCopy(open({ saveState: "idle" }), 1)).toBe(true);
+    expect(serverCopyChoice(open({ saveState: "idle" }), false, newer)).toBe("take");
   });
 
   it("leaves the project alone when the server's copy is the one it has, or an older one", () => {
-    expect(takesServerCopy(open(), 0)).toBe(false);
-    expect(takesServerCopy(open({ serverRevision: 2 }), 2)).toBe(false);
-    expect(takesServerCopy(open({ serverRevision: 2 }), 1)).toBe(false);
+    expect(serverCopyChoice(open(), false, { revision: 0, transcript: true })).toBe("keep");
+    expect(serverCopyChoice(open({ serverRevision: 2 }), false, { revision: 2, transcript: true })).toBe("keep");
+    expect(serverCopyChoice(open({ serverRevision: 2 }), true, { revision: 1, transcript: true })).toBe("keep");
   });
 
-  it("never replaces a transcript or captions the person has on the page, on any clip", () => {
-    expect(takesServerCopy(open({ words: [word] }), 1)).toBe(false);
-    expect(takesServerCopy(open({ cues: [{ id: 1, start: 0, end: 1, words: [word] }] }), 1)).toBe(false);
+  it("never replaces a transcript or captions the person has on the page, on any clip, sent or not", () => {
+    const cue = { id: 1, start: 0, end: 1, words: [word] };
     const other = { transcribed: true, status: { phase: "done" as const }, uploadState: "done" as const };
-    expect(takesServerCopy(open({ clips: [...open().clips, other] }), 1)).toBe(false);
+    for (const unsent of [false, true]) {
+      expect(serverCopyChoice(open({ words: [word] }), unsent, newer)).toBe("keep");
+      expect(serverCopyChoice(open({ cues: [cue] }), unsent, newer)).toBe("keep");
+      expect(serverCopyChoice(open({ clips: [...open().clips, other] }), unsent, newer)).toBe("keep");
+      expect(serverCopyChoice(open({ cues: [cue], serverConflict: true, saveState: "error" }), unsent, newer)).toBe("keep");
+    }
   });
 
-  it("never replaces a project with something running: a transcription, a cadence pass, an apply, a clip still uploading", () => {
-    expect(takesServerCopy(open({ status: { phase: "transcribing", progress: 0 } }), 1)).toBe(false);
-    expect(takesServerCopy(open({ status: { phase: "matching" } }), 1)).toBe(false);
-    expect(takesServerCopy(open({ refining: true }), 1)).toBe(false);
-    expect(takesServerCopy(open({ applyingMaster: true }), 1)).toBe(false);
+  it("never replaces a project with something running, or one whose own transcription failed (what the person does after that is not sent)", () => {
     const clip = open().clips[0]!;
-    expect(takesServerCopy(open({ clips: [{ ...clip, status: { phase: "extracting" } }] }), 1)).toBe(false);
-    expect(takesServerCopy(open({ clips: [{ ...clip, uploadState: "uploading" }] }), 1)).toBe(false);
-    // a transcription that failed here is not running: the server's captions are welcome
-    expect(takesServerCopy(open({ status: { phase: "error", message: "no sound" } }), 1)).toBe(true);
+    for (const unsent of [false, true]) {
+      expect(serverCopyChoice(open({ status: { phase: "transcribing", progress: 0 } }), unsent, newer)).toBe("keep");
+      expect(serverCopyChoice(open({ status: { phase: "matching" } }), unsent, newer)).toBe("keep");
+      expect(serverCopyChoice(open({ status: { phase: "error", message: "no sound" } }), unsent, newer)).toBe("keep");
+      expect(serverCopyChoice(open({ refining: true }), unsent, newer)).toBe("keep");
+      expect(serverCopyChoice(open({ applyingMaster: true }), unsent, newer)).toBe("keep");
+      expect(serverCopyChoice(open({ clips: [{ ...clip, status: { phase: "extracting" } }] }), unsent, newer)).toBe("keep");
+      expect(serverCopyChoice(open({ clips: [{ ...clip, status: { phase: "error", message: "no sound" } }] }), unsent, newer)).toBe("keep");
+      expect(serverCopyChoice(open({ clips: [{ ...clip, uploadState: "uploading" }] }), unsent, newer)).toBe("keep");
+    }
   });
 
-  it("never replaces a change the server has not taken: one waiting to be saved, one it refused", () => {
-    expect(takesServerCopy(open({ saveState: "saving" }), 1)).toBe(false);
-    expect(takesServerCopy(open({ saveState: "error" }), 1)).toBe(false);
-    expect(takesServerCopy(open({ serverConflict: true }), 1)).toBe(false);
+  it("a change the server has not taken (waiting, or refused) is joined by the captions when they are the one save in between", () => {
+    expect(serverCopyChoice(open(), true, newer)).toBe("join");
+    expect(serverCopyChoice(open({ saveState: "saving" }), false, newer)).toBe("join");
+    expect(serverCopyChoice(open({ saveState: "error", serverConflict: true }), false, newer)).toBe("join");
+    expect(serverCopyChoice(open({ serverRevision: 4, saveState: "saving" }), true, { revision: 5, transcript: true })).toBe("join");
+  });
+
+  it("and stays a refused save, as it always was, when the server is ahead by anything else: two saves, or one that brought no transcript", () => {
+    for (const s of [open(), open({ saveState: "saving" }), open({ saveState: "error", serverConflict: true })]) {
+      expect(serverCopyChoice(s, true, { revision: 2, transcript: true })).toBe("keep");
+      expect(serverCopyChoice(s, true, { revision: 1, transcript: false })).toBe("keep");
+    }
   });
 
   it("leaves a project that is not on the server yet, or still asks its first questions", () => {
@@ -87,6 +104,7 @@ const server = {
   puts: [] as Put[],
   /** Runs while a read is under way (the person does something meanwhile). */
   duringRead: null as null | (() => void),
+  fps: null as number | null,
 };
 /** The server's own save for the project, on top of what it holds: the captions job (captions-job.ts), or "no words were heard". */
 const serverMakesCaptions = (words = said, cues = lines) => {
@@ -106,7 +124,7 @@ const debounce = () => vi.advanceTimersByTimeAsync(5000);
 
 beforeEach(async () => {
   vi.useFakeTimers();
-  Object.assign(server, { revision: 0, clip: {}, reads: 0, puts: [], duringRead: null });
+  Object.assign(server, { revision: 0, clip: {}, reads: 0, puts: [], duringRead: null, fps: null });
   vi.stubGlobal("fetch", async (url: string | URL, init?: RequestInit) => {
     const u = String(url);
     if (u === `/api/projects/${ID}/sync`) {
@@ -119,7 +137,7 @@ beforeEach(async () => {
     }
     if (u === `/api/projects/${ID}`) {
       server.reads++;
-      const answer = { id: ID, name: "Tiny tumbles", revision: server.revision, fps: null, model: null, autoCadence: null, script: "", clips: [{ id: "c1", name: "tumbles.mp4", duration: 2.4, srcWidth: 360, srcHeight: 640, srcFps: 30, hasOriginal: true, ...structuredClone(server.clip) }] };
+      const answer = { id: ID, name: "Tiny tumbles", revision: server.revision, fps: server.fps, model: null, autoCadence: null, script: "", clips: [{ id: "c1", name: "tumbles.mp4", duration: 2.4, srcWidth: 360, srcHeight: 640, srcFps: 30, hasOriginal: true, ...structuredClone(server.clip) }] };
       server.duringRead?.();
       return Response.json(answer);
     }
@@ -209,17 +227,89 @@ describe("an open project and the captions the server makes for it", () => {
     expect(useStudio.getState()).toMatchObject({ serverRevision: 0, cues: [], status: { phase: "transcribing" } });
   });
 
-  it("as before: a change not yet saved when the server's captions land is sent first, refused, and stays on the page", async () => {
+  it("a change not yet sent when the server's captions land: the captions join it, and both are saved on top (nothing is refused)", async () => {
     useStudio.getState().setStyle({ fontFamily: "Poppins" });
+    useStudio.getState().addTextAt(0.5);
     serverMakesCaptions();
+    expect(await takeServerCopy(ID)).toBe(true);
+    const s = useStudio.getState();
+    expect(s).toMatchObject({ serverRevision: 1, serverConflict: false, style: { fontFamily: "Poppins" }, texts: [{ text: "Your text" }] });
+    expect(s.cues.map((c) => c.words.map((w) => w.text).join(" "))).toEqual(["Tiny Acrobatics", "starts with a roll."]);
+    await debounce();
+    // one save, on top of the server's: her look, her text, the captions and the first transcript the server kept
+    expect(server.puts.map((p) => p.baseRevision)).toEqual([1]);
+    expect(server.clip).toMatchObject({ style: { fontFamily: "Poppins" }, texts: [{ text: "Your text" }], cues: lines, originalWords: said });
+    expect(useStudio.getState()).toMatchObject({ serverRevision: 2, saveState: "saved", serverConflict: false });
+    // undo cannot bring back the project without its captions
+    useStudio.getState().undoEdit();
+    expect(useStudio.getState().cues).toHaveLength(2);
+  });
+
+  it("the same when the page's save went out first and was refused: the captions join what was refused and it is sent again", async () => {
+    useStudio.getState().addTextAt(0.5);
+    serverMakesCaptions();
+    await debounce(); // no notice was heard: the page's own save is what finds out
+    expect(server.puts.map((p) => p.baseRevision)).toEqual([0, 1]);
+    expect(server.clip).toMatchObject({ texts: [{ text: "Your text" }], cues: lines, originalWords: said });
+    expect(useStudio.getState()).toMatchObject({ serverRevision: 2, saveState: "saved", serverConflict: false, saveError: null, texts: [{ text: "Your text" }] });
+    expect(useStudio.getState().cues).toHaveLength(2);
+  });
+
+  it("a frame rate the page only assumed gives way to the one the server read from the file; one the person set stays", async () => {
+    useStudio.getState().addTextAt(0.5);
+    serverMakesCaptions();
+    server.fps = 25;
+    expect(await takeServerCopy(ID)).toBe(true);
+    expect(useStudio.getState()).toMatchObject({ fps: 25, fpsManual: true });
+  });
+
+  it("as before, a refused save stays refused when the server is ahead by more than the captions: another save after them", async () => {
+    useStudio.getState().addTextAt(0.5);
+    serverMakesCaptions();
+    server.revision++; // someone saved again, in another tab or on another device
     expect(await takeServerCopy(ID)).toBe(false);
+    await debounce();
     expect(server.puts.map((p) => p.baseRevision)).toEqual([0]);
-    expect(useStudio.getState()).toMatchObject({ serverRevision: 0, serverConflict: true, saveState: "error", cues: [], style: { fontFamily: "Poppins" } });
-    // and the server still has its captions
+    expect(useStudio.getState()).toMatchObject({ serverRevision: 0, serverConflict: true, saveState: "error", cues: [], texts: [{ text: "Your text" }] });
     expect(server.clip.cues).toEqual(lines);
   });
 
-  it("as before: a transcription the person started on the page is theirs; when the server's captions land first, the page's save is refused", async () => {
+  it("as before, a refused save stays refused when the one save in between brought no transcript: another tab changed the look", async () => {
+    useStudio.getState().addTextAt(0.5);
+    server.revision++;
+    server.clip.style = { ...DEFAULT_STYLE, fontFamily: "Anton" };
+    expect(await takeServerCopy(ID)).toBe(false);
+    await debounce();
+    expect(useStudio.getState()).toMatchObject({ serverRevision: 0, serverConflict: true, saveState: "error", texts: [{ text: "Your text" }] });
+    expect(server.clip.style).toMatchObject({ fontFamily: "Anton" });
+  });
+
+  it("no words were heard, and a change of hers was not sent yet: that record joins her change too; a later save by another tab is then a refusal, as before", async () => {
+    useStudio.getState().addTextAt(0.5);
+    serverMakesCaptions([], []);
+    expect(await takeServerCopy(ID)).toBe(true);
+    await debounce();
+    expect(server.puts.map((p) => p.baseRevision)).toEqual([1]);
+    expect(server.clip).toMatchObject({ texts: [{ text: "Your text" }], cues: [], originalWords: [] });
+    // the page now holds that record itself: one more save elsewhere brought no transcript
+    useStudio.getState().addTextAt(1);
+    server.revision++;
+    expect(await takeServerCopy(ID)).toBe(false);
+    await debounce();
+    expect(useStudio.getState()).toMatchObject({ serverConflict: true, saveState: "error" });
+    expect(useStudio.getState().texts).toHaveLength(2);
+  });
+
+  it("after a transcription of their own that failed, what the person adds is not sent by the page, so it is never replaced", async () => {
+    useStudio.setState({ status: { phase: "error", message: "No sound" } });
+    useStudio.getState().addTextAt(0.5);
+    serverMakesCaptions();
+    expect(await takeServerCopy(ID)).toBe(false);
+    expect(server.reads).toBe(0);
+    expect(useStudio.getState()).toMatchObject({ serverRevision: 0, cues: [], texts: [{ text: "Your text" }] });
+  });
+
+  it("as before: a transcription the person started on the page is theirs and stays on the page; when the server's captions land first, the page's save of it is refused", async () => {
     useStudio.setState({ status: { phase: "transcribing", progress: 0 } });
     serverMakesCaptions();
     expect(await takeServerCopy(ID)).toBe(false);
@@ -267,10 +357,22 @@ describe("this browser's stored copy, opened again", () => {
     useStudio.setState({ ...s, localSaveState: "saved", saveState, style: { ...s.style, fontFamily: "Poppins" }, ...more });
   };
 
-  it("with changes the server never took, it is sent; the server refuses it when it has a newer copy, and the stored one stays", async () => {
+  it("with changes the server never took, it is sent: on top of the captions when they are the one save the server is ahead by", async () => {
     serverMakesCaptions();
     opened("saving");
+    expect(await takeServerCopy(ID)).toBe(true);
+    await debounce();
+    expect(server.puts.map((p) => p.baseRevision)).toEqual([1]);
+    expect(server.clip).toMatchObject({ style: { fontFamily: "Poppins" }, cues: lines });
+    expect(useStudio.getState()).toMatchObject({ serverRevision: 2, saveState: "saved", serverConflict: false, style: { fontFamily: "Poppins" } });
+  });
+
+  it("with changes the server never took and a server further ahead, it is refused and stays as it is, as before", async () => {
+    serverMakesCaptions();
+    server.revision++;
+    opened("saving");
     expect(await takeServerCopy(ID)).toBe(false);
+    await debounce();
     expect(server.puts.map((p) => p.baseRevision)).toEqual([0]);
     expect(useStudio.getState()).toMatchObject({ serverConflict: true, cues: [], style: { fontFamily: "Poppins" } });
   });

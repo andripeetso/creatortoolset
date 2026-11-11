@@ -128,7 +128,7 @@ export function buildRecoveryProject(
     serverProjectReady: state.serverProjectReady,
     serverRevision: state.serverRevision,
     serverConflict: state.serverConflict,
-    unsynced: state.saveState === "saving" || state.saveState === "error",
+    unsynced: unsent(state),
     fileName: state.fileName,
     activeClipId: state.activeClipId,
     fps: state.fps,
@@ -140,6 +140,20 @@ export function buildRecoveryProject(
     setupPending: state.setupPending,
     clips,
   };
+}
+
+/**
+ * The page holds something the server has not taken: a save waiting or refused, or a clip in a phase in which the
+ * autosave sends nothing (persist.ts: a transcript that has landed while its lines are still being matched).
+ */
+function unsent(state: StudioSnapshot): boolean {
+  const held = (phase: string) => phase !== "idle" && phase !== "done";
+  return (
+    state.saveState === "saving" ||
+    state.saveState === "error" ||
+    held(state.status.phase) ||
+    state.clips.some((clip) => held(clip.status.phase))
+  );
 }
 
 /**
