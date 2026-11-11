@@ -40,6 +40,10 @@ describe("todoRows", () => {
   it("is empty when nothing waits on the account", () => {
     expect(todoRows([edit("e1", null)], [asset("a1", "none")])).toEqual([]);
   });
+
+  it("leaves out an edit whose last step the person stopped", () => {
+    expect(todoRows([edit("e1", { kind: "draft", state: "failed", stopped: true })], [])).toEqual([]);
+  });
 });
 
 const row = (id: string, href: string, more: Partial<ActivityRow> = {}): ActivityRow => ({ id, title: "Media Library", detail: `Row ${id}`, state: "working", href, ...more });
@@ -71,6 +75,11 @@ describe("runningByTile", () => {
     expect(chips["/editor"]).toMatchObject({ text: "2 editing", moving: true });
     expect(chips["/captions?view=projects"]?.text).toBe("1 exporting");
     expect(chips["/workshop"]?.text).toBe("2 writing");
+  });
+
+  it("never counts the menu bar's own rows (a worker with a Start button)", () => {
+    const start = { actions: [{ id: "start", title: "Start", run: "start" as const, label: "com.example.worker" }] };
+    expect(runningByTile([row("e1", "/editor/e1"), row("w", "/editor", start)], 0)["/editor"]?.text).toBe("1 editing");
   });
 
   it("counts each tool's running things with its own word, and two kinds of work at one tool as working", () => {

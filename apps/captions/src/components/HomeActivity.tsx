@@ -21,6 +21,9 @@ export interface TodoRow {
   asset?: string;
 }
 
+/** An edit whose last step failed (not one the person stopped) or needs a key: it waits on you. */
+export const editWaits = (e: EditSummary) => (e.last?.state === "failed" && !e.last.stopped) || e.last?.state === "needs_key";
+
 /** What waits on you, from the lists the Home page already reads: videos to review, and edits whose last step failed
  *  or needs a key. Pure, so the rows can be tested without a server. */
 export function todoRows(edits: EditSummary[], assets: ReviewAsset[]): TodoRow[] {
@@ -28,7 +31,7 @@ export function todoRows(edits: EditSummary[], assets: ReviewAsset[]): TodoRow[]
     .filter((a) => a.approval.status === "needs_review")
     .map((a): TodoRow => ({ key: `r:${a.id}`, to: `/review/${a.id}`, text: `${a.name} is waiting for your review`, icon: "review", asset: a.id }));
   const edit = edits
-    .filter((e) => e.last?.state === "failed" || e.last?.state === "needs_key")
+    .filter(editWaits)
     .map((e): TodoRow => {
       const needsKey = e.last?.state === "needs_key";
       return {
@@ -174,7 +177,8 @@ export function runningByTile(server: ActivityRow[], writing: number): Record<st
   if (writing) count("/workshop", writing, "writing", `${writing} writing`, true);
   for (const line of TILE) {
     const [, tile, verb] = line;
-    const rows = server.filter((r) => r.state === "working" && lineOf(r.href) === line);
+    // a row with buttons is the menu bar's own (a worker's Start), left out here as in the list
+    const rows = server.filter((r) => r.state === "working" && !r.actions?.length && lineOf(r.href) === line);
     if (!rows.length) continue;
     const moving = rows.filter((r) => !r.reason);
     // the hover: what each thing is (the Media Library's one row says how far it is)
