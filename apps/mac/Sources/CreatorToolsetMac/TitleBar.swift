@@ -79,6 +79,26 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
         super.mouseDown(with: event)
     }
 
+    /// The Finder items of a drop on this window: a page only gets a dropped item's contents, so the assistant asks for
+    /// these ("dropped") to point at a folder where it lies instead of uploading it. Only a real drop hands them over.
+    private var drag = DragPaths()
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        drag.entered(droppedItems(sender.draggingPasteboard))
+        return super.draggingEntered(sender)
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        drag.exited()
+        super.draggingExited(sender)
+    }
+
+    // before super: the page's drop event (and its "dropped" ask) comes from inside super's handling
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        drag.dropped()
+        return super.performDragOperation(sender)
+    }
+
     // A wheel mouse's steps glide instead of jumping the page (WheelGlide.swift).
     private var glide = WheelGlide()
     private var glideLink: CADisplayLink?
@@ -244,6 +264,8 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
         // the page shows its Record screen buttons only where this app can record (macOS 15+)
         if Recorder.available {
             scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macRecord = '1';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            // "record-trash:<id>" throws a recording away without asking: the page asks in its own dialog (mac-record.ts)
+            scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macRecordTrash = '1';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         }
         // ctlocal:// takes several requests at once from this version on (ProjectScheme.swift); in an older app the
         // page reads a recording's files one after another instead (src/lib/local-files.ts)
@@ -298,7 +320,36 @@ extension AppWebView {
               let ask = message.body as? String, thisMacAsks.contains(ask) || installAsk(ask) != nil || isPluginAsk(ask), let onThisMacAsk else {
             return replyHandler(["aiOn": false, "paired": false], nil)
         }
+        if ask == "dropped" { return replyHandler(["items": drag.take()], nil) }
         onThisMacAsk(ask) { replyHandler($0, nil) }
+    }
+}
+
+/// A drag's Finder items as the page may see them: nothing while a drag only passes over or after it left, the items of
+/// a drop once (the first "dropped" ask takes them), and nothing once that drop is 10 seconds old.
+struct DragPaths {
+    private var over: [[String: Any]] = []
+    private var drop: (items: [[String: Any]], at: Date)?
+
+    mutating func entered(_ items: [[String: Any]]) { over = items }
+    mutating func exited() { over = [] }
+    mutating func dropped(at now: Date = Date()) {
+        drop = (over, now)
+        over = []
+    }
+    mutating func take(at now: Date = Date()) -> [[String: Any]] {
+        defer { drop = nil }
+        guard let drop, now.timeIntervalSince(drop.at) < 10 else { return [] }
+        return drop.items
+    }
+}
+
+/// A drag's Finder files and folders: { path, folder } each (anything else on the pasteboard is left out).
+func droppedItems(_ board: NSPasteboard) -> [[String: Any]] {
+    let urls = board.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+    return urls.prefix(50).map { url in
+        let folder = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+        return ["path": url.path, "folder": folder]
     }
 }
 

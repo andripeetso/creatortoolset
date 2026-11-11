@@ -5,8 +5,9 @@ import AppKit
 import Foundation
 
 /// The questions the page may ask over the "thisMac" handler (TitleBar.swift); any other is answered as off.
-/// One more has parts of its own: "install:<claude|codex>:<key>" (installAsk).
-let thisMacAsks = ["state", "start", "access", "folder", "files"]
+/// "dropped" is answered by the window itself (AppWebView.dragItems). One more has parts of its own:
+/// "install:<claude|codex>:<key>" (installAsk).
+let thisMacAsks = ["state", "start", "access", "folder", "dropped", "files"]
 
 /// The files picked in this app's open panel for the page (Shell runOpenPanelWith), newest first, each once, at most
 /// `cap`: the page asks where they are after the panel closes, and a second pick must not lose the first's while that
