@@ -72,6 +72,8 @@ export default function ScreenProjectPage() {
         </div>
       ) : (
         <ScreenRecordingEditor
+          // one editor per recording: its look, its undo steps and its place in time never pass to the next one
+          key={rec.id}
           embedded
           barSlot={slot}
           source={source}

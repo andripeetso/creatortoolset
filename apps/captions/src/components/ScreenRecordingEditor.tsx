@@ -190,28 +190,40 @@ export function ScreenRecordingEditor({
 
   useEffect(() => () => abort.current?.abort(), []);
 
-  // Space plays, the arrows step, Delete removes the picked zoom, ⌘Z and ⇧⌘Z undo and redo
+  // Space plays, the arrows step, Delete removes the picked zoom, ⌘Z and ⇧⌘Z undo and redo. Taken before anything
+  // else gets the key (capture), and kept from going further: a button pressed a moment ago still has the focus and
+  // would take the Space, and a page under this editor (Review) has keys of its own.
   useEffect(() => {
+    const elsewhere = (e: KeyboardEvent) =>
+      typing(e) || !!(e.target as HTMLElement | null)?.closest('[data-slot="popover-content"], [role="menu"]');
     const onKey = (e: KeyboardEvent) => {
-      if (typing(e) || !lookRef.current) return;
-      const meta = e.metaKey || e.ctrlKey;
-      if (e.key === " " && !(e.target as HTMLElement | null)?.closest("button, [role=slider], [role=radio], [role=switch], [role=tab]")) {
-        e.preventDefault();
-        player.toggle();
-      } else if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && !(e.target as HTMLElement | null)?.closest("[role=slider], [role=radiogroup]")) {
-        e.preventDefault();
+      const look = lookRef.current;
+      if (!look || elsewhere(e)) return;
+      const on = (e.target as HTMLElement | null)?.closest("[role=slider], [role=radiogroup], [role=tablist]");
+      if (e.key === " ") player.toggle();
+      else if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && !on && !e.metaKey && !e.altKey) {
         player.seek(player.time() + (e.key === "ArrowLeft" ? -1 : 1) * (e.shiftKey ? 0.1 : 1));
-      } else if ((e.key === "Backspace" || e.key === "Delete") && picked !== null && lookRef.current.zooms[picked]) {
-        e.preventDefault();
-        change({ zooms: lookRef.current.zooms.filter((_, i) => i !== picked) });
+      } else if ((e.key === "Backspace" || e.key === "Delete") && picked !== null && look.zooms[picked]) {
+        change({ zooms: look.zooms.filter((_, i) => i !== picked) });
         setPicked(null);
-      } else if (meta && e.key.toLowerCase() === "z") {
-        e.preventDefault();
-        step(!e.shiftKey);
-      } else if (e.key === "Escape" && picked !== null) setPicked(null);
+      } else if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "z") step(!e.shiftKey);
+      else if (e.key === "Escape" && picked !== null) setPicked(null);
+      else return;
+      e.preventDefault();
+      e.stopPropagation();
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    // the Space that played must not also press the focused button when it comes up
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key !== " " || !lookRef.current || elsewhere(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("keyup", onKeyUp, true);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("keyup", onKeyUp, true);
+    };
   }, [player, picked, change, step]);
 
   const run = async (a: EditorAction) => {
