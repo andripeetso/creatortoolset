@@ -11,12 +11,15 @@ process.env.APP_SECRET = "notes-tools-secret";
 process.env.CT_LOCAL = "1";
 delete process.env.DEEPGRAM_API_KEY;
 
-// the speech model is not loaded in a test: this stands in for it
+// the speech model is not loaded in a test: this stands in for it, and listens for as long as the test says
 let hears: "words" | "nothing" = "words";
+let listening: Promise<void> = Promise.resolve();
 vi.mock("../lib/device-transcribe", async (real) => ({
   ...(await real<typeof import("../lib/device-transcribe")>()),
-  transcribeOnDevice: async () =>
-    hears === "words" ? { words: ["We", "start", "with", "a", "roll."].map((text, i) => ({ text, start: i / 5, end: (i + 1) / 5 })), language: "en" } : { error: "The speech model stopped" },
+  transcribeOnDevice: async () => {
+    await listening;
+    return hears === "words" ? { words: ["We", "start", "with", "a", "roll."].map((text, i) => ({ text, start: i / 5, end: (i + 1) / 5 })), language: "en" } : { error: "The speech model stopped" };
+  },
 }));
 
 const { createUser, newApiKey } = await import("../users");
@@ -112,15 +115,15 @@ describe("a recording dropped in the chat becomes a Video Note", () => {
     noteId = made.id;
     expect(made).toMatchObject({ to: "notes", name: "Class plan.wav", href: `/video-notes/${noteId}` });
     expect((await messagesOf(cookie)).at(-1)!.work).toEqual([{ id: `notes:${noteId}`, kind: "notes", title: "Class plan.wav", href: `/video-notes/${noteId}`, status: "running", detail: "Transcribing and summing it up" }]);
+    // the reply ends ("it is being made") while the note is still being worked on
+    await t.end();
     // the transcript's correction pass, then the title and the summary
     await macWrites(2);
-    await vi.waitFor(async () => expect((await messagesOf(cookie)).at(-1)!.work![0]).toMatchObject({ status: "done", detail: "Ready" }), { timeout: 20_000, interval: 100 });
-    // the reply is still being written: it keeps the last word
-    expect((await messagesOf(cookie)).at(-1)!.status).toBe("thinking");
-    await t.end();
+    await vi.waitFor(async () => expect((await messagesOf(cookie)).at(-1)!.text).toBe("“Tiny tumbles plan” is ready."), { timeout: 20_000, interval: 100 });
     const messages = await messagesOf(cookie);
     expect(messages.slice(-2).map((m: AssistantMessage) => [m.role, m.text, m.status])).toEqual([["assistant", "Done.", "done"], ["assistant", "“Tiny tumbles plan” is ready.", "done"]]);
     expect(messages.at(-1)!.choices).toEqual(["Sum it up", "Show me"]);
+    expect(messages.at(-2)!.work![0]).toMatchObject({ id: `notes:${noteId}`, status: "done", detail: "Ready" });
   });
 
   it("then gives its summary, and writes the takeaways and the action plan when asked for them", async () => {
@@ -161,15 +164,19 @@ describe("a recording dropped in the chat becomes a Video Note", () => {
 
   it("a recording that fails ends its card as failed, with the reason in the chat", async () => {
     hears = "nothing";
+    let stop = () => {};
+    listening = new Promise((r) => (stop = r));
     const cookie = await cookieOf("ana");
     const file = await drop(cookie, "Bad take.wav", "audio/wav", wav);
     const t = await turn(cookie, "And this one", [file]);
     const made = (await tool(t.token, "use_file", { file, to: "notes" })).out;
-    await vi.waitFor(async () => expect((await messagesOf(cookie)).at(-1)!.work![0]).toMatchObject({ id: `notes:${made.id}`, status: "failed", detail: "The speech model stopped" }), { timeout: 20_000, interval: 100 });
     await t.end();
+    stop();
+    await vi.waitFor(async () => expect((await messagesOf(cookie)).at(-1)!.text).toBe("“Bad take.wav” did not finish: The speech model stopped"), { timeout: 20_000, interval: 100 });
     hears = "words";
-    const last = (await messagesOf(cookie)).at(-1)!;
-    expect([last.text, last.choices]).toEqual(["“Bad take.wav” did not finish: The speech model stopped", ["Show me"]]);
+    const messages = await messagesOf(cookie);
+    expect(messages.at(-1)!.choices).toEqual(["Show me"]);
+    expect(messages.at(-2)!.work![0]).toMatchObject({ id: `notes:${made.id}`, status: "failed", detail: "The speech model stopped" });
     expect((await tool(anaKey, "notes_list")).out.notes[0]).toMatchObject({ id: made.id, status: "error" });
   });
 
