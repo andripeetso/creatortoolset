@@ -206,7 +206,10 @@ private final class PickerSession {
             setActive(under)
         }
         if kind == .window {
+            // the window under the pointer; over empty desktop the last one stays picked, and before any hover the
+            // frontmost window (the one you were working in), so Start and Return always have a window
             hovered = PickerGeometry.frontmost(at: CGPoint(x: mouse.x, y: mainHeight - mouse.y), in: candidates)
+                ?? hovered ?? candidates.first
         }
         views.forEach { $0.update() }
     }
@@ -228,7 +231,9 @@ private final class PickerSession {
         case .display:
             break
         case .window:
-            startCurrent()
+            // a click on a window records it; a click on empty desktop does nothing (the picked one waits for Start)
+            let mouse = NSEvent.mouseLocation
+            if PickerGeometry.frontmost(at: CGPoint(x: mouse.x, y: mainHeight - mouse.y), in: candidates) != nil { startCurrent() }
         case .area:
             if view.displayID != activeDisplayID { setActive(view) }
             if let sel = selection {

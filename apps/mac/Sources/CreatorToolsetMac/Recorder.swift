@@ -30,10 +30,12 @@ func normalizedPointer(_ location: CGPoint, display: CGRect, mainHeight: CGFloat
     return (round((location.x - display.minX) / display.width), round((mainHeight - location.y - display.minY) / display.height))
 }
 
-/// The capture size: the display's pixels, scaled down to fit 3840 on the long side (H.264's hardware limit is about
-/// 4K), even numbers for the encoder.
+/// The capture size: the display's pixels, scaled down to fit 3840 on the long side and 4K's pixel count in all
+/// (H.264's hardware limit is about 4K; a tall window at full sharpness passes the side limit and stops the encoder
+/// midway), even numbers for the encoder.
 func captureSize(points: CGSize, scale: CGFloat) -> (width: Int, height: Int) {
-    let k = min(1, 3840 / max(points.width * scale, points.height * scale))
+    let w = points.width * scale, h = points.height * scale
+    let k = min(1, 3840 / max(w, h), (3840 * 2160 / (w * h)).squareRoot())
     let even = { (v: CGFloat) in max(2, Int((v * scale * k) / 2) * 2) }
     return (even(points.width), even(points.height))
 }
@@ -373,6 +375,7 @@ final class Recorder: ObservableObject {
         guard stillWanted() else { return }
         for n in [3, 2, 1] {
             phase = .countdown(n)
+            NSSound(named: n == 1 ? "Pop" : "Tink")?.play()   // a beat per number; capture starts after the last one
             try? await Task.sleep(for: .seconds(1))
             if !stillWanted() { return }   // cancelled during the count-in
         }
@@ -569,7 +572,8 @@ final class Recorder: ObservableObject {
 
     private func stoppedByItself(_ error: Error) {
         guard phase == .recording || phase == .paused else { return }
-        AppLog.write("recording stopped: \(error.localizedDescription)")
+        let e = error as NSError   // the domain and code: "could not be completed" alone says nothing
+        AppLog.write("recording stopped: \(e.localizedDescription) (\(e.domain) \(e.code)\(e.userInfo[NSUnderlyingErrorKey].map { ", \($0)" } ?? ""))")
         stop()
     }
 

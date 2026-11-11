@@ -27,5 +27,7 @@ final class RecorderTests: XCTestCase {
         XCTAssertTrue(captureSize(points: CGSize(width: 3008, height: 1692), scale: 2) == (3840, 2160))
         XCTAssertTrue(captureSize(points: CGSize(width: 1512, height: 982), scale: 2) == (3024, 1964))
         XCTAssertTrue(captureSize(points: CGSize(width: 1921, height: 1081), scale: 1) == (1920, 1080))   // even
+        let tall = captureSize(points: CGSize(width: 1504, height: 1565), scale: 2)   // a tall window: 4K's pixels at most
+        XCTAssertTrue(tall.width * tall.height <= 3840 * 2160 && tall.width > 2800, "\(tall)")
     }
 }
