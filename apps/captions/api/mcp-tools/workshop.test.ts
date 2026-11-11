@@ -256,10 +256,10 @@ describe("the writer the assistant asked", { timeout: 30_000 }, () => {
     expect(cardOf(v, id)).toMatchObject({ status: "done", detail: "The writer is done", href: `/workshop/sessions/${id}` });
     expect(v.messages.slice(-2).map((m) => [m.role, m.text, m.status])).toEqual([["assistant", "I asked the writer.", "done"], ["assistant", "The writer finished “Forward rolls”.", "done"]]);
     expect(v.messages.at(-1)!.choices).toEqual(["Show me"]);
-    // the next message goes to the AI with that line, so "Show me" has a name to find
+    // the next message goes to the AI with that line and the page it is about, so "Show me" has somewhere to go
     expect((await app.request("/api/assistant/turn", { method: "POST", ...json({ text: "Show me" }, { cookie }) })).status).toBe(202);
     const next = await claim();
-    expect(next.user).toContain("Assistant: The writer finished “Forward rolls”.\n\nUser: Show me");
+    expect(next.user).toMatch(new RegExp(`Assistant: The writer finished “Forward rolls”\\. \\[made: .+ → /workshop/sessions/${id}\\]\n\nUser: Show me`));
     await app.request(`/api/devices/relay/${next.id}/done`, { method: "POST", ...json({ text: "Here it is." }, { authorization: `Bearer ${mac.token}` }) });
   });
 

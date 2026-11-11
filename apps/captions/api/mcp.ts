@@ -16,7 +16,8 @@ import { SESSION_STATUSES } from "./lib/workshop/types";
 import { postedFromUrl } from "./lib/workshop/posted";
 import { innerCall, jobTurn, type AuthVars } from "./auth";
 import type { SessionUser } from "./users";
-import type { ServerPlugin } from "./lib/plugin";
+import { pluginReplaces, type ServerPlugin } from "./lib/plugin";
+import { editorTools } from "./mcp-tools/editor";
 import type { AssetCard } from "../contracts/library";
 import { rollCount, rollLine } from "./library/roll";
 
@@ -86,8 +87,8 @@ media_update changes its title, tags or description, media_add_to_folder files c
 link for other people. Each video sorts itself as A-roll (someone talks to the camera: the takes an edit is built on) or
 B-roll (the rest); nobody sets that by hand. After adding files, tell the user the answer's said line.
 
-AI Editor: edits made from footage in the Media Library; each runs steps (analyze, script, draft, broll) into drafts,
-one per version, which can be filed in Review. editor_create makes a new one from the takes' version ids and starts it:
+AI Editor: edits made from footage in the Media Library; each runs steps (analyze, script, draft) into drafts,
+one per version, and the run files each draft's preview in Review by itself. editor_create makes a new one from the takes' version ids and starts it:
 "edit what I put in this folder today" = media_import_folder (since today), then editor_create with its version ids and
 the script file's text. Asked to edit a folder, first say which video it looks like (its script file, a Workshop session
 that fits its name) and ask once, in one short question, whether that's right and whether to use the usual setup.
@@ -207,13 +208,14 @@ export const TOOLS = [
   { name: "editor_get", description: "One AI Editor edit: its brief, drafts, notes and jobs.", inputSchema: { type: "object", properties: { edit: str }, required: ["edit"] } },
   {
     name: "editor_run",
-    description: "Run an AI Editor edit from a step on (analyze, script, draft, broll); send_to_review files a draft's preview in Review (needs draft).",
-    inputSchema: { type: "object", properties: { edit: str, kind: { type: "string", enum: [...EDIT_STEPS, "send_to_review"] }, draft: str }, required: ["edit", "kind"] },
+    description: "Run an AI Editor edit from a step on (analyze, script, draft); the run ends with each draft's preview filed in Review. send_to_review renders one draft's preview again and files it as the next version of its Review video (needs draft): only after the draft changed, never to show one that is already there.",
+    // a whole edit cannot run from broll (it belongs to one draft): the page never offers it either
+    inputSchema: { type: "object", properties: { edit: str, kind: { type: "string", enum: [...EDIT_STEPS.filter((s) => s !== "broll"), "send_to_review"] }, draft: str }, required: ["edit", "kind"] },
   },
   {
     name: "editor_create",
     description:
-      "Make a new AI Editor edit and start it (analyze → script → draft → B-roll; each version's draft can then go to Review). sources = the talking takes, as version_id from media_search or media_import_folder (up to 50). script = what is said, when the user has one (a script file's text from media_import_folder); brief = what the edit is for and how it should feel. broll_folder = a Media Library folder id (media_folders) to cut B-roll from. versions = how many different versions (1-5), target_s = length in seconds (0 = as long as it needs). start=false only makes it. Takes still being transcribed are waited for. Returns the edit's id and link: editor_get follows it.",
+      "Make a new AI Editor edit and start it (analyze → script → draft → B-roll → a preview of each version, filed in Review). sources = the talking takes, as version_id from media_search or media_import_folder (up to 50). script = what is said, when the user has one (a script file's text from media_import_folder); brief = what the edit is for and how it should feel. broll_folder = a Media Library folder id (media_folders) to cut B-roll from. versions = how many different versions (1-5), target_s = length in seconds (0 = as long as it needs). start=false only makes it. Takes still being transcribed are waited for. Returns the edit's id and link: editor_get follows it.",
     inputSchema: {
       type: "object",
       properties: { sources: { type: "array", items: str }, name: str, brief: str, script: str, versions: { type: "integer" }, target_s: { type: "integer" }, broll_folder: str, start: { type: "boolean" } },
@@ -328,6 +330,13 @@ const MODULE_DEFS: ToolDef[] = MODULES.flatMap((m) => m.defs);
 const MODULE_HANDLERS = new Map<string, ToolHandler>(MODULES.flatMap((m) => Object.entries(m.handlers)));
 const MODULE_STEPS: Record<string, string> = Object.assign({}, ...MODULES.map((m) => m.steps ?? {}));
 const DOCK_ONLY = new Set(MODULE_DEFS.filter((d) => d.dockOnly).map((d) => d.name));
+/**
+ * The built-in AI Editor's own tools (mcp-tools/editor.ts). On an install where a plug-in answers /api/editor they
+ * would act on that plug-in's routes by accident (its stop is a 404, its delete is not a trash), so they are left out
+ * there unless the plug-in serves a tool of the same name.
+ */
+const BUILT_IN_EDITOR = new Set(editorTools.defs.map((d) => d.name));
+const notHere = (name: string) => BUILT_IN_EDITOR.has(name) && pluginReplaces("/api/editor");
 
 /**
  * The plug-ins' MCP tools (a plugin's `tools: { defs, handlers, replaces }`), gathered once when the server boots. A tool whose name a
@@ -774,10 +783,22 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
     }),
     editor_get: async (a) => {
       const e = await json(`/api/editor/${encodeURIComponent(String(a.edit))}`);
+      const jobs = (e.jobs as Args[] | undefined) ?? [];
+      const previews = (e.previews as Record<string, { assetId: string; n: number }> | undefined) ?? {};
+      const titles = (e.plans as Args[] | undefined) ?? [];
       return {
-        ...pick(e, ["id", "name", "brief", "script", "versions", "drafts", "notes"]),
+        ...pick(e, ["id", "name", "brief", "script", "versions", "notes"]),
+        // each draft with where its preview is: "in Review" plays with show_video (edit + draft) and opens at review
+        drafts: ((e.drafts as string[] | undefined) ?? []).map((name) => {
+          const own = jobs.filter((j) => j.variant === name);
+          const p = previews[name];
+          const preview = own.some((j) => j.state === "queued" || j.state === "running") ? "being made" : own.some((j) => j.state === "failed" || j.state === "needs_key") ? "failed" : p ? "in Review" : "none";
+          return { name, ...pick(titles.find((x) => x.name === name) ?? {}, ["title"]), preview, ...(p ? { review: `/review/${p.assetId}?v=${p.n}` } : {}) };
+        }),
+        ...(Object.keys((e.flags as Args | undefined) ?? {}).length ? { flags: e.flags } : {}),
         link: `${origin}/editor/${e.id}`,
-        jobs: ((e.jobs as Args[] | undefined) ?? []).slice(-10).map((j) => pick(j, ["id", "kind", "variant", "state", "error"])),
+        // the newest ten, and every one that failed or needs setup however old
+        jobs: jobs.filter((j, i) => i >= jobs.length - 10 || j.state === "failed" || j.state === "needs_key").map((j) => pick(j, ["id", "kind", "variant", "state", "error"])),
       };
     },
     editor_run: async (a) => {
@@ -798,7 +819,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       if (a.broll_folder) body.brollCollectionId = a.broll_folder;
       const { id } = await json<{ id: string }>("/api/editor", "POST", body);
       if (a.start !== false) await json(`/api/editor/${encodeURIComponent(id)}/run`, "POST", { from: "analyze" });
-      return { id, name: a.name ?? "Untitled edit", status: a.start !== false ? "started" : "made", link: `${origin}/editor/${id}`, note: "editor_get follows it; each version's draft goes to Review with editor_run send_to_review." };
+      return { id, name: a.name ?? "Untitled edit", status: a.start !== false ? "started" : "made", link: `${origin}/editor/${id}`, note: "It runs by itself and files each version's preview in Review; the chat says when it is ready, so end your reply rather than wait." };
     },
     media_folders: async () => {
       const lib = await homeLibraryId();
@@ -1030,7 +1051,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
         // an editor plug-in answering this path has no previews map: a draft it filed in Review carries review { asset, n }
         const filed = ((e.drafts as Args[] | undefined) ?? []).find((d) => d.name === a.draft)?.review as { asset: string; n: number } | undefined;
         const p = previews[String(a.draft)] ?? (filed ? { assetId: filed.asset, n: filed.n } : undefined);
-        if (!p) throw new ToolError("That draft is not in Review yet: editor_run kind send_to_review files it, then it plays here.");
+        if (!p) throw new ToolError("That draft has no preview in Review yet: editor_get says where each draft's preview is.");
         [link, version] = [p.assetId, p.n];
       }
       if (!link) throw new ToolError("Give the Review video's link or id, or an edit and draft.");
@@ -1210,7 +1231,7 @@ async function callTool(call: Call, auth: Headers, origin: string, user: Session
     },
   };
   const plug = plugged.handlers.get(name);
-  const own = MODULE_HANDLERS.get(name);
+  const own = notHere(name) ? undefined : MODULE_HANDLERS.get(name);
   const handler = plug ? (a: Args) => plug(a, ctx) : own ? (a: Args) => own(a, ctx) : tools(call, auth, origin, user, ctx.sure)[name];
   if (turn) noteStep(user.username, turn, stepFor(name, args ?? {}, plugged.steps));
   try {
@@ -1249,7 +1270,7 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
       const dock = isJob(auth);
       const listed = [...TOOLS, ...MODULE_DEFS.filter((d) => dock || !d.dockOnly), ...(dock ? ASSISTANT_DEFS : [])];
       // dockOnly says who gets a tool; it is not part of the listing
-      return ok({ tools: [...listed.filter((t) => !plugged.replaced.has(t.name)), ...plugged.defs].map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) });
+      return ok({ tools: [...listed.filter((t) => !plugged.replaced.has(t.name) && !notHere(t.name)), ...plugged.defs].map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) });
     }
     case "tools/call":
       return ok(await callTool(call, auth, origin, user, String(params.name), (params.arguments ?? {}) as Args, plugged));
