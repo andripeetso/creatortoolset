@@ -7,7 +7,7 @@ import { isPhoneHub } from "@/lib/mobile";
 import { shownTools, useOpenTool, withPluginTiles, type Tool as HomeTool } from "@/lib/tools";
 import { AppBar } from "@/components/AppBar";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
-import { HomeTodo, useTodoLists } from "@/components/HomeTodo";
+import { HomeActivity, useRunning, useTodoLists, type Chip } from "@/components/HomeActivity";
 import { HomeIntro, IntroCaption, STAGE_SAYS, useIntroBeat } from "@/components/HomeIntro";
 import { TOOL_ICONS } from "@/components/setup/ToolNeeds";
 import { webPlugins } from "@/plugins.gen";
@@ -82,9 +82,9 @@ export default function ToolsetHome() {
   const waiting = useWaiting(me);
   const project = useWorkspace(currentProject);
   const { projectTint, homeGlow, ownColour } = useAppearance();
-  // what's working right now: a Workshop reply being written. Its stage's box pulses and the tile says how many.
-  const rows = useSessionSummaries();
-  const running: Record<string, number> = showCounts ? { "/workshop": rows?.filter((r) => r.working).length ?? 0 } : {};
+  // what's working right now (HomeActivity.tsx useRunning: replies, clips being prepared, edits, exports): its stage's
+  // box pulses while it moves and the tile says how far it is
+  const running = useRunning(me);
   // which tools are ready: the saved setup, live (lib/setup.ts useSetupSync). Read again on coming Home and when Settings
   // closes, since this window's own changes (a key added in a tool or in Settings) send it no notice
   const view = useSetup((s) => s.view);
@@ -147,7 +147,7 @@ export default function ToolsetHome() {
           <Icon className={quiet ? "h-5 w-5 text-[var(--tint-text)]" : "h-6 w-6 text-white"} />
           {!ok && <Lock className="absolute -bottom-1 -right-1 h-4 w-4 rounded-full bg-zinc-900 p-0.5 text-zinc-300" />}
           {ok && (k === "workshop" ? showCounts && <WorkshopBadge /> : k !== "record" && k !== "finals" && <Badge n={waiting[k] ?? 0} means={BADGE_MEANS[k]} />)}
-          {ok && running[dest] ? <Running n={running[dest]} verb="writing" /> : null}
+          {ok && running[dest] ? <Running chip={running[dest]} /> : null}
           {ok && missing.length > 0 && <NeedsSetup what={missing} />}
         </span>
         <span className={`text-xs leading-tight transition-colors duration-200 group-hover:text-zinc-50 ${quiet ? "text-zinc-400" : "text-zinc-300"}`}>{NAME[k]}</span>
@@ -227,7 +227,7 @@ export default function ToolsetHome() {
       {beat && <HomeIntro beat={beat} />}
       <AppBar className="intro-bar absolute inset-x-0 top-0 mt-[env(safe-area-inset-top)] bg-transparent">
         {canUse(me, "instagram") || canUse(me, "workshop") ? <ProjectSwitcher /> : null}
-        <HomeTodo />
+        <HomeActivity />
       </AppBar>
       {phone && <div className="h-16 shrink-0" />}
 
@@ -275,7 +275,7 @@ export default function ToolsetHome() {
               )}
               <section
                 style={{ "--i": i } as CSSProperties}
-                className={`intro-box relative rounded-2xl border p-3 ${g.tools.some((t) => canUse(me, t) && running[PAGE[t].to]) ? "home-busy" : ""} ${boxLook(g.id)}`}
+                className={`intro-box relative rounded-2xl border p-3 ${g.tools.some((t) => canUse(me, t) && running[PAGE[t].to]?.moving) ? "home-busy" : ""} ${boxLook(g.id)}`}
               >
                 {/* the welcome only: the stage before it is a box (its number, name and what you do there), and the frame that opens into the box */}
                 {beat && (
@@ -357,7 +357,7 @@ function NeedsSetup({ what }: { what: string[] }) {
 /**
  * What waits on you at a tool, by its route: only what needs you, never what the AI or someone else is working on.
  * Workshop: replies you haven't read. AI Editor: edits whose last step failed or needs a key. Review: videos marked
- * Needs review. From the to-do's saved lists, live (HomeTodo.tsx useTodoLists).
+ * Needs review. From the Activity list's saved lists, live (HomeActivity.tsx useTodoLists).
  */
 function useWaiting(me: Me | null): Record<string, number> {
   const { edits, assets } = useTodoLists(me);
@@ -379,14 +379,14 @@ const BADGE_MEANS: Partial<Record<Tool, (n: number) => string>> = {
   review: (n) => `${plural(n, "video")} to review`,
 };
 
-/** Work running at a tool, quiet beside its badge: a spinner and the count, never red. */
-function Running({ n, verb }: { n: number; verb: string }) {
+/** Work running at a tool, quiet beside its badge: a spinner and how far it is, never red; work that waits has no spinner. */
+function Running({ chip }: { chip: Chip }) {
   return (
     <span
-      title={`${n} ${verb}`}
+      title={chip.title}
       className="intro-late absolute -bottom-1.5 -right-1.5 flex items-center gap-1 whitespace-nowrap rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] leading-none text-zinc-300 ring-2 ring-[#0b0b10]"
     >
-      <Loader2 className="h-2.5 w-2.5 animate-spin" /> {n} {verb}
+      {chip.moving && <Loader2 className="h-2.5 w-2.5 animate-spin" />} {chip.text}
     </span>
   );
 }

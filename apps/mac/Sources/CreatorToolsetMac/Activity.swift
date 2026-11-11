@@ -1,6 +1,7 @@
-// The menu bar panel: what is working right now and what waits for you, one row each, the state on the right in
-// colour. Rows come from the open server's Workshop sessions (GET /api/workshop/sessions/summary), the plug-in rows
-// it adds (GET /api/activity, no Swift in a plug-in) and this app's AI runner; the rest of the old menu sits behind a gear.
+// The menu bar panel: what is running right now and what waits on you, one row each, the state on the right in
+// colour. Rows come from the open server's Workshop sessions (GET /api/workshop/sessions/summary), its own background
+// work and its plug-ins' rows (GET /api/activity: the Media Library, edits, exports; no Swift in a plug-in) and this app's
+// AI runner; the rest of the old menu sits behind a gear.
 import ServiceManagement
 import SwiftUI
 
@@ -27,6 +28,10 @@ struct PluginRow: Decodable, Equatable {
     let href: String
     /// buttons on the row: start, stop or restart a LaunchAgent on this Mac (LaunchAgent.swift)
     var actions: [PluginAction]? = nil
+    /// how far it is, 0 to 1
+    var progress: Double? = nil
+    /// why the work waits and when it carries on by itself (an AI plan's limit)
+    var reason: String? = nil
 }
 
 /// One button of a plug-in row. `run` is "start", "stop" or "restart"; `label` the LaunchAgent it runs.
@@ -45,6 +50,17 @@ struct ActivityRow: Identifiable, Equatable {
     /// the page it opens in the window; nil = This Mac
     let href: String?
     var actions: [PluginAction] = []
+    var progress: Double? = nil
+    var reason: String? = nil
+
+    /// The word on the right: work held back says Waiting, not Working.
+    var word: String { reason != nil ? "Waiting" : state.word }
+}
+
+/// The panel's own line for this Mac's last AI answer when it was a plan's limit, unless a row already gives that as its
+/// reason (said once). Nil when the last answer was no limit.
+func panelLimitLine(lastError: String?, rows: [ActivityRow]) -> String? {
+    rows.contains { $0.reason != nil } ? nil : lastError.flatMap(plainLimitLine)
 }
 
 /// Active (replies being written, plug-in work, this Mac's AI) and For you (new replies, plug-in items waiting), in that order.
@@ -68,7 +84,8 @@ extension PluginRow {
     /// The panel's row; the id is prefixed so a plug-in's row never shares an id with a session's.
     var row: ActivityRow {
         ActivityRow(id: "p:\(id)", title: title, detail: detail, state: state == "working" ? .working : .ready, href: href,
-                    actions: (actions ?? []).filter { LaunchAgent.verbs.contains($0.run) && LaunchAgent.isValid($0.label) })
+                    actions: (actions ?? []).filter { LaunchAgent.verbs.contains($0.run) && LaunchAgent.isValid($0.label) },
+                    progress: progress.map { min(1, max(0, $0)) }, reason: reason)
     }
 }
 
@@ -79,7 +96,7 @@ struct ActivityPanel: View {
     var body: some View {
         let rows = shell.rows
         VStack(alignment: .leading, spacing: 0) {
-            Text(rows.active.isEmpty ? "Nothing running" : "\(rows.active.count) active")
+            Text(rows.active.isEmpty ? "Nothing running" : "\(rows.active.count) running")
                 .font(.system(size: 13, weight: .semibold))
                 .frame(maxWidth: .infinity)
                 .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 6)
@@ -87,12 +104,13 @@ struct ActivityPanel: View {
             // ponytail: 12 rows a section, no scrolling; the window's pages hold the rest
             ForEach(rows.active.prefix(12)) { RowView(row: $0, shell: shell) }
             if !rows.forYou.isEmpty {
-                Text("For you").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                Text("Waiting on you").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
                     .padding(.horizontal, 14).padding(.top, rows.active.isEmpty ? 2 : 10).padding(.bottom, 2)
                 ForEach(rows.forYou.prefix(12)) { RowView(row: $0, shell: shell) }
             }
-            // the plan's usage limit is a state, not an error: said on its own line, in place of "Nothing waits for you."
-            let limit = shell.ai.lastError.flatMap(plainLimitLine)
+            // the plan's usage limit is a state, not an error: said on its own line, in place of "Nothing waits for you.",
+            // or by the row whose work it holds back
+            let limit = panelLimitLine(lastError: shell.ai.lastError, rows: rows.active)
             if let limit {
                 Text(limit).font(.system(size: 12, weight: .medium)).foregroundStyle(.orange)
                     .padding(.horizontal, 14).padding(.vertical, 6)
@@ -100,7 +118,7 @@ struct ActivityPanel: View {
                 Text(shell.hasServer ? "Nothing waits for you." : "Pick a server in the window to see your work.")
                     .font(.system(size: 12)).foregroundStyle(.secondary).padding(.horizontal, 14).padding(.vertical, 6)
             }
-            ForEach([limit == nil ? shell.ai.lastError.map { "Last AI error: \($0)" } : nil, shell.notice, shell.spaceLine].compactMap { $0 }, id: \.self) {
+            ForEach([shell.ai.lastError.flatMap(plainLimitLine) == nil ? shell.ai.lastError.map { "Last AI error: \($0)" } : nil, shell.notice, shell.spaceLine].compactMap { $0 }, id: \.self) {
                 Text($0).font(.system(size: 11)).foregroundStyle(.orange).padding(.horizontal, 14).padding(.top, 4)
             }
 
@@ -138,12 +156,19 @@ private struct RowView: View {
             Button {
                 if let href = row.href { shell.showWindow(href: href) } else { shell.openThisMac() }
             } label: {
-                HStack(spacing: 8) {
-                    Text(row.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                    Text(row.detail).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
-                    Spacer(minLength: 8)
-                    Text(row.state.word).font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(row.state == .working ? Color(red: 0.45, green: 0.72, blue: 1) : Color(red: 0.20, green: 0.83, blue: 0.60))
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Text(row.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                        Text(row.detail).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                        Spacer(minLength: 8)
+                        Text(row.word).font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(row.reason != nil ? .secondary : row.state == .working ? Color(red: 0.45, green: 0.72, blue: 1) : Color(red: 0.20, green: 0.83, blue: 0.60))
+                    }
+                    if let reason = row.reason {
+                        Text(reason).font(.system(size: 11)).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                    } else if let progress = row.progress {
+                        ProgressView(value: progress).progressViewStyle(.linear).controlSize(.mini)
+                    }
                 }
                 .contentShape(Rectangle())
             }
