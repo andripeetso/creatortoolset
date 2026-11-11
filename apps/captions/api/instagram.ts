@@ -4397,7 +4397,8 @@ instagramApp.get("/accounts/:id", async (c) => {
     { id: meta.id, username: meta.username, catalog },
   ])[0];
   const [graph, daily] = await Promise.all([loadGraphStats(meta.id), loadGraphDaily(meta.id)]);
-  const whatWorks = await whatWorksFor(user, meta, catalog, c.req.raw.signal);
+  // ?lite=1 (the AI's tools): the rows only, without labelling every new caption with an AI first
+  const whatWorks = c.req.query("lite") === "1" ? null : await whatWorksFor(user, meta, catalog, c.req.raw.signal);
   return c.json({
     ...(await publicAccount(meta, catalog.length)),
     // the page never reads a row's Graph record (signed media links, half the response) or its full caption
