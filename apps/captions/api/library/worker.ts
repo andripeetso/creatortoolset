@@ -10,6 +10,7 @@ import { fingerprint } from "./fingerprint";
 import { claimJob, defer, enqueueJob, extendLease, finishJob, parkJob, requeueExpired, type JobRow } from "./jobs";
 import { keyFor } from "../my-keys";
 import { isInside, musicFolders } from "../lib/storage";
+import { isThisMachine } from "../lib/devices";
 import { AiProviderError } from "../ai-complete";
 import { MacClaudeError } from "../lib/mac-claude";
 import { makeProxy, needsProxy } from "./media/proxy";
@@ -154,7 +155,7 @@ async function run(job: JobRow): Promise<void> {
     db.prepare("UPDATE asset_versions SET probe = ? WHERE id = ?").run(JSON.stringify(p), v.id);
     // a file from the account's music folders is music: a thumbnail and a waveform, no transcript, no description,
     // no search by meaning (each would spend their AI or keys on a song nobody asked about)
-    const music = !!v.source_path && isInside(v.source_path, await musicFolders(env.dataDir, job.actor));
+    const music = !!v.source_path && isInside(v.source_path, await musicFolders(env.dataDir, job.actor, isThisMachine));
     // a song's album art is a picture, not video: its thumbnail, no duplicate check and no description
     const video = !!p.vcodec && !p.cover;
     if (p.vcodec) enqueueJob(db, v.library_id, v.id, "thumb", job.actor);

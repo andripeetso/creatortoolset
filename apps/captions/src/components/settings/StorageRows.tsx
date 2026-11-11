@@ -4,6 +4,7 @@ import type { ProvidersView } from "@contracts/providers";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useBigFolder } from "@/components/LibraryProcessing";
 import { Card, EmptyRow, FormDialog, Row, RowMenu, SettingsSelect, Status } from "./ui";
 import { msg } from "./helpers";
 
@@ -178,8 +179,8 @@ export function Storage({ devices, storage, onChanged }: { devices: Computer[]; 
     <Card>
       {folders.length === 0 && <EmptyRow title="No folders set yet" description="Where the Media Library and the AI Editor read and save files." />}
       <LibraryRow library={folders.find((f) => f.role === "library")} devices={devices} serverDisks={storage.serverDisks} onChanged={onChanged} />
-      <SourceRow role="footage" sources={sources} folders={folders} devices={devices} serverDisks={storage.serverDisks} onChanged={onChanged} />
-      <SourceRow role="music" sources={sources} folders={folders} devices={devices} serverDisks={storage.serverDisks} onChanged={onChanged} />
+      <SourceRow role="footage" sources={sources} folders={folders} devices={devices} serverDisks={storage.serverDisks} here={storage.here} onChanged={onChanged} />
+      <SourceRow role="music" sources={sources} folders={folders} devices={devices} serverDisks={storage.serverDisks} here={storage.here} onChanged={onChanged} />
     </Card>
   );
 }
@@ -259,8 +260,8 @@ function LibraryDialog({ open, onOpenChange, devices, serverDisks, change, onCha
 }
 
 /** Footage or music: each folder's full path, "Set folder" when none and "Change" after (the dialog adds one), and a `…` menu to remove one. */
-function SourceRow({ role, sources, folders, devices, serverDisks, onChanged }: {
-  role: SourceRole; sources: StorageFolder[]; folders: StorageFolder[]; devices: Computer[]; serverDisks: Disk[]; onChanged: () => void;
+function SourceRow({ role, sources, folders, devices, serverDisks, here, onChanged }: {
+  role: SourceRole; sources: StorageFolder[]; folders: StorageFolder[]; devices: Computer[]; serverDisks: Disk[]; here?: string[]; onChanged: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const mine = sources.filter((f) => f.role === role);
@@ -299,26 +300,29 @@ function SourceRow({ role, sources, folders, devices, serverDisks, onChanged }: 
           </div>
         }
       />
-      <AddFolderDialog open={open} onOpenChange={setOpen} role={role} devices={devices} serverDisks={serverDisks} onChanged={onChanged} />
+      <AddFolderDialog open={open} onOpenChange={setOpen} role={role} devices={devices} serverDisks={serverDisks} here={here} onChanged={onChanged} />
     </>
   );
 }
 
 /** "Add storage" from the Storage section: a folder you already have, as footage or music, on a drive of one of your computers. */
-export function AddStorageButton({ devices, serverDisks, onChanged }: { devices: Computer[]; serverDisks?: Disk[]; onChanged: () => void }) {
+export function AddStorageButton({ devices, serverDisks, here, onChanged }: { devices: Computer[]; serverDisks?: Disk[]; here?: string[]; onChanged: () => void }) {
   const [open, setOpen] = useState(false);
   return (
     <>
       <Button size="xs" variant="ghost" onClick={() => setOpen(true)}><Plus className="size-3" /> Add storage</Button>
-      <AddFolderDialog open={open} onOpenChange={setOpen} devices={devices} serverDisks={serverDisks} onChanged={onChanged} />
+      <AddFolderDialog open={open} onOpenChange={setOpen} devices={devices} serverDisks={serverDisks} here={here} onChanged={onChanged} />
     </>
   );
 }
 
 /** A folder you already have, as footage or music, on one of your computers. `role` picks it first; the person can change it. */
-export function AddFolderDialog({ open, onOpenChange, role: first, devices, serverDisks, onChanged }: {
-  open: boolean; onOpenChange: (o: boolean) => void; role?: SourceRole; devices: Computer[]; serverDisks?: Disk[]; onChanged: () => void;
+export function AddFolderDialog({ open, onOpenChange, role: first, devices, serverDisks, here = [], onChanged }: {
+  open: boolean; onOpenChange: (o: boolean) => void; role?: SourceRole; devices: Computer[]; serverDisks?: Disk[]; here?: string[]; onChanged: () => void;
 }) {
+  // `here`: the computers that are the machine this server runs on. A folder added on one joins the Media Library,
+  // which transcribes and describes every clip, so a big one shows what that takes before it is added
+  const big = useBigFolder();
   const [role, setRole] = useState<SourceRole>(first ?? "footage");
   const [pickHost, setPickHost] = useState("");
   const [path, setPath] = useState("");
@@ -335,12 +339,19 @@ export function AddFolderDialog({ open, onOpenChange, role: first, devices, serv
   const submit = async () => {
     setBusy(true);
     setErr(null);
+    const p = path.trim();
+    const add = async () => {
+      try {
+        await addStorageFolder({ role, host, path: p });
+        onOpenChange(false);
+        onChanged();
+      } catch (x) {
+        setErr(msg(x));
+      }
+    };
     try {
-      await addStorageFolder({ role, host, path: path.trim() });
-      onOpenChange(false);
-      onChanged();
-    } catch (x) {
-      setErr(msg(x));
+      if (here.includes(host)) await big.check(p, add, { music: role === "music" });
+      else await add();
     } finally {
       setBusy(false);
     }
@@ -364,6 +375,7 @@ export function AddFolderDialog({ open, onOpenChange, role: first, devices, serv
           <Input value={path} onChange={(e) => setPath(e.target.value)} placeholder="/Volumes/Drive/Footage" aria-label="Folder path" />
         </>
       )}
+      {big.dialog}
     </FormDialog>
   );
 }

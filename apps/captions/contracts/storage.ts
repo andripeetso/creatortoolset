@@ -94,6 +94,9 @@ export interface AddFolderBody {
  *  one (CT_LOCAL=1, the owner's Mac). On a hosted server it is empty, so no one sees another machine's disks. */
 export interface StorageView extends StorageState {
   serverDisks: Disk[];
+  /** The account's computers (device ids) that are the machine this server runs on, where the server may read the
+   *  person's folders: a folder added on one joins the Media Library, so the page shows what a big one takes first. */
+  here?: string[];
 }
 
 /** A computer's report of the folders it found: good paths and ids only (see parseStorageReport). */

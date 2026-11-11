@@ -5,9 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import { LIBRARY_NAME, LIBRARY_SUBFOLDERS, STORAGE_ROLES, THIS_COMPUTER, okFolderPath, type StorageState, type StorageView } from "../contracts/storage";
 import type { AuthVars } from "./auth";
-import { deviceOf } from "./lib/devices";
+import { deviceOf, isThisMachine, listDevices } from "./lib/devices";
 import { env, hostedMode } from "./lib/env";
-import { addWatchFolder, removeWatchFolder } from "./library/watch";
+import { addWatchFolder, removeWatchFolder, watchAllowed } from "./library/watch";
 import { libraryPath, localDisks, parseStorageFile, storageFilePath } from "./lib/storage";
 
 /**
@@ -55,6 +55,13 @@ const mine = (c: C, host: string) => {
 /** This computer, for the owner of a server that runs on one (not hosted): setup's Folders step records against it. */
 const thisComputer = (c: C, host: string) => host === THIS_COMPUTER && !hostedMode() && c.get("user").role === "admin";
 
+/**
+ * A folder this server reads in place, so it joins the Media Library's watch list: "this computer" by name (setup's
+ * Folders step), or the paired computer that is the machine this server runs on (Settings → Storage picks a computer),
+ * where the server may read the person's folders at all (watchAllowed: not a hosted server).
+ */
+const readHere = (user: string, host: string) => host === THIS_COMPUTER || (isThisMachine(host) && watchAllowed(user));
+
 export const storageApp = new Hono<{ Variables: AuthVars }>();
 
 storageApp.use("*", async (c, next) => {
@@ -72,7 +79,9 @@ storageApp.get("/", async (c) => {
   const reported = lib ? deviceOf(lib.origin.host)?.report?.machine?.disks ?? [] : [];
   const libraryPath = lib && !reported.length ? lib.origin.path : undefined;
   const local = process.env.CT_LOCAL === "1" && u.role === "admin";
-  const view: StorageView = { ...st, serverDisks: local ? await localDisks(libraryPath) : [] };
+  // which of this account's computers is this machine: a folder added on it goes into the Library (the page asks first when it is big)
+  const here = watchAllowed(u.username) ? listDevices((d) => !!mine(c, d.id) && isThisMachine(d.id)).map((d) => d.id) : [];
+  const view: StorageView = { ...st, serverDisks: local ? await localDisks(libraryPath) : [], here };
   return c.json(view);
 });
 
@@ -117,7 +126,7 @@ storageApp.post("/folders", async (c) => {
   // "~/…" is this computer's home folder: stored as the full path, so it matches the scan's list
   const p = (raw === "~" || raw.startsWith("~/") ? path.join(os.homedir(), raw.slice(1)) : raw).replace(/(.)\/+$/, "$1");
   // this computer's folders are read by the Library and the AI Editor through its watch list: the path is checked there
-  if (host === THIS_COMPUTER) {
+  if (readHere(user, host)) {
     const refused = await addWatchFolder(user, p);
     if (refused) return c.json({ error: refused }, 400);
   }
@@ -144,6 +153,6 @@ storageApp.delete("/folders/:id", async (c) => {
     return { st, gone };
   });
   if (!out) return c.json({ error: "Not found" }, 404);
-  if (out.gone.role !== "library" && out.gone.origin.host === THIS_COMPUTER) await removeWatchFolder(user, out.gone.origin.path);
+  if (out.gone.role !== "library" && readHere(user, out.gone.origin.host)) await removeWatchFolder(user, out.gone.origin.path);
   return c.json(out.st);
 });

@@ -129,13 +129,14 @@ export function uploadRelayView(
 }
 
 /**
- * The account's music folders on this computer (setup's Music rows and the Library's own Music/), as real paths: the
+ * The account's music folders on this computer (setup's and Settings' Music rows and the Library's own Music/), as real paths: the
  * Media Library takes their files in like any other (thumbnail, waveform), but spends nobody's AI or keys on them.
  */
-export async function musicFolders(dataDir: string, user: string | null): Promise<string[]> {
+export async function musicFolders(dataDir: string, user: string | null, here: (host: string) => boolean = () => false): Promise<string[]> {
   if (!user) return [];
   const st = parseStorageFile(await readFile(storageFilePath(dataDir, user), "utf-8").catch(() => "{}"));
-  const dirs = sourcesOf(st.folders).filter((f) => f.role === "music" && f.origin.host === THIS_COMPUTER).map((f) => f.origin.path);
+  // `here`: a paired computer that is this machine (Settings → Storage records a folder against it, lib/devices.ts isThisMachine)
+  const dirs = sourcesOf(st.folders).filter((f) => f.role === "music" && (f.origin.host === THIS_COMPUTER || here(f.origin.host))).map((f) => f.origin.path);
   return Promise.all(dirs.map((d) => realpath(d).catch(() => d)));
 }
 

@@ -1,5 +1,5 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -125,6 +125,60 @@ describe("a folder added in setup", () => {
       const r = await addSetupFolder(footage);
       expect(r.status).toBe(400);
       expect(((await r.json()) as { error: string }).error).toMatch(/not on your computer/);
+    } finally {
+      process.env.LIBRARY_WATCH_FOLDERS = "1";
+    }
+  });
+});
+
+// Settings → Storage picks a computer. When that computer is the machine this server runs on (the Mac app's own
+// pairing on a server inside the Mac app), its folder joins the Library like a setup folder does.
+const { pairDevice, saveReport } = await import("./lib/devices");
+describe("a folder added in Settings for the computer this server runs on", () => {
+  const add = (host: string, p: string, role = "footage") =>
+    app.request("/api/devices/storage/folders", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ role, host, path: p }) });
+  const view = async () => (await (await app.request("/api/devices/storage")).json()) as { here: string[]; folders: { id: string; origin: { host: string; path: string } }[] };
+  const machine = (host: string) => ({ at: Date.now(), drivers: [], homes: [], machine: { host, cpus: 8, memGb: 16 } }) as never;
+  // this Mac's own pairing reports this machine's name (in another case, as the Mac app does), another computer its own
+  const mac = pairDevice(USER, "Tiny Studio Mac").device.id;
+  const other = pairDevice(USER, "Tiny Helper").device.id;
+  saveReport(mac, machine(hostname().toUpperCase()));
+  saveReport(other, machine("tiny-helper.local"));
+  const mine = path.join(dir, "Shoot");
+  mkdirSync(mine, { recursive: true });
+  writeFileSync(path.join(mine, "a.mp4"), Buffer.alloc(1024, 3));
+
+  it("tells the page which computer is this machine", async () => {
+    expect((await view()).here).toEqual([mac]);
+  });
+
+  it("joins the Library's watch list, keeps the computer it was added on, and leaves the list when it is removed", async () => {
+    expect((await add(mac, mine)).status).toBe(200);
+    expect(await watchedPaths()).toContain(mine);
+    const row = (await view()).folders.find((f) => f.origin.path === mine)!;
+    expect(row.origin.host).toBe(mac);
+    await app.request(`/api/devices/storage/folders/${row.id}`, { method: "DELETE" });
+    expect(await watchedPaths()).not.toContain(mine);
+  });
+
+  it("a folder that is not there is refused with the reason, as in setup", async () => {
+    const r = await add(mac, path.join(dir, "no-such-folder"));
+    expect(r.status).toBe(400);
+    expect(((await r.json()) as { error: string }).error).toMatch(/No such folder on the server/);
+  });
+
+  it("another computer's folder is only recorded: the server cannot read it, so nothing is watched or checked", async () => {
+    const theirs = "/Volumes/Tiny Drive/Footage";
+    expect((await add(other, theirs)).status).toBe(200);
+    expect(await watchedPaths()).not.toContain(theirs);
+  });
+
+  it("where the server may not read the person's folders (a hosted server), a folder is recorded as before and no computer is named", async () => {
+    process.env.LIBRARY_WATCH_FOLDERS = "0";
+    try {
+      expect((await view()).here).toEqual([]);
+      expect((await add(mac, mine, "music")).status).toBe(200);
+      expect(await watchedPaths()).not.toContain(mine);
     } finally {
       process.env.LIBRARY_WATCH_FOLDERS = "1";
     }

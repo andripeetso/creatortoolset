@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { hostname } from "node:os";
 import { rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Device, MacReport, ProviderSettings } from "../../contracts/providers";
@@ -230,6 +231,16 @@ export function forViewer(viewer: string, d: Device): Device {
   const r = d.report;
   if (d.owner === viewer || d.owner === "workspace" || !r?.machine?.disks) return d;
   return { ...d, report: { ...r, machine: { ...r.machine, disks: undefined } } };
+}
+
+const shortHost = (h: string) => h.toLowerCase().replace(/\.local$/, "");
+/**
+ * Is this paired computer the machine this server runs on (the server inside a person's Mac app, and that Mac's own
+ * pairing)? By the host name its report gives; reporters differ in case and in ".local". No report yet: not known, so no.
+ */
+export function isThisMachine(id: string): boolean {
+  const host = find(id)?.report?.machine?.host;
+  return !!host && shortHost(host) === shortHost(hostname());
 }
 
 /** What the device reported last. */
