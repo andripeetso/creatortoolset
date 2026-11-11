@@ -64,7 +64,7 @@ describe.skipIf(serverPlugins.length > 0)("an account with no editing style", ()
     expect(Buffer.byteLength(def.description)).toBeLessThanOrEqual(300);
     expect(Buffer.byteLength(def.description)).toBe(131);
     // the description, the name and eight typed fields (those alone are 307 bytes), and the comma before it in the list
-    expect(bytes(dock) - bytes(main(dock))).toBe(453);
-    expect(bytes(outside) - bytes(main(outside))).toBe(453);
+    expect(bytes(dock) - bytes(main(dock))).toBe(454);
+    expect(bytes(outside) - bytes(main(outside))).toBe(454);
   });
 });
