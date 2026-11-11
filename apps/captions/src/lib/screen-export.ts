@@ -5,7 +5,8 @@ import { drawFrame, pointerPath, type CameraImage, type ScreenEvents, type Scree
 /**
  * The recording with its look (zooms, pointer, background), made in this browser from the file as uploaded, at
  * `width`×`height`. The first sound track (the voice) comes along. `cameraUrl` is the camera file (same clock: its
- * t=0 is the screen's t=0); its frames are drawn over the picture. Returns the MP4.
+ * t=0 is the screen's t=0); its frames are drawn over the picture. `trim` keeps only that part of the recording
+ * (seconds); the look's times stay the recording's own. Returns the MP4.
  */
 export async function renderScreenVideo(opts: {
   url: string;
@@ -14,6 +15,7 @@ export async function renderScreenVideo(opts: {
   look: ScreenLook;
   width: number;
   height: number;
+  trim?: { start: number; end: number };
   onProgress: (p: number) => void;
   signal?: AbortSignal;
 }): Promise<Blob> {
@@ -30,6 +32,7 @@ export async function renderScreenVideo(opts: {
   const output = new Output({ format: new Mp4OutputFormat({ fastStart: "in-memory" }), target });
   const cameraInput = opts.cameraUrl ? new Input({ source: new UrlSource(opts.cameraUrl), formats: ALL_FORMATS }) : null;
   let camera: Awaited<ReturnType<typeof cameraSource>> = null;
+  const cut = opts.trim?.start ?? 0;
   try {
     camera = cameraInput ? await cameraSource(cameraInput) : null;
     const conversion = await Conversion.init({
@@ -37,6 +40,7 @@ export async function renderScreenVideo(opts: {
       output,
       tracks: "primary",
       showWarnings: false,
+      trim: opts.trim,
       video: {
         codec: "avc",
         quality: new Quality({ bitrate: Math.max(8_000_000, width * height * 5), bitrateMode: "variable" }),
@@ -46,10 +50,12 @@ export async function renderScreenVideo(opts: {
         processedHeight: height,
         process: async (sample) => {
           // the browser may close a frame image in the next microtask, so both images are taken right before drawing
-          const cam = camera ? await camera.at(sample.timestamp) : null;
+          // a trimmed conversion hands over frames timed from the cut; the look and the camera go by the recording's time
+          const t = sample.timestamp + cut;
+          const cam = camera ? await camera.at(t) : null;
           const frame = sample.toCanvasImageSource();
           const camImage: CameraImage | null = cam ? { image: cam.toCanvasImageSource(), width: cam.displayWidth, height: cam.displayHeight } : null;
-          drawFrame(ctx, frame, sample.displayWidth, sample.displayHeight, sample.timestamp, look, path, events.clicks, camImage);
+          drawFrame(ctx, frame, sample.displayWidth, sample.displayHeight, t, look, path, events.clicks, camImage);
           return canvas;
         },
       },

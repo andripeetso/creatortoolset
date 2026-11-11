@@ -14,7 +14,7 @@ export type ScreenEvents = {
   audio?: string[];
 };
 
-/** A zoom: from `start` to `end` (s), `scale`× towards (x, y) (0–1 of the display). */
+/** A zoom: from `start` to `end` (s), `scale`× towards (x, y) (0–1 of the recorded picture). */
 export type Zoom = { start: number; end: number; x: number; y: number; scale: number };
 
 export type FrameShape = "source" | "16:9" | "9:16" | "1:1" | "4:5";
@@ -31,13 +31,21 @@ export type ScreenLook = {
   hideIdle: boolean;
   /** A ring where you click. */
   clickRings: boolean;
-  /** A BACKGROUNDS id. */
+  /** The pointer is not drawn at all (the rings still are, when on). */
+  pointerHidden?: boolean;
+  /** A BACKGROUNDS id, "color" (one colour: `color`) or "custom" (a gradient of your two colours: `stops`). */
   background: string;
+  color?: string;
+  stops?: [string, string];
   /** Space around the picture, 0–0.15 of the frame's short side. */
   padding: number;
   /** Corner radius, 0–0.06 of the frame's short side. */
   radius: number;
+  /** A shadow under the picture, and how dark (0–1; a look saved before the amount existed has 0.45). */
   shadow: boolean;
+  shadowAmount?: number;
+  /** The part of the recording that is kept (seconds); the rest is cut off the start and the end. */
+  trim?: { start: number; end: number };
   shape: FrameShape;
   /** In a frame of another shape: fill it (crop, the view follows the pointer) instead of fitting the whole screen. */
   fill: boolean;
@@ -66,15 +74,47 @@ export function defaultCamera(): CameraLook {
 /** A decoded camera frame for drawFrame. */
 export type CameraImage = { image: CanvasImageSource; width: number; height: number };
 
-export const BACKGROUNDS: { id: string; label: string; stops: string[] }[] = [
+export const BACKGROUNDS: { id: string; label: string; stops: [string, string] }[] = [
   { id: "violet", label: "Violet", stops: ["#7c3aed", "#db2777"] },
   { id: "ocean", label: "Ocean", stops: ["#0ea5e9", "#4f46e5"] },
   { id: "sunset", label: "Sunset", stops: ["#f97316", "#e11d48"] },
   { id: "mint", label: "Mint", stops: ["#10b981", "#0d9488"] },
+  { id: "rose", label: "Rose", stops: ["#fda4af", "#be185d"] },
+  { id: "amber", label: "Amber", stops: ["#fcd34d", "#ea580c"] },
+  { id: "sky", label: "Sky", stops: ["#bae6fd", "#2563eb"] },
+  { id: "plum", label: "Plum", stops: ["#6d28d9", "#1e1b4b"] },
+  { id: "slate", label: "Slate", stops: ["#64748b", "#1e293b"] },
   { id: "paper", label: "Paper", stops: ["#f5f5f4", "#d6d3d1"] },
   { id: "night", label: "Night", stops: ["#27272a", "#09090b"] },
   { id: "black", label: "Black", stops: ["#000000", "#000000"] },
 ];
+
+const HEX = /^#[0-9a-f]{6}$/i;
+
+/** The two colours the background runs between (the same twice for one colour). */
+export function backgroundStops(look: Pick<ScreenLook, "background" | "color" | "stops">): [string, string] {
+  if (look.background === "color") {
+    const c = look.color && HEX.test(look.color) ? look.color : "#18181b";
+    return [c, c];
+  }
+  if (look.background === "custom" && look.stops?.every((c) => HEX.test(c))) return look.stops;
+  return (BACKGROUNDS.find((b) => b.id === look.background) ?? BACKGROUNDS[0]).stops;
+}
+
+/** How dark the shadow is, 0–1 (0 = none). */
+export function shadowOf(look: Pick<ScreenLook, "shadow" | "shadowAmount">): number {
+  return look.shadow ? Math.min(1, Math.max(0, look.shadowAmount ?? 0.45)) : 0;
+}
+
+/** Zooms shorter than this are not made or kept. */
+export const MIN_ZOOM = 0.6;
+
+/** The kept part of a recording `duration` long: the look's trim inside it, or all of it. At least 0.2 s is kept. */
+export function trimOf(look: Pick<ScreenLook, "trim">, duration: number): { start: number; end: number } {
+  const start = Math.min(Math.max(0, look.trim?.start ?? 0), Math.max(0, duration - 0.2));
+  const end = Math.min(duration, Math.max(start + 0.2, look.trim?.end ?? duration));
+  return { start, end };
+}
 
 const RAMP = 0.7; // seconds into and out of a zoom
 const IDLE = 2; // seconds still before the pointer fades
@@ -82,11 +122,13 @@ const IDLE = 2; // seconds still before the pointer fades
 export const DEFAULT_ZOOM = 2;
 
 /** Zooms where you clicked: clicks under 3 s apart share one, which starts 1 s before the first and ends 1.5 s after
- *  the last (at least 2.5 s long), aimed at their middle. */
+ *  the last (at least 2.5 s long), aimed at their middle. A click in the last half second is the press that stopped
+ *  the recording, not something to look at. */
 export function autoZooms(clicks: ScreenEvents["clicks"], duration: number, scale = DEFAULT_ZOOM): Zoom[] {
   const groups: [number, number, number][][] = [];
   for (const c of [...clicks].sort((a, b) => a[0] - b[0])) {
-    if (c[1] < 0 || c[1] > 1 || c[2] < 0 || c[2] > 1) continue; // on another display
+    if (c[1] < 0 || c[1] > 1 || c[2] < 0 || c[2] > 1) continue; // outside the recorded picture
+    if (duration > 0 && duration - c[0] < 0.5) continue;
     const g = groups.at(-1);
     if (g && c[0] - g.at(-1)![0] < 3) g.push(c);
     else groups.push([c]);
@@ -123,6 +165,34 @@ export function defaultLook(events: ScreenEvents, duration: number): ScreenLook 
     shape: "source",
     fill: false,
   };
+}
+
+/**
+ * A saved look made whole: fields a newer editor added get their defaults, numbers stay inside their ranges, and the
+ * zooms are in order, inside the recording and apart. Looks are saved as they are (Review's server, the Mac app), so
+ * this is the one reader of an old or hand-edited one.
+ */
+export function normalizeLook(saved: Partial<ScreenLook> | null | undefined, events: ScreenEvents, duration: number): ScreenLook {
+  const base = defaultLook(events, duration);
+  if (!saved || typeof saved !== "object") return base;
+  const num = (v: unknown, min: number, max: number, or: number) =>
+    typeof v === "number" && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : or;
+  const look: ScreenLook = { ...base, ...saved };
+  look.pointer = num(saved.pointer, 0.8, 3, base.pointer);
+  look.smooth = num(saved.smooth, 0, 0.4, base.smooth);
+  look.padding = num(saved.padding, 0, 0.15, base.padding);
+  look.radius = num(saved.radius, 0, 0.06, base.radius);
+  const zooms: Zoom[] = [];
+  for (const z of Array.isArray(saved.zooms) ? [...saved.zooms].sort((a, b) => a.start - b.start) : base.zooms) {
+    if (![z?.start, z?.end, z?.x, z?.y, z?.scale].every((v) => typeof v === "number" && Number.isFinite(v))) continue;
+    const start = Math.max(zooms.at(-1)?.end ?? 0, Math.max(0, z.start));
+    const end = Math.min(duration || Infinity, z.end);
+    if (end - start < MIN_ZOOM) continue;
+    zooms.push({ start, end, x: num(z.x, 0, 1, 0.5), y: num(z.y, 0, 1, 0.5), scale: num(z.scale, 1.2, 4, DEFAULT_ZOOM) });
+  }
+  look.zooms = zooms;
+  if (saved.trim) look.trim = trimOf(saved, duration);
+  return look;
 }
 
 /** Moves and clicks as one time-sorted path. */
@@ -224,7 +294,7 @@ export function outputSize(shape: FrameShape, srcW: number, srcH: number, uhd: b
   return r >= 1 ? { width: even(short * r), height: short } : { width: short, height: even(short / r) };
 }
 
-type Rect = { x: number; y: number; w: number; h: number };
+export type Rect = { x: number; y: number; w: number; h: number };
 
 /** Side by side: the screen on the left (62% of the width less half the gap), the camera on the right (38%), full height. */
 export function sideRects(outW: number, outH: number, pad: number): { screen: Rect; camera: Rect } {
@@ -345,8 +415,11 @@ function drawCamera(
 
 /**
  * One output frame at time t: background, the picture (zoomed), the pointer and click rings, then the camera.
- * `source` is the recording's frame at t (a <video>, or the export's decoded frame). `camera` is the camera's frame at
- * t, or null when the recording has no camera. A look without `camera` gets `defaultCamera()` when a camera exists.
+ * `source` is the recording's frame at t (the preview's bitmap of it, or the export's decoded frame). `camera` is the
+ * camera's frame at t, or null when the recording has no camera. A look without `camera` gets `defaultCamera()` when a
+ * camera exists. `opts.quality` is how carefully the picture is scaled ("high" unless said: the export and a settled
+ * preview). While a preview plays or is being changed it hands over `opts.picture` instead, and the picture comes from
+ * there.
  * Layouts: bubble (a circle or rounded square in a corner, drawn over everything, never zoomed), only (the camera
  * fills the frame; the screen is not drawn), side (screen left, camera right), hidden (the camera is not drawn).
  */
@@ -360,16 +433,24 @@ export function drawFrame(
   path: [number, number, number][],
   clicks: ScreenEvents["clicks"],
   camera: CameraImage | null = null,
+  opts: {
+    quality?: ImageSmoothingQuality;
+    /** The part `src` of the recording's frame already drawn `w`×`h` at the top left of an image (the preview's graphics-card reader); null = draw `source`. */
+    picture?: (src: Rect, w: number, h: number) => CanvasImageSource | null;
+  } = {},
 ) {
   const { width: outW, height: outH } = ctx.canvas;
   const short = Math.min(outW, outH);
   const pad = look.padding * short;
   const cam = camera ? (look.camera ?? defaultCamera()) : null;
-  const bg = BACKGROUNDS.find((b) => b.id === look.background) ?? BACKGROUNDS[0];
-  const grad = ctx.createLinearGradient(0, 0, outW, outH);
-  grad.addColorStop(0, bg.stops[0]);
-  grad.addColorStop(1, bg.stops[1]);
-  ctx.fillStyle = grad;
+  const [from, to] = backgroundStops(look);
+  if (from === to) ctx.fillStyle = from;
+  else {
+    const grad = ctx.createLinearGradient(0, 0, outW, outH);
+    grad.addColorStop(0, from);
+    grad.addColorStop(1, to);
+    ctx.fillStyle = grad;
+  }
   ctx.fillRect(0, 0, outW, outH);
 
   if (camera && cam?.layout === "only") {
@@ -379,9 +460,10 @@ export function drawFrame(
 
   const { box, src } = layout(look, path, t, srcW, srcH, outW, outH, cam);
   const radius = look.radius * short;
-  if (look.shadow && look.padding > 0) {
+  const shadow = shadowOf(look);
+  if (shadow > 0 && look.padding > 0) {
     ctx.save();
-    ctx.shadowColor = "rgba(0,0,0,0.45)";
+    ctx.shadowColor = `rgba(0,0,0,${shadow})`;
     ctx.shadowBlur = short * 0.04;
     ctx.shadowOffsetY = short * 0.012;
     ctx.fillStyle = "#000";
@@ -392,8 +474,12 @@ export function drawFrame(
   ctx.save();
   roundRect(ctx, box, radius);
   ctx.clip();
-  ctx.imageSmoothingQuality = "high";
-  ctx.drawImage(source, src.x, src.y, src.w, src.h, box.x, box.y, box.w, box.h);
+  ctx.imageSmoothingQuality = opts.quality ?? "high";
+  const pw = Math.max(1, Math.round(box.w));
+  const ph = Math.max(1, Math.round(box.h));
+  const ready = opts.picture?.(src, pw, ph);
+  if (ready) ctx.drawImage(ready, 0, 0, pw, ph, box.x, box.y, box.w, box.h);
+  else ctx.drawImage(source, src.x, src.y, src.w, src.h, box.x, box.y, box.w, box.h);
 
   // source pixels → output pixels
   const k = box.w / src.w;
@@ -416,7 +502,7 @@ export function drawFrame(
   const p = smoothPointer(path, t, look.smooth);
   let alpha = 1;
   if (look.hideIdle) alpha = 1 - Math.min(1, Math.max(0, (stillFor(path, t) - IDLE) / 0.4));
-  if (p && alpha > 0 && p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1) {
+  if (p && !look.pointerHidden && alpha > 0 && p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1) {
     const at = toOut(p.x, p.y);
     // a real pointer is ~1.3% of the display's height; it grows with the zoom like the rest of the screen
     const h = srcH * 0.013 * look.pointer * k * 1.25;

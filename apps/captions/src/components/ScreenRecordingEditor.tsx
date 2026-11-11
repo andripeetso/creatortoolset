@@ -1,35 +1,28 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Loader2, Pause, Play, Plus, RotateCcw, Trash2, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+import { Loader2, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import {
-  BACKGROUNDS,
-  DEFAULT_ZOOM,
-  autoZooms,
   defaultLook,
-  drawFrame,
+  normalizeLook,
   outputSize,
   pointerAt,
   pointerPath,
-  type FrameShape,
+  trimOf,
   type ScreenEvents,
   type ScreenLook,
 } from "@/lib/screen-recording";
+import { clock } from "@/lib/screen-timeline";
 import { renderScreenVideo } from "@/lib/screen-export";
 import type { ScreenSource } from "@/lib/screen-source";
-import { CameraControls } from "@/components/ScreenCameraControls";
+import { Inspector, type InspectorTab } from "@/components/screen-editor/Inspector";
+import { Timeline } from "@/components/screen-editor/Timeline";
+import { Segmented } from "@/components/screen-editor/controls";
+import { usePlayer } from "@/components/screen-editor/usePlayer";
 
-const SHAPES: { id: FrameShape; label: string }[] = [
-  { id: "source", label: "Screen" },
-  { id: "16:9", label: "16:9" },
-  { id: "9:16", label: "9:16" },
-  { id: "1:1", label: "1:1" },
-  { id: "4:5", label: "4:5" },
-];
-
-const fmt = (t: number) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
-
-/** A header button. `run` gets the rendered video (`name` has no extension) and reports its own steps. */
+/** A way out for the finished video. `run` gets it (`name` has no extension) and reports its own steps. */
 export type EditorAction = {
   label: string;
   title?: string;
@@ -37,132 +30,200 @@ export type EditorAction = {
   run: (out: { blob: Blob; name: string }, progress: (step: string, pct: number) => void) => Promise<void>;
 };
 
+const SIZE_KEY = "screen-editor-size";
+const typing = (e: KeyboardEvent) => {
+  const el = e.target as HTMLElement | null;
+  return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable);
+};
+
 /**
- * Zoom & pointer for a screen recording: zooms where you clicked (edit, add, remove), a smooth larger pointer,
- * background, padding, corners, frame shape, 4K. The caller decides what to do with the rendered video (the
- * header `actions`): Review adds it as the next version; the Screen Recorder page saves it or uploads it.
- * `embedded` fills its parent (a page) instead of covering the window.
+ * The editor of a screen recording: the picture with its look, playing as it opens; under it the recording and its
+ * zooms on a timeline; beside it the look (background, pointer, zooms, camera). Export makes the video on this
+ * computer; the caller says where it goes (`actions`): Review adds it as the next version, the Screen Recorder saves
+ * it or uploads it. `extra` goes before Export. `embedded` fills its parent (a page) instead of covering the window;
+ * such a page hands over a place in its own top bar (`barSlot`) and Export goes there, so the screen has one bar.
  */
 export function ScreenRecordingEditor({
   source,
   meta,
   actions,
   onClose,
+  extra,
   embedded = false,
+  barSlot,
 }: {
   source: ScreenSource;
   meta: { name: string; duration: number; width: number; height: number };
   actions: EditorAction[];
   onClose?: () => void;
+  extra?: ReactNode;
   embedded?: boolean;
+  barSlot?: HTMLElement | null;
 }) {
   const [events, setEvents] = useState<ScreenEvents | null>(null);
   const [look, setLook] = useState<ScreenLook | null>(null);
   const [error, setError] = useState("");
-  const [time, setTime] = useState(0);
-  const [playing, setPlaying] = useState(false);
   const [picked, setPicked] = useState<number | null>(null);
-  const [uhd, setUhd] = useState(false);
+  const [tab, setTab] = useState<InspectorTab>("background");
+  const [uhd, setUhd] = useState(() => {
+    try {
+      return localStorage.getItem(SIZE_KEY) === "4k";
+    } catch {
+      return false;
+    }
+  });
+  const [exporting, setExporting] = useState(false);
   const [making, setMaking] = useState<{ step: string; pct: number } | null>(null);
-  const video = useRef<HTMLVideoElement>(null);
-  const cam = useRef<HTMLVideoElement>(null);
-  const canvas = useRef<HTMLCanvasElement>(null);
   const abort = useRef<AbortController | null>(null);
   // the source is read through a ref: its identity can change on every page render, its url cannot
   const sourceRef = useRef(source);
   sourceRef.current = source;
-  const { duration, width, height } = meta;
+  const { width, height } = meta;
   const base = meta.name.replace(/\.(mp4|mov|m4v|webm)$/i, "");
+
+  const path = useMemo(() => (events ? pointerPath(events) : []), [events]);
+  const player = usePlayer({ look, events, path, duration: meta.duration, width, height });
+  // a recording filed without its length (one that stopped early) takes it from the file
+  const duration = meta.duration > 0 ? meta.duration : player.mediaDuration;
+  const loaded = useRef<{ events: ScreenEvents; look: ScreenLook | null } | null>(null);
 
   useEffect(() => {
     sourceRef.current
       .load()
       .then(({ events, look }) => {
         if (!events) throw new Error("This recording has no pointer log");
+        loaded.current = { events, look };
         setEvents(events);
-        setLook(look ?? defaultLook(events, duration));
       })
       .catch((e: Error) => setError(e.message));
     // the url names the recording; a new source for the same one must not reload and lose edits
-  }, [source.url, duration]);
+  }, [source.url]);
 
-  // every change is kept (the page can close any time)
-  const first = useRef(true);
+  // the look needs the length: read it once both are known
+  const lookRef = useRef<ScreenLook | null>(null);
+  useEffect(() => {
+    if (lookRef.current || !loaded.current || !(duration > 0)) return;
+    const { events, look } = loaded.current;
+    lookRef.current = normalizeLook(look, events, duration);
+    setLook(lookRef.current);
+  }, [events, duration]);
+
+  // every change is kept (the page can close any time), and can be undone
+  const history = useRef({ past: [] as ScreenLook[], future: [] as ScreenLook[], at: 0 });
+  const [, setSteps] = useState(0);
   const unsaved = useRef<ScreenLook | null>(null);
-  useEffect(() => {
-    if (!look) return;
-    if (first.current) return void (first.current = false);
-    unsaved.current = look;
-    const t = window.setTimeout(() => {
+  const saver = useRef(0);
+  const keep = useCallback((next: ScreenLook) => {
+    lookRef.current = next;
+    setLook(next);
+    unsaved.current = next;
+    window.clearTimeout(saver.current);
+    saver.current = window.setTimeout(() => {
       unsaved.current = null;
-      sourceRef.current.saveLook(look);
+      sourceRef.current.saveLook(next);
     }, 700);
-    return () => window.clearTimeout(t);
-  }, [look]);
-  // closing within the debounce still saves the last change
-  useEffect(() => () => void (unsaved.current && sourceRef.current.saveLook(unsaved.current)), []);
-
-  const path = useMemo(() => (events ? pointerPath(events) : []), [events]);
-  const size = look ? outputSize(look.shape, width, height, false) : { width: 16, height: 9 };
-
-  // the preview: the same drawFrame as the export, every animation frame
-  useEffect(() => {
-    if (!look || !events) return;
-    let raf = 0;
-    const tick = () => {
-      const v = video.current;
-      const c = canvas.current;
-      const ctx = c?.getContext("2d", { alpha: false });
-      if (v && c && ctx && v.readyState >= 2) {
-        const k = cam.current;
-        if (k && !v.paused && Math.abs(k.currentTime - v.currentTime) > 0.15) k.currentTime = v.currentTime;
-        const camera = k && k.readyState >= 2 ? { image: k, width: k.videoWidth, height: k.videoHeight } : null;
-        drawFrame(ctx, v, v.videoWidth, v.videoHeight, v.currentTime, look, path, events.clicks, camera);
-        if (!v.paused) setTime(v.currentTime);
+  }, []);
+  // closing within the wait still saves the last change
+  useEffect(
+    () => () => {
+      window.clearTimeout(saver.current);
+      if (unsaved.current) sourceRef.current.saveLook(unsaved.current);
+    },
+    [],
+  );
+  const change = useCallback(
+    (patch: Partial<ScreenLook>) => {
+      const now = lookRef.current;
+      if (!now) return;
+      const h = history.current;
+      const at = performance.now();
+      // one drag is one step back: changes less than 0.6 s apart count as the same one
+      if (at - h.at > 600) {
+        h.past.push(now);
+        if (h.past.length > 200) h.past.shift();
+        setSteps((n) => n + 1);
       }
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [look, events, path]);
+      h.at = at;
+      h.future = [];
+      keep({ ...now, ...patch });
+    },
+    [keep],
+  );
+  const step = useCallback(
+    (back: boolean) => {
+      const h = history.current;
+      const now = lookRef.current;
+      const to = (back ? h.past : h.future).pop();
+      if (!now || !to) return;
+      (back ? h.future : h.past).push(now);
+      h.at = 0;
+      setSteps((n) => n + 1);
+      keep(to);
+    },
+    [keep],
+  );
+
+  // where a zoom at t should look: the pointer there, or the nearest edge when it was outside the picture
+  const aim = useCallback(
+    (t: number) => {
+      const p = pointerAt(path, t) ?? { x: 0.5, y: 0.5 };
+      const inside = (v: number) => Math.round(Math.min(1, Math.max(0, v)) * 1000) / 1000;
+      return { x: inside(p.x), y: inside(p.y) };
+    },
+    [path],
+  );
+  const zoom = look && picked !== null ? look.zooms[picked] : undefined;
+
+  /** Picks a zoom: its settings open, and the picture goes to where it is zoomed in, so a change is seen at once. */
+  const pick = useCallback(
+    (index: number | null) => {
+      setPicked(index);
+      const z = index !== null ? lookRef.current?.zooms[index] : undefined;
+      if (!z) return;
+      setTab("zoom");
+      player.pause();
+      const t = player.time();
+      if (t < z.start + 0.7 || t > z.end - 0.7) player.seek((z.start + z.end) / 2);
+    },
+    [player],
+  );
 
   useEffect(() => () => abort.current?.abort(), []);
 
-  const set = (patch: Partial<ScreenLook>) => setLook((l) => (l ? { ...l, ...patch } : l));
-  const zoom = picked !== null ? look?.zooms[picked] : undefined;
-  const setZoom = (patch: Partial<NonNullable<typeof zoom>>) =>
-    setLook((l) => (l && picked !== null ? { ...l, zooms: l.zooms.map((z, i) => (i === picked ? { ...z, ...patch } : z)) } : l));
-  const syncCam = (t: number) => {
-    if (cam.current) cam.current.currentTime = t;
-  };
-  const seek = (t: number) => {
-    const at = Math.max(0, Math.min(duration, t));
-    if (video.current) video.current.currentTime = at;
-    syncCam(at);
-    setTime(t);
-  };
-  const toggle = () => {
-    const v = video.current;
-    if (!v) return;
-    if (v.paused) void v.play();
-    else v.pause();
-  };
+  // Space plays, the arrows step, Delete removes the picked zoom, ⌘Z and ⇧⌘Z undo and redo
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (typing(e) || !lookRef.current) return;
+      const meta = e.metaKey || e.ctrlKey;
+      if (e.key === " " && !(e.target as HTMLElement | null)?.closest("button, [role=slider], [role=radio], [role=switch], [role=tab]")) {
+        e.preventDefault();
+        player.toggle();
+      } else if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && !(e.target as HTMLElement | null)?.closest("[role=slider], [role=radiogroup]")) {
+        e.preventDefault();
+        player.seek(player.time() + (e.key === "ArrowLeft" ? -1 : 1) * (e.shiftKey ? 0.1 : 1));
+      } else if ((e.key === "Backspace" || e.key === "Delete") && picked !== null && lookRef.current.zooms[picked]) {
+        e.preventDefault();
+        change({ zooms: lookRef.current.zooms.filter((_, i) => i !== picked) });
+        setPicked(null);
+      } else if (meta && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        step(!e.shiftKey);
+      } else if (e.key === "Escape" && picked !== null) setPicked(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [player, picked, change, step]);
 
-  const addZoom = () => {
-    if (!look) return;
-    const p = pointerAt(path, time) ?? { x: 0.5, y: 0.5 };
-    const z = { start: time, end: Math.min(duration, time + 3), x: p.x, y: p.y, scale: DEFAULT_ZOOM };
-    const zooms = [...look.zooms, z].sort((a, b) => a.start - b.start);
-    set({ zooms });
-    setPicked(zooms.indexOf(z));
-  };
-
-  const run = async (a: EditorAction, uhdOut: boolean) => {
+  const run = async (a: EditorAction) => {
     if (!look || !events) return;
+    setExporting(false);
+    player.pause();
     const ctl = new AbortController();
     abort.current = ctl;
-    const out = outputSize(look.shape, width, height, uhdOut);
+    const out = outputSize(look.shape, width, height, uhd);
+    const kept = trimOf(look, duration);
     try {
+      setError("");
       setMaking({ step: "Making", pct: 0 });
       const blob = await renderScreenVideo({
         url: sourceRef.current.url,
@@ -170,6 +231,7 @@ export function ScreenRecordingEditor({
         events,
         look,
         ...out,
+        trim: look.trim ? kept : undefined,
         signal: ctl.signal,
         onProgress: (p) => setMaking({ step: "Making", pct: Math.round(p * 100) }),
       });
@@ -184,279 +246,178 @@ export function ScreenRecordingEditor({
     }
   };
 
+  const sizes = look ? { hd: outputSize(look.shape, width, height, false), uhd: outputSize(look.shape, width, height, true) } : null;
+  const kept = look ? trimOf(look, duration) : null;
+  const initial = useMemo(() => (events ? defaultLook(events, duration) : null), [events, duration]);
+  const h = history.current;
+
+  const buttons = (
+    <>
+      {error && look && (
+        <span className="max-w-md truncate text-xs text-red-400" title={error}>
+          {error}
+        </span>
+      )}
+      {extra}
+      {making ? (
+        <Button size="sm" variant="outline" onClick={() => abort.current?.abort()}>
+          <Loader2 className="animate-spin" /> {making.step} {making.pct}% · Stop
+        </Button>
+      ) : (
+        <Popover open={exporting} onOpenChange={setExporting}>
+          <PopoverTrigger asChild>
+            <Button size="sm" disabled={!look} className="bg-violet-600 text-white hover:bg-violet-500">
+              <Upload /> Export
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-72 space-y-3 border-zinc-800 bg-zinc-950 p-3 text-zinc-100">
+            {sizes && kept && (
+              <>
+                <Segmented
+                  label="Video size"
+                  value={uhd ? "4k" : "hd"}
+                  options={[
+                    { id: "hd", label: "1080p" },
+                    { id: "4k", label: "4K" },
+                  ]}
+                  onChange={(v) => {
+                    setUhd(v === "4k");
+                    try {
+                      localStorage.setItem(SIZE_KEY, v);
+                    } catch {
+                      // kept for this visit only
+                    }
+                  }}
+                />
+                <p className="text-center text-[11px] tabular-nums text-zinc-400">
+                  {(uhd ? sizes.uhd : sizes.hd).width} × {(uhd ? sizes.uhd : sizes.hd).height} pixels · {clock(kept.end - kept.start, true)}
+                </p>
+              </>
+            )}
+            <div className="space-y-1.5">
+              {actions.map((a) => (
+                <Button
+                  key={a.label}
+                  size="sm"
+                  title={a.title}
+                  variant={a.primary ? "default" : "outline"}
+                  onClick={() => void run(a)}
+                  className={cn("w-full", a.primary && "bg-violet-600 text-white hover:bg-violet-500")}
+                >
+                  {a.label}
+                </Button>
+              ))}
+            </div>
+          </PopoverContent>
+        </Popover>
+      )}
+    </>
+  );
+
   return (
     <div
-      className={cn(
-        "flex flex-col bg-zinc-950 text-zinc-100",
-        embedded ? "min-h-0 flex-1" : "fixed inset-0 z-50",
-      )}
+      className={cn("flex flex-col bg-zinc-950 text-zinc-100", embedded ? "min-h-0 flex-1" : "fixed inset-0 z-50")}
       role={embedded ? undefined : "dialog"}
       aria-label="Zoom and pointer"
     >
-      <div className="flex min-h-14 items-center gap-3 px-4" data-titlebar>
-        <span className="text-sm font-semibold">Zoom & pointer</span>
-        <span className="truncate text-xs text-zinc-500">{meta.name}</span>
-        <div className="ml-auto flex items-center gap-2">
-          {error && <span className="max-w-md truncate text-xs text-red-400" title={error}>{error}</span>}
-          <label className="flex items-center gap-1.5 text-xs text-zinc-400">
-            <input type="checkbox" checked={uhd} onChange={(e) => setUhd(e.target.checked)} /> 4K
-          </label>
-          {making ? (
-            <Button size="sm" variant="outline" onClick={() => abort.current?.abort()}>
-              <Loader2 className="animate-spin" /> {making.step} {making.pct}% · Stop
-            </Button>
-          ) : (
-            actions.map((a) => (
-              <Button
-                key={a.label}
-                size="sm"
-                disabled={!look}
-                title={a.title}
-                variant={a.primary ? "default" : "outline"}
-                onClick={() => void run(a, uhd)}
-                className={a.primary ? "bg-violet-600 text-white hover:bg-violet-500" : undefined}
-              >
-                {a.label}
-              </Button>
-            ))
-          )}
-          {onClose && (
-            <Button size="icon" variant="ghost" onClick={onClose} aria-label="Close">
-              <X />
-            </Button>
-          )}
-        </div>
-      </div>
-
-      {!look || !events ? (
-        <div className="flex flex-1 items-center justify-center">
-          {error ? <p className="text-sm text-red-400">{error}</p> : <Loader2 className="h-6 w-6 animate-spin text-zinc-600" />}
-        </div>
+      {embedded ? (
+        barSlot ? (
+          createPortal(buttons, barSlot)
+        ) : (
+          <div className="flex min-h-12 items-center justify-end gap-2 border-b border-zinc-800 px-4">{buttons}</div>
+        )
       ) : (
-        <div className="flex min-h-0 flex-1">
-          <div className="flex min-w-0 flex-1 flex-col">
-            <div className="flex min-h-0 flex-1 items-center justify-center p-6">
-              <canvas
-                ref={canvas}
-                width={Math.round(size.width / 2)}
-                height={Math.round(size.height / 2)}
-                onClick={toggle}
-                className="max-h-full max-w-full cursor-pointer rounded shadow-2xl"
-                style={{ aspectRatio: `${size.width} / ${size.height}` }}
-              />
-              <video
-                ref={video}
-                src={source.url}
-                crossOrigin="anonymous"
-                playsInline
-                preload="auto"
-                className="pointer-events-none absolute h-px w-px opacity-0"
-                onPlay={() => {
-                  setPlaying(true);
-                  if (cam.current) void cam.current.play().catch(() => {});
-                }}
-                onPause={() => {
-                  setPlaying(false);
-                  cam.current?.pause();
-                }}
-                onSeeked={(e) => {
-                  setTime(e.currentTarget.currentTime);
-                  syncCam(e.currentTarget.currentTime);
-                }}
-              />
-              {source.cameraUrl && (
-                // muted: the screen's own track carries the voice; this one only feeds the camera picture
-                <video
-                  ref={cam}
-                  src={source.cameraUrl}
-                  crossOrigin="anonymous"
-                  muted
-                  playsInline
-                  preload="auto"
-                  className="pointer-events-none absolute h-px w-px opacity-0"
-                />
-              )}
-            </div>
-
-            <div className="border-t border-zinc-800 px-4 py-3">
-              <div className="mb-2 flex items-center gap-3 text-xs text-zinc-400">
-                <button onClick={toggle} className="rounded p-1 text-zinc-200 hover:bg-zinc-800" aria-label={playing ? "Pause" : "Play"}>
-                  {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-                </button>
-                <span className="tabular-nums">{fmt(time)} / {fmt(duration)}</span>
-                <button onClick={addZoom} className="ml-auto flex items-center gap-1 rounded px-2 py-1 text-violet-300 hover:bg-zinc-900">
-                  <Plus className="h-3.5 w-3.5" /> Zoom here
-                </button>
-                <button
-                  onClick={() => {
-                    set({ zooms: autoZooms(events.clicks, duration) });
-                    setPicked(null);
-                  }}
-                  title="Throw away the zooms and make them again from your clicks"
-                  className="flex items-center gap-1 rounded px-2 py-1 hover:bg-zinc-900"
-                >
-                  <RotateCcw className="h-3.5 w-3.5" /> From clicks
-                </button>
-              </div>
-              {/* the zooms over the recording; a press seeks, a zoom picks it */}
-              <div
-                className="relative h-12 cursor-pointer rounded bg-zinc-900"
-                onPointerDown={(e) => {
-                  const r = e.currentTarget.getBoundingClientRect();
-                  seek(((e.clientX - r.left) / r.width) * duration);
-                }}
-              >
-                {events.clicks.map(([t], i) => (
-                  <span key={i} className="absolute bottom-0 h-2 w-px bg-zinc-600" style={{ left: `${(t / duration) * 100}%` }} />
-                ))}
-                {look.zooms.map((z, i) => (
-                  <button
-                    key={i}
-                    onPointerDown={(e) => {
-                      e.stopPropagation();
-                      setPicked(i);
-                      seek(z.start + 0.1);
-                    }}
-                    className={cn(
-                      "absolute top-1.5 h-7 rounded border text-[10px] font-medium",
-                      picked === i ? "border-violet-300 bg-violet-500/60 text-white" : "border-violet-500/50 bg-violet-500/25 text-violet-200",
-                    )}
-                    style={{ left: `${(z.start / duration) * 100}%`, width: `${Math.max(0.4, ((z.end - z.start) / duration) * 100)}%` }}
-                  >
-                    {z.scale.toFixed(1)}×
-                  </button>
-                ))}
-                <span className="pointer-events-none absolute inset-y-0 w-0.5 bg-zinc-100" style={{ left: `${(time / duration) * 100}%` }} />
-              </div>
-            </div>
+        <div className="flex min-h-14 items-center gap-3 px-4" data-titlebar>
+          <span className="text-sm font-semibold">Zoom & pointer</span>
+          <span className="truncate text-xs text-zinc-400">{meta.name}</span>
+          <div className="ml-auto flex items-center gap-2">
+            {buttons}
+            {onClose && (
+              <Button size="icon" variant="ghost" onClick={onClose} aria-label="Close">
+                <X />
+              </Button>
+            )}
           </div>
-
-          <aside className="w-72 shrink-0 space-y-5 overflow-y-scroll border-l border-zinc-800 p-4 text-sm">
-            {zoom && (
-              <Section title={`Zoom ${fmt(zoom.start)}–${fmt(zoom.end)}`}>
-                <Slider label="Depth" value={zoom.scale} min={1.2} max={4} step={0.1} show={(v) => `${v.toFixed(1)}×`} onChange={(scale) => setZoom({ scale })} />
-                <Slider label="Starts" value={zoom.start} min={0} max={Math.max(0, zoom.end - 0.5)} step={0.1} show={fmt} onChange={(start) => setZoom({ start })} />
-                <Slider label="Ends" value={zoom.end} min={zoom.start + 0.5} max={duration} step={0.1} show={fmt} onChange={(end) => setZoom({ end })} />
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => {
-                      const p = pointerAt(path, time);
-                      if (p) setZoom({ x: p.x, y: p.y });
-                    }}
-                    className="rounded px-2 py-1 text-xs text-violet-300 hover:bg-zinc-900"
-                    title="Aim this zoom where the pointer is now"
-                  >
-                    Aim at the pointer
-                  </button>
-                  <button
-                    onClick={() => {
-                      set({ zooms: look.zooms.filter((_, i) => i !== picked) });
-                      setPicked(null);
-                    }}
-                    className="ml-auto flex items-center gap-1 rounded px-2 py-1 text-xs text-red-300 hover:bg-zinc-900"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" /> Remove
-                  </button>
-                </div>
-              </Section>
-            )}
-
-            <Section title="Zooms">
-              <Toggle label="Follow the pointer" checked={look.follow} onChange={(follow) => set({ follow })} />
-              <Slider
-                label="Depth of every zoom"
-                value={look.zooms[0]?.scale ?? DEFAULT_ZOOM}
-                min={1.2}
-                max={4}
-                step={0.1}
-                show={(v) => `${v.toFixed(1)}×`}
-                onChange={(scale) => set({ zooms: look.zooms.map((z) => ({ ...z, scale })) })}
-              />
-            </Section>
-
-            <Section title="Pointer">
-              <Slider label="Size" value={look.pointer} min={0.8} max={3} step={0.1} show={(v) => `${v.toFixed(1)}×`} onChange={(pointer) => set({ pointer })} />
-              <Slider label="Smooth" value={look.smooth} min={0} max={0.4} step={0.01} show={(v) => (v ? `${Math.round(v * 100)}` : "off")} onChange={(smooth) => set({ smooth })} />
-              <Toggle label="Hide when still" checked={look.hideIdle} onChange={(hideIdle) => set({ hideIdle })} />
-              <Toggle label="Ring on clicks" checked={look.clickRings} onChange={(clickRings) => set({ clickRings })} />
-            </Section>
-
-            {source.cameraUrl && <CameraControls look={look} onChange={(next) => setLook(next)} />}
-
-            <Section title="Frame">
-              <div className="flex flex-wrap gap-1">
-                {SHAPES.map((s) => (
-                  <button
-                    key={s.id}
-                    onClick={() => set({ shape: s.id })}
-                    className={cn("rounded px-2 py-1 text-xs", look.shape === s.id ? "bg-violet-600 text-white" : "bg-zinc-900 text-zinc-300 hover:bg-zinc-800")}
-                  >
-                    {s.label}
-                  </button>
-                ))}
-              </div>
-              {look.shape !== "source" && (
-                <Toggle label="Fill the frame (crop, follow the pointer)" checked={look.fill} onChange={(fill) => set({ fill })} />
-              )}
-              <Slider label="Padding" value={look.padding} min={0} max={0.15} step={0.005} show={(v) => `${Math.round(v * 100)}`} onChange={(padding) => set({ padding })} />
-              <Slider label="Corners" value={look.radius} min={0} max={0.06} step={0.002} show={(v) => `${Math.round(v * 1000)}`} onChange={(radius) => set({ radius })} />
-              <Toggle label="Shadow" checked={look.shadow} onChange={(shadow) => set({ shadow })} />
-              <div className="flex flex-wrap gap-1.5 pt-1">
-                {BACKGROUNDS.map((b) => (
-                  <button
-                    key={b.id}
-                    onClick={() => set({ background: b.id })}
-                    title={b.label}
-                    aria-label={b.label}
-                    className={cn("h-7 w-7 rounded-full border-2", look.background === b.id ? "border-zinc-100" : "border-transparent")}
-                    style={{ background: `linear-gradient(135deg, ${b.stops[0]}, ${b.stops[1]})` }}
-                  />
-                ))}
-              </div>
-            </Section>
-            {events.audio && events.audio.length > 1 && (
-              <p className="text-xs text-zinc-500">The video keeps your voice. The Mac's sound is a second track in the original file.</p>
-            )}
-          </aside>
         </div>
       )}
+
+      <div className="flex min-h-0 flex-1">
+        <div className="flex min-w-0 flex-1 flex-col">
+          {/* the picture: fitted into this box by the player, a press plays and pauses */}
+          <div className="relative min-h-0 flex-1 p-6">
+            <div ref={player.stage} className="flex h-full w-full items-center justify-center">
+              <canvas
+                ref={player.canvas}
+                onClick={player.toggle}
+                className={cn("cursor-pointer rounded-md shadow-2xl transition-opacity", player.ready && look ? "opacity-100" : "opacity-0")}
+              />
+            </div>
+            {(!player.ready || !look) && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                {error ? <p className="text-sm text-red-400">{error}</p> : <Loader2 className="h-6 w-6 animate-spin text-zinc-600" />}
+              </div>
+            )}
+            <video
+              ref={player.video}
+              src={source.url}
+              crossOrigin="anonymous"
+              playsInline
+              preload="auto"
+              className="pointer-events-none absolute left-0 top-0 h-px w-px opacity-0"
+              onError={() => setError("This recording can't be played here")}
+              {...player.videoProps}
+            />
+            {source.cameraUrl && (
+              // muted: the screen's own track carries the voice; this one only feeds the camera picture
+              <video
+                ref={player.cam}
+                src={source.cameraUrl}
+                crossOrigin="anonymous"
+                muted
+                playsInline
+                preload="auto"
+                className="pointer-events-none absolute left-0 top-0 h-px w-px opacity-0"
+              />
+            )}
+          </div>
+
+          {look && events && (
+            <Timeline
+              player={player}
+              duration={duration}
+              look={look}
+              clicks={events.clicks}
+              picked={zoom ? picked : null}
+              onPick={pick}
+              change={change}
+              aim={aim}
+              depth={look.zooms.at(-1)?.scale ?? 2}
+              undo={h.past.length ? () => step(true) : null}
+              redo={h.future.length ? () => step(false) : null}
+            />
+          )}
+        </div>
+
+        {look && events && initial && (
+          <Inspector
+            tab={tab}
+            onTab={(t) => {
+              setTab(t);
+              if (t !== "zoom") setPicked(null);
+            }}
+            look={look}
+            initial={initial}
+            change={change}
+            events={events}
+            duration={duration}
+            picked={zoom ? picked : null}
+            onPick={pick}
+            player={player}
+            aim={aim}
+            hasCamera={!!source.cameraUrl}
+          />
+        )}
+      </div>
     </div>
-  );
-}
-
-function Section({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="space-y-2.5">
-      <h3 className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">{title}</h3>
-      {children}
-    </section>
-  );
-}
-
-function Slider({ label, value, min, max, step, show, onChange }: {
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  step: number;
-  show: (v: number) => string;
-  onChange: (v: number) => void;
-}) {
-  return (
-    <label className="block">
-      <span className="flex justify-between text-xs text-zinc-400">
-        {label} <span className="tabular-nums text-zinc-500">{show(value)}</span>
-      </span>
-      <input type="range" className="w-full accent-violet-500" value={value} min={min} max={max} step={step} onChange={(e) => onChange(Number(e.target.value))} />
-    </label>
-  );
-}
-
-function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <label className="flex items-center justify-between gap-2 text-xs text-zinc-300">
-      {label}
-      <input type="checkbox" className="accent-violet-500" checked={checked} onChange={(e) => onChange(e.target.checked)} />
-    </label>
   );
 }
