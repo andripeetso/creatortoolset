@@ -321,10 +321,7 @@ function ZoomTab({
  */
 function AimPad({ zoom, player, onAim }: { zoom: Zoom; player: Player; onAim: (x: number, y: number) => void }) {
   const canvas = useRef<HTMLCanvasElement>(null);
-  const ratio = (() => {
-    const v = player.video.current;
-    return v && v.videoWidth && v.videoHeight ? v.videoWidth / v.videoHeight : 16 / 9;
-  })();
+  const ratio = player.ratio() || 16 / 9;
 
   useEffect(() => {
     let last = 0;

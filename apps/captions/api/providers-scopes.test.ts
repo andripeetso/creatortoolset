@@ -185,7 +185,7 @@ describe("devices", () => {
     const req = (await wait) as { id: string };
     await relay(jordan.token, `/${req.id}/fail`, { error: "You've hit your limit", limit: true });
     const e = (await answer) as { message: string; cause?: unknown };
-    expect(e.message).toMatch(/hit your limit/);
+    expect(e.message).toMatch(/plan.s limit is reached/);
   });
 });
 
