@@ -80,3 +80,31 @@ it("keeps the saved rows when the server can't be reached, and says the list did
   await flush();
   expect(now()).toContain("The accounts did not load.");
 });
+
+it("moves an Access tick at once, keeps it when the save lands and puts it back when the save fails", async () => {
+  putCached("tinyadmin", "/api/admin/users", [account]);
+  let save!: (r: Response) => void;
+  vi.stubGlobal("fetch", (_url: string, init?: RequestInit) =>
+    init?.method === "PATCH" ? new Promise<Response>((r) => (save = r)) : Promise.resolve(new Response(JSON.stringify([account]), { status: 200 })),
+  );
+  open("access");
+  await flush();
+  const tick = () => host!.querySelector<HTMLButtonElement>('[role="checkbox"]')!;
+  expect(tick().getAttribute("aria-checked")).toBe("true");
+
+  // the save has not answered: the tick is already off, and stays off while it waits
+  act(() => tick().click());
+  expect(tick().getAttribute("aria-checked")).toBe("false");
+  await flush();
+  expect(tick().getAttribute("aria-checked")).toBe("false");
+  save(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+  await flush();
+  expect(tick().getAttribute("aria-checked")).toBe("false");
+
+  // a save the server refuses: back to what is saved
+  act(() => tick().click());
+  expect(tick().getAttribute("aria-checked")).toBe("true");
+  save(new Response(JSON.stringify({ error: "Unknown app" }), { status: 400 }));
+  await flush();
+  expect(tick().getAttribute("aria-checked")).toBe("false");
+});

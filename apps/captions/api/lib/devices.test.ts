@@ -103,4 +103,23 @@ describe("device notices", () => {
     expect(await heard("otheradmin")).toBeGreaterThan(s0);
     expect(await heard("tinymember")).toBe(0);
   });
+
+  // An admin's computer is in every admin's list (api/devices.ts), so each of them hears its changes; a member's is its own.
+  it("tells every admin about an admin's computer, and only the member about a member's", async () => {
+    const { currentSeq } = await import("./sync");
+    const { renameDevice, revokeDevice, touchDevice } = await import("./devices");
+    const s0 = currentSeq();
+    const { device } = pairDevice("tinyadmin", "Tiny Admin Mac");
+    expect(currentSeq() - s0).toBe(2); // tinyadmin and otheradmin
+    touchDevice(device.id);
+    renameDevice(device.id, "Tiny Studio Mac");
+    saveReport(device.id, { at: Date.now(), drivers: [], homes: [] }, "0.12.0");
+    expect(currentSeq() - s0).toBe(8);
+    await revokeDevice(device.id);
+    expect(currentSeq() - s0).toBe(10);
+    const s1 = currentSeq();
+    const mine = pairDevice("tinymember", "Tiny Member Mac").device;
+    touchDevice(mine.id);
+    expect(currentSeq() - s1).toBe(2); // the member alone, twice
+  });
 });

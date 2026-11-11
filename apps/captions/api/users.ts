@@ -398,6 +398,11 @@ export function listUsers(): UserRecord[] {
   return users;
 }
 
+/** Tells every admin's open windows that a topic changed: for what every admin is shown (the team's AI, an admin's computer). */
+export function announceAdmins(topic: string): void {
+  for (const u of users) if (u.role === "admin") announce(u.username, topic);
+}
+
 export function bumpUsage(
   username: string,
   patch: Partial<Omit<UserUsage, "lastActiveAt">>,

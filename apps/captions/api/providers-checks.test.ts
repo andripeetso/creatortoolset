@@ -14,7 +14,7 @@ process.env.APP_SECRET = "test-secret";
 
 const { providersApp } = await import("./providers");
 const { ownSettings, providerChecks, saveSettings, noteCallOutcome } = await import("./lib/providers");
-const { createUser } = await import("./users");
+const { createUser, listUsers } = await import("./users");
 
 let who: SessionUser = { username: "ana", role: "team", cloud: true, off: [] };
 const app = new Hono<{ Variables: AuthVars }>();
@@ -48,6 +48,27 @@ describe("a saved check outlives this process", () => {
     providerChecks()[KEY] = { ok: false, at: Date.now(), ms: 0, error: "Timed out" };
     expect((await view()).checks[KEY]).toMatchObject({ ok: false, error: "Timed out" });
     delete providerChecks()[KEY];
+  });
+});
+
+describe("the team's AI", () => {
+  // It belongs to no account: the admins are shown it (viewFor), so each of them hears when it starts or stops answering.
+  it("tells every admin when its check changes, and nobody when the same result comes again", async () => {
+    const { recordCheck } = await import("./lib/providers");
+    const { currentSeq } = await import("./lib/sync");
+    createUser("tinyadmin", "password1", { role: "admin" });
+    createUser("otheradmin", "password1", { role: "admin" });
+    await saveSettings({ instances: [{ id: "claude_team", driver: "claude", name: "Claude", enabled: true, device: "mac-team" }], default: { instance: "claude_team", model: "", effort: "xhigh" }, jobs: {} }, "workspace");
+    // one notice per admin (the two above and any the server starts with), none for ana
+    const admins = listUsers().filter((u) => u.role === "admin").length;
+    expect(admins).toBeGreaterThanOrEqual(2);
+    const s0 = currentSeq();
+    await recordCheck("workspace:claude_team", { ok: true, ms: 900, at: Date.now() });
+    expect(currentSeq() - s0).toBe(admins);
+    await recordCheck("workspace:claude_team", { ok: true, ms: 800, at: Date.now() });
+    expect(currentSeq() - s0).toBe(admins);
+    await recordCheck("workspace:claude_team", { ok: false, ms: 0, at: Date.now(), error: "Not signed in" });
+    expect(currentSeq() - s0).toBe(admins * 2);
   });
 });
 

@@ -11,8 +11,8 @@ import { fmtAgo, lastActiveText, msg } from "@/components/settings/helpers";
 
 /**
  * Settings → Admin (hosted servers, platform admins only): accounts, the apps each one gets (Access), and every project on
- * the server. Admin API: api/admin.ts. Ticks in Access save at once; a failed save is a toast and the grid keeps the
- * saved state. The lists are read through their saved copies (lib/local-cache.ts): the rows are there on the first frame
+ * the server. Admin API: api/admin.ts. Ticks in Access move and save at once; a failed save is a toast and the tick goes
+ * back to the saved state. The lists are read through their saved copies (lib/local-cache.ts): the rows are there on the first frame
  * of a reload and when the server can't be reached, and they are read again behind that and when an admin changes one.
  */
 
@@ -86,8 +86,27 @@ export function AdminPanel({ tab }: { tab: AdminTab }) {
   };
   const attempt = (p: Promise<unknown>) => p.catch((e) => saveFailed(msg(e)));
 
-  const toggleApp = (u: AdminUser, t: Tool) =>
-    attempt(call(`/api/admin/users/${u.username}`, { method: "PATCH", body: JSON.stringify({ off: u.off.includes(t) ? u.off.filter((x) => x !== t) : [...u.off, t] }) }));
+  // Access: a tick shows at once. `ticked` holds an account's apps while their save is on its way; a save that lands goes
+  // into the saved list (which also drops a read that started before it), one that fails falls back to what was saved
+  const [ticked, setTicked] = useState<Record<string, Tool[]>>({});
+  const offOf = (u: AdminUser) => ticked[u.username] ?? u.off;
+  const toggleApp = (u: AdminUser, t: Tool) => {
+    const off = offOf(u).includes(t) ? offOf(u).filter((x) => x !== t) : [...offOf(u), t];
+    setTicked((m) => ({ ...m, [u.username]: off }));
+    return fetch(`/api/admin/users/${u.username}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ off }) })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error || `Could not save it (${res.status})`);
+        accounts.set((list) => list && list.map((x) => (x.username === u.username ? { ...x, off } : x)));
+      })
+      .catch((e) => saveFailed(msg(e)))
+      // a newer tick on the same account keeps its own entry
+      .finally(() =>
+        setTicked((m) => {
+          const { [u.username]: mine, ...rest } = m;
+          return mine === off ? rest : m;
+        }),
+      );
+  };
   const changeRole = (u: AdminUser, role: Role) => attempt(call(`/api/admin/users/${u.username}`, { method: "PATCH", body: JSON.stringify({ role }) }));
   const removeAccount = (u: AdminUser) => attempt(call(`/api/admin/users/${u.username}`, { method: "DELETE" }));
   const removeProject = async (p: AdminProject) => {
@@ -215,7 +234,7 @@ export function AdminPanel({ tab }: { tab: AdminTab }) {
                             </span>
                           </td>
                           {TOOLS.map((t) => (
-                            <Tick key={t} on={admin || !u.off.includes(t)} disabled={admin} title={`${TOOL_NAMES[t]} for ${u.username}`} onClick={() => void toggleApp(u, t)} />
+                            <Tick key={t} on={admin || !offOf(u).includes(t)} disabled={admin} title={`${TOOL_NAMES[t]} for ${u.username}`} onClick={() => void toggleApp(u, t)} />
                           ))}
                         </tr>
                       </Fragment>

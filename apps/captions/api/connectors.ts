@@ -5,13 +5,14 @@ import { env } from "./lib/env";
 import { keyFor } from "./my-keys";
 import { LOGINS, PLATFORMS, type ConnectorsView, type OwnInstagram, type LoginKind, type SocialPlatform } from "../contracts/connectors";
 import { accountsFromGrant, finishLogin, freshToken, loginUrl, pullAccount, refreshGrant } from "./lib/connectors/platforms";
-import { issuerFor, loginsOn, serviceRedeem, serviceRefresh, serviceStart, type Issuer } from "./lib/connectors/signin-service";
+import { issuerFor, loginsKnown, loginsOn, serviceRedeem, serviceRefresh, serviceStart, type Issuer } from "./lib/connectors/signin-service";
 import { sessionSources } from "./lib/connectors/provider";
 import { printPosts } from "./lib/connectors/prints";
 import { findAccount, newState, patchAccount, publicAccount, readConnectors, removeAccount, saveAccounts, type StoredAccount } from "./lib/connectors/store";
 import { publicApifyStatus, readApify } from "./lib/instagram/apify";
 import { addLoginAccount, allAccounts } from "./instagram";
 import { accountProjects } from "./lib/workshop/workspace";
+import { announce } from "./lib/sync";
 import { findUser, listUsers, LOCAL_USER, type SessionUser } from "./users";
 
 /**
@@ -40,7 +41,8 @@ async function view(c: Context<{ Variables: AuthVars }>): Promise<ConnectorsView
   const user = c.get("user");
   const apify = publicApifyStatus(await readApify(user.username));
   return {
-    logins: await loginsOn(),
+    // not held on the sign-in service: what it said last, and the page is told when a new answer differs
+    logins: loginsKnown(() => announce(user.username, "connectors")),
     instagram: await ownInstagram(user.username),
     apify: { configured: apify.configured, valid: apify.valid },
     youtubeKey: !!keyFor(user, "YOUTUBE_API_KEY").key,
@@ -199,6 +201,8 @@ async function pullOne(user: SessionUser | string, key: string): Promise<void> {
 const EVERY_MS = 12 * 60 * 60_000;
 export function startConnectorPulls(): void {
   if (process.env.NODE_ENV === "test") return;
+  // which sign-ins the service offers, asked now so the first open of Settings → Social accounts has the answer (loginsKnown)
+  void loginsOn();
   setInterval(() => {
     for (const u of listUsers())
       for (const a of readConnectors(u.username).accounts)

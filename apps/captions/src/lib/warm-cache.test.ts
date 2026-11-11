@@ -27,8 +27,8 @@ it("warms only what the account may read: the team on a hosted server, the admin
   expect(keys("user", true)).toContain("/api/workspace");
   expect(keys("user", true)).not.toContain("/api/admin/users");
   expect(keys("admin", true)).toEqual(expect.arrayContaining(["/api/workspace", "/api/service-keys", "/api/admin/users", "/api/admin/projects"]));
-  // Social accounts asks another server which logins it offers: never warmed
-  expect(keys("admin", true)).not.toContain("/api/connectors");
+  // Social accounts too: its read no longer waits for the sign-in service
+  expect(keys("user", false)).toContain("/api/connectors");
 });
 
 it("saves \"no sign-in apps\" for a server that has none, so that read is not asked again on every start", async () => {

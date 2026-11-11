@@ -26,7 +26,7 @@ import {
 } from "../../contracts/providers";
 import { env } from "./env";
 import { deviceExists, deviceOf } from "./devices";
-import { USERNAME_RE, findUser } from "../users";
+import { USERNAME_RE, announceAdmins, findUser } from "../users";
 import { driverKinds, providerPresets } from "./plugin";
 import { announce } from "./sync";
 
@@ -152,9 +152,11 @@ export async function recordCheck(key: string, c: ProviderCheck): Promise<void> 
   const was = s.instances.find((i) => i.id === id)?.lastCheck?.ok;
   const instances = s.instances.map((i) => (i.id === id ? { ...i, lastCheck: { ok: c.ok, at: c.at, ms: c.ms, ...(c.note ? { note: c.note.slice(0, 200) } : {}) } } : i));
   await saveSettings({ ...s, instances }, scope);
-  // an own AI that starts or stops answering is what setup and Home show; a same result again is not news
-  // ponytail: the workspace's AI tells no one (per-account notices); fan out to its accounts if they need it live
-  if (was !== c.ok && scope !== "workspace") announce(scope, "providers");
+  // an AI that starts or stops answering is what Settings, setup and Home show; a same result again is not news. The
+  // team's AI is shown to the admins only (api/providers.ts viewFor), so they are the ones told
+  if (was === c.ok) return;
+  if (scope === "workspace") announceAdmins("providers");
+  else announce(scope, "providers");
 }
 
 /** A driver id the server knows: a built-in, or a kind a plug-in adds. */

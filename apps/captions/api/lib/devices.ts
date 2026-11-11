@@ -6,7 +6,7 @@ import type { Device, MacReport, ProviderSettings } from "../../contracts/provid
 import { env } from "./env";
 import { dropOwnSettings, ownSettings, providerSettings, saveSettings } from "./providers";
 import { announce } from "./sync";
-import { listUsers } from "../users";
+import { announceAdmins, findUser } from "../users";
 
 /**
  * The Macs that run AI jobs (contracts/providers.ts `Device`), in $DATA_DIR/devices.json. Any account pairs its
@@ -66,12 +66,14 @@ function find(id: string): Stored | undefined {
 }
 
 /**
- * Tells the accounts that are shown a computer that it changed ("devices"): its owner, or every admin for the team's own
- * computer (owner "workspace" is no account: only the admins are sent it, so only they have a page to refresh).
+ * Tells the accounts that are shown a computer that it changed ("devices"): its owner, and every admin for the team's own
+ * computer (owner "workspace" is no account) and for an admin's computer, since each admin's list has those too
+ * (api/devices.ts, api/providers.ts).
  */
 function tell(owner: string): void {
-  const accounts = owner === "workspace" ? listUsers().filter((u) => u.role === "admin").map((u) => u.username) : [owner];
-  for (const who of accounts) announce(who, "devices");
+  const shared = owner === "workspace" || findUser(owner)?.role === "admin";
+  if (shared) announceAdmins("devices");
+  else announce(owner, "devices");
 }
 
 /** The timer per device that tells its owner it went offline, ONLINE_MS after its last call. */
@@ -140,6 +142,7 @@ export function pairDevice(owner: string, name: string, version?: string): { dev
   list = all().filter((x) => !replaced.includes(x.id));
   list.push(d);
   persist();
+  tell(owner);
   return { device: strip(d), token, replaced };
 }
 
@@ -150,6 +153,7 @@ export function renameDevice(id: string, name: string): Device | undefined {
   if (!d) return undefined;
   d.name = name;
   persist();
+  tell(d.owner);
   return strip(d);
 }
 
@@ -189,6 +193,7 @@ export async function revokeDevice(id: string): Promise<boolean> {
   await moveProviders(d.owner, [id], null);
   list = all().filter((x) => x.id !== id);
   persist();
+  tell(d.owner);
   return true;
 }
 
@@ -208,9 +213,10 @@ export function saveReport(id: string, r: MacReport, version?: string): void {
   // ponytail: an empty list from the only reporter keeps the old disks; add an explicit clear when a Mac really loses them all.
   const kept = d.report?.machine?.disks;
   if (r.machine && kept && !r.machine.disks) r.machine = { ...r.machine, disks: kept };
-  // a CLI installed, signed in or on another plan is a change setup shows; the machine's load in each report is not
+  // a CLI installed, signed in or on another plan is a change setup shows, and so is the app's new version; the machine's
+  // load in each report is not
   const drivers = (x: MacReport | undefined) => JSON.stringify(x?.drivers ?? []);
-  if (drivers(d.report) !== drivers(r)) tell(d.owner);
+  if (drivers(d.report) !== drivers(r) || (!!version && version !== d.version)) tell(d.owner);
   d.report = r;
   if (version) d.version = version;
   persist();

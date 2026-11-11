@@ -1,6 +1,7 @@
 import type { Provider } from "@/components/setup/AccountStep";
 import { canUse, useAuth, type Me } from "./auth";
 import { listAutomations } from "./automations";
+import { getConnectors } from "./connectors";
 import { getProviders } from "./providers";
 import { getWorkspace } from "./workspaces";
 import { forgetCached, readCached, warmCached } from "./local-cache";
@@ -21,8 +22,8 @@ const get = (url: string) => () => fetch(url).then((r) => (r.ok ? (r.json() as P
 /**
  * Settings' own lists, as [key, loader]: the keys and the saved shapes are the sections' own (components/settings,
  * AdminPanel.tsx; the test checks each key is still read there). Only what this account may read: a team's page on a
- * hosted server, the admin pages for its admins. Left out: Social accounts (/api/connectors asks the sign-in service
- * which logins it offers, a call to another server).
+ * hosted server, the admin pages for its admins. Social accounts is among them since its read stopped waiting for the
+ * sign-in service (api/lib/connectors/signin-service.ts loginsKnown).
  */
 export function settingsLists(me: Pick<Me, "role">, hosted: boolean): Array<[string, () => Promise<unknown>]> {
   const admin = hosted && me.role === "admin";
@@ -33,6 +34,7 @@ export function settingsLists(me: Pick<Me, "role">, hosted: boolean): Array<[str
     ["/api/devices/storage", get("/api/devices/storage")], // Storage
     ["/api/my-keys", get("/api/my-keys")], // API keys
     ["/api/instagram/apify", get("/api/instagram/apify")], // API keys
+    ["/api/connectors", getConnectors], // Social accounts
     ["/api/auth/api-key", get("/api/auth/api-key")], // Headless access
     // Account: a computer with no account answers 401, which the page keeps as "none"
     ["/api/auth/account", () => fetch("/api/auth/account").then((r) => (r.status === 401 ? "none" : r.ok ? (r.json() as Promise<unknown>) : Promise.reject(new Error(String(r.status)))))],

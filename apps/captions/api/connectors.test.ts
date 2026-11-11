@@ -123,7 +123,7 @@ describe("connectors", () => {
 describe("the sign-in service", () => {
   it("an install with no app of its own signs in through the service: the ticket pays out to its verifier, and the login renews there", async () => {
     const { createHash } = await import("node:crypto");
-    const { forgetServiceLogins, serviceRefresh } = await import("./lib/connectors/signin-service");
+    const { forgetServiceLogins, loginsOn, serviceRefresh } = await import("./lib/connectors/signin-service");
     const { freshToken } = await import("./lib/connectors/platforms");
     process.env.PLATFORM_SIGNIN_ORIGIN = "https://svc.test";
     forgetServiceLogins();
@@ -143,7 +143,9 @@ describe("the sign-in service", () => {
       return Response.json({}, { status: 404 });
     });
     try {
-      // Meta has its app here (META_APP_ID above): that one stays local; YouTube comes from the service
+      // Meta has its app here (META_APP_ID above): that one stays local; YouTube comes from the service, which the
+      // server asks when it starts (startConnectorPulls), so the list has its answer
+      await loginsOn();
       const view = (await (await app.request("/api/connectors")).json()) as { logins: Record<string, boolean> };
       expect(view.logins).toEqual({ meta: true, google: true, tiktok: false });
       expect((await app.request("/api/connectors/login/meta")).headers.get("location")).toContain("facebook.com");
@@ -168,6 +170,34 @@ describe("the sign-in service", () => {
       const again = new URL((await app.request("/api/connectors/login/google")).headers.get("location")!);
       challenge = "someone-else";
       expect((await app.request(`/api/connectors/callback/google?state=${again.searchParams.get("state")}&ticket=T1`)).headers.get("location")).toContain("error=");
+    } finally {
+      delete process.env.PLATFORM_SIGNIN_ORIGIN;
+      forgetServiceLogins();
+    }
+  });
+
+  it("the list does not wait for the service: it answers with what is known, and the page is told when the service's answer differs", async () => {
+    const { forgetServiceLogins } = await import("./lib/connectors/signin-service");
+    const { currentSeq } = await import("./lib/sync");
+    process.env.PLATFORM_SIGNIN_ORIGIN = "https://svc.test";
+    forgetServiceLogins();
+    let answer!: (r: Response) => void;
+    let asked = 0;
+    vi.stubGlobal("fetch", () => (asked++, new Promise<Response>((r) => (answer = r))));
+    const logins = async () => ((await (await app.request("/api/connectors")).json()) as { logins: Record<string, boolean> }).logins;
+    try {
+      // the service has not answered: the list is there anyway, with this server's own app only
+      expect(await logins()).toEqual({ meta: true, google: false, tiktok: false });
+      expect(await logins()).toEqual({ meta: true, google: false, tiktok: false });
+      expect(asked).toBe(1);
+      const s0 = currentSeq();
+      answer(Response.json({ meta: true, google: true, tiktok: false }));
+      await vi.waitFor(() => expect(currentSeq()).toBeGreaterThan(s0));
+      expect(await logins()).toEqual({ meta: true, google: true, tiktok: false });
+      // the same answer on the next read is no news
+      const s1 = currentSeq();
+      expect(await logins()).toEqual({ meta: true, google: true, tiktok: false });
+      expect(currentSeq()).toBe(s1);
     } finally {
       delete process.env.PLATFORM_SIGNIN_ORIGIN;
       forgetServiceLogins();
