@@ -28,15 +28,16 @@ const INSTALL_TIMEOUT_MS = 61 * 60_000;
  * The AIs this screen sets up, in order: what a person knows each by, the program's name small beside it, and what it
  * runs on. Each one installs, signs in and connects from its one button. `more` puts it behind Show more, where any other
  * AI the Mac app runs that is already on this Mac (LocalAiView.others) is listed too, which the button only connects.
- * Plans: a free account isn't enough for ChatGPT or Claude (vendor docs, 2026-11-09); Gemini CLI takes any personal Google
- * account, with more each day on Google AI Pro and Ultra (its quotas page, 2026-11-10); Grok's and Cursor's sign-ins take
+ * Plans: a free account isn't enough for ChatGPT or Claude (vendor docs, 2026-11-09), nor for Google: its quotas page
+ * lists free, Google AI Pro and Ultra, but a real run on a free account was turned away (2026-11-10; local-ai.ts
+ * plainError), and no run of ours was on a paid one; Grok's and Cursor's sign-ins take
  * the person's account, whose plans their vendors don't list for these programs; Muse Code has no free tier (Everyday,
  * High, Power and Maximum Usage plans). `size`: what its install downloads, said while it runs (measured 2026-11-10).
  */
 export const AIS: Array<{ id: string; name: string; sub: string; uses: string; size?: string; more?: boolean }> = [
   { id: "codex", name: "ChatGPT", sub: "Codex", uses: "Uses your ChatGPT plan (Plus or higher).", size: "about 110 MB" },
   { id: "claude", name: "Claude", sub: "Claude Code", uses: "Uses your Claude plan (Pro or higher)." },
-  { id: "gemini", name: "Google", sub: "Gemini", uses: "Uses your Google account (free, Google AI Pro or Ultra)." },
+  { id: "gemini", name: "Google", sub: "Gemini", uses: "Uses your Google AI plan (Pro or Ultra)." },
   { id: "grok", name: "Grok", sub: "Grok Build", uses: "Uses your Grok account.", size: "about 185 MB" },
   { id: "musecode", name: "Meta", sub: "Muse Code", uses: "Uses your Meta plan (Everyday or higher).", size: "about 470 MB" },
   { id: "cursor", name: "Cursor", sub: "Cursor Agent", uses: "Uses your Cursor account.", size: "about 175 MB", more: true },
@@ -159,7 +160,7 @@ export function AnswerPicker({ view, onPick }: { view: ProvidersView; onPick: (s
  */
 function AgentRow({ id, row, result, phase, code, onConnect }: { id: string; row?: Known; result?: ConnectResult; phase?: Phase; code?: string; onConnect: () => void }) {
   const v = rowView(id, row, result, phase, code);
-  const failed = !phase && !!result && result.state !== "ready" && result.state !== "mac" && result.state !== "unsupported";
+  const failed = !phase && !!result && !["ready", "mac", "unsupported", "signin"].includes(result.state);
   return (
     <ListRow
       icon={<ProviderLogo driver={id} className="size-4" />}
@@ -326,7 +327,9 @@ export function AiPanel({ onConnectedChange }: { onConnectedChange?: (on: boolea
             void connect(id, next);
           } else if (Date.now() - since > WAIT_MS) {
             window.clearInterval(t);
-            setPhase("timedOut");
+            // Grok's, Meta's and Cursor's sign-in is read from a file: when the wait runs out the real check has the last word
+            if (v?.others?.some((o) => o.id === id)) void connect(id, next);
+            else setPhase("timedOut");
           }
         }, POLL_MS);
         timers.current.push(t);
@@ -351,7 +354,9 @@ export function AiPanel({ onConnectedChange }: { onConnectedChange?: (on: boolea
           continue;
         }
         if (step === "signin") return signIn();
-        // still signed out after this press's sign-in is the sign-in state again (the row offers Sign in), never a failure
+        // signed out before any sign-in is the row's state (Sign in), never a failure. Still signed out after this press's
+        // own sign-in is one: said plainly, with the program's words under Details
+        if (r.state === "signin" && aiOf(id)) return end(failed("The sign-in didn't finish. Try again.", r.raw));
         return end(r.state === "missing" ? failed(r.message ?? "It didn't install. Try again.", r.raw) : r);
       }
     },

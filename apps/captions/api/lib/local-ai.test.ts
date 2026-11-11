@@ -666,6 +666,12 @@ setTimeout(() => {}, 60000);
     expect(plainError("It took 3 s to sign the request").state).toBe("failed");
   });
 
+  it("Google turning a free account away is said as that, not as a sign-in or a silence", () => {
+    // Gemini CLI 0.68 on a free personal Google account (2026-11-10)
+    const refused = "Gemini: This client is no longer supported for Gemini Code Assist for individuals. Please migrate to the Antigravity suite to continue. Authentication tier: free-tier";
+    expect(plainError(refused)).toEqual({ state: "failed", message: "Google turned this account away: it no longer takes free Google accounts here." });
+  });
+
   it("signs Grok in with its browser sign-in and Cursor with its own, each started from the copy on this Mac", async () => {
     const dir = path.join(root, "fake-vendors");
     mkdirSync(dir, { recursive: true });
@@ -676,6 +682,9 @@ setTimeout(() => {}, 60000);
     expect(await local.signIn("grok")).toEqual({ ok: true, message: "Your browser opens. Sign in there, then come back here." });
     expect(await local.signIn("cursor")).toMatchObject({ ok: true });
     await vi.waitFor(() => expect(readFileSync(said, "utf8").split("\n").filter(Boolean).sort()).toEqual(["cursor-agent login", "grok login --oauth"]), { timeout: 5000 });
+    // a sign-in started here that ended well counts, wherever that version saves it: no file of Grok's is in this home
+    const grokNow = async () => (await local.localAiView("ana", [], true, path.join(root, "no-files-home"))).others?.find((o) => o.id === "grok");
+    await vi.waitFor(async () => expect(await grokNow()).toMatchObject({ found: true, signedIn: true }), { timeout: 5000 });
     // OpenCode signs in its own way, not from here
     expect(await local.signIn("opencode")).toMatchObject({ ok: false });
   });
@@ -699,15 +708,18 @@ setTimeout(() => {}, 60000);
     const { device } = pairDevice("kai", "Studio Mac");
     touchDevice(device.id);
     shell((line) => (line.startsWith("command -v grok ") ? "/opt/homebrew/bin/grok\n" : ""));
+    const grokRow = async () => (await local.localAiView("kai", [], false, home)).others?.find((o) => o.id === "grok");
+    // its sign-in file isn't there, so the row offers Sign in; the file only names the button
+    expect(await grokRow()).toEqual({ id: "grok", found: true, signedIn: false, connected: false });
+    // the check is what knows: it answers, so Grok is connected, file or no file
     mockCheck.next = { ok: true, ms: 9, error: undefined, note: undefined };
-    // signed out, as its sign-in file says: the sign-in state, before any check
-    expect(await local.connectCli("kai", "grok", home, device.id)).toMatchObject({ state: "signin", signedIn: false });
-    expect(ownSettings("kai")?.instances ?? []).toHaveLength(0);
-    mkdirSync(path.join(home, ".grok"), { recursive: true });
-    writeFileSync(path.join(home, ".grok", "auth.json"), "{}");
     expect(await local.connectCli("kai", "grok", home, device.id)).toMatchObject({ state: "ready", answered: true });
     expect(ownSettings("kai")?.instances).toEqual([expect.objectContaining({ id: "local-grok", driver: "grok", name: "Grok", device: device.id })]);
-    expect((await local.localAiView("kai", [], false, home)).others?.find((o) => o.id === "grok")).toEqual({ id: "grok", found: true, signedIn: true, connected: true });
+    // connected with no file found: unknown, never "signed out since last time"
+    expect(await grokRow()).toEqual({ id: "grok", found: true, signedIn: null, connected: true });
+    mkdirSync(path.join(home, ".grok"), { recursive: true });
+    writeFileSync(path.join(home, ".grok", "auth.json"), "{}");
+    expect(await grokRow()).toEqual({ id: "grok", found: true, signedIn: true, connected: true });
     // a check that comes back not signed in is the sign-in state too
     mockCheck.next = { ok: false, ms: 9, error: "Grok: Not signed in. To authenticate without a browser, run:\n  grok login --device-code", note: undefined };
     expect(await local.connectCli("kai", "grok", home, device.id)).toMatchObject({ state: "signin" });

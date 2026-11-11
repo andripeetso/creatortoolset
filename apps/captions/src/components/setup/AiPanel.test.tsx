@@ -42,7 +42,7 @@ describe("the rows: named by what a person knows, in order", () => {
     for (const html of [panel(view([claude, codex])), panel(view([claude, codex, gemini]))]) {
       expect(html.indexOf(">Claude<")).toBeLessThan(html.indexOf(">Google<"));
       expect(html).toContain(">Gemini<");
-      expect(html).toContain("Uses your Google account (free, Google AI Pro or Ultra).");
+      expect(html).toContain("Uses your Google AI plan (Pro or Ultra).");
     }
   });
 
@@ -59,7 +59,7 @@ describe("the rows: named by what a person knows, in order", () => {
     expect(some).toContain("Not signed in yet. Uses your ChatGPT plan (Plus or higher).");
     expect(some).toContain("Uses your Claude plan (Pro or higher).");
     expect(some).not.toContain("Not signed in yet. Uses your Claude plan");
-    expect(rowView("gemini", gemini, undefined, undefined)).toEqual({ line: "Uses your Google account (free, Google AI Pro or Ultra).", button: { label: "Connect" } });
+    expect(rowView("gemini", gemini, undefined, undefined)).toEqual({ line: "Uses your Google AI plan (Pro or Ultra).", button: { label: "Connect" } });
   });
 
   it("Grok on this Mac but signed out, as its sign-in file says, reads Sign in before any press", () => {
@@ -183,6 +183,7 @@ describe("what Connect does, one step at a time", () => {
     const html = panel({ ...view([claude]), others: [other("grok", { signedIn: true })] }, { results: { grok: signin } });
     expect(html).not.toContain("Details");
     expect(html).not.toContain("grok login");
+    expect(html).not.toContain("text-red-600");
     // Meta signed out, in its own words: Sign in, and its "run /login" never shows
     const meta: ConnectResult = { state: "signin", signedIn: false, answered: false, message: "Not signed in yet.", raw: "Muse Code: not logged in: run /login to add an API key" };
     expect(rowView("musecode", other("musecode", { signedIn: true }), meta, undefined)).toEqual({ line: "Not signed in yet. Uses your Meta plan (Everyday or higher).", button: { label: "Sign in" } });

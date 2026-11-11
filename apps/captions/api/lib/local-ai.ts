@@ -84,6 +84,7 @@ export function setRunnerForTests(r?: Runner, onDisk?: (p: string) => boolean): 
   shellSaid.clear();
   versions.clear();
   codexUrl = undefined;
+  loggedIn.clear();
 }
 
 const isExecutable = (p: string): boolean => {
@@ -272,6 +273,10 @@ export const parseVersion = (text: string): string | undefined => text.split("\n
 
 /** The raw text, as the message a person sees (plain words; the raw text stays for Details). */
 export function plainError(raw: string): { state: "signin" | "missing" | "failed"; message: string } {
+  // Google turning a free Google account away (Gemini CLI 0.68, tier free-tier, 2026-11-10): "This client is no longer
+  // supported for Gemini Code Assist for individuals… migrate to the Antigravity suite". Trying again won't change it.
+  if (/no longer supported for Gemini Code Assist|migrate to the Antigravity/i.test(raw))
+    return { state: "failed", message: "Google turned this account away: it no longer takes free Google accounts here." };
   // "auth method": Gemini CLI with no sign-in chosen ("Please set an Auth method in your …/settings.json");
   // "not signed in", "grok login": Grok signed out ("Not signed in. To authenticate without a browser, run: grok login …")
   if (/not logged in|not signed in|grok login|\/login|log in|authentication|auth method|unauthorized|401/i.test(raw)) return { state: "signin", message: "Not signed in yet." };
@@ -439,6 +444,19 @@ export const VENDOR_AIS: Partial<Record<Driver, { install: string; bin: (home: s
   },
 };
 
+/** A sign-in of Grok, Meta or Cursor started here that ended well, whatever file it saved. */
+const loggedIn = new Set<Driver>();
+
+/**
+ * What a row says of Grok's, Meta's or Cursor's sign-in: the file it saves, or a sign-in started here that ended well.
+ * Only the button's name hangs on it; the real check decides (connectCli). One that is connected and whose file isn't
+ * found is unknown, never signed out.
+ * ponytail: none of the three files was seen after a real sign-in (no accounts to try, 2026-11-10). Once they are, a
+ * connected one with no file can say it was signed out.
+ */
+const vendorSignedIn = (id: Driver, home: string, connected: boolean): boolean | null =>
+  VENDOR_AIS[id]?.signedIn(home) || loggedIn.has(id) ? true : connected ? null : false;
+
 /**
  * Meta's sign-in page and its code from `muse login`'s own output, or null until both are printed: "Open this page to sign
  * in:", the page, "confirm this code matches:", the code. Only a page on auth.meta.com is taken (the Mac app reads it the
@@ -516,7 +534,7 @@ export async function localAiView(username: string, mcpTo: CliId[], fresh = fals
     rows,
     others: others.map((id) => {
       const here = found.some((f) => f.id === id);
-      return { id, found: here, signedIn: here && VENDOR_AIS[id] ? VENDOR_AIS[id].signedIn(home) : null, connected: connected(id) };
+      return { id, found: here, signedIn: here && VENDOR_AIS[id] ? vendorSignedIn(id, home, connected(id)) : null, connected: connected(id) };
     }),
   };
 }
@@ -680,6 +698,7 @@ export async function signIn(id: Driver): Promise<SignInResult> {
   const bin = isCli(id) ? await binFor(id) : vendor && (await otherAis()).find((o) => o.id === id)?.bin;
   if (!bin) return { ok: false, message: MISSING };
   logins.get(id)?.kill();
+  loggedIn.delete(id);
   const child =
     id === "gemini"
       ? geminiLogin(bin)
@@ -694,9 +713,10 @@ export async function signIn(id: Driver): Promise<SignInResult> {
     return { ok: false, message: `Couldn't start ${nameOf(id)} sign-in. Try again.` };
   }
   const timer = setTimeout(() => child.kill(), LOGIN_MS);
-  child.on("exit", () => {
+  child.on("exit", (code) => {
     clearTimeout(timer);
     if (logins.get(id) === child) logins.delete(id);
+    if (code === 0 && vendor) loggedIn.add(id);
   });
   if (id !== "musecode") {
     child.stdout?.resume();
@@ -733,9 +753,10 @@ export async function signIn(id: Driver): Promise<SignInResult> {
  * (the AI step's picker does that). Mints no key.
  */
 export async function connectCli(username: string, id: Driver, home = os.homedir(), mac?: string): Promise<ConnectResult> {
-  // another AI the Mac app runs: found on this Mac; Grok's and Cursor's sign-in is read from the file it saves
+  // another AI the Mac app runs: found on this Mac. Its sign-in file not being there never stops the check: the check
+  // itself says "not signed in" (plainError), and it is the one that knows
   const found = !isCli(id) && (await otherAis(home)).some((o) => o.id === id);
-  const p = isCli(id) ? await probe(id, true, home) : { found, signedIn: found ? (VENDOR_AIS[id]?.signedIn(home) ?? null) : null, home: undefined };
+  const p: Pick<Probe, "found" | "signedIn" | "home"> = isCli(id) ? await probe(id, true, home) : { found, signedIn: found && VENDOR_AIS[id]?.signedIn(home) ? true : null };
   if (!p.found) return { state: "missing", signedIn: null, answered: null, message: MISSING };
   if (p.signedIn === false) return { state: "signin", signedIn: false, answered: null, message: "Not signed in yet." };
   // this server's own Mac: a device of this account that is answering now, never the first online one of its Macs
