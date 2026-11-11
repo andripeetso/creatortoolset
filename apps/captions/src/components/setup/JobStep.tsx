@@ -69,7 +69,7 @@ function FootageRow({ lib, status, reload }: { lib: string; status: WatchStatus;
     <NeedLine
       met={met}
       name="Where are your videos?"
-      line={met ? status.folders.map((f) => f.path).join(", ") : "Read where they are. Nothing is moved or uploaded."}
+      line={met ? status.folders.map((f) => f.path).join(", ") : "Read where they are. Nothing is moved."}
       button={
         <Button size="sm" variant="outline" className="h-7" disabled={busy} onClick={() => void choose()}>
           Choose a folder
