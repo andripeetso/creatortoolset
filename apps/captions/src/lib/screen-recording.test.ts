@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { zoomView, alphaFileName, alphaPacking, autoZooms, backgroundStops, bubbleRect, cameraAt, defaultCamera, defaultLook, drawFrame, layout, normalizeLook, opaqueLook, outputSize, pointerAt, pointerPath, shadowOf, sideRects, trimOf, type ScreenEvents, type ScreenLook } from "./screen-recording";
+import { zoomFloor, zoomView, alphaFileName, alphaPacking, autoZooms, backgroundStops, bubbleRect, cameraAt, defaultCamera, defaultLook, drawFrame, layout, normalizeLook, opaqueLook, outputSize, pointerAt, pointerPath, shadowOf, sideRects, trimOf, type ScreenEvents, type ScreenLook } from "./screen-recording";
 
 const events: ScreenEvents = {
   v: 1,
@@ -125,6 +125,36 @@ describe("screen recording", () => {
     expect(layout({ ...base, fill: true, zoomFit: "frame", zooms: [{ start: -10, end: 10, x: 0.5, y: 0.5, scale: 2 }] }, [], 0, 2000, 2000, 1920, 1080).box).toEqual({ x: 0, y: 0, w: 1920, h: 1080 });
     // the aim pad's box is the part shown
     expect(zoomView({ ...base, zoomFit: "space" }, { start: 1, end: 5, x: 0.5, y: 0.5, scale: 1.5 }, 2000, 2000, 1920, 1080)).toMatchObject({ x: 0, w: 1 });
+  });
+
+  it("fills the whole frame with a zoom, however shallow, where that is chosen", () => {
+    // a square recording in a wide frame with padding: at rest an 864 square, so 1920 / 864 covers the frame
+    const base = { ...defaultLook(events, 30), shape: "16:9" as const, padding: 0.1, follow: false };
+    expect(base.zoomFit).toBe("frame"); // what a new recording starts with
+    const cover = 1920 / 864;
+    const at = (t: number, scale: number) => layout({ ...base, zooms: [{ start: 0, end: 20, x: 0.5, y: 0.5, scale }] }, [], t, 2000, 2000, 1920, 1080);
+    // a 1.3× zoom all the way in: the picture covers the frame, the window has grown by what that takes
+    const shallow = at(10, 1.3);
+    expect(shallow.box).toEqual({ x: 0, y: 0, w: 1920, h: 1080 });
+    expect(shallow.grown).toBeCloseTo(cover);
+    expect(shallow.src.w).toBeCloseTo(2000);
+    expect(shallow.corners).toBeCloseTo(0); // no rounded corner of the background in a filled frame
+    // on its way in it is in between, and at rest nothing has moved
+    const half = at(0.35, 1.3);
+    expect(half.grown).toBeGreaterThan(1);
+    expect(half.grown).toBeLessThan(cover);
+    expect(half.corners).toBeGreaterThan(0);
+    expect(at(0, 1.3).corners).toBe(1);
+    expect(at(0, 1.3).box).toEqual({ x: 528, y: 108, w: 864, h: 864 });
+    // a deeper zoom keeps its own depth
+    expect(at(10, 3).grown).toBe(3);
+    expect(at(10, 3).corners).toBe(0);
+    // the least depth, for the panel: only where zooms fill the frame
+    expect(zoomFloor(base, 1)).toBeCloseTo(cover);
+    expect(zoomFloor({ ...base, zoomFit: "space" }, 1)).toBe(1);
+    expect(zoomFloor({ ...base, zoomFit: "inside" }, 1)).toBe(1);
+    expect(zoomFloor({ ...base, fill: true }, 1)).toBe(1);
+    expect(zoomFloor(base, 1, { ...defaultCamera(), layout: "side" })).toBe(1);
   });
 
   it("keeps the trim inside the recording", () => {

@@ -2,18 +2,18 @@ import type { DatabaseSync } from "node:sqlite";
 import type { LibraryEstimate, LibraryProgress, LibraryStage, LibraryStep, LibraryStepEstimate, LibraryStepRoute } from "../../contracts/library";
 import { aiFor, onApiKey } from "../ai-complete";
 import { BACKGROUND_SLOTS, macUsageSince } from "../lib/mac-claude";
-import { keyFor } from "../my-keys";
 import { libraryDb, librarySetting } from "./db";
 import { DESCRIBE_LABEL, whoFor } from "./describe";
+import { embedRoute } from "./embed";
 import { NeedsKey, transcribeRoute } from "./transcribe";
 import { LANES, LIMIT_LIKE } from "./worker";
 
 /**
  * How much processing clips will take, before they go in, and how much is left (GET /api/library/:id/estimate and
  * /progress). Per clip: the server's own file steps, a transcript, an AI description (when on), search by meaning (when
- * on and there is a key). Pace is this server's own: the last 200 finished jobs of each kind, by what ran them. Cost:
- * a description's average in the usage tally (the CLI's API-equivalent on a connected AI, the real bill on a key), and
- * a transcription service's list price per minute. Until a step has run three times here, the starting guesses below.
+ * on: a key, else this computer). Pace is this server's own: the last 200 finished jobs of each kind, by what ran them.
+ * Cost: a description's average in the usage tally (the CLI's API-equivalent on a connected AI, the real bill on a key),
+ * and a transcription service's list price per minute. Until a step has run three times here, the starting guesses below.
  */
 
 const STEP_OF: Record<string, LibraryStep> = {
@@ -97,8 +97,14 @@ export function routesOf(libraryId: string, username: string): Record<LibrarySte
   } catch (e) {
     transcript = { route: "none", missing: e instanceof NeedsKey ? e.message : String(e) };
   }
-  const k = keyFor(username, "OPENAI_API_KEY");
-  const embed: Route = !librarySetting(libraryId, "embed") ? { route: "off" } : k.missing ? { route: "none", missing: k.missing } : { route: "openai" };
+  let embed: Route = { route: "off" };
+  if (librarySetting(libraryId, "embed")) {
+    try {
+      embed = { route: "device" in embedRoute(username) ? "device" : "openai" };
+    } catch (e) {
+      embed = { route: "none", missing: e instanceof NeedsKey ? e.message : String(e) };
+    }
+  }
   return { files: { route: "server" }, transcript, describe, embed };
 }
 
@@ -145,21 +151,20 @@ async function perClip(db: DatabaseSync, step: LibraryStep, route: LibraryStepRo
     };
   }
   const pace = paceOf(db, "embed");
-  return { seconds: pace ?? GUESS_S.embed!, usd: 0, measured: pace !== null, at: laneSize("ai") };
+  return { seconds: pace ?? GUESS_S.embed!, usd: 0, measured: pace !== null, at: route === "device" ? 1 : laneSize("ai") };
 }
 
 const STEPS: LibraryStep[] = ["files", "transcript", "describe", "embed"];
 
 /**
- * The whole run: steps run side by side, so the slowest, except that this computer's transcripts share the one ffmpeg
- * line with the files (media/run.ts ffmpegSlot), so those two add up.
+ * The whole run: steps run side by side, so the slowest, except that this computer's transcripts and search entries
+ * share the one ffmpeg line with the files (media/run.ts ffmpegSlot), so those add up.
  * ponytail: a description waiting on its transcript is not counted
  */
 function total(steps: { step: LibraryStep; route: LibraryStepRoute; seconds: number }[]): number {
-  const of = (step: LibraryStep) => steps.find((s) => s.step === step);
-  const t = of("transcript");
-  const line = (of("files")?.seconds ?? 0) + (t?.route === "device" ? t.seconds : 0);
-  return Math.max(line, ...steps.filter((s) => s.step !== "files" && !(s.step === "transcript" && s.route === "device")).map((s) => s.seconds));
+  const inLine = (s: { step: LibraryStep; route: LibraryStepRoute }) => s.step === "files" || s.route === "device";
+  const line = steps.filter(inLine).reduce((t, s) => t + s.seconds, 0);
+  return Math.max(line, ...steps.filter((s) => !inLine(s)).map((s) => s.seconds));
 }
 
 /** What is going in: `clips` files of `bytes` in all, `audio` of them sound only (`audioBytes`), from a music folder or not. */

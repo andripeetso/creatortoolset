@@ -1,8 +1,21 @@
 import AppKit
+import AVFoundation
 import XCTest
 @testable import CreatorToolsetMac
 
 final class RecorderTests: XCTestCase {
+
+    func testTheRecordersFilesAreEncodedWithoutFrameReordering() {
+        // With reordering, a file written in fragments failed to close in most takes longer than about 9 s
+        // (AVFoundation -11800 / -16341) and only its first fragments were kept; see recorderVideoSettings.
+        for settings in [recorderVideoSettings(width: 2826, height: 2934, bitRate: 19_900_000, frameRate: 60),
+                         recorderVideoSettings(width: 1280, height: 720, bitRate: 6_000_000, frameRate: 30)] {
+            let compression = settings[AVVideoCompressionPropertiesKey] as? [String: Any]
+            XCTAssertEqual(compression?[AVVideoAllowFrameReorderingKey] as? Bool, false)
+            XCTAssertEqual(compression?[AVVideoMaxKeyFrameIntervalDurationKey] as? Int, 2)
+        }
+    }
+
     func testPointerOnTheMainDisplay() {
         // main display 1512×982 points: bottom-left origin in, top-left 0–1 out
         let main = CGRect(x: 0, y: 0, width: 1512, height: 982)
