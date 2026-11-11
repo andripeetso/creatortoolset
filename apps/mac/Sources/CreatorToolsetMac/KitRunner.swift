@@ -64,8 +64,9 @@ struct KitCalls {
     /// -[WKWebView _webProcessIdentifier]: the page's own process (older than any macOS the app runs on)
     var processIdentifier = "_webProcessIdentifier"
     /// the features that must be in the list and end up off, and those switched off where this macOS has them
+    /// (DNS prefetch has had two names: WebKit's source for macOS 14 and 15 has it as DNSPrefetchingEnabled, off by default)
     var needed: Set<String> = ["LinkPreconnect"]
-    var wanted: Set<String> = ["LinkDNSPrefetchEnabled"]
+    var wanted: Set<String> = ["LinkDNSPrefetchEnabled", "DNSPrefetchingEnabled"]
 }
 
 /// What shuts a card's script in besides its page's own policy and frame. Every card is drawn behind all of them; a
@@ -93,8 +94,8 @@ enum KitRunner {
     /// The private WebKit calls a card's page uses (a test changes a name to one that is not there).
     @MainActor static var calls = KitCalls()
     /// Whether a page behind the walls was asked, on this Mac, if the two walls that could fail to take without
-    /// saying so did take. Asked once, before the first card.
-    @MainActor private static var checked = false
+    /// saying so did take. Asked once, before the first card (a test sets it back to see that `draw` asks).
+    @MainActor static var checked = false
 
     /// Loads a card's page with no card's script in it and asks the page's own engine two things: is WebRTC gone
     /// (Lockdown Mode took), and does it no longer know `preconnect` as a link type (the switch took: that answer and

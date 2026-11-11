@@ -329,19 +329,27 @@ final class RelayRunner {
         return nil
     }
 
-    /// One card step, from reading the cards to done or fail (CardJobs.swift). It holds a slot as an AI request does, so
-    /// it never runs beside four of them. A card that fails is the edit's news, told to the site; the menu's last AI
-    /// error is left alone.
-    func drawCards(_ step: EditorJob) {
+    /// One card step, from reading the cards to done or fail (CardJobs.swift), and then every further step the site
+    /// says waits on its answer to that done or fail (an edit queues one step a version). It holds a slot as an AI
+    /// request does, so it never runs beside four of them. A card that fails is the edit's news, told to the site; the
+    /// menu's last AI error is left alone.
+    func drawCards(_ first: EditorJob) {
         defer { slots.signal() }
         publish { $0.drawing = true }
-        let end = CardJob(api: api, id: step.id, folder: work.appendingPathComponent("cards/\(step.id)"),
-                          stopped: { [weak self] in self?.isStopped ?? true }).run()
-        if case .failed(let why) = end { AppLog.write("cards: step \(step.id) failed: \(why)") }
+        var cannot = false
+        var next: EditorJob? = first
+        while let step = next {
+            let (end, more) = CardJob(api: api, id: step.id, folder: work.appendingPathComponent("cards/\(step.id)"),
+                                      stopped: { [weak self] in self?.isStopped ?? true }).run()
+            if case .failed(let why) = end { AppLog.write("cards: step \(step.id) failed: \(why)") }
+            if case .cannot = end { cannot = true }
+            // without that word from the site the next step is seen on a later poll (the one in flight listed no kind)
+            next = more && !cannot && !isStopped ? claimStep() : nil
+        }
         lock.lock()
-        drawing = false   // the next poll lists the kind again, and the site hints at once if more steps wait
+        drawing = false   // the next poll lists the kind again
         // this Mac can't shut a card's script in: from now on its polls say it draws none, so another Mac gets the step
-        if case .cannot = end { cannotDraw = true }
+        if cannot { cannotDraw = true }
         lock.unlock()
         publish { $0.drawing = false }
     }

@@ -382,6 +382,32 @@ final class KitSandboxTests: XCTestCase {
         }
     }
 
+    func testNoCardIsDrawnBeforeThePageWasAsked() async throws {
+        // a WebKit that has the switch but does not heed it, stood in for by never throwing the switch: the page is
+        // made, and the question asked before the first card finds preconnect still on, so the script never runs
+        KitRunner.checked = false
+        KitRunner.calls.needed = []
+        KitRunner.calls.wanted = []
+        defer {
+            KitRunner.calls = KitCalls()
+            KitRunner.checked = false
+        }
+        var frames = 0
+        do {
+            try await KitRunner.draw(card("function kitFrame(t) { document.getElementById('stage').textContent = t; }")) { _, _ in frames += 1 }
+            XCTFail("a card was drawn behind a wall that did not take")
+        } catch {
+            XCTAssertEqual(error as? KitRunnerError, .unsafe("link preconnect is still on in a card's page"))
+        }
+        XCTAssertEqual(frames, 0)
+        XCTAssertFalse(KitRunner.checked, "and the next card asks again")
+        // with the walls as they are the same card draws, and the question is not asked a second time
+        KitRunner.calls = KitCalls()
+        try await KitRunner.draw(card("function kitFrame(t) { document.getElementById('stage').textContent = t; }")) { _, _ in frames += 1 }
+        XCTAssertEqual(frames, 4)
+        XCTAssertTrue(KitRunner.checked)
+    }
+
     func testTheWallsAreThisPagesAlone() async throws {
         // a card's page switches WebKit's link preconnect off for itself: a web view made afterwards still has it
         let site = FakeSite()

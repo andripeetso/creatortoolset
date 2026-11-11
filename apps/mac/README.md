@@ -395,7 +395,9 @@ beside `blobs` in the body of `relay/wait`), and a server with such a step queue
 `{"editor": true}`. Only then does the Mac post `POST /api/devices/relay/editor/claim` with
 `{"kinds":["cards-draw"]}`. A server that never answers so, which is every server without the card step, is never
 asked. The poll lists no kind while cards are being drawn and for 25 s after a hint that led to no step (an hour
-after a claim the server refused), so a server that hints wrongly gets one claim, not a loop.
+after a claim the server refused), so a server that hints wrongly gets one claim, not a loop. The server can say the
+same on its answer to a step's `done` or `fail` (`"editor": true` beside `ok`), and the next step is then claimed at
+once; without it the next step is seen on a later poll, up to 25 s on.
 
 A step it gets is read with `GET /api/devices/relay/editor/job/<id>/cards`:
 `{ width, height, fps, script, cards: [{ id, seconds, content }] }`, one script for every card of a version. Each card

@@ -55,7 +55,7 @@ final class CardJobsTests: XCTestCase {
         job.limit = limit
         job.beatEvery = beatEvery
         let ready = job
-        return (await offMain { ready.run() }, folder)
+        return (await offMain { ready.run().end }, folder)
     }
 
     private func paths(_ site: FakeSite) -> [String] { site.requests.map { "\($0.method) \($0.path)" } }
@@ -406,6 +406,41 @@ final class CardJobsTests: XCTestCase {
         XCTAssertTrue(seen.statuses.allSatisfy { $0.lastError == nil && $0.running == 0 })
         // listed again on the next poll: the server hints at once when more steps wait
         XCTAssertEqual(runner.editorKinds(now: 1001), ["cards-draw"])
+    }
+
+    func testAStepSaidOnDoneIsDrawnAtOnceWithNoPollBetween() async {
+        // an edit queues one step a version: the answer to the first one's done says the next waits
+        let cards = sheet(["Tiny Acrobatics"])
+        let site = FakeSite()
+        let first = Flag()
+        site.answer = { request in
+            if request.path.hasSuffix("/editor/claim") { return (200, first.set() ? #"{"job":{"id":7,"kind":"cards-draw","editId":"e1","variant":"A"}}"# : #"{"job":{"id":8,"kind":"cards-draw","editId":"e1","variant":"B"}}"#) }
+            if request.path.hasSuffix("/cards") { return (200, cards) }
+            if request.path.hasSuffix("/job/7/done") { return (200, #"{"ok":true,"editor":true}"#) }
+            return (200, #"{"ok":true}"#)
+        }
+        let seen = Seen()
+        let runner = runner(site, seen: seen)
+        guard let step = runner.claimStep(now: 1000) else { return XCTFail("no step") }
+        await offMain { runner.drawCards(step) }
+        let job = "/api/devices/relay/editor/job"
+        XCTAssertEqual(paths(site), [claim, "GET \(job)/7/cards", "POST \(job)/7/cards/c1", "POST \(job)/7/done",
+                                     claim, "GET \(job)/8/cards", "POST \(job)/8/cards/c1", "POST \(job)/8/done"])
+        XCTAssertEqual(seen.statuses.map(\.drawing), [true, false], "one Drawing cards row for both")
+
+        // a server that says so wrongly gets one claim, and then this Mac lists no kind for a poll's length
+        let wrong = FakeSite()
+        let once = Flag()
+        wrong.answer = { request in
+            if request.path.hasSuffix("/editor/claim") { return (200, once.set() ? #"{"job":{"id":7,"kind":"cards-draw","editId":"e1","variant":"A"}}"# : #"{"job":null}"#) }
+            if request.path.hasSuffix("/cards") { return (200, cards) }
+            return (200, #"{"ok":true,"editor":true}"#)
+        }
+        let other = self.runner(wrong)
+        guard let again = other.claimStep(now: 1000) else { return XCTFail("no step") }
+        await offMain { other.drawCards(again) }
+        XCTAssertEqual(paths(wrong), [claim, "GET \(job)/7/cards", "POST \(job)/7/cards/c1", "POST \(job)/7/done", claim])
+        XCTAssertNil(other.editorKinds())
     }
 
     func testAMacThatCannotShutAScriptInSaysSoAndListsNoKindFromThenOn() async {

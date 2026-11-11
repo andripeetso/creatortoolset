@@ -9,6 +9,7 @@
 //   POST /api/devices/relay/editor/job/:id/cards/:cardId   multipart: `clip` (H.264 .mp4, no sound) and `still` three
 //        times (PNG, 540 px wide: the first, the middle and the last frame, in that order)
 //   then the step's own /done, or /fail { error } with a reason a person can read; /beat every 15 s while it works.
+//   An answer to /done or /fail that carries `editor: true` says another step waits: it is claimed at once.
 // Every card that drew is sent. One that did not fails the step (the server tries a failed step again, so a card's
 // id can arrive more than once).
 import Foundation
@@ -188,7 +189,9 @@ struct CardJob {
     /// what a card's id keeps as it is in the address; every other character is percent-encoded
     static let idCharacters = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~")
 
-    func run() -> End {
+    /// How the step ended, and whether the server's answer to done or fail said another step waits (`"editor": true`
+    /// beside `ok`): the same hint as on the long poll, on an answer this Mac gets anyway.
+    func run() -> (end: End, more: Bool) {
         let lease = Lease()
         Thread { keep(lease) }.start()
         defer {
@@ -196,12 +199,13 @@ struct CardJob {
             try? FileManager.default.removeItem(at: folder)
         }
         let end = work(lease)
+        var reply: DeviceReply?
         switch end {
-        case .done: _ = try? api.call("POST", "\(base)/done", tries: 4)
-        case .failed(let why), .cannot(let why): _ = try? api.call("POST", "\(base)/fail", ["error": String(why.prefix(500))], tries: 4)
+        case .done: reply = try? api.call("POST", "\(base)/done", tries: 4)
+        case .failed(let why), .cannot(let why): reply = try? api.call("POST", "\(base)/fail", ["error": String(why.prefix(500))], tries: 4)
         case .gone: break
         }
-        return end
+        return (end, reply.map { $0.status == 200 && RelayRunner.editorWaits($0.data) } ?? false)
     }
 
     /// The lease: a beat every 15 s. A blip is not a lost step; only the server saying it is no longer this Mac's is.
