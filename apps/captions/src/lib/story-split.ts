@@ -10,6 +10,7 @@ import {
   Output,
   Quality,
 } from "mediabunny";
+import { allowHighH264 } from "./h264-level";
 
 /**
  * Story Splitter: one video → stories of about 20 s, cut where it hurts
@@ -240,6 +241,7 @@ function planStretch(a: Analysis, from: number, to: number, target: number): num
 
 /** Frame differences and loudness, decoded side by side. */
 export async function readSignals(blob: Blob, onProgress: (p: number) => void): Promise<Signals> {
+  await allowHighH264(); // the Mac app's web view takes H.264 above level 5.2 only this way (lib/h264-level.ts)
   const input = new Input({ source: new BlobSource(blob), formats: ALL_FORMATS });
   try {
     const video = await input.getPrimaryVideoTrack();
@@ -312,6 +314,7 @@ export async function renderStories(
 ): Promise<Blob> {
   const bounds = [0, ...cuts, duration];
   const files: { name: string; data: Uint8Array }[] = [];
+  await allowHighH264();
   const input = new Input({ source: new BlobSource(blob), formats: ALL_FORMATS });
   try {
     const hasAudio = !!(await input.getPrimaryAudioTrack());
