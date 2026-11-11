@@ -148,8 +148,21 @@ async function list(): Promise<Listed[] | null> {
 }
 
 /**
+ * How long all the page halves together may hold up the first screen. A page file whose own top-level code never
+ * finishes (an await that never settles) would otherwise leave the window blank for good, with a healthy server
+ * behind it and nothing to say why. (An object, so a test can shorten it.)
+ */
+// ponytail: every load of the window waits again for a plug-in that is too slow, until it is switched off or fixed;
+// remember it per version if that bites
+export const pageLimits = { loadMs: 10_000 };
+
+/** The file a plug-in's page half is imported from (its own function, so a test can stand in for the server). */
+export const pageFile = { load: (id: string): Promise<{ default: WebPlugin }> => import(/* @vite-ignore */ `${window.location.origin}/api/plugins/web/${id}/web.js`) };
+
+/**
  * Adds each plug-in's page half to the app's list (webPlugins). main.tsx waits for it before the first render, so
- * every screen sees them. Signed out, the server gives no list and nothing is loaded.
+ * every screen sees them. Signed out, the server gives no list and nothing is loaded. One that does not load in
+ * time is left out and named, and the app draws without it.
  */
 export async function loadFolderPlugins(): Promise<void> {
   const plugins = await list();
@@ -157,26 +170,44 @@ export async function loadFolderPlugins(): Promise<void> {
   listed = true;
   const table = new Map<string, unknown>();
   (globalThis as { __ctHost?: unknown }).__ctHost = { get: (id: string) => table.get(id) };
+  const deadline = Date.now() + pageLimits.loadMs;
   for (const p of plugins) {
     let css: HTMLLinkElement | null = null;
+    // set when the time is up: a file that finishes loading after that does not join the app behind its back
+    let late = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      for (const need of p.needs) {
-        const load = hostModules[need];
-        if (!load) throw new Error(`It needs ${need.replace(/^pkg:/, "the package ")}, which this version of the app doesn't have`);
-        if (!table.has(need)) table.set(need, await load());
-      }
-      if (p.css) {
-        css = Object.assign(document.createElement("link"), { rel: "stylesheet", href: `/api/plugins/web/${p.id}/web.css` });
-        document.head.append(css);
-      }
-      const mod = (await import(/* @vite-ignore */ `${window.location.origin}/api/plugins/web/${p.id}/web.js`)) as { default: WebPlugin };
-      const problem = webAdmissionProblem(webPlugins, mod.default, p.id);
-      if (problem) throw new Error(problem);
-      webPlugins.push(guardWebPlugin(mod.default));
+      await Promise.race([
+        (async () => {
+          for (const need of p.needs) {
+            const load = hostModules[need];
+            if (!load) throw new Error(`It needs ${need.replace(/^pkg:/, "the package ")}, which this version of the app doesn't have`);
+            if (!table.has(need)) table.set(need, await load());
+          }
+          if (late) return;
+          if (p.css) {
+            css = Object.assign(document.createElement("link"), { rel: "stylesheet", href: `/api/plugins/web/${p.id}/web.css` });
+            document.head.append(css);
+          }
+          const mod = await pageFile.load(p.id);
+          if (late) return;
+          const problem = webAdmissionProblem(webPlugins, mod.default, p.id);
+          if (problem) throw new Error(problem);
+          webPlugins.push(guardWebPlugin(mod.default));
+        })(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            late = true;
+            reject(new Error("They took too long to load"));
+          }, Math.max(0, deadline - Date.now()));
+        }),
+      ]);
     } catch (e) {
-      css?.remove();
+      (css as HTMLLinkElement | null)?.remove();
       folderPluginFailures.set(p.id, message(e));
       console.error(`[plugins] ${p.id}: its pages were left out`, e);
+    } finally {
+      clearTimeout(timer);
     }
   }
 }
