@@ -29,6 +29,12 @@ describe("the post step's chain", () => {
     expect(out.notes).toEqual([]);
   });
 
+  it("puts what a step says in the draft's notes", async () => {
+    const talk: EditorStep = { id: "blur", title: "Blur", about: "", run: async (i) => (i.note("Blur found no face that matches “the kids”"), {}) };
+    const out = await runSteps([{ id: "blur", values: {} }], [talk], input);
+    expect(out.notes).toEqual([`${POST_NOTE}Blur found no face that matches “the kids”`]);
+  });
+
   it("names a step the edit uses that this app no longer has, and plays the sources as they are", async () => {
     const out = await runSteps([{ id: "blur", values: {} }], [], input);
     expect(out.files).toEqual({});
@@ -43,7 +49,10 @@ describe("one post copy per version", () => {
     const face = file("face-refine/a-1.mov");
     const voice = file("voice/a-2.mov");
     const older = file("voice/a-0.mov");
+    const side = file("voice/a-2.mov.counts.json");
+    const faceSide = file("face-refine/a-1.mov.counts.json");
     await prune(root, new Set([voice]));
     expect([existsSync(face), existsSync(voice), existsSync(older)]).toEqual([false, true, false]);
+    expect([existsSync(side), existsSync(faceSide)]).toEqual([true, false]);   // a kept copy's own files stay with it
   });
 });

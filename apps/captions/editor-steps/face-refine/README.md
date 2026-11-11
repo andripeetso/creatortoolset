@@ -30,12 +30,13 @@ encoder's ffmpeg lays over the source it decodes itself, so every pixel outside 
 
 ## The runtime: Python, set up on first use
 
-The first time the step runs (never before it is switched on), it sets itself up in
-`<data dir>/plugins/editor-face-refine/`:
+The first time the step runs (never before it is switched on), it sets itself up: the models and the engine in
+`<data dir>/plugins/editor-face-refine/`, the Python in `<data dir>/runtime/mediapipe-<hash of the list>/`, which Blur
+faces shares (`api/editor/mediapipe.ts`), so a Mac with both steps downloads it once:
 
 1. It finds a Python 3.9 to 3.14 (Homebrew, python.org, or the developer tools' `/usr/bin/python3`, which it tries only
    when the developer tools are installed, so the macOS install dialog never opens).
-2. It makes its own venv and installs exactly the packages in `requirements.ts` (about 400 MB): `mediapipe==1.2.2`,
+2. It makes the venv and installs exactly the packages in `api/editor/mediapipe-requirements.ts` (about 400 MB): `mediapipe==1.2.2`,
    `opencv-contrib-python==5.0.0.93` and every package they need, each pinned by version and SHA-256 hash, wheels only
    (`pip install --require-hashes --only-binary=:all:`), so what lands on a Mac is what was tested. The list was made
    with `pip download --only-binary=:all: --platform macosx_<13_0|15_0|26_0>_arm64 --python-version <3.9 … 3.14>` for
@@ -43,7 +44,8 @@ The first time the step runs (never before it is switched on), it sets itself up
    with a `python_version` marker. OpenCV 5 has no build for macOS 11 or 12, so the step needs macOS 13 or newer. To move
    to new versions, make the list again the same way and run the step's real edits again.
 3. It downloads the two models from Google's MediaPipe model storage and checks their SHA-256.
-4. It writes `ready` only after the engine's self-test passes.
+4. It writes `ready` in the venv only after the engine's self-test passes. A copy of the step from before the shared
+   venv keeps its own venv in the step's folder, untouched.
 
 When something is missing, the step fails with a message that names it, for example "Face refinement needs Python 3
 on this Mac: …". On a Mac that needs Apple silicon: MediaPipe has no Intel macOS build.

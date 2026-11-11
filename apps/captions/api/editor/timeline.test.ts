@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -15,7 +15,7 @@ const { libraryDb } = await import("../library/db");
 const { enqueueJob } = await import("../library/jobs");
 const { saveTranscript } = await import("../library/transcribe");
 const { ENERGY_PER_SECOND, energyFile } = await import("./analyze");
-const { createEdit, readDraft, saveDraft, saveStep, viewOf, readEdit } = await import("./store");
+const { createEdit, editDir, readDraft, readStep, saveDraft, saveStep, viewOf, readEdit } = await import("./store");
 const { buildTimeline, sourceOf, timecodeFrames } = await import("./timeline");
 const { tick } = await import("./worker");
 
@@ -106,6 +106,10 @@ describe("AI Editor timeline", () => {
     await saveStep(e.id, "analysis", { sentences, notes: [] });
     await saveStep(e.id, "plan", { lines, plans, notes: [] });
     await saveDraft(e.id, "v3", { timeline: {} as never, notes: [] });
+    const v3copy = path.join(editDir(e.id), "post", "v3", "face-blur", "a-1.mov");
+    mkdirSync(path.dirname(v3copy), { recursive: true });
+    writeFileSync(v3copy, "x");
+    await saveStep(e.id, "post", { v3: { files: { ver_a: v3copy }, notes: [] } });
     enqueueJob(libraryDb(), "mem-a", `${e.id}:`, "draft", "mem-a", true, "edit_jobs");
     while (await tick());
     const jobs = viewOf(readEdit(e.id)!).jobs.map((j) => [j.kind, j.variant, j.kind === "draft" ? j.state : ""]);
@@ -123,6 +127,9 @@ describe("AI Editor timeline", () => {
       ["preview", "v2", ""],
     ]);
     expect(viewOf(readEdit(e.id)!).drafts).toEqual(["v1", "v2"]);
+    // the dropped version's post copies go too
+    expect(existsSync(path.join(editDir(e.id), "post", "v3"))).toBe(false);
+    expect(readStep(e.id, "post")?.v3).toBeUndefined();
     const v2 = readDraft(e.id, "v2")!.timeline;
     expect(v2.tracks.V1.items.map((i) => i.src)).toEqual(["ver_a", "ver_b"]);
     expect(Object.keys(v2.sources).sort()).toEqual(["ver_a", "ver_b"]);

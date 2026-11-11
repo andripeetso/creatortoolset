@@ -1,4 +1,4 @@
-import { rm } from "node:fs/promises";
+import { readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { DEFAULT_EYELINE, TRACKS, type Item, type Line, type Sentence, type Timeline, type TimelineSource, type TrackId, type VersionPlan } from "../../contracts/editor";
 import { blobs, libraryDb } from "../library/db";
@@ -8,7 +8,7 @@ import { wordsOf, type TimedWord } from "../library/transcribe";
 import { energyOf } from "./analyze";
 import { CUT, cutTake, type CutSettings } from "./cut";
 import { framingOf } from "./framing";
-import { draftNames, editDir, readStep, saveDraft } from "./store";
+import { draftNames, editDir, readStep, saveDraft, saveStep } from "./store";
 import type { StepContext } from "./worker";
 
 /**
@@ -121,9 +121,13 @@ export async function draftStep({ edit, job, variant, signal }: StepContext): Pr
   if (!plan) throw new Error("Write the script first");
   const db = libraryDb();
   if (!variant) {
-    // the whole edit: one draft per version planned, and drafts of versions no longer planned go
+    // the whole edit: one draft per version planned, and drafts of versions no longer planned go, with their post copies
     const keep = new Set(plan.plans.map((p) => p.name));
     for (const n of draftNames(edit.id)) if (!keep.has(n)) await rm(path.join(editDir(edit.id), "drafts", `${n}.json`), { force: true });
+    const postDir = path.join(editDir(edit.id), "post");
+    for (const n of await readdir(postDir).catch(() => [])) if (!keep.has(n) && n !== "_") await rm(path.join(postDir, n), { recursive: true, force: true });
+    const post = readStep(edit.id, "post");
+    if (post && Object.keys(post).some((v) => v && !keep.has(v))) await saveStep(edit.id, "post", Object.fromEntries(Object.entries(post).filter(([v]) => !v || keep.has(v))));
     for (const p of plan.plans) enqueueJob(db, edit.workspaceId, `${edit.id}:${p.name}`, "draft", job.actor, true, "edit_jobs");
     return;
   }
