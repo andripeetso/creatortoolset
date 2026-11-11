@@ -50,7 +50,9 @@ async function send(user: string, u: { id: string; data: Buffer }): Promise<any>
   return json(call(user, "POST", `/api/library/uploads/${u.id}/finish`));
 }
 const jobs = (id: string) => libraryDb().prepare("SELECT kind, state FROM edit_jobs WHERE edit_id = ?").all(id);
-const settle = () => new Promise((r) => setTimeout(r, 50));
+const { uploadFinished } = await import("./store");
+// waits for every finished upload's work queued before it (one chain): a no-op of an upload nobody waits on
+const settle = () => uploadFinished("-", "-");
 
 describe.skipIf(rootReplaced)("AI Editor: an edit from clips still uploading", () => {
   it("waits for every clip, then starts with them as its sources in the order picked", async () => {
