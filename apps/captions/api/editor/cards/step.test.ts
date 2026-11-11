@@ -624,7 +624,7 @@ describe.skipIf(rootReplaced)("cards never hold an edit up", () => {
       const id = await newEdit();
       await toCards(id);
       expect(asked).toEqual([]);
-      expect(await ended(id)).toEqual({ cards: [], note: "Cards: a style from Community makes no cards yet" });
+      expect(await ended(id)).toEqual({ cards: [], note: "Cards: a style from Community makes no cards" });
     } finally {
       change("maker", (f) => void delete f.animation!.find((a) => a.id === anim.id)!.from);
     }

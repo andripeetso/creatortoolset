@@ -190,7 +190,7 @@ async function make({ edit, job, variant, signal }: StepContext, tl: Timeline, f
   const style = findAnimation(actor, st.style);
   if (!style) return end("its animation style is gone");
   // only a style the person made reaches an AI call (contracts/editor-styles.ts `from`)
-  if (style.from) return end("a style from Community makes no cards yet");
+  if (style.from) return end("a style from Community makes no cards");
 
   try {
     if (!st.cards) {
