@@ -12,7 +12,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ScreenRecordingEditor, type EditorAction } from "@/components/ScreenRecordingEditor";
-import { canRecordScreen, tellRecorder, useLocalRecordings, type ShareDest } from "@/lib/mac-record";
+import { canRecordScreen, tellRecorder, throwAwayRecording, useLocalRecordings, type ShareDest } from "@/lib/mac-record";
 import { uploadReviewFile } from "@/lib/review";
 import { openLocalRecording } from "@/lib/screen-source";
 
@@ -120,9 +120,8 @@ export default function ScreenProjectPage() {
               aria-label="Throw this recording away"
               title="Throw this recording away (to the Trash)"
               className="hover:bg-red-950/60 hover:text-red-300"
-              onClick={() => {
-                setLeaving(true);
-                tellRecorder(`delete:${rec.id}`);
+              onClick={async () => {
+                if (await throwAwayRecording(rec)) setLeaving(true);
               }}
             >
               <Trash2 />

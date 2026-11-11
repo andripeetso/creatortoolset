@@ -82,7 +82,7 @@ export function ScreenRecordingEditor({
   const base = meta.name.replace(/\.(mp4|mov|m4v|webm)$/i, "");
 
   const path = useMemo(() => (events ? pointerPath(events) : []), [events]);
-  const player = usePlayer({ look, events, path, duration: meta.duration, width, height });
+  const player = usePlayer({ url: source.url, cameraUrl: source.cameraUrl, look, events, path, duration: meta.duration, width, height });
   // a recording filed without its length (one that stopped early) takes it from the file
   const duration = meta.duration > 0 ? meta.duration : player.mediaDuration;
   const loaded = useRef<{ events: ScreenEvents; look: ScreenLook | null } | null>(null);
@@ -195,11 +195,11 @@ export function ScreenRecordingEditor({
   // would take the Space, and a page under this editor (Review) has keys of its own.
   useEffect(() => {
     const elsewhere = (e: KeyboardEvent) =>
-      typing(e) || !!(e.target as HTMLElement | null)?.closest('[data-slot="popover-content"], [role="menu"]');
+      typing(e) || !!(e.target as Partial<HTMLElement> | null)?.closest?.('[data-slot="popover-content"], [role="menu"]');
     const onKey = (e: KeyboardEvent) => {
       const look = lookRef.current;
       if (!look || elsewhere(e)) return;
-      const on = (e.target as HTMLElement | null)?.closest("[role=slider], [role=radiogroup], [role=tablist]");
+      const on = (e.target as Partial<HTMLElement> | null)?.closest?.("[role=slider], [role=radiogroup], [role=tablist]");
       if (e.key === " ") player.toggle();
       else if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && !on && !e.metaKey && !e.altKey) {
         player.seek(player.time() + (e.key === "ArrowLeft" ? -1 : 1) * (e.shiftKey ? 0.1 : 1));
@@ -368,31 +368,15 @@ export function ScreenRecordingEditor({
             </div>
             {(!player.ready || !look) && (
               <div className="absolute inset-0 flex items-center justify-center">
-                {error ? <p className="text-sm text-red-400">{error}</p> : <Loader2 className="h-6 w-6 animate-spin text-zinc-600" />}
+                {error || player.failed ? (
+                  <p className="text-sm text-red-400">{error || "This recording can't be played here"}</p>
+                ) : (
+                  <Loader2 className="h-6 w-6 animate-spin text-zinc-600" />
+                )}
               </div>
             )}
-            <video
-              ref={player.video}
-              src={source.url}
-              crossOrigin="anonymous"
-              playsInline
-              preload="auto"
-              className="pointer-events-none absolute left-0 top-0 h-px w-px opacity-0"
-              onError={() => setError("This recording can't be played here")}
-              {...player.videoProps}
-            />
-            {source.cameraUrl && (
-              // muted: the screen's own track carries the voice; this one only feeds the camera picture
-              <video
-                ref={player.cam}
-                src={source.cameraUrl}
-                crossOrigin="anonymous"
-                muted
-                playsInline
-                preload="auto"
-                className="pointer-events-none absolute left-0 top-0 h-px w-px opacity-0"
-              />
-            )}
+            {/* the videos themselves: the player makes them here, out of sight */}
+            <div ref={player.holder} />
           </div>
 
           {look && events && (

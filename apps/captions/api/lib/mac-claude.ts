@@ -442,6 +442,7 @@ export function relayRoutes(deviceOf: (c: Context) => string | null) {
     const error = String(b.error ?? "failed").slice(0, 300);
     // the relay says what the CLI said; a closed usage window says when it opens again
     const tool = DRIVERS.find((d) => d.id === r.provider?.driver)?.label ?? "Claude";
+    if (b.limit === true) console.warn(`[ai] ${r.label ?? "a call"}: usage limit (${error})`); // the CLI's own words, for the log only
     const err = b.limit === true ? new MacClaudeError(limitMessage(error, tool), "limit") : new MacClaudeError(r.provider?.driver && r.provider.driver !== "claude" ? error : `Claude on the Mac: ${error}`, b.gone === true ? "gone" : "failed"); // the other CLIs' errors name themselves ("Codex: …")
     err.usage = usage;
     r.fail(err);

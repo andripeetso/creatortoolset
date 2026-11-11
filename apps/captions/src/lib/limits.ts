@@ -1,4 +1,4 @@
-import type { LimitWindow, LimitsIdentity } from "@contracts/providers";
+import { DRIVERS, type LimitWindow, type LimitsIdentity, type ProvidersView } from "@contracts/providers";
 
 /**
  * The plan-limit numbers behind Settings → Usage → Plan limits. Pure: every figure comes from the latest readings and `now`,
@@ -8,6 +8,9 @@ import type { LimitWindow, LimitsIdentity } from "@contracts/providers";
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
+
+/** A window at or under this share left is amber, in Settings → Usage and in the bar on top of every page. */
+export const LOW = 20;
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
 
@@ -88,4 +91,33 @@ export function noticeOf(i: LimitsIdentity, customEndpoint = false): string | nu
   if (i.state === "signed_out") return "Signed out in this folder. Sign in again there, and the reading comes back within five minutes.";
   if (i.state === "error") return `Its limits could not be read${i.error ? ` (${i.error})` : ""}.`;
   return i.windows.length === 0 ? "No limits reported." : null;
+}
+
+/**
+ * The one plan line the bar on top of every page shows (PlanLimitPill), or null while every plan has room. A used-up plan
+ * first, then the window with the least left at or under LOW. A call that met the limit (the AI's check note, mac-claude.ts)
+ * counts until a newer reading of that login says otherwise, so it shows even while Plan limits are off on the Mac.
+ */
+export function planAlert(view: ProvidersView, now: number): { text: string; full: string } | null {
+  const name = (d: string) => DRIVERS.find((x) => x.id === d)?.label ?? d;
+  let low: { text: string; full: string; left: number } | null = null;
+  for (const i of view.limits) {
+    if (i.state !== "ok") continue;
+    for (const raw of i.windows) {
+      const w = countedWindow(i, raw, now);
+      const left = leftOf(w.usedPercent);
+      if (left > LOW || (low && low.left <= left)) continue;
+      const reset = resetsIn(w, now);
+      const text = left === 0 ? `${name(i.driver)} · ${w.label} used up${reset ? ` · ${reset}` : ""}` : `${name(i.driver)} · ${w.label}: ${left}% left`;
+      low = { text, full: `${text}${left && reset ? ` · ${reset}` : ""}`, left };
+    }
+  }
+  if (low?.left === 0) return low;
+  for (const [key, c] of Object.entries(view.checks ?? {})) {
+    if (!c.note || view.limits.some((i) => i.instances.includes(key) && i.at > c.at)) continue;
+    // "Your Claude plan's weekly limit is reached; it resets 5pm." → "Claude weekly limit reached · resets 5pm"
+    const m = /^Your (.+?) plan's (.+?) is reached(?:; it resets (.+?))?\.$/.exec(c.note);
+    return { text: m ? `${m[1]} ${m[2]} reached${m[3] ? ` · resets ${m[3]}` : ""}` : c.note, full: c.note };
+  }
+  return low;
 }

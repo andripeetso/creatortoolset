@@ -147,6 +147,6 @@ describe("Muse Code on a Mac", () => {
     // what the Mac sends for one (MuseStream.failure)
     const error = "Your Muse Code plan's usage limit is reached. Muse Code said: usage limit reached. It resets Nov 11, 2026 at 5:00 AM.";
     await relay(jordan.token, `/${job.id}/fail`, { error, limit: true });
-    await expect(answer).rejects.toMatchObject({ kind: "limit", message: expect.stringMatching(/^Your Muse Code plan's limit is reached; it resets Nov 11, 2026 at 5:00 AM\. Muse Code said: /) });
+    await expect(answer).rejects.toMatchObject({ kind: "limit", message: "Your Muse Code plan's limit is reached; it resets Nov 11, 2026 at 5:00 AM." });
   });
 });

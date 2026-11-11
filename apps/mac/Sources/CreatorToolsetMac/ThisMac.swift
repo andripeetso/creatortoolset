@@ -57,7 +57,7 @@ struct ThisMacView: View {
             }
             Section("Plan limits") {
                 Toggle("Read this Mac's Claude and Codex limits", isOn: $readLimits)
-                Text("Undocumented: reads each CLI's login on this Mac (the Claude login from the Keychain, Codex's auth.json) and asks the CLI's usage page every five minutes. Off by default; off sends nothing and reads nothing.")
+                Text("Undocumented: reads each CLI's login on this Mac (the Claude login from the Keychain, Codex's auth.json) and asks the CLI's usage page every five minutes. On once Claude or Codex first runs here; off sends nothing and reads nothing.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             if shell.server != nil {
