@@ -488,7 +488,10 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
     }
     const added = files.filter((f) => f.version_id);
     const lib = String(added[0]?.library ?? "");
-    const sorted = lib ? await sortedLine(lib, added.map((f) => String(f.version_id)), SORT_WAIT_S.added, by) : { said: "Nothing was added", left: 0 };
+    // nothing went in: the line says why, when every file was refused for the same reason
+    const why = new Set(files.map((f) => f.error));
+    const none = `Nothing was added${why.size === 1 && files[0]?.error ? `: ${String(files[0].error)}` : ""}`;
+    const sorted = lib ? await sortedLine(lib, added.map((f) => String(f.version_id)), SORT_WAIT_S.added, by) : { said: none, left: 0 };
     return {
       said: sorted.said,
       files: files.map(({ library: _, ...f }) => f),

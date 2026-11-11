@@ -221,6 +221,44 @@ describe("a Video Note read back", () => {
   });
 });
 
+describe("a file dropped for the Media Library", () => {
+  /** A file dropped in the chat, uploaded as the dock does (one part). */
+  const drop = async (cookie: string, name: string) => {
+    const bytes = Buffer.alloc(4096, 7);
+    const { id, partSize } = (await (await app.request("/api/assistant/files", { method: "POST", ...json({ name, mime: "video/mp4", size: bytes.length }, { cookie }) })).json()) as { id: string; partSize: number };
+    await app.request(`/api/assistant/files/${id}/parts/1`, { method: "POST", headers: { cookie, "upload-length": String(bytes.length), "upload-part-size": String(partSize), "content-length": String(bytes.length), "content-type": "application/octet-stream" }, body: bytes });
+    expect((await app.request(`/api/assistant/files/${id}/complete`, { method: "POST", headers: { cookie } })).status).toBe(200);
+    return id;
+  };
+
+  it("is not put where the person never looks: on an install whose Media Library is a plug-in's source it is refused, and the answer says why", async () => {
+    const { registerLibrarySlot, resetLibrarySlots } = await import("./library/sources");
+    const { libraryDb } = await import("./library/db");
+    (await import("./mcp")).SORT_WAIT_S.added = 0; // the line as it is the moment the file is in, without waiting for the sorting
+    const cookie = await cookieOf("ana");
+    const t = await turn(cookie, "Put this in my library");
+    const count = () => (libraryDb().prepare("SELECT COUNT(*) AS n FROM assets").get() as { n: number }).n;
+    // an extra source beside the app's own library changes nothing: the file goes in
+    registerLibrarySlot("tiny", { source: { id: "extras", label: "Extras" } });
+    const added = JSON.parse((await tool(t.token, "use_file", { file: await drop(cookie, "Sea.mp4"), to: "library" })).text) as { said: string };
+    expect(added.said).toMatch(/^1 clip added/);
+    const before = count();
+    expect(before).toBeGreaterThan(0);
+    // a source that IS the Media Library: nothing is added to the storage library its page never shows
+    resetLibrarySlots();
+    registerLibrarySlot("tiny", { source: { id: "catalog", label: "Footage catalog", main: true } });
+    try {
+      const refused = JSON.parse((await tool(t.token, "use_file", { files: [await drop(cookie, "Talk.mp4"), await drop(cookie, "Roll.mp4")], to: "library" })).text) as { said: string; href?: string };
+      expect(refused.said).toBe("Nothing was added: On this server the Media Library is the Footage catalog, and files go in on its own page (/library): open it and add them there.");
+      expect(refused.href).toBeUndefined();
+      expect(count()).toBe(before);
+    } finally {
+      resetLibrarySlots();
+      await t.end();
+    }
+  });
+});
+
 describe("a scheduled run has nobody at the screen", () => {
   it("opening a page or asking for a key is refused there, in words the AI can act on", async () => {
     const run = runInChat("ana", { task: { id: "t1", name: "Weekly" }, prompt: "Do the weekly thing", preface: "", fresh: true, route: routeOf("ana", false)!, url: "http://localhost/api/mcp" });
