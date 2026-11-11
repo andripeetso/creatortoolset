@@ -42,7 +42,8 @@ export const tell = (what: string) => postToApp(`thismac-${what}`);
 export function useThisMac(on: boolean): ThisMacState | null {
   const user = useAuth((s) => s.me?.username ?? null);
   const [state, setState] = useState<ThisMacState | null>(() => {
-    const kept = on ? readCached<ThisMacState>(user, SAVED) : null;
+    // read whenever the app is here, so a caller that turns `on` later (the account menu, on open) paints its last answer at once
+    const kept = hasThisMac() ? readCached<ThisMacState>(user, SAVED) : null;
     return kept && { ...kept, saved: true };
   });
   useEffect(() => {
