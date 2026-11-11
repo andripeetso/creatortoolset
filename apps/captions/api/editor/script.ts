@@ -7,6 +7,7 @@ import { whoFor } from "../library/describe";
 import { NeedsKey } from "../library/transcribe";
 import { packInstructions } from "../lib/packs";
 import { readStep, saveStep, type EditMeta } from "./store";
+import { styleBlock } from "./styles";
 import type { StepContext } from "./worker";
 
 /**
@@ -180,7 +181,8 @@ export async function scriptStep({ edit, job, signal }: StepContext): Promise<vo
     script: edit.script,
     versions: edit.versions,
     targetS: edit.targetS,
-    packText: await packInstructions(job.actor!, "editor.script", null),
+    // an edit made with an editing style: the person's own notes, after the packs' text (styles.ts); no style adds nothing
+    packText: [await packInstructions(job.actor!, "editor.script", null), styleBlock(edit.style)].filter(Boolean).join("\n\n"),
   });
   let raw: RawScript;
   try {

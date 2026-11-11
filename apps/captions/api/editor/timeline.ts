@@ -6,7 +6,7 @@ import { enqueueJob } from "../library/jobs";
 import type { ProbeSummary } from "../library/media/probe";
 import { wordsOf, type TimedWord } from "../library/transcribe";
 import { energyOf } from "./analyze";
-import { cutTake, type CutSettings } from "./cut";
+import { CUT, cutTake, type CutSettings } from "./cut";
 import { framingOf } from "./framing";
 import { draftNames, editDir, readStep, saveDraft } from "./store";
 import type { StepContext } from "./worker";
@@ -15,6 +15,13 @@ import type { StepContext } from "./worker";
  * The AI Editor's draft step: one version's plan → a timeline. Each line's take is cut (cut.ts), its pieces laid end
  * to end on V1 (picture) and A1 (its own sound, linked), every other shot punched in (framing.ts), a marker per line.
  */
+
+/**
+ * The cut of an edit whose editing style says Natural pace: a pause shorter than half a second stays, and a line keeps
+ * more air before and after it. Starting values nobody has measured on real footage. Every other edit gets the cut's
+ * own settings (CUT), untouched.
+ */
+export const NATURAL_CUT: CutSettings = { ...CUT, minSilenceS: 0.5, keepTailS: 0.16, keepHeadS: 0.08, lineHeadS: 0.12, lineTailS: 0.2 };
 
 export const TRACK_NAMES: Record<TrackId, string> = { V1: "Speaker", V2: "B-roll", A1: "Voice", A2: "Music", A3: "Sound effects" };
 
@@ -150,6 +157,7 @@ export async function draftStep({ edit, job, variant, signal }: StepContext): Pr
     energy,
     punch: edit.framing.punch,
     eyeline: edit.eyeline ?? {},
+    cut: edit.style?.pace === "natural" ? NATURAL_CUT : undefined,
   });
   if (!timeline.tracks.V1.items.length) throw new Error(`No speech found in ${version.title}'s takes`);
   await saveDraft(edit.id, version.name, { timeline, notes });

@@ -9,7 +9,8 @@ import { footageTargetFor } from "./ingest";
 import { LINK_TTL_S, mediaPaths } from "./media";
 import { toOtio } from "./otio";
 import { qaOf } from "./qa";
-import { allEdits, cleanBrief, createEdit, draftNames, editorDefaults, editRole, gradeOf, NoCollection, readDraft, readEdit, postFiles, readStep, saveEdit, saveStep, setChosenDefault, sourcesWorkspace, summaryOf, viewOf, type EditMeta } from "./store";
+import { allEdits, cleanBrief, createEdit, draftNames, editorDefaults, editRole, gradeOf, NoCollection, NoStyle, readDraft, readEdit, postFiles, readStep, saveEdit, saveStep, setChosenDefault, sourcesWorkspace, styleFields, summaryOf, viewOf, type EditMeta } from "./store";
+import { createStyle, deleteStyle, stylesView, updateStyle } from "./styles";
 import { stopEdit } from "./worker";
 
 /**
@@ -40,6 +41,7 @@ editorApp.post("/", async (c) => {
     return e ? c.json({ id: e.id }) : notFound(c);
   } catch (e) {
     if (e instanceof NoCollection) return notFound(c);
+    if (e instanceof NoStyle) return c.json({ error: e.message, code: "not_found" }, 404);
     throw e;
   }
 });
@@ -73,6 +75,27 @@ editorApp.put("/defaults/:slot", async (c) => {
   return c.json(await editorDefaults(user));
 });
 
+// the person's editing styles (contracts/editor-styles.ts); registered before /:id, as the defaults are
+editorApp.get("/styles", (c) => c.json(stylesView(c.get("user").username)));
+
+/** A new style from the fields sent, or with `fromEdit` from an edit of the caller's own (its choices, never its brief, script or footage). */
+editorApp.post("/styles", async (c) => {
+  const user = c.get("user").username;
+  const b = await body(c);
+  const from = b.fromEdit === undefined ? undefined : readEdit(String(b.fromEdit));
+  if (b.fromEdit !== undefined && !editRole(user, from ?? null)) return notFound(c);
+  const made = createStyle(user, b, from ?? undefined);
+  return typeof made === "string" ? c.json({ error: made, code: "invalid" }, 400) : c.json(made);
+});
+
+editorApp.put("/styles/:id", async (c) => {
+  const changed = updateStyle(c.get("user").username, c.req.param("id"), await body(c));
+  if (!changed) return notFound(c);
+  return typeof changed === "string" ? c.json({ error: changed, code: "invalid" }, 400) : c.json(changed);
+});
+
+editorApp.delete("/styles/:id", (c) => (deleteStyle(c.get("user").username, c.req.param("id")) ? c.json({ ok: true }) : notFound(c)));
+
 editorApp.get("/:id", (c) => {
   const r = load(c);
   return r ? c.json(viewOf(r.e)) : notFound(c);
@@ -82,15 +105,21 @@ editorApp.patch("/:id", async (c) => {
   const r = load(c);
   if (!r) return notFound(c);
   let patch;
+  let styled: Partial<EditMeta> = {};
+  const b = await body(c);
   try {
-    patch = cleanBrief(await body(c), r.e.createdBy, r.e.workspaceId);
+    patch = cleanBrief(b, r.e.createdBy, r.e.workspaceId);
+    // `style` puts an editing style's choices on the edit, under what this patch sets itself; null takes the style off
+    if (typeof b.style === "string") styled = await styleFields(r.e.createdBy, r.e.workspaceId, b.style, r.e.bundle);
   } catch (e) {
     if (e instanceof NoCollection) return notFound(c);
+    if (e instanceof NoStyle) return c.json({ error: e.message, code: "not_found" }, 404);
     throw e;
   }
   delete patch.framing; // set per source in a later step
   // a flag the patch leaves out keeps its state
-  const e = { ...r.e, ...patch, flags: { ...r.e.flags, ...patch.flags } };
+  const e = { ...r.e, ...styled, ...patch, flags: { ...r.e.flags, ...patch.flags } };
+  if (b.style === null) delete e.style;
   await saveEdit(e);
   return c.json(viewOf(readEdit(e.id)!));
 });
