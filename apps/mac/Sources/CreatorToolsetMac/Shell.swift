@@ -696,6 +696,9 @@ final class Shell: NSObject, ObservableObject {
         runner?.stop()
         runner = nil
         runnerID = UUID()
+        // what the stopped runner still finishes is no longer told here, so its count and its row would stay for good
+        ai.running = 0
+        ai.drawing = false
     }
 
     /// The site no longer knows this Mac (its token was revoked): drop the token and say so in the menu.

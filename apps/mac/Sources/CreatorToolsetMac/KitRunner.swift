@@ -12,7 +12,8 @@
 //   - WebKit's link preconnect is switched off (a link click with target=_blank, or <link rel=preconnect>, otherwise
 //     opens a connection whatever the policy says). WebKit has no public switch for it, so this is a private call,
 //     and a Mac where it is missing draws no card;
-//   - whatever else heads for a name or address outside this Mac is sent to a proxy address where nothing listens;
+//   - whatever else asks for a name outside this Mac is handed to a proxy address where nothing listens (measured
+//     for a name; an address is expected to go the same way, and trying one would be real traffic);
 //   - one time limit for the whole card, and the page's process is ended with the card (a loop that never returns
 //     otherwise keeps a processor busy until the app quits, and WebKit's own kill does not stop it).
 import AppKit
@@ -58,7 +59,7 @@ struct KitWalls: OptionSet {
     static let lockdown = KitWalls(rawValue: 2)
     /// WebKit's link preconnect switched off
     static let noPreconnect = KitWalls(rawValue: 4)
-    /// a proxy address where nothing listens, for everything bound for a name or address outside this Mac
+    /// a proxy address where nothing listens, for whatever else is bound outside this Mac
     static let deadProxy = KitWalls(rawValue: 8)
     static let all: KitWalls = [.stay, .lockdown, .noPreconnect, .deadProxy]
 }
@@ -68,8 +69,12 @@ enum KitRunner {
     static let cardLimit: TimeInterval = 20
     /// Nothing loads but the page's own inline script and style, and `data:` images.
     static let policy = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:"
-    /// The dead proxy's port on this Mac: 1, which only the system could listen on and nothing does.
+    /// The dead proxy's port on this Mac: 1, where nothing listens.
     static let deadPort: UInt16 = 1
+    /// WebKit's own features switched off for a card's page. The needed one must be there to switch, or no card is
+    /// drawn (a test names one that is not there, to see that); the wanted one is switched off where this macOS has it.
+    @MainActor static var neededSwitches: Set<String> = ["LinkPreconnect"]
+    static let wantedSwitches: Set<String> = ["LinkDNSPrefetchEnabled"]
 
     /// The kit's own page: the stage, the card's content and the kit as inline script.
     static func html(for card: KitCard) throws -> String {
@@ -156,7 +161,7 @@ final class KitWebView: NSObject, WKNavigationDelegate {
         config.websiteDataStore = .nonPersistent()
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
         if walls.contains(.lockdown) { config.defaultWebpagePreferences.isLockdownModeEnabled = true }
-        if walls.contains(.noPreconnect) { try Self.switchOff(["LinkPreconnect"], and: ["LinkDNSPrefetchEnabled"], in: config.preferences) }
+        if walls.contains(.noPreconnect) { _ = try Self.switchOff(KitRunner.neededSwitches, and: KitRunner.wantedSwitches, in: config.preferences) }
         if walls.contains(.deadProxy), let port = NWEndpoint.Port(rawValue: proxyPort) {
             config.websiteDataStore.proxyConfigurations = [ProxyConfiguration(socksv5Proxy: .hostPort(host: "127.0.0.1", port: port))]
         }
@@ -167,10 +172,10 @@ final class KitWebView: NSObject, WKNavigationDelegate {
         webView.navigationDelegate = self
     }
 
-    /// Switches entries of WebKit's own feature list off for this page's preferences (they are this page's alone).
-    /// Private WebKit calls: WebKit has no public switch for link preconnect. `needed` must end up off, or this
-    /// throws and no card is drawn; `wanted` are switched off where this macOS has them.
-    private static func switchOff(_ needed: Set<String>, and wanted: Set<String>, in preferences: WKPreferences) throws {
+    /// Switches entries of WebKit's own feature list off for this page's preferences (they are this page's alone) and
+    /// returns the ones now off. Private WebKit calls: WebKit has no public switch for link preconnect. `needed` must
+    /// end up off, or this throws and no card is drawn; `wanted` are switched off where this macOS has them.
+    static func switchOff(_ needed: Set<String>, and wanted: Set<String>, in preferences: WKPreferences) throws -> Set<String> {
         let list = Selector(("_features")), set = Selector(("_setEnabled:forFeature:")), get = Selector(("_isEnabledForFeature:"))
         let key = Selector(("key"))
         guard WKPreferences.responds(to: list), preferences.responds(to: set), preferences.responds(to: get),
@@ -188,6 +193,7 @@ final class KitWebView: NSObject, WKNavigationDelegate {
             if !getter(preferences, get, feature) { off.insert(name) }
         }
         guard off.isSuperset(of: needed) else { throw KitRunnerError.unsafe("this macOS has no switch for link preconnect") }
+        return off
     }
 
     /// The page's own process, 0 when it has none (a private WebKit call: nothing public names it).

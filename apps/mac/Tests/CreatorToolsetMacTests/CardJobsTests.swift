@@ -322,6 +322,29 @@ final class CardJobsTests: XCTestCase {
         XCTAssertEqual(site.requests.filter { $0.path.hasSuffix("/editor/claim") }.count, 2)
     }
 
+    func testAMacThatCannotShutAScriptInSaysSoAndStopsAsking() async {
+        await MainActor.run { KitRunner.neededSwitches = ["NoSuchSwitch"] }   // as on a macOS whose WebKit lacks the switch
+        addTeardownBlock { await MainActor.run { KitRunner.neededSwitches = ["LinkPreconnect"] } }
+        let cards = sheet(["Tiny Acrobatics", "Second card"])
+        let site = FakeSite()
+        site.answer = { request in
+            if request.path.hasSuffix("/editor/claim") { return (200, request.body.count > 12 ? #"{"job":{"id":7,"kind":"cards-draw","editId":"e1","variant":"A"}}"# : #"{"job":null}"#) }
+            if request.path.hasSuffix("/job/7/cards") { return (200, cards) }
+            return (200, #"{"ok":true}"#)
+        }
+        let runner = runner(site)
+        guard let step = runner.claimStep(now: 1000) else { return XCTFail("no step") }
+        await offMain { runner.drawCards(step) }
+        // nothing was drawn or sent; the step failed in words, and the Mac told the server it draws no cards
+        XCTAssertEqual(paths(site), ["POST /api/devices/relay/editor/claim", "GET \(base)/cards", "POST \(base)/fail", "POST /api/devices/relay/editor/claim"])
+        let told = (try? JSONSerialization.jsonObject(with: site.requests[2].body)) as? [String: Any]
+        XCTAssertEqual(told?["error"] as? String, "Cards can't be drawn on this Mac: this macOS has no switch for link preconnect.")
+        XCTAssertEqual(String(decoding: site.requests[3].body, as: UTF8.self), #"{"kinds":[]}"#)
+        // and it never asks again while the app runs
+        for now in stride(from: 2000.0, to: 400_000, by: 3600) { XCTAssertNil(runner.claimStep(now: now)) }
+        XCTAssertEqual(site.requests.count, 4)
+    }
+
     func testAStepOfAKindThisMacDidNotDeclareIsHandedBack() {
         let site = FakeSite()
         site.answer = { $0.path.hasSuffix("/editor/claim") ? (200, #"{"job":{"id":9,"kind":"resolve","editId":"e1","variant":""}}"#) : (200, #"{"ok":true}"#) }

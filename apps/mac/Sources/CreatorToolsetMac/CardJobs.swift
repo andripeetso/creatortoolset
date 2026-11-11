@@ -166,6 +166,8 @@ struct CardJob {
         case done
         /// told to the server as the step's failure
         case failed(String)
+        /// this Mac can't shut a card's script in, so it draws none: told to the server the same way
+        case cannot(String)
         /// no longer this Mac's step (taken back, this Mac removed, the runner switched off): nothing more is sent
         case gone
     }
@@ -192,7 +194,7 @@ struct CardJob {
         let end = work(lease)
         switch end {
         case .done: _ = try? api.call("POST", "\(base)/done", tries: 4)
-        case .failed(let why): _ = try? api.call("POST", "\(base)/fail", ["error": String(why.prefix(500))], tries: 4)
+        case .failed(let why), .cannot(let why): _ = try? api.call("POST", "\(base)/fail", ["error": String(why.prefix(500))], tries: 4)
         case .gone: break
         }
         return end
@@ -237,7 +239,7 @@ struct CardJob {
             }
             defer { try? FileManager.default.removeItem(at: clip) }
             // this Mac can't shut a script in: none of the cards is drawn
-            if case .failure(let error) = drawn, case KitRunnerError.unsafe(let why) = error { return .failed("Cards can't be drawn on this Mac: \(why).") }
+            if case .failure(let error) = drawn, case KitRunnerError.unsafe(let why) = error { return .cannot("Cards can't be drawn on this Mac: \(why).") }
             guard case .success(let stills) = drawn, let film = try? Data(contentsOf: clip) else {
                 if case .failure(let error) = drawn { failed.append("\(name) \(cardFailure(error, limit: limit))") } else { failed.append("\(name) could not be made into a clip.") }
                 continue

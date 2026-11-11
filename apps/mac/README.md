@@ -419,17 +419,20 @@ opposite against a listener on this Mac (`KitSandboxTests.swift`):
   images.
 - WebKit's link preconnect is switched off for the page: a link with `target="_blank"` that the script clicks, or a
   `<link rel="preconnect">`, otherwise opens a connection whatever the policy says. WebKit has no public switch for
-  it, so this uses a private one (`_features`, `_setEnabled:forFeature:` on `WKPreferences`), and a Mac whose WebKit
-  lacks it draws no card and says so.
-- Whatever else heads for a name or address outside this Mac goes to a proxy address where nothing listens (port 1
-  on this Mac), set on the page's own data store.
+  it, so this uses a private one (`_features`, `_setEnabled:forFeature:` on `WKPreferences`). A Mac whose WebKit
+  lacks it draws no card: the step fails with a sentence saying so, the Mac tells the server it draws none (a claim
+  that declares no kind) and asks no more.
+- Whatever else asks for a name outside this Mac is handed to a proxy address where nothing listens (port 1 on this
+  Mac), set on the page's own data store.
 - One limit of 20 s covers the whole card: its page loading, every call into the script and every picture. The
   page's process is ended with every card (`SIGKILL` to the process `_webProcessIdentifier` names, another private
   call): a script that loops forever otherwise keeps a processor busy until the app quits, and WebKit's own kill
   does not stop it. Each card's page has a process of its own.
 
-Not measured: a DNS lookup that sends nothing else (the switch for `<link rel="dns-prefetch">` is turned off, but
-nothing here can watch a lookup), and macOS versions other than the one the tests ran on.
+Not measured: a DNS lookup that sends nothing else (the switch for `<link rel="dns-prefetch">` is turned off where
+this macOS has it, but nothing here can watch a lookup); the proxy for a bare address outside this Mac (trying one
+would be real traffic; a name goes to the proxy); a script that takes memory without end (the limit and the end of
+its process stop it, after up to 20 s). See also "Not checked yet".
 
 ## Notifications and the Dock badge
 
@@ -518,6 +521,12 @@ The first run, Access from other devices and Data location (Local server 4–6) 
 but not yet launched: the window's cookie landing in WebKit's store before the page loads, the setup inside the
 window, auto-pairing on a fresh data folder, the Keychain prompt for `owner-password` on a signed build, a real
 `ditto` move to an external disk and back, and the unplugged-disk message still need a run on a Mac.
+
+The card step (see "Draws an edit's cards") has run only in the tests, on macOS 26 on Apple silicon, against a
+stand-in for the server: not in the launched app, not in a signed build with the hardened runtime, not against a real
+server, and not on macOS 14 or 15 (where a missing private switch means no cards are drawn, by design). Whether
+Lockdown Mode for a page shows anything the first time in a real app bundle, and what the drawing costs the window
+while a person uses the app or records (each frame is taken on the main thread, at the screen's scale), are not known.
 
 The app has not been launched on a Mac in this build (so far it has been built and unit-tested). The plug-ins'
 alert, the record's Keychain path on a signed build, the restart's page reload and the five-crash pause have not

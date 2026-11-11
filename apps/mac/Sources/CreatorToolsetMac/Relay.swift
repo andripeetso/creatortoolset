@@ -313,9 +313,16 @@ final class RelayRunner {
         let end = CardJob(api: api, id: step.id, folder: work.appendingPathComponent("cards/\(step.id)"),
                           stopped: { [weak self] in self?.isStopped ?? true }).run()
         if case .failed(let why) = end { AppLog.write("cards: step \(step.id) failed: \(why)") }
+        var next: TimeInterval = 0   // more may wait (one step a version): ask again at once
+        if case .cannot = end {
+            // this Mac can't shut a card's script in: it tells the site it draws none (a claim that declares no kind),
+            // so another Mac of the account gets the step, and it asks no more
+            _ = try? api.call("POST", "/api/devices/relay/editor/claim", ["kinds": [String]()], tries: 2)
+            next = .infinity
+        }
         lock.lock()
         drawing = false
-        claimAt = 0   // more may wait (one step a version): ask again at once
+        claimAt = next
         lock.unlock()
         publish { $0.drawing = false }
     }

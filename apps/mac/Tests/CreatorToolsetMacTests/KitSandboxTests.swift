@@ -339,6 +339,20 @@ final class KitSandboxTests: XCTestCase {
         XCTAssertTrue(ended)
     }
 
+    func testAMacWithoutTheSwitchDrawsNoCard() throws {
+        // on this Mac the switches are there and end up off
+        let off = try KitWebView.switchOff(["LinkPreconnect"], and: ["LinkDNSPrefetchEnabled"], in: WKPreferences())
+        XCTAssertEqual(off, ["LinkPreconnect", "LinkDNSPrefetchEnabled"])
+        // a macOS whose WebKit has no such switch: no page is made, so nothing runs behind fewer walls
+        XCTAssertThrowsError(try KitWebView.switchOff(["NoSuchSwitch"], and: [], in: WKPreferences())) { error in
+            XCTAssertEqual(error as? KitRunnerError, .unsafe("this macOS has no switch for link preconnect"))
+        }
+        KitRunner.neededSwitches = ["NoSuchSwitch"]
+        defer { KitRunner.neededSwitches = ["LinkPreconnect"] }
+        XCTAssertThrowsError(try KitWebView(width: 320, height: 180))
+        XCTAssertEqual(KitRunner.cardLimit, 20, "a card gets 20 s")
+    }
+
     func testTheWallsAreThisPagesAlone() async throws {
         // a card's page switches WebKit's link preconnect off for itself: a web view made afterwards still has it
         let site = FakeSite()
