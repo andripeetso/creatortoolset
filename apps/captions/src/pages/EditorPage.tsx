@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
-import { Check, Folder, Loader2, Plus } from "lucide-react";
+import { Check, Clapperboard, Folder, Loader2, Plus } from "lucide-react";
 import type { EditSummary } from "@contracts/editor";
 import { MAX_VERSIONS } from "@contracts/editor";
 import type { AssetCard, Collection, LibrarySummary } from "@contracts/library";
@@ -18,6 +18,9 @@ import { cn } from "@/lib/utils";
 import { confirmHeavy, openToolSetup } from "@/lib/setup";
 import { EditorDefaultsButton } from "@/components/settings/EditorDefaultsDialog";
 import { FootageFolderCard } from "@/components/FootageFolderCard";
+import { BrowseBar } from "@/components/browse/Bar";
+import { FolderGrid, ItemCard } from "@/components/browse/Grid";
+import { byName, matches, persistSort, storedSort, useBrowseView } from "@/components/browse/views";
 
 /**
  * AI Editor (/editor): the edits I made (a workspace owner: the members' too), and New edit: footage picked from the
@@ -25,6 +28,8 @@ import { FootageFolderCard } from "@/components/FootageFolderCard";
  */
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+const SORTS = ["recent", "name"] as const;
+const SORT_KEY = "editor:sort";
 export const thumb = (versionId: string) => `/api/library/media/${versionId}/thumb`;
 
 const STATE_TONE: Record<string, string> = {
@@ -49,6 +54,11 @@ export default function EditorPage() {
   const [params] = useSearchParams();
   const start = params.get("new") ? { folder: params.get("folder") ?? "", name: params.get("name") ?? "" } : undefined;
   const [creating, setCreating] = useState(!!start);
+  const [view, setView] = useBrowseView("editor");
+  const [find, setFind] = useState("");
+  const [sort, setSort] = useState(() => storedSort(SORT_KEY, SORTS));
+  // the server sends them newest change first
+  const shown = edits?.filter((e) => matches(find, e.name)).sort((a, b) => (sort === "name" ? byName(a, b) : 0)) ?? [];
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -74,8 +84,42 @@ export default function EditorPage() {
           </div>
         )}
         {edits && edits.length > 0 && (
+          <BrowseBar
+            search={{ value: find, onChange: setFind, placeholder: "Search edits (⌘K)" }}
+            sort={{
+              value: sort,
+              onChange: (v) => {
+                setSort(v);
+                persistSort(SORT_KEY, v);
+              },
+              label: "Sort edits",
+              options: [
+                { id: "recent", label: "Recent" },
+                { id: "name", label: "Name" },
+              ],
+            }}
+            view={{ value: view, onChange: setView }}
+          />
+        )}
+        {edits && edits.length > 0 && shown.length === 0 && <p className="py-16 text-center text-sm text-zinc-500">No matches.</p>}
+        {shown.length > 0 && view === "grid" && (
+          <FolderGrid size="small">
+            {shown.map((e) => (
+              <ItemCard
+                key={e.id}
+                to={`/editor/${e.id}`}
+                picture={e.sources[0] ? thumb(e.sources[0]) : undefined}
+                icon={Clapperboard}
+                name={e.name}
+                meta={`${e.sources.length} ${e.sources.length === 1 ? "clip" : "clips"} · ${new Date(e.updatedAt).toLocaleDateString()}`}
+                badge={e.last && <StateBadge state={e.last.state} />}
+              />
+            ))}
+          </FolderGrid>
+        )}
+        {shown.length > 0 && view === "list" && (
           <ul className="flex flex-col divide-y divide-zinc-500/15 rounded-xl border border-zinc-500/20">
-            {edits.map((e) => (
+            {shown.map((e) => (
               <li key={e.id}>
                 <Link to={`/editor/${e.id}`} className="flex items-center gap-3 px-3 py-2.5 hover:bg-zinc-500/10">
                   <div className="flex shrink-0 -space-x-3">
