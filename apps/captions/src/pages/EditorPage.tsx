@@ -18,7 +18,9 @@ import { cn } from "@/lib/utils";
 import { confirmHeavy, openToolSetup } from "@/lib/setup";
 import { EditorDefaultsButton } from "@/components/settings/EditorDefaultsDialog";
 import { FootageFolderCard } from "@/components/FootageFolderCard";
-import { BrowseBar } from "@/components/browse/Bar";
+import { BrowseBar, NewFolderButton } from "@/components/browse/Bar";
+import { FolderTrail, MoveToMenu, ToolFolderCards, ToolFolderRows } from "@/components/browse/ToolFolders";
+import { useToolFolders } from "@/lib/folders";
 import { FolderGrid, ItemCard } from "@/components/browse/Grid";
 import { byName, matches, persistSort, storedSort, useBrowseView } from "@/components/browse/views";
 
@@ -57,12 +59,19 @@ export default function EditorPage() {
   const [view, setView] = useBrowseView("editor");
   const [find, setFind] = useState("");
   const [sort, setSort] = useState(() => storedSort(SORT_KEY, SORTS));
-  // the server sends them newest change first
-  const shown = edits?.filter((e) => matches(find, e.name)).sort((a, b) => (sort === "name" ? byName(a, b) : 0)) ?? [];
+  // the open folder's edits (every folder's when searching); the server sends them newest change first
+  const folders = useToolFolders("editor", edits ?? [], find);
+  const shown = folders.here.filter((e) => matches(find, e.name)).sort((a, b) => (sort === "name" ? byName(a, b) : 0));
+  const firstClip = (id: string) => {
+    const v = edits?.find((e) => e.id === id)?.sources[0];
+    return v ? thumb(v) : undefined;
+  };
+  const anything = !!edits?.length || folders.folders.length > 0 || !!folders.open;
 
   return (
     <div className="flex min-h-dvh flex-col">
       <AppBar tool="AI Editor">
+        {anything && <NewFolderButton onClick={() => void folders.newFolder()} />}
         <EditorDefaultsButton />
         <Button size="sm" onClick={() => setCreating(true)}>
           <Plus className="h-4 w-4" />
@@ -71,7 +80,7 @@ export default function EditorPage() {
       </AppBar>
       <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-3 px-4 py-4 sm:px-6">
         {edits === null && !error && <div aria-hidden="true" className="h-[184px] rounded-xl border border-zinc-500/20" />}
-        {edits?.length === 0 && (
+        {edits?.length === 0 && !anything && (
           <div className="flex flex-col items-center gap-3 py-16 text-center">
             <p className="max-w-md text-sm text-zinc-500">
               Pick raw takes from your Media Library and say what the video is. The AI picks the best take of each line, cuts the restarts and
@@ -83,7 +92,8 @@ export default function EditorPage() {
             </Button>
           </div>
         )}
-        {edits && edits.length > 0 && (
+        <FolderTrail state={folders} top="AI Editor" />
+        {anything && (
           <BrowseBar
             search={{ value: find, onChange: setFind, placeholder: "Search edits (⌘K)" }}
             sort={{
@@ -101,9 +111,10 @@ export default function EditorPage() {
             view={{ value: view, onChange: setView }}
           />
         )}
-        {edits && edits.length > 0 && shown.length === 0 && <p className="py-16 text-center text-sm text-zinc-500">No matches.</p>}
-        {shown.length > 0 && view === "grid" && (
+        {find.trim() && shown.length === 0 && folders.folders.length === 0 && <p className="py-16 text-center text-sm text-zinc-500">No matches.</p>}
+        {(shown.length > 0 || folders.folders.length > 0) && view === "grid" && (
           <FolderGrid size="small">
+            <ToolFolderCards state={folders} pictureOf={firstClip} />
             {shown.map((e) => (
               <ItemCard
                 key={e.id}
@@ -113,15 +124,22 @@ export default function EditorPage() {
                 name={e.name}
                 meta={`${e.sources.length} ${e.sources.length === 1 ? "clip" : "clips"} · ${new Date(e.updatedAt).toLocaleDateString()}`}
                 badge={e.last && <StateBadge state={e.last.state} />}
+                drag={folders.drag(e.id)}
+                actions={folders.folders.length > 0 || folders.open ? <MoveToMenu state={folders} id={e.id} className="rounded p-1 hover:bg-white/20" /> : undefined}
               />
             ))}
           </FolderGrid>
         )}
+        {view === "list" && folders.folders.length > 0 && (
+          <div className="flex flex-col gap-1.5">
+            <ToolFolderRows state={folders} />
+          </div>
+        )}
         {shown.length > 0 && view === "list" && (
           <ul className="flex flex-col divide-y divide-zinc-500/15 rounded-xl border border-zinc-500/20">
             {shown.map((e) => (
-              <li key={e.id}>
-                <Link to={`/editor/${e.id}`} className="flex items-center gap-3 px-3 py-2.5 hover:bg-zinc-500/10">
+              <li key={e.id} className="group flex items-center">
+                <Link to={`/editor/${e.id}`} {...folders.drag(e.id)} className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5 hover:bg-zinc-500/10">
                   <div className="flex shrink-0 -space-x-3">
                     {e.sources.slice(0, 3).map((v) => (
                       <img key={v} src={thumb(v)} alt="" className="h-10 w-16 rounded-md border border-zinc-500/30 bg-zinc-800 object-cover" />
@@ -136,6 +154,7 @@ export default function EditorPage() {
                   </div>
                   {e.last && <StateBadge state={e.last.state} />}
                 </Link>
+                <MoveToMenu state={folders} id={e.id} className="mr-2 rounded p-1.5 text-zinc-500 opacity-0 hover:bg-zinc-500/15 hover:text-zinc-200 focus-visible:opacity-100 group-hover:opacity-100" />
               </li>
             ))}
           </ul>
