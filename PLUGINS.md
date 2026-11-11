@@ -100,10 +100,10 @@ A plug-in has one or both of these files, and any other files beside them:
 | You want | Field | File |
 |---|---|---|
 | A page of your own | `routes: [{ path, element }]` | `web.tsx` |
-| A tile on Home, in Plan, Make, Distribute or Tools | `tiles` | `web.tsx` |
+| A tile on Home, in Plan, Make, Distribute or Tools (each names a `gate`, see the switch below) | `tiles` | `web.tsx` |
 | A section in Settings | `settings` | `web.tsx` |
 | An item in the account menu | `accountMenu` | `web.tsx` |
-| A button on a Workshop session, a review upload, an export or a library item | `itemActions` | `web.tsx` |
+| A button on a Workshop session, a review upload, an export or a library item. `onRun` gets the item's id; read the rest through the app's own API (a session: `GET /api/workshop/sessions/<id>`) | `itemActions` | `web.tsx` |
 | Panels and toolbar buttons in Review | `review` | `web.tsx` |
 | Your page in place of a built-in one (AI Editor, Media Library, Finals, Settings → Storage) | `replaces` | `web.tsx` |
 | An API of its own, at `/api/x/<id>/…` behind the app's login | `routes` (a Hono app) | `plugin.ts` |
