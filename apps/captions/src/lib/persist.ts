@@ -13,15 +13,17 @@ import {
   type ClipSnapshot,
 } from "./store";
 import { storedAutoCadence } from "./cadence-preference";
-import { onTopic } from "./sync";
+import { onTopic, whenVisible } from "./sync";
 import { bumpCueIdCounter, type CadenceFit } from "./captions";
 import {
   deleteLocalRecoveryProject,
   listLocalRecoveryProjects,
+  openedInSync,
   renameLocalRecoveryProject,
   restoreLocalRecoveryProject,
 } from "./local-recovery";
 import {
+  BUSY_PHASES,
   DEFAULT_STYLE,
   type CaptionStyle,
   type Cue,
@@ -230,28 +232,122 @@ export async function loadSession(
   id: string,
   options?: { server?: boolean },
 ): Promise<boolean> {
+  // Already open (picked in the project list): it is shown as it is. Opening this browser's stored copy over it
+  // counted as an edit, and that edit was sent to the server, which refuses it when it has a newer copy.
+  if (!options?.server && useStudio.getState().projectId === id) {
+    useStudio.setState({ projectLibraryOpen: false });
+    await takeServerCopy(id);
+    return true;
+  }
   // Prefer the browser copy. It can be newer than the cloud copy and retains
   // edits plus the original File even when upload/sync failed.
   if (
     !options?.server &&
     (await restoreLocalRecoveryProject(id).catch(() => false))
-  )
+  ) {
+    // ...unless nobody touched it here and the server has made something for it since (takeServerCopy)
+    await takeServerCopy(id);
     return true;
-  let p: ProjectData;
-  try {
-    const res = await fetch(`/api/projects/${id}`);
-    if (!res.ok) return false;
-    p = await res.json();
-    if (!p || !Array.isArray(p.clips)) return false;
-  } catch {
-    return false; // network/parse failure — the opener must not hang
   }
+  const p = await readServerProject(id);
+  if (!p) return false; // network/parse failure — the opener must not hang
+  applyServerProject(id, p);
+  return true;
+}
 
+/** The server's copy of a project, read now: never a read already under way, which may have started before a save. */
+async function readServerProject(id: string): Promise<ProjectData | null> {
+  try {
+    const res = await fetch(`/api/projects/${id}`, { cache: "no-store" });
+    if (!res.ok) return null;
+    const p = (await res.json()) as ProjectData;
+    return p && Array.isArray(p.clips) ? p : null;
+  } catch {
+    return null;
+  }
+}
+
+/** What the page holds of the open project, for the choice below. */
+export type OpenProject = Pick<
+  StudioSnapshot,
+  | "serverProjectReady"
+  | "serverConflict"
+  | "setupPending"
+  | "serverRevision"
+  | "saveState"
+  | "refining"
+  | "applyingMaster"
+  | "status"
+  | "words"
+  | "cues"
+> & { clips: Pick<ClipInfo, "transcribed" | "status" | "uploadState">[] };
+
+/**
+ * A project on the server in which the person has made no captions and has nothing running: no transcript on any
+ * clip, no transcription, cadence pass or apply under way, no clip still on its way to the server.
+ */
+export function untouched(s: OpenProject): boolean {
+  const busy = (status: OpenProject["status"]) => BUSY_PHASES.has(status.phase);
+  return (
+    s.serverProjectReady &&
+    !s.serverConflict &&
+    !s.setupPending &&
+    !s.refining &&
+    !s.applyingMaster &&
+    !busy(s.status) &&
+    s.words.length === 0 &&
+    s.cues.length === 0 &&
+    s.clips.every((c) => !c.transcribed && !busy(c.status) && c.uploadState === "done")
+  );
+}
+
+/**
+ * Whether the open project takes the server's copy at `revision`. The rule: what the person did on the page is theirs
+ * and is never replaced; a project they have not touched takes what the server made for it (captions for a video sent
+ * from the assistant's chat, api/captions-job.ts). So: only a newer copy, only over an `untouched` project, and only
+ * when the page has nothing left to send. A look or a text the person added is then in that newer copy already: it
+ * was saved on top of theirs.
+ */
+export function takesServerCopy(s: OpenProject, revision: number): boolean {
+  return revision > s.serverRevision && (s.saveState === "saved" || s.saveState === "idle") && untouched(s);
+}
+
+/**
+ * The open project takes what the server has made for it since, when the rule above allows: on a change notice, after
+ * this browser's own stored copy was opened, and when its link is pressed while it is open. True when it did.
+ */
+export async function takeServerCopy(id: string): Promise<boolean> {
+  const open = () => {
+    const s = useStudio.getState();
+    return s.projectId === id ? s : null;
+  };
+  const before = open();
+  if (!before || !untouched(before)) return false;
+  // what the page still has to send goes first, so the server's revision check judges it and the read includes it
+  await flushPendingSave();
+  const p = await readServerProject(id);
+  // the person may have done something while that was under way: looked at again, now
+  const s = open();
+  if (!p || !s || pendingSave || syncTails.has(id) || !takesServerCopy(s, p.revision ?? 0)) return false;
+  // a file of this computer's stays with its clip (upload, export without the server)
+  if (s.clips.some((c) => getClipSnapshot(c.id)?.file)) return false;
+  applyServerProject(id, p, s);
+  return true;
+}
+
+/**
+ * The server's copy becomes the open project. `keep`: the project that is open is this one, so its place stays (the
+ * clip in front, the playhead, the video as it plays, the project list if that is what is on screen).
+ */
+function applyServerProject(id: string, p: ProjectData, keep?: StudioSnapshot): void {
   // dropping whatever is open: free its local clip resources
   const prev = useStudio.getState();
-  for (const c of prev.clips) {
-    if (c.videoUrl.startsWith("blob:")) URL.revokeObjectURL(c.videoUrl);
+  if (!keep) {
+    for (const c of prev.clips) {
+      if (c.videoUrl.startsWith("blob:")) URL.revokeObjectURL(c.videoUrl);
+    }
   }
+  const urls = new Map(keep?.clips.map((c) => [c.id, c.videoUrl]));
   const slots = new Map<string, ClipSnapshot>();
   const clips: ClipInfo[] = p.clips.map((cm) => {
     slots.set(cm.id, clipSlotFromServer(cm));
@@ -260,7 +356,8 @@ export async function loadSession(
     return {
       id: cm.id,
       name: cm.name ?? p.name,
-      videoUrl: `/api/projects/${id}/clips/${cm.id}/video`,
+      // the address the player already has, so the video is not loaded again under the person
+      videoUrl: urls.get(cm.id) ?? `/api/projects/${id}/clips/${cm.id}/video`,
       duration: cm.duration ?? 0,
       sourceWidth: cm.srcWidth ?? 0,
       sourceHeight: cm.srcHeight ?? 0,
@@ -289,11 +386,18 @@ export async function loadSession(
   bumpTextIdCounter(textMax);
   clearEditHistory();
 
-  const first = clips[0];
+  const first = clips.find((c) => c.id === keep?.activeClipId) ?? clips[0];
   const firstSlot = first ? slots.get(first.id)! : null;
-  // swap the whole slot registry via the store's load path
+  // The slots go in before the state: a save built from this state reads a clip's first transcript from its slot
+  // (buildPayload), and would send none. And the autosave takes this as a project just opened from the server's own
+  // copy, so it sends nothing back (initPersistence).
+  loadClipSlots([...slots]);
+  serverRevisions.set(id, p.revision ?? 0);
+  lastProject = null;
+  openedInSync.id = id;
   useStudio.setState({
     projectId: id,
+    projectLibraryOpen: keep?.projectLibraryOpen ?? false,
     serverProjectReady: true,
     serverRevision: p.revision ?? 0,
     serverConflict: false,
@@ -355,8 +459,8 @@ export async function loadSession(
         }),
     selectedTextId: null,
     editingTextId: null,
-    currentTime: 0,
-    playing: false,
+    currentTime: keep?.currentTime ?? 0,
+    playing: keep?.playing ?? false,
     applyingMaster: false,
     applyMasterProgress: null,
     masterApplyResults: null,
@@ -365,9 +469,6 @@ export async function loadSession(
     rangeSel: null,
     selectedClipIds: [],
   });
-  loadClipSlots([...slots]);
-  serverRevisions.set(id, p.revision ?? 0);
-  return true;
 }
 
 /** Duplicate a project on the server into the signed-in user's library (hosted admins only; the server refuses others). */
@@ -555,6 +656,8 @@ async function saveClip(clipId: string): Promise<void> {
 // project even if the user switches projects before the timer fires
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingSave: (() => Promise<void>) | null = null;
+// the project the autosave last saw (initPersistence): a project that differs was just opened, not edited
+let lastProject: string | null = null;
 
 function scheduleSave(s: StudioSnapshot): void {
   const id = s.projectId!;
@@ -1368,7 +1471,6 @@ async function switchToProxy(
 }
 
 export function initPersistence(): void {
-  let lastProject: string | null = null;
   let last: {
     w: unknown;
     c: unknown;
@@ -1398,6 +1500,16 @@ export function initPersistence(): void {
     })();
   });
 
+  // A change to this account's projects that this page did not make (the server's captions for a video sent from the
+  // assistant's chat), and every (re)connect of the change stream, a reload included: the open project takes the
+  // server's copy when nobody touched it here (takeServerCopy). Held while the window is hidden.
+  onTopic("projects", () =>
+    whenVisible("captions:open-project", () => {
+      const id = useStudio.getState().projectId;
+      if (id) void takeServerCopy(id);
+    }),
+  );
+
   useStudio.subscribe((s) => {
     // The durable project shell is tiny and must exist before media upload.
     // Transcript autosave no longer depends on the source transfer.
@@ -1415,6 +1527,8 @@ export function initPersistence(): void {
         }
       }
     }
+    // closed: the same project opened again is a project just opened, not an edit to send
+    if (!s.projectId) lastProject = null;
     if (!s.projectId || !s.serverProjectReady) return;
     // no saves mid-transcription; idle (untranscribed) and done both save
     if (s.status.phase !== "done" && s.status.phase !== "idle") return;
@@ -1436,9 +1550,20 @@ export function initPersistence(): void {
         a: s.autoCadence,
         sc: s.script,
       };
+      // Not a project just opened from a copy the server already has: its own
+      // (applyServerProject), or a stored one with nothing unsent. That save
+      // was refused whenever the server had made something newer.
+      const inSync = openedInSync.id === s.projectId;
+      openedInSync.id = null;
       if (
         s.localSaveState === "saved" &&
-        (s.words.length || s.cues.length || s.texts.length)
+        !inSync &&
+        // a stored copy with unsent changes (a project being created sends
+        // its own first save), or a project first seen with work in it
+        ((s.saveState === "saving" && !creatingProject) ||
+          s.words.length ||
+          s.cues.length ||
+          s.texts.length)
       ) {
         scheduleSave(s);
       }
