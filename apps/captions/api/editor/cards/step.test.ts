@@ -41,6 +41,7 @@ const { editDir, readDraft, readEdit, saveDraft, saveStep } = await import("../s
 const { emptyTracks } = await import("../timeline");
 const { tick } = await import("../worker");
 const { CARD_TEXT_MAX, MAX_CALLS, MAX_CARDS, MAX_DRAWS, SCRIPT_MAX, readCards } = await import("./state");
+const { cardWindow, placeCards } = await import("./place");
 const { parsePlan, parseScript } = await import("./prompts");
 const { clock, LOOK_PICTURES, MAKE_PICTURES, SHEET_MAX_BYTES, SHEET_MAX_SIDE } = await import("./step");
 
@@ -562,7 +563,7 @@ describe.skipIf(rootReplaced)("cards never hold an edit up", () => {
     await toCards(none);
     for (let attempt = 1; attempt <= 3; attempt++) await drawOnMac({ fail: "Cards can't be drawn on this Mac: this macOS has no switch for link preconnect.", skip: ["c1", "c2"] });
     await step();
-    expect(await ended(none)).toEqual({ cards: [], note: "Cards: Cards can't be drawn on this Mac: this macOS has no switch for link preconnect." });
+    expect(await ended(none)).toEqual({ cards: [], note: "Cards can't be drawn on this Mac: this macOS has no switch for link preconnect." });
     expect(cardsOnCut(none)).toEqual([]);
   });
 
@@ -600,14 +601,14 @@ describe.skipIf(rootReplaced)("cards never hold an edit up", () => {
     answers = ["I would rather not."];
     await toCards(id);
     expect(asked).toHaveLength(1);
-    expect((await ended(id))!.note).toMatch(/^Cards: /);
+    expect(await ended(id)).toEqual({ cards: [], note: "Cards: the AI's answer was not a list of cards" });
 
     const long = await newEdit();
     asked = [];
     answers = [PLAN, `function kitFrame(t, card) {}\n${"/".repeat(SCRIPT_MAX)}`];
     await toCards(long);
     expect(asked).toHaveLength(2);
-    expect(await ended(long)).toEqual({ cards: [], note: "Cards: The AI's card script is over 60,000 characters" });
+    expect(await ended(long)).toEqual({ cards: [], note: "Cards: the AI's card script is over 60,000 characters" });
     expect(existsSync(path.join(editDir(long), "cards", "v1", "script.txt"))).toBe(false);
 
     const none = await newEdit();
@@ -734,6 +735,33 @@ describe.skipIf(rootReplaced)("the device contract", () => {
     await call("maker", "POST", `/api/editor/${id}/stop`);
     expect((await relay(mac.token, "POST", `${base}/c2`, cardForm(1.2), "")).status).toBe(404);
     expect(await json(relay(mac.token, "POST", `/job/${job!.id}/beat`, "{}"))).toEqual({ ok: false });
+  });
+});
+
+describe("where a card goes", () => {
+  it("at 29.97 and 23.976 frames a second a card drawn for its room fills it to the frame", () => {
+    for (const fps of [23.976, 29.97, 59.94]) {
+      const t = timeline();
+      t.fps = fps;
+      t.tracks.V2.items = [];
+      const room = cardWindow(t, "L2")!;
+      // the clip the Mac draws for that room: its seconds to three places, and as many frames as that comes to
+      const seconds = Math.round((room.len / fps) * 1000) / 1000;
+      const dur = Math.round(seconds * fps);
+      const laid = placeCards(t, [{ key: "card-c1", text: "Tuck your chin", line: "L2", source: { versionId: "card-c1", name: "Card 1", fps, tc: 0, dur, w: 360, h: 640, file: "cards/v1/c1.mp4" } }]);
+      expect(laid.notes, String(fps)).toEqual([]);
+      expect(laid.timeline.tracks.V2.items, String(fps)).toEqual([{ src: "card-c1", in: 0, len: room.len, rec: room.rec }]);
+    }
+  });
+
+  it("never in the hook, never over the last line, and never over a shot too short to keep his face first", () => {
+    const t = timeline();
+    expect(cardWindow(t, "L1")).toEqual({ rec: 44, len: 46 }); // after the hook's 1.5 s
+    expect(cardWindow(t, "L2")).toEqual({ rec: 138, len: 72 }); // 2.4 s at most, ending on his cut
+    expect(cardWindow(t, "L3")).toEqual({ rec: 234, len: 36 }); // 1.2 s at least
+    expect(cardWindow(t, "L4")).toBeNull(); // the last line
+    t.tracks.V1.items[2]!.len = 59; // one frame short of his face (0.8 s) and the shortest card (1.2 s)
+    expect(cardWindow(t, "L3")).toBeNull();
   });
 });
 

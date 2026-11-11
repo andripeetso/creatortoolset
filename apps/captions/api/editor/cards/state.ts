@@ -107,6 +107,9 @@ export async function clearCards(editId: string, variant: string): Promise<void>
   await rm(cardsDir(editId, variant), { recursive: true, force: true });
 }
 
+/** A note as the page shows it: under "Cards: ", unless the words (a Mac's own sentence) already start with it. */
+const noteOf = (why: string) => (/^Cards\b/.test(why) ? why : `${CARDS_NOTE}${why}`);
+
 /** The edit page's view of each version's cards (Edit.cards); undefined when no version has any state. */
 export function cardsView(editId: string, variants: string[]): Record<string, EditCards> | undefined {
   if (!existsSync(path.join(editDir(editId), "cards"))) return undefined;
@@ -116,7 +119,7 @@ export function cardsView(editId: string, variants: string[]): Record<string, Ed
     if (!st) continue;
     out[v] = {
       cards: (st.cards ?? []).filter((c) => st.drawn.includes(c.id)).map((c) => ({ id: c.id, text: c.text, liked: st.liked.includes(c.id) })),
-      ...(st.note || st.left?.length ? { note: `${CARDS_NOTE}${[st.note, ...(st.left ?? [])].filter(Boolean).join("; ")}` } : {}),
+      ...(st.note || st.left?.length ? { note: noteOf([st.note, ...(st.left ?? [])].filter(Boolean).join("; ")) } : {}),
     };
   }
   return Object.keys(out).length ? out : undefined;

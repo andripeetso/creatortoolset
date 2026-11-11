@@ -31,8 +31,13 @@ export function planPrompt(i: { lines: PlanLine[]; brief: string; packText?: str
 
 /** The plan's cards, checked: a line that can carry one, each line once, words cut to the cap, at most MAX_CARDS. */
 export function parsePlan(text: string, lines: PlanLine[]): { line: number; text: string }[] {
-  const o = parseJsonObject(text);
-  if (!Array.isArray(o.cards)) throw new Error("The AI's answer has no list of cards");
+  let o: Record<string, unknown> = {};
+  try {
+    o = parseJsonObject(text);
+  } catch {
+    /* no JSON in it: the same as no list */
+  }
+  if (!Array.isArray(o.cards)) throw new Error("the AI's answer was not a list of cards");
   const out: { line: number; text: string }[] = [];
   for (const c of o.cards as { line?: unknown; text?: unknown }[]) {
     const line = Number(c?.line);
@@ -78,8 +83,8 @@ export function makePrompt(i: FrameInput & { made: number; inspirations: number 
 /** The script out of an answer: a code fence around it is dropped. Throws when it is no card script or over the cap. */
 export function parseScript(text: string): string {
   const script = text.trim().replace(/^```[a-z]*\s*\n/i, "").replace(/\n```$/, "").trim();
-  if (!/\bkitFrame\b/.test(script)) throw new Error("The AI's answer is not a card script");
-  if (script.length > SCRIPT_MAX) throw new Error(`The AI's card script is over ${SCRIPT_MAX.toLocaleString("en-US")} characters`);
+  if (!/\bkitFrame\b/.test(script)) throw new Error("the AI's answer was not a card script");
+  if (script.length > SCRIPT_MAX) throw new Error(`the AI's card script is over ${SCRIPT_MAX.toLocaleString("en-US")} characters`);
   return script;
 }
 

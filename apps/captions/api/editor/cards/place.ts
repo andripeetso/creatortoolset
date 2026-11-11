@@ -50,7 +50,8 @@ export function placeCards(tl: Timeline, cards: CardClip[]): { timeline: Timelin
   for (const c of cards) {
     const w = c.line ? cardWindow(out, c.line) : null;
     // the clip is as long as its room was when it was drawn: it ends on his cut, as a cutaway does, however long the room is now
-    const len = Math.min(w?.len ?? 0, Math.floor((c.source.dur * out.fps) / c.source.fps));
+    // (a hair added before the floor: at 29.97 and 23.976 frames a second, n * fps / fps comes out just under n)
+    const len = Math.min(w?.len ?? 0, Math.floor((c.source.dur * out.fps) / c.source.fps + 1e-6));
     if (!w || len < min) {
       notes.push(`no room for “${c.text}” in this cut`);
       continue;

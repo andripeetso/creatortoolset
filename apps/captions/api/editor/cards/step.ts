@@ -212,10 +212,11 @@ async function make({ edit, job, variant, signal }: StepContext, tl: Timeline, f
       const pictures = await stylePictures(actor, style, MAKE_PICTURES);
       throw await ask(await answer(actor, makePrompt({ ...frame, made: pictures.made, inspirations: pictures.inspirations }), pictures.images, parseScript, signal));
     }
-    if (!st.looked && st.draws < MAX_DRAWS && (await spend())) {
+    const shown = frame.cards.filter((c) => st.drawn.includes(c.id));
+    // the stills on one sheet. Stills that cannot be laid out are not looked at: the cards are drawn, and no call is made
+    const sheet = st.looked || st.draws >= MAX_DRAWS ? null : await lookSheet(edit.id, variant, shown.map((c) => c.id), frame.width, frame.height).catch(() => null);
+    if (sheet && (await spend())) {
       await save({ ...st, looked: true });
-      const shown = frame.cards.filter((c) => st.drawn.includes(c.id));
-      const sheet = await lookSheet(edit.id, variant, shown.map((c) => c.id), frame.width, frame.height);
       const pictures = await stylePictures(actor, style, LOOK_PICTURES);
       const script = await readFile(scriptFile(edit.id, variant), "utf8");
       const fixed = await answer(actor, lookPrompt({ ...frame, cards: shown, script, columns: sheet.columns, pictures: pictures.images.length }), [sheet.image, ...pictures.images], parseLook, signal);

@@ -11,11 +11,17 @@ import { DEFAULT_SETTINGS, DRIVERS, type Driver } from "../../../contracts/provi
 //
 // What a Mac's command line then does with such a request is the Mac app's code, and is pinned by its own tests
 // (apps/mac/Tests/CreatorToolsetMacTests): a request with no folder and no web starts Claude with an empty tool list
-// (RelayTests.testPlainRunHasNoToolsAndNoSession), Grok with its to-do list alone and web search off
-// (testGrokCommandLineNeverHasFileTools), Muse Code with no built-in tools
-// (MuseTests.testNoFolderAndNoWebMeansNoToolsAndNothingEverWritesOrRuns); Codex always has its shell, shut in a
-// read-only profile with no network (testACodexThatTakesAProfileRunsFencedAndAnOlderOneIsNotRun), and OpenCode its
-// read tools kept to the run's folder (testAnOpenCodeRunGetsRulesThatKeepItInItsFolder).
+// (RelayTests.testPlainRunHasNoToolsAndNoSession) and Grok with its to-do list alone and web search off
+// (testGrokCommandLineNeverHasFileTools): those two, and the key, can only answer.
+// The other kinds can do more than answer even for a request in words alone (read in the Mac app's code, not run here):
+//   - Codex always has its shell, shut in a read-only profile with no network
+//     (testACodexThatTakesAProfileRunsFencedAndAnOlderOneIsNotRun);
+//   - Gemini runs in plan mode with its read tools, in an empty folder of the run's own, and its command line takes
+//     no switch for the web, so its web search is not ruled out;
+//   - Muse Code starts with no built-in tools (MuseTests.testNoFolderAndNoWebMeansNoToolsAndNothingEverWritesOrRuns),
+//     but loads the MCP servers the person listed in its own settings;
+//   - OpenCode has its read tools, kept to the run's folder (testAnOpenCodeRunGetsRulesThatKeepItInItsFolder);
+//   - Cursor, Antigravity, Pi and a local ACP command get no rules from the app: a question they would ask is refused.
 // A call WITH pictures on a Mac is not answer-only on any kind: the pictures are files in the run's own folder, read
 // with that AI's read tools (RelayTests.testFolderAndWebGetTheReadTools), and Grok takes no pictures at all
 // (testAGrokRunHasNoFolderOfFiles). That is why only a style the person made reaches these calls (step.ts).
