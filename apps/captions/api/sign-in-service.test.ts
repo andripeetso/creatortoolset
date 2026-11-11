@@ -173,4 +173,25 @@ describe("with a service named in the server's .env", () => {
     expect(res.headers.get("set-cookie")).toBeNull();
     expect(asked).toEqual([]);
   });
+
+  it("links nothing from a made-up confirm, or from a sign-in already on another account", async () => {
+    process.env.ACCOUNT_SIGNIN_SERVICE = SERVICE;
+    // a confirm no sign-in started
+    const made = await app.request("/api/auth/link-confirm", { method: "POST", body: new URLSearchParams({ id: "not-ours" }) });
+    expect(made.status).toBe(400);
+    expect(await made.text()).toContain("That sign-in expired");
+    // a Google account that already signs in to another account: no confirm page, nothing moves
+    createUser("dee", "deepass12", { role: "user" });
+    createUser("eve", "evepass12", { role: "user" });
+    linkIdentity(findUser("eve")!, { provider: "google", sub: "g-eve", email: "eve@example.test" });
+    const login = await app.request("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: "dee", password: "deepass12" }) });
+    const to = await start("google", "link", cookieOf(login));
+    service({ provider: "google", sub: "g-eve", email: "eve@example.test", name: "Eve" }, () => to.searchParams.get("challenge")!);
+    const back = await app.request(`/api/auth/service/callback?state=${to.searchParams.get("state")}&ticket=T1`);
+    const page = await back.text();
+    expect(back.status).toBe(400);
+    expect(page).toContain("already signs in to another account here");
+    expect(page).not.toContain("link-confirm");
+    expect(findByIdentity("google", "g-eve")?.username).toBe("eve");
+  });
 });
