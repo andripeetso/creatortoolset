@@ -1,5 +1,6 @@
 import { PACK_SLOTS, type InstalledPack, type Pack, type PackSlot } from "@contracts/packs";
 import type { CatalogEntry } from "@contracts/pack-catalog";
+import { HOME_TILES, HOME_TILE_NAMES } from "@contracts/tools";
 
 export const LICENCES = ["CC-BY-4.0", "CC0-1.0", "MIT"] as const;
 
@@ -11,14 +12,17 @@ export interface PackContents {
   slots: Array<{ slot: PackSlot; label: string; text: string }>;
   frameworks: Array<{ name: string; role: string }>;
   captionStyles: string[];
+  /** A Home layout: the tools it shows on Home, by name, in Home's order. null = the pack has none. */
+  home: string[] | null;
 }
 
-export function packContents(pack: Partial<Pick<Pack, "instructions" | "frameworks" | "captionStyles">>): PackContents {
+export function packContents(pack: Partial<Pick<Pack, "instructions" | "frameworks" | "captionStyles" | "home">>): PackContents {
   const instructions = pack.instructions ?? {};
   return {
     slots: USED_SLOTS.filter((s) => instructions[s]).map((slot) => ({ slot, label: PACK_SLOTS[slot], text: instructions[slot] ?? "" })),
     frameworks: (pack.frameworks ?? []).map((f) => ({ name: f.name, role: f.role })),
     captionStyles: (pack.captionStyles ?? []).map((s) => s.name),
+    home: pack.home ? HOME_TILES.filter((t) => !pack.home!.hidden.includes(t)).map((t) => HOME_TILE_NAMES[t]) : null,
   };
 }
 
@@ -34,6 +38,7 @@ export const PACK_KINDS = {
   captions: "Caption styles",
   editing: "Editing styles",
   analyzer: "Analyzer guides",
+  home: "Home layouts",
 } as const;
 export type KindId = keyof typeof PACK_KINDS;
 
@@ -56,6 +61,7 @@ export function packKinds(c: CatalogEntry["contains"]): PackKind[] {
   else if (slots.includes("captions.lines")) add("captions");
   if (countSlots("editor.")) add("editing", countSlots("editor."));
   if (slots.includes("analyzer.ideas")) add("analyzer", 1);
+  if (c.home) add("home");
   return kinds;
 }
 
@@ -74,7 +80,7 @@ export const slugify = (name: string): string =>
 
 /** Where in the app a pack's contents land: the workflow stage (as on Home), the tool, the spot in it, what it does. */
 export interface Destination {
-  stage: "Plan" | "Make";
+  stage: "Plan" | "Make" | "Home";
   tool: string;
   to: string;
   spot: string;
@@ -104,16 +110,19 @@ export function destinations(c: CatalogEntry["contains"]): Destination[] {
     out.push({ ...captions, spot: "Where captions break into lines", does: "Added to what the AI is told when it splits a transcript into caption lines." });
   if (has("editor.script"))
     out.push({ ...editor, spot: "The script", does: "Added to what the AI is told when it plans an edit's script." });
+  if (c.home)
+    out.push({ stage: "Home", tool: "Settings", to: "/settings/tools", spot: "Shown on Home", does: "Sets which tools Home shows, when you press Use on Home. Every switch stays yours to change." });
   return out;
 }
 
 /** A pack's `contains`, worked out from the pack itself (the detail page has the pack, the cards have `contains`). */
-export function containsOf(p: Partial<Pick<Pack, "instructions" | "frameworks" | "captionStyles" | "designSystems">>): CatalogEntry["contains"] {
+export function containsOf(p: Partial<Pick<Pack, "instructions" | "frameworks" | "captionStyles" | "designSystems" | "home">>): CatalogEntry["contains"] {
   return {
     instructions: (Object.keys(p.instructions ?? {}) as PackSlot[]).filter((s) => p.instructions?.[s]),
     frameworks: p.frameworks?.length ?? 0,
     captionStyles: p.captionStyles?.length ?? 0,
     designSystems: p.designSystems?.length ?? 0,
+    ...(p.home ? { home: true } : {}),
   };
 }
 

@@ -180,7 +180,12 @@ A plug-in is a folder the person's own AI writes into `~/Library/Application Sup
 - **A change never gets more than the person agreed to.** The record keeps whether the alert they agreed to said the
   plug-in runs on this Mac (it had a server half). A changed folder that adds a server half to a plug-in with pages
   only is not taken up by itself, whatever Update automatically says: its row says "The new version would run on this
-  Mac, so it waits for you." and Use the new version shows the alert that says so.
+  Mac, so it waits for you." and Use the new version shows the alert that says so. The alert's own sentence is the
+  same for both kinds ("It runs on this Mac inside the app, with the app's access to your files, your keys and the
+  internet"): a plug-in's page is drawn as the app's own page, signed in as the person, so it can press what they
+  can, the provider settings that start a program on this Mac and the assistant included. Pages only is no lesser kind.
+- **Nothing before the sign-in.** A folder plug-in with `openRoutes` or `publicRoutes` is left out
+  (`api/lib/folder-plugins.ts`): with other devices on, this server answers the whole network.
 - **The record** is one Keychain generic-password item: `{ on: { id: { fingerprint, folder, server } }, waits }` (the
   clicks, the folder each was switched on from, whether it ran on this Mac, and Update automatically off as `waits`), service
   `AppIdentity.keychain("plugins")` (`com.creatortoolset.mac.plugins`, a copy's own), account `approved`. A build with a provisioning profile keeps it in the data-protection Keychain, which no other

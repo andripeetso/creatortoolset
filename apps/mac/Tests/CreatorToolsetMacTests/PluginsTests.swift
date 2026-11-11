@@ -48,7 +48,7 @@ final class PluginsTests: XCTestCase {
         let server = switchOnAlertText(name: "Tiny", folder: "tiny-acro", server: true, web: true, auto: false)
         XCTAssertEqual(server.message, "Switch on “Tiny”?")
         XCTAssertEqual(server.detail, "It is the folder “tiny-acro” in your plug-ins folder. This plug-in was not made by Creator Toolset. It runs on this Mac inside the app, with the app's access to your files, your keys and the internet.")
-        XCTAssertEqual(switchOnAlertText(name: "Tiny", folder: "tiny-acro", server: false, web: true, auto: false).detail, "It is the folder “tiny-acro” in your plug-ins folder. This plug-in was not made by Creator Toolset. It adds pages to the app, and they can see and change everything in it.")
+        XCTAssertEqual(switchOnAlertText(name: "Tiny", folder: "tiny-acro", server: false, web: true, auto: false).detail, server.detail)   // pages only reaches the same: its page is the app's own, signed in
         XCTAssertNil(switchOnAlertText(name: "Tiny", folder: "tiny-acro", server: false, web: false, auto: true).detail)
     }
 
