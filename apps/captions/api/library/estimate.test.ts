@@ -19,7 +19,7 @@ const { libraryDb } = await import("./db");
 const { claimJob, enqueueJob } = await import("./jobs");
 const { estimate, progress } = await import("./estimate");
 const { describeSlot } = await import("./describe");
-const { holdForLimit, tick } = await import("./worker");
+const { holdForLimit, releaseLimit, tick } = await import("./worker");
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -71,6 +71,30 @@ describe("estimate", () => {
   });
 });
 
+describe("what the page counts", () => {
+  it("each step since this run began, in the order they run: a clip that is through stays counted, so no number goes down", async () => {
+    d.prepare("DELETE FROM jobs WHERE state != 'done'").run();
+    for (const v of ["v1", "v2", "v3"]) for (const k of ["proxy", "thumb", "transcribe"]) enqueueJob(d, "lib_e", v, k, "local");
+    const counts = async () => (await progress("lib_e", "local")).stages!.map((s) => `${s.kind} ${s.done}/${s.of}`);
+    // their descriptions were made before (the setup above): done work of a clip in the run counts
+    expect(await counts()).toEqual(["thumb 0/3", "proxy 0/3", "transcribe 0/3", "describe 3/3"]);
+    // v1 is through every step, v2 and v3 have their pictures
+    d.prepare("UPDATE jobs SET state = 'done' WHERE state = 'queued' AND (version_id = 'v1' OR kind = 'thumb')").run();
+    expect(await counts()).toEqual(["thumb 3/3", "proxy 1/3", "transcribe 1/3", "describe 3/3"]);
+    const running = d.prepare("UPDATE jobs SET state = 'running', started_at = ? WHERE version_id = 'v2' AND kind = 'proxy' RETURNING id").get(Date.now()) as { id: number };
+    expect((await progress("lib_e", "local")).stages!.find((s) => s.kind === "proxy")).toMatchObject({ done: 1, of: 3, now: "c" });
+    d.prepare("UPDATE jobs SET state = 'failed' WHERE id = ?").run(running.id);
+    expect((await progress("lib_e", "local")).stages!.find((s) => s.kind === "proxy")).toMatchObject({ done: 1, of: 3, failed: 1 });
+    // the queue empties: the next run counts from nothing
+    d.prepare("UPDATE jobs SET state = 'done' WHERE state = 'queued'").run();
+    expect(await progress("lib_e", "local")).toMatchObject({ left: 0, stages: [] });
+    enqueueJob(d, "lib_e", "v3", "embed", "local", true);
+    // search by meaning has no key here: it is no line (it waits for a key in `waiting`, once claimed)
+    expect(await counts()).toEqual(["thumb 1/1", "proxy 1/1", "transcribe 1/1", "describe 1/1"]);
+    d.prepare("DELETE FROM jobs WHERE kind != 'describe'").run();
+  });
+});
+
 describe("the plan's usage limit", () => {
   it("holds every queued description, says why, and counts them as waiting, not as work left", async () => {
     d.prepare("DELETE FROM jobs WHERE state != 'done'").run();
@@ -84,10 +108,14 @@ describe("the plan's usage limit", () => {
       { step: "describe", count: 3, missing: "Your Claude plan's weekly limit is reached; it resets 5pm. They carry on by themselves then.", limit: true },
     ]);
     expect(claimJob(d, 300, Date.now(), "jobs", ["describe"])).toBeNull(); // none asks the closed plan meanwhile
-    // past the hold they are work again
-    expect((await progress("lib_e", "local")).waiting).toHaveLength(1);
+    // the hold is over and one asks again: still waiting, no time left shown, until one gets through
     d.prepare("UPDATE jobs SET run_after = 0 WHERE kind = 'describe'").run();
-    expect(await progress("lib_e", "local")).toMatchObject({ left: 3, waiting: [] });
+    claimJob(d, 300, Date.now(), "jobs", ["describe"]);
+    expect(await progress("lib_e", "local")).toMatchObject({ left: 0, seconds: 0, waiting: [{ count: 3, limit: true }] });
+    // one got through: the rest are work again
+    d.prepare("UPDATE jobs SET state = 'done', error = NULL WHERE kind = 'describe' AND state = 'running'").run();
+    releaseLimit(d, "local");
+    expect(await progress("lib_e", "local")).toMatchObject({ left: 2, waiting: [] });
     d.prepare("DELETE FROM jobs WHERE state != 'done'").run();
   });
 });
@@ -105,9 +133,8 @@ describe("parallel lanes", () => {
     enqueueJob(d, "lib_e", "v3", "transcribe", "local");
     enqueueJob(d, "lib_e", "v3", "describe", "local");
     expect(await tick(Date.now(), ["describe"])).toBe(false);
-    const j = d.prepare("SELECT state, attempts, run_after FROM jobs WHERE version_id = 'v3' AND kind = 'describe'").get() as { state: string; attempts: number; run_after: number };
-    expect(j).toMatchObject({ state: "queued", attempts: 0 });
-    expect(j.run_after).toBeGreaterThan(Date.now());
+    const j = d.prepare("SELECT state, attempts FROM jobs WHERE version_id = 'v3' AND kind = 'describe'").get() as { state: string; attempts: number };
+    expect(j).toMatchObject({ state: "queued", attempts: 0 }); // never claimed, so no attempt spent
   });
 
   it("a connected AI takes two descriptions at a time", () => {

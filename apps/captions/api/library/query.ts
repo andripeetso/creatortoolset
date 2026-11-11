@@ -74,7 +74,11 @@ export const CARD = `a.id AS id, a.library_id AS library_id, a.kind AS kind, a.t
   EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'thumb') AS has_thumb,
   (SELECT group_concat(tag, char(31)) FROM asset_tags t WHERE t.asset_id = a.id) AS tags,
   (SELECT group_concat(tag, char(31)) FROM asset_tags t WHERE t.asset_id = a.id AND t.source = 'ai') AS ai_tags,
-  ${SHOWN("v.id")} AS description`;
+  ${SHOWN("v.id")} AS description,
+  (SELECT j.kind || char(31) || j.state FROM jobs j WHERE j.version_id = v.id AND j.state IN ('queued', 'running')
+    ORDER BY j.state = 'running' DESC, instr('probe thumb wave proxy fingerprint transcribe describe embed', j.kind) LIMIT 1) AS preparing,
+  CASE WHEN v.state = 'failed' THEN (SELECT j.kind || char(31) || IFNULL(j.error, '') FROM jobs j WHERE j.version_id = v.id AND j.state = 'failed'
+    AND j.kind IN ('probe', 'thumb', 'wave', 'proxy') LIMIT 1) END AS failed`;
 
 export interface CardRow {
   id: string;
@@ -91,6 +95,8 @@ export interface CardRow {
   tags: string | null;
   ai_tags: string | null;
   description: string | null;
+  preparing?: string | null;
+  failed?: string | null;
 }
 
 /** The SQL for one page of a library's assets, with `limit + 1` rows so the caller knows there is a next page. */
@@ -167,6 +173,8 @@ export function toCard(r: CardRow): AssetCard {
     ...(p.capturedAt ? { capturedAt: p.capturedAt } : {}),
     ...(r.trashed_at ? { trashedAt: r.trashed_at } : {}),
     ...(inReview(r.id) ? { review: true as const } : {}), // ponytail: two stats a card; a column when pages get big
+    ...(r.preparing ? { preparing: { step: r.preparing.split("\x1f")[0] as NonNullable<AssetCard["preparing"]>["step"], running: r.preparing.endsWith("running") } } : {}),
+    ...(r.failed ? { failed: { step: r.failed.split("\x1f")[0] as NonNullable<AssetCard["failed"]>["step"], error: r.failed.split("\x1f")[1] ?? "" } } : {}),
   };
 }
 

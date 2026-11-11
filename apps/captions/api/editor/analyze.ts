@@ -6,7 +6,7 @@ import { ffmpegCommand } from "../ffmpeg-runtime";
 import { deviceStatus } from "../lib/device-transcribe";
 import { env } from "../lib/env";
 import { blobs, libraryDb } from "../library/db";
-import { enqueueJob } from "../library/jobs";
+import { enqueueJob, prepareFirst } from "../library/jobs";
 import { ffmpegSlot } from "../library/media/run";
 import type { ProbeSummary } from "../library/media/probe";
 import { transcribeRoute, wordsOf, type TimedWord } from "../library/transcribe";
@@ -158,6 +158,7 @@ export async function analyzeStep({ edit, job, signal }: StepContext): Promise<v
       ready.push({ row, probe, words });
       continue;
     }
+    prepareFirst(row.id); // the edit waits on its transcript: before the library's other clips
     const job = db.prepare("SELECT state, error, actor FROM jobs WHERE version_id = ? AND kind = 'transcribe'").get(row.id) as
       | { state: string; error: string | null; actor: string | null }
       | undefined;

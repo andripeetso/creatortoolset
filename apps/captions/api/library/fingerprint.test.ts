@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ffmpegCommand } from "../ffmpeg-runtime";
 import { fingerprint, phash, phashDistance, phashPerSecond } from "./fingerprint";
+import { makeProxy } from "./media/proxy";
 
 const scratch = process.env.CT_SCRATCH_DIR ?? tmpdir();
 mkdirSync(scratch, { recursive: true });
@@ -37,6 +38,17 @@ describe("pHash", () => {
     expect(a).toHaveLength(3);
     expect(mean(a, b)).toBeLessThanOrEqual(10); // measured about 3
     expect(mean(a, c)).toBeGreaterThan(20); // measured about 31
+  });
+
+  it("a camera file's lighter copy hashes as the file does, second by second (the worker hashes the copy)", async () => {
+    const big = path.join(dir, "camera.mov");
+    const light = path.join(dir, "camera-proxy.mp4");
+    // 10-bit 1080p with moving pictures, grain on top; the copy is the worker's own 720p H.264
+    ff(["-f", "lavfi", "-i", "testsrc2=duration=3:size=1920x1080:rate=25", "-vf", "noise=alls=7:allf=t", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p10le", big]);
+    await makeProxy(big, light);
+    const [a, b] = await Promise.all([big, light].map(phashPerSecond));
+    expect(b).toHaveLength(a.length);
+    expect(Math.max(...a.map((h, i) => phashDistance(h, b[i]!)))).toBeLessThanOrEqual(2); // measured on 4K camera files: 0 to 2 bits
   });
 
   it("without the Cleaner's PDQ tool the fingerprint is the pHashes alone", async () => {

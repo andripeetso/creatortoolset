@@ -1,11 +1,12 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router";
-import type { LibraryEstimate, LibraryProgress, LibraryStepEstimate, WatchStatus } from "@contracts/library";
+import type { AssetCard, LibraryEstimate, LibraryProgress, LibraryStage, LibraryStepEstimate, WatchStatus } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
 import { getEstimate, getProgress, getWatch, type Drop, listLibraries } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
+import { cn } from "@/lib/utils";
 
 /**
  * The Media Library's processing, said in time and money: a bar with the time left while clips are being prepared, and
@@ -61,9 +62,41 @@ export function stepLine(s: LibraryStepEstimate): string | null {
 /** A folder's own name, the way the person knows it ("/Volumes/Card/Trip" → "Trip"). */
 export const folderName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() ?? p;
 
+/** Each step of preparing, in the words of the person who watches it go by (api/library/estimate.ts STAGES). */
+const STAGE_NAME: Record<LibraryStage["kind"], string> = {
+  thumb: "Pictures",
+  proxy: "Lighter copies",
+  fingerprint: "Duplicate checks",
+  transcribe: "Transcripts",
+  describe: "AI descriptions",
+  embed: "Search by meaning",
+};
+
+/** One line of the list: what, how far (a thin bar), how many; the step running now shows its clip and a soft pulse. */
+function StageRow({ name, done, of, now, busy = !!now, failed = 0 }: { name: string; done: number; of: number; now?: string; busy?: boolean; failed?: number }) {
+  const through = done + failed >= of;
+  return (
+    <li className="grid grid-cols-[minmax(0,11rem)_minmax(3rem,1fr)_auto] items-center gap-x-3 text-sm">
+      <span className="flex min-w-0 items-center gap-1.5">
+        <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", busy ? "bg-zinc-400 motion-safe:animate-pulse dark:bg-zinc-300" : "bg-transparent")} />
+        <span className={cn("truncate", through && "text-zinc-500")}>
+          {name}
+          {now && <span className="text-zinc-500"> · {now}</span>}
+        </span>
+      </span>
+      <Progress value={(Math.min(of, done + failed) / Math.max(1, of)) * 100} className={cn("h-1", through && "opacity-50")} />
+      <span className="shrink-0 text-right text-xs tabular-nums text-zinc-500">
+        {done.toLocaleString()} of {of.toLocaleString()}
+        {failed > 0 && ` · ${failed.toLocaleString()} failed`}
+      </span>
+    </li>
+  );
+}
+
 /**
- * While a library has work left: a footage folder still being read (how many of its clips are in), then how far the
- * preparing is and how long the rest takes, plus anything waiting for a key.
+ * While a library has work left: a footage folder still being read (how many of its clips are in), then one line per
+ * step of the preparing, in the order they run (pictures, lighter copies, duplicate checks, transcripts, descriptions),
+ * each counting up as its clips go through, with the time the rest takes; plus anything waiting for a key or a limit.
  */
 export function LibraryProgressBar({ libraryId }: { libraryId: string }) {
   const p = useCachedLoad<LibraryProgress>(`/api/library/${libraryId}/progress`, () => getProgress(libraryId)).data;
@@ -74,28 +107,20 @@ export function LibraryProgressBar({ libraryId }: { libraryId: string }) {
   const what = { files: ["file", "files"], transcript: ["transcript", "transcripts"], describe: ["AI description", "AI descriptions"], embed: ["search entry", "search entries"] };
   return (
     <section aria-label="Processing" className="flex flex-col gap-1.5 text-sm">
-      {adding.map((f) => (
-        <div key={f.path} className="flex flex-col gap-1.5">
-          <div className="flex items-center justify-between gap-3">
-            <span>Adding clips from {folderName(f.path)}</span>
-            <span className="shrink-0 text-xs text-zinc-500">
-              {(f.files - f.adding).toLocaleString()} of {f.files.toLocaleString()}
-            </span>
-          </div>
-          <Progress value={((f.files - f.adding) / Math.max(1, f.files)) * 100} className="h-1.5" />
-        </div>
-      ))}
       {p && p.left > 0 && (
-        <>
-          <div className="flex items-center justify-between gap-3">
-            <span>
-              Preparing {p.clips.toLocaleString()} {p.clips === 1 ? "clip" : "clips"}
-            </span>
-            <span className="shrink-0 text-xs text-zinc-500">{aboutTime(p.seconds)} left</span>
-          </div>
-          <Progress value={(p.done / Math.max(1, p.done + p.left)) * 100} className="h-1.5" />
-        </>
+        <div className="flex items-center justify-between gap-3">
+          <span>
+            Preparing {p.clips.toLocaleString()} {p.clips === 1 ? "clip" : "clips"}
+          </span>
+          <span className="shrink-0 text-xs text-zinc-500">{aboutTime(p.seconds)} left</span>
+        </div>
       )}
+      <ul className="flex flex-col gap-1">
+        {adding.map((f) => (
+          <StageRow key={f.path} name={`Adding clips from ${folderName(f.path)}`} done={f.files - f.adding} of={f.files} busy />
+        ))}
+        {p && p.left > 0 && p.stages?.map((s) => <StageRow key={s.kind} name={STAGE_NAME[s.kind]} done={s.done} of={s.of} now={s.now} failed={s.failed} />)}
+      </ul>
       {p?.waiting.map((w) => (
         <div
           key={`${w.step}${w.limit ? "-limit" : ""}`}
@@ -109,6 +134,48 @@ export function LibraryProgressBar({ libraryId }: { libraryId: string }) {
         </div>
       ))}
     </section>
+  );
+}
+
+const PICTURE_STEPS = new Set(["probe", "thumb", "wave"]);
+const STEP_WORDS: Record<NonNullable<AssetCard["preparing"]>["step"], string> = {
+  probe: "Getting its picture",
+  thumb: "Getting its picture",
+  wave: "Getting its picture",
+  proxy: "Making a lighter copy",
+  fingerprint: "Checking for duplicates",
+  transcribe: "Transcribing",
+  describe: "Describing",
+  embed: "Adding to search",
+};
+const FAILED_WORDS: Record<NonNullable<AssetCard["failed"]>["step"], string> = {
+  probe: "This file can't be read as video or sound",
+  thumb: "Its picture could not be made",
+  wave: "Its sound could not be read",
+  proxy: "Its lighter copy could not be made",
+};
+
+/**
+ * A clip card's line while it is prepared: the step running on it now (a soft pulse), or, before it has a picture,
+ * that the picture comes. A failed clip says what failed, the tool's own words on hover. Nothing for a clip that is
+ * ready or waits its turn with its picture shown. For the grid's tiles (src/pages/LibraryPage.tsx).
+ */
+export function ClipStage({ card, className }: { card: Pick<AssetCard, "preparing" | "failed" | "thumbUrl" | "state">; className?: string }) {
+  if (card.state === "failed" && card.failed) {
+    return (
+      <span title={card.failed.error} className={cn("flex items-center gap-1.5 text-xs text-red-600 dark:text-red-400", className)}>
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-red-500" />
+        {FAILED_WORDS[card.failed.step]}
+      </span>
+    );
+  }
+  const p = card.preparing;
+  if (!p || !(p.running || (!card.thumbUrl && PICTURE_STEPS.has(p.step)))) return null;
+  return (
+    <span className={cn("flex items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400", className)}>
+      <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full bg-zinc-400", p.running && "motion-safe:animate-pulse")} />
+      {STEP_WORDS[p.step]}
+    </span>
   );
 }
 
