@@ -34,6 +34,27 @@ let acpDefaults: [String: AcpLaunch] = [
     "pi": AcpLaunch(command: "npx", args: ["-y", "pi-acp@0.0.34"]),
 ]
 
+/// An ACP agent's own rules for one run, as environment variables, set last (over the provider's own values). OpenCode
+/// (measured 2026-11-10, OpenCode 1.18.31 over ACP, a stand-in model calling its tools, through acpAnswer): its shell and
+/// file writes ran unasked, so a shell command that hides its path (`cat $(printf …)`, python, a link in the folder to a
+/// file outside) read files outside the run folder and wrote one there; its web fetch reached any address; the person's
+/// own MCP servers were offered; a read outside asked first (refused here, which ended the turn), and a sub-agent's
+/// question never reached this client, so that run waited until the prompt's time ran out. These rules allow only its
+/// read, search, listing and to-do tools (and the web fetch when the request has the web), a read outside the folder is
+/// refused and the turn goes on. They are its own permission rules and, merged over the person's config, the rules of
+/// its build agent, which every run uses: a person's own default agent or rules that allow the shell did not undo them.
+/// Not kept in: a run folder inside a git repository (OpenCode reads up to that repository's top); app run folders sit
+/// under ~/Library and the temporary folder. The other ACP kinds were not measured (not installed here).
+func acpRules(driver: String, web: Bool) -> [String: String] {
+    guard driver == "opencode" else { return [:] }
+    let rules = ["*": "deny", "external_directory": "deny", "read": "allow", "glob": "allow", "grep": "allow", "list": "allow",
+                 "todowrite": "allow", "webfetch": web ? "allow" : "deny"]
+    func json(_ value: [String: Any]) -> String {
+        (try? JSONSerialization.data(withJSONObject: value, options: .sortedKeys)).map { String(decoding: $0, as: UTF8.self) } ?? ""
+    }
+    return ["OPENCODE_PERMISSION": json(rules), "OPENCODE_CONFIG_CONTENT": json(["default_agent": "build", "agent": ["build": ["permission": rules]]])]
+}
+
 /// An ACP agent's program and its arguments, as the job carries them.
 struct AcpLaunch: Equatable {
     let command: String
@@ -257,9 +278,16 @@ func homeEnv(_ home: String) -> [String: String] {
 
 /// the Mac relay's `claude -p` arguments (the prompt comes on stdin). `resume` is passed only with a session.
 /// `mcpConfigFile`: the app's own MCP server (the assistant), whose tools are then allowed too.
-/// `asks`: Claude Code's own permission rules, its questions on stdout and the answers on stdin (stream-json; ClaudeRun
-/// answers them through the site). Only the web and the app's MCP tools are allowed up front then; the rest of `tools`
-/// runs when Claude Code treats it as safe, else it asks.
+/// Only the web and the app's MCP tools are allowed up front; the rest of `tools` runs when Claude Code treats it as safe
+/// (a read inside its folder), else it would ask: `dontAsk` refuses that, and with `asks` the question goes to the person
+/// (stream-json: its questions on stdout, the answers on stdin; ClaudeRun answers them through the site).
+/// Measured 2026-11-10 (Claude Code 2.1.322 and 2.1.310, a stand-in model calling its tools, through claudeAnswer): with
+/// Read, Glob and Grep allowed up front, Read and Grep took any path (absolute, `../`, `~/`, a link in the folder to a file
+/// outside) and Glob listed any folder, the run's own MCP config with its job token next to the folder included. Not
+/// allowed up front, each of those was refused ("Permission to use Read has been denied because Claude Code is running in
+/// don't ask mode"), and the folder's files, a picture there, a resumed session and the app's MCP tools still worked.
+/// With `asks`, Read, Glob, Grep and read-only shell commands (ls, pwd, cat of a file) inside the folder ran unasked, as
+/// did the web and the app's tools; every path outside, a write and an edit were asked first.
 func claudeArguments(model: String, effort: String, systemFile: String, tools: String, session: Bool, resume: String,
                      mcpConfigFile: String = "", asks: Bool = false) -> [String] {
     var args = ["-p", "--model", model, "--effort", effort,
@@ -270,14 +298,14 @@ func claudeArguments(model: String, effort: String, systemFile: String, tools: S
     if !resume.isEmpty { args += ["--resume", resume] }
     if !mcpConfigFile.isEmpty { args += ["--mcp-config", mcpConfigFile] }
     let web = webTools.split(separator: ",")
-    let upFront = asks ? tools.split(separator: ",").filter { web.contains($0) }.joined(separator: ",") : tools
+    let upFront = tools.split(separator: ",").filter { web.contains($0) }.joined(separator: ",")
     let allowed = [upFront, mcpConfigFile.isEmpty ? "" : mcpTools].filter { !$0.isEmpty }.joined(separator: ",")
     if asks {
         args += ["--input-format", "stream-json", "--permission-prompt-tool", "stdio", "--permission-mode", "manual"]
-        if !allowed.isEmpty { args += ["--allowedTools", allowed] }
-    } else if !allowed.isEmpty {
-        args += ["--allowedTools", allowed, "--permission-mode", "dontAsk"]   // anything else is refused
+    } else {
+        args += ["--permission-mode", "dontAsk"]   // anything that would ask is refused
     }
+    if !allowed.isEmpty { args += ["--allowedTools", allowed] }
     return args
 }
 
@@ -619,22 +647,33 @@ func codexRunFolder() -> URL {
     return folder
 }
 
-/// the Mac relay codex_cmd: `codex exec --json` (codex-cli 0.39) in a read-only sandbox in the run's folder, the prompt on
-/// stdin ("-"). The effort goes in as its config key; the model only when one is named.
-/// What Codex can still do (measured with `codex debug seatbelt` from codex-cli 0.39 on this Mac). Its read-only sandbox
-/// (`-s read-only`, the most restrictive mode `exec` offers; it has no approval flag) still lets its shell read any file the
-/// Mac user can read, by absolute path: codex-cli 0.39 has no flag that limits reads. That is the same as running Codex in
-/// the user's own terminal. It runs in an empty folder of its own per run (removed after the run), so no project files sit in
-/// its working root. Writes are off too (a write inside the run folder was refused in the probe), and network access is off
-/// (direct connections and DNS both failed in the sandbox). Its use of CODEX_HOME was not measured. Runs only ever carry the device owner's own prompts:
-/// unnamed calls are refused and no one else's login is used (providers-routing).
-/// ponytail: read access is not limited here; add a read allowlist when codex exposes one.
+/// the Mac relay codex_cmd: `codex exec --json` in the run's folder, the prompt on stdin ("-"). The effort goes in as its
+/// config key; the model only when one is named.
+/// `fenced` (a Codex that takes a permission profile, codexTakesProfile): the run's own profile lets it read its folder and
+/// the system's own files (`:minimal`) and nothing else, write nothing and reach no network. Measured 2026-11-10 with
+/// codex-cli 0.163, a stand-in model calling its tools, through codexAnswer: its read-only sandbox (`-s read-only`) let the
+/// shell read any file the Mac user can (an absolute path, `../`, `~/`, a link in the folder to a file outside, grep and
+/// find on a folder outside), and view_image open any picture; and `-s` wins over a profile, so a fenced run has none.
+/// With the profile, each of those was refused ("Operation not permitted"), in a sub-agent too, and so were CODEX_HOME,
+/// the home folder, this Mac's per-user temporary folder and /Volumes (`:minimal` still reads the system's own folders,
+/// such as /Applications and /etc, and /tmp); the folder's own files were still read, the attached pictures
+/// still reached the model and this server's MCP call still ran. A sandbox_mode or another default profile in the
+/// person's config.toml did not undo it; only a profile of this very name there would add to it. The shell gets only the
+/// core variables (shell_environment_policy), so the job token stays out of reach. Older Codex (0.39) has no profiles:
+/// unfenced, it runs read-only as before, and its shell can read any file the Mac user can.
 /// `mcpURL`: the app's own MCP server for this run only (the assistant), its token read from `codexTokenEnv`. The person's
 /// config.toml is not read then, as --strict-mcp-config does for Claude: none of the MCP servers listed there are in the run,
 /// and a creator-toolset table saved there can't merge into this one (codex-cli 0.163 merges even an inline table).
-/// Its calls need no approval (exec has no one to ask); the shell stays read-only.
-func codexArguments(cwd: String, model: String, effort: String, pictures: [String] = [], mcpURL: String = "") -> [String] {
-    var args = ["exec", "--json", "--skip-git-repo-check", "-C", cwd, "-s", "read-only", "-c", "model_reasoning_effort=" + effort]
+/// Its calls need no approval (exec has no one to ask).
+func codexArguments(cwd: String, model: String, effort: String, pictures: [String] = [], mcpURL: String = "", fenced: Bool = false) -> [String] {
+    var args = ["exec", "--json", "--skip-git-repo-check", "-C", cwd, "-c", "model_reasoning_effort=" + effort]
+    if fenced {
+        args += ["-c", "default_permissions=\"\(codexProfile)\"",
+                 "-c", "permissions.\(codexProfile).filesystem={\":minimal\"=\"read\",\":project_roots\"=\"read\"}",
+                 "-c", "shell_environment_policy.inherit=\"core\""]
+    } else {
+        args += ["-s", "read-only"]
+    }
     if !mcpURL.isEmpty {
         let server = "mcp_servers.creator-toolset."
         args += ["--ignore-user-config", "-c", server + "url=\"\(mcpURL)\"", "-c", server + "bearer_token_env_var=\"\(codexTokenEnv)\"",
@@ -644,6 +683,15 @@ func codexArguments(cwd: String, model: String, effort: String, pictures: [Strin
     // one `--image=<file>` each: the list form would take the "-" (the prompt from stdin) as a picture
     args += pictures.map { "--image=" + $0 }
     return args + ["-"]
+}
+
+/// The name of a Codex run's own permission profile (codexArguments).
+let codexProfile = "creator-toolset-folder"
+
+/// Whether this Codex takes a permission profile (codex-cli 0.163 does, 0.39 doesn't), from its own help; nil when it gave
+/// no answer in time (a busy Mac), so a run is never unfenced by a slow start.
+func codexTakesProfile(_ cli: String) -> Bool? {
+    runQuick(cli, ["sandbox", "--help"], seconds: 15).map { $0.contains("--permission-profile") }
 }
 
 /// The variable the turn's job token goes in, so it is never on the command line.
@@ -1113,8 +1161,16 @@ func resolveBlobs(_ files: [String: String], cache: URL, fetch: (String) throws 
 
 /// the Mac relay sync_folder: make `root` hold the site's folder (path -> text). A changed file is rewritten, one no
 /// longer there is deleted (unless `prune` is off: the assistant's own folder keeps what's in it), the rest is left
-/// alone. "base64:…" is a file's bytes. A path that would leave `root` is skipped.
+/// alone. "base64:…" is a file's bytes. A path that would leave `root` is skipped, and no link stays in it: the app never
+/// makes one, and one would lead a read outside the folder (measured: an AI's read tool followed a link left in the
+/// folder to a file outside) or this sync's own writes there.
 func syncFolder(_ root: URL, _ files: [String: String], prune: Bool = true) throws {
+    let fm = FileManager.default
+    if let walk = fm.enumerator(at: root, includingPropertiesForKeys: [.isSymbolicLinkKey]) {
+        for case let item as URL in walk where (try? item.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true {
+            try? fm.removeItem(at: item)
+        }
+    }
     var want: [String: Data] = [:]
     for (rel, text) in files where isSafeRelative(rel) {
         if text.hasPrefix("base64:") {
@@ -1123,7 +1179,6 @@ func syncFolder(_ root: URL, _ files: [String: String], prune: Bool = true) thro
             want[rel] = Data(text.utf8)
         }
     }
-    let fm = FileManager.default
     let base = realPath(root.path) + "/"   // /var and /private/var are the same folder: compare resolved paths
     if prune, let walk = fm.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey]) {
         for case let file as URL in walk {

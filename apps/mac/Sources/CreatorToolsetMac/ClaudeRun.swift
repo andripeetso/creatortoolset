@@ -105,6 +105,7 @@ func acpAnswer(_ req: RelayRequest, _ opts: RelayOptions, work: URL, send: @esca
     let (cwd, system) = try prepareFolder(req, work: work, tmp: tmp)
     let prompt = "<instructions>\n\(system)\n</instructions>\n\n" + requestText(req.user, folder: folder)
     let environment = driverEnv(base: ProcessInfo.processInfo.environment).merging(opts.env) { _, value in value }
+        .merging(acpRules(driver: opts.driver, web: req.web)) { _, rule in rule }
     let speech = AcpSpeech()
     let run: AcpRun
     do {
@@ -250,11 +251,18 @@ func codexAnswer(_ req: RelayRequest, _ opts: RelayOptions, cli: String, work: U
     let (cwd, system) = try prepareFolder(req, work: work, tmp: tmp, emptyFolder: emptyFolder)
     let prompt = "<instructions>\n\(system)\n</instructions>\n\n" + requestText(req.user, folder: folder)
     let pictures = codexPictures(req.files, cwd: cwd)
+    // no answer: a slow start is not run unfenced; a program that isn't there fails below, in runStream's words
+    var fenced = false
+    if let takes = codexTakesProfile(cli) {
+        fenced = takes
+    } else if FileManager.default.isExecutableFile(atPath: cli) {
+        throw ClaudeFailure(message: "Codex didn't start in time. Try again.")
+    }
     // the assistant: the app's MCP server for this run, its token only in this process's environment
     let mcp = req.mcp.flatMap { codexTakesMcp(cli) ? $0 : nil }
     var env = driverEnv(base: ProcessInfo.processInfo.environment, home: opts.home)
     if let mcp { env[codexTokenEnv] = mcp.token }
-    let args = codexArguments(cwd: cwd.path, model: opts.model, effort: opts.effort, pictures: pictures, mcpURL: mcp?.url ?? "")
+    let args = codexArguments(cwd: cwd.path, model: opts.model, effort: opts.effort, pictures: pictures, mcpURL: mcp?.url ?? "", fenced: fenced)
     let outcome = try runStream(cli: cli, args: args, cwd: cwd, env: env, prompt: prompt, folder: folder,
                                 send: send, step: step, tmp: tmp, stream: CodexStream())
     if outcome.killed {
@@ -357,10 +365,9 @@ func prepareFolder(_ req: RelayRequest, work: URL, tmp: URL, emptyFolder: URL? =
         cwd = emptyFolder ?? tmp.appendingPathComponent("folder")
     }
     try fm.createDirectory(at: cwd, withIntermediateDirectories: true)
-    if folder {
-        if req.files["sessions/INDEX.md"] != nil { system += piecesNote }
-        try syncFolder(cwd, req.files, prune: req.workdir == nil)   // the assistant's folder keeps what's in it
-    }
+    if folder && req.files["sessions/INDEX.md"] != nil { system += piecesNote }
+    // the assistant's folder keeps what's in it, and is synced on a turn with no file too, so no link stays there either
+    if folder || req.workdir != nil { try syncFolder(cwd, req.files, prune: req.workdir == nil) }
     return (cwd, system)
 }
 
