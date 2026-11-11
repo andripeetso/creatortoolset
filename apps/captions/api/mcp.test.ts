@@ -502,6 +502,7 @@ describe("Creator Toolset as a remote MCP server", () => {
     // options (my words only, deep research). Tools added since then live in api/mcp-tools/ and are not counted here.
     // 15032 -> 15164: set_work_prefs job (what they want to do first, from setup; the assistant can change it)
     // 15164 -> 15233: instagram_posts gives a saved post's library id, which instagram_post reads
-    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(15233);
+    // 15233 -> 15277: media_search says a typed search comes best match first, with where a word is said
+    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(15277);
   });
 });

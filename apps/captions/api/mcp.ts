@@ -229,7 +229,7 @@ export const TOOLS = [
   {
     name: "media_search",
     description:
-      "Search the user's Media Library: q matches titles, tags, AI descriptions and what is said in the clips; leave it out for the newest. kind = video, image, audio or doc; roll = a (A-roll) or b (B-roll); folder = a folder id (media_folders); since = only files added on or after this date; versions = version ids just added: said then counts how they were sorted, waiting up to 50 s for it. Each hit: id, version_id (for editor_create), title, kind, roll, state (ready once processed), length, description, tags.",
+      "Search the user's Media Library: q matches titles, tags, AI descriptions and what is said in the clips (best match first; said = where it is said); leave it out for the newest. kind = video, image, audio or doc; roll = a (A-roll) or b (B-roll); folder = a folder id (media_folders); since = only files added on or after this date; versions = version ids just added: said then counts how they were sorted, waiting up to 50 s for it. Each hit: id, version_id (for editor_create), title, kind, roll, state (ready once processed), length, description, tags.",
     inputSchema: { type: "object", properties: { q: str, kind: { type: "string", enum: ["video", "image", "audio", "doc"] }, roll: { type: "string", enum: ["a", "b"] }, folder: str, since: str, versions: { type: "array", items: str }, limit: { type: "integer" } } },
   },
   { name: "media_folders", description: "The Media Library's folders: id, name, how many files. A folder id goes into media_search and editor_create's broll_folder; media_import_folder files into a plain folder (kind manual), not a smart one.", inputSchema: { type: "object", properties: {} } },
@@ -824,12 +824,30 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       if (a.roll) q.set("roll", String(a.roll));
       if (a.folder) q.set("collectionId", String(a.folder));
       if (a.since) q.set("from", String(dateMs(a.since)));
-      const page = main ? { items: [] as Args[] } : await json<{ items: Args[] }>(`/api/library/${lib}/assets?${q}`);
+      // a typed search asks the library's fuller search: words in the title, tags and description, words that are said (with
+      // the second they are said at) and, where it is on, clips close in meaning. It answers its best hits, one per matching
+      // moment; since and version ids are the list's own, so those still go to the list.
+      const moments = new Map<string, Array<{ at: string; text: string }>>();
+      let page: { items: Args[] };
+      if (main) page = { items: [] };
+      else if (a.q && !a.since && !versions.length) {
+        const ask = new URLSearchParams({ q: String(a.q) });
+        for (const k of ["kind", "roll", "collectionId"]) if (q.get(k)) ask.set(k, q.get(k)!);
+        const hits = await json<Array<{ asset: Args; seconds?: number; snippet?: string }>>(`/api/library/${lib}/search?${ask}`);
+        const byClip = new Map<string, Args>();
+        for (const h of hits) {
+          const id = String(h.asset.id);
+          if (!byClip.has(id)) byClip.set(id, h.asset);
+          if (h.snippet && typeof h.seconds === "number" && (moments.get(id)?.length ?? 0) < 3) moments.set(id, [...(moments.get(id) ?? []), { at: clock(h.seconds).replace(/\.\d+$/, ""), text: h.snippet.replace(/\s+/g, " ").trim().slice(0, 200) }]);
+        }
+        page = { items: [...byClip.values()].slice(0, limit) };
+      } else page = await json<{ items: Args[] }>(`/api/library/${lib}/assets?${q}`);
       // with more than one source, each hit says which it is from
       const hit = (f: Args, source?: string) => ({
         ...pick(f, ["id", "versionId", "title", "kind", "roll", "state", "durationS", "tags"]),
         ...(f.description ? { description: String((f.description as Args).text).slice(0, 300) } : {}),
         ...(f.capturedAt ? { captured: when(f.capturedAt) } : {}),
+        ...(moments.has(String(f.id)) ? { said: moments.get(String(f.id)) } : {}),
         ...(source ? { source } : {}),
       });
       const files = page.items.map((f) => hit(f, others.length ? "Library" : undefined));

@@ -122,9 +122,10 @@ describe("the media tools follow the install's library", () => {
     tiny.seen.length = 0;
     const out = (await tool(key, "media_search", { q: "beach" })).value;
     expect(out.sources).toEqual(["Library", "Tiny archive"]);
+    // the library's own hits come best match first (its search decides), then the source's
     expect(out.files.map((f: { title: string; source: string }) => [f.title, f.source])).toEqual([
-      ["Beach talk to the camera", "Library"],
       ["Beach waves", "Library"],
+      ["Beach talk to the camera", "Library"],
       ["Beach cartwheel from the archive", "Tiny archive"],
       ["Beach photo from the archive", "Tiny archive"],
     ]);
@@ -132,6 +133,14 @@ describe("the media tools follow the install's library", () => {
     expect(out.note).toBeUndefined();
     // the source is asked through the library's own route, as the caller: the AI key and no cookie
     expect(tiny.seen).toEqual([{ user: "ana", q: "beach", authorization: key, cookie: null }]);
+  });
+
+  it("a typed search finds a word that is only said in a clip, and says at which second", async () => {
+    const out = (await tool(key, "media_search", { q: "chin" })).value;
+    expect(out.files.map((f: { id: string }) => f.id)).toEqual(["clip-talk"]);
+    expect(out.files[0].said).toEqual([{ at: "0:04", text: expect.stringContaining("chin") }]);
+    // the list's own filters still narrow it
+    expect((await tool(key, "media_search", { q: "chin", roll: "b" })).value.files).toEqual([]);
   });
 
   it("where the plug-in's source IS the install's Media Library, only it is searched and nothing names a source", async () => {
@@ -150,7 +159,7 @@ describe("the media tools follow the install's library", () => {
 
   it("kind is applied to a source's hits; roll, since, a folder and version ids are not its own, and the answer says so", async () => {
     const videos = (await tool(key, "media_search", { q: "beach", kind: "video" })).value;
-    expect(videos.files.map((f: { title: string }) => f.title)).toEqual(["Beach talk to the camera", "Beach waves", "Beach cartwheel from the archive"]);
+    expect(videos.files.map((f: { title: string }) => f.title)).toEqual(["Beach waves", "Beach talk to the camera", "Beach cartwheel from the archive"]);
     expect(videos.note).toBeUndefined();
 
     const aRoll = (await tool(key, "media_search", { q: "beach", roll: "a", since: "2026-11-09T00:00:00Z" })).value;
