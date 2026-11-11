@@ -166,8 +166,10 @@ export default function LibraryPage() {
   const [more, setMore] = useState<{ key: string; items: AssetCard[]; next?: string } | null>(null);
   const extra = more && more.key === pageKey ? more : null;
   const shownIds = new Set(first.data?.items.map((a) => a.id));
-  // while a term is typed the grid is the search's own answer, best first: by words, by what is said, or by meaning
-  const searching = !!term && !trash && !source;
+  // while a term is typed the grid is the search's own answer, best first: by words, by what is said, or by meaning. A
+  // saved search with words runs that search, and a term typed in it narrows it
+  const words = [smart?.query?.q, term].filter(Boolean).join(" ");
+  const searching = !!words && !trash && !source;
   const items = searching
     ? [...new Map((found?.hits ?? []).map((h) => [h.asset.id, h.asset])).values()]
     : [...(first.data?.items ?? []), ...(extra?.items.filter((a) => !shownIds.has(a.id)) ?? [])];
@@ -208,14 +210,14 @@ export default function LibraryPage() {
       .catch(() => setSources([]));
   }, [libId]);
 
-  // the search: the clips found for the grid, and the lines said in them. In a saved search it narrows that search: its
-  // words, kind and roll with the new ones
+  // the search: the clips found for the grid, and the lines said in them. In a saved search: its words, kind and roll
+  // with the ones picked now
   useEffect(() => {
     setFound(null);
     if (!libId || !searching) return;
     let live = true;
     const saved = smart?.query;
-    searchLibrary(libId, saved?.q ? `${saved.q} ${term}` : term, {
+    searchLibrary(libId, words, {
       facets,
       kind: kind === "all" ? saved?.kind?.[0] : kind,
       collectionId: smart ? undefined : (open ?? undefined),
@@ -224,7 +226,7 @@ export default function LibraryPage() {
       .then((r) => live && setFound(r))
       .catch((e) => live && (setFound({ hits: [], meaningGettingReady: false }), setError(message(e))));
     return () => void (live = false);
-  }, [libId, term, open, smart, facets, kind, roll, searching]);
+  }, [libId, words, open, smart, facets, kind, roll, searching]);
 
   const openClip = (a: AssetCard, at = 0) => {
     // a plug-in source's item (external ref) has no library asset to open here yet: its own page holds it
@@ -336,7 +338,7 @@ export default function LibraryPage() {
   };
 
   // the search on screen at the top level, kept as a saved search that runs it again (in a folder it would not be the same)
-  const canSave = searching && !open && !Object.values(facets).some((v) => v.length);
+  const canSave = !!term && searching && !open && !Object.values(facets).some((v) => v.length);
   const saveSearch = async () => {
     if (!libId || !term) return;
     try {

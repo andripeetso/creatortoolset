@@ -36,6 +36,7 @@ const server = vi.hoisted(() => ({
   /** what the page asked the listing for, and the folder changes it sent */
   asked: [] as Record<string, unknown>[],
   changed: [] as unknown[][],
+  searched: [] as string[],
 }));
 
 vi.mock("@/lib/library", async (importOriginal) => ({
@@ -45,6 +46,10 @@ vi.mock("@/lib/library", async (importOriginal) => ({
   listAssets: async (_: string, q: { trashed?: boolean; roll?: "a" | "b" }) => {
     server.asked.push(q);
     return { items: (q.trashed ? server.trash : server.items).filter((x) => !q.roll || (x as { roll?: string }).roll === q.roll), next: null };
+  },
+  searchLibrary: async (_: string, q: string) => {
+    server.searched.push(q);
+    return { hits: server.items.map((asset) => ({ asset })), meaningGettingReady: false };
   },
   changeFolderItems: async (...a: unknown[]) => {
     server.changed.push(a);
@@ -68,6 +73,7 @@ beforeEach(() => {
   server.watch = { allowed: true, folders: [], missing: 0 };
   server.asked = [];
   server.changed = [];
+  server.searched = [];
 });
 afterEach(() => {
   act(() => root?.unmount());
@@ -257,7 +263,7 @@ describe("Media Library folders", () => {
     ]);
   });
 
-  it("a saved search takes no drops and has no New folder inside it", async () => {
+  it("a saved search takes no drops; opened, it runs its search (what is said too) and has no New folder", async () => {
     server.folders = folders;
     const top = await mount();
     await act(async () => drop(link(top, "Apples")!, "one"));
@@ -266,6 +272,8 @@ describe("Media Library folders", () => {
     document.body.innerHTML = "";
     const inside = await mount("/library?f=col_s");
     expect(inside.querySelector('nav[aria-label="Folder"]')?.textContent).toBe("TinyApples");
+    expect(server.searched).toEqual(["apples"]);
+    expect(inside.textContent).toContain("Tiny Acrobatics one");
     expect(buttons(inside)).not.toContain("New folder");
   });
 
