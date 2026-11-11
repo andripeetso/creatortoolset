@@ -6,7 +6,9 @@ import {
   autoZooms,
   backgroundStops,
   defaultCamera,
+  outputSize,
   shadowOf,
+  zoomView,
   type CameraLook,
   type FrameShape,
   type ScreenEvents,
@@ -238,7 +240,7 @@ function ZoomTab({
             </button>
           </div>
           <SliderRow label="Depth" value={zoom.scale} min={1.2} max={4} step={0.1} format={(v) => `${v.toFixed(1)}×`} onChange={(scale) => setZoom({ scale })} />
-          <AimPad zoom={zoom} player={player} onAim={(x, y) => setZoom({ x, y })} />
+          <AimPad look={look} zoom={zoom} player={player} onAim={(x, y) => setZoom({ x, y })} />
           <PanelButton
             onClick={() => {
               const at = aim(player.time());
@@ -249,6 +251,7 @@ function ZoomTab({
             <Crosshair /> Aim at the pointer
           </PanelButton>
         </Group>
+        <EveryZoom look={look} change={change} />
         <Group>
           {look.zooms.length > 1 && (
             <PanelButton onClick={() => change({ zooms: look.zooms.map((z) => ({ ...z, scale: zoom.scale })) })}>
@@ -289,9 +292,7 @@ function ZoomTab({
       </Group>
       {look.zooms.length > 0 && (
         <>
-          <Group>
-            <SwitchRow label="Follow the pointer while zoomed" checked={look.follow} onChange={(follow) => change({ follow })} />
-          </Group>
+          <EveryZoom look={look} change={change} />
           <Group title="Zooms">
             <div className="space-y-1">
               {look.zooms.map((z, i) => (
@@ -316,10 +317,39 @@ function ZoomTab({
 }
 
 /**
+ * What holds for every zoom: whether the view follows the pointer, and what a zoom does to the window the recording
+ * sits in. The window can only grow where the whole recording is shown; "Use the space" only where the frame has
+ * space beside it (another shape than the recording's).
+ */
+function EveryZoom({ look, change }: { look: ScreenLook; change: (patch: Partial<ScreenLook>) => void }) {
+  const filled = look.fill && look.shape !== "source";
+  const room = look.shape !== "source";
+  const fit = look.zoomFit === "frame" ? "frame" : look.zoomFit === "space" && room ? "space" : "inside";
+  return (
+    <Group title="Every zoom">
+      <SwitchRow label="Follow the pointer while zoomed" checked={look.follow} onChange={(follow) => change({ follow })} />
+      {!filled && (
+        <Segmented
+          stacked
+          label="What zooming does to the window"
+          value={fit}
+          options={[
+            { id: "inside", label: "Zoom inside the window", title: "The window stays as it is; the picture is zoomed inside it" },
+            ...(room ? [{ id: "space" as const, label: "Grow into the empty space", title: "The window grows into the empty space beside it before anything is cut off" }] : []),
+            { id: "frame", label: "Zoom the whole frame", title: "The window itself is zoomed, past the padding to the frame's edges" },
+          ]}
+          onChange={(zoomFit) => change({ zoomFit })}
+        />
+      )}
+    </Group>
+  );
+}
+
+/**
  * Where a zoom looks: the recording's frame, small, with a box around the part the zoom shows. Drag the box, or
  * press anywhere, to aim it.
  */
-function AimPad({ zoom, player, onAim }: { zoom: Zoom; player: Player; onAim: (x: number, y: number) => void }) {
+function AimPad({ look, zoom, player, onAim }: { look: ScreenLook; zoom: Zoom; player: Player; onAim: (x: number, y: number) => void }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const ratio = player.ratio() || 16 / 9;
 
@@ -336,10 +366,10 @@ function AimPad({ zoom, player, onAim }: { zoom: Zoom; player: Player; onAim: (x
     return player.onFrame(draw);
   }, [player]);
 
-  // the box is what the zoom shows: 1/scale of each side, kept inside the picture like the zoom itself
-  const side = 1 / zoom.scale;
-  const left = Math.min(1 - side, Math.max(0, zoom.x - side / 2));
-  const top = Math.min(1 - side, Math.max(0, zoom.y - side / 2));
+  // the box is the part of the recording the zoom shows, worked out the way the picture itself is laid out (a
+  // window that grows with the zoom shows more than 1/depth of each side)
+  const out = outputSize(look.shape, ratio * 1000, 1000, false);
+  const view = zoomView(look, zoom, ratio * 1000, 1000, out.width, out.height);
 
   const aimAt = (e: { clientX: number; clientY: number }, el: HTMLElement) => {
     const r = el.getBoundingClientRect();
@@ -375,7 +405,7 @@ function AimPad({ zoom, player, onAim }: { zoom: Zoom; player: Player; onAim: (x
         <canvas ref={canvas} width={560} height={Math.round(560 / ratio)} className="h-full w-full opacity-70" />
         <div
           className="pointer-events-none absolute rounded-sm border-2 border-violet-400 bg-violet-400/15 shadow-[0_0_0_9999px_rgba(0,0,0,0.45)]"
-          style={{ left: `${left * 100}%`, top: `${top * 100}%`, width: `${side * 100}%`, height: `${side * 100}%` }}
+          style={{ left: `${view.x * 100}%`, top: `${view.y * 100}%`, width: `${view.w * 100}%`, height: `${view.h * 100}%` }}
         />
       </div>
     </div>
