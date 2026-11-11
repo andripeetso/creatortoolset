@@ -504,6 +504,12 @@ describe("the plan an account's AIs are on", () => {
     expect(await local.connectCli("pla", "claude", home, device.id)).toMatchObject({ state: "ready" });
     expect(local.knownPlans("pla")).toEqual({ claude: "claude_max5", codex: "chatgpt_plus" });
     expect(local.planOf("pla")).toBe("claude_max5");
+    // a default AI whose plan nobody names: Not sure, never the other AI's plan
+    saveLimits(device.id, reading("free"));
+    const set = ownSettings("pla")!;
+    await saveSettings({ ...set, instances: [...set.instances, { id: "local-codex", driver: "codex", name: "Codex", enabled: true, device: device.id }], default: { ...set.default, instance: "local-codex" } }, "pla");
+    expect(local.planOf("pla")).toBeNull();
+    saveLimits(device.id, reading("plus"));
     // and the list's rows name them: Codex's from its reading, Claude's from its sign-in
     world(["claude", "codex"], (f, args) => {
       if (args.join(" ") === "auth status --json") return { stdout: claudeAuth(true, "max") };

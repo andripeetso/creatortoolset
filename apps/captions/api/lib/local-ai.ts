@@ -511,12 +511,15 @@ export function knownPlans(username: string): Partial<Record<Driver, PlanId>> {
   return { ...(claude ? { claude } : {}), ...(codex ? { codex } : {}) };
 }
 
-/** The account's plan, one value for Usage, setup and the big-job warning: its default AI's, else any it knows. */
+/**
+ * The account's plan, one value for Usage, setup and the big-job warning: its default AI's (unknown stays unknown, never
+ * another AI's plan), or with no default AI yet the one plan known.
+ */
 export function planOf(username: string): PlanId | null {
   const plans = knownPlans(username);
   const own = ownSettings(username);
   const driver = own?.instances.find((i) => i.id === own.default.instance)?.driver;
-  return (driver && plans[driver]) || Object.values(plans)[0] || null;
+  return (driver ? plans[driver] : Object.values(plans)[0]) ?? null;
 }
 
 /* ---- the view ---- */
