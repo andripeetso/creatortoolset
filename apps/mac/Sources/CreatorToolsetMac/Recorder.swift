@@ -639,16 +639,11 @@ final class Recorder: ObservableObject {
         }
     }
 
-    /// Throws the recording away (asks first once it has started).
+    /// Throws the recording away. Once it has started, the bar asks first (RecorderBar), in the bar itself.
     func cancel() {
         if case .countdown = phase { return finish() }
         if phase == .toolbar { return closeToolbar() }
         guard #available(macOS 15.0, *), let capture = capture as? Capture else { return }
-        let ask = NSAlert()
-        ask.messageText = "Throw this recording away?"
-        ask.addButton(withTitle: "Throw Away")
-        ask.addButton(withTitle: "Keep Recording")
-        guard ask.runModal() == .alertFirstButtonReturn else { return }
         capture.cancel()
         camera?.cancel()
         try? project?.delete()
@@ -725,15 +720,19 @@ final class Recorder: ObservableObject {
         }
     }
 
-    /// Throws a finished recording away (to the Trash), after asking.
-    func delete(_ project: LocalProject) {
+    /// Throws a finished recording away (to the Trash). The one who pressed asks first, in its own place: the page in the
+    /// app's dialog ("trash:<id>"), the panel after Stop on the panel. `asking`: only for a page older than that, which
+    /// sends "delete:<id>" and leaves the question to this app.
+    func delete(_ project: LocalProject, asking: Bool = false) {
         if case .uploading = phase { return alert("Wait for the upload", "It can be thrown away when the upload is done.") }
-        let ask = NSAlert()
-        ask.messageText = "Throw \"\(project.name)\" away?"
-        ask.informativeText = "It goes to the Trash."
-        ask.addButton(withTitle: "Throw Away")
-        ask.addButton(withTitle: "Cancel")
-        guard ask.runModal() == .alertFirstButtonReturn else { return }
+        if asking {
+            let ask = NSAlert()
+            ask.messageText = "Throw \"\(project.name)\" away?"
+            ask.informativeText = "It goes to the Trash."
+            ask.addButton(withTitle: "Throw Away")
+            ask.addButton(withTitle: "Cancel")
+            guard ask.runModal() == .alertFirstButtonReturn else { return }
+        }
         do {
             try project.delete()
             RecordingPreview.close()
@@ -838,10 +837,20 @@ final class Recorder: ObservableObject {
 /// recording): the count-in, then time, Pause, Stop, Throw away.
 struct RecorderBar: View {
     @ObservedObject var recorder: Recorder
+    /// Throw away was pressed: the bar asks in its own place until Throw Away or Keep.
+    @State private var asking = false
 
     var body: some View {
         HStack(spacing: 12) {
             switch recorder.phase {
+            case .recording where asking, .paused where asking:
+                Text("Throw away?")
+                Button("Keep") { asking = false }
+                Button("Throw Away") {
+                    asking = false
+                    recorder.cancel()
+                }
+                .foregroundStyle(.red)
             case .countdown(let n):
                 Text("Recording in \(n)").monospacedDigit()
                 Button("Cancel") { recorder.cancel() }
@@ -854,7 +863,7 @@ struct RecorderBar: View {
                     Image(systemName: recorder.phase == .paused ? "play.fill" : "pause.fill")
                 }.help(recorder.phase == .paused ? "Resume" : "Pause")
                 Button { recorder.stop() } label: { Image(systemName: "stop.fill") }.help("Stop (⌥⌘.)")
-                Button { recorder.cancel() } label: { Image(systemName: "trash") }.help("Throw away")
+                Button { asking = true } label: { Image(systemName: "trash") }.help("Throw away")
             case .saving:
                 ProgressView().controlSize(.small)
                 Text("Saving…")

@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { canUse, useMe } from "@/lib/auth";
 import { useCachedList } from "@/lib/local-cache";
-import { canRecordScreen, openRecorder, tellRecorder, useLocalRecordings, useRecorderState, type LocalRecording, type RecorderPhase, type ShareDest } from "@/lib/mac-record";
+import { canRecordScreen, openRecorder, tellRecorder, throwAwayRecording, useLocalRecordings, useRecorderState, type LocalRecording, type RecorderPhase, type ShareDest } from "@/lib/mac-record";
 import { localFileUrl, localFilesOverlap } from "@/lib/local-files";
 import { listReviewAssets, thumbUrl } from "@/lib/review";
 import { timeAgo } from "@/lib/exports";
@@ -79,9 +79,7 @@ export default function ScreenRecorderPage() {
     .sort((a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt))
     .slice(0, 12);
 
-  // the Mac app asks before it moves a recording to the Trash (its own alert, in every version of it), so the page
-  // does not ask as well: that was two questions for one press, and the page's said "cannot be undone"
-  const throwAway = (r: LocalRecording) => tellRecorder(`delete:${r.id}`);
+  const throwAway = (r: LocalRecording) => void throwAwayRecording(r);
 
   return (
     <div className="flex min-h-dvh flex-col bg-zinc-950 text-zinc-100">

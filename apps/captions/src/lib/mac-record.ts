@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 
+import { confirmDialog } from "./dialogs";
+
 /** The Mac app's screen recorder (apps/mac Recorder.swift): offered only where the app can record (macOS 15+;
  *  it sets <html data-mac-record>). Record buttons open its toolbar; recordings are local projects on this Mac
  *  (see LocalRecording) until they are sent somewhere. */
@@ -18,7 +20,8 @@ export type RecorderMessage =
   | "list"
   | `share:${string}:${ShareDest}`
   | `reveal:${string}`
-  | `delete:${string}`;
+  | `delete:${string}`
+  | `trash:${string}`;
 
 /** Posts a raw message to the app (no-op outside it). */
 export function postToApp(message: string) {
@@ -29,6 +32,19 @@ export function postToApp(message: string) {
 /** `record-<message>` to the app. */
 export function tellRecorder(message: RecorderMessage) {
   postToApp(`record-${message}`);
+}
+
+/** Throws a recording on this Mac away (to the Trash), asking first in the app's own dialog; true when it goes. An app
+ *  from before `trash:` (no <html data-mac-record-trash>) asks in its own alert instead, so the page leaves it to it. */
+export async function throwAwayRecording(r: { id: string; name: string }): Promise<boolean> {
+  if (document.documentElement.dataset.macRecordTrash !== "1") {
+    tellRecorder(`delete:${r.id}`);
+    return true;
+  }
+  if (!(await confirmDialog({ title: `Throw “${r.name}” away?`, body: "It goes to the Trash.", ok: "Throw away", danger: true, deleting: true })))
+    return false;
+  tellRecorder(`trash:${r.id}`);
+  return true;
 }
 
 /** Opens the app's recording toolbar (nothing starts until the user picks a source and Start). */

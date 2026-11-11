@@ -470,7 +470,8 @@ final class Shell: NSObject, ObservableObject {
                 Task { await recorder.share(project, to: destination) }
             }
         case "reveal": if let project { NSWorkspace.shared.activateFileViewerSelecting([project.screenURL]) }
-        case "delete": if let project { recorder.delete(project) }
+        case "trash": if let project { recorder.delete(project) }   // the page has asked
+        case "delete": if let project { recorder.delete(project, asking: true) }   // a page from before "trash"
         default: break   // "state": only the answer
         }
         pushRecorderState()

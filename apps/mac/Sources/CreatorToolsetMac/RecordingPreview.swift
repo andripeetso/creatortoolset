@@ -87,6 +87,8 @@ private struct PreviewView: View {
     let actions: RecordingPreview.Actions
     let close: () -> Void
     @State private var hovering = false
+    /// The trash was pressed: the panel asks over the picture until Throw Away or Cancel.
+    @State private var asking = false
 
     var body: some View {
         ZStack {
@@ -100,7 +102,7 @@ private struct PreviewView: View {
             .frame(width: 340, height: 210)
             .clipped()
 
-            if hovering && busy.text == nil {
+            if hovering && busy.text == nil && !asking {
                 Color.black.opacity(0.55)
                 VStack(spacing: 10) {
                     HStack(spacing: 10) {
@@ -130,7 +132,21 @@ private struct PreviewView: View {
                 }
             }
 
-            VStack {
+            if asking {
+                Color.black.opacity(0.75)
+                VStack(spacing: 6) {
+                    Text("Throw it away?").font(.system(size: 14, weight: .semibold))
+                    Text("It goes to the Trash.").font(.system(size: 12)).foregroundStyle(.white.opacity(0.7))
+                    HStack(spacing: 10) {
+                        pill("Cancel", fill: .white.opacity(0.14)) { asking = false }
+                        pill("Throw Away", fill: .red.opacity(0.85), action: actions.discard)
+                    }
+                    .padding(.top, 8)
+                }
+                .foregroundStyle(.white)
+            }
+
+            if !asking { VStack {
                 HStack {
                     Button(action: close) {
                         Image(systemName: "xmark")
@@ -142,8 +158,8 @@ private struct PreviewView: View {
                     .buttonStyle(.plain)
                     .help("Close (the recording stays)")
                     Spacer()
-                    // in sight, not in a menu: a take that is not wanted goes with one press (the app asks once)
-                    Button(action: actions.discard) {
+                    // in sight, not in a menu: a take that is not wanted goes with one press (the panel asks once, over the picture)
+                    Button { asking = true } label: {
                         Image(systemName: "trash")
                             .font(.system(size: 11, weight: .bold))
                             .foregroundStyle(.white)
@@ -171,7 +187,7 @@ private struct PreviewView: View {
                 .padding(.vertical, 6)
                 .background(LinearGradient(colors: [.clear, .black.opacity(0.7)], startPoint: .top, endPoint: .bottom))
             }
-            .padding(8)
+            .padding(8) }
         }
         .frame(width: 340, height: 210)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -190,6 +206,15 @@ private struct PreviewView: View {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.writeObjects([project.screenURL as NSURL])
         actions.copy()
+    }
+
+    private func pill(_ title: String, fill: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title).font(.system(size: 12, weight: .medium))
+                .padding(.horizontal, 14).frame(height: 28)
+                .background(Capsule().fill(fill))
+        }
+        .buttonStyle(.plain)
     }
 
     private func tile(_ title: String, _ symbol: String, _ action: @escaping () -> Void) -> some View {
