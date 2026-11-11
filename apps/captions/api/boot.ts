@@ -24,6 +24,7 @@ import { startTrashPurge } from "./library/trash";
 import { startWatchFolders, watchApp } from "./library/watch";
 import { storageApp } from "./library/usage";
 import { editorApp } from "./editor/routes";
+import { foldersApp } from "./folders";
 import { startEditorWorker } from "./editor/worker";
 import { presetsApp } from "./presets";
 import { packCatalogApp } from "./pack-catalog";
@@ -196,6 +197,7 @@ export const TOOL_GATES: [string, Tool[]][] = [
   ["/api/clean", ["clean"]],
   ["/api/library", ["media"]],
   ["/api/editor", ["editor"]],
+  ["/api/folders/editor", ["editor"]],
   // the Analyzer and the Workshop read each other's APIs
   ["/api/instagram", ["instagram", "workshop"]],
   ["/api/workshop", ["instagram", "workshop"]],
@@ -421,6 +423,7 @@ if (process.env.NODE_ENV !== "test") {
   startPlugins(serverPlugins, startFolderPlugin);
 }
 app.route("/api/stories", storiesApp);
+app.route("/api/folders", foldersApp);
 app.route("/api/account-profile", accountProfileApp);
 // plug-ins (plugins/<id>/plugin.ts, generated into api/plugins.gen.ts) mount under /api/x/<id>, behind the same login
 mountPlugins(app, serverPlugins);

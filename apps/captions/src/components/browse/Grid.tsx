@@ -68,6 +68,7 @@ export function ItemCard({
   corner,
   title,
   actions,
+  drag,
 }: {
   to?: string;
   onClick?: () => void;
@@ -79,6 +80,8 @@ export function ItemCard({
   corner?: ReactNode;
   title?: string;
   actions?: ReactNode;
+  /** dragged onto a folder (lib/folders.ts `drag`) */
+  drag?: { draggable: boolean; onDragStart: (e: React.DragEvent) => void };
 }) {
   const body = (
     <>
@@ -98,11 +101,11 @@ export function ItemCard({
   );
   const box = "block w-full overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/50 text-left transition-colors hover:border-violet-500/60";
   const card = to ? (
-    <Link to={to} title={title} className={box}>
+    <Link to={to} title={title} className={box} {...drag}>
       {body}
     </Link>
   ) : (
-    <button type="button" onClick={onClick} title={title} className={box}>
+    <button type="button" onClick={onClick} title={title} className={box} {...drag}>
       {body}
     </button>
   );
