@@ -76,7 +76,7 @@ describe("FolderCard", () => {
     expect(d.onFiles).toHaveBeenCalledWith([file]);
   });
 
-  it("takes nothing while dropping is off, and nothing it does not know", () => {
+  it("takes nothing while dropping is off, and no files when it has nowhere to put them", () => {
     const off = render(<FolderCard name="F" to="/f" covers={[]} drop={drop({ enabled: false })} />).querySelector("a")!;
     const e = dragEvent("dragover", { [ITEM]: "1" });
     off.dispatchEvent(e);
@@ -87,6 +87,9 @@ describe("FolderCard", () => {
     const files = dragEvent("dragover", {}, [new File(["x"], "a.mp4")]);
     noFiles.dispatchEvent(files);
     expect(files.defaultPrevented).toBe(false); // the page's own drop takes them
+    const item = dragEvent("dragover", {}); // a page drag whose type the browser does not list until the drop
+    noFiles.dispatchEvent(item);
+    expect(item.defaultPrevented).toBe(true);
   });
 
   it("right-click: Open, Rename…, the tool's items, then Delete with its words", async () => {

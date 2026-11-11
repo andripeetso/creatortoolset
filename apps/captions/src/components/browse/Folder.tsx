@@ -33,7 +33,8 @@ export interface FolderProps {
 }
 
 export interface FolderDrop {
-  /** The dataTransfer type the tool's item cards set when dragged; its value is their ids joined by ",". */
+  /** The dataTransfer type the tool's item cards set when dragged; its value is their ids joined by ",". A drop with
+   *  neither that nor files does nothing. */
   type: string;
   /** Items dragged from the page onto it. */
   onItems: (ids: string[]) => void;
@@ -52,7 +53,9 @@ const leftFor = (e: React.DragEvent) => !e.currentTarget.contains(e.relatedTarge
 function useFolderDrop(drop?: FolderDrop) {
   const [over, setOver] = useState(false);
   if (!drop || drop.enabled === false) return { over: false, handlers: {} };
-  const ours = (e: React.DragEvent) => e.dataTransfer.types.includes(drop.type) || (!!drop.onFiles && e.dataTransfer.types.includes("Files"));
+  // every drag but files it can't take (those fall through to the page): a browser may not list a page's own drag type
+  // until the drop, so the type is read there
+  const ours = (e: React.DragEvent) => !!drop.onFiles || !e.dataTransfer.types.includes("Files") || e.dataTransfer.types.includes(drop.type);
   return {
     over,
     handlers: {
