@@ -6,10 +6,9 @@ import { useCachedLoad } from "@/lib/local-cache";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, UserRound } from "lucide-react";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Loader2, UserRound } from "lucide-react";
 import { PROVIDER_NAME, ProviderMark, type Provider } from "@/components/ProviderMark";
-import { useMacAccount } from "@/components/setup/AccountStep";
+import { SIGN_IN_BUTTON, useMacAccount } from "@/components/setup/AccountStep";
 import { Card, EmptyRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section } from "./ui";
 
 const PROVIDERS: Provider[] = ["google", "apple", "github"];
@@ -110,6 +109,15 @@ export function AccountSection() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params]);
 
+  // a link finished in the system browser (the Mac app opens sign-ins there): coming back to the window shows it
+  useEffect(() => {
+    const again = () => void load();
+    window.addEventListener("focus", again);
+    return () => window.removeEventListener("focus", again);
+    // load is stable
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   if (!me) return <LoadingRow />;
   if (noAccount) {
     return (
@@ -169,15 +177,16 @@ const isProvider = (p: string | undefined): p is Provider => !!p && (PROVIDERS a
 
 /**
  * Connected accounts: each sign-in this account has, with the provider's mark, who it is there and its own menu, then
- * Connect account for the ones still open. On a server with sign-in set up they are the account's linked sign-ins
- * (Unlink; Connect account links another). In the Mac app it is also the Creator Toolset account this Mac is signed in
- * to (Sign out; Connect account signs in, only for a sign-in the Mac app offers). Nothing connected and nothing to
+ * a Continue with … button (the provider's mark) for each one still open. On a server with sign-in set up they are the account's linked sign-ins
+ * (Unlink; a Continue with … button links another). In the Mac app it is also the Creator Toolset account this Mac is signed in
+ * to (Sign out; its button signs in, only for a sign-in the Mac app offers). Nothing connected and nothing to
  * connect means no section at all, so it is never a dead row.
  */
 function ConnectedAccounts({ signins, open, unlink }: { signins: SignIn[]; open: Provider[]; unlink: (p: Provider) => Promise<void> }) {
   const mac = useMacAccount({ first: "offered" });
   const macIn = mac.account.state === "signedIn" ? mac.account : null;
-  const macOpen = macIn ? [] : mac.providers;
+  // a provider this server links is its button; the Mac app's own account sign-in only for one the server does not
+  const macOpen = macIn ? [] : mac.providers.filter((p) => !open.includes(p));
   // a sign-in from here that failed says so once (the sheet being closed is nothing to report)
   const failed = mac.account.state === "error" ? mac.account.message || "The sign-in didn't work. Try again." : mac.account.state === "unreachable" ? "Couldn't reach the account server. Try again." : null;
   useEffect(() => {
@@ -187,7 +196,6 @@ function ConnectedAccounts({ signins, open, unlink }: { signins: SignIn[]; open:
   const mark = (p: Provider | undefined) => (
     <span className="text-foreground">{p ? <ProviderMark provider={p} className="size-4" /> : <UserRound className="size-4" />}</span>
   );
-  const item = "gap-2.5 text-sm";
   return (
     <Section id="sign-in-with" title="Connected accounts">
       <Card>
@@ -214,32 +222,19 @@ function ConnectedAccounts({ signins, open, unlink }: { signins: SignIn[]; open:
           />
         )}
         {(open.length > 0 || macOpen.length > 0) && (
-          <div className="px-1.5 py-1.5 sm:px-2">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button size="sm" variant="ghost" disabled={!!mac.busy} className="text-[var(--tint-text,theme(colors.violet.400))]">
-                  <Plus className="size-3.5" />
-                  {mac.busy && mac.busy !== "signout" ? "Signing in…" : "Connect account"}
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-56">
-                {open.map((p) => (
-                  <DropdownMenuItem key={`link-${p}`} asChild className={item}>
-                    <a href={`/api/account/login/${p}?for=link`}>
-                      <ProviderMark provider={p} className="size-4 text-foreground" />
-                      {PROVIDER_NAME[p]}
-                    </a>
-                  </DropdownMenuItem>
-                ))}
-                {macOpen.map((p) => (
-                  <DropdownMenuItem key={`mac-${p}`} className={item} onSelect={() => mac.signIn(p)}>
-                    {/* its own colour: a menu item greys an icon that names none */}
-                    <ProviderMark provider={p} className="size-4 text-foreground" />
-                    {PROVIDER_NAME[p]}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
+          <div className="flex flex-col gap-2 p-2 sm:flex-row">
+            {open.map((p) => (
+              <a key={`link-${p}`} href={`/api/account/login/${p}?for=link`} className={cn(SIGN_IN_BUTTON, "sm:flex-1")}>
+                <ProviderMark provider={p} className="size-4 shrink-0" />
+                <span>Continue with {PROVIDER_NAME[p]}</span>
+              </a>
+            ))}
+            {macOpen.map((p) => (
+              <button key={`mac-${p}`} type="button" disabled={!!mac.busy} onClick={() => mac.signIn(p)} className={cn(SIGN_IN_BUTTON, "sm:flex-1", mac.busy && mac.busy !== p && "opacity-50")}>
+                {mac.busy === p ? <Loader2 aria-hidden className="size-4 animate-spin" /> : <ProviderMark provider={p} className="size-4 shrink-0" />}
+                <span>{mac.busy === p ? "Signing in…" : `Continue with ${PROVIDER_NAME[p]}`}</span>
+              </button>
+            ))}
           </div>
         )}
       </Card>

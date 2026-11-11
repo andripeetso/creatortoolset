@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { escHtml, plainPage } from "./lib/plain-page";
 import type { Context } from "hono";
 import { getSessionUser, sessionOf, type AuthVars } from "./auth";
 import { env } from "./lib/env";
@@ -105,10 +106,6 @@ connectorsApp.get("/login/:kind", async (c) => {
  */
 export const connectorsCallbackApp = new Hono();
 
-const donePage = (title: string, line: string) =>
-  `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>:root{color-scheme:light dark}body{margin:0;min-height:100vh;display:grid;place-items:center;font:15px/1.5 -apple-system,system-ui,sans-serif}main{max-width:420px;padding:32px 24px}h1{font-size:20px;margin:0 0 8px}p{margin:0;opacity:.7}</style></head><body><main><h1>${title}</h1><p>${line}</p></main></body></html>`;
-const escHtml = (s: string) => s.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
-
 connectorsCallbackApp.get("/callback/:kind", async (c) => {
   const st = states.get(c.req.query("state") ?? "");
   const kind = c.req.param("kind") as LoginKind;
@@ -120,7 +117,7 @@ connectorsCallbackApp.get("/callback/:kind", async (c) => {
   const back = (q: string) => {
     if (here) return c.redirect(`${to}${to.includes("?") ? "&" : "?"}${q}`);
     const p = new URLSearchParams(q);
-    return p.get("connected") ? c.html(donePage("Connected", "You can close this tab. Creator Toolset already has the account, in Settings → Social accounts.")) : c.html(donePage("Not connected", escHtml(p.get("error") ?? "")), 400);
+    return p.get("connected") ? c.html(plainPage("Connected", "You can close this tab. Creator Toolset already has the account, in Settings → Social accounts.")) : c.html(plainPage("Not connected", escHtml(p.get("error") ?? "")), 400);
   };
   if (!st || st.kind !== kind || Date.now() - st.at > STATE_MS) return back(`error=${encodeURIComponent("That login expired: start it again")}`);
   const user = st.user;

@@ -2,8 +2,11 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { createHash, createPrivateKey, randomBytes, sign as cryptoSign } from "node:crypto";
 import { getSessionUser, setLoginCookie, type AuthVars } from "./auth";
-import { hostedMode } from "./lib/env";
-import { bumpUsage, createUser, findByIdentity, findByLogin, findUser, isSignInProvider, linkIdentity, refreshPicture, type SignInProvider } from "./users";
+import { writeFileSync, readFileSync, renameSync } from "node:fs";
+import path from "node:path";
+import { env, hostedMode } from "./lib/env";
+import { escHtml, plainPage } from "./lib/plain-page";
+import { SIGNIN_NAME, bumpUsage, createUser, findByIdentity, findByLogin, findUser, isSignInProvider, linkIdentity, refreshPicture, type SignInProvider } from "./users";
 
 /**
  * Sign in with Apple, Google and GitHub to a site account, and linking one to an account (Settings → Account). A hosted
@@ -134,13 +137,50 @@ export function signinUrl(kind: Kind, redirect: string, state: string): string |
 }
 
 type Mode = { type: "site" } | { type: "link"; username: string };
-// in memory: a sign-in in flight (single use, 15 min)
+/**
+ * A map kept in the data folder, so a restart (every deploy) between a sign-in's start and its way back loses nothing.
+ * Small and short-lived: each entry is single use and swept after 15 minutes.
+ */
+class Kept<V extends { at: number }> extends Map<string, V> {
+  private file: string;
+  constructor(name: string) {
+    super();
+    this.file = path.join(env.dataDir, name);
+    try {
+      for (const [k, v] of Object.entries(JSON.parse(readFileSync(this.file, "utf8")) as Record<string, V>)) if (Date.now() - v.at <= STATE_MS) super.set(k, v);
+    } catch {
+      // none yet
+    }
+  }
+  private save() {
+    try {
+      writeFileSync(`${this.file}.tmp`, JSON.stringify(Object.fromEntries(this)), { mode: 0o600 });
+      renameSync(`${this.file}.tmp`, this.file);
+    } catch (e) {
+      console.error("[sign-in] could not keep sign-ins in progress:", e instanceof Error ? e.message : e);
+    }
+  }
+  override set(k: string, v: V) {
+    super.set(k, v);
+    this.save();
+    return this;
+  }
+  override delete(k: string) {
+    const had = super.delete(k);
+    if (had) this.save();
+    return had;
+  }
+}
+
+// a sign-in in flight (single use, 15 min)
 // `verifier`: the sign-in went to the service; only this server can collect who signed in (PKCE)
-const states = new Map<string, { kind: Kind; mode: Mode; at: number; verifier?: string }>();
+const states = new Kept<{ kind: Kind; mode: Mode; at: number; verifier?: string }>("sign-ins-in-progress.json");
+// a link whose way back reached a browser without that account's session: waits for the person's press (15 min)
+const pendingLinks = new Kept<{ username: string; who: Who; at: number }>("sign-in-links-waiting.json");
 
 const sweep = () => {
   const now = Date.now();
-  for (const [k, v] of states) if (now - v.at > STATE_MS) states.delete(k);
+  for (const m of [states, pendingLinks]) for (const [k, v] of m) if (now - v.at > STATE_MS) m.delete(k);
 };
 
 /** Starts a sign-in for a site account (`for=site`) or links one to the signed-in account (`for=link`); others go on. */
@@ -218,10 +258,11 @@ signInCallbackApp.get(SERVICE_RETURN.replace("/api/auth", ""), async (c, next) =
   if (!hostedMode()) return next();
   const state = c.req.query("state") ?? "";
   const st = states.get(state);
-  if (!st?.verifier) return next();
+  // a sign-in this server has no record of (expired, or used already): say so, rather than a bare Not Found
+  if (!st?.verifier) return c.html(EXPIRED, 400);
   states.delete(state); // single use
-  if (Date.now() - st.at > STATE_MS) return c.text("That sign-in expired: start it again", 400);
-  const fail = failTo(c, st.mode);
+  if (Date.now() - st.at > STATE_MS) return c.html(EXPIRED, 400);
+  const fail = failTo(c, st.mode, true);
   const ticket = c.req.query("ticket") ?? "";
   if (c.req.query("error") || !ticket) return fail(str(c.req.query("error")).slice(0, 200) || "Sign-in was cancelled");
   try {
@@ -243,14 +284,46 @@ signInCallbackApp.get(SERVICE_RETURN.replace("/api/auth", ""), async (c, next) =
   }
 });
 
-const failTo = (c: Context, mode: Mode) => (msg: string) =>
-  mode.type === "link" ? c.redirect(`/settings/account?signin=${encodeURIComponent(msg)}`) : c.redirect(`/login?error=${encodeURIComponent(msg)}`);
+/** The press on a link's page above: the link is made, and the person goes back to the app (its window reloads on focus). */
+signInCallbackApp.post("/link-confirm", async (c) => {
+  if (!hostedMode()) return c.notFound();
+  const f = await c.req.parseBody();
+  const id = typeof f.id === "string" ? f.id : "";
+  const p = pendingLinks.get(id);
+  if (!p || Date.now() - p.at > STATE_MS) return c.html(EXPIRED, 400);
+  pendingLinks.delete(id); // single use
+  const user = findUser(p.username);
+  try {
+    if (!user) throw new Error("That account is gone");
+    linkIdentity(user, p.who);
+  } catch (e) {
+    return c.html(plainPage("That didn't link", `${escHtml(e instanceof Error ? e.message : String(e))}.`), 400);
+  }
+  return c.html(plainPage(`${SIGNIN_NAME[p.who.provider]} is linked`, "You can close this page and go back to Creator Toolset."));
+});
+
+const EXPIRED = plainPage("That sign-in expired", "Start it again from Creator Toolset.");
+
+/** The account's own session came along (`withCookie`), or the way back is a cross-site POST that never carries one. */
+const sessionHere = (c: Context, username: string) => getSessionUser(c.req.header("cookie"))?.username === username;
+
+/**
+ * Where a failed sign-in goes: the login screen, or Settings → Account for a link. A link whose way back reached a
+ * browser without that account's session (the Mac app finishes sign-ins in the system browser) gets a plain page,
+ * since Settings would only show that browser the login screen.
+ */
+const failTo = (c: Context, mode: Mode, withCookie = false) => (msg: string) =>
+  mode.type !== "link"
+    ? c.redirect(`/login?error=${encodeURIComponent(msg)}`)
+    : withCookie && !sessionHere(c, mode.username)
+      ? c.html(plainPage("That didn't link", `${escHtml(msg)}. Go back to Creator Toolset and try again.`), 400)
+      : c.redirect(`/settings/account?signin=${encodeURIComponent(msg)}`);
 
 async function callback(c: Context, kind: Kind, p: { code: string; state: string; error?: string; userJson?: string }) {
   const st = states.get(p.state);
   states.delete(p.state); // single use
-  if (!st || st.kind !== kind || Date.now() - st.at > STATE_MS) return c.text("That sign-in expired: start it again", 400);
-  const fail = failTo(c, st.mode);
+  if (!st || st.kind !== kind || Date.now() - st.at > STATE_MS) return c.html(EXPIRED, 400);
+  const fail = failTo(c, st.mode, kind !== "apple");
   if (p.error || !p.code) return fail("Sign-in was cancelled");
   try {
     const redirect = `${originOf(c)}/api/auth/${kind}/callback`;
@@ -271,11 +344,29 @@ async function callback(c: Context, kind: Kind, p: { code: string; state: string
  */
 function finish(c: Context, mode: Mode, who: Who, withCookie: boolean) {
   const kind = who.provider;
-  const fail = failTo(c, mode);
+  const fail = failTo(c, mode, withCookie);
   if (mode.type === "link") {
-    if (withCookie && getSessionUser(c.req.header("cookie"))?.username !== mode.username) return fail("Finish linking in the browser you're signed in on");
     const user = findUser(mode.username);
     if (!user) return fail("That account is gone");
+    if (withCookie && !sessionHere(c, mode.username)) {
+      // this browser is not signed in here as the account that started the link (the Mac app's sign-in finishes in the
+      // system browser): it names the account and links only on a press, so a link sent to someone else shows them
+      // whose account they would be adding their sign-in to
+      const other = findByIdentity(kind, who.sub);
+      if (other && other !== user) return fail(`That ${SIGNIN_NAME[kind]} account already signs in to another account here`);
+      sweep();
+      const id = randomBytes(24).toString("base64url");
+      pendingLinks.set(id, { username: user.username, who, at: Date.now() });
+      const name = escHtml(user.displayName || user.username);
+      const them = escHtml(who.email || who.name || `this ${SIGNIN_NAME[kind]} account`);
+      return c.html(
+        plainPage(
+          `Link ${SIGNIN_NAME[kind]}?`,
+          `<b>${them}</b> will sign in to <b>${name}</b> on ${escHtml(new URL(originOf(c)).host)}. Not your account? Close this page.`,
+          `<form method="post" action="/api/auth/link-confirm"><input type="hidden" name="id" value="${id}"><button type="submit">Link ${SIGNIN_NAME[kind]}</button></form>`,
+        ),
+      );
+    }
     try {
       linkIdentity(user, who);
     } catch (e) {

@@ -1,18 +1,14 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { useNavigate, useSearchParams } from "react-router";
+import { useSearchParams } from "react-router";
 import { RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { addAccount as addInstagram, patchAccount as patchInstagram } from "@/lib/instagram";
-import { patchProject } from "@/lib/workshop";
+import { patchAccount as patchInstagram } from "@/lib/instagram";
 import { useCachedLoad } from "@/lib/local-cache";
 import { useWorkspace } from "@/lib/workspace";
 import {
   LOGINS,
   PLATFORMS,
-  addHandle,
   disconnectAccount,
   getConnectors,
   linkAccount,
@@ -36,7 +32,6 @@ const n = (v?: number) => (v === undefined ? "" : v >= 10_000 ? `${Math.round(v 
 /** "@name", whether the handle was stored with its @ or without. */
 const NO_LOGINS: Record<LoginKind, boolean> = { meta: false, google: false, tiktok: false };
 const at = (handle: string) => `@${handle.replace(/^@+/, "")}`;
-const NOUN: Record<SocialPlatform, string> = { instagram: "an Instagram", facebook: "a Facebook", youtube: "a YouTube", tiktok: "a TikTok", x: "an X" };
 const loginOf = (p: SocialPlatform): LoginKind | undefined => PLATFORMS.find((x) => x.id === p)?.login;
 
 /** The time of the newest platform sign-in in the list (the server's clock), 0 with none. */
@@ -56,14 +51,16 @@ export function signInItems(logins: Record<LoginKind, boolean>, viaService: read
   return LOGINS.filter((l) => logins[l.id] && !viaService.includes(l.id)).map((l) => ({ id: l.id, label: SIGN_IN[l.id] }));
 }
 
-/** One platform for one project: its account, or the one way this server can add one (its sign-in, a public @handle). */
+/** Meta lets an app read an Instagram account only when it is a professional one (Business or Creator) linked to a Page. */
+const IG_NEEDS = "A Business or Creator account linked to a Facebook Page";
+
+/** One platform for one project: its account, or its sign-in on this server. */
 export interface PlatformRow {
   platform: SocialPlatform;
   label: string;
   /** The account's @handle and numbers, or how an account is added on this server. */
   summary: string;
-  /** "Add" opens the platform's dialog (or its handle field); none = an account is there. The Apify key a public @handle
-   *  needs is never asked for on this page: the dialog sends the person to API keys, the one place it is entered. */
+  /** "Add" starts the platform's sign-in; none = an account is there (or the sign-in is not available). */
   button?: "Add";
   /** The project's account on this platform (one per platform per project). */
   account?: ConnectedAccount;
@@ -80,7 +77,7 @@ export interface PlatformRow {
 export function platformRows(view: Pick<ConnectorsView, "logins" | "apify" | "accounts" | "instagram">, projectId?: string, off: LoginKind[] = []): PlatformRow[] {
   return PLATFORMS.flatMap((p): PlatformRow[] => {
     // off: the sign-in service was asked (Add was pressed) and does not offer this platform's sign-in
-    const said = !!p.login && off.includes(p.login) ? `${SIGN_IN_OFF}. ` : "";
+    const said = !!p.login && off.includes(p.login);
     const loginOn = !!p.login && !!view.logins[p.login] && !said;
     const on = view.accounts.filter((a) => a.platform === p.id);
     // ponytail: a Meta sign-in can bring several Pages into one project; the row shows the first
@@ -92,10 +89,12 @@ export function platformRows(view: Pick<ConnectorsView, "logins" | "apify" | "ac
     if (p.id === "instagram") {
       const own = view.instagram.find((x) => !!projectId && x.projectId === projectId) ?? view.instagram.find((x) => x.mine && !x.projectId);
       if (own) return [{ platform: p.id, label: p.label, summary: [at(own.handle), own.followers !== undefined ? `${n(own.followers)} followers` : ""].filter(Boolean).join(" · "), own }];
-      return [{ platform: p.id, label: p.label, summary: loginOn ? "Your account by sign-in, or by @handle" : `${said}Your account, by @handle`, button: "Add" }];
     }
-    const own = p.id === "facebook" ? "Your Pages by sign-in" : p.id === "youtube" ? "Your channel by sign-in" : "Your account by sign-in";
-    const summary = loginOn ? `${own}, or by @handle` : said + (p.id === "facebook" ? "Public Pages, by @handle" : p.id === "youtube" ? "Public channels, by @handle" : "Public accounts, by @handle");
+    // only accounts the person signs in to: a platform without a sign-in here has no row (a public account is followed
+    // where it is read, not here); one the sign-in service turned down says so, with nothing to press
+    if (said) return [{ platform: p.id, label: p.label, summary: SIGN_IN_OFF }];
+    if (!loginOn) return [];
+    const summary = p.id === "instagram" ? IG_NEEDS : p.id === "facebook" ? "Your Pages" : p.id === "youtube" ? "Your channel" : "Your account";
     return [{ platform: p.id, label: p.label, summary, button: "Add" }];
   });
 }
@@ -111,8 +110,6 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
   const projects = useWorkspace((s) => s.projects);
   const current = useWorkspace((s) => s.currentProjectId);
   const { data: view, error, refresh } = useCachedLoad<ConnectorsView>("/api/connectors", getConnectors, { own: true });
-  const [dlg, setDlg] = useState<{ platform: SocialPlatform; step: "choose" | "handle"; seq: number }>({ platform: "tiktok", step: "handle", seq: 0 });
-  const [open, setOpen] = useState(false);
   const [params, setParams] = useSearchParams();
   // The sign-in service is asked only when the person acts (Add, Sign in), never to draw the rows. `off`: the sign-ins it
   // then said it does not offer, said on their rows until the page is left; `asking`: the one being asked for now.
@@ -130,18 +127,17 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
   };
 
   const reload = useCallback(() => refresh().catch(() => {}), [refresh]);
-  // A sign-in started from the Add dialog finishes somewhere else: the Mac app sends it to the computer's browser. The
-  // server tells this window when the account is saved (it announces "connectors"), the list reads itself again, and
-  // the dialog that was waiting closes by itself. `waiting`: the newest sign-in there was when the dialog opened.
+  // A sign-in started with Add finishes somewhere else: the Mac app sends it to the computer's browser. The server tells
+  // this window when the account is saved (it announces "connectors") and the list reads itself again. `waiting`: the
+  // newest sign-in there was when Add was pressed.
   const waiting = useRef<number | null>(null);
   useEffect(() => {
-    if (!view || !open || waiting.current === null) return;
+    if (!view || waiting.current === null) return;
     const fresh = signedInSince(view.accounts, waiting.current);
     if (!fresh.length) return;
     waiting.current = null;
-    setOpen(false);
     toast(`${fresh.map((a) => at(a.handle)).join(", ")} connected. Reading ${fresh.length > 1 ? "their" : "its"} numbers now.`);
-  }, [view, open]);
+  }, [view]);
   // a sign-in from the Mac app finishes in the computer's browser: coming back to the window shows the new account
   useEffect(() => {
     const onFocus = () => void reload();
@@ -166,8 +162,8 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
     setParams((p) => (p.delete("connected"), p.delete("error"), p), { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  // `?add=<platform>` opens that platform's Add dialog once, where its row has Add, then the parameter goes. A link is
-  // not the person's press, so it never asks the sign-in service: a platform whose sign-in comes from there stays closed.
+  // `?add=<platform>` starts that platform's sign-in once, where its row has Add, then the parameter goes. A link is not
+  // the person's press, so it never asks the sign-in service: a platform whose sign-in comes from there is left alone.
   useEffect(() => {
     const add = params.get("add");
     if (!add || compact || !view) return;
@@ -207,12 +203,12 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
   }
 
   const rows = platformRows(view, current ?? undefined, off);
+  // Add is the platform's sign-in itself (the Mac app finishes it in the computer's browser)
   const choose = async (platform: SocialPlatform) => {
     const login = loginOf(platform);
-    const loginOn = !!login && (await offered(login, view));
-    setDlg((d) => ({ platform, step: loginOn ? "choose" : "handle", seq: d.seq + 1 }));
+    if (!login || !(await offered(login, view))) return;
     waiting.current = newestSignIn(view.accounts);
-    setOpen(true);
+    window.location.assign(loginHref(login, { back, projectId: projectId() }));
   };
 
   return (
@@ -283,146 +279,7 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
         </Card>
       </Section>
 
-      <AddDialog
-        key={dlg.seq}
-        open={open}
-        onOpenChange={setOpen}
-        platform={dlg.platform}
-        startStep={dlg.step}
-        view={view}
-        back={back}
-        projectId={projectId()}
-        onDone={() => void reload().then(watch)}
-      />
     </>
-  );
-}
-
-const choiceCls =
-  "flex w-full flex-col gap-0.5 rounded-lg border border-border/60 px-3 py-2.5 text-left outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring";
-
-/**
- * Add an account on one platform. Two ways when the platform has a sign-in on this server (its own account, or someone's
- * public account by @handle); one way otherwise (the handle field, with the platform already known).
- */
-/** Meta lets an app read an Instagram account only when it is a professional one (Business or Creator) linked to a Page. */
-const IG_NEEDS = "Needs a Business or Creator account linked to a Facebook Page you manage.";
-
-function AddDialog({ open, onOpenChange, platform, startStep, view, back, projectId, onDone }: {
-  open: boolean;
-  onOpenChange: (o: boolean) => void;
-  platform: SocialPlatform;
-  startStep: "choose" | "handle";
-  view: ConnectorsView;
-  back: string;
-  projectId?: string;
-  onDone: () => void;
-}) {
-  const navigate = useNavigate();
-  const [step, setStep] = useState(startStep);
-  const [handle, setHandle] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const login = loginOf(platform);
-  // Instagram by handle goes to the Analyzer, which reads your own account through the server's token or your Apify key
-  const ig = platform === "instagram";
-  const ytKey = platform === "youtube" && !!view.youtubeKey;
-  const configured = ig || ytKey || (view.apify.configured && view.apify.valid !== false);
-  const title = `Add ${NOUN[platform]} account`;
-  const close = () => onOpenChange(false);
-
-  const submit = async () => {
-    if (!configured) {
-      close();
-      navigate("/settings/keys");
-      return;
-    }
-    if (!handle.trim()) return;
-    setBusy(true);
-    setError(null);
-    try {
-      if (ig) {
-        const a = await addInstagram(handle.trim(), { run: "now", mine: !view.instagram.some((x) => x.mine) });
-        if (projectId) await patchProject(projectId, { accountId: a.id });
-      } else await addHandle(platform, handle.trim(), projectId);
-      setHandle("");
-      close();
-      toast(`${ig ? "Connected" : "Following"} ${at(handle.trim())}. Reading its posts now.`);
-      onDone();
-    } catch (e) {
-      setError(msg(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent {...(step === "handle" ? {} : { "aria-describedby": undefined })} className="sm:max-w-md">
-        {step === "choose" ? (
-          <>
-            <DialogHeader>
-              <DialogTitle>{title}</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-2">
-              {login && view.logins[login] && (
-                <a href={loginHref(login, { back, projectId })} className={choiceCls}>
-                  <span className="text-sm font-medium">My own account: {SIGN_IN[login].replace("Sign in with ", "sign in with ")}</span>
-                  <span className="text-xs text-muted-foreground">{ig ? IG_NEEDS : `${LOGINS.find((l) => l.id === login)!.gives.replace(/^./, (c) => c.toUpperCase())}.`}</span>
-                </a>
-              )}
-              {platform === "instagram" ? (
-                <button type="button" className={choiceCls} onClick={() => setStep("handle")}>
-                  <span className="text-sm font-medium">My own account, by @handle</span>
-                </button>
-              ) : (
-                <button type="button" className={choiceCls} onClick={() => setStep("handle")}>
-                  <span className="text-sm font-medium">Someone's public account</span>
-                  <span className="text-xs text-muted-foreground">{ytKey ? "Type its @handle." : configured ? "Type its @handle. Reads its public posts with your Apify key." : "Needs your Apify key first."}</span>
-                </button>
-              )}
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="ghost" size="sm" onClick={close}>
-                Cancel
-              </Button>
-            </DialogFooter>
-          </>
-        ) : (
-          <form
-            className="space-y-4"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!busy) void submit();
-            }}
-          >
-            <DialogHeader>
-              <DialogTitle>{title}</DialogTitle>
-              <DialogDescription>
-                {ig ? "Type your @handle or profile link." : ytKey ? "Type its @handle or channel link." : configured ? "Type its @handle or profile link. Reads its public posts with your Apify key." : "Reading public posts needs your Apify key. Add it first."}
-              </DialogDescription>
-            </DialogHeader>
-            {configured && (
-              <Input aria-label="@handle or profile link" placeholder="@handle or profile link" value={handle} onChange={(e) => setHandle(e.target.value)} autoFocus className="h-8" />
-            )}
-            {error && <p role="alert" className="text-xs text-red-600 dark:text-red-400">{error}</p>}
-            <DialogFooter>
-              {startStep === "choose" && (
-                <Button type="button" variant="ghost" size="sm" onClick={() => setStep("choose")}>
-                  Back
-                </Button>
-              )}
-              <Button type="button" variant="ghost" size="sm" onClick={close}>
-                Cancel
-              </Button>
-              <Button type="submit" size="sm" disabled={busy}>
-                {busy ? "Saving…" : configured ? "Add account" : "Add key"}
-              </Button>
-            </DialogFooter>
-          </form>
-        )}
-      </DialogContent>
-    </Dialog>
   );
 }
 

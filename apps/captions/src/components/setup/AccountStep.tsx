@@ -132,7 +132,8 @@ export const offersAccount = (a: Pick<MacAccount, "account" | "providers">) =>
   a.providers.length > 0 && a.account.state !== "signedIn" && a.account.state !== "off" && a.account.state !== "checking";
 
 /** The sign-in card's one button per provider: the app's own plain button, with the provider's mark. */
-const SIGN_IN_BUTTON =
+/** One sign-in's button: the provider's mark and Continue with …, the same on setup's card and in Settings → Account. */
+export const SIGN_IN_BUTTON =
   "flex h-10 w-full items-center justify-center gap-2.5 rounded-lg border border-border bg-background text-sm font-medium text-foreground transition-colors hover:bg-accent " +
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--tint)] focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-default";
 
