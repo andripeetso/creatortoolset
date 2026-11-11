@@ -91,10 +91,12 @@ const CONNECT = { label: "Connect" };
  */
 const COMMAND = /`|\b(run|type|paste)\b|environment variable|:\s*$/i;
 const COMMAND_LINE = /^\s*(\$|export|source|sudo|curl|npm|npx|brew|echo|mkdir|grok|agent|cursor-agent|codex|claude|gemini|muse)(\s|$)/;
+/** A file's path in the words ("/Users/x/.grok/bin/grok", "~/.zshrc"): shown as "…", never the file itself. */
+const FILE_PATH = /(^|[\s'"(=])(?:~|\/)[\w.@-]*(?:\/[\w.@-]+)+\/?/g;
 export const withoutCommands = (raw?: string): string | undefined =>
   raw
     ?.split("\n")
-    .map((line) => line.split(/(?<=[.!?])\s+/).filter((s) => !COMMAND.test(s) && !COMMAND_LINE.test(s)).join(" "))
+    .map((line) => line.split(/(?<=[.!?])\s+/).filter((s) => !COMMAND.test(s) && !COMMAND_LINE.test(s)).join(" ").replace(FILE_PATH, "$1…"))
     .filter((line) => line.trim())
     .join("\n") || undefined;
 

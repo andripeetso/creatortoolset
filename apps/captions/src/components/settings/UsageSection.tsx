@@ -33,13 +33,13 @@ export function UsageSection() {
   const bridge = useThisMac(hasThisMac());
   const limitsOn = bridge?.limits;
   const wasOff = useRef(false);
-  // the plan the person picked (setup's answer); "Your plan" reads it, and the warning before a heavy run does too
+  // the plan the person picked (setup's answer), else the one their AI names: "Your plan" reads it, and the warning
+  // before a heavy run does too. Read again with the page (on open and each reload): a reading that names the plan can
+  // come in after setup was first read
   const setup = useSetup((s) => s.view);
-  useEffect(() => {
-    if (!setup) void useSetup.getState().load();
-  }, [setup]);
+  useEffect(() => void useSetup.getState().load(), []);
 
-  const load = useCallback(() => refresh().then(() => setNow(Date.now()), () => {}), [refresh]);
+  const load = useCallback(() => Promise.all([refresh(), useSetup.getState().load()]).then(() => setNow(Date.now()), () => {}), [refresh]);
 
   useEffect(() => {
     const reload = setInterval(() => void load(), RELOAD_MS);

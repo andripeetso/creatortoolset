@@ -84,15 +84,14 @@ export const codexPlan = (planType: string | null | undefined): PlanId | null =>
  *   supported for Gemini Code Assist for individuals… migrate to the Antigravity suite".
  * - Claude Code 2.1: "Your account is on hold and can't use Claude Code" (its OAuthAccountOnHoldError).
  * - Grok Build 1.0.4: "Grok Build is not yet available for this account."
- * - Muse Code 1.4.15: "No subscription allowance" (a Meta account with no Muse Code plan).
- * None of these was seen in a live run except Google's: they are the programs' own texts.
+ * None of these was seen in a live run except Google's: they are the programs' own texts. Muse Code 1.4.15 holds
+ * "No subscription allowance (" with nothing that ties it to an account without a plan, so it is not mapped.
  */
 export function noPlanLine(raw: string): string | null {
   if (/To use Codex with your ChatGPT plan/i.test(raw)) return "Codex needs ChatGPT Plus or higher, which this account doesn't have.";
   if (/no longer supported for Gemini Code Assist|migrate to the Antigravity/i.test(raw)) return "Google turned this account away: it no longer takes free Google accounts here.";
   if (/account is on hold and can.t use Claude Code/i.test(raw)) return "Claude put this account on hold, so it can't use Claude Code.";
   if (/Grok Build is not yet available for this account/i.test(raw)) return "Grok Build isn't available for this Grok account yet.";
-  if (/No subscription allowance/i.test(raw)) return "Muse Code needs a Meta plan (Everyday or higher), which this account doesn't have.";
   return null;
 }
 

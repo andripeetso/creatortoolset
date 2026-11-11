@@ -229,6 +229,10 @@ describe("what Connect does, one step at a time", () => {
     // the programs' own words, as the Mac sends them, stay: they start with the program's name, not a command
     expect(withoutCommands("Claude on the Mac: Claude: API Error: 403 This organization has been disabled.")).toBe("Claude on the Mac: Claude: API Error: 403 This organization has been disabled.");
     expect(withoutCommands("Muse Code couldn't answer. Muse Code said: overloaded.")).toBe("Muse Code couldn't answer. Muse Code said: overloaded.");
+    // no file's path: a program's words can name its own files; an address on the web stays
+    expect(withoutCommands("Claude gave no result: Error reading /Users/tiny/.claude/settings.json (EACCES)")).toBe("Claude gave no result: Error reading … (EACCES)");
+    expect(withoutCommands("Grok 1.0.77 installed to /Users/x/.grok/bin/grok")).toBe("Grok 1.0.77 installed to …");
+    expect(withoutCommands("upgrade to Plus: https://chatgpt.com/explore/plus.")).toBe("upgrade to Plus: https://chatgpt.com/explore/plus.");
   });
 
   it("a failure is one plain sentence said once, Try again, and the program's own words under What it said", () => {

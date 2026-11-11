@@ -43,7 +43,6 @@ describe("no plan for this AI", () => {
     expect(noPlanLine("Gemini: This client is no longer supported for Gemini Code Assist for individuals.")).toMatch(/^Google turned this account away/);
     expect(noPlanLine("Claude on the Mac: Your account is on hold and can't use Claude Code. View details or appeal: https://claude.ai/restricted")).toBe("Claude put this account on hold, so it can't use Claude Code.");
     expect(noPlanLine("Grok gave no result: Grok Build is not yet available for this account.")).toBe("Grok Build isn't available for this Grok account yet.");
-    expect(noPlanLine("Muse Code couldn't answer. Muse Code said: No subscription allowance (account)")).toMatch(/^Muse Code needs a Meta plan \(Everyday or higher\)/);
   });
 
   it("leaves everything else alone: a limit, a sign-in, a plain failure", () => {
