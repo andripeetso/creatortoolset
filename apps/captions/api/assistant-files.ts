@@ -12,6 +12,7 @@ import { createProjectFromFile, linkOrCopy } from "./projects";
 import { ensureLibrary } from "./library/access";
 import { libraryDb } from "./library/db";
 import { saveToLibrary } from "./library/routes";
+import { mainSource } from "./library/sources";
 import { FILE_USES, type AssistantFile, type AssistantFileUse } from "../contracts/assistant";
 
 /**
@@ -151,6 +152,9 @@ export async function useFile(
     return { to, id: made.id, name: title, href: `/video-notes/${made.id}` };
   }
   if (to === "library") {
+    // where a plug-in's source is the Media Library, the page never shows the storage library: nothing goes where nobody looks
+    const main = mainSource();
+    if (main) throw new Error(`On this server the Media Library is the ${main.label}, and files go in on its own page (/library): open it and add them there.`);
     // the library keeps its own copy (a dropped file goes after 7 days); it is prepared and sorted A-roll or B-roll there
     ensureLibrary(user.username);
     const saved = await saveToLibrary(user.username, file, path.extname(title) ? title : `${title}${path.extname(meta.name)}`, [], undefined, true);
