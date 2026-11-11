@@ -1,7 +1,8 @@
-import { useEffect, useState, type RefObject } from "react";
+import { useEffect, useState, type CSSProperties, type RefObject } from "react";
 import { ChevronLeft, ChevronRight, Download, Loader2, Volume2 } from "lucide-react";
 import type { AssetCard, AssetDetail } from "@contracts/library";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { copyReady, original, playerNote, type PlayerNote } from "./clip";
 
 /**
@@ -22,6 +23,7 @@ export function ClipPlayer({
   onPrev,
   onNext,
   onTime,
+  fill = false,
 }: {
   asset: AssetCard;
   detail: AssetDetail | null;
@@ -31,6 +33,8 @@ export function ClipPlayer({
   onNext?: () => void;
   /** the second playing now, for the transcript's mark */
   onTime?: (s: number) => void;
+  /** in the window: the player takes the whole left side (on a phone, the top) */
+  fill?: boolean;
 }) {
   const [muted, setMuted] = useState(false);
   // the plain address failed: once the lighter copy is made it is asked for again, at a new address (`?r=1`) so the
@@ -72,7 +76,7 @@ export function ClipPlayer({
     onTimeUpdate: () => onTime?.(media.current?.currentTime ?? 0),
   };
 
-  if (a.kind === "audio") {
+  if (a.kind === "audio" && !fill) {
     return (
       <>
         <audio key={src} ref={media} src={src} controls preload="auto" className="w-full" {...events} />
@@ -81,24 +85,34 @@ export function ClipPlayer({
     );
   }
 
+  // the box has the clip's own shape (an upright clip stands upright), at most so tall; in the window it fills its side
+  const shape = { "--ar": a.width && a.height ? `${a.width} / ${a.height}` : "16 / 9" } as CSSProperties;
   return (
     <div
-      className="relative aspect-video w-full overflow-hidden rounded-lg bg-black bg-contain bg-center bg-no-repeat"
+      className={cn(
+        "relative w-full overflow-hidden bg-black bg-contain bg-center bg-no-repeat",
+        a.kind === "audio" ? "h-40 md:h-full" : "aspect-[var(--ar)]",
+        fill ? "max-h-[45dvh] md:h-full md:max-h-none md:aspect-auto" : "max-h-[70vh] rounded-lg",
+      )}
       // the clip's picture under the video, the same size as its frames: what shows until the first frame is there
-      style={picture ? { backgroundImage: `url("${picture}")` } : undefined}
+      style={{ ...shape, ...(picture ? { backgroundImage: `url("${picture}")` } : {}) }}
     >
-      <video
-        key={src}
-        ref={media}
-        src={src}
-        poster={picture}
-        controls={phase !== "failed"}
-        playsInline
-        preload="auto"
-        className={phase === "failed" ? "hidden" : "absolute inset-0 h-full w-full object-contain"}
-        {...events}
-      />
-      {phase === "loading" && !note && (
+      {a.kind === "audio" ? (
+        <audio key={src} ref={media} src={src} controls preload="auto" className="absolute inset-x-4 bottom-4 w-[calc(100%-2rem)]" {...events} />
+      ) : (
+        <video
+          key={src}
+          ref={media}
+          src={src}
+          poster={picture}
+          controls={phase !== "failed"}
+          playsInline
+          preload="auto"
+          className={phase === "failed" ? "hidden" : "absolute inset-0 h-full w-full object-contain"}
+          {...events}
+        />
+      )}
+      {phase === "loading" && !note && a.kind === "video" && (
         <Loader2 aria-label="Loading" className="pointer-events-none absolute left-1/2 top-1/2 h-6 w-6 -translate-x-1/2 -translate-y-1/2 animate-spin text-white/80 drop-shadow" />
       )}
       {note && (
@@ -123,12 +137,12 @@ export function ClipPlayer({
         </Button>
       )}
       {onPrev && (
-        <button type="button" aria-label="Previous clip" onClick={onPrev} className="absolute left-2 top-1/2 -translate-y-1/2 rounded-full bg-black/50 p-1.5 text-white hover:bg-black/70">
+        <button type="button" aria-label="Previous clip" onClick={onPrev} className="absolute left-3 top-1/2 z-10 -translate-y-1/2 rounded-full bg-black/50 p-2 text-white hover:bg-black/70">
           <ChevronLeft className="h-5 w-5" />
         </button>
       )}
       {onNext && (
-        <button type="button" aria-label="Next clip" onClick={onNext} className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full bg-black/50 p-1.5 text-white hover:bg-black/70">
+        <button type="button" aria-label="Next clip" onClick={onNext} className="absolute right-3 top-1/2 z-10 -translate-y-1/2 rounded-full bg-black/50 p-2 text-white hover:bg-black/70">
           <ChevronRight className="h-5 w-5" />
         </button>
       )}

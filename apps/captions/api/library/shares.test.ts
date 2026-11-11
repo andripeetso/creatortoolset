@@ -114,6 +114,31 @@ describe("library share links", () => {
     expect(await media.text()).toBe("fake-video-bytes");
   });
 
+  it("changes a live link in place: download, a password on and off, a new expiry; the address stays", async () => {
+    const v = seed("a5", "Epsilon", "owner-a");
+    await putSource(v);
+    const made = await data(call("owner-a", "POST", "/api/library/lib_a/shares", { target: { kind: "asset", id: "a5" }, scope: "view" }));
+    expect((await data(call("", "GET", `/api/library/s/${made.token}`))).items[0].sourceUrl).toBeUndefined();
+
+    const changed = await data(call("owner-a", "PATCH", `/api/library/shares/${made.id}`, { scope: "download", expiresInDays: 30 }));
+    expect(changed).toMatchObject({ id: made.id, scope: "download", locked: false });
+    expect(changed.expiresAt).toBeGreaterThan(Date.now() + 29 * 86_400_000);
+    expect((await data(call("", "GET", `/api/library/s/${made.token}`))).items[0].sourceUrl).toBe(`/api/library/s/${made.token}/media/${v}/source`);
+
+    expect(await data(call("owner-a", "PATCH", `/api/library/shares/${made.id}`, { password: "open-sesame-3" }))).toMatchObject({ locked: true, scope: "download" });
+    expect(await data(call("", "GET", `/api/library/s/${made.token}`))).toEqual({ locked: true, items: [] });
+    expect((await call("", "POST", `/api/library/s/${made.token}/unlock`, { password: "open-sesame-3" })).status).toBe(204);
+    expect(JSON.stringify(libraryDb().prepare("SELECT * FROM shares").all())).not.toContain("open-sesame-3");
+
+    expect(await data(call("owner-a", "PATCH", `/api/library/shares/${made.id}`, { password: null }))).toMatchObject({ locked: false });
+    expect((await data(call("", "GET", `/api/library/s/${made.token}`))).locked).toBe(false);
+
+    expect((await call("owner-a", "PATCH", `/api/library/shares/${made.id}`, { expiresInDays: 91 })).status).toBe(400);
+    expect((await call("owner-a", "PATCH", `/api/library/shares/${made.id}`, { scope: "comment" })).status).toBe(400);
+    libraryDb().prepare("UPDATE shares SET expires_at = ? WHERE token_hash = ?").run(Date.now() - 1, made.id);
+    expect((await call("owner-a", "PATCH", `/api/library/shares/${made.id}`, { expiresInDays: 7 })).status).toBe(404); // an ended link stays ended
+  });
+
   it("stops guessing a link's password after 10 wrong tries, right or wrong, until the window ends", async () => {
     seed("a4", "Delta", "owner-a");
     const made = await data(call("owner-a", "POST", "/api/library/lib_a/shares", { target: { kind: "asset", id: "a4" }, scope: "view", password: "open-sesame-2" }));
@@ -151,6 +176,7 @@ describe("library share links", () => {
       ["POST", "/api/library/lib_a/shares", { target: { kind: "asset", id: "c1" }, scope: "view" }],
       ["GET", "/api/library/lib_a/shares"],
       ["DELETE", `/api/library/shares/${link.id}`],
+      ["PATCH", `/api/library/shares/${link.id}`, { scope: "download" }],
       ["GET", "/api/library/lib_a/collections"],
       ["POST", "/api/library/lib_a/collections", { name: "x" }],
       ["PATCH", `/api/library/lib_a/collections/${col.id}`, { name: "y" }],

@@ -224,6 +224,28 @@ shareApp.delete("/shares/:tokenHash", (c) => {
   return c.json({ ok: true });
 });
 
+// PATCH /api/library/shares/:tokenHash { scope?, expiresInDays?, password? } → ShareRow: the same link, changed in place
+// (its address stays). `expiresInDays` counts from now; `password` "" or null takes it off, a new one locks out
+// whoever unlocked the old one.
+shareApp.patch("/shares/:tokenHash", async (c) => {
+  const user = c.get("user");
+  const hash = c.req.param("tokenHash");
+  const s = db().prepare("SELECT * FROM shares WHERE token_hash = ?").get(hash) as ShareDb | undefined;
+  if (!s || s.expires_at <= Date.now() || !libraryRole(user.username, s.library_id)) return notFound(c);
+  const b = (await c.req.json().catch(() => null)) as { scope?: unknown; expiresInDays?: unknown; password?: unknown } | null;
+  if (!b) return c.json({ error: "Say what to change", code: "invalid" }, 400);
+  if (b.scope !== undefined && b.scope !== "view" && b.scope !== "download") return c.json({ error: "A link is view or download", code: "invalid" }, 400);
+  const days = b.expiresInDays;
+  if (days !== undefined && (!Number.isInteger(days) || (days as number) < 1 || (days as number) > 90)) return c.json({ error: "Expiry is 1 to 90 days", code: "invalid" }, 400);
+  if (b.password !== undefined && b.password !== null && (typeof b.password !== "string" || b.password.length > 200)) return c.json({ error: "Password is too long", code: "invalid" }, 400);
+  const password = b.password === undefined ? s.password_hash : b.password ? await hashPassword(b.password as string) : null;
+  const scope = (b.scope as ShareDb["scope"] | undefined) ?? s.scope;
+  const expiresAt = days === undefined ? s.expires_at : Date.now() + (days as number) * DAY;
+  db().prepare("UPDATE shares SET scope = ?, expires_at = ?, password_hash = ? WHERE token_hash = ?").run(scope, expiresAt, password, hash);
+  const row: ShareRow = { id: hash, target: { kind: s.target_kind, id: s.target_id }, scope, locked: !!password, createdBy: s.created_by, expiresAt, views: s.views };
+  return c.json(row);
+});
+
 // ---------- the link holder (no account) ----------
 
 // GET /api/library/s/:token → the shared view; locked (no items) until the password is given
