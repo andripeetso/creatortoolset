@@ -49,6 +49,22 @@ export interface SocialStats {
   days?: Array<{ day: string; views?: number; watchMinutes?: number; followersGained?: number; reach?: number; engagements?: number; videoViews?: number }>;
 }
 
+/** A YouTube video from the channel's own analytics (every video, over the channel's lifetime). `kind` is the API's creatorContentType. */
+export interface SocialVideo {
+  id: string;
+  kind: string;
+  views?: number;
+  watchMinutes?: number;
+  averageViewSeconds?: number;
+  averageViewPercent?: number;
+  likes?: number;
+  comments?: number;
+  shares?: number;
+  subscribersGained?: number;
+  /** Audience retention for the newest videos only, at each point of the length: `elapsed` is 0 to 1, `watch` the audience watch ratio (share of views still playing there), `relative` the retention against similar-length videos. */
+  retention?: Array<{ elapsed: number; watch?: number; relative?: number }>;
+}
+
 /** A login's state. Written only by the pull (api/connectors.ts `pullOne`); missing on rows from before it existed = connected. */
 export type LoginStatus = "connected" | "needs_reconnect" | "error";
 
@@ -71,6 +87,8 @@ export interface ConnectedAccount {
   pulling?: boolean;
   stats?: SocialStats;
   posts?: SocialPost[];
+  /** YouTube login: every video's analytics, Shorts and long videos by `kind`. */
+  videos?: SocialVideo[];
   /** The Analyzer account an Instagram login fills (its deep view: catalog, comments, insights). */
   analyzerId?: string;
 }

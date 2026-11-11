@@ -20,6 +20,7 @@ import { TOOLS, type Tool } from "@contracts/tools";
 import { MAKES, type Job, type Make } from "@contracts/work-prefs";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { saveFailed } from "@/components/settings/kit-controls";
 import { AccountSetupView, offersAccount, useMacAccount } from "@/components/setup/AccountStep";
 import { AgentsStep } from "@/components/setup/AgentsStep";
 import { Choice } from "@/components/setup/Choice";
@@ -223,6 +224,9 @@ export function SetupDialog() {
         return goHome(plays);
       }
       to(path[at + 1]!);
+    } catch {
+      // the last screen's save did not go through: it stays up and says so, instead of a Done that does nothing
+      saveFailed("That did not save. Try again.");
     } finally {
       setBusy(false);
     }

@@ -503,6 +503,8 @@ describe("Creator Toolset as a remote MCP server", () => {
     // 15032 -> 15164: set_work_prefs job (what they want to do first, from setup; the assistant can change it)
     // 15164 -> 15233: instagram_posts gives a saved post's library id, which instagram_post reads
     // 15233 -> 15277: media_search says a typed search comes best match first, with where a word is said
-    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(15277);
+    // 15277 -> 15445: the public AI Editor says what a run does by itself (each draft's preview is filed in Review), what
+    // send_to_review is for (a draft that changed), and where each draft's preview is (editor_get)
+    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(15445);
   });
 });

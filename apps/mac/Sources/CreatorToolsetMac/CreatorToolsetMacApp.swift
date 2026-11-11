@@ -8,7 +8,7 @@ import WebKit
 struct CreatorToolsetMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var shell: Shell
-    /// Sparkle: reads the appcast at FEED_URL every 4 hours and installs what it finds (Info.plist keys from
+    /// Sparkle: reads the appcast at FEED_URL every hour and installs what it finds (Info.plist keys from
     /// build-app.sh). A build without a feed (`swift run`) starts no updater.
     private let updater = SPUStandardUpdaterController(
         startingUpdater: Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil,

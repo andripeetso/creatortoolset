@@ -56,7 +56,7 @@ if [ -n "${SPARKLE_PUBLIC_KEY:-}" ] && [ -n "${FEED_URL:-}" ]; then
   <key>SUPublicEDKey</key><string>$SPARKLE_PUBLIC_KEY</string>
   <key>SUEnableAutomaticChecks</key><true/>
   <key>SUAutomaticallyUpdate</key><true/>
-  <key>SUScheduledCheckInterval</key><integer>14400</integer>"
+  <key>SUScheduledCheckInterval</key><integer>3600</integer>"
 elif [ -n "${SPARKLE_PUBLIC_KEY:-}${FEED_URL:-}" ]; then
   echo "Set both SPARKLE_PUBLIC_KEY and FEED_URL for updates, or neither." >&2
   exit 1

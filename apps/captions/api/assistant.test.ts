@@ -15,6 +15,8 @@ const { pairDevice } = await import("./lib/devices");
 const { saveSettings } = await import("./lib/providers");
 const { DEFAULT_SETTINGS } = await import("../contracts/providers");
 
+/** A loaded plug-in whose source is the install's Media Library (LibrarySource.main): a drop "for the library" is refused there. */
+const pluggedLibrary = !!(await import("./library/sources")).mainSource();
 const ana = createUser("ana", "password1");
 const noAi = createUser("nico", "password1");
 const fullKey = `Bearer ${newApiKey(ana, "full")}`;
@@ -594,7 +596,8 @@ describe("a video dropped in the chat", () => {
     revokeJobToken(other);
   });
 
-  it("use_file puts dropped files in the Media Library and says in one line how they were sorted", async () => {
+  // with a plug-in loaded that IS the Media Library (LibrarySource.main) the drop is refused by design: assistant-core.test.ts has that case
+  it.skipIf(pluggedLibrary)("use_file puts dropped files in the Media Library and says in one line how they were sorted", async () => {
     const { SORT_WAIT_S } = await import("./mcp");
     const { libraryDb } = await import("./library/db");
     SORT_WAIT_S.added = 0; // the line as it is the moment they are in
