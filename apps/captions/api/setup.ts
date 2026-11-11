@@ -186,12 +186,13 @@ setupApp.put("/", async (c) => {
   if (b.tools !== undefined) {
     if (!Array.isArray(b.tools) || !b.tools.every(isTool))
       return c.json({ error: `tools: some of ${TOOLS.join(", ")}` }, 400);
-    next.tools = TOOLS.filter((t) => (b.tools as Tool[]).includes(t));
+    // an id the page can't show (view leaves it out, so the page never sends it) stays in the file as it was saved
+    next.tools = [...TOOLS.filter((t) => (b.tools as Tool[]).includes(t)), ...(next.tools ?? []).filter((t) => !isTool(t))];
   }
   if (b.hidden !== undefined) {
     if (!Array.isArray(b.hidden) || !b.hidden.every(isHomeTile))
       return c.json({ error: `hidden: some of ${HOME_TILES.join(", ")}` }, 400);
-    next.hidden = HOME_TILES.filter((t) => (b.hidden as HomeTile[]).includes(t));
+    next.hidden = [...HOME_TILES.filter((t) => (b.hidden as HomeTile[]).includes(t)), ...(next.hidden ?? []).filter((t) => !isHomeTile(t))];
   }
   if (b.plan !== undefined) {
     if (b.plan !== null && !isPlan(b.plan))

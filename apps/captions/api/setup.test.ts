@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
@@ -56,6 +56,10 @@ describe("setup: my tools, my plan, what is set up", () => {
     // Settings → Tools sends the list it was given back with one change
     expect((await put({ hidden: [...seen.hidden, "enhance"] })).status).toBe(200);
     expect((await put({ tools: seen.tools })).status).toBe(200);
+    expect(await get()).toMatchObject({ tools: ["workshop"], hidden: ["enhance", "notes"] });
+    // the file keeps what the page can't show: a choice made for a tile that may come back (as a plug-in's) is not thrown away
+    const kept = JSON.parse(readFileSync(path.join(process.env.DATA_DIR!, "setup", "early.json"), "utf8")) as { tools: string[]; hidden: string[] };
+    expect(kept).toMatchObject({ tools: ["workshop", "left-the-app"], hidden: ["enhance", "notes", "left-the-app"] });
     who = was;
   });
 
