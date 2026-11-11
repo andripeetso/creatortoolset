@@ -103,6 +103,8 @@ export const startOver = () => call<AssistantView>("", "DELETE");
 export const openPast = (id: string) => call<AssistantView>(`/past/${encodeURIComponent(id)}/open`, "POST");
 export const deletePast = (id: string) => call<AssistantView>(`/past/${encodeURIComponent(id)}`, "DELETE");
 /** Allow or deny something the reply asked to do on the Mac. */
+/** Yes or No to a question the assistant put before deleting, publishing or sending something. */
+export const answerConfirm = (id: string, yes: boolean) => call<AssistantView>(`/confirms/${encodeURIComponent(id)}`, "POST", { yes });
 export const answerApproval = (id: string, allow: boolean) => call<AssistantView>(`/approvals/${encodeURIComponent(id)}`, "POST", { allow });
 
 /** A conversation as plain text, for Copy. */
