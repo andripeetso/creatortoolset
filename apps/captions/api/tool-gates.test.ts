@@ -33,10 +33,13 @@ describe("tool gates", () => {
   });
 
   it("only names real tools, and every gated prefix is mounted", () => {
-    const paths = app.routes.map((r) => r.path);
+    const routes = app.routes.map((r) => r.path.split("/"));
     for (const [prefix, tools] of TOOL_GATES) {
       expect(tools.every((t) => (TOOLS as readonly string[]).includes(t))).toBe(true);
-      expect(paths.some((p) => p === prefix || p.startsWith(prefix + "/")), `${prefix} is not mounted`).toBe(true);
+      // a route's `:name` part stands for any one part: /api/folders/:tool is where /api/folders/editor is mounted
+      const want = prefix.split("/");
+      const mounted = routes.some((r) => r.length >= want.length && want.every((part, i) => r[i] === part || r[i].startsWith(":")));
+      expect(mounted, `${prefix} is not mounted`).toBe(true);
     }
   });
 });
