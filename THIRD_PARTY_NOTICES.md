@@ -71,9 +71,10 @@ copy each one's licence next to the files they install.
   code, BSD licence (`THREATEXCHANGE-LICENSE`). PDQ includes CImg, dual-licensed CeCILL-C or CeCILL 2.1
   (`CIMG-NOTICE`).
 - SSCD copy detection model (`scripts/install-sscd-runtime.mjs`): MIT (`scripts/sscd-LICENSE.txt`).
-- The AI Editor's Face refinement step (`apps/captions/editor-steps/face-refine`) installs its own Python runtime on
-  the computer the first time it runs, into the app's data folder (`plugins/editor-face-refine/`), never before the
-  person switches the step on. pip installs these from PyPI:
+- The AI Editor's face steps, Face refinement and Blur faces (`apps/captions/editor-steps/face-refine`, `face-blur`),
+  install one shared Python runtime on the computer the first time one of them runs, into the app's data folder
+  (`runtime/mediapipe-<hash>/`, the list in `apps/captions/api/editor/mediapipe-requirements.ts`), never before the
+  person switches a step on. pip installs these from PyPI:
   - `mediapipe` 1.2.2: Apache-2.0.
   - `opencv-contrib-python` 5.0.0.93: OpenCV under Apache-2.0, its packaging MIT. The wheel bundles FFmpeg (LGPL
     2.1) and other libraries; their licences are in the wheel's `cv2/LICENSE-3RD-PARTY.txt`.
@@ -83,10 +84,11 @@ copy each one's licence next to the files they install.
     cycler, kiwisolver, pycparser, python-dateutil and packaging (BSD, packaging also Apache-2.0). Versions are
     what pip picks for that Python, so check `pip freeze` in the venv for the exact set.
 
-  It then downloads two MediaPipe models from Google's model storage (URLs and SHA-256 in the step's `plugin.ts`),
-  both under Apache-2.0 according to their model cards:
-  - `face_landmarker.task`: BlazeFace short range, Face Mesh V2 and Blendshape V2.
-  - `selfie_multiclass_256x256.tflite`: Multiclass Segmentation.
+  Each step then downloads its MediaPipe models from Google's model storage (URLs and SHA-256 in the step's
+  `plugin.ts`), all under Apache-2.0 according to their model cards:
+  - Face refinement: `face_landmarker.task` (BlazeFace short range, Face Mesh V2 and Blendshape V2) and
+    `selfie_multiclass_256x256.tflite` (Multiclass Segmentation).
+  - Blur faces: `blaze_face_short_range.tflite` (BlazeFace short range).
 
 ## Mac app
 
