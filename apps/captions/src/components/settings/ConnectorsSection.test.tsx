@@ -1,5 +1,11 @@
-import { expect, it } from "vitest";
-import { newestSignIn, platformRows, signedInSince, signInItems } from "./ConnectorsSection";
+// @vitest-environment happy-dom
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { MemoryRouter, useLocation } from "react-router";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { useAuth } from "@/lib/auth";
+import { clearLocalCache, putCached } from "@/lib/local-cache";
+import { ConnectorsSection, newestSignIn, platformRows, signedInSince, signInItems } from "./ConnectorsSection";
 import type { ConnectedAccount, ConnectorsView } from "@contracts/connectors";
 
 it("offers only the sign-ins this server has an app for", () => {
@@ -82,4 +88,68 @@ it("knows a sign-in finished elsewhere: an account connected by sign-in after th
   expect(signedInSince([login("tinyacrobatics", 300)], 100).map((a) => a.handle)).toEqual(["tinyacrobatics"]);
   // an account added by @handle meanwhile is the dialog's own doing, not a sign-in
   expect(signedInSince([...before, { ...acct("x", "tinyx"), connectedAt: 999 }], 100)).toEqual([]);
+});
+
+describe("/settings/connectors?add=<platform> (the address of a platform's Add dialog)", () => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  let root: Root | undefined;
+  let search = "";
+  let asked: string[] = [];
+  const Where = () => ((search = useLocation().search), null);
+
+  async function follow(platform: string, o: Parameters<typeof view>[0] & { viaService?: ConnectorsView["viaService"] } = {}) {
+    const saved = { ...view(o), viaService: o.viaService, extras: { sessions: [] } };
+    asked = [];
+    useAuth.setState({ required: true, me: { username: "sam", role: "admin", cloud: false, off: [] } });
+    putCached("sam", "/api/connectors", saved);
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      if (String(url) !== "/api/connectors" || init?.method) asked.push(`${init?.method ?? "GET"} ${url}`);
+      return new Response(JSON.stringify(String(url) === "/api/connectors" ? saved : { on: true }), { status: 200 });
+    });
+    root = createRoot(document.body.appendChild(document.createElement("div")));
+    await act(async () => {
+      root!.render(<MemoryRouter initialEntries={[`/settings/connectors?add=${platform}`]}><ConnectorsSection /><Where /></MemoryRouter>);
+      await new Promise((done) => setTimeout(done, 0));
+    });
+  }
+  const dialog = () => document.body.querySelector('[role="dialog"]')?.textContent ?? "";
+
+  afterEach(() => {
+    act(() => root?.unmount());
+    document.body.innerHTML = "";
+    clearLocalCache();
+    vi.unstubAllGlobals();
+  });
+
+  it("opens the platform's Add dialog on its handle field, drops the parameter and adds nothing by itself", async () => {
+    await follow("tiktok");
+    expect(dialog()).toContain("Add a TikTok account");
+    expect(search).toBe("");
+    expect(asked).toEqual([]);
+  });
+
+  it("offers the sign-in too where this server has its own app for it, without asking anyone", async () => {
+    await follow("youtube", { logins: { ...none, google: true } });
+    expect(dialog()).toContain("Add a YouTube account");
+    expect(dialog()).toContain("My own account: sign in with YouTube");
+    expect(asked).toEqual([]);
+  });
+
+  it("never asks the sign-in service: a platform whose sign-in comes from there stays closed until the person presses Add", async () => {
+    await follow("youtube", { logins: { ...none, google: true }, viaService: ["google"] });
+    expect(dialog()).toBe("");
+    expect(document.body.textContent).toContain("YouTube");
+    expect(search).toBe("");
+    expect(asked).toEqual([]);
+  });
+
+  it("opens nothing for a platform whose account is already there, or for a name that is no platform", async () => {
+    await follow("tiktok", { accounts: [acct("tiktok", "tinyacrobatics")] });
+    expect(dialog()).toBe("");
+    expect(search).toBe("");
+    act(() => root!.unmount());
+    await follow("1");
+    expect(dialog()).toBe("");
+    expect(search).toBe("");
+  });
 });

@@ -105,6 +105,9 @@ export function facetClauses(picked: Record<string, string[]>): { sql: string; p
     .map(([key, values]) => facets.get(key)!.where(values));
 }
 
+/** The plug-in source that is the install's Media Library, when one says so (LibrarySource.main). */
+export const mainSource = (): LibrarySource | undefined => [...sources.values()].find((s) => s.main);
+
 /** Test seam: forget every plug-in's registrations, leaving the built-in source and its owner-only policy. */
 export function resetLibrarySlots(): void {
   sources.clear();

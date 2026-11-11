@@ -18,8 +18,8 @@ export function readShareTheme(
 }
 
 /**
- * What the account picked (Settings → Appearance): "light", "dark" or "system". Nothing picked = dark in the app
- * (its tools are drawn dark) and the system's on a public share page.
+ * What the account picked (Settings → Appearance, setup's "Pick your look"): "light", "dark" or "system". Nothing
+ * picked = the system's, in the app and on a public share page alike ("Match my Mac" is the default look).
  */
 export function storedThemeChoice(
   share: boolean,
@@ -33,7 +33,8 @@ export function storedThemeChoice(
   } catch {
     /* private mode */
   }
-  return share ? "system" : "dark";
+  void share; // one default for both since 2026-11-11; the argument stays for its callers
+  return "system";
 }
 
 export function persistShareTheme(

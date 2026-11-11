@@ -619,7 +619,7 @@ libraryApp.get("/:id/sources", async (c) => {
   const viewer = viewerOf(user.username, c.req.param("id"));
   if (!viewer) return c.json({ error: "Not found", code: "not_found" }, 404);
   const sources = await sourcesVisibleTo(viewer);
-  return c.json({ sources: sources.map((s) => ({ id: s.id, label: s.label })) });
+  return c.json({ sources: sources.map((s) => ({ id: s.id, label: s.label, ...(s.main ? { main: true } : {}) })) });
 });
 
 libraryApp.get("/:id/assets", async (c) => {

@@ -1,15 +1,19 @@
+import { MODULES } from "./mcp-tools";
+import { ToolError, type ToolContext, type ToolDef, type ToolHandler, type WorkCard } from "./mcp-tools/types";
+import { reviewOf } from "./mcp-tools/review";
 import { Hono } from "hono";
 import { MY_KEYS } from "../contracts/service-keys";
 import { TOOLS as APP_TOOLS, TOOL_NAMES, readiness, type SetupView } from "../contracts/tools";
-import { CHECK, EDITORS, MAKES, TALK } from "../contracts/work-prefs";
+import { CHECK, EDITORS, JOBS, MAKES, TALK } from "../contracts/work-prefs";
 import { EDIT_STEPS } from "../contracts/editor";
 import { routeFor } from "./lib/providers";
 import { deviceName } from "./lib/devices";
 import { readConnectors } from "./lib/connectors/store";
 import { myKeys } from "./my-keys";
-import { askSecret, navigateTo, noteChoices, noteMedia, noteStep, noteWork } from "./assistant";
+import { askConfirm, askSecret, navigateTo, noteChoices, noteMedia, noteStep, noteWork, setConfirmRunner, setInstallGuide, unattended } from "./assistant";
 import { FILE_USES, type AssistantMedia, type AssistantWork } from "../contracts/assistant";
 import { SESSION_STATUSES } from "./lib/workshop/types";
+import { postedFromUrl } from "./lib/workshop/posted";
 import { innerCall, jobTurn, type AuthVars } from "./auth";
 import type { SessionUser } from "./users";
 import type { ServerPlugin } from "./lib/plugin";
@@ -30,7 +34,6 @@ type Call = (path: string, init: RequestInit) => Promise<Response>;
 type Args = Record<string, unknown>;
 type Content = { type: "text"; text: string } | { type: "image"; mimeType: string; data: string };
 
-class ToolError extends Error {}
 
 /** The setup answers and, per tool (the picked ones, else all), what it still needs and what would add to it. */
 function setupView(v: SetupView) {
@@ -44,6 +47,9 @@ function setupView(v: SetupView) {
 /** The tools only the assistant's job token may call (the dock, assistant.ts). */
 const ASSISTANT_TOOLS = new Set(["setup_status", "save_setup", "ask_secret", "navigate", "show_video", "use_file", "notes_get", "offer_choices"]);
 const isJob = (auth: Headers) => /^Bearer ctj_/.test(auth.get("authorization") ?? "");
+
+/** The most of a recording's words a tool hands the AI at once (about 15 minutes of speech). */
+const TRANSCRIPT_MAX = 12_000;
 
 /** MCP clients give up on a tool call after about a minute: a reply still thinking hands back its id to wait on. */
 const WAIT_MAX_S = 55;
@@ -68,12 +74,17 @@ Review: his videos waiting for feedback, their versions and timed comments (with
 Resolve a comment only once the change it asks for is made. review_set_approval marks a video approved or sent back.
 
 Instagram (the Analyzer): instagram_refresh starts a pull of one of the user's accounts (on their own Apify key or
-official login), instagram_posts lists its posts since a date and the state of its pulls.
+official login), instagram_posts lists its posts since a date and the state of its pulls. instagram_search finds the
+posts the user saved by words, instagram_post reads one (what is said in it, the text on screen, the idea) and
+instagram_save saves a post by its link.
 
-Media Library: the user's footage. media_import_folder brings a folder on this computer in (and reads the script files
-there), media_search finds files by what they show or say, media_folders lists the folders. Each video sorts itself as
-A-roll (someone talks to the camera: the takes an edit is built on) or B-roll (the rest). After adding files, tell the
-user the answer's said line.
+Media Library: the user's footage, their raw material. media_import_folder brings a folder on this computer in (and
+reads the script files there), media_search finds files by what they show or say, media_folders lists the folders.
+media_search looks in the library and in every source a plug-in adds to it: a hit then names its source, and the answer
+says when a filter could not be applied to one. media_get reads one clip in full (its description, what is said in it),
+media_update changes its title, tags or description, media_add_to_folder files clips in a folder, media_share makes a
+link for other people. Each video sorts itself as A-roll (someone talks to the camera: the takes an edit is built on) or
+B-roll (the rest); nobody sets that by hand. After adding files, tell the user the answer's said line.
 
 AI Editor: edits made from footage in the Media Library; each runs steps (analyze, script, draft, broll) into drafts,
 one per version, which can be filed in Review. editor_create makes a new one from the takes' version ids and starts it:
@@ -104,7 +115,7 @@ const schedule = {
 };
 const lines = { type: "array", items: { type: "object", properties: { id: str, text: str }, required: ["text"] } };
 export const TOOLS = [
-  { name: "workshop_projects", description: "The Workshop's projects (brands): id, name, audience, voice, CTA, notes.", inputSchema: { type: "object", properties: {} } },
+  { name: "workshop_projects", description: "The Workshop's projects (brands): id, name, audience, voice, CTA, notes. current is the id of the one the app is in.", inputSchema: { type: "object", properties: {} } },
   { name: "workshop_sessions", description: "Workshop sessions, newest first: id, title, status, project, pinned, posted.", inputSchema: { type: "object", properties: { project: { type: "string", description: "only this project's (id)" } } } },
   {
     name: "workshop_session",
@@ -118,12 +129,12 @@ export const TOOLS = [
   },
   {
     name: "workshop_update_session",
-    description: "Change a session's title, notes or status (moves it through the stages), or link its post: post_url (its Instagram link), or remove_post: true to unlink it.",
+    description: "Change a session's title, notes or status (moves it through the stages), or its posts: post_url links an Instagram post (the session becomes published), unlink_post_url unlinks that one, remove_post: true unlinks them all.",
     inputSchema: {
       type: "object",
       properties: {
         session: str, title: str, notes: str, status: { type: "string", enum: [...SESSION_STATUSES] },
-        post_url: str, remove_post: { type: "boolean" },
+        post_url: str, unlink_post_url: str, remove_post: { type: "boolean" },
       },
       required: ["session"],
     },
@@ -148,6 +159,8 @@ export const TOOLS = [
         piece: str,
         message: str,
         scope: { type: "string", enum: ["slight", "rewrite"], description: "how much it may change (unset = normal)" },
+        my_words_only: { type: "boolean", description: "it only picks, trims and orders the user's own sentences in message" },
+        deep_research: { type: "boolean", description: "web research first (takes minutes): ask the user before" },
         wait_s: { type: "integer", description: `default and max ${WAIT_MAX_S}` },
       },
       required: ["session", "piece", "message"],
@@ -187,7 +200,7 @@ export const TOOLS = [
   },
   {
     name: "instagram_posts",
-    description: "An Analyzer account's posts (by handle) taken on or after since (a date, like 2026-10-01): shortcode, url, kind, when, caption, plays, likes, comments, and the state of its pulls.",
+    description: "An Analyzer account's posts (by handle) taken on or after since (a date, like 2026-10-01): shortcode, url, kind, when, caption, plays, likes, comments, id (once the post is saved in the library: instagram_post reads it), and the state of its pulls.",
     inputSchema: { type: "object", properties: { account: str, since: str }, required: ["account"] },
   },
   { name: "editor_list", description: "AI Editor edits, newest first: id, name, the last step and its state.", inputSchema: { type: "object", properties: {} } },
@@ -247,8 +260,8 @@ export const TOOLS = [
   { name: "get_work_prefs", description: "How the user wants to work: talk (app | chat | both), check (app | editor | both), their editor and what they make.", inputSchema: { type: "object", properties: {} } },
   {
     name: "set_work_prefs",
-    description: "Change how the user wants to work. talk = where they talk to the AI (app, chat = their own AI chat, both); check = where they check the work (app, editor, both); editor = which video editor (or null); makes = what they make.",
-    inputSchema: { type: "object", properties: { talk: { type: "string", enum: [...TALK] }, check: { type: "string", enum: [...CHECK] }, editor: { type: ["string", "null"], enum: [...EDITORS, null] }, makes: { type: "array", items: { type: "string", enum: [...MAKES] } } } },
+    description: "Change how the user wants to work. talk = where they talk to the AI (app, chat = their own AI chat, both); check = where they check the work (app, editor, both); editor = which video editor (or null); makes = what they make; job = what they want to do first (or null).",
+    inputSchema: { type: "object", properties: { talk: { type: "string", enum: [...TALK] }, check: { type: "string", enum: [...CHECK] }, editor: { type: ["string", "null"], enum: [...EDITORS, null] }, makes: { type: "array", items: { type: "string", enum: [...MAKES] } }, job: { type: ["string", "null"], enum: [...JOBS, null] } } },
   },
 ];
 
@@ -278,39 +291,62 @@ const ASSISTANT_DEFS = [
   },
   {
     name: "use_file",
-    description: "Send a video or recording to a tool: file = the id of one dropped in the chat, or path = a file on this computer (when the server runs on it; not for library: media_import_folder reads its folder in place). to: notes = Video Notes (transcript, summary, takeaways, action items, chapters; follow it with notes_get), review = a Review video (then review_share for a link), captions = a Caption Studio project, library = the Media Library, where each clip sorts itself as A-roll or B-roll (files = several dropped ids at once; tell the user the answer's said line). name = a title for it (default the file's name). The same file can go to several.",
-    inputSchema: { type: "object", properties: { file: str, files: { type: "array", items: str }, path: str, to: { type: "string", enum: [...FILE_USES] }, name: str }, required: ["to"] },
+    description: "Send a video or recording to a tool: file = the id of one dropped in the chat, or path = a file on this computer (when the server runs on it; not for library: media_import_folder reads its folder in place). to: notes = Video Notes (transcript, summary, chapters; follow it with notes_get, which also writes takeaways, an action plan and quotes), review = a Review video (then review_share for a link; with version_of = a Review video's link or id, as get_review takes, the file becomes that video's next version instead), captions = a Caption Studio project, library = the Media Library, where each clip sorts itself as A-roll or B-roll (files = several dropped ids at once; tell the user the answer's said line). name = a title for it (default the file's name). The same file can go to several.",
+    inputSchema: { type: "object", properties: { file: str, files: { type: "array", items: str }, path: str, to: { type: "string", enum: [...FILE_USES] }, name: str, version_of: str }, required: ["to"] },
   },
   {
     name: "notes_get",
-    description: "A Video Note (use_file to: notes gives its id): status (processing with its step, ready, error), title, summary, takeaways, action items, chapters and quotes once ready. Waits up to 50 s while it processes.",
-    inputSchema: { type: "object", properties: { id: str }, required: ["id"] },
+    description: "A Video Note (use_file to: notes gives its id; notes_list finds one): status (processing with its step, ready, error), title, summary and chapters once ready, and the takeaways, action plan and quotes it has. add = the ones to write when it has none yet (the user's AI writes them; when the answer says still_writing, call again). transcript: true adds what is said in it. Waits up to 50 s (wait_s: less).",
+    inputSchema: { type: "object", properties: { id: str, transcript: { type: "boolean" }, add: { type: "array", items: { type: "string", enum: ["takeaways", "action plan", "quotes", "summary", "chapters"] } }, wait_s: { type: "integer" } }, required: ["id"] },
   },
 ];
 
-/** A plug-in's MCP tool: its listing (the shape of TOOLS) and the handler that answers it. */
-export type PluginToolDef = { name: string; description: string; inputSchema: Args };
-/** What a plug-in tool handler gets besides its arguments: the account it runs as, this server's address, and the site's routes as that account. */
-export type PluginToolContext = { user: SessionUser; origin: string; api: ReturnType<typeof apiOf> };
-export type PluginToolHandler = (args: Args, ctx: PluginToolContext) => Promise<unknown>;
-export type PluginTools = { defs: PluginToolDef[]; handlers: Map<string, PluginToolHandler>; replaced: Set<string> };
+/** A plug-in's MCP tool: its listing (the shape of TOOLS) and the handler that answers it. The same shapes as a built-in module's (mcp-tools/types.ts). */
+export type PluginToolDef = ToolDef;
+/** What a tool handler gets besides its arguments: the account it runs as, this server's address, the site's routes as that account, and sure(). */
+export type PluginToolContext = ToolContext;
+export type PluginToolHandler = ToolHandler;
+export type PluginTools = {
+  defs: PluginToolDef[];
+  handlers: Map<string, PluginToolHandler>;
+  replaced: Set<string>;
+  /** What a plug-in tool's call looks like to the person watching, by tool name. */
+  steps: Record<string, string>;
+  /** Each plug-in's cards: asked in turn for a call of one of its tools. */
+  work: Array<(name: string, args: Args, result: Args) => WorkCard | null>;
+  /** What the plug-ins add to the assistant's guide and to the MCP server's instructions: how this install differs. */
+  guide: string;
+};
+
+/** The tools kept in their own files (mcp-tools/index.ts), by name. */
+const MODULE_DEFS: ToolDef[] = MODULES.flatMap((m) => m.defs);
+const MODULE_HANDLERS = new Map<string, ToolHandler>(MODULES.flatMap((m) => Object.entries(m.handlers)));
+const MODULE_STEPS: Record<string, string> = Object.assign({}, ...MODULES.map((m) => m.steps ?? {}));
+const DOCK_ONLY = new Set(MODULE_DEFS.filter((d) => d.dockOnly).map((d) => d.name));
 
 /**
  * The plug-ins' MCP tools (a plugin's `tools: { defs, handlers, replaces }`), gathered once when the server boots. A tool whose name a
  * built-in or assistant tool already has throws, unless the same plug-in lists that built-in in `replaces`: its tool then answers the
  * name, and the built-in is left out of the list. `replaces` takes only TOOLS names, each by one plug-in, and the plug-in must serve a
  * tool of that name. A def with no handler throws. The boot refuses rather than shadowing a tool by accident.
+ * `steps`, `work` and `guide` are optional: the line a call shows, the card it leaves, and what the assistant should know about this install.
  */
 export function pluginToolsOf(plugins: ServerPlugin[]): PluginTools {
-  const builtIn = new Set(TOOLS.map((t) => t.name));
-  const taken = new Set<string>([...builtIn, ...ASSISTANT_DEFS.map((t) => t.name)]);
-  const out: PluginTools = { defs: [], handlers: new Map(), replaced: new Set() };
+  const builtIn = new Set([...TOOLS.map((t) => t.name), ...MODULE_DEFS.filter((d) => !d.dockOnly).map((d) => d.name)]);
+  const taken = new Set<string>([...builtIn, ...ASSISTANT_DEFS.map((t) => t.name), ...DOCK_ONLY]);
+  const out: PluginTools = { defs: [], handlers: new Map(), replaced: new Set(), steps: {}, work: [], guide: "" };
   for (const plugin of plugins) {
-    const { defs = [], handlers = {}, replaces = [] } = (plugin.tools ?? {}) as {
+    const { defs = [], handlers = {}, replaces = [], steps = {}, work, guide } = (plugin.tools ?? {}) as {
       defs?: PluginToolDef[];
       handlers?: Record<string, PluginToolHandler>;
       replaces?: string[];
+      steps?: Record<string, string>;
+      work?: (name: string, args: Args, result: Args) => WorkCard | null;
+      guide?: string;
     };
+    Object.assign(out.steps, steps);
+    if (work) out.work.push(work);
+    if (guide?.trim()) out.guide += `${out.guide ? "\n\n" : ""}${guide.trim()}`;
     const over = new Set(replaces);
     for (const name of over) {
       if (!builtIn.has(name)) throw new Error(`plug-in ${plugin.id}: ${name} is not a built-in tool it can replace`);
@@ -402,8 +438,13 @@ const taskOut = (t: Args) => ({
 });
 
 /** The tools, each a thin client of the site's own routes with the caller's credentials. */
-function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
+function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sure: ToolContext["sure"]) {
   const api = apiOf(call, auth);
+  /** A tool that opens something on the person's screen has nobody to open it for in a scheduled run. */
+  const someoneThere = () => {
+    const turn = jobTurn(auth.get("authorization") ?? undefined);
+    if (turn && unattended(user.username, turn)) throw new ToolError("Nobody is at the screen in a scheduled run: say it in your answer instead.");
+  };
   const json = async <T = Args>(path: string, method = "GET", body?: unknown) => (await (await api(path, method, body)).json()) as T;
   const ws = <T = Args>(path: string, method = "GET", body?: unknown) => json<T>(`/api/workshop${path}`, method, body);
   /** An Analyzer account of the user's by handle → its id (the account routes take the id). */
@@ -418,6 +459,17 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
     const lib = (await json<{ libraries: Args[] }>("/api/library")).libraries[0];
     if (!lib) throw new ToolError("This account has no Media Library yet.");
     return String(lib.id);
+  };
+  /** What a plug-in adds to that library, as this account may see it (its /library page lists these beside "Library"). None unless a plug-in brings one. */
+  const librarySources = async (lib: string) =>
+    (await json<{ sources?: Array<{ id: string; label: string; main?: boolean }> }>(`/api/library/${encodeURIComponent(lib)}/sources`).catch(() => null))?.sources ?? [];
+  /** One plug-in source's cards for a search (its own list takes q and nothing else), or null when it refuses or is not back by `by`. */
+  const sourceCards = async (lib: string, source: string, q: unknown, by: number): Promise<Args[] | null> => {
+    const ask = new URLSearchParams({ source, ...(q ? { q: String(q) } : {}) });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<null>((done) => (timer = setTimeout(() => done(null), Math.max(0, by - Date.now()))));
+    const cards = json<{ items?: Args[] }>(`/api/library/${encodeURIComponent(lib)}/assets?${ask}`).then((r) => r.items ?? [], () => null);
+    return Promise.race([cards, late]).finally(() => clearTimeout(timer));
   };
   /** The said line for versions just added (roll.ts), waiting up to waitS (never past `by`) while some are still being sorted. */
   const sortedLine = async (lib: string, versions: string[], waitS: number, by = Date.now() + ANSWER_BY_S * 1000) => {
@@ -453,7 +505,10 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
     }
     const added = files.filter((f) => f.version_id);
     const lib = String(added[0]?.library ?? "");
-    const sorted = lib ? await sortedLine(lib, added.map((f) => String(f.version_id)), SORT_WAIT_S.added, by) : { said: "Nothing was added", left: 0 };
+    // nothing went in: the line says why, when every file was refused for the same reason
+    const why = new Set(files.map((f) => f.error));
+    const none = `Nothing was added${why.size === 1 && files[0]?.error ? `: ${String(files[0].error)}` : ""}`;
+    const sorted = lib ? await sortedLine(lib, added.map((f) => String(f.version_id)), SORT_WAIT_S.added, by) : { said: none, left: 0 };
     return {
       said: sorted.said,
       files: files.map(({ library: _, ...f }) => f),
@@ -477,7 +532,10 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
   };
 
   const handlers: Record<string, (a: Args) => Promise<unknown>> = {
-    workshop_projects: async () => ({ projects: (await ws<Args[]>("/projects")).map((p) => pick(p, ["id", "name", "audience", "voice", "cta", "notes"])) }),
+    workshop_projects: async () => {
+      const w = await ws<{ currentProjectId: string | null; projects: Args[] }>("/workspace");
+      return { current: w.currentProjectId, projects: w.projects.map((p) => pick(p, ["id", "name", "audience", "voice", "cta", "notes"])) };
+    },
     workshop_sessions: async (a) => ({
       sessions: (await ws<Args[]>(`/sessions${a.project ? `?projectId=${encodeURIComponent(String(a.project))}` : ""}`)).map((r) =>
         pick(r, ["id", "title", "status", "projectId", "projectName", "pinned", "posted", "updatedAt"]),
@@ -500,12 +558,19 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
       return { ...pick(made, ["id", "title", "status", "projectId"]), pieces: await pieces(String(made.id)) };
     },
     workshop_update_session: async (a) => {
-      const body: Args = pick(a, ["title", "notes", "status"]);
+      // notes: "" clears them (pick would drop it)
+      const body: Args = { ...pick(a, ["title", "status"]), ...(typeof a.notes === "string" ? { notes: a.notes } : {}) };
       // through the session's own PATCH, so the link is checked as it is from the app
       if (a.remove_post === true) body.posted = null;
-      else if (a.post_url) body.posted = a.post_url;
+      else if (a.unlink_post_url) {
+        // only a post that is linked: the route marks whatever it is given "never match again"
+        const code = postedFromUrl(String(a.unlink_post_url))?.shortcode;
+        const now = code ? await ws(`/sessions/${a.session}`) : null;
+        if (!now || !((now.postings as Args[] | undefined) ?? (now.posted ? [now.posted as Args] : [])).some((p) => p.shortcode === code)) throw new ToolError("That post is not linked to this session.");
+        body.posted = { remove: code };
+      } else if (a.post_url) body.posted = a.post_url;
       if (!Object.keys(body).length) throw new ToolError("Nothing to change: give a title, notes, status or a post.");
-      return pick(await ws(`/sessions/${a.session}`, "PATCH", body), ["id", "title", "status", "posted"]);
+      return pick(await ws(`/sessions/${a.session}`, "PATCH", body), ["id", "title", "status", "posted", "postings"]);
     },
     workshop_new_piece: async (a) => piece(await ws(`/sessions/${a.session}/docs`, "POST", pick(a, ["kind", "title", "text"]))),
     workshop_edit_piece: async (a) => {
@@ -514,17 +579,19 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
       return piece(await ws(`/sessions/${a.session}/docs/${a.piece}`, "PATCH", body));
     },
     workshop_chat: async (a) => {
-      const started = await ws<{ reply: Args }>(`/sessions/${a.session}/chat`, "POST", { docId: a.piece, text: a.message, ...(a.scope ? { scope: a.scope } : {}) });
+      const started = await ws<{ reply: Args }>(`/sessions/${a.session}/chat`, "POST", { docId: a.piece, text: a.message, ...(a.scope ? { scope: a.scope } : {}), ...(a.my_words_only === true ? { mine: true } : {}), ...(a.deep_research === true ? { deep: true } : {}) });
       return wait({ session: a.session, reply: started.reply.id, wait_s: a.wait_s });
     },
     workshop_wait: wait,
     finals_link_session: async (a) =>
       ws(`/sessions/${a.session}/finals`, "POST", { pieceId: a.piece, ...(a.workshop_piece ? { docId: a.workshop_piece } : {}) }),
-    list_reviews: async () => ({
-      reviews: (await json<Args[]>("/api/review")).map((r) => {
+    list_reviews: async () => {
+      const folders = new Map((await json<Args[]>("/api/review/projects")).map((p) => [p.id, p.name]));
+      return { reviews: (await json<Args[]>("/api/review")).map((r) => {
         const versions = (r.versions as Args[] | undefined) ?? [];
         return {
           ...pick(r, ["id", "name"]),
+          ...(folders.has(r.projectId) ? { folder: folders.get(r.projectId) } : {}),
           approval: (r.approval as Args | undefined)?.status,
           versions: versions.length,
           latest_file: versions.at(-1)?.name,
@@ -533,8 +600,8 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
           updated: when(r.updatedAt),
           link: `${origin}/review/${r.id}`,
         };
-      }),
-    }),
+      }) };
+    },
     get_review: async (a) => {
       const path = reviewPath(String(a.link), origin);
       const view = await json(path);
@@ -560,7 +627,11 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
         ...pick(asset, ["id", "name"]),
         link: `${origin}/review/${asset.id}`,
         approval: (asset.approval as Args | undefined)?.status,
-        versions: [...versions.values()].map((v) => pick(v, ["n", "name", "duration", "fps", "width", "height", "status", "removed"])),
+        versions: [...versions.values()].map((v) => ({
+          ...pick(v, ["n", "name", "duration", "fps", "width", "height", "status", "removed"]),
+          // the file itself, where this caller may have it: a link the person presses (the owner's needs their sign-in)
+          ...(asset.download && !v.removed && v.status !== "error" ? { download: `${origin}${path}/v/${v.n}/download` } : {}),
+        })),
         open_comments: threads.filter((t) => !t.resolved).length,
         comments: threads,
       };
@@ -575,23 +646,32 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
       return out;
     },
     resolve_comment: async (a) => {
-      const id = ((await json(reviewPath(String(a.link), origin))).asset as Args).id;
-      const cm = await json(`/api/review/assets/${id}/comments/${encodeURIComponent(String(a.comment_id))}`, "PATCH", { resolved: a.resolved !== false });
+      const r = await reviewOf({ json, origin }, a.link);
+      const had = r.comments.find((c) => c.id === a.comment_id);
+      if (!had) throw new ToolError("No comment with that id on this video: get_review lists them.");
+      if (!r.manage && !had.mine) throw new ToolError("That video is someone else's: on its share link you can resolve only the comments you wrote.");
+      const cm = await json(`${r.path}/comments/${encodeURIComponent(String(a.comment_id))}`, "PATCH", { resolved: a.resolved !== false });
       return { id: cm.id, resolved: !!cm.resolved, text: cm.text };
     },
     use_file: async (a) => {
-      // what the tool still needs comes first: the assistant asks for it (ask_secret, a Settings page), then tries again
+      // what the tool still needs comes first: the assistant asks for it (ask_secret) or opens the page that holds it, then tries again
       const tool = a.to === "review" ? "review" : a.to === "captions" ? "captions" : a.to === "library" ? "media" : "notes";
       const { missing } = readiness(tool, (await json<SetupView>("/api/setup")).have);
-      if (missing.length)
+      if (missing.length) {
+        // the page each kind of need is set up on, the same ones Settings → Tools sends a person to
+        const page: Record<Exclude<(typeof missing)[number]["form"], "keys">, string> = { ai: "/settings/providers", apify: "/settings/keys", library: "/library", project: "/projects" };
         return {
           not_yet: `${TOOL_NAMES[tool]} needs these first; then call use_file again.`,
-          needs: missing.map((n) => ({ what: n.what, ...(n.form === "keys" ? { ask_secret: n.anyOf } : { open: n.form === "ai" ? "/settings/providers" : "/settings/general" }) })),
+          needs: missing.map((n) => ({ what: n.what, ...(n.form === "keys" ? { ask_secret: n.anyOf } : { open: page[n.form] }) })),
         };
+      }
       if (a.to === "library") return toLibrary(a);
       if (!a.file && !a.path) throw new ToolError("Give the dropped file's id, or a path on this computer.");
+      // a fix for a video already in Review: found by its link or id as the caller; the use route takes only the owner's own
+      if (a.version_of && a.to !== "review") throw new ToolError("version_of goes with to: review.");
+      const of = a.version_of ? { version_of: ((await json(reviewPath(String(a.version_of), origin))).asset as Args).id } : {};
       const file = a.path ? (await json(`/api/assistant/files/path`, "POST", { path: a.path })).id : a.file;
-      return json(`/api/assistant/files/${encodeURIComponent(String(file))}/use`, "POST", pick(a, ["to", "name"]));
+      return json(`/api/assistant/files/${encodeURIComponent(String(file))}/use`, "POST", { ...pick(a, ["to", "name"]), ...of });
     },
     notes_get: async (a) => {
       const path = `/api/clips/${encodeURIComponent(String(a.id))}`;
@@ -600,27 +680,60 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
         if (n.owner !== user.username && user.role !== "admin") throw new ToolError("Not found, or not this account's.");
         return n;
       };
+      const by = Date.now() + Math.max(0, Math.min(Number(a.wait_s ?? ANSWER_BY_S), ANSWER_BY_S)) * 1000;
       let n = mine(await json(path));
-      for (let t = 0; n.status === "processing" && t < 25; t++) n = (await sleep(2000), mine(await json(path)));
-      const blocks = Object.fromEntries(((n.blocks as Args[] | undefined) ?? []).map((b) => [b.kind, b.text ?? ((b.items as Args[] | undefined) ?? []).map((x) => x.text)]));
+      while (n.status === "processing" && Date.now() < by) n = (await sleep(2000), mine(await json(path)));
+      // a note's sections in the page's own words; the routes know them by kind ("action items" is how people ask for the plan)
+      const KIND: Record<string, string> = { takeaways: "takeaways", "action plan": "actions", quotes: "quotes", summary: "summary", chapters: "chapters" };
+      const wordOf = (kind: unknown) => Object.keys(KIND).find((w) => KIND[w] === kind) ?? String(kind);
+      const asked = (Array.isArray(a.add) ? a.add : []).map((w) => {
+        const said = String(w).trim().toLowerCase();
+        const kind = KIND[said] ?? (said === "action items" || said === "actions" ? "actions" : undefined);
+        if (!kind) throw new ToolError(`add takes ${Object.keys(KIND).join(", ")}.`);
+        return kind;
+      });
+      const has = (kind: string) => (kind === "summary" ? !!n.summary : kind === "chapters" ? !!(n.chapters as unknown[] | undefined)?.length : ((n.blocks as Args[] | undefined) ?? []).some((b) => b.kind === kind));
+      const writing = () => (n.generating as string[] | undefined) ?? [];
+      // the ones asked for that the note has not got: each is written by the person's own AI, and waited for while there is time
+      const want = n.status === "ready" && n.hasTranscript ? asked.filter((k) => !has(k)) : [];
+      for (const k of want) if (!writing().includes(k)) await api(`${path}/blocks`, "POST", { kind: k });
+      if (want.length) n = mine(await json(path));
+      while (want.some((k) => writing().includes(k)) && Date.now() < by) n = (await sleep(1000), mine(await json(path)));
+      const still = want.filter((k) => writing().includes(k));
+      const failed = Object.fromEntries(want.filter((k) => !has(k) && !still.includes(k) && (n.blockErrors as Args | undefined)?.[k]).map((k) => [wordOf(k), (n.blockErrors as Args)[k]]));
+      const blocks = Object.fromEntries(((n.blocks as Args[] | undefined) ?? []).map((b) => [wordOf(b.kind), b.text ?? ((b.items as Args[] | undefined) ?? []).map((x) => x.text)]));
+      // what is said, as plain text; a long recording is cut and says so
+      let said: string | undefined;
+      if (a.transcript === true && n.status === "ready" && n.hasTranscript) {
+        const words = (await json<{ words?: Array<{ text: string }> }>(`${path}/transcript`)).words ?? [];
+        const all = words.map((w) => w.text).join(" ").replace(/\s+/g, " ").trim();
+        said = all.length > TRANSCRIPT_MAX ? `${all.slice(0, TRANSCRIPT_MAX)} … (cut: ${all.length.toLocaleString("en-US")} characters in all; the page has the rest)` : all;
+      }
       return {
         ...pick(n, ["id", "name", "status", "step", "error"]),
         link: `${origin}/video-notes/${n.id}`,
         ...(n.status === "processing" ? { note: "Still processing: call notes_get again." } : {}),
         ...(n.status === "ready" && !n.hasTranscript ? { note: "No transcript: the file has no speech, or this account's cloud transcription is off (an admin switches it on)." } : {}),
+        // a new note keeps its summary beside its blocks, not in them
+        ...(n.summary ? { summary: n.summary } : {}),
         ...blocks,
+        ...(said ? { transcript: said } : {}),
         ...((n.chapters as Args[] | undefined)?.length ? { chapters: (n.chapters as Args[]).map((c) => `${clock(Number(c.t))} ${c.title}`) } : {}),
+        ...(still.length ? { still_writing: still.map(wordOf), note: "Still writing: call notes_get again with the same add." } : {}),
+        ...(Object.keys(failed).length ? { could_not_write: failed } : {}),
       };
     },
     review_set_approval: async (a) => {
-      const id = ((await json(reviewPath(String(a.link), origin))).asset as Args).id;
-      const r = await json(`/api/review/assets/${id}/approval`, "POST", { status: a.status });
+      const at = await reviewOf({ json, origin }, a.link);
+      if (!at.manage && a.status !== "approved" && a.status !== "changes") throw new ToolError("That video is someone else's: on its share link you can approve it or ask for changes (approved, changes), nothing else.");
+      const r = await json(`${at.path}/approval`, "POST", { status: a.status });
       return { id: r.id, name: r.name, approval: (r.approval as Args | undefined)?.status };
     },
     review_share: async (a) => {
-      const id = ((await json(reviewPath(String(a.link), origin))).asset as Args).id;
+      const at = await reviewOf({ json, origin }, a.link);
+      if (!at.manage) throw new ToolError("That video is someone else's: only its owner can change its share link.");
       const share = { enabled: a.on !== false, ...(typeof a.download === "boolean" ? { download: a.download } : {}) };
-      const r = await json(`/api/review/assets/${id}`, "PATCH", { share });
+      const r = await json(at.path, "PATCH", { share });
       const s = r.share as { token: string; enabled: boolean; download: boolean };
       if (!s.enabled) return { name: r.name, shared: false };
       // a server on this Mac with no address on the internet: the link opens here only
@@ -637,13 +750,16 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
       if (Number.isNaN(sinceMs)) throw new ToolError("since is a date, like 2026-10-01.");
       const acc = await json(`/api/instagram/accounts/${await accountOf(String(a.account))}?lite=1`);
       const rows = ((acc.catalog as Args[] | undefined) ?? []).filter((r) => (r.takenAt as number) >= sinceMs).sort((x, y) => (y.takenAt as number) - (x.takenAt as number));
+      // a catalog row carries a short preview only; a saved post's own text is in the same answer
+      const saved = new Map(((acc.posts as Args[] | undefined) ?? []).map((p) => [p.id, p.caption]));
       return {
         account: acc.username,
         jobs: acc.jobs,
         posts: rows.map((r) => ({
           ...pick(r, ["shortcode", "url", "kind"]),
+          ...(r.postId ? { id: r.postId } : {}),
           when: when(r.takenAt),
-          caption: String(r.caption ?? r.captionPreview ?? "").slice(0, 300),
+          caption: String(saved.get(r.postId) ?? r.captionPreview ?? "").slice(0, 300),
           ...pick((r.counts ?? {}) as Args, ["plays", "likes", "comments"]),
         })),
       };
@@ -681,13 +797,26 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
     },
     media_folders: async () => {
       const lib = await homeLibraryId();
+      const others = await librarySources(lib);
       const { collections } = await json<{ collections: Args[] }>(`/api/library/${lib}/collections`);
-      return { library: lib, folders: collections.map((c) => pick(c, ["id", "name", "kind", "parentId", "count"])) };
+      return {
+        library: lib,
+        folders: collections.map((c) => pick(c, ["id", "name", "kind", "parentId", "count"])),
+        // a plug-in's source has no folders here
+        ...(others.length ? { note: `These are the Library's own folders. media_search also searches, with no folders here: ${others.map((s) => s.label).join(", ")}.` } : {}),
+      };
     },
     media_search: async (a) => {
+      const by = Date.now() + ANSWER_BY_S * 1000;
       const lib = await homeLibraryId();
-      const q = new URLSearchParams({ limit: String(Math.max(1, Math.min(Number(a.limit ?? 50), 200))) });
+      const limit = Math.max(1, Math.min(Number(a.limit ?? 50), 200));
+      const q = new URLSearchParams({ limit: String(limit) });
       const versions = Array.isArray(a.versions) ? a.versions.map(String) : [];
+      // what a plug-in adds to this library is searched too; a folder and version ids are the library's own
+      const others = await librarySources(lib);
+      // a source that IS the install's Media Library (its page shows that, not the app's own storage): only it is searched
+      const main = versions.length || a.folder ? undefined : others.find((s) => s.main);
+      const asked = versions.length || a.folder ? [] : main ? [main] : others;
       const said = versions.length ? (await sortedLine(lib, versions, SORT_WAIT_S.asked)).said : undefined;
       if (versions.length) q.set("versions", versions.join(","));
       if (a.q) q.set("q", String(a.q));
@@ -695,15 +824,38 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
       if (a.roll) q.set("roll", String(a.roll));
       if (a.folder) q.set("collectionId", String(a.folder));
       if (a.since) q.set("from", String(dateMs(a.since)));
-      const page = await json<{ items: Args[] }>(`/api/library/${lib}/assets?${q}`);
+      const page = main ? { items: [] as Args[] } : await json<{ items: Args[] }>(`/api/library/${lib}/assets?${q}`);
+      // with more than one source, each hit says which it is from
+      const hit = (f: Args, source?: string) => ({
+        ...pick(f, ["id", "versionId", "title", "kind", "roll", "state", "durationS", "tags"]),
+        ...(f.description ? { description: String((f.description as Args).text).slice(0, 300) } : {}),
+        ...(f.capturedAt ? { captured: when(f.capturedAt) } : {}),
+        ...(source ? { source } : {}),
+      });
+      const files = page.items.map((f) => hit(f, others.length ? "Library" : undefined));
+      const named = (label: string) => (main ? undefined : label);
+      // a filter a source could not take is said, never dropped in silence
+      const notes: string[] = [];
+      if (others.length && !asked.length) notes.push(`A folder and version ids are the Library's own: ${others.map((s) => s.label).join(", ")} not searched.`);
+      const found = await Promise.all(asked.map((s) => sourceCards(lib, s.id, a.q, by)));
+      for (const [i, s] of asked.entries()) {
+        const cards = found[i];
+        if (!cards) {
+          notes.push(`${s.label} did not answer.`);
+          continue;
+        }
+        let kept = a.kind ? cards.filter((c) => c.kind === a.kind) : cards;
+        if (a.roll && cards.some((c) => c.roll)) kept = kept.filter((c) => c.roll === a.roll);
+        else if (a.roll && kept.length) notes.push(`${s.label} does not sort A-roll and B-roll: roll was not applied to it.`);
+        if (a.since && kept.length) notes.push(`${s.label} does not say when a clip was added: since was not applied to it (captured is when a clip was shot).`);
+        files.push(...kept.slice(0, limit).map((c) => hit(c, named(s.label))));
+      }
       return {
         library: lib,
         ...(said ? { said } : {}),
-        files: page.items.map((f) => ({
-          ...pick(f, ["id", "versionId", "title", "kind", "roll", "state", "durationS", "tags"]),
-          ...(f.description ? { description: String((f.description as Args).text).slice(0, 300) } : {}),
-          ...(f.capturedAt ? { captured: when(f.capturedAt) } : {}),
-        })),
+        ...(others.length && !main ? { sources: ["Library", ...asked.map((s) => s.label)] } : {}),
+        files,
+        ...(notes.length ? { note: notes.join(" ") } : {}),
       };
     },
     media_import_folder: async (a) => {
@@ -789,12 +941,18 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
       return taskOut(a.id ? await json(`/api/automations/${encodeURIComponent(String(a.id))}`, "PATCH", body) : await json("/api/automations", "POST", body));
     },
     run_scheduled_task_now: async (a) => taskOut(await json(`/api/automations/${encodeURIComponent(String(a.id))}/run`, "POST")),
-    delete_scheduled_task: async (a) => json(`/api/automations/${encodeURIComponent(String(a.id))}`, "DELETE"),
+    delete_scheduled_task: async (a) => {
+      const found = (await json<{ items: Args[] }>("/api/automations")).items.find((t) => t.id === a.id);
+      if (!found) throw new ToolError("Not found, or not this account's.");
+      await sure(`Delete the scheduled task "${String(found.name)}"?`);
+      return json(`/api/automations/${encodeURIComponent(String(a.id))}`, "DELETE");
+    },
     get_work_prefs: async () => json("/api/work-prefs"),
     set_work_prefs: async (a) => {
       const body = pick(a, ["talk", "check", "makes"]);
       if (a.editor !== undefined) body.editor = a.editor;
-      if (!Object.keys(body).length) throw new ToolError("Nothing to change: give talk, check, editor or makes.");
+      if (a.job !== undefined) body.job = a.job;
+      if (!Object.keys(body).length) throw new ToolError("Nothing to change: give talk, check, editor, makes or job.");
       return json("/api/work-prefs", "PUT", body);
     },
     setup_status: async () => {
@@ -813,6 +971,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
     },
     save_setup: async (a) => setupView(await json<SetupView>("/api/setup", "PUT", pick(a, ["tools", "plan", "done"]))),
     ask_secret: async (a) => {
+      someoneThere();
       const env = MY_KEYS.find((k) => k.env === a.env);
       if (!env) throw new ToolError(`${String(a.env)} is not a key the app takes.`);
       // only the name and the reason: any other argument (a value included) is dropped unread
@@ -826,7 +985,10 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
       if (turn) noteChoices(user.username, turn, [...new Set(choices)]);
       return { status: "shown", note: "The buttons are under your reply: end the reply and wait for the answer." };
     },
-    navigate: async (a) => ({ status: "opening", path: await navigateTo(user.username, String(a.path ?? "")) }),
+    navigate: async (a) => {
+      someoneThere();
+      return { status: "opening", path: await navigateTo(user.username, String(a.path ?? "")) };
+    },
     // the card's src and href are the site's own routes, so the browser's cookie passes the same checks this call did
     show_video: async (a) => {
       let link = a.link;
@@ -835,8 +997,11 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
         // this editor files each draft's preview in Review: the draft plays from there
         if (!a.edit || !a.draft) throw new ToolError("An AI Editor preview needs edit and draft (editor_get lists them).");
         const e = await json(`/api/editor/${encodeURIComponent(String(a.edit))}`);
-        const p = ((e.previews as Record<string, { assetId: string; n: number }> | undefined) ?? {})[String(a.draft)];
-        if (!p) throw new ToolError("That draft has no preview yet: editor_run kind preview renders one.");
+        const previews = (e.previews as Record<string, { assetId: string; n: number }> | undefined) ?? {};
+        // an editor plug-in answering this path has no previews map: a draft it filed in Review carries review { asset, n }
+        const filed = ((e.drafts as Args[] | undefined) ?? []).find((d) => d.name === a.draft)?.review as { asset: string; n: number } | undefined;
+        const p = previews[String(a.draft)] ?? (filed ? { assetId: filed.asset, n: filed.n } : undefined);
+        if (!p) throw new ToolError("That draft is not in Review yet: editor_run kind send_to_review files it, then it plays here.");
         [link, version] = [p.assetId, p.n];
       }
       if (!link) throw new ToolError("Give the Review video's link or id, or an edit and draft.");
@@ -910,10 +1075,10 @@ const STEPS: Record<string, string> = {
   instagram_comments: "Reading the comments",
 };
 const PAGES: Record<string, string> = { review: "Review", workshop: "the Workshop", editor: "the AI Editor", settings: "Settings", instagram: "the Analyzer", analyzer: "the Analyzer" };
-export const stepFor = (name: string, args: Args): string =>
+export const stepFor = (name: string, args: Args, plugged: Record<string, string> = {}): string =>
   name === "navigate"
     ? `Opening ${PAGES[String(args.path ?? "").split(/[/?]/)[1] ?? ""] ?? "the page"}`
-    : (STEPS[name] ?? name.replace(/_/g, " "));
+    : (plugged[name] ?? STEPS[name] ?? MODULE_STEPS[name] ?? name.replace(/_/g, " "));
 
 const WRITING = "The Workshop's writer is drafting";
 const kindTitle = (kind: unknown) => String(kind ?? "job").replace(/^./, (c) => c.toUpperCase()).replace(/_/g, " ");
@@ -989,19 +1154,45 @@ export function workFor(name: string, a: Args, r: Args): { card: AssistantWork; 
   }
 }
 
-async function callTool(call: Call, auth: Headers, origin: string, user: SessionUser, name: string, args: Args, plugged: PluginTools) {
-  const plug = plugged.handlers.get(name);
-  const handler = plug ? (a: Args) => plug(a, { user, origin, api: apiOf(call, auth) }) : tools(call, auth, origin, user)[name];
+/** sure() put its question on a card: the call ends here, and runs again when the person presses Yes. */
+class Asked extends Error {}
+
+/**
+ * One tool call. `confirmed`: the person pressed Yes on the card this same call put up (assistant.ts runs it again
+ * as them, with their own login instead of the reply's token), so sure() goes through.
+ */
+async function callTool(call: Call, auth: Headers, origin: string, user: SessionUser, name: string, args: Args, plugged: PluginTools, confirmed = false) {
+  const api = apiOf(call, auth);
   const turn = jobTurn(auth.get("authorization") ?? undefined);
-  if (turn) noteStep(user.username, turn, stepFor(name, args ?? {}));
+  const ctx: ToolContext = {
+    user,
+    origin,
+    api,
+    json: async <T = Args>(path: string, method = "GET", body?: unknown) => (await (await api(path, method, body)).json()) as T,
+    sure: async (question) => {
+      // outside the dock the caller's own AI app asks its own way; in the dock the question waits on a card
+      if (confirmed || !turn) return;
+      if (!askConfirm(user.username, turn, question, { tool: name, args })) throw new ToolError("Too many questions are waiting for the user under this reply: end it and let them answer.");
+      throw new Asked(question);
+    },
+  };
+  const plug = plugged.handlers.get(name);
+  const own = MODULE_HANDLERS.get(name);
+  const handler = plug ? (a: Args) => plug(a, ctx) : own ? (a: Args) => own(a, ctx) : tools(call, auth, origin, user, ctx.sure)[name];
+  if (turn) noteStep(user.username, turn, stepFor(name, args ?? {}, plugged.steps));
   try {
     if (!handler) throw new ToolError(`Unknown tool ${name}.`);
-    if (ASSISTANT_TOOLS.has(name) && !isJob(auth)) throw new ToolError(`${name} is for the assistant only.`);
+    if ((ASSISTANT_TOOLS.has(name) || DOCK_ONLY.has(name)) && !isJob(auth) && !confirmed) throw new ToolError(`${name} is for the assistant only.`);
     const result = await handler(args ?? {});
-    const work = turn && result && typeof result === "object" && !Array.isArray(result) ? workFor(name, args ?? {}, result as Args) : null;
-    if (turn && work) noteWork(user.username, turn, work.card, work.only);
+    if (turn && result && typeof result === "object" && !Array.isArray(result)) {
+      const cards = plug ? plugged.work : MODULES.filter((m) => name in m.handlers).map((m) => m.work).filter((w) => !!w);
+      const work = cards.map((w) => w(name, args ?? {}, result as Args)).find((c) => !!c) ?? workFor(name, args ?? {}, result as Args);
+      if (work) noteWork(user.username, turn, work.card, work.only);
+    }
     return { content: Array.isArray(result) ? (result as Content[]) : [{ type: "text", text: JSON.stringify(result, null, 1) }] };
   } catch (e) {
+    if (e instanceof Asked)
+      return { content: [{ type: "text", text: `Asked the user: "${e.message}" Nothing has been changed. It is done when they press Yes on the card under your reply: say that you asked, end your reply and wait.` }] };
     return { content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }], isError: true };
   }
 }
@@ -1017,13 +1208,15 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
         protocolVersion: typeof params.protocolVersion === "string" ? params.protocolVersion : "2025-06-18",
         capabilities: { tools: {} },
         serverInfo: { name: "creator-toolset", version: "1.0.0" },
-        instructions: INSTRUCTIONS,
+        instructions: plugged.guide ? `${INSTRUCTIONS}\n\n${plugged.guide}` : INSTRUCTIONS,
       });
     case "ping":
       return ok({});
     case "tools/list": {
-      const listed = isJob(auth) ? [...TOOLS, ...ASSISTANT_DEFS] : TOOLS;
-      return ok({ tools: [...listed.filter((t) => !plugged.replaced.has(t.name)), ...plugged.defs] });
+      const dock = isJob(auth);
+      const listed = [...TOOLS, ...MODULE_DEFS.filter((d) => dock || !d.dockOnly), ...(dock ? ASSISTANT_DEFS : [])];
+      // dockOnly says who gets a tool; it is not part of the listing
+      return ok({ tools: [...listed.filter((t) => !plugged.replaced.has(t.name)), ...plugged.defs].map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) });
     }
     case "tools/call":
       return ok(await callTool(call, auth, origin, user, String(params.name), (params.arguments ?? {}) as Args, plugged));
@@ -1036,6 +1229,13 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
 export function mcpApp(call: Call, plugins: ServerPlugin[] = []) {
   const app = new Hono<{ Variables: AuthVars }>();
   const plugged = pluginToolsOf(plugins);
+  setInstallGuide(plugged.guide);
+  // Yes on a card (assistant.ts): the call it stands for runs again as the person who pressed it
+  setConfirmRunner(async (user, headers, origin, tool, args) => {
+    const inner: Call = (path, init) => innerCall.run(user, () => call(path, init));
+    const r = await callTool(inner, headers, origin, user, tool, (args ?? {}) as Args, plugged, true);
+    return { ok: !("isError" in r), text: r.content.map((x) => (x.type === "text" ? x.text : "")).join(" ") };
+  });
   app.post("/", async (c) => {
     const body = (await c.req.json().catch(() => null)) as Args | Args[] | null;
     if (!body) return c.json({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } }, 400);

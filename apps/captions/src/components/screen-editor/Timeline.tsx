@@ -44,6 +44,7 @@ export function Timeline({
   change,
   aim,
   depth,
+  floor,
   undo,
   redo,
 }: {
@@ -58,6 +59,8 @@ export function Timeline({
   aim: (t: number) => { x: number; y: number };
   /** How deep a new zoom is. */
   depth: number;
+  /** The least depth a zoom is seen at (above 1 where zooms fill the whole frame). */
+  floor: number;
   undo: (() => void) | null;
   redo: (() => void) | null;
 }) {
@@ -294,7 +297,7 @@ export function Timeline({
                   role="button"
                   tabIndex={0}
                   aria-pressed={picked === i}
-                  aria-label={`Zoom ${clock(z.start, true)} to ${clock(z.end, true)}, ${z.scale.toFixed(1)} times`}
+                  aria-label={`Zoom ${clock(z.start, true)} to ${clock(z.end, true)}, ${Math.max(z.scale, floor).toFixed(1)} times`}
                   onPointerDown={(e) => grabZoom(e, i, "body")}
                   onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), onPick(i))}
                   className={cn(
@@ -306,7 +309,7 @@ export function Timeline({
                   style={{ left: x(z.start), width: Math.max(10, x(z.end) - x(z.start)) }}
                 >
                   <span onPointerDown={(e) => grabZoom(e, i, "start")} className="absolute inset-y-0 left-0 w-2 cursor-ew-resize" />
-                  <span className="pointer-events-none truncate px-2">{z.scale.toFixed(1)}×</span>
+                  <span className="pointer-events-none truncate px-2">{Math.max(z.scale, floor).toFixed(1)}×</span>
                   <span onPointerDown={(e) => grabZoom(e, i, "end")} className="absolute inset-y-0 right-0 w-2 cursor-ew-resize" />
                 </div>
               ))}

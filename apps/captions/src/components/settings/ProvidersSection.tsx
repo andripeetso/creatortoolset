@@ -1,6 +1,6 @@
 import { groupComputers } from "./computers-group";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link, useNavigate, useSearchParams } from "react-router";
 import { Plus, RotateCcw } from "lucide-react";
 import {
   addInstanceTo,
@@ -63,6 +63,13 @@ export function ProvidersSection({ sub }: { sub?: string }) {
   const [read, setRead] = useState(false);
   const [tab, setTab] = useState<string | null>(null);
   const [adding, setAdding] = useState<{ driver?: Driver } | null>(null);
+  const [params, setParams] = useSearchParams();
+  // `?add=1` opens Add provider once, where the page has that button (a computer, and a set this account edits), then the parameter goes
+  useEffect(() => {
+    if (params.get("add") !== "1" || !view || !me) return;
+    if (view.devices.length && (isAdmin || view.own)) setAdding({});
+    setParams((p) => (p.delete("add"), p), { replace: true });
+  }, [params, setParams, view, me, isAdmin]);
   const [checking, setChecking] = useState<string | null>(null);
   const [signingIn, setSigningIn] = useState<string | null>(null);
   const [installing, setInstalling] = useState<string | null>(null);

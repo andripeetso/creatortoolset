@@ -7,11 +7,12 @@ import { env } from "./lib/env";
 import { assembleParts, MAX_UPLOAD_BYTES, PART_SIZE, partsStatus, readUploadState, receivePart, startUpload } from "./lib/uploads";
 import { mayUse, type SessionUser } from "./users";
 import { notesFromFile, probeDuration } from "./clips";
-import { addVersion } from "./review";
+import { addVersion, readMeta as readReview } from "./review";
 import { createProjectFromFile, linkOrCopy } from "./projects";
 import { ensureLibrary } from "./library/access";
 import { libraryDb } from "./library/db";
 import { saveToLibrary } from "./library/routes";
+import { mainSource } from "./library/sources";
 import { FILE_USES, type AssistantFile, type AssistantFileUse } from "../contracts/assistant";
 
 /**
@@ -134,16 +135,21 @@ assistantFilesApp.post("/path", async (c) => {
 
 const NAMES: Record<AssistantFileUse, string> = { notes: "Video Notes", review: "Review", captions: "Caption Studio", library: "Media Library" };
 
-/** Hand a dropped file to a tool; answers what it became and its page. */
+/**
+ * Hand a dropped file to a tool; answers what it became and its page. versionOf (Review only): the id of a Review
+ * video of this account's own, which gets the file as its next version instead of a new video being made.
+ */
 export async function useFile(
   user: SessionUser,
   id: string,
   to: AssistantFileUse,
   name?: string,
-): Promise<{ to: AssistantFileUse; id: string; name: string; href: string; note?: string; versionId?: string; libraryId?: string }> {
+  versionOf?: string,
+): Promise<{ to: AssistantFileUse; id: string; name: string; href: string; note?: string; version?: number; versionId?: string; libraryId?: string }> {
   const meta = await readFileMeta(user.username, id);
   if (!meta) throw new Error("That file isn't here any more (dropped files are kept 7 days): ask for it again.");
   if (!mayUse(user, TOOL_OF[to])) throw new Error(`${NAMES[to]} isn't switched on for this account.`);
+  if (versionOf && to !== "review") throw new Error("Only a Review video takes a next version.");
   const file = fileOf(user.username, id);
   const title = (name?.trim() || meta.name).slice(0, 120);
   if (to === "notes") {
@@ -151,6 +157,9 @@ export async function useFile(
     return { to, id: made.id, name: title, href: `/video-notes/${made.id}` };
   }
   if (to === "library") {
+    // where a plug-in's source is the Media Library, the page never shows the storage library: nothing goes where nobody looks
+    const main = mainSource();
+    if (main) throw new Error(`On this server the Media Library is the ${main.label}, and files go in on its own page (/library): open it and add them there.`);
     // the library keeps its own copy (a dropped file goes after 7 days); it is prepared and sorted A-roll or B-roll there
     ensureLibrary(user.username);
     const saved = await saveToLibrary(user.username, file, path.extname(title) ? title : `${title}${path.extname(meta.name)}`, [], undefined, true);
@@ -162,9 +171,13 @@ export async function useFile(
     return { to, id: assetId, versionId: a.current_version_id, libraryId: a.library_id, name: title, href, ...("duplicateOf" in saved ? { note: "Already in the Media Library" } : {}) };
   }
   if (to === "review") {
-    const added = await addVersion(undefined, { owner: user.username, name: title, mime: meta.mime, bytes: meta.size }, (dest) => linkOrCopy(file, dest));
+    // a fix for a video already there: its next version, and only on the owner's own video
+    const of = versionOf ? await readReview(versionOf) : null;
+    if (versionOf && of?.owner !== user.username) throw new Error("That Review video isn't here, or isn't this account's.");
+    const added = await addVersion(of?.id, { owner: user.username, name: title, mime: meta.mime, bytes: meta.size }, (dest) => linkOrCopy(file, dest));
     if (!added) throw new Error("Review couldn't take it.");
-    return { to, id: added.meta.id, name: title, href: `/review/${added.meta.id}` };
+    if (!of) return { to, id: added.meta.id, name: title, href: `/review/${added.meta.id}` };
+    return { to, id: of.id, name: added.meta.name, href: `/review/${of.id}?v=${added.n}`, version: added.n, note: `Version ${added.n} of “${added.meta.name}”` };
   }
   // Caption Studio builds its editing copy first: a long file can take minutes, so the answer doesn't wait past 40 s
   const job = createProjectFromFile({ owner: user.username, name: title, clipName: meta.name, file, duration: await probeDuration(file) });
@@ -175,11 +188,11 @@ export async function useFile(
 }
 
 assistantFilesApp.post("/:id/use", async (c) => {
-  const b = (await c.req.json().catch(() => null)) as { to?: unknown; name?: unknown } | null;
+  const b = (await c.req.json().catch(() => null)) as { to?: unknown; name?: unknown; version_of?: unknown } | null;
   const to = b?.to as AssistantFileUse;
   if (!FILE_USES.includes(to)) return c.json({ error: `to is one of ${FILE_USES.join(", ")}` }, 400);
   try {
-    return c.json(await useFile(c.get("user"), c.req.param("id"), to, typeof b?.name === "string" ? b.name : undefined));
+    return c.json(await useFile(c.get("user"), c.req.param("id"), to, typeof b?.name === "string" ? b.name : undefined, typeof b?.version_of === "string" && b.version_of ? b.version_of : undefined));
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 409);
   }

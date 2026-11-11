@@ -35,6 +35,7 @@ import { useThrow } from "./useThrow";
 import { Elapsed, WorkCards } from "./WorkCards";
 import { VideoCards } from "./VideoCard";
 import { ApprovalCards } from "./ApprovalCards";
+import { ConfirmCards } from "./ConfirmCards";
 import { NoticeLine, WelcomeLine, WelcomePill, useWelcome } from "./Welcome";
 import { openSetupAt, setupFinished, useSetup, useWorkTalk } from "@/lib/setup";
 
@@ -199,7 +200,9 @@ export function AssistantDock() {
     if (!view?.navigate) return;
     navigate(view.navigate);
     void navigated().then((r) => r.ok && setView(r.data));
-  }, [view?.navigate, navigate]);
+    // `navigate` changes with the page, which ran this twice: two history entries, and Back reopened a dialog the link had opened
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view?.navigate]);
 
   useEffect(() => {
     if (!collapsed) bottom.current?.scrollIntoView({ block: "end", behavior: "smooth" });
@@ -662,7 +665,7 @@ export function AssistantDock() {
                   : undefined;
               // the newest reply's buttons (offer_choices) answer it in one press, until something else is said
               const choose = i === all.length - 1 && m.status === "done" && m.choices?.length && !thinking && !busy ? chipSend : undefined;
-              return <Message key={m.id} m={m} onRetry={retry} onChoose={choose} />;
+              return <Message key={m.id} m={m} onRetry={retry} onChoose={choose} onView={setView} />;
             })}
             {notice && <NoticeLine notice={notice} onChip={chipSend} />}
           </div>
@@ -763,13 +766,13 @@ const attachmentsLabel = (it: Queued) =>
 export function NoToolsNote({ view }: { view: AssistantView | null }) {
   if (view?.provider !== "other" || view.tools) return null;
   return (
-    <span className="min-w-0 truncate text-[11px] text-muted-foreground" title={`${view.aiName} answers from your message only: it can't use Creator Toolset's tools (Claude Code and Codex can) or do things on your Mac for you.`}>
+    <span className="min-w-0 truncate text-[11px] text-muted-foreground" title={`${view.aiName} answers from your message only: it can't use Creator Toolset's tools (Claude Code, Codex, Gemini CLI and Grok can) or do things on your Mac for you.`}>
       {view.aiName} · no app tools
     </span>
   );
 }
 
-function Message({ m, onRetry, onChoose }: { m: AssistantMessage; onRetry?: () => void; onChoose?: (text: string) => void }) {
+function Message({ m, onRetry, onChoose, onView }: { m: AssistantMessage; onRetry?: () => void; onChoose?: (text: string) => void; onView: (v: AssistantView) => void }) {
   const [big, setBig] = useState<string | null>(null);
   const enter = "motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300";
   if (m.role === "note") return <p className={cn("mx-auto max-w-[90%] text-center text-xs text-muted-foreground", enter)}>{m.text}</p>;
@@ -834,6 +837,7 @@ function Message({ m, onRetry, onChoose }: { m: AssistantMessage; onRetry?: () =
         <WorkCards work={m.work} />
         <VideoCards media={m.media} />
         <ApprovalCards approvals={m.approvals} />
+        <ConfirmCards confirms={m.confirms} onView={onView} />
         <Dots />
       </div>
     );
@@ -853,6 +857,7 @@ function Message({ m, onRetry, onChoose }: { m: AssistantMessage; onRetry?: () =
         <WorkCards work={m.work} />
         <VideoCards media={m.media} />
         <ApprovalCards approvals={m.approvals} />
+        <ConfirmCards confirms={m.confirms} onView={onView} />
         <p className={cn("text-destructive", enter)}>That didn&apos;t work.</p>
         {again}
       </div>
@@ -876,6 +881,7 @@ function Message({ m, onRetry, onChoose }: { m: AssistantMessage; onRetry?: () =
       <WorkCards work={m.work} />
       <VideoCards media={m.media} />
       <ApprovalCards approvals={m.approvals} />
+        <ConfirmCards confirms={m.confirms} onView={onView} />
       {/* a used-up plan is a wait, said in amber; a real failure in red */}
       {m.status === "error" ? <p className={isLimitLine(m.text) ? "text-amber-600 dark:text-amber-400" : "text-destructive"}>{m.text}</p> : <ReplyText text={m.text} />}
       {again}

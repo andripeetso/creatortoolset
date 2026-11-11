@@ -5,13 +5,18 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { env } from "./lib/env";
 
 /**
  * Same-origin proxy + disk cache for Hugging Face model files.
  * The browser fetches model weights from /api/hf/<model>/resolve/<rev>/<file>
  * so transcription works even where huggingface.co is unreachable.
  * Tries huggingface.co first, falls back to hf-mirror.com, caches on disk.
+ * One copy of a model on this computer: a file the server's own model library already keeps (<data>/models, as
+ * lib/device-transcribe.ts modelLibrary fetches it) is served from there, and that library's own fetch
+ * (OWN_COPY header) is passed on without a second copy in the temporary folder.
  */
+export const OWN_COPY = "x-keeps-own-copy";
 export const hfApp = new Hono();
 
 const UPSTREAMS = ["https://huggingface.co", "https://hf-mirror.com"];
@@ -60,6 +65,11 @@ async function openUpstream(urlPath: string, method: "GET" | "HEAD" = "GET"): Pr
 }
 
 const cached = (dest: string) => existsSync(dest) && statSync(dest).size > 0;
+/** Where the server's model library keeps `sub` (<model>/resolve/main/<file>), or null for another revision. */
+const ownCopy = (sub: string) => {
+  const m = sub.match(/^\/(.+?)\/resolve\/main\/(.+)$/);
+  return m ? path.join(env.dataDir, "models", m[1]!, m[2]!) : null;
+};
 const typeOf = (sub: string) => (sub.endsWith(".json") ? "application/json" : sub.endsWith(".txt") ? "text/plain" : "application/octet-stream");
 
 hfApp.all("/*", async (c) => {
@@ -67,7 +77,8 @@ hfApp.all("/*", async (c) => {
   if (!sub || sub.includes("..")) {
     return c.json({ error: "bad path" }, 400);
   }
-  const dest = path.join(CACHE_DIR, sub);
+  const own = ownCopy(sub);
+  const dest = own && cached(own) ? own : path.join(CACHE_DIR, sub);
   if (c.req.method !== "GET" && !cached(dest)) {
     // a size probe (HEAD) for a file that is not here yet: the upstream's own answer, and nothing is fetched for it
     // (fetching it here made the real request wait behind a download nobody could watch)
@@ -92,6 +103,13 @@ hfApp.all("/*", async (c) => {
       release();
       return c.json({ error: e instanceof Error ? e.message : "upstream unavailable" }, 502);
     }
+    const length = res.headers.get("content-encoding") ? null : res.headers.get("content-length");
+    const headers = { "Content-Type": typeOf(sub), ...(length ? { "Content-Length": length } : {}), "Access-Control-Allow-Origin": "*" };
+    if (c.req.header(OWN_COPY)) {
+      release();
+      // a fresh stream: the server's Response takes its body only from a stream no other Response holds
+      return new Response(res.body!.pipeThrough(new TransformStream()), { status: 200, headers });
+    }
     const [toBrowser, toDisk] = res.body!.tee();
     const tmp = dest + ".part";
     void mkdir(path.dirname(dest), { recursive: true })
@@ -99,8 +117,6 @@ hfApp.all("/*", async (c) => {
       .then(() => rename(tmp, dest))
       .catch(() => rm(tmp, { force: true }).catch(() => {}))
       .finally(release);
-    const length = res.headers.get("content-encoding") ? null : res.headers.get("content-length");
-    const headers = { "Content-Type": typeOf(sub), ...(length ? { "Content-Length": length } : {}), "Access-Control-Allow-Origin": "*" };
     return new Response(toBrowser, { status: 200, headers });
   }
   const size = statSync(dest).size;

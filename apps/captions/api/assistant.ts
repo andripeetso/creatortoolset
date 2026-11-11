@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { AuthVars } from "./auth";
+import type { SessionUser } from "./users";
 import { mintJobToken, revokeJobToken, touchJobToken } from "./auth";
 import { announceSoon } from "./lib/announce-soon";
 import { env } from "./lib/env";
@@ -41,16 +42,17 @@ export const SYSTEM = `You are the assistant built into Creator Toolset, a web a
 
 Your reply is shown in a small chat dock. You act in the app only through its tools (the creator-toolset MCP server):
 - setup_status: what is set up (the AI, logins, which keys are saved, the project count). Call it before you walk someone through setup.
-- The workshop_* tools (projects, sessions, pieces), list_reviews, get_review, resolve_comment, review_set_approval and review_share (a video's public share link) work on the user's own content.
-- instagram_posts and instagram_refresh: the user's Instagram posts in the Analyzer and their numbers. instagram_comments reads the comments under an account's posts (what people ask most); instagram_add_account adds the user's own account or another creator's.
-- media_import_folder brings a folder on this computer into the Media Library (only files changed since a time, like today) and returns the script files' text there; media_search and media_folders find footage and folders. Each video sorts itself as A-roll (someone talks to the camera) or B-roll (the rest): media_search's roll narrows to one. After adding files, tell the user the answer's said line.
+- The workshop_* tools (projects, sessions, pieces, a session's sources, the project the app is in), list_reviews, get_review, resolve_comment, review_set_approval and review_share (a video's public share link) work on the user's own content. review_comment writes a comment or a reply on a video, review_update renames or files it, review_folders lists or makes folders, review_trash bins it.
+- instagram_posts and instagram_refresh: the user's Instagram posts in the Analyzer and their numbers. instagram_comments reads the comments under an account's posts (what people ask most); instagram_add_account adds the user's own account or another creator's. instagram_search finds posts saved in the Analyzer by words, instagram_post reads one (what is said in it, the text on screen, the idea), instagram_save saves a post by its link.
+- media_import_folder brings a folder on this computer into the Media Library (only files changed since a time, like today) and returns the script files' text there; media_search and media_folders find footage and folders. Each video sorts itself as A-roll (someone talks to the camera) or B-roll (the rest): media_search's roll narrows to one. After adding files, tell the user the answer's said line. media_get reads one clip in full (its description, what is said in it, its folders), media_update changes its title, tags or description, media_add_to_folder files clips in a folder, and media_share makes a share link for a clip or a folder.
 - editor_list, editor_get and editor_run: the AI Editor's edits, their drafts and jobs. editor_create makes a new edit from the takes' version ids (with the script and a B-roll folder) and starts it.
 - schedule_task, list_scheduled_tasks, run_scheduled_task_now and delete_scheduled_task: scheduled tasks. A task is a prompt the user's AI runs on its own on a schedule (at a time on chosen weekdays, once at a date and time, or every few minutes or hours), and each run posts the prompt and its answer in an assistant chat: by default this chat. When the user asks for something to happen regularly or later, make one; say the next run, and that they can change it in Settings, Scheduled tasks.
-- navigate opens a page of the app for the user, given as a relative path such as /workshop.
+- navigate opens a page of the app for the user, given as a relative path such as /workshop. It can put these dialogs up for them to fill in: /settings/providers?add=1 (add an AI), /settings/connectors?add=<instagram|facebook|youtube|tiktok|x> (add a social account), /settings/devices?add=1 (add a computer) or ?phone=1 (a phone), /settings/automations?add=1 (a new scheduled task), /projects?add=1 (a new project), /settings/team?add=1 (invite someone, on a team's server).
 - A name in your reply opens its page when it is a markdown link to a path of this app: [its title](/review/<id>?v=<n>), [its name](/editor/<id>), [its title](/workshop/sessions/<id>). When you list reviews, edits or sessions the user can open, link each that way (a tool's link ends in that path).
 - show_video plays a Review video (or an AI Editor draft's preview) inside the chat, with a link to its page.
-- use_file sends a video or recording (dropped in the chat, or by its path on this computer when the server runs here) to Video Notes (transcript, summary, takeaways, action items, chapters), Review (a video page with comments and a share link), Caption Studio (captions on the video) or the Media Library (footage to keep, sorted into A-roll and B-roll; several dropped files in one call; a folder on this computer goes in with media_import_folder). notes_get follows a Video Note until it's ready and reads what it found.
+- use_file sends a video or recording (dropped in the chat, or by its path on this computer when the server runs here) to Video Notes (transcript, summary, takeaways, action items, chapters), Review (a video page with comments and a share link), Caption Studio (captions on the video) or the Media Library (footage to keep, sorted into A-roll and B-roll; several dropped files in one call; a folder on this computer goes in with media_import_folder). notes_get follows a Video Note until it's ready and reads what it found. With version_of (a Review video's link) the file becomes that video's next version instead of a new video. notes_list lists the user's Video Notes; notes_get with add writes the takeaways, the action plan or the quotes a note does not have yet.
 - offer_choices puts 2 to 4 short answers under your reply as buttons; a press sends that answer as the user's next message.
+- A tool that deletes, publishes or sends asks the user itself, with a Yes / No card under your reply. When a tool answers that it asked, say so in a few words and end your reply: it is done when they press Yes.
 - ask_secret asks the user for one API key. The app shows a secure box in the chat; the key goes straight to the app and never to you. Never ask the user to paste a key, token or password into the chat, and never repeat one back.
 
 A folder the user dropped comes as its path on their computer. Asked to edit it, keep it to a tap or two:
@@ -89,6 +91,8 @@ interface Conv {
   messages: AssistantMessage[];
   pending?: { env: string; why: string; at: number };
   navigate?: string;
+  /** The tool call each waiting Yes / No card stands for (askConfirm), by the card's id. Never sent to the dock. */
+  calls?: Record<string, { tool: string; args: unknown }>;
   /** Earlier conversations, newest first (New chat keeps the one it replaces here). */
   past?: Chat[];
 }
@@ -343,6 +347,99 @@ export function noteChoices(username: string, turn: string, choices: string[]): 
   saveSoon(username);
 }
 
+/* ---- a tool asks before it deletes, publishes or sends (mcp.ts sure) ---- */
+
+const MAX_CONFIRMS = 10;
+
+/** Every message list of the account: the open chat's, then each earlier chat's. */
+const everyChat = (conv: Conv): AssistantMessage[][] => [conv.messages, ...(conv.past ?? []).map((p) => p.messages)];
+
+/**
+ * A tool's question as a Yes / No card under the reply, with the call it stands for kept here. The same call asked
+ * twice in one reply keeps its one card. false when the reply is gone or already has too many.
+ */
+export function askConfirm(username: string, turn: string, question: string, call: { tool: string; args: unknown }): boolean {
+  const m = messageOf(username, turn);
+  if (!m || m.role !== "assistant") return false;
+  const conv = load(username);
+  const calls = (conv.calls ??= {});
+  const list = (m.confirms ??= []);
+  const same = JSON.stringify(call);
+  if (list.some((x) => x.status === "waiting" && JSON.stringify(calls[x.id]) === same)) return true;
+  if (list.length >= MAX_CONFIRMS) return false;
+  const id = randomUUID();
+  list.push({ id, question: question.replace(/\s+/g, " ").trim().slice(0, 300), at: Date.now(), status: "waiting" });
+  calls[id] = call;
+  save(username);
+  tell(username);
+  return true;
+}
+
+/** Runs a confirmed call as the person who pressed Yes (mcp.ts registers it: this file can't import that one). */
+type ConfirmRunner = (user: SessionUser, headers: Headers, origin: string, tool: string, args: unknown) => Promise<{ ok: boolean; text: string }>;
+let confirmRunner: ConfirmRunner | undefined;
+export const setConfirmRunner = (run: ConfirmRunner): void => void (confirmRunner = run);
+const answering = new Set<string>();
+
+/** What this install's plug-ins add to the assistant's guide (mcp.ts gathers it at boot). */
+let installGuide = "";
+export const setInstallGuide = (text: string): void => void (installGuide = text ? `\n\n${text}` : "");
+
+/** The reply belongs to a scheduled run: nobody is at the screen (api/automations.ts posts the prompt with its task). */
+export function unattended(username: string, turn: string): boolean {
+  for (const list of everyChat(load(username))) {
+    const i = list.findIndex((m) => m.id === turn);
+    if (i >= 0) return !!list[i - 1]?.task;
+  }
+  return false;
+}
+
+/* ---- work the assistant started has ended: its cards finish, and the chat says so ---- */
+
+/** Lines waiting for a reply that is still being written in their chat, by that reply's id (said when it ends). */
+const later = new Map<string, AssistantMessage[]>();
+
+/**
+ * Work the assistant started has ended (an edit's job, a Video Note, the Workshop's writer). Its running cards, in
+ * whatever chat they sit, get their end; the cards are found by the start of their id ("edit:<id>" ends
+ * "edit:<id>:new" and "edit:<id>:draft"). With `say`, one line is posted in that chat as the assistant's, with
+ * answer buttons under it (`choices`: a press sends that answer). Nothing is said when no card was running: work
+ * started on its own page tells nobody in the chat. Returns whether a card was running.
+ */
+export function workEnded(username: string, idStart: string, end: { status: "done" | "failed"; detail?: string; say?: string; choices?: string[] }): boolean {
+  const conv = load(username);
+  let hit = false;
+  let said = false;
+  for (const list of everyChat(conv)) {
+    const cards = list.flatMap((m) => m.work ?? []).filter((w) => w.status === "running" && (w.id === idStart || w.id.startsWith(`${idStart}:`)));
+    if (!cards.length) continue;
+    hit = true;
+    for (const w of cards) Object.assign(w, { status: end.status, ...(end.detail ? { detail: end.detail } : {}) });
+    if (!end.say || said) continue;
+    said = true;
+    const line: AssistantMessage = { id: randomUUID(), role: "assistant", text: end.say, at: Date.now(), status: "done", ...(end.choices?.length ? { choices: end.choices.slice(0, 4) } : {}) };
+    const last = list.at(-1);
+    // a reply being written there keeps the last word until it ends
+    if (last?.status === "thinking") later.set(last.id, [...(later.get(last.id) ?? []), line]);
+    else list.push(line);
+  }
+  if (hit) {
+    save(username);
+    tell(username);
+  }
+  return hit;
+}
+
+/** A reply ended: the lines that waited for it go under it. */
+function sayLater(username: string, replyId: string): void {
+  const lines = later.get(replyId);
+  if (!lines) return;
+  later.delete(replyId);
+  const list = everyChat(load(username)).find((l) => l.some((m) => m.id === replyId));
+  const now = Date.now();
+  list?.push(...lines.map((l, i) => ({ ...l, at: now + i })));
+}
+
 /* ---- what the reply asks to do on the user's Mac (MacOpts.onAsk) ---- */
 
 /** Unanswered this long = no. */
@@ -479,9 +576,16 @@ function view(username: string, admin: boolean): AssistantView {
   };
 }
 
+/** What a reply asked before a tool deleted or sent something, and how it was answered. */
+const asked = (m: AssistantMessage) =>
+  (m.confirms ?? []).map((q) => `[asked: "${q.question}" → ${q.status === "waiting" ? "not answered yet" : q.status === "no" ? "the user said no" : q.status === "done" ? `yes, done${q.result ? `: ${q.result}` : ""}` : `yes, but it failed: ${q.result ?? ""}`}]`);
+
+/** What a reply started or opened, with its page, so "show me" a few messages later has somewhere to go. */
+const cards = (m: AssistantMessage) => (m.work ?? []).map((w) => `[${w.status === "running" ? "started" : w.status === "failed" ? "failed" : "made"}: ${w.title} → ${w.href}]`);
+
 /** An earlier message's attachments, by count and name only: their files went with that turn. */
 const marks = (m: AssistantMessage) =>
-  [m.images?.length ? `[${m.images.length === 1 ? "1 picture" : `${m.images.length} pictures`}]` : "", ...(m.pasted ?? []).map((n) => `[pasted: ${n}]`), ...(m.files ?? []).map((f) => `[video: ${f.name}, file id ${f.id}]`), ...(m.folders ?? []).map((p) => `[folder: ${p}]`)].filter(Boolean).join(" ");
+  [...cards(m), ...asked(m), m.images?.length ? `[${m.images.length === 1 ? "1 picture" : `${m.images.length} pictures`}]` : "", ...(m.pasted ?? []).map((n) => `[pasted: ${n}]`), ...(m.files ?? []).map((f) => `[video: ${f.name}, file id ${f.id}]`), ...(m.folders ?? []).map((p) => `[folder: ${p}]`)].filter(Boolean).join(" ");
 
 /** What came with the newest message, as facts: its files in the folder, the page it was sent from, what was highlighted. */
 function newestFacts(input: TurnInput): string[] {
@@ -489,7 +593,7 @@ function newestFacts(input: TurnInput): string[] {
   const n = input.images.length;
   if (n) out.push(`The user attached ${n === 1 ? "a picture" : `${n} pictures`}: ${input.images.map((im, i) => attachedName(im.name, i, IMAGE_EXT[im.type])).join(", ")} (the Read tool shows a picture).`);
   for (const f of input.files) out.push(`The user attached ${f.mime.startsWith("audio/") ? "a recording" : "a video"}: "${f.name}" (${(f.size / 1048576).toFixed(f.size < 10485760 ? 1 : 0)} MB), file id ${f.id}.`);
-  for (const p of input.paths) out.push(`The user dropped a folder from their computer: ${JSON.stringify(p)} (its path there; nothing was uploaded).`);
+  for (const p of input.paths) out.push(`The user dropped a folder from their computer: ${JSON.stringify(p)} (its path there).`);
   for (const [i, p] of input.pasted.entries()) out.push(`The user pasted "${p.name}" (${p.text.length.toLocaleString("en-US")} characters), in ${pastedName(p.name, i)}.`);
   const c = input.context;
   if (c) {
@@ -541,7 +645,8 @@ export async function answerWithTools(
   // ponytail: an old Codex or Gemini CLI (no per-run MCP server) answers without the tools though the prompt names them (the Mac checks).
   const claude = route.instance.driver === "claude";
   const token = hasTools(route) ? mintJobToken(username, opts.turn) : undefined;
-  const system = !token ? SYSTEM + NO_TOOLS_NOTE : claude && opts.onAsk ? SYSTEM + MAC_NOTE : SYSTEM;
+  const guide = SYSTEM + installGuide;
+  const system = !token ? guide + NO_TOOLS_NOTE : claude && opts.onAsk ? guide + MAC_NOTE : guide;
   try {
     return await streamMacClaude(system, prompt, opts.cancel, (t) => opts.onDelta?.(t), undefined, {
       label: opts.label,
@@ -600,6 +705,7 @@ async function runTurn(username: string, replyId: string, route: Route, url: str
     // what it asked and nobody answered can't be done any more
     const m = messageOf(username, replyId);
     if (m) expireApprovals(m, 0);
+    sayLater(username, replyId);
     if (running.get(username) === stop) running.delete(username);
     const t = pendingSave.get(username);
     if (t) clearTimeout(t);
@@ -672,6 +778,7 @@ export async function runInChat(
     Object.assign(messageOf(username, reply.id) ?? {}, { status: stop.signal.aborted ? "done" : "error", text: why });
     throw new Error(why);
   } finally {
+    sayLater(username, reply.id);
     if (open && running.get(username) === stop) running.delete(username);
     const t = pendingSave.get(username);
     if (t) clearTimeout(t);
@@ -808,6 +915,37 @@ assistantApp.post("/approvals/:id", async (c) => {
   const a = answerApproval(u.username, c.req.param("id"), b.allow);
   if (!a) return c.json({ error: "Not found" }, 404);
   if (a.status !== (b.allow ? "allowed" : "denied")) return c.json({ error: a.status === "expired" ? "Too late: it waited 10 minutes and wasn't done" : "Already answered" }, 409);
+  return c.json(view(u.username, u.role === "admin"));
+});
+
+/**
+ * Yes or No to a question a tool asked before deleting, publishing or sending (only the caller's own; anyone else's
+ * is not found). Yes runs the call it stands for as the caller, and the card says how it went.
+ */
+assistantApp.post("/confirms/:id", async (c) => {
+  const u = c.get("user");
+  const b = (await c.req.json().catch(() => null)) as { yes?: unknown } | null;
+  if (typeof b?.yes !== "boolean") return c.json({ error: "Say yes: true or false" }, 400);
+  const id = c.req.param("id");
+  const conv = load(u.username);
+  const q = everyChat(conv).flat().flatMap((m) => m.confirms ?? []).find((x) => x.id === id);
+  if (!q) return c.json({ error: "Not found" }, 404);
+  if (q.status !== "waiting" || answering.has(id)) return c.json({ error: "Already answered" }, 409);
+  const call = conv.calls?.[id];
+  if (!b.yes) q.status = "no";
+  else if (!call || !confirmRunner) Object.assign(q, { status: "failed", result: "It can't be done from here any more: ask again." });
+  else {
+    answering.add(id);
+    try {
+      const r = await confirmRunner(u, c.req.raw.headers, publicOrigin(c), call.tool, call.args);
+      Object.assign(q, { status: r.ok ? "done" : "failed", result: r.text.replace(/\s+/g, " ").trim().slice(0, 300) });
+    } finally {
+      answering.delete(id);
+    }
+  }
+  if (conv.calls) delete conv.calls[id];
+  save(u.username);
+  tell(u.username);
   return c.json(view(u.username, u.role === "admin"));
 });
 
