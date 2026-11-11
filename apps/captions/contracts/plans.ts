@@ -70,14 +70,18 @@ export function planFromCli(text: string | null | undefined): PlanId | null {
 
 /**
  * A closed usage window in plain words, from the CLI's own: "You've hit your limit · resets 2pm (Europe/Tallinn)" →
- * "Your Claude plan's limit is reached; it resets 2pm (Europe/Tallinn)." The CLI's words follow, as it said them.
+ * "Your Claude plan's limit is reached; it resets 2pm." One sentence, as the assistant, a row or a card says it; the
+ * CLI's own words go to the server log (mac-claude.ts).
  */
 /** A limit message's own sentence, as a row shows it: no "X said: …" tail and no time zone name. */
 export const limitLine = (message: string): string =>
   `${message.split(/\. [^.]+? said: /)[0]!.replace(/ \([A-Za-z_]+\/[A-Za-z_/]+\)/, "").replace(/\.$/, "")}.`;
 
+/** The sentence limitMessage makes: the plan's usage is used up, which is a wait, not a failure. */
+export const isLimitLine = (text: string): boolean => /plan's (?:[\w-]+ )?limit is reached/.test(text);
+
 export function limitMessage(cli: string, tool = "Claude"): string {
   const window = /weekly/i.test(cli) ? "weekly limit" : /session|5-hour/i.test(cli) ? "5-hour limit" : "limit";
   const reset = /resets\s+(?:at\s+)?([^·\n]+?)\s*\.?$/i.exec(cli.trim())?.[1];
-  return `Your ${tool} plan's ${window} is reached${reset ? `; it resets ${reset}` : ""}. ${tool} said: ${cli.trim()}`;
+  return limitLine(`Your ${tool} plan's ${window} is reached${reset ? `; it resets ${reset}` : ""}.`);
 }
