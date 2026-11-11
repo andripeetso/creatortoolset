@@ -14,11 +14,14 @@ const listed = (...plugins: { id: string; needs: string[] }[]) =>
   vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ plugins: plugins.map((p) => ({ name: p.id, css: false, ...p })) }))));
 const page = (id: string) => ({ default: defineWebPlugin({ id, routes: [{ path: `/${id}`, element: null }] }) });
 
+// a server's own build may have plug-ins compiled in (plugins.gen): the tests look only at what they add to that list
+const compiled = webPlugins.length;
+const added = () => webPlugins.slice(compiled).map((p) => p.id);
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   folderPluginFailures.clear();
-  webPlugins.length = 0;
+  webPlugins.splice(compiled);
   pageLimits.loadMs = 10_000;
 });
 
@@ -30,7 +33,7 @@ describe("a page half that never finishes loading does not leave the window blan
     const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
     await loadFolderPlugins(); // without the limit this never returns, and main.tsx waits for it before the first screen
     expect(folderPluginFailures.get("stuck")).toBe("They took too long to load");
-    expect(webPlugins).toEqual([]);
+    expect(added()).toEqual([]);
     quiet.mockRestore();
   });
 
@@ -44,7 +47,7 @@ describe("a page half that never finishes loading does not leave the window blan
     expect([...folderPluginFailures.keys()].sort()).toEqual(["late", "waits"]);
     arrive(page("late"));
     await new Promise((r) => setTimeout(r, 20));
-    expect(webPlugins).toEqual([]);
+    expect(added()).toEqual([]);
     quiet.mockRestore();
   });
 
@@ -53,6 +56,6 @@ describe("a page half that never finishes loading does not leave the window blan
     vi.spyOn(pageFile, "load").mockImplementation(async () => page("quick"));
     await loadFolderPlugins();
     expect(folderPluginFailures.size).toBe(0);
-    expect(webPlugins.map((p) => p.id)).toEqual(["quick"]);
+    expect(added()).toEqual(["quick"]);
   });
 });
