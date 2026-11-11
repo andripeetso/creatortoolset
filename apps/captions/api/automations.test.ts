@@ -200,11 +200,21 @@ describe("the scheduler", () => {
 
 describe("runs land in assistant chats", () => {
   const stored = async (id: string) => (await find("alice", id)) as Automation;
+  /** The newest "assistant" notice alice's open docks were sent (the change stream's hello, api/lib/sync.ts). */
+  const noticed = async () => {
+    const reader = (await req("alice", "GET", "/sync/events")).body!.getReader();
+    const hello = new TextDecoder().decode((await reader.read()).value);
+    await reader.cancel();
+    return (JSON.parse(/^data: (.*)$/m.exec(hello)![1]!) as { topics: Record<string, number> }).topics.assistant ?? 0;
+  };
 
   it("new chat each run: a new chat named after the task holds the prompt and the answer; the open chat is left alone", async () => {
     const a = await make("alice", { name: "Hook ideas", schedule: everyHour, prompt: "Write three hooks" });
     const open = (await chats("alice")).id;
+    const sent = await noticed();
     await runAutomation("alice", await stored(a.id), ready);
+    // an open dock is told a run posted: it never asks on a timer
+    expect(await noticed()).toBeGreaterThan(sent);
     await runAutomation("alice", await stored(a.id), ready);
     const view = await chats("alice");
     expect(view.id).toBe(open);
