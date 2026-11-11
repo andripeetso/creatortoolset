@@ -5,8 +5,6 @@ import {
   Captions,
   Clock,
   Film,
-  LayoutGrid,
-  List,
   Pencil,
   RotateCcw,
   Trash2,
@@ -30,13 +28,14 @@ import { confirmDiscardUnsavedProject, guardLeaveLink } from "@/lib/persistence-
 import { PersistenceBadge } from "./PersistenceStatus";
 import { AppBar, ToolIntro } from "./AppBar";
 import { DropZoneText, dropZoneClass } from "./DropZone";
+import { ViewSwitch as ViewToggle, type BrowseView } from "./browse/Bar";
 import { alertDialog, confirmDialog } from "@/lib/dialogs";
 
 /** Recent projects shown on the import screen; the rest lives in "All projects". */
 const RECENT_COUNT = 6;
 const TRASH_KEEP_DAYS = 5;
 const VIEW_KEY = "cap-projects-view";
-type View = "grid" | "list";
+type View = BrowseView;
 
 /** Clip thumbnail with a film-icon fallback when none exists. */
 function SessionThumb({ s, className }: { s: SessionMeta; className: string }) {
@@ -58,34 +57,6 @@ function SessionThumb({ s, className }: { s: SessionMeta; className: string }) {
       onError={() => setErr(true)}
       className={`object-cover ${className}`}
     />
-  );
-}
-
-function ViewToggle({
-  view,
-  onChange,
-}: {
-  view: View;
-  onChange: (v: View) => void;
-}) {
-  const btn = (v: View, Icon: typeof LayoutGrid, title: string) => (
-    <button
-      onClick={() => onChange(v)}
-      title={title}
-      className={`rounded p-1 transition-colors ${
-        view === v
-          ? "bg-zinc-700 text-zinc-100"
-          : "text-zinc-500 hover:text-zinc-300"
-      }`}
-    >
-      <Icon className="h-3.5 w-3.5" />
-    </button>
-  );
-  return (
-    <div className="flex gap-0.5 rounded-md border border-zinc-800 p-0.5">
-      {btn("grid", LayoutGrid, "Thumbnail view")}
-      {btn("list", List, "List view")}
-    </div>
   );
 }
 
