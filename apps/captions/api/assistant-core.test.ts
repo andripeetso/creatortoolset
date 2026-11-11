@@ -198,6 +198,29 @@ describe("work the assistant started ends", () => {
   });
 });
 
+describe("a Video Note read back", () => {
+  it("a new note comes with its summary, and with what is said in it when asked; a long recording is cut and says so", async () => {
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    const NOTE = "11111111-2222-4333-8444-555555555555";
+    const dir = path.join(process.env.DATA_DIR!, "clips", NOTE);
+    mkdirSync(dir, { recursive: true });
+    const now = Date.now();
+    // as processClip leaves a fresh note: a summary and chapters, no blocks yet
+    writeFileSync(path.join(dir, "meta.json"), JSON.stringify({ id: NOTE, name: "Tiny tumbles plan", owner: "ana", duration: 60, bytes: 1, mime: "video/mp4", status: "ready", progress: 1, summary: "A plan for the first class.", chapters: [{ t: 0, title: "Start" }], createdAt: now, updatedAt: now }));
+    writeFileSync(path.join(dir, "transcript.json"), JSON.stringify({ words: ["We", "start", "with", "a", "roll."].map((text, i) => ({ text, start: i, end: i + 1 })) }));
+    const t = await turn(await cookieOf("ana"), "Sum it up");
+    const plain = JSON.parse((await tool(t.token, "notes_get", { id: NOTE })).text);
+    expect(plain).toMatchObject({ id: NOTE, status: "ready", summary: "A plan for the first class.", chapters: ["0:00.00 Start"] });
+    expect(plain.transcript).toBeUndefined();
+    expect(JSON.parse((await tool(t.token, "notes_get", { id: NOTE, transcript: true })).text).transcript).toBe("We start with a roll.");
+    writeFileSync(path.join(dir, "transcript.json"), JSON.stringify({ words: Array.from({ length: 4000 }, (_, i) => ({ text: "tumble", start: i, end: i + 1 })) }));
+    const long = JSON.parse((await tool(t.token, "notes_get", { id: NOTE, transcript: true })).text).transcript as string;
+    expect(long.length).toBeLessThan(12_200);
+    expect(long).toContain("(cut: 27,999 characters in all; the page has the rest)");
+    await t.end();
+  });
+});
+
 describe("a scheduled run has nobody at the screen", () => {
   it("opening a page or asking for a key is refused there, in words the AI can act on", async () => {
     const run = runInChat("ana", { task: { id: "t1", name: "Weekly" }, prompt: "Do the weekly thing", preface: "", fresh: true, route: routeOf("ana", false)!, url: "http://localhost/api/mcp" });

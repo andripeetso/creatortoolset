@@ -764,7 +764,7 @@ const attachmentsLabel = (it: Queued) =>
 export function NoToolsNote({ view }: { view: AssistantView | null }) {
   if (view?.provider !== "other" || view.tools) return null;
   return (
-    <span className="min-w-0 truncate text-[11px] text-muted-foreground" title={`${view.aiName} answers from your message only: it can't use Creator Toolset's tools (Claude Code and Codex can) or do things on your Mac for you.`}>
+    <span className="min-w-0 truncate text-[11px] text-muted-foreground" title={`${view.aiName} answers from your message only: it can't use Creator Toolset's tools (Claude Code, Codex, Gemini CLI and Grok can) or do things on your Mac for you.`}>
       {view.aiName} · no app tools
     </span>
   );

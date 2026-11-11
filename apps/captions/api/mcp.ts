@@ -44,6 +44,9 @@ function setupView(v: SetupView) {
 const ASSISTANT_TOOLS = new Set(["setup_status", "save_setup", "ask_secret", "navigate", "show_video", "use_file", "notes_get", "offer_choices"]);
 const isJob = (auth: Headers) => /^Bearer ctj_/.test(auth.get("authorization") ?? "");
 
+/** The most of a recording's words a tool hands the AI at once (about 15 minutes of speech). */
+const TRANSCRIPT_MAX = 12_000;
+
 /** MCP clients give up on a tool call after about a minute: a reply still thinking hands back its id to wait on. */
 const WAIT_MAX_S = 55;
 
@@ -274,8 +277,8 @@ const ASSISTANT_DEFS = [
   },
   {
     name: "notes_get",
-    description: "A Video Note (use_file to: notes gives its id): status (processing with its step, ready, error), title, summary, takeaways, action items, chapters and quotes once ready. Waits up to 50 s while it processes.",
-    inputSchema: { type: "object", properties: { id: str }, required: ["id"] },
+    description: "A Video Note (use_file to: notes gives its id): status (processing with its step, ready, error), title, summary and chapters once ready, and the takeaways, action items and quotes it has. transcript: true adds what is said in it. Waits up to 50 s while it processes.",
+    inputSchema: { type: "object", properties: { id: str, transcript: { type: "boolean" } }, required: ["id"] },
   },
 ];
 
@@ -579,12 +582,22 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       let n = mine(await json(path));
       for (let t = 0; n.status === "processing" && t < 25; t++) n = (await sleep(2000), mine(await json(path)));
       const blocks = Object.fromEntries(((n.blocks as Args[] | undefined) ?? []).map((b) => [b.kind, b.text ?? ((b.items as Args[] | undefined) ?? []).map((x) => x.text)]));
+      // what is said, as plain text; a long recording is cut and says so
+      let said: string | undefined;
+      if (a.transcript === true && n.status === "ready" && n.hasTranscript) {
+        const words = (await json<{ words?: Array<{ text: string }> }>(`${path}/transcript`)).words ?? [];
+        const all = words.map((w) => w.text).join(" ").replace(/\s+/g, " ").trim();
+        said = all.length > TRANSCRIPT_MAX ? `${all.slice(0, TRANSCRIPT_MAX)} … (cut: ${all.length.toLocaleString("en-US")} characters in all; the page has the rest)` : all;
+      }
       return {
         ...pick(n, ["id", "name", "status", "step", "error"]),
         link: `${origin}/video-notes/${n.id}`,
         ...(n.status === "processing" ? { note: "Still processing: call notes_get again." } : {}),
         ...(n.status === "ready" && !n.hasTranscript ? { note: "No transcript: the file has no speech, or this account's cloud transcription is off (an admin switches it on)." } : {}),
+        // a new note keeps its summary beside its blocks, not in them
+        ...(n.summary ? { summary: n.summary } : {}),
         ...blocks,
+        ...(said ? { transcript: said } : {}),
         ...((n.chapters as Args[] | undefined)?.length ? { chapters: (n.chapters as Args[]).map((c) => `${clock(Number(c.t))} ${c.title}`) } : {}),
       };
     },
