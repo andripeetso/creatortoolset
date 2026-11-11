@@ -15,10 +15,10 @@ let defaultAccountServer = URL(string: "https://creatortoolset.com")!
 /// no keys for is not offered (its sign-in page answers 404 or 501), so its button is not shown.
 let accountProviders = ["apple", "google", "github"]
 
-/// The sign-ins proven to work end to end on the default account server, in the order setup's last screen shows them.
-/// Empty until one has: setup then has no account screen, and a signed-out person's status asks that server nothing, so
-/// the app makes no call there before a press. Add a provider only after a real sign-in with it has gone through.
-let accountLive: [String] = []
+/// The sign-ins the default account server offers, in the order setup's last screen shows them. A fixed list, so a
+/// signed-out person's status asks that server nothing and the app makes no call there before a press. A provider is
+/// listed only once the server has its keys (Google and Apple since 2026-11-11). Empty = no account screen in setup.
+let accountLive = ["google", "apple"]
 
 /// The account server from This Mac → Account: never set = defaultAccountServer; "" = none (forks, own servers).
 func accountServerURL(_ saved: String?) -> URL? {
