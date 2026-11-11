@@ -19,7 +19,7 @@ export function readShareTheme(
 
 /**
  * What the account picked (Settings → Appearance, setup's "Pick your look"): "light", "dark" or "system". Nothing
- * picked = the system's, in the app and on a public share page alike ("Match my Mac" is the default look).
+ * picked = the system's, in the app and on a public share page alike ("Use system settings" is the default look).
  */
 export function storedThemeChoice(
   share: boolean,

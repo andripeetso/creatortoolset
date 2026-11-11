@@ -89,9 +89,9 @@ const MAKE_ICONS: Record<Make, LucideIcon> = {
 
 /** "Pick your look": the choices Settings → Appearance has, under setup's names. */
 const LOOK_CHOICES: Array<{ id: ThemeChoice; name: string }> = [
-  { id: "dark", name: "Dark" },
+  { id: "system", name: "Use system settings" },
   { id: "light", name: "Light" },
-  { id: "system", name: "Match my Mac" },
+  { id: "dark", name: "Dark" },
 ];
 
 const SAVED_NOTE = "Your setup is saved. You'll find the rest on Home.";
