@@ -40,7 +40,7 @@ import { adminApp } from "./admin";
 import { workspaceApp } from "./workspace";
 import { viewAsTarget } from "./lib/view-as";
 import { grantsApp } from "./library/grants";
-import { assistantApp } from "./assistant";
+import { assistantApp, resumeFromDisk } from "./assistant";
 import { memoryApp } from "./memory";
 import { automationsApp, startAutomations } from "./automations";
 import { providersApp } from "./providers";
@@ -430,6 +430,8 @@ if (process.env.NODE_ENV !== "test") {
   startTrashPurge();
   startWatchFolders();
   startPlugins(serverPlugins, startFolderPlugin);
+  // assistant messages that waited for their videos when the server stopped
+  resumeFromDisk();
 }
 app.route("/api/stories", storiesApp);
 app.route("/api/folders", foldersApp);

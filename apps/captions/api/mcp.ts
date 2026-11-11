@@ -1040,7 +1040,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       const env = MY_KEYS.find((k) => k.env === a.env);
       if (!env) throw new ToolError(`${String(a.env)} is not a key the app takes.`);
       // only the name and the reason: any other argument (a value included) is dropped unread
-      await askSecret(user.username, env.env, String(a.why ?? "").slice(0, 300));
+      await askSecret(user.username, env.env, String(a.why ?? "").slice(0, 300), jobTurn(auth.get("authorization") ?? undefined) ?? undefined);
       return { status: "asked", note: "The user will type the key into a secure box in the chat. It does not come to you; carry on without it until it's saved." };
     },
     offer_choices: async (a) => {
