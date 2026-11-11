@@ -63,6 +63,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { confirmDialog } from "@/lib/dialogs";
 
 function fmtMmSs(t: number): string {
   const m = Math.floor(Math.max(0, t) / 60);
@@ -667,9 +668,7 @@ function Editor({
             type="button"
             onClick={async () => {
               if (
-                !window.confirm(
-                  `Delete “${name}”?\n\nThis cannot be undone.`,
-                )
+!(await confirmDialog({ title: `Delete “${name}”?`, body: "This cannot be undone.", ok: "Delete", danger: true }))
               ) {
                 return;
               }
@@ -989,12 +988,10 @@ export default function DocumentsPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={(e) => {
+                    onClick={async (e) => {
                       e.stopPropagation();
                       if (
-                        !window.confirm(
-                          `Delete “${d.name}”?\n\nThis cannot be undone.`,
-                        )
+                        !(await confirmDialog({ title: `Delete “${d.name}”?`, body: "This cannot be undone.", ok: "Delete", danger: true }))
                       ) {
                         return;
                       }

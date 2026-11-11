@@ -8,6 +8,7 @@ import { deleteEdit, exportUrl, getEdit, getSentences, patchEdit, putLines, retr
 import { useCachedLoad } from "@/lib/local-cache";
 import { confirmHeavy } from "@/lib/setup";
 import { StateBadge, thumb } from "./EditorPage";
+import { confirmDialog } from "@/lib/dialogs";
 
 /**
  * One edit (/editor/:id): its steps (a step that needs a key or provider links to the setting), an eye line per source
@@ -69,7 +70,7 @@ export default function EditorEditPage() {
   }
 
   const remove = async () => {
-    if (!window.confirm(`Move “${edit.name}” to the trash?`)) return;
+    if (!(await confirmDialog({ title: `Move “${edit.name}” to the trash?`, ok: "Move to trash", danger: true, deleting: true }))) return;
     try {
       await deleteEdit(id);
       navigate("/editor");

@@ -1,5 +1,6 @@
 import { ExternalLink, X } from "lucide-react";
 import { SESSION_STATUSES, sessionStatusOf, type SessionPosting, type SessionPatch, type SessionStatus } from "@/lib/workshop";
+import { promptDialog } from "@/lib/dialogs";
 
 const STATUS_CLASS: Record<SessionStatus, string> = {
   draft: "border-zinc-700 text-zinc-400",
@@ -108,9 +109,9 @@ export function SessionPosted({
           type="button"
           disabled={disabled}
           title="Paste the Instagram link of a post this became"
-          onClick={(e) => {
+          onClick={async (e) => {
             e.stopPropagation();
-            const url = window.prompt("Paste the post's Instagram link");
+            const url = await promptDialog({ title: "Paste the post's Instagram link", ok: "Link post" });
             if (url?.trim()) onChange(url.trim());
           }}
           className="shrink-0 rounded-md border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 hover:bg-zinc-800 hover:text-zinc-50 disabled:opacity-50"

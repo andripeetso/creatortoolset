@@ -10,6 +10,7 @@ import { canRecordScreen, openRecorder, tellRecorder, useLocalRecordings, useRec
 import { listReviewAssets, thumbUrl } from "@/lib/review";
 import { timeAgo } from "@/lib/exports";
 import { cn } from "@/lib/utils";
+import { confirmDialog } from "@/lib/dialogs";
 
 const PHASE: Partial<Record<RecorderPhase, string>> = {
   countdown: "Starting…",
@@ -48,8 +49,8 @@ export default function ScreenRecorderPage() {
     .sort((a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt))
     .slice(0, 12);
 
-  const throwAway = (r: LocalRecording) => {
-    if (!window.confirm(`Throw away “${r.name}”?\n\nThe recording is deleted from this Mac. This cannot be undone.`)) return;
+  const throwAway = async (r: LocalRecording) => {
+    if (!(await confirmDialog({ title: `Throw away “${r.name}”?`, body: "The recording is deleted from this Mac. This cannot be undone.", ok: "Throw away", danger: true }))) return;
     tellRecorder(`delete:${r.id}`);
   };
 
