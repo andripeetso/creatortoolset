@@ -11,6 +11,8 @@ import { env, hostedMode } from "./env";
  * Caption Studio runs in the browser, run by the server itself. Only a server on its owner's computer does this
  * (the desktop app's own server, CT_LOCAL=1, and never a hosted one): a hosted server keeps asking for a key. A
  * key, when there is one, always goes first (library/transcribe.ts transcribeRoute): this is slower and free.
+ * The model tidies speech: said twice, written once. So its words are checked against the sound, and what it left
+ * out is heard again (relisten).
  */
 
 /** Caption Studio's first model (src/lib/transcribe.ts MODELS[0]), so one download serves both: it hears every language. */
@@ -66,6 +68,101 @@ export function wordsOf(chunks: Chunk[], seconds = Infinity): DeviceWord[] {
     .sort((x, y) => x.start - y.start); // where two 30 s windows meet, a word can come back a moment early
 }
 
+/**
+ * What the second listen goes by: seconds, and loudness as a share of the loud level where words were heard (the AI
+ * Editor's cut uses the same share). Measured on 33 recordings full of retakes, all from one shoot (one voice, one
+ * microphone, one room: 15 minutes, 2,032 words by a second transcriber): the first listen left out 244 of them and
+ * the second listen 122, with 25 more words that are not in the second transcript (misheard ones). That stays at 120
+ * to 124 for a threshold of 0.1 to 0.2, a pause of 0.15 to 0.3 and an opening of 0.3 to 0.6; a long word of 1.5 gives
+ * 135. 23 of the 33 came out exactly as the first listen wrote them. Re-measure on real recordings before changing.
+ */
+export const RELISTEN = {
+  threshold: 0.15,
+  /** quiet this long ends a stretch of speech */
+  pauseS: 0.2,
+  /** a stretch of speech that opens with this much before its first word has words missing */
+  openingS: 0.4,
+  /** a word that holds more speech than this holds other words too */
+  longS: 1,
+  /** a stretch is heard with this much of the quiet around it */
+  padS: 0.15,
+};
+const RATE = 16000;
+const READS = 100;
+
+/** Loudness READS times a second, as a share of the 90th percentile of the reads inside `words`. */
+function loudness(pcm: Float32Array, words: DeviceWord[]): Float32Array {
+  const per = RATE / READS;
+  const e = new Float32Array(Math.floor(pcm.length / per));
+  for (let i = 0; i < e.length; i++) {
+    let sum = 0;
+    for (let k = i * per; k < (i + 1) * per; k++) sum += pcm[k]! * pcm[k]!;
+    e[i] = Math.sqrt(sum / per);
+  }
+  const spoken = Float32Array.from(words.flatMap((w) => [...e.subarray(Math.round(w.start * READS), Math.round(w.end * READS))])).sort();
+  const level = spoken[Math.floor(spoken.length * 0.9)] || 1;
+  return e.map((x) => x / level);
+}
+
+/**
+ * The first listen checked against the sound, and what it left out heard again. The model writes a phrase that was
+ * said twice once, and drops a false start or an attempt the speaker gave up; its word times then give it away: the
+ * speech after a pause opens with no word of its own (the word before runs on across the pause), or one word holds
+ * seconds of speech. Each such stretch is heard again alone (`hear`: its words, in the recording's seconds), where the
+ * model has nothing else to write, and the words the first listen does not have there are added; the word that ran on
+ * into it ends at the pause. Everything else stays as the model wrote it, and so does speech before its first word.
+ * ponytail: a repeat with no pause that hides in a word under longS, and words the model mishears when it hears a
+ * stretch alone, stay as they are; a larger model is the next step, not more rules here. Over music with a speaker
+ * on top there are no pauses to go by, so only the long words are heard again.
+ */
+export async function relisten(first: DeviceWord[], pcm: Float32Array, hear: (from: number, to: number) => Promise<DeviceWord[]>, c = RELISTEN): Promise<DeviceWord[]> {
+  const e = loudness(pcm, first);
+  // the stretches of speech [from, to): loud reads, with the pauses under pauseS between them
+  const speech: [number, number][] = [];
+  let from = -1;
+  let last = -1;
+  for (let i = 0; i <= e.length; i++) {
+    if (i < e.length && e[i]! >= c.threshold) {
+      if (from < 0) from = i;
+      last = i;
+    } else if (from >= 0 && (i === e.length || i - last >= c.pauseS * READS)) {
+      speech.push([from / READS, (last + 1) / READS]);
+      from = -1;
+    }
+  }
+  const held = (w: DeviceWord) => e.subarray(Math.round(w.start * READS), Math.round(w.end * READS)).filter((x) => x >= c.threshold).length / READS;
+  // half the words hold seconds of sound: the model is not following a speaker (music, noise), and there is nothing to check
+  if (first.map(held).sort((x, y) => x - y)[first.length >> 1]! > c.longS) return first;
+  const words = first.map((w) => ({ ...w }));
+  const again: { from: number; to: number; holder?: DeviceWord }[] = [];
+  speech.forEach(([a, b], k) => {
+    // a stretch that follows speech the model wrote words for, and that one of its words reaches or follows
+    const pause = speech[k - 1]?.[1] ?? 0;
+    if (!words.some((w) => w.start < pause) || !words.some((w) => w.end > a)) return;
+    // its own first word starts in it, or in the pause before it
+    const opens = words.find((w) => w.start >= pause && w.start < b)?.start ?? b;
+    if (opens - a < c.openingS) return;
+    again.push({ from: a, to: b });
+    // the word that ran on into it ends at that pause
+    for (const w of words) if (w.start < pause && w.end > a) w.end = Math.max(pause, w.start + 0.05);
+  });
+  for (const w of words) if (held(w) > c.longS) again.push({ from: w.start, to: w.end, holder: w });
+  for (const { from, to, holder } of again) {
+    // a stretch between pauses is heard with some of the quiet around it (half the pause at most); a long word's span as it is
+    const k = speech.findIndex(([a]) => a === from);
+    const lead = holder ? 0 : Math.min(c.padS, (from - (speech[k - 1]?.[1] ?? 0)) / 2);
+    const tail = holder ? 0 : Math.min(c.padS, ((speech[k + 1]?.[0] ?? Infinity) - to) / 2);
+    // a word that starts after the stretch is made up; in a long word's span, the first quarter second is the word itself
+    const got = (await hear(from - lead, to + tail)).filter((w) => w.start < to && (!holder || w.start >= holder.start + 0.25));
+    if (holder && got[0]) holder.end = Math.min(holder.end, got[0].start);
+    // a word is there already when a word of the first listen shares half of the shorter one's time with it
+    const there = (w: DeviceWord) => words.some((x) => (Math.min(w.end, x.end) - Math.max(w.start, x.start)) * 2 >= Math.min(w.end - w.start, x.end - x.start));
+    const missing = got.filter((w) => !there(w));
+    words.push(...missing.map((w) => ({ ...w, end: Math.min(w.end, Math.max(to, w.start + 0.05)) })));
+  }
+  return words.sort((x, y) => x.start - y.start);
+}
+
 async function loadModel(say: (text: string) => void): Promise<Transcriber> {
   const { pipeline, env: lib } = await import("@huggingface/transformers");
   lib.cacheDir = modelsDir();
@@ -111,8 +208,12 @@ export function transcribeOnDevice(pcmFile: string, key: string, load = loadMode
         const pcm = b.byteOffset % 4 ? new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + n * 4)) : new Float32Array(b.buffer, b.byteOffset, n);
         // the language is heard, never assumed: left alone the model takes everything for English
         const language = await spokenLanguage(model, pcm);
-        const out = await model(pcm, { chunk_length_s: 30, stride_length_s: 5, return_timestamps: "word", ...(language ? { language, task: "transcribe" } : {}) });
-        return { words: wordsOf(out.chunks ?? [], pcm.length / 16000), language };
+        const options = { chunk_length_s: 30, stride_length_s: 5, return_timestamps: "word", ...(language ? { language, task: "transcribe" } : {}) };
+        const hear = async (from: number, to: number) => {
+          const out = await model(pcm.subarray(Math.round(from * RATE), Math.round(to * RATE)), options);
+          return wordsOf(out.chunks ?? [], to - from).map((w) => ({ text: w.text, start: w.start + from, end: w.end + from }));
+        };
+        return { words: await relisten(await hear(0, pcm.length / RATE), pcm, hear), language };
       } finally {
         await model.dispose(); // about 2 GB while it runs: given back between jobs
       }

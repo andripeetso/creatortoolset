@@ -274,6 +274,9 @@ const choiceCls =
  * Add an account on one platform. Two ways when the platform has a sign-in on this server (its own account, or someone's
  * public account by @handle); one way otherwise (the handle field, with the platform already known).
  */
+/** Meta lets an app read an Instagram account only when it is a professional one (Business or Creator) linked to a Page. */
+const IG_NEEDS = "Needs a Business or Creator account linked to a Facebook Page you manage.";
+
 function AddDialog({ open, onOpenChange, platform, startStep, view, back, projectId, onDone }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
@@ -334,7 +337,7 @@ function AddDialog({ open, onOpenChange, platform, startStep, view, back, projec
               {login && view.logins[login] && (
                 <a href={loginHref(login, { back, projectId })} className={choiceCls}>
                   <span className="text-sm font-medium">My own account: {SIGN_IN[login].replace("Sign in with ", "sign in with ")}</span>
-                  <span className="text-xs text-muted-foreground">{LOGINS.find((l) => l.id === login)!.gives.replace(/^./, (c) => c.toUpperCase())}.</span>
+                  <span className="text-xs text-muted-foreground">{ig ? IG_NEEDS : `${LOGINS.find((l) => l.id === login)!.gives.replace(/^./, (c) => c.toUpperCase())}.`}</span>
                 </a>
               )}
               {platform === "instagram" ? (

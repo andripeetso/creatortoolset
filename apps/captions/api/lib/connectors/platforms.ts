@@ -149,7 +149,7 @@ export async function accountsFromGrant(kind: LoginKind, t: Grant): Promise<NewA
       const ig = isRec(p.instagram_business_account) ? p.instagram_business_account : null;
       if (ig) out.push({ platform: "instagram", platformId: str(ig.id), handle: str(ig.username), name: str(ig.name), avatar: str(ig.profile_picture_url) || undefined, via: "login", token, stats: { followers: num(ig.followers_count), posts: num(ig.media_count) } });
     }
-    if (!out.length) throw new Error("That Facebook login manages no Pages. An Instagram professional account is read through the Facebook Page it is linked to");
+    if (!out.length) throw new Error("That Facebook login manages no Pages. Instagram needs a Business or Creator account linked to a Facebook Page you manage");
     return out;
   }
   if (kind === "google") {
