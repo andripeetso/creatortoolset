@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
-import { ArrowUpRight, Check, Copy, CornerDownLeft, FileText, Film, History, KeyRound, MessageCircle, PanelRight, PanelRightClose, Pencil, RotateCcw, SquarePen, Trash2, VolumeX, X } from "lucide-react";
+import { ArrowUpRight, Check, Copy, CornerDownLeft, FileText, Film, Folder, History, KeyRound, MessageCircle, PanelRight, PanelRightClose, Pencil, RotateCcw, SquarePen, Trash2, VolumeX, X } from "lucide-react";
 import type { AssistantImage, AssistantMessage, AssistantView } from "@contracts/assistant";
 import { isLimitLine } from "@contracts/plans";
 import { ReplyText } from "@/components/ReplyText";
@@ -28,8 +28,9 @@ import { speak, stopSpeaking, unlockAudio, useReadAloud } from "@/lib/read-aloud
 import { onTopic } from "@/lib/sync";
 import { cn } from "@/lib/utils";
 import { Composer, PictureOverlay } from "./Composer";
-import { EMPTY_DRAFT, MAX_PICTURES, isLongPaste, isMediaFile, isPicture, toPicture, type Draft } from "./draft";
+import { EMPTY_DRAFT, MAX_FILES, MAX_FOLDERS, MAX_PICTURES, droppedFiles, folderName, isLongPaste, isMediaFile, isPicture, toPicture, type Draft } from "./draft";
 import { chunkedUpload } from "@/lib/uploads";
+import { droppedFoldersOnMac } from "@/lib/thisMac";
 import { useThrow } from "./useThrow";
 import { Elapsed, WorkCards } from "./WorkCards";
 import { VideoCards } from "./VideoCard";
@@ -51,7 +52,7 @@ const ORIGIN: Record<Corner, string> = { tl: "origin-top-left", tr: "origin-top-
 
 const QUEUE_KEY = "ct-assistant:queue";
 /** A message waiting its turn, with what goes with it (an older stored one is only { id, text }). */
-type Queued = { id: string; text: string; images?: AssistantImage[]; pasted?: Draft["pasted"]; files?: Array<{ id: string; name: string }>; quote?: string };
+type Queued = { id: string; text: string; images?: AssistantImage[]; pasted?: Draft["pasted"]; files?: Array<{ id: string; name: string }>; folders?: string[]; quote?: string };
 const storedQueue = (): Queued[] => {
   try {
     return JSON.parse(localStorage.getItem(QUEUE_KEY) ?? "[]") as Queued[];
@@ -229,6 +230,7 @@ export function AssistantDock() {
       ...(it.images?.length ? { images: it.images } : {}),
       ...(it.pasted?.length ? { pasted: it.pasted } : {}),
       ...(it.files?.length ? { files: it.files.map((f) => f.id) } : {}),
+      ...(it.folders?.length ? { paths: it.folders } : {}),
       context: { ...pageContext(), ...(it.quote ? { selection: it.quote } : {}) },
     });
     setBusy(false);
@@ -243,6 +245,8 @@ export function AssistantDock() {
   // The queue, as in the Workshop's chat: Enter while a reply runs adds the message here, and the first one sends
   // when the reply is done. Steer stops the reply and sends that one now; Edit puts it back in the box.
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
   const [queue, setQueue] = useState<Queued[]>(storedQueue);
   // a queued message the server refused stays first and waits for a click (no retry loop)
   const [held, setHeld] = useState(false);
@@ -271,10 +275,18 @@ export function AssistantDock() {
     });
   }, []);
   const addFiles = useCallback(
-    async (files: File[]) => {
+    async (files: File[], folder = false) => {
       const pics = files.filter(isPicture);
-      const media = files.filter((f) => !isPicture(f) && isMediaFile(f));
-      if (pics.length + media.length < files.length) setError("Pictures, videos and recordings can go with a message: paste text into the box");
+      let media = files.filter((f) => !isPicture(f) && isMediaFile(f));
+      // a folder's other files (a camera's sidecars, notes) are passed over without a word
+      const other = files.find((f) => !isPicture(f) && !isMediaFile(f));
+      if (folder ? !pics.length && !media.length : other)
+        setError(folder ? "That folder has no pictures, videos or recordings" : `"${other?.name}" can't go with a message: only pictures, videos and recordings can`);
+      const room = MAX_FILES - draftRef.current.files.length;
+      if (media.length > room) {
+        setError(`At most ${MAX_FILES} videos go with one message: the first ${Math.max(room, 0)} were added`);
+        media = media.slice(0, Math.max(room, 0));
+      }
       // a video uploads at once; the message waits for it (Send is off until it's in)
       for (const f of media) {
         const key = `${Date.now()}-${f.name}-${f.size}`;
@@ -344,12 +356,19 @@ export function AssistantDock() {
       images: [...cur.images, ...(it.images ?? [])].slice(0, MAX_PICTURES),
       pasted: [...cur.pasted, ...(it.pasted ?? [])],
       files: [...cur.files, ...(it.files ?? []).map((f) => ({ key: f.id, name: f.name, size: 0, pct: 100, id: f.id }))],
+      folders: [...new Set([...cur.folders, ...(it.folders ?? [])])],
     }));
     if (it.quote) setQuote(it.quote);
   };
   // the pending highlighted text goes with this message and leaves the box
-  const submit = ({ files, ...d }: Draft) => {
-    const it: Queued = { id: `${Date.now()}-${queue.length}`, ...d, ...(files.length ? { files: files.map((f) => ({ id: f.id!, name: f.name })) } : {}), ...(quote ? { quote } : {}) };
+  const submit = ({ files, folders, ...d }: Draft) => {
+    const it: Queued = {
+      id: `${Date.now()}-${queue.length}`,
+      ...d,
+      ...(files.length ? { files: files.map((f) => ({ id: f.id!, name: f.name })) } : {}),
+      ...(folders.length ? { folders } : {}),
+      ...(quote ? { quote } : {}),
+    };
     setQuote(null);
     // the first thing sent ends the welcome and any notice a tool left
     set({ notice: null });
@@ -482,12 +501,18 @@ export function AssistantDock() {
         setDropping(false);
         if (!connectedNow || !e.dataTransfer.files.length) return;
         e.preventDefault();
-        void addFiles(Array.from(e.dataTransfer.files));
+        droppedFiles(e.dataTransfer, droppedFoldersOnMac).then(
+          (d) => {
+            if (d.folders.length) setDraft((cur) => ({ ...cur, folders: [...new Set([...cur.folders, ...d.folders])].slice(0, MAX_FOLDERS) }));
+            if (d.files.length || !d.folders.length) void addFiles(d.files, d.folder);
+          },
+          (err) => setError(err instanceof Error ? err.message : String(err)),
+        );
       }}
     >
       {dropping && (
         <div className="pointer-events-none absolute inset-1.5 z-10 flex items-center justify-center rounded-[14px] border-2 border-dashed border-[var(--tint)] bg-[color-mix(in_srgb,var(--tint)_10%,transparent)] text-sm font-medium text-[var(--tint)] motion-safe:animate-in motion-safe:fade-in">
-          Drop pictures to add them
+          Drop pictures, videos or a folder
         </div>
       )}
       <header
@@ -635,7 +660,9 @@ export function AssistantDock() {
                 i === all.length - 1 && m.status === "error" && asked?.role === "user" && !thinking && !busy
                   ? () => void send({ text: asked.text, ...(asked.quote ? { quote: asked.quote } : {}) })
                   : undefined;
-              return <Message key={m.id} m={m} onRetry={retry} />;
+              // the newest reply's buttons (offer_choices) answer it in one press, until something else is said
+              const choose = i === all.length - 1 && m.status === "done" && m.choices?.length && !thinking && !busy ? chipSend : undefined;
+              return <Message key={m.id} m={m} onRetry={retry} onChoose={choose} />;
             })}
             {notice && <NoticeLine notice={notice} onChip={chipSend} />}
           </div>
@@ -730,7 +757,7 @@ export function AssistantDock() {
 
 /** "2 pictures, Pasted text": what a queued message carries besides its words. */
 const attachmentsLabel = (it: Queued) =>
-  [it.images?.length ? `${it.images.length} picture${it.images.length === 1 ? "" : "s"}` : "", ...(it.pasted ?? []).map((p) => p.name), ...(it.files ?? []).map((f) => f.name)].filter(Boolean).join(", ");
+  [it.images?.length ? `${it.images.length} picture${it.images.length === 1 ? "" : "s"}` : "", ...(it.pasted ?? []).map((p) => p.name), ...(it.files ?? []).map((f) => f.name), ...(it.folders ?? []).map(folderName)].filter(Boolean).join(", ");
 
 /** The header's "OpenCode · no app tools", only for an AI that truly has none of the app's tools. */
 export function NoToolsNote({ view }: { view: AssistantView | null }) {
@@ -742,7 +769,7 @@ export function NoToolsNote({ view }: { view: AssistantView | null }) {
   );
 }
 
-function Message({ m, onRetry }: { m: AssistantMessage; onRetry?: () => void }) {
+function Message({ m, onRetry, onChoose }: { m: AssistantMessage; onRetry?: () => void; onChoose?: (text: string) => void }) {
   const [big, setBig] = useState<string | null>(null);
   const enter = "motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300";
   if (m.role === "note") return <p className={cn("mx-auto max-w-[90%] text-center text-xs text-muted-foreground", enter)}>{m.text}</p>;
@@ -759,7 +786,7 @@ function Message({ m, onRetry }: { m: AssistantMessage; onRetry?: () => void }) 
             «{m.quote}»
           </p>
         )}
-        {(!!m.images?.length || !!m.pasted?.length || !!m.files?.length) && (
+        {(!!m.images?.length || !!m.pasted?.length || !!m.files?.length || !!m.folders?.length) && (
           <div className="flex flex-wrap justify-end gap-1.5">
             {m.images?.map((im) => (
               <button key={im.id} type="button" onClick={() => setBig(`/api/assistant/images/${encodeURIComponent(im.id)}`)} title={im.name} aria-label={`Show ${im.name}`} className="cursor-zoom-in">
@@ -770,6 +797,12 @@ function Message({ m, onRetry }: { m: AssistantMessage; onRetry?: () => void }) 
               <span key={f.id} className="flex h-8 max-w-full items-center gap-1.5 rounded-lg border bg-muted px-2 text-[11px]" title={f.name}>
                 <Film className="size-3.5 shrink-0 text-[var(--tint)]" aria-hidden />
                 <span className="truncate">{f.name}</span>
+              </span>
+            ))}
+            {m.folders?.map((p) => (
+              <span key={p} className="flex h-8 max-w-full items-center gap-1.5 rounded-lg border bg-muted px-2 text-[11px]" title={p}>
+                <Folder className="size-3.5 shrink-0 text-[var(--tint)]" aria-hidden />
+                <span className="truncate">{folderName(p)}</span>
               </span>
             ))}
             {m.pasted?.map((name, i) => (
@@ -846,6 +879,20 @@ function Message({ m, onRetry }: { m: AssistantMessage; onRetry?: () => void }) 
       {/* a used-up plan is a wait, said in amber; a real failure in red */}
       {m.status === "error" ? <p className={isLimitLine(m.text) ? "text-amber-600 dark:text-amber-400" : "text-destructive"}>{m.text}</p> : <ReplyText text={m.text} />}
       {again}
+      {onChoose && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {m.choices!.map((c) => (
+            <button
+              key={c}
+              type="button"
+              onClick={() => onChoose(c)}
+              className="rounded-full border px-3 py-1 text-xs font-medium transition-colors hover:border-[color-mix(in_srgb,var(--tint)_50%,transparent)] hover:text-[var(--tint)] motion-safe:animate-in motion-safe:fade-in"
+            >
+              {c}
+            </button>
+          ))}
+        </div>
+      )}
       {m.status === "thinking" && <span className="ml-0.5 inline-block h-3.5 w-1.5 rounded-sm bg-[var(--tint)] align-middle motion-safe:animate-pulse" aria-hidden />}
       {!working && <CopyButton className={cn(msgCopy, "-ml-1 mt-0.5")} text={() => m.text} label="Copy" />}
     </div>
