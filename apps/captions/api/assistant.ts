@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { AuthVars } from "./auth";
+import type { SessionUser } from "./users";
 import { mintJobToken, revokeJobToken, touchJobToken } from "./auth";
 import { announceSoon } from "./lib/announce-soon";
 import { env } from "./lib/env";
@@ -88,6 +89,8 @@ interface Conv {
   messages: AssistantMessage[];
   pending?: { env: string; why: string; at: number };
   navigate?: string;
+  /** The tool call each waiting Yes / No card stands for (askConfirm), by the card's id. Never sent to the dock. */
+  calls?: Record<string, { tool: string; args: unknown }>;
   /** Earlier conversations, newest first (New chat keeps the one it replaces here). */
   past?: Chat[];
 }
@@ -342,6 +345,99 @@ export function noteChoices(username: string, turn: string, choices: string[]): 
   saveSoon(username);
 }
 
+/* ---- a tool asks before it deletes, publishes or sends (mcp.ts sure) ---- */
+
+const MAX_CONFIRMS = 10;
+
+/** Every message list of the account: the open chat's, then each earlier chat's. */
+const everyChat = (conv: Conv): AssistantMessage[][] => [conv.messages, ...(conv.past ?? []).map((p) => p.messages)];
+
+/**
+ * A tool's question as a Yes / No card under the reply, with the call it stands for kept here. The same call asked
+ * twice in one reply keeps its one card. false when the reply is gone or already has too many.
+ */
+export function askConfirm(username: string, turn: string, question: string, call: { tool: string; args: unknown }): boolean {
+  const m = messageOf(username, turn);
+  if (!m || m.role !== "assistant") return false;
+  const conv = load(username);
+  const calls = (conv.calls ??= {});
+  const list = (m.confirms ??= []);
+  const same = JSON.stringify(call);
+  if (list.some((x) => x.status === "waiting" && JSON.stringify(calls[x.id]) === same)) return true;
+  if (list.length >= MAX_CONFIRMS) return false;
+  const id = randomUUID();
+  list.push({ id, question: question.replace(/\s+/g, " ").trim().slice(0, 300), at: Date.now(), status: "waiting" });
+  calls[id] = call;
+  save(username);
+  tell(username);
+  return true;
+}
+
+/** Runs a confirmed call as the person who pressed Yes (mcp.ts registers it: this file can't import that one). */
+type ConfirmRunner = (user: SessionUser, headers: Headers, origin: string, tool: string, args: unknown) => Promise<{ ok: boolean; text: string }>;
+let confirmRunner: ConfirmRunner | undefined;
+export const setConfirmRunner = (run: ConfirmRunner): void => void (confirmRunner = run);
+const answering = new Set<string>();
+
+/** What this install's plug-ins add to the assistant's guide (mcp.ts gathers it at boot). */
+let installGuide = "";
+export const setInstallGuide = (text: string): void => void (installGuide = text ? `\n\n${text}` : "");
+
+/** The reply belongs to a scheduled run: nobody is at the screen (api/automations.ts posts the prompt with its task). */
+export function unattended(username: string, turn: string): boolean {
+  for (const list of everyChat(load(username))) {
+    const i = list.findIndex((m) => m.id === turn);
+    if (i >= 0) return !!list[i - 1]?.task;
+  }
+  return false;
+}
+
+/* ---- work the assistant started has ended: its cards finish, and the chat says so ---- */
+
+/** Lines waiting for a reply that is still being written in their chat, by that reply's id (said when it ends). */
+const later = new Map<string, AssistantMessage[]>();
+
+/**
+ * Work the assistant started has ended (an edit's job, a Video Note, the Workshop's writer). Its running cards, in
+ * whatever chat they sit, get their end; the cards are found by the start of their id ("edit:<id>" ends
+ * "edit:<id>:new" and "edit:<id>:draft"). With `say`, one line is posted in that chat as the assistant's, with
+ * answer buttons under it (`choices`: a press sends that answer). Nothing is said when no card was running: work
+ * started on its own page tells nobody in the chat. Returns whether a card was running.
+ */
+export function workEnded(username: string, idStart: string, end: { status: "done" | "failed"; detail?: string; say?: string; choices?: string[] }): boolean {
+  const conv = load(username);
+  let hit = false;
+  let said = false;
+  for (const list of everyChat(conv)) {
+    const cards = list.flatMap((m) => m.work ?? []).filter((w) => w.status === "running" && (w.id === idStart || w.id.startsWith(`${idStart}:`)));
+    if (!cards.length) continue;
+    hit = true;
+    for (const w of cards) Object.assign(w, { status: end.status, ...(end.detail ? { detail: end.detail } : {}) });
+    if (!end.say || said) continue;
+    said = true;
+    const line: AssistantMessage = { id: randomUUID(), role: "assistant", text: end.say, at: Date.now(), status: "done", ...(end.choices?.length ? { choices: end.choices.slice(0, 4) } : {}) };
+    const last = list.at(-1);
+    // a reply being written there keeps the last word until it ends
+    if (last?.status === "thinking") later.set(last.id, [...(later.get(last.id) ?? []), line]);
+    else list.push(line);
+  }
+  if (hit) {
+    save(username);
+    tell(username);
+  }
+  return hit;
+}
+
+/** A reply ended: the lines that waited for it go under it. */
+function sayLater(username: string, replyId: string): void {
+  const lines = later.get(replyId);
+  if (!lines) return;
+  later.delete(replyId);
+  const list = everyChat(load(username)).find((l) => l.some((m) => m.id === replyId));
+  const now = Date.now();
+  list?.push(...lines.map((l, i) => ({ ...l, at: now + i })));
+}
+
 /* ---- what the reply asks to do on the user's Mac (MacOpts.onAsk) ---- */
 
 /** Unanswered this long = no. */
@@ -478,9 +574,13 @@ function view(username: string, admin: boolean): AssistantView {
   };
 }
 
+/** What a reply asked before a tool deleted or sent something, and how it was answered. */
+const asked = (m: AssistantMessage) =>
+  (m.confirms ?? []).map((q) => `[asked: "${q.question}" → ${q.status === "waiting" ? "not answered yet" : q.status === "no" ? "the user said no" : q.status === "done" ? `yes, done${q.result ? `: ${q.result}` : ""}` : `yes, but it failed: ${q.result ?? ""}`}]`);
+
 /** An earlier message's attachments, by count and name only: their files went with that turn. */
 const marks = (m: AssistantMessage) =>
-  [m.images?.length ? `[${m.images.length === 1 ? "1 picture" : `${m.images.length} pictures`}]` : "", ...(m.pasted ?? []).map((n) => `[pasted: ${n}]`), ...(m.files ?? []).map((f) => `[video: ${f.name}, file id ${f.id}]`), ...(m.folders ?? []).map((p) => `[folder: ${p}]`)].filter(Boolean).join(" ");
+  [...asked(m), m.images?.length ? `[${m.images.length === 1 ? "1 picture" : `${m.images.length} pictures`}]` : "", ...(m.pasted ?? []).map((n) => `[pasted: ${n}]`), ...(m.files ?? []).map((f) => `[video: ${f.name}, file id ${f.id}]`), ...(m.folders ?? []).map((p) => `[folder: ${p}]`)].filter(Boolean).join(" ");
 
 /** What came with the newest message, as facts: its files in the folder, the page it was sent from, what was highlighted. */
 function newestFacts(input: TurnInput): string[] {
@@ -540,7 +640,8 @@ export async function answerWithTools(
   // ponytail: an old Codex or Gemini CLI (no per-run MCP server) answers without the tools though the prompt names them (the Mac checks).
   const claude = route.instance.driver === "claude";
   const token = hasTools(route) ? mintJobToken(username, opts.turn) : undefined;
-  const system = !token ? SYSTEM + NO_TOOLS_NOTE : claude && opts.onAsk ? SYSTEM + MAC_NOTE : SYSTEM;
+  const guide = SYSTEM + installGuide;
+  const system = !token ? guide + NO_TOOLS_NOTE : claude && opts.onAsk ? guide + MAC_NOTE : guide;
   try {
     return await streamMacClaude(system, prompt, opts.cancel, (t) => opts.onDelta?.(t), undefined, {
       label: opts.label,
@@ -599,6 +700,7 @@ async function runTurn(username: string, replyId: string, route: Route, url: str
     // what it asked and nobody answered can't be done any more
     const m = messageOf(username, replyId);
     if (m) expireApprovals(m, 0);
+    sayLater(username, replyId);
     if (running.get(username) === stop) running.delete(username);
     const t = pendingSave.get(username);
     if (t) clearTimeout(t);
@@ -671,6 +773,7 @@ export async function runInChat(
     Object.assign(messageOf(username, reply.id) ?? {}, { status: stop.signal.aborted ? "done" : "error", text: why });
     throw new Error(why);
   } finally {
+    sayLater(username, reply.id);
     if (open && running.get(username) === stop) running.delete(username);
     const t = pendingSave.get(username);
     if (t) clearTimeout(t);
@@ -807,6 +910,37 @@ assistantApp.post("/approvals/:id", async (c) => {
   const a = answerApproval(u.username, c.req.param("id"), b.allow);
   if (!a) return c.json({ error: "Not found" }, 404);
   if (a.status !== (b.allow ? "allowed" : "denied")) return c.json({ error: a.status === "expired" ? "Too late: it waited 10 minutes and wasn't done" : "Already answered" }, 409);
+  return c.json(view(u.username, u.role === "admin"));
+});
+
+/**
+ * Yes or No to a question a tool asked before deleting, publishing or sending (only the caller's own; anyone else's
+ * is not found). Yes runs the call it stands for as the caller, and the card says how it went.
+ */
+assistantApp.post("/confirms/:id", async (c) => {
+  const u = c.get("user");
+  const b = (await c.req.json().catch(() => null)) as { yes?: unknown } | null;
+  if (typeof b?.yes !== "boolean") return c.json({ error: "Say yes: true or false" }, 400);
+  const id = c.req.param("id");
+  const conv = load(u.username);
+  const q = everyChat(conv).flat().flatMap((m) => m.confirms ?? []).find((x) => x.id === id);
+  if (!q) return c.json({ error: "Not found" }, 404);
+  if (q.status !== "waiting" || answering.has(id)) return c.json({ error: "Already answered" }, 409);
+  const call = conv.calls?.[id];
+  if (!b.yes) q.status = "no";
+  else if (!call || !confirmRunner) Object.assign(q, { status: "failed", result: "It can't be done from here any more: ask again." });
+  else {
+    answering.add(id);
+    try {
+      const r = await confirmRunner(u, c.req.raw.headers, publicOrigin(c), call.tool, call.args);
+      Object.assign(q, { status: r.ok ? "done" : "failed", result: r.text.replace(/\s+/g, " ").trim().slice(0, 300) });
+    } finally {
+      answering.delete(id);
+    }
+  }
+  if (conv.calls) delete conv.calls[id];
+  save(u.username);
+  tell(u.username);
   return c.json(view(u.username, u.role === "admin"));
 });
 
