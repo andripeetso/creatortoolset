@@ -12,7 +12,9 @@ struct UploadView: View {
     @State private var importing = false
     @State private var problem: String?
 
-    private var waiting: Int { store.items.filter { $0.state == .picked || $0.state == .failed }.count }
+    /// A New edit's clips show on its row in Chats, not here.
+    private var items: [UploadItem] { store.items.filter { $0.edit == nil } }
+    private var waiting: Int { items.filter { $0.state == .picked || $0.state == .failed }.count }
 
     var body: some View {
         List {
@@ -20,13 +22,13 @@ struct UploadView: View {
             if copying > 0 {
                 Label("Copying \(copying) from Photos…", systemImage: "hourglass").foregroundStyle(.secondary)
             }
-            ForEach(store.items.reversed()) { item in
+            ForEach(items.reversed()) { item in
                 UploadRow(item: item, live: store.liveBytes[item.id])
                     .swipeActions { Button("Remove", role: .destructive) { engine.remove(item.id) } }
             }
         }
         .overlay {
-            if store.items.isEmpty && copying == 0 {
+            if items.isEmpty && copying == 0 {
                 ContentUnavailableView("Nothing picked", systemImage: "arrow.up.circle",
                                        description: Text("Pick clips from Photos or Files."))
             }
@@ -45,7 +47,7 @@ struct UploadView: View {
         .navigationTitle("Upload")
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
-                if store.items.contains(where: { $0.state == .done }) {
+                if items.contains(where: { $0.state == .done }) {
                     Button("Clear") { engine.clearDone() }
                 }
                 Button { importing = true } label: { Image(systemName: "folder") }

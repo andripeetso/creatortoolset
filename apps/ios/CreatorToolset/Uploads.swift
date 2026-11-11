@@ -21,6 +21,8 @@ struct UploadItem: Codable, Identifiable, Hashable {
     var note: String?
     var attempts = 0
     var nextAttemptAt: Date?
+    /// The phone's New edit it is a clip of (`PhoneEdit.id`): it waits for that Start, not for Upload.
+    var edit: UUID?
 
     struct Direct: Codable, Hashable {
         let partSize: Int64

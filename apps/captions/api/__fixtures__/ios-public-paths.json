@@ -17,5 +17,8 @@
   { "id": "workshop.sessions", "method": "GET", "path": "/api/workshop/sessions", "probe": "list", "shape": { "type": "array" } },
   { "id": "workshop.session-docs", "method": "GET", "path": "/api/workshop/sessions/:id/docs", "probe": "route" },
   { "id": "assistant.get", "method": "GET", "path": "/api/assistant", "probe": "list", "shape": { "type": "object", "keys": ["aiName", "messages"] } },
-  { "id": "assistant.turn", "method": "POST", "path": "/api/assistant/turn", "probe": "route" }
+  { "id": "assistant.turn", "method": "POST", "path": "/api/assistant/turn", "probe": "route" },
+  { "id": "editor.create", "method": "POST", "path": "/api/editor", "probe": "route" },
+  { "id": "editor.get", "method": "GET", "path": "/api/editor/:id", "probe": "route" },
+  { "id": "editor.delete", "method": "DELETE", "path": "/api/editor/:id", "probe": "route" }
 ]

@@ -12,6 +12,7 @@ struct CreatorToolsetApp: App {
                 .environmentObject(Servers.shared)
                 .environmentObject(UploadEngine.shared)
                 .environmentObject(UploadEngine.shared.store)
+                .environmentObject(PhoneEdits.shared)
                 .preferredColorScheme(.dark)
         }
         .onChange(of: scenePhase) { _, phase in

@@ -160,6 +160,102 @@ final class ServerTests: XCTestCase {
         XCTAssertNotNil(UIImage(data: coverData), "the Finals cover does not decode")
     }
 
+    /// New edit: two clips picked, Start. The edit is there with both uploads waiting before any byte goes; once both
+    /// are in, it has them as its sources and its first step (analyze) is queued, without the phone doing more.
+    func testNewEdit() async throws {
+        let cookie = try await signIn()
+        let server = Server(url: origin, username: "admin")
+        Servers.shared.add(server, cookie: cookie)
+        let api = try XCTUnwrap(Servers.shared.api)
+        let engine = UploadEngine.shared
+        let edits = PhoneEdits.shared
+
+        // two different clips (the library counts the same bytes once): the synthetic video, each with its own tail
+        let video = try Data(contentsOf: try XCTUnwrap(Bundle(for: Self.self).url(forResource: "tiny", withExtension: "mp4")))
+        let local = UUID()
+        var clips: [UUID] = []
+        for n in 1...2 {
+            let id = UUID()
+            try (video + Data(UUID().uuidString.utf8)).write(to: AppFiles.upload(id))
+            engine.add(id: id, filename: "tinyacrobatics-clip\(n).mp4", size: Int64(video.count + 36), server: server, edit: local)
+            clips.append(id)
+        }
+        edits.add(PhoneEdit(id: local, server: server.id, name: "Phone edit, Tiny Acrobatics", clips: clips))
+
+        var waiting: RemoteEdit?
+        await edits.start(local) {
+            waiting = try await api.get("/api/editor/\(edits.item(local)?.editId ?? "")")
+            // no byte has gone yet
+            XCTAssertTrue(clips.allSatisfy { engine.store.item($0)?.state == .picked })
+        }
+        let editId = try XCTUnwrap(edits.item(local)?.editId, edits.item(local)?.problem ?? "no edit")
+        XCTAssertEqual(waiting?.sources, [])
+        XCTAssertEqual(waiting?.uploads?.map(\.id), clips.map { engine.store.item($0)?.uploadId ?? "" }, "in the order picked")
+        XCTAssertEqual(waiting?.uploads?.compactMap(\.version), [])
+
+        var now: RemoteEdit?
+        for _ in 0..<180 {
+            now = try await api.get("/api/editor/\(editId)")
+            if now?.sources?.count == 2 { break }
+            try await Task.sleep(for: .seconds(1))
+        }
+        XCTAssertEqual(now?.sources?.count, 2, clips.map { engine.store.item($0)?.note ?? "" }.description)
+        XCTAssertNil(now?.uploads)
+        XCTAssertEqual(now?.jobs?.first?.kind, "analyze")
+
+        // the row follows: the copies on the phone are cleared, and it reads Editing (or the step's problem)
+        await edits.refresh()
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertTrue(clips.allSatisfy { engine.store.item($0) == nil })
+        let row = edits.state(try XCTUnwrap(edits.item(local)))
+        XCTAssertTrue(row == .editing || { if case .stuck = row { return true } else { return false } }(), "\(row)")
+    }
+
+    /// Try again: the old edit goes to the trash, the clips go again as new uploads (the library has them already, so
+    /// they count as themselves), and a fresh edit starts with both.
+    func testNewEditTryAgain() async throws {
+        let cookie = try await signIn()
+        let server = Server(url: origin, username: "admin")
+        Servers.shared.add(server, cookie: cookie)
+        let api = try XCTUnwrap(Servers.shared.api)
+        let engine = UploadEngine.shared
+        let edits = PhoneEdits.shared
+        let video = try Data(contentsOf: try XCTUnwrap(Bundle(for: Self.self).url(forResource: "tiny", withExtension: "mp4")))
+        let local = UUID()
+        var clips: [UUID] = []
+        for n in 1...2 {
+            let id = UUID()
+            try (video + Data(UUID().uuidString.utf8)).write(to: AppFiles.upload(id))
+            engine.add(id: id, filename: "tinyacrobatics-again\(n).mp4", size: Int64(video.count + 36), server: server, edit: local)
+            clips.append(id)
+        }
+        edits.add(PhoneEdit(id: local, server: server.id, name: "Phone edit, Tiny Acrobatics again", clips: clips))
+        await edits.start(local)
+        let first = try XCTUnwrap(edits.item(local)?.editId, edits.item(local)?.problem ?? "no edit")
+        for _ in 0..<120 where !clips.allSatisfy({ engine.store.item($0)?.state == .done }) {
+            try await Task.sleep(for: .seconds(1))
+        }
+
+        await edits.retry(local)
+        let second = try XCTUnwrap(edits.item(local)?.editId, edits.item(local)?.problem ?? "no new edit")
+        XCTAssertNotEqual(second, first)
+        do {
+            let _: RemoteEdit = try await api.get("/api/editor/\(first)")
+            XCTFail("the old edit is still there")
+        } catch APIError.server(let status, _) {
+            XCTAssertEqual(status, 404)
+        }
+        var now: RemoteEdit?
+        for _ in 0..<120 {
+            now = try await api.get("/api/editor/\(second)")
+            if now?.sources?.count == 2 { break }
+            try await Task.sleep(for: .seconds(1))
+        }
+        XCTAssertEqual(now?.sources?.count, 2, clips.map { engine.store.item($0)?.note ?? "" }.description)
+        XCTAssertTrue(clips.allSatisfy { engine.store.item($0)?.duplicate == true })
+        edits.forget(local)
+    }
+
     /// The web view ("Everything else") is signed in with the phone's cookie, on http as on https.
     func testWebViewSignedIn() async throws {
         let cookie = try await signIn()
