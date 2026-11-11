@@ -18,7 +18,7 @@ import { isAdminActor } from "../my-keys";
  * transcript excerpt go to the actor's own AI (aiFor: their provider, or their own Anthropic key).
  * No route parks the job as needs_key, never failed and never on someone else's AI. The answer is JSON: a description
  * and tags, stored as the AI's. A human's description stays the one shown (query.ts); human tags keep their source.
- * Off unless the library's owner switched it on (settings.describe), since it spends AI on every upload.
+ * On unless the library's owner switched it off (settings.describe; db.ts SETTING_DEFAULTS): a big upload says first what it spends.
  */
 
 export const FRAMES = 4;

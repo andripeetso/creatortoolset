@@ -165,8 +165,11 @@ export const blobs: Omit<BlobStore, "kind" | "caps"> = {
 };
 
 /** A library's on/off setting. describe and embed spend AI on every upload, so they are off until its owner turns them on. */
-/** Search by meaning starts on (it waits for an OpenAI key, worker.ts); describing spends AI on every upload, so it starts off. */
-export const SETTING_DEFAULTS = { describe: false, embed: true } as const;
+/**
+ * Both start on: describing runs on the uploader's own AI (or parks until they connect one), and a big upload says
+ * first what it will take (estimate.ts); search by meaning waits for an OpenAI key (worker.ts).
+ */
+export const SETTING_DEFAULTS = { describe: true, embed: true } as const;
 
 export const librarySetting = (libraryId: string, key: "describe" | "embed"): boolean => {
   const on = (libraryDb().prepare(`SELECT json_extract(settings, '$.${key}') AS on_ FROM libraries WHERE id = ?`).get(libraryId) as { on_: number | null } | undefined)?.on_;

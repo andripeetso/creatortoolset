@@ -658,7 +658,7 @@ const AiBadge = () => (
   </span>
 );
 
-/** The owner's switches. Describing spends AI on every new upload, so it starts off; search by meaning starts on and waits for an OpenAI key. */
+/** The owner's switches, both on to start (api/library/db.ts SETTING_DEFAULTS): a big upload says first what they will take. */
 function AiSwitches({ library, onChange, onError }: { library: LibrarySummary; onChange: (l: LibrarySummary) => void; onError: (e: string) => void }) {
   const flip = (key: "describe" | "embed", on: boolean) =>
     updateLibrary(library.id, { settings: { [key]: on } })
