@@ -9,6 +9,8 @@ import { completeLocal } from "./lib/local-claude";
 import { hostedMode } from "./lib/env";
 import { addSpend, budgetLeft } from "./lib/workspaces";
 import { keyFor } from "./my-keys";
+import { localModelOf } from "./local-model";
+import type { LocalModel } from "../contracts/service-keys";
 import { findUser, type SessionUser } from "./users";
 
 /**
@@ -44,7 +46,8 @@ export class AiProviderError extends Error {
 
 /** "mac" = a provider on a paired Mac (lib/mac-claude.ts); "anthropic" = the API key (guests, demo);
  *  "local" = Claude Code on the machine running this code (lib/local-claude.ts), for scripts only. */
-export type ProviderId = "anthropic" | "mac" | "local";
+// "localModel" = a model the person runs themselves, at the address they typed (local-model.ts); not "local", which is Claude Code here.
+export type ProviderId = "anthropic" | "mac" | "local" | "localModel";
 
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 
@@ -63,6 +66,8 @@ export type ProviderOpts = {
   apiKey?: string;
   /** A workspace member on an API budget (hosted only): the API answer's cost goes on their month. */
   bill?: string;
+  /** The model server a "localModel" call goes to (aiFor's: the caller's own, from Settings → API keys). */
+  localModel?: LocalModel;
   /** Why there is no provider for this caller: the call fails with it. */
   off?: string;
   /** Pictures before the text (Anthropic only; pass `only: ["anthropic"]`, the others would never see them). */
@@ -87,7 +92,7 @@ export function aiFor(who: Who, job: JobId, label: string, own?: Selection): Pro
   // nobody named: never the server's providers (background work names whose work it is)
   if (!name || role === "visitor") return { only: [], off: "This AI call names no account" };
   const r = routeFor(name, role === "admin", job, own);
-  if (!r) return onApiKey(name, job, label) || onBudget(name, job, label) || { only: [], off: "No AI for your account: add one in Settings → Providers, or your Anthropic key in Settings → API keys" };
+  if (!r) return onLocalModel(name, job, label) || onApiKey(name, job, label) || onBudget(name, job, label) || { only: [], off: "No AI for your account: add one in Settings → Providers, or your Anthropic key in Settings → API keys" };
   const { selection, instance } = r;
   return {
     only: ["mac"],
@@ -106,6 +111,18 @@ export function onApiKey(name: string, job: JobId, label: string): ProviderOpts 
   if (!k.key) return null;
   if (job === "workshop") return { only: [], off: "Content Workshop runs on your own AI (it reads the whole project folder): connect yours in Settings → Providers" };
   return { only: ["anthropic"], retries: 1, apiKey: k.key, mac: { label } };
+}
+
+/**
+ * An account with no provider that typed a local model (localModelOf: an install's own admin, never a hosted server):
+ * its text jobs go to that address, before its Anthropic key. The route carries no key and no retry, and names one
+ * provider, so a local model that is down fails the call and nothing else answers it. Never the Workshop, as above.
+ */
+function onLocalModel(name: string, job: JobId, label: string): ProviderOpts | null {
+  const localModel = localModelOf(name);
+  if (!localModel) return null;
+  if (job === "workshop") return { only: [], off: "Content Workshop runs on your own AI (it reads the whole project folder): connect yours in Settings → Providers" };
+  return { only: ["localModel"], localModel, mac: { label } };
 }
 
 /**
@@ -203,6 +220,7 @@ function providers(): Provider[] {
   const all: Provider[] = [
     // the route (aiFor) picked the key: a call without one is not sent
     { id: "anthropic", label: "Anthropic API", configured: true, complete: completeAnthropic },
+    { id: "localModel", label: "Local model", configured: true, complete: completeLocalModel },
     { id: "mac", label: "Claude (Mac)", configured: true, complete: (system, user, cancel, opts) => streamMac(system, user, cancel, () => {}, opts?.onUsage, opts ?? {}) },
     // Claude Code on this machine: only scripts name it in `only`; aiFor never routes a site request here
     { id: "local", label: "Claude Code (this machine)", configured: true, complete: async (system, user, cancel) => {
@@ -356,6 +374,58 @@ export function contentFromAnthropic(body: string, onUsage?: (u: AnthropicUsage)
     .trim();
   if (!text) throw new AiProviderError("The model returned an empty answer", "FAILED", true);
   return text;
+}
+
+/** A local model's failure, in words that name its address: never Anthropic's key or credit messages, and never retried. */
+const localFailed = (local: LocalModel, why: string) => new AiProviderError(`The local model at ${local.url} ${why}`, "FAILED", false);
+
+/**
+ * One request at a time per address: a model on one video card answers one at a time, and a request waiting in the
+ * model server's own line would spend its time limit there.
+ * ponytail: one at a time for every address; a number in the Local model box if someone's server answers several at once
+ */
+const localLine = new Map<string, Promise<unknown>>();
+
+/**
+ * One answer from the person's own model server: the Messages request completeAnthropic sends, to their address, with
+ * their model's name. No x-api-key (that is their Anthropic key) and no output_config (Anthropic's own knob). The
+ * answer's tokens are passed on at no price, whatever the model is called, and are not in the paid (API) tally.
+ */
+function completeLocalModel(system: string, user: string, cancelSignal?: AbortSignal, opts: ProviderOpts = {}): Promise<string> {
+  const local = opts.localModel;
+  if (!local) return Promise.reject(new AiProviderError("No local model is set", "FAILED", false));
+  const answer = (localLine.get(local.url) ?? Promise.resolve()).then(async () => {
+    let resp: Response;
+    try {
+      resp = await fetch(`${local.url}/v1/messages`, {
+        method: "POST",
+        headers: { "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
+        body: JSON.stringify({ model: local.model, max_tokens: 16000, system, messages: [{ role: "user", content: user }] }),
+        signal: requestSignal(cancelSignal),
+      });
+    } catch (e: unknown) {
+      if (cancelSignal?.aborted) wrapFetchError(e, cancelSignal);
+      const slow = e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError");
+      throw localFailed(local, slow ? `gave no answer in ${CHUNK_TIMEOUT_MS / 60_000} minutes` : "did not answer: check that it is running");
+    }
+    const body = await readBody(resp);
+    let data: { content?: { type?: string; text?: string }[]; error?: { message?: string }; usage?: AnthropicUsage; stop_reason?: string } = {};
+    try {
+      data = JSON.parse(body) as typeof data;
+    } catch {
+      if (resp.ok) throw localFailed(local, "sent an answer this app can't read");
+    }
+    if (!resp.ok || data.error) throw localFailed(local, `answered ${resp.status}: ${data.error?.message || body.slice(0, 200)}`);
+    if (data.usage) opts.onUsage?.(apiUsage(data.usage, ""));
+    // cut off: a model that thinks first can fill a short context before it writes a word, and half an answer is none
+    if (data.stop_reason === "max_tokens")
+      throw localFailed(local, `ran out of room before it finished (${data.usage?.input_tokens ?? "?"} tokens in, ${data.usage?.output_tokens ?? "?"} out): give it a longer context on its server`);
+    const text = (data.content ?? []).filter((b) => b.type === "text" && b.text).map((b) => b.text as string).join("\n").trim();
+    if (!text) throw localFailed(local, "returned an empty answer");
+    return text;
+  });
+  localLine.set(local.url, answer.catch(() => {}));
+  return answer;
 }
 
 /**
@@ -552,6 +622,12 @@ const STREAMERS: Record<ProviderId, (system: string, user: string, cancel: Abort
   // Claude Code here answers in one piece (`claude -p --output-format json`): the whole text is one delta
   local: async (system, user, cancel, onDelta) => {
     const { text } = await completeLocal(system, user, cancel);
+    await onDelta(text);
+    return text;
+  },
+  // a local model's answer arrives in one piece too: no streamed job runs on the direct path (the Workshop never does)
+  localModel: async (system, user, cancel, onDelta, onUsage, opts) => {
+    const text = await completeLocalModel(system, user, cancel, { ...opts, onUsage });
     await onDelta(text);
     return text;
   },

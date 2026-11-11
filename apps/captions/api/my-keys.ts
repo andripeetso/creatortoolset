@@ -5,6 +5,7 @@ import type { AuthVars } from "./auth";
 import { env } from "./lib/env";
 import { findUser, LOCAL_USER, USERNAME_RE, type SessionUser } from "./users";
 import { serverKeyFrom } from "./service-keys";
+import { localModelApp } from "./local-model";
 import { MY_KEYS, type MyKeyEnv, type MyKeyView } from "../contracts/service-keys";
 
 /**
@@ -107,6 +108,9 @@ myKeysApp.get("/", (c) => {
     }),
   );
 });
+
+// the Local model box on the same page (local-model.ts): mounted before /:env, which would answer "No such key"
+myKeysApp.route("/local-model", localModelApp);
 
 myKeysApp.put("/:env", async (c) => {
   const name = c.req.param("env");
