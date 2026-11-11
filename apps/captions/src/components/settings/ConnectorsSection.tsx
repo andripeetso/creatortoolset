@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { RefreshCw } from "lucide-react";
 import { toast } from "sonner";
@@ -38,6 +38,11 @@ const NO_LOGINS: Record<LoginKind, boolean> = { meta: false, google: false, tikt
 const at = (handle: string) => `@${handle.replace(/^@+/, "")}`;
 const NOUN: Record<SocialPlatform, string> = { instagram: "an Instagram", facebook: "a Facebook", youtube: "a YouTube", tiktok: "a TikTok", x: "an X" };
 const loginOf = (p: SocialPlatform): LoginKind | undefined => PLATFORMS.find((x) => x.id === p)?.login;
+
+/** The time of the newest platform sign-in in the list (the server's clock), 0 with none. */
+export const newestSignIn = (accounts: readonly ConnectedAccount[]) => Math.max(0, ...accounts.filter((a) => a.via === "login").map((a) => a.connectedAt));
+/** The accounts a platform sign-in connected after `since` (a time from newestSignIn, so one clock is compared with itself). */
+export const signedInSince = (accounts: readonly ConnectedAccount[], since: number) => accounts.filter((a) => a.via === "login" && a.connectedAt > since);
 
 /** What a row says when the sign-in service was asked for its platform and does not offer it (or could not be reached). */
 export const SIGN_IN_OFF = "Sign-in is not available right now";
@@ -125,6 +130,18 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
   };
 
   const reload = useCallback(() => refresh().catch(() => {}), [refresh]);
+  // A sign-in started from the Add dialog finishes somewhere else: the Mac app sends it to the computer's browser. The
+  // server tells this window when the account is saved (it announces "connectors"), the list reads itself again, and
+  // the dialog that was waiting closes by itself. `waiting`: the newest sign-in there was when the dialog opened.
+  const waiting = useRef<number | null>(null);
+  useEffect(() => {
+    if (!view || !open || waiting.current === null) return;
+    const fresh = signedInSince(view.accounts, waiting.current);
+    if (!fresh.length) return;
+    waiting.current = null;
+    setOpen(false);
+    toast(`${fresh.map((a) => at(a.handle)).join(", ")} connected. Reading ${fresh.length > 1 ? "their" : "its"} numbers now.`);
+  }, [view, open]);
   // a sign-in from the Mac app finishes in the computer's browser: coming back to the window shows the new account
   useEffect(() => {
     const onFocus = () => void reload();
@@ -183,6 +200,7 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
     const login = loginOf(platform);
     const loginOn = !!login && (await offered(login, view));
     setDlg((d) => ({ platform, step: loginOn ? "choose" : "handle", seq: d.seq + 1 }));
+    waiting.current = newestSignIn(view.accounts);
     setOpen(true);
   };
 

@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { platformRows, signInItems } from "./ConnectorsSection";
+import { newestSignIn, platformRows, signedInSince, signInItems } from "./ConnectorsSection";
 import type { ConnectedAccount, ConnectorsView } from "@contracts/connectors";
 
 it("offers only the sign-ins this server has an app for", () => {
@@ -68,4 +68,18 @@ it("Instagram follows the project: the account a project links, else the one mar
   expect(row(platformRows(view({ instagram }), "p1"), "instagram")?.own?.id).toBe("a");
   expect(row(platformRows(view({ instagram }), "p2"), "instagram")?.own?.id).toBe("b");
   expect(row(platformRows(view({ instagram }), "p3"), "instagram")).toMatchObject({ button: "Add" });
+});
+
+it("knows a sign-in finished elsewhere: an account connected by sign-in after the dialog opened, also one that was connected before", () => {
+  const login = (handle: string, connectedAt: number): ConnectedAccount => ({ ...acct("youtube", handle), via: "login", connectedAt });
+  const before = [login("tinyacrobatics", 100), { ...acct("tiktok", "tinytok"), connectedAt: 900 }];
+  // the newest sign-in when the dialog opens: handles (by Apify) do not count
+  expect(newestSignIn(before)).toBe(100);
+  expect(newestSignIn([])).toBe(0);
+  expect(signedInSince(before, 100)).toEqual([]);
+  // a new account by sign-in, and the same account signed in again (its time moves)
+  expect(signedInSince([...before, login("tinytwo", 250)], 100).map((a) => a.handle)).toEqual(["tinytwo"]);
+  expect(signedInSince([login("tinyacrobatics", 300)], 100).map((a) => a.handle)).toEqual(["tinyacrobatics"]);
+  // an account added by @handle meanwhile is the dialog's own doing, not a sign-in
+  expect(signedInSince([...before, { ...acct("x", "tinyx"), connectedAt: 999 }], 100)).toEqual([]);
 });

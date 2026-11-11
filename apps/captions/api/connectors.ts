@@ -12,6 +12,7 @@ import { findAccount, newState, patchAccount, publicAccount, readConnectors, rem
 import { publicApifyStatus, readApify } from "./lib/instagram/apify";
 import { addLoginAccount, allAccounts } from "./instagram";
 import { accountProjects } from "./lib/workshop/workspace";
+import { announce } from "./lib/sync";
 import { findUser, listUsers, LOCAL_USER, type SessionUser } from "./users";
 
 /**
@@ -119,7 +120,7 @@ connectorsCallbackApp.get("/callback/:kind", async (c) => {
   const back = (q: string) => {
     if (here) return c.redirect(`${to}${to.includes("?") ? "&" : "?"}${q}`);
     const p = new URLSearchParams(q);
-    return p.get("connected") ? c.html(donePage("Connected", "Go back to Creator Toolset: the account is in Settings → Social accounts.")) : c.html(donePage("Not connected", escHtml(p.get("error") ?? "")), 400);
+    return p.get("connected") ? c.html(donePage("Connected", "You can close this tab. Creator Toolset already has the account, in Settings → Social accounts.")) : c.html(donePage("Not connected", escHtml(p.get("error") ?? "")), 400);
   };
   if (!st || st.kind !== kind || Date.now() - st.at > STATE_MS) return back(`error=${encodeURIComponent("That login expired: start it again")}`);
   const user = st.user;
@@ -129,7 +130,11 @@ connectorsCallbackApp.get("/callback/:kind", async (c) => {
   try {
     // through the service the platform's code was swapped on the site: this install redeems its ticket with the verifier
     const got = st.issuer === "service" ? await accountsFromGrant(kind, await serviceRedeem(c.req.query("ticket") ?? "", st.verifier!)) : await finishLogin(kind, c.req.query("code") ?? "", redirectFor(c, kind), st.verifier);
-    const saved = saveAccounts(user, got.map((a) => ({ ...a, issuer: st.issuer, loginStatus: "connected" as const, pullError: undefined, ...(st.projectId ? { projectId: st.projectId } : {}) })));
+    // connectedAt is this sign-in's moment, also for an account that was connected before: the page that started it
+    // (often in another window: the Mac app sends the sign-in to the computer's browser) knows by it that it finished
+    const saved = saveAccounts(user, got.map((a) => ({ ...a, connectedAt: Date.now(), issuer: st.issuer, loginStatus: "connected" as const, pullError: undefined, ...(st.projectId ? { projectId: st.projectId } : {}) })));
+    // told to the person's open windows now, since this way back is no write of theirs (no session, a GET)
+    announce(user, "connectors");
     for (const a of saved) void pullOne(user, a.key);
     return back(`connected=${saved.length}`);
   } catch (e) {
@@ -202,6 +207,8 @@ async function pullOne(user: SessionUser | string, key: string): Promise<void> {
     patchAccount(name, key, { pullError: (e instanceof Error ? e.message : String(e)).slice(0, 300), pulledAt: Date.now(), loginStatus: "error" });
   } finally {
     pulling.delete(`${name}/${key}`);
+    // the numbers (or the reason there are none) are in: the open windows read the list again
+    announce(name, "connectors");
   }
 }
 
