@@ -154,6 +154,9 @@ const apiCalls = new Map<string, AbortController>();
 export const cancelled = new Set<string>();
 const queue: string[] = [];
 let running = 0;
+/** This account's files being enhanced, for Home (api/activity.ts). ponytail: a plug-in engine's pass shows while it is in `active`. */
+export const enhancing = (username: string) =>
+  [...active.values()].filter((m) => m.owner === username && (m.status === "queued" || m.status === "running")).map((m) => ({ id: m.id, name: m.name, waits: m.status === "queued", progress: m.progress }));
 
 void mkdir(ENHANCE_DIR, { recursive: true }).catch(() => {});
 

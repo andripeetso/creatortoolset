@@ -129,6 +129,52 @@ describe("appRows", () => {
     ]);
     expect(rows[2]).not.toHaveProperty("progress");
   });
+
+  it("lists each tool's running work: the thing, the tool and what it does, how far when it is not waiting", () => {
+    const rows = appRows({
+      libraries: [],
+      edits: [],
+      exports: [],
+      analyzer: [
+        { id: "p1", kind: "post", name: "@tinyacrobatics", waits: false },
+        { id: "p2", kind: "post", name: "@tinyacrobatics", waits: true },
+        { id: "a1", kind: "account", name: "@tinyacrobatics", waits: false },
+        { id: "tiny:", kind: "ideas", name: "Ideas", waits: false },
+      ],
+      notes: [{ id: "n1", name: "Tiny walkthrough", progress: 0.4, section: false }, { id: "n2", name: "Older note", progress: undefined, section: true }],
+      enhance: [{ id: "s1", name: "voice.wav", waits: false, progress: 0.3 }, { id: "s2", name: "next.wav", waits: true, progress: 0 }],
+      review: [{ id: "r1/2", assetId: "r1", name: "Tiny cut", progress: 0.5 }],
+      guides: [{ id: "g1", name: "Tiny walkthrough" }],
+      captioning: [{ id: "c1", name: "Tiny talk" }],
+    });
+    expect(rows.map((r) => [r.title, r.detail, r.href, r.progress])).toEqual([
+      ["@tinyacrobatics", "Content Analyzer · reading the post", "/instagram/p1", undefined],
+      ["@tinyacrobatics", "Content Analyzer · waits its turn", "/instagram/p2", undefined],
+      ["@tinyacrobatics", "Content Analyzer · pulling the account", "/instagram/accounts/a1", undefined],
+      ["Ideas", "Content Analyzer · finding ideas", "/instagram", undefined],
+      ["Tiny walkthrough", "Video Notes · making the note", "/clips/n1", 0.4],
+      ["Older note", "Video Notes · writing a section", "/clips/n2", undefined],
+      ["voice.wav", "Audio Enhancer · enhancing", "/enhance/s1", 0.3],
+      ["next.wav", "Audio Enhancer · waits its turn", "/enhance/s2", undefined],
+      ["Tiny cut", "Review · preparing the video", "/review/r1", 0.5],
+      ["Tiny walkthrough", "Guide Builder · writing", "/documents", undefined],
+      ["Tiny talk", "Caption Studio · captioning", "/captions?view=projects", undefined],
+    ]);
+    expect(rows.every((r) => r.state === "working")).toBe(true);
+    expect(new Set(rows.map((r) => r.id)).size).toBe(rows.length);
+  });
+});
+
+describe("GET /api/activity", () => {
+  it("adds no row for a tool the account has switched off", async () => {
+    const tiny: SessionUser = { ...admin, username: "tiny-activity", role: "user", off: ["instagram", "notes", "enhance", "review", "guides", "captions"] };
+    const app = new Hono<any>();
+    app.use("*", async (c, next) => { c.set("user", tiny); await next(); });
+    app.route("/api/activity", activityApp([]));
+    const res = await app.request("/api/activity");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([]);
+  });
 });
 
 describe("pluginMenu and GET /api/activity/menu", () => {
