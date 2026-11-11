@@ -68,7 +68,7 @@ export default function MobileInstagramPage() {
   // saved copies (lib/local-cache): the page paints from them at once and they stay live. The accounts and what the
   // Analyzer can read with are the desktop page's own copies; the posts are this page's (every shelf, per project).
   const pid = currentProjectId ?? "";
-  const { items: posts, setItems: setPosts, refresh: loadPosts } = useCachedList<InstagramPost>(
+  const { items: posts, known: postsKnown, setItems: setPosts, refresh: loadPosts } = useCachedList<InstagramPost>(
     allowed ? `instagram/posts?${JSON.stringify(ALL)}|p=${pid}` : null,
     () => listPosts(ALL),
     LISTS_LIVE,
@@ -311,7 +311,7 @@ export default function MobileInstagramPage() {
             </div>
           ))}
 
-        <MobileAnalyzerLibrary posts={posts} onChanged={refresh} />
+        <MobileAnalyzerLibrary posts={posts} known={postsKnown} onChanged={refresh} />
       </div>
     </div>
   );

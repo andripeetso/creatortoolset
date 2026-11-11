@@ -61,9 +61,10 @@ const PAGE = 30;
 
 /**
  * Everything in the Analyzer, on a phone: filter by why it was kept, search,
- * tap a post to watch it with its caption, numbers and idea.
+ * tap a post to watch it with its caption, numbers and idea. `known` is off until the posts have been read once
+ * (a first visit, nothing saved yet): no count and no "nothing saved" then, since neither is known.
  */
-export function MobileAnalyzerLibrary({ posts, onChanged }: { posts: InstagramPost[]; onChanged?: () => void }) {
+export function MobileAnalyzerLibrary({ posts, known, onChanged }: { posts: InstagramPost[]; known: boolean; onChanged?: () => void }) {
   const [shelf, setShelf] = useState<ShelfFilter | "due">("all");
   const [q, setQ] = useState("");
   const [limit, setLimit] = useState(PAGE);
@@ -95,7 +96,7 @@ export function MobileAnalyzerLibrary({ posts, onChanged }: { posts: InstagramPo
 
   return (
     <div>
-      <p className="mb-2 text-xs text-zinc-500">In the Analyzer · {posts.length}</p>
+      <p className="mb-2 text-xs text-zinc-500">In the Analyzer{known ? ` · ${posts.length}` : ""}</p>
       {due.length > 0 && (
         <div className="mb-2 flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[13px] text-amber-200">
           <TriangleAlert className="h-4 w-4 shrink-0" />
@@ -148,9 +149,11 @@ export function MobileAnalyzerLibrary({ posts, onChanged }: { posts: InstagramPo
       </div>
 
       {shown.length === 0 ? (
-        <p className="py-8 text-center text-sm text-zinc-600">
-          {posts.length ? "Nothing matches." : "Nothing saved yet. Share a reel into this app, or paste a link above."}
-        </p>
+        known && (
+          <p className="py-8 text-center text-sm text-zinc-600">
+            {posts.length ? "Nothing matches." : "Nothing saved yet. Share a reel into this app, or paste a link above."}
+          </p>
+        )
       ) : (
         <ul className="flex flex-col gap-2">
           {shown.slice(0, limit).map((post) => (
