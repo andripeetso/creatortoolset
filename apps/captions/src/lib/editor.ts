@@ -1,5 +1,5 @@
 import type { StepsView } from "@contracts/editor-steps";
-import type { EditingStyle, EditingStyleInput, EditingStylesView } from "@contracts/editor-styles";
+import type { EditingStyle, EditingStyleInput, EditingStylesView, FinishedEdit } from "@contracts/editor-styles";
 import type { Edit, EditPatch, EditSlot, EditStep, EditSummary, EditorDefaults, FootageTarget, NewEdit, PlansPatch, Sentence, Take, VersionPlan } from "@contracts/editor";
 
 /** The AI Editor's calls to api/editor/routes.ts. */
@@ -39,6 +39,9 @@ export const listStyles = () => send<EditingStylesView>("/api/editor/styles");
 export const createStyle = (body: EditingStyleInput | { fromEdit: string; name: string }) => send<EditingStyle>("/api/editor/styles", "POST", body);
 export const updateStyle = (id: string, body: EditingStyleInput) => send<EditingStyle>(`/api/editor/styles/${id}`, "PUT", body);
 export const deleteStyle = (id: string) => send<{ ok: true }>(`/api/editor/styles/${id}`, "DELETE");
+/** The edits finished in a style, newest first, and × on one (it never counts for a style again). */
+export const listFinished = (styleId: string) => send<FinishedEdit[]>(`/api/editor/styles/${styleId}/finished`);
+export const removeFinished = (styleId: string, editId: string) => send<{ ok: true }>(`/api/editor/styles/${styleId}/finished/${editId}`, "DELETE");
 export const setEyeline = (id: string, versionId: string, y: number) => send<Edit>(`${base(id)}/eyeline/${versionId}`, "PUT", { y });
 export const getSentences = (id: string) => send<Sentence[]>(`${base(id)}/sentences`);
 export const putLines = (id: string, body: PlansPatch) => send<Edit>(`${base(id)}/lines`, "PUT", body);

@@ -11,7 +11,7 @@ import { duplicateStyle, EditingStyles, type OpenStyle } from "./EditingStyles";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-let has: { grades: boolean; folders: boolean; steps: boolean };
+let has: { grades: boolean; folders: boolean; steps: boolean; skills?: object[]; finished?: object[] };
 let sent: { method: string; url: string; body: Record<string, unknown> }[];
 let root: Root | undefined;
 let host: HTMLDivElement | undefined;
@@ -42,6 +42,8 @@ beforeEach(() => {
     if (url === "/api/library") return reply({ libraries: [{ id: "lib_1", name: "Tiny Acrobatics" }] });
     if (url.includes("/collections")) return reply({ collections: has.folders ? [{ id: "col_1", name: "B-roll", parentId: null, kind: "manual", createdBy: "me" }] : [] });
     if (url === "/api/edit-steps") return reply({ steps: has.steps ? [blur] : [], canAdd: false });
+    if (url === "/api/skills") return reply({ skills: has.skills ?? [] });
+    if (url.endsWith("/finished")) return reply(has.finished ?? []);
     return reply({});
   });
 });
@@ -166,5 +168,67 @@ describe("The style sheet", () => {
     expect(labels()).toEqual(["Name", "How should it be cut?", "Versions", "Target length (s)", "Pace", "Punch-in"]);
     expect(document.querySelector('[aria-label="Post-processing"]')).toBeNull();
     expect(Object.keys((await save()).body).sort()).toEqual(["name", "notes", "pace", "punch", "targetS", "versions"]);
+  });
+});
+
+describe("The style sheet: a skill, and the edits finished with the style", () => {
+  const skill = (id: string, name: string, extra: object = {}) => ({ id, name, when: "When it fits.", body: "Text.", on: true, createdAt: 0, updatedAt: 0, ...extra });
+  const section = () => document.querySelector('[aria-label="Finished with this style"]');
+
+  it("the Skill select lists the skills an edit would get (on, for every project); the one picked is sent, None sends null", async () => {
+    has.skills = [skill("sk_hooks", "Hooks"), skill("sk_off", "Switched off", { on: false }), skill("sk_project", "One project only", { projectIds: ["p1"] }), skill("sk_ends", "Endings")];
+    const named = { ...style, skill: "sk_ends" };
+    await render([named], named);
+    expect(labels()).toContain("Skill");
+    const sel = field<HTMLSelectElement>("style-skill")!;
+    expect([...sel.options].map((o) => o.textContent)).toEqual(["None", "Hooks", "Endings"]);
+    expect(sel.value).toBe("sk_ends");
+    await type("style-skill", "sk_hooks");
+    expect((await save()).body.skill).toBe("sk_hooks");
+    await type("style-skill", "");
+    expect((await save()).body.skill).toBeNull();
+  });
+
+  it("with no skill that would reach an edit there is no Skill select, and the style's skill is left as it is", async () => {
+    has.skills = [skill("sk_off", "Switched off", { on: false })];
+    const named = { ...style, skill: "sk_off" };
+    await render([named], named);
+    expect(labels()).not.toContain("Skill");
+    expect("skill" in (await save()).body).toBe(false);
+  });
+
+  it("the finished edits are listed under Save, each with an ×; a press takes one off at once", async () => {
+    has.finished = [
+      { editId: "e_two", variant: "v1", name: "Tiny Acrobatics hook", at: Date.UTC(2026, 10, 11, 12), brief: "", targetS: 45, seconds: 41, said: "Said.", cut: [] },
+      { editId: "e_one", variant: "v2", name: "", at: Date.UTC(2026, 10, 9, 12), brief: "", targetS: 0, seconds: 0, said: "Said.", cut: [] },
+    ];
+    await render([style], style);
+    const day = (ms: number) => new Date(ms).toLocaleDateString();
+    expect(section()!.querySelector("h3")!.textContent).toBe("Finished with this style");
+    // a name, how long it came out and the day; one with no name of the person's own shows its day
+    expect([...section()!.querySelectorAll("li")].map((li) => li.textContent)).toEqual([`Tiny Acrobatics hook41 s · ${day(Date.UTC(2026, 10, 11, 12))}`, day(Date.UTC(2026, 10, 9, 12))]);
+    // it is below the Save button, and nothing explains it
+    const save = [...document.querySelectorAll("form button")].find((b) => b.textContent?.trim() === "Save")!;
+    expect(save.compareDocumentPosition(section()!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(section()!.querySelector("p")).toBeNull();
+
+    act(() => (section()!.querySelector('[aria-label="Remove Tiny Acrobatics hook from the finished edits"]') as HTMLElement).click());
+    await flush();
+    expect(sent.at(-1)).toMatchObject({ method: "DELETE", url: "/api/editor/styles/s_a/finished/e_two" });
+    expect(section()!.querySelectorAll("li")).toHaveLength(1);
+    act(() => (section()!.querySelector("li button") as HTMLElement).click());
+    await flush();
+    expect(sent.at(-1)).toMatchObject({ method: "DELETE", url: "/api/editor/styles/s_a/finished/e_one" });
+    expect(section()).toBeNull(); // an empty list is not shown
+  });
+
+  it("a style with no finished edit, and a new style, show no such list", async () => {
+    await render([style], style);
+    expect(section()).toBeNull();
+    act(() => root!.unmount());
+    host!.remove();
+    has.finished = [{ editId: "e", variant: "v1", name: "Of another style", at: 0, brief: "", targetS: 0, seconds: 1, said: "x", cut: [] }];
+    await render([], "new");
+    expect(section()).toBeNull();
   });
 });
