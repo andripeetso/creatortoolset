@@ -136,6 +136,39 @@ describe("a step is running only while it really runs", () => {
   };
   const running = () => (d.prepare("SELECT version_id AS v FROM jobs WHERE state = 'running' ORDER BY version_id").all() as { v: string }[]).map((r) => r.v);
 
+  it("this computer claims one search entry at a time too", async () => {
+    process.env.CT_LOCAL = "1";
+    delete process.env.OPENAI_API_KEY;
+    const net = globalThis.fetch;
+    globalThis.fetch = (() => Promise.reject(new TypeError("no network in tests"))) as typeof fetch; // the search model is never fetched here
+    let free!: () => void;
+    const held = ffmpegSlot(() => new Promise<void>((r) => (free = r))); // the line every heavy job runs in is busy
+    try {
+      for (const v of ["e1", "e2"]) {
+        d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at) VALUES (?, 'lib_a', 'video', ?, ?, 'local', 1)").run(
+          `a_${v}`,
+          `Tiny Acrobatics handstand on the beach at sunset ${v}`,
+          v,
+        );
+        d.prepare(
+          `INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, probe, state, created_by, created_at)
+           VALUES (?, ?, 1, ?, 1, ?, '{"duration":5,"vcodec":"h264"}', 'ready', 'local', 1)`,
+        ).run(v, `a_${v}`, `k/${v}`, v);
+        enqueueJob(d, "lib_a", v, "embed", "local");
+      }
+      const lane = LANES.find((l) => l.name === "ai")!.kinds;
+      const ticks = [tick(Date.now(), lane), tick(Date.now(), lane)];
+      expect(await Promise.race([ticks[1], new Promise((r) => setTimeout(() => r("waiting"), 300))])).toBe(false);
+      expect(running()).toEqual(["e1"]);
+      free();
+      await Promise.all([...ticks, held]);
+    } finally {
+      free?.();
+      globalThis.fetch = net;
+      delete process.env.CT_LOCAL;
+    }
+  });
+
   it("this computer claims one transcript at a time; a key's service takes several at once", async () => {
     process.env.CT_LOCAL = "1";
     let free!: () => void;
