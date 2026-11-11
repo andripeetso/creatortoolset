@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getClipSnapshot, useStudio } from "./store";
+import { getClipSnapshot, playerRef, useStudio } from "./store";
 import { initPersistence, loadSession, serverCopyChoice, takeServerCopy, untouched, type OpenProject } from "./persist";
 import { openedInSync } from "./local-recovery";
 import { DEFAULT_STYLE, type Cue, type Word } from "./types";
@@ -181,6 +181,46 @@ describe("an open project and the captions the server makes for it", () => {
     expect(await takeServerCopy(ID)).toBe(true);
     expect(useStudio.getState()).toMatchObject({ currentTime: 1.2, projectLibraryOpen: true, videoUrl: `/api/projects/${ID}/clips/c1/video` });
     expect(useStudio.getState().cues).toHaveLength(2);
+  });
+
+  it("a video the player could not load (asked for before its editing copy existed) is asked for again; one that plays is left alone", async () => {
+    const address = `/api/projects/${ID}/clips/c1/video`;
+    playerRef.video = { error: null, readyState: 4 } as HTMLVideoElement;
+    expect(await takeServerCopy(ID)).toBe(false);
+    expect(useStudio.getState()).toMatchObject({ videoUrl: address, clips: [{ videoUrl: address }] });
+    playerRef.video = { error: { code: 4 }, readyState: 0 } as HTMLVideoElement;
+    serverMakesCaptions();
+    expect(await takeServerCopy(ID)).toBe(true);
+    const s = useStudio.getState();
+    expect(s.videoUrl).toMatch(/\/video\?ready=\d+$/);
+    expect(s.clips[0]!.videoUrl).toBe(s.videoUrl);
+    expect(s.cues).toHaveLength(2);
+    playerRef.video = null;
+  });
+
+  it("a save waiting for another project is neither counted as this project's nor dropped", async () => {
+    // a change in a project, then at once another project opened (the list does not wait for the save)
+    useStudio.getState().setStyle({ fontFamily: "Poppins" });
+    const other = useStudio.getState();
+    useStudio.getState().reset();
+    openedInSync.id = "22222222-2222-4222-8222-222222222222";
+    useStudio.setState({ ...other, projectId: "22222222-2222-4222-8222-222222222222", style: other.style, localSaveState: "saved", saveState: "saved" });
+    vi.stubGlobal("fetch", async (url: string | URL, init?: RequestInit) => {
+      const u = String(url);
+      if (u === `/api/projects/${ID}/sync`) {
+        server.puts.push(JSON.parse(String(init!.body)) as Put);
+        return Response.json({ ok: true, revision: ++server.revision });
+      }
+      if (u === "/api/projects/22222222-2222-4222-8222-222222222222") return Response.json({ id: "22222222-2222-4222-8222-222222222222", name: "Other", revision: 1, fps: null, model: null, autoCadence: null, script: "", clips: [{ id: "c1", name: "other.mp4", duration: 2.4, words: said, originalWords: said, cues: lines }] });
+      throw new Error(`No such route in this test: ${u}`);
+    });
+    // the other project is clean and one save behind: it takes the server's copy whole
+    expect(await takeServerCopy("22222222-2222-4222-8222-222222222222")).toBe(true);
+    expect(useStudio.getState()).toMatchObject({ fileName: "Other", serverRevision: 1 });
+    // and the first project's change is still sent
+    await debounce();
+    expect(server.puts).toHaveLength(1);
+    expect(server.puts[0]).toMatchObject({ baseRevision: 0, snapshot: { clip: { style: { fontFamily: "Poppins" } } } });
   });
 
   it("no words were heard: the project takes that copy too, so its next save is accepted", async () => {

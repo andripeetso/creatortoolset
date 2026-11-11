@@ -5,6 +5,7 @@ import {
   getClipSnapshot,
   isEditorBusy,
   loadClipSlots,
+  playerRef,
   setClipRemovedHook,
   setClipReorderedHook,
   setSaveClipHook,
@@ -332,6 +333,7 @@ export async function takeServerCopy(id: string): Promise<boolean> {
     return s.projectId === id ? s : null;
   };
   const before = open();
+  if (before) askForVideoAgain(before);
   if (!before || !untouched(before)) return false;
   // A save on its way lands first (the server judges it), and the read comes after it: a read that started before a
   // save would bring the older copy. A save still waiting is not sent early: with the captions one save ahead it
@@ -351,7 +353,7 @@ export async function takeServerCopy(id: string): Promise<boolean> {
   const transcript = p.clips.some(
     (c) => (c.cues?.length ?? 0) > 0 || (c.words?.length ?? 0) > 0 || (Array.isArray(c.originalWords) && !getClipSnapshot(c.id)?.originalWords),
   );
-  const choice = serverCopyChoice(s, !!pendingSave, { revision: p.revision ?? 0, transcript });
+  const choice = serverCopyChoice(s, pendingFor === id, { revision: p.revision ?? 0, transcript });
   if (choice === "keep") return false;
   if (choice === "take") {
     applyServerProject(id, p, s);
@@ -359,9 +361,12 @@ export async function takeServerCopy(id: string): Promise<boolean> {
   }
   // "join". What waits to be sent was built before the captions: it is dropped, and the project as it is after the
   // join is sent instead (the changes below are edits to the autosave).
-  if (saveTimer) clearTimeout(saveTimer);
-  saveTimer = null;
-  pendingSave = null;
+  if (pendingFor === id) {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = null;
+    pendingSave = null;
+    pendingFor = null;
+  }
   applyServerProject(id, p, s);
   bumpTextIdCounter(s.texts.reduce((a, t) => Math.max(a, t.id + 1), 0));
   bumpPosIdCounter(s.posSegments.reduce((a, g) => Math.max(a, g.id + 1), 0));
@@ -380,6 +385,18 @@ export async function takeServerCopy(id: string): Promise<boolean> {
   // their look through the page's own action, so the lines are laid out for their box as if they had chosen it now
   if (JSON.stringify(s.style) !== JSON.stringify(useStudio.getState().style)) useStudio.getState().setStyle(s.style);
   return true;
+}
+
+/**
+ * The open clip's video, when the player could not load it: the page asked before the editing copy existed (a video
+ * sent from the assistant's chat is a project at once, its editing copy is built behind it), and a video element
+ * never asks again by itself. A new address makes it ask; the server says when the copy is in (a "projects" notice).
+ */
+function askForVideoAgain(s: StudioSnapshot): void {
+  if (!s.projectId || !s.activeClipId || !s.videoUrl || s.videoUrl.startsWith("blob:") || !playerRef.video?.error) return;
+  const videoUrl = `/api/projects/${s.projectId}/clips/${s.activeClipId}/video?ready=${Date.now()}`;
+  patchClip(s.activeClipId, { videoUrl });
+  useStudio.setState({ videoUrl });
 }
 
 /**
@@ -706,6 +723,8 @@ async function saveClip(clipId: string): Promise<void> {
 // project even if the user switches projects before the timer fires
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingSave: (() => Promise<void>) | null = null;
+// the project that waiting save is for (another one can be open by the time it is sent)
+let pendingFor: string | null = null;
 // the project the autosave last saw (initPersistence): a project that differs was just opened, not edited
 let lastProject: string | null = null;
 
@@ -713,6 +732,7 @@ function scheduleSave(s: StudioSnapshot): void {
   const id = s.projectId!;
   const payload = buildPayload(s);
   pendingSave = () => putData(id, payload);
+  pendingFor = id;
   // Mark dirty immediately, including during the debounce window. Otherwise
   // the UI can falsely say SAVED for 1.2 seconds after every edit.
   useStudio.setState({ saveState: "saving" });
@@ -720,6 +740,7 @@ function scheduleSave(s: StudioSnapshot): void {
   saveTimer = setTimeout(() => {
     const run = pendingSave;
     pendingSave = null;
+    pendingFor = null;
     if (run) void run();
   }, 1200);
 }
@@ -732,6 +753,7 @@ export async function flushPendingSave(): Promise<void> {
   }
   const run = pendingSave;
   pendingSave = null;
+  pendingFor = null;
   if (run) await run();
   const id = useStudio.getState().projectId;
   if (id) await syncTails.get(id);
