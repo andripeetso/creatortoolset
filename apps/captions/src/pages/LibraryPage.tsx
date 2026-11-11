@@ -1,16 +1,23 @@
 import { useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router";
-import { AudioLines, Quote, FileText, Image as ImageIcon, Upload, Video } from "lucide-react";
+import { useNavigate, useSearchParams } from "react-router";
+import { AudioLines, Quote, FileText, Image as ImageIcon, Search, Upload, Video } from "lucide-react";
 import type { AssetCard, AssetKind, AssetPage, Collection, LibrarySummary, SearchHit, WatchStatus } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
+import { BrowseBar, NewFolderButton, TrashLink } from "@/components/browse/Bar";
+import { askFolderName, askRename } from "@/components/browse/browse";
+import { FolderCard, FolderRow, type FolderProps } from "@/components/browse/Folder";
+import { FolderGrid } from "@/components/browse/Grid";
+import { FolderTrail } from "@/components/browse/ToolFolders";
+import { byName, persistSort, storedSort, useBrowseView } from "@/components/browse/views";
 import { FootageFolderCard } from "@/components/FootageFolderCard";
 import { BIG_DROP, BigUploadDialog, ClipStage, LibraryProgressBar, MovingBar } from "@/components/LibraryProcessing";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
+import { confirmDialog } from "@/lib/dialogs";
 import {
   createCollection,
   createLibrary,
+  deleteCollection,
   getAsset,
   getWatch,
   isFinals,
@@ -19,6 +26,7 @@ import {
   listLibraries,
   listSources,
   changeFolderItems,
+  renameCollection,
   searchLibrary,
   setTrashed,
   uploadFile,
@@ -31,15 +39,18 @@ import { LibraryFacetBar } from "@/components/LibraryFacetBar";
 import { libraryBadges, libraryFacets } from "@/lib/library-slots";
 import { AiBadge, ClipPanel } from "./library/ClipPanel";
 import { ClipView } from "./library/ClipView";
-import { LibraryFolders } from "./library/LibraryFolders";
+import { folderTo, foldersAt, holdsClips, moveOptions, moveSteps, trailOf } from "./library/folders";
 import { LibrarySettings } from "./library/LibrarySettings";
 
 /**
  * Media Library (/library): the person's raw materials, one library's footage as a grid of 16:9 cards. An empty library
- * is one screen: what the library is for and the folder to choose (FootageFolderCard), upload as the second way. Above
- * the grid: the search, the kind, the folders and the settings button, then one row to narrow (A-roll and B-roll first),
- * then the progress while there is any. Search runs over titles and tags (FTS5, api/library/query.ts), and over what is
- * said in the clips (api/library/search.ts): a line said opens the preview at its second. A card opens its preview.
+ * is one screen: what the library is for and the folder to choose (FootageFolderCard), upload as the second way. Its
+ * folders (the library's collections, ./library/folders.ts) are the app's folder cards and rows (components/browse/):
+ * the top level shows the folders and the clips in none, `?f=` opens one, `?trash=1` the Trash. Above them: the trail
+ * back up, the bar (search, sort, cards or list, the kind, the settings button), then one row to narrow (A-roll and
+ * B-roll first), then the progress while there is any. Search looks in the whole library from the top, in the folder
+ * when one is open: titles and tags (FTS5, api/library/query.ts) and what is said in the clips (api/library/search.ts),
+ * where a line said opens the preview at its second. A card opens its preview; dragged onto a folder it moves there.
  * Uploads go in one at a time, from the tray. A card being prepared updates when the server finishes it (the change
  * stream), without polling. Finals has its own tool (/finals): its folder is not shown here.
  */
@@ -74,6 +85,11 @@ interface Upload {
   final?: boolean; // refused for good (too large for this server): no Retry
 }
 
+/** what a clip carries when it is dragged onto a folder */
+const DRAG = "application/x-ct-media-item";
+const SORTS = ["new", "name"] as const;
+const SORT_KEY = "library:sort";
+
 const clock = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -96,7 +112,9 @@ export default function LibraryPage() {
   const [startAt, setStartAt] = useState(0); // the second the preview opens at (a line said in it)
   const [found, setFound] = useState<{ hits: SearchHit[]; meaningGettingReady: boolean } | null>(null); // a search's answer
   const [error, setError] = useState<string | null>(null);
-  const [scope, setScope] = useState("all"); // "all", "trash", or a collection id
+  const [sort, setSort] = useState(() => storedSort(SORT_KEY, SORTS));
+  const [view, setView] = useBrowseView("media");
+  const navigate = useNavigate();
   const [source, setSource] = useState(""); // "" = this library, else a plug-in source's id (its cards only)
   const [sourceList, setSources] = useState<{ id: string; label: string }[] | null>(null); // null: not read yet
   const sources = sourceList ?? [];
@@ -110,18 +128,26 @@ export default function LibraryPage() {
   // Finals has its own tool (/finals reads this folder's pieces): it is kept, never shown or offered here
   const collections = (folderList.data ?? []).filter((c) => !isFinals(c));
   const reloadFolders = () => void folderList.refresh().catch((e) => setError(message(e)));
+  // the open folder (?f=), or the Trash (?trash=1); a folder that is gone is the top level once the folders are known
+  const [linked] = useSearchParams(); // also ?library=&asset= (the Video Cleaner's duplicate check links here)
+  const trash = linked.get("trash") === "1";
+  const asked = trash ? null : linked.get("f");
+  const open = asked && (!folderList.data || collections.some((c) => c.id === asked)) ? asked : null;
+  const openFolder = collections.find((c) => c.id === open);
+  const smart = openFolder?.kind === "smart" ? openFolder : undefined;
+  /** the plain folder open: clips move out of it, uploads and new folders go in it */
+  const into = openFolder && holdsClips(openFolder) ? openFolder.id : null;
   // the footage folders (the owner's view; anyone else gets an error and no settings): an empty grid says whether clips
   // are on their way from one
   const watchLoad = useCachedLoad<WatchStatus>(libId ? `/api/library/${libId}/watch` : null, () => getWatch(libId!));
   const watch = watchLoad.data;
   const adding = !!watch?.folders.some((f) => f.adding > 0);
-  const [linked] = useSearchParams(); // ?library=&asset= (the Video Cleaner's duplicate check links here)
 
   useEffect(() => {
     const lib = linked.get("library");
     const asset = linked.get("asset");
     if (lib) setLibraryId(lib);
-    if (lib && asset) getAsset(lib, asset).then((a) => open(a), (e) => setError(message(e)));
+    if (lib && asset) getAsset(lib, asset).then((a) => openClip(a), (e) => setError(message(e)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [linked]);
 
@@ -130,8 +156,9 @@ export default function LibraryPage() {
     return () => clearTimeout(t);
   }, [q]);
 
-  // the first page for the current library, search, kind and folder, kept per view; "Load more" pages add to it
-  const folder = scope === "all" ? {} : scope === "trash" ? { trashed: true } : { collectionId: scope };
+  // the first page for the current library, search, kind and folder, kept per view; "Load more" pages add to it. The top
+  // level lists the clips in no folder
+  const folder = trash ? { trashed: true } : open ? { collectionId: open } : { unfiled: true };
   const query = { q: term || undefined, kind: kind === "all" ? undefined : [kind], facets, ...folder, source: source || undefined, roll: roll ?? undefined };
   const pageKey = libId ? `/api/library/${libId}/assets?view=${encodeURIComponent(JSON.stringify(query))}` : null;
   const first = useCachedLoad<AssetPage>(pageKey, () => listAssets(libId!, query));
@@ -140,7 +167,7 @@ export default function LibraryPage() {
   const extra = more && more.key === pageKey ? more : null;
   const shownIds = new Set(first.data?.items.map((a) => a.id));
   // while a term is typed the grid is the search's own answer, best first: by words, by what is said, or by meaning
-  const searching = !!term && scope !== "trash" && !source;
+  const searching = !!term && !trash && !source;
   const items = searching
     ? [...new Map((found?.hits ?? []).map((h) => [h.asset.id, h.asset])).values()]
     : [...(first.data?.items ?? []), ...(extra?.items.filter((a) => !shownIds.has(a.id)) ?? [])];
@@ -148,19 +175,30 @@ export default function LibraryPage() {
   const next = searching ? undefined : extra ? extra.next : first.data?.next;
   // A-roll / B-roll is the server's filter (the whole library, not only the pages loaded); the row shows once clips are sorted
   const hasRoll = items.some((a) => rollOf(a));
-  const shown = items;
+  // ponytail: Name orders the pages loaded so far (the server pages newest first); a server-side order when a folder
+  // holds more than a page or two
+  const shown = sort === "name" && !searching ? [...items].sort((x, y) => byName({ name: x.title }, { name: y.title })) : items;
   const narrowed = !!term || kind !== "all" || !!roll || Object.values(facets).some((v) => v.length) || !!source;
+  const shownFolders = trash || source ? [] : foldersAt(collections, open, term);
 
-  // an empty library is one screen (what it is for, the folder to choose): nothing in it, nothing in its trash, no
-  // footage folder, no plug-in source, no upload on its way. Until all of that is known the grid's frame stands.
-  const emptyView = scope === "all" && !narrowed && first.data?.items.length === 0;
+  // an empty library is one screen (what it is for, the folder to choose): nothing in it, no folder, nothing in its
+  // trash, no footage folder, no plug-in source, no upload on its way. Until all of that is known the grid's frame stands.
+  const foldersKnown = !!folderList.data || !!folderList.error;
+  const emptyView = !open && !trash && !narrowed && first.data?.items.length === 0 && !collections.length;
   const trashPeek = useCachedLoad<AssetPage>(emptyView && libId ? `/api/library/${libId}/assets?view=trash-peek` : null, () =>
     listAssets(libId!, { trashed: true, limit: 1 }),
   );
   const watchKnown = watch !== null || !!watchLoad.error;
   const firstScreen =
-    emptyView && watchKnown && sourceList?.length === 0 && !watch?.folders.length && !uploads.length && !asking && trashPeek.data?.items.length === 0;
-  const settling = emptyView && !firstScreen && (!watchKnown || !trashPeek.data || !sourceList); // still finding out: the frame, not a wrong screen
+    emptyView &&
+    foldersKnown &&
+    watchKnown &&
+    sourceList?.length === 0 &&
+    !watch?.folders.length &&
+    !uploads.length &&
+    !asking &&
+    trashPeek.data?.items.length === 0;
+  const settling = emptyView && !firstScreen && (!foldersKnown || !watchKnown || !trashPeek.data || !sourceList); // still finding out: the frame, not a wrong screen
 
   // the plug-in sources this account may browse here (none unless a plug-in brings one)
   useEffect(() => {
@@ -170,18 +208,25 @@ export default function LibraryPage() {
       .catch(() => setSources([]));
   }, [libId]);
 
-  // the search: the clips found for the grid, and the lines said in them
+  // the search: the clips found for the grid, and the lines said in them. In a saved search it narrows that search: its
+  // words, kind and roll with the new ones
   useEffect(() => {
     setFound(null);
     if (!libId || !searching) return;
     let live = true;
-    searchLibrary(libId, term, { facets, kind: kind === "all" ? undefined : kind, collectionId: scope === "all" ? undefined : scope, roll: roll ?? undefined })
+    const saved = smart?.query;
+    searchLibrary(libId, saved?.q ? `${saved.q} ${term}` : term, {
+      facets,
+      kind: kind === "all" ? saved?.kind?.[0] : kind,
+      collectionId: smart ? undefined : (open ?? undefined),
+      roll: roll ?? saved?.roll,
+    })
       .then((r) => live && setFound(r))
       .catch((e) => live && (setFound({ hits: [], meaningGettingReady: false }), setError(message(e))));
     return () => void (live = false);
-  }, [libId, term, scope, facets, kind, roll, searching]);
+  }, [libId, term, open, smart, facets, kind, roll, searching]);
 
-  const open = (a: AssetCard, at = 0) => {
+  const openClip = (a: AssetCard, at = 0) => {
     // a plug-in source's item (external ref) has no library asset to open here yet: its own page holds it
     if (a.id.startsWith("ext_")) return;
     setStartAt(at);
@@ -231,7 +276,7 @@ export default function LibraryPage() {
 
   // one file after another: the server's disk and the phone's data are both easier on that
   const start = (files: File[], here = false) => {
-    const folderId = collections.find((c) => c.id === scope && c.kind === "manual")?.id;
+    const folderId = into ?? undefined;
     const added = files.map((file) => ({ key: ++keys.current, file, sent: 0, folderId, status: "waiting" as const, inPlace: here }));
     setUploads((prev) => [...prev, ...added]);
     void (async () => {
@@ -249,32 +294,85 @@ export default function LibraryPage() {
     }
   };
 
-  const newFolder = async (name: string) => {
-    if (!libId) return;
-    try {
-      await createCollection(libId, { name: name.slice(0, 80) });
-      reloadFolders();
-    } catch (e) {
-      setError(message(e));
-      throw e;
-    }
+  // a new folder goes in the open one
+  const newFolder = async () => {
+    const name = await askFolderName();
+    if (name && libId) await createCollection(libId, { name, ...(into ? { parentId: into } : {}) }).then(reloadFolders, (e) => setError(message(e)));
+  };
+  const renameFolder = async (c: Collection) => {
+    const name = await askRename("Rename folder", c.name);
+    if (name && libId) await renameCollection(libId, c.id, name).then(reloadFolders, (e) => setError(message(e)));
+  };
+  // the clips in it stay in the library (api/library/collections.ts): they and its folders move up one level
+  const removeFolder = async (c: Collection) => {
+    const yes = await confirmDialog({
+      title: `Delete the folder “${c.name}”?`,
+      ...(holdsClips(c) ? { body: "What is in it moves up one level." } : {}),
+      ok: "Delete folder",
+      danger: true,
+    });
+    if (!yes || !libId) return;
+    await deleteCollection(libId, c.id).then(
+      () => {
+        reloadFolders();
+        reload();
+      },
+      (e) => setError(message(e)),
+    );
   };
 
-  // the current search and kind, kept as a smart folder that runs them again
+  // clips dragged onto a folder or moved from their window: into that folder, out of the one open
+  const move = async (ids: string[], to: string | null) => {
+    if (!libId) return;
+    const step = moveSteps(into, to);
+    try {
+      if (step.add) await changeFolderItems(libId, step.add, ids, true);
+      if (step.remove) await changeFolderItems(libId, step.remove, ids, false);
+    } catch (e) {
+      setError(message(e));
+    }
+    reload();
+    reloadFolders();
+  };
+
+  // the search on screen at the top level, kept as a saved search that runs it again (in a folder it would not be the same)
+  const canSave = searching && !open && !Object.values(facets).some((v) => v.length);
   const saveSearch = async () => {
     if (!libId || !term) return;
     try {
       const c = await createCollection(libId, {
         name: term.slice(0, 80),
         kind: "smart",
-        query: { q: term, kind: kind === "all" ? undefined : [kind] },
+        query: { q: term, kind: kind === "all" ? undefined : [kind], roll: roll ?? undefined },
       });
       reloadFolders();
-      setScope(c.id);
+      setQ("");
+      navigate(folderTo(c.id));
     } catch (e) {
       setError(message(e));
     }
   };
+
+  const folderProps = (c: Collection): FolderProps => ({
+    name: c.name,
+    to: folderTo(c.id),
+    icon: c.kind === "smart" ? Search : undefined,
+    meta: holdsClips(c) ? (c.count ?? 0) + collections.filter((x) => x.parentId === c.id).length : undefined,
+    drop: holdsClips(c) ? { type: DRAG, onItems: (ids) => void move(ids, c.id), label: "Move into this folder" } : undefined,
+    onRename: () => void renameFolder(c),
+    onDelete: () => void removeFolder(c),
+  });
+  // a library clip can be dragged onto a folder (not from the Trash, not a plug-in source's item)
+  const dragOf = (a: AssetCard) =>
+    trash || a.id.startsWith("ext_")
+      ? undefined
+      : {
+          draggable: true,
+          onDragStart: (e: React.DragEvent) => {
+            e.dataTransfer.setData(DRAG, a.id);
+            e.dataTransfer.effectAllowed = "move";
+          },
+        };
 
   const moveAsset = async (a: AssetCard, trash: boolean) => {
     if (!libId) return;
@@ -282,16 +380,6 @@ export default function LibraryPage() {
       await setTrashed(libId, a.id, trash);
       setPreview(null);
       reload();
-    } catch (e) {
-      setError(message(e));
-    }
-  };
-
-  const addToFolder = async (a: AssetCard, folderId: string) => {
-    if (!libId || !folderId) return;
-    try {
-      await changeFolderItems(libId, folderId, [a.id], true);
-      reloadFolders();
     } catch (e) {
       setError(message(e));
     }
@@ -314,11 +402,15 @@ export default function LibraryPage() {
   return (
     <div className="flex min-h-dvh flex-col">
       <AppBar tool="Media Library" trail={library?.name}>
-        {library && !firstScreen && (
-          <Button size="sm" onClick={chooseFiles}>
-            <Upload className="h-4 w-4" />
-            Upload
-          </Button>
+        {library && !firstScreen && !trash && (
+          <>
+            {!open && <TrashLink to="/library?trash=1" title="Trash" />}
+            {!smart && <NewFolderButton onClick={() => void newFolder()} />}
+            <Button size="sm" onClick={chooseFiles}>
+              <Upload className="h-4 w-4" />
+              Upload
+            </Button>
+          </>
         )}
       </AppBar>
       {asking && libId && (
@@ -376,20 +468,34 @@ export default function LibraryPage() {
 
         {library && !firstScreen && (
           <>
-            <div className="flex flex-wrap items-center gap-2">
-              <Input
-                type="search"
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="Search titles, tags and what is said"
-                aria-label="Search"
-                className="min-w-0 flex-1 basis-full sm:basis-72"
-              />
+            <FolderTrail state={{ open: trash ? "trash" : open, trail: trailOf(collections, open, trash), to: folderTo }} top={library.name} />
+            <BrowseBar
+              search={{ value: q, onChange: setQ, placeholder: "Search clips and what is said" }}
+              sort={{
+                value: sort,
+                onChange: (v) => {
+                  setSort(v);
+                  persistSort(SORT_KEY, v);
+                },
+                label: "Sort clips",
+                options: [
+                  { id: "new", label: "Newest" },
+                  { id: "name", label: "Name" },
+                ],
+              }}
+              view={{ value: view, onChange: setView }}
+            >
+              {canSave && (
+                <Button size="sm" variant="ghost" className="h-8" onClick={() => void saveSearch()}>
+                  <Search className="h-4 w-4" />
+                  Save this search as a folder
+                </Button>
+              )}
               <select
                 aria-label="Kind"
                 value={kind}
                 onChange={(e) => setKind(e.target.value as AssetKind | "all")}
-                className="h-8 rounded-md border border-zinc-500/30 bg-transparent px-2 text-sm"
+                className="h-8 rounded-md border border-zinc-800 bg-transparent px-2 text-[12px] text-zinc-400 outline-none hover:text-zinc-200"
               >
                 {KINDS.map((k) => (
                   <option key={k.value} value={k.value}>
@@ -397,23 +503,16 @@ export default function LibraryPage() {
                   </option>
                 ))}
               </select>
-              <LibraryFolders
-                folders={collections}
-                open={scope}
-                onOpen={setScope}
-                onMake={newFolder}
-                onSaveSearch={term ? () => void saveSearch() : undefined}
-              />
               {watch && (
                 <LibrarySettings
                   library={library}
                   watch={watch}
-                  folders={collections.filter((c) => c.kind === "manual")}
+                  folders={collections.filter(holdsClips)}
                   onChange={(l) => setLibraries((all) => all?.map((x) => (x.id === l.id ? l : x)) ?? all)}
                   onError={setError}
                 />
               )}
-            </div>
+            </BrowseBar>
 
             <div className="flex flex-wrap items-center gap-1.5 empty:hidden">
               {(hasRoll || roll) && (
@@ -482,7 +581,7 @@ export default function LibraryPage() {
                   <button
                     key={`${h.asset.versionId}-${i}`}
                     type="button"
-                    onClick={() => open(h.asset, h.seconds)}
+                    onClick={() => openClip(h.asset, h.seconds)}
                     className="flex items-baseline gap-2 rounded px-1 py-1 text-left text-sm hover:bg-zinc-500/10"
                   >
                     <Quote className="h-3.5 w-3.5 shrink-0 self-center text-zinc-500" />
@@ -495,15 +594,27 @@ export default function LibraryPage() {
             )}
 
             {(searching ? !found : !first.data) || settling ? (
-              <TileFrame />
-            ) : shown.length > 0 ? (
-              <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-                {shown.map((a) => (
-                  <li key={a.id}>
-                    <AssetTile asset={a} onOpen={() => open(a)} />
-                  </li>
-                ))}
-              </ul>
+              view === "list" ? <RowFrame /> : <TileFrame />
+            ) : shown.length > 0 || shownFolders.length > 0 ? (
+              view === "list" ? (
+                <div className="flex flex-col gap-1.5">
+                  {shownFolders.map((c) => (
+                    <FolderRow key={c.id} {...folderProps(c)} />
+                  ))}
+                  {shown.map((a) => (
+                    <AssetRow key={a.id} asset={a} onOpen={() => openClip(a)} drag={dragOf(a)} />
+                  ))}
+                </div>
+              ) : (
+                <FolderGrid size="small">
+                  {shownFolders.map((c) => (
+                    <FolderCard key={c.id} {...folderProps(c)} covers={(c.covers ?? []).map((src) => ({ src }))} />
+                  ))}
+                  {shown.map((a) => (
+                    <AssetTile key={a.id} asset={a} onOpen={() => openClip(a)} drag={dragOf(a)} />
+                  ))}
+                </FolderGrid>
+              )
             ) : (
               libraries !== null && (
                 <p className="py-16 text-center text-sm text-zinc-500">
@@ -511,9 +622,9 @@ export default function LibraryPage() {
                     ? "No matches."
                     : adding
                       ? null // the line above the grid says how many are in
-                      : scope === "trash"
+                      : trash
                         ? "The trash is empty."
-                        : scope !== "all"
+                        : open
                           ? "Nothing in this folder yet."
                           : watch?.folders.length
                             ? "No videos in your folder yet."
@@ -541,12 +652,12 @@ export default function LibraryPage() {
               libraryId={libId}
               asset={preview}
               startAt={startAt}
-              inTrash={scope === "trash"}
-              folders={collections.filter((c) => c.kind === "manual")}
-              onTrash={(trash) => void moveAsset(preview, trash)}
-              onPrev={((i) => (i > 0 ? () => open(items[i - 1]!) : undefined))(items.findIndex((x) => x.id === preview.id))}
-              onNext={((i) => (i >= 0 && i < items.length - 1 ? () => open(items[i + 1]!) : undefined))(items.findIndex((x) => x.id === preview.id))}
-              onAddToFolder={(id) => void addToFolder(preview, id)}
+              inTrash={trash}
+              moveTo={moveOptions(collections, into)}
+              onTrash={(t) => void moveAsset(preview, t)}
+              onPrev={((i) => (i > 0 ? () => openClip(shown[i - 1]!) : undefined))(shown.findIndex((x) => x.id === preview.id))}
+              onNext={((i) => (i >= 0 && i < shown.length - 1 ? () => openClip(shown[i + 1]!) : undefined))(shown.findIndex((x) => x.id === preview.id))}
+              onMove={(id) => move([preview.id], id)}
               onSaved={(a) => {
                 setPreview(a);
                 const fix = (all: AssetCard[]) => all.map((x) => (x.id === a.id ? { ...x, description: a.description, tags: a.tags, aiTags: a.aiTags } : x));
@@ -557,6 +668,17 @@ export default function LibraryPage() {
             />
           )}
       </ClipView>
+    </div>
+  );
+}
+
+/** The list view's rows before its list is known, their height: nothing moves when the list arrives. */
+function RowFrame() {
+  return (
+    <div aria-hidden="true" className="flex flex-col gap-1.5">
+      {Array.from({ length: 6 }, (_, i) => (
+        <div key={i} className="h-[58px] rounded-lg border border-zinc-800 bg-zinc-900/50" />
+      ))}
     </div>
   );
 }
@@ -579,11 +701,13 @@ function TileFrame() {
  * One clip. Its picture shows the moment there is one; before that a clip being prepared says so, quietly and moving
  * (never amber: amber is for what needs the person). A failed clip says why; a missing one (its drive unplugged) says so.
  */
-function AssetTile({ asset: a, onOpen }: { asset: AssetCard; onOpen: () => void }) {
+type Drag = { draggable: boolean; onDragStart: (e: React.DragEvent) => void };
+
+function AssetTile({ asset: a, onOpen, drag }: { asset: AssetCard; onOpen: () => void; drag?: Drag }) {
   const Icon = KIND_ICON[a.kind];
   const preparing = a.state === "processing" && !a.thumbUrl;
   return (
-    <button type="button" onClick={onOpen} data-state={a.state} className="group flex w-full flex-col gap-1.5 text-left">
+    <button type="button" onClick={onOpen} data-state={a.state} {...drag} className="group flex w-full min-w-0 flex-col gap-1.5 text-left">
       <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-zinc-900 ring-1 ring-zinc-500/20 transition group-hover:ring-zinc-400/60">
         {a.thumbUrl ? (
           <img src={a.thumbUrl} alt="" loading="lazy" className={cn("h-full w-full object-cover", a.state === "missing" && "opacity-40")} />
@@ -622,6 +746,34 @@ function AssetTile({ asset: a, onOpen }: { asset: AssetCard; onOpen: () => void 
           {a.description.text}
         </span>
       )}
+    </button>
+  );
+}
+
+/** One clip in the list view: its picture, name, the step running on it and its length, as a folder's row. */
+function AssetRow({ asset: a, onOpen, drag }: { asset: AssetCard; onOpen: () => void; drag?: Drag }) {
+  const Icon = KIND_ICON[a.kind];
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      data-state={a.state}
+      {...drag}
+      className="flex w-full items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-2 text-left transition-colors hover:border-violet-500/50"
+    >
+      <div className="flex h-10 w-16 shrink-0 items-center justify-center overflow-hidden rounded bg-zinc-950 text-zinc-600">
+        {a.thumbUrl ? <img src={a.thumbUrl} alt="" loading="lazy" className={cn("h-full w-full object-cover", a.state === "missing" && "opacity-40")} /> : <Icon className="h-4 w-4" />}
+      </div>
+      <span className="min-w-0 flex-1 truncate text-sm">{a.title}</span>
+      {a.state === "missing" ? (
+        <span className="flex shrink-0 items-center gap-1.5 text-xs text-zinc-500">
+          <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+          File not found
+        </span>
+      ) : (
+        <ClipStage card={a} className="shrink-0" />
+      )}
+      {a.durationS !== undefined && <span className="shrink-0 font-mono text-[11px] text-zinc-500">{clock(a.durationS)}</span>}
     </button>
   );
 }

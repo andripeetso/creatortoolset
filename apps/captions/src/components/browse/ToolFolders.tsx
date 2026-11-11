@@ -50,7 +50,7 @@ export function ToolFolderRows({ state }: { state: ToolFoldersState }) {
 }
 
 /** Inside a folder: the way back up, the top first. */
-export function FolderTrail({ state, top }: { state: ToolFoldersState; top: string }) {
+export function FolderTrail({ state, top }: { state: Pick<ToolFoldersState, "open" | "to"> & { trail: { id: string; name: string }[] }; top: string }) {
   if (!state.open) return null;
   const up = state.trail.slice(0, -1);
   return (

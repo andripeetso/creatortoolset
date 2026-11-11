@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router";
-import { Folder as FolderIcon, Trash2 } from "lucide-react";
+import { Folder as FolderIcon, Trash2, type LucideIcon } from "lucide-react";
 import { Picture } from "@/components/Picture";
 import {
   ContextMenu,
@@ -30,6 +30,8 @@ export interface FolderProps {
   deleteLabel?: string;
   /** The tool's own menu items, after Rename (ContextMenuItem). */
   menu?: ReactNode;
+  /** Its sign in place of the folder (a saved search's magnifier). */
+  icon?: LucideIcon;
 }
 
 export interface FolderDrop {
@@ -115,6 +117,7 @@ export interface Cover {
 export function FolderCard({ covers, aspect = "video", ...p }: FolderProps & { covers: Cover[]; aspect?: "video" | "portrait" }) {
   const { over, handlers } = useFolderDrop(p.drop);
   const shown = covers.slice(0, 4);
+  const Icon = p.icon ?? FolderIcon;
   return (
     <FolderMenu {...p}>
       <Link
@@ -141,7 +144,7 @@ export function FolderCard({ covers, aspect = "video", ...p }: FolderProps & { c
               ))}
             </div>
           ) : (
-            <FolderIcon className="absolute inset-0 m-auto h-10 w-10 text-zinc-700" />
+            <Icon className="absolute inset-0 m-auto h-10 w-10 text-zinc-700" />
           )}
           {over && (
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-violet-950/70 text-sm font-medium">
@@ -150,7 +153,7 @@ export function FolderCard({ covers, aspect = "video", ...p }: FolderProps & { c
           )}
         </div>
         <div className="flex items-center gap-2 px-3.5 py-3">
-          <FolderIcon className="h-4 w-4 shrink-0 text-violet-400" />
+          <Icon className="h-4 w-4 shrink-0 text-violet-400" />
           <p className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-100">{p.name}</p>
           {p.meta !== undefined && <span className="text-xs tabular-nums text-zinc-500">{p.meta}</span>}
         </div>
@@ -162,6 +165,7 @@ export function FolderCard({ covers, aspect = "video", ...p }: FolderProps & { c
 /** The list view's folder: one row, the same menu and drops as its card. */
 export function FolderRow(p: FolderProps) {
   const { over, handlers } = useFolderDrop(p.drop);
+  const Icon = p.icon ?? FolderIcon;
   return (
     <FolderMenu {...p}>
       <Link
@@ -173,7 +177,7 @@ export function FolderRow(p: FolderProps) {
           over ? "border-violet-500 bg-violet-500/10" : "border-zinc-800 bg-zinc-900/50",
         )}
       >
-        <FolderIcon className="h-4 w-4 shrink-0 text-violet-400" />
+        <Icon className="h-4 w-4 shrink-0 text-violet-400" />
         <span className="min-w-0 flex-1 truncate text-sm text-zinc-100">{over ? p.drop?.label : p.name}</span>
         {p.meta !== undefined && <span className="shrink-0 text-[11px] tabular-nums text-zinc-500">{p.meta}</span>}
       </Link>

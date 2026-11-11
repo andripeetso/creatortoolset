@@ -91,6 +91,7 @@ export function listAssets(libraryId: string, q: SearchQuery & { cursor?: string
   if (q.collectionId) p.set("collectionId", q.collectionId);
   if (q.limit) p.set("limit", String(q.limit));
   if (q.trashed) p.set("trashed", "1");
+  if (q.unfiled) p.set("unfiled", "1");
   if (q.roll) p.set("roll", q.roll);
   if (q.cursor) p.set("cursor", q.cursor);
   // a plug-in source's cards instead of the library's (the Sources group in the sidebar)
@@ -120,7 +121,14 @@ export const createCollection = (libraryId: string, input: { name: string; kind?
   send<Collection>(`/api/library/${libraryId}/collections`, "POST", input);
 
 export const changeFolderItems = (libraryId: string, collectionId: string, assetIds: string[], add: boolean) =>
-  send<unknown>(`/api/library/${libraryId}/collections/${collectionId}/items`, add ? "POST" : "DELETE", { assetIds });
+  send<{ added?: number; removed?: number }>(`/api/library/${libraryId}/collections/${collectionId}/items`, add ? "POST" : "DELETE", { assetIds });
+
+export const renameCollection = (libraryId: string, collectionId: string, name: string) =>
+  send<Collection>(`/api/library/${libraryId}/collections/${collectionId}`, "PATCH", { name });
+
+/** The folder goes; what was in it moves up one level (api/library/collections.ts). Its clips stay in the library. */
+export const deleteCollection = (libraryId: string, collectionId: string) =>
+  send<{ ok: true }>(`/api/library/${libraryId}/collections/${collectionId}`, "DELETE");
 
 /** Into the trash (`trash` true) or back out of it. */
 export const setTrashed = (libraryId: string, assetId: string, trash: boolean) =>

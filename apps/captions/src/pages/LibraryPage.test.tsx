@@ -33,16 +33,23 @@ const server = vi.hoisted(() => ({
   trash: [] as unknown[],
   folders: [] as unknown[],
   watch: { allowed: true, folders: [] as unknown[], missing: 0 } as unknown,
+  /** what the page asked the listing for, and the folder changes it sent */
+  asked: [] as Record<string, unknown>[],
+  changed: [] as unknown[][],
 }));
 
 vi.mock("@/lib/library", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/library")>()),
   listLibraries: async () => [{ id: "lib_tiny", name: "Tiny", storage: "local", settings: { describe: true, embed: false } }],
   // the stand-in narrows by roll the way the server does (api/library/query.ts): the page asks, it does not filter
-  listAssets: async (_: string, q: { trashed?: boolean; roll?: "a" | "b" }) => ({
-    items: (q.trashed ? server.trash : server.items).filter((x) => !q.roll || (x as { roll?: string }).roll === q.roll),
-    next: null,
-  }),
+  listAssets: async (_: string, q: { trashed?: boolean; roll?: "a" | "b" }) => {
+    server.asked.push(q);
+    return { items: (q.trashed ? server.trash : server.items).filter((x) => !q.roll || (x as { roll?: string }).roll === q.roll), next: null };
+  },
+  changeFolderItems: async (...a: unknown[]) => {
+    server.changed.push(a);
+    return { added: 1 };
+  },
   listCollections: async () => server.folders,
   listSources: async () => [],
   getWatch: async () => server.watch,
@@ -59,6 +66,8 @@ beforeEach(() => {
   server.trash = [];
   server.folders = [];
   server.watch = { allowed: true, folders: [], missing: 0 };
+  server.asked = [];
+  server.changed = [];
 });
 afterEach(() => {
   act(() => root?.unmount());
@@ -67,13 +76,13 @@ afterEach(() => {
 });
 
 /** Renders the page and waits for its first effects (the library load) to settle. */
-async function mount(): Promise<HTMLElement> {
+async function mount(at = "/library"): Promise<HTMLElement> {
   const host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
     root!.render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={[at]}>
         <LibraryPage />
       </MemoryRouter>,
     );
@@ -114,7 +123,7 @@ describe("Media Library page", () => {
     expect(host.textContent).toContain("raw materials");
     expect(buttons(host)).toEqual(expect.arrayContaining(["Choose a folder", "Upload files"]));
     expect(buttons(host)).not.toContain("Skip");
-    expect(host.querySelector('input[type="search"]')).toBeNull();
+    expect(host.querySelector('[role="searchbox"]')).toBeNull();
     expect(host.querySelector('[aria-label="Kind"]')).toBeNull();
     expect(host.querySelector('[aria-label^="Library settings"]')).toBeNull();
     expect(host.querySelector('input[type="checkbox"], [role="switch"]')).toBeNull();
@@ -126,7 +135,7 @@ describe("Media Library page", () => {
     server.trash = [clip("gone")];
     const host = await mount();
     expect(host.textContent).not.toContain("Where are your videos?");
-    expect(host.querySelector('input[type="search"]')).not.toBeNull();
+    expect(host.querySelector('[role="searchbox"]')).not.toBeNull();
   });
 
   it("a footage folder with no clips yet says so, not the first screen", async () => {
@@ -204,5 +213,69 @@ describe("Media Library page", () => {
     const host = await mount();
     expect(host.textContent).toContain("Couldn't read this file");
     expect(host.textContent).toContain("File not found");
+  });
+});
+
+describe("Media Library folders", () => {
+  const folders = [
+    { id: "col_t", name: "Trip", parentId: null, kind: "manual", count: 1, covers: ["/api/library/media/v1/thumb"], createdBy: "admin" },
+    { id: "col_b", name: "Beach", parentId: "col_t", kind: "manual", count: 0, createdBy: "admin" },
+    { id: "col_s", name: "Apples", parentId: null, kind: "smart", query: { q: "apples" }, createdBy: "admin" },
+  ];
+  const link = (host: HTMLElement, name: string) => [...host.querySelectorAll("a")].find((a) => a.textContent?.includes(name));
+  /** a page item dropped on an element, as the browser hands it over */
+  const drop = (el: Element, id: string) => {
+    const e = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(e, "dataTransfer", { value: { types: ["application/x-ct-media-item"], getData: (t: string) => (t === "application/x-ct-media-item" ? id : ""), files: [] } });
+    el.dispatchEvent(e);
+  };
+
+  it("the top level shows its folders (saved searches last) and asks only for the clips in no folder", async () => {
+    server.folders = folders;
+    const host = await mount();
+    expect(link(host, "Trip")?.getAttribute("href")).toBe("/library?f=col_t");
+    expect(link(host, "Trip")?.querySelector("img")?.getAttribute("src")).toBe("/api/library/media/v1/thumb");
+    expect(link(host, "Beach")).toBeUndefined();
+    const names = [...host.querySelectorAll('a[href^="/library?f="]')].map((a) => a.textContent);
+    expect(names.findIndex((n) => n?.includes("Apples"))).toBeGreaterThan(names.findIndex((n) => n?.includes("Trip")));
+    expect(server.asked.at(-1)).toMatchObject({ unfiled: true });
+    expect(host.querySelector('a[aria-label="Trash"]')?.getAttribute("href")).toBe("/library?trash=1");
+    expect(buttons(host)).toContain("New folder");
+  });
+
+  it("a folder opens from the address with the trail back up and its own folders; a clip dropped on one moves there", async () => {
+    server.folders = folders;
+    const host = await mount("/library?f=col_t");
+    expect(host.querySelector('nav[aria-label="Folder"]')?.textContent).toBe("TinyTrip");
+    expect(link(host, "Beach")).toBeDefined();
+    expect(link(host, "Apples")).toBeUndefined();
+    expect(server.asked.at(-1)).toMatchObject({ collectionId: "col_t" });
+    await act(async () => drop(link(host, "Beach")!, "one"));
+    expect(server.changed).toEqual([
+      ["lib_tiny", "col_b", ["one"], true],
+      ["lib_tiny", "col_t", ["one"], false],
+    ]);
+  });
+
+  it("a saved search takes no drops and has no New folder inside it", async () => {
+    server.folders = folders;
+    const top = await mount();
+    await act(async () => drop(link(top, "Apples")!, "one"));
+    expect(server.changed).toEqual([]);
+    act(() => root?.unmount());
+    document.body.innerHTML = "";
+    const inside = await mount("/library?f=col_s");
+    expect(inside.querySelector('nav[aria-label="Folder"]')?.textContent).toBe("TinyApples");
+    expect(buttons(inside)).not.toContain("New folder");
+  });
+
+  it("the Trash opens from the address, under its own trail, with no folders", async () => {
+    server.folders = folders;
+    server.trash = [clip("gone")];
+    const host = await mount("/library?trash=1");
+    expect(host.querySelector('nav[aria-label="Folder"]')?.textContent).toBe("TinyTrash");
+    expect(link(host, "Trip")).toBeUndefined();
+    expect(host.textContent).toContain("Tiny Acrobatics gone");
+    expect(server.asked.at(-1)).toMatchObject({ trashed: true });
   });
 });
