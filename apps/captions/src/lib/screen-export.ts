@@ -1,4 +1,4 @@
-import { ALL_FORMATS, BufferTarget, Conversion, Input, Mp4OutputFormat, Output, Quality, UrlSource } from "mediabunny";
+import { ALL_FORMATS, BlobSource, BufferTarget, Conversion, Input, Mp4OutputFormat, Output, Quality, UrlSource } from "mediabunny";
 import { VideoSample, VideoSampleSink } from "mediabunny";
 import { drawFrame, pointerPath, type CameraImage, type ScreenEvents, type ScreenLook } from "./screen-recording";
 import { allowHighH264 } from "./h264-level";
@@ -13,6 +13,9 @@ import { frameReader } from "./frame-reader";
 export async function renderScreenVideo(opts: {
   url: string;
   cameraUrl?: string;
+  /** The same files already in the page (an older Mac app's recordings are read whole first): read instead of the URLs. */
+  file?: Blob;
+  cameraFile?: Blob;
   events: ScreenEvents;
   look: ScreenLook;
   width: number;
@@ -31,9 +34,13 @@ export async function renderScreenVideo(opts: {
   await allowHighH264(); // a large window's recording is H.264 level 6.0, which the Mac app's web view takes only this way
   // ponytail: the whole MP4 in memory (~75 MB a minute at 1080p); stream it to the upload if long recordings run out of memory
   const target = new BufferTarget();
-  const input = new Input({ source: new UrlSource(opts.url), formats: ALL_FORMATS });
+  const input = new Input({ source: opts.file ? new BlobSource(opts.file) : new UrlSource(opts.url), formats: ALL_FORMATS });
   const output = new Output({ format: new Mp4OutputFormat({ fastStart: "in-memory" }), target });
-  const cameraInput = opts.cameraUrl ? new Input({ source: new UrlSource(opts.cameraUrl), formats: ALL_FORMATS }) : null;
+  const cameraInput = opts.cameraFile
+    ? new Input({ source: new BlobSource(opts.cameraFile), formats: ALL_FORMATS })
+    : opts.cameraUrl
+      ? new Input({ source: new UrlSource(opts.cameraUrl), formats: ALL_FORMATS })
+      : null;
   let camera: Awaited<ReturnType<typeof cameraSource>> = null;
   let reader: ReturnType<typeof frameReader> = null;
   try {
