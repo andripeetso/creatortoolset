@@ -78,10 +78,13 @@ official login), instagram_posts lists its posts since a date and the state of i
 posts the user saved by words, instagram_post reads one (what is said in it, the text on screen, the idea) and
 instagram_save saves a post by its link.
 
-Media Library: the user's footage. media_import_folder brings a folder on this computer in (and reads the script files
-there), media_search finds files by what they show or say, media_folders lists the folders. Each video sorts itself as
-A-roll (someone talks to the camera: the takes an edit is built on) or B-roll (the rest). After adding files, tell the
-user the answer's said line.
+Media Library: the user's footage, their raw material. media_import_folder brings a folder on this computer in (and
+reads the script files there), media_search finds files by what they show or say, media_folders lists the folders.
+media_search looks in the library and in every source a plug-in adds to it: a hit then names its source, and the answer
+says when a filter could not be applied to one. media_get reads one clip in full (its description, what is said in it),
+media_update changes its title, tags or description, media_add_to_folder files clips in a folder, media_share makes a
+link for other people. Each video sorts itself as A-roll (someone talks to the camera: the takes an edit is built on) or
+B-roll (the rest); nobody sets that by hand. After adding files, tell the user the answer's said line.
 
 AI Editor: edits made from footage in the Media Library; each runs steps (analyze, script, draft, broll) into drafts,
 one per version, which can be filed in Review. editor_create makes a new one from the takes' version ids and starts it:
@@ -457,6 +460,17 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
     if (!lib) throw new ToolError("This account has no Media Library yet.");
     return String(lib.id);
   };
+  /** What a plug-in adds to that library, as this account may see it (its /library page lists these beside "Library"). None unless a plug-in brings one. */
+  const librarySources = async (lib: string) =>
+    (await json<{ sources?: Array<{ id: string; label: string }> }>(`/api/library/${encodeURIComponent(lib)}/sources`).catch(() => null))?.sources ?? [];
+  /** One plug-in source's cards for a search (its own list takes q and nothing else), or null when it refuses or is not back by `by`. */
+  const sourceCards = async (lib: string, source: string, q: unknown, by: number): Promise<Args[] | null> => {
+    const ask = new URLSearchParams({ source, ...(q ? { q: String(q) } : {}) });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<null>((done) => (timer = setTimeout(() => done(null), Math.max(0, by - Date.now()))));
+    const cards = json<{ items?: Args[] }>(`/api/library/${encodeURIComponent(lib)}/assets?${ask}`).then((r) => r.items ?? [], () => null);
+    return Promise.race([cards, late]).finally(() => clearTimeout(timer));
+  };
   /** The said line for versions just added (roll.ts), waiting up to waitS (never past `by`) while some are still being sorted. */
   const sortedLine = async (lib: string, versions: string[], waitS: number, by = Date.now() + ANSWER_BY_S * 1000) => {
     const end = Math.min(by, Date.now() + waitS * 1000);
@@ -783,13 +797,24 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
     },
     media_folders: async () => {
       const lib = await homeLibraryId();
+      const others = await librarySources(lib);
       const { collections } = await json<{ collections: Args[] }>(`/api/library/${lib}/collections`);
-      return { library: lib, folders: collections.map((c) => pick(c, ["id", "name", "kind", "parentId", "count"])) };
+      return {
+        library: lib,
+        folders: collections.map((c) => pick(c, ["id", "name", "kind", "parentId", "count"])),
+        // a plug-in's source has no folders here
+        ...(others.length ? { note: `These are the Library's own folders. media_search also searches, with no folders here: ${others.map((s) => s.label).join(", ")}.` } : {}),
+      };
     },
     media_search: async (a) => {
+      const by = Date.now() + ANSWER_BY_S * 1000;
       const lib = await homeLibraryId();
-      const q = new URLSearchParams({ limit: String(Math.max(1, Math.min(Number(a.limit ?? 50), 200))) });
+      const limit = Math.max(1, Math.min(Number(a.limit ?? 50), 200));
+      const q = new URLSearchParams({ limit: String(limit) });
       const versions = Array.isArray(a.versions) ? a.versions.map(String) : [];
+      // what a plug-in adds to this library is searched too; a folder and version ids are the library's own
+      const others = await librarySources(lib);
+      const asked = versions.length || a.folder ? [] : others;
       const said = versions.length ? (await sortedLine(lib, versions, SORT_WAIT_S.asked)).said : undefined;
       if (versions.length) q.set("versions", versions.join(","));
       if (a.q) q.set("q", String(a.q));
@@ -798,14 +823,36 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       if (a.folder) q.set("collectionId", String(a.folder));
       if (a.since) q.set("from", String(dateMs(a.since)));
       const page = await json<{ items: Args[] }>(`/api/library/${lib}/assets?${q}`);
+      // with more than one source, each hit says which it is from
+      const hit = (f: Args, source?: string) => ({
+        ...pick(f, ["id", "versionId", "title", "kind", "roll", "state", "durationS", "tags"]),
+        ...(f.description ? { description: String((f.description as Args).text).slice(0, 300) } : {}),
+        ...(f.capturedAt ? { captured: when(f.capturedAt) } : {}),
+        ...(source ? { source } : {}),
+      });
+      const files = page.items.map((f) => hit(f, others.length ? "Library" : undefined));
+      // a filter a source could not take is said, never dropped in silence
+      const notes: string[] = [];
+      if (others.length && !asked.length) notes.push(`A folder and version ids are the Library's own: ${others.map((s) => s.label).join(", ")} not searched.`);
+      const found = await Promise.all(asked.map((s) => sourceCards(lib, s.id, a.q, by)));
+      for (const [i, s] of asked.entries()) {
+        const cards = found[i];
+        if (!cards) {
+          notes.push(`${s.label} did not answer.`);
+          continue;
+        }
+        let kept = a.kind ? cards.filter((c) => c.kind === a.kind) : cards;
+        if (a.roll && cards.some((c) => c.roll)) kept = kept.filter((c) => c.roll === a.roll);
+        else if (a.roll && kept.length) notes.push(`${s.label} does not sort A-roll and B-roll: roll was not applied to it.`);
+        if (a.since && kept.length) notes.push(`${s.label} does not say when a clip was added: since was not applied to it (captured is when a clip was shot).`);
+        files.push(...kept.slice(0, limit).map((c) => hit(c, s.label)));
+      }
       return {
         library: lib,
         ...(said ? { said } : {}),
-        files: page.items.map((f) => ({
-          ...pick(f, ["id", "versionId", "title", "kind", "roll", "state", "durationS", "tags"]),
-          ...(f.description ? { description: String((f.description as Args).text).slice(0, 300) } : {}),
-          ...(f.capturedAt ? { captured: when(f.capturedAt) } : {}),
-        })),
+        ...(others.length ? { sources: ["Library", ...asked.map((s) => s.label)] } : {}),
+        files,
+        ...(notes.length ? { note: notes.join(" ") } : {}),
       };
     },
     media_import_folder: async (a) => {
