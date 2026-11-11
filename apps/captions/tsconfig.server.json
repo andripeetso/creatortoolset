@@ -21,5 +21,5 @@
     }
   },
   "exclude": ["api/**/*.e2e.test.ts"],
-  "include": ["api", "plugins/**/plugin.ts", "plugin-examples/**/plugin.ts", "contracts", "db", "src/lib/document-markdown.ts", "src/lib/instagram-markdown.ts", "src/lib/workshop-markdown.ts", "src/lib/carousel-visualize.ts", "src/lib/carousel-layout.ts"]
+  "include": ["api", "plugins/**/plugin.ts", "plugin-examples/**/plugin.ts", "editor-steps/**/*.ts", "contracts", "db", "src/lib/document-markdown.ts", "src/lib/instagram-markdown.ts", "src/lib/workshop-markdown.ts", "src/lib/carousel-visualize.ts", "src/lib/carousel-layout.ts"]
 }

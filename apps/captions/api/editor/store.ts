@@ -6,6 +6,8 @@ import { BUILT_IN_BUNDLE, EDIT_SLOTS, MAX_VERSIONS, type Edit, type EditBundle, 
 import { env } from "../lib/env";
 import { listInstalled, packOn } from "../lib/packs";
 import { pluginEditFlags } from "../lib/plugin";
+import type { EditStepChoice } from "../../contracts/editor-steps";
+import { chosenSteps } from "./steps";
 import type { Cdl } from "./grade";
 import { libraryRole } from "../library/access";
 import { libraryDb } from "../library/db";
@@ -28,6 +30,8 @@ export interface EditMeta extends EditBrief {
   eyeline?: Record<string, number>;
   /** the items the edit was made with, recorded by createEdit and never changed by a later default */
   bundle: EditBundle;
+  /** the post-processing steps it was made with (Settings → AI Editor at the time), run by post.ts */
+  steps?: EditStepChoice[];
   trashedAt?: number;
 }
 
@@ -60,6 +64,8 @@ export interface StepFiles {
   plan: { lines: Line[]; plans: VersionPlan[]; notes: string[] };
   /** each version's preview in Review (preview.ts) */
   review: Record<string, ReviewPreview>;
+  /** each version's post-processing (post.ts): the copies its steps made, by source version id, and their notes */
+  post: Record<string, { files: Record<string, string>; notes: string[] }>;
 }
 
 export function readStep<K extends keyof StepFiles>(id: string, name: K): StepFiles[K] | null {
@@ -69,6 +75,9 @@ export function readStep<K extends keyof StepFiles>(id: string, name: K): StepFi
     return null;
   }
 }
+
+/** The copies the post step made for a version, by source version id: the preview and the export play these (none: the sources' own files). */
+export const postFiles = (editId: string, variant: string): Record<string, string> => readStep(editId, "post")?.[variant]?.files ?? {};
 
 export const saveStep = <K extends keyof StepFiles>(id: string, name: K, value: StepFiles[K]) => writeJsonAtomic(path.join(root(), id, `${name}.json`), value);
 
@@ -289,6 +298,7 @@ export async function createEdit(username: string, body: Record<string, unknown>
     brollCollectionId: null,
     framing: { punch: 1.15 },
     bundle: (await editorDefaults(username)).bundle,
+    steps: chosenSteps(username),
     ...brief,
     flags: { ...defaultFlags(), ...brief.flags },
   };

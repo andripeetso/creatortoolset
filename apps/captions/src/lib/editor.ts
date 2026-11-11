@@ -1,3 +1,4 @@
+import type { StepsView } from "@contracts/editor-steps";
 import type { Edit, EditPatch, EditSlot, EditStep, EditSummary, EditorDefaults, FootageTarget, NewEdit, PlansPatch, Sentence, Take, VersionPlan } from "@contracts/editor";
 
 /** The AI Editor's calls to api/editor/routes.ts. */
@@ -27,6 +28,11 @@ export const patchEdit = (id: string, body: EditPatch) => send<Edit>(base(id), "
 export const getEditorDefaults = () => send<EditorDefaults>("/api/editor/defaults");
 /** Sets one slot's default to an item, or back to the pack's or built-in one with null. */
 export const setEditorDefault = (slot: EditSlot, id: string | null) => send<EditorDefaults>(`/api/editor/defaults/${slot}`, "PUT", { id });
+/** Settings → AI Editor: the post-processing steps (contracts/editor-steps.ts). */
+export const getEditSteps = () => send<StepsView>("/api/edit-steps");
+export const setEditStep = (id: string, change: { use?: boolean; values?: Record<string, string> }) => send<StepsView>(`/api/edit-steps/${id}`, "PUT", change);
+/** Puts a step that comes with the app into the plug-ins folder; the Mac app's own alert then switches it on. */
+export const addEditStep = (folder: string) => send<{ folder: string }>(`/api/edit-steps/add/${encodeURIComponent(folder)}`, "POST");
 export const setEyeline = (id: string, versionId: string, y: number) => send<Edit>(`${base(id)}/eyeline/${versionId}`, "PUT", { y });
 export const getSentences = (id: string) => send<Sentence[]>(`${base(id)}/sentences`);
 export const putLines = (id: string, body: PlansPatch) => send<Edit>(`${base(id)}/lines`, "PUT", body);

@@ -118,6 +118,7 @@ A plug-in has one or both of these files, and any other files beside them:
 | Something done each time a session is published or changes status, an export finishes or a review gets a new version | `onEvent(name, fn)` from `api/lib/events.ts`, called in `start` | `plugin.ts` |
 | Work that starts with the server | `start` | `plugin.ts` |
 | Media Library sources, filters and badges | `library` | both |
+| A post-processing step in the AI Editor (it changes the footage a draft plays: the voice, the colour, faces) | `editor.steps` | `plugin.ts` |
 | AI provider kinds and presets | `providers` | `plugin.ts` |
 | Rows and menu items in the Mac app's menu bar | `activity`, `menu` | `plugin.ts` |
 

@@ -31,7 +31,8 @@ it("shows a button only for the providers the account server has keys for", () =
 it("shows no sign-in button when the reply names no providers (an older Mac app)", () => {
   const html = view({ state: "signedOut" }, []);
   expect(html).not.toContain("Continue with");
-  expect(html).toContain("Sign in to set up your account");
+  expect(html).toContain("Sign in to set up your Creator Toolset account.");
+  expect(html).not.toMatch(/nothing else/i);
 });
 
 it("goes on once signed in, while the server has no sign-in yet, or with no account step", () => {
@@ -73,8 +74,9 @@ it("the account screen is a sign-in screen: one button for each sign-in offered,
   expect(html).not.toMatch(/GitHub|phone|settings|sync/i);
   // a sign-in card: its own title and one line, and only what a sign-in does today
   expect(html).toContain("Sign in to Creator Toolset");
-  expect(html).toContain("Optional. Sign in and the app shows your name.");
-  expect(html).toContain("Nothing else is read from that account.");
+  expect(html).toContain("Optional. One account for this app and creatortoolset.com.");
+  // never a promise about what is or is not read from the Apple or Google account
+  expect(html + setup({ state: "signedIn", name: "Ana", email: "ana@tinyacrobatics.example" })).not.toMatch(/nothing else|is read|only your name/i);
   // while the system's sheet is up: that button says so, and no second sign-in can be started
   const busy = setup({ state: "signedOut" }, ["google", "apple"], "google");
   expect(buttons(busy)).toEqual(["Signing in…", "Continue with Apple"]);

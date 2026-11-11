@@ -37,6 +37,7 @@ const ffmpegFiles = [
   "api/review-library.test.ts",
   "api/review.test.ts",
   "scripts/plugin-build.test.mjs",
+  "editor-steps/voice/plugin.test.ts",
 ];
 
 const include = [
@@ -46,6 +47,7 @@ const include = [
   "src/**/*.test.ts",
   "src/**/*.test.tsx",
   "scripts/**/*.test.mjs",
+  "editor-steps/**/*.test.ts",
 ];
 
 export default defineConfig({
