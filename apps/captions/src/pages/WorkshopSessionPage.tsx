@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams, useSearchParams } from "react-router";
-import { Eye, Loader2, Sparkles, X } from "lucide-react";
+import { Eye, Loader2, X } from "lucide-react";
 import { AppBar } from "@/components/AppBar";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
 import { AuditButton } from "@/components/workshop/AuditButton";
@@ -43,7 +43,6 @@ import {
   listDocuments,
   listFrameworks,
   listProjects,
-  docKindLabel,
   listRules,
   listFinalsForDoc,
   listSessions,
@@ -1210,22 +1209,6 @@ export default function WorkshopSessionPage() {
                 body: session && activeDoc ? (
                   <div className="flex min-h-0 flex-1 flex-col">
                     <SessionFinals sessionId={session.id} />
-                    {/* an empty piece: write it from what the session has */}
-                    {activeDoc.kind !== "notes" && !activeDoc.blocks.some((b) => b.text.trim()) && aiAvailable && !thinking ? (
-                      <div className="flex items-center gap-2 border-b border-border px-4 py-2 text-[12px] text-muted-foreground">
-                        <span>This {docKindLabel(activeDoc.kind)} is empty.</span>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const from = docs.find((d) => d.id !== activeDoc.id && d.kind !== "notes" && d.blocks.some((b) => b.text.trim()));
-                            void send(`Write this ${docKindLabel(activeDoc.kind)} from ${from ? `the ${docKindLabel(from.kind)}` : "what's"} in this session.`);
-                          }}
-                          className="flex h-7 items-center gap-1 rounded-md bg-violet-600 px-2.5 font-medium text-white hover:bg-violet-500"
-                        >
-                          <Sparkles className="h-3.5 w-3.5" /> Write it from this session
-                        </button>
-                      </div>
-                    ) : null}
                     <DocumentEditor
                       key={activeDoc.id}
                       doc={activeDoc}
