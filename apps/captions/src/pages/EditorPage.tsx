@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from "react-router";
 import { Check, Clapperboard, Folder, Loader2, Plus } from "lucide-react";
 import type { EditSummary } from "@contracts/editor";
 import { MAX_VERSIONS } from "@contracts/editor";
-import type { EditingStylesView } from "@contracts/editor-styles";
+import type { AnimationStylesView, EditingStylesView } from "@contracts/editor-styles";
 import type { AssetCard, Collection, LibrarySummary } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
 import { Badge } from "@/components/ui/badge";
@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { createEdit, footageTarget, listEdits, listStyles, runEdit } from "@/lib/editor";
+import { createEdit, footageTarget, listAnimationStyles, listEdits, listStyles, runEdit } from "@/lib/editor";
 import { changeFolderItems, getAsset, listAssets, listCollections, listLibraries, uploadFile } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
 import { cn } from "@/lib/utils";
@@ -25,6 +25,7 @@ import { FolderTrail, MoveToMenu, ToolFolderCards, ToolFolderRows } from "@/comp
 import { useToolFolders } from "@/lib/folders";
 import { FolderGrid, ItemCard } from "@/components/browse/Grid";
 import { byName, matches, persistSort, storedSort, useBrowseView } from "@/components/browse/views";
+import { AnimationStyles, type OpenAnimation } from "./editor/AnimationStyles";
 import { EditingStyles, type OpenStyle } from "./editor/EditingStyles";
 
 /**
@@ -73,15 +74,40 @@ export default function EditorPage() {
   // the person's editing styles: the second tab (/editor?tab=styles), and New edit's Style select. `own`: it is read again after this window's own saves
   const styleList = useCachedLoad<EditingStylesView>("/api/editor/styles", listStyles, { own: true });
   const [openStyle, setOpenStyle] = useState<OpenStyle>(null);
-  const tab = params.get("tab") === "styles" ? "styles" : "edits";
+  // the person's animation styles: the third tab (/editor?tab=animation)
+  const animationList = useCachedLoad<AnimationStylesView>("/api/editor/animation-styles", listAnimationStyles, { own: true });
+  const [openAnimation, setOpenAnimation] = useState<OpenAnimation>(null);
+  const asked = params.get("tab");
+  const tab = asked === "styles" || asked === "animation" ? asked : "edits";
   const tabs = (
-    <Tabs value={tab} onValueChange={(t) => setParams(t === "styles" ? { tab: t } : {})}>
+    <Tabs value={tab} onValueChange={(t) => setParams(t === "edits" ? {} : { tab: t })}>
       <TabsList>
         <TabsTrigger value="edits">Edits</TabsTrigger>
         <TabsTrigger value="styles">Editing styles</TabsTrigger>
+        <TabsTrigger value="animation">Animation styles</TabsTrigger>
       </TabsList>
     </Tabs>
   );
+
+  if (tab === "animation") {
+    return (
+      <div className="flex min-h-dvh flex-col">
+        <AppBar tool="AI Editor">
+          {!!animationList.data?.styles.length && (
+            <Button size="sm" onClick={() => setOpenAnimation("new")}>
+              <Plus className="h-4 w-4" />
+              New animation style
+            </Button>
+          )}
+        </AppBar>
+        <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-3 px-4 py-4 sm:px-6">
+          {tabs}
+          {animationList.data && <AnimationStyles styles={animationList.data.styles} open={openAnimation} onOpen={setOpenAnimation} onChanged={animationList.refresh} />}
+          {!animationList.data && animationList.error && <p className="text-sm text-red-400">{animationList.error}</p>}
+        </main>
+      </div>
+    );
+  }
 
   // only one tab is drawn at a time: the styles tab has its own bar button and nothing of the edits list
   if (tab === "styles") {

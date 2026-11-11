@@ -9,6 +9,7 @@ import {
   PUNCHES,
   STYLE_NAME_MAX,
   STYLE_NOTES_MAX,
+  type AnimationStyle,
   type EditingStyle,
   type EditingStyleInput,
   type EditingStylesView,
@@ -31,13 +32,15 @@ import type { EditMeta } from "./store";
 const USER = /^[a-zA-Z0-9._-]{1,64}$/;
 const fileOf = (username: string) => path.join(env.dataDir, "editor-styles", `${username}.json`);
 
-interface Saved {
+export interface Saved {
   last?: string;
   editing: EditingStyle[];
+  /** the person's animation styles (animation-styles.ts) */
+  animation?: AnimationStyle[];
   [other: string]: unknown;
 }
 
-function read(username: string): Saved {
+export function read(username: string): Saved {
   try {
     if (!USER.test(username)) throw new Error("Bad account name");
     const f = JSON.parse(readFileSync(fileOf(username), "utf8")) as Saved;
@@ -48,7 +51,7 @@ function read(username: string): Saved {
 }
 
 /** Read, change and write with nothing awaited in between, so two requests of one account never lose each other's change. */
-function change<T>(username: string, fn: (f: Saved) => T): T {
+export function change<T>(username: string, fn: (f: Saved) => T): T {
   if (!USER.test(username)) throw new Error("Bad account name");
   const f = read(username);
   const out = fn(f);
@@ -161,6 +164,10 @@ function clean(username: string, body: Record<string, unknown>): EditingStyleInp
     if (typeof steps === "string") return steps;
     out.steps = steps;
   }
+  if (body.animation !== undefined) {
+    if (body.animation !== null && !read(username).animation?.some((a) => a.id === body.animation)) return "No such animation style";
+    out.animation = body.animation as string | null;
+  }
   return out;
 }
 
@@ -174,7 +181,7 @@ export function createStyle(username: string, body: Record<string, unknown>, fro
   if (typeof given === "string") return given;
   if (!given.name) return "Give the style a name";
   const base = from
-    ? { notes: from.style?.notes ?? "", versions: from.versions, targetS: from.targetS, pace: from.style?.pace ?? "tight", punch: punchOf(from.framing.punch), grade: from.bundle.grade, brollCollectionId: from.brollCollectionId, steps: from.steps ?? null }
+    ? { notes: from.style?.notes ?? "", versions: from.versions, targetS: from.targetS, pace: from.style?.pace ?? "tight", punch: punchOf(from.framing.punch), grade: from.bundle.grade, brollCollectionId: from.brollCollectionId, steps: from.steps ?? null, ...(from.style?.animation ? { animation: from.style.animation } : {}) }
     : PLAIN;
   const now = Date.now();
   const style: EditingStyle = { ...base, ...given, name: given.name, id: randomUUID(), createdAt: now, updatedAt: now };
@@ -206,7 +213,7 @@ export const deleteStyle = (username: string, id: string): boolean =>
   });
 
 /** What an edit keeps of its style. */
-export const styleCopy = (s: EditingStyle): EditStyleCopy => ({ id: s.id, name: s.name, notes: s.notes, pace: s.pace });
+export const styleCopy = (s: EditingStyle): EditStyleCopy => ({ id: s.id, name: s.name, notes: s.notes, pace: s.pace, ...(s.animation ? { animation: s.animation } : {}) });
 
 /**
  * The one block an edit's style adds to the script step's prompt, after the installed packs' text: the person's own

@@ -19,6 +19,7 @@
  *   GET    /api/editor/defaults            → EditorDefaults (the set a new edit gets, and the items each slot can take)
  *   PUT    /api/editor/defaults/:slot      { id: string | null } (null = back to the built-in one) → EditorDefaults
  *   GET, POST /api/editor/styles, PUT, DELETE /api/editor/styles/:id   the person's editing styles (contracts/editor-styles.ts)
+ *   /api/editor/animation-styles…        the person's animation styles and their pictures (contracts/editor-styles.ts)
  * Every step runs as the edit's creator, on their own keys and AI: a workspace owner sees, stops and deletes, never runs.
  */
 

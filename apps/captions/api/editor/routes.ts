@@ -10,6 +10,7 @@ import { LINK_TTL_S, mediaPaths } from "./media";
 import { toOtio } from "./otio";
 import { qaOf } from "./qa";
 import { allEdits, cleanBrief, createEdit, draftNames, editorDefaults, editRole, gradeOf, NoCollection, NoStyle, readDraft, readEdit, postFiles, readStep, saveEdit, saveStep, setChosenDefault, sourcesWorkspace, styleFields, summaryOf, viewOf, type EditMeta } from "./store";
+import { animationApp } from "./animation-styles";
 import { createStyle, deleteStyle, stylesView, updateStyle } from "./styles";
 import { stopEdit } from "./worker";
 
@@ -95,6 +96,9 @@ editorApp.put("/styles/:id", async (c) => {
 });
 
 editorApp.delete("/styles/:id", (c) => (deleteStyle(c.get("user").username, c.req.param("id")) ? c.json({ ok: true }) : notFound(c)));
+
+// the person's animation styles and their pictures (animation-styles.ts); before /:id, as the styles are
+editorApp.route("/animation-styles", animationApp);
 
 editorApp.get("/:id", (c) => {
   const r = load(c);

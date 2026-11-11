@@ -1,5 +1,5 @@
 import type { StepsView } from "@contracts/editor-steps";
-import type { EditingStyle, EditingStyleInput, EditingStylesView } from "@contracts/editor-styles";
+import type { AnimationStyle, AnimationStylesView, EditingStyle, EditingStyleInput, EditingStylesView } from "@contracts/editor-styles";
 import type { Edit, EditPatch, EditSlot, EditStep, EditSummary, EditorDefaults, FootageTarget, NewEdit, PlansPatch, Sentence, Take, VersionPlan } from "@contracts/editor";
 
 /** The AI Editor's calls to api/editor/routes.ts. */
@@ -39,6 +39,23 @@ export const listStyles = () => send<EditingStylesView>("/api/editor/styles");
 export const createStyle = (body: EditingStyleInput | { fromEdit: string; name: string }) => send<EditingStyle>("/api/editor/styles", "POST", body);
 export const updateStyle = (id: string, body: EditingStyleInput) => send<EditingStyle>(`/api/editor/styles/${id}`, "PUT", body);
 export const deleteStyle = (id: string) => send<{ ok: true }>(`/api/editor/styles/${id}`, "DELETE");
+/** The person's animation styles (contracts/editor-styles.ts): a name, a brief and pictures. */
+const animation = "/api/editor/animation-styles";
+export const listAnimationStyles = () => send<AnimationStylesView>(animation);
+export const createAnimationStyle = (body: { name: string; brief: string }) => send<AnimationStyle>(animation, "POST", body);
+export const updateAnimationStyle = (id: string, body: { name?: string; brief?: string }) => send<AnimationStyle>(`${animation}/${id}`, "PUT", body);
+export const deleteAnimationStyle = (id: string) => send<{ ok: true }>(`${animation}/${id}`, "DELETE");
+export const stylePictureUrl = (id: string, pictureId: string) => `${animation}/${id}/pictures/${pictureId}`;
+export const removeStylePicture = (id: string, pictureId: string) => send<AnimationStyle>(stylePictureUrl(id, pictureId), "DELETE");
+/** Adds pictures to a style, each as an inspiration. */
+export async function addStylePictures(id: string, files: File[]): Promise<AnimationStyle> {
+  const form = new FormData();
+  for (const f of files) form.append("file", f);
+  const r = await fetch(`${animation}/${id}/pictures`, { method: "POST", body: form });
+  const out = (await r.json().catch(() => ({}))) as AnimationStyle & { error?: string };
+  if (!r.ok) throw new Error(out.error ?? `Request failed (${r.status})`);
+  return out;
+}
 export const setEyeline = (id: string, versionId: string, y: number) => send<Edit>(`${base(id)}/eyeline/${versionId}`, "PUT", { y });
 export const getSentences = (id: string) => send<Sentence[]>(`${base(id)}/sentences`);
 export const putLines = (id: string, body: PlansPatch) => send<Edit>(`${base(id)}/lines`, "PUT", body);
