@@ -94,8 +94,13 @@ export interface OwnInstagram {
 }
 
 export interface ConnectorsView {
-  /** Which logins this server has an app registered for. */
+  /** Which logins a person can ask for here: this server has an app registered, or a sign-in service is set that may offer it. */
   logins: Record<LoginKind, boolean>;
+  /**
+   * Of those, the ones only the sign-in service can give. It is not asked for a list: the page asks when the person
+   * presses Add (GET /api/connectors/apps/<kind>), and says so on the row if the service does not offer the platform.
+   */
+  viaService?: LoginKind[];
   /** The person's own Instagram accounts in the Content Analyzer: the one marked Mine, and each project's linked one. */
   instagram: OwnInstagram[];
   apify: { configured: boolean; valid: boolean | null };

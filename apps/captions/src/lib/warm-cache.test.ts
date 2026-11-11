@@ -27,7 +27,7 @@ it("warms only what the account may read: the team on a hosted server, the admin
   expect(keys("user", true)).toContain("/api/workspace");
   expect(keys("user", true)).not.toContain("/api/admin/users");
   expect(keys("admin", true)).toEqual(expect.arrayContaining(["/api/workspace", "/api/service-keys", "/api/admin/users", "/api/admin/projects"]));
-  // Social accounts too: its read no longer waits for the sign-in service
+  // Social accounts too: its read asks no other server
   expect(keys("user", false)).toContain("/api/connectors");
 });
 

@@ -28,31 +28,29 @@ export function serviceOrigin(): string {
 
 // ponytail: one cached answer per process; 10 minutes when it answered, 1 minute when it did not (an offline install never waits twice)
 let cached: { at: number; ttl: number; logins: Record<LoginKind, boolean> } | null = null;
-let asking: Promise<Record<LoginKind, boolean>> | null = null;
 
-/** Which platform sign-ins the service offers (asked at most every few minutes, 3 s at most). */
-export async function serviceLogins(): Promise<Record<LoginKind, boolean>> {
+/**
+ * Which platform sign-ins the service offers (asked at most every few minutes, 3 s at most). Asked only when a person
+ * acts: Add on a platform, or a sign-in (issuerFor). Never when the server starts or a page is read: an install does
+ * not call the service by itself.
+ */
+async function serviceLogins(): Promise<Record<LoginKind, boolean>> {
   const origin = serviceOrigin();
   if (!origin) return none();
   if (cached && Date.now() - cached.at < cached.ttl) return cached.logins;
-  // one request, however many ask while it is on its way
-  asking ??= (async () => {
-    try {
-      const res = await fetch(`${origin}/api/platform-signin`, { signal: AbortSignal.timeout(3000) });
-      const body = (await res.json()) as Partial<Record<LoginKind, unknown>>;
-      const logins = Object.fromEntries(KINDS.map((k) => [k, res.ok && body[k] === true])) as Record<LoginKind, boolean>;
-      cached = { at: Date.now(), ttl: 10 * 60_000, logins };
-    } catch {
-      cached = { at: Date.now(), ttl: 60_000, logins: none() };
-    }
-    asking = null;
-    return cached.logins;
-  })();
-  return asking;
+  try {
+    const res = await fetch(`${origin}/api/platform-signin`, { signal: AbortSignal.timeout(3000) });
+    const body = (await res.json()) as Partial<Record<LoginKind, unknown>>;
+    const logins = Object.fromEntries(KINDS.map((k) => [k, res.ok && body[k] === true])) as Record<LoginKind, boolean>;
+    cached = { at: Date.now(), ttl: 10 * 60_000, logins };
+  } catch {
+    cached = { at: Date.now(), ttl: 60_000, logins: none() };
+  }
+  return cached.logins;
 }
 
 /** Test seam: forget the cached answer. */
-export const forgetServiceLogins = () => void (cached = asking = null);
+export const forgetServiceLogins = () => void (cached = null);
 
 /** Who signs a person in to this platform here: this server's own app, the service, or nobody. */
 export async function issuerFor(kind: LoginKind): Promise<Issuer | null> {
@@ -60,28 +58,14 @@ export async function issuerFor(kind: LoginKind): Promise<Issuer | null> {
   return (await serviceLogins())[kind] ? "service" : null;
 }
 
-const withLocal = (remote: Record<LoginKind, boolean>) => Object.fromEntries(KINDS.map((k) => [k, !!appFor(k) || remote[k]])) as Record<LoginKind, boolean>;
-
-/** Each platform's sign-in, on whichever side has it. */
-export async function loginsOn(): Promise<Record<LoginKind, boolean>> {
-  return withLocal(KINDS.some((k) => !appFor(k)) ? await serviceLogins() : none());
-}
-
 /**
- * The same, without waiting for the service (a page's list is never held on another server): what the service said
- * last, none before its first answer. When that is old or missing the service is asked behind, and `changed` runs if
- * its answer differs from the one returned here (the caller tells the page to read again). The server asks once when
- * it starts (startConnectorPulls), so the first page usually has the answer already.
+ * The sign-ins a person can ask for here, known without asking anyone: this server's own app, or a sign-in service
+ * that is set (whether it offers the platform is asked when the person presses Add: issuerFor).
  */
-export function loginsKnown(changed: () => void): Record<LoginKind, boolean> {
-  const said = cached?.logins ?? none();
-  const fresh = !!cached && Date.now() - cached.at < cached.ttl;
-  if (!fresh && serviceOrigin() && KINDS.some((k) => !appFor(k)))
-    void serviceLogins().then((now) => {
-      if (KINDS.some((k) => now[k] !== said[k])) changed();
-    });
-  return withLocal(serviceOrigin() ? said : none());
-}
+export const loginsHere = (): Record<LoginKind, boolean> => Object.fromEntries(KINDS.map((k) => [k, !!appFor(k) || !!serviceOrigin()])) as Record<LoginKind, boolean>;
+
+/** Of those, the ones only the service can give. */
+export const viaService = (): LoginKind[] => (serviceOrigin() ? KINDS.filter((k) => !appFor(k)) : []);
 
 const b64sha = (s: string) => createHash("sha256").update(s).digest("base64url");
 

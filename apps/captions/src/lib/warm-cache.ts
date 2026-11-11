@@ -22,8 +22,8 @@ const get = (url: string) => () => fetch(url).then((r) => (r.ok ? (r.json() as P
 /**
  * Settings' own lists, as [key, loader]: the keys and the saved shapes are the sections' own (components/settings,
  * AdminPanel.tsx; the test checks each key is still read there). Only what this account may read: a team's page on a
- * hosted server, the admin pages for its admins. Social accounts is among them since its read stopped waiting for the
- * sign-in service (api/lib/connectors/signin-service.ts loginsKnown).
+ * hosted server, the admin pages for its admins. Social accounts is among them: its read asks no other server (the
+ * sign-in service is asked only when the person presses Add, api/lib/connectors/signin-service.ts).
  */
 export function settingsLists(me: Pick<Me, "role">, hosted: boolean): Array<[string, () => Promise<unknown>]> {
   const admin = hosted && me.role === "admin";
