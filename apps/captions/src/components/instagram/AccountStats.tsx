@@ -1,5 +1,6 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
+import { useCachedLoad } from "@/lib/local-cache";
 import {
   catalogTotals,
   fmtCount,
@@ -491,14 +492,12 @@ export function AccountStats({
   );
 }
 
-/** The phone Analyzer: one account's stats behind its headline numbers, fetched on its own. */
+/**
+ * The phone Analyzer: one account's stats behind its headline numbers. Read from the account page's own saved copy
+ * (lib/local-cache.ts), so on a reload it is there on the first frame, and it follows the Analyzer's changes.
+ */
 export function AccountStatsCard({ id }: { id: string }) {
-  const [account, setAccount] = useState<InstagramAccount | null>(null);
-  useEffect(() => {
-    getAccount(id)
-      .then(setAccount)
-      .catch(() => {});
-  }, [id]);
+  const { data: account } = useCachedLoad<InstagramAccount>(`/api/instagram/accounts/${id}`, () => getAccount(id));
   if (!account) return null;
   const catalog = account.catalog ?? [];
   const views30 = account.insights?.graph?.totals?.views;
