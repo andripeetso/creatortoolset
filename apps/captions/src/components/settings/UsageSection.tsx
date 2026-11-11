@@ -6,7 +6,7 @@ import type { SetupView } from "@contracts/tools";
 import { Button } from "@/components/ui/button";
 import { USAGE_PERIODS, deviceOf, thisMacDevice, usageSince, useProviders, type UsageRow } from "@/lib/providers";
 import { LOW, countedWindow, identityKey, leftOf, noticeOf, resetsIn } from "@/lib/limits";
-import { planToWarnBy, useSetup } from "@/lib/setup";
+import { useSetup } from "@/lib/setup";
 import { tokensLabel } from "@/lib/workshop";
 import { cn } from "@/lib/utils";
 import { ProviderLogo } from "./ProviderLogos";
@@ -118,6 +118,9 @@ export function PlanLimits({ view, now, bridge, setup }: { view: ProvidersView; 
 function YourPlan({ setup }: { setup: SetupView | null }) {
   if (!setup) return null;
   const save = (v: string) => void useSetup.getState().save({ plan: v === "none" ? null : (v as PlanId) }).catch(() => saveFailed("That did not save. Try again."));
+  // the first choice follows the account: the plan it names, or Not sure when it names none. Choosing it drops a pick
+  // made by hand, so every choice in the list does something (Not sure beside a found plan used to jump straight back)
+  const found = PLANS.find((x) => x.id === setup.detected);
   return (
     <Card>
       <Row
@@ -127,9 +130,9 @@ function YourPlan({ setup }: { setup: SetupView | null }) {
         control={
           <SettingsSelect
             label="Your plan"
-            value={planToWarnBy(setup) ?? "none"}
+            value={setup.plan ?? "none"}
             onValueChange={save}
-            options={[{ value: "none", label: "Not sure" }, ...PLANS.map((p) => ({ value: p.id, label: p.label }))]}
+            options={[{ value: "none", label: found ? `${found.label}, read from your account` : "Not sure" }, ...PLANS.map((p) => ({ value: p.id, label: p.label }))]}
           />
         }
       />

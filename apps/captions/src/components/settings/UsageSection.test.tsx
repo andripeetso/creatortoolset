@@ -49,7 +49,7 @@ describe("plan limits that are off on a Mac", () => {
 });
 
 describe("your plan", () => {
-  // its value is planToWarnBy's (the pick, else the plan the AI names), tested in lib/plan-warning.test.ts
+  // the plan a big job warns by is planToWarnBy's (the pick, else the plan the AI names), tested in lib/plan-warning.test.ts
   it("is shown when nothing names the plan, and when the AI names it", () => {
     expect(page(null, setup())).toContain("Your plan");
     expect(page(null, setup({ detected: "chatgpt_plus" }))).toContain("Your plan");
