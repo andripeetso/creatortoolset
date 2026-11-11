@@ -59,7 +59,8 @@ export type ScreenLook = {
    * - "inside": the window stays as it is and the picture is zoomed within it, cropped on every side.
    * - "space": the window grows into the empty space around it, up to the padding, and only then crops. A square
    *   recording in a wide frame keeps its whole width at 1.5× where "inside" would cut a third of it off.
-   * - "frame": the window itself is zoomed, corners and all, past the padding to the frame's edges.
+   * - "frame": the window itself is zoomed, corners and all, past the padding, until the picture fills the whole
+   *   frame: a zoom is then at least as deep as what covers the frame (`zoomFloor`).
    * Only where the whole recording is shown at rest: a frame that is filled (`fill`) has no window to grow.
    */
   zoomFit?: "inside" | "space" | "frame";
@@ -266,7 +267,7 @@ export function defaultLook(events: ScreenEvents, duration: number): ScreenLook 
     shadow: true,
     shape: "source",
     fill: false,
-    zoomFit: "space",
+    zoomFit: "frame",
   };
 }
 
@@ -362,17 +363,22 @@ const ease = (k: number) => {
   return c < 0.5 ? 4 * c * c * c : 1 - (-2 * c + 2) ** 3 / 2;
 };
 
-/** The zoom at t (1 = none) and the point it aims at (0–1 of the display). */
+/**
+ * The zoom at t (1 = none) and the point it aims at (0–1 of the display). `k` is how far in it is (0–1) and `full`
+ * the depth it has all the way in.
+ */
 export function cameraAt(look: ScreenLook, path: [number, number, number][], t: number) {
   let scale = 1;
   let x = 0.5;
   let y = 0.5;
   let held = 0;
+  let full = 1;
   for (const z of look.zooms) {
     if (t < z.start || t > z.end) continue;
     const k = ease((t - z.start) / RAMP) * ease((z.end - t) / RAMP);
     if (k <= held) continue;
     held = k;
+    full = z.scale;
     scale = 1 + (z.scale - 1) * k;
     let ax = z.x;
     let ay = z.y;
@@ -387,7 +393,7 @@ export function cameraAt(look: ScreenLook, path: [number, number, number][], t: 
     x = 0.5 + (ax - 0.5) * k;
     y = 0.5 + (ay - 0.5) * k;
   }
-  return { scale, x, y };
+  return { scale, x, y, k: held, full };
 }
 
 /** Output pixels for a frame shape: 1080 on the short side (2160 for 4K), the source's shape for "source". */
@@ -439,16 +445,7 @@ export function layout(
   outH: number,
   camera: CameraLook | null = null,
 ) {
-  const short = Math.min(outW, outH);
-  const pad = look.padding * short;
-  const inner: Rect = camera?.layout === "side" ? sideRects(outW, outH, pad).screen : { x: pad, y: pad, w: outW - 2 * pad, h: outH - 2 * pad };
-  const srcRatio = srcW / srcH;
-  let box = inner;
-  if (!look.fill || look.shape === "source") {
-    const w = Math.min(inner.w, inner.h * srcRatio);
-    const h = w / srcRatio;
-    box = { x: inner.x + (inner.w - w) / 2, y: inner.y + (inner.h - h) / 2, w, h };
-  }
+  const { inner, box } = restBox(look, srcW / srcH, outW, outH, camera);
   // the largest part of the source in the box's shape, then zoomed
   const boxRatio = box.w / box.h;
   const baseW = Math.min(srcW, srcH * boxRatio);
@@ -465,7 +462,7 @@ export function layout(
     const sh = baseH / cam.scale;
     const sx = Math.min(srcW - sw, Math.max(0, cx * srcW - sw / 2));
     const sy = Math.min(srcH - sh, Math.max(0, cy * srcH - sh / 2));
-    return { box, src: { x: sx, y: sy, w: sw, h: sh } as Rect, window: box, grown: 1 };
+    return { box, src: { x: sx, y: sy, w: sw, h: sh } as Rect, window: box, grown: 1, corners: 1 };
   }
   // The window grows with the zoom, as far as `limit` lets it: the padded area ("space") or the whole frame
   // ("frame", not over a camera beside it). The point looked at goes to the limit's middle; a window that does not
@@ -473,8 +470,11 @@ export function layout(
   // window inside the limit.
   const whole = look.zoomFit === "frame" && camera?.layout !== "side";
   const limit: Rect = whole ? { x: 0, y: 0, w: outW, h: outH } : inner;
-  const W = box.w * cam.scale;
-  const H = box.h * cam.scale;
+  // "frame": a zoom all the way in fills the frame, so it is at least as deep as what makes the window cover it
+  const cover = whole ? Math.max(limit.w / box.w, limit.h / box.h) : 1;
+  const scale = cam.full < cover ? 1 + (cover - 1) * cam.k : cam.scale;
+  const W = box.w * scale;
+  const H = box.h * scale;
   const place = (size: number, from: number, room: number, at: number) =>
     size <= room ? from + (room - size) / 2 : Math.min(from, Math.max(from + room - size, from + room / 2 - at * size));
   const grownBox: Rect = { x: place(W, limit.x, limit.w, cx), y: place(H, limit.y, limit.h, cy), w: W, h: H };
@@ -483,8 +483,31 @@ export function layout(
   const seen: Rect = { x: x0, y: y0, w: Math.min(grownBox.x + W, limit.x + limit.w) - x0, h: Math.min(grownBox.y + H, limit.y + limit.h) - y0 };
   const src: Rect = { x: ((seen.x - grownBox.x) / W) * srcW, y: ((seen.y - grownBox.y) / H) * srcH, w: (seen.w / W) * srcW, h: (seen.h / H) * srcH };
   // "space": the window is what is seen (its corners stay at the padding). "frame": the window is the grown one,
-  // its corners and shadow growing with it and leaving the frame.
-  return { box: seen, src, window: whole ? grownBox : seen, grown: whole ? cam.scale : 1 };
+  // its shadow growing with it and leaving the frame; its corners grow with it too and square off on the way, gone
+  // by the time it covers the frame, so no corner of the background shows in a frame that is filled.
+  const squared = cover > 1.02 ? Math.min(1, (scale - 1) / (cover - 1)) : cam.k;
+  return { box: seen, src, window: whole ? grownBox : seen, grown: whole ? scale : 1, corners: whole ? scale * (1 - squared) : 1 };
+}
+
+/** The padded part of the frame (beside a camera in the side layout: the screen's part) and the window in it at rest. */
+function restBox(look: ScreenLook, srcRatio: number, outW: number, outH: number, camera: CameraLook | null): { inner: Rect; box: Rect } {
+  const pad = look.padding * Math.min(outW, outH);
+  const inner: Rect = camera?.layout === "side" ? sideRects(outW, outH, pad).screen : { x: pad, y: pad, w: outW - 2 * pad, h: outH - 2 * pad };
+  if (look.fill && look.shape !== "source") return { inner, box: inner };
+  const w = Math.min(inner.w, inner.h * srcRatio);
+  const h = w / srcRatio;
+  return { inner, box: { x: inner.x + (inner.w - w) / 2, y: inner.y + (inner.h - h) / 2, w, h } };
+}
+
+/**
+ * The least depth a zoom has where zooms fill the whole frame ("frame"): what makes the window cover the frame. 1
+ * where zooms do something else. `srcRatio` is the recording's width over its height.
+ */
+export function zoomFloor(look: ScreenLook, srcRatio: number, camera: CameraLook | null = null): number {
+  if (look.zoomFit !== "frame" || !zoomGrows(look) || camera?.layout === "side") return 1;
+  const out = outputSize(look.shape, srcRatio * 1000, 1000, false);
+  const { box } = restBox(look, srcRatio, out.width, out.height, camera);
+  return Math.max(out.width / box.w, out.height / box.h);
 }
 
 /** A zoom makes the window grow: the look says so, and the whole recording is shown at rest. */
@@ -603,8 +626,8 @@ export function drawFrame(
     return;
   }
 
-  const { box, src, window, grown } = layout(look, path, t, srcW, srcH, outW, outH, cam);
-  const radius = look.radius * short * grown;
+  const { box, src, window, corners } = layout(look, path, t, srcW, srcH, outW, outH, cam);
+  const radius = look.radius * short * corners;
   const shadow = shadowOf(look);
   if (shadow > 0 && look.padding > 0) {
     ctx.save();

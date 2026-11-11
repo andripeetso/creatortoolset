@@ -1,5 +1,6 @@
 import { MODULES } from "./mcp-tools";
 import { ToolError, type ToolContext, type ToolDef, type ToolHandler, type WorkCard } from "./mcp-tools/types";
+import { reviewOf } from "./mcp-tools/review";
 import { Hono } from "hono";
 import { MY_KEYS } from "../contracts/service-keys";
 import { TOOLS as APP_TOOLS, TOOL_NAMES, readiness, type SetupView } from "../contracts/tools";
@@ -73,12 +74,17 @@ Review: his videos waiting for feedback, their versions and timed comments (with
 Resolve a comment only once the change it asks for is made. review_set_approval marks a video approved or sent back.
 
 Instagram (the Analyzer): instagram_refresh starts a pull of one of the user's accounts (on their own Apify key or
-official login), instagram_posts lists its posts since a date and the state of its pulls.
+official login), instagram_posts lists its posts since a date and the state of its pulls. instagram_search finds the
+posts the user saved by words, instagram_post reads one (what is said in it, the text on screen, the idea) and
+instagram_save saves a post by its link.
 
-Media Library: the user's footage. media_import_folder brings a folder on this computer in (and reads the script files
-there), media_search finds files by what they show or say, media_folders lists the folders. Each video sorts itself as
-A-roll (someone talks to the camera: the takes an edit is built on) or B-roll (the rest). After adding files, tell the
-user the answer's said line.
+Media Library: the user's footage, their raw material. media_import_folder brings a folder on this computer in (and
+reads the script files there), media_search finds files by what they show or say, media_folders lists the folders.
+media_search looks in the library and in every source a plug-in adds to it: a hit then names its source, and the answer
+says when a filter could not be applied to one. media_get reads one clip in full (its description, what is said in it),
+media_update changes its title, tags or description, media_add_to_folder files clips in a folder, media_share makes a
+link for other people. Each video sorts itself as A-roll (someone talks to the camera: the takes an edit is built on) or
+B-roll (the rest); nobody sets that by hand. After adding files, tell the user the answer's said line.
 
 AI Editor: edits made from footage in the Media Library; each runs steps (analyze, script, draft, broll) into drafts,
 one per version, which can be filed in Review. editor_create makes a new one from the takes' version ids and starts it:
@@ -194,7 +200,7 @@ export const TOOLS = [
   },
   {
     name: "instagram_posts",
-    description: "An Analyzer account's posts (by handle) taken on or after since (a date, like 2026-10-01): shortcode, url, kind, when, caption, plays, likes, comments, and the state of its pulls.",
+    description: "An Analyzer account's posts (by handle) taken on or after since (a date, like 2026-10-01): shortcode, url, kind, when, caption, plays, likes, comments, id (once the post is saved in the library: instagram_post reads it), and the state of its pulls.",
     inputSchema: { type: "object", properties: { account: str, since: str }, required: ["account"] },
   },
   { name: "editor_list", description: "AI Editor edits, newest first: id, name, the last step and its state.", inputSchema: { type: "object", properties: {} } },
@@ -223,7 +229,7 @@ export const TOOLS = [
   {
     name: "media_search",
     description:
-      "Search the user's Media Library: q matches titles, tags, AI descriptions and what is said in the clips; leave it out for the newest. kind = video, image, audio or doc; roll = a (A-roll) or b (B-roll); folder = a folder id (media_folders); since = only files added on or after this date; versions = version ids just added: said then counts how they were sorted, waiting up to 50 s for it. Each hit: id, version_id (for editor_create), title, kind, roll, state (ready once processed), length, description, tags.",
+      "Search the user's Media Library: q matches titles, tags, AI descriptions and what is said in the clips (best match first; said = where it is said); leave it out for the newest. kind = video, image, audio or doc; roll = a (A-roll) or b (B-roll); folder = a folder id (media_folders); since = only files added on or after this date; versions = version ids just added: said then counts how they were sorted, waiting up to 50 s for it. Each hit: id, version_id (for editor_create), title, kind, roll, state (ready once processed), length, description, tags.",
     inputSchema: { type: "object", properties: { q: str, kind: { type: "string", enum: ["video", "image", "audio", "doc"] }, roll: { type: "string", enum: ["a", "b"] }, folder: str, since: str, versions: { type: "array", items: str }, limit: { type: "integer" } } },
   },
   { name: "media_folders", description: "The Media Library's folders: id, name, how many files. A folder id goes into media_search and editor_create's broll_folder; media_import_folder files into a plain folder (kind manual), not a smart one.", inputSchema: { type: "object", properties: {} } },
@@ -285,13 +291,13 @@ const ASSISTANT_DEFS = [
   },
   {
     name: "use_file",
-    description: "Send a video or recording to a tool: file = the id of one dropped in the chat, or path = a file on this computer (when the server runs on it; not for library: media_import_folder reads its folder in place). to: notes = Video Notes (transcript, summary, takeaways, action items, chapters; follow it with notes_get), review = a Review video (then review_share for a link), captions = a Caption Studio project, library = the Media Library, where each clip sorts itself as A-roll or B-roll (files = several dropped ids at once; tell the user the answer's said line). name = a title for it (default the file's name). The same file can go to several.",
-    inputSchema: { type: "object", properties: { file: str, files: { type: "array", items: str }, path: str, to: { type: "string", enum: [...FILE_USES] }, name: str }, required: ["to"] },
+    description: "Send a video or recording to a tool: file = the id of one dropped in the chat, or path = a file on this computer (when the server runs on it; not for library: media_import_folder reads its folder in place). to: notes = Video Notes (transcript, summary, chapters; follow it with notes_get, which also writes takeaways, an action plan and quotes), review = a Review video (then review_share for a link; with version_of = a Review video's link or id, as get_review takes, the file becomes that video's next version instead), captions = a Caption Studio project, library = the Media Library, where each clip sorts itself as A-roll or B-roll (files = several dropped ids at once; tell the user the answer's said line). name = a title for it (default the file's name). The same file can go to several.",
+    inputSchema: { type: "object", properties: { file: str, files: { type: "array", items: str }, path: str, to: { type: "string", enum: [...FILE_USES] }, name: str, version_of: str }, required: ["to"] },
   },
   {
     name: "notes_get",
-    description: "A Video Note (use_file to: notes gives its id): status (processing with its step, ready, error), title, summary and chapters once ready, and the takeaways, action items and quotes it has. transcript: true adds what is said in it. Waits up to 50 s while it processes.",
-    inputSchema: { type: "object", properties: { id: str, transcript: { type: "boolean" } }, required: ["id"] },
+    description: "A Video Note (use_file to: notes gives its id; notes_list finds one): status (processing with its step, ready, error), title, summary and chapters once ready, and the takeaways, action plan and quotes it has. add = the ones to write when it has none yet (the user's AI writes them; when the answer says still_writing, call again). transcript: true adds what is said in it. Waits up to 50 s (wait_s: less).",
+    inputSchema: { type: "object", properties: { id: str, transcript: { type: "boolean" }, add: { type: "array", items: { type: "string", enum: ["takeaways", "action plan", "quotes", "summary", "chapters"] } }, wait_s: { type: "integer" } }, required: ["id"] },
   },
 ];
 
@@ -454,6 +460,17 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
     if (!lib) throw new ToolError("This account has no Media Library yet.");
     return String(lib.id);
   };
+  /** What a plug-in adds to that library, as this account may see it (its /library page lists these beside "Library"). None unless a plug-in brings one. */
+  const librarySources = async (lib: string) =>
+    (await json<{ sources?: Array<{ id: string; label: string; main?: boolean }> }>(`/api/library/${encodeURIComponent(lib)}/sources`).catch(() => null))?.sources ?? [];
+  /** One plug-in source's cards for a search (its own list takes q and nothing else), or null when it refuses or is not back by `by`. */
+  const sourceCards = async (lib: string, source: string, q: unknown, by: number): Promise<Args[] | null> => {
+    const ask = new URLSearchParams({ source, ...(q ? { q: String(q) } : {}) });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<null>((done) => (timer = setTimeout(() => done(null), Math.max(0, by - Date.now()))));
+    const cards = json<{ items?: Args[] }>(`/api/library/${encodeURIComponent(lib)}/assets?${ask}`).then((r) => r.items ?? [], () => null);
+    return Promise.race([cards, late]).finally(() => clearTimeout(timer));
+  };
   /** The said line for versions just added (roll.ts), waiting up to waitS (never past `by`) while some are still being sorted. */
   const sortedLine = async (lib: string, versions: string[], waitS: number, by = Date.now() + ANSWER_BY_S * 1000) => {
     const end = Math.min(by, Date.now() + waitS * 1000);
@@ -568,11 +585,13 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
     workshop_wait: wait,
     finals_link_session: async (a) =>
       ws(`/sessions/${a.session}/finals`, "POST", { pieceId: a.piece, ...(a.workshop_piece ? { docId: a.workshop_piece } : {}) }),
-    list_reviews: async () => ({
-      reviews: (await json<Args[]>("/api/review")).map((r) => {
+    list_reviews: async () => {
+      const folders = new Map((await json<Args[]>("/api/review/projects")).map((p) => [p.id, p.name]));
+      return { reviews: (await json<Args[]>("/api/review")).map((r) => {
         const versions = (r.versions as Args[] | undefined) ?? [];
         return {
           ...pick(r, ["id", "name"]),
+          ...(folders.has(r.projectId) ? { folder: folders.get(r.projectId) } : {}),
           approval: (r.approval as Args | undefined)?.status,
           versions: versions.length,
           latest_file: versions.at(-1)?.name,
@@ -581,8 +600,8 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
           updated: when(r.updatedAt),
           link: `${origin}/review/${r.id}`,
         };
-      }),
-    }),
+      }) };
+    },
     get_review: async (a) => {
       const path = reviewPath(String(a.link), origin);
       const view = await json(path);
@@ -608,7 +627,11 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
         ...pick(asset, ["id", "name"]),
         link: `${origin}/review/${asset.id}`,
         approval: (asset.approval as Args | undefined)?.status,
-        versions: [...versions.values()].map((v) => pick(v, ["n", "name", "duration", "fps", "width", "height", "status", "removed"])),
+        versions: [...versions.values()].map((v) => ({
+          ...pick(v, ["n", "name", "duration", "fps", "width", "height", "status", "removed"]),
+          // the file itself, where this caller may have it: a link the person presses (the owner's needs their sign-in)
+          ...(asset.download && !v.removed && v.status !== "error" ? { download: `${origin}${path}/v/${v.n}/download` } : {}),
+        })),
         open_comments: threads.filter((t) => !t.resolved).length,
         comments: threads,
       };
@@ -623,23 +646,32 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       return out;
     },
     resolve_comment: async (a) => {
-      const id = ((await json(reviewPath(String(a.link), origin))).asset as Args).id;
-      const cm = await json(`/api/review/assets/${id}/comments/${encodeURIComponent(String(a.comment_id))}`, "PATCH", { resolved: a.resolved !== false });
+      const r = await reviewOf({ json, origin }, a.link);
+      const had = r.comments.find((c) => c.id === a.comment_id);
+      if (!had) throw new ToolError("No comment with that id on this video: get_review lists them.");
+      if (!r.manage && !had.mine) throw new ToolError("That video is someone else's: on its share link you can resolve only the comments you wrote.");
+      const cm = await json(`${r.path}/comments/${encodeURIComponent(String(a.comment_id))}`, "PATCH", { resolved: a.resolved !== false });
       return { id: cm.id, resolved: !!cm.resolved, text: cm.text };
     },
     use_file: async (a) => {
-      // what the tool still needs comes first: the assistant asks for it (ask_secret, a Settings page), then tries again
+      // what the tool still needs comes first: the assistant asks for it (ask_secret) or opens the page that holds it, then tries again
       const tool = a.to === "review" ? "review" : a.to === "captions" ? "captions" : a.to === "library" ? "media" : "notes";
       const { missing } = readiness(tool, (await json<SetupView>("/api/setup")).have);
-      if (missing.length)
+      if (missing.length) {
+        // the page each kind of need is set up on, the same ones Settings → Tools sends a person to
+        const page: Record<Exclude<(typeof missing)[number]["form"], "keys">, string> = { ai: "/settings/providers", apify: "/settings/keys", library: "/library", project: "/projects" };
         return {
           not_yet: `${TOOL_NAMES[tool]} needs these first; then call use_file again.`,
-          needs: missing.map((n) => ({ what: n.what, ...(n.form === "keys" ? { ask_secret: n.anyOf } : { open: n.form === "ai" ? "/settings/providers" : "/settings/general" }) })),
+          needs: missing.map((n) => ({ what: n.what, ...(n.form === "keys" ? { ask_secret: n.anyOf } : { open: page[n.form] }) })),
         };
+      }
       if (a.to === "library") return toLibrary(a);
       if (!a.file && !a.path) throw new ToolError("Give the dropped file's id, or a path on this computer.");
+      // a fix for a video already in Review: found by its link or id as the caller; the use route takes only the owner's own
+      if (a.version_of && a.to !== "review") throw new ToolError("version_of goes with to: review.");
+      const of = a.version_of ? { version_of: ((await json(reviewPath(String(a.version_of), origin))).asset as Args).id } : {};
       const file = a.path ? (await json(`/api/assistant/files/path`, "POST", { path: a.path })).id : a.file;
-      return json(`/api/assistant/files/${encodeURIComponent(String(file))}/use`, "POST", pick(a, ["to", "name"]));
+      return json(`/api/assistant/files/${encodeURIComponent(String(file))}/use`, "POST", { ...pick(a, ["to", "name"]), ...of });
     },
     notes_get: async (a) => {
       const path = `/api/clips/${encodeURIComponent(String(a.id))}`;
@@ -648,9 +680,28 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
         if (n.owner !== user.username && user.role !== "admin") throw new ToolError("Not found, or not this account's.");
         return n;
       };
+      const by = Date.now() + Math.max(0, Math.min(Number(a.wait_s ?? ANSWER_BY_S), ANSWER_BY_S)) * 1000;
       let n = mine(await json(path));
-      for (let t = 0; n.status === "processing" && t < 25; t++) n = (await sleep(2000), mine(await json(path)));
-      const blocks = Object.fromEntries(((n.blocks as Args[] | undefined) ?? []).map((b) => [b.kind, b.text ?? ((b.items as Args[] | undefined) ?? []).map((x) => x.text)]));
+      while (n.status === "processing" && Date.now() < by) n = (await sleep(2000), mine(await json(path)));
+      // a note's sections in the page's own words; the routes know them by kind ("action items" is how people ask for the plan)
+      const KIND: Record<string, string> = { takeaways: "takeaways", "action plan": "actions", quotes: "quotes", summary: "summary", chapters: "chapters" };
+      const wordOf = (kind: unknown) => Object.keys(KIND).find((w) => KIND[w] === kind) ?? String(kind);
+      const asked = (Array.isArray(a.add) ? a.add : []).map((w) => {
+        const said = String(w).trim().toLowerCase();
+        const kind = KIND[said] ?? (said === "action items" || said === "actions" ? "actions" : undefined);
+        if (!kind) throw new ToolError(`add takes ${Object.keys(KIND).join(", ")}.`);
+        return kind;
+      });
+      const has = (kind: string) => (kind === "summary" ? !!n.summary : kind === "chapters" ? !!(n.chapters as unknown[] | undefined)?.length : ((n.blocks as Args[] | undefined) ?? []).some((b) => b.kind === kind));
+      const writing = () => (n.generating as string[] | undefined) ?? [];
+      // the ones asked for that the note has not got: each is written by the person's own AI, and waited for while there is time
+      const want = n.status === "ready" && n.hasTranscript ? asked.filter((k) => !has(k)) : [];
+      for (const k of want) if (!writing().includes(k)) await api(`${path}/blocks`, "POST", { kind: k });
+      if (want.length) n = mine(await json(path));
+      while (want.some((k) => writing().includes(k)) && Date.now() < by) n = (await sleep(1000), mine(await json(path)));
+      const still = want.filter((k) => writing().includes(k));
+      const failed = Object.fromEntries(want.filter((k) => !has(k) && !still.includes(k) && (n.blockErrors as Args | undefined)?.[k]).map((k) => [wordOf(k), (n.blockErrors as Args)[k]]));
+      const blocks = Object.fromEntries(((n.blocks as Args[] | undefined) ?? []).map((b) => [wordOf(b.kind), b.text ?? ((b.items as Args[] | undefined) ?? []).map((x) => x.text)]));
       // what is said, as plain text; a long recording is cut and says so
       let said: string | undefined;
       if (a.transcript === true && n.status === "ready" && n.hasTranscript) {
@@ -668,17 +719,21 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
         ...blocks,
         ...(said ? { transcript: said } : {}),
         ...((n.chapters as Args[] | undefined)?.length ? { chapters: (n.chapters as Args[]).map((c) => `${clock(Number(c.t))} ${c.title}`) } : {}),
+        ...(still.length ? { still_writing: still.map(wordOf), note: "Still writing: call notes_get again with the same add." } : {}),
+        ...(Object.keys(failed).length ? { could_not_write: failed } : {}),
       };
     },
     review_set_approval: async (a) => {
-      const id = ((await json(reviewPath(String(a.link), origin))).asset as Args).id;
-      const r = await json(`/api/review/assets/${id}/approval`, "POST", { status: a.status });
+      const at = await reviewOf({ json, origin }, a.link);
+      if (!at.manage && a.status !== "approved" && a.status !== "changes") throw new ToolError("That video is someone else's: on its share link you can approve it or ask for changes (approved, changes), nothing else.");
+      const r = await json(`${at.path}/approval`, "POST", { status: a.status });
       return { id: r.id, name: r.name, approval: (r.approval as Args | undefined)?.status };
     },
     review_share: async (a) => {
-      const id = ((await json(reviewPath(String(a.link), origin))).asset as Args).id;
+      const at = await reviewOf({ json, origin }, a.link);
+      if (!at.manage) throw new ToolError("That video is someone else's: only its owner can change its share link.");
       const share = { enabled: a.on !== false, ...(typeof a.download === "boolean" ? { download: a.download } : {}) };
-      const r = await json(`/api/review/assets/${id}`, "PATCH", { share });
+      const r = await json(at.path, "PATCH", { share });
       const s = r.share as { token: string; enabled: boolean; download: boolean };
       if (!s.enabled) return { name: r.name, shared: false };
       // a server on this Mac with no address on the internet: the link opens here only
@@ -695,13 +750,16 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       if (Number.isNaN(sinceMs)) throw new ToolError("since is a date, like 2026-10-01.");
       const acc = await json(`/api/instagram/accounts/${await accountOf(String(a.account))}?lite=1`);
       const rows = ((acc.catalog as Args[] | undefined) ?? []).filter((r) => (r.takenAt as number) >= sinceMs).sort((x, y) => (y.takenAt as number) - (x.takenAt as number));
+      // a catalog row carries a short preview only; a saved post's own text is in the same answer
+      const saved = new Map(((acc.posts as Args[] | undefined) ?? []).map((p) => [p.id, p.caption]));
       return {
         account: acc.username,
         jobs: acc.jobs,
         posts: rows.map((r) => ({
           ...pick(r, ["shortcode", "url", "kind"]),
+          ...(r.postId ? { id: r.postId } : {}),
           when: when(r.takenAt),
-          caption: String(r.caption ?? r.captionPreview ?? "").slice(0, 300),
+          caption: String(saved.get(r.postId) ?? r.captionPreview ?? "").slice(0, 300),
           ...pick((r.counts ?? {}) as Args, ["plays", "likes", "comments"]),
         })),
       };
@@ -739,13 +797,26 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
     },
     media_folders: async () => {
       const lib = await homeLibraryId();
+      const others = await librarySources(lib);
       const { collections } = await json<{ collections: Args[] }>(`/api/library/${lib}/collections`);
-      return { library: lib, folders: collections.map((c) => pick(c, ["id", "name", "kind", "parentId", "count"])) };
+      return {
+        library: lib,
+        folders: collections.map((c) => pick(c, ["id", "name", "kind", "parentId", "count"])),
+        // a plug-in's source has no folders here
+        ...(others.length ? { note: `These are the Library's own folders. media_search also searches, with no folders here: ${others.map((s) => s.label).join(", ")}.` } : {}),
+      };
     },
     media_search: async (a) => {
+      const by = Date.now() + ANSWER_BY_S * 1000;
       const lib = await homeLibraryId();
-      const q = new URLSearchParams({ limit: String(Math.max(1, Math.min(Number(a.limit ?? 50), 200))) });
+      const limit = Math.max(1, Math.min(Number(a.limit ?? 50), 200));
+      const q = new URLSearchParams({ limit: String(limit) });
       const versions = Array.isArray(a.versions) ? a.versions.map(String) : [];
+      // what a plug-in adds to this library is searched too; a folder and version ids are the library's own
+      const others = await librarySources(lib);
+      // a source that IS the install's Media Library (its page shows that, not the app's own storage): only it is searched
+      const main = versions.length || a.folder ? undefined : others.find((s) => s.main);
+      const asked = versions.length || a.folder ? [] : main ? [main] : others;
       const said = versions.length ? (await sortedLine(lib, versions, SORT_WAIT_S.asked)).said : undefined;
       if (versions.length) q.set("versions", versions.join(","));
       if (a.q) q.set("q", String(a.q));
@@ -753,15 +824,56 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       if (a.roll) q.set("roll", String(a.roll));
       if (a.folder) q.set("collectionId", String(a.folder));
       if (a.since) q.set("from", String(dateMs(a.since)));
-      const page = await json<{ items: Args[] }>(`/api/library/${lib}/assets?${q}`);
+      // a typed search asks the library's fuller search: words in the title, tags and description, words that are said (with
+      // the second they are said at) and, where it is on, clips close in meaning. It answers its best hits, one per matching
+      // moment; since and version ids are the list's own, so those still go to the list.
+      const moments = new Map<string, Array<{ at: string; text: string }>>();
+      let page: { items: Args[] };
+      if (main) page = { items: [] };
+      else if (a.q && !a.since && !versions.length) {
+        const ask = new URLSearchParams({ q: String(a.q) });
+        for (const k of ["kind", "roll", "collectionId"]) if (q.get(k)) ask.set(k, q.get(k)!);
+        const hits = await json<Array<{ asset: Args; seconds?: number; snippet?: string }>>(`/api/library/${lib}/search?${ask}`);
+        const byClip = new Map<string, Args>();
+        for (const h of hits) {
+          const id = String(h.asset.id);
+          if (!byClip.has(id)) byClip.set(id, h.asset);
+          if (h.snippet && typeof h.seconds === "number" && (moments.get(id)?.length ?? 0) < 3) moments.set(id, [...(moments.get(id) ?? []), { at: clock(h.seconds).replace(/\.\d+$/, ""), text: h.snippet.replace(/\s+/g, " ").trim().slice(0, 200) }]);
+        }
+        page = { items: [...byClip.values()].slice(0, limit) };
+      } else page = await json<{ items: Args[] }>(`/api/library/${lib}/assets?${q}`);
+      // with more than one source, each hit says which it is from
+      const hit = (f: Args, source?: string) => ({
+        ...pick(f, ["id", "versionId", "title", "kind", "roll", "state", "durationS", "tags"]),
+        ...(f.description ? { description: String((f.description as Args).text).slice(0, 300) } : {}),
+        ...(f.capturedAt ? { captured: when(f.capturedAt) } : {}),
+        ...(moments.has(String(f.id)) ? { said: moments.get(String(f.id)) } : {}),
+        ...(source ? { source } : {}),
+      });
+      const files = page.items.map((f) => hit(f, others.length ? "Library" : undefined));
+      const named = (label: string) => (main ? undefined : label);
+      // a filter a source could not take is said, never dropped in silence
+      const notes: string[] = [];
+      if (others.length && !asked.length) notes.push(`A folder and version ids are the Library's own: ${others.map((s) => s.label).join(", ")} not searched.`);
+      const found = await Promise.all(asked.map((s) => sourceCards(lib, s.id, a.q, by)));
+      for (const [i, s] of asked.entries()) {
+        const cards = found[i];
+        if (!cards) {
+          notes.push(`${s.label} did not answer.`);
+          continue;
+        }
+        let kept = a.kind ? cards.filter((c) => c.kind === a.kind) : cards;
+        if (a.roll && cards.some((c) => c.roll)) kept = kept.filter((c) => c.roll === a.roll);
+        else if (a.roll && kept.length) notes.push(`${s.label} does not sort A-roll and B-roll: roll was not applied to it.`);
+        if (a.since && kept.length) notes.push(`${s.label} does not say when a clip was added: since was not applied to it (captured is when a clip was shot).`);
+        files.push(...kept.slice(0, limit).map((c) => hit(c, named(s.label))));
+      }
       return {
         library: lib,
         ...(said ? { said } : {}),
-        files: page.items.map((f) => ({
-          ...pick(f, ["id", "versionId", "title", "kind", "roll", "state", "durationS", "tags"]),
-          ...(f.description ? { description: String((f.description as Args).text).slice(0, 300) } : {}),
-          ...(f.capturedAt ? { captured: when(f.capturedAt) } : {}),
-        })),
+        ...(others.length && !main ? { sources: ["Library", ...asked.map((s) => s.label)] } : {}),
+        files,
+        ...(notes.length ? { note: notes.join(" ") } : {}),
       };
     },
     media_import_folder: async (a) => {
@@ -903,8 +1015,11 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
         // this editor files each draft's preview in Review: the draft plays from there
         if (!a.edit || !a.draft) throw new ToolError("An AI Editor preview needs edit and draft (editor_get lists them).");
         const e = await json(`/api/editor/${encodeURIComponent(String(a.edit))}`);
-        const p = ((e.previews as Record<string, { assetId: string; n: number }> | undefined) ?? {})[String(a.draft)];
-        if (!p) throw new ToolError("That draft has no preview yet: editor_run kind preview renders one.");
+        const previews = (e.previews as Record<string, { assetId: string; n: number }> | undefined) ?? {};
+        // an editor plug-in answering this path has no previews map: a draft it filed in Review carries review { asset, n }
+        const filed = ((e.drafts as Args[] | undefined) ?? []).find((d) => d.name === a.draft)?.review as { asset: string; n: number } | undefined;
+        const p = previews[String(a.draft)] ?? (filed ? { assetId: filed.asset, n: filed.n } : undefined);
+        if (!p) throw new ToolError("That draft is not in Review yet: editor_run kind send_to_review files it, then it plays here.");
         [link, version] = [p.assetId, p.n];
       }
       if (!link) throw new ToolError("Give the Review video's link or id, or an edit and draft.");

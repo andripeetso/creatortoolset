@@ -51,6 +51,7 @@ export function Inspector({
   aim,
   hasCamera,
   canClear,
+  floor,
 }: {
   tab: InspectorTab;
   onTab: (tab: InspectorTab) => void;
@@ -67,6 +68,8 @@ export function Inspector({
   hasCamera: boolean;
   /** A see-through video can be made here: the background can be None. */
   canClear: boolean;
+  /** The least depth a zoom is seen at (lib/screen-recording.ts zoomFloor, in tenths): above 1 where zooms fill the whole frame. */
+  floor: number;
 }) {
   const tabs: { id: InspectorTab; label: string; icon: typeof ImageIcon }[] = [
     { id: "background", label: "Background", icon: ImageIcon },
@@ -100,7 +103,7 @@ export function Inspector({
         {shown === "background" && <BackgroundTab look={look} initial={initial} change={change} canClear={canClear} />}
         {shown === "pointer" && <PointerTab look={look} initial={initial} change={change} />}
         {shown === "zoom" && (
-          <ZoomTab look={look} change={change} events={events} duration={duration} picked={picked} onPick={onPick} player={player} aim={aim} />
+          <ZoomTab look={look} change={change} events={events} duration={duration} picked={picked} onPick={onPick} player={player} aim={aim} floor={floor} />
         )}
         {shown === "camera" && <CameraTab look={look} change={change} />}
       </div>
@@ -209,6 +212,7 @@ function ZoomTab({
   onPick,
   player,
   aim,
+  floor,
 }: {
   look: ScreenLook;
   change: (patch: Partial<ScreenLook>) => void;
@@ -218,8 +222,13 @@ function ZoomTab({
   onPick: (index: number | null) => void;
   player: Player;
   aim: (t: number) => { x: number; y: number };
+  floor: number;
 }) {
   const zoom = picked !== null ? look.zooms[picked] : undefined;
+  // where zooms fill the whole frame none is shallower than what covers it: the slider starts there, and the
+  // depths shown are the ones seen
+  const least = Math.max(1.2, floor);
+  const depth = (z: Zoom) => Math.max(z.scale, least);
   const setZoom = (patch: Partial<Zoom>) => change({ zooms: look.zooms.map((z, i) => (i === picked ? { ...z, ...patch } : z)) });
   // where the clicks were or, with none, where the pointer was at work (lib/screen-recording.ts autoZooms)
   const laidOut = autoZooms(events, duration, zoom?.scale ?? look.zooms[0]?.scale);
@@ -245,7 +254,9 @@ function ZoomTab({
               <X className="h-3.5 w-3.5" />
             </button>
           </div>
-          <SliderRow label="Depth" value={zoom.scale} min={1.2} max={4} step={0.1} format={(v) => `${v.toFixed(1)}×`} onChange={(scale) => setZoom({ scale })} />
+          {least < 4 && (
+            <SliderRow label="Depth" value={depth(zoom)} min={least} max={4} step={0.1} format={(v) => `${v.toFixed(1)}×`} onChange={(scale) => setZoom({ scale })} />
+          )}
           <AimPad look={look} zoom={zoom} player={player} onAim={(x, y) => setZoom({ x, y })} />
           <PanelButton
             onClick={() => {
@@ -261,7 +272,7 @@ function ZoomTab({
         <Group>
           {look.zooms.length > 1 && (
             <PanelButton onClick={() => change({ zooms: look.zooms.map((z) => ({ ...z, scale: zoom.scale })) })}>
-              Use {zoom.scale.toFixed(1)}× for every zoom
+              Use {depth(zoom).toFixed(1)}× for every zoom
             </PanelButton>
           )}
           <PanelButton
@@ -311,7 +322,7 @@ function ZoomTab({
                   <span>
                     {clock(z.start, true)} – {clock(z.end, true)}
                   </span>
-                  <span className="text-zinc-400">{z.scale.toFixed(1)}×</span>
+                  <span className="text-zinc-400">{depth(z).toFixed(1)}×</span>
                 </button>
               ))}
             </div>
@@ -324,8 +335,8 @@ function ZoomTab({
 
 /**
  * What holds for every zoom: whether the view follows the pointer, and what a zoom does to the window the recording
- * sits in. The window can only grow where the whole recording is shown; "Use the space" only where the frame has
- * space beside it (another shape than the recording's).
+ * sits in. The window can only grow where the whole recording is shown; up to the padding only where the frame has
+ * space beside the window (another shape than the recording's).
  */
 function EveryZoom({ look, change }: { look: ScreenLook; change: (patch: Partial<ScreenLook>) => void }) {
   const filled = look.fill && look.shape !== "source";
@@ -335,17 +346,20 @@ function EveryZoom({ look, change }: { look: ScreenLook; change: (patch: Partial
     <Group title="Every zoom">
       <SwitchRow label="Follow the pointer while zoomed" checked={look.follow} onChange={(follow) => change({ follow })} />
       {!filled && (
-        <Segmented
-          stacked
-          label="What zooming does to the window"
-          value={fit}
-          options={[
-            { id: "inside", label: "Zoom inside the window", title: "The window stays as it is; the picture is zoomed inside it" },
-            ...(room ? [{ id: "space" as const, label: "Grow into the empty space", title: "The window grows into the empty space beside it before anything is cut off" }] : []),
-            { id: "frame", label: "Zoom the whole frame", title: "The window itself is zoomed, past the padding to the frame's edges" },
-          ]}
-          onChange={(zoomFit) => change({ zoomFit })}
-        />
+        <div className="space-y-2">
+          <p className="text-xs text-zinc-400">While zoomed, the window</p>
+          <Segmented
+            stacked
+            label="While zoomed, the window"
+            value={fit}
+            options={[
+              { id: "inside", label: "Keeps its size", title: "The window stays as it is; the picture is zoomed inside it" },
+              ...(room ? [{ id: "space" as const, label: "Grows up to the padding", title: "The window grows into the empty space beside it, as far as the padding" }] : []),
+              { id: "frame", label: "Fills the whole frame", title: "The window grows past the padding until the picture fills the frame" },
+            ]}
+            onChange={(zoomFit) => change({ zoomFit })}
+          />
+        </div>
       )}
     </Group>
   );

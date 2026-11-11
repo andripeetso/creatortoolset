@@ -6,6 +6,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { cn } from "@/lib/utils";
 import {
   alphaFileName,
+  defaultCamera,
   defaultLook,
   normalizeLook,
   opaqueLook,
@@ -13,6 +14,7 @@ import {
   pointerAt,
   pointerPath,
   trimOf,
+  zoomFloor,
   type ScreenEvents,
   type ScreenLook,
 } from "@/lib/screen-recording";
@@ -285,6 +287,9 @@ export function ScreenRecordingEditor({
   const clear = look?.background === "none";
   const size = sizes && (uhd && !clear ? sizes.uhd : sizes.hd);
   const kept = look ? trimOf(look, duration) : null;
+  // where zooms fill the whole frame, none is shallower than what covers it: the panel and the timeline say that depth
+  const shape = (width && height ? width / height : player.ratio()) || 16 / 9;
+  const floor = look ? Math.ceil(zoomFloor(look, shape, source.cameraUrl ? (look.camera ?? defaultCamera()) : null) * 10 - 1e-6) / 10 : 1;
   const initial = useMemo(() => (events ? defaultLook(events, duration) : null), [events, duration]);
   const h = history.current;
 
@@ -425,6 +430,7 @@ export function ScreenRecordingEditor({
               change={change}
               aim={aim}
               depth={look.zooms.at(-1)?.scale ?? 2}
+              floor={floor}
               undo={h.past.length ? () => step(true) : null}
               redo={h.future.length ? () => step(false) : null}
             />
@@ -449,6 +455,7 @@ export function ScreenRecordingEditor({
             aim={aim}
             hasCamera={!!source.cameraUrl}
             canClear={canClear}
+            floor={floor}
           />
         )}
       </div>

@@ -200,7 +200,9 @@ export function AssistantDock() {
     if (!view?.navigate) return;
     navigate(view.navigate);
     void navigated().then((r) => r.ok && setView(r.data));
-  }, [view?.navigate, navigate]);
+    // `navigate` changes with the page, which ran this twice: two history entries, and Back reopened a dialog the link had opened
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view?.navigate]);
 
   useEffect(() => {
     if (!collapsed) bottom.current?.scrollIntoView({ block: "end", behavior: "smooth" });
