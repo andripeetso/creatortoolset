@@ -58,13 +58,40 @@ export function planWarning(plan: PlanId | null | undefined, feature: Feature, c
 }
 
 /**
- * What the CLI said about its plan (`claude auth status --json`: subscriptionType and planTier, sent by the Mac app),
- * as a plan, or null when it doesn't say. Codex says only "ChatGPT", never the plan.
+ * What Claude Code said about its plan (`claude auth status --json`: subscriptionType and planTier, sent by the Mac app),
+ * as a plan, or null when it doesn't say. Claude's words only: another AI's plan names go through their own mapping.
  */
 export function planFromCli(text: string | null | undefined): PlanId | null {
   const t = (text ?? "").toLowerCase();
   if (/max/.test(t)) return /20/.test(t) ? "claude_max20" : "claude_max5";
   if (/\bpro\b/.test(t)) return "claude_pro";
+  return null;
+}
+
+/**
+ * The plan Codex's usage page names (its `plan_type`, read by the Mac app with the limits), as a plan: only the two
+ * PLANS has. Every other value ("free", "go", "prolite", "team", "edu_pro"…) is null, never the nearest guess.
+ */
+export const codexPlan = (planType: string | null | undefined): PlanId | null =>
+  planType === "plus" ? "chatgpt_plus" : planType === "pro" ? "chatgpt_pro" : null;
+
+/**
+ * An AI turning the account itself away, as one plain sentence naming what it needs, or null. Trying again never helps
+ * with these, so the row says this in place of "Try again". Each pattern is the AI's own words, from:
+ * - Codex: "To use Codex with your ChatGPT plan, upgrade to Plus" (its UsageNotIncluded error, codex-rs/protocol/src/
+ *   error.rs; in the codex-cli 0.39 and 0.163 programs too).
+ * - Google: a free Google account (Gemini CLI 0.68, tier free-tier, a real run 2026-11-10): "This client is no longer
+ *   supported for Gemini Code Assist for individuals… migrate to the Antigravity suite".
+ * - Claude Code 2.1: "Your account is on hold and can't use Claude Code" (its OAuthAccountOnHoldError).
+ * - Grok Build 1.0.4: "Grok Build is not yet available for this account."
+ * None of these was seen in a live run except Google's: they are the programs' own texts. Muse Code 1.4.15 holds
+ * "No subscription allowance (" with nothing that ties it to an account without a plan, so it is not mapped.
+ */
+export function noPlanLine(raw: string): string | null {
+  if (/To use Codex with your ChatGPT plan/i.test(raw)) return "Codex needs ChatGPT Plus or higher, which this account doesn't have.";
+  if (/no longer supported for Gemini Code Assist|migrate to the Antigravity/i.test(raw)) return "Google turned this account away: it no longer takes free Google accounts here.";
+  if (/account is on hold and can.t use Claude Code/i.test(raw)) return "Claude put this account on hold, so it can't use Claude Code.";
+  if (/Grok Build is not yet available for this account/i.test(raw)) return "Grok Build isn't available for this Grok account yet.";
   return null;
 }
 
@@ -82,6 +109,7 @@ export const isLimitLine = (text: string): boolean => /plan's (?:[\w-]+ )?limit 
 
 export function limitMessage(cli: string, tool = "Claude"): string {
   const window = /weekly/i.test(cli) ? "weekly limit" : /session|5-hour/i.test(cli) ? "5-hour limit" : "limit";
-  const reset = /resets\s+(?:at\s+)?([^·\n]+?)\s*\.?$/i.exec(cli.trim())?.[1];
+  // Claude says "resets 5pm", Codex "Try again at 5:00 PM." (codex-rs/protocol/src/error.rs retry_suffix)
+  const reset = /(?:resets|try again at)\s+(?:at\s+)?([^·\n]+?)\s*\.?$/i.exec(cli.trim())?.[1];
   return limitLine(`Your ${tool} plan's ${window} is reached${reset ? `; it resets ${reset}` : ""}.`);
 }

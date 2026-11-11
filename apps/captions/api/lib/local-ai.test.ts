@@ -89,6 +89,16 @@ describe("reading what the CLIs say", () => {
     expect(plainError("model not found for this plan")).toMatchObject({ state: "failed", message: "It didn't answer. Try again." });
   });
 
+  it("says plainly when the account has no plan for this AI, before any sign-in or retry wording", () => {
+    // Codex's own words (codex-rs/protocol/src/error.rs UsageNotIncluded), as the Mac sends them
+    expect(plainError("Codex: To use Codex with your ChatGPT plan, upgrade to Plus: https://chatgpt.com/explore/plus.")).toEqual({ state: "plan", message: "Codex needs ChatGPT Plus or higher, which this account doesn't have." });
+    // Claude Code's on-hold refusal names logging in too ("can't sign in"): it is still not a sign-in
+    expect(plainError("Claude on the Mac: Claude: Your account is on hold and can't use Claude Code. View details or appeal: https://claude.ai/restricted").state).toBe("plan");
+    expect(plainError("Gemini: This client is no longer supported for Gemini Code Assist for individuals. Please migrate to the Antigravity suite.")).toEqual({ state: "plan", message: "Google turned this account away: it no longer takes free Google accounts here." });
+    // Grok Build 1.0.4's limits come as a failure (the Mac flags no Grok limit): a wait, said as one
+    expect(plainError("Grok: You’ve reached your free Grok Build usage limit for now. Get SuperGrok for much higher limits, or try again later: https://grok.com/supergrok?referrer=grok-build")).toEqual({ state: "failed", message: "Your free Grok plan's limit is reached for now. Try again later." });
+  });
+
   it("finds a binary in the usual places, nvm's newest last-resort", () => {
     expect(fallbackCandidates("claude", "/Users/x", ["/Users/x/.nvm/versions/node/v22/bin/claude"]).slice(0, 3)).toEqual([
       "/opt/homebrew/bin/claude",
@@ -175,6 +185,22 @@ describe("connect your AI", () => {
     mockCheck.next = { ok: false, ms: 3, note: undefined, error: "The Codex on this Mac is too old to run here. Update it." };
     expect(await local.connectCli("old", "codex", home, device.id)).toMatchObject({ state: "outdated", message: "ChatGPT needs a newer Codex than the one on this Mac. Try again." });
     expect(ownSettings("old")).toBeNull();
+  });
+
+  it("an account with no plan for Codex is told so at the press, and nothing is saved", async () => {
+    createUser("nop", "password1", { role: "user" });
+    const { device } = pairDevice("nop", "Nop Mac");
+    touchDevice(device.id);
+    world(["codex"], (f, args) => {
+      if (args.join(" ") === "login status") return { stdout: "Logged in using ChatGPT\n" };
+      if (f.endsWith("/codex") && args[0] === "--version") return { stdout: "codex-cli 0.163.0\n" };
+      return undefined;
+    });
+    const error = "Codex: To use Codex with your ChatGPT plan, upgrade to Plus: https://chatgpt.com/explore/plus.";
+    mockCheck.next = { ok: false, ms: 3, note: undefined, error };
+    expect(await local.connectCli("nop", "codex", home, device.id)).toEqual({ state: "plan", signedIn: true, answered: false, ms: 3, message: "Codex needs ChatGPT Plus or higher, which this account doesn't have.", raw: error });
+    expect(ownSettings("nop")).toBeNull();
+    mockCheck.next = { ok: true, ms: 5, error: undefined, note: undefined };
   });
 
   it("a Gemini CLI the Mac app won't run for being too old is 'outdated' too, and nothing is saved", async () => {
@@ -459,6 +485,44 @@ describe("the list setup shows", () => {
   });
 });
 
+describe("the plan an account's AIs are on", () => {
+  it("is Claude's from its own sign-in once connected here, and ChatGPT's from Codex's usage reading; nothing is guessed", async () => {
+    const { saveLimits } = await import("./limits");
+    createUser("pla", "password1", { role: "user" });
+    const { device } = pairDevice("pla", "Pla Mac");
+    touchDevice(device.id);
+    expect(local.planOf("pla")).toBeNull();
+    // Codex's usage page says "promax", a plan PLANS doesn't have: still nothing
+    const reading = (plan: string) => ({ identities: [{ driver: "codex", home: "/Users/x/.codex", isDefault: true, label: "default", state: "ok", windows: [], plan }] });
+    saveLimits(device.id, reading("promax"));
+    expect(local.knownPlans("pla")).toEqual({});
+    saveLimits(device.id, reading("plus"));
+    expect(local.knownPlans("pla")).toEqual({ codex: "chatgpt_plus" });
+    expect(local.planOf("pla")).toBe("chatgpt_plus");
+    // Claude connected here: what `claude auth status --json` said at Connect; the default AI's plan is the account's
+    world(["claude"], (f, args) => (args.join(" ") === "auth status --json" ? { stdout: claudeAuth(true, "max") } : claudeVersion(f, args)));
+    expect(await local.connectCli("pla", "claude", home, device.id)).toMatchObject({ state: "ready" });
+    expect(local.knownPlans("pla")).toEqual({ claude: "claude_max5", codex: "chatgpt_plus" });
+    expect(local.planOf("pla")).toBe("claude_max5");
+    // a default AI whose plan nobody names: Not sure, never the other AI's plan
+    saveLimits(device.id, reading("free"));
+    const set = ownSettings("pla")!;
+    await saveSettings({ ...set, instances: [...set.instances, { id: "local-codex", driver: "codex", name: "Codex", enabled: true, device: device.id }], default: { ...set.default, instance: "local-codex" } }, "pla");
+    expect(local.planOf("pla")).toBeNull();
+    saveLimits(device.id, reading("plus"));
+    // and the list's rows name them: Codex's from its reading, Claude's from its sign-in
+    world(["claude", "codex"], (f, args) => {
+      if (args.join(" ") === "auth status --json") return { stdout: claudeAuth(true, "max") };
+      if (args.join(" ") === "login status") return { stdout: "Logged in using ChatGPT" };
+      if (f.endsWith("/codex") && args[0] === "--version") return { stdout: "codex-cli 0.163.0" };
+      return claudeVersion(f, args);
+    });
+    const v = await local.localAiView("pla", [], true);
+    expect(v.rows.find((r) => r.id === "codex")?.plan).toBe("chatgpt_plus");
+    expect(v.rows.find((r) => r.id === "claude")?.plan).toBe("claude_max5");
+  });
+});
+
 describe("Creator Toolset in each CLI", () => {
   const keyIn = (calls: string[]) => calls.find((c) => c.includes("mcp add --transport"))?.match(/ctk_[0-9a-f]+/)?.[0];
 
@@ -691,7 +755,7 @@ setTimeout(() => {}, 60000);
   it("Google turning a free account away is said as that, not as a sign-in or a silence", () => {
     // Gemini CLI 0.68 on a free personal Google account (2026-11-10)
     const refused = "Gemini: This client is no longer supported for Gemini Code Assist for individuals. Please migrate to the Antigravity suite to continue. Authentication tier: free-tier";
-    expect(plainError(refused)).toEqual({ state: "failed", message: "Google turned this account away: it no longer takes free Google accounts here." });
+    expect(plainError(refused)).toEqual({ state: "plan", message: "Google turned this account away: it no longer takes free Google accounts here." });
   });
 
   it("signs Grok in with its browser sign-in and Cursor with its own, each started from the copy on this Mac", async () => {

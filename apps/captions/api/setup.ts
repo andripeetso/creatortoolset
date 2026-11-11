@@ -11,7 +11,7 @@ import { readConnectors } from "./lib/connectors/store";
 import { publicApifyStatus, readApify } from "./lib/instagram/apify";
 import { deviceTranscribes } from "./lib/device-transcribe";
 import { connectedOwn } from "./lib/providers";
-import { addMcp, connectCli, installCli, localAiView, signIn, updateCli, CLI_IDS, MAC_ONLY, OTHER_AIS, VENDOR_AIS } from "./lib/local-ai";
+import { addMcp, connectCli, installCli, localAiView, planOf, signIn, updateCli, CLI_IDS, MAC_ONLY, OTHER_AIS, VENDOR_AIS } from "./lib/local-ai";
 import { ownedProjects } from "./lib/workshop/workspace";
 import { ensureLibrary, homeOf } from "./library/access";
 import { libraryDb } from "./library/db";
@@ -27,7 +27,7 @@ import { MY_KEYS } from "../contracts/service-keys";
 import type { CliId, LocalAiView } from "../contracts/local-ai";
 import type { Driver } from "../contracts/providers";
 import { isTool, TOOLS, type Have, type SetupView, type Tool, HOME_TILES, isHomeTile, type HomeTile } from "../contracts/tools";
-import { isPlan, planFromCli, type PlanId } from "../contracts/plans";
+import { isPlan, type PlanId } from "../contracts/plans";
 
 /**
  * First-run setup and Settings → Setup: the tools a person uses (their own list, apart from Admin → Access), the plan
@@ -107,13 +107,6 @@ export async function haveFor(user: SessionUser): Promise<Have[]> {
   return have;
 }
 
-/** The plan a CLI on one of this account's Macs reported (the Mac app's report), if any says one. */
-const detectedPlan = (u: string): PlanId | null =>
-  listDevices((d) => d.owner === u)
-    .flatMap((d) => d.report?.drivers ?? [])
-    .map((r) => planFromCli(r.plan))
-    .find(Boolean) ?? null;
-
 async function view(user: SessionUser): Promise<SetupView> {
   const s = read(user.username) ?? {};
   return {
@@ -122,7 +115,7 @@ async function view(user: SessionUser): Promise<SetupView> {
     tools: s.tools ? s.tools.filter(isTool) : null,
     hidden: (s.hidden ?? []).filter(isHomeTile),
     plan: s.plan ?? null,
-    detected: detectedPlan(user.username),
+    detected: planOf(user.username),
     done: !!s.done,
     have: await haveFor(user),
     mcpTo: s.mcpTo ?? [],

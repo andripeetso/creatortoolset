@@ -5,11 +5,12 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { type CliId, type ConnectResult, type LocalAiRow, type LocalAiView, type McpResult, type SignInResult } from "../../contracts/local-ai";
-import { planFromCli, type PlanId } from "../../contracts/plans";
+import { codexPlan, noPlanLine, planFromCli, type PlanId } from "../../contracts/plans";
 import { addInstanceTo, DRIVERS, type Driver, type ProviderInstance } from "../../contracts/providers";
 import { checkInstance } from "../providers";
 import { connectedOwn, modelsFor, ownSettings, parseSettings, saveSettings } from "./providers";
-import { deviceOf, isOnline } from "./devices";
+import { deviceOf, isOnline, listDevices } from "./devices";
+import { reportedPlan } from "./limits";
 import { dropAiKey, findUser, newAiKey, type UserRecord } from "../users";
 
 /**
@@ -271,12 +272,14 @@ export const parseCodexLogin = (text: string): boolean => /logged in/i.test(text
 /** The first line of `--version`, at most 120 characters. */
 export const parseVersion = (text: string): string | undefined => text.split("\n")[0]?.trim().slice(0, 120) || undefined;
 
-/** The raw text, as the message a person sees (plain words; the raw text stays for Details). */
-export function plainError(raw: string): { state: "signin" | "missing" | "failed"; message: string } {
-  // Google turning a free Google account away (Gemini CLI 0.68, tier free-tier, 2026-11-10): "This client is no longer
-  // supported for Gemini Code Assist for individuals… migrate to the Antigravity suite". Trying again won't change it.
-  if (/no longer supported for Gemini Code Assist|migrate to the Antigravity/i.test(raw))
-    return { state: "failed", message: "Google turned this account away: it no longer takes free Google accounts here." };
+/** The raw text, as the message a person sees (plain words; the raw text stays for What it said). */
+export function plainError(raw: string): { state: "signin" | "missing" | "failed" | "plan"; message: string } {
+  // the account itself turned away (no plan that includes this AI): checked first, a refusal can mention signing in
+  const noPlan = noPlanLine(raw);
+  if (noPlan) return { state: "plan", message: noPlan };
+  // Grok Build 1.0.4's own words for a used-up plan; the Mac flags no Grok limit, so they come as a failure
+  if (/reached your free Grok Build usage limit/i.test(raw)) return { state: "failed", message: "Your free Grok plan's limit is reached for now. Try again later." };
+  if (/hit the rate limit for your plan/i.test(raw)) return { state: "failed", message: "Your Grok plan's limit is reached for now. Try again later." };
   // "auth method": Gemini CLI with no sign-in chosen ("Please set an Auth method in your …/settings.json");
   // "not signed in", "grok login": Grok signed out ("Not signed in. To authenticate without a browser, run: grok login …")
   if (/not logged in|not signed in|grok login|\/login|log in|authentication|auth method|unauthorized|401/i.test(raw)) return { state: "signin", message: "Not signed in yet." };
@@ -492,6 +495,33 @@ export async function otherAis(home = os.homedir()): Promise<Array<{ id: Driver;
 
 const nameOf = (id: Driver): string => (isCli(id) ? NAMES[id] : (DRIVERS.find((d) => d.id === id)?.label ?? id));
 
+/* ---- the plan ---- */
+
+/**
+ * The plan each of this account's AIs runs on, as the AI's own tools name it, and nothing when none does (never a
+ * guess). Claude: `claude auth status --json`, from this server's own look at its Mac once that Claude is this account's
+ * AI (Connect ran it), else from a Mac's report. ChatGPT: the plan type Codex's usage page answers, which the Mac app
+ * sends with the limits (Limits.swift).
+ */
+export function knownPlans(username: string): Partial<Record<Driver, PlanId>> {
+  const macs = listDevices((d) => d.owner === username);
+  const here = (ownSettings(username)?.instances ?? []).some((i) => i.id === "local-claude" && i.enabled) ? probes.get("claude")?.p.plan : undefined;
+  const claude = here ?? macs.flatMap((d) => d.report?.drivers ?? []).filter((r) => r.driver === "claude").map((r) => planFromCli(r.plan)).find(Boolean);
+  const codex = macs.map((d) => codexPlan(reportedPlan(d.id, "codex"))).find(Boolean);
+  return { ...(claude ? { claude } : {}), ...(codex ? { codex } : {}) };
+}
+
+/**
+ * The account's plan, one value for Usage, setup and the big-job warning: its default AI's (unknown stays unknown, never
+ * another AI's plan), or with no default AI yet the one plan known.
+ */
+export function planOf(username: string): PlanId | null {
+  const plans = knownPlans(username);
+  const own = ownSettings(username);
+  const driver = own?.instances.find((i) => i.id === own.default.instance)?.driver;
+  return (driver ? plans[driver] : Object.values(plans)[0]) ?? null;
+}
+
 /* ---- the view ---- */
 
 /** The rows setup shows: each CLI, found on this Mac or not; then Grok, Meta and Cursor, found or not, and the other AIs found. */
@@ -500,6 +530,7 @@ export async function localAiView(username: string, mcpTo: CliId[], fresh = fals
   if (fresh) CLI_IDS.forEach(forgetCli);
   const [probed, found] = await Promise.all([Promise.all(CLI_IDS.map((id) => probe(id, fresh, home))), otherAis(home)]);
   const own = ownSettings(username)?.instances ?? [];
+  const plans = knownPlans(username);
   const connected = (id: string) => {
     const inst = own.find((i) => i.id === `local-${id}`);
     return !!(inst?.enabled && inst.lastCheck?.ok);
@@ -521,7 +552,7 @@ export async function localAiView(username: string, mcpTo: CliId[], fresh = fals
       found: true,
       version: p.version,
       signedIn: p.signedIn,
-      ...(p.plan ? { plan: p.plan } : {}),
+      ...((p.plan ?? plans[p.id]) ? { plan: p.plan ?? plans[p.id] } : {}),
       connected: connected(p.id),
       ...(lastCheck ? { lastCheck } : {}),
       mcp,
@@ -785,7 +816,7 @@ export async function connectCli(username: string, id: Driver, home = os.homedir
       return { state: "outdated", signedIn: p.signedIn, answered: false, ms: check.ms, message: `${id === "gemini" ? "Google needs a newer Gemini" : "ChatGPT needs a newer Codex"} than the one on this Mac. Try again.`, raw: check.error };
     const plain = plainError(check.error ?? "");
     if (plain.state === "signin") return { state: "signin", signedIn: false, answered: false, message: plain.message, raw: check.error };
-    return { state: "failed", signedIn: p.signedIn, answered: false, ms: check.ms, message: plain.message, raw: check.error };
+    return { state: plain.state === "plan" ? "plan" : "failed", signedIn: p.signedIn, answered: false, ms: check.ms, message: plain.message, raw: check.error };
   }
   await saveSettings({ ...next, instances: next.instances.map((i) => (i.id === instId ? { ...i, lastCheck: { ok: true, at: check.at, ms: check.ms, ...(check.note ? { note: check.note } : {}) } } : i)) }, username);
   // a plan at its limit is connected all the same: the message says when it resets

@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router";
 import { Terminal } from "lucide-react";
+import { noPlanLine, PLANS, planFromCli } from "@contracts/plans";
 import { DRIVERS, type Driver, type MacReport, type ProviderCheck, type ProviderInstance, type ProviderSettings } from "@contracts/providers";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
@@ -37,6 +38,9 @@ export function providerStatus(o: {
   const answeredSinceReport = !!o.check?.ok && (o.reportAt === undefined || o.check.at >= o.reportAt);
   if (o.found?.signedIn === false && !answeredSinceReport) return { tone: "attention", text: "Not signed in", action: "sign-in" };
   if (o.check && !o.check.ok) {
+    // the account itself turned away (no plan that includes this AI): said as setup says it, with no retry to offer
+    const noPlan = noPlanLine(o.check.error ?? "");
+    if (noPlan) return { tone: "attention", text: noPlan };
     // the plain reason is in the detail; a sign-in problem gets its fix on the row
     const signIn = /sign in|log ?in|login/i.test(o.check.error ?? "");
     const computer = /did not pick up|is offline|stopped answering/i.test(o.check.error ?? "");
@@ -44,7 +48,9 @@ export function providerStatus(o: {
   }
   // it works, with something to know (a plan limit and when it resets): said plainly, nothing to press
   if (o.check?.ok && o.check.note) return { tone: "neutral", text: o.check.note };
-  if (o.found?.signedIn && o.found.plan) return { tone: "neutral", text: `${o.found.plan.charAt(0).toUpperCase()}${o.found.plan.slice(1)} plan` };
+  // Claude's report says "max default_claude_max_5x": its plan's own name; another AI's tier as it says it
+  const claude = o.found?.driver === "claude" ? PLANS.find((p) => p.id === planFromCli(o.found?.plan))?.label : undefined;
+  if (o.found?.signedIn && o.found.plan) return { tone: "neutral", text: `${claude ?? `${o.found.plan.charAt(0).toUpperCase()}${o.found.plan.slice(1)}`} plan` };
   return { tone: "neutral", text: "" };
 }
 

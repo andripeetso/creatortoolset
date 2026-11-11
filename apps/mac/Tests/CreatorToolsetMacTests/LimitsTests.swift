@@ -77,6 +77,14 @@ final class LimitsTests: XCTestCase {
         XCTAssertEqual(rows[1]["usedPercent"] as? Double, 100)
     }
 
+    func testCodexPlanIsTheUsagePagesOwnWord() {
+        // the answer's shape as Codex's own client reads it (codex-rs RateLimitStatusPayload: plan_type beside rate_limit)
+        XCTAssertEqual(codexPlan(object(#"{"plan_type":"plus","rate_limit":{"primary_window":{"used_percent":3}}}"#)), "plus")
+        XCTAssertEqual(codexPlan(object(#"{"plan_type":"self_serve_business_usage_based_and_then_some_more_words"}"#))?.count, 40)
+        XCTAssertNil(codexPlan(object(#"{"plan_type":""}"#)))
+        XCTAssertNil(codexPlan(object(#"{"rate_limit":{}}"#)))   // an answer without one (an older page): nothing
+    }
+
     // MARK: readings
 
     func testStatusMapsToState() {

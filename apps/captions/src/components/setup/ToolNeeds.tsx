@@ -168,7 +168,7 @@ export function PlanQuestion({ view, onSave }: { view: SetupView; onSave: (plan:
         ))}
       </select>
       <span className="text-xs text-muted-foreground">
-        {reported && `Read from Claude Code: ${reported}. `}On Pro or Plus, heavy runs (the AI Editor, deep research, big Analyzer runs) ask first: they can use up the 5-hour limit.
+        {reported && `Your AI account is on ${reported}. `}On Pro or Plus, heavy runs (the AI Editor, deep research, big Analyzer runs) ask first: they can use up the 5-hour limit.
       </span>
     </label>
   );

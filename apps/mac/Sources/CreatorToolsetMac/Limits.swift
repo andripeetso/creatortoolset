@@ -108,6 +108,13 @@ func codexWindows(_ body: [String: Any]) -> [[String: Any]] {
     return out
 }
 
+/// The plan Codex's usage page names ("plus", "pro", "free"…: its plan_type, codex-rs RateLimitStatusPayload), as it
+/// says it, 40 characters at most; nil when it names none. The site decides what it means (contracts/plans.ts codexPlan).
+func codexPlan(_ body: [String: Any]) -> String? {
+    guard let plan = body["plan_type"] as? String, !plan.isEmpty else { return nil }
+    return String(plan.prefix(40))
+}
+
 /// The keychain item for a config folder: "Claude Code-credentials-" + the first 8 hex digits of SHA-256 of the path.
 func claudeKeychainService(home: String) -> String {
     let hex = SHA256.hash(data: Data(home.utf8)).map { String(format: "%02x", $0) }.joined()
@@ -188,17 +195,18 @@ private func usageGET(_ urlString: String, headers: [String: String]) -> (status
     return (slot.status, slot.body)
 }
 
-/// One folder's reading: its state, an error when there is one, and its windows (only when ok).
-typealias LimitReading = (state: String, error: String?, windows: [[String: Any]])
+/// One folder's reading: its state, an error when there is one, its windows and the plan it names (only when ok).
+typealias LimitReading = (state: String, error: String?, windows: [[String: Any]], plan: String?)
 
-private func finish(_ reply: (status: Int, body: [String: Any]?), windows: ([String: Any]) -> [[String: Any]]) -> LimitReading {
+private func finish(_ reply: (status: Int, body: [String: Any]?), windows: ([String: Any]) -> [[String: Any]],
+                    plan: ([String: Any]) -> String? = { _ in nil }) -> LimitReading {
     let reading = readingState(status: reply.status, body: reply.body)
-    guard reading.state == "ok", let body = reply.body else { return (reading.state, reading.error, []) }
-    return (reading.state, nil, windows(body))
+    guard reading.state == "ok", let body = reply.body else { return (reading.state, reading.error, [], nil) }
+    return (reading.state, nil, windows(body), plan(body))
 }
 
 private func claudeReading(home: String) -> LimitReading {
-    guard let token = claudeLogin(home: home) else { return ("no_login", nil, []) }
+    guard let token = claudeLogin(home: home) else { return ("no_login", nil, [], nil) }
     let reply = usageGET(claudeUsageURL, headers: [
         "Authorization": "Bearer " + token, "anthropic-beta": "oauth-2025-04-20", "User-Agent": "creator-toolset",
     ])
@@ -206,10 +214,10 @@ private func claudeReading(home: String) -> LimitReading {
 }
 
 private func codexReading(home: String) -> LimitReading {
-    guard let login = codexLogin(home: home) else { return ("no_login", nil, []) }
+    guard let login = codexLogin(home: home) else { return ("no_login", nil, [], nil) }
     var headers = ["Authorization": "Bearer " + login.token, "User-Agent": "creator-toolset"]
     if let account = login.accountId { headers["ChatGPT-Account-Id"] = account }
-    return finish(usageGET(codexUsageURL, headers: headers), windows: codexWindows)
+    return finish(usageGET(codexUsageURL, headers: headers), windows: codexWindows, plan: codexPlan)
 }
 
 /// The identities for the limits post: each Claude and Codex folder from homeReport, with its label and reading.
@@ -230,6 +238,7 @@ func limitsReport(home: URL, now: Date = Date(), enabled: Bool = limitsReadingOn
             "state": reading.state, "windows": reading.windows,
         ]
         if let error = reading.error { identity["error"] = error }
+        if let plan = reading.plan { identity["plan"] = plan }
         out.append(identity)
     }
     return out
