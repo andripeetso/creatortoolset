@@ -11,7 +11,7 @@ import { readConnectors } from "./lib/connectors/store";
 import { publicApifyStatus, readApify } from "./lib/instagram/apify";
 import { deviceTranscribes } from "./lib/device-transcribe";
 import { connectedOwn } from "./lib/providers";
-import { addMcp, connectCli, installCli, localAiView, signIn, updateCli, CLI_IDS, MAC_ONLY, OTHER_AIS } from "./lib/local-ai";
+import { addMcp, connectCli, installCli, localAiView, signIn, updateCli, CLI_IDS, MAC_ONLY, OTHER_AIS, VENDOR_AIS } from "./lib/local-ai";
 import { ownedProjects } from "./lib/workshop/workspace";
 import { ensureLibrary, homeOf } from "./library/access";
 import { libraryDb } from "./library/db";
@@ -38,10 +38,10 @@ import { isPlan, planFromCli, type PlanId } from "../contracts/plans";
  *   GET  /api/setup/computers → ComputersView  this computer, plus the account's other computers (devices) with online state
  *   PUT  /api/setup  { tools?: Tool[], plan?: PlanId | null, done?: boolean } → SetupView
  *   GET  /api/setup/ai[?fresh=1]       → LocalAiView   the AI CLIs found on this computer (owner only; fresh reads them again)
- *   POST /api/setup/ai/signin  { id }  → SignInResult  starts the tool's own sign-in; its browser opens (CT_LOCAL=1)
+ *   POST /api/setup/ai/signin  { id }  → SignInResult  starts the tool's own sign-in (the three CLIs, Grok, Cursor); its browser opens (CT_LOCAL=1)
  *   POST /api/setup/ai/connect { id, device } → ConnectResult connects it as this account's AI after a real check (always 200)
  *   POST /api/setup/ai/mcp     { id }  → McpResult     adds Creator Toolset to it, with one new Full key (CT_LOCAL=1)
- *   POST /api/setup/ai/install { id }  → SignInResult  installs it by the vendor's own route, then checks it runs (CT_LOCAL=1)
+ *   POST /api/setup/ai/install { id }  → SignInResult  installs it (the three CLIs, Grok, Cursor) by the vendor's own route, then checks it runs (CT_LOCAL=1)
  *   POST /api/setup/join { link }      → { ok, server, device } joins another server behind its one-time link (not hosted)
  */
 
@@ -213,8 +213,9 @@ const port = () => Number(process.env.PORT || 3000);
 const cliOf = (v: unknown): CliId | null =>
   typeof v === "string" && (CLI_IDS as string[]).includes(v) ? (v as CliId) : null;
 const mcpToOf = (u: string): CliId[] => read(u)?.mcpTo ?? [];
-/** Connect also takes the other AIs the Mac app runs (local-ai.ts OTHER_AIS); only the three CLIs install and sign in here. */
+/** Connect also takes the other AIs the Mac app runs (local-ai.ts OTHER_AIS); install and sign-in the three CLIs, Grok and Cursor (VENDOR_AIS). */
 const aiOf = (v: unknown): Driver | null => cliOf(v) ?? (typeof v === "string" && Object.keys(OTHER_AIS).includes(v) ? (v as Driver) : null);
+const setupAiOf = (v: unknown): Driver | null => cliOf(v) ?? (typeof v === "string" && Object.hasOwn(VENDOR_AIS, v) ? (v as Driver) : null);
 
 setupApp.get("/ai", async (c) => {
   const u = c.get("user").username;
@@ -224,8 +225,8 @@ setupApp.get("/ai", async (c) => {
 
 setupApp.post("/ai/signin", async (c) => {
   if (!ownComputer(c.get("user"))) return c.json({ ok: false, message: MAC_ONLY }, 403);
-  const id = cliOf(((await c.req.json().catch(() => null)) as { id?: unknown } | null)?.id);
-  if (!id) return c.json({ error: "Pick Claude Code, Codex or Gemini CLI" }, 400);
+  const id = setupAiOf(((await c.req.json().catch(() => null)) as { id?: unknown } | null)?.id);
+  if (!id) return c.json({ error: "Pick an AI this Mac can set up" }, 400);
   return c.json(await signIn(id));
 });
 
@@ -240,8 +241,8 @@ setupApp.post("/ai/connect", async (c) => {
 
 setupApp.post("/ai/install", async (c) => {
   if (!ownComputer(c.get("user"))) return c.json({ ok: false, message: MAC_ONLY }, 403);
-  const id = cliOf(((await c.req.json().catch(() => null)) as { id?: unknown } | null)?.id);
-  if (!id) return c.json({ error: "Pick Claude Code, Codex or Gemini CLI" }, 400);
+  const id = setupAiOf(((await c.req.json().catch(() => null)) as { id?: unknown } | null)?.id);
+  if (!id) return c.json({ error: "Pick an AI this Mac can set up" }, 400);
   return c.json(await installCli(id));
 });
 

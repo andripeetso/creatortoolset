@@ -272,8 +272,9 @@ export const parseVersion = (text: string): string | undefined => text.split("\n
 
 /** The raw text, as the message a person sees (plain words; the raw text stays for Details). */
 export function plainError(raw: string): { state: "signin" | "missing" | "failed"; message: string } {
-  // "auth method": Gemini CLI with no sign-in chosen ("Please set an Auth method in your …/settings.json")
-  if (/not logged in|\/login|log in|authentication|auth method|unauthorized|401/i.test(raw)) return { state: "signin", message: "Not signed in yet." };
+  // "auth method": Gemini CLI with no sign-in chosen ("Please set an Auth method in your …/settings.json");
+  // "not signed in", "grok login": Grok signed out ("Not signed in. To authenticate without a browser, run: grok login …")
+  if (/not logged in|not signed in|grok login|\/login|log in|authentication|auth method|unauthorized|401/i.test(raw)) return { state: "signin", message: "Not signed in yet." };
   if (/timed out|timeout|did not pick up/i.test(raw)) return { state: "failed", message: "It took too long to answer. Try again." };
   if (/ENOENT|command not found|no such file/i.test(raw)) return { state: "missing", message: MISSING };
   return { state: "failed", message: "It didn't answer. Try again." };
@@ -390,27 +391,64 @@ export async function probe(id: CliId, fresh = false, home = os.homedir()): Prom
 
 /**
  * The other AIs the Mac app runs (ClaudeRequest.swift runnableDrivers), by the command it starts (MacReport.swift
- * driverBinaries). Setup lists the ones on this Mac and connects them as they are set up there: it never installs one or
- * signs one in.
+ * driverBinaries). Setup lists the ones on this Mac and connects them as they are set up there; the ones in VENDOR_AIS
+ * it also installs and signs in.
  */
 export const OTHER_AIS: Partial<Record<Driver, string>> = { grok: "grok", cursor: "cursor-agent", opencode: "opencode", antigravity: "antigravity-acp", pi: "pi" };
 
-/** The other AIs on this Mac: one login shell's `command -v` for all of them, then the usual folders (as lookup). */
-export async function otherAis(home = os.homedir()): Promise<Driver[]> {
+/** Whether a Cursor config file names the account it signed in with (`authInfo`; signing out removes it). */
+const cursorAccount = (file: string): boolean => {
+  try {
+    return !!(JSON.parse(readFileSync(file, "utf8")) as { authInfo?: unknown }).authInfo;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * The other AIs setup installs and signs in as it does the three CLIs: the vendor's own installer, the copy it leaves,
+ * the vendor's browser sign-in, and the file that sign-in saves. A look reads only that file, never starts a program.
+ */
+export const VENDOR_AIS: Partial<Record<Driver, { install: string; bin: (home: string) => string; login: string[]; signedIn: (home: string) => boolean }>> = {
+  // xAI's installer keeps grok in ~/.grok/bin; `login --oauth` is its browser sign-in, saved to auth.json
+  grok: {
+    install: "curl -fsSL https://x.ai/cli/install.sh | bash",
+    bin: (h) => path.join(h, ".grok", "bin", "grok"),
+    login: ["login", "--oauth"],
+    signedIn: (h) => existsSync(path.join(process.env.GROK_HOME || path.join(h, ".grok"), "auth.json")),
+  },
+  // Cursor's installer links cursor-agent into ~/.local/bin; its sign-in keeps the tokens in the Keychain and the
+  // account in cli-config.json
+  cursor: {
+    install: "curl -fsS https://cursor.com/install | bash",
+    bin: (h) => path.join(h, ".local", "bin", "cursor-agent"),
+    login: ["login"],
+    signedIn: (h) => cursorAccount(path.join(process.env.CURSOR_CONFIG_DIR || path.join(h, ".cursor"), "cli-config.json")),
+  },
+};
+
+/** The other AIs on this Mac and the copy each runs: one login shell's `command -v` for all of them, then the usual folders. */
+export async function otherAis(home = os.homedir()): Promise<Array<{ id: Driver; bin: string }>> {
   const ids = Object.keys(OTHER_AIS) as Driver[];
   const out = await fromShell(ids.map((id) => OTHER_AIS[id]).join(" "));
-  const onPath = new Set(out.split("\n").map((l) => l.trim()).filter((l) => l.startsWith("/")).map((l) => path.basename(l)));
+  const onPath = out.split("\n").map((l) => l.trim()).filter((l) => l.startsWith("/"));
   const nvm = nvmVersionDirs(home);
-  return ids.filter((id) => onPath.has(OTHER_AIS[id]!) || fallbackCandidates(OTHER_AIS[id]!, home, nvm).some(copyAt));
+  return ids.flatMap((id) => {
+    const name = OTHER_AIS[id]!;
+    const bin = onPath.find((l) => path.basename(l) === name) ?? fallbackCandidates(name, home, nvm).find(copyAt);
+    return bin ? [{ id, bin }] : [];
+  });
 }
+
+const nameOf = (id: Driver): string => (isCli(id) ? NAMES[id] : (DRIVERS.find((d) => d.id === id)?.label ?? id));
 
 /* ---- the view ---- */
 
-/** The rows setup shows: each CLI, found on this Mac or not. */
-export async function localAiView(username: string, mcpTo: CliId[], fresh = false): Promise<LocalAiView> {
+/** The rows setup shows: each CLI, found on this Mac or not; then Grok and Cursor, found or not, and the other AIs found. */
+export async function localAiView(username: string, mcpTo: CliId[], fresh = false, home = os.homedir()): Promise<LocalAiView> {
   // fresh: Check again. Nothing cached is used, so a CLI installed a moment ago is found and its sign-in is read again.
   if (fresh) CLI_IDS.forEach(forgetCli);
-  const [probed, found] = await Promise.all([Promise.all(CLI_IDS.map((id) => probe(id, fresh))), otherAis()]);
+  const [probed, found] = await Promise.all([Promise.all(CLI_IDS.map((id) => probe(id, fresh, home))), otherAis(home)]);
   const own = ownSettings(username)?.instances ?? [];
   const connected = (id: string) => {
     const inst = own.find((i) => i.id === `local-${id}`);
@@ -440,7 +478,15 @@ export async function localAiView(username: string, mcpTo: CliId[], fresh = fals
       ...(mcp === "update" ? { updateCommand: codexUpdateCommand(p.bin ?? "", p.real) } : {}),
     });
   }
-  return { local: true, rows, others: found.map((id) => ({ id, connected: connected(id) })) };
+  const others = (Object.keys(OTHER_AIS) as Driver[]).filter((id) => VENDOR_AIS[id] || found.some((f) => f.id === id));
+  return {
+    local: true,
+    rows,
+    others: others.map((id) => {
+      const here = found.some((f) => f.id === id);
+      return { id, found: here, signedIn: here && VENDOR_AIS[id] ? VENDOR_AIS[id].signedIn(home) : null, connected: connected(id) };
+    }),
+  };
 }
 
 /* ---- install: the vendors' own routes, run here as child processes (no Terminal) ---- */
@@ -546,21 +592,26 @@ async function installGemini(): Promise<Failed | null> {
  * Installs one CLI by its vendor's own route, then runs the binary by its absolute path with --version: only a binary
  * that answers counts as installed. Nothing is shown as a command to paste.
  */
-export async function installCli(id: CliId): Promise<SignInResult> {
-  const failed = id === "claude" ? await installClaude() : id === "codex" ? await installCodex() : await installGemini();
+export async function installCli(id: Driver): Promise<SignInResult> {
+  const vendor = isCli(id) ? undefined : VENDOR_AIS[id];
+  if (!isCli(id) && !vendor) return { ok: false, message: `${nameOf(id)} isn't installed from here.` };
+  // Grok's and Cursor's installers download about 180 MB each: half an hour, as Codex's
+  const failed =
+    id === "claude" ? await installClaude() : id === "codex" ? await installCodex() : id === "gemini" ? await installGemini()
+    : await step("/bin/bash", ["-o", "pipefail", "-c", vendor!.install], process.env, `Couldn't install ${nameOf(id)}. Check the internet connection, then try again.`, 30 * 60_000);
   if (failed) return { ok: false, message: failed.message, raw: failed.raw };
-  const bin = id === "gemini" ? geminiBin() : path.join(localBin(), id);
+  const bin = id === "gemini" ? geminiBin() : vendor ? vendor.bin(os.homedir()) : path.join(localBin(), id);
   const v = await run(bin, ["--version"], { env: { ...process.env, PATH: toolPath(bin) }, timeout: 15_000 });
-  forgetCli(id); // the next look reads the machine again
-  shellSaid.delete(id); // and asks the shell again: the new copy may be on its PATH
-  if (v.code !== 0) return { ok: false, message: `${NAMES[id]} installed, but it didn't start. Try again.`, raw: tailOf(v) };
-  return { ok: true, message: `${NAMES[id]} is installed.` };
+  if (isCli(id)) forgetCli(id); // the next look reads the machine again
+  shellSaid.clear(); // and asks the shell again: the new copy may be on its PATH
+  if (v.code !== 0) return { ok: false, message: `${nameOf(id)} installed, but it didn't start. Try again.`, raw: tailOf(v) };
+  return { ok: true, message: `${nameOf(id)} is installed.` };
 }
 
 /* ---- sign in: the vendor's own sign-in runs as a child process; the page polls until it is done ---- */
 
-/** The sign-in commands running now, one per CLI: a new press ends the older one. */
-const logins = new Map<CliId, ChildProcess>();
+/** The sign-in commands running now, one per AI: a new press ends the older one. */
+const logins = new Map<Driver, ChildProcess>();
 
 /**
  * Gemini CLI has no sign-in command. Its editor mode (`--acp`, the Agent Client Protocol: JSON lines on stdin and stdout)
@@ -592,14 +643,15 @@ function geminiLogin(bin: string): ChildProcess {
 }
 
 /** Starts the vendor's sign-in (its browser opens) as a child process. The page checks the sign-in every few seconds until it is done. */
-export async function signIn(id: CliId): Promise<SignInResult> {
-  const bin = await binFor(id);
+export async function signIn(id: Driver): Promise<SignInResult> {
+  const vendor = isCli(id) ? undefined : VENDOR_AIS[id];
+  const bin = isCli(id) ? await binFor(id) : vendor && (await otherAis()).find((o) => o.id === id)?.bin;
   if (!bin) return { ok: false, message: MISSING };
   logins.get(id)?.kill();
   const child =
     id === "gemini"
       ? geminiLogin(bin)
-      : spawn(bin, id === "claude" ? ["auth", "login"] : ["login"], { env: { ...process.env, PATH: toolPath(bin) }, stdio: ["ignore", "pipe", "pipe"] });
+      : spawn(bin, id === "claude" ? ["auth", "login"] : (vendor?.login ?? ["login"]), { env: { ...process.env, PATH: toolPath(bin) }, stdio: ["ignore", "pipe", "pipe"] });
   logins.set(id, child);
   const started = await new Promise<boolean>((resolve) => {
     child.once("spawn", () => resolve(true));
@@ -607,7 +659,7 @@ export async function signIn(id: CliId): Promise<SignInResult> {
   });
   if (!started) {
     logins.delete(id);
-    return { ok: false, message: `Couldn't start ${NAMES[id]} sign-in. Try again.` };
+    return { ok: false, message: `Couldn't start ${nameOf(id)} sign-in. Try again.` };
   }
   child.stdout?.resume();
   child.stderr?.resume();
@@ -628,8 +680,9 @@ export async function signIn(id: CliId): Promise<SignInResult> {
  * (the AI step's picker does that). Mints no key.
  */
 export async function connectCli(username: string, id: Driver, home = os.homedir(), mac?: string): Promise<ConnectResult> {
-  // another AI the Mac app runs: found on this Mac, never installed or signed in here; the check says whether it answers
-  const p = isCli(id) ? await probe(id, true, home) : { found: (await otherAis(home)).includes(id), signedIn: null, home: undefined };
+  // another AI the Mac app runs: found on this Mac; Grok's and Cursor's sign-in is read from the file it saves
+  const found = !isCli(id) && (await otherAis(home)).some((o) => o.id === id);
+  const p = isCli(id) ? await probe(id, true, home) : { found, signedIn: found ? (VENDOR_AIS[id]?.signedIn(home) ?? null) : null, home: undefined };
   if (!p.found) return { state: "missing", signedIn: null, answered: null, message: MISSING };
   if (p.signedIn === false) return { state: "signin", signedIn: false, answered: null, message: "Not signed in yet." };
   // this server's own Mac: a device of this account that is answering now, never the first online one of its Macs
@@ -637,7 +690,7 @@ export async function connectCli(username: string, id: Driver, home = os.homedir
   if (!device || device.owner !== username || !isOnline(device.id)) return { state: "mac", signedIn: p.signedIn, answered: null, message: MAC_ONLY };
 
   const instId = `local-${id}`;
-  const name = isCli(id) ? NAMES[id] : (DRIVERS.find((d) => d.id === id)?.label ?? id);
+  const name = nameOf(id);
   const inst: ProviderInstance = { id: instId, driver: id, name, enabled: true, device: device.id, ...(p.home ? { home: p.home } : {}) };
   // the same writer as the Settings page's Add provider: addInstanceTo builds the set, parseSettings checks it.
   // A first AI becomes the default with the first model this login really has (modelsFor), not the catalogue's.

@@ -61,7 +61,7 @@ import { cn } from "@/lib/utils";
 
 /** Each screen: its title and the line under it. The first three are the path, with `own` after them for an own-AI answer; the rest open alone from a `?setup=` link. */
 const STEP: Record<SetupStep, { title: string; hint: string }> = {
-  agents: { title: "Connect your AI", hint: "Creator Toolset works with the ChatGPT, Claude or Google plan you already have." },
+  agents: { title: "Connect your AI", hint: "Creator Toolset works with the ChatGPT, Claude, Google or Grok plan you already have." },
   make: { title: "What do you make?", hint: "Pick what fits. It turns on the right tools." },
   connect: { title: "Connect your computers", hint: "Add your phone or another computer." },
   folders: {

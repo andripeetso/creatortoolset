@@ -59,6 +59,22 @@ describe("install with the vendor's own route, no Terminal", () => {
     expect(calls.some((c) => c.file.endsWith("osascript"))).toBe(false);
   });
 
+  it("Grok and Cursor: each vendor's own installer as a child process, then its program run by the path it leaves", async () => {
+    const grok = path.join(home, ".grok", "bin", "grok");
+    const cursor = localBin("cursor-agent");
+    const calls = machine((file, args) => (file === grok ? versionOf(args, "grok 1.0.77 (50ca579fa996)\n") : file === cursor ? versionOf(args, "2026.11.10-731fb78\n") : undefined));
+    expect(await local.installCli("grok")).toEqual({ ok: true, message: "Grok is installed." });
+    expect(calls.find((c) => c.file === "/bin/bash")?.args.join(" ")).toContain("curl -fsSL https://x.ai/cli/install.sh | bash");
+    expect(calls.at(-1)).toMatchObject({ file: grok, args: ["--version"] });
+    expect(await local.installCli("cursor")).toEqual({ ok: true, message: "Cursor is installed." });
+    expect(calls.filter((c) => c.file === "/bin/bash").at(-1)?.args.join(" ")).toContain("curl -fsS https://cursor.com/install | bash");
+    expect(calls.at(-1)).toMatchObject({ file: cursor, args: ["--version"] });
+    // an AI with no installer here is refused, nothing runs
+    const before = calls.length;
+    expect(await local.installCli("opencode")).toMatchObject({ ok: false });
+    expect(calls.length).toBe(before);
+  });
+
   it("a failed install is one plain sentence, with the command's own output kept for Details", async () => {
     machine((file) => (file === "/bin/bash" ? { code: 6, stderr: "curl: (6) Could not resolve host: claude.ai" } : undefined));
     const r = await local.installCli("claude");

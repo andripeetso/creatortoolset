@@ -122,6 +122,11 @@ describe("your AI on this computer: only the owner's account, on a server that r
   it("refuses an unknown CLI name before anything runs", async () => {
     who = { username: "owner", role: "admin", cloud: true, off: [] };
     expect((await post("/api/setup/ai/connect", { id: "rm -rf" })).status).toBe(400);
+    // install and sign-in take only the AIs setup installs: never a name the list's object only inherits
+    for (const id of ["toString", "constructor", "opencode"]) {
+      expect((await post("/api/setup/ai/install", { id })).status).toBe(400);
+      expect((await post("/api/setup/ai/signin", { id })).status).toBe(400);
+    }
   });
 
   it("is closed on a hosted server, even for its admin: the server is not the person's computer", async () => {

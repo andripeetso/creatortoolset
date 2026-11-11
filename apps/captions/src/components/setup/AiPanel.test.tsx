@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { ConnectResult, LocalAiRow, LocalAiView } from "@contracts/local-ai";
 import type { ProviderSettings, ProvidersView } from "@contracts/providers";
-import { AiPanelView, AnswerPicker, anyConnected, nextStep, rowView } from "./AiPanel";
+import { AiPanelView, AnswerPicker, anyConnected, nextStep, rowView, withoutCommands } from "./AiPanel";
 
 /** React writes an apostrophe as &#x27; in markup; the words are what these tests check. */
 const text = (html: string) => html.replaceAll("&#x27;", "'");
@@ -17,6 +17,8 @@ const row = (over: Partial<LocalAiRow> & Pick<LocalAiRow, "id" | "name">): Local
   ...over,
 });
 const view = (rows: LocalAiRow[], local = true): LocalAiView => ({ local, rows });
+/** Another AI in the view: Grok and Cursor are always listed, the rest only when found. */
+const other = (id: "grok" | "cursor" | "opencode" | "pi", over: { found?: boolean; signedIn?: boolean | null; connected?: boolean } = {}) => ({ id, found: true, signedIn: null, connected: false, ...over });
 const panel = (v: LocalAiView | null, over: Partial<Parameters<typeof AiPanelView>[0]> = {}) =>
   text(renderToStaticMarkup(<AiPanelView view={v} results={{}} phases={{}} onConnect={() => {}} {...over} />));
 
@@ -24,7 +26,7 @@ const claude = row({ id: "claude", name: "Claude Code" });
 const codex = row({ id: "codex", name: "Codex", version: "codex-cli 0.50.0", signedIn: false });
 const gemini = row({ id: "gemini", name: "Gemini CLI", version: "0.9.1", signedIn: null });
 const connected = (id: "claude" | "codex", name: string) => row({ id, name, connected: true, lastCheck: { ok: true, at: 1, ms: 5 } });
-const buttons = (html: string) => [...html.matchAll(/<button[^>]*>([^<]*)<\/button>/g)].map((m) => m[1]);
+const buttons = (html: string) => [...html.matchAll(/<button[^>]*>([^<]*)</g)].map((m) => m[1]);
 
 describe("the rows: named by what a person knows, in order", () => {
   it("ChatGPT comes first with Codex as its small second line, then Claude with Claude Code", () => {
@@ -44,35 +46,62 @@ describe("the rows: named by what a person knows, in order", () => {
     }
   });
 
-  it("every state before it is connected has the same one button, Connect: nothing installed, signed out, signed in", () => {
-    // nothing installed (no rows), a signed-out ChatGPT, a signed-in Claude, a signed-out Google
-    expect(buttons(panel(view([])))).toEqual(["Connect", "Connect", "Connect"]);
-    expect(buttons(panel(view([codex, claude, gemini])))).toEqual(["Connect", "Connect", "Connect"]);
-    const html = panel(view([codex, claude]));
-    expect(html).toContain("Uses your ChatGPT plan (Plus or higher).");
-    expect(html).toContain("Uses your Claude plan (Pro or higher).");
+  it("reads each state before any press, and names the button for the next real step", () => {
+    // nothing on this Mac: Install on the four up front (ChatGPT, Claude, Google, Grok), the line says so
+    const none = panel(view([]));
+    expect(buttons(none)).toEqual(["Install", "Install", "Install", "Install", "Show more"]);
+    expect(none).toContain("Not on this Mac yet. Uses your ChatGPT plan (Plus or higher).");
+    expect(none).toContain("Not on this Mac yet. Uses your Grok account.");
+    // installed and signed out: Sign in; installed and signed in (or not readable, Google before its sign-in file): Connect
+    const some = panel({ ...view([codex, claude, row({ id: "gemini", name: "Gemini CLI", signedIn: false })]), others: [other("grok", { signedIn: false })] });
+    expect(buttons(some)).toEqual(["Sign in", "Connect", "Sign in", "Sign in", "Show more"]);
+    expect(some).toContain("Not signed in yet. Uses your ChatGPT plan (Plus or higher).");
+    expect(some).toContain("Uses your Claude plan (Pro or higher).");
+    expect(some).not.toContain("Not signed in yet. Uses your Claude plan");
+    expect(rowView("gemini", gemini, undefined, undefined)).toEqual({ line: "Uses your Google account (free, Google AI Pro or Ultra).", button: { label: "Connect" } });
   });
 
-  it("lists another AI the Mac app runs only once it is on this Mac, after Google, with Connect and no second line", () => {
-    expect(panel(view([claude]))).not.toMatch(/Grok|OpenCode/);
-    const html = panel({ ...view([claude]), others: [{ id: "grok", connected: false }, { id: "opencode", connected: true }] });
-    expect(html.indexOf(">Google<")).toBeLessThan(html.indexOf(">Grok<"));
-    expect(html).toContain("Uses Grok as it's set up on this Mac.");
-    expect(html).toContain('aria-label="OpenCode is connected"');
-    expect(buttons(html)).toEqual(["Connect", "Connect", "Connect", "Connect"]); // ChatGPT, Claude, Google, Grok
+  it("Grok on this Mac but signed out, as its sign-in file says, reads Sign in before any press", () => {
+    expect(rowView("grok", other("grok", { signedIn: false }), undefined, undefined)).toEqual({ line: "Not signed in yet. Uses your Grok account.", button: { label: "Sign in" } });
+    expect(rowView("grok", other("grok", { signedIn: true }), undefined, undefined)).toEqual({ line: "Uses your Grok account.", button: { label: "Connect" } });
+    expect(rowView("cursor", other("cursor", { found: false }), undefined, undefined)).toEqual({ line: "Not on this Mac yet. Uses your Cursor account.", button: { label: "Install" } });
   });
 
-  it("never says Use it, Install, Sign in or Check on a button, and shows no Details on a row that is fine", () => {
+  it("up front: ChatGPT, Claude, Google, Grok; Cursor and any other AI found here behind Show more, open on a press", () => {
+    const v = { ...view([claude]), others: [other("grok"), other("cursor", { found: false }), other("opencode")] };
+    const closed = panel(v);
+    expect([">ChatGPT<", ">Claude<", ">Google<", ">Grok<"].map((n) => closed.indexOf(n)).every((at, i, all) => at > -1 && (i === 0 || at > all[i - 1]!))).toBe(true);
+    expect(closed).not.toMatch(/>Cursor<|>OpenCode</);
+    expect(closed).toContain('aria-expanded="false"');
+    const open = panel(v, { showMore: true });
+    expect(open.indexOf(">Grok<")).toBeLessThan(open.indexOf(">Cursor<"));
+    expect(open.indexOf(">Cursor<")).toBeLessThan(open.indexOf(">OpenCode<"));
+    expect(open).toContain("Uses OpenCode as it's set up on this Mac.");
+    expect(buttons(open).at(-1)).toBe("Show less");
+    // no Show more when nothing is behind it; another AI that is not on this Mac has nothing to press and is not listed
+    expect(panel({ ...v, others: [other("grok"), other("cursor", { connected: true })] })).not.toContain("Show more");
+    expect(panel({ ...view([claude]), others: [other("grok")] }, { showMore: true })).not.toMatch(/OpenCode|>Pi</);
+  });
+
+  it("an AI behind Show more that is connected, working or failed shows up front", () => {
+    const v = { ...view([claude]), others: [other("grok"), other("cursor"), other("opencode", { connected: true })] };
+    expect(panel(v)).toContain('aria-label="OpenCode is connected"');
+    expect(panel(v, { phases: { cursor: "installing" } })).toContain(">Installing…<");
+    expect(panel(v, { results: { cursor: { state: "failed", signedIn: true, answered: false, message: "It didn't answer. Try again." } } })).toContain("It didn't answer. Try again.");
+    expect(panel(v)).not.toContain(">Cursor<");
+  });
+
+  it("never says Use it or Check on a button, and shows no Details on a row that is fine", () => {
     for (const html of [panel(view([])), panel(view([codex, claude])), panel(view([connected("claude", "Claude Code")]))]) {
-      expect(html).not.toMatch(/>(Use it|In use|Install|Sign in|Check(ing…| again)?)<\/button>/);
+      expect(html).not.toMatch(/>(Use it|In use|Check(ing…| again)?)<\/button>/);
       expect(html).not.toContain("Details");
     }
   });
 
   it("a connected AI shows a quiet check and no button, never a Ready or Connected label", () => {
-    const html = panel(view([connected("claude", "Claude Code")]));
+    const html = panel({ ...view([connected("claude", "Claude Code")]), others: [other("grok")] });
     expect(html).toContain('aria-label="Claude is connected"');
-    expect(buttons(html)).toEqual(["Connect", "Connect"]); // ChatGPT's and Google's rows; Claude's has none
+    expect(buttons(html)).toEqual(["Install", "Install", "Connect", "Show more"]); // ChatGPT's, Google's and Grok's rows; Claude's has none
     expect(html).not.toContain("Ready");
     expect(html).not.toContain(">Connected");
   });
@@ -121,23 +150,55 @@ describe("anyConnected", () => {
     expect(anyConnected(view([codex]), { codex: { state: "ready", signedIn: true, answered: true } })).toBe(true);
     expect(anyConnected(view([claude]), { claude: { state: "failed", signedIn: true, answered: false } })).toBe(false);
     // another AI on this Mac counts the same way
-    expect(anyConnected({ ...view([claude]), others: [{ id: "grok", connected: true }] }, {})).toBe(true);
-    expect(anyConnected({ ...view([claude]), others: [{ id: "grok", connected: false }] }, { grok: { state: "ready", signedIn: null, answered: true } })).toBe(true);
+    expect(anyConnected({ ...view([claude]), others: [other("opencode", { connected: true })] }, {})).toBe(true);
+    expect(anyConnected({ ...view([claude]), others: [other("grok")] }, { grok: { state: "ready", signedIn: null, answered: true } })).toBe(true);
   });
 });
 
 describe("what Connect does, one step at a time", () => {
-  it("says what it is doing while it works, with the button waiting as Connecting…", () => {
-    for (const phase of ["installing", "updating", "signingIn", "connecting"] as const) {
-      expect(rowView("codex", codex, undefined, phase).button).toEqual({ label: "Connecting…", disabled: true });
+  it("says what it is doing while it works, the waiting button named for the step it is on", () => {
+    const labels = { installing: "Installing…", updating: "Updating…", signingIn: "Signing in…", connecting: "Connecting…" } as const;
+    for (const [phase, label] of Object.entries(labels) as Array<[keyof typeof labels, string]>) {
+      expect(rowView("codex", codex, undefined, phase).button).toEqual({ label, disabled: true });
     }
     expect(rowView("codex", undefined, undefined, "installing").line).toBe("Installing what ChatGPT needs on this Mac. This can take a few minutes.");
     expect(rowView("codex", codex, undefined, "updating").line).toBe("Updating what ChatGPT needs on this Mac. This can take a few minutes.");
     expect(rowView("claude", claude, undefined, "signingIn").line).toBe("Finish signing in in your browser.");
   });
 
-  it("after three minutes still signed out: Connect again, never a Check button", () => {
-    expect(rowView("claude", claude, undefined, "timedOut").button).toEqual({ label: "Connect" });
+  it("after three minutes still signed out: Sign in again, never a Check button", () => {
+    expect(rowView("claude", claude, undefined, "timedOut")).toEqual({ line: "Still not signed in. Finish in your browser, or sign in again.", button: { label: "Sign in" } });
+  });
+
+  it("a check that comes back not signed in is the sign-in state, never a failure: Sign in, no red line, no Details", () => {
+    // Grok's own words when it is signed out (grok 1.0.77, 2026-11-10)
+    const raw = "Grok: Not signed in. To authenticate without a browser, run:\n  grok login --device-code\n\nAlternatively, set the XAI_API_KEY environment variable or run `grok login` on a machine with a browser.";
+    const signin: ConnectResult = { state: "signin", signedIn: false, answered: false, message: "Not signed in yet.", raw };
+    expect(rowView("grok", other("grok", { signedIn: true }), signin, undefined)).toEqual({ line: "Not signed in yet. Uses your Grok account.", button: { label: "Sign in" } });
+    const html = panel({ ...view([claude]), others: [other("grok", { signedIn: true })] }, { results: { grok: signin } });
+    expect(html).not.toContain("Details");
+    expect(html).not.toContain("grok login");
+    // an AI this screen can't sign in (OpenCode) says it plainly and looks again on a press
+    expect(rowView("opencode", other("opencode"), signin, undefined)).toEqual({ line: "Not signed in to OpenCode on this Mac yet.", button: { label: "Connect" } });
+  });
+
+  it("no text a row shows, Details included, holds a command to run: the program's instructions are left out", () => {
+    const real = [
+      // Grok signed out, Cursor signed out (its print run and its editor mode), the installers' last words
+      "Not signed in. To authenticate without a browser, run:\n  grok login --device-code\n\nAlternatively, set the XAI_API_KEY environment variable or run `grok login` on a machine with a browser.",
+      "Not logged in. Run `agent login` first.",
+      "Authentication required. Please run 'agent login' first, then call authenticate() with methodId 'cursor_login'.",
+      "Grok 1.0.77 installed to /Users/x/.grok/bin/grok\n  Updated /Users/x/.grok/bin in PATH in /Users/x/.zshrc.\n\nRun 'grok' or 'agent' to get started!\n  export PATH=\"$HOME/.grok/bin:$PATH\"",
+      "Next Steps\n1. Add ~/.local/bin to your PATH:\n   echo 'export PATH=\"$HOME/.local/bin:$PATH\"' >> ~/.zshrc\n   source ~/.zshrc\n2. Start using Cursor Agent:\n   agent",
+    ];
+    for (const raw of real) {
+      const html = panel(view([claude]), { results: { claude: { state: "failed", signedIn: true, answered: false, message: "It didn't answer. Try again.", raw } } });
+      expect(html).toContain("It didn't answer. Try again.");
+      expect(html).not.toMatch(/`|grok login|agent login|--device-code|export PATH|source ~|echo '|\brun\b|>\s*agent\s*</i);
+    }
+    expect(withoutCommands(real[0])).toBe("Not signed in.");
+    expect(withoutCommands(real[1])).toBe("Not logged in.");
+    expect(withoutCommands("curl: (6) Could not resolve host: x.ai")).toBe("curl: (6) Could not resolve host: x.ai");
   });
 
   it("a failure is one plain sentence said once, Try again, and the program's own words under Details", () => {
@@ -159,10 +220,10 @@ describe("what Connect does, one step at a time", () => {
     expect(v).toEqual({ line: "Your Claude plan's weekly limit is reached; it resets Nov 11 at 5pm.", button: null, connected: true });
   });
 
-  it("connected earlier but signed out now: says so, with Connect, and no check mark", () => {
+  it("connected earlier but signed out now: says so, with Sign in, and no check mark", () => {
     const v = rowView("claude", row({ id: "claude", name: "Claude Code", connected: true, signedIn: false }), undefined, undefined);
     expect(v.line).toBe("Signed out since last time.");
-    expect(v.button).toEqual({ label: "Connect" });
+    expect(v.button).toEqual({ label: "Sign in" });
     expect(v.connected).toBeFalsy();
   });
 
@@ -181,9 +242,10 @@ describe("what Connect does, one step at a time", () => {
 
 describe("the banned words", () => {
   it("the rows and a failure say none of CLI, PATH, Terminal, API key or MCP", () => {
-    const html = panel({ ...view([codex, claude, gemini]), others: [{ id: "opencode", connected: false }] }, {
+    const html = panel({ ...view([codex, claude, gemini]), others: [other("grok"), other("opencode")] }, {
       results: { codex: { state: "failed", signedIn: false, answered: false, message: "Couldn't download Codex. Check the internet connection, then try again.", raw: "curl: (6) Could not resolve host" } },
       phases: { claude: "installing" },
+      showMore: true,
     });
     expect(html).toContain("ChatGPT");
     expect(html).not.toMatch(/\bCLI\b/);
