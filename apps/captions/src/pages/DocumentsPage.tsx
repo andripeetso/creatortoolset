@@ -27,7 +27,9 @@ import { isPhoneHub, toolsetHomePath } from "@/lib/mobile";
 import { AppBar, ToolIntro } from "@/components/AppBar";
 import { DesktopHint } from "@/components/mobile/DesktopHint";
 import { thumbClipUrl } from "@/lib/clips";
-import { BrowseBar } from "@/components/browse/Bar";
+import { BrowseBar, NewFolderButton } from "@/components/browse/Bar";
+import { FolderTrail, MoveToMenu, ToolFolderCards, ToolFolderRows } from "@/components/browse/ToolFolders";
+import { useToolFolders } from "@/lib/folders";
 import { FolderGrid, ItemCard } from "@/components/browse/Grid";
 import { askRename } from "@/components/browse/browse";
 import { byName, matches, persistSort, storedSort, useBrowseView } from "@/components/browse/views";
@@ -817,8 +819,13 @@ export default function DocumentsPage() {
   const [view, setView] = useBrowseView("guides");
   const [find, setFind] = useState("");
   const [sort, setSort] = useState(() => storedSort(GUIDES_SORT_KEY, GUIDES_SORTS));
-  // the server sends them newest change first
-  const listed = docs.filter((d) => matches(find, d.name)).sort((a, b) => (sort === "name" ? byName(a, b) : 0));
+  // the open folder's guides (every folder's when searching); the server sends them newest change first
+  const folders = useToolFolders("guides", docs, find);
+  const listed = folders.here.filter((d) => matches(find, d.name)).sort((a, b) => (sort === "name" ? byName(a, b) : 0));
+  const guidePicture = (id: string) => {
+    const clip = docs.find((d) => d.id === id)?.sources.find((x) => x.type === "clip");
+    return clip ? thumbClipUrl(clip.id) : undefined;
+  };
   // renamed or deleted from its row or its card: the list changes at once, a refused rename goes back
   const renameTo = (d: DocumentMeta, name: string) => {
     setDocs((list) => list.map((x) => (x.id === d.id ? { ...x, name } : x)));
@@ -845,6 +852,7 @@ export default function DocumentsPage() {
     <div className="flex min-h-screen flex-col bg-background pb-12 text-foreground [--bar-bg:hsl(var(--background))]">
       <AppBar tool="Guide Builder" to={docId ? "/documents" : undefined} trail={current?.name} account={!!me}>
         {isPublicSharePath(pathname) ? <ShareThemeSwitch /> : null}
+        {canUse(me, "guides") && !docId && !composing && docs.length > 0 && <NewFolderButton onClick={() => void folders.newFolder()} />}
         {!me && required ? (
           <Link
             to={home}
@@ -942,6 +950,7 @@ export default function DocumentsPage() {
           </div>
         ) : (
           <>
+            <FolderTrail state={folders} top="Guide Builder" />
             <BrowseBar
               search={{ value: find, onChange: setFind, placeholder: "Search guides (⌘K)" }}
               sort={{
@@ -958,9 +967,10 @@ export default function DocumentsPage() {
               }}
               view={{ value: view, onChange: setView }}
             />
-            {listed.length === 0 && <p className="py-10 text-center text-sm text-zinc-500">No matches.</p>}
+            {find.trim() && listed.length === 0 && folders.folders.length === 0 && <p className="py-10 text-center text-sm text-zinc-500">No matches.</p>}
             {view === "grid" ? (
               <FolderGrid size="small">
+                <ToolFolderCards state={folders} pictureOf={guidePicture} />
                 {listed.map((d) => {
                   const clip = d.sources.find((x) => x.type === "clip");
                   const guide = parseDocKind(d.kind) === "guide";
@@ -972,8 +982,10 @@ export default function DocumentsPage() {
                       icon={guide ? ListOrdered : FileText}
                       name={d.name}
                       meta={`${timeAgo(d.updatedAt)}${guide ? " · Guide" : ""}${d.published ? " · Shared" : ""}`}
+                      drag={folders.drag(d.id)}
                       actions={
                         <>
+                          <MoveToMenu state={folders} id={d.id} className="rounded p-1 hover:bg-white/20" />
                           <button type="button" title="Rename" aria-label={`Rename ${d.name}`} className="rounded p-1 hover:bg-white/20" onClick={() => void askRename("Rename", d.name).then((name) => name && renameTo(d, name))}>
                             <Pencil className="h-3.5 w-3.5" />
                           </button>
@@ -988,9 +1000,11 @@ export default function DocumentsPage() {
               </FolderGrid>
             ) : (
           <div className="flex flex-col gap-1.5">
+              <ToolFolderRows state={folders} />
               {listed.map((d) => (
                 <div
                   key={d.id}
+                  {...folders.drag(d.id)}
                   onClick={() => {
                     if (renaming !== d.id) navigate(`/documents/${d.id}`);
                   }}
@@ -1032,6 +1046,7 @@ export default function DocumentsPage() {
                       {d.published ? " · Shared" : ""}
                     </p>
                   </div>
+                  <MoveToMenu state={folders} id={d.id} className="rounded p-1.5 text-zinc-600 opacity-0 hover:bg-zinc-800 hover:text-zinc-200 focus-visible:opacity-100 group-hover:opacity-100" />
                   <button
                     type="button"
                     onClick={(e) => {
