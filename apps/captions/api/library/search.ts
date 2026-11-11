@@ -6,7 +6,7 @@ import { deviceStatus } from "../lib/device-transcribe";
 import { libraryRole, mayWrite, versionSource } from "./access";
 import { libraryDb } from "./db";
 import { hitKey, meaningGettingReady, rrf, semanticHits } from "./embed";
-import { enqueueJob } from "./jobs";
+import { enqueueJob, prepareFirst } from "./jobs";
 import { CARD, ftsQuery, indexAsset, parseSearch, toCard, type CardRow } from "./query";
 import { viewerOf, visibleCards } from "./routes";
 import { assetRef, canSee, facetClauses } from "./sources";
@@ -130,6 +130,7 @@ searchApp.get("/:id/assets/:assetId", async (c) => {
   if (!viewer) return notFound(c);
   const detail = assetDetail(libraryId, c.req.param("assetId"));
   if (!detail || !(await canSee(viewer, assetRef(libraryId, detail.id, detail.versionId)))) return notFound(c);
+  if (detail.state === "processing") prepareFirst(detail.versionId); // opened while it is prepared: it goes first (worker.ts)
   return c.json(detail);
 });
 

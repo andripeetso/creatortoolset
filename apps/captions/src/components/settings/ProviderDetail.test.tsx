@@ -19,6 +19,9 @@ describe("providerStatus", () => {
     expect(providerStatus({ ...base, found: signedIn, check: { ok: false, ms: 0, error: "Sam's Mac did not pick up the request", at: 1 } }).text).toBe("Computer didn't answer");
     // a failure about signing in gets its fix on the row
     expect(providerStatus({ ...base, found: signedIn, check: { ok: false, ms: 0, error: "Not logged in · run /login", at: 1 } }).action).toBe("sign-in");
+    // an account with no plan for this AI: setup's sentence, and no Test again that cannot help
+    const noPlan = "Codex: To use Codex with your ChatGPT plan, upgrade to Plus: https://chatgpt.com/explore/plus.";
+    expect(providerStatus({ ...base, found: signedIn, check: { ok: false, ms: 0, error: noPlan, at: 1 } })).toEqual({ tone: "attention", text: "Codex needs ChatGPT Plus or higher, which this account doesn't have." });
   });
 
   it("trusts a passing check newer than the computer's report over a 'not signed in' in that report", () => {
@@ -34,7 +37,9 @@ describe("providerStatus", () => {
   });
 
   it("shows the plan for a signed-in tool, and nothing when it is fine and has no plan (no 'Ready' label)", () => {
-    expect(providerStatus({ ...base, found: signedIn }).text).toBe("Max plan");
+    expect(providerStatus({ ...base, found: signedIn }).text).toBe("Claude Max 5x plan");
+    // the report's whole words ("max default_claude_max_20x") read as the plan's name
+    expect(providerStatus({ ...base, found: { driver: "claude", installed: true, signedIn: true, plan: "max default_claude_max_20x" } }).text).toBe("Claude Max 20x plan");
     expect(providerStatus({ ...base, found: { driver: "claude", installed: true, signedIn: true } }).text).toBe("");
     expect(providerStatus({ ...base, report: false, check: { ok: true, ms: 900, at: 1 } }).text).toBe("");
   });

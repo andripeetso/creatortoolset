@@ -10,7 +10,7 @@ import { env, hostedMode } from "../lib/env";
 import { freeBytes, sha256File } from "../lib/uploads";
 import { ensureLibrary, homeOf, libraryChanged, libraryRole } from "./access";
 import { blobs, libraryDb } from "./db";
-import { enqueueJob } from "./jobs";
+import { enqueueJob, takingClips } from "./jobs";
 import { kindOf, recordVersion } from "./routes";
 import { findUser } from "../users";
 
@@ -23,7 +23,8 @@ import { findUser } from "../users";
  * (scanSoon). A file is imported once its size and mtime have stayed the same across scans: for 60 s when it was
  * written in the last minute (a camera card still copying), for 5 s when it is older (footage already in a folder the
  * person just chose; mtime alone lies, a copy keeps the original's, so the size is still watched). Each file shows on
- * the open pages as it is taken, not when the whole pass ends, and the status says how many are still to come.
+ * the open pages as it is taken, not when the whole pass ends, and the status says how many are still to come. While
+ * a pass takes files the library's slower steps wait (worker.ts), so every clip is in, with its picture, before them.
  * `watch_seen` remembers each path's size and mtime, so an unchanged file is never imported twice, even after it is trashed.
  * `reference` leaves the file where it is (the blob key is a link to it, `source_path` names it); `copy` stores a
  * copy like an upload. A referenced file that disappears marks its version `missing`; nothing is deleted, and the
@@ -434,6 +435,14 @@ async function ingest(libraryId: string, f: WatchFolder, file: string, size: num
 
 /** One pass over a library's watch folders. Returns how many files it took in (new versions or known duplicates). */
 async function scanLibrary(libraryId: string, now: number): Promise<number> {
+  try {
+    return await scanFolders(libraryId, now);
+  } finally {
+    takingClips.delete(libraryId);
+  }
+}
+
+async function scanFolders(libraryId: string, now: number): Promise<number> {
   let took = 0;
   for (const f of foldersOf(libraryId)) {
     // files come in as the owner who added the folder, while the library is still theirs; never as anyone else
@@ -480,6 +489,7 @@ async function scanLibrary(libraryId: string, now: number): Promise<number> {
       const p = pending.get(key);
       if (!p || now - p.since < settleFor(p)) continue;
       pending.delete(key);
+      takingClips.add(libraryId);
       try {
         // through the same queue as the AI's imports, which may have taken this file meanwhile
         if ((await takeFile(libraryId, f, file, p.size, p.mtime)).fresh) took++;

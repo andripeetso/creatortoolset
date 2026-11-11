@@ -2,7 +2,10 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { cn } from "@/lib/utils";
 import { segmentItem, segmentList } from "@/components/SegmentedTabs";
 import { Link, useNavigate, useSearchParams } from "react-router";
-import { ChevronDown, CircleCheck, Download, Link2, Loader2, NotebookPen, Pencil, Plus, Search, TriangleAlert, X } from "lucide-react";
+import { CircleCheck, Download, Link2, Loader2, NotebookPen, Pencil, Plus, TriangleAlert, X } from "lucide-react";
+import { BrowseBar, type Chip } from "@/components/browse/Bar";
+import { BrowseList, ListRow, RowLink, type ListSection } from "@/components/browse/List";
+import { shownItems } from "@/components/browse/browse";
 import { AppBar, ToolIntro } from "@/components/AppBar";
 import { ProjectList } from "@/components/workspace/ProjectList";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
@@ -87,19 +90,8 @@ export default function WorkshopPage() {
   );
   const [find, setFind] = useState("");
   const summaries = useSessionSummaries();
-  // no sidebar here: this list is the one, ⌘K is its search
+  // no sidebar here: this list is the one, ⌘K is its search (the bar's)
   useWorkshopTitle("Content Workshop");
-  const findRef = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
-        e.preventDefault();
-        findRef.current?.focus();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
   // the list by what each session makes: a type filter and a sort, remembered. Sorted by status by default (the most
   // complete at the bottom); the key is new so the old "recent" default doesn't stick.
   const [kindFilter, setKindFilter] = useState<PieceKind | "all">(() => (localStorage.getItem("workshop:kind") as PieceKind | null) ?? "all");
@@ -137,8 +129,8 @@ export default function WorkshopPage() {
       window.removeEventListener("pointerdown", onDown);
     };
   }, []);
+  // a Shift/⌘-click on a row (ListRow says which)
   const pickClick = (e: React.MouseEvent, id: string) => {
-    if (!e.shiftKey && !e.metaKey && !e.ctrlKey) return false;
     e.preventDefault();
     window.getSelection()?.removeAllRanges(); // a Shift-click extends the page's text selection in Safari and the Mac app
     const from = anchor.current ? order.current.indexOf(anchor.current) : -1;
@@ -154,7 +146,6 @@ export default function WorkshopPage() {
       });
       anchor.current = id;
     }
-    return true;
   };
   // right-click on a row: the session menu
   const [menu, setMenu] = useState<{ s: SessionRow; x: number; y: number } | null>(null);
@@ -351,39 +342,29 @@ export default function WorkshopPage() {
 
         {tab === "sessions" && (
           <section>
-            {/* one row, one height */}
-            <div className="mb-3 flex flex-wrap items-center gap-1.5">
-              <label className="flex h-8 w-56 items-center gap-1.5 rounded-md border border-zinc-800 px-2 text-[12px] text-zinc-400 focus-within:border-zinc-600">
-                <Search className="h-3.5 w-3.5 shrink-0" />
-                <input ref={findRef} value={find} onChange={(e) => setFind(e.target.value)} placeholder="Search sessions (⌘K)" className="min-w-0 flex-1 bg-transparent text-zinc-100 outline-none placeholder:text-zinc-500" />
-              </label>
-              <div className="mr-auto flex flex-wrap items-center gap-1.5">
-                {(["all", ...DOC_KINDS.map((k) => k.id).filter((k) => sessions.some((x) => x.kinds?.includes(k)))] as const).map((k) => {
-                  const n = k === "all" ? sessions.length : sessions.filter((x) => x.kinds?.includes(k)).length;
-                  return (
-                    <button
-                      key={k}
-                      type="button"
-                      onClick={() => setKindFilter(k)}
-                      aria-pressed={kindFilter === k}
-                      className={`flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-[12px] ${kindFilter === k ? "border-zinc-600 bg-zinc-800 text-zinc-100" : "border-zinc-800 text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200"}`}
-                    >
-                      {k === "all" ? null : <span className={`h-1.5 w-1.5 rounded-full ${KIND_DOT[k]}`} />}
-                      {k === "all" ? "All" : DOC_KINDS.find((d) => d.id === k)!.label} · {n}
-                    </button>
-                  );
-                })}
-                <select
-                  value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
-                  className="h-8 rounded-md border border-zinc-800 bg-transparent px-2 text-[12px] text-zinc-400 outline-none hover:text-zinc-200"
-                  aria-label="Sort sessions"
-                >
-                  <option value="recent">Sort: Recent</option>
-                  <option value="type">Sort: Type</option>
-                  <option value="status">Sort: Status</option>
-                </select>
-              </div>
+            <BrowseBar
+              search={{ value: find, onChange: setFind, placeholder: "Search sessions (⌘K)" }}
+              chips={{
+                value: kindFilter,
+                onChange: setKindFilter,
+                options: (["all", ...DOC_KINDS.map((k) => k.id).filter((k) => sessions.some((x) => x.kinds?.includes(k)))] as const).map(
+                  (k): Chip<PieceKind | "all"> =>
+                    k === "all"
+                      ? { id: k, label: "All", count: sessions.length }
+                      : { id: k, label: DOC_KINDS.find((d) => d.id === k)!.label, count: sessions.filter((x) => x.kinds?.includes(k)).length, dot: KIND_DOT[k] },
+                ),
+              }}
+              sort={{
+                value: sortBy,
+                onChange: setSortBy,
+                label: "Sort sessions",
+                options: [
+                  { id: "recent", label: "Recent" },
+                  { id: "type", label: "Type" },
+                  { id: "status", label: "Status" },
+                ],
+              }}
+            >
               {notice && !picked.size && <span className="text-[12px] text-zinc-400">{notice}</span>}
               {picked.size > 0 && (
                 <span data-keep-picked className="contents">
@@ -412,7 +393,7 @@ export default function WorkshopPage() {
                 {busy === "session" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
                 New session
               </button>}
-            </div>
+            </BrowseBar>
             {!sessionsKnown ? (
               <div aria-hidden className="flex flex-col gap-1.5">
                 {Array.from({ length: 5 }, (_, i) => (
@@ -424,110 +405,67 @@ export default function WorkshopPage() {
                 No sessions yet. Start one, search a topic, add the posts worth reading.
               </p>
             ) : (
-              <div className="flex flex-col gap-1.5">
-                {(() => {
-                  // Published sessions are wrapped up: folded under a line at the end
-                  // live from the sidebar's summary: a reply running, or one finished that you haven't looked at
-                  const live = (s: SessionRow) => {
-                    const r = summaries?.find((x) => x.id === s.id);
-                    return { working: !!r?.working, unseen: !!r?.ready && !r.working };
-                  };
-                  const shown = visible;
-                  // pinned sessions first, in their own block (the sidebar's Pinned group)
-                  const pinnedRows = shown.filter((s) => s.pinned);
-                  const rest = shown.filter((s) => !s.pinned);
-                  const done = rest.filter((s) => s.status === "published");
-                  // the script is done (Ready) or handed off (In Production): nothing waits on you there
-                  const making = rest.filter((s) => MAKING.includes(s.status ?? "draft"));
-                  const shelved = rest.filter((s) => s.status === "shelved");
-                  const fold = (label: string, list: SessionRow[], open: boolean, toggle: () => void, dim: string) =>
-                    list.length > 0 && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={toggle}
-                          aria-expanded={open}
-                          className="mt-3 flex items-center gap-3 rounded-md px-1 py-1 text-[12px] text-zinc-500 hover:text-zinc-300"
-                        >
-                          <span>
-                            {label} ({list.length})
-                          </span>
-                          <span className="h-px flex-1 bg-zinc-800" />
-                          <ChevronDown className={`h-3.5 w-3.5 ${open ? "rotate-180" : ""}`} />
-                        </button>
-                        {open && <div className={`flex flex-col gap-1.5 ${dim}`}>{list.map(row)}</div>}
-                      </>
-                    );
-                  const row = (s: SessionRow) => (
-                  <div
-                    key={s.id}
-                    data-keep-picked
-                    // the whole row is the target: a
-                    // Shift/⌘-click anywhere on it but its buttons picks it, and nothing on the row selects as text
-                    className={`group flex select-none items-center gap-3 rounded-lg border px-3 py-2.5 ${picked.has(s.id) ? "border-violet-500/50 bg-violet-500/5" : "border-zinc-800 bg-zinc-900/50"}`}
-                    onMouseDown={(e) => (e.shiftKey || e.metaKey || e.ctrlKey) && e.preventDefault()}
-                    onClick={(e) => {
-                      if ((e.target as Element).closest("button, select, input, a[target=_blank], [role=button], [role=combobox]")) return;
-                      pickClick(e, s.id);
-                    }}
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      setMenu({ s, x: e.clientX, y: e.clientY });
-                    }}
-                  >
-                    {/* the type tile first, the name, and what the AI is doing; the counts were noise.
-                        The link fills the row's height and left edge, so a plain click on its padding opens it too. */}
-                    <Link
-                      to={sessionPath(s.id)}
-                      onClick={(e) => (e.shiftKey || e.metaKey || e.ctrlKey) && e.preventDefault()} // a pick, not a visit: the row picks it
-                      className="-my-2.5 -ml-3 flex min-w-0 flex-1 items-center gap-2.5 self-stretch py-2.5 pl-3"
-                    >
-                      {(s.kinds?.length ? s.kinds : [undefined]).map((k, i) => (
-                        <KindTile key={k ?? i} kind={k} />
-                      ))}
-                      <span className={`truncate text-sm ${live(s).unseen ? "font-semibold text-zinc-50" : "text-zinc-300"}`}>{s.title}</span>
-                      {live(s).working || s.generating ? (
-                        <span className="flex shrink-0 items-center gap-1 text-[11px] text-violet-300">
-                          <Loader2 className="h-3 w-3 animate-spin" /> Working
-                        </span>
-                      ) : live(s).unseen ? (
-                        <span className="flex shrink-0 items-center gap-1 text-[11px] text-emerald-300" title="A reply finished that you haven't looked at">
-                          <CircleCheck className="h-3.5 w-3.5" /> Done
-                        </span>
-                      ) : null}
-                      <span className="ml-auto shrink-0 pl-2 text-[11px] tabular-nums text-zinc-500">{timeAgo(s.updatedAt)}</span>
-                    </Link>
-                    <SessionPosted postings={postingsOfSession(s)} status={s.status} disabled={busy !== null} onChange={(posted) => void setPosted(s.id, posted)} />
-                    <SessionStatusSelect
-                      value={s.status}
-                      disabled={busy !== null}
-                      onChange={(status) => setStatus(s.id, status)}
-                    />
-                    <SharePopover
-                      sessionId={s.id}
-                      title={s.title}
-                      onStatus={(status) => setSessions((rows) => rows.map((r) => (r.id === s.id ? { ...r, status } : r)))}
-                      shared={!!s.shared}
-                      onShared={(on) => setSessions((rows) => rows.map((r) => (r.id === s.id ? { ...r, shared: on } : r)))}
-                      className="flex items-center gap-1 rounded-md border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 hover:bg-zinc-800 hover:text-zinc-50"
-                    />
-                    {/* no Delete on the row: it's in the right-click menu */}
-                  </div>
-                  );
-                  const main = rest.filter((s) => !done.includes(s) && !making.includes(s) && !shelved.includes(s));
-                  order.current = [...pinnedRows, ...main, ...(showProduction ? making : []), ...(showPublished ? done : []), ...(showShelved ? shelved : [])].map((s) => s.id);
-                  return (
-                    <>
-                      {pinnedRows.length > 0 && <p className="px-1 pb-1 text-[12px] text-zinc-500">Pinned ({pinnedRows.length})</p>}
-                      {pinnedRows.map(row)}
-                      {main.map(row)}
-                      {fold("Ready & in production", making, showProduction, () => setShowProduction((v) => !v), "")}
-                      {fold("Published", done, showPublished, () => setShowPublished((v) => !v), "opacity-75")}
-                      {fold("Shelved", shelved, showShelved, () => setShowShelved((v) => !v), "opacity-60")}
-                    </>
-                  );
-                })()}
-              </div>
+              (() => {
+                // live from the sidebar's summary: a reply running, or one finished that you haven't looked at
+                const live = (s: SessionRow) => {
+                  const r = summaries?.find((x) => x.id === s.id);
+                  return { working: !!r?.working, unseen: !!r?.ready && !r.working };
+                };
+                // pinned sessions first, in their own block (the sidebar's Pinned group)
+                const pinnedRows = visible.filter((s) => s.pinned);
+                const rest = visible.filter((s) => !s.pinned);
+                // Published sessions are wrapped up: folded under a line at the end
+                const done = rest.filter((s) => s.status === "published");
+                // the script is done (Ready) or handed off (In Production): nothing waits on you there
+                const making = rest.filter((s) => MAKING.includes(s.status ?? "draft"));
+                const shelved = rest.filter((s) => s.status === "shelved");
+                const main = rest.filter((s) => !done.includes(s) && !making.includes(s) && !shelved.includes(s));
+                const sections: ListSection<SessionRow>[] = [
+                  { key: "pinned", label: "Pinned", items: pinnedRows },
+                  { key: "main", items: main },
+                  { key: "making", label: "Ready & in production", items: making, fold: { open: showProduction, onToggle: () => setShowProduction((v) => !v) } },
+                  { key: "done", label: "Published", items: done, fold: { open: showPublished, onToggle: () => setShowPublished((v) => !v) }, className: "opacity-75" },
+                  { key: "shelved", label: "Shelved", items: shelved, fold: { open: showShelved, onToggle: () => setShowShelved((v) => !v) }, className: "opacity-60" },
+                ];
+                order.current = shownItems(sections).map((s) => s.id);
+                return (
+                  <BrowseList
+                    sections={sections}
+                    row={(s) => (
+                      <ListRow key={s.id} picked={picked.has(s.id)} onPick={(e) => pickClick(e, s.id)} onMenu={(e) => setMenu({ s, x: e.clientX, y: e.clientY })}>
+                        {/* the type tile first, the name, and what the AI is doing; the counts were noise */}
+                        <RowLink to={sessionPath(s.id)}>
+                          {(s.kinds?.length ? s.kinds : [undefined]).map((k, i) => (
+                            <KindTile key={k ?? i} kind={k} />
+                          ))}
+                          <span className={`truncate text-sm ${live(s).unseen ? "font-semibold text-zinc-50" : "text-zinc-300"}`}>{s.title}</span>
+                          {live(s).working || s.generating ? (
+                            <span className="flex shrink-0 items-center gap-1 text-[11px] text-violet-300">
+                              <Loader2 className="h-3 w-3 animate-spin" /> Working
+                            </span>
+                          ) : live(s).unseen ? (
+                            <span className="flex shrink-0 items-center gap-1 text-[11px] text-emerald-300" title="A reply finished that you haven't looked at">
+                              <CircleCheck className="h-3.5 w-3.5" /> Done
+                            </span>
+                          ) : null}
+                          <span className="ml-auto shrink-0 pl-2 text-[11px] tabular-nums text-zinc-500">{timeAgo(s.updatedAt)}</span>
+                        </RowLink>
+                        <SessionPosted postings={postingsOfSession(s)} status={s.status} disabled={busy !== null} onChange={(posted) => void setPosted(s.id, posted)} />
+                        <SessionStatusSelect value={s.status} disabled={busy !== null} onChange={(status) => setStatus(s.id, status)} />
+                        <SharePopover
+                          sessionId={s.id}
+                          title={s.title}
+                          onStatus={(status) => setSessions((rows) => rows.map((r) => (r.id === s.id ? { ...r, status } : r)))}
+                          shared={!!s.shared}
+                          onShared={(on) => setSessions((rows) => rows.map((r) => (r.id === s.id ? { ...r, shared: on } : r)))}
+                          className="flex items-center gap-1 rounded-md border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 hover:bg-zinc-800 hover:text-zinc-50"
+                        />
+                        {/* no Delete on the row: it's in the right-click menu */}
+                      </ListRow>
+                    )}
+                  />
+                );
+              })()
             )}
           </section>
         )}

@@ -8,10 +8,13 @@ let running = 0;
 const waiting: (() => void)[] = [];
 const limit = () => Math.max(1, Number(process.env.FFMPEG_CONCURRENCY) || 1);
 
-/** Runs `work` (one ffmpeg process) in the server-wide limit; for a caller that spawns ffmpeg itself to read its output. */
-export async function ffmpegSlot<T>(work: () => Promise<T>): Promise<T> {
+/**
+ * Runs `work` (one ffmpeg process) in the server-wide limit; for a caller that spawns ffmpeg itself to read its output.
+ * `soon`: a few seconds' work a person waits to see (a clip's picture) goes before the queued long runs.
+ */
+export async function ffmpegSlot<T>(work: () => Promise<T>, soon = false): Promise<T> {
   if (running < limit()) running++;
-  else await new Promise<void>((r) => waiting.push(r)); // the releasing run hands its slot over: `running` stays counted
+  else await new Promise<void>((r) => (soon ? waiting.unshift(r) : waiting.push(r))); // the releasing run hands its slot over: `running` stays counted
   try {
     return await work();
   } finally {
@@ -22,8 +25,8 @@ export async function ffmpegSlot<T>(work: () => Promise<T>): Promise<T> {
 }
 
 /** One ffmpeg run; stderr's tail is the error. Callers pass the arguments after the global flags. */
-export function ffmpeg(args: string[]): Promise<void> {
-  return ffmpegSlot(() => run(args));
+export function ffmpeg(args: string[], soon = false): Promise<void> {
+  return ffmpegSlot(() => run(args), soon);
 }
 
 function run(args: string[]): Promise<void> {
@@ -49,8 +52,8 @@ export async function atomically(out: string, write: (tmp: string) => Promise<vo
 }
 
 /** ffmpeg writes `out` through a temp file (see atomically). `args` are the inputs and options, without the output. */
-export function ffmpegTo(out: string, args: string[]): Promise<void> {
-  return atomically(out, (tmp) => ffmpeg([...args, tmp]));
+export function ffmpegTo(out: string, args: string[], soon = false): Promise<void> {
+  return atomically(out, (tmp) => ffmpeg([...args, tmp], soon));
 }
 
 export const writeJsonAtomic = (out: string, value: unknown) =>

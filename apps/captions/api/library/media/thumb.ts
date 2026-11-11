@@ -6,12 +6,13 @@ import { ffmpegTo } from "./run";
  * ponytail: the plan's "first good frame" is just the three seeks above; no scene scoring.
  */
 export async function makeThumb(src: string, out: string, duration: number, cover = false): Promise<void> {
-  if (cover) return ffmpegTo(out, ["-i", src, "-map", "0:v:0", "-frames:v", "1", "-vf", "scale=480:-2", "-q:v", "4"]);
+  // a picture is what the person waits for: it goes before the queued long runs (run.ts ffmpegSlot)
+  if (cover) return ffmpegTo(out, ["-i", src, "-map", "0:v:0", "-frames:v", "1", "-vf", "scale=480:-2", "-q:v", "4"], true);
   const seeks = [duration * 0.1, 1, 0];
   let lastErr: unknown;
   for (const t of [...new Set(seeks)]) {
     try {
-      await ffmpegTo(out, ["-ss", String(Math.max(0, t)), "-i", src, "-frames:v", "1", "-vf", "scale=480:-2", "-q:v", "4"]);
+      await ffmpegTo(out, ["-ss", String(Math.max(0, t)), "-i", src, "-frames:v", "1", "-vf", "scale=480:-2", "-q:v", "4"], true);
       return;
     } catch (e) {
       lastErr = e;
