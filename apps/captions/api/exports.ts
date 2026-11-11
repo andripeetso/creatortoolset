@@ -113,6 +113,9 @@ function publicJob(j: Job): Omit<Job, "params"> {
 
 const jobs = new Map<string, Job>();
 const children = new Map<string, ChildProcess>();
+/** An account's renders still to finish, for Home's list and the menu bar (api/activity.ts). */
+export const activeExports = (owner: string) =>
+  [...jobs.values()].filter((j) => j.owner === owner && (j.status === "queued" || j.status === "running")).map((j) => ({ id: j.id, filename: j.filename, status: j.status, progress: j.progress, projectId: j.params.projectId }));
 
 async function persist(job: Job): Promise<void> {
   try {

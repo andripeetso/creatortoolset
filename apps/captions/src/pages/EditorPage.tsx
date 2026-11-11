@@ -194,11 +194,12 @@ function NewEditSheet({ open, onClose, start }: { open: boolean; onClose: () => 
   /** Files from this computer: filed in the library (the A-roll folder, or a plug-in\'s), then picked for this edit. */
   const fromComputer = async (files: FileList | null) => {
     if (!files?.length) return;
+    const picked = Array.from(files); // before any await: clearing the input empties this very list in WebKit
     setBusy(true);
     setError(null);
     try {
       const target = await footageTarget();
-      for (const file of Array.from(files)) {
+      for (const file of picked) {
         const up = await uploadFile(target.libraryId, file, () => {}, target.collectionId);
         const assetId = up.assetId ?? up.duplicateOf;
         if (!assetId) throw new Error(`${file.name} was not filed in the library`);

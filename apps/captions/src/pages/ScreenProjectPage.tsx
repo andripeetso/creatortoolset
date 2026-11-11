@@ -24,7 +24,7 @@ const SHARES: { dest: ShareDest; label: string }[] = [
 
 /**
  * One recording on this Mac (`/record/<id>`, app only): its editor on the local file. Export saves the edited video
- * or uploads it to Review; the menu beside it sends the recording as it was made, or shows its file; the bin throws
+ * or uploads it to Review (with no background: saves a see-through video, which the app makes from the download); the menu beside it sends the recording as it was made, or shows its file; the bin throws
  * the recording away (the app asks once, then it is in the Trash) and goes back to the recordings.
  */
 export default function ScreenProjectPage() {
@@ -70,18 +70,19 @@ export default function ScreenProjectPage() {
 
   if (!canRecordScreen()) return <Navigate to="/record" replace />;
 
+  const download = (blob: Blob, fileName: string) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = fileName;
+    a.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  };
   const actions: EditorAction[] = [
     {
       label: "Save video…",
       title: "Makes the video with this look and saves it",
-      run: async ({ blob, name }) => {
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `${name}.mp4`;
-        a.click();
-        window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
-      },
+      run: async ({ blob, name }) => download(blob, `${name}.mp4`),
     },
     {
       label: "Upload to Review",
@@ -112,6 +113,7 @@ export default function ScreenProjectPage() {
           source={source}
           meta={{ name: rec.name, duration: rec.durationMs / 1000, width: rec.width, height: rec.height }}
           actions={actions}
+          download={download}
           extra={
             <>
             <Button

@@ -1,34 +1,19 @@
+import path from "node:path";
 import { Hono } from "hono";
+import type { ActivityAction, ActivityRow, ActivityState, AgentRun } from "../contracts/activity";
 import type { AuthVars } from "./auth";
+import type { activeExports } from "./exports";
+import type { LibraryWork } from "./library/activity";
 import type { ServerPlugin } from "./lib/plugin";
 import type { SessionUser } from "./users";
 
-// Rows for the Mac menu bar panel from plug-ins. GET /api/activity returns the rows every loaded plug-in adds with
-// its `activity(user)` function, so a plug-in shows its work in the pill with no Swift code. The panel puts "working"
-// rows under Active and "ready" rows under For you; a row's href is an app path the window opens.
+// What runs and what waits, for Home's Activity list and the Mac menu bar panel. GET /api/activity returns the app's own
+// rows (the Media Library, AI Editor edits, exports) and then the rows every loaded plug-in adds with its
+// `activity(user)` function, so a plug-in shows its work with no Swift code. "working" rows are listed under Running,
+// "ready" rows under Waiting on you; a row's href is an app path the window opens.
 
-export type ActivityState = "working" | "ready";
-
-// What a row's button does on the Mac the app runs on: start, stop or restart (kickstart) a LaunchAgent. Only a label the
-// plug-in declares in `launchAgents` passes (pluginActivity drops the rest). The Mac runs it (apps/mac LaunchAgent.swift).
-export type AgentRun = "start" | "stop" | "restart";
-export interface ActivityAction {
-  id: string;
-  title: string;
-  run: AgentRun;
-  label: string;
-}
-
-export interface ActivityRow {
-  id: string;
-  title: string;
-  detail: string;
-  state: ActivityState;
-  // An app path such as "/editor". Never a full URL, never a protocol-relative "//" one.
-  href: string;
-  // Buttons on the row (the Mac's pill). Optional; a row with none has no buttons.
-  actions?: ActivityAction[];
-}
+// The row types live in contracts/activity.ts (Home's list reads them too); plug-ins import them from here.
+export type { ActivityAction, ActivityRow, ActivityState, AgentRun } from "../contracts/activity";
 
 export type ActivityFn = (user: SessionUser) => ActivityRow[] | Promise<ActivityRow[]>;
 
@@ -117,9 +102,14 @@ export async function pluginActivity(plugins: ServerPlugin[], user: SessionUser,
     for (const item of results[i] ?? []) {
       if (!item || typeof item.id !== "string" || typeof item.title !== "string" || typeof item.detail !== "string") continue;
       if (!STATES.includes(item.state) || typeof item.href !== "string" || !isAppPath(item.href)) continue;
-      const { actions, ...row } = item;
+      const { id, title, detail, state, href, actions, progress, reason } = item;
       const kept = cleanActions(plugin, actions);
-      out.push({ ...row, id: `${plugin.id}:${row.id}`, ...(kept ? { actions: kept } : {}) });
+      out.push({
+        id: `${plugin.id}:${id}`, title, detail, state, href,
+        ...(kept ? { actions: kept } : {}),
+        ...(typeof progress === "number" && progress >= 0 && progress <= 1 ? { progress } : {}),
+        ...(typeof reason === "string" && reason.trim() ? { reason: reason.slice(0, 300) } : {}),
+      });
     }
   });
   return out;
@@ -143,12 +133,93 @@ export async function pluginMenu(plugins: ServerPlugin[], user: SessionUser, tim
   return out;
 }
 
-/** GET /api/activity: the plug-in rows for the signed-in account (behind the account gate in boot.ts). GET /api/activity/menu: their menu items. GET /api/activity/tools: the Go menu's own tools. */
+/** The app's own background work for one account, as appRows reads it. */
+export interface AppWork {
+  libraries: LibraryWork[];
+  /** the account's edits whose newest step is queued or running */
+  edits: { id: string; name: string }[];
+  exports: ReturnType<typeof activeExports>;
+}
+
+const may = (user: SessionUser, tool: string) => user.role === "admin" || !user.off.includes(tool);
+
+/** Read when asked, so a test of the rows loads none of the tools. */
+async function appWork(user: SessionUser): Promise<AppWork> {
+  const [{ libraryWork }, { allEdits, summaryOf }, { activeExports }] = await Promise.all([import("./library/activity"), import("./editor/store"), import("./exports")]);
+  const edits = may(user, "editor")
+    ? allEdits().filter((e) => !e.trashedAt && e.createdBy === user.username).map(summaryOf).filter((e) => e.last?.state === "queued" || e.last?.state === "running")
+    : [];
+  return { libraries: may(user, "media") ? await libraryWork(user) : [], edits, exports: activeExports(user.username) };
+}
+
+const count = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
+const pct = (x: number) => `${Math.round(x * 100)}%`;
+const STEP: Record<string, [string, string]> = {
+  files: ["file", "files"],
+  transcript: ["transcript", "transcripts"],
+  describe: ["AI description", "AI descriptions"],
+  embed: ["search entry", "search entries"],
+};
+
+/**
+ * The app's own rows. The Media Library: a footage folder still being taken in, uploads, clips being prepared, AI
+ * descriptions held back by the plan's limit (running, with the limit as the reason: nothing for the person to do), and
+ * steps that wait for a key (waiting on you). Then edits with a step queued or running, then renders.
+ */
+export function appRows(w: AppWork): ActivityRow[] {
+  const rows: ActivityRow[] = [];
+  for (const lib of w.libraries) {
+    const add = (id: string, detail: string, more: Partial<ActivityRow> = {}) =>
+      rows.push({ id: `library:${lib.id}:${id}`, title: "Media Library", detail, state: "working", href: "/library", ...more });
+    lib.folders.filter((f) => f.adding > 0).forEach((f, i) => {
+      const done = f.files - f.adding;
+      add(`add${i}`, `Adding clips from ${path.basename(f.path)} · ${done.toLocaleString()} of ${f.files.toLocaleString()}`, { progress: done / Math.max(1, f.files) });
+    });
+    const up = lib.uploading;
+    if (up) add("upload", `Uploading ${count(up.files, "file")} · ${pct(up.received / Math.max(1, up.size))}`, { progress: up.received / Math.max(1, up.size) });
+    const p = lib.progress;
+    if (p.left > 0) add("prepare", `Preparing ${count(p.clips, "clip")} · ${pct(p.done / (p.done + p.left))}`, { progress: p.done / (p.done + p.left) });
+    for (const x of p.waiting) {
+      const [one, many] = STEP[x.step] ?? ["file", "files"];
+      const what = `${count(x.count, one, many)} ${x.count === 1 ? "waits" : "wait"}`;
+      if (x.limit) add("limit", what, { reason: x.missing });
+      else add(`key:${x.step}`, `${what}: ${x.missing}`, { state: "ready" });
+    }
+  }
+  for (const e of w.edits) rows.push({ id: `editor:${e.id}`, title: e.name, detail: "AI Editor", state: "working", href: `/editor/${e.id}` });
+  for (const j of w.exports) {
+    const running = j.status === "running";
+    rows.push({
+      id: `export:${j.id}`,
+      title: j.filename,
+      detail: running ? `Exporting · ${pct(j.progress)}` : "Export · waits its turn",
+      state: "working",
+      href: j.projectId ? `/captions?project=${encodeURIComponent(j.projectId)}` : "/captions",
+      ...(running ? { progress: j.progress } : {}),
+    });
+  }
+  return rows;
+}
+
+/** The app's rows for this account; none for visitors, and none (said in the log) when reading them fails. */
+async function appActivity(user: SessionUser): Promise<ActivityRow[]> {
+  if (user.role === "visitor") return [];
+  try {
+    return appRows(await appWork(user));
+  } catch (err) {
+    console.warn(`[activity] ${err instanceof Error ? err.message : String(err)}`);
+    return [];
+  }
+}
+
+/** GET /api/activity: the app's own rows and then the plug-in rows for the signed-in account (behind the account gate in boot.ts). GET /api/activity/menu: their menu items. GET /api/activity/tools: the Go menu's own tools. */
 export function activityApp(plugins: ServerPlugin[]) {
   const app = new Hono<{ Variables: AuthVars }>();
   app.get("/", async (c) => {
     c.header("Cache-Control", "no-store");
-    return c.json(await pluginActivity(plugins, c.get("user")));
+    const user = c.get("user");
+    const [own, added] = await Promise.all([appActivity(user), pluginActivity(plugins, user)]);
+    return c.json([...own, ...added]);
   });
   app.get("/menu", async (c) => {
     c.header("Cache-Control", "no-store");

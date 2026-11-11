@@ -267,6 +267,9 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
             // "record-trash:<id>" throws a recording away without asking: the page asks in its own dialog (mac-record.ts)
             scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macRecordTrash = '1';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         }
+        // a download named "….ctalpha.mp4" becomes a see-through video (AlphaVideo.swift): the editor offers no
+        // background only where this is set (mac-record.ts)
+        scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macRecordAlpha = '1';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         // ctlocal:// takes several requests at once from this version on (ProjectScheme.swift); in an older app the
         // page reads a recording's files one after another instead (src/lib/local-files.ts)
         scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macLocalFiles = '2';", injectionTime: .atDocumentStart, forMainFrameOnly: true))

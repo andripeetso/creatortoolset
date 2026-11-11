@@ -55,6 +55,20 @@ const store = (key: string, on: boolean) => {
   }
 };
 const MUTED_KEY = "screen-editor-muted";
+
+/** The checkerboard that shows through a look with no background: one fill, `cell` pixels a square. */
+function checker(ctx: CanvasRenderingContext2D, cell: number): CanvasPattern | null {
+  const tile = document.createElement("canvas");
+  tile.width = tile.height = cell * 2;
+  const t = tile.getContext("2d");
+  if (!t) return null;
+  t.fillStyle = "#52525b";
+  t.fillRect(0, 0, cell * 2, cell * 2);
+  t.fillStyle = "#3f3f46";
+  t.fillRect(0, 0, cell, cell);
+  t.fillRect(cell, cell, cell, cell);
+  return ctx.createPattern(tile, "repeat");
+}
 const LOOP_KEY = "screen-editor-loop";
 
 /**
@@ -65,7 +79,8 @@ const LOOP_KEY = "screen-editor-loop";
  * - once things have stood still for a moment, one frame is painted with the 2D canvas's own best scaling, from a
  *   bitmap of the frame (33 ms, once);
  * - nothing is painted while it is paused and nothing changes;
- * - the time goes to listeners (the playhead, the clock), never through React state.
+ * - the time goes to listeners (the playhead, the clock), never through React state;
+ * - a look with no background gets its checkerboard as one pattern fill on the same canvas, which stays opaque.
  * What keeps it steady: the video is never asked to announce its frames (requestVideoFrameCallback made every start
  * stand still after 0.3 s), and each video is on two elements that take turns (deck.ts), because one that has played
  * and is then moved stands still for a quarter of a second soon after it starts again.
@@ -123,6 +138,8 @@ export function usePlayer(o: {
     resume: 0,
     started: false,
     box: { w: 0, h: 0 },
+    /** The checkerboard's pattern, kept while the canvas keeps its size. */
+    checker: null as { cell: number; fill: CanvasPattern | null } | null,
     times: new Set<(t: number) => void>(),
     frames: new Set<() => void>(),
   }).current;
@@ -279,6 +296,12 @@ export function usePlayer(o: {
       if (c.style.height !== `${cssH}px`) c.style.height = `${cssH}px`;
       const ctx = c.getContext("2d", { alpha: false });
       if (!ctx) return false;
+      if (look.background === "none") {
+        const cell = Math.max(4, Math.round(Math.max(pw, ph) / 90));
+        if (s.checker?.cell !== cell) s.checker = { cell, fill: checker(ctx, cell) };
+        ctx.fillStyle = s.checker.fill ?? "#3f3f46";
+        ctx.fillRect(0, 0, pw, ph);
+      }
       const camEl = camera.current?.el;
       const liveCamera: CameraImage | null =
         camEl && camEl.readyState >= 2 ? { image: camEl, width: camEl.videoWidth, height: camEl.videoHeight } : null;

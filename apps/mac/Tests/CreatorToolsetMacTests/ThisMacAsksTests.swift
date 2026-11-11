@@ -12,6 +12,30 @@ final class ThisMacAsksTests: XCTestCase {
         XCTAssertFalse(thisMacAsks.contains("ai:on"))
     }
 
+    func testPickedFilesAreKeptNewestFirstOnceEachAndOnlyForThisMacsServer() throws {
+        XCTAssertTrue(thisMacAsks.contains("files"))
+        let a = URL(fileURLWithPath: "/footage/A.mp4"), b = URL(fileURLWithPath: "/footage/B.mp4"), c = URL(fileURLWithPath: "/footage/C.mp4")
+        // a second pick keeps the first one's files (they may still be being added), and a file picked again moves up
+        XCTAssertEqual(rememberPicks([c, a], in: [a, b]), [c, a, b])
+        XCTAssertEqual(rememberPicks([c], in: [a, b], cap: 2), [c, a])
+
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("picks-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let clip = folder.appendingPathComponent("Tiny Acrobatics.mp4")
+        try Data(count: 1234).write(to: clip)
+        let gone = folder.appendingPathComponent("gone.mp4")
+
+        let files = try XCTUnwrap(pickedFilesReply([clip, folder, gone], here: true)["files"] as? [[String: Any]])
+        XCTAssertEqual(files.count, 1)   // the folder and the missing file are left out
+        XCTAssertEqual(files[0]["path"] as? String, clip.path)
+        XCTAssertEqual(files[0]["name"] as? String, "Tiny Acrobatics.mp4")
+        XCTAssertEqual(files[0]["size"] as? Int, 1234)
+        XCTAssertGreaterThan(files[0]["modified"] as? Double ?? 0, 1_600_000_000_000)
+        // a server that is not this Mac cannot read them: no paths
+        XCTAssertEqual((pickedFilesReply([clip], here: false)["files"] as? [Any])?.count, 0)
+    }
+
     func testADragsFinderItemsComeWithTheirPathAndWhetherEachIsAFolder() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("ct-drop-\(UUID().uuidString)")
         let file = dir.appendingPathComponent("clip 1.mov")

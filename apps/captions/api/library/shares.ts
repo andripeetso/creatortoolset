@@ -189,7 +189,8 @@ shareApp.post("/:id/shares", async (c) => {
   return c.json(created, 201);
 });
 
-// GET /api/library/:id/shares → the live links: all of them for the owner, the caller's own for a member
+// GET /api/library/:id/shares → the library's live links, for the account the library is (libraryRole knows no other
+// role; anyone else gets 404). If members ever get a role here, a member must list only their own links
 shareApp.get("/:id/shares", (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
@@ -210,7 +211,8 @@ shareApp.get("/:id/shares", (c) => {
   return c.json({ shares });
 });
 
-// DELETE /api/library/shares/:tokenHash → revoke (the creator or the owner); the link is 404 from then on
+// DELETE /api/library/shares/:tokenHash → revoke, for the library's own account (the same rule as the list); the link
+// is 404 from then on
 shareApp.delete("/shares/:tokenHash", (c) => {
   const user = c.get("user");
   const s = db().prepare("SELECT library_id, created_by FROM shares WHERE token_hash = ?").get(c.req.param("tokenHash")) as

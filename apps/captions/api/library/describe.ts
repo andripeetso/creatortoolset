@@ -12,12 +12,13 @@ import { ffmpegTo } from "./media/run";
 import { indexAsset } from "./query";
 import { NeedsKey, segmentsOf } from "./transcribe";
 import { isAdminActor } from "../my-keys";
+import type { Roll } from "./roll";
 
 /**
  * The library's `describe` job (tasks/media-library-plan.md, sections 5 and 11): four frames, the title and a
  * transcript excerpt go to the actor's own AI (aiFor: their provider, or their own Anthropic key).
  * No route parks the job as needs_key, never failed and never on someone else's AI. The answer is JSON: a description
- * and tags, stored as the AI's. A human's description stays the one shown (query.ts); human tags keep their source.
+ * and tags, stored as the AI's, and in the same answer whether the clip is A-roll or B-roll (roll.ts reads it). A human's description stays the one shown (query.ts); human tags keep their source.
  * On unless the library's owner switched it off (settings.describe; db.ts SETTING_DEFAULTS): a big upload says first what it spends.
  */
 
@@ -36,6 +37,8 @@ export interface DescribeInput {
 export interface Described {
   description: string;
   tags: string[];
+  /** "a": someone talks to the camera through most of it; "b": anything else. Absent when the answer had none */
+  roll?: Roll;
 }
 
 export function describePrompt(input: DescribeInput): { system: string; user: string } {
@@ -48,7 +51,8 @@ export function describePrompt(input: DescribeInput): { system: string; user: st
       `Title: ${input.title}`,
       input.transcript ? `What is said (excerpt):\n${input.transcript}` : "Nothing is transcribed.",
       `The ${input.frames} pictures are frames from the start to the end of the clip, in order.`,
-      'Answer as {"description": "two or three plain sentences", "tags": ["up to 8 short lowercase search words"]}',
+      'roll is "a" when a person talks to the camera (or to someone just beside it) through most of the clip, a take a video could be built on; else "b" (scenery, action, details, people not talking to the camera).',
+      'Answer as {"description": "two or three plain sentences", "tags": ["up to 8 short lowercase search words"], "roll": "a" or "b"}',
     ].join("\n\n"),
   };
 }
@@ -61,7 +65,7 @@ export function parseDescribe(text: string): Described {
   const tags = Array.isArray(o.tags)
     ? [...new Set(o.tags.filter((t): t is string => typeof t === "string").map((t) => t.trim().toLowerCase().slice(0, 40)).filter(Boolean))].slice(0, MAX_TAGS)
     : [];
-  return { description, tags };
+  return { description, tags, ...(o.roll === "a" || o.roll === "b" ? { roll: o.roll } : {}) };
 }
 
 /** Frame times spread over the clip (the middle of each quarter); one frame for a still or a very short clip. */
@@ -75,11 +79,12 @@ export function saveDescribed(db: DatabaseSync, versionId: string, d: Described,
   const { asset_id } = db.prepare("SELECT asset_id FROM asset_versions WHERE id = ?").get(versionId) as { asset_id: string };
   db.exec("BEGIN");
   try {
-    db.prepare("INSERT OR REPLACE INTO descriptions (version_id, source, text, provider, created_at) VALUES (?, 'ai', ?, ?, ?)").run(
+    db.prepare("INSERT OR REPLACE INTO descriptions (version_id, source, text, provider, created_at, roll) VALUES (?, 'ai', ?, ?, ?, ?)").run(
       versionId,
       d.description,
       provider,
       Date.now(),
+      d.roll ?? null,
     );
     db.prepare("DELETE FROM asset_tags WHERE asset_id = ? AND source = 'ai'").run(asset_id);
     const add = db.prepare("INSERT OR IGNORE INTO asset_tags (asset_id, tag, source) VALUES (?, ?, 'ai')");

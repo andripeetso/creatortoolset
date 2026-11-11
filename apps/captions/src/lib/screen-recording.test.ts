@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { zoomView, autoZooms, backgroundStops, bubbleRect, cameraAt, defaultCamera, defaultLook, drawFrame, layout, normalizeLook, outputSize, pointerAt, pointerPath, shadowOf, sideRects, trimOf, type ScreenEvents, type ScreenLook } from "./screen-recording";
+import { zoomView, alphaFileName, alphaPacking, autoZooms, backgroundStops, bubbleRect, cameraAt, defaultCamera, defaultLook, drawFrame, layout, normalizeLook, opaqueLook, outputSize, pointerAt, pointerPath, shadowOf, sideRects, trimOf, type ScreenEvents, type ScreenLook } from "./screen-recording";
 
 const events: ScreenEvents = {
   v: 1,
@@ -196,6 +196,39 @@ describe("screen recording", () => {
     drawFrame(ctx, screen as unknown as CanvasImageSource, 3840, 2160, 1, look, pointerPath(events), events.clicks, { image: { cam: true } as unknown as CanvasImageSource, width: 640, height: 480 });
     const drawn = calls.filter((c) => c[0] === "drawImage").map((c) => c[1]);
     expect(drawn).toEqual([screen]);
+  });
+
+  it("paints nothing behind the window with no background, and a saved look keeps that kind", () => {
+    const filled = (background: string) => {
+      const calls: unknown[][] = [];
+      const look = { ...defaultLook(events, 30), background };
+      drawFrame(fakeContext(1920, 1080, calls), {} as CanvasImageSource, 3840, 2160, 1, look, pointerPath(events), events.clicks);
+      return calls.filter((c) => c[0] === "fillRect");
+    };
+    expect(filled("violet")).toEqual([["fillRect", 0, 0, 1920, 1080]]);
+    expect(filled("none")).toEqual([]);
+    expect(normalizeLook({ background: "none" }, events, 30).background).toBe("none");
+    // where no see-through video can be made it is the first gradient again; any other look is left as it is
+    expect(opaqueLook({ ...defaultLook(events, 30), background: "none" }).background).toBe("violet");
+    const sky = { ...defaultLook(events, 30), background: "sky" };
+    expect(opaqueLook(sky)).toBe(sky);
+  });
+
+  it("packs a see-through frame's colours and matte: stacked when wide, side by side when tall", () => {
+    // the same cases as the Mac app's AlphaVideoTests, which takes the halves apart again
+    const cases: [number, number, "stacked" | "beside", number, number][] = [
+      [1920, 1080, "stacked", 1920, 2160],
+      [1080, 1920, "beside", 2160, 1920],
+      [1080, 1080, "stacked", 1080, 2160],
+      [1080, 1124, "beside", 2160, 1124],
+      [1080, 1350, "beside", 2160, 1350],
+      [2160, 1080, "stacked", 2160, 2160],
+      [1080, 2160, "beside", 2160, 2160],
+    ];
+    for (const [w, h, layout, pw, ph] of cases) expect(alphaPacking(w, h)).toEqual({ layout, width: pw, height: ph });
+    // the name says which, for the app: two of the cases above pack to the same 2160×2160
+    expect(alphaFileName("Demo (transparent)", 1920, 1080)).toBe("Demo (transparent).stacked.ctalpha.mp4");
+    expect(alphaFileName("Demo (transparent)", 1080, 1920)).toBe("Demo (transparent).beside.ctalpha.mp4");
   });
 });
 

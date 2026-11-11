@@ -19,6 +19,7 @@ WORKDIR /repo
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml turbo.json ./
 COPY apps/captions/package.json apps/captions/
 COPY apps/mac/package.json apps/mac/
+COPY apps/ios/package.json apps/ios/
 COPY apps/relay/package.json apps/relay/
 RUN pnpm install --frozen-lockfile
 # Chromium and the production node_modules depend only on the manifests, so they are made before the

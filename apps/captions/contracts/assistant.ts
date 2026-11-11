@@ -26,6 +26,8 @@ export interface AssistantMessage {
   media?: AssistantMedia[];
   /** Answers the reply offers as buttons (offer_choices): a press sends that one as the user's message. */
   choices?: string[];
+  /** Questions the reply put before deleting, publishing or sending something: a Yes / No card each. */
+  confirms?: AssistantConfirm[];
   /** A user message's attachments as shown in the chat: pictures by name (served by GET /api/assistant/images/:id), pastes by name. */
   images?: Array<{ id: string; name: string }>;
   pasted?: string[];
@@ -80,6 +82,19 @@ export interface AssistantApproval {
   status: "waiting" | "allowed" | "denied" | "expired";
 }
 
+/**
+ * A question the assistant put before a tool deleted, published or sent something. POST /api/assistant/confirms/:id
+ * { yes } answers it: Yes runs the tool as the person and the card says how it went ("done", or "failed" with why in
+ * `result`); No drops it ("no").
+ */
+export interface AssistantConfirm {
+  id: string;
+  question: string;
+  at: number;
+  status: "waiting" | "done" | "failed" | "no";
+  result?: string;
+}
+
 /** A key the assistant asked for (ask_secret): shown as a password box in the dock. */
 export interface AssistantPending {
   env: string;
@@ -132,8 +147,8 @@ export interface AssistantFile {
   size: number;
 }
 
-/** Where the assistant's use_file can send a dropped file: Video Notes, Review or Caption Studio. */
-export const FILE_USES = ["notes", "review", "captions"] as const;
+/** Where the assistant's use_file can send a dropped file: Video Notes, Review, Caption Studio or the Media Library. */
+export const FILE_USES = ["notes", "review", "captions", "library"] as const;
 export type AssistantFileUse = (typeof FILE_USES)[number];
 
 /** An earlier conversation, kept when a new one starts (Earlier chats in the dock). */
