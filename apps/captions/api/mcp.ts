@@ -288,13 +288,13 @@ const ASSISTANT_DEFS = [
   },
   {
     name: "use_file",
-    description: "Send a video or recording to a tool: file = the id of one dropped in the chat, or path = a file on this computer (when the server runs on it; not for library: media_import_folder reads its folder in place). to: notes = Video Notes (transcript, summary, takeaways, action items, chapters; follow it with notes_get), review = a Review video (then review_share for a link), captions = a Caption Studio project, library = the Media Library, where each clip sorts itself as A-roll or B-roll (files = several dropped ids at once; tell the user the answer's said line). name = a title for it (default the file's name). The same file can go to several.",
-    inputSchema: { type: "object", properties: { file: str, files: { type: "array", items: str }, path: str, to: { type: "string", enum: [...FILE_USES] }, name: str }, required: ["to"] },
+    description: "Send a video or recording to a tool: file = the id of one dropped in the chat, or path = a file on this computer (when the server runs on it; not for library: media_import_folder reads its folder in place). to: notes = Video Notes (transcript, summary, chapters; follow it with notes_get, which also writes takeaways, an action plan and quotes), review = a Review video (then review_share for a link; with version_of = a Review video's link or id, as get_review takes, the file becomes that video's next version instead), captions = a Caption Studio project, library = the Media Library, where each clip sorts itself as A-roll or B-roll (files = several dropped ids at once; tell the user the answer's said line). name = a title for it (default the file's name). The same file can go to several.",
+    inputSchema: { type: "object", properties: { file: str, files: { type: "array", items: str }, path: str, to: { type: "string", enum: [...FILE_USES] }, name: str, version_of: str }, required: ["to"] },
   },
   {
     name: "notes_get",
-    description: "A Video Note (use_file to: notes gives its id): status (processing with its step, ready, error), title, summary and chapters once ready, and the takeaways, action items and quotes it has. transcript: true adds what is said in it. Waits up to 50 s while it processes.",
-    inputSchema: { type: "object", properties: { id: str, transcript: { type: "boolean" } }, required: ["id"] },
+    description: "A Video Note (use_file to: notes gives its id; notes_list finds one): status (processing with its step, ready, error), title, summary and chapters once ready, and the takeaways, action plan and quotes it has. add = the ones to write when it has none yet (the user's AI writes them; when the answer says still_writing, call again). transcript: true adds what is said in it. Waits up to 50 s (wait_s: less).",
+    inputSchema: { type: "object", properties: { id: str, transcript: { type: "boolean" }, add: { type: "array", items: { type: "string", enum: ["takeaways", "action plan", "quotes", "summary", "chapters"] } }, wait_s: { type: "integer" } }, required: ["id"] },
   },
 ];
 
@@ -640,18 +640,24 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       return { id: cm.id, resolved: !!cm.resolved, text: cm.text };
     },
     use_file: async (a) => {
-      // what the tool still needs comes first: the assistant asks for it (ask_secret, a Settings page), then tries again
+      // what the tool still needs comes first: the assistant asks for it (ask_secret) or opens the page that holds it, then tries again
       const tool = a.to === "review" ? "review" : a.to === "captions" ? "captions" : a.to === "library" ? "media" : "notes";
       const { missing } = readiness(tool, (await json<SetupView>("/api/setup")).have);
-      if (missing.length)
+      if (missing.length) {
+        // the page each kind of need is set up on, the same ones Settings → Tools sends a person to
+        const page: Record<Exclude<(typeof missing)[number]["form"], "keys">, string> = { ai: "/settings/providers", apify: "/settings/keys", library: "/library", project: "/projects" };
         return {
           not_yet: `${TOOL_NAMES[tool]} needs these first; then call use_file again.`,
-          needs: missing.map((n) => ({ what: n.what, ...(n.form === "keys" ? { ask_secret: n.anyOf } : { open: n.form === "ai" ? "/settings/providers" : "/settings/general" }) })),
+          needs: missing.map((n) => ({ what: n.what, ...(n.form === "keys" ? { ask_secret: n.anyOf } : { open: page[n.form] }) })),
         };
+      }
       if (a.to === "library") return toLibrary(a);
       if (!a.file && !a.path) throw new ToolError("Give the dropped file's id, or a path on this computer.");
+      // a fix for a video already in Review: found by its link or id as the caller; the use route takes only the owner's own
+      if (a.version_of && a.to !== "review") throw new ToolError("version_of goes with to: review.");
+      const of = a.version_of ? { version_of: ((await json(reviewPath(String(a.version_of), origin))).asset as Args).id } : {};
       const file = a.path ? (await json(`/api/assistant/files/path`, "POST", { path: a.path })).id : a.file;
-      return json(`/api/assistant/files/${encodeURIComponent(String(file))}/use`, "POST", pick(a, ["to", "name"]));
+      return json(`/api/assistant/files/${encodeURIComponent(String(file))}/use`, "POST", { ...pick(a, ["to", "name"]), ...of });
     },
     notes_get: async (a) => {
       const path = `/api/clips/${encodeURIComponent(String(a.id))}`;
@@ -660,9 +666,28 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
         if (n.owner !== user.username && user.role !== "admin") throw new ToolError("Not found, or not this account's.");
         return n;
       };
+      const by = Date.now() + Math.max(0, Math.min(Number(a.wait_s ?? ANSWER_BY_S), ANSWER_BY_S)) * 1000;
       let n = mine(await json(path));
-      for (let t = 0; n.status === "processing" && t < 25; t++) n = (await sleep(2000), mine(await json(path)));
-      const blocks = Object.fromEntries(((n.blocks as Args[] | undefined) ?? []).map((b) => [b.kind, b.text ?? ((b.items as Args[] | undefined) ?? []).map((x) => x.text)]));
+      while (n.status === "processing" && Date.now() < by) n = (await sleep(2000), mine(await json(path)));
+      // a note's sections in the page's own words; the routes know them by kind ("action items" is how people ask for the plan)
+      const KIND: Record<string, string> = { takeaways: "takeaways", "action plan": "actions", quotes: "quotes", summary: "summary", chapters: "chapters" };
+      const wordOf = (kind: unknown) => Object.keys(KIND).find((w) => KIND[w] === kind) ?? String(kind);
+      const asked = (Array.isArray(a.add) ? a.add : []).map((w) => {
+        const said = String(w).trim().toLowerCase();
+        const kind = KIND[said] ?? (said === "action items" || said === "actions" ? "actions" : undefined);
+        if (!kind) throw new ToolError(`add takes ${Object.keys(KIND).join(", ")}.`);
+        return kind;
+      });
+      const has = (kind: string) => (kind === "summary" ? !!n.summary : kind === "chapters" ? !!(n.chapters as unknown[] | undefined)?.length : ((n.blocks as Args[] | undefined) ?? []).some((b) => b.kind === kind));
+      const writing = () => (n.generating as string[] | undefined) ?? [];
+      // the ones asked for that the note has not got: each is written by the person's own AI, and waited for while there is time
+      const want = n.status === "ready" && n.hasTranscript ? asked.filter((k) => !has(k)) : [];
+      for (const k of want) if (!writing().includes(k)) await api(`${path}/blocks`, "POST", { kind: k });
+      if (want.length) n = mine(await json(path));
+      while (want.some((k) => writing().includes(k)) && Date.now() < by) n = (await sleep(1000), mine(await json(path)));
+      const still = want.filter((k) => writing().includes(k));
+      const failed = Object.fromEntries(want.filter((k) => !has(k) && !still.includes(k) && (n.blockErrors as Args | undefined)?.[k]).map((k) => [wordOf(k), (n.blockErrors as Args)[k]]));
+      const blocks = Object.fromEntries(((n.blocks as Args[] | undefined) ?? []).map((b) => [wordOf(b.kind), b.text ?? ((b.items as Args[] | undefined) ?? []).map((x) => x.text)]));
       // what is said, as plain text; a long recording is cut and says so
       let said: string | undefined;
       if (a.transcript === true && n.status === "ready" && n.hasTranscript) {
@@ -680,6 +705,8 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
         ...blocks,
         ...(said ? { transcript: said } : {}),
         ...((n.chapters as Args[] | undefined)?.length ? { chapters: (n.chapters as Args[]).map((c) => `${clock(Number(c.t))} ${c.title}`) } : {}),
+        ...(still.length ? { still_writing: still.map(wordOf), note: "Still writing: call notes_get again with the same add." } : {}),
+        ...(Object.keys(failed).length ? { could_not_write: failed } : {}),
       };
     },
     review_set_approval: async (a) => {
