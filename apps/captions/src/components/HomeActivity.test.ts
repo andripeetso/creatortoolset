@@ -3,7 +3,7 @@ import type { EditSummary } from "@contracts/editor";
 import type { ReviewAsset } from "@/lib/review";
 import type { ActivityRow } from "@contracts/activity";
 import type { SessionSummary } from "@/lib/workshop-summary";
-import { activityLines, runningByTile, todoRows } from "./HomeActivity";
+import { activityLines, runningByTile, todoRows, withStatus } from "./HomeActivity";
 
 const edit = (id: string, state: EditSummary["last"]): EditSummary => ({
   id,
@@ -27,6 +27,14 @@ describe("todoRows", () => {
     expect(rows[0].to).toBe("/review/a1");
     expect(rows[1].text).toContain("last step failed");
     expect(rows[2].icon).toBe("key");
+  });
+
+  it("drops the review rows that were cleared, and brings back one whose clear failed", () => {
+    const assets = [asset("a1", "needs_review"), asset("a2", "needs_review"), asset("a3", "approved")];
+    const cleared = withStatus(assets, ["a1", "a2"], "none");
+    expect(todoRows([], cleared)).toEqual([]);
+    expect(cleared[2].approval.status).toBe("approved");
+    expect(todoRows([], withStatus(cleared, ["a2"], "needs_review")).map((r) => r.asset)).toEqual(["a2"]);
   });
 
   it("is empty when nothing waits on the account", () => {

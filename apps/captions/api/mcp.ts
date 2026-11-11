@@ -19,6 +19,8 @@ import { innerCall, jobTurn, type AuthVars } from "./auth";
 import type { SessionUser } from "./users";
 import { pluginReplaces, type ServerPlugin } from "./lib/plugin";
 import { editorTools } from "./mcp-tools/editor";
+import { finalsTools } from "./mcp-tools/finals";
+import { mainSource } from "./library/sources";
 import type { AssetCard } from "../contracts/library";
 import { rollCount, rollLine } from "./library/roll";
 
@@ -337,7 +339,13 @@ const DOCK_ONLY = new Set(MODULE_DEFS.filter((d) => d.dockOnly).map((d) => d.nam
  * there unless the plug-in serves a tool of the same name.
  */
 const BUILT_IN_EDITOR = new Set(editorTools.defs.map((d) => d.name));
-const notHere = (name: string) => BUILT_IN_EDITOR.has(name) && pluginReplaces("/api/editor");
+/**
+ * The built-in Finals tools (mcp-tools/finals.ts) work on the pieces of the app's own library. On an install whose
+ * Media Library is a plug-in's (LibrarySource.main) the person never sees that library, so the tools would list and
+ * change pieces that are on no page there: left out, like the editor's.
+ */
+const BUILT_IN_FINALS = new Set(finalsTools.defs.map((d) => d.name));
+const notHere = (name: string) => (BUILT_IN_EDITOR.has(name) && pluginReplaces("/api/editor")) || (BUILT_IN_FINALS.has(name) && !!mainSource());
 
 /**
  * The plug-ins' MCP tools (a plugin's `tools: { defs, handlers, replaces }`), gathered once when the server boots. A tool whose name a
@@ -478,12 +486,18 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
   /** What a plug-in adds to that library, as this account may see it (its /library page lists these beside "Library"). None unless a plug-in brings one. */
   const librarySources = async (lib: string) =>
     (await json<{ sources?: Array<{ id: string; label: string; main?: boolean }> }>(`/api/library/${encodeURIComponent(lib)}/sources`).catch(() => null))?.sources ?? [];
-  /** One plug-in source's cards for a search (its own list takes q and nothing else), or null when it refuses or is not back by `by`. */
-  const sourceCards = async (lib: string, source: string, q: unknown, by: number): Promise<Args[] | null> => {
+  /**
+   * One plug-in source's cards for a search (its own list takes q and nothing else), or null when it fails or is not
+   * back by `by`. `refused`: the source's own reason for listing nothing (SourceRefusal).
+   */
+  const sourceCards = async (lib: string, source: string, q: unknown, by: number): Promise<{ items: Args[]; refused?: string } | null> => {
     const ask = new URLSearchParams({ source, ...(q ? { q: String(q) } : {}) });
     let timer: ReturnType<typeof setTimeout> | undefined;
     const late = new Promise<null>((done) => (timer = setTimeout(() => done(null), Math.max(0, by - Date.now()))));
-    const cards = json<{ items?: Args[] }>(`/api/library/${encodeURIComponent(lib)}/assets?${ask}`).then((r) => r.items ?? [], () => null);
+    const cards = json<{ items?: Args[]; refused?: string }>(`/api/library/${encodeURIComponent(lib)}/assets?${ask}`).then(
+      (r) => ({ items: r.items ?? [], ...(r.refused ? { refused: r.refused } : {}) }),
+      () => null,
+    );
     return Promise.race([cards, late]).finally(() => clearTimeout(timer));
   };
   /** The said line for versions just added (roll.ts), waiting up to waitS (never past `by`) while some are still being sorted. */
@@ -884,11 +898,16 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       if (others.length && !asked.length) notes.push(`A folder and version ids are the Library's own: ${others.map((s) => s.label).join(", ")} not searched.`);
       const found = await Promise.all(asked.map((s) => sourceCards(lib, s.id, a.q, by)));
       for (const [i, s] of asked.entries()) {
-        const cards = found[i];
-        if (!cards) {
+        const answer = found[i];
+        if (!answer) {
           notes.push(`${s.label} did not answer.`);
           continue;
         }
+        if (answer.refused) {
+          notes.push(`${s.label}: ${answer.refused}`);
+          continue;
+        }
+        const cards = answer.items;
         let kept = a.kind ? cards.filter((c) => c.kind === a.kind) : cards;
         if (a.roll && cards.some((c) => c.roll)) kept = kept.filter((c) => c.roll === a.roll);
         else if (a.roll && kept.length) notes.push(`${s.label} does not sort A-roll and B-roll: roll was not applied to it.`);

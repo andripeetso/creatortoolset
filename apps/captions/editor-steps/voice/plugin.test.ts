@@ -19,7 +19,7 @@ describe("the Voice step", () => {
       sources: { t: { w: 320, h: 240 }, b: { w: 320, h: 240 } },
       tracks: { A1: { items: [{ src: "t" }] }, V2: { items: [{ src: "b" }] } },
     } as unknown as Timeline;
-    const input = { edit: { id: "e", name: "E", createdBy: "me" }, variant: "", files: { t: take, b: take }, timeline, values: { noise: "light" }, workDir: dir, signal: new AbortController().signal };
+    const input = { edit: { id: "e", name: "E", createdBy: "me" }, variant: "", files: { t: take, b: take }, timeline, values: { noise: "light" }, workDir: dir, signal: new AbortController().signal, note: () => {} };
     const out = await cleanVoices(input);
     expect(Object.keys(out)).toEqual(["t"]);
     const before = probe(take);
