@@ -34,6 +34,8 @@ final class Shell: NSObject, ObservableObject {
     /// The server on this Mac (Server.swift), when this build has one; runsHere = the window uses it, not a site.
     let server: LocalServer? = LocalServer.folder == nil ? nil : LocalServer()
     @Published private(set) var runsHere = false
+    /// The files picked in the open panel for the page (rememberPicks, ThisMacBridge.swift): the page's "files" ask.
+    private var pickedFiles: [URL] = []
     /// The servers added by address (Servers.swift) and the one the window shows: thisMacID, an added one's id, or nil
     /// (no server picked: the window asks to pick or add one).
     @Published private(set) var servers: [ServerEntry] = []
@@ -135,6 +137,7 @@ final class Shell: NSObject, ObservableObject {
             case "state": done(self.thisMacState())
             case "access": Task { done(await self.accessFromOtherDevices()) }
             case "folder": done(self.chooseFolder())
+            case "files": done(pickedFilesReply(self.pickedFiles, here: self.runsHere && self.server != nil))
             default: Task { done(await self.startThisMac()) }
             }
         }
@@ -874,7 +877,11 @@ extension Shell: WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
         panel.allowsMultipleSelection = parameters.allowsMultipleSelection
         panel.canChooseFiles = true
         panel.canChooseDirectories = parameters.allowsDirectories
-        let done: (NSApplication.ModalResponse) -> Void = { completionHandler($0 == .OK ? panel.urls : nil) }
+        let done: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            // remembered first: the page asks where they are ("files") as soon as it has them
+            if response == .OK, let self { self.pickedFiles = rememberPicks(panel.urls, in: self.pickedFiles) }
+            completionHandler(response == .OK ? panel.urls : nil)
+        }
         if let window = webView.window {
             panel.beginSheetModal(for: window, completionHandler: done)
         } else {

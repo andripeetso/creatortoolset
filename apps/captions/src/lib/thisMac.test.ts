@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { allowOtherDevices, installInMacAi } from "./thisMac";
+import { allowOtherDevices, installInMacAi, pathOnMac } from "./thisMac";
 
 const bridgeWith = (postMessage: (m: string) => Promise<unknown>) => vi.stubGlobal("window", { webkit: { messageHandlers: { thisMac: { postMessage } } } });
 
@@ -50,5 +50,27 @@ describe("Install through the Mac app", () => {
     vi.stubGlobal("window", { webkit: { messageHandlers: { thisMac: { postMessage } } } });
     await installInMacAi("codex", "ctk_0123456789abcdef");
     expect(postMessage).toHaveBeenCalledWith("install:codex:ctk_0123456789abcdef");
+  });
+});
+
+describe("where a picked file is on this Mac", () => {
+  const file = (name: string, size: number, lastModified = 1_700_000_000_000) => new File([new Uint8Array(size)], name, { lastModified });
+  const at = (path: string, size: number, modified = 1_700_000_000_000) => ({ path, name: path.split("/").pop(), size, modified });
+
+  it("matches by name and size, and by the time it changed when two picked files share both", async () => {
+    withBridge({ files: [at("/a/C0001.MP4", 10), at("/b/C0001.MP4", 10, 1_600_000_000_000), at("/a/C0002.MP4", 20)] });
+    expect(await pathOnMac(file("C0002.MP4", 20))).toBe("/a/C0002.MP4");
+    expect(await pathOnMac(file("C0001.MP4", 10))).toBe("/a/C0001.MP4");
+    expect(await pathOnMac(file("C0001.MP4", 10, 1_600_000_000_500))).toBe("/b/C0001.MP4");
+    expect(await pathOnMac(file("C0001.MP4", 11))).toBeUndefined(); // another file of that name
+  });
+
+  it("leaves it to an upload when it is not sure, in a browser, and in a Mac app from before it could say", async () => {
+    withBridge({ files: [at("/a/C0001.MP4", 10), at("/b/C0001.MP4", 10)] });
+    expect(await pathOnMac(file("C0001.MP4", 10))).toBeUndefined();
+    withBridge({ aiOn: false, paired: false });
+    expect(await pathOnMac(file("C0001.MP4", 10))).toBeUndefined();
+    vi.stubGlobal("window", {});
+    expect(await pathOnMac(file("C0001.MP4", 10))).toBeUndefined();
   });
 });

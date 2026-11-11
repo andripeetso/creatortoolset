@@ -209,7 +209,7 @@ function serial<T>(libraryId: string, job: () => Promise<T>): Promise<T> {
  * A file into the library once: one already taken at this size and mtime gives its version again (null when it was
  * never taken), anything else is ingested and remembered in `watch_seen`. `fresh` = whether it was ingested now.
  */
-function takeFile(libraryId: string, f: WatchFolder, file: string, size: number, mtime: number): Promise<{ versionId: string | null; fresh: boolean }> {
+export function takeFile(libraryId: string, f: WatchFolder, file: string, size: number, mtime: number): Promise<{ versionId: string | null; fresh: boolean }> {
   return serial(libraryId, async () => {
     const seen = db().prepare("SELECT size, mtime, version_id FROM watch_seen WHERE library_id = ? AND path = ?").get(libraryId, file) as
       | { size: number; mtime: number; version_id: string | null }

@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import { randomUUID } from "node:crypto";
-import { copyFile, mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type { AuthVars } from "../auth";
@@ -20,6 +20,8 @@ import { similar } from "./similar";
 import { assetRef, canSee, sourceById, sourcesVisibleTo } from "./sources";
 import { externalAssetRef, externalRefById } from "./refs";
 import { buildAssetQuery, indexAsset, pageOf, parseSearch, type CardRow } from "./query";
+// watch.ts imports from this file too: its functions are only called inside handlers, never while the files load
+import { IMPORT_WAIT_MS, takeFile, watchAllowed } from "./watch";
 
 /**
  * Media Library routes (tasks/media-library-plan.md, sections 4 and 7). Mounted at /api/library.
@@ -44,6 +46,9 @@ function gbSetting(name: string, fallback: number): number {
   const v = raw === undefined || raw.trim() === "" ? NaN : Number(raw);
   return Number.isFinite(v) && v >= 0 ? v : fallback;
 }
+
+/** Bytes as people read them: "12.4 GB", "8 GB", "300 MB". */
+const gb = (bytes: number) => (bytes >= GiB ? `${Number((bytes / GiB).toFixed(1))} GB` : `${Math.max(1, Math.round(bytes / 1024 ** 2))} MB`);
 
 const KIND_OF: [RegExp, "video" | "image" | "audio"][] = [
   [/\.(mp4|mov|m4v|webm|mkv|avi)$/i, "video"],
@@ -304,7 +309,11 @@ libraryApp.post("/:id/uploads", async (c) => {
   const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   const size = Number(body?.size);
   if (!Number.isSafeInteger(size) || size <= 0) return c.json({ error: "Invalid size", code: "invalid" }, 400);
-  if (size > gbSetting("LIBRARY_MAX_UPLOAD_GB", 8) * GiB) return c.json({ error: "Too large", code: "too_large" }, 413);
+  // the largest upload holds only where an upload is the only way in: on the person's own computer the disk is the limit
+  const max = gbSetting("LIBRARY_MAX_UPLOAD_GB", 8) * GiB;
+  if (size > max && !watchAllowed(user.username)) {
+    return c.json({ error: `This file is ${gb(size)}. This server takes files up to ${gb(max)}. Export a smaller copy and upload that.`, code: "too_large" }, 413);
+  }
   const replaces = typeof body?.replacesAssetId === "string" ? body.replacesAssetId : null;
   if (replaces) {
     const target = db().prepare("SELECT created_by, current_version_id FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL").get(replaces, libraryId) as
@@ -354,6 +363,61 @@ libraryApp.post("/:id/uploads", async (c) => {
     );
   if (started) return c.json({ id, offset: 0, chunkSize: started.partSize, direct: { partSize: started.partSize, urls: started.urls } }, 201);
   return c.json({ id, offset: 0, chunkSize: CHUNK_BYTES }, 201);
+});
+
+/**
+ * POST /api/library/:id/in-place { path, size, collectionId?, again? } → { assetId, versionId } | { duplicateOf } |
+ * 202 { working } (still hashing after IMPORT_WAIT_MS: ask again with `again`). A file the person picked on their own
+ * computer (the Mac app's open panel says where it is) joins the library where it is, through a watch folder's door:
+ * taken once, the duplicate check, a link under the blob key, `missing` while its drive is away. No copy, so no size
+ * limit. The checks of a watch folder, for one file: this server is on the caller's computer (watchAllowed), a media
+ * file on this disk outside the app's data, the declared size, a library that keeps its files on this disk.
+ * 400 or 403: not here, upload it instead (the page does).
+ */
+libraryApp.post("/:id/in-place", async (c) => {
+  const user = c.get("user");
+  const libraryId = c.req.param("id");
+  if (!libraryRole(user.username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
+  if (!watchAllowed(user.username)) return c.json({ error: "This server is not on your computer: upload the file", code: "forbidden" }, 403);
+  const body = ((await c.req.json().catch(() => null)) ?? {}) as { path?: unknown; size?: unknown; collectionId?: unknown; again?: unknown };
+  const given = typeof body.path === "string" ? body.path : "";
+  const refuse = (error: string) => c.json({ error, code: "invalid" }, 400);
+  if (!path.isAbsolute(given)) return refuse("Not a full path");
+  const real = await realpath(given).catch(() => null);
+  const s = real ? await stat(real).catch(() => null) : null;
+  if (!real || !s?.isFile()) return refuse(`No such file on this computer: ${given}`);
+  if (s.size !== Number(body.size)) return refuse("The file changed since it was picked");
+  if (kindOf(real) === "doc") return refuse("Only videos, sound and pictures are added in place");
+  const data = await realpath(env.dataDir).catch(() => path.resolve(env.dataDir));
+  const fromData = path.relative(data, real);
+  if (fromData.split(path.sep)[0] !== ".." && !path.isAbsolute(fromData)) return refuse("That file is in the app's own data");
+  if ((db().prepare("SELECT storage_kind FROM libraries WHERE id = ?").get(libraryId) as { storage_kind: string }).storage_kind !== "local") {
+    return refuse("This library keeps its files in a bucket");
+  }
+  const collectionId = typeof body.collectionId === "string" && body.collectionId ? body.collectionId : undefined;
+  if (collectionId && !db().prepare("SELECT 1 FROM collections WHERE id = ? AND library_id = ? AND kind = 'manual'").get(collectionId, libraryId)) {
+    return c.json({ error: "Not found", code: "not_found" }, 404);
+  }
+  const folder = { path: path.dirname(real), mode: "reference" as const, collectionId, addedBy: user.username };
+  const taking = takeFile(libraryId, folder, real, s.size, Math.floor(s.mtimeMs));
+  taking.catch((e) => console.error("[library] in place:", real, e instanceof Error ? e.message : e));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const got = await Promise.race([taking, new Promise<null>((r) => (timer = setTimeout(() => r(null), IMPORT_WAIT_MS)))]).catch(
+    (e: unknown) => (e instanceof Error ? e : new Error(String(e))),
+  );
+  clearTimeout(timer);
+  if (got instanceof Error) return c.json({ error: got.message, code: "conflict" }, 500);
+  if (!got) return c.json({ working: true }, 202);
+  const v = got.versionId
+    ? (db()
+        .prepare("SELECT v.source_path, a.id, a.trashed_at FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?")
+        .get(got.versionId) as { source_path: string | null; id: string; trashed_at: number | null } | undefined)
+    : undefined;
+  if (!v) return c.json({ error: "It could not be added", code: "conflict" }, 409);
+  if (v.trashed_at) return c.json({ error: "In the trash in the Media Library: restore it there to use it", code: "conflict" }, 409);
+  // this very file, taken now (or by the call this one asks again for); anything else was in the library already
+  if (v.source_path === real && (got.fresh || body.again === true)) return c.json({ assetId: v.id, versionId: got.versionId });
+  return c.json({ duplicateOf: v.id });
 });
 
 // HEAD /api/library/uploads/:uploadId → Upload-Offset: what is on disk. Hono sends HEAD through GET, so this is a GET

@@ -42,6 +42,26 @@ export async function chooseFolderOnMac(): Promise<string | null | undefined> {
 }
 
 /**
+ * Where a file picked in the Mac app's own open panel is on this Mac (ThisMacBridge.swift pickedFilesReply), so the
+ * server can add it in place instead of taking an upload. Matched by name and size (and the time it was last changed
+ * when two picked files share both). undefined in a browser, in a Mac app from before it could say (it answers every
+ * unknown question with its state), on a server that is not this Mac, or when the match is not sure: then the page uploads.
+ */
+export async function pathOnMac(file: File): Promise<string | undefined> {
+  const bridge = thisMacBridge();
+  if (!bridge) return undefined;
+  try {
+    const r = ((await bridge.postMessage("files")) ?? {}) as unknown as { files?: unknown };
+    const picked = Array.isArray(r.files) ? (r.files as { path?: unknown; name?: unknown; size?: unknown; modified?: unknown }[]) : [];
+    const same = picked.filter((f) => typeof f?.path === "string" && f.name === file.name && f.size === file.size);
+    const one = same.length > 1 ? same.filter((f) => Math.abs(Number(f.modified) - file.lastModified) < 2000) : same;
+    return one.length === 1 ? (one[0].path as string) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Headless access → Install on a server that is not this computer: the Mac app adds the open server to Claude Code or
  * Codex on this Mac itself (ThisMacBridge.swift installInAI), with the key the page just made for that app. true = done;
  * a sentence = why not; undefined = no Mac app here, or one from before it could (the page then shows the line to run).
