@@ -60,6 +60,8 @@ export interface SearchQuery {
   /** plug-in sidebar filters: facet key → chosen values (api/library/sources.ts) */
   facets?: Record<string, string[]>;
   trashed?: boolean; // the trash instead of the library
+  /** only clips in none of the person's folders (the library's top level); Finals and saved searches don't count */
+  unfiled?: boolean;
   cursor?: string;
   limit?: number; // limit ≤ 200
 }
@@ -223,6 +225,8 @@ export interface Collection {
   kind: "manual" | "smart";
   query?: SearchQuery; // smart only
   count?: number; // manual only: items in it
+  /** manual only: up to four of its clips' pictures (thumb addresses), for its card */
+  covers?: string[];
   createdBy: string;
 }
 

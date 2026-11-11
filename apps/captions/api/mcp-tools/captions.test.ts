@@ -157,7 +157,7 @@ describe("a video dropped in the chat and sent to Caption Studio", () => {
     const { sent, card, token, end } = await captionThis(cookie, "Tiny tumbles");
     expect(sent).toMatchObject({ to: "captions", name: "Tiny tumbles", href: `/captions?project=${sent.id}`, captioning: true });
     expect(sent.id).toMatch(/^[0-9a-f-]{36}$/);
-    // while the captions are made the card leads to the project list, never into the project (a page that opens it now keeps its own empty copy)
+    // while the captions are made the card leads to the project list, never into the project (Transcribe pressed there meanwhile would be refused)
     expect(await card()).toEqual({ id: `captions:${sent.id}`, kind: "captions", title: "Tiny tumbles", href: "/captions?view=projects", status: "running", detail: "Making the captions" });
     // read back while they are being made: the state, and no captions yet
     const early = JSON.parse((await tool(token, "captions_get", { project: sent.id })).text);

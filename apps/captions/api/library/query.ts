@@ -70,6 +70,7 @@ export function parseSearch(p: Record<string, string | undefined>): SearchQuery 
     ...(p.cursor ? { cursor: p.cursor } : {}),
     ...(p.collectionId ? { collectionId: p.collectionId.slice(0, 64) } : {}),
     ...(p.trashed === "1" ? { trashed: true } : {}),
+    ...(p.unfiled === "1" ? { unfiled: true } : {}),
     ...(p.roll === "a" || p.roll === "b" ? { roll: p.roll } : {}),
     ...(p.versions ? { versions: p.versions.split(",").filter(Boolean).slice(0, MAX_LIMIT) } : {}),
     ...(Object.keys(picked).length ? { facets: picked } : {}),
@@ -145,6 +146,11 @@ export function buildAssetQuery(libraryId: string, query: SearchQuery = {}): { s
   if (query.collectionId) {
     where.push("a.id IN (SELECT asset_id FROM collection_items WHERE collection_id = ?)");
     params.push(query.collectionId);
+  }
+  if (query.unfiled) {
+    // a folder is a plain collection; Finals (finals.ts) and a saved search's old item rows are not
+    where.push(`a.id NOT IN (SELECT fi.asset_id FROM collection_items fi JOIN collections fc ON fc.id = fi.collection_id
+      WHERE fc.kind = 'manual' AND NOT (fc.parent_id IS NULL AND fc.name = 'Finals'))`);
   }
   for (const f of facetClauses(query.facets ?? {})) {
     where.push(f.sql);
