@@ -441,7 +441,7 @@ final class Shell: NSObject, ObservableObject {
     }
 
     var rows: (active: [ActivityRow], forYou: [ActivityRow]) {
-        activityRows(sessions: sessions, aiRunning: aiOn ? ai.running : 0, plugin: pluginRows)
+        activityRows(sessions: sessions, aiRunning: aiOn ? ai.running : 0, plugin: pluginRows, drawing: aiOn && ai.drawing)
     }
 
     var aiLine: String {

@@ -11,7 +11,7 @@ The app is a thin native shell around the same web UI, plus the local runner
 it supervises: the web stays the one UI. A fix on the site reaches
 the Mac app on the next load, and a reviewer on a share link keeps using the website.
 Nothing here re-builds a screen. The native parts only do what a web page can't: run this
-Mac's AI jobs, post notifications, set the Dock badge, and record the screen.
+Mac's AI jobs, draw an edit's cards, post notifications, set the Dock badge, and record the screen.
 
 ## Build and run
 
@@ -386,6 +386,51 @@ Once at start and hourly the app posts `POST /api/devices/relay/report` (`MacRep
 CLIs are installed (with `--version`) and the Claude and Codex config folders, read only. Nothing is ever
 written there.
 
+## Draws an edit's cards
+
+While **Use this Mac for my AI** is on, the same runner also draws the AI Editor's cards for the account's own edits
+(`CardJobs.swift`, `KitRunner.swift`, `CardClip.swift`). The long poll only carries AI requests, so the runner asks for
+card steps on the poll's own loop: before a poll, and at most once every 25 s, it posts
+`POST /api/devices/relay/editor/claim` with `{"kinds":["cards-draw"]}` and the device token. A server with nothing to
+draw answers `{"job":null}`, and so does a server that does not know the kind: nothing else happens. A server without
+the route (any 4xx) is asked again an hour later. None of this shows in the menu or the log.
+
+A step it gets is read with `GET /api/devices/relay/editor/job/<id>/cards`:
+`{ width, height, fps, script, cards: [{ id, seconds, content }] }`, one script for every card of a version. Each card
+is drawn frame by frame at that size and rate, made into an H.264 `.mp4` with no sound, plus three PNG stills 540 px
+wide (the first, middle and last frame), and posted to `…/job/<id>/cards/<cardId>` as multipart: `clip`, then `still`
+three times. What the script leaves unpainted is black. The step ends with `…/done`, or with `…/fail` and a sentence
+a person can read ("Card 2 of 6 took longer than 20 seconds to draw."); `…/beat` goes out every 15 s meanwhile. Every
+card that drew is sent even when another failed, and the server tries a failed step again, so a card's id can arrive
+more than once. A step is one of the runner's four slots and only one is drawn at a time; the menu bar's row says
+"Drawing cards". A card that fails is told to the server and written to the app log, never shown as an AI error.
+
+**The script is the person's AI's output and is never trusted.** It runs only in a web view made for that one card
+(`KitRunner.swift`), never in the app's window or its pages. What holds it, each measured by a script that tries the
+opposite against a listener on this Mac (`KitSandboxTests.swift`):
+
+- The script's page is a sandboxed frame (scripts only) of a page whose Content-Security-Policy is
+  `default-src 'none'`: nothing loads or is sent (fetch, sockets, images, fonts, frames, workers), and the engine
+  refuses the frame's own navigations, forms and new windows before the app is asked.
+- The web view refuses every navigation but that page and that frame. It has no message handlers, cookies or storage
+  of the app's, and its own data store is gone with the card. It can read no file.
+- Lockdown Mode is on for the page, because the policy does not govern WebRTC. A card's script therefore has no
+  WebRTC, WebAssembly, WebGL or Web Audio. It has the DOM, CSS, SVG and a 2D canvas, the system's fonts and `data:`
+  images.
+- WebKit's link preconnect is switched off for the page: a link with `target="_blank"` that the script clicks, or a
+  `<link rel="preconnect">`, otherwise opens a connection whatever the policy says. WebKit has no public switch for
+  it, so this uses a private one (`_features`, `_setEnabled:forFeature:` on `WKPreferences`), and a Mac whose WebKit
+  lacks it draws no card and says so.
+- Whatever else heads for a name or address outside this Mac goes to a proxy address where nothing listens (port 1
+  on this Mac), set on the page's own data store.
+- One limit of 20 s covers the whole card: its page loading, every call into the script and every picture. The
+  page's process is ended with every card (`SIGKILL` to the process `_webProcessIdentifier` names, another private
+  call): a script that loops forever otherwise keeps a processor busy until the app quits, and WebKit's own kill
+  does not stop it. Each card's page has a process of its own.
+
+Not measured: a DNS lookup that sends nothing else (the switch for `<link rel="dns-prefetch">` is turned off, but
+nothing here can watch a lookup), and macOS versions other than the one the tests ran on.
+
 ## Notifications and the Dock badge
 
 Every 30 s the app asks `GET /api/review/notifications`. Each new unread item becomes a banner
@@ -413,6 +458,7 @@ reply finishing or an AI edit failing, so those notifications need a server chan
   `~/Library/Application Support/Creator Toolset/relay/<site>`. In it, `workshop/` holds a Workshop session's
   folder while its Claude session is kept (14 days) and `blobs/` big files by their hash (30 days).
 - `~/Library/Application Support/Creator Toolset/assistant/<server>/`: the assistant's own folder (its working folder on this Mac).
+- `cards/<step>/` in the runner's folder: the clip of the card being drawn, removed when its step ends.
 
 The site's login cookie lives in WebKit's own store for the app (like Safari's), so the login lasts
 between launches; Sign out on the site clears it. The one secret the app keeps is the device token of
@@ -436,6 +482,9 @@ between launches; Sign out on the site clears it. The one secret the app keeps i
   environment, the stream reading, usage, folder sync (plain functions).
 - `Sources/CreatorToolsetMac/ClaudeRun.swift`: one Claude run (the process, streaming, the answer).
 - `Sources/CreatorToolsetMac/MacReport.swift`: the CLIs and config folders the Mac reports.
+- `Sources/CreatorToolsetMac/CardJobs.swift`: one card step (the read, each card, the upload, done or fail, the lease).
+- `Sources/CreatorToolsetMac/KitRunner.swift`: the web view a card's script is shut in, its time limit and its frames.
+- `Sources/CreatorToolsetMac/CardClip.swift`: a card's frames as an H.264 clip and three stills.
 - `Sources/CreatorToolsetMac/Server.swift`: the server on this Mac (start, health wait, port, crashes, log, stop,
   the owner's password, data location).
 - `Sources/CreatorToolsetMac/Plugins.swift`: plug-ins (the asks, Switch on's alert, the record in the Keychain, the
@@ -449,6 +498,12 @@ between launches; Sign out on the site clears it. The one secret the app keeps i
 - `Tests/CreatorToolsetMacTests/RelayTests.swift`: the relay offline (request checks, command line,
   env, stream, usage, folder, sessions, report). `CT_REAL_CLAUDE=1 swift test --filter RealRun`
   makes one real `claude` call through `~/.claude-work` (a fraction of a cent).
+- `Tests/CreatorToolsetMacTests/KitSandboxTests.swift`: what a card's script can't do (reach the network, read a file,
+  leave its page, run past its limit, leave a process behind), each beside a control that can.
+- `Tests/CreatorToolsetMacTests/CardJobsTests.swift`: a card step against a stand-in server (`FakeSite.swift`): the
+  claim and its pace, the read, the upload, each way a step ends. `CT_CARD_REPORT=<folder> swift test --filter
+  testReportOneCard` writes one card's clip and stills there.
+- `Tests/CreatorToolsetMacTests/CardClipTests.swift`, `KitRunnerTests.swift`: the clip, the stills, the frames.
 - `Tests/CreatorToolsetMacTests/ServerTests.swift`: the restart backoff, the log rotation, the pid check, the
   missing disk, a move's checks, folder sizes and the runner's folder.
 - `Tests/CreatorToolsetMacTests/PluginsTests.swift`: the plug-in asks, the server's environment, the Switch on

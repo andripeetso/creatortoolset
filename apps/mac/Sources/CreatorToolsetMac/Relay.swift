@@ -38,15 +38,30 @@ final class DeviceAPI {
 
     /// A POST with the token. `tries` retries network blips and 5xx answers with a backoff (the Mac relay Site.call).
     func call(_ method: String = "POST", _ path: String, _ body: [String: Any]? = nil, tries: Int = 1, timeout: TimeInterval = 60) throws -> DeviceReply {
+        try send(method, path, type: "application/json", body: try JSONSerialization.data(withJSONObject: body ?? [:]), tries: tries, timeout: timeout)
+    }
+
+    /// A GET with the token and no body (the cards of an editor step).
+    func get(_ path: String, tries: Int = 1, timeout: TimeInterval = 60) throws -> DeviceReply {
+        try send("GET", path, type: nil, body: nil, tries: tries, timeout: timeout)
+    }
+
+    /// A multipart POST with the token (a card's clip and stills).
+    func upload(_ path: String, _ parts: [FormPart], tries: Int = 1, timeout: TimeInterval = 120) throws -> DeviceReply {
+        let boundary = "ct-\(UUID().uuidString)"
+        return try send("POST", path, type: "multipart/form-data; boundary=\(boundary)", body: multipartBody(parts, boundary: boundary), tries: tries, timeout: timeout)
+    }
+
+    private func send(_ method: String, _ path: String, type: String?, body: Data?, tries: Int, timeout: TimeInterval) throws -> DeviceReply {
         var last = "no answer"
         for attempt in 0..<max(tries, 1) {
             var request = URLRequest(url: URL(string: path, relativeTo: base) ?? base)
             request.httpMethod = method
             request.timeoutInterval = timeout
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            if let type { request.setValue(type, forHTTPHeaderField: "Content-Type") }
             request.setValue("CreatorToolsetMac/\(appVersion)", forHTTPHeaderField: "User-Agent")
-            request.httpBody = try JSONSerialization.data(withJSONObject: body ?? [:])
+            request.httpBody = body
             let answer = synchronousData(request)
             if let error = answer.error {
                 last = error.localizedDescription
@@ -144,6 +159,8 @@ struct AIStatus: Equatable {
     var running = 0
     var lastError: String?
     var lastDone: String?
+    /// an edit's cards are being drawn here (CardJobs.swift); not an AI request, and never an AI error
+    var drawing = false
 }
 
 /// The device's relay (the Mac relay serve / run / report): up to 4 jobs at once, a report at start and hourly.
@@ -159,6 +176,13 @@ final class RelayRunner {
     private let lock = NSLock()
     private var stopped = false
     private var status = AIStatus()
+    /// A claim for an editor step goes out at most this often: the long poll's own pace when nothing waits (the site
+    /// holds a poll 25 s). A site that has no such route (any 4xx) is asked again an hour later.
+    static let claimEvery: TimeInterval = 25
+    static let claimAfterRefusal: TimeInterval = 3600
+    /// the uptime before which no claim goes out, and whether a card step is being drawn (one at a time); under `lock`
+    private var claimAt: TimeInterval = 0
+    private var drawing = false
     private let onStatus: (AIStatus) -> Void
     private let onRevoked: () -> Void
 
@@ -211,6 +235,14 @@ final class RelayRunner {
         var pollFailed = false   // a poll's error clears once a poll goes through again (the menu bar's problem dot)
         while !isStopped {
             slots.wait()
+            if let step = claimStep() {
+                DispatchQueue.global(qos: .utility).async { [self] in drawCards(step) }   // drawCards() releases the slot
+                continue
+            }
+            if isStopped {   // removed from the account while it asked
+                slots.signal()
+                return
+            }
             let reply: DeviceReply
             do {
                 reply = try api.call("POST", "/api/devices/relay/wait", ["blobs": true], tries: 1, timeout: 60)   // big files come as hashes
@@ -241,6 +273,51 @@ final class RelayRunner {
             }
             // 204: nothing waited; ask again
         }
+    }
+
+    /// Asks the site for an editor step this Mac can run: drawing an edit's cards (serve() asks with a free slot in
+    /// hand). It rides the long poll's loop, since the poll itself only carries AI requests, at no more than the
+    /// poll's own pace, and not at all while cards are being drawn. It is quiet by design: a site that does not know
+    /// the kind answers `job: null`, the same as one with nothing queued; neither that, a site without the route nor a
+    /// network blip shows in the menu or the log.
+    func claimStep(now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> EditorJob? {
+        lock.lock()
+        let due = !drawing && now >= claimAt
+        if due { claimAt = now + Self.claimEvery }
+        lock.unlock()
+        guard due, let reply = try? api.call("POST", "/api/devices/relay/editor/claim", ["kinds": [cardsKind]], tries: 1, timeout: 10) else { return nil }
+        guard reply.status == 200, let step = EditorJob(claim: reply.data) else {
+            if (400..<500).contains(reply.status) {
+                lock.lock()
+                claimAt = now + Self.claimAfterRefusal
+                lock.unlock()
+            }
+            return nil
+        }
+        guard step.kind == cardsKind else {   // not a kind this Mac declared: back in the site's queue
+            _ = try? api.call("POST", "/api/devices/relay/editor/job/\(step.id)/fail", ["error": "This Mac has no \(step.kind) step"], tries: 2)
+            return nil
+        }
+        lock.lock()
+        drawing = true
+        lock.unlock()
+        return step
+    }
+
+    /// One card step, from reading the cards to done or fail (CardJobs.swift). It holds a slot as an AI request does, so
+    /// it never runs beside four of them. A card that fails is the edit's news, told to the site; the menu's last AI
+    /// error is left alone.
+    func drawCards(_ step: EditorJob) {
+        defer { slots.signal() }
+        publish { $0.drawing = true }
+        let end = CardJob(api: api, id: step.id, folder: work.appendingPathComponent("cards/\(step.id)"),
+                          stopped: { [weak self] in self?.isStopped ?? true }).run()
+        if case .failed(let why) = end { AppLog.write("cards: step \(step.id) failed: \(why)") }
+        lock.lock()
+        drawing = false
+        claimAt = 0   // more may wait (one step a version): ask again at once
+        lock.unlock()
+        publish { $0.drawing = false }
     }
 
     /// the Mac relay run(): one request, answered through the four routes.
