@@ -29,8 +29,12 @@ export function serviceOrigin(): string {
 // ponytail: one cached answer per process; 10 minutes when it answered, 1 minute when it did not (an offline install never waits twice)
 let cached: { at: number; ttl: number; logins: Record<LoginKind, boolean> } | null = null;
 
-/** Which platform sign-ins the service offers (asked at most every few minutes, 3 s at most). */
-export async function serviceLogins(): Promise<Record<LoginKind, boolean>> {
+/**
+ * Which platform sign-ins the service offers (asked at most every few minutes, 3 s at most). Asked only when a person
+ * acts: Add on a platform, or a sign-in (issuerFor). Never when the server starts or a page is read: an install does
+ * not call the service by itself.
+ */
+async function serviceLogins(): Promise<Record<LoginKind, boolean>> {
   const origin = serviceOrigin();
   if (!origin) return none();
   if (cached && Date.now() - cached.at < cached.ttl) return cached.logins;
@@ -54,11 +58,14 @@ export async function issuerFor(kind: LoginKind): Promise<Issuer | null> {
   return (await serviceLogins())[kind] ? "service" : null;
 }
 
-/** Each platform's sign-in, on whichever side has it. */
-export async function loginsOn(): Promise<Record<LoginKind, boolean>> {
-  const remote = KINDS.some((k) => !appFor(k)) ? await serviceLogins() : none();
-  return Object.fromEntries(KINDS.map((k) => [k, !!appFor(k) || remote[k]])) as Record<LoginKind, boolean>;
-}
+/**
+ * The sign-ins a person can ask for here, known without asking anyone: this server's own app, or a sign-in service
+ * that is set (whether it offers the platform is asked when the person presses Add: issuerFor).
+ */
+export const loginsHere = (): Record<LoginKind, boolean> => Object.fromEntries(KINDS.map((k) => [k, !!appFor(k) || !!serviceOrigin()])) as Record<LoginKind, boolean>;
+
+/** Of those, the ones only the service can give. */
+export const viaService = (): LoginKind[] => (serviceOrigin() ? KINDS.filter((k) => !appFor(k)) : []);
 
 const b64sha = (s: string) => createHash("sha256").update(s).digest("base64url");
 

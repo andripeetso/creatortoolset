@@ -208,16 +208,19 @@ func geminiAnswer(_ req: RelayRequest, _ opts: RelayOptions, cli: String, work: 
     let (cwd, system) = try prepareFolder(req, work: work, tmp: tmp)
     let prompt = "<instructions>\n\(system)\n</instructions>\n\n" + requestText(req.user, folder: folder)
     // the assistant: the app's MCP server for this run, in the run's own fresh folder (never a Workshop session's)
-    var env = driverEnv(base: ProcessInfo.processInfo.environment)
-    var policy = ""
-    if let mcp = req.mcp, cwd.path.hasPrefix(tmp.path), geminiTakesMcp(cli) {
+    var env = driverEnv(base: ProcessInfo.processInfo.environment).merging(geminiSignInEnv) { _, new in new }
+    // its rules live in a policy file: a Gemini CLI that takes none could leave plan mode and run a shell command, so it is not run
+    guard let takesPolicy = geminiTakesPolicy(cli) else { throw ClaudeFailure(message: "Gemini didn't start in time. Try again.") }
+    guard takesPolicy else { throw ClaudeFailure(message: geminiTooOld) }
+    let mcp = req.mcp.flatMap { cwd.path.hasPrefix(tmp.path) ? $0 : nil }
+    if let mcp {
         try runMcpFiles(driver: "gemini", url: mcp.url, cwd: cwd)
-        let file = tmp.appendingPathComponent("creator-toolset.toml")
-        try geminiMcpPolicy.write(to: file, atomically: true, encoding: .utf8)
-        policy = file.path
         env.merge(runMcpEnv(driver: "gemini", token: mcp.token)) { _, new in new }
     }
-    let outcome = try runStream(cli: cli, args: geminiArguments(model: opts.model, mcpPolicy: policy), cwd: cwd,
+    let file = tmp.appendingPathComponent("policy.toml")
+    try geminiPolicy(mcp: mcp != nil).write(to: file, atomically: true, encoding: .utf8)
+    let policy = file.path
+    let outcome = try runStream(cli: cli, args: geminiArguments(model: opts.model, policy: policy, mcp: mcp != nil), cwd: cwd,
                                 env: env, prompt: prompt, folder: folder,
                                 send: send, step: step, tmp: tmp, stream: GeminiStream(cwd: cwd.path))
     if outcome.killed {
@@ -270,26 +273,29 @@ func codexAnswer(_ req: RelayRequest, _ opts: RelayOptions, cli: String, work: U
 func grokAnswer(_ req: RelayRequest, _ opts: RelayOptions, cli: String, work: URL,
                 send: @escaping (String) -> Bool, step: @escaping (String) -> Void) throws -> ClaudeAnswer {
     let fm = FileManager.default
-    let folder = !req.files.isEmpty || !req.session.isEmpty
+    // a picture or another file: Grok has no folder to be handed one in (grokInline)
+    guard let prompt = grokInline(req.user, files: req.files) else { throw ClaudeFailure(message: grokNoFiles) }
     let tmp = fm.temporaryDirectory.appendingPathComponent("relay-\(UUID().uuidString)")
     try fm.createDirectory(at: tmp, withIntermediateDirectories: true)
     defer { try? fm.removeItem(at: tmp) }
 
-    let (cwd, system) = try prepareFolder(req, work: work, tmp: tmp)
+    // always the run's own fresh, empty folder: never a Workshop session's or the assistant's, whose files it could read
+    let cwd = tmp.appendingPathComponent("folder")
+    try fm.createDirectory(at: cwd, withIntermediateDirectories: true)
+    let system = req.files["sessions/INDEX.md"] != nil ? req.system + piecesNote : req.system
     let promptFile = tmp.appendingPathComponent("prompt.txt")
-    try requestText(req.user, folder: folder).write(to: promptFile, atomically: true, encoding: .utf8)
-    // the assistant: the app's MCP server for this run, in the run's own fresh folder (never a Workshop session's)
+    try prompt.write(to: promptFile, atomically: true, encoding: .utf8)
+    // the assistant: the app's MCP server for this run, in that folder
     var env = driverEnv(base: ProcessInfo.processInfo.environment)
-    // ponytail: no version check; grok 1.0.4 and 1.0.77 measured. Add one like geminiTakesMcp if an older grok turns up.
-    let mcp = req.mcp.flatMap { cwd.path.hasPrefix(tmp.path) ? $0 : nil }
-    if let mcp {
+    // ponytail: no version check; grok 1.0.4 and 1.0.77 measured. Add one like geminiTakesPolicy if an older grok turns up.
+    if let mcp = req.mcp {
         try runMcpFiles(driver: "grok", url: mcp.url, cwd: cwd)
         env.merge(runMcpEnv(driver: "grok", token: mcp.token)) { _, new in new }
     }
-    let args = grokArguments(cwd: cwd.path, model: opts.model, effort: opts.effort, system: system, web: req.web, folder: folder,
-                             promptFile: promptFile.path, mcp: mcp != nil)
+    let args = grokArguments(cwd: cwd.path, model: opts.model, effort: opts.effort, system: system, web: req.web,
+                             promptFile: promptFile.path, mcp: req.mcp != nil)
     let outcome = try runStream(cli: cli, args: args, cwd: cwd, env: env,
-                                prompt: "", folder: folder, send: send, step: step, tmp: tmp, stream: ClaudeStream(cwd: cwd.path))
+                                prompt: "", folder: false, send: send, step: step, tmp: tmp, stream: ClaudeStream(cwd: cwd.path))
     if outcome.killed {
         throw ClaudeFailure(message: "the site stopped waiting", usage: stoppedRow(outcome.stream.seen), stopped: true)
     }

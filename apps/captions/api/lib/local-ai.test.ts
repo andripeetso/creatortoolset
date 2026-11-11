@@ -173,6 +173,18 @@ describe("connect your AI", () => {
     expect(ownSettings("old")).toBeNull();
   });
 
+  it("a Gemini CLI the Mac app won't run for being too old is 'outdated' too, and nothing is saved", async () => {
+    const { device } = pairDevice("oldg", "Old Mac");
+    touchDevice(device.id);
+    world(["gemini"], (f, args) => (f.endsWith("/gemini") && args[0] === "--version" ? { stdout: "0.20.0\n" } : undefined));
+    mkdirSync(path.join(home, ".gemini"), { recursive: true });
+    writeFileSync(path.join(home, ".gemini", "oauth_creds.json"), "{}");
+    // the Mac app's own words (ClaudeRequest.swift geminiTooOld)
+    mockCheck.next = { ok: false, ms: 3, note: undefined, error: "The Gemini on this Mac is too old to run here. Update it." };
+    expect(await local.connectCli("oldg", "gemini", home, device.id)).toMatchObject({ state: "outdated", answered: false, message: "Google needs a newer Gemini than the one on this Mac. Try again." });
+    expect(ownSettings("oldg")).toBeNull();
+  });
+
   it("a plan at its limit is connected: saved with its check, and the message says when it resets", async () => {
     const { device } = pairDevice("lim", "Lim Mac");
     touchDevice(device.id);
@@ -664,6 +676,12 @@ setTimeout(() => {}, 60000);
     expect(plainError("Authentication required. Please run 'agent login' first, then call authenticate() with methodId 'cursor_login'.").state).toBe("signin");
     expect(plainError("Muse Code: not logged in: run /login to add an API key").state).toBe("signin");
     expect(plainError("It took 3 s to sign the request").state).toBe("failed");
+  });
+
+  it("Gemini with its login gone says so in its own words, and that is the sign-in state", () => {
+    // Gemini CLI 0.68 with the Mac app's sign-in variables and a made-up login (2026-11-10)
+    const gone = "Gemini: Manual authorization is required but the current session is non-interactive. Please run the Gemini CLI in an interactive terminal to log in, provide a GEMINI_API_KEY, or ensure Application Default Credentials are configured.";
+    expect(plainError(gone)).toEqual({ state: "signin", message: "Not signed in yet." });
   });
 
   it("Google turning a free account away is said as that, not as a sign-in or a silence", () => {

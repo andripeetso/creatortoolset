@@ -13,6 +13,16 @@ const THIS_MAC = "this-mac";
 /** The site's own link to the source code, whose front page leads to the self-hosting guide (SELF_HOSTING.md). */
 const GUIDE = "https://creatortoolset.com/api/landing/github";
 
+/** Switching swaps the whole window for another server's data: said once, at the click (here and in the account menu). */
+export async function switchServer(v: { id: string; name: string }, open?: { name: string }) {
+  const ok = await confirmDialog({
+    title: `Switch to ${v.name}?`,
+    body: `This window opens ${v.name}. It has its own projects${open ? `, separate from ${open.name}` : ""}. Switch back here, or in the account menu.`,
+    ok: "Switch",
+  });
+  if (ok) tell(`select:${v.id}`);
+}
+
 /**
  * Settings → Servers (the Mac app only): the servers this app opens, one at a time. The active one has a green dot and
  * Active, every other one has a Switch button in the same place. Every change goes to the app, which holds the list; this page only shows it.
@@ -45,15 +55,7 @@ export function ServersSection() {
 
   const open = s?.servers.find((v) => v.current);
   const added = s?.servers.some((v) => v.id !== THIS_MAC);
-  // switching swaps the whole window for another server's data: say so once, at the click, not on the row
-  const switchTo = async (v: { id: string; name: string }) => {
-    const ok = await confirmDialog({
-      title: `Switch to ${v.name}?`,
-      body: `This window opens ${v.name}. It has its own projects${open ? `, separate from ${open.name}` : ""}. Switch back here, or in the Servers menu.`,
-      ok: "Switch",
-    });
-    if (ok) tell(`select:${v.id}`);
-  };
+  const switchTo = (v: { id: string; name: string }) => switchServer(v, open);
 
   return (
     <>

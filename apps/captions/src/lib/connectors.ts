@@ -11,6 +11,8 @@ async function json<T>(r: Response): Promise<T> {
 const send = (method: string, body?: unknown): RequestInit => ({ method, headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
 
 export const getConnectors = () => fetch("/api/connectors").then((r) => json<ConnectorsView>(r));
+/** Is this platform's sign-in on right now? Asked when the person presses Add (the server asks the sign-in service then, never before). */
+export const loginOffered = (kind: LoginKind) => fetch(`/api/connectors/apps/${kind}`).then((r) => json<{ on: boolean }>(r)).then((r) => r.on);
 /** A full-page trip to the platform's login and back to `back`. */
 export const loginHref = (kind: LoginKind, opts: { projectId?: string; back?: string } = {}) =>
   `/api/connectors/login/${kind}?${new URLSearchParams({ ...(opts.projectId ? { projectId: opts.projectId } : {}), back: opts.back ?? "/settings/connectors" })}`;

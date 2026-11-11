@@ -35,6 +35,15 @@ it("Instagram adds its own account when the Meta sign-in is set", () => {
   expect(row(platformRows(view({ logins: { ...none, meta: true } })), "instagram")).toMatchObject({ button: "Add", summary: "Your account by sign-in, or by @handle" });
 });
 
+it("a platform whose sign-in the service does not offer says so on its row, and still has Add (by @handle)", () => {
+  const all = { meta: true, google: true, tiktok: true };
+  expect(row(platformRows(view({ logins: all })), "tiktok")).toMatchObject({ button: "Add", summary: "Your account by sign-in, or by @handle" });
+  const rows = platformRows(view({ logins: all }), undefined, ["tiktok"]);
+  expect(row(rows, "tiktok")).toMatchObject({ button: "Add", summary: "Sign-in is not available right now. Public accounts, by @handle" });
+  // the other platforms are as they were
+  expect(row(rows, "youtube")).toMatchObject({ summary: "Your channel by sign-in, or by @handle" });
+});
+
 it("each project shows its own account per platform; an account in no project shows until one is linked", () => {
   const accounts = [acct("tiktok", "brand-a", "p1"), acct("tiktok", "brand-b", "p2"), acct("youtube", "old")];
   const p1 = platformRows(view({ accounts }), "p1");

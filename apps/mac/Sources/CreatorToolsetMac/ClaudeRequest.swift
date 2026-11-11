@@ -522,31 +522,61 @@ func round4(_ x: Double) -> Double {
 let geminiTools = ["read_file": "Read", "grep_search": "Grep", "glob": "Glob", "google_web_search": "WebSearch"]
 
 /// the Mac relay gemini_cmd: `gemini -o stream-json`, the prompt on stdin (no -p: the CLI reads a piped prompt). Plan mode
-/// is its read tools only, no edits or shell; --skip-trust for the run's own folder. This CLI has no effort flag.
-/// `mcpPolicy`: the app's own MCP server for this run (runMcpFiles): only that server of all the person's is in the run, and
-/// the rule in that file lets its calls run unasked in plan mode, which otherwise refuses them.
-func geminiArguments(model: String, mcpPolicy: String = "") -> [String] {
+/// is its read tools only, no edits or shell, while geminiPolicy keeps the run in it; --skip-trust for the run's own folder.
+/// This CLI has no effort flag.
+/// `policy`: the file of geminiPolicy's rules for this run (a CLI that takes one). `mcp`: the app's own MCP server is in this
+/// run (runMcpFiles), and only that server of all the person's is.
+func geminiArguments(model: String, policy: String = "", mcp: Bool = false) -> [String] {
     var args = ["-o", "stream-json", "--approval-mode", "plan", "--skip-trust"]
-    if !mcpPolicy.isEmpty { args += ["--allowed-mcp-server-names", "creator-toolset", "--policy", mcpPolicy] }
+    if mcp { args += ["--allowed-mcp-server-names", "creator-toolset"] }
+    if !policy.isEmpty { args += ["--policy", policy] }
     if !model.isEmpty { args += ["-m", model] }
     return args
 }
 
-/// Whether this Gemini CLI takes a policy file for one run (`--policy`); an older one answers with the message alone.
-func geminiTakesMcp(_ cli: String) -> Bool {
-    runQuick(cli, ["--help"], seconds: 15)?.contains("--policy") ?? false
+/// Whether this Gemini CLI takes a policy file for one run (`--policy`); an older one is not run (geminiAnswer), since
+/// nothing else holds its rules. Asked once per program file, so a run doesn't wait for a second Gemini start (about a
+/// second). nil: the ask got no answer (a busy Mac), which is not remembered and not "too old".
+func geminiTakesPolicy(_ cli: String) -> Bool? {
+    let key = cli + "@" + "\((try? FileManager.default.attributesOfItem(atPath: realPath(cli)))?[.modificationDate] ?? "")"
+    if let known = geminiPolicyLock.withLock({ geminiPolicyCLIs[key] }) { return known }
+    guard let help = runQuick(cli, ["--help"], seconds: 15) else { return nil }
+    let takes = help.contains("--policy")
+    geminiPolicyLock.withLock { geminiPolicyCLIs[key] = takes }
+    return takes
 }
 
-/// The rule that lets the app's own MCP server's calls run in Gemini's plan mode (its policy engine, a user-tier rule).
-let geminiMcpPolicy = """
-    [[rule]]
-    mcpName = "creator-toolset"
-    toolName = "*"
-    decision = "allow"
-    priority = 100
-    modes = ["plan"]
+/// What a Gemini CLI too old for a policy file is answered with. The site reads these words and installs the current one
+/// (local-ai.ts connectCli).
+let geminiTooOld = "The Gemini on this Mac is too old to run here. Update it."
+private let geminiPolicyLock = NSLock()
+private var geminiPolicyCLIs: [String: Bool] = [:]
 
-    """
+/// A Gemini run's rules, in its policy engine (user-tier rules). Plan mode alone does not hold (measured 2026-11-10, Gemini CLI
+/// 0.68, its model's calls replayed): a run could write a Markdown plan into Gemini's own ~/.gemini/tmp folder, and
+/// exit_plan_mode, even naming a plan that doesn't exist, was approved with nobody asked; the run then left plan mode, wrote
+/// into its folder and ran a shell command that read a file outside and wrote another there. With this rule, in every mode,
+/// none of those four is a tool, and the folder's files are still read. `mcp`: the app's own MCP server's calls run unasked in
+/// plan mode, which otherwise refuses them.
+func geminiPolicy(mcp: Bool) -> String {
+    let deny = """
+        [[rule]]
+        toolName = ["exit_plan_mode", "write_file", "replace", "run_shell_command"]
+        decision = "deny"
+        priority = 100
+
+        """
+    let allow = """
+        [[rule]]
+        mcpName = "creator-toolset"
+        toolName = "*"
+        decision = "allow"
+        priority = 100
+        modes = ["plan"]
+
+        """
+    return mcp ? allow + "\n" + deny : deny
+}
 
 /// The app's own MCP server for one Gemini or Grok run (the assistant), as files in the run's own fresh folder: that folder's
 /// settings (Gemini, `.gemini/settings.json`) or config (Grok, `.grok/config.toml`) name the server, and the token is read
@@ -554,9 +584,10 @@ let geminiMcpPolicy = """
 /// is trusted, so the run trusts its own folder for itself alone (runMcpEnv); nothing is written to the person's settings.
 /// Measured 2026-11-10 with Gemini CLI 0.68 and grok 1.0.4 and 1.0.77, their models' answers replayed or a stand-in model,
 /// against stand-in servers and a real Creator Toolset server: this server's calls (a lookup and a change) ran unasked with
-/// the job token, a server in the person's own settings got none, and nothing was written to the person's settings. Gemini's
-/// file write was refused by plan mode and it has no shell there. With the assistant's flags (web on) grok offers only its
-/// two MCP tools: a write and a read outside the folder were not tools at all.
+/// the job token, a server in the person's own settings got none, and nothing was written to the person's settings. Gemini,
+/// with or without a folder of files: a read, listing, search or glob outside the run folder was refused ("Path not in
+/// workspace"), and it has no shell or web_fetch in plan mode, as long as it stays there (geminiPolicy). Grok's tools:
+/// grokArguments.
 func runMcpFiles(driver: String, url: String, cwd: URL) throws {
     let fm = FileManager.default
     if driver == "gemini" {
@@ -631,25 +662,57 @@ func codexPictures(_ files: [String: String], cwd: URL) -> [String] {
         .map { cwd.appendingPathComponent($0).path }
 }
 
-/// grok's tool ids for its read tools and its web tools (the Mac relay GROK_READ, GROK_WEB).
-let grokReadTools = "read_file,grep,list_dir"
+/// grok's tool ids for its web tools (the Mac relay GROK_WEB).
 let grokWebTools = "web_search,web_fetch"
 
-/// the Mac relay grok_cmd: `grok -p`'s headless stream, the prompt in `promptFile`. Tools are only the read tools of a folder
-/// (plus web when asked); with no folder there is no shell, no editing and no subagents. It never asks (dontAsk).
+/// What a request that brings Grok a picture or another file is answered with.
+let grokNoFiles = "Grok can't take pictures or files yet. Paste the text itself, or use another AI for this."
+
+/// A Grok run has no folder of files. Its read tools take any path on the Mac and no permission rule or tool switch keeps
+/// them in a folder (grokArguments), so it gets none of them: the request's text files go into the prompt whole, each under
+/// its path. nil when one of them is bytes (a picture, another file), which Grok can't be given then (grokNoFiles).
+/// ponytail: every text file goes in whole; trim to what the request names if a Workshop folder outgrows Grok's context.
+func grokInline(_ user: String, files: [String: String]) -> String? {
+    if files.isEmpty { return user }
+    if files.values.contains(where: { $0.hasPrefix("base64:") }) { return nil }
+    let blocks = files.keys.sorted().map { "<file path=\"\($0)\">\n\(files[$0] ?? "")\n</file>" }
+    return "The files this request needs are below, each whole under its path.\n\n" + blocks.joined(separator: "\n\n") + "\n\n" + user
+}
+
+/// the Mac relay grok_cmd: `grok -p`'s headless stream, the prompt in `promptFile`. Its only tools are the web's when asked:
+/// no file tools, no shell, no editing and no subagents. It never asks (dontAsk).
 /// `mcp`: the app's own MCP server is in this run (runMcpFiles); its calls are allowed, every other MCP server's are refused.
-func grokArguments(cwd: String, model: String, effort: String, system: String, web: Bool, folder: Bool, promptFile: String, mcp: Bool = false) -> [String] {
+/// Measured 2026-11-10 (grok 1.0.4 and 1.0.77, a stand-in model calling tools): an empty `--tools` list is no list, so a run
+/// with no tools named was offered every built-in. Its read_file, list_dir and grep ran on any path (outside the run
+/// folder, `../`, `~/`), named in the list or not, and `monitor` ran `tail -f` on a file outside and handed its lines to the
+/// model; writes, image tools and workflows stopped only because dontAsk has nobody to say yes. Nothing keeps a read in a
+/// folder: its `--sandbox strict` keeps reads to the folder, the system folders, ~/.grok and the temp folders, but it refuses
+/// to start where /var/run/docker.sock links outside the places it knows, and it can't write in ~/.grok outside its
+/// sessions, where its sign-in is saved, so it is not used until it has run through here with a real sign-in. So a run
+/// never has a folder (grokInline), the list is never empty (todo_write touches no file), and deny rules, which hold
+/// whatever a version's tool names are, refuse reads of any path (`Read(**)`, which covers grep too; a bare `Read` would also
+/// refuse search_tool, how grok finds this server's tools) and edits, writes and shell (grok counts monitor as shell;
+/// writes, image tools and workflows as edits). With both, none of those calls ran on either version; this server's MCP
+/// calls and the web tools still ran.
+func grokArguments(cwd: String, model: String, effort: String, system: String, web: Bool, promptFile: String, mcp: Bool = false) -> [String] {
     var args = ["--prompt-file", promptFile, "--verbatim",
                 "--output-format", "streaming-messages-json", "--include-partial-messages", "--no-memory", "--no-subagents",
                 "--cwd", cwd, "--reasoning-effort", effort, "--permission-mode", "dontAsk",
                 "--system-prompt-override", system, "--disallowed-tools", "run_terminal_cmd,search_replace,Agent"]
     if !model.isEmpty { args += ["-m", model] }
-    // Always passed: without a folder the list is empty (grok's default built-ins would read any file on this Mac).
-    args += ["--tools", ((folder ? [grokReadTools] : []) + (web ? [grokWebTools] : [])).joined(separator: ",")]
+    args += ["--tools", web ? grokWebTools : "todo_write"]
+    for rule in ["Read(**)", "Edit", "Write", "Bash"] { args += ["--deny", rule] }
     if !web { args.append("--disable-web-search") }
     if mcp { args += ["--allow", "MCPTool(creator-toolset__*)"] }
     return args
 }
+
+/// Gemini's sign-in for every run: its Google-account sign-in when the person's settings name no method. The app's own Google
+/// sign-in (`gemini --acp`'s authenticate) can leave the login file but no chosen method, and then every run stopped at
+/// "Please set an Auth method"; Gemini reads the method from GOOGLE_GENAI_USE_GCA then (before any API key). With NO_BROWSER a
+/// run whose login is gone says it needs a sign-in and stops, instead of asking on stdin to open a browser (measured
+/// 2026-11-10 on Gemini CLI 0.68 with a made-up login: past "auth method", then "Manual authorization is required…").
+let geminiSignInEnv = ["GOOGLE_GENAI_USE_GCA": "true", "NO_BROWSER": "true"]
 
 /// the Mac relay driver_env: the environment without API keys (the subscription only, never API billing), and
 /// CODEX_HOME for a Codex home (the folder codex keeps its sign-in in).

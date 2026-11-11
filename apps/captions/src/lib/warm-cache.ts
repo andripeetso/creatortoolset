@@ -1,14 +1,49 @@
-import { canUse, useAuth } from "./auth";
+import type { Provider } from "@/components/setup/AccountStep";
+import { canUse, useAuth, type Me } from "./auth";
+import { listAutomations } from "./automations";
+import { getConnectors } from "./connectors";
+import { getProviders } from "./providers";
+import { getWorkspace } from "./workspaces";
 import { forgetCached, readCached, warmCached } from "./local-cache";
 import { listReviewAssets, listReviewProjects } from "./review";
 import { getSession, keepSession, listChat, listDocuments as listPieces, listSessions, listFrameworks, listRules, getWorkshopAvailability, sessionKeys, type SessionRecord, type SessionRow } from "./workshop";
 import { listAccounts, listPosts, type ListPostsQuery } from "./instagram";
 import { listEdits } from "./editor";
-import { listClips } from "./clips";
+import { CLIPS_AVAILABILITY, getClipsAvailability, listClips } from "./clips";
 import { listDocuments } from "./documents";
 import { listEnhance } from "./enhance";
 import { PROJECT_ACCOUNTS_KEY, useWorkspace } from "./workspace";
 import { listSessions as listProjects } from "./persist";
+
+/** No sign-in apps, as Account keeps it (AccountSection.tsx). Typed by the apps' own list, so a new one fails the build here. */
+const NO_SIGN_INS: Record<Provider, boolean> = { apple: false, google: false, github: false };
+const get = (url: string) => () => fetch(url).then((r) => (r.ok ? (r.json() as Promise<unknown>) : Promise.reject(new Error(String(r.status)))));
+
+/**
+ * Settings' own lists, as [key, loader]: the keys and the saved shapes are the sections' own (components/settings,
+ * AdminPanel.tsx; the test checks each key is still read there). Only what this account may read: a team's page on a
+ * hosted server, the admin pages for its admins. Social accounts is among them: its read asks no other server (the
+ * sign-in service is asked only when the person presses Add, api/lib/connectors/signin-service.ts).
+ */
+export function settingsLists(me: Pick<Me, "role">, hosted: boolean): Array<[string, () => Promise<unknown>]> {
+  const admin = hosted && me.role === "admin";
+  return [
+    ["/api/providers", getProviders], // Providers, Usage, Devices, Storage, Scheduled tasks
+    ["/api/setup/ai", get("/api/setup/ai")], // Providers, Headless access
+    ["/api/automations", listAutomations], // Scheduled tasks
+    ["/api/devices/storage", get("/api/devices/storage")], // Storage
+    ["/api/my-keys", get("/api/my-keys")], // API keys
+    ["/api/instagram/apify", get("/api/instagram/apify")], // API keys
+    ["/api/connectors", getConnectors], // Social accounts
+    ["/api/auth/api-key", get("/api/auth/api-key")], // Headless access
+    // Account: a computer with no account answers 401, which the page keeps as "none"
+    ["/api/auth/account", () => fetch("/api/auth/account").then((r) => (r.status === 401 ? "none" : r.ok ? (r.json() as Promise<unknown>) : Promise.reject(new Error(String(r.status)))))],
+    // Account, Team: the sign-in apps this server has. One that does not answer has none (an own-computer server: 404)
+    ["/api/account/providers", () => fetch("/api/account/providers").then((r) => (r.ok ? (r.json() as Promise<unknown>) : NO_SIGN_INS))],
+    ...(hosted ? [["/api/workspace", () => getWorkspace().then((team) => ({ team }))] as [string, () => Promise<unknown>]] : []), // Team
+    ...(admin ? ["/api/service-keys", "/api/admin/users", "/api/admin/projects"].map((url) => [url, get(url)] as [string, () => Promise<unknown>]) : []), // Admin
+  ];
+}
 
 /**
  * Fills the saved lists of every screen this account can open (lib/local-cache), so even a first visit paints at once.
@@ -49,11 +84,20 @@ export async function warmScreens(): Promise<void> {
   // Home's to-do and badges (HomeTodo.tsx useTodoLists)
   if (canUse(me, "editor")) job("/api/editor", listEdits);
   if (canUse(me, "captions")) job("caption-projects", listProjects);
-  if (canUse(me, "notes")) job("/api/clips", listClips);
+  if (canUse(me, "notes")) {
+    job("/api/clips", listClips);
+    // whether an AI is connected: a clip's page decides by it, before it draws, whether to ask for chapters
+    job(CLIPS_AVAILABILITY, getClipsAvailability);
+  }
   if (canUse(me, "guides")) job("/api/documents", listDocuments);
   if (canUse(me, "enhance")) job("/api/enhance", listEnhance);
   await Promise.all(jobs);
   await warmRecentSessions();
+  // Settings, last (nothing above waits for it): only the lists this device has no copy of yet, so the first-ever open
+  // of a section paints like every later one (each section reads its own list again when it opens) and an app start
+  // adds no requests after that
+  const missing = settingsLists(me, useAuth.getState().hosted).filter(([url]) => readCached(me.username, url) === null);
+  await Promise.all(missing.map(([url, load]) => warmCached(url, load).catch(() => {})));
 }
 
 /**

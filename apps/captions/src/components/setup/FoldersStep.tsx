@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Storage, getStorage } from "@/components/settings/DevicesSection";
+import { useBigFolder } from "@/components/LibraryProcessing";
 import { getProviders } from "@/lib/providers";
 import { useAuth, useMe } from "@/lib/auth";
 import { LIBRARY_NAME, THIS_COMPUTER, type SourceRole, type StorageView } from "@contracts/storage";
@@ -36,6 +37,8 @@ export function FoldersStep({ onNext, actions }: { onNext: () => void; actions: 
   const [customPath, setCustomPath] = useState("");
   // hosted: the folders of the person's own computers; a failed read offers Try again (Continue stays either way)
   const [hostedError, setHostedError] = useState(false);
+  // a big folder says first what taking it into the Media Library costs in time and usage
+  const big = useBigFolder();
 
   const reload = () => getStorage().then(setStorage).catch(() => setStorage(null));
   const loadHosted = () => {
@@ -66,9 +69,7 @@ export function FoldersStep({ onNext, actions }: { onNext: () => void; actions: 
   const libraryShown = library?.origin.path ?? `${DEFAULT_LIBRARY_DISK}/${LIBRARY_NAME}`;
 
   // the server checks the folder (it must be a folder on this computer); a refusal stays on the step with its reason
-  const addTyped = async (role: SourceRole) => {
-    const p = customPath.trim();
-    if (!p) return;
+  const add = async (role: SourceRole, p: string) => {
     setBusy(true);
     setError(null);
     try {
@@ -78,6 +79,17 @@ export function FoldersStep({ onNext, actions }: { onNext: () => void; actions: 
       await reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't add that folder. Check the path, then try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const addTyped = async (role: SourceRole) => {
+    const p = customPath.trim();
+    if (!p) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await big.check(p, () => add(role, p), { music: role === "music" });
     } finally {
       setBusy(false);
     }
@@ -173,6 +185,7 @@ export function FoldersStep({ onNext, actions }: { onNext: () => void; actions: 
           {error}
         </p>
       )}
+      {big.dialog}
 
       {actions &&
         createPortal(

@@ -1,11 +1,13 @@
 import { createHash, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { hostname } from "node:os";
 import { rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Device, MacReport, ProviderSettings } from "../../contracts/providers";
 import { env } from "./env";
 import { dropOwnSettings, ownSettings, providerSettings, saveSettings } from "./providers";
 import { announce } from "./sync";
+import { announceAdmins, findUser } from "../users";
 
 /**
  * The Macs that run AI jobs (contracts/providers.ts `Device`), in $DATA_DIR/devices.json. Any account pairs its
@@ -64,23 +66,35 @@ function find(id: string): Stored | undefined {
   return all().find((d) => d.id === id);
 }
 
+/**
+ * Tells the accounts that are shown a computer that it changed ("devices"): its owner, and every admin for the team's own
+ * computer (owner "workspace" is no account) and for an admin's computer, since each admin's list has those too
+ * (api/devices.ts, api/providers.ts).
+ */
+function tell(owner: string): void {
+  const shared = owner === "workspace" || findUser(owner)?.role === "admin";
+  if (shared) announceAdmins("devices");
+  else announce(owner, "devices");
+}
+
 /** The timer per device that tells its owner it went offline, ONLINE_MS after its last call. */
 const goingOff = new Map<string, ReturnType<typeof setTimeout>>();
 
 /**
  * Any relay call says the Mac is here (lastSeen). Written at most once a minute: online is in memory anyway. Its owner's
- * open windows hear "devices" when it comes online and when it goes quiet, never on each call.
+ * open windows (the admins', for the team's own computer) hear "devices" when it comes online and when it goes quiet,
+ * never on each call.
  */
 export function touchDevice(id: string): void {
   const d = find(id);
   if (!d) return;
-  if (!isOnline(id)) announce(d.owner, "devices");
+  if (!isOnline(id)) tell(d.owner);
   d.lastSeen = Date.now();
   if (d.lastSeen - persistedAt > 60_000) persist();
   clearTimeout(goingOff.get(id));
   const t = setTimeout(() => {
     goingOff.delete(id);
-    if (find(id) && !isOnline(id)) announce(d.owner, "devices");
+    if (find(id) && !isOnline(id)) tell(d.owner);
   }, ONLINE_MS + 1000);
   t.unref?.();
   goingOff.set(id, t);
@@ -129,6 +143,7 @@ export function pairDevice(owner: string, name: string, version?: string): { dev
   list = all().filter((x) => !replaced.includes(x.id));
   list.push(d);
   persist();
+  tell(owner);
   return { device: strip(d), token, replaced };
 }
 
@@ -139,6 +154,7 @@ export function renameDevice(id: string, name: string): Device | undefined {
   if (!d) return undefined;
   d.name = name;
   persist();
+  tell(d.owner);
   return strip(d);
 }
 
@@ -178,6 +194,7 @@ export async function revokeDevice(id: string): Promise<boolean> {
   await moveProviders(d.owner, [id], null);
   list = all().filter((x) => x.id !== id);
   persist();
+  tell(d.owner);
   return true;
 }
 
@@ -197,9 +214,10 @@ export function saveReport(id: string, r: MacReport, version?: string): void {
   // ponytail: an empty list from the only reporter keeps the old disks; add an explicit clear when a Mac really loses them all.
   const kept = d.report?.machine?.disks;
   if (r.machine && kept && !r.machine.disks) r.machine = { ...r.machine, disks: kept };
-  // a CLI installed, signed in or on another plan is a change setup shows; the machine's load in each report is not
+  // a CLI installed, signed in or on another plan is a change setup shows, and so is the app's new version; the machine's
+  // load in each report is not
   const drivers = (x: MacReport | undefined) => JSON.stringify(x?.drivers ?? []);
-  if (drivers(d.report) !== drivers(r)) announce(d.owner, "devices");
+  if (drivers(d.report) !== drivers(r) || (!!version && version !== d.version)) tell(d.owner);
   d.report = r;
   if (version) d.version = version;
   persist();
@@ -213,6 +231,16 @@ export function forViewer(viewer: string, d: Device): Device {
   const r = d.report;
   if (d.owner === viewer || d.owner === "workspace" || !r?.machine?.disks) return d;
   return { ...d, report: { ...r, machine: { ...r.machine, disks: undefined } } };
+}
+
+const shortHost = (h: string) => h.toLowerCase().replace(/\.local$/, "");
+/**
+ * Is this paired computer the machine this server runs on (the server inside a person's Mac app, and that Mac's own
+ * pairing)? By the host name its report gives; reporters differ in case and in ".local". No report yet: not known, so no.
+ */
+export function isThisMachine(id: string): boolean {
+  const host = find(id)?.report?.machine?.host;
+  return !!host && shortHost(host) === shortHost(hostname());
 }
 
 /** What the device reported last. */

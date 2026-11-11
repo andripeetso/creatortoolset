@@ -138,5 +138,9 @@ module.exports = {
     addBase(themed.base);
     // where a scrollbar takes room (a mouse or trackpad; a phone draws it over the content): see index.css
     addVariant("bars", "@media (hover: hover) and (pointer: fine)");
+    // Home's room (pages/ToolsetHome.tsx): the page's width after a docked chat, where the window's would overflow
+    addVariant("hub", "@container hub (min-width: 900px)");
+    addVariant("hub-2xl", "@container hub (min-width: 1536px)");
+    addVariant("hub-narrow", "@container hub (max-width: 899.98px)");
   })],
 }

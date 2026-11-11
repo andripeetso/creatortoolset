@@ -32,9 +32,26 @@ export const listLibraries = () =>
     .then((r) => json<{ libraries: LibrarySummary[] }>(r))
     .then((x) => x.libraries);
 
-/** What processing `clips` clips of `bytes` in all would take in the library (api/library/estimate.ts). */
-export const getEstimate = (libraryId: string, clips: number, bytes: number) =>
-  fetch(`/api/library/${libraryId}/estimate?clips=${clips}&bytes=${Math.round(bytes)}`).then((r) => json<LibraryEstimate>(r));
+/** What is going in: `clips` files of `bytes`, `audio` of them sound only (`audioBytes`), from a music folder or not. */
+export interface Drop {
+  clips: number;
+  bytes: number;
+  audio?: number;
+  audioBytes?: number;
+  music?: boolean;
+}
+
+/** Sound-only files among `files`, and their bytes (the server's own kinds, api/library/routes.ts kindOf). */
+export const audioOf = (files: File[]) => {
+  const audio = files.filter((f) => /\.(mp3|m4a|wav|aac|ogg|opus|flac)$/i.test(f.name));
+  return { audio: audio.length, audioBytes: audio.reduce((n, f) => n + f.size, 0) };
+};
+
+/** What processing a drop would take in the library (api/library/estimate.ts). */
+export const getEstimate = (libraryId: string, d: Drop) =>
+  fetch(
+    `/api/library/${libraryId}/estimate?clips=${d.clips}&bytes=${Math.round(d.bytes)}&audio=${d.audio ?? 0}&audioBytes=${Math.round(d.audioBytes ?? 0)}${d.music ? "&music=1" : ""}`,
+  ).then((r) => json<LibraryEstimate>(r));
 
 /** The processing still to do in the library. */
 export const getProgress = (libraryId: string) => fetch(`/api/library/${libraryId}/progress`).then((r) => json<LibraryProgress>(r));

@@ -142,7 +142,7 @@ export default function ToolsetHome() {
       <>
         <span className={quiet
           ? "relative flex h-10 w-10 items-center justify-center rounded-xl bg-zinc-800/80 transition-colors duration-200 group-hover:bg-zinc-700"
-          : "relative flex h-12 w-12 items-center justify-center rounded-2xl 2xl:h-14 2xl:w-14 bg-[color-mix(in_srgb,var(--tint)_90%,transparent)] transition-colors duration-200 group-hover:bg-[var(--tint)]"}>
+          : "relative flex h-12 w-12 items-center justify-center rounded-2xl hub-2xl:h-14 hub-2xl:w-14 bg-[color-mix(in_srgb,var(--tint)_90%,transparent)] transition-colors duration-200 group-hover:bg-[var(--tint)]"}>
           <Icon className={quiet ? "h-5 w-5 text-[var(--tint-text)]" : "h-6 w-6 text-white"} />
           {!ok && <Lock className="absolute -bottom-1 -right-1 h-4 w-4 rounded-full bg-zinc-900 p-0.5 text-zinc-300" />}
           {ok && (k === "workshop" ? showCounts && <WorkshopBadge /> : k !== "record" && k !== "finals" && <Badge n={waiting[k] ?? 0} means={BADGE_MEANS[k]} />)}
@@ -153,7 +153,7 @@ export default function ToolsetHome() {
       </>
     );
     // a light hover: the icon and the name brighten a little, faded, never moving (owner, 2026-11-08)
-    const className = "group flex w-[88px] flex-col items-center gap-2 rounded-xl px-1 py-2 text-center 2xl:w-[104px]";
+    const className = "group flex w-[88px] flex-col items-center gap-2 rounded-xl px-1 py-2 text-center hub-2xl:w-[104px]";
     if (!ok) {
       return (
         <div key={k} aria-disabled="true" title="Switched off for this account" className={`${className} cursor-not-allowed opacity-40`}>
@@ -176,12 +176,12 @@ export default function ToolsetHome() {
   const pluginTile = (t: HomeTool, quiet = false) => {
     const dest = phone && t.phoneTo ? t.phoneTo : t.to;
     const Icon = t.icon;
-    const className = "group flex w-[88px] flex-col items-center gap-2 rounded-xl px-1 py-2 text-center 2xl:w-[104px]";
+    const className = "group flex w-[88px] flex-col items-center gap-2 rounded-xl px-1 py-2 text-center hub-2xl:w-[104px]";
     const body = (
       <>
         <span className={quiet
           ? "relative flex h-10 w-10 items-center justify-center rounded-xl bg-zinc-800/80 transition-colors duration-200 group-hover:bg-zinc-700"
-          : "relative flex h-12 w-12 items-center justify-center rounded-2xl 2xl:h-14 2xl:w-14 bg-[color-mix(in_srgb,var(--tint)_90%,transparent)] transition-colors duration-200 group-hover:bg-[var(--tint)]"}>
+          : "relative flex h-12 w-12 items-center justify-center rounded-2xl hub-2xl:h-14 hub-2xl:w-14 bg-[color-mix(in_srgb,var(--tint)_90%,transparent)] transition-colors duration-200 group-hover:bg-[var(--tint)]"}>
           <Icon className={quiet ? "h-5 w-5 text-[var(--tint-text)]" : "h-6 w-6 text-white"} />
         </span>
         <span className={`text-xs leading-tight transition-colors duration-200 group-hover:text-zinc-50 ${quiet ? "text-zinc-400" : "text-zinc-300"}`}>{t.name}</span>
@@ -202,7 +202,7 @@ export default function ToolsetHome() {
       nodes: [...(g.id === "distribute" ? ["finals" as Key] : g.tools.filter(shownOnHome)).map((t) => tile(t)), ...pluginTilesFor(g.label, me).map((t) => pluginTile(t))],
     }))
     .filter((b) => b.nodes.length > 0);
-  const boxColumns = ["", "min-[900px]:grid-cols-1", "min-[900px]:grid-cols-[1fr_auto_1fr]", "min-[900px]:grid-cols-[1fr_auto_1fr_auto_1fr]"][boxes.length] ?? "";
+  const boxColumns = ["", "hub:grid-cols-1", "hub:grid-cols-[1fr_auto_1fr]", "hub:grid-cols-[1fr_auto_1fr_auto_1fr]"][boxes.length] ?? "";
   const extraTiles = known ? [...extras.map((k) => tile(k, true)), ...pluginTilesFor("Extras", me).map((t) => pluginTile(t, true))] : [];
 
   return (
@@ -230,7 +230,10 @@ export default function ToolsetHome() {
       </AppBar>
       {phone && <div className="h-16 shrink-0" />}
 
-      <div className="intro-body relative flex w-[520px] max-w-[94vw] flex-col gap-3 min-[900px]:w-[1120px] min-[900px]:gap-6 2xl:w-[1280px]">
+      {/* the boxes go by the room the page has, not the window: a chat docked to the right takes 400px of it. As
+          much room above and below as the bar takes, so a tall column stays clear of the bar and a short one centred */}
+      <div className={`flex w-full justify-center [container:hub/inline-size] ${phone ? "" : "my-14"}`}>
+      <div className="intro-body relative flex w-[520px] max-w-[94%] flex-col gap-3 hub:w-[1120px] hub:gap-6 hub-2xl:w-[1280px]">
         {beat && <IntroCaption beat={beat} />}
         {/* setup happens on the computer: a phone gets the way there, never the setup itself */}
         {view && !setupFinished(view) && phone && !view.have.includes("project") && (
@@ -259,13 +262,13 @@ export default function ToolsetHome() {
         )}
 
         {/* the boxed groups (Plan, Make, Distribute) in a row with arrows between, then Extras: quieter, a centred label */}
-        <div className={`flex flex-col gap-1.5 min-[900px]:grid ${boxColumns} min-[900px]:gap-2`}>
+        <div className={`flex flex-col gap-1.5 hub:grid ${boxColumns} hub:gap-2`}>
           {boxes.map(({ g, nodes }, i) => (
             <Fragment key={g.id}>
               {i > 0 && (
-                <div style={{ "--i": i } as CSSProperties} className="intro-link relative flex items-center justify-center gap-2 self-center min-[900px]:w-20 min-[900px]:flex-col min-[900px]:gap-1 min-[900px]:px-2">
+                <div style={{ "--i": i } as CSSProperties} className="intro-link relative flex items-center justify-center gap-2 self-center hub:w-20 hub:flex-col hub:gap-1 hub:px-2">
                   {showCounts && i === 1 && <Between />}
-                  <ArrowRight className="intro-arrow h-4 w-4 shrink-0 rotate-90 text-zinc-600 min-[900px]:rotate-0" />
+                  <ArrowRight className="intro-arrow h-4 w-4 shrink-0 rotate-90 text-zinc-600 hub:rotate-0" />
                   {beat && <i className="intro-line" />}
                 </div>
               )}
@@ -285,10 +288,10 @@ export default function ToolsetHome() {
                   </>
                 )}
                 <h2 className="intro-label px-1 pb-2 text-[11px] font-medium uppercase tracking-wider text-zinc-500">{g.label}</h2>
-                <div className="flex items-start justify-center gap-4 min-[900px]:justify-evenly min-[900px]:gap-0">
+                <div className="flex items-start justify-center gap-4 hub:justify-evenly hub:gap-0">
                   {nodes.map((node, j) => (
                     <Fragment key={j}>
-                      {j > 0 && <ChevronRight className="intro-chev mt-6 h-4 w-4 shrink-0 text-zinc-700 2xl:mt-7" />}
+                      {j > 0 && <ChevronRight className="intro-chev mt-6 h-4 w-4 shrink-0 text-zinc-700 hub-2xl:mt-7" />}
                       <div className="intro-tile" style={{ "--i": nth++ } as CSSProperties}>{node}</div>
                     </Fragment>
                   ))}
@@ -299,7 +302,7 @@ export default function ToolsetHome() {
         </div>
 
 
-        {/* one row whatever the number: the tools spread across the width from 900 px, wrapping below */}
+        {/* one row whatever the number: the tools spread across the width from 900 px of room, wrapping below */}
         {extraTiles.length > 0 && (
         <section className="intro-extras">
           <h2 className="intro-extras-head flex items-center gap-3 pb-2 text-[11px] font-medium uppercase tracking-wider text-zinc-600">
@@ -307,13 +310,14 @@ export default function ToolsetHome() {
             {extrasGroup?.label ?? "Extras"}
             <span className="h-px flex-1 bg-zinc-800/80" />
           </h2>
-          <div className="flex flex-wrap justify-center gap-x-2 gap-y-1 min-[900px]:grid min-[900px]:auto-cols-fr min-[900px]:grid-flow-col min-[900px]:justify-items-center min-[900px]:gap-0">
+          <div className="flex flex-wrap justify-center gap-x-2 gap-y-1 hub:grid hub:auto-cols-fr hub:grid-flow-col hub:justify-items-center hub:gap-0">
             {extraTiles.map((node, j) => (
               <div key={j} className="intro-extra flex" style={{ "--i": j } as CSSProperties}>{node}</div>
             ))}
           </div>
         </section>
         )}
+      </div>
       </div>
 
     </div>
@@ -400,7 +404,7 @@ function Between() {
     <Link
       to="/workshop"
       title="Workshop sessions Ready or In Production: scripts waiting to be filmed and made"
-      className="intro-late flex flex-col items-center whitespace-nowrap text-center text-[11px] leading-tight text-[var(--tint-text)] transition-[filter] duration-200 hover:brightness-125 max-[899px]:flex-row max-[899px]:gap-1.5"
+      className="intro-late flex flex-col items-center whitespace-nowrap text-center text-[11px] leading-tight text-[var(--tint-text)] transition-[filter] duration-200 hover:brightness-125 hub-narrow:flex-row hub-narrow:gap-1.5"
     >
       {parts.map((p) => <span key={p}>{p}</span>)}
     </Link>

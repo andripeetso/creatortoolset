@@ -17,6 +17,7 @@ import {
   getConnectors,
   linkAccount,
   loginHref,
+  loginOffered,
   pullAccountNow,
   type ConnectedAccount,
   type ConnectorsView,
@@ -36,6 +37,9 @@ const n = (v?: number) => (v === undefined ? "" : v >= 10_000 ? `${Math.round(v 
 const at = (handle: string) => `@${handle.replace(/^@+/, "")}`;
 const NOUN: Record<SocialPlatform, string> = { instagram: "an Instagram", facebook: "a Facebook", youtube: "a YouTube", tiktok: "a TikTok", x: "an X" };
 const loginOf = (p: SocialPlatform): LoginKind | undefined => PLATFORMS.find((x) => x.id === p)?.login;
+
+/** What a row says when the sign-in service was asked for its platform and does not offer it (or could not be reached). */
+export const SIGN_IN_OFF = "Sign-in is not available right now";
 
 /** The sign-in items this server has an app for (the login is the platform's own: Meta covers Facebook and Instagram). */
 export function signInItems(logins: Record<LoginKind, boolean>): Array<{ id: LoginKind; label: string }> {
@@ -63,9 +67,11 @@ export interface PlatformRow {
  * is the person's own account: its sign-in, else the Analyzer account the project links (or the one marked Mine that no
  * project links).
  */
-export function platformRows(view: Pick<ConnectorsView, "logins" | "apify" | "accounts" | "instagram">, projectId?: string): PlatformRow[] {
+export function platformRows(view: Pick<ConnectorsView, "logins" | "apify" | "accounts" | "instagram">, projectId?: string, off: LoginKind[] = []): PlatformRow[] {
   return PLATFORMS.flatMap((p): PlatformRow[] => {
-    const loginOn = !!p.login && !!view.logins[p.login];
+    // off: the sign-in service was asked (Add was pressed) and does not offer this platform's sign-in
+    const said = !!p.login && off.includes(p.login) ? `${SIGN_IN_OFF}. ` : "";
+    const loginOn = !!p.login && !!view.logins[p.login] && !said;
     const on = view.accounts.filter((a) => a.platform === p.id);
     // ponytail: a Meta sign-in can bring several Pages into one project; the row shows the first
     const account = on.find((a) => !!projectId && a.projectId === projectId) ?? on.find((a) => !a.projectId);
@@ -76,10 +82,10 @@ export function platformRows(view: Pick<ConnectorsView, "logins" | "apify" | "ac
     if (p.id === "instagram") {
       const own = view.instagram.find((x) => !!projectId && x.projectId === projectId) ?? view.instagram.find((x) => x.mine && !x.projectId);
       if (own) return [{ platform: p.id, label: p.label, summary: [at(own.handle), own.followers !== undefined ? `${n(own.followers)} followers` : ""].filter(Boolean).join(" · "), own }];
-      return [{ platform: p.id, label: p.label, summary: loginOn ? "Your account by sign-in, or by @handle" : "Your account, by @handle", button: "Add" }];
+      return [{ platform: p.id, label: p.label, summary: loginOn ? "Your account by sign-in, or by @handle" : `${said}Your account, by @handle`, button: "Add" }];
     }
     const own = p.id === "facebook" ? "Your Pages by sign-in" : p.id === "youtube" ? "Your channel by sign-in" : "Your account by sign-in";
-    const summary = loginOn ? `${own}, or by @handle` : p.id === "facebook" ? "Public Pages, by @handle" : p.id === "youtube" ? "Public channels, by @handle" : "Public accounts, by @handle";
+    const summary = loginOn ? `${own}, or by @handle` : said + (p.id === "facebook" ? "Public Pages, by @handle" : p.id === "youtube" ? "Public channels, by @handle" : "Public accounts, by @handle");
     return [{ platform: p.id, label: p.label, summary, button: "Add" }];
   });
 }
@@ -96,6 +102,20 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
   const [dlg, setDlg] = useState<{ platform: SocialPlatform; step: "choose" | "handle"; seq: number }>({ platform: "tiktok", step: "handle", seq: 0 });
   const [open, setOpen] = useState(false);
   const [params, setParams] = useSearchParams();
+  // The sign-in service is asked only when the person acts (Add, Sign in), never to draw the rows. `off`: the sign-ins it
+  // then said it does not offer, said on their rows until the page is left; `asking`: the one being asked for now.
+  const [off, setOff] = useState<LoginKind[]>([]);
+  const [asking, setAsking] = useState<LoginKind | null>(null);
+  const offered = async (kind: LoginKind, view: ConnectorsView): Promise<boolean> => {
+    if (!view.logins[kind]) return false;
+    // this server's own app: nothing to ask
+    if (!view.viaService?.includes(kind)) return true;
+    setAsking(kind);
+    const on = await loginOffered(kind).catch(() => false);
+    setAsking(null);
+    setOff((was) => (on ? was.filter((k) => k !== kind) : [...new Set([...was, kind])]));
+    return on;
+  };
 
   const reload = useCallback(() => refresh().catch(() => {}), [refresh]);
   // a sign-in from the Mac app finishes in the computer's browser: coming back to the window shows the new account
@@ -131,10 +151,15 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
           <ListRow
             key={l.id}
             title={SIGN_IN[l.id]}
-            subtitle={l.gives}
+            subtitle={off.includes(l.id) ? SIGN_IN_OFF : l.gives}
             actions={
-              <Button asChild size="sm" variant="outline">
-                <a href={loginHref(l.id, { back, projectId: projectId() })}>Sign in</a>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={asking === l.id}
+                onClick={() => void offered(l.id, view!).then((on) => on && window.location.assign(loginHref(l.id, { back, projectId: projectId() })))}
+              >
+                Sign in
               </Button>
             }
           />
@@ -151,10 +176,11 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
     );
   }
 
-  const rows = platformRows(view, current ?? undefined);
-  const choose = (platform: SocialPlatform) => {
-    const loginOn = !!loginOf(platform) && !!view.logins[loginOf(platform)!];
-    setDlg({ platform, step: loginOn ? "choose" : "handle", seq: dlg.seq + 1 });
+  const rows = platformRows(view, current ?? undefined, off);
+  const choose = async (platform: SocialPlatform) => {
+    const login = loginOf(platform);
+    const loginOn = !!login && (await offered(login, view));
+    setDlg((d) => ({ platform, step: loginOn ? "choose" : "handle", seq: d.seq + 1 }));
     setOpen(true);
   };
 
@@ -215,7 +241,7 @@ export function ConnectorsSection({ back = "/settings/connectors", compact }: { 
                 subtitle={r.summary}
                 actions={
                   r.button && (
-                    <Button size="sm" variant="outline" aria-label={`${r.button} ${r.label}`} onClick={() => choose(r.platform)}>
+                    <Button size="sm" variant="outline" aria-label={`${r.button} ${r.label}`} disabled={!!asking && asking === loginOf(r.platform)} onClick={() => void choose(r.platform)}>
                       {r.button}
                     </Button>
                   )

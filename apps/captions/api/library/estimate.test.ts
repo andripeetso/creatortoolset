@@ -39,7 +39,7 @@ for (const i of [1, 2, 3]) {
 
 describe("estimate", () => {
   it("prices a drop on this library's own footage and this server's own pace", async () => {
-    const e = await estimate("lib_e", "local", 100, 100 * 30_000_000);
+    const e = await estimate("lib_e", "local", { clips: 100, bytes: 100 * 30_000_000 });
     expect(e.minutes).toBeCloseTo(100, 5);
     const step = (s: string) => e.steps.find((x) => x.step === s)!;
     expect(step("transcript")).toMatchObject({ route: "deepgram", measured: false });
@@ -48,6 +48,17 @@ describe("estimate", () => {
     expect(step("describe")).toMatchObject({ route: "provider", seconds: 1000 });
     expect(step("embed").route).toBe("none"); // on by default, no OpenAI key
     expect(e.seconds).toBe(Math.max(...e.steps.map((s) => s.seconds)));
+  });
+
+  it("a music folder costs nobody AI or keys; sound-only files are never described", async () => {
+    const songs = await estimate("lib_e", "local", { clips: 50, bytes: 50 * 4_000_000, audio: 50, audioBytes: 50 * 4_000_000, music: true });
+    expect(songs.minutes).toBeCloseTo((50 * 4_000_000) / 16_000 / 60, 5); // at a song's bitrate, not the footage's
+    expect(songs.steps.filter((s) => s.route !== "off").map((s) => s.step)).toEqual(["files"]);
+    expect(songs.steps.reduce((n, s) => n + s.usd, 0)).toBe(0);
+    expect(songs.withApiKey).toBeUndefined();
+    const memos = await estimate("lib_e", "local", { clips: 30, bytes: 30 * 1_000_000, audio: 30, audioBytes: 30 * 1_000_000 });
+    expect(memos.steps.find((s) => s.step === "transcript")!.route).toBe("deepgram"); // a voice memo is still searchable by what is said
+    expect(memos.steps.find((s) => s.step === "describe")!.route).toBe("off");
   });
 
   it("says what is left, and nothing once the queue is empty", async () => {

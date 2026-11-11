@@ -54,7 +54,7 @@ import {
   type ClipSession,
   type ClipWord,
 } from "@/lib/clips";
-import { useAutoChapters } from "@/components/ClipBlocks";
+import { useChapters } from "@/components/ClipBlocks";
 import { ShareThemeSwitch } from "@/components/ShareTheme";
 
 function fmtMmSs(t: number): string {
@@ -341,6 +341,11 @@ function MobilePlayer({
   );
 }
 
+/** The chapters' row under the player is one height whatever it holds (the chapters, "Generating chapters…", or that
+ *  it failed), so the page under it never moves when one becomes the other. */
+const CHAPTER_ROW_H = "h-14";
+const CHAPTER_ROW = `${CHAPTER_ROW_H} box-content flex shrink-0 items-center gap-2 border-b border-border bg-background px-4 text-[13px] text-muted-foreground`;
+
 function ChapterStrip({
   chapters,
   playhead,
@@ -365,7 +370,7 @@ function ChapterStrip({
 
   return (
     <div className="shrink-0 border-b border-border bg-background">
-      <div className="flex snap-x snap-mandatory gap-2 overflow-x-auto px-3 py-2.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <div className={`${CHAPTER_ROW_H} flex snap-x snap-mandatory items-center gap-2 overflow-x-auto px-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden`}>
         {chapters.map((ch, i) => {
           const on = i === activeI;
           return (
@@ -528,7 +533,7 @@ export function MobileClipView({
   const [draft, setDraft] = useState("");
 
   const chapters = clipChapters(session);
-  const chaptersPending = useAutoChapters(session, owns, onChange);
+  const making = useChapters(session, owns, onChange);
   const blocks = displayBlocks(session);
   const tabs = [
     ...blocks.map((b) => ({
@@ -746,10 +751,18 @@ export function MobileClipView({
               playhead={playhead}
               seek={seek}
             />
-          ) : chaptersPending ? (
-            <div className="flex shrink-0 items-center gap-2 border-b border-border bg-background px-4 py-2.5 text-[13px] text-muted-foreground">
+          ) : making.pending ? (
+            <div className={CHAPTER_ROW}>
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
               Generating chapters…
+            </div>
+          ) : making.failed ? (
+            // the row stays where "Generating chapters…" was, so the page under it does not move
+            <div className={CHAPTER_ROW}>
+              <span className="min-w-0 flex-1 truncate">{making.failed}</span>
+              <button type="button" onClick={making.retry} className="shrink-0 font-medium text-foreground">
+                Try again
+              </button>
             </div>
           ) : null}
 

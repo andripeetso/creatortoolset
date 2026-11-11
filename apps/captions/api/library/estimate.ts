@@ -36,6 +36,8 @@ const DEVICE_PACE = 0.3;
 const PER_MIN_USD = { deepgram: 0.0043, openai: 0.006 };
 /** A phone's 1080p video, about 12 Mbit/s, until the library holds some of its own. */
 const GUESS_BYTES_PER_S = 1.5e6;
+/** A song or a voice memo: about 128 kbit/s. */
+const AUDIO_BYTES_PER_S = 16_000;
 const GUESS_PROXY_SHARE = 0.3;
 /** A playable copy takes about the clip's own length to make. */
 const PROXY_PACE = 1;
@@ -153,25 +155,47 @@ function total(steps: { step: LibraryStep; route: LibraryStepRoute; seconds: num
   return Math.max(line, ...steps.filter((s) => s.step !== "files" && !(s.step === "transcript" && s.route === "device")).map((s) => s.seconds));
 }
 
-/** What `clips` clips of `bytes` in all would take in this library for `username`. */
-export async function estimate(libraryId: string, username: string, clips: number, bytes: number): Promise<LibraryEstimate> {
+/** What is going in: `clips` files of `bytes` in all, `audio` of them sound only (`audioBytes`), from a music folder or not. */
+export interface Drop {
+  clips: number;
+  bytes: number;
+  audio?: number;
+  audioBytes?: number;
+  music?: boolean;
+}
+
+/**
+ * What a drop would take in this library for `username`. A music folder's files get the server's own steps only
+ * (worker.ts: no transcript, description or search by meaning); sound-only files are never described.
+ */
+export async function estimate(libraryId: string, username: string, drop: Drop): Promise<LibraryEstimate> {
   const db = libraryDb();
+  const { clips, music = false } = drop;
+  const audio = Math.min(clips, drop.audio ?? 0);
+  const audioBytes = Math.min(drop.bytes, drop.audioBytes ?? 0);
   const { secondsPerByte, proxyShare } = footageOf(db, libraryId);
-  const footage = bytes * secondsPerByte;
+  const footage = (drop.bytes - audioBytes) * secondsPerByte + audioBytes / AUDIO_BYTES_PER_S;
   const clipSeconds = clips ? footage / clips : 0;
   const routes = routesOf(libraryId, username);
+  // how many files each step takes
+  const count: Record<LibraryStep, number> = { files: clips, transcript: music ? 0 : clips, describe: music ? 0 : clips - audio, embed: music ? 0 : clips };
   const steps: LibraryStepEstimate[] = [];
   for (const step of STEPS) {
-    const { route, missing } = routes[step];
+    const n = count[step];
+    // a step no file here takes says nothing, as a step switched off
+    const { route, missing } = n ? routes[step] : { route: "off" as const, missing: undefined };
     const p = await perClip(db, step, route, clipSeconds, proxyShare);
-    steps.push({ step, route, ...(missing ? { missing } : {}), usd: p.usd * clips, seconds: (p.seconds * clips) / p.at, measured: p.measured });
+    // ponytail: a sound-only file is priced as a clip that never needs a playable copy; its thumbnail and duplicate check are counted anyway
+    const files = step === "files" && audio ? await perClip(db, "files", route, clipSeconds, 0) : null;
+    const seconds = files ? ((n - audio) * p.seconds + audio * files.seconds) / p.at : (p.seconds * n) / p.at;
+    steps.push({ step, route, ...(missing ? { missing } : {}), usd: p.usd * n, seconds, measured: p.measured });
   }
   const seconds = total(steps);
   const out: LibraryEstimate = { clips, minutes: footage / 60, steps, seconds };
-  if (routes.describe.route === "provider") {
+  if (count.describe && routes.describe.route === "provider") {
     const api = await perClip(db, "describe", "api", clipSeconds, proxyShare);
-    const faster = total(steps.map((s) => (s.step === "describe" ? { ...s, seconds: (api.seconds * clips) / api.at } : s)));
-    if (faster < seconds * 0.8) out.withApiKey = { seconds: faster, usd: api.usd * clips };
+    const faster = total(steps.map((s) => (s.step === "describe" ? { ...s, seconds: (api.seconds * count.describe) / api.at } : s)));
+    if (faster < seconds * 0.8) out.withApiKey = { seconds: faster, usd: api.usd * count.describe };
   }
   return out;
 }

@@ -5,7 +5,7 @@ import { env } from "./lib/env";
 import { keyFor } from "./my-keys";
 import { LOGINS, PLATFORMS, type ConnectorsView, type OwnInstagram, type LoginKind, type SocialPlatform } from "../contracts/connectors";
 import { accountsFromGrant, finishLogin, freshToken, loginUrl, pullAccount, refreshGrant } from "./lib/connectors/platforms";
-import { issuerFor, loginsOn, serviceRedeem, serviceRefresh, serviceStart, type Issuer } from "./lib/connectors/signin-service";
+import { issuerFor, loginsHere, serviceRedeem, serviceRefresh, serviceStart, viaService, type Issuer } from "./lib/connectors/signin-service";
 import { sessionSources } from "./lib/connectors/provider";
 import { printPosts } from "./lib/connectors/prints";
 import { findAccount, newState, patchAccount, publicAccount, readConnectors, removeAccount, saveAccounts, type StoredAccount } from "./lib/connectors/store";
@@ -40,7 +40,9 @@ async function view(c: Context<{ Variables: AuthVars }>): Promise<ConnectorsView
   const user = c.get("user");
   const apify = publicApifyStatus(await readApify(user.username));
   return {
-    logins: await loginsOn(),
+    // known without asking the sign-in service: it is asked when the person presses Add (/apps/:kind), never for a list
+    logins: loginsHere(),
+    viaService: viaService(),
     instagram: await ownInstagram(user.username),
     apify: { configured: apify.configured, valid: apify.valid },
     youtubeKey: !!keyFor(user, "YOUTUBE_API_KEY").key,
@@ -59,8 +61,16 @@ async function ownInstagram(username: string): Promise<OwnInstagram[]> {
 
 connectorsApp.get("/", async (c) => c.json(await view(c)));
 
-/** Which logins work here, by name only: this server's own apps (.env; the keys never leave it) or the sign-in service's. */
-connectorsApp.get("/apps", async (c) => c.json({ set: await loginsOn() }));
+/**
+ * Is this platform's sign-in on, asked when a person presses Add: this server's own app (.env; the keys never leave it)
+ * answers at once, else the sign-in service is asked whether it offers the platform.
+ */
+connectorsApp.get("/apps/:kind", async (c) => {
+  const kind = c.req.param("kind") as LoginKind;
+  if (nobody(c.get("user"))) return c.json({ error: "Connect accounts from your own account" }, 403);
+  if (!KINDS.includes(kind)) return c.json({ error: "Unknown login" }, 404);
+  return c.json({ on: !!(await issuerFor(kind)) });
+});
 
 /** TikTok's "verify URL ownership" file, at the site's root (boot.ts mounts this before the app). .env: TIKTOK_VERIFY_FILE + TIKTOK_VERIFY_CONTENT. */
 export function tiktokVerifyFile(name: string): string | null {

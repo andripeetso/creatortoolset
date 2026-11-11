@@ -547,8 +547,9 @@ export default function CleanPage() {
             className={buttonClass + " border border-zinc-700 text-zinc-300"}
           >
             <Plus className="h-4 w-4" />
-            {/* a phone shows the icon only (the name stays for a screen reader), so the bar's actions fit one row */}
-            <span className="sr-only sm:not-sr-only">Add videos</span>
+            {/* below a wide window the icon only (the name stays for a screen reader): the bar's actions fit a phone's one
+                row, and at tablet width the bar, one row that never wraps there, is not wider than the window */}
+            <span className="sr-only lg:not-sr-only">Add videos</span>
           </button>
           {!compareUploads && (
             <>
@@ -566,7 +567,7 @@ export default function CleanPage() {
                 ) : (
                   <Fingerprint className="h-4 w-4" />
                 )}
-                <span className="sr-only sm:not-sr-only">
+                <span className="sr-only lg:not-sr-only">
                   {row?.operation === "measuring"
                     ? "Measuring…"
                     : "Measure full scores"}

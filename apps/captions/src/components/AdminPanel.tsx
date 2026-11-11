@@ -1,6 +1,7 @@
-import { Fragment, useCallback, useEffect, useState, type FormEvent } from "react";
+import { Fragment, useState, type FormEvent } from "react";
 import { Check, Plus, Trash2 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { useCachedLoad } from "@/lib/local-cache";
 import { confirmDialog } from "@/lib/dialogs";
 import { TOOLS, TOOL_NAMES, type Tool } from "@contracts/tools";
 import { Button } from "@/components/ui/button";
@@ -10,8 +11,9 @@ import { fmtAgo, lastActiveText, msg } from "@/components/settings/helpers";
 
 /**
  * Settings → Admin (hosted servers, platform admins only): accounts, the apps each one gets (Access), and every project on
- * the server. Admin API: api/admin.ts. Ticks in Access save at once; a failed save is a toast and the grid keeps the
- * saved state.
+ * the server. Admin API: api/admin.ts. Ticks in Access move and save at once; a failed save is a toast and the tick goes
+ * back to the saved state. The lists are read through their saved copies (lib/local-cache.ts): the rows are there on the first frame
+ * of a reload and when the server can't be reached, and they are read again behind that and when an admin changes one.
  */
 
 /** Stored as the account's role: admin, team (files kept 28 days after they last change), or user (14). */
@@ -53,43 +55,25 @@ function fmtBytes(n: number): string {
 
 const tableCls = "w-full text-left text-xs";
 
+const read = <T,>(url: string) => () => fetch(url).then((r) => (r.ok ? (r.json() as Promise<T>) : Promise.reject(new Error(`Request failed (${r.status})`))));
+/** own: this window's saves read the list again too, so a tick saved while the list was still being read is not undone by that older read. */
+const ACCOUNTS_LIVE = { own: true };
+/** A project is deleted through its own tool's address, so the list follows those too. */
+const PROJECTS_LIVE = { topic: ["admin", "projects", "enhance"], own: true };
+
 export function AdminPanel({ tab }: { tab: AdminTab }) {
   const me = useAuth((s) => s.me);
-  const [users, setUsers] = useState<AdminUser[] | null>(null);
-  const [projects, setProjects] = useState<AdminProject[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const accounts = useCachedLoad<AdminUser[]>("/api/admin/users", read<AdminUser[]>("/api/admin/users"), ACCOUNTS_LIVE);
+  const made = useCachedLoad<AdminProject[]>(tab === "projects" ? "/api/admin/projects" : null, read<AdminProject[]>("/api/admin/projects"), PROJECTS_LIVE);
+  const users = accounts.data;
+  const projects = made.data;
+  // an error row only when there is nothing to show: with a saved copy the rows stay (offline, a server restart)
+  const usersFailed = !users && !!accounts.error;
+  const projectsFailed = !projects && !!made.error;
+  const refresh = () => accounts.refresh().catch(() => {});
+  const refreshProjects = () => made.refresh().catch(() => {});
   const [creating, setCreating] = useState(false);
   const [resetFor, setResetFor] = useState<AdminUser | null>(null);
-
-  const refresh = useCallback(async () => {
-    try {
-      const res = await fetch("/api/admin/users");
-      if (!res.ok) throw new Error();
-      setUsers(await res.json());
-      setLoadError(null);
-    } catch {
-      setLoadError("The accounts did not load.");
-    }
-  }, []);
-
-  const refreshProjects = useCallback(async () => {
-    try {
-      const res = await fetch("/api/admin/projects");
-      if (!res.ok) throw new Error();
-      setProjects(await res.json());
-      setLoadError(null);
-    } catch {
-      setLoadError("The projects did not load.");
-    }
-  }, []);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  useEffect(() => {
-    if (tab === "projects" && projects === null) void refreshProjects();
-  }, [tab, projects, refreshProjects]);
 
   /** One change to the server; a failure throws (the caller's toast says why) and the view keeps what it had. */
   const call = async (path: string, init: RequestInit) => {
@@ -102,8 +86,27 @@ export function AdminPanel({ tab }: { tab: AdminTab }) {
   };
   const attempt = (p: Promise<unknown>) => p.catch((e) => saveFailed(msg(e)));
 
-  const toggleApp = (u: AdminUser, t: Tool) =>
-    attempt(call(`/api/admin/users/${u.username}`, { method: "PATCH", body: JSON.stringify({ off: u.off.includes(t) ? u.off.filter((x) => x !== t) : [...u.off, t] }) }));
+  // Access: a tick shows at once. `ticked` holds an account's apps while their save is on its way; a save that lands goes
+  // into the saved list (which also drops a read that started before it), one that fails falls back to what was saved
+  const [ticked, setTicked] = useState<Record<string, Tool[]>>({});
+  const offOf = (u: AdminUser) => ticked[u.username] ?? u.off;
+  const toggleApp = (u: AdminUser, t: Tool) => {
+    const off = offOf(u).includes(t) ? offOf(u).filter((x) => x !== t) : [...offOf(u), t];
+    setTicked((m) => ({ ...m, [u.username]: off }));
+    return fetch(`/api/admin/users/${u.username}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ off }) })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error || `Could not save it (${res.status})`);
+        accounts.set((list) => list && list.map((x) => (x.username === u.username ? { ...x, off } : x)));
+      })
+      .catch((e) => saveFailed(msg(e)))
+      // a newer tick on the same account keeps its own entry
+      .finally(() =>
+        setTicked((m) => {
+          const { [u.username]: mine, ...rest } = m;
+          return mine === off ? rest : m;
+        }),
+      );
+  };
   const changeRole = (u: AdminUser, role: Role) => attempt(call(`/api/admin/users/${u.username}`, { method: "PATCH", body: JSON.stringify({ role }) }));
   const removeAccount = (u: AdminUser) => attempt(call(`/api/admin/users/${u.username}`, { method: "DELETE" }));
   const removeProject = async (p: AdminProject) => {
@@ -137,8 +140,8 @@ export function AdminPanel({ tab }: { tab: AdminTab }) {
           }
         >
           <Card>
-            {loadError && <ErrorRow title={loadError} retry={() => void refresh()} />}
-            {!loadError && users === null && <LoadingRow />}
+            {usersFailed && <ErrorRow title="The accounts did not load." retry={() => void refresh()} />}
+            {!users && !usersFailed && <LoadingRow />}
             {users?.length === 0 && <EmptyRow title="No accounts yet" />}
             {users?.map((u) => {
               const you = u.username === me?.username;
@@ -202,8 +205,8 @@ export function AdminPanel({ tab }: { tab: AdminTab }) {
     return (
       <Section id="admin-access" title="Access">
         <Card>
-          {loadError && <ErrorRow title={loadError} retry={() => void refresh()} />}
-          {!loadError && users === null && <LoadingRow />}
+          {usersFailed && <ErrorRow title="The accounts did not load." retry={() => void refresh()} />}
+          {!users && !usersFailed && <LoadingRow />}
           {users && (
             <div className="overflow-x-auto py-3 sm:py-4">
               <table className={`${tableCls} min-w-[640px]`}>
@@ -231,7 +234,7 @@ export function AdminPanel({ tab }: { tab: AdminTab }) {
                             </span>
                           </td>
                           {TOOLS.map((t) => (
-                            <Tick key={t} on={admin || !u.off.includes(t)} disabled={admin} title={`${TOOL_NAMES[t]} for ${u.username}`} onClick={() => void toggleApp(u, t)} />
+                            <Tick key={t} on={admin || !offOf(u).includes(t)} disabled={admin} title={`${TOOL_NAMES[t]} for ${u.username}`} onClick={() => void toggleApp(u, t)} />
                           ))}
                         </tr>
                       </Fragment>
@@ -249,8 +252,8 @@ export function AdminPanel({ tab }: { tab: AdminTab }) {
   return (
     <Section id="admin-projects" title="Projects">
       <Card>
-        {loadError && <ErrorRow title={loadError} retry={() => void refreshProjects()} />}
-        {!loadError && projects === null && <LoadingRow />}
+        {projectsFailed && <ErrorRow title="The projects did not load." retry={() => void refreshProjects()} />}
+        {!projects && !projectsFailed && <LoadingRow />}
         {projects?.length === 0 && <EmptyRow title="No projects yet" description="Projects made on this server show here, newest first." />}
         {projects && projects.length > 0 && (
           <div className="overflow-x-auto p-3 sm:p-4">

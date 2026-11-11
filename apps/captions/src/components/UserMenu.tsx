@@ -1,9 +1,14 @@
+import { useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 import {
   ChevronDown,
   BarChart3,
+  Check,
   Globe,
+  Laptop,
   LogOut,
+  Plus,
+  Server,
   Settings,
   UserRound,
 } from "lucide-react";
@@ -11,6 +16,8 @@ import { logout, useAuth } from "@/lib/auth";
 import { isPhoneHub } from "@/lib/mobile";
 import { accountItemsFor } from "@/lib/plugin";
 import { AccountAvatar } from "@/components/settings/AccountSection";
+import { hasThisMac, useThisMac } from "@/components/settings/ThisMacSection";
+import { switchServer } from "@/components/settings/ServersSection";
 import { webPlugins } from "@/plugins.gen";
 import { isPublicReviewPath, isPublicSharePath } from "./AuthGate";
 import {
@@ -33,18 +40,26 @@ export function useAccountInCorner(): boolean {
   );
 }
 
-/** The account menu, top right beside the project switcher: Settings, Community, Usage, the plug-ins' items, sign out. */
+/**
+ * The account menu, top right beside the project switcher: in the Mac app the servers it opens (pick one to switch),
+ * then Settings, Community, Usage, the plug-ins' items, sign out. A team lives on its server, so the servers are the teams.
+ */
 export function UserMenu() {
   const required = useAuth((s) => s.required);
   const me = useAuth((s) => s.me);
   const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  // the app's servers, asked only while the menu is open (its last answer paints at once)
+  const mac = useThisMac(open && hasThisMac());
+  const servers = mac?.servers ?? [];
+  const current = servers.find((v) => v.current);
 
   if (!me) return null;
   const pluginItems = accountItemsFor(me, webPlugins);
 
   return (
     <span className="flex items-center gap-0.5">
-      <DropdownMenu>
+      <DropdownMenu open={open} onOpenChange={setOpen}>
         <DropdownMenuTrigger asChild>
           <button
             title="Account menu"
@@ -71,6 +86,28 @@ export function UserMenu() {
             </span>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
+          {mac && (
+            <>
+              <DropdownMenuLabel className="text-[10px] font-normal uppercase tracking-wider text-muted-foreground">
+                Servers
+              </DropdownMenuLabel>
+              {servers.map((v) => (
+                <DropdownMenuItem
+                  key={v.id}
+                  onSelect={() => { if (!v.current) void switchServer(v, current); }}
+                  className="text-xs"
+                >
+                  {v.id === "this-mac" ? <Laptop /> : <Server />}
+                  <span className="min-w-0 flex-1 truncate">{v.name}</span>
+                  {v.current && <Check className="text-foreground" />}
+                </DropdownMenuItem>
+              ))}
+              <DropdownMenuItem onSelect={() => navigate("/settings/servers?add=1")} className="text-xs text-muted-foreground">
+                <Plus /> Add server
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+            </>
+          )}
           <DropdownMenuItem onSelect={() => navigate("/settings")} className="text-xs">
             <Settings /> Settings
             <DropdownMenuShortcut>⌘,</DropdownMenuShortcut>

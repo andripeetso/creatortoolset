@@ -1,7 +1,7 @@
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { sourcesOf, type StorageFolder } from "../../contracts/storage";
-import { canReach, folderFor, libraryPath, localDisks, parseStorageFile, parseStorageReport, storageFilePath, uploadRelayView } from "./storage";
+import { canReach, folderFor, isInside, libraryPath, localDisks, parseStorageFile, parseStorageReport, storageFilePath, uploadRelayView } from "./storage";
 
 // Two fake volumes: "/" (100 GB free of 200) and an external drive at /Volumes/EXT (5 of 20). Other paths do not exist.
 vi.mock("node:fs/promises", async (orig) => {
@@ -122,6 +122,13 @@ describe("where the files are: the library and its files", () => {
     expect(libraryPath("/")).toBe("~/Creator Toolset");
     expect(libraryPath("/Volumes/TEAM/")).toBe("/Volumes/TEAM/Creator Toolset");
     expect(libraryPath("/Volumes/TEAM")).toBe("/Volumes/TEAM/Creator Toolset");
+  });
+
+  it("a file is inside a music folder only below it, never beside or at it", () => {
+    expect(isInside("/m/Music/a.mp3", ["/m/Music"])).toBe(true);
+    expect(isInside("/m/Music/album/a.mp3", ["/x", "/m/Music"])).toBe(true);
+    expect(isInside("/m/Music2/a.mp3", ["/m/Music"])).toBe(false);
+    expect(isInside("/m/Music", ["/m/Music"])).toBe(false);
   });
 
   it("each account's list is its own file under storage/", () => {

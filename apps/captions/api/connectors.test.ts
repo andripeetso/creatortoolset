@@ -72,9 +72,11 @@ describe("connectors", () => {
 
   it("the apps come from the env only; a Business Meta app logs in by its configuration", async () => {
     // names only: which logins this server is set up for, never the keys
-    const apps = (await (await app.request("/api/connectors/apps")).json()) as { set: Record<string, boolean> };
-    expect(apps).toEqual({ set: { meta: true, google: false, tiktok: false } });
-    expect(JSON.stringify(apps)).not.toContain("secret");
+    const on = async (kind: string) => (await app.request(`/api/connectors/apps/${kind}`)).json();
+    expect([await on("meta"), await on("google"), await on("tiktok")]).toEqual([{ on: true }, { on: false }, { on: false }]);
+    const view = await (await app.request("/api/connectors")).json();
+    expect(view).toMatchObject({ logins: { meta: true, google: false, tiktok: false }, viaService: [] });
+    expect(JSON.stringify(view)).not.toContain("secret");
     vi.stubEnv("META_CONFIG_ID", "cfg7");
     try {
       const login = new URL((await app.request("/api/connectors/login/meta")).headers.get("location")!);
@@ -143,9 +145,11 @@ describe("the sign-in service", () => {
       return Response.json({}, { status: 404 });
     });
     try {
-      // Meta has its app here (META_APP_ID above): that one stays local; YouTube comes from the service
-      const view = (await (await app.request("/api/connectors")).json()) as { logins: Record<string, boolean> };
-      expect(view.logins).toEqual({ meta: true, google: true, tiktok: false });
+      // Meta has its app here (META_APP_ID above): that one stays local; YouTube and TikTok can only come from the
+      // service, which the list does not ask
+      const view = (await (await app.request("/api/connectors")).json()) as { logins: Record<string, boolean>; viaService: string[] };
+      expect(view).toMatchObject({ logins: { meta: true, google: true, tiktok: true }, viaService: ["google", "tiktok"] });
+      expect(asked).toEqual([]);
       expect((await app.request("/api/connectors/login/meta")).headers.get("location")).toContain("facebook.com");
 
       const start = new URL((await app.request("/api/connectors/login/google")).headers.get("location")!);
@@ -174,8 +178,33 @@ describe("the sign-in service", () => {
     }
   });
 
+  it("an install does not call the service by itself: the list asks nothing, Add on a platform does", async () => {
+    const { forgetServiceLogins } = await import("./lib/connectors/signin-service");
+    process.env.PLATFORM_SIGNIN_ORIGIN = "https://svc.test";
+    forgetServiceLogins();
+    const asked: string[] = [];
+    vi.stubGlobal("fetch", async (url: string | URL) => (asked.push(String(url)), Response.json({ meta: true, google: true, tiktok: false })));
+    const on = async (kind: string) => ((await (await app.request(`/api/connectors/apps/${kind}`)).json()) as { on: boolean }).on;
+    try {
+      // the rows: the platforms the app has sign-in code for, with no request to anyone
+      await app.request("/api/connectors");
+      await app.request("/api/connectors");
+      expect(asked).toEqual([]);
+      // this server's own app answers by itself
+      expect(await on("meta")).toBe(true);
+      expect(asked).toEqual([]);
+      // Add on a platform the service would give: asked now, once (its answer is kept a few minutes)
+      expect(await on("google")).toBe(true);
+      expect(await on("tiktok")).toBe(false);
+      expect(asked).toEqual(["https://svc.test/api/platform-signin"]);
+    } finally {
+      delete process.env.PLATFORM_SIGNIN_ORIGIN;
+      forgetServiceLogins();
+    }
+  });
+
   it("an offline service hides its sign-ins and is asked again only after a minute", async () => {
-    const { forgetServiceLogins, loginsOn } = await import("./lib/connectors/signin-service");
+    const { forgetServiceLogins, issuerFor } = await import("./lib/connectors/signin-service");
     process.env.PLATFORM_SIGNIN_ORIGIN = "https://svc.test";
     forgetServiceLogins();
     let n = 0;
@@ -184,8 +213,8 @@ describe("the sign-in service", () => {
       throw new Error("offline");
     });
     try {
-      expect(await loginsOn()).toEqual({ meta: true, google: false, tiktok: false });
-      await loginsOn();
+      expect([await issuerFor("meta"), await issuerFor("google")]).toEqual(["local", null]);
+      await issuerFor("google");
       expect(n).toBe(1);
     } finally {
       delete process.env.PLATFORM_SIGNIN_ORIGIN;

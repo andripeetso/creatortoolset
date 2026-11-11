@@ -1,6 +1,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 
 process.env.DATA_DIR = mkdtempSync(path.join(tmpdir(), "devices-"));
@@ -71,5 +72,54 @@ describe("device notices", () => {
     expect(currentSeq() - s0).toBe(2);
     saveReport(device.id, report(true));
     expect(currentSeq() - s0).toBe(3);
+  });
+
+  // The team's own computer has no account as its owner ("workspace"): the admins are the ones shown it.
+  it("tells every admin, and no one else, when the team's own computer comes online or its tools change", async () => {
+    const { currentSeq, syncApp } = await import("./sync");
+    const { touchDevice } = await import("./devices");
+    const { createUser } = await import("../users");
+    createUser("tinyadmin", "tiny-password", { role: "admin" });
+    createUser("otheradmin", "tiny-password", { role: "admin" });
+    createUser("tinymember", "tiny-password");
+    const { device } = pairDevice("workspace", "Tiny Team Mac");
+    const s0 = currentSeq();
+    touchDevice(device.id);
+    expect(currentSeq() - s0).toBe(2); // one notice per admin
+    saveReport(device.id, { at: Date.now(), drivers: [{ driver: "claude", installed: true, signedIn: true }], homes: [] });
+    expect(currentSeq() - s0).toBe(4);
+    // who heard: the newest "devices" change each account's stream says hello with
+    const heard = async (username: string) => {
+      const app = new Hono<{ Variables: { user: { username: string } } }>();
+      app.use("*", async (c, next) => (c.set("user", { username }), next()));
+      app.route("/", syncApp as never);
+      const ac = new AbortController();
+      const res = await app.request("/events", { signal: ac.signal });
+      const first = new TextDecoder().decode((await res.body!.getReader().read()).value);
+      ac.abort();
+      return (JSON.parse(/data: (.*)/.exec(first)![1]) as { topics: Record<string, number> }).topics.devices ?? 0;
+    };
+    expect(await heard("tinyadmin")).toBeGreaterThan(s0);
+    expect(await heard("otheradmin")).toBeGreaterThan(s0);
+    expect(await heard("tinymember")).toBe(0);
+  });
+
+  // An admin's computer is in every admin's list (api/devices.ts), so each of them hears its changes; a member's is its own.
+  it("tells every admin about an admin's computer, and only the member about a member's", async () => {
+    const { currentSeq } = await import("./sync");
+    const { renameDevice, revokeDevice, touchDevice } = await import("./devices");
+    const s0 = currentSeq();
+    const { device } = pairDevice("tinyadmin", "Tiny Admin Mac");
+    expect(currentSeq() - s0).toBe(2); // tinyadmin and otheradmin
+    touchDevice(device.id);
+    renameDevice(device.id, "Tiny Studio Mac");
+    saveReport(device.id, { at: Date.now(), drivers: [], homes: [] }, "0.12.0");
+    expect(currentSeq() - s0).toBe(8);
+    await revokeDevice(device.id);
+    expect(currentSeq() - s0).toBe(10);
+    const s1 = currentSeq();
+    const mine = pairDevice("tinymember", "Tiny Member Mac").device;
+    touchDevice(mine.id);
+    expect(currentSeq() - s1).toBe(2); // the member alone, twice
   });
 });

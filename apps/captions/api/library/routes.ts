@@ -469,14 +469,14 @@ const settingsOf = (json: string): LibrarySettings => {
   return { describe: s.describe ?? SETTING_DEFAULTS.describe, embed: s.embed ?? SETTING_DEFAULTS.embed };
 };
 
-// GET /api/library/:id/estimate?clips&bytes → LibraryEstimate: what processing that many clips would take, for the caller
+// GET /api/library/:id/estimate?clips&bytes&audio&audioBytes&music → LibraryEstimate: what processing that many clips would take, for the caller
 libraryApp.get("/:id/estimate", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
   if (!libraryRole(user.username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
-  const clips = Math.min(1_000_000, Math.max(0, Math.floor(Number(c.req.query("clips")) || 0)));
-  const bytes = Math.max(0, Number(c.req.query("bytes")) || 0);
-  return c.json(await estimate(libraryId, user.username, clips, bytes));
+  const n = (k: string) => Math.max(0, Number(c.req.query(k)) || 0);
+  const clips = Math.min(1_000_000, Math.floor(n("clips")));
+  return c.json(await estimate(libraryId, user.username, { clips, bytes: n("bytes"), audio: Math.floor(n("audio")), audioBytes: n("audioBytes"), music: c.req.query("music") === "1" }));
 });
 
 // GET /api/library/:id/progress → LibraryProgress: the processing still to do

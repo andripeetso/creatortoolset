@@ -610,13 +610,19 @@ final class RelayTests: XCTestCase {
 
     func testGeminiAndGrokGetTheAppsServerForOneRunInTheirOwnFolder() throws {
         // Gemini: only that server, and the rule that lets its calls run in plan mode; nothing more without it
-        XCTAssertEqual(geminiArguments(model: "", mcpPolicy: "/t/p.toml"),
+        XCTAssertEqual(geminiArguments(model: "", policy: "/t/p.toml", mcp: true),
                        ["-o", "stream-json", "--approval-mode", "plan", "--skip-trust", "--allowed-mcp-server-names", "creator-toolset", "--policy", "/t/p.toml"])
-        XCTAssertTrue(geminiMcpPolicy.contains(#"mcpName = "creator-toolset""#) && geminiMcpPolicy.contains(#"modes = ["plan"]"#))
+        XCTAssertEqual(geminiArguments(model: "", policy: "/t/p.toml"), ["-o", "stream-json", "--approval-mode", "plan", "--skip-trust", "--policy", "/t/p.toml"])
+        XCTAssertTrue(geminiPolicy(mcp: true).contains(#"mcpName = "creator-toolset""#) && geminiPolicy(mcp: true).contains(#"modes = ["plan"]"#))
+        // no way out of plan mode and no writes or shell in any run, in any mode; the app's server only with it
+        for mcp in [true, false] {
+            XCTAssertTrue(geminiPolicy(mcp: mcp).hasSuffix(#"toolName = ["exit_plan_mode", "write_file", "replace", "run_shell_command"]\#ndecision = "deny"\#npriority = 100\#n"#))
+        }
+        XCTAssertFalse(geminiPolicy(mcp: false).contains("creator-toolset"))
         // Grok: that server's calls allowed; the rest of its command line as without it
         let prompt = "/tmp/p.txt"
-        let plain = grokArguments(cwd: "/tmp/run", model: "", effort: "low", system: "S", web: false, folder: false, promptFile: prompt)
-        let tools = grokArguments(cwd: "/tmp/run", model: "", effort: "low", system: "S", web: false, folder: false, promptFile: prompt, mcp: true)
+        let plain = grokArguments(cwd: "/tmp/run", model: "", effort: "low", system: "S", web: false, promptFile: prompt)
+        let tools = grokArguments(cwd: "/tmp/run", model: "", effort: "low", system: "S", web: false, promptFile: prompt, mcp: true)
         XCTAssertEqual(tools, plain + ["--allow", "MCPTool(creator-toolset__*)"])
         XCTAssertFalse(plain.contains("--allow"))
         // the files name the server and the variable the token is in, never the token
@@ -637,12 +643,12 @@ final class RelayTests: XCTestCase {
     func testGeminiAndGrokRunsGetTheTokenInTheirEnvironmentAndTheServerInTheirFolder() throws {
         let dir = temp()
         let seen = dir.appendingPathComponent("seen.txt")
-        // a program that prints `help` for --help, and for a run writes its arguments, the token it was given and the
-        // server file in its folder, then answers as Gemini or Grok does
+        // a program that prints `help` for --help, and for a run writes its sign-in variables, its arguments, the token it was
+        // given and the server file in its folder, then answers as Gemini or Grok does
         func stub(_ name: String, help: String, answer: String) throws -> String {
             let file = dir.appendingPathComponent(name)
             let script = "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then echo '\(help)'; exit 0; fi\ncat > /dev/null\n"
-                + "{ echo \"$* token=$\(codexTokenEnv)\"; cat .gemini/settings.json .grok/config.toml 2>/dev/null; } > '\(seen.path)'\n"
+                + "{ echo \"gca=$GOOGLE_GENAI_USE_GCA browser=$NO_BROWSER $* token=$\(codexTokenEnv)\"; cat .gemini/settings.json .grok/config.toml 2>/dev/null; } > '\(seen.path)'\n"
                 + "echo '\(answer)'\n"
             try script.write(to: file, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
@@ -658,15 +664,21 @@ final class RelayTests: XCTestCase {
             XCTAssertEqual(try run(cli), "ok")
             let now = try String(contentsOf: seen, encoding: .utf8)
             XCTAssertTrue(now.contains(" token=\(token)\n"), driver)
+            // Gemini's Google-account sign-in for the run, never an API key
+            if driver == "gemini" { XCTAssertTrue(now.hasPrefix("gca=true browser=true ")) }
             XCTAssertEqual(now.components(separatedBy: token).count, 2, driver)   // in the environment only: no argument, no file
             XCTAssertTrue(now.contains("http://127.0.0.1:9/api/mcp"), driver)
             XCTAssertTrue(now.contains(driver == "gemini" ? "--allowed-mcp-server-names creator-toolset --policy" : "--allow MCPTool(creator-toolset__*)"), driver)
-            // a Gemini too old for a policy file answers with the message alone
+            // a Gemini too old for a policy file is not run at all: nothing else holds its rules
             if let old {
-                XCTAssertEqual(try run(old), "ok")
-                let then = try String(contentsOf: seen, encoding: .utf8)
-                XCTAssertFalse(then.contains("creator-toolset"))
-                XCTAssertTrue(then.contains(" token=\n"))
+                try FileManager.default.removeItem(at: seen)
+                XCTAssertThrowsError(try run(old)) { XCTAssertEqual(($0 as? ClaudeFailure)?.message, geminiTooOld) }
+                XCTAssertFalse(FileManager.default.fileExists(atPath: seen.path))
+                // a current Gemini without the app's tools still gets the rules (no file writes), and no MCP server
+                let plain = request(#"{"id":"g8","system":"s","user":"u","driver":"gemini","effort":"low"}"#)
+                XCTAssertEqual(try runAnswer(plain, try requestOptions(plain), cli: cli, work: temp(), send: { _ in true }, step: { _ in }).text, "ok")
+                let rules = try String(contentsOf: seen, encoding: .utf8)
+                XCTAssertTrue(rules.contains(" --policy ") && !rules.contains("--allowed-mcp-server-names"))
             }
         }
     }
@@ -694,20 +706,64 @@ final class RelayTests: XCTestCase {
         XCTAssertNil(driverEnv(base: base)["OPENAI_API_KEY"])
     }
 
-    func testGrokCommandLineHasTheReadToolsOnlyInAFolder() {
+    func testGrokCommandLineNeverHasFileTools() {
         let prompt = "/tmp/p.txt"
-        let folder = grokArguments(cwd: "/tmp/run", model: "", effort: "low", system: "S", web: false, folder: true, promptFile: prompt)
-        XCTAssertEqual(folder[folder.firstIndex(of: "--prompt-file")! + 1], prompt)
-        XCTAssertEqual(folder[folder.firstIndex(of: "--tools")! + 1], "read_file,grep,list_dir")
-        XCTAssertTrue(folder.contains("--disable-web-search"))
-        XCTAssertEqual(folder[folder.firstIndex(of: "--permission-mode")! + 1], "dontAsk")
-        XCTAssertEqual(folder[folder.firstIndex(of: "--disallowed-tools")! + 1], "run_terminal_cmd,search_replace,Agent")
-        let web = grokArguments(cwd: "/tmp/run", model: "grok-4", effort: "high", system: "S", web: true, folder: true, promptFile: prompt)
-        XCTAssertEqual(web[web.firstIndex(of: "--tools")! + 1], "read_file,grep,list_dir,web_search,web_fetch")
+        let plain = grokArguments(cwd: "/tmp/run", model: "", effort: "low", system: "S", web: false, promptFile: prompt)
+        XCTAssertEqual(plain[plain.firstIndex(of: "--prompt-file")! + 1], prompt)
+        // no web: one built-in that touches no file (an empty list would offer them all)
+        XCTAssertEqual(plain[plain.firstIndex(of: "--tools")! + 1], "todo_write")
+        XCTAssertTrue(plain.contains("--disable-web-search"))
+        XCTAssertEqual(plain[plain.firstIndex(of: "--permission-mode")! + 1], "dontAsk")
+        XCTAssertEqual(plain[plain.firstIndex(of: "--disallowed-tools")! + 1], "run_terminal_cmd,search_replace,Agent")
+        let web = grokArguments(cwd: "/tmp/run", model: "grok-4", effort: "high", system: "S", web: true, promptFile: prompt)
+        XCTAssertEqual(web[web.firstIndex(of: "--tools")! + 1], "web_search,web_fetch")
         XCTAssertFalse(web.contains("--disable-web-search"))
         XCTAssertEqual(web[web.firstIndex(of: "-m")! + 1], "grok-4")
-        let plain = grokArguments(cwd: "/tmp/run", model: "", effort: "low", system: "S", web: false, folder: false, promptFile: prompt)
-        XCTAssertEqual(plain[plain.firstIndex(of: "--tools")! + 1], "")   // no folder, no web: no built-in tools at all
+        // reads of any path, edits, writes and shell are refused in every run: there is no folder run
+        func denied(_ args: [String]) -> [String] { args.indices.filter { args[$0] == "--deny" }.map { args[$0 + 1] } }
+        for args in [plain, web] {
+            XCTAssertEqual(denied(args), ["Read(**)", "Edit", "Write", "Bash"])
+            XCTAssertFalse(args.joined(separator: " ").contains("read_file"))
+        }
+    }
+
+    func testGrokGetsItsTextFilesInThePromptAndNoOtherFile() {
+        XCTAssertEqual(grokInline("Do it.", files: [:]), "Do it.")
+        let text = grokInline("Do it.", files: ["notes/b.md": "second", "a.md": "first"])
+        XCTAssertEqual(text, "The files this request needs are below, each whole under its path.\n\n"
+            + "<file path=\"a.md\">\nfirst\n</file>\n\n<file path=\"notes/b.md\">\nsecond\n</file>\n\nDo it.")
+        XCTAssertNil(grokInline("Look.", files: ["a.md": "first", "shot.png": "base64:iVBORw0KGgo="]))
+    }
+
+    /// A Grok run never sits in a folder of files: a Workshop session's files reach it in the prompt, it runs in an empty
+    /// folder of its own, and a picture is refused before the program starts.
+    func testAGrokRunHasNoFolderOfFiles() throws {
+        let dir = temp()
+        let seen = dir.appendingPathComponent("seen.txt")
+        let file = dir.appendingPathComponent("grok")
+        // a program that writes where it runs, what is in that folder, its arguments and its prompt, then answers as Grok does
+        let script = "#!/bin/sh\nfor a in \"$@\"; do if [ \"$p\" = 1 ]; then f=\"$a\"; p=0; fi; [ \"$a\" = --prompt-file ] && p=1; done\n"
+            + "{ pwd; ls -A; echo \"ARGS $*\"; cat \"$f\"; } > '\(seen.path)'\n"
+            + #"echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'"# + "\n"
+        try script.write(to: file, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
+        let work = temp()
+        let run = { (body: String) in
+            let req = self.request(#"{"id":"gf","system":"s","user":"Sum it up.","driver":"grok","effort":"low","session":"sess-1","web":true,"# + body + "}")
+            return try runAnswer(req, try requestOptions(req), cli: file.path, work: work, send: { _ in true }, step: { _ in }).text
+        }
+        XCTAssertEqual(try run(#""files":{"sources/talk.md":"CANARY in the session"}"#), "ok")
+        let now = try String(contentsOf: seen, encoding: .utf8)
+        XCTAssertTrue(now.contains("<file path=\"sources/talk.md\">\nCANARY in the session\n</file>\n\nSum it up."))
+        XCTAssertFalse(now.contains("read them there"))                       // no folder note: there is nothing to read
+        XCTAssertFalse(now.components(separatedBy: "ARGS")[0].contains("talk.md"))   // the folder it runs in holds no file of the request
+        XCTAssertFalse(now.contains(work.path))                               // and it is not the Workshop session's folder
+        XCTAssertTrue(now.contains("--tools web_search,web_fetch") && now.contains("--deny Read(**)"))
+        // nothing of the session was written on this Mac for it
+        XCTAssertFalse(FileManager.default.fileExists(atPath: work.appendingPathComponent("workshop").path))
+        try FileManager.default.removeItem(at: seen)
+        XCTAssertThrowsError(try run(#""files":{"shot.png":"base64:iVBORw0KGgo="}"#)) { XCTAssertEqual(($0 as? ClaudeFailure)?.message, grokNoFiles) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: seen.path))
     }
 
     /// Lines captured from grok on this Mac when it was not signed in: an init line, then the error result.
@@ -843,7 +899,7 @@ final class RelayTests: XCTestCase {
     func testRealGeminiToolsRun() throws {
         guard ProcessInfo.processInfo.environment["CT_REAL_GEMINI_TOOLS"] == "1" else { throw XCTSkip("set CT_REAL_GEMINI_TOOLS=1, CT_REAL_SITE and CT_REAL_KEYS") }
         let cli = ProcessInfo.processInfo.environment["CT_REAL_GEMINI_BIN"] ?? binary("gemini", home: FileManager.default.homeDirectoryForCurrentUser) ?? "gemini"
-        XCTAssertTrue(geminiTakesMcp(cli))
+        XCTAssertEqual(geminiTakesPolicy(cli), true)
         try realToolsRun("gemini", cli: cli)
     }
 
@@ -890,6 +946,67 @@ final class RelayTests: XCTestCase {
         let answer = try runAnswer(req, try requestOptions(req), cli: cli, work: temp(), send: { _ in true }, step: { _ in })
         print("REAL GROK: text=\(answer.text) usage=\(answer.usage)")
         XCTAssertTrue(answer.text.localizedCaseInsensitiveContains("OK"))
+    }
+
+    /// CT_REAL_GROK_BIN=<a grok> CT_REAL_GROK_HOME=<a scratch folder> swift test --filter GrokStandIn: real grok runs the way the
+    /// relay runs them, needing no account: grok runs in a home of its own made under CT_REAL_GROK_HOME, whose model is a
+    /// stand-in on 127.0.0.1 that answers with tool calls on a file outside the run folder (a read, a listing, a search, a
+    /// `tail -f` through monitor, a write), then the app's MCP tool (a stand-in server too). In neither run may one of those
+    /// file calls run, and the MCP call must: plain, and the assistant with a pasted text file and the web on, whose file
+    /// reaches the model in the prompt (a Grok run has no folder of files).
+    func testRealGrokStandInRun() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let cli = env["CT_REAL_GROK_BIN"], let base = env["CT_REAL_GROK_HOME"] else {
+            throw XCTSkip("set CT_REAL_GROK_BIN and CT_REAL_GROK_HOME to run grok against a stand-in model")
+        }
+        let fm = FileManager.default
+        let root = URL(fileURLWithPath: base).appendingPathComponent("standin-\(UUID().uuidString)")
+        let home = root.appendingPathComponent("home"), outside = root.appendingPathComponent("outside")
+        for dir in [home.appendingPathComponent(".grok"), home.appendingPathComponent("tmp"), outside] {
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
+        let canary = "CANARY-" + UUID().uuidString, canaryFile = outside.appendingPathComponent("canary.txt").path
+        let written = outside.appendingPathComponent("written.txt").path
+        try canary.write(toFile: canaryFile, atomically: true, encoding: .utf8)
+        let token = "ctj_" + String(repeating: "5", count: 48)
+        func call(_ name: String, _ input: [String: Any]) -> [String: Any] { ["name": name, "arguments": input] }
+        let server = try GrokStandIn(token: token, steps: [
+            [call("read_file", ["target_file": canaryFile]), call("read_file", ["target_file": "notes.md"]),
+             call("list_dir", ["target_directory": outside.path]), call("grep", ["pattern": "CANARY", "path": outside.path]),
+             call("monitor", ["command": "tail -n 1 -f " + canaryFile, "description": "watch", "timeout_ms": 5000]),
+             call("write", ["file_path": written, "content": "WRITTEN"]), call("search_tool", ["query": "creator-toolset lookup"])],
+            [call("use_tool", ["tool_name": "creator-toolset__lookup", "tool_input": [String: Any]()])],
+        ])
+        try "[models]\ndefault = \"standin\"\n\n[model.standin]\nmodel = \"standin\"\nbase_url = \"http://127.0.0.1:\(server.port)/v1\"\napi_key = \"standin\"\n"
+            .write(to: home.appendingPathComponent(".grok/config.toml"), atomically: true, encoding: .utf8)
+        let old = (env["HOME"], env["TMPDIR"])
+        setenv("HOME", home.path, 1)
+        setenv("TMPDIR", home.appendingPathComponent("tmp").path, 1)   // grok's own temporary files (the run folders stay in ours)
+        defer {
+            if let home = old.0 { setenv("HOME", home, 1) }
+            if let tmp = old.1 { setenv("TMPDIR", tmp, 1) } else { unsetenv("TMPDIR") }
+        }
+        let mcp = #","mcp":{"url":"http://127.0.0.1:\#(server.port)/api/mcp","token":"\#(token)"}"#
+        for (name, extra) in [("plain", #","web":false"#), ("pasted", #","web":true,"files":{"notes.md":"Tiny Acrobatics notes"}"#)] {
+            server.reset()
+            let req = request(#"{"id":"standin","system":"S","user":"Do the task.","driver":"grok","effort":"low""# + extra + mcp + "}")
+            let answer = try runAnswer(req, try requestOptions(req), cli: cli, work: root, send: { _ in true }, step: { _ in })
+            let seen = server.bodies
+            print("GROK STAND-IN \(cliVersion(cli) ?? cli) \(name): offered \(server.offered.sorted()), outside file read: \(seen.contains(canary))")
+            XCTAssertEqual(answer.text, "DONE", name)
+            // the app's tool is still found and runs
+            XCTAssertTrue(server.results.contains { $0.contains("Look up the newest Workshop project.") }, name)
+            XCTAssertTrue(server.results.contains { $0.contains("MCP-LOOKUP-RESULT") }, name)
+            XCTAssertFalse(fm.fileExists(atPath: written), name)
+            XCTAssertFalse(seen.contains(canary), name)   // the file outside never reached the model
+            XCTAssertTrue(server.offered.isDisjoint(with: ["read_file", "list_dir", "grep", "write", "monitor"]), "\(name): \(server.offered)")
+            if name == "plain" {
+                XCTAssertTrue(server.offered.isSubset(of: ["todo_write", "search_tool", "use_tool", "session_title"]), "\(server.offered)")
+            } else {
+                XCTAssertTrue(seen.contains("<file path=\\\"notes.md\\\">\\nTiny Acrobatics notes"), name)   // in the prompt, as the model got it (JSON)
+            }
+        }
+        try? fm.removeItem(at: root)
     }
 
     /// CT_REAL_MUSE=1 swift test --filter RealMuse: real runs through Muse Code, the way the relay runs it. CT_REAL_MUSE_BIN names
@@ -1226,5 +1343,113 @@ final class RelayTests: XCTestCase {
         XCTAssertFalse(answer.text.isEmpty)
         XCTAssertTrue(answer.text.localizedCaseInsensitiveContains("OK"))
         XCTAssertEqual(answer.usage["models"] as? [String], ["claude-opus-5-5"])
+    }
+}
+
+/// A stand-in model (chat completions, streamed) and MCP server on 127.0.0.1 for testRealGrokStandInRun. A chat request with
+/// tools gets the calls of the next step (one step per tool-call message it already carries), then "DONE"; one without
+/// tools gets "ok". The MCP side has one tool, `lookup`, and answers only the bearer token. Every request body is kept.
+private final class GrokStandIn {
+    private(set) var port = 0
+    private let fd = socket(AF_INET, SOCK_STREAM, 0)
+    private let token: String
+    private let steps: [[[String: Any]]]
+    private let lock = NSLock()
+    private var kept: [String] = []
+    private var tools: Set<String> = []
+    private var answers: [String] = []
+
+    init(token: String, steps: [[[String: Any]]]) throws {
+        self.token = token
+        self.steps = steps
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+        var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let ok = withUnsafeMutablePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, len) == 0 && listen(fd, 16) == 0 && getsockname(fd, $0, &len) == 0 }
+        }
+        guard ok else { throw RelayError(message: "the stand-in got no port") }
+        port = Int(UInt16(bigEndian: addr.sin_port))
+        Thread { [fd] in
+            while case let client = accept(fd, nil, nil), client >= 0 { Thread { self.serve(client) }.start() }
+        }.start()
+    }
+
+    deinit { close(fd) }
+
+    var bodies: String { lock.withLock { kept.joined(separator: "\n") } }
+    var offered: Set<String> { lock.withLock { tools } }
+    /// what the tools answered, as the model was sent it
+    var results: [String] { lock.withLock { answers } }
+    func reset() { lock.withLock { kept = []; tools = []; answers = [] } }
+
+    /// One request on `client`, answered with Connection: close.
+    private func serve(_ client: Int32) {
+        defer { close(client) }
+        var data = Data(), buf = [UInt8](repeating: 0, count: 65536)
+        let gap = Data("\r\n\r\n".utf8)
+        func more() -> Bool { let n = read(client, &buf, buf.count); if n > 0 { data.append(buf, count: n) }; return n > 0 }
+        while data.range(of: gap) == nil { guard more() else { return } }
+        let split = data.range(of: gap)!
+        let head = String(decoding: data[..<split.lowerBound], as: UTF8.self)
+        let length = head.components(separatedBy: "\r\n").first { $0.lowercased().hasPrefix("content-length:") }
+            .flatMap { Int($0.dropFirst(15).trimmingCharacters(in: .whitespaces)) } ?? 0
+        while data.count - split.upperBound < length { guard more() else { return } }
+        let body = data.subdata(in: split.upperBound..<split.upperBound + length)
+        let line = head.prefix { $0 != "\r" }.split(separator: " ")
+        let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:]
+        lock.withLock { kept.append(String(decoding: body, as: UTF8.self)) }
+        let (status, type, reply): (String, String, Data)
+        if line.first != "POST" {
+            (status, type, reply) = ("405 Method Not Allowed", "text/plain", Data())
+        } else if line.dropFirst().first?.hasPrefix("/api/mcp") == true {
+            (status, type, reply) = mcp(json, authorized: head.contains("Bearer " + token))
+        } else {
+            (status, type, reply) = ("200 OK", "text/event-stream", chat(json))
+        }
+        let out = Data("HTTP/1.1 \(status)\r\nContent-Type: \(type)\r\nContent-Length: \(reply.count)\r\nConnection: close\r\n\r\n".utf8) + reply
+        _ = out.withUnsafeBytes { write(client, $0.baseAddress, out.count) }
+    }
+
+    private func chat(_ req: [String: Any]) -> Data {
+        let names = (req["tools"] as? [[String: Any]] ?? []).compactMap { ($0["function"] as? [String: Any])?["name"] as? String }
+        let messages = req["messages"] as? [[String: Any]] ?? []
+        lock.withLock {
+            tools.formUnion(names)
+            answers += messages.filter { $0["role"] as? String == "tool" }.map { "\($0["content"] ?? "")" }
+        }
+        let step = messages.filter { $0["role"] as? String == "assistant" && $0["tool_calls"] != nil }.count
+        var delta: [String: Any] = ["role": "assistant", "content": names.isEmpty ? "ok" : "DONE"]
+        if !names.isEmpty, step < steps.count {
+            delta = ["role": "assistant", "tool_calls": steps[step].enumerated().map { i, call in
+                ["index": i, "id": "call_\(step)_\(i)", "type": "function",
+                 "function": ["name": call["name"]!, "arguments": String(decoding: try! JSONSerialization.data(withJSONObject: call["arguments"]!), as: UTF8.self)]]
+            }]
+        }
+        let finish = delta["tool_calls"] == nil ? "stop" : "tool_calls"
+        let chunks: [[String: Any]] = [["choices": [["index": 0, "delta": delta]]],
+                                       ["choices": [["index": 0, "delta": [String: Any](), "finish_reason": finish]],
+                                        "usage": ["prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12]]]
+        let lines = chunks.map { "data: " + String(decoding: try! JSONSerialization.data(withJSONObject: $0.merging(["id": "c", "object": "chat.completion.chunk", "created": 0, "model": "standin"]) { a, _ in a }), as: UTF8.self) }
+        return Data((lines + ["data: [DONE]"]).map { $0 + "\n\n" }.joined().utf8)
+    }
+
+    private func mcp(_ msg: [String: Any], authorized: Bool) -> (String, String, Data) {
+        guard authorized else { return ("401 Unauthorized", "text/plain", Data()) }
+        guard let id = msg["id"] else { return ("202 Accepted", "text/plain", Data()) }
+        var reply: [String: Any] = ["jsonrpc": "2.0", "id": id]
+        switch msg["method"] as? String {
+        case "initialize":
+            let version = (msg["params"] as? [String: Any])?["protocolVersion"] ?? "2025-06-18"
+            reply["result"] = ["protocolVersion": version, "capabilities": ["tools": [String: Any]()], "serverInfo": ["name": "standin", "version": "1"]]
+        case "tools/list":
+            reply["result"] = ["tools": [["name": "lookup", "description": "Look up the newest Workshop project.", "inputSchema": ["type": "object", "properties": [String: Any]()]]]]
+        case "tools/call":
+            reply["result"] = ["content": [["type": "text", "text": "MCP-LOOKUP-RESULT: Tiny Acrobatics"]]]
+        default:
+            reply["error"] = ["code": -32601, "message": "no such method"]
+        }
+        return ("200 OK", "application/json", try! JSONSerialization.data(withJSONObject: reply))
     }
 }
