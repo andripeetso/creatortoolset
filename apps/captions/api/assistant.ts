@@ -778,6 +778,8 @@ export function saidInChat(username: string, turn: string): Array<{ id: string; 
   const typed = (m: AssistantMessage, i: number) => m.role === "user" && !m.task && !sent[i - 1]?.choices?.includes(m.text);
   return sent.map((m, i) => (typed(m, i) ? { id: m.id, text: m.text, at: m.at } : null)).slice(-HISTORY).filter((m) => !!m).reverse();
 }
+/** The check a quote is held to against those; an editing style's notes are held to it too (api/editor/routes.ts). */
+export { foundIn } from "./lib/memory";
 
 /** A reply is being written in this chat now: a run waits for it to end. */
 export function chatBusy(username: string, chat: string | undefined): boolean {

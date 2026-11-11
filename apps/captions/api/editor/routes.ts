@@ -1,6 +1,8 @@
 import { Hono, type Context } from "hono";
 import { EDIT_SLOTS, EDIT_STEPS, type EditSlot, type EditStep, type VersionPlan } from "../../contracts/editor";
-import type { AuthVars } from "../auth";
+import { MEMORY_QUOTE_MIN, tidy } from "../../contracts/memory";
+import { foundIn, saidInChat } from "../assistant";
+import { jobTurn, type AuthVars } from "../auth";
 import { libraryDb } from "../library/db";
 import { enqueueJob } from "../library/jobs";
 import { ZipFile } from "yazl";
@@ -10,7 +12,7 @@ import { LINK_TTL_S, mediaPaths } from "./media";
 import { toOtio } from "./otio";
 import { qaOf } from "./qa";
 import { allEdits, cleanBrief, createEdit, draftNames, editorDefaults, editRole, gradeOf, NoCollection, NoStyle, readDraft, readEdit, postFiles, readStep, saveEdit, saveStep, setChosenDefault, sourcesWorkspace, styleFields, summaryOf, viewOf, type EditMeta } from "./store";
-import { createStyle, deleteStyle, stylesView, updateStyle } from "./styles";
+import { createStyle, deleteStyle, findStyle, stylesView, updateStyle } from "./styles";
 import { stopEdit } from "./worker";
 
 /**
@@ -78,18 +80,52 @@ editorApp.put("/defaults/:slot", async (c) => {
 // the person's editing styles (contracts/editor-styles.ts); registered before /:id, as the defaults are
 editorApp.get("/styles", (c) => c.json(stylesView(c.get("user").username)));
 
+const NOT_TYPED = "Not saved: the notes are not the user's own words in this chat. Send a whole phrase they typed themselves, word for word, or leave notes out: they write them on the style's sheet (AI Editor, Editing styles).";
+
+/**
+ * A style's notes go into the script prompt of every later edit in that style, so no AI writes them. A save that comes
+ * from a reply the assistant is writing (it carries that reply's job token) keeps notes only when they stand in
+ * something the person typed in that chat: the check a remembered fact is held to (saidInChat, foundIn, and its
+ * shortest quote, so notes are never put together a word at a time), and what is kept is their wording. A scheduled
+ * run has nobody typing, so it saves no notes. A save from the person's own page, or from their own AI with an access
+ * key, is theirs and is not checked. True when the save is refused.
+ */
+function notesNotTyped(c: C, b: Record<string, unknown>): boolean {
+  const auth = c.req.header("authorization");
+  if (!/^Bearer ctj_/.test(auth ?? "")) return false;
+  const said = saidInChat(c.get("user").username, jobTurn(auth) ?? "") ?? [];
+  for (const k of ["notes", "addNotes"]) {
+    const sent = b[k];
+    if (typeof sent !== "string" || !sent.trim()) continue;
+    const typed = tidy(sent).length < MEMORY_QUOTE_MIN ? null : said.map((m) => foundIn(sent, m.text)).find((t) => !!t);
+    if (!typed) return true;
+    b[k] = typed;
+  }
+  return false;
+}
+
 /** A new style from the fields sent, or with `fromEdit` from an edit of the caller's own (its choices, never its brief, script or footage). */
 editorApp.post("/styles", async (c) => {
   const user = c.get("user").username;
   const b = await body(c);
+  if (notesNotTyped(c, b)) return c.json({ error: NOT_TYPED, code: "not_typed" }, 409);
   const from = b.fromEdit === undefined ? undefined : readEdit(String(b.fromEdit));
   if (b.fromEdit !== undefined && !editRole(user, from ?? null)) return notFound(c);
   const made = createStyle(user, b, from ?? undefined);
   return typeof made === "string" ? c.json({ error: made, code: "invalid" }, 400) : c.json(made);
 });
 
+/** Changes the fields sent. `addNotes` adds a line under the notes the style has (one it already holds is not added twice). */
 editorApp.put("/styles/:id", async (c) => {
-  const changed = updateStyle(c.get("user").username, c.req.param("id"), await body(c));
+  const user = c.get("user").username;
+  const b = await body(c);
+  if (notesNotTyped(c, b)) return c.json({ error: NOT_TYPED, code: "not_typed" }, 409);
+  if (typeof b.addNotes === "string" && b.addNotes.trim()) {
+    const had = findStyle(user, c.req.param("id"))?.notes ?? "";
+    const add = b.addNotes.trim();
+    b.notes = had.toLowerCase().includes(add.toLowerCase()) ? had : [had, add].filter(Boolean).join("\n");
+  }
+  const changed = updateStyle(user, c.req.param("id"), b);
   if (!changed) return notFound(c);
   return typeof changed === "string" ? c.json({ error: changed, code: "invalid" }, 400) : c.json(changed);
 });
