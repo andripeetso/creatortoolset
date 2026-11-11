@@ -3,8 +3,8 @@ import { ENERGY_PER_SECOND } from "./analyze";
 
 /**
  * The AI Editor's cut: one take of a script line → the source frames to use. Trims the take to the line's words (a
- * previous take's tail and junk after it go), cuts restarts ("so this is | so this is for"), then tightens pauses by
- * loudness. Pure: words, loudness and numbers in, segments out.
+ * previous take's tail and junk after it go), cuts restarts ("so this is | so this is for", and the ones the line's
+ * text shows), then tightens pauses by loudness. Pure: words, loudness and numbers in, segments out.
  */
 
 /**
@@ -44,38 +44,68 @@ export const tokens = (text: string): string[] =>
 
 const tokenOf = (w: TimedWord) => tokens(w.w).join(" ");
 
+/** What a stray word between two matched ones costs: a matched word is worth reaching across one stray word, not two. */
+const SKIP = 0.5;
+
 /**
- * [i0, i1) of the words that say `text`: the longest common subsequence of their tokens, without matches far from the
- * main run (another take's words). When fewer than half the line's words are found (the text is a paraphrase), the whole
- * take stays.
+ * The words that say `text`, as pairs [word, text token] in order: the most matched words, less SKIP for every stray
+ * word between two of them (a word the text has no token for; a word that stands where the text has another one is
+ * a misheard word and costs nothing), the later ones on a tie. So the line is its last reading, whole: a previous
+ * take's tail and a false start fall outside it (also when one of the two readings has a word misheard), and a phrase
+ * said twice inside the line does not end it. Empty when fewer than half the line's words are found (a paraphrase).
  */
-export function trim(words: TimedWord[], text: string): [number, number] {
+function said(words: TimedWord[], text: string): [number, number][] {
   const a = words.map(tokenOf);
   const b = tokens(text);
-  if (!a.length || !b.length) return [0, words.length];
-  // LCS table, from the end so the walk goes forward
-  const L = Array.from({ length: a.length + 1 }, () => new Int32Array(b.length + 1));
-  for (let i = a.length - 1; i >= 0; i--) for (let j = b.length - 1; j >= 0; j--) L[i]![j] = a[i] === b[j] ? L[i + 1]![j + 1]! + 1 : Math.max(L[i + 1]![j]!, L[i]![j + 1]!);
-  // skip a word whenever a later one matches as well: a restart keeps its last reading, a previous take's tail never anchors the line
-  const pairs: [number, number][] = [];
-  for (let i = 0, j = 0; i < a.length && j < b.length; ) {
-    if (L[i + 1]![j] === L[i]![j]) i++;
-    else if (a[i] === b[j]) pairs.push([i++, j++]);
-    else j++;
-  }
-  if (pairs.length * 2 < b.length) return [0, words.length];
-  // the main run: the longest stretch of pairs consecutive on both sides
-  let best = [0, 1];
-  for (let s = 0, k = 1; k <= pairs.length; k++) {
-    const consecutive = k < pairs.length && pairs[k]![0] === pairs[k - 1]![0] + 1 && pairs[k]![1] === pairs[k - 1]![1] + 1;
-    if (!consecutive) {
-      if (k - s > best[1]! - best[0]!) best = [s, k];
-      s = k;
+  // open[i][j]: the best run of pairs within words < i and tokens < j, ready for another pair; at[i][j]: the best one that ends in the pair (i, j)
+  const open = Array.from({ length: a.length + 1 }, () => new Float32Array(b.length + 1).fill(-Infinity));
+  const at = Array.from({ length: a.length }, () => new Float32Array(b.length).fill(-Infinity));
+  let end: [number, number] | undefined;
+  for (let i = 0; i <= a.length; i++)
+    for (let j = 0; j <= b.length; j++) {
+      if (i && j) open[i]![j] = Math.max(open[i - 1]![j]! - SKIP, open[i]![j - 1]!, open[i - 1]![j - 1]!, at[i - 1]![j - 1]!);
+      if (i === a.length || j === b.length || a[i] !== b[j]) continue;
+      at[i]![j] = 1 + Math.max(0, open[i]![j]!);
+      if (!end || at[i]![j]! >= at[end[0]]![end[1]]!) end = [i, j];
     }
+  const pairs: [number, number][] = [];
+  for (let [i, j] = end ?? [-1, 0]; i >= 0; ) {
+    pairs.unshift([i, j]);
+    if (open[i]![j]! <= 0) break;
+    // back to the pair before: the word right before when it matches (the later reading), else past a token, a misheard word, a stray word
+    while (at[i - 1]![j - 1] !== open[i]![j]) {
+      if (open[i]![j - 1] === open[i]![j]) j--;
+      else {
+        if (open[i - 1]![j - 1] === open[i]![j]) j--;
+        i--;
+      }
+    }
+    i--;
+    j--;
   }
-  const [mi, mj] = pairs[best[0]!]!;
-  const keep = pairs.filter(([i, j]) => Math.abs(i - mi) - Math.abs(j - mj) <= 3);
-  return [keep[0]![0], keep[keep.length - 1]![0] + 1];
+  return pairs.length * 2 < b.length ? [] : pairs;
+}
+
+/** [i0, i1) of the words that say `text` (said): its last reading, without another take's words around it. A paraphrase keeps the whole take. */
+export function trim(words: TimedWord[], text: string): [number, number] {
+  const pairs = said(words, text);
+  return pairs.length ? [pairs[0]![0], pairs[pairs.length - 1]![0] + 1] : [0, words.length];
+}
+
+/**
+ * Restarts only the line's text shows, because the two readings differ (the stumble itself, or a word misheard):
+ * between two words the text has side by side, the take says words the text does not have, and they begin with the
+ * word the line carries on with. The same sizes as restarts(): three words or more, or fewer across a pause.
+ */
+function strays(words: TimedWord[], pairs: [number, number][], c: CutSettings): [number, number][] {
+  const out: [number, number][] = [];
+  for (let p = 1; p < pairs.length; p++) {
+    const [i0, j0] = pairs[p - 1]!;
+    const [i1, j1] = pairs[p]!;
+    const again = j1 === j0 + 1 && i1 > i0 + 1 && tokenOf(words[i0 + 1]!) === tokenOf(words[i1]!);
+    if (again && (i1 - i0 > 3 || words[i1]!.s - words[i1 - 1]!.e >= c.restartPauseS)) out.push([i0 + 1, i1]);
+  }
+  return out;
 }
 
 /** `a` is `b` or a cut-off start of it ("you" of "your"). */
@@ -137,6 +167,16 @@ function quietest(e: Float32Array, lo: number, hi: number): number {
   return at;
 }
 
+/** The middle of the first `need` quiet frames in [lo, hi], read forward (step 1) or back (-1); undefined when it has no such pause. */
+function pause(e: Float32Array, lo: number, hi: number, step: 1 | -1, need: number, threshold: number): number | undefined {
+  lo = Math.max(lo, 0);
+  hi = Math.min(hi, e.length - 1);
+  for (let f = step > 0 ? lo : hi, run = 0; f >= lo && f <= hi; f += step) {
+    run = e[f]! < threshold ? run + 1 : 0;
+    if (run === need) return f - step * (need >> 1);
+  }
+}
+
 /** Speech pieces of frames [a, b): silences of minSilence or more cut, keeping a little each side; never outside [a, b). */
 export function speechPieces(e: Float32Array, a: number, b: number, fps: number, c: CutSettings = CUT): [number, number][] {
   const fr = (s: number) => Math.max(1, Math.round(s * fps));
@@ -193,32 +233,38 @@ export interface CutResult {
  */
 export function cutTake(words: TimedWord[], from: number, to: number, text: string, energy: Float32Array, fps: number, c: CutSettings = CUT): CutResult {
   const take = words.slice(from, to);
-  const [t0, t1] = trim(take, text);
+  const pairs = said(take, text);
+  const [t0, t1] = pairs.length ? [pairs[0]![0], pairs[pairs.length - 1]![0] + 1] : [0, take.length];
   if (t1 <= t0) return { segments: [], removed: [] };
   const i0 = from + t0;
   const i1 = from + t1;
   const e = frameEnergy(energy, fps);
   const f = (s: number) => Math.round(s * fps);
   const pad = Math.round(fps / 3);
-  // the cut between two words: the quietest frame between them (±2 frames, word timings are loose)
-  const between = (i: number): number => {
+  // the cut between two words, in the pause next to the words that stay (the first one after them, the last one before
+  // them), so speech between two takes that nobody wrote down stays out; with no pause there, the quietest frame
+  // between the two words (±2 frames, word timings are loose)
+  const between = (i: number, stay: "before" | "after"): number => {
     const prev = words[i - 1];
     const next = words[i];
     if (!prev) return Math.max(f(next!.s) - pad, 0);
     if (!next) return f(prev.e) + pad;
     const [lo, hi] = [f(prev.e), f(next.s)].sort((x, y) => x - y);
-    return e.length ? quietest(e, lo! - 2, hi! + 2) : Math.round((lo! + hi!) / 2);
+    if (!e.length) return Math.round((lo! + hi!) / 2);
+    return pause(e, lo! - 2, hi! + 2, stay === "before" ? 1 : -1, Math.max(1, Math.round(c.minSilenceS * fps)), c.threshold) ?? quietest(e, lo! - 2, hi! + 2);
   };
-  const head = between(i0);
-  const tail = between(i1);
+  const head = between(i0, "after");
+  const tail = between(i1, "before");
   const removed: string[] = [];
-  const said = (a: number, b: number) => words.slice(a, b).map((w) => w.w).join(" ");
-  if (i0 > from) removed.push(`before the line: ${said(from, i0)}`);
-  if (i1 < to) removed.push(`after the line: ${said(i1, to)}`);
+  const quote = (a: number, b: number) => words.slice(a, b).map((w) => w.w).join(" ");
+  if (i0 > from) removed.push(`before the line: ${quote(from, i0)}`);
+  if (i1 < to) removed.push(`after the line: ${quote(i1, to)}`);
   let ranges: [number, number][] = [[head, tail]];
-  for (const [i, j] of restarts(words.slice(i0, i1), c)) {
-    removed.push(`false start: ${said(i0 + i, i0 + j)}`);
-    ranges = without(ranges, i === 0 ? head : between(i0 + i), between(i0 + j));
+  const gone = restarts(words.slice(i0, i1), c);
+  for (const [i, j] of strays(take, pairs, c)) if (!gone.some(([x, y]) => i - t0 < y && j - t0 > x)) gone.push([i - t0, j - t0]);
+  for (const [i, j] of gone) {
+    removed.push(`false start: ${quote(i0 + i, i0 + j)}`);
+    ranges = without(ranges, i === 0 ? head : between(i0 + i, "before"), between(i0 + j, "after"));
   }
   // no loudness read (a file with no sound frames): keep the word ranges as they are
   const segments = e.length ? ranges.flatMap(([a, b]) => speechPieces(e, a, b, fps, c)) : ranges;
