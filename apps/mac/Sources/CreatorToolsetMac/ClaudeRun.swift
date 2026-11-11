@@ -210,14 +210,18 @@ func geminiAnswer(_ req: RelayRequest, _ opts: RelayOptions, cli: String, work: 
     // the assistant: the app's MCP server for this run, in the run's own fresh folder (never a Workshop session's)
     var env = driverEnv(base: ProcessInfo.processInfo.environment).merging(geminiSignInEnv) { _, new in new }
     var policy = ""
-    if let mcp = req.mcp, cwd.path.hasPrefix(tmp.path), geminiTakesMcp(cli) {
+    let takesPolicy = geminiTakesPolicy(cli)
+    let mcp = req.mcp.flatMap { cwd.path.hasPrefix(tmp.path) && takesPolicy ? $0 : nil }
+    if let mcp {
         try runMcpFiles(driver: "gemini", url: mcp.url, cwd: cwd)
-        let file = tmp.appendingPathComponent("creator-toolset.toml")
-        try geminiMcpPolicy.write(to: file, atomically: true, encoding: .utf8)
-        policy = file.path
         env.merge(runMcpEnv(driver: "gemini", token: mcp.token)) { _, new in new }
     }
-    let outcome = try runStream(cli: cli, args: geminiArguments(model: opts.model, mcpPolicy: policy), cwd: cwd,
+    if takesPolicy {
+        let file = tmp.appendingPathComponent("policy.toml")
+        try geminiPolicy(mcp: mcp != nil).write(to: file, atomically: true, encoding: .utf8)
+        policy = file.path
+    }
+    let outcome = try runStream(cli: cli, args: geminiArguments(model: opts.model, policy: policy, mcp: mcp != nil), cwd: cwd,
                                 env: env, prompt: prompt, folder: folder,
                                 send: send, step: step, tmp: tmp, stream: GeminiStream(cwd: cwd.path))
     if outcome.killed {
@@ -280,7 +284,7 @@ func grokAnswer(_ req: RelayRequest, _ opts: RelayOptions, cli: String, work: UR
     try requestText(req.user, folder: folder).write(to: promptFile, atomically: true, encoding: .utf8)
     // the assistant: the app's MCP server for this run, in the run's own fresh folder (never a Workshop session's)
     var env = driverEnv(base: ProcessInfo.processInfo.environment)
-    // ponytail: no version check; grok 1.0.4 and 1.0.77 measured. Add one like geminiTakesMcp if an older grok turns up.
+    // ponytail: no version check; grok 1.0.4 and 1.0.77 measured. Add one like geminiTakesPolicy if an older grok turns up.
     let mcp = req.mcp.flatMap { cwd.path.hasPrefix(tmp.path) ? $0 : nil }
     if let mcp {
         try runMcpFiles(driver: "grok", url: mcp.url, cwd: cwd)

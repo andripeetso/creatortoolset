@@ -522,40 +522,55 @@ func round4(_ x: Double) -> Double {
 let geminiTools = ["read_file": "Read", "grep_search": "Grep", "glob": "Glob", "google_web_search": "WebSearch"]
 
 /// the Mac relay gemini_cmd: `gemini -o stream-json`, the prompt on stdin (no -p: the CLI reads a piped prompt). Plan mode
-/// is its read tools only, no edits or shell; --skip-trust for the run's own folder. This CLI has no effort flag.
-/// `mcpPolicy`: the app's own MCP server for this run (runMcpFiles): only that server of all the person's is in the run, and
-/// the rule in that file lets its calls run unasked in plan mode, which otherwise refuses them.
-func geminiArguments(model: String, mcpPolicy: String = "") -> [String] {
+/// is its read tools only, no edits or shell, while geminiPolicy keeps the run in it; --skip-trust for the run's own folder.
+/// This CLI has no effort flag.
+/// `policy`: the file of geminiPolicy's rules for this run (a CLI that takes one). `mcp`: the app's own MCP server is in this
+/// run (runMcpFiles), and only that server of all the person's is.
+func geminiArguments(model: String, policy: String = "", mcp: Bool = false) -> [String] {
     var args = ["-o", "stream-json", "--approval-mode", "plan", "--skip-trust"]
-    if !mcpPolicy.isEmpty { args += ["--allowed-mcp-server-names", "creator-toolset", "--policy", mcpPolicy] }
+    if mcp { args += ["--allowed-mcp-server-names", "creator-toolset"] }
+    if !policy.isEmpty { args += ["--policy", policy] }
     if !model.isEmpty { args += ["-m", model] }
     return args
 }
 
-/// Whether this Gemini CLI takes a policy file for one run (`--policy`); an older one answers with the message alone.
-func geminiTakesMcp(_ cli: String) -> Bool {
-    runQuick(cli, ["--help"], seconds: 15)?.contains("--policy") ?? false
+/// Whether this Gemini CLI takes a policy file for one run (`--policy`); an older one runs without (and without the app's
+/// tools). Asked once per program file, so a run doesn't wait for a second Gemini start (about a second).
+func geminiTakesPolicy(_ cli: String) -> Bool {
+    let key = cli + "@" + "\((try? FileManager.default.attributesOfItem(atPath: realPath(cli)))?[.modificationDate] ?? "")"
+    if let known = geminiPolicyLock.withLock({ geminiPolicyCLIs[key] }) { return known }
+    let takes = runQuick(cli, ["--help"], seconds: 15)?.contains("--policy") ?? false
+    geminiPolicyLock.withLock { geminiPolicyCLIs[key] = takes }
+    return takes
 }
+private let geminiPolicyLock = NSLock()
+private var geminiPolicyCLIs: [String: Bool] = [:]
 
-/// The rules for a Gemini run with the app's MCP server, in its policy engine (user-tier rules): that server's calls run unasked
-/// in plan mode, which otherwise refuses them, and the file writes are taken away. Plan mode alone still let a run write a
-/// Markdown plan into Gemini's own ~/.gemini/tmp/<project>/<session>/plans (measured 2026-11-10, Gemini CLI 0.68); with the
-/// second rule write_file and replace are not tools at all.
-let geminiMcpPolicy = """
-    [[rule]]
-    mcpName = "creator-toolset"
-    toolName = "*"
-    decision = "allow"
-    priority = 100
-    modes = ["plan"]
+/// A Gemini run's rules, in its policy engine (user-tier rules). Plan mode alone does not hold (measured 2026-11-10, Gemini CLI
+/// 0.68, its model's calls replayed): a run could write a Markdown plan into Gemini's own ~/.gemini/tmp folder, and
+/// exit_plan_mode, even naming a plan that doesn't exist, was approved with nobody asked; the run then left plan mode, wrote
+/// into its folder and ran a shell command that read a file outside and wrote another there. With this rule, in every mode,
+/// none of those four is a tool, and the folder's files are still read. `mcp`: the app's own MCP server's calls run unasked in
+/// plan mode, which otherwise refuses them.
+func geminiPolicy(mcp: Bool) -> String {
+    let deny = """
+        [[rule]]
+        toolName = ["exit_plan_mode", "write_file", "replace", "run_shell_command"]
+        decision = "deny"
+        priority = 100
 
-    [[rule]]
-    toolName = ["write_file", "replace"]
-    decision = "deny"
-    priority = 100
-    modes = ["plan"]
+        """
+    let allow = """
+        [[rule]]
+        mcpName = "creator-toolset"
+        toolName = "*"
+        decision = "allow"
+        priority = 100
+        modes = ["plan"]
 
-    """
+        """
+    return mcp ? allow + "\n" + deny : deny
+}
 
 /// The app's own MCP server for one Gemini or Grok run (the assistant), as files in the run's own fresh folder: that folder's
 /// settings (Gemini, `.gemini/settings.json`) or config (Grok, `.grok/config.toml`) name the server, and the token is read
@@ -565,8 +580,8 @@ let geminiMcpPolicy = """
 /// against stand-in servers and a real Creator Toolset server: this server's calls (a lookup and a change) ran unasked with
 /// the job token, a server in the person's own settings got none, and nothing was written to the person's settings. Gemini,
 /// with or without a folder of files: a read, listing, search or glob outside the run folder was refused ("Path not in
-/// workspace"), it has no shell or web_fetch in plan mode, and writes go only to its own plans folder (geminiMcpPolicy takes
-/// that away too). Grok's tools: grokArguments.
+/// workspace"), and it has no shell or web_fetch in plan mode, as long as it stays there (geminiPolicy). Grok's tools:
+/// grokArguments.
 func runMcpFiles(driver: String, url: String, cwd: URL) throws {
     let fm = FileManager.default
     if driver == "gemini" {
@@ -643,8 +658,9 @@ func codexPictures(_ files: [String: String], cwd: URL) -> [String] {
 
 /// grok's tool ids for its read tools and its web tools (the Mac relay GROK_READ, GROK_WEB). The read tools take any path:
 /// no permission rule or tool switch keeps them in the folder. Its `--sandbox strict` keeps reads to the folder, the system
-/// folders, ~/.grok and the temp folders, but it refuses to start where Docker's socket links outside the places it knows,
-/// and it can't save a renewed sign-in in ~/.grok (measured 2026-11-10, grok 1.0.77), so it is not used.
+/// folders, ~/.grok and the temp folders, but it refuses to start where /var/run/docker.sock links outside the places it
+/// knows, and it can't write in ~/.grok outside its sessions, where its sign-in is saved (measured 2026-11-10, grok 1.0.77),
+/// so it is not used.
 let grokReadTools = "read_file,grep,list_dir"
 let grokWebTools = "web_search,web_fetch"
 

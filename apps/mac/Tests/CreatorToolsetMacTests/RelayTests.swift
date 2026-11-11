@@ -610,10 +610,15 @@ final class RelayTests: XCTestCase {
 
     func testGeminiAndGrokGetTheAppsServerForOneRunInTheirOwnFolder() throws {
         // Gemini: only that server, and the rule that lets its calls run in plan mode; nothing more without it
-        XCTAssertEqual(geminiArguments(model: "", mcpPolicy: "/t/p.toml"),
+        XCTAssertEqual(geminiArguments(model: "", policy: "/t/p.toml", mcp: true),
                        ["-o", "stream-json", "--approval-mode", "plan", "--skip-trust", "--allowed-mcp-server-names", "creator-toolset", "--policy", "/t/p.toml"])
-        XCTAssertTrue(geminiMcpPolicy.contains(#"mcpName = "creator-toolset""#) && geminiMcpPolicy.contains(#"modes = ["plan"]"#))
-        XCTAssertTrue(geminiMcpPolicy.contains(#"toolName = ["write_file", "replace"]\#ndecision = "deny""#))   // no plan files either
+        XCTAssertEqual(geminiArguments(model: "", policy: "/t/p.toml"), ["-o", "stream-json", "--approval-mode", "plan", "--skip-trust", "--policy", "/t/p.toml"])
+        XCTAssertTrue(geminiPolicy(mcp: true).contains(#"mcpName = "creator-toolset""#) && geminiPolicy(mcp: true).contains(#"modes = ["plan"]"#))
+        // no way out of plan mode and no writes or shell in any run, in any mode; the app's server only with it
+        for mcp in [true, false] {
+            XCTAssertTrue(geminiPolicy(mcp: mcp).hasSuffix(#"toolName = ["exit_plan_mode", "write_file", "replace", "run_shell_command"]\#ndecision = "deny"\#npriority = 100\#n"#))
+        }
+        XCTAssertFalse(geminiPolicy(mcp: false).contains("creator-toolset"))
         // Grok: that server's calls allowed; the rest of its command line as without it
         let prompt = "/tmp/p.txt"
         let plain = grokArguments(cwd: "/tmp/run", model: "", effort: "low", system: "S", web: false, folder: false, promptFile: prompt)
@@ -659,8 +664,8 @@ final class RelayTests: XCTestCase {
             XCTAssertEqual(try run(cli), "ok")
             let now = try String(contentsOf: seen, encoding: .utf8)
             XCTAssertTrue(now.contains(" token=\(token)\n"), driver)
-            // Gemini's Google-account sign-in for the run, never an API key; Grok gets neither
-            XCTAssertTrue(now.hasPrefix(driver == "gemini" ? "gca=true browser=true " : "gca= browser= "), driver)
+            // Gemini's Google-account sign-in for the run, never an API key
+            if driver == "gemini" { XCTAssertTrue(now.hasPrefix("gca=true browser=true ")) }
             XCTAssertEqual(now.components(separatedBy: token).count, 2, driver)   // in the environment only: no argument, no file
             XCTAssertTrue(now.contains("http://127.0.0.1:9/api/mcp"), driver)
             XCTAssertTrue(now.contains(driver == "gemini" ? "--allowed-mcp-server-names creator-toolset --policy" : "--allow MCPTool(creator-toolset__*)"), driver)
@@ -671,6 +676,11 @@ final class RelayTests: XCTestCase {
                 XCTAssertFalse(then.contains("creator-toolset"))
                 XCTAssertTrue(then.contains(" token=\n"))
                 XCTAssertTrue(then.hasPrefix("gca=true browser=true "))   // a run without the app's tools too
+                // a current Gemini without the app's tools still gets the rules (no file writes), and no MCP server
+                let plain = request(#"{"id":"g8","system":"s","user":"u","driver":"gemini","effort":"low"}"#)
+                XCTAssertEqual(try runAnswer(plain, try requestOptions(plain), cli: cli, work: temp(), send: { _ in true }, step: { _ in }).text, "ok")
+                let rules = try String(contentsOf: seen, encoding: .utf8)
+                XCTAssertTrue(rules.contains(" --policy ") && !rules.contains("--allowed-mcp-server-names"))
             }
         }
     }
@@ -854,7 +864,7 @@ final class RelayTests: XCTestCase {
     func testRealGeminiToolsRun() throws {
         guard ProcessInfo.processInfo.environment["CT_REAL_GEMINI_TOOLS"] == "1" else { throw XCTSkip("set CT_REAL_GEMINI_TOOLS=1, CT_REAL_SITE and CT_REAL_KEYS") }
         let cli = ProcessInfo.processInfo.environment["CT_REAL_GEMINI_BIN"] ?? binary("gemini", home: FileManager.default.homeDirectoryForCurrentUser) ?? "gemini"
-        XCTAssertTrue(geminiTakesMcp(cli))
+        XCTAssertTrue(geminiTakesPolicy(cli))
         try realToolsRun("gemini", cli: cli)
     }
 
@@ -936,7 +946,7 @@ final class RelayTests: XCTestCase {
             .write(to: home.appendingPathComponent(".grok/config.toml"), atomically: true, encoding: .utf8)
         let old = (env["HOME"], env["TMPDIR"])
         setenv("HOME", home.path, 1)
-        setenv("TMPDIR", home.appendingPathComponent("tmp").path, 1)   // the run folders too
+        setenv("TMPDIR", home.appendingPathComponent("tmp").path, 1)   // grok's own temporary files (the run folders stay in ours)
         defer {
             if let home = old.0 { setenv("HOME", home, 1) }
             if let tmp = old.1 { setenv("TMPDIR", tmp, 1) } else { unsetenv("TMPDIR") }
