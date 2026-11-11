@@ -118,7 +118,7 @@ export function JobStep({ mine, have, job, onPick, ai }: { mine: readonly Tool[]
 
   return (
     <div className="space-y-5">
-      <div role="radiogroup" aria-label="What do you want to do first?" className="grid grid-cols-2 gap-2 min-[720px]:grid-cols-3">
+      <div role="radiogroup" aria-label="What do you want to do first?" className="grid gap-2 sm:grid-cols-2">
         {jobsFor(mine).map((j) => (
           <Choice
             key={j}
