@@ -121,7 +121,7 @@ export const createCollection = (libraryId: string, input: { name: string; kind?
   send<Collection>(`/api/library/${libraryId}/collections`, "POST", input);
 
 export const changeFolderItems = (libraryId: string, collectionId: string, assetIds: string[], add: boolean) =>
-  send<{ added?: number; removed?: number }>(`/api/library/${libraryId}/collections/${collectionId}/items`, add ? "POST" : "DELETE", { assetIds });
+  send<unknown>(`/api/library/${libraryId}/collections/${collectionId}/items`, add ? "POST" : "DELETE", { assetIds });
 
 export const renameCollection = (libraryId: string, collectionId: string, name: string) =>
   send<Collection>(`/api/library/${libraryId}/collections/${collectionId}`, "PATCH", { name });
