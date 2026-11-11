@@ -6,10 +6,12 @@ import { pluginFootageTarget } from "../lib/plugin";
 
 /** The folder footage picked from this computer is filed in: the talking takes an edit is built on (A-roll). */
 export const A_ROLL = "A-roll";
+/** It lists every clip sorted or filed as A-roll (library/roll.ts); a clip uploaded into it is filed as A-roll. */
+const A_ROLL_QUERY = JSON.stringify({ roll: "a" });
 
 /**
  * Where footage added to an edit from outside the library is filed: a plug-in's target when one answers (editor.ingest),
- * else the account's own library's A-roll folder, made on first use. Null when the account has no library it may write to.
+ * else the account's own library's A-roll folder (a smart folder over the clips' roll), made on first use. Null when the account has no library it may write to.
  */
 export async function footageTargetFor(username: string): Promise<FootageTarget | null> {
   const plugin = await pluginFootageTarget(username);
@@ -20,15 +22,16 @@ export async function footageTargetFor(username: string): Promise<FootageTarget 
     | undefined;
   if (!lib || !libraryRole(username, lib.id)) return null;
   const found = d
-    .prepare("SELECT id FROM collections WHERE library_id = ? AND kind = 'manual' AND parent_id IS NULL AND name = ?")
-    .get(lib.id, A_ROLL) as { id: string } | undefined;
+    .prepare("SELECT id FROM collections WHERE library_id = ? AND kind = 'smart' AND query = ? ORDER BY created_at, id LIMIT 1")
+    .get(lib.id, A_ROLL_QUERY) as { id: string } | undefined;
   if (found) return { libraryId: lib.id, collectionId: found.id };
   // ponytail: two first-time requests at once can make two A-roll folders; add a unique index when that shows up
   const id = `col_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
-  d.prepare("INSERT INTO collections (id, library_id, parent_id, name, kind, query, created_at, created_by) VALUES (?, ?, NULL, ?, 'manual', NULL, ?, ?)").run(
+  d.prepare("INSERT INTO collections (id, library_id, parent_id, name, kind, query, created_at, created_by) VALUES (?, ?, NULL, ?, 'smart', ?, ?, ?)").run(
     id,
     lib.id,
     A_ROLL,
+    A_ROLL_QUERY,
     Date.now(),
     username,
   );

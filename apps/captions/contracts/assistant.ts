@@ -126,8 +126,8 @@ export interface AssistantFile {
   size: number;
 }
 
-/** Where the assistant's use_file can send a dropped file: Video Notes, Review or Caption Studio. */
-export const FILE_USES = ["notes", "review", "captions"] as const;
+/** Where the assistant's use_file can send a dropped file: Video Notes, Review, Caption Studio or the Media Library. */
+export const FILE_USES = ["notes", "review", "captions", "library"] as const;
 export type AssistantFileUse = (typeof FILE_USES)[number];
 
 /** An earlier conversation, kept when a new one starts (Earlier chats in the dock). */

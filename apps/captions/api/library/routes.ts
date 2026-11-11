@@ -20,6 +20,7 @@ import { similar } from "./similar";
 import { assetRef, canSee, sourceById, sourcesVisibleTo } from "./sources";
 import { externalAssetRef, externalRefById } from "./refs";
 import { buildAssetQuery, indexAsset, pageOf, parseSearch, type CardRow } from "./query";
+import { fileRoll, rollFolder } from "./roll";
 
 /**
  * Media Library routes (tasks/media-library-plan.md, sections 4 and 7). Mounted at /api/library.
@@ -114,6 +115,8 @@ export function recordVersion(
        SELECT ?, ?, COALESCE(MAX(position), 0) + 1, ? FROM collection_items WHERE collection_id = ?`,
     ).run(o.collectionId, assetId, o.by, o.collectionId);
   }
+  const roll = o.collectionId ? rollFolder(d, o.libraryId, o.collectionId) : null; // uploaded into the A-roll folder: filed as A-roll
+  if (roll) fileRoll(d, assetId, roll);
   indexAsset(d, assetId);
   enqueueJob(d, o.libraryId, o.versionId, "probe", o.by);
   return assetId;

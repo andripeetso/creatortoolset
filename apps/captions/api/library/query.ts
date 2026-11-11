@@ -64,6 +64,8 @@ export function parseSearch(p: Record<string, string | undefined>): SearchQuery 
     ...(p.cursor ? { cursor: p.cursor } : {}),
     ...(p.collectionId ? { collectionId: p.collectionId.slice(0, 64) } : {}),
     ...(p.trashed === "1" ? { trashed: true } : {}),
+    ...(p.roll === "a" || p.roll === "b" ? { roll: p.roll } : {}),
+    ...(p.versions ? { versions: p.versions.split(",").filter(Boolean).slice(0, MAX_LIMIT) } : {}),
     ...(Object.keys(picked).length ? { facets: picked } : {}),
     limit: Math.min(MAX_LIMIT, Math.max(1, Math.floor(limit ?? DEFAULT_LIMIT))),
   };
@@ -74,7 +76,7 @@ export const CARD = `a.id AS id, a.library_id AS library_id, a.kind AS kind, a.t
   EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'thumb') AS has_thumb,
   (SELECT group_concat(tag, char(31)) FROM asset_tags t WHERE t.asset_id = a.id) AS tags,
   (SELECT group_concat(tag, char(31)) FROM asset_tags t WHERE t.asset_id = a.id AND t.source = 'ai') AS ai_tags,
-  ${SHOWN("v.id")} AS description`;
+  ${SHOWN("v.id")} AS description, a.roll AS roll`;
 
 export interface CardRow {
   id: string;
@@ -91,6 +93,7 @@ export interface CardRow {
   tags: string | null;
   ai_tags: string | null;
   description: string | null;
+  roll: AssetCard["roll"] | null;
 }
 
 /** The SQL for one page of a library's assets, with `limit + 1` rows so the caller knows there is a next page. */
@@ -117,6 +120,14 @@ export function buildAssetQuery(libraryId: string, query: SearchQuery = {}): { s
   if (query.to !== undefined) {
     where.push("a.created_at < ?");
     params.push(query.to);
+  }
+  if (query.roll) {
+    where.push("a.roll = ?");
+    params.push(query.roll);
+  }
+  if (query.versions?.length) {
+    where.push(`v.id IN (${query.versions.map(() => "?").join(",")})`);
+    params.push(...query.versions);
   }
   if (query.collectionId) {
     where.push("a.id IN (SELECT asset_id FROM collection_items WHERE collection_id = ?)");
@@ -166,6 +177,7 @@ export function toCard(r: CardRow): AssetCard {
     state: r.state,
     ...(p.capturedAt ? { capturedAt: p.capturedAt } : {}),
     ...(r.trashed_at ? { trashedAt: r.trashed_at } : {}),
+    ...(r.roll ? { roll: r.roll } : {}),
     ...(inReview(r.id) ? { review: true as const } : {}), // ponytail: two stats a card; a column when pages get big
   };
 }

@@ -26,6 +26,8 @@ export interface AssetCard {
   trashedAt?: number;
   /** a Review video (same id): Review owns its versions and its trash, so the library opens it there */
   review?: true;
+  /** A-roll (someone talks to the camera) or B-roll (the rest), as the library sorted it (api/library/roll.ts); videos only, once sorted */
+  roll?: "a" | "b";
 }
 
 export interface AssetDetail extends AssetCard {
@@ -45,6 +47,10 @@ export interface SearchQuery {
   from?: number;
   to?: number;
   hasTranscript?: boolean;
+  /** only A-roll or only B-roll (`?roll=a|b`) */
+  roll?: "a" | "b";
+  /** only these versions' assets (`?versions=id,id`, at most 200) */
+  versions?: string[];
   /** plug-in sidebar filters: facet key → chosen values (api/library/sources.ts) */
   facets?: Record<string, string[]>;
   trashed?: boolean; // the trash instead of the library

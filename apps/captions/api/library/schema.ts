@@ -349,4 +349,15 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE edit_jobs ADD COLUMN started_at INTEGER;
   ALTER TABLE edit_jobs ADD COLUMN done_at INTEGER;
   `,
+  // 16: A-roll and B-roll (roll.ts): the clip's roll, a roll it was filed as (never re-sorted), the AI's answer. The
+  // A-roll folder the AI Editor made becomes the smart folder of the clips sorted A-roll; its videos are filed as A-roll
+  `
+  ALTER TABLE assets ADD COLUMN roll TEXT;
+  ALTER TABLE assets ADD COLUMN filed_roll TEXT;
+  ALTER TABLE descriptions ADD COLUMN roll TEXT;
+  UPDATE assets SET filed_roll = 'a' WHERE kind = 'video' AND id IN (SELECT i.asset_id FROM collection_items i JOIN collections c ON c.id = i.collection_id
+    WHERE c.kind = 'manual' AND c.parent_id IS NULL AND c.name = 'A-roll');
+  DELETE FROM collection_items WHERE collection_id IN (SELECT id FROM collections WHERE kind = 'manual' AND parent_id IS NULL AND name = 'A-roll');
+  UPDATE collections SET kind = 'smart', query = '{"roll":"a"}' WHERE kind = 'manual' AND parent_id IS NULL AND name = 'A-roll';
+  `,
 ];

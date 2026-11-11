@@ -93,10 +93,12 @@ describe("describe job", () => {
     expect(completeVisionWithFallback).not.toHaveBeenCalled();
   });
 
-  it("the prompt builder has no field for names or ages, and the answer keeps only description and tags", () => {
+  it("the prompt builder has no field for names or ages, and the answer keeps only description, tags and roll", () => {
     const p = describePrompt({ title: "Forward roll", transcript: "[0:00] Tuck the chin.", frames: 4 });
-    const asked = JSON.parse(p.user.slice(p.user.lastIndexOf('{"'))) as Record<string, unknown>;
-    expect(Object.keys(asked)).toEqual(["description", "tags"]);
+    expect(p.user).toMatch(/"roll": "a" or "b"\}$/);
+    expect(p.user).not.toMatch(/creator|who/i); // A-roll is anyone talking to the camera, never a guess at who
+    expect(parseDescribe('{"description": "A person talks.", "tags": [], "roll": "a"}').roll).toBe("a");
+    expect(parseDescribe('{"description": "A person talks.", "tags": [], "roll": "maybe"}')).toEqual({ description: "A person talks.", tags: [] });
     expect(p.system).toMatch(/Never say who anyone is/);
     expect(parseDescribe('```json\n{"description": "A person rolls.", "tags": ["Roll", "roll", " mat "], "people": ["x"], "age": 3}\n```')).toEqual({
       description: "A person rolls.",

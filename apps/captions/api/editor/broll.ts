@@ -1,5 +1,7 @@
 import type { Item, Timeline, TimelineSource } from "../../contracts/editor";
 import { libraryDb } from "../library/db";
+import { savedQuery } from "../library/collections";
+import { buildAssetQuery, MAX_LIMIT, type CardRow } from "../library/query";
 import type { ProbeSummary } from "../library/media/probe";
 import { brollMinFrames } from "./qa";
 import { readDraft, saveDraft, sourcesWorkspace } from "./store";
@@ -123,13 +125,20 @@ export async function brollStep({ edit, job, variant, signal }: StepContext): Pr
   const draft = readDraft(edit.id, variant);
   if (!draft) throw new Error(`No draft ${variant} to add B-roll to`);
   if (!edit.brollCollectionId) return;
-  const rows = libraryDb()
+  const col = libraryDb().prepare("SELECT library_id, kind, query FROM collections WHERE id = ?").get(edit.brollCollectionId) as
+    | { library_id: string; kind: string; query: string | null }
+    | undefined;
+  // a smart folder (B-roll: every clip sorted B-roll) runs its query: its newest MAX_LIMIT videos
+  const smart = col?.kind === "smart" ? buildAssetQuery(col.library_id, { ...savedQuery(JSON.parse(col.query ?? "{}")), kind: ["video"], limit: MAX_LIMIT }) : null;
+  const rows = smart
+    ? (libraryDb().prepare(smart.sql).all(...smart.params) as unknown as CardRow[]).slice(0, MAX_LIMIT).map((r) => ({ id: r.version_id, title: r.title, probe: r.probe }))
+    : (libraryDb()
     .prepare(
       `SELECT v.id, a.title, v.probe FROM collection_items ci JOIN assets a ON a.id = ci.asset_id
        JOIN asset_versions v ON v.id = a.current_version_id
        WHERE ci.collection_id = ? AND a.trashed_at IS NULL ORDER BY ci.position, a.id`,
     )
-    .all(edit.brollCollectionId) as unknown as CollectionRow[];
+    .all(edit.brollCollectionId) as unknown as CollectionRow[]);
   if (!rows.length) return;
   // read again at this step: the creator may have lost a library or the collection's footage since the edit was made
   if (sourcesWorkspace(job.actor ?? "", rows.map((r) => r.id)) !== edit.workspaceId) throw new Error("The B-roll collection is no longer yours to read");
