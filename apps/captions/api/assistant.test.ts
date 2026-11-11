@@ -593,6 +593,8 @@ describe("a video dropped in the chat", () => {
     const again = JSON.parse((await toolOf(token, "use_file", { file: talk.id, to: "library" })).text) as Added;
     expect(again.files[0]).toMatchObject({ version_id: a, note: "Already in the Media Library" });
     expect(again.said).toBe("1 clip added: 1 A-roll");
+    // a file on this computer is never copied in: its folder is read in place
+    expect((await toolOf(token, "use_file", { path: "/Users/tiny/Movies/take.mov", to: "library" })).text).toMatch(/media_import_folder/);
     revokeJobToken(token);
     SORT_WAIT_S.added = 10;
   });

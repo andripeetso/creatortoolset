@@ -170,7 +170,7 @@ describe("sorting the clips in a library", () => {
 });
 
 describe("the A-roll folder people already have", () => {
-  it("becomes the smart folder of A-roll: its videos filed as A-roll, a picture in it stays in the library, other folders untouched", () => {
+  it("becomes the smart folder of A-roll: its videos filed as A-roll, a picture in it is listed under All only, other folders untouched", () => {
     const at = MIGRATIONS.findIndex((m) => m.includes("filed_roll"));
     const file = path.join(dir, "before.db");
     const old = new DatabaseSync(file);
@@ -191,7 +191,7 @@ describe("the A-roll folder people already have", () => {
       { id: "still", filed_roll: null },
       { id: "take", filed_roll: "a" },
     ]);
-    expect(db.prepare("SELECT collection_id, asset_id FROM collection_items").all()).toEqual([{ collection_id: "col_b", asset_id: "sea" }]);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM collection_items").get()).toEqual({ n: 3 }); // kept, unread by a smart folder
     db.close();
   });
 });

@@ -49,6 +49,8 @@ const isJob = (auth: Headers) => /^Bearer ctj_/.test(auth.get("authorization") ?
 const WAIT_MAX_S = 55;
 /** Seconds a media tool waits for new clips to be sorted: after adding them, and when asked with versions. */
 export const SORT_WAIT_S = { added: 10, asked: 50 };
+/** A media tool answers within this many seconds of its call, under the client's minute. */
+const ANSWER_BY_S = 50;
 /** What a media tool's answer says while clips are still being sorted (a transcript first). */
 const STILL_SORTING = "Some clips are still being sorted (their transcript comes first): media_search with these versions waits for the final count.";
 
@@ -270,7 +272,7 @@ const ASSISTANT_DEFS = [
   },
   {
     name: "use_file",
-    description: "Send a video or recording to a tool: file = the id of one dropped in the chat, or path = a file on this computer (when the server runs on it; nothing is uploaded). to: notes = Video Notes (transcript, summary, takeaways, action items, chapters; follow it with notes_get), review = a Review video (then review_share for a link), captions = a Caption Studio project, library = the Media Library, where each clip sorts itself as A-roll or B-roll (files = several dropped ids at once; tell the user the answer's said line). name = a title for it (default the file's name). The same file can go to several.",
+    description: "Send a video or recording to a tool: file = the id of one dropped in the chat, or path = a file on this computer (when the server runs on it; not for library: media_import_folder reads its folder in place). to: notes = Video Notes (transcript, summary, takeaways, action items, chapters; follow it with notes_get), review = a Review video (then review_share for a link), captions = a Caption Studio project, library = the Media Library, where each clip sorts itself as A-roll or B-roll (files = several dropped ids at once; tell the user the answer's said line). name = a title for it (default the file's name). The same file can go to several.",
     inputSchema: { type: "object", properties: { file: str, files: { type: "array", items: str }, path: str, to: { type: "string", enum: [...FILE_USES] }, name: str }, required: ["to"] },
   },
   {
@@ -411,24 +413,31 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
     if (!lib) throw new ToolError("This account has no Media Library yet.");
     return String(lib.id);
   };
-  /** The said line for versions just added (roll.ts), waiting up to waitS while some are still being sorted. */
-  const sortedLine = async (lib: string, versions: string[], waitS: number) => {
-    const end = Date.now() + waitS * 1000;
+  /** The said line for versions just added (roll.ts), waiting up to waitS (never past `by`) while some are still being sorted. */
+  const sortedLine = async (lib: string, versions: string[], waitS: number, by = Date.now() + ANSWER_BY_S * 1000) => {
+    const end = Math.min(by, Date.now() + waitS * 1000);
     const q = new URLSearchParams({ versions: versions.slice(0, 200).join(","), limit: "200" });
     for (;;) {
       const items = (await json<{ items?: AssetCard[] }>(`/api/library/${encodeURIComponent(lib)}/assets?${q}`)).items ?? [];
       const { left } = rollCount(items);
       if (!left || Date.now() >= end) return { said: rollLine(items), left };
-      await sleep(3000);
+      await sleep(Math.min(3000, end - Date.now()));
     }
   };
-  /** use_file to the library: each dropped file (or the path) is added, then one line says how they were sorted. */
+  /** use_file to the library: each dropped file is added (a copy the library keeps), then one line says how they were sorted. */
   const toLibrary = async (a: Args) => {
+    const by = Date.now() + ANSWER_BY_S * 1000;
+    // a file on this computer is read where it is, never copied: its folder goes in with media_import_folder
+    if (a.path) throw new ToolError("For a file on this computer, use media_import_folder with its folder (and since): it is read where it is.");
     const ids = [...(Array.isArray(a.files) ? a.files.map(String) : []), ...(a.file ? [String(a.file)] : [])];
-    if (a.path) ids.push(String((await json(`/api/assistant/files/path`, "POST", { path: a.path })).id));
-    if (!ids.length) throw new ToolError("Give the dropped files' ids, or a path on this computer.");
+    if (!ids.length) throw new ToolError("Give the dropped files' ids.");
     const files: Args[] = [];
     for (const id of ids.slice(0, 50)) {
+      // big files take a while each: the ones not reached in time are named, to send again
+      if (Date.now() > by - 15_000) {
+        files.push({ file: id, not_yet: "Not added yet: call use_file again with these" });
+        continue;
+      }
       try {
         const r = await json(`/api/assistant/files/${encodeURIComponent(id)}/use`, "POST", { to: "library", ...(ids.length === 1 ? pick(a, ["name"]) : {}) });
         files.push({ name: r.name, version_id: r.versionId, library: r.libraryId, href: r.href, ...pick(r, ["note"]) });
@@ -438,7 +447,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
     }
     const added = files.filter((f) => f.version_id);
     const lib = String(added[0]?.library ?? "");
-    const sorted = lib ? await sortedLine(lib, added.map((f) => String(f.version_id)), SORT_WAIT_S.added) : { said: "Nothing was added", left: 0 };
+    const sorted = lib ? await sortedLine(lib, added.map((f) => String(f.version_id)), SORT_WAIT_S.added, by) : { said: "Nothing was added", left: 0 };
     return {
       said: sorted.said,
       files: files.map(({ library: _, ...f }) => f),
@@ -692,12 +701,13 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
       };
     },
     media_import_folder: async (a) => {
+      const by = Date.now() + ANSWER_BY_S * 1000; // the route itself may take 40 s
       const body: Args = { path: a.path };
       if (a.since) body.since = dateMs(a.since);
       if (a.folder) body.collectionId = a.folder;
       const r = await json<{ libraryId: string; imported: Args[]; scripts: Args[]; working?: number; copying?: string[] }>("/api/library/import-folder", "POST", body);
       const done = r.imported.filter((x) => x.versionId);
-      const sorted = done.length ? await sortedLine(r.libraryId, done.map((x) => String(x.versionId)), SORT_WAIT_S.added) : null;
+      const sorted = done.length ? await sortedLine(r.libraryId, done.map((x) => String(x.versionId)), SORT_WAIT_S.added, by) : null;
       return {
         imported: done.length,
         ...(sorted ? { said: sorted.said } : {}),

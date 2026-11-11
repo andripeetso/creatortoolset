@@ -320,7 +320,7 @@ libraryApp.post("/:id/uploads", async (c) => {
   if (collection) {
     const col = db().prepare("SELECT kind FROM collections WHERE id = ? AND library_id = ?").get(collection, libraryId) as { kind: string } | undefined;
     if (!col) return c.json({ error: "Not found", code: "not_found" }, 404);
-    if (col.kind !== "manual") return c.json({ error: "A smart collection takes its items from its query", code: "conflict" }, 409);
+    if (col.kind !== "manual" && !rollFolder(db(), libraryId, collection)) return c.json({ error: "A smart collection takes its items from its query", code: "conflict" }, 409);
   }
   await sweepStale();
   const id = randomUUID();

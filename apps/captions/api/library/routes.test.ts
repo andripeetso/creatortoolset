@@ -187,6 +187,12 @@ describe("library: uploading into a folder", () => {
     expect(items("col_gone")).toEqual([]);
     expect((await create("owner-a", 800, { collectionId: "col_smart" })).status).toBe(409);
   });
+
+  it("takes an upload into the A-roll folder (the AI Editor's footage) and files it as A-roll", async () => {
+    libraryDb().prepare(`INSERT INTO collections (id, library_id, name, kind, query, created_at, created_by) VALUES ('col_aroll', 'lib_a', 'A-roll', 'smart', '{"roll":"a"}', 0, 'owner-a')`).run();
+    const { assetId } = await upload("col_aroll", 13);
+    expect(libraryDb().prepare("SELECT roll, filed_roll FROM assets WHERE id = ?").get(assetId)).toEqual({ roll: "a", filed_roll: "a" });
+  });
 });
 
 describe("saving a finished file into the library", () => {
