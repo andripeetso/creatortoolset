@@ -51,7 +51,7 @@ describe("libraryRole", () => {
     expect(libraryRole("mem", "lib_old")).toBeNull();
   });
 
-  it("is null with the Media Library switched off, so the Workshop and the Video Cleaner read nothing of it", async () => {
+  it("is null with the Media Library switched off, so the Workshop reads nothing of it", async () => {
     expect(libraryRole("off-a", "lib_off")).toBeNull();
     expect(await libraryRef("off-a", "ast_off", "v_off")).toBeNull();
     expect(similarTo("off-a", ["0000000000000000"]).matches).toEqual([]);

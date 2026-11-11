@@ -1,4 +1,3 @@
-import { SendToCleanerButton } from "@/components/SendToCleanerButton";
 import { useEffect, useState } from "react";
 import { useCachedList } from "@/lib/local-cache";
 import { useLocation, useNavigate } from "react-router";
@@ -210,31 +209,30 @@ export default function Home() {
   const location = useLocation();
   const projectLibraryRequested =
     new URLSearchParams(location.search).get("view") === "projects";
-  // /captions?project=<id>: open that project (Review's "Caption Studio")
+  // /captions?project=<id>: open that project (Review's "Caption Studio"). With &clip=<id> it is read again from the
+  // server and opens on that clip: a clip that was just added to it from outside this page (addEditedClip, api/projects.ts)
   const projectRequested = new URLSearchParams(location.search).get("project");
-  const cleanerClipRequested = new URLSearchParams(location.search).get(
-    "cleanerClip",
-  );
+  const clipRequested = new URLSearchParams(location.search).get("clip");
   useEffect(() => {
     if (!projectRequested) return;
     navigate("/captions", { replace: true });
     if (
       useStudio.getState().projectId === projectRequested &&
-      !cleanerClipRequested
+      !clipRequested
     )
       return;
     void (async () => {
       if (!(await confirmDiscardUnsavedProject("Open another project"))) return;
       await flushPendingSave();
       if (
-        await loadSession(projectRequested, { server: !!cleanerClipRequested })
+        await loadSession(projectRequested, { server: !!clipRequested })
       ) {
-        if (cleanerClipRequested)
-          useStudio.getState().switchClip(cleanerClipRequested);
+        if (clipRequested)
+          useStudio.getState().switchClip(clipRequested);
         useStudio.setState({ projectLibraryOpen: false });
       }
     })();
-  }, [navigate, projectRequested, cleanerClipRequested]);
+  }, [navigate, projectRequested, clipRequested]);
   useEffect(() => {
     if (!projectLibraryRequested) return;
     useStudio.getState().openProjectLibrary();
@@ -407,7 +405,6 @@ export default function Home() {
             />
           </label>
           <ProjectActions />
-          <SendToCleanerButton />
           <button
             onClick={() => setExportOpen(true)}
             disabled={cues.length === 0 && texts.length === 0}

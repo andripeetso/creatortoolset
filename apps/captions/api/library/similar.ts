@@ -13,8 +13,8 @@ import type { TimedWord } from "./transcribe";
  * The duplicate check (tasks/media-library-plan.md, section 10): which videos in the caller's libraries share
  * pictures with a clip, by the per-second pHashes of the `fingerprint` derivative. A second of the clip matches when
  * some second of the other video is within MAX_BITS of it; `overlap` is the share of the clip's seconds that match.
- * The Video Cleaner calls similarTo with a file that is not in the library; similar(versionId) is the same for a
- * library version.
+ * similarTo takes the hashes of a file that is not in the library (a plug-in's upload); similar(versionId) is the same
+ * for a library version.
  */
 
 const MAX_BITS = 10; // fingerprint.test.ts measured about 3 for a re-encode, about 31 for another video

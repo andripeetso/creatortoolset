@@ -196,9 +196,8 @@ it("an answer switches on only the extra that clearly fits it", () => {
   expect(toolsFor(["youtube", "carousel", "ad"], TOOLS)).toEqual(toolsFor([], TOOLS)); // no extra fits
 });
 
-it("Video Cleaner and Story Splitter are never switched on by an answer", () => {
+it("Story Splitter is never switched on by an answer", () => {
   for (const m of ["reel", "youtube", "carousel", "ad", "podcast", "course", "recording", "thread", "newsletter", "article", "other"] as const) {
-    expect(toolsFor([m], TOOLS)).not.toContain("clean");
     expect(toolsFor([m], TOOLS)).not.toContain("stories");
   }
 });

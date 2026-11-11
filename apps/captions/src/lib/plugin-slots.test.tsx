@@ -27,7 +27,7 @@ describe("Home tiles", () => {
     expect(workflow.map((s) => [s.stage, s.tools.map((t) => t.name)])).toEqual([
       ["Plan", ["Content Analyzer", "Content Workshop"]],
       ["Make", ["AI Editor", "Review"]],
-      ["Distribute", ["Video Cleaner", "Story Splitter", "Finals"]],
+      ["Distribute", ["Story Splitter", "Finals"]],
     ]);
     expect(other.map((t) => t.name)).toEqual([
       "Media Library", "Audio Enhancer", "Caption Studio", "Video Notes", "Screen Recorder", "Guide Builder",

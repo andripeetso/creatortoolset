@@ -172,8 +172,9 @@ if (KEEP_DAYS > 0) {
 }
 
 interface ClipMeta {
-  cleanTransferId?: string;
-  cleanOrigin?: { projectId: string; clipId: string; scenes: number };
+  /** set on a clip that addEditedClip made: the hand-over it came from, and the clip it is an edit of */
+  transferId?: string;
+  transferOrigin?: { projectId: string; clipId: string; scenes: number };
   id: string;
   name: string;
   duration: number;
@@ -2500,8 +2501,11 @@ export async function clipReadyToEdit(
   return existsSync(clipProxyPath(home, clipId));
 }
 
-/** Snapshot editable captions alongside the uncaptioned source under the project lock. */
-export async function captionClipForCleaner(
+/**
+ * A clip's uncaptioned source with a snapshot of its captions, read under the project lock: for a tool that edits the
+ * clip outside Caption Studio (a plug-in) and hands it back with addEditedClip.
+ */
+export async function clipWithCaptions(
   projectId: string,
   clipId: string,
   user: SessionUser,
@@ -2531,8 +2535,11 @@ export async function captionClipForCleaner(
   });
 }
 
-/** Add an edited clip without overwriting a project's existing media or annotations. */
-export async function acceptCleanerClip(o: {
+/**
+ * Adds an edited clip without overwriting a project's existing media or annotations: to the project it came from
+ * (`origin`, refused when that project changed since), or to a new project. The same `transferId` twice adds it once.
+ */
+export async function addEditedClip(o: {
   user: SessionUser;
   file: string;
   name: string;
@@ -2558,13 +2565,13 @@ export async function acceptCleanerClip(o: {
         message: "The Caption Studio project is no longer available.",
       });
     const existing = meta?.clips.find(
-      (c) => c.cleanTransferId === o.transferId,
+      (c) => c.transferId === o.transferId,
     );
     if (existing) return { projectId, clipId: existing.id };
     if (o.origin && (meta!.revision ?? 0) !== o.origin.revision)
       throw new HTTPException(409, {
         message:
-          "This project changed in Caption Studio. Send its current clip to Cleaner again to preserve the latest caption edits.",
+          "This project changed in Caption Studio. Send its current clip again to keep the latest caption edits.",
       });
     const clipId = randomUUID(),
       now = Date.now();
@@ -2594,10 +2601,10 @@ export async function acceptCleanerClip(o: {
         srcWidth: o.width,
         srcHeight: o.height,
         originalBytes: (await stat(o.file)).size,
-        cleanTransferId: o.transferId,
+        transferId: o.transferId,
         ...(o.origin
           ? {
-              cleanOrigin: {
+              transferOrigin: {
                 projectId,
                 clipId: o.origin.clipId,
                 scenes: o.scenes,

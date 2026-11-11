@@ -502,7 +502,7 @@ export function mountPlugins(app: Hono<any, any, any>, plugins: ServerPlugin[]):
 }
 
 /** The built-in root paths a plug-in may answer before the built-in router (a plug-in's `answers[].path` must be one of these). */
-export const ANSWERABLE_PATHS = ["/api/instagram", "/api/media", "/api/enhance", "/api/review", "/api/clean"] as const;
+export const ANSWERABLE_PATHS = ["/api/instagram", "/api/media", "/api/enhance", "/api/review"] as const;
 
 /** Refuses an answered path that is not in ANSWERABLE_PATHS, or that two plug-ins both answer. */
 function checkAnswers(plugins: ServerPlugin[]): void {
