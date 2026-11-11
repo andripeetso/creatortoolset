@@ -486,12 +486,18 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
   /** What a plug-in adds to that library, as this account may see it (its /library page lists these beside "Library"). None unless a plug-in brings one. */
   const librarySources = async (lib: string) =>
     (await json<{ sources?: Array<{ id: string; label: string; main?: boolean }> }>(`/api/library/${encodeURIComponent(lib)}/sources`).catch(() => null))?.sources ?? [];
-  /** One plug-in source's cards for a search (its own list takes q and nothing else), or null when it refuses or is not back by `by`. */
-  const sourceCards = async (lib: string, source: string, q: unknown, by: number): Promise<Args[] | null> => {
+  /**
+   * One plug-in source's cards for a search (its own list takes q and nothing else), or null when it fails or is not
+   * back by `by`. `refused`: the source's own reason for listing nothing (SourceRefusal).
+   */
+  const sourceCards = async (lib: string, source: string, q: unknown, by: number): Promise<{ items: Args[]; refused?: string } | null> => {
     const ask = new URLSearchParams({ source, ...(q ? { q: String(q) } : {}) });
     let timer: ReturnType<typeof setTimeout> | undefined;
     const late = new Promise<null>((done) => (timer = setTimeout(() => done(null), Math.max(0, by - Date.now()))));
-    const cards = json<{ items?: Args[] }>(`/api/library/${encodeURIComponent(lib)}/assets?${ask}`).then((r) => r.items ?? [], () => null);
+    const cards = json<{ items?: Args[]; refused?: string }>(`/api/library/${encodeURIComponent(lib)}/assets?${ask}`).then(
+      (r) => ({ items: r.items ?? [], ...(r.refused ? { refused: r.refused } : {}) }),
+      () => null,
+    );
     return Promise.race([cards, late]).finally(() => clearTimeout(timer));
   };
   /** The said line for versions just added (roll.ts), waiting up to waitS (never past `by`) while some are still being sorted. */
@@ -892,11 +898,16 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       if (others.length && !asked.length) notes.push(`A folder and version ids are the Library's own: ${others.map((s) => s.label).join(", ")} not searched.`);
       const found = await Promise.all(asked.map((s) => sourceCards(lib, s.id, a.q, by)));
       for (const [i, s] of asked.entries()) {
-        const cards = found[i];
-        if (!cards) {
+        const answer = found[i];
+        if (!answer) {
           notes.push(`${s.label} did not answer.`);
           continue;
         }
+        if (answer.refused) {
+          notes.push(`${s.label}: ${answer.refused}`);
+          continue;
+        }
+        const cards = answer.items;
         let kept = a.kind ? cards.filter((c) => c.kind === a.kind) : cards;
         if (a.roll && cards.some((c) => c.roll)) kept = kept.filter((c) => c.roll === a.roll);
         else if (a.roll && kept.length) notes.push(`${s.label} does not sort A-roll and B-roll: roll was not applied to it.`);
