@@ -44,8 +44,9 @@ describe("Settings redirects", () => {
     expect(resolveSection("packs", local)).toEqual({ kind: "redirect", to: "/community/installed" });
   });
 
-  it("sends the editor id out of Settings to the AI Editor page", () => {
+  it("sends the editor id out of Settings to the AI Editor page, except in the Mac app on its own server (its steps page)", () => {
     expect(resolveSection("editor", local)).toEqual({ kind: "redirect", to: "/editor" });
+    expect(resolveSection("editor", { ...local, mac: true })).toEqual({ kind: "page", id: "editor" });
   });
 
   it("sends a page this install does not show to General", () => {
