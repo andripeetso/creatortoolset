@@ -65,14 +65,15 @@ it("setup has an account screen only when the Mac app names a sign-in and nobody
   expect(offers({ state: "checking" }, ["google"])).toBe(false);
 });
 
-it("the account screen: one row and one Sign in button for each sign-in offered, and no promise of anything", () => {
+it("the account screen is a sign-in screen: one button for each sign-in offered, with its mark, and no promise of anything", () => {
   const html = setup({ state: "signedOut" });
-  expect(buttons(html)).toEqual(["Sign in", "Sign in"]);
-  expect(html.indexOf("Google")).toBeLessThan(html.indexOf("Apple")); // the order the Mac app named them in
-  expect(html).not.toMatch(/GitHub|phone|settings|sync|Continue with/i);
-  // while the system's sheet is up: that row says so, and no second sign-in can be started
+  expect(buttons(html)).toEqual(["Continue with Google", "Continue with Apple"]); // the order the Mac app named them in
+  expect(html.match(/<svg/g)).toHaveLength(2); // each carries its provider's mark
+  expect(html).toContain("#4285F4"); // Google's, in its own colours
+  expect(html).not.toMatch(/GitHub|phone|settings|sync/i);
+  // while the system's sheet is up: that button says so, and no second sign-in can be started
   const busy = setup({ state: "signedOut" }, ["google", "apple"], "google");
-  expect(buttons(busy)).toEqual(["Signing in…", "Sign in"]);
+  expect(buttons(busy)).toEqual(["Signing in…", "Continue with Apple"]);
   expect(busy.match(/disabled=""/g)).toHaveLength(2);
 });
 
@@ -82,7 +83,7 @@ it("the account screen after a press: signed in says who; a closed sheet says no
   expect(done).toContain("ana@tinyacrobatics.example");
   expect(buttons(done)).toEqual([]);
   const closed = setup({ state: "cancelled" });
-  expect(buttons(closed)).toEqual(["Sign in", "Sign in"]);
+  expect(buttons(closed)).toEqual(["Continue with Google", "Continue with Apple"]);
   expect(closed).not.toContain("text-red-600");
   for (const [state, words] of [
     [{ state: "error", message: "That sign-in didn't go through." }, "That sign-in didn't go through."],
@@ -91,8 +92,8 @@ it("the account screen after a press: signed in says who; a closed sheet says no
   ] as [AccountState, string][]) {
     const html = setup(state);
     expect(html).toContain(words);
-    expect(buttons(html)).toEqual(["Sign in", "Sign in"]);
+    expect(buttons(html)).toEqual(["Continue with Google", "Continue with Apple"]);
   }
-  // opened with nothing to offer (an old link): one plain line, no row
+  // opened with nothing to offer (an old link): one plain line, no button
   expect(setup({ state: "signedOut" }, [])).toContain("Sign-in is not available right now.");
 });
