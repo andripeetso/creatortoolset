@@ -498,7 +498,9 @@ describe("Creator Toolset as a remote MCP server", () => {
     // Media Library's folders), instagram_add_account and instagram_comments (what people write under an account's posts)
     // 14394 -> 14660: A-roll and B-roll: media_search's roll filter and versions (the clips just added, with the said line
     // that counts how they were sorted), roll on each hit; media_import_folder returns that said line
-    // 14660 -> 14792: set_work_prefs job (what they want to do first, from setup; the assistant can change it)
-    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(14792);
+    // 14660 -> 15032: the Workshop's current project, unlinking one post (and what linking does to the status), and the writer's two
+    // options (my words only, deep research). Tools added since then live in api/mcp-tools/ and are not counted here.
+    // 15032 -> 15164: set_work_prefs job (what they want to do first, from setup; the assistant can change it)
+    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(15164);
   });
 });

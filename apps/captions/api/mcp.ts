@@ -1,3 +1,5 @@
+import { MODULES } from "./mcp-tools";
+import { ToolError, type ToolContext, type ToolDef, type ToolHandler, type WorkCard } from "./mcp-tools/types";
 import { Hono } from "hono";
 import { MY_KEYS } from "../contracts/service-keys";
 import { TOOLS as APP_TOOLS, TOOL_NAMES, readiness, type SetupView } from "../contracts/tools";
@@ -7,9 +9,10 @@ import { routeFor } from "./lib/providers";
 import { deviceName } from "./lib/devices";
 import { readConnectors } from "./lib/connectors/store";
 import { myKeys } from "./my-keys";
-import { askSecret, navigateTo, noteChoices, noteMedia, noteStep, noteWork } from "./assistant";
+import { askConfirm, askSecret, navigateTo, noteChoices, noteMedia, noteStep, noteWork, setConfirmRunner, setInstallGuide, unattended } from "./assistant";
 import { FILE_USES, type AssistantMedia, type AssistantWork } from "../contracts/assistant";
 import { SESSION_STATUSES } from "./lib/workshop/types";
+import { postedFromUrl } from "./lib/workshop/posted";
 import { innerCall, jobTurn, type AuthVars } from "./auth";
 import type { SessionUser } from "./users";
 import type { ServerPlugin } from "./lib/plugin";
@@ -30,7 +33,6 @@ type Call = (path: string, init: RequestInit) => Promise<Response>;
 type Args = Record<string, unknown>;
 type Content = { type: "text"; text: string } | { type: "image"; mimeType: string; data: string };
 
-class ToolError extends Error {}
 
 /** The setup answers and, per tool (the picked ones, else all), what it still needs and what would add to it. */
 function setupView(v: SetupView) {
@@ -44,6 +46,9 @@ function setupView(v: SetupView) {
 /** The tools only the assistant's job token may call (the dock, assistant.ts). */
 const ASSISTANT_TOOLS = new Set(["setup_status", "save_setup", "ask_secret", "navigate", "show_video", "use_file", "notes_get", "offer_choices"]);
 const isJob = (auth: Headers) => /^Bearer ctj_/.test(auth.get("authorization") ?? "");
+
+/** The most of a recording's words a tool hands the AI at once (about 15 minutes of speech). */
+const TRANSCRIPT_MAX = 12_000;
 
 /** MCP clients give up on a tool call after about a minute: a reply still thinking hands back its id to wait on. */
 const WAIT_MAX_S = 55;
@@ -104,7 +109,7 @@ const schedule = {
 };
 const lines = { type: "array", items: { type: "object", properties: { id: str, text: str }, required: ["text"] } };
 export const TOOLS = [
-  { name: "workshop_projects", description: "The Workshop's projects (brands): id, name, audience, voice, CTA, notes.", inputSchema: { type: "object", properties: {} } },
+  { name: "workshop_projects", description: "The Workshop's projects (brands): id, name, audience, voice, CTA, notes. current is the id of the one the app is in.", inputSchema: { type: "object", properties: {} } },
   { name: "workshop_sessions", description: "Workshop sessions, newest first: id, title, status, project, pinned, posted.", inputSchema: { type: "object", properties: { project: { type: "string", description: "only this project's (id)" } } } },
   {
     name: "workshop_session",
@@ -118,12 +123,12 @@ export const TOOLS = [
   },
   {
     name: "workshop_update_session",
-    description: "Change a session's title, notes or status (moves it through the stages), or link its post: post_url (its Instagram link), or remove_post: true to unlink it.",
+    description: "Change a session's title, notes or status (moves it through the stages), or its posts: post_url links an Instagram post (the session becomes published), unlink_post_url unlinks that one, remove_post: true unlinks them all.",
     inputSchema: {
       type: "object",
       properties: {
         session: str, title: str, notes: str, status: { type: "string", enum: [...SESSION_STATUSES] },
-        post_url: str, remove_post: { type: "boolean" },
+        post_url: str, unlink_post_url: str, remove_post: { type: "boolean" },
       },
       required: ["session"],
     },
@@ -148,6 +153,8 @@ export const TOOLS = [
         piece: str,
         message: str,
         scope: { type: "string", enum: ["slight", "rewrite"], description: "how much it may change (unset = normal)" },
+        my_words_only: { type: "boolean", description: "it only picks, trims and orders the user's own sentences in message" },
+        deep_research: { type: "boolean", description: "web research first (takes minutes): ask the user before" },
         wait_s: { type: "integer", description: `default and max ${WAIT_MAX_S}` },
       },
       required: ["session", "piece", "message"],
@@ -283,34 +290,57 @@ const ASSISTANT_DEFS = [
   },
   {
     name: "notes_get",
-    description: "A Video Note (use_file to: notes gives its id): status (processing with its step, ready, error), title, summary, takeaways, action items, chapters and quotes once ready. Waits up to 50 s while it processes.",
-    inputSchema: { type: "object", properties: { id: str }, required: ["id"] },
+    description: "A Video Note (use_file to: notes gives its id): status (processing with its step, ready, error), title, summary and chapters once ready, and the takeaways, action items and quotes it has. transcript: true adds what is said in it. Waits up to 50 s while it processes.",
+    inputSchema: { type: "object", properties: { id: str, transcript: { type: "boolean" } }, required: ["id"] },
   },
 ];
 
-/** A plug-in's MCP tool: its listing (the shape of TOOLS) and the handler that answers it. */
-export type PluginToolDef = { name: string; description: string; inputSchema: Args };
-/** What a plug-in tool handler gets besides its arguments: the account it runs as, this server's address, and the site's routes as that account. */
-export type PluginToolContext = { user: SessionUser; origin: string; api: ReturnType<typeof apiOf> };
-export type PluginToolHandler = (args: Args, ctx: PluginToolContext) => Promise<unknown>;
-export type PluginTools = { defs: PluginToolDef[]; handlers: Map<string, PluginToolHandler>; replaced: Set<string> };
+/** A plug-in's MCP tool: its listing (the shape of TOOLS) and the handler that answers it. The same shapes as a built-in module's (mcp-tools/types.ts). */
+export type PluginToolDef = ToolDef;
+/** What a tool handler gets besides its arguments: the account it runs as, this server's address, the site's routes as that account, and sure(). */
+export type PluginToolContext = ToolContext;
+export type PluginToolHandler = ToolHandler;
+export type PluginTools = {
+  defs: PluginToolDef[];
+  handlers: Map<string, PluginToolHandler>;
+  replaced: Set<string>;
+  /** What a plug-in tool's call looks like to the person watching, by tool name. */
+  steps: Record<string, string>;
+  /** Each plug-in's cards: asked in turn for a call of one of its tools. */
+  work: Array<(name: string, args: Args, result: Args) => WorkCard | null>;
+  /** What the plug-ins add to the assistant's guide and to the MCP server's instructions: how this install differs. */
+  guide: string;
+};
+
+/** The tools kept in their own files (mcp-tools/index.ts), by name. */
+const MODULE_DEFS: ToolDef[] = MODULES.flatMap((m) => m.defs);
+const MODULE_HANDLERS = new Map<string, ToolHandler>(MODULES.flatMap((m) => Object.entries(m.handlers)));
+const MODULE_STEPS: Record<string, string> = Object.assign({}, ...MODULES.map((m) => m.steps ?? {}));
+const DOCK_ONLY = new Set(MODULE_DEFS.filter((d) => d.dockOnly).map((d) => d.name));
 
 /**
  * The plug-ins' MCP tools (a plugin's `tools: { defs, handlers, replaces }`), gathered once when the server boots. A tool whose name a
  * built-in or assistant tool already has throws, unless the same plug-in lists that built-in in `replaces`: its tool then answers the
  * name, and the built-in is left out of the list. `replaces` takes only TOOLS names, each by one plug-in, and the plug-in must serve a
  * tool of that name. A def with no handler throws. The boot refuses rather than shadowing a tool by accident.
+ * `steps`, `work` and `guide` are optional: the line a call shows, the card it leaves, and what the assistant should know about this install.
  */
 export function pluginToolsOf(plugins: ServerPlugin[]): PluginTools {
-  const builtIn = new Set(TOOLS.map((t) => t.name));
-  const taken = new Set<string>([...builtIn, ...ASSISTANT_DEFS.map((t) => t.name)]);
-  const out: PluginTools = { defs: [], handlers: new Map(), replaced: new Set() };
+  const builtIn = new Set([...TOOLS.map((t) => t.name), ...MODULE_DEFS.filter((d) => !d.dockOnly).map((d) => d.name)]);
+  const taken = new Set<string>([...builtIn, ...ASSISTANT_DEFS.map((t) => t.name), ...DOCK_ONLY]);
+  const out: PluginTools = { defs: [], handlers: new Map(), replaced: new Set(), steps: {}, work: [], guide: "" };
   for (const plugin of plugins) {
-    const { defs = [], handlers = {}, replaces = [] } = (plugin.tools ?? {}) as {
+    const { defs = [], handlers = {}, replaces = [], steps = {}, work, guide } = (plugin.tools ?? {}) as {
       defs?: PluginToolDef[];
       handlers?: Record<string, PluginToolHandler>;
       replaces?: string[];
+      steps?: Record<string, string>;
+      work?: (name: string, args: Args, result: Args) => WorkCard | null;
+      guide?: string;
     };
+    Object.assign(out.steps, steps);
+    if (work) out.work.push(work);
+    if (guide?.trim()) out.guide += `${out.guide ? "\n\n" : ""}${guide.trim()}`;
     const over = new Set(replaces);
     for (const name of over) {
       if (!builtIn.has(name)) throw new Error(`plug-in ${plugin.id}: ${name} is not a built-in tool it can replace`);
@@ -402,8 +432,13 @@ const taskOut = (t: Args) => ({
 });
 
 /** The tools, each a thin client of the site's own routes with the caller's credentials. */
-function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
+function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sure: ToolContext["sure"]) {
   const api = apiOf(call, auth);
+  /** A tool that opens something on the person's screen has nobody to open it for in a scheduled run. */
+  const someoneThere = () => {
+    const turn = jobTurn(auth.get("authorization") ?? undefined);
+    if (turn && unattended(user.username, turn)) throw new ToolError("Nobody is at the screen in a scheduled run: say it in your answer instead.");
+  };
   const json = async <T = Args>(path: string, method = "GET", body?: unknown) => (await (await api(path, method, body)).json()) as T;
   const ws = <T = Args>(path: string, method = "GET", body?: unknown) => json<T>(`/api/workshop${path}`, method, body);
   /** An Analyzer account of the user's by handle → its id (the account routes take the id). */
@@ -453,7 +488,10 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
     }
     const added = files.filter((f) => f.version_id);
     const lib = String(added[0]?.library ?? "");
-    const sorted = lib ? await sortedLine(lib, added.map((f) => String(f.version_id)), SORT_WAIT_S.added, by) : { said: "Nothing was added", left: 0 };
+    // nothing went in: the line says why, when every file was refused for the same reason
+    const why = new Set(files.map((f) => f.error));
+    const none = `Nothing was added${why.size === 1 && files[0]?.error ? `: ${String(files[0].error)}` : ""}`;
+    const sorted = lib ? await sortedLine(lib, added.map((f) => String(f.version_id)), SORT_WAIT_S.added, by) : { said: none, left: 0 };
     return {
       said: sorted.said,
       files: files.map(({ library: _, ...f }) => f),
@@ -477,7 +515,10 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
   };
 
   const handlers: Record<string, (a: Args) => Promise<unknown>> = {
-    workshop_projects: async () => ({ projects: (await ws<Args[]>("/projects")).map((p) => pick(p, ["id", "name", "audience", "voice", "cta", "notes"])) }),
+    workshop_projects: async () => {
+      const w = await ws<{ currentProjectId: string | null; projects: Args[] }>("/workspace");
+      return { current: w.currentProjectId, projects: w.projects.map((p) => pick(p, ["id", "name", "audience", "voice", "cta", "notes"])) };
+    },
     workshop_sessions: async (a) => ({
       sessions: (await ws<Args[]>(`/sessions${a.project ? `?projectId=${encodeURIComponent(String(a.project))}` : ""}`)).map((r) =>
         pick(r, ["id", "title", "status", "projectId", "projectName", "pinned", "posted", "updatedAt"]),
@@ -500,12 +541,19 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
       return { ...pick(made, ["id", "title", "status", "projectId"]), pieces: await pieces(String(made.id)) };
     },
     workshop_update_session: async (a) => {
-      const body: Args = pick(a, ["title", "notes", "status"]);
+      // notes: "" clears them (pick would drop it)
+      const body: Args = { ...pick(a, ["title", "status"]), ...(typeof a.notes === "string" ? { notes: a.notes } : {}) };
       // through the session's own PATCH, so the link is checked as it is from the app
       if (a.remove_post === true) body.posted = null;
-      else if (a.post_url) body.posted = a.post_url;
+      else if (a.unlink_post_url) {
+        // only a post that is linked: the route marks whatever it is given "never match again"
+        const code = postedFromUrl(String(a.unlink_post_url))?.shortcode;
+        const now = code ? await ws(`/sessions/${a.session}`) : null;
+        if (!now || !((now.postings as Args[] | undefined) ?? (now.posted ? [now.posted as Args] : [])).some((p) => p.shortcode === code)) throw new ToolError("That post is not linked to this session.");
+        body.posted = { remove: code };
+      } else if (a.post_url) body.posted = a.post_url;
       if (!Object.keys(body).length) throw new ToolError("Nothing to change: give a title, notes, status or a post.");
-      return pick(await ws(`/sessions/${a.session}`, "PATCH", body), ["id", "title", "status", "posted"]);
+      return pick(await ws(`/sessions/${a.session}`, "PATCH", body), ["id", "title", "status", "posted", "postings"]);
     },
     workshop_new_piece: async (a) => piece(await ws(`/sessions/${a.session}/docs`, "POST", pick(a, ["kind", "title", "text"]))),
     workshop_edit_piece: async (a) => {
@@ -514,7 +562,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
       return piece(await ws(`/sessions/${a.session}/docs/${a.piece}`, "PATCH", body));
     },
     workshop_chat: async (a) => {
-      const started = await ws<{ reply: Args }>(`/sessions/${a.session}/chat`, "POST", { docId: a.piece, text: a.message, ...(a.scope ? { scope: a.scope } : {}) });
+      const started = await ws<{ reply: Args }>(`/sessions/${a.session}/chat`, "POST", { docId: a.piece, text: a.message, ...(a.scope ? { scope: a.scope } : {}), ...(a.my_words_only === true ? { mine: true } : {}), ...(a.deep_research === true ? { deep: true } : {}) });
       return wait({ session: a.session, reply: started.reply.id, wait_s: a.wait_s });
     },
     workshop_wait: wait,
@@ -603,12 +651,22 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
       let n = mine(await json(path));
       for (let t = 0; n.status === "processing" && t < 25; t++) n = (await sleep(2000), mine(await json(path)));
       const blocks = Object.fromEntries(((n.blocks as Args[] | undefined) ?? []).map((b) => [b.kind, b.text ?? ((b.items as Args[] | undefined) ?? []).map((x) => x.text)]));
+      // what is said, as plain text; a long recording is cut and says so
+      let said: string | undefined;
+      if (a.transcript === true && n.status === "ready" && n.hasTranscript) {
+        const words = (await json<{ words?: Array<{ text: string }> }>(`${path}/transcript`)).words ?? [];
+        const all = words.map((w) => w.text).join(" ").replace(/\s+/g, " ").trim();
+        said = all.length > TRANSCRIPT_MAX ? `${all.slice(0, TRANSCRIPT_MAX)} … (cut: ${all.length.toLocaleString("en-US")} characters in all; the page has the rest)` : all;
+      }
       return {
         ...pick(n, ["id", "name", "status", "step", "error"]),
         link: `${origin}/video-notes/${n.id}`,
         ...(n.status === "processing" ? { note: "Still processing: call notes_get again." } : {}),
         ...(n.status === "ready" && !n.hasTranscript ? { note: "No transcript: the file has no speech, or this account's cloud transcription is off (an admin switches it on)." } : {}),
+        // a new note keeps its summary beside its blocks, not in them
+        ...(n.summary ? { summary: n.summary } : {}),
         ...blocks,
+        ...(said ? { transcript: said } : {}),
         ...((n.chapters as Args[] | undefined)?.length ? { chapters: (n.chapters as Args[]).map((c) => `${clock(Number(c.t))} ${c.title}`) } : {}),
       };
     },
@@ -789,7 +847,12 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
       return taskOut(a.id ? await json(`/api/automations/${encodeURIComponent(String(a.id))}`, "PATCH", body) : await json("/api/automations", "POST", body));
     },
     run_scheduled_task_now: async (a) => taskOut(await json(`/api/automations/${encodeURIComponent(String(a.id))}/run`, "POST")),
-    delete_scheduled_task: async (a) => json(`/api/automations/${encodeURIComponent(String(a.id))}`, "DELETE"),
+    delete_scheduled_task: async (a) => {
+      const found = (await json<{ items: Args[] }>("/api/automations")).items.find((t) => t.id === a.id);
+      if (!found) throw new ToolError("Not found, or not this account's.");
+      await sure(`Delete the scheduled task "${String(found.name)}"?`);
+      return json(`/api/automations/${encodeURIComponent(String(a.id))}`, "DELETE");
+    },
     get_work_prefs: async () => json("/api/work-prefs"),
     set_work_prefs: async (a) => {
       const body = pick(a, ["talk", "check", "makes"]);
@@ -814,6 +877,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
     },
     save_setup: async (a) => setupView(await json<SetupView>("/api/setup", "PUT", pick(a, ["tools", "plan", "done"]))),
     ask_secret: async (a) => {
+      someoneThere();
       const env = MY_KEYS.find((k) => k.env === a.env);
       if (!env) throw new ToolError(`${String(a.env)} is not a key the app takes.`);
       // only the name and the reason: any other argument (a value included) is dropped unread
@@ -827,7 +891,10 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser) {
       if (turn) noteChoices(user.username, turn, [...new Set(choices)]);
       return { status: "shown", note: "The buttons are under your reply: end the reply and wait for the answer." };
     },
-    navigate: async (a) => ({ status: "opening", path: await navigateTo(user.username, String(a.path ?? "")) }),
+    navigate: async (a) => {
+      someoneThere();
+      return { status: "opening", path: await navigateTo(user.username, String(a.path ?? "")) };
+    },
     // the card's src and href are the site's own routes, so the browser's cookie passes the same checks this call did
     show_video: async (a) => {
       let link = a.link;
@@ -911,10 +978,10 @@ const STEPS: Record<string, string> = {
   instagram_comments: "Reading the comments",
 };
 const PAGES: Record<string, string> = { review: "Review", workshop: "the Workshop", editor: "the AI Editor", settings: "Settings", instagram: "the Analyzer", analyzer: "the Analyzer" };
-export const stepFor = (name: string, args: Args): string =>
+export const stepFor = (name: string, args: Args, plugged: Record<string, string> = {}): string =>
   name === "navigate"
     ? `Opening ${PAGES[String(args.path ?? "").split(/[/?]/)[1] ?? ""] ?? "the page"}`
-    : (STEPS[name] ?? name.replace(/_/g, " "));
+    : (plugged[name] ?? STEPS[name] ?? MODULE_STEPS[name] ?? name.replace(/_/g, " "));
 
 const WRITING = "The Workshop's writer is drafting";
 const kindTitle = (kind: unknown) => String(kind ?? "job").replace(/^./, (c) => c.toUpperCase()).replace(/_/g, " ");
@@ -990,19 +1057,45 @@ export function workFor(name: string, a: Args, r: Args): { card: AssistantWork; 
   }
 }
 
-async function callTool(call: Call, auth: Headers, origin: string, user: SessionUser, name: string, args: Args, plugged: PluginTools) {
-  const plug = plugged.handlers.get(name);
-  const handler = plug ? (a: Args) => plug(a, { user, origin, api: apiOf(call, auth) }) : tools(call, auth, origin, user)[name];
+/** sure() put its question on a card: the call ends here, and runs again when the person presses Yes. */
+class Asked extends Error {}
+
+/**
+ * One tool call. `confirmed`: the person pressed Yes on the card this same call put up (assistant.ts runs it again
+ * as them, with their own login instead of the reply's token), so sure() goes through.
+ */
+async function callTool(call: Call, auth: Headers, origin: string, user: SessionUser, name: string, args: Args, plugged: PluginTools, confirmed = false) {
+  const api = apiOf(call, auth);
   const turn = jobTurn(auth.get("authorization") ?? undefined);
-  if (turn) noteStep(user.username, turn, stepFor(name, args ?? {}));
+  const ctx: ToolContext = {
+    user,
+    origin,
+    api,
+    json: async <T = Args>(path: string, method = "GET", body?: unknown) => (await (await api(path, method, body)).json()) as T,
+    sure: async (question) => {
+      // outside the dock the caller's own AI app asks its own way; in the dock the question waits on a card
+      if (confirmed || !turn) return;
+      if (!askConfirm(user.username, turn, question, { tool: name, args })) throw new ToolError("Too many questions are waiting for the user under this reply: end it and let them answer.");
+      throw new Asked(question);
+    },
+  };
+  const plug = plugged.handlers.get(name);
+  const own = MODULE_HANDLERS.get(name);
+  const handler = plug ? (a: Args) => plug(a, ctx) : own ? (a: Args) => own(a, ctx) : tools(call, auth, origin, user, ctx.sure)[name];
+  if (turn) noteStep(user.username, turn, stepFor(name, args ?? {}, plugged.steps));
   try {
     if (!handler) throw new ToolError(`Unknown tool ${name}.`);
-    if (ASSISTANT_TOOLS.has(name) && !isJob(auth)) throw new ToolError(`${name} is for the assistant only.`);
+    if ((ASSISTANT_TOOLS.has(name) || DOCK_ONLY.has(name)) && !isJob(auth) && !confirmed) throw new ToolError(`${name} is for the assistant only.`);
     const result = await handler(args ?? {});
-    const work = turn && result && typeof result === "object" && !Array.isArray(result) ? workFor(name, args ?? {}, result as Args) : null;
-    if (turn && work) noteWork(user.username, turn, work.card, work.only);
+    if (turn && result && typeof result === "object" && !Array.isArray(result)) {
+      const cards = plug ? plugged.work : MODULES.filter((m) => name in m.handlers).map((m) => m.work).filter((w) => !!w);
+      const work = cards.map((w) => w(name, args ?? {}, result as Args)).find((c) => !!c) ?? workFor(name, args ?? {}, result as Args);
+      if (work) noteWork(user.username, turn, work.card, work.only);
+    }
     return { content: Array.isArray(result) ? (result as Content[]) : [{ type: "text", text: JSON.stringify(result, null, 1) }] };
   } catch (e) {
+    if (e instanceof Asked)
+      return { content: [{ type: "text", text: `Asked the user: "${e.message}" Nothing has been changed. It is done when they press Yes on the card under your reply: say that you asked, end your reply and wait.` }] };
     return { content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }], isError: true };
   }
 }
@@ -1018,13 +1111,15 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
         protocolVersion: typeof params.protocolVersion === "string" ? params.protocolVersion : "2025-06-18",
         capabilities: { tools: {} },
         serverInfo: { name: "creator-toolset", version: "1.0.0" },
-        instructions: INSTRUCTIONS,
+        instructions: plugged.guide ? `${INSTRUCTIONS}\n\n${plugged.guide}` : INSTRUCTIONS,
       });
     case "ping":
       return ok({});
     case "tools/list": {
-      const listed = isJob(auth) ? [...TOOLS, ...ASSISTANT_DEFS] : TOOLS;
-      return ok({ tools: [...listed.filter((t) => !plugged.replaced.has(t.name)), ...plugged.defs] });
+      const dock = isJob(auth);
+      const listed = [...TOOLS, ...MODULE_DEFS.filter((d) => dock || !d.dockOnly), ...(dock ? ASSISTANT_DEFS : [])];
+      // dockOnly says who gets a tool; it is not part of the listing
+      return ok({ tools: [...listed.filter((t) => !plugged.replaced.has(t.name)), ...plugged.defs].map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) });
     }
     case "tools/call":
       return ok(await callTool(call, auth, origin, user, String(params.name), (params.arguments ?? {}) as Args, plugged));
@@ -1037,6 +1132,13 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
 export function mcpApp(call: Call, plugins: ServerPlugin[] = []) {
   const app = new Hono<{ Variables: AuthVars }>();
   const plugged = pluginToolsOf(plugins);
+  setInstallGuide(plugged.guide);
+  // Yes on a card (assistant.ts): the call it stands for runs again as the person who pressed it
+  setConfirmRunner(async (user, headers, origin, tool, args) => {
+    const inner: Call = (path, init) => innerCall.run(user, () => call(path, init));
+    const r = await callTool(inner, headers, origin, user, tool, (args ?? {}) as Args, plugged, true);
+    return { ok: !("isError" in r), text: r.content.map((x) => (x.type === "text" ? x.text : "")).join(" ") };
+  });
   app.post("/", async (c) => {
     const body = (await c.req.json().catch(() => null)) as Args | Args[] | null;
     if (!body) return c.json({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } }, 400);

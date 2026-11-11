@@ -40,6 +40,12 @@ export interface LibraryPolicy {
 export interface LibrarySource {
   id: string;
   label: string;
+  /**
+   * This source IS the install's Media Library: its page shows this source in place of the app's own storage library.
+   * So nothing is added to the storage library from outside that page (a file dropped in the assistant is refused,
+   * with the label), because the person would never see it there.
+   */
+  main?: boolean;
   /** The source's cards for this viewer (the Media Library's Source picker). Ids are external ref ids. */
   list?(viewer: LibraryViewer, req: Request): Promise<AssetCard[]>;
   /** One item's bytes for a ref of this source: `thumb`, `play` or `source`. Null when there is nothing to serve. */
