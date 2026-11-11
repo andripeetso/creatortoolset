@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { clearPieceCover, getPiece, libraryNews, patchPieceItem, reorderedPositions, setPieceCover } from "./library";
+import { clearPieceCover, getPiece, libraryNews, patchPieceItem, reorderedPositions, setPieceCover, uploadFile } from "./library";
 
 describe("reorderedPositions", () => {
   const items = [
@@ -84,5 +84,52 @@ describe("libraryNews (useLibraryChanges)", () => {
     expect(libraryNews({ seq: 7, boot: "b1" }, 7, "b1")).toBe(false);
     expect(libraryNews({ seq: 7, boot: "b1" }, 8, "b1")).toBe(true);
     expect(libraryNews({ seq: 7, boot: "b1" }, 2, "b2")).toBe(true);
+  });
+});
+
+describe("uploadFile from the Mac app on its own server", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const clip = () => new File([new Uint8Array(5000)], "C0001.MP4", { lastModified: 1_700_000_000_000 });
+  const mac = (answer: unknown) => vi.stubGlobal("window", { webkit: { messageHandlers: { thisMac: { postMessage: async () => answer } } } });
+  const picked = { files: [{ path: "/Volumes/Card/C0001.MP4", name: "C0001.MP4", size: 5000, modified: 1_700_000_000_000 }] };
+
+  it("adds a picked file where it is, asks again while the server still reads it, and sends no bytes", async () => {
+    mac(picked);
+    const answers = [new Response(JSON.stringify({ working: true }), { status: 202 }), new Response(JSON.stringify({ assetId: "a1", versionId: "v1" }))];
+    const fetchMock = vi.fn(async () => answers.shift()!);
+    vi.stubGlobal("fetch", fetchMock);
+    const told: [number, boolean | undefined][] = [];
+    expect(await uploadFile("lib_1", clip(), (sent, inPlace) => told.push([sent, inPlace]), "col_1")).toEqual({ assetId: "a1", versionId: "v1" });
+    const calls = fetchMock.mock.calls as unknown as [string, RequestInit][];
+    expect(calls.map(([url]) => url)).toEqual(["/api/library/lib_1/in-place", "/api/library/lib_1/in-place"]);
+    expect(calls.map(([, init]) => JSON.parse(String(init.body)))).toEqual([
+      { path: "/Volumes/Card/C0001.MP4", size: 5000, collectionId: "col_1", again: false },
+      { path: "/Volumes/Card/C0001.MP4", size: 5000, collectionId: "col_1", again: true },
+    ]);
+    expect(told).toEqual([[0, true]]);
+  });
+
+  it("uploads as before in an older Mac app, which answers the question with its state, and when the server says to", async () => {
+    for (const [answer, inPlace] of [
+      [{ aiOn: false, paired: false }, null], // an older Mac app: no files in its answer
+      [picked, new Response(JSON.stringify({ code: "forbidden" }), { status: 403 })], // not this computer's server
+    ] as const) {
+      mac(answer);
+      const urls: string[] = [];
+      vi.stubGlobal("fetch", async (url: string) => {
+        urls.push(url);
+        if (url.endsWith("/in-place")) return inPlace!;
+        if (url.endsWith("/uploads")) return new Response(JSON.stringify({ id: "u1", offset: 0, chunkSize: 1 << 20 }), { status: 201 });
+        if (url.endsWith("/finish")) return new Response(JSON.stringify({ assetId: "a2" }));
+        return new Response(null, { status: 204, headers: { "upload-offset": "5000" } });
+      });
+      expect(await uploadFile("lib_1", clip(), () => {})).toEqual({ assetId: "a2" });
+      expect(urls.filter((u) => !u.endsWith("/in-place"))).toEqual(["/api/library/lib_1/uploads", "/api/library/uploads/u1", "/api/library/uploads/u1/finish"]);
+    }
+  });
+
+  it("keeps the server's code on a refusal, so the page shows no Retry for a file too large for this server", async () => {
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ error: "This file is 12 GB. This server takes files up to 8 GB.", code: "too_large" }), { status: 413 }));
+    await expect(uploadFile("lib_1", clip(), () => {})).rejects.toMatchObject({ message: expect.stringContaining("12 GB"), code: "too_large" });
   });
 });

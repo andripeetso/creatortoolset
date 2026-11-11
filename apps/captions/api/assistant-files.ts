@@ -9,6 +9,10 @@ import { mayUse, type SessionUser } from "./users";
 import { notesFromFile, probeDuration } from "./clips";
 import { addVersion } from "./review";
 import { createProjectFromFile, linkOrCopy } from "./projects";
+import { ensureLibrary } from "./library/access";
+import { libraryDb } from "./library/db";
+import { saveToLibrary } from "./library/routes";
+import { mainSource } from "./library/sources";
 import { FILE_USES, type AssistantFile, type AssistantFileUse } from "../contracts/assistant";
 
 /**
@@ -94,7 +98,7 @@ assistantFilesApp.post("/:id/complete", async (c) => {
   return c.json(meta);
 });
 
-const TOOL_OF = { notes: "notes", review: "review", captions: "captions" } as const;
+const TOOL_OF = { notes: "notes", review: "review", captions: "captions", library: "media" } as const;
 const MIME: Record<string, string> = {
   mp4: "video/mp4", m4v: "video/mp4", mov: "video/quicktime", webm: "video/webm", mkv: "video/x-matroska", avi: "video/x-msvideo",
   mp3: "audio/mpeg", m4a: "audio/mp4", wav: "audio/wav", aac: "audio/aac", ogg: "audio/ogg",
@@ -129,10 +133,15 @@ assistantFilesApp.post("/path", async (c) => {
   }
 });
 
-const NAMES: Record<AssistantFileUse, string> = { notes: "Video Notes", review: "Review", captions: "Caption Studio" };
+const NAMES: Record<AssistantFileUse, string> = { notes: "Video Notes", review: "Review", captions: "Caption Studio", library: "Media Library" };
 
 /** Hand a dropped file to a tool; answers what it became and its page. */
-export async function useFile(user: SessionUser, id: string, to: AssistantFileUse, name?: string): Promise<{ to: AssistantFileUse; id: string; name: string; href: string; note?: string }> {
+export async function useFile(
+  user: SessionUser,
+  id: string,
+  to: AssistantFileUse,
+  name?: string,
+): Promise<{ to: AssistantFileUse; id: string; name: string; href: string; note?: string; versionId?: string; libraryId?: string }> {
   const meta = await readFileMeta(user.username, id);
   if (!meta) throw new Error("That file isn't here any more (dropped files are kept 7 days): ask for it again.");
   if (!mayUse(user, TOOL_OF[to])) throw new Error(`${NAMES[to]} isn't switched on for this account.`);
@@ -141,6 +150,20 @@ export async function useFile(user: SessionUser, id: string, to: AssistantFileUs
   if (to === "notes") {
     const made = await notesFromFile(file, title, meta.mime, user);
     return { to, id: made.id, name: title, href: `/video-notes/${made.id}` };
+  }
+  if (to === "library") {
+    // where a plug-in's source is the Media Library, the page never shows the storage library: nothing goes where nobody looks
+    const main = mainSource();
+    if (main) throw new Error(`On this server the Media Library is the ${main.label}, and files go in on its own page (/library): open it and add them there.`);
+    // the library keeps its own copy (a dropped file goes after 7 days); it is prepared and sorted A-roll or B-roll there
+    ensureLibrary(user.username);
+    const saved = await saveToLibrary(user.username, file, path.extname(title) ? title : `${title}${path.extname(meta.name)}`, [], undefined, true);
+    if (!saved) throw new Error("This account has no Media Library it may add to.");
+    if ("error" in saved) throw new Error(saved.error);
+    const assetId = "duplicateOf" in saved ? saved.duplicateOf : saved.assetId;
+    const a = libraryDb().prepare("SELECT library_id, current_version_id FROM assets WHERE id = ?").get(assetId) as { library_id: string; current_version_id: string };
+    const href = `/library?library=${a.library_id}&asset=${assetId}`;
+    return { to, id: assetId, versionId: a.current_version_id, libraryId: a.library_id, name: title, href, ...("duplicateOf" in saved ? { note: "Already in the Media Library" } : {}) };
   }
   if (to === "review") {
     const added = await addVersion(undefined, { owner: user.username, name: title, mime: meta.mime, bytes: meta.size }, (dest) => linkOrCopy(file, dest));

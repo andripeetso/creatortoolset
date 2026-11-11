@@ -50,6 +50,7 @@ export function Inspector({
   player,
   aim,
   hasCamera,
+  canClear,
 }: {
   tab: InspectorTab;
   onTab: (tab: InspectorTab) => void;
@@ -64,6 +65,8 @@ export function Inspector({
   player: Player;
   aim: (t: number) => { x: number; y: number };
   hasCamera: boolean;
+  /** A see-through video can be made here: the background can be None. */
+  canClear: boolean;
 }) {
   const tabs: { id: InspectorTab; label: string; icon: typeof ImageIcon }[] = [
     { id: "background", label: "Background", icon: ImageIcon },
@@ -94,7 +97,7 @@ export function Inspector({
         ))}
       </div>
       <div role="tabpanel" className="min-h-0 flex-1 space-y-6 overflow-y-scroll p-4 bars:pr-2">
-        {shown === "background" && <BackgroundTab look={look} initial={initial} change={change} />}
+        {shown === "background" && <BackgroundTab look={look} initial={initial} change={change} canClear={canClear} />}
         {shown === "pointer" && <PointerTab look={look} initial={initial} change={change} />}
         {shown === "zoom" && (
           <ZoomTab look={look} change={change} events={events} duration={duration} picked={picked} onPick={onPick} player={player} aim={aim} />
@@ -107,9 +110,9 @@ export function Inspector({
 
 type TabProps = { look: ScreenLook; initial: ScreenLook; change: (patch: Partial<ScreenLook>) => void };
 
-function BackgroundTab({ look, initial, change }: TabProps) {
+function BackgroundTab({ look, initial, change, canClear }: TabProps & { canClear: boolean }) {
   const [from, to] = backgroundStops(look);
-  const kind = look.background === "color" ? "color" : "gradient";
+  const kind = look.background === "none" ? "none" : look.background === "color" ? "color" : "gradient";
   return (
     <>
       <Group title="Frame">
@@ -126,10 +129,13 @@ function BackgroundTab({ look, initial, change }: TabProps) {
           options={[
             { id: "gradient", label: "Gradient" },
             { id: "color", label: "Color" },
+            ...(canClear ? [{ id: "none" as const, label: "None", title: "Nothing behind the window: Export makes a video with a transparent background" }] : []),
           ]}
-          onChange={(k) => change(k === "color" ? { background: "color", color: look.color ?? from } : { background: BACKGROUNDS[0].id })}
+          onChange={(k) =>
+            change(k === "none" ? { background: "none" } : k === "color" ? { background: "color", color: look.color ?? from } : { background: BACKGROUNDS[0].id })
+          }
         />
-        {kind === "gradient" ? (
+        {kind === "none" ? null : kind === "gradient" ? (
           <>
             <Swatches
               label="Gradient"

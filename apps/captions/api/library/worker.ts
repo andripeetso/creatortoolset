@@ -18,6 +18,7 @@ import { probe, type ProbeSummary } from "./media/probe";
 import { makeThumb } from "./media/thumb";
 import { makeWave } from "./media/wave";
 import { NeedsKey, transcribeVersion } from "./transcribe";
+import { sortAfter, sortUnsorted } from "./roll";
 
 /**
  * The library's worker (tasks/media-library-plan.md, section 5): the queue runs in lanes (LANES), several at once where
@@ -158,6 +159,7 @@ export async function tick(now = Date.now(), kinds: readonly string[] = LANES.fl
   } finally {
     clearInterval(beat);
     release();
+    sortAfter(job); // A-roll or B-roll, again with what this job added (roll.ts)
     libraryChanged(job.library_id); // a picture, a transcript or the card's state: the open pages refetch
   }
   return true;
@@ -167,6 +169,7 @@ export async function tick(now = Date.now(), kinds: readonly string[] = LANES.fl
 export function startLibraryWorker(): () => void {
   let stopped = false;
   const stopCatchUp = startEmbedCatchUp();
+  void sortUnsorted(); // clips from before A-roll and B-roll, from what they already have
   for (const lane of LANES)
     for (let i = 0; i < lane.size; i++) {
       const loop = async () => {

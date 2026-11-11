@@ -325,6 +325,7 @@ describe("Creator Toolset as a remote MCP server", () => {
 
   it("media_import_folder sends the folder, since as epoch ms and the folder id, and shapes the files and scripts", async () => {
     const site = fakeSite({
+      "GET /api/library/lib_home/assets": () => ({ items: [{ id: "a1", versionId: "v_1", kind: "video", state: "ready", durationS: 40, width: 1920, roll: "a" }] }),
       "POST /api/library/import-folder": () => ({
         libraryId: "lib_home",
         imported: [
@@ -338,6 +339,7 @@ describe("Creator Toolset as a remote MCP server", () => {
     expect(site.hits[0]!.body).toEqual({ path: "/Tiny/Footage", since: Date.parse("2026-11-10T00:00:00+02:00"), collectionId: "coll_b" });
     expect(out.value).toEqual({
       imported: 1,
+      said: "1 clip added: 1 A-roll",
       files: [
         { file: "/Tiny/Footage/Take 1.mov", version_id: "v_1" },
         { file: "/Tiny/Footage/Broken.mov", error: "unreadable" },
@@ -354,6 +356,35 @@ describe("Creator Toolset as a remote MCP server", () => {
     const bad = fakeSite({});
     expect(await callWith(bad, "media_import_folder", { path: "/Tiny/Footage", since: "yesterday" })).toEqual({ error: true, value: expect.stringContaining("is not a date") });
     expect(bad.hits).toHaveLength(0);
+  });
+
+  it("says in one line how the clips just added were sorted, and media_search with versions waits for the rest", async () => {
+    const cards = [
+      ...["v1", "v2", "v3"].map((v) => ({ versionId: v, kind: "video", state: "ready", durationS: 60, width: 1920, roll: "a" })),
+      ...["v4", "v5", "v6", "v7", "v8", "v9", "v10", "v11", "v12"].map((v) => ({ versionId: v, kind: "video", state: "ready", durationS: 8, width: 1920, roll: "b" })),
+    ];
+    let sorted = false; // the last clip's transcript comes after the first look
+    const site = fakeSite({
+      "GET /api/library": () => ({ libraries: [{ id: "lib_home" }] }),
+      "GET /api/library/lib_home/assets": () => ({ items: sorted ? cards : [...cards.slice(0, 11), { versionId: "v12", kind: "video", state: "processing" }] }),
+      "POST /api/library/import-folder": () => ({ libraryId: "lib_home", imported: cards.map((c) => ({ file: `/Tiny/${c.versionId}.mov`, versionId: c.versionId })), scripts: [] }),
+    });
+    const { SORT_WAIT_S } = await import("./mcp");
+    const was = { ...SORT_WAIT_S };
+    SORT_WAIT_S.added = 0;
+    try {
+      const out = await callWith(site, "media_import_folder", { path: "/Tiny" });
+      expect(out.value.said).toBe("12 clips added: 3 A-roll, 8 B-roll, 1 still being sorted");
+      expect(out.value.note).toContain("media_search with these versions");
+      sorted = true;
+      const later = await callWith(site, "media_search", { versions: cards.map((c) => c.versionId), roll: "b" });
+      expect(later.value.said).toBe("12 clips added: 3 A-roll, 9 B-roll");
+      const asked = new URL(site.hits.at(-1)!.path, "https://x.test").searchParams;
+      expect(asked.get("roll")).toBe("b");
+      expect(asked.get("versions")).toBe(cards.map((c) => c.versionId).join(","));
+    } finally {
+      Object.assign(SORT_WAIT_S, was);
+    }
   });
 
   describe("instagram_comments", () => {
@@ -465,6 +496,10 @@ describe("Creator Toolset as a remote MCP server", () => {
     // run_scheduled_task_now and delete_scheduled_task: runs post in an assistant chat, a destination says which, once and weekdays
     // 10338 -> 14394: editor_create (make and start an AI Editor edit), media_import_folder, media_search, media_folders (the
     // Media Library's folders), instagram_add_account and instagram_comments (what people write under an account's posts)
-    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(14394);
+    // 14394 -> 14660: A-roll and B-roll: media_search's roll filter and versions (the clips just added, with the said line
+    // that counts how they were sorted), roll on each hit; media_import_folder returns that said line
+    // 14660 -> 15032: the Workshop's current project, unlinking one post (and what linking does to the status), and the writer's two
+    // options (my words only, deep research). Tools added since then live in api/mcp-tools/ and are not counted here.
+    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(15032);
   });
 });

@@ -52,9 +52,9 @@ const KINDS: { value: AssetKind | "all"; label: string }[] = [
 ];
 const KIND_ICON: Record<AssetKind, typeof Video> = { video: Video, audio: AudioLines, image: ImageIcon, doc: FileText };
 
-/** A-roll or B-roll, when the server has sorted the clip (the "roll" work fills AssetCard.roll; read as optional here). */
+/** A-roll or B-roll, as the server sorted the clip (api/library/roll.ts); finished work and unsorted clips have none. */
 type Roll = "a" | "b";
-const rollOf = (a: AssetCard) => (a as AssetCard & { roll?: Roll }).roll;
+const rollOf = (a: AssetCard) => a.roll;
 const ROLLS: { value: Roll | null; label: string }[] = [
   { value: null, label: "All" },
   { value: "a", label: "A-roll" },
@@ -69,6 +69,8 @@ interface Upload {
   folderId?: string;
   status: "uploading" | "added" | "duplicate" | "failed";
   error?: string;
+  inPlace?: boolean; // added where it is on this Mac, not uploaded
+  final?: boolean; // refused for good (too large for this server): no Retry
 }
 
 const clock = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
@@ -128,7 +130,7 @@ export default function LibraryPage() {
 
   // the first page for the current library, search, kind and folder, kept per view; "Load more" pages add to it
   const folder = scope === "all" ? {} : scope === "trash" ? { trashed: true } : { collectionId: scope };
-  const query = { q: term || undefined, kind: kind === "all" ? undefined : [kind], facets, ...folder, source: source || undefined };
+  const query = { q: term || undefined, kind: kind === "all" ? undefined : [kind], facets, ...folder, source: source || undefined, roll: roll ?? undefined };
   const pageKey = libId ? `/api/library/${libId}/assets?view=${encodeURIComponent(JSON.stringify(query))}` : null;
   const first = useCachedLoad<AssetPage>(pageKey, () => listAssets(libId!, query));
   const reload = () => void first.refresh().catch((e) => setError(message(e)));
@@ -142,9 +144,9 @@ export default function LibraryPage() {
     : [...(first.data?.items ?? []), ...(extra?.items.filter((a) => !shownIds.has(a.id)) ?? [])];
   const said = found?.hits.filter((h) => h.seconds !== undefined) ?? [];
   const next = searching ? undefined : extra ? extra.next : first.data?.next;
-  // ponytail: A-roll / B-roll narrows the pages loaded so far; a server query when the roll work adds one
+  // A-roll / B-roll is the server's filter (the whole library, not only the pages loaded); the row shows once clips are sorted
   const hasRoll = items.some((a) => rollOf(a));
-  const shown = roll ? items.filter((a) => rollOf(a) === roll) : items;
+  const shown = items;
   const narrowed = !!term || kind !== "all" || !!roll || Object.values(facets).some((v) => v.length) || !!source;
 
   // an empty library is one screen (what it is for, the folder to choose): nothing in it, nothing in its trash, no
@@ -171,11 +173,11 @@ export default function LibraryPage() {
     setFound(null);
     if (!libId || !searching) return;
     let live = true;
-    searchLibrary(libId, term, { facets, kind: kind === "all" ? undefined : kind, collectionId: scope === "all" ? undefined : scope })
+    searchLibrary(libId, term, { facets, kind: kind === "all" ? undefined : kind, collectionId: scope === "all" ? undefined : scope, roll: roll ?? undefined })
       .then((r) => live && setFound(r))
       .catch((e) => live && (setFound({ hits: [], meaningGettingReady: false }), setError(message(e))));
     return () => void (live = false);
-  }, [libId, term, scope, facets, kind, searching]);
+  }, [libId, term, scope, facets, kind, roll, searching]);
 
   const open = (a: AssetCard, at = 0) => {
     // a plug-in source's item (external ref) has no library asset to open here yet: its own page holds it
@@ -204,12 +206,12 @@ export default function LibraryPage() {
     if (!libId) return;
     patch(u.key, { status: "uploading", sent: 0, error: undefined });
     try {
-      const r = await uploadFile(libId, u.file, (sent) => patch(u.key, { sent }), u.folderId);
+      const r = await uploadFile(libId, u.file, (sent, inPlace) => patch(u.key, { sent, inPlace }), u.folderId);
       patch(u.key, r.duplicateOf ? { status: "duplicate", sent: u.file.size } : { status: "added", sent: u.file.size });
       reload();
       if (u.folderId) reloadFolders(); // the folder's count
     } catch (e) {
-      patch(u.key, { status: "failed", error: message(e) });
+      patch(u.key, { status: "failed", error: message(e), final: (e as { code?: string }).code === "too_large" });
     }
   };
 
@@ -291,7 +293,7 @@ export default function LibraryPage() {
 
   const label = (u: Upload) =>
     u.status === "uploading"
-      ? `Uploading ${Math.round((u.sent / Math.max(1, u.file.size)) * 100)}%`
+      ? u.inPlace ? "Adding" : `Uploading ${Math.round((u.sent / Math.max(1, u.file.size)) * 100)}%`
       : u.status === "added"
         ? "Added"
         : u.status === "duplicate"
@@ -449,10 +451,12 @@ export default function LibraryPage() {
                     {u.status === "uploading" && <Progress value={(u.sent / Math.max(1, u.file.size)) * 100} className="h-1.5" />}
                     {u.status === "failed" && (
                       <div className="flex items-center gap-2 text-xs text-red-400">
-                        <span className="truncate">{u.error}</span>
+                        <span className="min-w-0">{u.error}</span>
+                        {!u.final && (
                         <Button variant="outline" size="sm" onClick={() => void send(u)}>
                           Retry
                         </Button>
+                        )}
                       </div>
                     )}
                   </div>

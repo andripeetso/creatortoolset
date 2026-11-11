@@ -35,7 +35,10 @@ export type ScreenLook = {
   clickRings: boolean;
   /** The pointer is not drawn at all (the rings still are, when on). */
   pointerHidden?: boolean;
-  /** A BACKGROUNDS id, "color" (one colour: `color`) or "custom" (a gradient of your two colours: `stops`). */
+  /**
+   * A BACKGROUNDS id, "color" (one colour: `color`), "custom" (a gradient of your two colours: `stops`) or "none"
+   * (nothing behind the window: the export keeps it see-through, where one can be made).
+   */
   background: string;
   color?: string;
   stops?: [string, string];
@@ -110,6 +113,28 @@ export function backgroundStops(look: Pick<ScreenLook, "background" | "color" | 
   }
   if (look.background === "custom" && look.stops?.every((c) => HEX.test(c))) return look.stops;
   return (BACKGROUNDS.find((b) => b.id === look.background) ?? BACKGROUNDS[0]).stops;
+}
+
+/** The look where no see-through video can be made: "none" becomes the first gradient. Any other look as it is. */
+export function opaqueLook(look: ScreenLook): ScreenLook {
+  return look.background === "none" ? { ...look, background: BACKGROUNDS[0].id } : look;
+}
+
+/**
+ * The picture a see-through export hands to the Mac app: every frame twice in one H.264 picture (which has no
+ * transparency of its own), its colours over black and its matte (white where the frame is opaque, black where it is
+ * clear). A wide frame has the two one above the other, a tall one side by side, so the picture stays inside what
+ * H.264 takes. The packed picture's shape does not say which (2160×1920 is a tall frame side by side, or a very wide
+ * one stacked), so the file's name does: `<name>.stacked.ctalpha.mp4` or `<name>.beside.ctalpha.mp4`. The app
+ * (apps/mac AlphaVideo.swift) joins the halves again.
+ */
+export function alphaPacking(width: number, height: number): { layout: "stacked" | "beside"; width: number; height: number } {
+  return width >= height ? { layout: "stacked", width, height: height * 2 } : { layout: "beside", width: width * 2, height };
+}
+
+/** The name the packed picture is saved under: the app knows it by its ending and reads how it is packed before it. */
+export function alphaFileName(name: string, width: number, height: number): string {
+  return `${name}.${alphaPacking(width, height).layout}.ctalpha.mp4`;
 }
 
 /** How dark the shadow is, 0–1 (0 = none). */
@@ -531,6 +556,8 @@ function drawCamera(
 
 /**
  * One output frame at time t: background, the picture (zoomed), the pointer and click rings, then the camera.
+ * With the background "none" nothing is painted behind the window: the caller cleared the canvas (the export) or
+ * painted what shows through (the preview's checkerboard).
  * `source` is the recording's frame at t (the preview's bitmap of it, or the export's decoded frame). `camera` is the
  * camera's frame at t, or null when the recording has no camera. A look without `camera` gets `defaultCamera()` when a
  * camera exists. `opts.quality` is how carefully the picture is scaled ("high" unless said: the export and a settled
@@ -559,15 +586,17 @@ export function drawFrame(
   const short = Math.min(outW, outH);
   const pad = look.padding * short;
   const cam = camera ? (look.camera ?? defaultCamera()) : null;
-  const [from, to] = backgroundStops(look);
-  if (from === to) ctx.fillStyle = from;
-  else {
-    const grad = ctx.createLinearGradient(0, 0, outW, outH);
-    grad.addColorStop(0, from);
-    grad.addColorStop(1, to);
-    ctx.fillStyle = grad;
+  if (look.background !== "none") {
+    const [from, to] = backgroundStops(look);
+    if (from === to) ctx.fillStyle = from;
+    else {
+      const grad = ctx.createLinearGradient(0, 0, outW, outH);
+      grad.addColorStop(0, from);
+      grad.addColorStop(1, to);
+      ctx.fillStyle = grad;
+    }
+    ctx.fillRect(0, 0, outW, outH);
   }
-  ctx.fillRect(0, 0, outW, outH);
 
   if (camera && cam?.layout === "only") {
     drawCamera(ctx, camera, { x: 0, y: 0, w: outW, h: outH }, { radius: 0, mirror: cam.mirror, short, shadow: false, border: false });

@@ -38,7 +38,11 @@ const server = vi.hoisted(() => ({
 vi.mock("@/lib/library", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/library")>()),
   listLibraries: async () => [{ id: "lib_tiny", name: "Tiny", storage: "local", settings: { describe: true, embed: false } }],
-  listAssets: async (_: string, q: { trashed?: boolean }) => ({ items: q.trashed ? server.trash : server.items, next: null }),
+  // the stand-in narrows by roll the way the server does (api/library/query.ts): the page asks, it does not filter
+  listAssets: async (_: string, q: { trashed?: boolean; roll?: "a" | "b" }) => ({
+    items: (q.trashed ? server.trash : server.items).filter((x) => !q.roll || (x as { roll?: string }).roll === q.roll),
+    next: null,
+  }),
   listCollections: async () => server.folders,
   listSources: async () => [],
   getWatch: async () => server.watch,
@@ -171,7 +175,7 @@ describe("Media Library page", () => {
     expect(sheet()).not.toContain("Footage folders");
   });
 
-  it("A-roll and B-roll narrow the grid when the clips carry them", async () => {
+  it("A-roll and B-roll ask the server for that roll, so the whole library is narrowed", async () => {
     server.items = [clip("talk", { roll: "a" }), clip("cover", { roll: "b" })];
     const host = await mount();
     const b = [...host.querySelectorAll('[aria-label="Roll"] button')].find((x) => x.textContent === "B-roll") as HTMLButtonElement;

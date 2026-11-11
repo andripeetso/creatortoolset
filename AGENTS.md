@@ -15,12 +15,13 @@ and signed in to with their own subscription.
 |---|---|---|
 | `apps/captions/` | The web app and its server: UI in `src/`, API in `api/`, shared types in `contracts/`, the database schema in `db/` | React, Vite, Hono, tRPC, TypeScript |
 | `apps/mac/` | The Mac app: a native shell around the web app, the server it runs on this Mac (bundled by `scripts/build-app.sh`), the list of servers it can open (This Mac and yours, by address), plus the local AI runner and its menu bar item | SwiftUI, Swift Package Manager, Sparkle |
+| `apps/ios/` | The iPhone app: the Assistant, uploads into the Media Library (background, resumable), Finals, scripts to film, and the web app for the rest. Talks to any server by address or one-time sign-in link | SwiftUI, Xcode project |
 | `apps/obsidian/` | An Obsidian plugin: a vault folder's notes and the Content Workshop in step (status both ways, Send, exports). Its own npm lockfile, outside the pnpm workspace | TypeScript, esbuild |
 | `scripts/` | Repository checks (`check-public.sh`) and the public-repo patterns in `scripts/public/` | Bash |
 | `.githooks/` | `pre-commit` (public-repo guard, secret scan) | Bash |
 
 Start with `apps/captions/README.md` for the app, `SELF_HOSTING.md` for running a server, and
-`apps/mac/README.md` for the Mac app.
+`apps/mac/README.md` for the Mac app, `apps/ios/README.md` for the iPhone app.
 
 ## Changing the app for one person: a plug-in first
 
@@ -66,6 +67,8 @@ pnpm check                                     # TypeScript, apps/captions
 pnpm build                                     # production build of the web app
 pnpm build:mac                                 # Mac app bundle with its server (apps/mac/scripts/build-app.sh, Apple silicon)
 pnpm test:mac                                  # Mac app tests (swift test)
+pnpm build:ios                                 # iPhone app, simulator build (apps/ios/README.md)
+pnpm test:ios                                  # iPhone app tests
 pnpm --filter @creator-toolset/captions run doctor   # checks a running install; bare `pnpm doctor` is pnpm's own command
 scripts/check-public.sh                        # the public-repo guard; the pre-commit hook runs it too
 ```

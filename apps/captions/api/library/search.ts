@@ -113,14 +113,16 @@ searchApp.get("/:id/search", async (c) => {
   if (!viewer) return notFound(c);
   const q = (c.req.query("q") ?? "").trim().slice(0, 200);
   if (!q) return c.json({ error: "Type something to search for", code: "invalid" }, 400);
-  const where = searchClauses(parseSearch(c.req.query()));
+  const query = parseSearch(c.req.query());
+  const { roll } = query;
+  const where = searchClauses(query);
   const text = searchLibrary(libraryId, q, LIMIT, where);
   const meaning = await semanticHits(libraryId, q, user.username, where).catch(() => null);
   const hits = meaning ? rrf([text, meaning], hitKey).slice(0, 2 * LIMIT) : text;
   if (!meaning && meaningGettingReady(libraryId, user.username)) c.header("X-Search-Meaning", "getting-ready");
   const seen = await visibleCards(viewer, libraryId, hits.map((h) => h.asset));
   const shown = new Set(seen.map((a) => a.id));
-  return c.json(hits.filter((h) => shown.has(h.asset.id)));
+  return c.json(hits.filter((h) => shown.has(h.asset.id) && (!roll || h.asset.roll === roll))); // ponytail: narrowed after the top hits
 });
 
 // GET /api/library/:id/assets/:assetId → AssetDetail (404 for a viewer the policies refuse)
