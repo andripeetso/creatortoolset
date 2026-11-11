@@ -213,7 +213,9 @@ export interface FolderPlugins {
 
 /**
  * What the Mac app says about one changed folder while Update automatically is on (lib/thisMac.ts pluginsAuto):
- * `waiting` = its new version is ready and the server is in the middle of something, `note` = why it was not taken.
+ * `waiting` = its new version is ready and the server is in the middle of something, `note` = the Mac app's sentence
+ * for a change that does not come in by itself (it does not build, it would run on the Mac for the first time, it
+ * changes too often).
  * undefined = the switch is off (or this is no Mac app): a changed folder waits for Use the new version.
  */
 export type FolderRowAuto = { waiting: boolean; note?: string };
@@ -230,7 +232,7 @@ export function folderRowNote(row: FolderPluginRow, pageProblem: string | undefi
   if (row.on && !paused && pageProblem) return { tone: "broken", text: `Its pages were left out: ${pageProblem}` };
   if (!row.changed) return null;
   if (!auto) return { tone: "attention", text: "Changed since you switched it on" };
-  if (auto.note) return { tone: "attention", text: `The new version was left out: ${auto.note}` };
+  if (auto.note) return { tone: "attention", text: auto.note };
   if (auto.waiting) return { text: "The new version starts when the running work is done" };
   return null;
 }

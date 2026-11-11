@@ -54,7 +54,8 @@ nothing: no Node, no pnpm, no checkout.
 6. **After you change the folder** of a plug-in that is on, the app takes the new version by itself: once the
    folder has stood still for a few seconds and the app's server has nothing running, the server restarts with it
    and the window reloads. A version that doesn't build is left out, its row says why, and the copy that was on
-   keeps running. The person can switch this off (Update automatically, on the same list); a changed folder then
+   keeps running. One change always waits for the person: adding `plugin.ts` to a plug-in that had only `web.tsx`,
+   because from then on it runs on their Mac (its row says so, and Use the new version asks them). The person can switch this off (Update automatically, on the same list); a changed folder then
    waits for their click on Use the new version. Write nothing into the plug-in's own folder while it runs: every
    change there is a new version. Its data goes under the data folder ("Its files" in [Rules](#rules)).
 

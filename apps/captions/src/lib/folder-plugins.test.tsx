@@ -129,7 +129,8 @@ describe("what a plug-in's row says under its name", () => {
     expect(offersNewVersion({ ...row, changed: true }, { waiting: true })).toBe(true);
   });
   it("says why a changed folder was not taken", () => {
-    expect(folderRowNote({ ...row, changed: true }, undefined, false, { waiting: false, note: "plugin.ts:3: Unexpected }" })).toEqual({ tone: "attention", text: "The new version was left out: plugin.ts:3: Unexpected }" });
+    const note = "The new version was left out: plugin.ts:3: Unexpected }";
+    expect(folderRowNote({ ...row, changed: true }, undefined, false, { waiting: false, note })).toEqual({ tone: "attention", text: note });
     expect(offersNewVersion({ ...row, changed: true }, { waiting: false, note: "x" })).toBe(true);
   });
 });

@@ -33,7 +33,7 @@ final class PluginsTests: XCTestCase {
         XCTAssertEqual(pluginsOnValue(approved), "alpha:\(b),zeta:\(fp)")
         XCTAssertEqual(pluginsOnValue([:]), "")
         // the folder each one was taken from goes with it, for the same plug-ins (a folder's name may hold anything)
-        let record = PluginApprovals(on: approved.mapValues { PluginApproval(fingerprint: $0, folder: $0 == b ? "my \"own\", folder/x" : "zeta") })
+        let record = PluginApprovals(on: approved.mapValues { PluginApproval(fingerprint: $0, folder: $0 == b ? "my \"own\", folder/x" : "zeta", server: true) })
         let env = pluginEnvironment(approved: record, paused: true)
         XCTAssertEqual(env["CT_PLUGINS_ON"], "alpha:\(b),zeta:\(fp)")
         XCTAssertEqual(env["CT_PLUGINS_FOLDERS"], #"{"alpha":"my \"own\", folder/x","zeta":"zeta"}"#)
@@ -91,14 +91,33 @@ final class PluginsTests: XCTestCase {
     /// Only another version of the plug-in that is on comes in by itself: never another id, never the same copy again.
     func testOnlyAnotherVersionOfThePluginThatIsOnIsTakenUp() {
         let a = String(repeating: "a", count: 64), b = String(repeating: "b", count: 64)
-        let on = PluginApproval(fingerprint: a, folder: "tiny")
+        let on = PluginApproval(fingerprint: a, folder: "tiny", server: true)
         func prepared(_ id: String, _ fingerprint: String) -> PluginPrepared {
             PluginPrepared(id: id, name: "Tiny", fingerprint: fingerprint, server: true, web: false)
         }
-        XCTAssertTrue(pluginTakesUp(prepared("tiny", b), id: "tiny", on: on))
-        XCTAssertFalse(pluginTakesUp(prepared("tiny", a), id: "tiny", on: on))      // the same copy: no restart
-        XCTAssertFalse(pluginTakesUp(prepared("other", b), id: "tiny", on: on))     // the folder now states another id
-        XCTAssertFalse(pluginTakesUp(prepared("tiny", "nonsense"), id: "tiny", on: on))
+        XCTAssertEqual(pluginChange(prepared("tiny", b), id: "tiny", on: on), .takes)
+        XCTAssertEqual(pluginChange(prepared("tiny", a), id: "tiny", on: on), PluginChange.none)      // the same copy: no restart
+        XCTAssertEqual(pluginChange(prepared("other", b), id: "tiny", on: on), PluginChange.none)     // the folder now states another id
+        XCTAssertEqual(pluginChange(prepared("tiny", "nonsense"), id: "tiny", on: on), PluginChange.none)
+    }
+
+    /// A change never gets more than the person agreed to: the alert of a plug-in with pages only never said it runs on
+    /// the Mac, so a version that adds a server half waits for their click, whatever Update automatically says.
+    func testAChangeThatAddsAServerHalfWaitsForAClick() {
+        let a = String(repeating: "a", count: 64), b = String(repeating: "b", count: 64)
+        func prepared(server: Bool, web: Bool) -> PluginPrepared {
+            PluginPrepared(id: "tiny", name: "Tiny", fingerprint: b, server: server, web: web)
+        }
+        let pagesOnly = PluginApproval(fingerprint: a, folder: "tiny", server: false)
+        XCTAssertEqual(pluginChange(prepared(server: true, web: true), id: "tiny", on: pagesOnly), .asks)
+        XCTAssertEqual(pluginChange(prepared(server: true, web: false), id: "tiny", on: pagesOnly), .asks)
+        XCTAssertEqual(pluginChange(prepared(server: false, web: true), id: "tiny", on: pagesOnly), .takes)   // still pages only
+        let runsHere = PluginApproval(fingerprint: a, folder: "tiny", server: true)
+        XCTAssertEqual(pluginChange(prepared(server: true, web: true), id: "tiny", on: runsHere), .takes)     // pages added: no more reach
+        XCTAssertEqual(pluginChange(prepared(server: false, web: true), id: "tiny", on: runsHere), .takes)    // less reach
+        // a record that does not say (none was ever shipped): the lesser agreement
+        let old = PluginRecord.decode(Data(#"{"on":{"tiny":{"fingerprint":"\#(a)","folder":"tiny"}}}"#.utf8))
+        XCTAssertEqual(old?.on["tiny"]?.server, false)
     }
 
     func testAPluginThatChangesFiveTimesInFiveMinutesWaitsForAClick() {
@@ -134,7 +153,7 @@ final class PluginsTests: XCTestCase {
 
     func testTheRecordEncodesAndDecodesAndKeepsItsOwnKeychainService() {
         let fp = String(repeating: "f", count: 64)
-        let tiny = PluginApprovals(on: ["tiny": PluginApproval(fingerprint: fp, folder: "tiny folder")])
+        let tiny = PluginApprovals(on: ["tiny": PluginApproval(fingerprint: fp, folder: "tiny folder", server: true)])
         XCTAssertEqual(PluginRecord.encode(tiny).flatMap(PluginRecord.decode), tiny)
         XCTAssertNil(PluginRecord.decode(Data("not json".utf8)))
         XCTAssertNil(PluginRecord.decode(Data(#"{"tiny":"\#(fp)"}"#.utf8)))          // not this record's shape: nothing is on

@@ -64,12 +64,27 @@ func isPluginFingerprint(_ fingerprint: String) -> Bool {
     fingerprint.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil
 }
 
-/// One plug-in the person switched on: the fingerprint of the copy that runs, and the folder in plugins/ it was taken
-/// from. Only that folder's later changes are taken up by themselves: another folder that states the same id is a
-/// folder nobody switched on.
+/// One plug-in the person switched on: the fingerprint of the copy that runs, the folder in plugins/ it was taken
+/// from, and whether the alert they agreed to said it runs on this Mac (it had a server half). Only that folder's later
+/// changes are taken up by themselves: another folder that states the same id is a folder nobody switched on. And a
+/// change never gets more than they agreed to: one that adds a server half waits for their click (pluginChange).
 struct PluginApproval: Codable, Equatable {
     var fingerprint: String
     var folder: String
+    var server: Bool
+
+    init(fingerprint: String, folder: String, server: Bool) {
+        self.fingerprint = fingerprint
+        self.folder = folder
+        self.server = server
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        fingerprint = try c.decode(String.self, forKey: .fingerprint)
+        folder = try c.decode(String.self, forKey: .folder)
+        server = try c.decodeIfPresent(Bool.self, forKey: .server) ?? false   // not said: the lesser agreement
+    }
 }
 
 /// What the Keychain item holds: the plug-ins that are on, and whether their later changes wait for a click.
@@ -260,10 +275,28 @@ func pluginFolderSettled(stamp: String?, last: String?, handled: String?) -> Boo
     stamp != nil && stamp == last && stamp != handled
 }
 
-/// A prepared copy comes in by itself only as another version of a plug-in that is on.
-func pluginTakesUp(_ prepared: PluginPrepared, id: String, on: PluginApproval) -> Bool {
-    prepared.id == id && isPluginFingerprint(prepared.fingerprint) && prepared.fingerprint != on.fingerprint
+/// What a prepared copy of a changed folder is to the plug-in that is on.
+enum PluginChange: Equatable {
+    /// the same copy, or not this plug-in at all: nothing happens
+    case none
+    /// another version within what the person agreed to: it comes in by itself
+    case takes
+    /// another version that reaches further than the alert they agreed to said: it waits for their click on that alert
+    case asks
 }
+
+/// A prepared copy comes in by itself only as another version of a plug-in that is on, and only when it can reach no
+/// more than the person agreed to. The Switch On alert of a plug-in with pages only says "It adds pages to the app"; a
+/// version that adds a server half runs on the Mac with the app's access to files, keys and the internet, which that
+/// alert never said. (Pages added to a plug-in that already runs on the Mac reach nothing it could not.)
+func pluginChange(_ prepared: PluginPrepared, id: String, on: PluginApproval) -> PluginChange {
+    guard prepared.id == id, isPluginFingerprint(prepared.fingerprint), prepared.fingerprint != on.fingerprint else { return .none }
+    return prepared.server && !on.server ? .asks : .takes
+}
+
+/// What the row of a changed plug-in says when its change does not come in by itself (the page shows it as it is).
+let pluginAsksNote = "The new version would run on this Mac, so it waits for you."
+func pluginLeftOutNote(_ why: String) -> String { "The new version was left out: \(why)" }
 
 /// A plug-in taken up five times in five minutes changes faster than an AI writes: most likely it writes into its own
 /// folder, and every take-up would restart the server for good. Its next change waits for a click.
@@ -271,7 +304,7 @@ func pluginChangesTooOften(_ takeUps: [Date], now: Date) -> Bool {
     takeUps.filter { now.timeIntervalSince($0) < 300 }.count >= 5
 }
 
-let pluginChangesTooOftenNote = "It changed five times in five minutes, so this change waits for you."
+let pluginChangesTooOftenNote = "It changed five times in five minutes, so its changes wait for you."
 
 /// Taking a change up restarts the server, which ends whatever it is doing. So it waits while the menu bar's Active
 /// list has a row (a Workshop reply being written, a plug-in's own work, an AI request on this Mac), while the
@@ -411,7 +444,7 @@ extension Shell {
             alert.beginSheetModal(for: window) { [weak self] response in
                 guard response == .alertSecondButtonReturn, let self else { return done(["ok": false]) }
                 var approved = PluginRecord.live.load()
-                approved.on[prepared.id] = PluginApproval(fingerprint: prepared.fingerprint, folder: folder)
+                approved.on[prepared.id] = PluginApproval(fingerprint: prepared.fingerprint, folder: folder, server: prepared.server)
                 guard PluginRecord.live.save(approved) else { return done(recordProblem) }
                 self.pluginWatch.forget(prepared.id)
                 self.approvalsChanged()
@@ -475,17 +508,20 @@ extension Shell {
                 continue
             }
             guard status == 200, let prepared = try? JSONDecoder().decode(PluginPrepared.self, from: body) else {
-                watch.notes[id] = prepareProblem(body)
+                watch.notes[id] = pluginLeftOutNote(prepareProblem(body))
                 continue
             }
             watch.notes[id] = nil
-            guard pluginTakesUp(prepared, id: id, on: on) else { continue }
+            let change = pluginChange(prepared, id: id, on: on)
+            if change == .none { continue }
             if pluginFolderStamp(folder) != stamp {
                 watch.handled[id] = nil   // it moved while it was copied: not a state that stood still
+            } else if change == .asks {
+                watch.notes[id] = pluginAsksNote
             } else if pluginChangesTooOften(watch.takeUps[id] ?? [], now: Date()) {
                 watch.notes[id] = pluginChangesTooOftenNote
             } else {
-                watch.waiting[id] = PluginApproval(fingerprint: prepared.fingerprint, folder: on.folder)
+                watch.waiting[id] = PluginApproval(fingerprint: prepared.fingerprint, folder: on.folder, server: prepared.server)
             }
         }
         guard !watch.waiting.isEmpty, await !busyHere() else { return }

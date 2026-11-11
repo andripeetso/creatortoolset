@@ -171,8 +171,12 @@ A plug-in is a folder the person's own AI writes into `~/Library/Application Sup
   Update automatically off needs no question; switching it back on is this app's alert, because the ask comes from
   the page, where a plug-in's own pages run. With it on, the Switch On alert ends with "Later changes to its folder
   run by themselves unless you switch off Update automatically."
-- **The record** is one Keychain generic-password item: `{ on: { id: { fingerprint, folder } }, waits }` (the clicks,
-  the folder each was switched on from, and Update automatically off as `waits`), service
+- **A change never gets more than the person agreed to.** The record keeps whether the alert they agreed to said the
+  plug-in runs on this Mac (it had a server half). A changed folder that adds a server half to a plug-in with pages
+  only is not taken up by itself, whatever Update automatically says: its row says "The new version would run on this
+  Mac, so it waits for you." and Use the new version shows the alert that says so.
+- **The record** is one Keychain generic-password item: `{ on: { id: { fingerprint, folder, server } }, waits }` (the
+  clicks, the folder each was switched on from, whether it ran on this Mac, and Update automatically off as `waits`), service
   `AppIdentity.keychain("plugins")` (`com.creatortoolset.mac.plugins`, a copy's own), account `approved`. A build with a provisioning profile keeps it in the data-protection Keychain, which no other
   program can reach, and never reads the file-based one. A build without a profile can't write there
   (errSecMissingEntitlement, -34018) and keeps the record in the file-based Keychain. That one is weaker: another
