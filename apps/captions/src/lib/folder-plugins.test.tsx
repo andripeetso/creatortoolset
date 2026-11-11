@@ -4,7 +4,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { Sparkles } from "lucide-react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { folderRowNote, guardWebPlugin, loadFolderPlugins, reloadForFolderPlugins, webAdmissionProblem, type FolderPluginRow } from "./folder-plugins";
+import { folderRowNote, guardWebPlugin, loadFolderPlugins, offersNewVersion, reloadForFolderPlugins, webAdmissionProblem, type FolderPluginRow } from "./folder-plugins";
 import { defineWebPlugin, type WebPlugin } from "./plugin";
 
 const Page = () => <p>a page</p>;
@@ -115,7 +115,21 @@ describe("what a plug-in's row says under its name", () => {
   it("says when only its pages were left out", () => {
     expect(folderRowNote(row, "It needs src/x, which this version of the app doesn't have", false)?.text).toMatch(/^Its pages were left out: It needs src\/x/);
   });
-  it("says the folder changed", () => {
+  it("says the folder changed, and offers the new version, while Update automatically is off", () => {
     expect(folderRowNote({ ...row, changed: true }, undefined, false)).toEqual({ tone: "attention", text: "Changed since you switched it on" });
+    expect(offersNewVersion({ ...row, changed: true }, undefined)).toBe(true);
+    expect(offersNewVersion(row, undefined)).toBe(false);
+  });
+  it("says nothing and offers nothing about a change that is coming in by itself", () => {
+    expect(folderRowNote({ ...row, changed: true }, undefined, false, { waiting: false })).toBeNull();
+    expect(offersNewVersion({ ...row, changed: true }, { waiting: false })).toBe(false);
+  });
+  it("says a new version waits for running work, quietly, and offers it now", () => {
+    expect(folderRowNote({ ...row, changed: true }, undefined, false, { waiting: true })).toEqual({ text: "The new version starts when the running work is done" });
+    expect(offersNewVersion({ ...row, changed: true }, { waiting: true })).toBe(true);
+  });
+  it("says why a changed folder was not taken", () => {
+    expect(folderRowNote({ ...row, changed: true }, undefined, false, { waiting: false, note: "plugin.ts:3: Unexpected }" })).toEqual({ tone: "attention", text: "The new version was left out: plugin.ts:3: Unexpected }" });
+    expect(offersNewVersion({ ...row, changed: true }, { waiting: false, note: "x" })).toBe(true);
   });
 });

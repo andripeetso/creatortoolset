@@ -115,6 +115,12 @@ func releaseEnv(_ info: [String: Any]?) -> [String: String] {
     return ["CT_CHANNEL": "release", "CT_VERSION": info?["CFBundleShortVersionString"] as? String ?? ""]
 }
 
+/// Whether a process has started programs that still run (the server's ffmpeg, a plug-in being built).
+func hasChildPrograms(_ pid: pid_t) -> Bool {
+    var pids = [pid_t](repeating: 0, count: 64)
+    return proc_listchildpids(pid, &pids, Int32(pids.count * MemoryLayout<pid_t>.size)) > 0
+}
+
 /// The path of a running process's program (to tell our own node from another program before stopping it).
 func processPath(_ pid: pid_t) -> String? {
     var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
@@ -366,6 +372,9 @@ final class LocalServer: ObservableObject {
         p.terminate()
     }
 
+    /// The server is running another program right now (Plugins.swift: a changed plug-in waits for it to end).
+    var runsPrograms: Bool { process.map { hasChildPrograms($0.processIdentifier) } ?? false }
+
     /// Stop, then start again, for a change of settings (plug-ins). It is not a crash, so the crash list stays as it is.
     func restart() {
         stop()
@@ -382,7 +391,7 @@ final class LocalServer: ObservableObject {
         crashes.append(Date())
         guard let delay = restartDelay(crashes: crashes, now: Date()) else {
             // five crashes: with a plug-in on and not paused, pause them once and start again (the likely cause)
-            if pluginsPauseInsteadOfStopping(on: PluginRecord.live.load().count, paused: UserDefaults.standard.bool(forKey: pluginsPausedKey)) {
+            if pluginsPauseInsteadOfStopping(on: PluginRecord.live.load().on.count, paused: UserDefaults.standard.bool(forKey: pluginsPausedKey)) {
                 UserDefaults.standard.set(true, forKey: pluginsPausedKey)
                 ServerLog.note("five crashes in five minutes: plug-ins paused, starting again")
                 crashes = []

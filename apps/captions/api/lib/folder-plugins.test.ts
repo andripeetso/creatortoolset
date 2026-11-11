@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { Hono } from "hono";
 import { definePlugin, type ServerPlugin } from "./plugin";
@@ -9,7 +9,7 @@ vi.mock("../plugin-host.gen", () => ({
   hostModules: { "api/lib/plugin": () => import("./plugin"), "pkg:hono": () => import("hono") } as Record<string, () => Promise<unknown>>,
 }));
 
-const { blamedPlugin, fingerprintOf, folderPluginRows, loadFolderPlugins, mountFolderPlugins, parseOn, prepareFolderPlugin, resetFolderPluginsForTest, startFolderPlugin } =
+const { blamedPlugin, fingerprintOf, folderPluginRows, loadFolderPlugins, mountFolderPlugins, parseFolders, parseOn, prepareFolderPlugin, resetFolderPluginsForTest, startFolderPlugin } =
   await import("./folder-plugins");
 
 // A throwaway app folder under node_modules/.tmp (git-ignored, on the same disk as the build).
@@ -77,6 +77,26 @@ describe("plug-ins from the person's folder", () => {
     const [plugin] = await start();
     expect(await (await (plugin!.routes as Hono).request("/ping")).json()).toEqual({ ok: "a" });
     expect(row("a")).toMatchObject({ running: true, changed: true });
+  });
+
+  it("keeps a plug-in that is on with the folder it was switched on from, whatever another folder says its id is", async () => {
+    write("tiny", "plugin.ts", server("tiny"));
+    await switchOn("tiny");
+    process.env.CT_PLUGINS_FOLDERS = JSON.stringify({ tiny: "tiny" });
+    // a folder nobody switched on, sorted first, stating the same id with other code
+    write("aaa", "plugin.ts", server("tiny").replace('ok: "tiny"', 'ok: "not mine"'));
+    const [plugin] = await start();
+    expect(await (await (plugin!.routes as Hono).request("/ping")).json()).toEqual({ ok: "tiny" });
+    const rows = folderPluginRows();
+    expect(rows.find((r) => r.folder === "tiny")).toMatchObject({ id: "tiny", on: true, running: true, changed: false });
+    expect(rows.find((r) => r.folder === "aaa")).toMatchObject({ id: null, on: false, changed: false, error: "Another folder is already the plug-in tiny" });
+    // the folder it was switched on from is renamed: the renamed one is the plug-in, still on
+    rmSync(path.join(root, "plugins", "aaa"), { recursive: true });
+    renameSync(path.join(root, "plugins", "tiny"), path.join(root, "plugins", "tiny 2"));
+    expect(folderPluginRows()).toMatchObject([{ folder: "tiny 2", id: "tiny", on: true, running: true, changed: false }]);
+    expect(parseFolders('{"a":"my, folder","b":3}')).toEqual(new Map([["a", "my, folder"]]));
+    expect(parseFolders("not json")).toEqual(new Map());
+    expect(parseFolders(undefined)).toEqual(new Map());
   });
 
   it("refuses an approved copy that was edited afterwards", async () => {

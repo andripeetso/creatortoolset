@@ -15,7 +15,10 @@ import { admissionProblem, type ServerPlugin } from "./plugin";
 //   <app folder>/plugins-run/<id>/                     that copy built for this start (remade at every start)
 //   <app folder>/plugins-state.json                    which plug-in was loading, and which stopped the server
 //
-// Only the Mac app says what is on: CT_PLUGINS_ON="id:fingerprint,…", from the list it keeps of the person's own clicks.
+// Only the Mac app says what is on: CT_PLUGINS_ON="id:fingerprint,…", from the list it keeps of the person's own clicks
+// (with CT_PLUGINS_FOLDERS, the folder each was taken from). A changed folder becomes a new approved copy in one of two
+// ways, both the Mac app's doing: the person's click on Use the new version, or by itself while Update automatically
+// is on (apps/mac Plugins.swift). The server never takes a change up on its own.
 // A plug-in runs only from its approved copy, and only while that copy still has its fingerprint. Each one is built
 // (scripts/plugin-build.mjs), loaded and checked by itself: one that fails is left out and named, and the app starts.
 
@@ -44,7 +47,7 @@ export interface FolderPluginRow {
   on: boolean;
   /** It is loaded in this server. */
   running: boolean;
-  /** The folder is no longer what they approved: the approved copy keeps running until they take the new one. */
+  /** The folder is no longer the copy that runs: that copy keeps running until the Mac app takes the new one. */
   changed: boolean;
   /** Why it isn't running, or what is wrong with the folder. */
   error?: string;
@@ -146,6 +149,15 @@ export function parseOn(value: string | undefined): Map<string, string> {
     if (m) out.set(m[1]!, m[2]!);
   }
   return out;
+}
+
+/** `{ "id": "folder" }` from the Mac app: the folder each switched-on plug-in was taken from. Anything malformed is dropped. */
+export function parseFolders(value: string | undefined): Map<string, string> {
+  try {
+    return new Map(Object.entries(JSON.parse(value || "{}") as Record<string, unknown>).filter((e): e is [string, string] => typeof e[1] === "string"));
+  } catch {
+    return new Map();
+  }
 }
 
 const paused = () => process.env.CT_PLUGINS_PAUSED === "1";
@@ -330,6 +342,7 @@ function describeFiles(files: Map<string, Buffer>): { id: string | null; name: s
 /** Every folder in plugins/, and every plug-in that is on, as Community → Installed lists them. */
 export function folderPluginRows(): FolderPluginRow[] {
   const on = parseOn(process.env.CT_PLUGINS_ON);
+  const from = parseFolders(process.env.CT_PLUGINS_FOLDERS);
   const state = readState();
   const rows: FolderPluginRow[] = [];
   const seen = new Set<string>();
@@ -341,7 +354,11 @@ export function folderPluginRows(): FolderPluginRow[] {
       const said = describeFiles(files);
       if (!files.has("plugin.ts") && !files.has("web.tsx")) throw new Error("The folder has neither plugin.ts nor web.tsx");
       if (!said.id) throw new Error('Its files state no id (id: "lowercase-letters")');
-      if (seen.has(said.id)) throw new Error(`Another folder is already the plug-in ${said.id}`);
+      // a plug-in that is on is the folder it was switched on from, while that folder is there: another folder
+      // stating its id is not it (a renamed folder is: the one it was switched on from is gone)
+      const home = on.has(said.id) ? from.get(said.id) : undefined;
+      const taken = seen.has(said.id) || (home !== undefined && home !== folder && names.includes(home));
+      if (taken) throw new Error(`Another folder is already the plug-in ${said.id}`);
       seen.add(said.id);
       Object.assign(row, { id: said.id, name: running.get(said.id)?.name ?? said.name ?? said.id, about: said.about });
       row.on = on.has(said.id);

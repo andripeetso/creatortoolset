@@ -211,10 +211,26 @@ export interface FolderPlugins {
   rows: FolderPluginRow[];
 }
 
-/** What a row says under its name, and whether it is trouble: why it isn't running, or that the folder has changed. */
-export function folderRowNote(row: FolderPluginRow, pageProblem: string | undefined, paused: boolean): { tone: "broken" | "attention"; text: string } | null {
+/**
+ * What the Mac app says about one changed folder while Update automatically is on (lib/thisMac.ts pluginsAuto):
+ * `waiting` = its new version is ready and the server is in the middle of something, `note` = why it was not taken.
+ * undefined = the switch is off (or this is no Mac app): a changed folder waits for Use the new version.
+ */
+export type FolderRowAuto = { waiting: boolean; note?: string };
+
+/** Whether a changed folder's row offers Use the new version: always with the switch off, and with it on only while the change is not coming in by itself. */
+export const offersNewVersion = (row: FolderPluginRow, auto: FolderRowAuto | undefined): boolean => row.changed && !!row.folder && (!auto || auto.waiting || !!auto.note);
+
+/**
+ * What a row says under its name, and whether it is trouble: why it isn't running, or that the folder has changed.
+ * No tone = nothing for the person to do. A change that is coming in by itself says nothing.
+ */
+export function folderRowNote(row: FolderPluginRow, pageProblem: string | undefined, paused: boolean, auto?: FolderRowAuto): { tone?: "broken" | "attention"; text: string } | null {
   if (row.error) return { tone: "broken", text: row.error };
   if (row.on && !paused && pageProblem) return { tone: "broken", text: `Its pages were left out: ${pageProblem}` };
-  if (row.changed) return { tone: "attention", text: "Changed since you switched it on" };
+  if (!row.changed) return null;
+  if (!auto) return { tone: "attention", text: "Changed since you switched it on" };
+  if (auto.note) return { tone: "attention", text: `The new version was left out: ${auto.note}` };
+  if (auto.waiting) return { text: "The new version starts when the running work is done" };
   return null;
 }

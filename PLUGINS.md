@@ -51,8 +51,12 @@ nothing: no Node, no pnpm, no checkout.
 5. **Tell the person to switch it on**: the account menu → Community → Installed → Plug-ins, the switch on its
    row. The app asks them in its own dialog and then restarts its server. Only they can do this. No file, setting
    or tool switches a plug-in on, so don't look for one.
-6. **After you change the folder**, its row says Changed, and Use the new version takes it. Until then the copy
-   they switched on keeps running.
+6. **After you change the folder** of a plug-in that is on, the app takes the new version by itself: once the
+   folder has stood still for a few seconds and the app's server has nothing running, the server restarts with it
+   and the window reloads. A version that doesn't build is left out, its row says why, and the copy that was on
+   keeps running. The person can switch this off (Update automatically, on the same list); a changed folder then
+   waits for their click on Use the new version. Write nothing into the plug-in's own folder while it runs: every
+   change there is a new version. Its data goes under the data folder ("Its files" in [Rules](#rules)).
 
 What is different from a checkout:
 
@@ -67,11 +71,11 @@ What is different from a checkout:
 - **When it fails**, the app starts without it and its row says why: it doesn't build, it throws while loading,
   it uses a name another plug-in has, or it stopped the app's server. A page that throws while it is drawn shows
   one line in its place. `~/Library/Logs/Creator Toolset Server.log` has the `[plugins]` lines. After a fix, they
-  switch it off and on again (or take the new version) and it gets another try.
+  switch it off and on again and it gets another try; a changed folder gets one by itself.
 - **You can't open the page yourself.** Until the person switches the plug-in on, nothing of it runs. Say so in
   your last message, tell them where the switch is and where the page will appear, and ask what they see.
 - **Updates:** the app updates itself and the folder stays. When the app changed something the plug-in imports,
-  the row says what is missing; fix the folder and they take the new version.
+  the row says what is missing; fix the folder and the new version comes in.
 
 ## Make one in a checkout
 

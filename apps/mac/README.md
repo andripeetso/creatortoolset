@@ -156,9 +156,23 @@ A plug-in is a folder the person's own AI writes into `~/Library/Application Sup
 
 - **Switch on** is this app's own alert, a sheet on the window, not a page's: the server takes a copy of the folder and
   builds it (nothing runs yet), then the alert names the plug-in and what it can reach. Cancel is the default; Switch On
-  records it. The page asks with `plugin:on:<folder>`, `plugin:off:<id>`, `plugin:show:<folder>` and `plugins:resume`
-  over the `thisMac` handler, honoured only while This Mac shows this app's own server (`Plugins.swift`).
-- **The record** of the clicks is `id → fingerprint` in one Keychain generic-password item, service
+  records it. The page asks with `plugin:on:<folder>`, `plugin:off:<id>`, `plugin:show:<folder>`, `plugins:resume`,
+  `plugins:state` and `plugins:auto:on|off` over the `thisMac` handler, honoured only while This Mac shows this app's
+  own server (`Plugins.swift`).
+- **A changed folder** of a plug-in that is on is taken up by this app, by itself, unless **Update automatically**
+  (the last row of the Plug-ins list) is off. Every 5 s the app stats the folders the plug-ins were switched on from.
+  A folder that is the same at two looks in a row is sent to the server's prepare (a copy and a test build; nothing
+  runs). A copy that builds waits until the server has nothing running, then the record takes its fingerprint and the
+  server restarts; the window goes back to the page it was on. "Nothing running" is: no row in the menu bar's Active
+  list (a Workshop reply being written, a plug-in's work, an AI request on this Mac), the recorder closed, and no
+  program started by the server still running (ffmpeg, a build). It does not see an upload in flight or work inside
+  the server that starts no program. A version that doesn't build is left out and its row says why. A plug-in taken
+  up five times in five minutes (one that writes into its own folder) waits for a click from then on. Switching
+  Update automatically off needs no question; switching it back on is this app's alert, because the ask comes from
+  the page, where a plug-in's own pages run. With it on, the Switch On alert ends with "Later changes to its folder
+  run by themselves unless you switch off Update automatically."
+- **The record** is one Keychain generic-password item: `{ on: { id: { fingerprint, folder } }, waits }` (the clicks,
+  the folder each was switched on from, and Update automatically off as `waits`), service
   `AppIdentity.keychain("plugins")` (`com.creatortoolset.mac.plugins`, a copy's own), account `approved`. A build with a provisioning profile keeps it in the data-protection Keychain, which no other
   program can reach, and never reads the file-based one. A build without a profile can't write there
   (errSecMissingEntitlement, -34018) and keeps the record in the file-based Keychain. That one is weaker: another
@@ -166,9 +180,11 @@ A plug-in is a folder the person's own AI writes into `~/Library/Application Sup
   a program that calls the Keychain on purpose. Nothing about plug-ins goes in UserDefaults or a file, except the
   paused flag (`pluginsPaused`).
 - **Env:** `CT_PLUGINS_ON=id:fingerprint,…` (sorted by id, left out when none is on) and `CT_PLUGINS_PAUSED=1` when
-  paused. With paused the server lists the plug-ins that are on and loads none.
-- **Restart:** a change (switch on or off, paused or back on) stops and starts the server without counting a crash;
-  the window shows the starting page and loads the page again when the server answers, so it sees the new set.
+  paused, plus `CT_PLUGINS_FOLDERS={"id":"folder",…}` so the server's list tells the folder that is on from another
+  folder stating the same id. With paused the server lists the plug-ins that are on and loads none.
+- **Restart:** a change (switch on or off, a new version, paused or back on) stops and starts the server without
+  counting a crash; the window shows the starting page and loads the page it was on again when the server answers,
+  so it sees the new set.
 - **Five crashes:** with a plug-in on and not paused, the app pauses them once, logs a line, clears the crash list
   and starts again. Otherwise the server stops trying, as above.
 - **This Mac:** a Plug-ins row, shown only while one is on: `N on`, or `Off` when paused, with Switch All Off or

@@ -19,6 +19,8 @@ final class Shell: NSObject, ObservableObject {
     @Published private(set) var pluginMenu: [PluginMenuItem] = []
     /// How many plug-ins the person has switched on (Plugins.swift, the record in the Keychain): This Mac's Plug-ins row.
     @Published internal(set) var pluginCount = 0
+    /// What the look at the plug-ins' folders remembers between looks (Plugins.swift pluginLook).
+    let pluginWatch = PluginWatch()
     /// The Go menu's own tools (GET /api/activity/tools, PluginMenu.swift): the server's list for this account.
     @Published private(set) var appTools: [AppToolItem] = []
     @Published internal(set) var notice: String?
@@ -155,7 +157,7 @@ final class Shell: NSObject, ObservableObject {
         }
         server?.onReady = { [weak self] in self?.serverReady() }
         aiOn = UserDefaults.standard.bool(forKey: aiKey)
-        pluginCount = PluginRecord.live.load().count
+        pluginCount = PluginRecord.live.load().on.count
         markDevice()
         if runsHere {
             startServer()   // the page and the AI runner wait for it
@@ -169,6 +171,10 @@ final class Shell: NSObject, ObservableObject {
         }
         timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             Task { @MainActor in await self?.refresh() }
+        }
+        // a plug-in that is on takes up the changes to its folder (Plugins.swift)
+        Timer.scheduledTimer(withTimeInterval: pluginLookSeconds, repeats: true) { [weak self] _ in
+            Task { @MainActor in await self?.pluginLook() }
         }
         Task { await refresh() }
     }
@@ -277,7 +283,12 @@ final class Shell: NSObject, ObservableObject {
         if let server { tunnel.start(server: LocalServer.folder, dataDir: server.dataDir) }   // a linked Mac's tunnel comes back
         Task {
             await signIn()
-            if !(webView.url.map { isSite($0, base) } ?? false) { open("/") }
+            // after a restart for the plug-ins (Plugins.swift) the window goes back to the page it was on
+            let back = pluginWatch.returnTo
+            pluginWatch.returnTo = nil
+            if !(webView.url.map { isSite($0, base) } ?? false) {
+                if let back, isSite(back, base) { webView.load(URLRequest(url: back)) } else { open("/") }
+            }
             // ponytail: aiOn is one flag for every site; per environment when the Mac app keeps several (slice 8)
             if startsAIWhenReady(aiOn: aiOn, running: runner != nil) { startAI() }
         }

@@ -1,12 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Advanced, Card, InUse, ListRow, RowMenu, Status, type RowMenuItem } from "@/components/settings/ui";
-import { folderPluginFailures, folderRowNote, type FolderPlugins } from "@/lib/folder-plugins";
+import { folderPluginFailures, folderRowNote, offersNewVersion, type FolderPlugins } from "@/lib/folder-plugins";
 import type { PluginAdd, PluginInfo } from "@/lib/plugin";
-import { resumePlugins, showPluginFolder, switchPluginOff, switchPluginOn, thisMacBridge, type PluginReply } from "@/lib/thisMac";
+import { pluginsAuto, resumePlugins, setPluginsAuto, showPluginFolder, switchPluginOff, switchPluginOn, thisMacBridge, type PluginReply, type PluginsAuto } from "@/lib/thisMac";
 
 /**
  * The plug-ins this server is built with, one row each (the ones from the person's own folder are FolderPluginRows, below). "What it adds" folds the list, and each line that has a place
@@ -37,19 +37,31 @@ function AddLine({ add }: { add: PluginAdd }) {
 
 /**
  * The plug-ins in the person's own folder, one row each, with the same On switch as a pack's row. Switching one on is
- * answered by the Mac app in its own dialog. Changed: the copy they approved keeps running until Use the new version.
- * A plug-in that could not load says why in red. The switch exists only in the Mac app on the Mac that runs the
+ * answered by the Mac app in its own dialog. A plug-in that is on takes up the changes to its folder by itself (the Mac
+ * app does it, once the server has nothing running); the last row, Update automatically, switches that off for all of
+ * them, and a changed folder then waits for Use the new version while the copy that is on keeps running.
+ * A plug-in that could not load says why in red. The switches exist only in the Mac app on the Mac that runs the
  * server; in a browser the rows are read-only. After a switch the Mac app restarts its server and reloads this window.
  */
 export function FolderPluginRows({ folder, plugins }: { folder: FolderPlugins; plugins: PluginInfo[] }) {
   const mac = !!thisMacBridge();
   const [busy, setBusy] = useState<string | null>(null);
   const [said, setSaid] = useState<Record<string, string>>({});
-  const run = async (key: string, ask: () => Promise<PluginReply | null>) => {
+  // Update automatically, as the Mac app keeps it (null in a browser, and until it answers)
+  const [auto, setAuto] = useState<PluginsAuto | null>(null);
+  useEffect(() => {
+    let live = true;
+    void pluginsAuto().then((a) => live && setAuto(a));
+    return () => {
+      live = false;
+    };
+  }, []);
+  const run = async (key: string, ask: () => Promise<PluginReply | null>, reloads = true) => {
     setBusy(key);
     const reply = await ask();
-    // a yes is followed by the app's own reload; anything else gives the row back
-    if (!reply?.ok) setBusy(null);
+    // a yes is followed by the app's own reload (the one switch for all of them reloads nothing); anything else gives the row back
+    if (!reply?.ok || !reloads) setBusy(null);
+    if (!reloads) setAuto(await pluginsAuto());
     setSaid((s) => ({ ...s, [key]: reply && !reply.ok && reply.problem ? reply.problem : "" }));
   };
   return (
@@ -64,7 +76,9 @@ export function FolderPluginRows({ folder, plugins }: { folder: FolderPlugins; p
       {folder.rows.map((row) => {
         const key = row.folder || row.id!;
         const adds = (row.running && plugins.find((p) => p.id === row.id)?.adds) || [];
-        const note = said[key] ? { tone: "broken" as const, text: said[key] } : folderRowNote(row, row.id ? folderPluginFailures.get(row.id) : undefined, folder.paused);
+        // by itself only for the folder it was switched on from: a renamed folder's change waits for the click
+        const rowAuto = auto?.auto && row.id && auto.folders[row.id] === row.folder ? { waiting: auto.waiting.includes(row.id), note: auto.notes[row.id] } : undefined;
+        const note = said[key] ? { tone: "broken" as const, text: said[key] } : folderRowNote(row, row.id ? folderPluginFailures.get(row.id) : undefined, folder.paused, rowAuto);
         const menu: RowMenuItem[] = row.folder ? [{ label: "Show in Finder", onSelect: () => void showPluginFolder(row.folder) }] : [];
         return (
           <div key={key} className="[&>*+*]:border-t [&>*+*]:border-border/50">
@@ -75,7 +89,7 @@ export function FolderPluginRows({ folder, plugins }: { folder: FolderPlugins; p
               actions={
                 mac ? (
                   <>
-                    {row.changed && row.folder && (
+                    {offersNewVersion(row, rowAuto) && (
                       <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => run(key, () => switchPluginOn(row.folder))}>
                         Use the new version
                       </Button>
@@ -103,6 +117,19 @@ export function FolderPluginRows({ folder, plugins }: { folder: FolderPlugins; p
           </div>
         );
       })}
+      {auto && (
+        <ListRow
+          title="Update automatically"
+          subtitle="A plug-in that is on runs later changes to its folder by itself."
+          status={said.auto && <Status tone="broken">{said.auto}</Status>}
+          actions={
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span>{auto.auto ? "On" : "Off"}</span>
+              <Switch aria-label="Update automatically" checked={auto.auto} disabled={busy !== null} onCheckedChange={(on) => void run("auto", () => setPluginsAuto(on), false)} />
+            </div>
+          }
+        />
+      )}
     </Card>
   );
 }
