@@ -11,7 +11,8 @@
 //   - Lockdown Mode for the page: no WebRTC (which the policy does not govern), WebAssembly, WebGL or Web Audio;
 //   - WebKit's link preconnect is switched off (a link click with target=_blank, or <link rel=preconnect>, otherwise
 //     opens a connection whatever the policy says). WebKit has no public switch for it, so this is a private call,
-//     and a Mac where it is missing draws no card;
+//     and a Mac where it is missing draws no card. WebKit's source has the switch, and the click's preconnect behind
+//     it, in the versions macOS 14.0 and 15.0 shipped with (read, not run: the tests ran on macOS 26);
 //   - whatever else asks for a name outside this Mac is handed to a proxy address where nothing listens (measured
 //     for a name; an address is expected to go the same way, and trying one would be real traffic);
 //   - one time limit for the whole card, and the page's process is ended with the card (a loop that never returns
@@ -49,6 +50,24 @@ enum KitRunnerError: Error, Equatable {
     case unsafe(String)
 }
 
+/// The private WebKit calls a card's page stands on, by name, and the features it switches off. All were read in
+/// WebKit's source as it shipped with macOS 14.0 and 15.0, and run on macOS 26. Each is looked for before it is used,
+/// and a Mac that lacks one draws no card and says which; a test names one that is not there to see that.
+struct KitCalls {
+    /// +[WKPreferences _features]: WebKit's own list of features (since macOS 13.3)
+    var features = "_features"
+    /// -[WKPreferences _setEnabled:forFeature:] and -[WKPreferences _isEnabledForFeature:] (since macOS 10.12)
+    var setEnabled = "_setEnabled:forFeature:"
+    var isEnabled = "_isEnabledForFeature:"
+    /// -[_WKFeature key]: a feature's name in that list (since macOS 13.3)
+    var featureKey = "key"
+    /// -[WKWebView _webProcessIdentifier]: the page's own process (older than any macOS the app runs on)
+    var processIdentifier = "_webProcessIdentifier"
+    /// the features that must be in the list and end up off, and those switched off where this macOS has them
+    var needed: Set<String> = ["LinkPreconnect"]
+    var wanted: Set<String> = ["LinkDNSPrefetchEnabled"]
+}
+
 /// What shuts a card's script in besides its page's own policy and frame. Every card is drawn behind all of them; a
 /// test takes them away to show that what a script tries does get out without them.
 struct KitWalls: OptionSet {
@@ -71,10 +90,27 @@ enum KitRunner {
     static let policy = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:"
     /// The dead proxy's port on this Mac: 1, where nothing listens.
     static let deadPort: UInt16 = 1
-    /// WebKit's own features switched off for a card's page. The needed one must be there to switch, or no card is
-    /// drawn (a test names one that is not there, to see that); the wanted one is switched off where this macOS has it.
-    @MainActor static var neededSwitches: Set<String> = ["LinkPreconnect"]
-    static let wantedSwitches: Set<String> = ["LinkDNSPrefetchEnabled"]
+    /// The private WebKit calls a card's page uses (a test changes a name to one that is not there).
+    @MainActor static var calls = KitCalls()
+    /// Whether a page behind the walls was found locked down on this Mac. Asked once, before the first card:
+    /// Lockdown Mode is the one wall that could fail to take without saying so, and WebRTC would then be there.
+    @MainActor private static var lockedDown = false
+
+    /// Loads a card's page with no card's script in it and throws unless WebRTC is gone from it.
+    @MainActor
+    static func probe(walls: KitWalls = .all) async throws {
+        let page = try KitWebView(width: 16, height: 16, walls: walls)
+        let late = DispatchWorkItem { MainActor.assumeIsolated { page.stop(.timedOut) } }
+        DispatchQueue.main.asyncAfter(deadline: .now() + cardLimit, execute: late)
+        defer {
+            late.cancel()
+            page.end()
+        }
+        try await page.load(try self.page(for: KitCard(kit: "", width: 16, height: 16, seconds: 1, fps: 1, content: [:])))
+        guard try await page.run("typeof RTCPeerConnection") == "undefined" else {
+            throw KitRunnerError.unsafe("Lockdown Mode did not take on a card's page (WebRTC is still there)")
+        }
+    }
 
     /// The kit's own page: the stage, the card's content and the kit as inline script.
     static func html(for card: KitCard) throws -> String {
@@ -118,6 +154,10 @@ enum KitRunner {
     /// Past it the card fails with `timedOut`.
     @MainActor
     static func draw(_ card: KitCard, limit: TimeInterval = cardLimit, frame: @MainActor (Int, CGImage) async throws -> Void) async throws {
+        if !lockedDown {
+            try await probe()
+            lockedDown = true
+        }
         try await draw(card, on: try KitWebView(width: card.width, height: card.height), limit: limit, frame: frame)
     }
 
@@ -153,52 +193,65 @@ final class KitWebView: NSObject, WKNavigationDelegate {
     /// set once the card's time is up or its page is gone: no further step starts
     private var over: KitRunnerError?
 
-    private static let processIdentifier = Selector(("_webProcessIdentifier"))
+    /// the name of the call that gives the page's process (KitCalls)
+    private let processCall: String
 
     /// `walls` and `proxyPort` are for the tests: every card is drawn with the defaults.
     init(width: Int, height: Int, walls: KitWalls = .all, proxyPort: UInt16 = KitRunner.deadPort) throws {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
-        if walls.contains(.lockdown) { config.defaultWebpagePreferences.isLockdownModeEnabled = true }
-        if walls.contains(.noPreconnect) { _ = try Self.switchOff(KitRunner.neededSwitches, and: KitRunner.wantedSwitches, in: config.preferences) }
+        let calls = KitRunner.calls
+        if walls.contains(.lockdown) {
+            config.defaultWebpagePreferences.isLockdownModeEnabled = true
+            guard config.defaultWebpagePreferences.isLockdownModeEnabled else {
+                throw KitRunnerError.unsafe("Lockdown Mode could not be switched on for a card's page")
+            }
+        }
+        if walls.contains(.noPreconnect) { _ = try Self.switchOff(calls, in: config.preferences) }
         if walls.contains(.deadProxy), let port = NWEndpoint.Port(rawValue: proxyPort) {
             config.websiteDataStore.proxyConfigurations = [ProxyConfiguration(socksv5Proxy: .hostPort(host: "127.0.0.1", port: port))]
         }
         webView = WKWebView(frame: NSRect(x: 0, y: 0, width: width, height: height), configuration: config)
         self.walls = walls
+        processCall = calls.processIdentifier
         super.init()
-        guard webView.responds(to: Self.processIdentifier) else { throw KitRunnerError.unsafe("this macOS gives no way to end a card's page") }
+        guard webView.responds(to: NSSelectorFromString(processCall)) else {
+            throw KitRunnerError.unsafe("this macOS gives no way to end a card's page (\(processCall))")
+        }
         webView.navigationDelegate = self
     }
 
-    /// Switches entries of WebKit's own feature list off for this page's preferences (they are this page's alone) and
-    /// returns the ones now off. Private WebKit calls: WebKit has no public switch for link preconnect. `needed` must
-    /// end up off, or this throws and no card is drawn; `wanted` are switched off where this macOS has them.
-    static func switchOff(_ needed: Set<String>, and wanted: Set<String>, in preferences: WKPreferences) throws -> Set<String> {
-        let list = Selector(("_features")), set = Selector(("_setEnabled:forFeature:")), get = Selector(("_isEnabledForFeature:"))
-        let key = Selector(("key"))
-        guard WKPreferences.responds(to: list), preferences.responds(to: set), preferences.responds(to: get),
-              let features = WKPreferences.perform(list)?.takeUnretainedValue() as? [NSObject] else {
-            throw KitRunnerError.unsafe("this macOS has no switch for link preconnect")
+    /// Switches the features `calls` names off for this page's preferences (they are this page's alone) and returns
+    /// the ones now off. Private WebKit calls: WebKit has no public switch for link preconnect. Each call is looked for
+    /// first, and the needed features must end up off, or this throws saying what is missing and no card is drawn.
+    static func switchOff(_ calls: KitCalls, in preferences: WKPreferences) throws -> Set<String> {
+        let list = NSSelectorFromString(calls.features), set = NSSelectorFromString(calls.setEnabled)
+        let get = NSSelectorFromString(calls.isEnabled), key = NSSelectorFromString(calls.featureKey)
+        guard WKPreferences.responds(to: list), let features = WKPreferences.perform(list)?.takeUnretainedValue() as? [NSObject] else {
+            throw KitRunnerError.unsafe("this macOS has no list of WebKit's features (\(calls.features))")
         }
+        guard preferences.responds(to: set) else { throw KitRunnerError.unsafe("this macOS can't switch a WebKit feature off (\(calls.setEnabled))") }
+        guard preferences.responds(to: get) else { throw KitRunnerError.unsafe("this macOS can't tell whether a WebKit feature is off (\(calls.isEnabled))") }
         typealias Setter = @convention(c) (AnyObject, Selector, Bool, AnyObject) -> Void
         typealias Getter = @convention(c) (AnyObject, Selector, AnyObject) -> Bool
         let setter = unsafeBitCast(preferences.method(for: set), to: Setter.self)
         let getter = unsafeBitCast(preferences.method(for: get), to: Getter.self)
         var off: Set<String> = []
         for feature in features where feature.responds(to: key) {
-            guard let name = feature.value(forKey: "key") as? String, needed.contains(name) || wanted.contains(name) else { continue }
+            guard let name = feature.value(forKey: calls.featureKey) as? String, calls.needed.contains(name) || calls.wanted.contains(name) else { continue }
             setter(preferences, set, false, feature)
             if !getter(preferences, get, feature) { off.insert(name) }
         }
-        guard off.isSuperset(of: needed) else { throw KitRunnerError.unsafe("this macOS has no switch for link preconnect") }
+        guard off.isSuperset(of: calls.needed) else {
+            throw KitRunnerError.unsafe("this macOS has no switch for link preconnect (\(calls.needed.sorted().joined(separator: ", ")))")
+        }
         return off
     }
 
     /// The page's own process, 0 when it has none (a private WebKit call: nothing public names it).
     var processID: pid_t {
-        (webView.value(forKey: "_webProcessIdentifier") as? NSNumber)?.int32Value ?? 0
+        (webView.value(forKey: processCall) as? NSNumber)?.int32Value ?? 0
     }
 
     /// Whether `pid` is a WebKit page process, by the program it runs.

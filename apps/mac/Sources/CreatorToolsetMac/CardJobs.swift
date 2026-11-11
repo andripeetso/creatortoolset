@@ -1,6 +1,10 @@
 // Drawing an edit's cards for the server. The server queues a `cards-draw` step for a Mac of the edit's own account;
 // this Mac takes it (Relay.swift), reads the cards, draws each one in the kit's page (KitRunner.swift: no network, no
 // files, no way off its page, 20 s a card) and sends a clip and three stills per card. With the device token:
+//   POST /api/devices/relay/wait   the long poll this Mac already holds says which kinds it would take now,
+//        `editor: ["cards-draw"]`, and a server with such a step queued answers that poll `{ "editor": true }`.
+//        Only then, never on a clock:
+//   POST /api/devices/relay/editor/claim { kinds: ["cards-draw"] } → { job: { id, kind, … } | null }
 //   GET  /api/devices/relay/editor/job/:id/cards → { width, height, fps, script, cards: [{ id, seconds, content }] }
 //   POST /api/devices/relay/editor/job/:id/cards/:cardId   multipart: `clip` (H.264 .mp4, no sound) and `still` three
 //        times (PNG, 540 px wide: the first, the middle and the last frame, in that order)

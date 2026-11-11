@@ -176,13 +176,16 @@ final class RelayRunner {
     private let lock = NSLock()
     private var stopped = false
     private var status = AIStatus()
-    /// A claim for an editor step goes out at most this often: the long poll's own pace when nothing waits (the site
-    /// holds a poll 25 s). A site that has no such route (any 4xx) is asked again an hour later.
-    static let claimEvery: TimeInterval = 25
-    static let claimAfterRefusal: TimeInterval = 3600
-    /// the uptime before which no claim goes out, and whether a card step is being drawn (one at a time); under `lock`
-    private var claimAt: TimeInterval = 0
+    /// After a hint that led to no step (another Mac took it, or the site was wrong) this Mac lists no editor kind on
+    /// its long poll for a poll's own length, so a wrong site gets one claim in 25 s at most; an hour after a claim the
+    /// site refused (any 4xx).
+    static let quietAfterNothing: TimeInterval = 25
+    static let quietAfterRefusal: TimeInterval = 3600
+    /// under `lock`: the uptime before which no editor kind is listed, whether a card step is being drawn (one at a
+    /// time), and whether this Mac found it can't shut a card's script in (it then lists none, for good)
+    private var quietUntil: TimeInterval = 0
     private var drawing = false
+    private var cannotDraw = false
     private let onStatus: (AIStatus) -> Void
     private let onRevoked: () -> Void
 
@@ -231,21 +234,17 @@ final class RelayRunner {
     }
 
     /// the Mac relay serve(): one long poll at a time, and none while every slot runs (the site's request waits or goes elsewhere).
-    private func serve() {
+    /// The poll is also how an editor step reaches this Mac, with no request of its own: the poll lists the kinds this
+    /// Mac would take now (`editor`), and a site with such a step queued answers `{"editor": true}`; only then is the
+    /// step claimed. A site that never says so is never asked.
+    func serve() {
         var pollFailed = false   // a poll's error clears once a poll goes through again (the menu bar's problem dot)
         while !isStopped {
             slots.wait()
-            if let step = claimStep() {
-                DispatchQueue.global(qos: .utility).async { [self] in drawCards(step) }   // drawCards() releases the slot
-                continue
-            }
-            if isStopped {   // removed from the account while it asked
-                slots.signal()
-                return
-            }
+            let listed = editorKinds()
             let reply: DeviceReply
             do {
-                reply = try api.call("POST", "/api/devices/relay/wait", ["blobs": true], tries: 1, timeout: 60)   // big files come as hashes
+                reply = try api.call("POST", "/api/devices/relay/wait", waitBody(listing: listed), tries: 1, timeout: 60)
             } catch {
                 slots.signal()
                 publish { $0.lastError = "\(error.localizedDescription)" }
@@ -265,6 +264,16 @@ final class RelayRunner {
                 DispatchQueue.global(qos: .utility).async { [self] in job(req) }   // job() releases the slot
                 continue
             }
+            if reply.status == 200, Self.editorWaits(reply.data) {
+                if listed?.isEmpty == false, let step = claimStep() {
+                    DispatchQueue.global(qos: .utility).async { [self] in drawCards(step) }   // drawCards() releases the slot
+                    continue
+                }
+                slots.signal()
+                // a hint this poll did not ask for (it listed no kind): the site is wrong, and is never asked in a loop
+                if listed?.isEmpty != false { sleepUnlessStopped(Int(Self.quietAfterNothing)) }
+                continue
+            }
             slots.signal()
             if reply.status == 404 {
                 sleepUnlessStopped(300)   // a site without the relay yet
@@ -275,33 +284,49 @@ final class RelayRunner {
         }
     }
 
-    /// Asks the site for an editor step this Mac can run: drawing an edit's cards (serve() asks with a free slot in
-    /// hand). It rides the long poll's loop, since the poll itself only carries AI requests, at no more than the
-    /// poll's own pace, and not at all while cards are being drawn. It is quiet by design: a site that does not know
-    /// the kind answers `job: null`, the same as one with nothing queued; neither that, a site without the route nor a
-    /// network blip shows in the menu or the log.
+    /// The editor step kinds this Mac would take a step of right now, for the long poll's `editor` field. Nil leaves
+    /// the field out: the site then keeps what it knows of this Mac and sends no hint. That is so while cards are being
+    /// drawn (one step at a time) and for a while after a hint that led to no step. A Mac that can't shut a card's
+    /// script in lists none, so the site stops counting on it.
+    func editorKinds(now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> [String]? {
+        lock.lock()
+        defer { lock.unlock() }
+        if cannotDraw { return [] }
+        return drawing || now < quietUntil ? nil : [cardsKind]
+    }
+
+    /// The long poll's body: big files come as hashes, and the editor kinds this Mac would take now, if any are to be said.
+    func waitBody(listing kinds: [String]?) -> [String: Any] {
+        var body: [String: Any] = ["blobs": true]
+        if let kinds { body["editor"] = kinds }
+        return body
+    }
+
+    /// Whether a long poll's answer is the site's hint that an editor step of a listed kind waits: `{"editor": true}`.
+    static func editorWaits(_ answer: Data) -> Bool {
+        ((try? JSONSerialization.jsonObject(with: answer)) as? [String: Any])?["editor"] as? Bool == true
+    }
+
+    /// Takes the editor step a hint spoke of (serve() calls it with a free slot in hand, and only after a hint). When
+    /// there is none after all, this Mac lists no kind for a while (`quietAfterNothing`), and nothing shows in the menu
+    /// or the log.
     func claimStep(now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> EditorJob? {
-        lock.lock()
-        let due = !drawing && now >= claimAt
-        if due { claimAt = now + Self.claimEvery }
-        lock.unlock()
-        guard due, let reply = try? api.call("POST", "/api/devices/relay/editor/claim", ["kinds": [cardsKind]], tries: 1, timeout: 10) else { return nil }
-        guard reply.status == 200, let step = EditorJob(claim: reply.data) else {
-            if (400..<500).contains(reply.status) {
+        let reply = try? api.call("POST", "/api/devices/relay/editor/claim", ["kinds": [cardsKind]], tries: 1, timeout: 10)
+        if let reply, reply.status == 200, let step = EditorJob(claim: reply.data) {
+            if step.kind == cardsKind {
                 lock.lock()
-                claimAt = now + Self.claimAfterRefusal
+                drawing = true
                 lock.unlock()
+                return step
             }
-            return nil
-        }
-        guard step.kind == cardsKind else {   // not a kind this Mac declared: back in the site's queue
+            // not a kind this Mac listed: back in the site's queue
             _ = try? api.call("POST", "/api/devices/relay/editor/job/\(step.id)/fail", ["error": "This Mac has no \(step.kind) step"], tries: 2)
-            return nil
         }
+        let refused = reply.map { (400..<500).contains($0.status) } ?? false
         lock.lock()
-        drawing = true
+        quietUntil = now + (refused ? Self.quietAfterRefusal : Self.quietAfterNothing)
         lock.unlock()
-        return step
+        return nil
     }
 
     /// One card step, from reading the cards to done or fail (CardJobs.swift). It holds a slot as an AI request does, so
@@ -313,16 +338,10 @@ final class RelayRunner {
         let end = CardJob(api: api, id: step.id, folder: work.appendingPathComponent("cards/\(step.id)"),
                           stopped: { [weak self] in self?.isStopped ?? true }).run()
         if case .failed(let why) = end { AppLog.write("cards: step \(step.id) failed: \(why)") }
-        var next: TimeInterval = 0   // more may wait (one step a version): ask again at once
-        if case .cannot = end {
-            // this Mac can't shut a card's script in: it tells the site it draws none (a claim that declares no kind),
-            // so another Mac of the account gets the step, and it asks no more
-            _ = try? api.call("POST", "/api/devices/relay/editor/claim", ["kinds": [String]()], tries: 2)
-            next = .infinity
-        }
         lock.lock()
-        drawing = false
-        claimAt = next
+        drawing = false   // the next poll lists the kind again, and the site hints at once if more steps wait
+        // this Mac can't shut a card's script in: from now on its polls say it draws none, so another Mac gets the step
+        if case .cannot = end { cannotDraw = true }
         lock.unlock()
         publish { $0.drawing = false }
     }

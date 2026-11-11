@@ -389,11 +389,13 @@ written there.
 ## Draws an edit's cards
 
 While **Use this Mac for my AI** is on, the same runner also draws the AI Editor's cards for the account's own edits
-(`CardJobs.swift`, `KitRunner.swift`, `CardClip.swift`). The long poll only carries AI requests, so the runner asks for
-card steps on the poll's own loop: before a poll, and at most once every 25 s, it posts
-`POST /api/devices/relay/editor/claim` with `{"kinds":["cards-draw"]}` and the device token. A server with nothing to
-draw answers `{"job":null}`, and so does a server that does not know the kind: nothing else happens. A server without
-the route (any 4xx) is asked again an hour later. None of this shows in the menu or the log.
+(`CardJobs.swift`, `KitRunner.swift`, `CardClip.swift`). It makes no request of its own to find out whether one
+waits. The long poll it already holds says which editor kinds this Mac would take now (`"editor": ["cards-draw"]`
+beside `blobs` in the body of `relay/wait`), and a server with such a step queued answers that poll with
+`{"editor": true}`. Only then does the Mac post `POST /api/devices/relay/editor/claim` with
+`{"kinds":["cards-draw"]}`. A server that never answers so, which is every server without the card step, is never
+asked. The poll lists no kind while cards are being drawn and for 25 s after a hint that led to no step (an hour
+after a claim the server refused), so a server that hints wrongly gets one claim, not a loop.
 
 A step it gets is read with `GET /api/devices/relay/editor/job/<id>/cards`:
 `{ width, height, fps, script, cards: [{ id, seconds, content }] }`, one script for every card of a version. Each card
@@ -414,14 +416,15 @@ opposite against a listener on this Mac (`KitSandboxTests.swift`):
   refuses the frame's own navigations, forms and new windows before the app is asked.
 - The web view refuses every navigation but that page and that frame. It has no message handlers, cookies or storage
   of the app's, and its own data store is gone with the card. It can read no file.
-- Lockdown Mode is on for the page, because the policy does not govern WebRTC. A card's script therefore has no
-  WebRTC, WebAssembly, WebGL or Web Audio. It has the DOM, CSS, SVG and a 2D canvas, the system's fonts and `data:`
+- Lockdown Mode is on for the page, because the policy does not govern WebRTC. It is the one wall that could fail
+  to take without saying so, so before the first card a page with no card's script in it is asked whether WebRTC is
+  gone; if not, nothing is drawn. A card's script therefore has no WebRTC, WebAssembly, WebGL or Web Audio. It has the DOM, CSS, SVG and a 2D canvas, the system's fonts and `data:`
   images.
 - WebKit's link preconnect is switched off for the page: a link with `target="_blank"` that the script clicks, or a
   `<link rel="preconnect">`, otherwise opens a connection whatever the policy says. WebKit has no public switch for
-  it, so this uses a private one (`_features`, `_setEnabled:forFeature:` on `WKPreferences`). A Mac whose WebKit
-  lacks it draws no card: the step fails with a sentence saying so, the Mac tells the server it draws none (a claim
-  that declares no kind) and asks no more.
+  it, so this uses a private one (`_features`, `_setEnabled:forFeature:`, `_isEnabledForFeature:` on
+  `WKPreferences`). A Mac whose WebKit lacks one of them draws no card: the step fails with a sentence saying which,
+  and from then on its long poll lists no kind (`"editor": []`), so the server stops counting on it.
 - Whatever else asks for a name outside this Mac is handed to a proxy address where nothing listens (port 1 on this
   Mac), set on the page's own data store.
 - One limit of 20 s covers the whole card: its page loading, every call into the script and every picture. The
@@ -524,7 +527,10 @@ window, auto-pairing on a fresh data folder, the Keychain prompt for `owner-pass
 
 The card step (see "Draws an edit's cards") has run only in the tests, on macOS 26 on Apple silicon, against a
 stand-in for the server: not in the launched app, not in a signed build with the hardened runtime, not against a real
-server, and not on macOS 14 or 15 (where a missing private switch means no cards are drawn, by design). Whether
+server, and not on macOS 14 or 15. For those, WebKit's source as it shipped with 14.0 and 15.0 was read: it has
+every call the card's page uses (the feature list and its switch, the link preconnect feature behind which the
+click's preconnect sits, the page's process id, Lockdown Mode for one page), so they are expected to draw. Each call
+is looked for before it is used, and a Mac that lacks one draws no card and says which. Whether
 Lockdown Mode for a page shows anything the first time in a real app bundle, and what the drawing costs the window
 while a person uses the app or records (each frame is taken on the main thread, at the screen's scale), are not known.
 

@@ -339,18 +339,41 @@ final class KitSandboxTests: XCTestCase {
         XCTAssertTrue(ended)
     }
 
-    func testAMacWithoutTheSwitchDrawsNoCard() throws {
-        // on this Mac the switches are there and end up off
-        let off = try KitWebView.switchOff(["LinkPreconnect"], and: ["LinkDNSPrefetchEnabled"], in: WKPreferences())
+    func testAMacWithoutOneOfThePrivateCallsDrawsNoCardAndSaysWhich() throws {
+        // on this Mac every call is there, and the features end up off
+        let off = try KitWebView.switchOff(KitCalls(), in: WKPreferences())
         XCTAssertEqual(off, ["LinkPreconnect", "LinkDNSPrefetchEnabled"])
-        // a macOS whose WebKit has no such switch: no page is made, so nothing runs behind fewer walls
-        XCTAssertThrowsError(try KitWebView.switchOff(["NoSuchSwitch"], and: [], in: WKPreferences())) { error in
-            XCTAssertEqual(error as? KitRunnerError, .unsafe("this macOS has no switch for link preconnect"))
+        // a macOS whose WebKit lacks one of them: no page is made, so nothing ever runs behind fewer walls
+        let missing: [(String, (inout KitCalls) -> Void, String)] = [
+            ("the feature list", { $0.features = "_noSuchList" }, "this macOS has no list of WebKit's features (_noSuchList)"),
+            ("the switch", { $0.setEnabled = "_noSuchSwitch:forFeature:" }, "this macOS can't switch a WebKit feature off (_noSuchSwitch:forFeature:)"),
+            ("the answer whether it is off", { $0.isEnabled = "_noSuchAnswer:" }, "this macOS can't tell whether a WebKit feature is off (_noSuchAnswer:)"),
+            ("a feature's name", { $0.featureKey = "noSuchName" }, "this macOS has no switch for link preconnect (LinkPreconnect)"),
+            ("the preconnect feature", { $0.needed = ["NoSuchFeature"] }, "this macOS has no switch for link preconnect (NoSuchFeature)"),
+            ("the page's process", { $0.processIdentifier = "_noSuchProcess" }, "this macOS gives no way to end a card's page (_noSuchProcess)"),
+        ]
+        defer { KitRunner.calls = KitCalls() }
+        for (name, change, sentence) in missing {
+            var calls = KitCalls()
+            change(&calls)
+            KitRunner.calls = calls
+            XCTAssertThrowsError(try KitWebView(width: 320, height: 180), name) { error in
+                XCTAssertEqual(error as? KitRunnerError, .unsafe(sentence), name)
+            }
         }
-        KitRunner.neededSwitches = ["NoSuchSwitch"]
-        defer { KitRunner.neededSwitches = ["LinkPreconnect"] }
-        XCTAssertThrowsError(try KitWebView(width: 320, height: 180))
         XCTAssertEqual(KitRunner.cardLimit, 20, "a card gets 20 s")
+    }
+
+    func testAPageThatIsNotLockedDownDrawsNoCard() async throws {
+        // Lockdown Mode is the one wall that could fail to take without saying so, so a page with no card's script in
+        // it is asked first: behind every wall WebRTC is gone, and without Lockdown Mode it is there and nothing is drawn
+        try await KitRunner.probe()
+        do {
+            try await KitRunner.probe(walls: [.stay, .noPreconnect, .deadProxy])
+            XCTFail("a page without Lockdown Mode passed for locked down")
+        } catch {
+            XCTAssertEqual(error as? KitRunnerError, .unsafe("Lockdown Mode did not take on a card's page (WebRTC is still there)"))
+        }
     }
 
     func testTheWallsAreThisPagesAlone() async throws {

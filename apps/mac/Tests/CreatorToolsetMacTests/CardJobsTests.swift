@@ -247,53 +247,141 @@ final class CardJobsTests: XCTestCase {
         return RelayRunner(base: site.url, token: token, work: dir.appendingPathComponent("relay"), home: dir, onStatus: { seen.add($0) }, onRevoked: {})
     }
 
-    func testAClaimDeclaresTheCardKindAtTheLongPollsPace() {
+    private final class Flag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var on = false
+        var isSet: Bool { lock.lock(); defer { lock.unlock() }; return on }
+        /// Sets it; true the first time only.
+        @discardableResult func set() -> Bool { lock.lock(); defer { lock.unlock() }; let first = !on; on = true; return first }
+    }
+
+    /// The runner's own long-poll loop on a thread of its own, until `until` says so or `seconds` pass, then stopped.
+    /// True when the loop ended in time: a deadline, never a join, so a loop that hangs fails the test and holds nothing.
+    private func serving(_ runner: RelayRunner, upTo seconds: Double, until: @escaping () -> Bool = { false }) async -> Bool {
+        let ended = Flag()
+        DispatchQueue.global().async {
+            runner.serve()
+            ended.set()
+        }
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline, !until() { try? await Task.sleep(nanoseconds: 20_000_000) }
+        runner.stop()
+        let limit = Date().addingTimeInterval(4)
+        while Date() < limit, !ended.isSet { try? await Task.sleep(nanoseconds: 20_000_000) }
+        return ended.isSet
+    }
+
+    private let poll = "POST /api/devices/relay/wait"
+    private let claim = "POST /api/devices/relay/editor/claim"
+    private func json(_ request: FakeSite.Request) -> NSDictionary? { (try? JSONSerialization.jsonObject(with: request.body)) as? NSDictionary }
+
+    func testAServerThatSendsNoHintCostsNoRequestAtAll() async {
+        // every server today: the long poll is answered 204 (nothing waits) and knows nothing of a hint
         let site = FakeSite()
-        site.answer = { _ in (200, #"{"job":null}"#) }
+        site.answer = { _ in
+            Thread.sleep(forTimeInterval: 0.03)
+            return (204, "")
+        }
         let seen = Seen()
-        let runner = runner(site, seen: seen)
-        XCTAssertNil(runner.claimStep(now: 1000))
-        XCTAssertEqual(paths(site), ["POST /api/devices/relay/editor/claim"])
-        XCTAssertEqual(site.requests[0].headers["authorization"], "Bearer \(token)")
-        XCTAssertEqual(String(decoding: site.requests[0].body, as: UTF8.self), #"{"kinds":["cards-draw"]}"#)
-        // not again before the long poll's own 25 s have passed, however often the loop comes round
-        for now in stride(from: 1000.0, to: 1025, by: 0.5) { XCTAssertNil(runner.claimStep(now: now)) }
-        XCTAssertEqual(site.requests.count, 1)
-        XCTAssertNil(runner.claimStep(now: 1025))
-        XCTAssertEqual(site.requests.count, 2)
-        // a claim that finds nothing changes nothing a person sees
+        let ended = await serving(runner(site, seen: seen), upTo: 0.8)
+        XCTAssertTrue(ended)
+        XCTAssertGreaterThan(site.requests.count, 5, "the loop polled many times")
+        for request in site.requests {
+            // the same request the app sends today, to the same address; the one thing new is a field in its body
+            XCTAssertEqual("\(request.method) \(request.path)", poll)
+            XCTAssertEqual(json(request), ["blobs": true, "editor": ["cards-draw"]])
+        }
+        XCTAssertTrue(seen.statuses.isEmpty, "and nothing a person sees changes")
+    }
+
+    func testAHintOnTheLongPollIsClaimedDrawnAndDone() async {
+        let cards = sheet(["Tiny Acrobatics", "Second card"])
+        let site = FakeSite()
+        let hinted = Flag()
+        site.answer = { request in
+            if request.path.hasSuffix("/relay/wait") {
+                let lists = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any])?["editor"] as? [String] ?? []
+                // the server's side of it: a step of a listed kind waits, said once, on a poll that listed the kind
+                if lists.contains("cards-draw"), hinted.set() { return (200, #"{"editor":true}"#) }
+                Thread.sleep(forTimeInterval: 0.03)
+                return (204, "")
+            }
+            if request.path.hasSuffix("/editor/claim") { return (200, #"{"job":{"id":7,"kind":"cards-draw","editId":"e1","variant":"A"}}"#) }
+            if request.path.hasSuffix("/job/7/cards") { return (200, cards) }
+            return (200, #"{"ok":true}"#)
+        }
+        let done = "POST \(base)/done"
+        let lists = { (request: FakeSite.Request) in self.json(request)?["editor"] != nil }
+        let seen = Seen()
+        // until the step is done and a later poll lists the kind again
+        let ended = await serving(runner(site, seen: seen), upTo: 15) {
+            let all = site.requests
+            guard let at = all.firstIndex(where: { "\($0.method) \($0.path)" == done }) else { return false }
+            return all[(at + 1)...].contains(where: lists)
+        }
+        XCTAssertTrue(ended)
+        let all = site.requests
+        let names = all.map { "\($0.method) \($0.path)" }
+        XCTAssertEqual(names.first, poll)
+        XCTAssertEqual(names.filter { $0 != poll }, [claim, "GET \(base)/cards", "POST \(base)/cards/c1", "POST \(base)/cards/c2", done],
+                       "one claim for the one hint, and the step it gave")
+        guard let claimed = names.firstIndex(of: claim), let finished = names.firstIndex(of: done) else { return XCTFail("no step") }
+        // while it draws, its polls go on for AI requests but list no kind: one card step at a time
+        let during = all[(claimed + 1)..<finished].filter { $0.path.hasSuffix("/relay/wait") }
+        XCTAssertFalse(during.isEmpty)
+        XCTAssertTrue(during.allSatisfy { self.json($0) == ["blobs": true] })
+        XCTAssertEqual(seen.statuses.map(\.drawing), [true, false])
+        XCTAssertTrue(seen.statuses.allSatisfy { $0.lastError == nil && $0.running == 0 })
+    }
+
+    func testAServerThatHintsWronglyGetsOneClaimNotALoop() async {
+        // a server that says a step waits on every poll, whatever the poll listed, and then has none
+        let site = FakeSite()
+        site.answer = { $0.path.hasSuffix("/relay/wait") ? (200, #"{"editor":true}"#) : (200, #"{"job":null}"#) }
+        let seen = Seen()
+        let ended = await serving(runner(site, seen: seen), upTo: 1.5)
+        XCTAssertTrue(ended)
+        // the hint is followed once; the next poll lists no kind, and a hint it did not ask for is left alone for a poll's length
+        XCTAssertEqual(paths(site), [poll, claim, poll])
+        XCTAssertEqual(json(site.requests[0]), ["blobs": true, "editor": ["cards-draw"]])
+        XCTAssertEqual(json(site.requests[2]), ["blobs": true])
         XCTAssertTrue(seen.statuses.isEmpty)
     }
 
-    func testAServerThatDoesNotKnowTheKindOrTheRouteIsQuiet() {
-        // today's server: it knows the claim but not the kind, and answers as if nothing were queued
-        let unknown = FakeSite()
-        unknown.answer = { _ in (200, #"{"job":null}"#) }
+    func testAClaimThatFindsNoStepKeepsTheMacQuietForAWhile() {
+        let site = FakeSite()
+        site.answer = { _ in (200, #"{"job":null}"#) }   // another Mac of the account was first
         let seen = Seen()
-        let quiet = runner(unknown, seen: seen)
-        for hour in 0..<3 { XCTAssertNil(quiet.claimStep(now: 5000 + Double(hour) * 3600)) }
-        XCTAssertEqual(unknown.requests.count, 3)
-        XCTAssertTrue(seen.statuses.isEmpty, "no error, nothing running")
+        let runner = runner(site, seen: seen)
+        XCTAssertEqual(runner.editorKinds(now: 1000), ["cards-draw"])
+        XCTAssertNil(runner.claimStep(now: 1000))
+        XCTAssertEqual(paths(site), [claim])
+        XCTAssertEqual(site.requests[0].headers["authorization"], "Bearer \(token)")
+        XCTAssertEqual(String(decoding: site.requests[0].body, as: UTF8.self), #"{"kinds":["cards-draw"]}"#)
+        XCTAssertNil(runner.editorKinds(now: 1000), "no kind is listed for a poll's length, so no hint and no claim")
+        XCTAssertNil(runner.editorKinds(now: 1024.9))
+        XCTAssertEqual(runner.editorKinds(now: 1025), ["cards-draw"])
 
-        // an older server with no such route: asked again an hour later, not at the poll's pace
-        for status in [404, 400] {
-            let old = FakeSite()
-            old.answer = { _ in (status, #"{"error":"Not found"}"#) }
-            let runner = runner(old, seen: seen)
+        // a server whose claim route refuses: an hour; one that is restarting: a poll's length
+        for (status, quiet) in [(404, 3600.0), (400, 3600.0), (502, 25.0)] {
+            let other = FakeSite()
+            other.answer = { _ in (status, #"{"error":"no"}"#) }
+            let runner = self.runner(other, seen: seen)
             XCTAssertNil(runner.claimStep(now: 1000))
-            for now in stride(from: 1000.0, to: 4600, by: 25) { XCTAssertNil(runner.claimStep(now: now)) }
-            XCTAssertEqual(old.requests.count, 1, "HTTP \(status)")
-            XCTAssertNil(runner.claimStep(now: 4600))
-            XCTAssertEqual(old.requests.count, 2, "HTTP \(status)")
+            XCTAssertNil(runner.editorKinds(now: 1000 + quiet - 0.1), "HTTP \(status)")
+            XCTAssertEqual(runner.editorKinds(now: 1000 + quiet), ["cards-draw"], "HTTP \(status)")
         }
-        // a server that is restarting is asked again at the usual pace
-        let down = FakeSite()
-        down.answer = { _ in (502, "{}") }
-        let patient = runner(down, seen: seen)
-        XCTAssertNil(patient.claimStep(now: 1000))
-        XCTAssertNil(patient.claimStep(now: 1025))
-        XCTAssertEqual(down.requests.count, 2)
-        XCTAssertTrue(seen.statuses.isEmpty)
+        XCTAssertTrue(seen.statuses.isEmpty, "none of it is an error a person sees")
+
+        // the poll's body: as today when no kind is to be said, the kinds otherwise, and none for a Mac that can't draw
+        XCTAssertEqual(runner.waitBody(listing: nil) as NSDictionary, ["blobs": true])
+        XCTAssertEqual(runner.waitBody(listing: ["cards-draw"]) as NSDictionary, ["blobs": true, "editor": ["cards-draw"]])
+        XCTAssertEqual(runner.waitBody(listing: []) as NSDictionary, ["blobs": true, "editor": [String]()])
+        // only {"editor": true} is the hint
+        XCTAssertTrue(RelayRunner.editorWaits(Data(#"{"editor":true}"#.utf8)))
+        for other in [#"{"editor":false}"#, #"{"editor":"yes"}"#, "{}", #"{"job":null}"#, "", "not json"] {
+            XCTAssertFalse(RelayRunner.editorWaits(Data(other.utf8)), other)
+        }
     }
 
     func testAClaimedStepIsDrawnOneAtATimeAndIsNotAnAIRequest() async {
@@ -308,49 +396,47 @@ final class CardJobsTests: XCTestCase {
         let runner = runner(site, seen: seen)
         let step = runner.claimStep(now: 1000)
         XCTAssertEqual(step, EditorJob(id: 7, kind: "cards-draw"))
-        // one card step at a time: nothing is claimed while this one is drawn
-        XCTAssertNil(runner.claimStep(now: 2000))
-        XCTAssertEqual(site.requests.count, 1)
+        // one card step at a time: no kind is listed while this one is drawn, however long that takes
+        XCTAssertNil(runner.editorKinds(now: 100_000))
         guard let step else { return }
         await offMain { runner.drawCards(step) }
-        XCTAssertEqual(Array(paths(site).dropFirst()), ["GET \(base)/cards", "POST \(base)/cards/c1", "POST \(base)/cards/c2", "POST \(base)/done"])
+        XCTAssertEqual(paths(site), [claim, "GET \(base)/cards", "POST \(base)/cards/c1", "POST \(base)/cards/c2", "POST \(base)/done"])
         // the menu saw it drawing and then not, with no AI request running and no AI error
         XCTAssertEqual(seen.statuses.map(\.drawing), [true, false])
         XCTAssertTrue(seen.statuses.allSatisfy { $0.lastError == nil && $0.running == 0 })
-        // more may wait: the next claim goes out at once
-        XCTAssertNotNil(runner.claimStep(now: 2000))
-        XCTAssertEqual(site.requests.filter { $0.path.hasSuffix("/editor/claim") }.count, 2)
+        // listed again on the next poll: the server hints at once when more steps wait
+        XCTAssertEqual(runner.editorKinds(now: 1001), ["cards-draw"])
     }
 
-    func testAMacThatCannotShutAScriptInSaysSoAndStopsAsking() async {
-        await MainActor.run { KitRunner.neededSwitches = ["NoSuchSwitch"] }   // as on a macOS whose WebKit lacks the switch
-        addTeardownBlock { await MainActor.run { KitRunner.neededSwitches = ["LinkPreconnect"] } }
+    func testAMacThatCannotShutAScriptInSaysSoAndListsNoKindFromThenOn() async {
+        await MainActor.run { KitRunner.calls.needed = ["NoSuchFeature"] }   // as on a macOS whose WebKit lacks the switch
+        addTeardownBlock { await MainActor.run { KitRunner.calls = KitCalls() } }
         let cards = sheet(["Tiny Acrobatics", "Second card"])
         let site = FakeSite()
         site.answer = { request in
-            if request.path.hasSuffix("/editor/claim") { return (200, request.body.count > 12 ? #"{"job":{"id":7,"kind":"cards-draw","editId":"e1","variant":"A"}}"# : #"{"job":null}"#) }
+            if request.path.hasSuffix("/editor/claim") { return (200, #"{"job":{"id":7,"kind":"cards-draw","editId":"e1","variant":"A"}}"#) }
             if request.path.hasSuffix("/job/7/cards") { return (200, cards) }
             return (200, #"{"ok":true}"#)
         }
         let runner = runner(site)
         guard let step = runner.claimStep(now: 1000) else { return XCTFail("no step") }
         await offMain { runner.drawCards(step) }
-        // nothing was drawn or sent; the step failed in words, and the Mac told the server it draws no cards
-        XCTAssertEqual(paths(site), ["POST /api/devices/relay/editor/claim", "GET \(base)/cards", "POST \(base)/fail", "POST /api/devices/relay/editor/claim"])
+        // nothing was drawn or sent, the step failed in words, and no request was added to say so
+        XCTAssertEqual(paths(site), [claim, "GET \(base)/cards", "POST \(base)/fail"])
         let told = (try? JSONSerialization.jsonObject(with: site.requests[2].body)) as? [String: Any]
-        XCTAssertEqual(told?["error"] as? String, "Cards can't be drawn on this Mac: this macOS has no switch for link preconnect.")
-        XCTAssertEqual(String(decoding: site.requests[3].body, as: UTF8.self), #"{"kinds":[]}"#)
-        // and it never asks again while the app runs
-        for now in stride(from: 2000.0, to: 400_000, by: 3600) { XCTAssertNil(runner.claimStep(now: now)) }
-        XCTAssertEqual(site.requests.count, 4)
+        XCTAssertEqual(told?["error"] as? String, "Cards can't be drawn on this Mac: this macOS has no switch for link preconnect (NoSuchFeature).")
+        // from now on its polls say it draws none, so the server stops counting on it and another Mac gets the step
+        for now in [1001.0, 5000, 1_000_000] { XCTAssertEqual(runner.editorKinds(now: now), []) }
+        XCTAssertEqual(runner.waitBody(listing: runner.editorKinds()) as NSDictionary, ["blobs": true, "editor": [String]()])
     }
 
-    func testAStepOfAKindThisMacDidNotDeclareIsHandedBack() {
+    func testAStepOfAKindThisMacDidNotListIsHandedBack() {
         let site = FakeSite()
         site.answer = { $0.path.hasSuffix("/editor/claim") ? (200, #"{"job":{"id":9,"kind":"resolve","editId":"e1","variant":""}}"#) : (200, #"{"ok":true}"#) }
         let runner = runner(site)
         XCTAssertNil(runner.claimStep(now: 1000))
-        XCTAssertEqual(paths(site), ["POST /api/devices/relay/editor/claim", "POST /api/devices/relay/editor/job/9/fail"])
+        XCTAssertEqual(paths(site), [claim, "POST /api/devices/relay/editor/job/9/fail"])
+        XCTAssertNil(runner.editorKinds(now: 1001))
     }
 
     func testTheMenuRowSaysWhatThisMacIsDoing() {
