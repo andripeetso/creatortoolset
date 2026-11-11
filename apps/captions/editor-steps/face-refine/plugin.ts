@@ -1,24 +1,22 @@
-import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import type { Timeline } from "../../contracts/editor";
 import { ffmpegCommand } from "../../api/ffmpeg-runtime";
 import { env } from "../../api/lib/env";
+import { engineRun, ensureMediapipe } from "../../api/editor/mediapipe";
 import { definePlugin, type EditorStepInput } from "../../api/lib/plugin";
 import { ffmpegSlot } from "../../api/library/media/run";
 import { ENGINE } from "./engine";
-import { REQUIREMENTS } from "./requirements";
 
 /**
  * Face refinement, an AI Editor step: the speaker's skin evened out and the dark circles under the eyes lifted, on the
  * frames of each recording the cut shows on V1, on this computer. Beard, brows, eyes and lips are left alone, pores
  * are kept. The copy is the whole file again (ProRes, the source's sound and timecode), so every cut stays where it is.
  *
- * The engine is Python (MediaPipe + OpenCV, engine.ts): on first use it gets its own venv and the two MediaPipe
- * models in the app's data folder (README.md says why Python).
+ * The engine is Python (MediaPipe + OpenCV, engine.ts): on first use it gets the face steps' shared venv
+ * (api/editor/mediapipe.ts) and the two MediaPipe models in the app's data folder (README.md says why Python).
  */
 
 /** frames either side of what the cut shows, for trims; ranges of one file closer than JOIN become one */
@@ -87,31 +85,6 @@ export function copyKey(file: string, ranges: [number, number][], look: string):
 
 const home = () => path.join(env.dataDir, "plugins", "editor-face-refine");
 
-function run(cmd: string, args: string[], opts: { env?: NodeJS.ProcessEnv; timeout?: number } = {}): Promise<string> {
-  return new Promise((resolve, reject) =>
-    execFile(cmd, args, { env: opts.env, timeout: opts.timeout ?? 15 * 60_000, maxBuffer: 16 << 20 }, (e, stdout, stderr) =>
-      e ? reject(new Error(`${String(stderr || e.message).trim().slice(-600)}`)) : resolve(stdout),
-    ),
-  );
-}
-
-/** A Python 3.9 to 3.14 (the versions requirements.ts is pinned for) with venv. On a Mac, /usr/bin/python3 is a stub that opens an installer unless the developer tools are there. */
-async function findPython(): Promise<string | null> {
-  const mac = process.platform === "darwin";
-  const devTools = mac ? await run("xcode-select", ["-p"], { timeout: 5000 }).then(() => true, () => false) : true;
-  const candidates = [
-    ...(mac ? ["/opt/homebrew/bin/python3", "/usr/local/bin/python3", "/Library/Frameworks/Python.framework/Versions/Current/bin/python3"] : []),
-    ...(devTools ? ["/usr/bin/python3"] : []),
-    ...(mac ? [] : ["python3"]),
-  ];
-  for (const py of candidates) {
-    if (py.startsWith("/") && !existsSync(py)) continue;
-    const ok = await run(py, ["-I", "-c", "import sys, venv, ensurepip; assert (3, 9) <= sys.version_info[:2] <= (3, 14)"], { timeout: 20_000 }).then(() => true, () => false);
-    if (ok) return py;
-  }
-  return null;
-}
-
 async function fetchModel(m: (typeof MODELS)[number], dir: string): Promise<void> {
   const dest = path.join(dir, m.name);
   if (existsSync(dest)) return;
@@ -124,67 +97,24 @@ async function fetchModel(m: (typeof MODELS)[number], dir: string): Promise<void
 }
 
 /**
- * The venv, the models and the engine, made once in the data folder the first time the step runs (never before the
- * person has switched it on). `ready` is written only after the engine's self-test passes, so a broken install is made again.
+ * The models and the engine in the step's own folder, and the face steps' shared Python (api/editor/mediapipe.ts), made
+ * once in the data folder the first time the step runs (never before the person has switched it on).
  */
 async function setUp(): Promise<{ python: string; engine: string; models: string }> {
-  if (process.platform === "darwin" && process.arch !== "arm64") throw new Error("Face refinement needs a Mac with Apple silicon (its face models have no Intel build)");
-  // Darwin 22 is macOS 13: OpenCV 5's Mac build starts there
-  if (process.platform === "darwin" && Number(os.release().split(".")[0]) < 22) throw new Error("Face refinement needs macOS 13 or newer");
   const dir = home();
-  const venv = path.join(dir, `venv-${sha1(REQUIREMENTS).slice(0, 8)}`);
-  const reqFile = path.join(dir, `requirements-${sha1(REQUIREMENTS).slice(0, 8)}.txt`);
-  const python = path.join(venv, "bin", "python");
   const engine = path.join(dir, `engine-${sha1(ENGINE).slice(0, 8)}.py`);
   const models = path.join(dir, "models");
-  const ready = path.join(venv, "ready");
   await mkdir(models, { recursive: true });
   if (!existsSync(engine)) {
     await writeFile(`${engine}.part`, ENGINE);
     await rename(`${engine}.part`, engine);
   }
   for (const m of MODELS) await fetchModel(m, models);
-  if (existsSync(ready)) return { python, engine, models };
-  const system = await findPython();
-  if (!system) throw new Error("Face refinement needs Python 3.9 to 3.14 on this Mac: install it from python.org (or run xcode-select --install), then run the edit again");
-  await rm(venv, { recursive: true, force: true });
-  const step = (what: string) => (e: Error) => {
-    throw new Error(`Face refinement could not ${what}: ${e.message}`);
-  };
-  await run(system, ["-m", "venv", venv]).catch(step(`make its own Python (with ${system})`));
-  await writeFile(reqFile, REQUIREMENTS);
-  // exactly the packages it was tested with: every one, dependencies too, by version and hash, wheels only
-  await run(python, ["-m", "pip", "install", "--no-cache-dir", "--disable-pip-version-check", "-q", "--require-hashes", "--only-binary=:all:", "-r", reqFile], { timeout: 30 * 60_000 }).catch(step("install MediaPipe and OpenCV in its own Python"));
-  await run(python, ["-I", engine, "--selftest"], { env: { ...process.env, FACE_REFINE_MODELS: models } }).catch(step("start its engine"));
-  await writeFile(ready, REQUIREMENTS);
+  const python = await ensureMediapipe("Face refinement", (py) => engineRun(py, [engine, "--selftest"], new AbortController().signal, { FACE_REFINE_MODELS: models }));
   return { python, engine, models };
 }
 let setting: Promise<{ python: string; engine: string; models: string }> | undefined;
 const ensure = () => (setting ??= setUp().catch((e) => ((setting = undefined), Promise.reject(e))));
-
-/** Runs the engine on one file; its own process group, so an abort ends its ffmpeg and workers too. */
-function engineRun(rt: { python: string; engine: string; models: string }, args: string[], signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) return reject(new Error("stopped")); // stopped while it waited for its turn
-    const p = spawn(rt.python, ["-I", rt.engine, ...args], { detached: true, stdio: ["ignore", "ignore", "pipe"], env: { ...process.env, FACE_REFINE_MODELS: rt.models } });
-    let err = "";
-    p.stderr.on("data", (d) => (err = (err + d.toString()).slice(-3000)));
-    const stop = () => {
-      try {
-        process.kill(-p.pid!, "SIGTERM");
-      } catch {
-        // already gone
-      }
-    };
-    signal.addEventListener("abort", stop, { once: true });
-    p.on("error", reject);
-    p.on("close", (code) => {
-      signal.removeEventListener("abort", stop);
-      if (code === 0) resolve();
-      else reject(new Error(signal.aborted ? "stopped" : err.split("\n").filter((l) => l && !/^[WI]\d{4} /.test(l)).slice(-3).join(" ") || `exited ${code}`));
-    });
-  });
-}
 
 export async function refineFaces({ files, timeline, values, workDir, signal }: EditorStepInput): Promise<Record<string, string>> {
   const look = LOOKS[values.smoothing ?? ""] ? values.smoothing! : "medium";
@@ -205,8 +135,8 @@ export async function refineFaces({ files, timeline, values, workDir, signal }: 
       const track = `${dest}.track`;
       try {
         await ffmpegSlot(() =>
-          engineRun(rt, [file, tmp, "--ranges", ranges.map(([a, b]) => `${a}-${b}`).join(","), "--work", track, "--ffmpeg", ffmpeg, "--ffprobe", ffprobe,
-            "--smooth", String(LOOKS[look]!.smooth), "--undereye", String(LOOKS[look]!.undereye)], signal),
+          engineRun(rt.python, [rt.engine, file, tmp, "--ranges", ranges.map(([a, b]) => `${a}-${b}`).join(","), "--work", track, "--ffmpeg", ffmpeg, "--ffprobe", ffprobe,
+            "--smooth", String(LOOKS[look]!.smooth), "--undereye", String(LOOKS[look]!.undereye)], signal, { FACE_REFINE_MODELS: rt.models }),
         );
         const meta = JSON.parse(await readFile(`${tmp}.json`, "utf8")) as { faces: number };
         if (meta.faces) await rename(tmp, dest);

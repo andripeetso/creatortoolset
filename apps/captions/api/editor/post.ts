@@ -36,7 +36,7 @@ export async function runSteps(
     if (!c || input.signal.aborted) continue;
     const workDir = path.join(input.workRoot, st.id);
     await mkdir(workDir, { recursive: true });
-    const made = await st.run({ edit: input.edit, variant: input.variant, files: { ...input.base, ...files }, timeline: input.timeline, values: c.values, workDir, signal: input.signal });
+    const made = await st.run({ edit: input.edit, variant: input.variant, files: { ...input.base, ...files }, timeline: input.timeline, values: c.values, workDir, signal: input.signal, note: (t) => notes.push(`${POST_NOTE}${t}`) });
     for (const [k, f] of Object.entries(made)) if (k in input.timeline.sources) files[k] = f;
   }
   return { files, notes };
