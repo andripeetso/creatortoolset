@@ -580,9 +580,12 @@ function view(username: string, admin: boolean): AssistantView {
 const asked = (m: AssistantMessage) =>
   (m.confirms ?? []).map((q) => `[asked: "${q.question}" → ${q.status === "waiting" ? "not answered yet" : q.status === "no" ? "the user said no" : q.status === "done" ? `yes, done${q.result ? `: ${q.result}` : ""}` : `yes, but it failed: ${q.result ?? ""}`}]`);
 
+/** What a reply started or opened, with its page, so "show me" a few messages later has somewhere to go. */
+const cards = (m: AssistantMessage) => (m.work ?? []).map((w) => `[${w.status === "running" ? "started" : w.status === "failed" ? "failed" : "made"}: ${w.title} → ${w.href}]`);
+
 /** An earlier message's attachments, by count and name only: their files went with that turn. */
 const marks = (m: AssistantMessage) =>
-  [...asked(m), m.images?.length ? `[${m.images.length === 1 ? "1 picture" : `${m.images.length} pictures`}]` : "", ...(m.pasted ?? []).map((n) => `[pasted: ${n}]`), ...(m.files ?? []).map((f) => `[video: ${f.name}, file id ${f.id}]`), ...(m.folders ?? []).map((p) => `[folder: ${p}]`)].filter(Boolean).join(" ");
+  [...cards(m), ...asked(m), m.images?.length ? `[${m.images.length === 1 ? "1 picture" : `${m.images.length} pictures`}]` : "", ...(m.pasted ?? []).map((n) => `[pasted: ${n}]`), ...(m.files ?? []).map((f) => `[video: ${f.name}, file id ${f.id}]`), ...(m.folders ?? []).map((p) => `[folder: ${p}]`)].filter(Boolean).join(" ");
 
 /** What came with the newest message, as facts: its files in the folder, the page it was sent from, what was highlighted. */
 function newestFacts(input: TurnInput): string[] {

@@ -12,6 +12,7 @@ import { myKeys } from "./my-keys";
 import { askConfirm, askSecret, navigateTo, noteChoices, noteMedia, noteStep, noteWork, setConfirmRunner, setInstallGuide, unattended } from "./assistant";
 import { FILE_USES, type AssistantMedia, type AssistantWork } from "../contracts/assistant";
 import { SESSION_STATUSES } from "./lib/workshop/types";
+import { postedFromUrl } from "./lib/workshop/posted";
 import { innerCall, jobTurn, type AuthVars } from "./auth";
 import type { SessionUser } from "./users";
 import type { ServerPlugin } from "./lib/plugin";
@@ -108,7 +109,7 @@ const schedule = {
 };
 const lines = { type: "array", items: { type: "object", properties: { id: str, text: str }, required: ["text"] } };
 export const TOOLS = [
-  { name: "workshop_projects", description: "The Workshop's projects (brands): id, name, audience, voice, CTA, notes.", inputSchema: { type: "object", properties: {} } },
+  { name: "workshop_projects", description: "The Workshop's projects (brands): id, name, audience, voice, CTA, notes. current is the id of the one the app is in.", inputSchema: { type: "object", properties: {} } },
   { name: "workshop_sessions", description: "Workshop sessions, newest first: id, title, status, project, pinned, posted.", inputSchema: { type: "object", properties: { project: { type: "string", description: "only this project's (id)" } } } },
   {
     name: "workshop_session",
@@ -122,12 +123,12 @@ export const TOOLS = [
   },
   {
     name: "workshop_update_session",
-    description: "Change a session's title, notes or status (moves it through the stages), or link its post: post_url (its Instagram link), or remove_post: true to unlink it.",
+    description: "Change a session's title, notes or status (moves it through the stages), or its posts: post_url links an Instagram post (the session becomes published), unlink_post_url unlinks that one, remove_post: true unlinks them all.",
     inputSchema: {
       type: "object",
       properties: {
         session: str, title: str, notes: str, status: { type: "string", enum: [...SESSION_STATUSES] },
-        post_url: str, remove_post: { type: "boolean" },
+        post_url: str, unlink_post_url: str, remove_post: { type: "boolean" },
       },
       required: ["session"],
     },
@@ -152,6 +153,8 @@ export const TOOLS = [
         piece: str,
         message: str,
         scope: { type: "string", enum: ["slight", "rewrite"], description: "how much it may change (unset = normal)" },
+        my_words_only: { type: "boolean", description: "it only picks, trims and orders the user's own sentences in message" },
+        deep_research: { type: "boolean", description: "web research first (takes minutes): ask the user before" },
         wait_s: { type: "integer", description: `default and max ${WAIT_MAX_S}` },
       },
       required: ["session", "piece", "message"],
@@ -509,7 +512,10 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
   };
 
   const handlers: Record<string, (a: Args) => Promise<unknown>> = {
-    workshop_projects: async () => ({ projects: (await ws<Args[]>("/projects")).map((p) => pick(p, ["id", "name", "audience", "voice", "cta", "notes"])) }),
+    workshop_projects: async () => {
+      const w = await ws<{ currentProjectId: string | null; projects: Args[] }>("/workspace");
+      return { current: w.currentProjectId, projects: w.projects.map((p) => pick(p, ["id", "name", "audience", "voice", "cta", "notes"])) };
+    },
     workshop_sessions: async (a) => ({
       sessions: (await ws<Args[]>(`/sessions${a.project ? `?projectId=${encodeURIComponent(String(a.project))}` : ""}`)).map((r) =>
         pick(r, ["id", "title", "status", "projectId", "projectName", "pinned", "posted", "updatedAt"]),
@@ -532,12 +538,19 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       return { ...pick(made, ["id", "title", "status", "projectId"]), pieces: await pieces(String(made.id)) };
     },
     workshop_update_session: async (a) => {
-      const body: Args = pick(a, ["title", "notes", "status"]);
+      // notes: "" clears them (pick would drop it)
+      const body: Args = { ...pick(a, ["title", "status"]), ...(typeof a.notes === "string" ? { notes: a.notes } : {}) };
       // through the session's own PATCH, so the link is checked as it is from the app
       if (a.remove_post === true) body.posted = null;
-      else if (a.post_url) body.posted = a.post_url;
+      else if (a.unlink_post_url) {
+        // only a post that is linked: the route marks whatever it is given "never match again"
+        const code = postedFromUrl(String(a.unlink_post_url))?.shortcode;
+        const now = code ? await ws(`/sessions/${a.session}`) : null;
+        if (!now || !((now.postings as Args[] | undefined) ?? (now.posted ? [now.posted as Args] : [])).some((p) => p.shortcode === code)) throw new ToolError("That post is not linked to this session.");
+        body.posted = { remove: code };
+      } else if (a.post_url) body.posted = a.post_url;
       if (!Object.keys(body).length) throw new ToolError("Nothing to change: give a title, notes, status or a post.");
-      return pick(await ws(`/sessions/${a.session}`, "PATCH", body), ["id", "title", "status", "posted"]);
+      return pick(await ws(`/sessions/${a.session}`, "PATCH", body), ["id", "title", "status", "posted", "postings"]);
     },
     workshop_new_piece: async (a) => piece(await ws(`/sessions/${a.session}/docs`, "POST", pick(a, ["kind", "title", "text"]))),
     workshop_edit_piece: async (a) => {
@@ -546,7 +559,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       return piece(await ws(`/sessions/${a.session}/docs/${a.piece}`, "PATCH", body));
     },
     workshop_chat: async (a) => {
-      const started = await ws<{ reply: Args }>(`/sessions/${a.session}/chat`, "POST", { docId: a.piece, text: a.message, ...(a.scope ? { scope: a.scope } : {}) });
+      const started = await ws<{ reply: Args }>(`/sessions/${a.session}/chat`, "POST", { docId: a.piece, text: a.message, ...(a.scope ? { scope: a.scope } : {}), ...(a.my_words_only === true ? { mine: true } : {}), ...(a.deep_research === true ? { deep: true } : {}) });
       return wait({ session: a.session, reply: started.reply.id, wait_s: a.wait_s });
     },
     workshop_wait: wait,
