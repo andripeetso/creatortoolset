@@ -579,6 +579,7 @@ final class Recorder: ObservableObject {
                     let e = error as NSError
                     AppLog.write("recording stopped early, \(clockText(kept)) kept: \(e.localizedDescription) (\(e.domain) \(e.code))")
                     events = await withCheckedContinuation { done in capture.eventsSoFar { done.resume(returning: $0) } }
+                    await rejoin(project.screenURL)
                 }
                 var hasCamera = camera != nil
                 if let camera {
@@ -607,6 +608,23 @@ final class Recorder: ObservableObject {
                 finish()
                 alert("Couldn't save the recording", "\(error.localizedDescription)\n\nWhat was recorded is in \(project.folder.path).")
             }
+        }
+    }
+
+    /// A recording that stopped early is a file of fragments, and the editor's export reads only the first of them
+    /// (measured: 5 s of a 15 s take). Written again as one plain MP4, without encoding anything again; when that
+    /// fails the fragments stay as they are, and still play.
+    @available(macOS 15.0, *)
+    private func rejoin(_ file: URL) async {
+        let whole = file.deletingLastPathComponent().appendingPathComponent("screen-whole.mp4")
+        try? FileManager.default.removeItem(at: whole)
+        do {
+            guard let export = AVAssetExportSession(asset: AVURLAsset(url: file), presetName: AVAssetExportPresetPassthrough) else { return }
+            try await export.export(to: whole, as: .mp4)
+            _ = try FileManager.default.replaceItemAt(file, withItemAt: whole)
+        } catch {
+            try? FileManager.default.removeItem(at: whole)
+            AppLog.write("early recording kept as fragments: \(error.localizedDescription)")
         }
     }
 

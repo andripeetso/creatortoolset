@@ -435,6 +435,9 @@ private final class PickerView: NSView {
         button.image = NSImage(systemSymbolName: "record.circle", accessibilityDescription: nil)
         button.imagePosition = .imageLeading
         button.contentTintColor = .white
+        // white on the accent colour in a light system too (the default title turns dark there)
+        button.attributedTitle = NSAttributedString(string: button.title, attributes: [
+            .foregroundColor: NSColor.white, .font: NSFont.systemFont(ofSize: NSFont.systemFontSize(for: .large), weight: .semibold)])
         button.target = self
         button.action = #selector(startTapped)
 
