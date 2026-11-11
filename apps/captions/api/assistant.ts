@@ -404,18 +404,22 @@ const later = new Map<string, AssistantMessage[]>();
  * whatever chat they sit, get their end; the cards are found by the start of their id ("edit:<id>" ends
  * "edit:<id>:new" and "edit:<id>:draft"). With `say`, one line is posted in that chat as the assistant's, with
  * answer buttons under it (`choices`: a press sends that answer). Nothing is said when no card was running: work
- * started on its own page tells nobody in the chat. Returns whether a card was running.
+ * started on its own page tells nobody in the chat. Nor when the reply that holds the card is still being written:
+ * it is following the work itself (waiting on it with a tool), so it says the end in its own words, once.
+ * Returns whether a card was running.
  */
 export function workEnded(username: string, idStart: string, end: { status: "done" | "failed"; detail?: string; say?: string; choices?: string[] }): boolean {
   const conv = load(username);
   let hit = false;
   let said = false;
   for (const list of everyChat(conv)) {
-    const cards = list.flatMap((m) => m.work ?? []).filter((w) => w.status === "running" && (w.id === idStart || w.id.startsWith(`${idStart}:`)));
-    if (!cards.length) continue;
+    const mine = (w: NonNullable<AssistantMessage["work"]>[number]) => w.status === "running" && (w.id === idStart || w.id.startsWith(`${idStart}:`));
+    const holders = list.filter((m) => m.work?.some(mine));
+    if (!holders.length) continue;
     hit = true;
-    for (const w of cards) Object.assign(w, { status: end.status, ...(end.detail ? { detail: end.detail } : {}) });
-    if (!end.say || said) continue;
+    const following = holders.some((m) => m.status === "thinking");
+    for (const w of holders.flatMap((m) => m.work!.filter(mine))) Object.assign(w, { status: end.status, ...(end.detail ? { detail: end.detail } : {}) });
+    if (!end.say || said || following) continue;
     said = true;
     const line: AssistantMessage = { id: randomUUID(), role: "assistant", text: end.say, at: Date.now(), status: "done", ...(end.choices?.length ? { choices: end.choices.slice(0, 4) } : {}) };
     const last = list.at(-1);
