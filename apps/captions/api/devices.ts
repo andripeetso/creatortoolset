@@ -6,7 +6,7 @@ import { parseKinds, RESOLVE_KIND, type DeviceClaim } from "../contracts/devices
 import type { AuthVars } from "./auth";
 import { claimableBy } from "./editor/engine";
 import { cardsDraw, saveCard } from "./editor/cards/device";
-import { beatForDevice, claimForDevice, doneForDevice, failForDevice } from "./editor/worker";
+import { beatForDevice, claimForDevice, doneForDevice, failForDevice, waitsForDevice } from "./editor/worker";
 import { mayClaim, type WorkerSeen } from "./lib/balance";
 import { env } from "./lib/env";
 import { relayRoutes } from "./lib/mac-claude";
@@ -25,6 +25,7 @@ import { storageApp } from "./devices-storage";
  *   POST /api/devices/relay/editor/job/:id/beat | /done | /fail  the device's step, same token
  *   GET /api/devices/relay/editor/job/:id/cards, POST …/cards/:cardId   a cards-draw step: what to draw, and each card drawn
  *   POST /api/devices/relay/wait | /report | /:id/text | /:id/step | /:id/done | /:id/fail
+ *       (a /wait that lists `editor` kinds is answered { editor: true } when a step of one waits: contracts/devices.ts)
  *       the Mac app's side, Authorization: Bearer ctd_… (boot.ts checks it before the cookie gate); the same bodies
  *       as the relay routes in mac-claude.ts (relayRoutes)
  */
@@ -50,29 +51,45 @@ devicesApp.post("/relay/editor/claim", async (c) => {
   const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   const kinds = parseKinds(b?.kinds);
   if (!kinds) return c.json({ error: "kinds: a list of step kinds" }, 400);
+  return c.json({ job: claimForDevice(d, await declared(d, kinds)) } satisfies DeviceClaim);
+});
+/** The kinds a device lists (its claim, or its long poll), kept as its own, and the ones of them it may take now. */
+async function declared(d: Device, kinds: string[]): Promise<string[]> {
   // what the device runs is stored with it, so Settings → Devices can show it; a claim with none claims nothing
   // the Resolve bridge is switched on by a pack with Resolve items (the owner's Resolve plug-in or a downloaded one)
   const granted = kinds.includes(RESOLVE_KIND) && (await resolveGranted(d.owner));
   const claimable = claimableBy(kinds).filter((k) => k !== RESOLVE_KIND || granted);
   setDeviceKinds(d.id, claimable);
-  return c.json({ job: claimForDevice(d, await balancedKinds(d, claimable)) } satisfies DeviceClaim);
-});
+  return balancedKinds(d, claimable);
+}
+/**
+ * The device's long poll lists the editor kinds it would claim right now (`editor`, contracts/devices.ts): they are kept
+ * as the claim keeps them, and true says a claim made now would be handed a step, so the poll is answered with the hint.
+ * A list that is no list of kinds is read as none sent.
+ */
+async function editorWaits(device: string, listed: unknown): Promise<boolean> {
+  const d = deviceOf(device);
+  const kinds = parseKinds(listed);
+  return !!d && !!kinds && waitsForDevice(d.owner, await declared(d, kinds));
+}
+/** The answer to done and fail: `editor: true` when another step this device could claim waits, so it claims at once. */
+const ended = async (d: Device, ok: boolean) => ({ ok, ...(ok && waitsForDevice(d.owner, await balancedKinds(d, d.kinds ?? [])) ? { editor: true } : {}) });
 devicesApp.post("/relay/editor/job/:id/beat", (c) => {
   const d = deviceCaller(c);
   if (!d) return c.json({ error: "Unauthorized" }, 401);
   return c.json({ ok: beatForDevice(d.id, jobId(c)) });
 });
-devicesApp.post("/relay/editor/job/:id/done", (c) => {
+devicesApp.post("/relay/editor/job/:id/done", async (c) => {
   const d = deviceCaller(c);
   if (!d) return c.json({ error: "Unauthorized" }, 401);
-  return c.json({ ok: doneForDevice(d.id, jobId(c)) });
+  return c.json(await ended(d, doneForDevice(d.id, jobId(c))));
 });
 devicesApp.post("/relay/editor/job/:id/fail", async (c) => {
   const d = deviceCaller(c);
   if (!d) return c.json({ error: "Unauthorized" }, 401);
   const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   const why = typeof b?.error === "string" && b.error ? b.error : "The device could not run this step";
-  return c.json({ ok: failForDevice(d.id, jobId(c), why) });
+  return c.json(await ended(d, failForDevice(d.id, jobId(c), why)));
 });
 // a cards-draw step (contracts/devices.ts): what the Mac that holds it is to draw, and each card it drew
 devicesApp.get("/relay/editor/job/:id/cards", (c) => {
@@ -89,7 +106,7 @@ devicesApp.post("/relay/editor/job/:id/cards/:cardId", async (c) => {
   return wrong ? c.json({ error: wrong }, wrong === "Not found" ? 404 : 400) : c.json({ ok: true });
 });
 
-devicesApp.route("/relay", relayRoutes((c) => deviceForToken(c.req.header("authorization"))?.id ?? null));
+devicesApp.route("/relay", relayRoutes((c) => deviceForToken(c.req.header("authorization"))?.id ?? null, editorWaits));
 devicesApp.route("/storage", storageApp);
 
 /** Load balancing (Settings → Devices): on/off and each of the account's computers' preference, in $DATA_DIR/balance/<user>.json. Admins only. */

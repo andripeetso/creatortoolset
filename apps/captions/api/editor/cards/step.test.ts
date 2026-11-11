@@ -3,14 +3,15 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { CARDS_DRAW_KIND, type CardsDraw } from "../../../contracts/devices";
+import { CARDS_DRAW_KIND, EDITOR_HINT, type CardsDraw } from "../../../contracts/devices";
 import type { Edit, Sentence, Timeline } from "../../../contracts/editor";
 import type { AnimationStyle, EditingStyle } from "../../../contracts/editor-styles";
 import { ffmpegCommand } from "../../ffmpeg-runtime";
 
 // The card step from end to end, on the real routes: the person's AI is their own Anthropic key (the requests are
 // caught where they leave the server, so each one is counted and read), and the Mac is a stand-in that speaks the
-// device contract (claim, read the cards, send a clip and three stills a card, done or fail).
+// device contract: it asks for nothing on a clock; its long poll lists the kind it draws, and it claims only when the
+// poll is answered with the hint (then: read the cards, send a clip and three stills a card, done or fail).
 
 const scratch = process.env.CT_SCRATCH_DIR ?? tmpdir();
 mkdirSync(scratch, { recursive: true });
@@ -24,7 +25,8 @@ const { createUser, setOff } = await import("../../users");
 const app = (await import("../../boot")).default;
 // A loaded plug-in that replaces /api/editor answers the root itself, so these tests (which drive the built-in root) run only without one.
 const rootReplaced = (await import("../../lib/plugin")).pluginReplaces("/api/editor");
-const { pairDevice, devicesSaved } = await import("../../lib/devices");
+const { pairDevice, devicesSaved, deviceOf } = await import("../../lib/devices");
+const { streamMacClaude } = await import("../../lib/mac-claude");
 const { blobs, libraryDb } = await import("../../library/db");
 const { enqueueJob } = await import("../../library/jobs");
 const { saveMyKey } = await import("../../my-keys");
@@ -99,7 +101,26 @@ let mac: { device: { id: string }; token: string };
 let other: { device: { id: string }; token: string };
 const relay = (token: string, method: string, url: string, body?: string | FormData, type = "application/json") =>
   app.request(`/api/devices/relay/editor${url}`, { method, headers: { authorization: `Bearer ${token}`, ...(type ? { "content-type": type } : {}) }, ...(body === undefined ? {} : { body }) });
-/** The claim: the Mac says it draws cards and takes a step if one waits. */
+/** The Mac's long poll, as it sends it while it could draw: the kinds it would claim right now ride along. */
+const LISTS = { blobs: true, editor: [CARDS_DRAW_KIND] };
+const poll = (token = mac.token, body: object = LISTS) =>
+  (due(), app.request("/api/devices/relay/wait", { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body) }));
+/** A poll nothing answers is held 25 seconds and ends empty (204), as it always has. The test's clock runs those seconds. */
+async function held(token = mac.token, body: object = LISTS): Promise<number> {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    let status: number | undefined;
+    void Promise.resolve(poll(token, body)).then((r) => (status = r.status));
+    for (let i = 0; i < 300 && status === undefined; i++) {
+      await new Promise((r) => setImmediate(r));
+      await vi.advanceTimersByTimeAsync(1000);
+    }
+    return status ?? 0;
+  } finally {
+    vi.useRealTimers();
+  }
+}
+/** The claim. A Mac posts it only after a hint; the tests also use it to see that nothing is left to take. */
 const claim = (token = mac.token) => (due(), json<{ job: { id: number; kind: string; editId: string; variant: string } | null }>(relay(token, "POST", "/claim", JSON.stringify({ kinds: [CARDS_DRAW_KIND] }))));
 const red = path.join(dir, "red.png");
 /** A card's upload, as the Mac sends it: `clip`, then `still` three times. */
@@ -111,18 +132,20 @@ function cardForm(seconds: number, colour = "red"): FormData {
   for (const name of ["first", "middle", "last"]) form.append("still", new File([readFileSync(red)], `${name}.png`, { type: "image/png" }));
   return form;
 }
-/** Plays the Mac for one draw: takes the step, reads the cards, sends each one (but `skip`), then done, or fail with `fail`. Null: no step waited. */
-async function drawOnMac(o: { fail?: string; skip?: string[]; colour?: string } = {}): Promise<CardsDraw | null> {
+/** Plays the Mac for one draw: its poll is told a step waits, it takes the step, reads the cards, sends each one (but `skip`), then done, or fail with `fail`. */
+async function drawOnMac(o: { fail?: string; skip?: string[]; colour?: string } = {}): Promise<CardsDraw> {
+  const told = await poll();
+  expect([told.status, await told.json()]).toEqual([200, EDITOR_HINT]);
   const { job } = await claim();
-  if (!job) return null;
-  expect(job.kind).toBe(CARDS_DRAW_KIND);
+  expect(job).toMatchObject({ kind: CARDS_DRAW_KIND });
+  if (!job) throw new Error("The hint led to no step");
   const sheet = await json<CardsDraw>(relay(mac.token, "GET", `/job/${job.id}/cards`, undefined, ""));
   for (const c of sheet.cards) {
     if (o.skip?.includes(c.id)) continue;
     const sent = await relay(mac.token, "POST", `/job/${job.id}/cards/${c.id}`, cardForm(c.seconds, o.colour), "");
     expect(sent.status).toBe(200);
   }
-  expect(await json(relay(mac.token, "POST", `/job/${job.id}/${o.fail ? "fail" : "done"}`, JSON.stringify(o.fail ? { error: o.fail } : {})))).toEqual({ ok: true });
+  expect(await json(relay(mac.token, "POST", `/job/${job.id}/${o.fail ? "fail" : "done"}`, JSON.stringify(o.fail ? { error: o.fail } : {})))).toMatchObject({ ok: true });
   return sheet;
 }
 
@@ -218,8 +241,10 @@ beforeAll(async () => {
   other = pairDevice("other", "Other Mac");
   anim = await json<AnimationStyle>(call("maker", "POST", "/api/editor/animation-styles", { name: "Bold red", brief: "Big white words on deep red. Nothing bounces." }));
   style = await json<EditingStyle>(call("maker", "POST", "/api/editor/styles", { name: "With cards", animation: anim.id }));
-  // the Mac is on and has said it draws cards
-  expect(await claim()).toEqual({ job: null });
+  // the Mac is on: its first long poll lists the kind it draws. Nothing waits, so the poll is held and ends empty.
+  expect(deviceOf(mac.device.id)?.kinds ?? []).toEqual([]);
+  expect(await held()).toBe(204);
+  expect(deviceOf(mac.device.id)?.kinds).toEqual([CARDS_DRAW_KIND]);
 }, 120_000);
 afterAll(async () => {
   await devicesSaved();
@@ -413,7 +438,7 @@ describe.skipIf(rootReplaced)("the card step", () => {
     expect((await call("maker", "POST", `/api/editor/${id}/cards/v1/again`)).status).toBe(409); // it is being made
     answers = [PLAN, SCRIPT, "OK"];
     await toCards(id);
-    expect(await drawOnMac()).not.toBeNull();
+    await drawOnMac();
     await step();
     expect(asked).toHaveLength(3);
     expect(cardsOnCut(id).map((i) => i.rec)).toEqual([138, 234]);
@@ -426,10 +451,10 @@ describe.skipIf(rootReplaced)("the card step", () => {
     const fixed = `${SCRIPT}\n// bigger words`;
     answers = [PLAN, SCRIPT, fixed];
     await toCards(e);
-    expect((await drawOnMac())!.script).toBe(SCRIPT);
+    expect((await drawOnMac()).script).toBe(SCRIPT);
     await step(); // the look: a corrected script, so a second draw is asked for
     expect(jobOf(e, "cards")).toMatchObject({ state: "queued" });
-    expect((await drawOnMac({ colour: "blue" }))!.script).toBe(fixed);
+    expect((await drawOnMac({ colour: "blue" })).script).toBe(fixed);
     await step(); // the second draw is in: no second look
     expect(asked).toHaveLength(MAX_CALLS);
     expect(readCards(e, "v1")).toMatchObject({ calls: MAX_CALLS, draws: MAX_DRAWS, done: true });
@@ -511,7 +536,7 @@ describe.skipIf(rootReplaced)("cards never hold an edit up", () => {
     await step(); // the cards step still waits
     expect(jobOf(id, "cards")).toMatchObject({ state: "queued" });
     expect(asked).toHaveLength(2);
-    expect(await drawOnMac({ colour: "blue" })).not.toBeNull();
+    await drawOnMac({ colour: "blue" });
     await step();
     expect(asked).toHaveLength(3); // the look, once
     expect(await ended(id)).toEqual({ cards: [{ id: "c1", text: "Tuck your chin", liked: false }, { id: "c2", text: "Push with both hands", liked: false }] });
@@ -604,6 +629,78 @@ describe.skipIf(rootReplaced)("cards never hold an edit up", () => {
       change("maker", (f) => void delete f.animation!.find((a) => a.id === anim.id)!.from);
     }
   });
+});
+
+describe.skipIf(rootReplaced)("how the Mac learns that a step waits", () => {
+  it("a poll that lists the kind is answered with the hint when a draw waits; one that lists none is held as ever, and so is another account's", async () => {
+    const id = await newEdit();
+    answers = [PLAN, SCRIPT];
+    await toCards(id);
+    expect(jobOf(id, CARDS_DRAW_KIND)).toMatchObject({ state: "queued" });
+    // a Mac app from before this (its poll has no `editor`) is never sent the hint: it could not read it
+    expect(await held(mac.token, { blobs: true })).toBe(204);
+    expect(await held(mac.token, {})).toBe(204);
+    expect(await held(mac.token, { blobs: true, editor: "cards-draw" })).toBe(204); // no list of kinds: read as none sent
+    expect(deviceOf(mac.device.id)?.kinds).toEqual([CARDS_DRAW_KIND]); // and what the Mac listed before stays
+    // the step is another account's: nothing for this Mac
+    expect(await held(other.token)).toBe(204);
+    // the hint, word for word, and the step is still there to claim: the hint took nothing
+    const told = await poll();
+    expect([told.status, await told.text()]).toEqual([200, '{"editor":true}']);
+    expect(jobOf(id, CARDS_DRAW_KIND)).toMatchObject({ state: "queued" });
+    await call("maker", "POST", `/api/editor/${id}/stop`);
+    expect(await held()).toBe(204); // stopped: nothing waits
+  }, 60_000);
+
+  it("an AI request that waits for the Mac goes first, and the hint comes on the poll after it", async () => {
+    const id = await newEdit();
+    answers = [PLAN, SCRIPT];
+    await toCards(id);
+    const ai = streamMacClaude("system", "user", undefined, () => {}, undefined, { provider: { instance: "claude", driver: "claude", model: "m", effort: "low", device: mac.device.id } });
+    const first = await json<{ id?: string; editor?: boolean }>(poll());
+    expect(first.id).toBeTruthy();
+    expect(first).not.toHaveProperty("editor");
+    await app.request(`/api/devices/relay/${first.id}/done`, { method: "POST", headers: { authorization: `Bearer ${mac.token}`, "content-type": "application/json" }, body: JSON.stringify({ text: "answered" }) });
+    expect(await ai).toBe("answered");
+    expect(await json(poll())).toEqual(EDITOR_HINT);
+    await call("maker", "POST", `/api/editor/${id}/stop`);
+  });
+
+  it("done says when another step waits, so the Mac claims it with no poll between; the last one says nothing more", async () => {
+    const one = await newEdit();
+    answers = [PLAN, SCRIPT];
+    await toCards(one);
+    const two = await newEdit();
+    answers = [PLAN, SCRIPT];
+    libraryDb().prepare("UPDATE edit_jobs SET state = 'failed', error = 'Stopped' WHERE edit_id = ? AND kind = 'cards'").run(one); // so the worker's next steps are the second edit's
+    libraryDb().prepare("UPDATE edit_jobs SET state = 'queued', error = NULL WHERE edit_id = ? AND kind = 'cards-draw'").run(one);
+    await step();
+    await step();
+    expect([jobOf(one, CARDS_DRAW_KIND)?.state, jobOf(two, CARDS_DRAW_KIND)?.state]).toEqual(["queued", "queued"]);
+    expect(await json(poll())).toEqual(EDITOR_HINT);
+    const a = (await claim()).job!;
+    expect(await json(relay(mac.token, "POST", `/job/${a.id}/done`, "{}"))).toEqual({ ok: true, editor: true });
+    const b = (await claim()).job!; // at once: no poll went between
+    expect(b.editId).not.toBe(a.editId);
+    // a fail puts the step back for later (a minute on): nothing to claim now, so no word
+    expect(await json(relay(mac.token, "POST", `/job/${b.id}/fail`, JSON.stringify({ error: "Card 1 of 2 drew nothing." })))).toEqual({ ok: true });
+    for (const e of [one, two]) await call("maker", "POST", `/api/editor/${e}/stop`);
+  });
+
+  it("a Mac that says it can draw nothing (an empty list) is no longer a Mac that draws cards: the version gets its note", async () => {
+    try {
+      expect(await held(mac.token, { blobs: true, editor: [] })).toBe(204);
+      expect(deviceOf(mac.device.id)?.kinds).toEqual([]);
+      const id = await newEdit();
+      await toCards(id);
+      expect(asked).toEqual([]);
+      expect((await view(id)).cards).toEqual({ v1: { cards: [], note: "Cards: no Mac with Creator Toolset is on" } });
+      await call("maker", "POST", `/api/editor/${id}/stop`);
+    } finally {
+      await held(); // it lists the kind again
+    }
+    expect(deviceOf(mac.device.id)?.kinds).toEqual([CARDS_DRAW_KIND]);
+  }, 60_000);
 });
 
 describe.skipIf(rootReplaced)("the device contract", () => {

@@ -129,6 +129,12 @@ export function claimForDevice(device: { id: string; owner: string }, kinds: str
   return { id: job.id, kind: job.kind, editId, variant };
 }
 
+/** Whether a claim by a device of `owner` with these kinds would be handed a step right now: what its long poll is told (devices.ts). */
+export function waitsForDevice(owner: string, kinds: string[], now = Date.now()): boolean {
+  const k = claimableBy(kinds);
+  return !!k.length && !!libraryDb().prepare(`SELECT 1 FROM ${T} WHERE state = 'queued' AND run_after <= ? AND actor = ? AND kind IN (${k.map(() => "?").join(", ")})`).get(now, owner, ...k);
+}
+
 /** The job row this device holds (claimed by it and still running), or undefined. */
 const heldBy = (db: DatabaseSync, id: number, device: string): JobRow | undefined =>
   db.prepare("SELECT * FROM edit_jobs WHERE id = ? AND device = ? AND state = 'running'").get(id, device) as JobRow | undefined;
