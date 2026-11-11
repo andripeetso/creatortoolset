@@ -86,8 +86,8 @@ export const analyzerTools: ToolModule = {
     {
       name: "instagram_save",
       description:
-        "Save posts to the Analyzer's library by their links (Instagram posts, reels and carousels, YouTube videos and Shorts), read on the user's own Apify key in a minute or two: instagram_post shows the state. read = stats (counts and post description), watch (default: plus what is said and the text on screen) or full (plus comments, tags and the idea); a post already saved is read again, for new counts and what it lacks.",
-      inputSchema: { type: "object", properties: { links: { type: "array", items: str }, read: { type: "string", enum: ["stats", "watch", "full"] } }, required: ["links"] },
+        "Save posts to the Analyzer's library by their links (Instagram posts, reels and carousels, YouTube videos and Shorts), read on the user's own Apify key in a minute or two: instagram_post shows the state. read = stats (counts and post description), watch (default: plus what is said and the text on screen) or full (plus comments, tags and the idea); a link already saved is not read again unless again: true (new counts, and what it lacks).",
+      inputSchema: { type: "object", properties: { links: { type: "array", items: str }, read: { type: "string", enum: ["stats", "watch", "full"] }, again: { type: "boolean" } }, required: ["links"] },
     },
   ],
   handlers: {
@@ -159,10 +159,19 @@ export const analyzerTools: ToolModule = {
     },
     instagram_save: async (a, ctx) => {
       const read = ["stats", "watch", "full"].includes(String(a.read)) ? a.read : "watch";
+      // a link that is in the library already is not read again unless asked: each read is on the person's own credit
+      const have: Args[] = [];
+      const fresh: unknown[] = [];
+      for (const link of [a.links].flat()) {
+        const p = a.again === true || typeof link !== "string" ? null : await savedPost(link, ctx).catch(() => null);
+        if (p) have.push(p);
+        else fresh.push(link);
+      }
       // what pasting links on the page sends; the route refuses in its own words (no link, no Apify key)
-      const r = await ctx.json<{ posts: Args[]; errors?: Args[] }>("/api/instagram", "POST", { urls: [a.links].flat(), recipe: { preset: read }, run: "now" });
+      const r = fresh.length || !have.length ? await ctx.json<{ posts: Args[]; errors?: Args[] }>("/api/instagram", "POST", { urls: fresh, recipe: { preset: read }, run: "now" }) : { posts: [] as Args[] };
+      const row = (p: Args, already: boolean) => ({ id: p.id, link: p.url, state: stateOf(p), ...(already ? { already: true } : {}), app_link: `${ctx.origin}/instagram/${p.id}` });
       return {
-        saved: r.posts.map((p) => ({ id: p.id, link: p.url, state: stateOf(p), ...(p.existing ? { already: true } : {}), app_link: `${ctx.origin}/instagram/${p.id}` })),
+        saved: [...have.map((p) => row(p, true)), ...r.posts.map((p) => row(p, !!p.existing))],
         ...(r.errors?.length ? { not_saved: r.errors } : {}),
         note: "Reading a post takes a minute or two: instagram_post shows its state.",
       };

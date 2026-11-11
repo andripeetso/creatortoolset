@@ -264,10 +264,12 @@ describe("instagram_save", () => {
   it("saves posts by their links and answers each one's library id and state; instagram_post then shows it being read", async () => {
     const out = (await tool(anaKey, "instagram_save", { links: ["https://www.instagram.com/reel/TinyNew01/?igsh=abc", "https://www.instagram.com/reel/TinyRoll1/"], read: "full" })).value;
     expect(out.saved).toHaveLength(2);
-    const [fresh, had] = out.saved;
+    // already in the library: it is named first, with no second copy and no second read on the person's credit
+    const [had, fresh] = out.saved;
     expect(fresh).toEqual({ id: fresh.id, link: "https://www.instagram.com/reel/TinyNew01/", state: "reading", app_link: `http://localhost/instagram/${fresh.id}` });
-    // already in the library: no second copy, and the parts it lacks (full adds the comments and tags) are read
-    expect(had).toMatchObject({ id: roll, already: true });
+    expect(had).toMatchObject({ id: roll, already: true, state: "ready" });
+    // again: true reads a saved post once more (new counts, and what it lacks)
+    expect((await tool(anaKey, "instagram_save", { links: ["https://www.instagram.com/reel/TinyRoll1/"], read: "full", again: true })).value.saved).toMatchObject([{ id: roll, already: true, state: "reading" }]);
     expect(out.note).toContain("instagram_post");
     const reading = (await tool(anaKey, "instagram_post", { post: fresh.id })).value;
     expect(reading).toMatchObject({ id: fresh.id, state: "reading", description: "", slides: [] });

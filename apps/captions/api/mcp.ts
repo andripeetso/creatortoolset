@@ -73,7 +73,9 @@ Review: his videos waiting for feedback, their versions and timed comments (with
 Resolve a comment only once the change it asks for is made. review_set_approval marks a video approved or sent back.
 
 Instagram (the Analyzer): instagram_refresh starts a pull of one of the user's accounts (on their own Apify key or
-official login), instagram_posts lists its posts since a date and the state of its pulls.
+official login), instagram_posts lists its posts since a date and the state of its pulls. instagram_search finds the
+posts the user saved by words, instagram_post reads one (what is said in it, the text on screen, the idea) and
+instagram_save saves a post by its link.
 
 Media Library: the user's footage. media_import_folder brings a folder on this computer in (and reads the script files
 there), media_search finds files by what they show or say, media_folders lists the folders. Each video sorts itself as
@@ -194,7 +196,7 @@ export const TOOLS = [
   },
   {
     name: "instagram_posts",
-    description: "An Analyzer account's posts (by handle) taken on or after since (a date, like 2026-10-01): shortcode, url, kind, when, caption, plays, likes, comments, and the state of its pulls.",
+    description: "An Analyzer account's posts (by handle) taken on or after since (a date, like 2026-10-01): shortcode, url, kind, when, caption, plays, likes, comments, id (once the post is saved in the library: instagram_post reads it), and the state of its pulls.",
     inputSchema: { type: "object", properties: { account: str, since: str }, required: ["account"] },
   },
   { name: "editor_list", description: "AI Editor edits, newest first: id, name, the last step and its state.", inputSchema: { type: "object", properties: {} } },
@@ -695,13 +697,16 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       if (Number.isNaN(sinceMs)) throw new ToolError("since is a date, like 2026-10-01.");
       const acc = await json(`/api/instagram/accounts/${await accountOf(String(a.account))}?lite=1`);
       const rows = ((acc.catalog as Args[] | undefined) ?? []).filter((r) => (r.takenAt as number) >= sinceMs).sort((x, y) => (y.takenAt as number) - (x.takenAt as number));
+      // a catalog row carries a short preview only; a saved post's own text is in the same answer
+      const saved = new Map(((acc.posts as Args[] | undefined) ?? []).map((p) => [p.id, p.caption]));
       return {
         account: acc.username,
         jobs: acc.jobs,
         posts: rows.map((r) => ({
           ...pick(r, ["shortcode", "url", "kind"]),
+          ...(r.postId ? { id: r.postId } : {}),
           when: when(r.takenAt),
-          caption: String(r.caption ?? r.captionPreview ?? "").slice(0, 300),
+          caption: String(saved.get(r.postId) ?? r.captionPreview ?? "").slice(0, 300),
           ...pick((r.counts ?? {}) as Args, ["plays", "likes", "comments"]),
         })),
       };
