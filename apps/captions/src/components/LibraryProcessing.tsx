@@ -77,7 +77,11 @@ export function LibraryProgressBar({ libraryId }: { libraryId: string }) {
         </>
       )}
       {p.waiting.map((w) => (
-        <div key={w.step} className="flex items-center gap-2 text-xs text-zinc-400">
+        <div
+          key={`${w.step}${w.limit ? "-limit" : ""}`}
+          // the plan's limit stops the AI for every tool, so it is said plainly, not as a footnote
+          className={w.limit ? "flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300" : "flex items-center gap-2 text-xs text-zinc-400"}
+        >
           <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
           <span>
             {w.count.toLocaleString()} {what[w.step][w.count === 1 ? 0 : 1]} {w.count === 1 ? "waits" : "wait"}: {w.missing}

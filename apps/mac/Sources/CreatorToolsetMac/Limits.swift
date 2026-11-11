@@ -243,7 +243,9 @@ func limitsForever(api: DeviceAPI, home: URL, stopped: () -> Bool, enabled: () -
         } catch {
             AppLog.write("relay limits: \(error.localizedDescription)")
         }
-        for _ in 0..<limitsInterval where !stopped() {
+        // switched on or off meanwhile: the next pass goes now, so a Turn on shows a reading at once
+        let was = enabled()
+        for _ in 0..<limitsInterval where !stopped() && enabled() == was {
             Thread.sleep(forTimeInterval: 1)
         }
     }

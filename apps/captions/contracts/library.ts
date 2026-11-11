@@ -115,7 +115,7 @@ export interface LibraryProgress {
   /** time left at this server's pace */
   seconds: number;
   /** jobs waiting for a key or an AI, with what to add */
-  waiting: { step: LibraryStep; count: number; missing: string }[];
+  waiting: { step: LibraryStep; count: number; missing: string; /** held back by the AI plan's usage limit */ limit?: boolean }[];
 }
 
 export interface LibrarySummary {

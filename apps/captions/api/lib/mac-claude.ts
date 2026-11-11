@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { DRIVERS, parseMachine, type AcpCommand, type Driver, type Effort, type MacReport, type Scope } from "../../contracts/providers";
-import { limitMessage } from "../../contracts/plans";
+import { limitLine, limitMessage } from "../../contracts/plans";
 import { env } from "./env";
 import { deviceName, isOnline, saveReport, touchDevice } from "./devices";
 import { saveLimits } from "./limits";
@@ -280,13 +280,15 @@ export function streamMacClaude(
         end();
         // the AI itself failed (not a stop, a usage limit, or a Mac that did not pick the request up): its check says so
         if (e instanceof MacClaudeError && (e.kind === "failed" || e.kind === "timeout")) noteOutcome(false, e.message);
+        // a usage limit: the AI works, its plan is used up; Settings and the Media Library say so until it answers again
+        if (e instanceof MacClaudeError && e.kind === "limit") noteOutcome(true, undefined, limitLine(e.message));
         reject(e);
       },
     };
     // the instance this call went through, if any: its outcome is recorded as that instance's check
-    const noteOutcome = (ok: boolean, error?: string) => {
+    const noteOutcome = (ok: boolean, error?: string, note?: string) => {
       const p = opts.provider;
-      if (p?.scope && p.instance) void noteCallOutcome(p.scope, p.instance, ok, error).catch(() => {});
+      if (p?.scope && p.instance) void noteCallOutcome(p.scope, p.instance, ok, error, note).catch(() => {});
     };
     const onAbort = () => r.fail(new MacClaudeError("Stopped", "stopped"));
     const check = setInterval(() => {
