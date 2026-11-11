@@ -366,6 +366,8 @@ html:not(.dark) ::-webkit-scrollbar-thumb { background: #d4d4d8; }
    What has not arrived yet is hidden, and things come in one after another by --i. Every move ends on the page's own
    look, so when the attribute goes (the end, Skip) Home is exactly as it always is. The top bar stays away while it
    plays and comes back softly. Never started under reduced motion (lib/setup.ts introPlays). */
+/* nothing the welcome moves or enlarges may make the page scroll (a scrollbar would show in the picture) */
+.home-hub[data-intro] { overflow: clip; }
 .home-hub[data-intro] .intro-body { pointer-events: none; transition: opacity 400ms ease, filter 400ms ease; }
 .home-hub[data-intro] .intro-bar { opacity: 0; pointer-events: none; }
 .intro-bar { transition: opacity 600ms ease; }
@@ -415,23 +417,28 @@ html:not(.dark) ::-webkit-scrollbar-thumb { background: #d4d4d8; }
 .intro-marked .intro-letter { animation: intro-ink 120ms linear both; animation-delay: calc(1530ms + var(--k) * 65ms); }
 /* a line or a scene that comes, stays and goes: its duration is set inline (its beat, or beats) */
 .intro-scene { animation: intro-scene linear both; }
-/* the beat's line, over the boxes. On the pipeline beat it stands alone in the middle, bigger, then glides up to its place */
+/* the beat's line, over the boxes. On the pipeline beat it stands alone in the middle, bigger, then glides up to its
+   place. Only the words are enlarged, not the line's full-width row: that row at 1.6 was wider than the window */
 .intro-caption { position: absolute; left: 0; right: 0; top: 0; translate: 0 calc(-100% - 2.5rem); text-align: center; pointer-events: none;
-  transition: top 800ms cubic-bezier(0.65, 0, 0.35, 1), translate 800ms cubic-bezier(0.65, 0, 0.35, 1), scale 800ms cubic-bezier(0.65, 0, 0.35, 1); }
-.home-hub[data-intro="pipeline"] .intro-caption { top: 50%; translate: 0 -50%; scale: 1.6; }
+  transition: top 800ms cubic-bezier(0.65, 0, 0.35, 1), translate 800ms cubic-bezier(0.65, 0, 0.35, 1); }
+.intro-caption > span { transition: scale 800ms cubic-bezier(0.65, 0, 0.35, 1); }
+.home-hub[data-intro="pipeline"] .intro-caption { top: 50%; translate: 0 -50%; }
+.home-hub[data-intro="pipeline"] .intro-caption > span { scale: 1.6; }
 .intro-chip { animation: intro-pop 520ms cubic-bezier(0.34, 1.56, 0.64, 1) both; animation-delay: calc(350ms + var(--i) * 220ms); }
 /* the colour going round: three soft discs in the project's colour and its two neighbours, each turning about its own
-   point near the middle; they open out from the middle as the name arrives. A blur this wide comes out in rings (WebKit
-   most of all, and plainest on the light page), so a fine grain lies over it and breaks them up */
-.intro-aurora { animation: intro-aurora linear both, intro-bloom 1800ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+   point near the middle; they open out from small as the name arrives (the discs themselves: scaling the layer they
+   are in showed its rectangle). A blur this wide comes out in rings (WebKit most of all, and plainest on the light
+   page), so a fine grain lies over it and breaks them up */
+.intro-aurora { animation: intro-aurora linear both; }
 .intro-aurora::after {
   content: ""; position: absolute; inset: 0; opacity: 0.09;
   background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
-.intro-aurora i { position: absolute; left: 50%; top: 50%; width: 46vmax; height: 46vmax; margin: -23vmax; border-radius: 50%; filter: blur(90px); opacity: 0.3; animation: intro-orbit 11s linear infinite; }
+.intro-aurora i { position: absolute; left: 50%; top: 50%; width: 46vmax; height: 46vmax; margin: -23vmax; border-radius: 50%; filter: blur(90px); opacity: 0.3;
+  animation: intro-orbit 11s linear infinite, intro-bloom 1800ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
 .intro-aurora i:nth-child(1) { background: var(--tint); transform-origin: 15% 30%; }
-.intro-aurora i:nth-child(2) { background: color-mix(in oklab, var(--tint) 55%, #38bdf8); transform-origin: 90% 35%; animation-duration: 14s; animation-direction: reverse; }
-.intro-aurora i:nth-child(3) { background: color-mix(in oklab, var(--tint) 55%, #f472b6); transform-origin: 45% 95%; animation-duration: 17s; }
+.intro-aurora i:nth-child(2) { background: color-mix(in oklab, var(--tint) 55%, #38bdf8); transform-origin: 90% 35%; animation-duration: 14s, 1800ms; animation-direction: reverse, normal; }
+.intro-aurora i:nth-child(3) { background: color-mix(in oklab, var(--tint) 55%, #f472b6); transform-origin: 45% 95%; animation-duration: 17s, 1800ms; }
 @keyframes intro-fade { from { opacity: 0; } }
 @keyframes intro-rise { from { opacity: 0; translate: 0 18px; scale: 0.94; } }
 @keyframes intro-pop { from { opacity: 0; scale: 0.4; } }

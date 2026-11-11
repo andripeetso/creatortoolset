@@ -109,8 +109,8 @@ export function HomeIntro({ beat }: { beat: Beat }) {
       <div
         aria-hidden
         className="intro-aurora pointer-events-none absolute inset-0 -z-10 overflow-hidden"
-        // the first is the whole welcome (it fades in and out with it), the second the opening-out at the start
-        style={{ animationDuration: `${BEATS.reduce((a, b) => a + b.ms, 0)}ms, 1800ms` }}
+        // it fades in and out with the whole welcome
+        style={{ animationDuration: `${BEATS.reduce((a, b) => a + b.ms, 0)}ms` }}
       >
         <i />
         <i />
