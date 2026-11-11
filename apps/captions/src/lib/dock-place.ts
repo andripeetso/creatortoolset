@@ -49,3 +49,41 @@ export function settle(x: number, y: number, vx: number, vy: number, w: number, 
 
 /** The corner a docked chat's bubble goes back to when it's closed. */
 export const cornerOf = (p: Place): Corner => (p.mode === "float" ? p.corner : "br");
+
+/** The bubble's reach from the window's corner: its 16px gap, its 56px and a little air. */
+const REACH = 96;
+
+/** How high a box stands in the window's bottom right corner: from its top to the window's bottom, or 0 when the box
+ *  is not in that corner (another layout put it elsewhere). */
+export function cornerHeight(box: { top: number; right: number; bottom: number }, w: number, h: number): number {
+  return w - box.right < REACH && h - box.bottom < REACH ? Math.max(0, Math.round(h - box.top)) : 0;
+}
+
+/**
+ * For a screen's own box in the window's bottom right corner, where the bubble sits by default (a Review video's
+ * comment box, a Workshop session's message box): given as the box's `ref`, it says how high the box stands
+ * (--corner-taken and data-corner-taken on <html>). The bubble then sits above it instead of over its buttons
+ * (AssistantDock), and the list above it keeps room at its end (.clears-bubble, index.css).
+ */
+export function cornerTaken(box: HTMLElement | null) {
+  if (!box) return;
+  const root = document.documentElement;
+  const clear = () => {
+    root.style.removeProperty("--corner-taken");
+    delete root.dataset.cornerTaken;
+  };
+  const say = () => {
+    const height = cornerHeight(box.getBoundingClientRect(), window.innerWidth, window.innerHeight);
+    if (!height) return clear();
+    root.style.setProperty("--corner-taken", `${height}px`);
+    root.dataset.cornerTaken = "";
+  };
+  const sized = new ResizeObserver(say);
+  sized.observe(box);
+  window.addEventListener("resize", say);
+  return () => {
+    sized.disconnect();
+    window.removeEventListener("resize", say);
+    clear();
+  };
+}

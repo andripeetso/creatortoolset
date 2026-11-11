@@ -234,6 +234,10 @@ html:has([data-fills-window]) { overflow-y: hidden; }
      every screen. */
   html:has([data-fills-window]) { --edge-room: 8px; }
 }
+/* The bubble sits above a box a screen keeps in the bottom right corner (data-corner-taken, lib/dock-place.ts), which
+   puts it over the end of the list above that box: the list keeps room there, so its last item can be scrolled clear
+   of the bubble (a Review video's comments, a Workshop session's chat). */
+html[data-corner-taken]:has(button[data-assistant-dock]) .clears-bubble { padding-bottom: 5rem; }
 /* A pane inside a card (a Workshop session's piece, notes, chat and Browse) keeps its bar's 8px at all times too
    (overflow-y-scroll), taken out of its own right padding in its class list (bars:pr-*, the variant for where a bar
    takes room, tailwind.config.js): the text is as wide as before, stays in the middle of the card and does not move
