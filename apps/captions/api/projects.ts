@@ -1445,6 +1445,7 @@ projectsApp.get("/:id", async (c) => {
     autoCadence: projData.autoCadence ?? null,
     script: projData.script ?? "",
     clips,
+    ...(captioning.has(id) ? { captioning: captioning.get(id) } : {}),
   });
 });
 
@@ -2454,6 +2455,8 @@ export async function createProjectFromFile(o: {
   file: string;
   duration: number;
   libraryVersionId?: string;
+  /** Answer once the project is on disk: its editing copy is built behind it (clipReadyToEdit waits for that). */
+  later?: boolean;
 }): Promise<{ projectId: string; clipId: string }> {
   const id = randomUUID();
   const clipId = randomUUID();
@@ -2482,9 +2485,14 @@ export async function createProjectFromFile(o: {
   await writeJson(clipDataPath(id, clipId), {});
   await linkOrCopy(o.file, clipOriginalPath(id, clipId));
   bumpUsage(o.owner, { projectsCreated: 1 });
-  await buildProxyFromOriginal(id, clipId);
+  // later: a build that fails is tried once more, and reported, by whoever waits for it
+  if (o.later) void buildProxyFromOriginal(id, clipId).catch(() => {});
+  else await buildProxyFromOriginal(id, clipId);
   return { projectId: id, clipId };
 }
+
+/** What the server itself is doing to a project right now (api/captions-job.ts), by project id: in memory only. */
+export const captioning = new Map<string, "preparing" | "transcribing">();
 
 /** Exists for this user with its editing proxy built (waits for a build). */
 export async function clipReadyToEdit(

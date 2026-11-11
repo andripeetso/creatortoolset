@@ -32,6 +32,7 @@ const ffmpegFiles = [
   "api/library/shares.test.ts",
   "api/library/similar.test.ts",
   "api/library/transcribe.test.ts",
+  "api/mcp-tools/captions.test.ts",
   "api/review-library.test.ts",
   "api/review.test.ts",
   "scripts/plugin-build.test.mjs",
