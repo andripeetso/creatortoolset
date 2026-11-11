@@ -175,8 +175,8 @@ In the downloaded Mac app the check is step 4 above. The rest of this section is
   the plug-in imports, `pnpm check` names the line.
 - **Sharing:** a plug-in is a folder. Put it in its own git repository. Someone else puts it in their Mac app's
   plug-ins folder and switches it on themselves, or clones it into `apps/captions/plugins/<id>` of their checkout.
-  Community lists no plug-ins. What people share there has no code: packs
-  ([packs.md](apps/captions/docs/features/packs.md)). A tool many people want is built into the app: open an issue.
+  Community lists no plug-ins made by other people. What people share there has no code: packs
+  ([packs.md](apps/captions/docs/features/packs.md)). A tool many people want is made by the team: open an issue.
 
 ## When no slot fits
 
