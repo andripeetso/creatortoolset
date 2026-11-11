@@ -390,7 +390,7 @@ function Transcript({
   if (!job) return null;
   return (
     <p className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-      {waiting ? (job.state === "running" && job.error) || "Transcribing…" : job.state === "done" ? "Nothing is said in this clip." : job.error ?? "The transcript failed."}
+      {waiting ? job.error || "Transcribing…" : job.state === "done" ? "Nothing is said in this clip." : job.error ?? "The transcript failed."}
       {(job.state === "needs_key" || job.state === "failed") && !inTrash && (
         <Button size="sm" variant="outline" onClick={onRetry}>
           Retry

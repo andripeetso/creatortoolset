@@ -32,6 +32,44 @@ beforeEach(() => {
   takingClips.clear();
 });
 
+// a transcript whose speech model is not downloaded yet: the stand-in for transcribeVersion says so (lib/device-transcribe.ts)
+import { vi } from "vitest";
+const stuck = vi.hoisted(() => ({ model: false }));
+vi.mock("./transcribe", async (real) => {
+  const m = await real<typeof import("./transcribe")>();
+  const { ModelNotReady } = await import("../lib/device-transcribe");
+  return { ...m, transcribeVersion: (...a: Parameters<typeof m.transcribeVersion>) => (stuck.model ? Promise.reject(new ModelNotReady("not downloaded")) : m.transcribeVersion(...a)) };
+});
+
+describe("a transcript whose speech model did not download", () => {
+  it("waits a minute and tries again, saying why, without spending an attempt or failing its clip", async () => {
+    // its own imports: it is picked onto other branches by itself
+    const { MODEL_WAITS, tick: run } = await import("./worker");
+    const { blobs: store } = await import("./db");
+    const { writeFileSync: write } = await import("node:fs");
+    d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at) VALUES ('a_m', 'lib_a', 'video', 'm', 'v_m', 'local', 1)").run();
+    d.prepare(
+      `INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, probe, state, created_by, created_at)
+       VALUES ('v_m', 'a_m', 1, 'k/v_m', 1, 'v_m', '{"duration":5,"vcodec":"h264","acodec":"aac"}', 'processing', 'local', 1)`,
+    ).run();
+    const f = path.join(dir, "v_m.bin");
+    write(f, "sound");
+    await store.put("k/v_m", f);
+    enqueueJob(d, "lib_a", "v_m", "transcribe", "local");
+    stuck.model = true;
+    try {
+      const before = Date.now();
+      expect(await run(before, LANES.find((l) => l.name === "transcripts")!.kinds)).toBe(true);
+      const j = d.prepare("SELECT state, attempts, run_after, error FROM jobs WHERE version_id = 'v_m'").get() as { state: string; attempts: number; run_after: number; error: string };
+      expect(j).toMatchObject({ state: "queued", attempts: 0, error: MODEL_WAITS });
+      expect(j.run_after).toBeGreaterThanOrEqual(before + 60_000);
+      expect(d.prepare("SELECT state FROM asset_versions WHERE id = 'v_m'").get()).toEqual({ state: "processing" });
+    } finally {
+      stuck.model = false;
+    }
+  });
+});
+
 describe("the order clips are prepared in", () => {
   it("every clip's picture first, then the slow steps; in a lane, all lighter copies before the duplicate checks", () => {
     // v1 came in and was probed, v2 and v3 came in after: their probes and v1's picture are still to do
