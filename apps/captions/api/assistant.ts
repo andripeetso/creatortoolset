@@ -50,8 +50,9 @@ Your reply is shown in a small chat dock. You act in the app only through its to
 - navigate opens a page of the app for the user, given as a relative path such as /workshop. It can put these dialogs up for them to fill in: /settings/providers?add=1 (add an AI), /settings/connectors?add=<instagram|facebook|youtube|tiktok|x> (add a social account), /settings/devices?add=1 (add a computer) or ?phone=1 (a phone), /settings/automations?add=1 (a new scheduled task), /projects?add=1 (a new project), /settings/team?add=1 (invite someone, on a team's server).
 - A name in your reply opens its page when it is a markdown link to a path of this app: [its title](/review/<id>?v=<n>), [its name](/editor/<id>), [its title](/workshop/sessions/<id>). When you list reviews, edits or sessions the user can open, link each that way (a tool's link ends in that path).
 - show_video plays a Review video (or an AI Editor draft's preview) inside the chat, with a link to its page.
-- use_file sends a video or recording (dropped in the chat, or by its path on this computer when the server runs here) to Video Notes (transcript, summary, takeaways, action items, chapters), Review (a video page with comments and a share link), Caption Studio (captions on the video) or the Media Library (footage to keep, sorted into A-roll and B-roll; several dropped files in one call; a folder on this computer goes in with media_import_folder). notes_get follows a Video Note until it's ready and reads what it found. With version_of (a Review video's link) the file becomes that video's next version instead of a new video. notes_list lists the user's Video Notes; notes_get with add writes the takeaways, the action plan or the quotes a note does not have yet.
+- use_file sends a video or recording (dropped in the chat, or by its path on this computer when the server runs here) to Video Notes (transcript, summary, takeaways, an action plan, chapters), Review (a video page with comments and a share link), Caption Studio (captions on the video) or the Media Library (footage to keep, sorted into A-roll and B-roll; several dropped files in one call; a folder on this computer goes in with media_import_folder). notes_get follows a Video Note until it's ready and reads what it found. With version_of (a Review video's link) the file becomes that video's next version instead of a new video. notes_list lists the user's Video Notes; notes_get with add writes the takeaways, the action plan or the quotes a note does not have yet. After use_file to captions the captions are made in the background and the chat says when they are ready: open the project only then (/captions?project=<id>), read them with captions_get, find projects with captions_list. There is no export tool: open the project and the person presses Export.
 - offer_choices puts 2 to 4 short answers under your reply as buttons; a press sends that answer as the user's next message.
+- ask_folder puts a Choose a folder button under your reply when you need a folder from their computer (in the Mac app; elsewhere it tells you to ask for a drop or a typed path). The folder they choose comes with their next message.
 - A tool that deletes, publishes or sends asks the user itself, with a Yes / No card under your reply. When a tool answers that it asked, say so in a few words and end your reply: it is done when they press Yes.
 - ask_secret asks the user for one API key. The app shows a secure box in the chat; the key goes straight to the app and never to you. Never ask the user to paste a key, token or password into the chat, and never repeat one back.
 
@@ -91,6 +92,8 @@ interface Conv {
   messages: AssistantMessage[];
   pending?: { env: string; why: string; at: number };
   navigate?: string;
+  /** The newest message came from the Mac app (its page context said so): its open panel can choose a folder (askFolder). */
+  mac?: boolean;
   /** The tool call each waiting Yes / No card stands for (askConfirm), by the card's id. Never sent to the dock. */
   calls?: Record<string, { tool: string; args: unknown }>;
   /** Earlier conversations, newest first (New chat keeps the one it replaces here). */
@@ -231,6 +234,7 @@ function parseTurn(raw: unknown): TurnInput {
         selection: capped(c.selection, CONTEXT_CAPS.selection),
         visible: capped(c.visible, CONTEXT_CAPS.visible),
         ...(typeof c.timezone === "string" && validTimezone(c.timezone) ? { timezone: c.timezone } : {}),
+        ...(c.mac === true ? { mac: true } : {}),
       }
     : undefined;
   return { text, images, pasted, fileIds, files: [], paths, context };
@@ -321,6 +325,10 @@ export function noteWork(username: string, turn: string, card: NonNullable<Assis
   if (m?.status !== "thinking") return;
   const work = (m.work ??= []);
   const had = work.find((w) => w.id === card.id);
+  // this reply has just read work that ended while it was being written: it says so itself, so the waiting line is dropped
+  const waiting = later.get(turn)?.filter((x) => !cardOf(card.id, x.idStart));
+  if (waiting && !waiting.length) later.delete(turn);
+  else if (waiting) later.set(turn, waiting);
   if (had) Object.assign(had, { status: card.status, detail: card.detail });
   else if (!onlyUpdate && work.length < 20) work.push(card);
   else return;
@@ -336,6 +344,18 @@ export function noteMedia(username: string, turn: string, card: AssistantMedia):
   if (at >= 0) media[at] = card;
   else if (media.length < 10) media.push(card);
   else return;
+  saveSoon(username);
+}
+
+/**
+ * The reply asks for a folder on the user's computer (ask_folder, mcp.ts): a Choose a folder button under it. Only the
+ * Mac app can choose one (its own open panel hands the page the path); elsewhere the AI is told to ask for a drop or a typed path.
+ */
+export function askFolder(username: string, turn: string, why: string): void {
+  if (!load(username).mac) throw new Error("The user is not in the Creator Toolset Mac app, so no button can choose a folder: ask them to drop the folder on the chat, or to type its path.");
+  const m = messageOf(username, turn);
+  if (m?.status !== "thinking") return;
+  m.folderAsk = { why: why.replace(/\s+/g, " ").trim().slice(0, 200) };
   saveSoon(username);
 }
 
@@ -397,30 +417,35 @@ export function unattended(username: string, turn: string): boolean {
 /* ---- work the assistant started has ended: its cards finish, and the chat says so ---- */
 
 /** Lines waiting for a reply that is still being written in their chat, by that reply's id (said when it ends). */
-const later = new Map<string, AssistantMessage[]>();
+const later = new Map<string, Array<{ line: AssistantMessage; idStart: string }>>();
+const cardOf = (id: string, idStart: string) => id === idStart || id.startsWith(`${idStart}:`);
 
 /**
  * Work the assistant started has ended (an edit's job, a Video Note, the Workshop's writer). Its running cards, in
  * whatever chat they sit, get their end; the cards are found by the start of their id ("edit:<id>" ends
  * "edit:<id>:new" and "edit:<id>:draft"). With `say`, one line is posted in that chat as the assistant's, with
  * answer buttons under it (`choices`: a press sends that answer). Nothing is said when no card was running: work
- * started on its own page tells nobody in the chat. Returns whether a card was running.
+ * started on its own page tells nobody in the chat. While a reply is being written in that chat the line waits for
+ * it to end, and is dropped if that reply reads the ended work with a tool meanwhile (noteWork): it then says so in
+ * its own words, once. Returns whether a card was running.
  */
-export function workEnded(username: string, idStart: string, end: { status: "done" | "failed"; detail?: string; say?: string; choices?: string[] }): boolean {
+export function workEnded(username: string, idStart: string, end: { status: "done" | "failed"; detail?: string; say?: string; choices?: string[]; href?: string }): boolean {
   const conv = load(username);
   let hit = false;
   let said = false;
   for (const list of everyChat(conv)) {
-    const cards = list.flatMap((m) => m.work ?? []).filter((w) => w.status === "running" && (w.id === idStart || w.id.startsWith(`${idStart}:`)));
-    if (!cards.length) continue;
+    const mine = (w: NonNullable<AssistantMessage["work"]>[number]) => w.status === "running" && cardOf(w.id, idStart);
+    const holders = list.filter((m) => m.work?.some(mine));
+    if (!holders.length) continue;
     hit = true;
-    for (const w of cards) Object.assign(w, { status: end.status, ...(end.detail ? { detail: end.detail } : {}) });
+    // href: where the card leads once the work is there (a card may lead elsewhere while it runs)
+    for (const w of holders.flatMap((m) => m.work!.filter(mine))) Object.assign(w, { status: end.status, ...(end.detail ? { detail: end.detail } : {}), ...(end.href ? { href: end.href } : {}) });
     if (!end.say || said) continue;
     said = true;
     const line: AssistantMessage = { id: randomUUID(), role: "assistant", text: end.say, at: Date.now(), status: "done", ...(end.choices?.length ? { choices: end.choices.slice(0, 4) } : {}) };
     const last = list.at(-1);
     // a reply being written there keeps the last word until it ends
-    if (last?.status === "thinking") later.set(last.id, [...(later.get(last.id) ?? []), line]);
+    if (last?.status === "thinking") later.set(last.id, [...(later.get(last.id) ?? []), { line, idStart }]);
     else list.push(line);
   }
   if (hit) {
@@ -437,7 +462,7 @@ function sayLater(username: string, replyId: string): void {
   later.delete(replyId);
   const list = everyChat(load(username)).find((l) => l.some((m) => m.id === replyId));
   const now = Date.now();
-  list?.push(...lines.map((l, i) => ({ ...l, at: now + i })));
+  list?.push(...lines.map((l, i) => ({ ...l.line, at: now + i })));
 }
 
 /* ---- what the reply asks to do on the user's Mac (MacOpts.onAsk) ---- */
@@ -817,6 +842,7 @@ assistantApp.post("/turn", async (c) => {
   const route = routeOf(u.username, u.role === "admin");
   if (!route) return c.json({ error: "Connect your AI first", code: "NO_PROVIDER" }, 409);
   const now = Date.now();
+  conv.mac = input.context?.mac === true;
   // the pictures are kept only once the turn runs
   const images = input.images.map((im) => saveImage(u.username, im, im.bytes));
   conv.messages.push({

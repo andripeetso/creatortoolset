@@ -10,6 +10,7 @@ import { fingerprint } from "./fingerprint";
 import { claimJob, defer, enqueueJob, extendLease, finishJob, firstClips, parkJob, requeueExpired, takingClips, type JobRow } from "./jobs";
 import { isInside, musicFolders } from "../lib/storage";
 import { isThisMachine } from "../lib/devices";
+import { ModelNotReady } from "../lib/device-transcribe";
 import { AiProviderError } from "../ai-complete";
 import { MacClaudeError } from "../lib/mac-claude";
 import { limitLine } from "../../contracts/plans";
@@ -70,6 +71,10 @@ function waitFor(e: unknown): number {
   if (under instanceof MacClaudeError && under.kind === "unclaimed") return 5 * 60;
   return e instanceof AiProviderError && e.code === "RATE_LIMIT" ? 60 : 0;
 }
+
+const MODEL_RETRY_S = 60;
+/** What the clip says while its transcript waits for the speech model (shown in its panel). */
+export const MODEL_WAITS = "The speech model's download stopped: it tries again in a minute.";
 
 /** How a description held for the plan's limit is known (limitLine's words, contracts/plans.ts). */
 export const LIMIT_LIKE = "%limit is reached%";
@@ -147,10 +152,13 @@ export async function tick(now = Date.now(), kinds: readonly string[] = LANES.fl
     }
     // a description that met the plan's usage limit, a rate limit or a Mac that is off waits for it, never fails: a
     // big drop would otherwise end in hundreds of failed cards
-    const wait = job.kind === "describe" ? waitFor(e) : 0;
+    // a transcript whose speech model did not download (a weak connection) waits a minute and tries again, saying why:
+    // the clip did not fail, and what came in whole is kept (lib/device-transcribe.ts)
+    const wait = job.kind === "describe" ? waitFor(e) : e instanceof ModelNotReady ? MODEL_RETRY_S : 0;
     if (wait) {
       defer(db, job.id, wait);
       if (isLimit(e)) holdForLimit(db, job.actor, limitLine((e as Error).message), Date.now() + wait * 1000);
+      if (e instanceof ModelNotReady) db.prepare("UPDATE jobs SET error = ? WHERE id = ?").run(MODEL_WAITS, job.id);
       return true;
     }
     finishJob(db, job.id, false, e instanceof Error ? e.message : String(e), Math.max(now, Date.now()));

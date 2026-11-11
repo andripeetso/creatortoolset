@@ -17,7 +17,7 @@ MODULES.push({
   ],
   handlers: {
     tiny_prefs: async (_a, ctx) => ({ talk: (await ctx.json<{ talk: string }>("/api/work-prefs")).talk, as: ctx.user.username }),
-    tiny_card: async (a) => ({ id: a.id }),
+    tiny_card: async (a) => ({ id: a.id, status: a.status }),
     tiny_wipe: async (a, ctx) => {
       if (!a.what) throw new ToolError("Say what.");
       await ctx.sure(`Wipe ${String(a.what)}?`);
@@ -26,7 +26,7 @@ MODULES.push({
     },
   },
   steps: { tiny_prefs: "Checking the tiny things" },
-  work: (name, _a, r) => (name === "tiny_card" ? { card: { id: `edit:${String(r.id)}:new`, kind: "edit", title: "Tiny edit", href: `/editor/${String(r.id)}`, status: "running" } } : null),
+  work: (name, _a, r) => (name === "tiny_card" ? { card: { id: `edit:${String(r.id)}:new`, kind: "edit", title: "Tiny edit", href: `/editor/${String(r.id)}`, status: r.status === "done" ? "done" : "running" } } : null),
 });
 const wiped: string[] = [];
 
@@ -182,19 +182,37 @@ describe("work the assistant started ends", () => {
     const cookie = await cookieOf("ana");
     const t = await turn(cookie, "Start the tiny edit");
     await tool(t.token, "tiny_card", { id: "e9" });
-    // while the reply is still being written the line waits, so the reply keeps the last word until it ends
+    await t.end();
+    // the reply that started it has ended; while ANOTHER reply is being written in that chat the line waits for it to end
+    const other = await turn(cookie, "And something else meanwhile");
     expect(workEnded("ana", "edit:e9", { status: "done", detail: "First cut is ready", say: "The first cut of Tiny edit is ready.", choices: ["Show me", "Carry on"] })).toBe(true);
     let messages = (await viewOf(cookie)).messages;
     expect(messages.at(-1)!.status).toBe("thinking");
-    expect(messages.at(-1)!.work![0]).toMatchObject({ status: "done", detail: "First cut is ready" });
-    await t.end();
+    expect(messages.at(-3)!.work![0]).toMatchObject({ status: "done", detail: "First cut is ready" });
+    await other.end();
     messages = (await viewOf(cookie)).messages;
     expect(messages.slice(-2).map((m: AssistantMessage) => [m.role, m.text, m.status])).toEqual([["assistant", "Done.", "done"], ["assistant", "The first cut of Tiny edit is ready.", "done"]]);
     expect(messages.at(-1)!.choices).toEqual(["Show me", "Carry on"]);
+
+    // work that ends while the reply that started it is still being written, and that reply then reads it with a tool:
+    // the reply says so itself, and no second line follows it
+    const same = await turn(cookie, "Start another and wait for it");
+    await tool(same.token, "tiny_card", { id: "e10" });
+    expect(workEnded("ana", "edit:e10", { status: "done", detail: "Ready", say: "Not said: the reply says it", href: "/editor/e10/first" })).toBe(true);
+    await tool(same.token, "tiny_card", { id: "e10", status: "done" });
+    await same.end();
+    messages = (await viewOf(cookie)).messages;
+    expect(messages.at(-1)).toMatchObject({ text: "Done.", work: [{ id: "edit:e10:new", status: "done", href: "/editor/e10/first" }] });
+    // the same, but the reply never looks at it again: the line comes once the reply has ended
+    const blind = await turn(cookie, "Start a third and move on");
+    await tool(blind.token, "tiny_card", { id: "e11" });
+    expect(workEnded("ana", "edit:e11", { status: "done", say: "The third is ready." })).toBe(true);
+    await blind.end();
+    expect((await viewOf(cookie)).messages.at(-1)!.text).toBe("The third is ready.");
     // ended already, or never started from the chat: nothing more is said
     expect(workEnded("ana", "edit:e9", { status: "done", say: "Again" })).toBe(false);
     expect(workEnded("ana", "edit:e", { status: "done", say: "Not this one" })).toBe(false);
-    expect((await viewOf(cookie)).messages.at(-1)!.text).toBe("The first cut of Tiny edit is ready.");
+    expect((await viewOf(cookie)).messages.at(-1)!.text).toBe("The third is ready.");
   });
 });
 
@@ -256,6 +274,30 @@ describe("a file dropped for the Media Library", () => {
       resetLibrarySlots();
       await t.end();
     }
+  });
+});
+
+describe("the assistant asks for a folder", () => {
+  it("in the Mac app the reply gets a Choose a folder button; anywhere else the AI is told to ask for a drop or a typed path", async () => {
+    const cookie = await cookieOf("ana");
+    const from = async (context: Record<string, unknown>) => {
+      expect((await app.request("/api/assistant/turn", { method: "POST", ...json({ text: "Edit my shoot", context }, { cookie }) })).status).toBe(202);
+      const job = await claim();
+      return { token: `Bearer ${job.mcp.token}`, end: () => finish(job.id) };
+    };
+    const browser = await from({ path: "/editor", title: "AI Editor" });
+    expect(await tool(browser.token, "ask_folder", { why: "the shoot to edit" })).toEqual({ error: true, text: "The user is not in the Creator Toolset Mac app, so no button can choose a folder: ask them to drop the folder on the chat, or to type its path." });
+    await browser.end();
+    expect((await viewOf(cookie)).messages.at(-1)!.folderAsk).toBeUndefined();
+    const mac = await from({ path: "/editor", title: "AI Editor", mac: true });
+    expect((await tool(mac.token, "ask_folder", { why: "the  shoot to edit" })).error).toBe(false);
+    await mac.end();
+    expect((await viewOf(cookie)).messages.at(-1)!.folderAsk).toEqual({ why: "the shoot to edit" });
+    // the chosen folder comes as the next message's folder, as a drop does
+    expect((await app.request("/api/assistant/turn", { method: "POST", ...json({ text: "", paths: ["/Users/you/Movies/Tiny shoot"] }, { cookie }) })).status).toBe(202);
+    const next = await claim();
+    expect(next.user).toContain('The user dropped a folder from their computer: "/Users/you/Movies/Tiny shoot" (its path there).');
+    await finish(next.id);
   });
 });
 

@@ -7,8 +7,9 @@ import { env } from "./lib/env";
 import { assembleParts, MAX_UPLOAD_BYTES, PART_SIZE, partsStatus, readUploadState, receivePart, startUpload } from "./lib/uploads";
 import { mayUse, type SessionUser } from "./users";
 import { notesFromFile, probeDuration } from "./clips";
-import { addVersion, readMeta as readReview } from "./review";
+import { addVersion, notifyNewVersion, readMeta as readReview } from "./review";
 import { createProjectFromFile, linkOrCopy } from "./projects";
+import { captionEngine, captionInBackground } from "./captions-job";
 import { ensureLibrary } from "./library/access";
 import { libraryDb } from "./library/db";
 import { saveToLibrary } from "./library/routes";
@@ -145,7 +146,7 @@ export async function useFile(
   to: AssistantFileUse,
   name?: string,
   versionOf?: string,
-): Promise<{ to: AssistantFileUse; id: string; name: string; href: string; note?: string; version?: number; versionId?: string; libraryId?: string }> {
+): Promise<{ to: AssistantFileUse; id: string; name: string; href: string; note?: string; version?: number; versionId?: string; libraryId?: string; captioning?: boolean }> {
   const meta = await readFileMeta(user.username, id);
   if (!meta) throw new Error("That file isn't here any more (dropped files are kept 7 days): ask for it again.");
   if (!mayUse(user, TOOL_OF[to])) throw new Error(`${NAMES[to]} isn't switched on for this account.`);
@@ -177,14 +178,20 @@ export async function useFile(
     const added = await addVersion(of?.id, { owner: user.username, name: title, mime: meta.mime, bytes: meta.size }, (dest) => linkOrCopy(file, dest));
     if (!added) throw new Error("Review couldn't take it.");
     if (!of) return { to, id: added.meta.id, name: title, href: `/review/${added.meta.id}` };
+    // the people who commented hear of the new version, as they do when it is uploaded on the page
+    await notifyNewVersion(added.meta, user.username, added.n);
     return { to, id: of.id, name: added.meta.name, href: `/review/${of.id}?v=${added.n}`, version: added.n, note: `Version ${added.n} of “${added.meta.name}”` };
   }
-  // Caption Studio builds its editing copy first: a long file can take minutes, so the answer doesn't wait past 40 s
-  const job = createProjectFromFile({ owner: user.username, name: title, clipName: meta.name, file, duration: await probeDuration(file) });
-  const made = await Promise.race([job, new Promise<null>((r) => setTimeout(() => r(null), 40_000))]);
-  // ponytail: no id until the copy is built; the project list shows it then
-  if (!made) return { to, id: "", name: title, href: "/captions?view=projects", note: "Still preparing: it shows in Caption Studio's projects in a few minutes." };
-  return { to, id: made.projectId, name: title, href: `/captions?project=${made.projectId}` };
+  // Caption Studio: the project is there at once, with its id; its editing copy and its captions are made behind the
+  // answer (captions-job.ts), and the chat says when they are ready. "Open it only then": a page that has the project
+  // open keeps its own copy (src/lib/persist.ts loadSession) and would not show captions saved under it
+  const made = await createProjectFromFile({ owner: user.username, name: title, clipName: meta.name, file, duration: await probeDuration(file), later: true });
+  const project = { to, id: made.projectId, name: title, href: `/captions?project=${made.projectId}` };
+  const route = captionEngine(user);
+  // nothing on this server transcribes for them: said in the route's own words (on the page, their browser still can)
+  if ("refused" in route) return { ...project, note: `Not transcribed: ${route.refused}. On the project's page, Transcribe runs in the browser and needs no key.` };
+  captionInBackground(user, made.projectId, made.clipId, title, route.engine);
+  return { ...project, captioning: true, note: "Being prepared and transcribed: the chat says when the captions are ready. Open the project only then." };
 }
 
 assistantFilesApp.post("/:id/use", async (c) => {

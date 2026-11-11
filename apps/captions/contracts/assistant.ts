@@ -26,6 +26,8 @@ export interface AssistantMessage {
   media?: AssistantMedia[];
   /** Answers the reply offers as buttons (offer_choices): a press sends that one as the user's message. */
   choices?: string[];
+  /** The reply asks for a folder on the user's computer (ask_folder): in the Mac app a Choose a folder button under it; the chosen folder goes with their next message. */
+  folderAsk?: { why: string };
   /** Questions the reply put before deleting, publishing or sending something: a Yes / No card each. */
   confirms?: AssistantConfirm[];
   /** A user message's attachments as shown in the chat: pictures by name (served by GET /api/assistant/images/:id), pastes by name. */
@@ -125,6 +127,8 @@ export interface AssistantContext {
   visible?: string;
   /** The browser's IANA time zone, so a task the assistant schedules runs on the person's clock. */
   timezone?: string;
+  /** Sent from the Mac app, whose own open panel can choose a folder (ask_folder). */
+  mac?: boolean;
 }
 
 /** POST /api/assistant/turn's body. */

@@ -10,7 +10,7 @@ import { routeFor } from "./lib/providers";
 import { deviceName } from "./lib/devices";
 import { readConnectors } from "./lib/connectors/store";
 import { myKeys } from "./my-keys";
-import { askConfirm, askSecret, navigateTo, noteChoices, noteMedia, noteStep, noteWork, setConfirmRunner, setInstallGuide, unattended } from "./assistant";
+import { askConfirm, askFolder, askSecret, navigateTo, noteChoices, noteMedia, noteStep, noteWork, setConfirmRunner, setInstallGuide, unattended } from "./assistant";
 import { FILE_USES, type AssistantMedia, type AssistantWork } from "../contracts/assistant";
 import { SESSION_STATUSES } from "./lib/workshop/types";
 import { postedFromUrl } from "./lib/workshop/posted";
@@ -45,7 +45,7 @@ function setupView(v: SetupView) {
 }
 
 /** The tools only the assistant's job token may call (the dock, assistant.ts). */
-const ASSISTANT_TOOLS = new Set(["setup_status", "save_setup", "ask_secret", "navigate", "show_video", "use_file", "notes_get", "offer_choices"]);
+const ASSISTANT_TOOLS = new Set(["setup_status", "save_setup", "ask_secret", "navigate", "show_video", "use_file", "notes_get", "offer_choices", "ask_folder"]);
 const isJob = (auth: Headers) => /^Bearer ctj_/.test(auth.get("authorization") ?? "");
 
 /** The most of a recording's words a tool hands the AI at once (about 15 minutes of speech). */
@@ -229,7 +229,7 @@ export const TOOLS = [
   {
     name: "media_search",
     description:
-      "Search the user's Media Library: q matches titles, tags, AI descriptions and what is said in the clips; leave it out for the newest. kind = video, image, audio or doc; roll = a (A-roll) or b (B-roll); folder = a folder id (media_folders); since = only files added on or after this date; versions = version ids just added: said then counts how they were sorted, waiting up to 50 s for it. Each hit: id, version_id (for editor_create), title, kind, roll, state (ready once processed), length, description, tags.",
+      "Search the user's Media Library: q matches titles, tags, AI descriptions and what is said in the clips (best match first; said = where it is said); leave it out for the newest. kind = video, image, audio or doc; roll = a (A-roll) or b (B-roll); folder = a folder id (media_folders); since = only files added on or after this date; versions = version ids just added: said then counts how they were sorted, waiting up to 50 s for it. Each hit: id, version_id (for editor_create), title, kind, roll, state (ready once processed), length, description, tags.",
     inputSchema: { type: "object", properties: { q: str, kind: { type: "string", enum: ["video", "image", "audio", "doc"] }, roll: { type: "string", enum: ["a", "b"] }, folder: str, since: str, versions: { type: "array", items: str }, limit: { type: "integer" } } },
   },
   { name: "media_folders", description: "The Media Library's folders: id, name, how many files. A folder id goes into media_search and editor_create's broll_folder; media_import_folder files into a plain folder (kind manual), not a smart one.", inputSchema: { type: "object", properties: {} } },
@@ -283,6 +283,11 @@ const ASSISTANT_DEFS = [
     description: "Put 2 to 4 short answers under your reply as buttons, for a question the user answers in one tap (\"Start with my usual setup\" / \"Change the setup\"). A press sends that answer as their next message. Ask the question in your reply too.",
     inputSchema: { type: "object", properties: { choices: { type: "array", items: str } }, required: ["choices"] },
   },
+  {
+    name: "ask_folder",
+    description: "Ask the user to choose a folder on their computer (a shoot to edit, footage to bring in): a Choose a folder button under your reply. why = what the folder is for, in a few words. Their choice comes with their next message. Ask for it in your reply too.",
+    inputSchema: { type: "object", properties: { why: str }, required: ["why"] },
+  },
   { name: "navigate", description: "Open a page of the app for the user: a relative path such as /workshop or /settings/connectors.", inputSchema: { type: "object", properties: { path: str }, required: ["path"] } },
   {
     name: "show_video",
@@ -291,7 +296,7 @@ const ASSISTANT_DEFS = [
   },
   {
     name: "use_file",
-    description: "Send a video or recording to a tool: file = the id of one dropped in the chat, or path = a file on this computer (when the server runs on it; not for library: media_import_folder reads its folder in place). to: notes = Video Notes (transcript, summary, chapters; follow it with notes_get, which also writes takeaways, an action plan and quotes), review = a Review video (then review_share for a link; with version_of = a Review video's link or id, as get_review takes, the file becomes that video's next version instead), captions = a Caption Studio project, library = the Media Library, where each clip sorts itself as A-roll or B-roll (files = several dropped ids at once; tell the user the answer's said line). name = a title for it (default the file's name). The same file can go to several.",
+    description: "Send a video or recording to a tool: file = the id of one dropped in the chat, or path = a file on this computer (when the server runs on it; not for library: media_import_folder reads its folder in place). to: notes = Video Notes (transcript, summary, chapters; follow it with notes_get, which also writes takeaways, an action plan and quotes), review = a Review video (then review_share for a link; with version_of = a Review video's link or id, as get_review takes, the file becomes that video's next version instead), captions = a Caption Studio project whose captions are made at once (the chat says when they are ready; captions_get reads them), library = the Media Library, where each clip sorts itself as A-roll or B-roll (files = several dropped ids at once; tell the user the answer's said line). name = a title for it (default the file's name). The same file can go to several.",
     inputSchema: { type: "object", properties: { file: str, files: { type: "array", items: str }, path: str, to: { type: "string", enum: [...FILE_USES] }, name: str, version_of: str }, required: ["to"] },
   },
   {
@@ -824,12 +829,30 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       if (a.roll) q.set("roll", String(a.roll));
       if (a.folder) q.set("collectionId", String(a.folder));
       if (a.since) q.set("from", String(dateMs(a.since)));
-      const page = main ? { items: [] as Args[] } : await json<{ items: Args[] }>(`/api/library/${lib}/assets?${q}`);
+      // a typed search asks the library's fuller search: words in the title, tags and description, words that are said (with
+      // the second they are said at) and, where it is on, clips close in meaning. It answers its best hits, one per matching
+      // moment; since and version ids are the list's own, so those still go to the list.
+      const moments = new Map<string, Array<{ at: string; text: string }>>();
+      let page: { items: Args[] };
+      if (main) page = { items: [] };
+      else if (a.q && !a.since && !versions.length) {
+        const ask = new URLSearchParams({ q: String(a.q) });
+        for (const k of ["kind", "roll", "collectionId"]) if (q.get(k)) ask.set(k, q.get(k)!);
+        const hits = await json<Array<{ asset: Args; seconds?: number; snippet?: string }>>(`/api/library/${lib}/search?${ask}`);
+        const byClip = new Map<string, Args>();
+        for (const h of hits) {
+          const id = String(h.asset.id);
+          if (!byClip.has(id)) byClip.set(id, h.asset);
+          if (h.snippet && typeof h.seconds === "number" && (moments.get(id)?.length ?? 0) < 3) moments.set(id, [...(moments.get(id) ?? []), { at: clock(h.seconds).replace(/\.\d+$/, ""), text: h.snippet.replace(/\s+/g, " ").trim().slice(0, 200) }]);
+        }
+        page = { items: [...byClip.values()].slice(0, limit) };
+      } else page = await json<{ items: Args[] }>(`/api/library/${lib}/assets?${q}`);
       // with more than one source, each hit says which it is from
       const hit = (f: Args, source?: string) => ({
         ...pick(f, ["id", "versionId", "title", "kind", "roll", "state", "durationS", "tags"]),
         ...(f.description ? { description: String((f.description as Args).text).slice(0, 300) } : {}),
         ...(f.capturedAt ? { captured: when(f.capturedAt) } : {}),
+        ...(moments.has(String(f.id)) ? { said: moments.get(String(f.id)) } : {}),
         ...(source ? { source } : {}),
       });
       const files = page.items.map((f) => hit(f, others.length ? "Library" : undefined));
@@ -985,6 +1008,12 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       if (turn) noteChoices(user.username, turn, [...new Set(choices)]);
       return { status: "shown", note: "The buttons are under your reply: end the reply and wait for the answer." };
     },
+    ask_folder: async (a) => {
+      someoneThere();
+      const turn = jobTurn(auth.get("authorization") ?? undefined);
+      if (turn) askFolder(user.username, turn, String(a.why ?? ""));
+      return { status: "asked", note: "The button is under your reply: end the reply and wait for the folder." };
+    },
     navigate: async (a) => {
       someoneThere();
       return { status: "opening", path: await navigateTo(user.username, String(a.path ?? "")) };
@@ -1036,6 +1065,7 @@ const STEPS: Record<string, string> = {
   setup_status: "Checking what's set up",
   show_video: "Showing the video",
   offer_choices: "Offering answers",
+  ask_folder: "Asking for a folder",
   use_file: "Sending your file",
   notes_get: "Reading the Video Note",
   save_setup: "Saving your setup",
@@ -1125,6 +1155,9 @@ export function workFor(name: string, a: Args, r: Args): { card: AssistantWork; 
         : null;
     case "use_file": {
       if (a.to === "library") return r.said && r.href ? { card: { id: `library:${String(r.href)}`, kind: "link", title: "Media Library", href: String(r.href), status: "done", detail: String(r.said) } } : null;
+      // Caption Studio: the card runs while the captions are being made (captions-job.ts ends it, and says so in the chat)
+      if (a.to === "captions")
+        return r.id ? { card: { id: `captions:${r.id}`, kind: "captions", title: String(r.name ?? "Caption Studio"), href: r.captioning ? "/captions?view=projects" : String(r.href), status: r.captioning ? "running" : "done", detail: r.captioning ? "Making the captions" : "In Caption Studio, not transcribed" } } : null;
       const kind = a.to === "review" ? "review" : a.to === "captions" ? "captions" : "notes";
       const where = { notes: "Video Notes", review: "Review", captions: "Caption Studio" }[kind];
       return r.href

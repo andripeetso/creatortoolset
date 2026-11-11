@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { readFile, rm } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { spokenLanguage } from "../../src/workers/spoken-language";
 import { hfApp, OWN_COPY } from "../hfproxy";
@@ -25,6 +25,9 @@ export const modelsDir = () => path.join(env.dataDir, "models");
 
 /** What a caller's ffmpeg writes for `transcribeOnDevice`: 16 kHz mono 32-bit float samples, no header. */
 export const DEVICE_AUDIO = ["-vn", "-ac", "1", "-ar", "16000", "-f", "f32le"];
+
+/** The speech model is not on this computer yet (its download stopped): a transcript waits and tries again (worker.ts). */
+export class ModelNotReady extends Error {}
 
 /** Whether this server transcribes by itself: one person's own computer, never a hosted server. */
 export const deviceTranscribes = (): boolean => process.env.CT_LOCAL === "1" && !hostedMode();
@@ -220,10 +223,13 @@ export function transcribeOnDevice(pcmFile: string, key: string, load = loadMode
     speaking = true;
     await freeOther();
     try {
-      const model = await load(say).catch(async (e) => {
+      const model = await load(say).catch((e) => {
+        // its files are left as they are, as the search model's are (device-embed.ts): the library is still writing the
+        // others, and deleting the folder under them ends the server (an error nobody catches); a half file never takes
+        // its real name (the library writes each under a temporary name and drops that when it breaks), so the next try
+        // fetches only what is missing
         console.warn("[transcribe] the speech model did not load:", e);
-        await rm(path.join(modelsDir(), MODEL), { recursive: true, force: true }); // a bad copy would fail every later run: the next try fetches it again
-        throw new Error(`The speech model could not be made ready. It downloads once (${MODEL_MB} MB): check the internet connection, then try again.`);
+        throw new ModelNotReady(`The speech model could not be downloaded (${MODEL_MB} MB, only the first time): check the internet connection.`);
       });
       try {
         say(LISTENING);

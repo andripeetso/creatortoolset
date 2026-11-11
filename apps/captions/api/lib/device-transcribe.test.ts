@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createWriteStream, existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdir, rename, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
@@ -7,7 +8,8 @@ const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "devic
 process.env.DATA_DIR = dir;
 const pcm = path.join(dir, "speech.f32");
 writeFileSync(pcm, Buffer.from(new Float32Array(16000).buffer)); // one second of silence, as ffmpeg's DEVICE_AUDIO writes it
-const { deviceStatus, deviceTranscribes, LISTENING, relisten, transcribeOnDevice, wordsOf } = await import("./device-transcribe");
+const { deviceStatus, deviceTranscribes, LISTENING, ModelNotReady, modelsDir, relisten, transcribeOnDevice, wordsOf } = await import("./device-transcribe");
+const { embedOnDevice } = await import("./device-embed");
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 afterEach(() => {
   delete process.env.CT_LOCAL;
@@ -85,7 +87,7 @@ describe("transcripts made on this computer", () => {
 
   it("a model that will not load fails in plain words, and the next run starts clean", async () => {
     const broken = async () => Promise.reject(new Error('Could not locate file: "http://server/api/hf/x/config.json"'));
-    await expect(transcribeOnDevice(pcm, "clip-1", broken)).rejects.toThrow(/^The speech model could not be made ready\. It downloads once \(291 MB\)/);
+    await expect(transcribeOnDevice(pcm, "clip-1", broken)).rejects.toThrow(/^The speech model could not be downloaded \(291 MB, only the first time\): check the internet connection\.$/);
     expect(deviceStatus("clip-1")).toBeUndefined();
     expect((await transcribeOnDevice(pcm, "clip-1", fakeModel().load)).words).toHaveLength(1);
   });
@@ -155,5 +157,93 @@ describe("transcripts made on this computer", () => {
     const { words } = await transcribeOnDevice(file, "clip-1", load);
     expect(samples).toEqual([5 * 16000, 1.3 * 16000]);
     expect(words.map((w) => [w.text, +w.start.toFixed(2), +w.end.toFixed(2)])).toEqual([["we", 1, 1.3], ["roll", 1.3, 2], ["we", 3, 3.25], ["roll", 3.25, 3.6], ["today", 3.6, 4]]);
+  });
+});
+
+/**
+ * How the model library keeps a downloaded file (its FileCache.put): the file's folder made, a stream to a temporary
+ * name with no listener for the stream's own errors, renamed once whole. `opened` is when the stream is opened: in the
+ * library a moment after the folder is made (the thread pool's next turn); the stand-in can hold that moment open, so
+ * the test does not depend on luck.
+ */
+async function keep(file: string, parts: number, o: { breakAt?: number; opened?: Promise<unknown> } = {}) {
+  const tmp = `${file}.tmp.${process.pid}.${Math.random().toString(36).slice(2)}`;
+  try {
+    await mkdir(path.dirname(file), { recursive: true });
+    await o.opened;
+    const out = createWriteStream(tmp);
+    for (let i = 0; i < parts; i++) {
+      if (i === o.breakAt) throw new TypeError("terminated"); // the connection dropped
+      await new Promise<void>((ok, no) => out.write(Buffer.alloc(4096), (e) => (e ? no(e) : ok())));
+      await new Promise((r) => setTimeout(r, 1));
+    }
+    await new Promise<void>((ok, no) => out.close((e) => (e ? no(e) : ok())));
+    await rename(tmp, file);
+  } catch (e) {
+    await unlink(tmp).catch(() => {});
+    throw e;
+  }
+}
+
+/**
+ * A stand-in for a loader's first download: the model file's connection drops half way while another of its files is
+ * on its way in (its folder made, its file opened once the failure has been handled: `handled()`). The library gives
+ * up on the model without waiting for that file, and only logs that file's own failure. Once the connection is back
+ * (`broken` false) the missing files come whole and the model loads.
+ */
+function download<M>(folder: string, model: () => M | Promise<M>) {
+  let handled!: () => void;
+  const state = { broken: true, writing: Promise.resolve() as Promise<unknown>, handled: () => handled() };
+  const load = async (): Promise<M> => {
+    const whole = (f: string) => existsSync(path.join(folder, f));
+    const later = new Promise<void>((r) => (handled = r));
+    if (!state.broken) handled();
+    if (!whole("onnx/decoder.onnx")) state.writing = keep(path.join(folder, "onnx", "decoder.onnx"), 3, { opened: later }).catch(() => {});
+    if (!whole("onnx/encoder.onnx")) await keep(path.join(folder, "onnx", "encoder.onnx"), 20, { breakAt: state.broken ? 5 : undefined });
+    await state.writing;
+    return model();
+  };
+  return { load, state };
+}
+
+describe("a model's first download breaks half way (both loaders: the speech model and the search model)", () => {
+  it("the server keeps running, nothing still being written is deleted, the transcript waits to try again, and a later run loads", async () => {
+    const crashes: unknown[] = [];
+    const crash = (e: unknown) => void crashes.push(e);
+    process.on("uncaughtException", crash);
+    process.on("unhandledRejection", crash);
+    try {
+      const speechDir = path.join(modelsDir(), "Xenova", "whisper-base");
+      const speech = download(speechDir, () => fakeModel().load());
+      const failed = await transcribeOnDevice(pcm, "clip-1", speech.load).catch((e: unknown) => e);
+      speech.state.handled();
+      await speech.state.writing;
+      await new Promise((r) => setTimeout(r, 100));
+      expect(crashes).toEqual([]); // an error nobody catches ends the server (folder-plugins.ts watchCrashes)
+      expect(failed).toBeInstanceOf(ModelNotReady); // the job waits for the model (worker.ts), it is no failure of the clip
+      expect((failed as Error).message).toMatch(/check the internet connection/);
+      expect(deviceStatus("clip-1")).toBeUndefined(); // nothing says it is being fetched while it is not
+      // what came in whole is kept, so the next try fetches only the rest; the half file never took the model's name
+      expect(readdirSync(path.join(speechDir, "onnx"))).toEqual(["decoder.onnx"]);
+      speech.state.broken = false;
+      expect((await transcribeOnDevice(pcm, "clip-1", speech.load)).words).toHaveLength(1);
+      expect(readdirSync(path.join(speechDir, "onnx")).sort()).toEqual(["decoder.onnx", "encoder.onnx"]);
+
+      const searchDir = path.join(modelsDir(), "Xenova", "paraphrase-multilingual-MiniLM-L12-v2");
+      const extractor = Object.assign(async (texts: string[]) => ({ data: new Float32Array(texts.length * 2).fill(1), dims: [texts.length, 2] }), { dispose: async () => {} });
+      const search = download(searchDir, () => extractor);
+      const lost = await embedOnDevice(["a"], { key: "ver-1" }, search.load).catch((e: unknown) => e);
+      search.state.handled();
+      await search.state.writing;
+      await new Promise((r) => setTimeout(r, 100));
+      expect(crashes).toEqual([]);
+      expect((lost as Error).message).toMatch(/check the internet connection/);
+      expect(readdirSync(path.join(searchDir, "onnx"))).toEqual(["decoder.onnx"]);
+      search.state.broken = false;
+      expect(await embedOnDevice(["a"], { key: "ver-1" }, search.load)).toHaveLength(1);
+    } finally {
+      process.off("uncaughtException", crash);
+      process.off("unhandledRejection", crash);
+    }
   });
 });
