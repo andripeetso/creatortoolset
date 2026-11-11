@@ -53,6 +53,7 @@ struct RootView: View {
 final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        Keychain.moveToSharedGroup()
         // created at launch, a background relaunch included, so the background session reconnects
         _ = UploadEngine.shared
         BackgroundRefresh.register()

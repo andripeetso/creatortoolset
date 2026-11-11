@@ -77,3 +77,34 @@ final class SignInTests: XCTestCase {
         XCTAssertEqual(SignIn.cookie(from: response), "tinyacrobatics.abc")
     }
 }
+
+/// The sign-ins live in the Keychain group the app shares with its Share extension.
+final class KeychainTests: XCTestCase {
+    func testASignInIsKeptAndRead() {
+        let account = "test-\(UUID().uuidString)"
+        XCTAssertTrue(Keychain.set(account, "tinyacrobatics.cookie"), "the Keychain refused the item (entitlements?)")
+        XCTAssertEqual(Keychain.get(account), "tinyacrobatics.cookie")
+        Keychain.set(account, nil)
+        XCTAssertNil(Keychain.get(account))
+    }
+
+    func testMovingIntoTheSharedGroupKeepsEverySignIn() {
+        let account = "test-\(UUID().uuidString)"
+        Keychain.set(account, "kept")
+        let defaults = UserDefaults(suiteName: "keychain-\(UUID().uuidString)")!
+        Keychain.moveToSharedGroup(defaults: defaults)
+        XCTAssertEqual(Keychain.get(account), "kept")
+        XCTAssertTrue(defaults.bool(forKey: "keychainShared"))
+        Keychain.set(account, nil)
+    }
+
+    func testTheServerListIsMirroredForTheShareExtension() {
+        let server = Server(url: URL(string: "https://studio.example.test/")!, username: "sam")
+        let saved = SavedServers(list: [server], currentId: server.id)
+        let before = SavedServers.read()
+        defer { if let before { before.write() } else { Keychain.set(SavedServers.account, nil) } }
+        saved.write()
+        XCTAssertEqual(SavedServers.read(), saved)
+        XCTAssertEqual(SavedServers.read()?.current?.server, server)
+    }
+}

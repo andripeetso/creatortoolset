@@ -1,17 +1,6 @@
 import Foundation
 import Security
 
-/// A Creator Toolset server this phone talks to: the one on the person's own computer, their own server, or a hosted
-/// one. The sign-in cookie (`cap_auth`) is kept in the Keychain, never in the list.
-struct Server: Codable, Identifiable, Hashable {
-    let url: URL
-    var username: String?
-    /// The computer's own name, for one reached through the account (its address is a row of letters and digits).
-    var label: String?
-    var id: String { url.absoluteString }
-    var name: String { label ?? (url.host(percentEncoded: false) ?? url.absoluteString) + (url.port.map { ":\($0)" } ?? "") }
-}
-
 /// The servers added on this phone and the one in use. Every screen reads `current`.
 @MainActor
 final class Servers: ObservableObject {
@@ -31,6 +20,8 @@ final class Servers: ObservableObject {
             list = saved
         }
         currentId = UserDefaults.standard.string(forKey: currentKey) ?? list.first?.id
+        // a phone that added its servers before the Share extension existed
+        if !list.isEmpty, SavedServers.read() == nil { SavedServers(list: list, currentId: currentId).write() }
     }
 
     var current: Server? { list.first { $0.id == currentId } }
@@ -74,32 +65,7 @@ final class Servers: ObservableObject {
     private func save() {
         UserDefaults.standard.set(try? JSONEncoder().encode(list), forKey: listKey)
         UserDefaults.standard.set(currentId, forKey: currentKey)
-    }
-}
-
-/// One generic-password item per server, readable after the first unlock (background uploads need it).
-enum Keychain {
-    private static func query(_ account: String) -> [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword,
-         kSecAttrService as String: "creator-toolset.server",
-         kSecAttrAccount as String: account]
-    }
-
-    static func get(_ account: String) -> String? {
-        var q = query(account)
-        q[kSecReturnData as String] = true
-        var out: AnyObject?
-        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let data = out as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
-    }
-
-    static func set(_ account: String, _ value: String?) {
-        SecItemDelete(query(account) as CFDictionary)
-        guard let value else { return }
-        var q = query(account)
-        q[kSecValueData as String] = Data(value.utf8)
-        q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        SecItemAdd(q as CFDictionary, nil)
+        SavedServers(list: list, currentId: currentId).write()
     }
 }
 
