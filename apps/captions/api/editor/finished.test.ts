@@ -333,7 +333,7 @@ describe.skipIf(rootReplaced)("Finished edits: fixed in size", () => {
     // newest first, and the first one made is gone
     expect(list.map((r) => r.editId)).toEqual(ids.slice(1).reverse());
     expect(JSON.parse(readFileSync(fileOf("maker", s.id), "utf8"))).toHaveLength(FINISHED_MAX);
-  });
+  }, 30_000); // 21 whole edits through the real routes: over a second alone, more beside the rest of the suite
 
   it("a file changed by hand gives no more: the caps hold where it is read", async () => {
     const s = await style("maker", { name: "By hand" });
