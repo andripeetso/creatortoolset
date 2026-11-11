@@ -394,12 +394,14 @@ export async function probe(id: CliId, fresh = false, home = os.homedir()): Prom
  * driverBinaries). Setup lists the ones on this Mac and connects them as they are set up there; the ones in VENDOR_AIS
  * it also installs and signs in.
  */
-export const OTHER_AIS: Partial<Record<Driver, string>> = { grok: "grok", cursor: "cursor-agent", opencode: "opencode", antigravity: "antigravity-acp", pi: "pi" };
+export const OTHER_AIS: Partial<Record<Driver, string>> = { grok: "grok", musecode: "muse", cursor: "cursor-agent", opencode: "opencode", antigravity: "antigravity-acp", pi: "pi" };
 
-/** Whether a Cursor config file names the account it signed in with (`authInfo`; signing out removes it). */
-const cursorAccount = (file: string): boolean => {
+/** Whether a JSON file has a value at `keys` (a saved sign-in): false when it is missing or unreadable. */
+const savedAt = (file: string, ...keys: string[]): boolean => {
   try {
-    return !!(JSON.parse(readFileSync(file, "utf8")) as { authInfo?: unknown }).authInfo;
+    let v: unknown = JSON.parse(readFileSync(file, "utf8"));
+    for (const k of keys) v = v && typeof v === "object" ? (v as Record<string, unknown>)[k] : undefined;
+    return !!v;
   } catch {
     return false;
   }
@@ -423,9 +425,39 @@ export const VENDOR_AIS: Partial<Record<Driver, { install: string; bin: (home: s
     install: "curl -fsS https://cursor.com/install | bash",
     bin: (h) => path.join(h, ".local", "bin", "cursor-agent"),
     login: ["login"],
-    signedIn: (h) => cursorAccount(path.join(process.env.CURSOR_CONFIG_DIR || path.join(h, ".cursor"), "cli-config.json")),
+    signedIn: (h) => savedAt(path.join(process.env.CURSOR_CONFIG_DIR || path.join(h, ".cursor"), "cli-config.json"), "authInfo"),
+  },
+  // Meta's installer puts a launcher at ~/.local/bin/muse and fetches the program (about 470 MB) through it; told not to
+  // edit the shell profiles. Its sign-in prints Meta's page and a code to confirm there (museLoginPage), then waits.
+  // ponytail: where the sign-in is saved was read from the launcher's code and Muse Code 1.4.15's own notes, not seen
+  // after a real sign-in.
+  musecode: {
+    install: "curl -fsSL https://dev.meta.ai/install.sh | MUSE_NO_MODIFY_PATH=1 sh",
+    bin: (h) => path.join(h, ".local", "bin", "muse"),
+    login: ["login"],
+    signedIn: (h) => savedAt(path.join(process.env.XDG_CONFIG_HOME || path.join(h, ".config"), "muse", "auth.json"), "providers", "meta", "access_token"),
   },
 };
+
+/**
+ * Meta's sign-in page and its code from `muse login`'s own output, or null until both are printed: "Open this page to sign
+ * in:", the page, "confirm this code matches:", the code. Only a page on auth.meta.com is taken (the Mac app reads it the
+ * same way: Relay.swift museLoginPage).
+ */
+export function museLoginPage(out: string): { page: string; code: string } | null {
+  const lines = out.split("\n").map((l) => l.trim());
+  const page = lines.find((l) => {
+    try {
+      const u = new URL(l);
+      return u.protocol === "https:" && u.host === "auth.meta.com";
+    } catch {
+      return false;
+    }
+  });
+  const at = lines.findIndex((l) => /(this code matches|enter this code):$/i.test(l));
+  const code = at >= 0 ? lines[at + 1] : "";
+  return page && code ? { page, code } : null;
+}
 
 /** The other AIs on this Mac and the copy each runs: one login shell's `command -v` for all of them, then the usual folders. */
 export async function otherAis(home = os.homedir()): Promise<Array<{ id: Driver; bin: string }>> {
@@ -444,7 +476,7 @@ const nameOf = (id: Driver): string => (isCli(id) ? NAMES[id] : (DRIVERS.find((d
 
 /* ---- the view ---- */
 
-/** The rows setup shows: each CLI, found on this Mac or not; then Grok and Cursor, found or not, and the other AIs found. */
+/** The rows setup shows: each CLI, found on this Mac or not; then Grok, Meta and Cursor, found or not, and the other AIs found. */
 export async function localAiView(username: string, mcpTo: CliId[], fresh = false, home = os.homedir()): Promise<LocalAiView> {
   // fresh: Check again. Nothing cached is used, so a CLI installed a moment ago is found and its sign-in is read again.
   if (fresh) CLI_IDS.forEach(forgetCli);
@@ -595,10 +627,10 @@ async function installGemini(): Promise<Failed | null> {
 export async function installCli(id: Driver): Promise<SignInResult> {
   const vendor = isCli(id) ? undefined : VENDOR_AIS[id];
   if (!isCli(id) && !vendor) return { ok: false, message: `${nameOf(id)} isn't installed from here.` };
-  // Grok's and Cursor's installers download about 180 MB each: half an hour, as Codex's
+  // Grok's and Cursor's installers download about 180 MB each, Meta's about 470 MB: an hour on a slow connection
   const failed =
     id === "claude" ? await installClaude() : id === "codex" ? await installCodex() : id === "gemini" ? await installGemini()
-    : await step("/bin/bash", ["-o", "pipefail", "-c", vendor!.install], process.env, `Couldn't install ${nameOf(id)}. Check the internet connection, then try again.`, 30 * 60_000);
+    : await step("/bin/bash", ["-o", "pipefail", "-c", vendor!.install], process.env, `Couldn't install ${nameOf(id)}. Check the internet connection, then try again.`, 60 * 60_000);
   if (failed) return { ok: false, message: failed.message, raw: failed.raw };
   const bin = id === "gemini" ? geminiBin() : vendor ? vendor.bin(os.homedir()) : path.join(localBin(), id);
   const v = await run(bin, ["--version"], { env: { ...process.env, PATH: toolPath(bin) }, timeout: 15_000 });
@@ -661,14 +693,35 @@ export async function signIn(id: Driver): Promise<SignInResult> {
     logins.delete(id);
     return { ok: false, message: `Couldn't start ${nameOf(id)} sign-in. Try again.` };
   }
-  child.stdout?.resume();
-  child.stderr?.resume();
   const timer = setTimeout(() => child.kill(), LOGIN_MS);
   child.on("exit", () => {
     clearTimeout(timer);
     if (logins.get(id) === child) logins.delete(id);
   });
-  return { ok: true, message: "Your browser opens. Sign in there, then come back here." };
+  if (id !== "musecode") {
+    child.stdout?.resume();
+    child.stderr?.resume();
+    return { ok: true, message: "Your browser opens. Sign in there, then come back here." };
+  }
+  // Meta's sign-in opens no browser itself: its page is opened here, and the row shows the code to confirm there
+  const got = await new Promise<{ page: string; code: string } | null>((resolve) => {
+    let out = "";
+    const read = (d: Buffer) => {
+      out += d.toString();
+      const p = museLoginPage(out);
+      if (p) resolve(p);
+    };
+    child.stdout?.on("data", read);
+    child.stderr?.on("data", read);
+    child.on("exit", () => resolve(null));
+    setTimeout(() => resolve(null), 30_000);
+  });
+  if (!got) {
+    child.kill();
+    return { ok: false, message: `Couldn't start ${nameOf(id)} sign-in. Try again.` };
+  }
+  spawn("open", [got.page], { stdio: "ignore" }).on("error", () => {});
+  return { ok: true, message: `Confirm this code on Meta's page: ${got.code}`, code: got.code };
 }
 
 /* ---- connect ---- */

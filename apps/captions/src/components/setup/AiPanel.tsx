@@ -21,8 +21,8 @@ const POLL_MS = 3_000;
 const RECHECK_MS = 20_000;
 /** How long a request may take before it gives up with a plain message (no wait spins forever). */
 const TIMEOUT_MS = 90_000;
-/** An install downloads the vendor's program here (ChatGPT's is 108 MB): a slow connection gets half an hour. */
-const INSTALL_TIMEOUT_MS = 31 * 60_000;
+/** An install downloads the vendor's program here (Meta's is about 470 MB): a slow connection gets an hour. */
+const INSTALL_TIMEOUT_MS = 61 * 60_000;
 
 /**
  * The AIs this screen sets up, in order: what a person knows each by, the program's name small beside it, and what it
@@ -30,14 +30,16 @@ const INSTALL_TIMEOUT_MS = 31 * 60_000;
  * AI the Mac app runs that is already on this Mac (LocalAiView.others) is listed too, which the button only connects.
  * Plans: a free account isn't enough for ChatGPT or Claude (vendor docs, 2026-11-09); Gemini CLI takes any personal Google
  * account, with more each day on Google AI Pro and Ultra (its quotas page, 2026-11-10); Grok's and Cursor's sign-ins take
- * the person's account, whose plans their vendors don't list for these programs.
+ * the person's account, whose plans their vendors don't list for these programs; Muse Code has no free tier (Everyday,
+ * High, Power and Maximum Usage plans). `size`: what its install downloads, said while it runs (measured 2026-11-10).
  */
-export const AIS: Array<{ id: string; name: string; sub: string; uses: string; more?: boolean }> = [
-  { id: "codex", name: "ChatGPT", sub: "Codex", uses: "Uses your ChatGPT plan (Plus or higher)." },
+export const AIS: Array<{ id: string; name: string; sub: string; uses: string; size?: string; more?: boolean }> = [
+  { id: "codex", name: "ChatGPT", sub: "Codex", uses: "Uses your ChatGPT plan (Plus or higher).", size: "about 110 MB" },
   { id: "claude", name: "Claude", sub: "Claude Code", uses: "Uses your Claude plan (Pro or higher)." },
   { id: "gemini", name: "Google", sub: "Gemini", uses: "Uses your Google account (free, Google AI Pro or Ultra)." },
-  { id: "grok", name: "Grok", sub: "Grok Build", uses: "Uses your Grok account." },
-  { id: "cursor", name: "Cursor", sub: "Cursor Agent", uses: "Uses your Cursor account.", more: true },
+  { id: "grok", name: "Grok", sub: "Grok Build", uses: "Uses your Grok account.", size: "about 185 MB" },
+  { id: "musecode", name: "Meta", sub: "Muse Code", uses: "Uses your Meta plan (Everyday or higher).", size: "about 470 MB" },
+  { id: "cursor", name: "Cursor", sub: "Cursor Agent", uses: "Uses your Cursor account.", size: "about 175 MB", more: true },
 ];
 const aiOf = (id: string) => AIS.find((a) => a.id === id);
 /** What a person knows each AI by, and its small second line (setup's other screens name them the same way). */
@@ -74,7 +76,7 @@ const CONNECT = { label: "Connect" };
  * A program's own words without the instructions in them to run something: a `command`, a line to type, "run: …", a
  * sentence that leads into one. Details shows the rest; the row itself says the plain thing.
  */
-const COMMAND = /`|\b(run|type|paste)\b|environment variable|:\s*$|^\s*(\$|export|source|sudo|curl|npm|npx|brew|echo|mkdir|grok|agent|cursor-agent|codex|claude|gemini)(\s|$)/i;
+const COMMAND = /`|\b(run|type|paste)\b|environment variable|:\s*$|^\s*(\$|export|source|sudo|curl|npm|npx|brew|echo|mkdir|grok|agent|cursor-agent|codex|claude|gemini|muse)(\s|$)/i;
 export const withoutCommands = (raw?: string): string | undefined =>
   raw
     ?.split("\n")
@@ -87,12 +89,14 @@ export const withoutCommands = (raw?: string): string | undefined =>
  * (Connect). One press does everything still missing, and the button names the step it is on. Not signed in is never a
  * failure: a check that says so offers Sign in. The check mark only once it is connected, and then there is no button.
  */
-export function rowView(id: string, row: Known | undefined, result: ConnectResult | undefined, phase: Phase | undefined): RowView {
+export function rowView(id: string, row: Known | undefined, result: ConnectResult | undefined, phase: Phase | undefined, code?: string): RowView {
   const name = nameOf(id);
   const ours = !!aiOf(id); // installs and signs in from here
-  if (phase === "installing") return { line: `Installing what ${name} needs on this Mac. This can take a few minutes.`, button: working("Installing…") };
+  const size = aiOf(id)?.size;
+  if (phase === "installing") return { line: `Installing what ${name} needs on this Mac${size ? ` (${size})` : ""}. This can take a few minutes.`, button: working("Installing…") };
   if (phase === "updating") return { line: `Updating what ${name} needs on this Mac. This can take a few minutes.`, button: working("Updating…") };
-  if (phase === "signingIn") return { line: "Finish signing in in your browser.", button: working("Signing in…") };
+  // a sign-in that asks for a code on the vendor's page (Meta's): the code is the line
+  if (phase === "signingIn") return { line: code ? `Confirm this code on Meta's page: ${code}` : "Finish signing in in your browser.", button: working("Signing in…") };
   if (phase === "connecting") return { line: usesOf(id), button: working("Connecting…") };
   if (phase === "timedOut") return { line: "Still not signed in. Finish in your browser, or sign in again.", button: SIGN_IN };
   if (result?.state === "mac" || result?.state === "unsupported")
@@ -153,8 +157,8 @@ export function AnswerPicker({ view, onPick }: { view: ProvidersView; onPick: (s
  * One AI's row, in the same rows as Settings and setup's last screen: its logo, its name with the program's name small
  * beside it, one plain line, and its one button. A failure is the red line, with the program's own words under Details.
  */
-function AgentRow({ id, row, result, phase, onConnect }: { id: string; row?: Known; result?: ConnectResult; phase?: Phase; onConnect: () => void }) {
-  const v = rowView(id, row, result, phase);
+function AgentRow({ id, row, result, phase, code, onConnect }: { id: string; row?: Known; result?: ConnectResult; phase?: Phase; code?: string; onConnect: () => void }) {
+  const v = rowView(id, row, result, phase, code);
   const failed = !phase && !!result && result.state !== "ready" && result.state !== "mac" && result.state !== "unsupported";
   return (
     <ListRow
@@ -198,6 +202,8 @@ export interface AiPanelViewProps {
   view: LocalAiView | null;
   results: Results;
   phases: Phases;
+  /** the code a sign-in asks the person to confirm on the vendor's page, by AI */
+  codes?: Partial<Record<string, string>>;
   onConnect: (id: string) => void;
   showMore?: boolean;
   onShowMore?: () => void;
@@ -207,14 +213,14 @@ export interface AiPanelViewProps {
  * The AIs this computer can connect: ChatGPT, Claude, Google and Grok up front, the rest behind Show more. One that is
  * connected, working or failed is always up front. Pure, for tests.
  */
-export function AiPanelView({ view, results, phases, onConnect, showMore = false, onShowMore }: AiPanelViewProps) {
+export function AiPanelView({ view, results, phases, codes = {}, onConnect, showMore = false, onShowMore }: AiPanelViewProps) {
   if (!view) return <p className="text-sm text-muted-foreground">Looking for your AI on this computer…</p>;
   if (!view.local)
     return <p className="text-sm text-muted-foreground">Ask the owner of this server to connect the AI it runs on.</p>;
   const behind = (id: string) => (!aiOf(id) || !!aiOf(id)?.more) && !phases[id] && !results[id] && !isConnected(rowOf(view, id));
   const ids = idsOf(view);
   const hidden = ids.some(behind);
-  const row = (id: string) => <AgentRow key={id} id={id} row={rowOf(view, id)} result={results[id]} phase={phases[id]} onConnect={() => onConnect(id)} />;
+  const row = (id: string) => <AgentRow key={id} id={id} row={rowOf(view, id)} result={results[id]} phase={phases[id]} code={codes[id]} onConnect={() => onConnect(id)} />;
   return (
     <div className="space-y-2">
       <Card>{ids.filter((id) => showMore || !behind(id)).map(row)}</Card>
@@ -277,6 +283,7 @@ export function AiPanel({ onConnectedChange }: { onConnectedChange?: (on: boolea
   const [phases, setPhases] = useState<Phases>({});
   const [providers, setProviders] = useState<ProvidersView | null>(null);
   const [showMore, setShowMore] = useState(false);
+  const [codes, setCodes] = useState<Partial<Record<string, string>>>({});
   const timers = useRef<number[]>([]);
 
   // fresh: the server re-reads PATH and the sign-in; a plain read may answer from its last look.
@@ -309,6 +316,7 @@ export function AiPanel({ onConnectedChange }: { onConnectedChange?: (on: boolea
         setPhase("signingIn");
         const started = await postJson<SignInResult>("/api/setup/ai/signin", { id });
         if (!started?.ok) return end(failed(started?.message ?? "Couldn't open the sign-in. Try again."));
+        setCodes((s) => ({ ...s, [id]: started.code }));
         const since = Date.now();
         const next = { ...did, signedIn: true };
         const t = window.setInterval(async () => {
@@ -380,7 +388,7 @@ export function AiPanel({ onConnectedChange }: { onConnectedChange?: (on: boolea
       {providers && (providers.own?.instances.filter((i) => i.enabled).length ?? 0) > 1 && (
         <AnswerPicker view={providers} onPick={(s) => void saveOwn(s).then(setProviders, () => {})} />
       )}
-      <AiPanelView view={view} results={results} phases={phases} onConnect={(id) => void connect(id)} showMore={showMore} onShowMore={() => setShowMore((o) => !o)} />
+      <AiPanelView view={view} results={results} phases={phases} codes={codes} onConnect={(id) => void connect(id)} showMore={showMore} onShowMore={() => setShowMore((o) => !o)} />
     </div>
   );
 }

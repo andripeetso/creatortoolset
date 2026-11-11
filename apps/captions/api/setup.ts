@@ -38,10 +38,10 @@ import { isPlan, planFromCli, type PlanId } from "../contracts/plans";
  *   GET  /api/setup/computers → ComputersView  this computer, plus the account's other computers (devices) with online state
  *   PUT  /api/setup  { tools?: Tool[], plan?: PlanId | null, done?: boolean } → SetupView
  *   GET  /api/setup/ai[?fresh=1]       → LocalAiView   the AI CLIs found on this computer (owner only; fresh reads them again)
- *   POST /api/setup/ai/signin  { id }  → SignInResult  starts the tool's own sign-in (the three CLIs, Grok, Cursor); its browser opens (CT_LOCAL=1)
+ *   POST /api/setup/ai/signin  { id }  → SignInResult  starts the tool's own sign-in (the three CLIs, Grok, Meta, Cursor); its browser opens (CT_LOCAL=1)
  *   POST /api/setup/ai/connect { id, device } → ConnectResult connects it as this account's AI after a real check (always 200)
  *   POST /api/setup/ai/mcp     { id }  → McpResult     adds Creator Toolset to it, with one new Full key (CT_LOCAL=1)
- *   POST /api/setup/ai/install { id }  → SignInResult  installs it (the three CLIs, Grok, Cursor) by the vendor's own route, then checks it runs (CT_LOCAL=1)
+ *   POST /api/setup/ai/install { id }  → SignInResult  installs it (the three CLIs, Grok, Meta, Cursor) by the vendor's own route, then checks it runs (CT_LOCAL=1)
  *   POST /api/setup/join { link }      → { ok, server, device } joins another server behind its one-time link (not hosted)
  */
 
@@ -213,7 +213,7 @@ const port = () => Number(process.env.PORT || 3000);
 const cliOf = (v: unknown): CliId | null =>
   typeof v === "string" && (CLI_IDS as string[]).includes(v) ? (v as CliId) : null;
 const mcpToOf = (u: string): CliId[] => read(u)?.mcpTo ?? [];
-/** Connect also takes the other AIs the Mac app runs (local-ai.ts OTHER_AIS); install and sign-in the three CLIs, Grok and Cursor (VENDOR_AIS). */
+/** Connect also takes the other AIs the Mac app runs (local-ai.ts OTHER_AIS); install and sign-in the three CLIs, Grok, Meta and Cursor (VENDOR_AIS). */
 const aiOf = (v: unknown): Driver | null => cliOf(v) ?? (typeof v === "string" && Object.keys(OTHER_AIS).includes(v) ? (v as Driver) : null);
 const setupAiOf = (v: unknown): Driver | null => cliOf(v) ?? (typeof v === "string" && Object.hasOwn(VENDOR_AIS, v) ? (v as Driver) : null);
 
