@@ -117,29 +117,55 @@ beforeEach(() => {
   mocked.mockReset();
 });
 
+/**
+ * Resolves when open windows have been told of `topic`. The watched announce is the handle, so nothing here waits by
+ * the clock: on a busy machine a turn can take longer than any fixed wait to reach the model or to end.
+ */
+const told = (topic: string) =>
+  new Promise<void>((resolve) => {
+    const is = (u: unknown, t: unknown) => u === "alex" && t === topic;
+    if (heard.mock.calls.some(([u, t]) => is(u, t))) return resolve();
+    heard.mockImplementation(((u: string, t: string) => {
+      if (is(u, t)) resolve();
+    }) as never);
+  });
+
 describe("a turn's saves reach open windows", () => {
   it("while the reply is written (its progress arrives on the Mac's own request) and when it ends", async () => {
     const { id, docId } = seed(["Slide"]);
     let hooks: { onDelta?: (t: string) => Promise<void> | void } | undefined;
     let finish!: () => void;
     const gate = new Promise<void>((r) => (finish = r));
+    // the turn has reached the model: said by the model's stand-in itself
+    let begun!: () => void;
+    const started = new Promise<void>((r) => (begun = r));
     mocked.mockImplementationOnce((async (_s: string, _u: string, _sig: unknown, parse: (t: string) => unknown, h: typeof hooks) => {
       hooks = h;
+      begun();
       await gate;
       return { result: parse(answer({ reply: "Done.", edits: [] })), provider: "Claude (Mac)" };
     }) as never);
     const { body } = await send(id, docId, "Tighten it.");
-    await vi.waitFor(() => expect(hooks).toBeTruthy());
-    await new Promise((r) => setTimeout(r, 1100)); // past the throttle
-    heard.mockClear();
-    await hooks!.onDelta!(answer({ reply: "Half way" }).slice(0, -2)); // called here, outside the turn's own chain
-    // only this session's own page refetches while the reply is written, a throttle later at most
-    await vi.waitFor(() => expect(heard).toHaveBeenCalledWith("alex", `workshop/s/${id}`), { timeout: 2500 });
-    expect(heard).not.toHaveBeenCalledWith("alex", "workshop");
-    heard.mockClear();
-    finish();
-    await settled(id, body.reply!.id);
-    await vi.waitFor(() => expect(heard).toHaveBeenCalledWith("alex", "workshop")); // the end: every Workshop list
+    try {
+      await started;
+      await new Promise((r) => setTimeout(r, 1100)); // past the throttle
+      heard.mockClear();
+      // only this session's own page refetches while the reply is written, a throttle later at most
+      const whileWritten = told(`workshop/s/${id}`);
+      await hooks!.onDelta!(answer({ reply: "Half way" }).slice(0, -2)); // called here, outside the turn's own chain
+      await whileWritten;
+      expect(heard).not.toHaveBeenCalledWith("alex", "workshop");
+      heard.mockClear();
+      const atTheEnd = told("workshop"); // the end: every Workshop list
+      finish();
+      await settled(id, body.reply!.id);
+      await atTheEnd;
+    } finally {
+      // whatever went wrong above, the turn ends inside its own test: left waiting, it would answer the next test's model
+      finish();
+      await settled(id, body.reply!.id).catch(() => {});
+      heard.mockReset();
+    }
   });
 });
 
