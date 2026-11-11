@@ -5,6 +5,12 @@ import WebKit
 // read the screen video without an upload. Only the listed files of one project folder are reachable: the id goes
 // through ProjectStore, and the file name must be an exact key of `types`. Files are read on a background queue in
 // 1 MB pieces; a stop from WebKit ends the read, and nothing is sent to WebKit after it.
+//
+// Every answer to WebKit is made on the main thread, with nothing held while waiting for it. WebKit starts and stops
+// tasks on the main thread, and an answer made from another thread waits for the main thread inside WebKit. Until
+// 0.13.1 the answers were made from the reading thread under a lock that start and stop also took: one request
+// answering while the next one started left each waiting for the other, and the app stood still for good (the page
+// plays a recording and reads its pointer log at once, so the editor froze the app within a second).
 
 final class ProjectScheme: NSObject, WKURLSchemeHandler {
     static let scheme = "ctlocal"
@@ -21,10 +27,9 @@ final class ProjectScheme: NSObject, WKURLSchemeHandler {
     private static let chunk: Int64 = 1 << 20
 
     private let root: @MainActor () -> URL
-    /// Tasks still being answered. Holding them keeps their ids unique until they end; `stop` removes one.
+    /// Tasks still being answered. Holding them keeps their ids unique until they end; `stop` removes one. Read and
+    /// written on the main thread only.
     private var live: [ObjectIdentifier: WKURLSchemeTask] = [:]
-    // Recursive: WebKit may call stop from inside a delivery on the same thread.
-    private let lock = NSRecursiveLock()
 
     init(root: @escaping @MainActor () -> URL) {
         self.root = root
@@ -61,9 +66,7 @@ final class ProjectScheme: NSObject, WKURLSchemeHandler {
         let request = urlSchemeTask.request
         guard let url = request.url else { return urlSchemeTask.didFailWithError(CocoaError(.fileReadUnknown)) }
         let task = urlSchemeTask
-        lock.lock()
         live[ObjectIdentifier(task)] = task
-        lock.unlock()
         let root = MainActor.assumeIsolated { self.root() }
         DispatchQueue.global(qos: .userInitiated).async {
             self.serve(url, method: request.httpMethod, range: request.value(forHTTPHeaderField: "Range"),
@@ -72,9 +75,7 @@ final class ProjectScheme: NSObject, WKURLSchemeHandler {
     }
 
     func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {
-        lock.lock()
         live[ObjectIdentifier(urlSchemeTask)] = nil
-        lock.unlock()
     }
 
     private func serve(_ url: URL, method: String?, range: String?, root: URL, task: WKURLSchemeTask) {
@@ -125,17 +126,18 @@ final class ProjectScheme: NSObject, WKURLSchemeHandler {
         }
     }
 
-    /// Runs `body` only while the task is still live, under the lock that `stop` takes, so WebKit never gets a call
-    /// after it stopped the task. `last` ends the task. Returns false when the task was stopped.
+    /// Runs `body` on the main thread, and only while the task is still live there, so WebKit never gets a call after
+    /// it stopped the task. The reading thread waits for it holding nothing, so the main thread is never kept from
+    /// starting or stopping another task. `last` ends the task. Returns false when the task was stopped.
     @discardableResult
     private func deliver(_ task: WKURLSchemeTask, last: Bool = false, _ body: (WKURLSchemeTask) -> Void) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        let key = ObjectIdentifier(task)
-        guard live[key] != nil else { return false }
-        body(task)
-        if last { live[key] = nil }
-        return true
+        DispatchQueue.main.sync {
+            let key = ObjectIdentifier(task)
+            guard live[key] != nil else { return false }
+            body(task)
+            if last { live[key] = nil }
+            return true
+        }
     }
 
     private static func response(_ url: URL, _ status: Int, _ headers: [String: String]) -> HTTPURLResponse {
