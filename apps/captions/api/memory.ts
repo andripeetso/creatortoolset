@@ -28,7 +28,7 @@ memoryApp.post("/", async (c) => {
   const project = b.project === true ? await currentProject(u) : undefined;
   const out = keep(u.username, b.quote, said, project?.id);
   if ("error" in out) return c.json({ error: out.error }, 409);
-  return c.json({ id: out.fact.id, text: out.fact.text, at: out.fact.at, ...(project ? { project: { id: project.id, name: project.name } } : {}) }, out.added ? 201 : 200);
+  return c.json({ id: out.fact.id, text: out.fact.text, at: out.fact.at, ...(project && out.fact.project ? { project: { id: project.id, name: project.name } } : {}) }, out.added ? 201 : 200);
 });
 
 memoryApp.delete("/:id", (c) => (remove(c.get("user").username, c.req.param("id")) ? c.json({ ok: true }) : c.json({ error: "Not found" }, 404)));

@@ -1,4 +1,4 @@
-import { even, type MemoryFact } from "../../contracts/memory";
+import { MEMORY_QUOTE_MIN, even, type MemoryFact } from "../../contracts/memory";
 import { ToolError, str, type ToolModule } from "./types";
 
 /**
@@ -23,7 +23,7 @@ export const memoryTools: ToolModule = {
     },
     forget: async (a, ctx) => {
       const q = even(String(a.quote ?? ""));
-      if (!q) throw new ToolError("Give the words of the fact to remove.");
+      if (q.length < MEMORY_QUOTE_MIN) throw new ToolError("Give the words of the fact to remove.");
       const { facts } = await ctx.json<{ facts: MemoryFact[] }>("/api/memory");
       const hits = facts.filter((f) => even(f.text).includes(q) || q.includes(even(f.text)));
       if (!hits.length) throw new ToolError("Nothing kept says that.");

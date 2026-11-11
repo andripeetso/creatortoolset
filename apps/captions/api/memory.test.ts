@@ -254,6 +254,8 @@ describe("a removed fact stays removed", () => {
     expect((await tool(f.token, "forget", { quote: "I post at" })).text).toBe('Several kept facts say that: quote one of them in full. "I post at 10:00 on Sundays", "I post at 18:00 on weekdays"');
     expect(JSON.parse((await tool(f.token, "forget", { quote: "my editor is called mia" })).text)).toEqual({ forgot: "My editor is called Mia" });
     expect((await tool(f.token, "forget", {})).text).toBe("Give the words of the fact to remove.");
+    // a word or two could name a fact by accident
+    expect((await tool(f.token, "forget", { quote: "Sundays" })).text).toBe("Give the words of the fact to remove.");
     await f.end();
     expect((await kept()).map((x) => x.text)).toEqual(["I post at 10:00 on Sundays", "I post at 18:00 on weekdays"]);
     // an AI key from outside the app has no forget tool
@@ -306,6 +308,8 @@ describe("projects are kept apart", () => {
     const t = await turn("Here we never show faces. And I only film on my phone.");
     expect(JSON.parse((await tool(t.token, "remember", { quote: "we never show faces", project_only: true })).text)).toEqual({ kept: "we never show faces", for_project: "Tiny Acrobatics" });
     expect(JSON.parse((await tool(t.token, "remember", { quote: "I only film on my phone" })).text)).toEqual({ kept: "I only film on my phone" });
+    // already kept about the person: asked again for this project only, it stays what it is
+    expect(JSON.parse((await tool(t.token, "remember", { quote: "I only film on my phone", project_only: true })).text)).toEqual({ kept: "I only film on my phone" });
     await t.end();
     expect(await kept()).toMatchObject([{ text: "I only film on my phone" }, { text: "we never show faces", project: { id: tumbles, name: "Tiny Acrobatics" } }]);
     expect((await kept())[0]!.project).toBeUndefined();
