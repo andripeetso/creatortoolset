@@ -77,20 +77,22 @@ export function SwitchRow({ label, checked, onChange }: { label: string; checked
   );
 }
 
-/** One choice out of a few, side by side. */
+/** One choice out of a few, side by side; `stacked` puts them under each other, for names too long to share a row. */
 export function Segmented<T extends string>({
   value,
   options,
   onChange,
   label,
+  stacked = false,
 }: {
   value: T;
   options: { id: T; label: string; title?: string }[];
   onChange: (v: T) => void;
   label: string;
+  stacked?: boolean;
 }) {
   return (
-    <div role="radiogroup" aria-label={label} className="flex rounded-lg bg-zinc-900 p-0.5">
+    <div role="radiogroup" aria-label={label} className={cn("flex rounded-lg bg-zinc-900 p-0.5", stacked && "flex-col")}>
       {options.map((o) => (
         <button
           key={o.id}
@@ -101,6 +103,7 @@ export function Segmented<T extends string>({
           onClick={() => onChange(o.id)}
           className={cn(
             "min-w-0 flex-1 truncate rounded-md px-2 py-1.5 text-xs transition-colors",
+            stacked && "px-2.5 text-left",
             value === o.id ? "bg-zinc-700 font-medium text-zinc-50 shadow-sm" : "text-zinc-400 hover:text-zinc-200",
           )}
         >

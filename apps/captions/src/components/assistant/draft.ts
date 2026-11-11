@@ -8,12 +8,49 @@ export const MAX_PICTURES = 6;
 const MAX_SIDE = 2000;
 const MAX_PNG_BYTES = 4 * 1024 * 1024;
 
+/** At most this many videos go with one message (MAX_FILES in api/assistant.ts). */
+export const MAX_FILES = 5;
+
+/** At most this many folders go with one message (MAX_PATHS in api/assistant.ts). */
+export const MAX_FOLDERS = 5;
+
+/**
+ * A drop's files, with each dropped folder opened (and its folders) into the files inside it. In the Mac app a folder
+ * comes as its path instead (folderPaths, nothing uploads); a browser never sees one, so there its files upload like
+ * files dropped one by one. The entries are taken before the first await: the drop's list is gone after the event.
+ */
+export async function droppedFiles(
+  dt: DataTransfer,
+  folderPaths?: () => Promise<string[] | undefined>,
+): Promise<{ files: File[]; folder: boolean; folders: string[] }> {
+  const entries = Array.from(dt.items, (it) => it.webkitGetAsEntry?.() ?? null);
+  if (!entries.some((e) => e?.isDirectory)) return { files: Array.from(dt.files), folder: false, folders: [] };
+  const folders = (await folderPaths?.()) ?? [];
+  const walk = async (e: FileSystemEntry): Promise<File[]> => {
+    if (e.isFile) return [await new Promise<File>((ok, no) => (e as FileSystemFileEntry).file(ok, no))];
+    const reader = (e as FileSystemDirectoryEntry).createReader();
+    const out: File[] = [];
+    // readEntries hands them over in batches (about 100) until an empty one
+    for (;;) {
+      const batch = await new Promise<FileSystemEntry[]>((ok, no) => reader.readEntries(ok, no));
+      if (!batch.length) return out;
+      for (const b of batch) if (!b.name.startsWith(".")) out.push(...(await walk(b)));
+    }
+  };
+  // with the folders' paths, only the loose files beside them are read
+  const read = entries.filter((e): e is FileSystemEntry => !!e && !(folders.length && e.isDirectory));
+  const all = (await Promise.all(read.map(walk))).flat();
+  return { files: all.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })), folder: !folders.length, folders };
+}
+
 /** A video or recording in the box: it uploads as soon as it's added (id once it's in, api/assistant-files.ts). */
 export type DraftFile = { key: string; name: string; size: number; pct: number; id?: string; error?: string };
 /** What's in the box: the words, pictures, long pastes (sent as files beside the words) and videos. */
-export type Draft = { text: string; images: AssistantImage[]; pasted: AssistantPaste[]; files: DraftFile[] };
-export const EMPTY_DRAFT: Draft = { text: "", images: [], pasted: [], files: [] };
-export const draftEmpty = (d: Draft) => !d.text.trim() && !d.images.length && !d.pasted.length && !d.files.length;
+export type Draft = { text: string; images: AssistantImage[]; pasted: AssistantPaste[]; files: DraftFile[]; folders: string[] };
+export const EMPTY_DRAFT: Draft = { text: "", images: [], pasted: [], files: [], folders: [] };
+export const draftEmpty = (d: Draft) => !d.text.trim() && !d.images.length && !d.pasted.length && !d.files.length && !d.folders.length;
+/** A folder's last name, for its chip. */
+export const folderName = (p: string) => p.replace(/\/+$/, "").split("/").pop() || p;
 /** Still uploading, or one failed: the message can't go yet. */
 export const filesPending = (d: Draft) => d.files.some((f) => !f.id);
 
