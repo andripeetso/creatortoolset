@@ -29,13 +29,16 @@ createUser("sam", "password1", { role: "admin" });
 type Got = { method: string; url: string; headers: IncomingMessage["headers"]; body: string };
 const got: Got[] = [];
 let answer: (req: Got) => { status: number; body: unknown } = () => ({ status: 200, body: { content: [{ type: "text", text: "from the local model" }], usage: { input_tokens: 40, output_tokens: 2 } } });
+// POST /api/chat, the question asked before each request (tooLongFor): by default this server has no such route
+const noSuchRoute = () => ({ status: 404, body: { error: "not found" } });
+let fits: (req: Got) => { status: number; body: unknown } = noSuchRoute;
 const server = createServer((req, res) => {
   let body = "";
   req.on("data", (c) => (body += c));
   req.on("end", () => {
     const seen = { method: req.method ?? "", url: req.url ?? "", headers: req.headers, body };
     got.push(seen);
-    const out = req.url === "/v1/models" ? { status: 200, body: { object: "list", data: [{ id: "small-one" }, { id: "big-one:12b" }] } } : answer(seen);
+    const out = req.url === "/v1/models" ? { status: 200, body: { object: "list", data: [{ id: "small-one" }, { id: "big-one:12b" }] } } : req.url === "/api/chat" ? fits(seen) : answer(seen);
     res.writeHead(out.status, { "content-type": "application/json" }).end(JSON.stringify(out.body));
   });
 });
@@ -60,6 +63,8 @@ const as = (who: SessionUser) => {
   };
 };
 const key = ["not", "a", "real", "key"].join("-");
+/** The requests themselves, without the question before each. */
+const sent = () => got.filter((g) => g.url === "/v1/messages");
 const noAi = { only: [], off: "No AI for your account: add one in Settings → Providers, or your Anthropic key in Settings → API keys" };
 
 afterEach(async () => {
@@ -67,6 +72,7 @@ afterEach(async () => {
   await as(admin).put({ url: null });
   saveMyKey("admin", "ANTHROPIC_API_KEY", null);
   got.length = 0;
+  fits = noSuchRoute;
   answer = () => ({ status: 200, body: { content: [{ type: "text", text: "from the local model" }], usage: { input_tokens: 40, output_tokens: 2 } } });
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
@@ -143,15 +149,21 @@ describe("what a local model is sent, and what it never is", () => {
     expect(route).toEqual({ only: ["localModel"], localModel: { url: address, model: "big-one:12b" }, mac: { label: "Caption Studio" } });
     const everywhere = vi.spyOn(globalThis, "fetch");
     expect(await completeWithFallback("The system text", "The user text", undefined, (t) => t, route)).toBe("from the local model");
-    expect(everywhere.mock.calls.map((c) => String(c[0]))).toEqual([`${address}/v1/messages`]); // one request, and not to Anthropic
-    expect(got).toHaveLength(1);
-    expect(got[0].method).toBe("POST");
-    expect(got[0].url).toBe("/v1/messages");
+    // the question and the request, both to the typed address, and nothing to Anthropic
+    expect(everywhere.mock.calls.map((c) => String(c[0]))).toEqual([`${address}/api/chat`, `${address}/v1/messages`]);
+    expect(got.map((g) => `${g.method} ${g.url}`)).toEqual(["POST /api/chat", "POST /v1/messages"]);
+    // the question: the same system and user text, thinking off, one token of answer, told not to cut
+    expect(got[0].body).toBe('{"model":"big-one:12b","stream":false,"think":false,"truncate":false,"options":{"num_predict":1},"messages":[{"role":"system","content":"The system text"},{"role":"user","content":"The user text"}]}');
+    got.shift();
     // thinking off: the format's own field, where the Anthropic request has output_config
     expect(got[0].body).toBe('{"model":"big-one:12b","max_tokens":16000,"thinking":{"type":"disabled"},"system":"The system text","messages":[{"role":"user","content":"The user text"}]}');
     expect(got[0].body).not.toContain("output_config");
     expect(got[0].headers).not.toHaveProperty("x-api-key");
     expect(got[0].headers).not.toHaveProperty("authorization");
+    // neither key, in neither of the two
+    expect(everywhere.mock.calls.map((c) => JSON.stringify(c[1]?.headers)).join()).not.toMatch(/api-key|authorization/i);
+    expect(everywhere.mock.calls.map((c) => JSON.stringify(c[1])).join()).not.toContain(key);
+    expect(everywhere.mock.calls.map((c) => JSON.stringify(c[1])).join()).not.toContain("the-servers-own-key");
     expect(JSON.stringify(got[0])).not.toContain(key);
     expect(JSON.stringify(got[0])).not.toContain("the-servers-own-key");
     expect(got[0].headers["anthropic-version"]).toBe("2023-06-01");
@@ -163,8 +175,9 @@ describe("what a local model is sent, and what it never is", () => {
     const out = await streamWithFallback("sys", "user", undefined, (t) => t, { onDelta: (t) => void deltas.push(t) }, aiFor(admin, "notes", "Video Notes"));
     expect(out).toEqual({ result: "from the local model", provider: "Local model" });
     expect(deltas).toEqual(["from the local model"]);
-    expect(got[0].body).toBe('{"model":"small-one","max_tokens":16000,"thinking":{"type":"disabled"},"system":"sys","messages":[{"role":"user","content":"user"}]}');
-    expect(got[0].headers).not.toHaveProperty("x-api-key");
+    expect(sent()).toHaveLength(1);
+    expect(sent()[0].body).toBe('{"model":"small-one","max_tokens":16000,"thinking":{"type":"disabled"},"system":"sys","messages":[{"role":"user","content":"user"}]}');
+    for (const g of got) expect(g.headers).not.toHaveProperty("x-api-key");
   });
 
   it("never the Workshop, which reads a folder a plain request can't", async () => {
@@ -200,8 +213,8 @@ describe("a local model that fails", () => {
       retryable: false,
     });
     await expect(streamWithFallback("sys", "user", undefined, (t) => t, {}, aiFor(admin, "captions", "Caption Studio"))).rejects.toThrow(`The local model at ${gone} did not answer`);
-    // two calls, one request each (no retry), both to the local address
-    expect(everywhere.mock.calls.map((c) => String(c[0]))).toEqual([`${gone}/v1/messages`, `${gone}/v1/messages`]);
+    // two calls, the question and one request each (no retry), all to the local address
+    expect(everywhere.mock.calls.map((c) => String(c[0]))).toEqual([`${gone}/api/chat`, `${gone}/v1/messages`, `${gone}/api/chat`, `${gone}/v1/messages`]);
   });
 
   it("a model the server does not have: its own words, not a message about an API key or credits", async () => {
@@ -216,7 +229,7 @@ describe("a local model that fails", () => {
       expect(e.message).toBe(`The local model at ${address} answered ${status}: no`);
       expect(e.code).toBe("FAILED");
     }
-    expect(got).toHaveLength(4); // one request per call
+    expect(sent()).toHaveLength(4); // one request per call
   });
 
   it("an answer cut off for lack of room says so, with the numbers, instead of passing half an answer on", async () => {
@@ -228,7 +241,7 @@ describe("a local model that fails", () => {
     // or half the lines
     answer = () => ({ status: 200, body: { content: [{ type: "text", text: '{"lines": ["So here' }], stop_reason: "max_tokens", usage: { input_tokens: 1225, output_tokens: 2870 } } });
     await expect(completeWithFallback("sys", "user", undefined, (t) => t, aiFor(admin, "captions", "Caption Studio"))).rejects.toThrow(why);
-    expect(got).toHaveLength(2);
+    expect(sent()).toHaveLength(2);
   });
 
   it("an answer that does not parse is not retried anywhere either", async () => {
@@ -237,7 +250,7 @@ describe("a local model that fails", () => {
     const everywhere = vi.spyOn(globalThis, "fetch");
     vi.spyOn(console, "warn").mockImplementation(() => {});
     await expect(completeWithFallback("sys", "user", undefined, () => { throw new Error("The model returned no JSON"); }, aiFor(admin, "captions", "Caption Studio"))).rejects.toThrow("The model returned no JSON");
-    expect(everywhere.mock.calls.map((c) => String(c[0]))).toEqual([`${address}/v1/messages`]);
+    expect(everywhere.mock.calls.map((c) => String(c[0]))).toEqual([`${address}/api/chat`, `${address}/v1/messages`]);
   });
 
   it("a Stop reaches the request and reads as stopped", async () => {
@@ -381,6 +394,61 @@ describe("fewestTokens, against what a model server counted", () => {
   });
 });
 
+describe("asked first whether the whole request fits", () => {
+  const route = () => aiFor(admin, "notes", "Video Notes");
+  // what one model server answered a 43,725-character request on a 4,096-token context when told not to cut
+  const refused = { status: 400, body: { error: "request (10451 tokens) exceeds the available context size (4096 tokens), try increasing it" } };
+
+  it("a server that says no: the job fails with both numbers, the request is never sent, and nothing else answers", async () => {
+    saveMyKey("admin", "ANTHROPIC_API_KEY", key);
+    await as(admin).put({ url: address, model: "small-one" });
+    fits = () => refused;
+    const everywhere = vi.spyOn(globalThis, "fetch");
+    await expect(completeWithFallback("sys", "a long prompt", undefined, (t) => t, route())).rejects.toMatchObject({
+      message: `The local model at ${address} can't read the whole request (it is 10451 tokens and the model's context holds 4096): give it a longer context on its server`,
+      code: "FAILED",
+      retryable: false,
+    });
+    await expect(streamWithFallback("sys", "a long prompt", undefined, (t) => t, {}, route())).rejects.toThrow("can't read the whole request");
+    expect(everywhere.mock.calls.map((c) => String(c[0]))).toEqual([`${address}/api/chat`, `${address}/api/chat`]);
+    expect(sent()).toEqual([]);
+  });
+
+  it("a no in other words is passed on as the server said it", async () => {
+    await as(admin).put({ url: address, model: "small-one" });
+    fits = () => ({ status: 400, body: { error: "the prompt exceeds the context window" } });
+    await expect(completeWithFallback("sys", "user", undefined, (t) => t, route())).rejects.toThrow(
+      `The local model at ${address} can't read the whole request (the prompt exceeds the context window): give it a longer context on its server`,
+    );
+    expect(sent()).toEqual([]);
+  });
+
+  it("a yes, a server with no such route, or any other answer: the request goes on", async () => {
+    await as(admin).put({ url: address, model: "small-one" });
+    const others = [
+      { status: 200, body: { message: { content: "O" }, done_reason: "length", prompt_eval_count: 3951 } }, // it fits
+      noSuchRoute(),
+      { status: 400, body: { error: "this model does not take that field" } }, // a no about something else
+      { status: 400, body: "not json" },
+      { status: 500, body: { error: "exceeds the context" } }, // not a refusal: the server failed
+      { status: 404, body: { error: "model 'small-one' not found" } }, // the request itself says so, in its own words
+    ];
+    for (const other of others) {
+      fits = () => other;
+      expect(await completeWithFallback("sys", "user", undefined, (t) => t, route())).toBe("from the local model");
+    }
+    expect(sent()).toHaveLength(others.length);
+    expect(got.filter((g) => g.url === "/api/chat")).toHaveLength(others.length);
+  });
+
+  it("the question and the request share one line: no other request is in flight between them", async () => {
+    await as(admin).put({ url: address, model: "small-one" });
+    fits = () => ({ status: 200, body: {} });
+    await Promise.all([1, 2, 3].map(() => completeWithFallback("sys", "user", undefined, (t) => t, route())));
+    expect(got.map((g) => g.url)).toEqual(["/api/chat", "/v1/messages", "/api/chat", "/v1/messages", "/api/chat", "/v1/messages"]);
+  });
+});
+
 describe("a prompt longer than the model server's context", () => {
   const long = `The door code for this exercise is PLUM-4821.\n\n${Array.from({ length: 420 }, (_, i) => `Line ${i + 1}: the studio keeps its mats rolled, its windows open and its blocks counted twice each morning.`).join("\n")}\n\nWhat is the door code given at the very start?`;
   // the answer a model gives when the start of the prompt never reached it: a normal one
@@ -397,7 +465,7 @@ describe("a prompt longer than the model server's context", () => {
       code: "FAILED",
       retryable: false,
     });
-    expect(everywhere.mock.calls.map((c) => String(c[0]))).toEqual([`${address}/v1/messages`]);
+    expect(everywhere.mock.calls.map((c) => String(c[0]))).toEqual([`${address}/api/chat`, `${address}/v1/messages`]);
   });
 
   it("read whole, the same prompt answers", async () => {

@@ -9,7 +9,7 @@ import { completeLocal } from "./lib/local-claude";
 import { hostedMode } from "./lib/env";
 import { addSpend, budgetLeft } from "./lib/workspaces";
 import { keyFor } from "./my-keys";
-import { fewestTokens, localModelOf } from "./local-model";
+import { fewestTokens, localModelOf, tooLongFor } from "./local-model";
 import type { LocalModel } from "../contracts/service-keys";
 import { findUser, type SessionUser } from "./users";
 
@@ -399,13 +399,18 @@ function completeLocalModel(system: string, user: string, cancelSignal?: AbortSi
   const local = opts.localModel;
   if (!local) return Promise.reject(new AiProviderError("No local model is set", "FAILED", false));
   const answer = (localLine.get(local.url) ?? Promise.resolve()).then(async () => {
+    const signal = requestSignal(cancelSignal); // one time limit for the question below and the request
+    // asked first: does the whole request fit? A server that can say no refuses here; the request itself would be cut.
+    // No answer to the question (no such route, the server down or slow) decides nothing: the request says what is wrong.
+    const tooLong = await tooLongFor(local, system, user, signal).catch((e: unknown) => (cancelSignal?.aborted ? wrapFetchError(e, cancelSignal) : null));
+    if (tooLong) throw localFailed(local, `can't read the whole request (${tooLong}): give it a longer context on its server`);
     let resp: Response;
     try {
       resp = await fetch(`${local.url}/v1/messages`, {
         method: "POST",
         headers: { "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
         body: JSON.stringify({ model: local.model, max_tokens: 16000, thinking: { type: "disabled" }, system, messages: [{ role: "user", content: user }] }),
-        signal: requestSignal(cancelSignal),
+        signal,
       });
     } catch (e: unknown) {
       if (cancelSignal?.aborted) wrapFetchError(e, cancelSignal);
@@ -423,8 +428,8 @@ function completeLocalModel(system: string, user: string, cancelSignal?: AbortSi
     if (data.usage) opts.onUsage?.(apiUsage(data.usage, ""));
     // what the server read: the tokens it read now plus those it reused from a request before (a repeat reads almost none anew)
     const read = (data.usage?.input_tokens ?? 0) + (data.usage?.cache_read_input_tokens ?? 0) + (data.usage?.cache_creation_input_tokens ?? 0);
-    // a prompt longer than the server's context is cut without a word, and the answer looks like any other: the count
-    // is the one sign. A server that gives no count can't be checked.
+    // a prompt longer than the server's context is cut without a word, and the answer looks like any other: for a
+    // server that could not be asked first, the count is the one sign. One that gives no count can't be checked.
     if (read > 0 && read < fewestTokens(`${system} ${user}`))
       throw localFailed(local, `read only part of the request (${read} tokens for a request of ${system.length + user.length} characters): give it a longer context on its server`);
     // cut off: a model that thinks first can fill a short context before it writes a word, and half an answer is none

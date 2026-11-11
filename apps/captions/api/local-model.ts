@@ -64,6 +64,29 @@ export function fewestTokens(text: string): number {
   return Math.floor(Math.max(t.split(" ").length * 0.9, (t.length - dense) / 7 + dense / 3));
 }
 
+/**
+ * Asks the model server, before the real request, whether the whole request fits the model's context. Some model
+ * servers also answer at /api/chat, and told there not to cut (truncate: false) they refuse a request longer than the
+ * context and give both numbers, where the Messages route cuts it and answers as if nothing happened. The same system
+ * and user text, thinking off, one token of answer, no key. The request that follows reuses what was read here, so the
+ * prompt is read once (measured: 0.2 to 0.3 seconds for a request that fills the context).
+ *
+ * Returns why it does not fit, or null: it fits, or this server has no such route (404) or answered anything else.
+ * The count of tokens read is the only check then (fewestTokens).
+ */
+export async function tooLongFor(local: LocalModel, system: string, user: string, signal: AbortSignal): Promise<string | null> {
+  const r = await fetch(`${local.url}/api/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model: local.model, stream: false, think: false, truncate: false, options: { num_predict: 1 }, messages: [{ role: "system", content: system }, { role: "user", content: user }] }),
+    signal,
+  });
+  const said = ((await r.json().catch(() => null)) as { error?: unknown } | null)?.error;
+  if (r.status !== 400 || typeof said !== "string" || !/exceeds.*context/i.test(said)) return null;
+  const n = /(\d+) tokens\D+(\d+) tokens/.exec(said);
+  return n ? `it is ${n[1]} tokens and the model's context holds ${n[2]}` : said.slice(0, 200);
+}
+
 const cache = new Map<string, LocalModel | null>();
 
 function saved(username: string): LocalModel | null {
