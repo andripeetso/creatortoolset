@@ -135,6 +135,7 @@ describe("one set of numbers while clips come in", () => {
     };
     const done = (v: string, kind: string) => d.prepare("UPDATE jobs SET state = 'done' WHERE version_id = ? AND kind = ?").run(v, kind);
     // the folder holds three clips, none handed over yet
+    d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.watch', json('[{"path":"/Volumes/Card/Trip","mode":"reference"}]')) WHERE id = 'lib_e'`).run();
     folderWalks.set("lib_e\0/Volumes/Card/Trip", { files: 3, adding: 3 });
     try {
     expect(await look()).toMatchObject({ clips: 3, left: 3, share: 0 });
@@ -158,6 +159,12 @@ describe("one set of numbers while clips come in", () => {
     expect(await look()).toMatchObject({ clips: 1 });
     for (let i = 1; i < seen.length; i++) expect(seen[i]).toBeGreaterThanOrEqual(seen[i - 1]!);
     expect(seen.at(-1)).toBeGreaterThan(0.9);
+    // a folder taken off the watch list while clips were still to come: they are no longer counted, and the run ends
+    d.prepare("DELETE FROM jobs WHERE state != 'done'").run();
+    folderWalks.set("lib_e\0/Volumes/Card/Trip", { files: 3, adding: 2 });
+    expect((await progress("lib_e", "local")).left).toBe(2);
+    d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.watch', json('[]')) WHERE id = 'lib_e'`).run();
+    expect(await progress("lib_e", "local")).toMatchObject({ left: 0, clips: 0 });
     } finally {
       folderWalks.clear();
       d.prepare("DELETE FROM jobs WHERE state != 'done'").run();

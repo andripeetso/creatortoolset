@@ -241,7 +241,7 @@ export async function progress(libraryId: string, username: string): Promise<Lib
     .all(LIMIT_LIKE, libraryId) as { kind: string; state: string; held: number; n: number; error: string | null }[];
   const pending = rows.filter((r) => r.state !== "needs_key" && !r.held);
   // the files a watch folder has found and not handed over yet: each is a clip still to prepare, from the moment it is seen
-  const toCome = stillToCome(libraryId);
+  const toCome = stillToCome(db, libraryId);
   const left = pending.reduce((n, r) => n + r.n, 0) + toCome;
   const waiting: LibraryProgress["waiting"] = rows.filter((r) => r.state === "needs_key").map((r) => ({ step: STEP_OF[r.kind] ?? "files", count: r.n, missing: r.error ?? "" }));
   const held = rows.filter((r) => r.held);
