@@ -141,9 +141,10 @@ newest one. A release reaches everyone's Mac, so make one only when the maintain
 - Client: `src/App.tsx` lists the routes. Tools are switched per account in `api/users.ts` (`TOOLS`).
 - Types shared by client and server live in `contracts/`.
 - Where things live (the app's one system; put new work in the matching place):
-  - **Home** = the tools you use (`src/lib/tools.ts`). **Settings** = how the app is set up: General, Appearance,
+  - **Home** = the tools you use (its groups are `TOOL_GROUPS` in `contracts/tools.ts`; `src/lib/tools.ts` is the
+    top bar's tool menu and the plug-in tiles). **Settings** = how the app is set up: General, Appearance, Tools,
     AI (Providers, Scheduled tasks, Usage), Hardware (Devices, Storage, Servers), Connections (Social accounts,
-    API keys, Headless access), Team, Server (Admin). **The account button** = you.
+    API keys, Headless access), People (Team, Admin; on a hosted server). **The account button** = you.
   - Inside a tool = that tool's own choices (its page, its Defaults dialog).
   - **Community** = everything added to the app. Installed shows **Plug-ins** (code: built into this server, or on
     the Mac app's own server the folders in the person's plug-ins folder, each with its switch) and then **Packs**

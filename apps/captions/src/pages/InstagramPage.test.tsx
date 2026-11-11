@@ -185,13 +185,12 @@ describe("Content Analyzer home", () => {
     expect(host.textContent).not.toContain("Collect posts you like");
   });
 
-  it("offers no Try again on a failed post while posts can't be read: one amber line says so, with Set up", async () => {
+  it("offers no Try again on a failed post while posts can't be read, and no line of text about setup: the card over the tool says that", async () => {
     server.canRead = false;
     const host = await mount(page("/instagram"));
     expect(host.textContent).toContain("Couldn’t download");
     expect(host.textContent).not.toContain("Try again");
-    expect(host.textContent?.match(/Can’t read/g)).toHaveLength(1);
-    expect(host.textContent).toContain("Set up");
+    expect(host.textContent).not.toMatch(/Can’t read|Set up/);
   });
 
   it("is the name, one line and the paste box for a project with nothing in it", async () => {

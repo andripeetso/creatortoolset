@@ -53,7 +53,6 @@ import {
   useChapters,
 } from "@/components/ClipBlocks";
 import { AppBar, ToolIntro } from "@/components/AppBar";
-import { ToolSetupLine } from "@/components/setup/ToolSetupLine";
 import { DropZoneText, dropZoneClass } from "@/components/DropZone";
 import { DesktopHint } from "@/components/mobile/DesktopHint";
 import { isPublicSharePath } from "@/components/AuthGate";
@@ -687,7 +686,6 @@ export default function ClipsPage() {
       )}
       {!clipId && (
         <div className="mx-auto w-[960px] max-w-[92vw]">
-          <ToolSetupLine tool="notes" />
         </div>
       )}
 

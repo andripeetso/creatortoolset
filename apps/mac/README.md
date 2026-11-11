@@ -2,7 +2,8 @@
 
 A Mac app (macOS 14+, SwiftUI; Sparkle for updates, the only package) that opens a Creator Toolset server (the one it
 runs on this Mac, or your own) in a window and adds what a browser tab can't: this Mac as an AI device in the menu bar, Review
-notes as Mac notifications, and a Dock badge.
+notes as Mac notifications, a Dock badge, and the Screen Recorder (macOS 15 or newer, `Recorder.swift`; on macOS 14
+the Record menu says "Screen recording needs macOS 15").
 
 ## Why it is a shell
 
@@ -10,7 +11,7 @@ The app is a thin native shell around the same web UI, plus the local runner
 it supervises: the web stays the one UI. A fix on the site reaches
 the Mac app on the next load, and a reviewer on a share link keeps using the website.
 Nothing here re-builds a screen. The native parts only do what a web page can't: run this
-Mac's AI jobs, post notifications, and set the Dock badge.
+Mac's AI jobs, post notifications, set the Dock badge, and record the screen.
 
 ## Build and run
 
@@ -133,15 +134,14 @@ on this Mac…" and opens `http://127.0.0.1:43128` once `/api/health` answers (p
 3. This Mac pairs as the owner's AI device (`POST /api/devices`, see "Runs your AI") with no toggle. On a server
    with `CT_LOCAL=1` the server puts the default Claude provider on the owner's first paired Mac, so the AI answers
    once `claude` is installed and signed in.
-4. The page opens the first-run setup (`SetupDialog` in `apps/captions`) inside the window: the account, which
-   tools you use, the first project (only for the Workshop or the Analyzer), your AI (only when a ticked tool uses
-   it: the Mac's report shows whether `claude` or `codex` is on its PATH or in `~/.local/bin`, `/opt/homebrew/bin`
-   or `/usr/local/bin`, the official install and sign-in commands, a check that runs one line through it, and
-   "Which plan are you on?", filled in from what `claude auth status --json` itself says), then what's left for
-   the ticked tools (all optional). The AI step looks again every 5 s, and the app reports its tools again
-   whenever it comes to the front, so a tool installed in Terminal shows up without a reload. These are the same
-   screens as Settings; Settings → Tools shows what each tool still needs, and after **Not now** Home keeps a
-   **Finish setting up** card that opens setup again.
+4. The page opens the first-run setup (`SetupDialog` in `apps/captions`) inside the window, three screens
+   (`SETUP_PATH` in `src/lib/setup.ts`): **Connect your AI** (a row per AI app on this Mac, whose one button is
+   Install, Sign in or Connect, whichever is still missing: `AiPanel.tsx`), **What do you make?** (turns on the
+   tools that fit and makes the first project when the account has none) and **How do you work best?** (in the
+   app, in your own AI, or both). After "In my own AI" or "Both", **Add Creator Toolset to your AI** follows. The
+   AI screen looks again every 20 s and whenever the app comes to the front, so an AI app installed in Terminal
+   shows up without a reload. Settings → Tools shows what each tool still needs, and after **Not now** Home keeps
+   a **Finish setting up** card that opens setup again.
 
 The optional account sign-in is not part of this: the server on your Mac works without one.
 
@@ -213,7 +213,8 @@ A plug-in is a folder the person's own AI writes into `~/Library/Application Sup
 
 ### Access from other devices
 
-Off by default: the server listens on `127.0.0.1` only. **This Mac → Access from other devices** asks for a
+Off by default: the server listens on `127.0.0.1` only. The switch **Let phones and other computers sign in**
+under **This Mac → Access from other devices** asks for a
 password of your own first (twice, 6 characters or more): the app changes the owner's password with
 `POST /api/auth/password` (the window gets its new cookie in the same answer), keeps it in the Keychain
 (`owner-password`), and restarts the server on every interface (`HOST=0.0.0.0`). Phones and other computers
@@ -280,17 +281,20 @@ one at most once a minute). A crash of the app itself is macOS's report in
   top bar that doesn't use `AppBar` needs the attribute. `TitleBar.swift`.
 - With the server on this Mac the window signs in by itself ("First run"). For another server, log in once: the
   login lives in WebKit's own persistent store, so it survives relaunches.
-- **Go** menu: ⌘1 Home, ⌘2 Workshop, ⌘3 Analyzer; ⌘[ and ⌘] go
-  back and forward; ⌘R reloads. The routes are the ones in `apps/captions/src/App.tsx`.
+- **Go** menu: ⌘1 Home, ⌘2 Workshop, ⌘3 AI Editor, ⌘4 Finals, ⌘5 Analyzer (the server lists the ones the account
+  may open, `APP_TOOLS` in `apps/captions/api/activity.ts`; the keys are `appToolShortcuts` in `PluginMenu.swift`);
+  ⌘[ and ⌘] go back and forward; ⌘R reloads. The routes are the ones in `apps/captions/src/App.tsx`.
+- **Record** menu (macOS 15 or newer): New Recording…, Stop Recording (⌥⌘.), All Recordings (the `/record` page),
+  then the recorder's own items: its shortcut, Record Button in Menu Bar, Recordings Folder… and Show Recordings.
 - **Links.** The app registers `creatortoolset://`: `creatortoolset://review/<id>?v=2` opens that page in the
   window and brings it forward, also with the window closed. A link to the window's own site handed to the app
   (`open -a "Creator Toolset" <url>`) opens there too. `appHref` in `Logic.swift`.
-- **Account.** The first run's step 1 (`src/components/setup/AccountStep.tsx`, through the page's `account` message
-  handler) signs in with Apple or Google: the app opens `<account server>/api/account/login/apple?app=1` (or
-  `google`) in the system's sign-in sheet, the server ends on `creatortoolset://account?code=<one-time code>`, and the
-  app swaps the code at `POST /api/account/token` for a token it keeps in the Keychain (`GET /api/account/me` checks
+- **Account.** Setup's **Connect your computers** screen (`src/components/setup/ConnectStep.tsx` shows
+  `AccountStep.tsx`, through the page's `account` message handler) signs in with Apple, Google or GitHub: the app
+  opens `<account server>/api/account/login/apple?app=1` (or `google`, `github`) in the system's sign-in sheet,
+  the server ends on `creatortoolset://account?code=<one-time code>`, and the app swaps the code at `POST /api/account/token` for a token it keeps in the Keychain (`GET /api/account/me` checks
   it). The name and email become the owner's profile on the server on this Mac (`api/owner-profile.ts`). Until the
-  account server's sign-in page redirects to Apple or Google (or while it can't be reached), the step says so and lets
+  account server's sign-in page redirects to Apple, Google or GitHub (or while it can't be reached), the step says so and lets
   you go on. A `creatortoolset://account` link is swapped only while a sign-in from this app is in flight, and the
   page's `account` messages are answered only for the window's own page, never a frame inside it. The account
   server is in This Mac → Account (default `https://creatortoolset.com`, the only place the app names it; empty = no
@@ -323,8 +327,8 @@ the dot says how many things wait for you. A click opens a panel (`Activity.swif
 - **For you**: Workshop sessions with a new reply ("Ready"); a row opens its page in the window;
 - the last AI error, a notice, and "Only N GB free on the data disk" under 10 GB;
 - **Open Creator Toolset**, and a gear with "AI on this Mac: …", "Server on this Mac: …", **Use this Mac for my
-  AI**, **Servers**, **This Mac…**, Settings, **Open at login**, **Open app log**, **Open server log** (with the
-  server), Check for Updates, Quit.
+  AI**, **Screen Recordings** (macOS 15 or newer), **Servers**, **This Mac…**, Settings, **Open at login**,
+  **Open app log**, **Open server log** (with the server), Check for Updates, Quit.
 
 Closing the last window takes the app out of the Dock and the app switcher; it stays in the menu bar. A copy in
 /Applications opens at login (on once by default; the gear's switch turns it off).
