@@ -1,4 +1,4 @@
-import CoreGraphics
+import AppKit
 import XCTest
 @testable import CreatorToolsetMac
 
@@ -29,5 +29,64 @@ final class RecorderTests: XCTestCase {
         XCTAssertTrue(captureSize(points: CGSize(width: 1921, height: 1081), scale: 1) == (1920, 1080))   // even
         let tall = captureSize(points: CGSize(width: 1504, height: 1565), scale: 2)   // a tall window: 4K's pixels at most
         XCTAssertTrue(tall.width * tall.height <= 3840 * 2160 && tall.width > 2800, "\(tall)")
+    }
+
+    // Placement, in AppKit's global points (y grows upwards). A 3008×1692 screen above and right of a 1512×982 main
+    // display, so its origin is not zero: the menu bar is off the top and a 70 pt Dock off the bottom.
+    private let visible = CGRect(x: 1512, y: 982 + 70, width: 3008, height: 1692 - 70 - 25)
+    private let bar = CGSize(width: 250, height: 44)
+
+    func testBarSitsUnderTheRecordedWindow() {
+        let window = CGRect(x: 2400, y: 1600, width: 1157, height: 563)
+        XCTAssertEqual(barOrigin(recorded: window, visible: visible, size: bar), CGPoint(x: 2400 + 578.5 - 125, y: 1600 - 10 - 44))
+    }
+
+    func testBarGoesAboveWhenThereIsNoRoomBelow() {
+        let window = CGRect(x: 2400, y: visible.minY + 20, width: 1157, height: 563)   // 20 pt over the Dock
+        XCTAssertEqual(barOrigin(recorded: window, visible: visible, size: bar).y, window.maxY + 10)
+    }
+
+    func testBarGoesInsideAWindowAsTallAsTheScreen() {
+        let window = CGRect(x: 2400, y: visible.minY, width: 1157, height: visible.height)
+        XCTAssertEqual(barOrigin(recorded: window, visible: visible, size: bar).y, window.minY + 16)
+    }
+
+    func testBarStaysOnTheScreen() {
+        // a window hanging off the left and bottom edges: the bar is pulled fully inside
+        let off = barOrigin(recorded: CGRect(x: 1300, y: 900, width: 300, height: 400), visible: visible, size: bar)
+        XCTAssertEqual(off.x, visible.minX)
+        XCTAssertTrue(visible.contains(CGRect(origin: off, size: bar)))
+        let right = barOrigin(recorded: CGRect(x: 4400, y: 1600, width: 300, height: 400), visible: visible, size: bar)
+        XCTAssertEqual(right.x, visible.maxX - 250)
+    }
+
+    func testBarKeepsTheTopCentreForAWholeDisplay() {
+        XCTAssertEqual(barOrigin(recorded: nil, visible: visible, size: bar), CGPoint(x: visible.midX - 125, y: visible.maxY - 44 - 12))
+    }
+
+    func testPreviewOpensAtTheRecordedCorner() {
+        let size = CGSize(width: 340, height: 210)
+        let window = CGRect(x: 2400, y: 1600, width: 1157, height: 563)
+        XCTAssertEqual(previewOrigin(recorded: window, visible: visible, size: size), CGPoint(x: window.maxX - 340 - 16, y: 1616))
+        // a whole display: the screen's bottom right, as before
+        XCTAssertEqual(previewOrigin(recorded: nil, visible: visible, size: size), CGPoint(x: visible.maxX - 356, y: visible.minY + 16))
+        // a window off the right and bottom edges: still fully on the screen
+        let off = previewOrigin(recorded: CGRect(x: 4300, y: 900, width: 600, height: 400), visible: visible, size: size)
+        XCTAssertEqual(off, CGPoint(x: visible.maxX - 340, y: visible.minY))
+    }
+
+    @MainActor
+    func testAPressOnTheAppsOwnFloatingWindowIsNotAClick() {
+        let bar = NSWindow(), main = NSWindow()
+        XCTAssertTrue(logsClick(.leftMouseDown, on: nil, own: [bar]))          // another app's window
+        XCTAssertTrue(logsClick(.rightMouseDown, on: main, own: [bar]))        // the app's main window can be what is recorded
+        XCTAssertFalse(logsClick(.leftMouseDown, on: bar, own: [bar]))         // Stop on the bar
+        XCTAssertFalse(logsClick(.mouseMoved, on: nil, own: [bar]))
+        XCTAssertFalse(logsClick(.leftMouseDragged, on: main, own: []))
+    }
+
+    func testClockText() {
+        XCTAssertEqual(clockText(42.9), "0:42")
+        XCTAssertEqual(clockText(3725), "1:02:05")
     }
 }

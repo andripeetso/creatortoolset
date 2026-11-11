@@ -1,9 +1,10 @@
 import AppKit
 import SwiftUI
 
-// The small panel that pops up at the bottom right of the screen when a recording stops. It shows the thumbnail and
-// the file's size and length; hovering it shows Save, Copy, Share and Edit. It stays until the user acts or closes it,
-// and does nothing with the recording itself: the caller (Recorder) runs each action and calls close() when done.
+// The small panel that pops up when a recording stops, at the bottom right corner of the recorded window or area (of
+// the screen for a whole display). It shows the thumbnail and the file's size and length; hovering it shows Save,
+// Copy, Share and Edit. It stays until the user acts or closes it, and does nothing with the recording itself: the
+// caller (Recorder) runs each action and calls close() when done.
 
 @MainActor
 final class RecordingPreviewBusy: ObservableObject {
@@ -26,13 +27,11 @@ final class RecordingPreviewBusy: ObservableObject {
     /// The panel on screen, nil when none is open.
     static var window: NSWindow? { current?.panel }
 
-    static func show(_ project: LocalProject, on screen: NSScreen, actions: Actions) {
+    /// `recorded`: the recorded window or area in AppKit's global points, nil for a whole display.
+    static func show(_ project: LocalProject, on screen: NSScreen, near recorded: CGRect?, actions: Actions) {
         close()
         let controller = Controller(project: project, actions: actions)
-        let margin: CGFloat = 16
-        let area = screen.visibleFrame
-        let origin = NSPoint(x: area.maxX - Controller.size.width - margin, y: area.minY + margin)
-        controller.panel.setFrameOrigin(origin)
+        controller.panel.setFrameOrigin(previewOrigin(recorded: recorded, visible: screen.visibleFrame, size: Controller.size))
         controller.panel.alphaValue = 0
         controller.panel.orderFrontRegardless()
         NSAnimationContext.runAnimationGroup { context in

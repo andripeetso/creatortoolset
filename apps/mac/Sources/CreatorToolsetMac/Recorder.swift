@@ -40,6 +40,36 @@ func captureSize(points: CGSize, scale: CGFloat) -> (width: Int, height: Int) {
     return (even(points.width), even(points.height))
 }
 
+/// Where the recording bar goes, all in AppKit's global points (y grows upwards): centred under the recorded window
+/// or area, 10 pt below it; 10 pt above it when that does not fit in `visible`; inside it, 16 pt above its bottom
+/// edge, when neither fits (a window as tall as the screen). No rect (a whole display): the top centre. Always
+/// fully inside `visible`.
+func barOrigin(recorded: CGRect?, visible: CGRect, size: CGSize) -> CGPoint {
+    guard let r = recorded else { return CGPoint(x: visible.midX - size.width / 2, y: visible.maxY - size.height - 12) }
+    let below = r.minY - 10 - size.height, above = r.maxY + 10
+    let y = below >= visible.minY ? below : (above + size.height <= visible.maxY ? above : r.minY + 16)
+    return PickerGeometry.clamped(CGRect(x: r.midX - size.width / 2, y: y, width: size.width, height: size.height), to: visible, scale: 1).origin
+}
+
+/// Where the panel shown after Stop goes (AppKit's global points): the recorded window's or area's bottom right
+/// corner, 16 pt inside it, where the eyes already are; the screen's for a whole display. Always fully inside `visible`.
+func previewOrigin(recorded: CGRect?, visible: CGRect, size: CGSize) -> CGPoint {
+    let r = recorded ?? visible
+    return PickerGeometry.clamped(CGRect(x: r.maxX - size.width - 16, y: r.minY + 16, width: size.width, height: size.height), to: visible, scale: 1).origin
+}
+
+/// Whether a pointer event is logged as a click: a button going down, but not on one of the app's own floating
+/// windows (a press on the bar's Stop is not a place for the editor to zoom in on).
+func logsClick(_ type: NSEvent.EventType, on window: NSWindow?, own: [NSWindow]) -> Bool {
+    [.leftMouseDown, .rightMouseDown].contains(type) && !own.contains { $0 === window }
+}
+
+/// Seconds as m:ss (h:mm:ss from an hour on).
+func clockText(_ t: TimeInterval) -> String {
+    let s = Int(t)
+    return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60) : String(format: "%d:%02d", s / 60, s % 60)
+}
+
 private func hostNow() -> CMTime { CMClockGetTime(CMClockGetHostTimeClock()) }
 
 enum RecorderError: LocalizedError {
@@ -134,8 +164,10 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Send
             queue.async {
                 // a stream that failed midway (display gone, permission taken) still keeps what it wrote
                 guard let offset = self.offset, self.writer.status == .writing else {
-                    self.writer.cancelWriting()
-                    done.resume(throwing: self.failed ?? RecorderError.nothingRecorded)
+                    // a writer that failed keeps its file (the fragments written before the failure play), and its
+                    // error is never "nothing recorded", which would throw the folder away
+                    if self.writer.status != .failed { self.writer.cancelWriting() }
+                    done.resume(throwing: self.failed ?? self.writer.error ?? RecorderError.nothingRecorded)
                     return
                 }
                 [self.video, self.mic, self.system].compactMap { $0 }.forEach { $0.markAsFinished() }
@@ -226,7 +258,10 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Send
 final class Recorder: ObservableObject {
     enum Phase: Equatable { case idle, toolbar, countdown(Int), recording, paused, saving, uploading(Double) }
 
-    @Published private(set) var phase = Phase.idle
+    @Published private(set) var phase = Phase.idle {
+        // the large number is on screen only during the count-in, however that ends
+        didSet { if case .countdown = phase {} else { CountIn.close() } }
+    }
     /// The toolbar's choices (source kind, microphone, camera, Mac sound), remembered between recordings.
     let setup = RecordSetup()
     @AppStorage("recordingsFolder") private var folderPath = ""
@@ -246,6 +281,9 @@ final class Recorder: ObservableObject {
     private var capture: AnyObject?
     private var camera: CameraRecorder?
     private var project: LocalProject?
+    /// The recorded window or area in AppKit's global points (origin bottom left of the main display), nil for a
+    /// whole display: the count-in, the bar and the panel after Stop are placed by it. Kept until `finish()`.
+    private var recorded: CGRect?
     private var panel: NSPanel?
     private var monitors: [Any] = []
     private var saver: Timer?
@@ -370,11 +408,13 @@ final class Recorder: ObservableObject {
             AppLog.write("recording without the microphone: access refused")
             micDevice = nil
         }
-        let screen = screen(of: source) ?? screenUnderPointer()
-        showBar(on: screen)
         guard stillWanted() else { return }
+        let screen = screen(of: source) ?? screenUnderPointer()
+        recorded = appKitRect(of: source)
+        showBar(on: screen)
         for n in [3, 2, 1] {
             phase = .countdown(n)
+            CountIn.show(n, over: recorded ?? screen.frame, inside: screen.frame)
             NSSound(named: n == 1 ? "Pop" : "Tink")?.play()   // a beat per number; capture starts after the last one
             try? await Task.sleep(for: .seconds(1))
             if !stillWanted() { return }   // cancelled during the count-in
@@ -394,7 +434,7 @@ final class Recorder: ObservableObject {
                 guard let display = content.displays.first(where: { $0.displayID == id }) else { throw RecorderError.noDisplay }
                 filter = SCContentFilter(display: display, excludingWindows: hidden)
                 rect = CGDisplayBounds(id)
-            case .window(let id):
+            case .window(let id, _):
                 guard let window = content.windows.first(where: { $0.windowID == id }) else { throw RecorderError.noDisplay }
                 filter = SCContentFilter(desktopIndependentWindow: window)
                 // ponytail: the window's place at the start; a window moved while recording shifts the drawn pointer
@@ -475,9 +515,9 @@ final class Recorder: ObservableObject {
     private func watchPointer(_ capture: AnyObject, rect: CGRect) {
         guard #available(macOS 15.0, *), let capture = capture as? Capture else { return }
         let mainHeight = CGDisplayBounds(CGMainDisplayID()).height
-        let handle = { (event: NSEvent) in
+        let handle = { [weak self] (event: NSEvent) in
             let p = normalizedPointer(NSEvent.mouseLocation, display: rect, mainHeight: mainHeight)
-            capture.note(x: p.x, y: p.y, click: [.leftMouseDown, .rightMouseDown].contains(event.type))
+            capture.note(x: p.x, y: p.y, click: logsClick(event.type, on: event.window, own: self?.ownWindows() ?? []))
         }
         // pointer events need no permission (key presses would: not logged)
         let mask: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .leftMouseDown, .rightMouseDown]
@@ -527,7 +567,19 @@ final class Recorder: ObservableObject {
         Task {
             do {
                 let events: ScreenEvents
-                do { events = try await capture.stop() } catch { camera?.cancel(); throw error }
+                var early: Error?
+                do { events = try await capture.stop() } catch {
+                    // the writer failed midway: the file is written in fragments, so what came before plays. Keep it,
+                    // with the pointer log so far, instead of leaving a folder nothing lists
+                    guard let kept = try? await AVURLAsset(url: project.screenURL).load(.duration).seconds, kept >= 1 else {
+                        camera?.cancel()
+                        throw error
+                    }
+                    early = error
+                    let e = error as NSError
+                    AppLog.write("recording stopped early, \(clockText(kept)) kept: \(e.localizedDescription) (\(e.domain) \(e.code))")
+                    events = await withCheckedContinuation { done in capture.eventsSoFar { done.resume(returning: $0) } }
+                }
                 var hasCamera = camera != nil
                 if let camera {
                     do { try await camera.stop(atHost: now) } catch {
@@ -540,10 +592,14 @@ final class Recorder: ObservableObject {
                 try project.markReady(durationMs: Int(duration.seconds * 1000), width: events.width, height: events.height,
                                       tracks: events.audio, camera: hasCamera)
                 try? await project.writeThumb(from: project.screenURL)
-                let screen = panel?.screen ?? screenUnderPointer()
+                let near = recorded   // finish() forgets it
+                let screen = near.flatMap(screen(holding:)) ?? panel?.screen ?? screenUnderPointer()
                 finish()
                 onRecordingsChanged?()
-                showPreview(project, on: screen)
+                showPreview(project, on: screen, near: near)
+                if let early {
+                    alert("The recording stopped early", "The first \(clockText(duration.seconds)) are kept.\n\n\(early.localizedDescription)")
+                }
             } catch RecorderError.nothingRecorded {
                 try? FileManager.default.removeItem(at: project.folder)
                 finish()
@@ -579,8 +635,8 @@ final class Recorder: ObservableObject {
 
     // MARK: after the recording
 
-    private func showPreview(_ project: LocalProject, on screen: NSScreen) {
-        RecordingPreview.show(project, on: screen, actions: .init(
+    private func showPreview(_ project: LocalProject, on screen: NSScreen, near recorded: CGRect?) {
+        RecordingPreview.show(project, on: screen, near: recorded, actions: .init(
             edit: { [weak self] in
                 RecordingPreview.close()
                 self?.openPage?("/record/\(project.id)")
@@ -675,6 +731,7 @@ final class Recorder: ObservableObject {
         capture = nil
         camera = nil
         project = nil
+        recorded = nil
         phase = .idle
         CameraPreview.close()
         closeBar()
@@ -689,14 +746,31 @@ final class Recorder: ObservableObject {
         let id: CGDirectDisplayID
         switch source {
         case .display(let d), .area(let d, _): id = d
-        case .window: return nil
+        case .window: return appKitRect(of: source).flatMap(screen(holding:))
         }
         return NSScreen.screens.first { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID) == id }
     }
 
+    /// The screen a rect's centre is on (AppKit's global points).
+    private func screen(holding rect: CGRect) -> NSScreen? {
+        NSScreen.screens.first { NSMouseInRect(NSPoint(x: rect.midX, y: rect.midY), $0.frame, false) }
+    }
+
+    /// The window or area a source records, in AppKit's global points; nil for a whole display.
+    private func appKitRect(of source: RecordSource) -> CGRect? {
+        let mainHeight = CGDisplayBounds(CGMainDisplayID()).height
+        switch source {
+        case .display: return nil
+        case .window(_, let frame): return PickerGeometry.topLeftFrame(frame, mainHeight: mainHeight)   // its own inverse
+        case .area(let id, let area):
+            let bounds = CGDisplayBounds(id)
+            return PickerGeometry.topLeftFrame(area.offsetBy(dx: bounds.minX, dy: bounds.minY), mainHeight: mainHeight)
+        }
+    }
+
     /// The app's floating windows: never in the picture.
     private func ownWindows() -> [NSWindow] {
-        ([panel, RecordToolbar.window, CameraPreview.window, RecordingPreview.window] as [NSWindow?]).compactMap { $0 }
+        ([panel, CountIn.window, RecordToolbar.window, CameraPreview.window, RecordingPreview.window] as [NSWindow?]).compactMap { $0 }
             + SourcePicker.windows
     }
 
@@ -713,8 +787,7 @@ final class Recorder: ObservableObject {
         panel.hasShadow = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.contentView = NSHostingView(rootView: RecorderBar(recorder: self).frame(width: size.width, height: size.height))
-        let area = screen.visibleFrame
-        panel.setFrameOrigin(NSPoint(x: area.midX - size.width / 2, y: area.maxY - size.height - 12))
+        panel.setFrameOrigin(barOrigin(recorded: recorded, visible: screen.visibleFrame, size: size))
         panel.orderFrontRegardless()
         self.panel = panel
     }
@@ -732,7 +805,8 @@ final class Recorder: ObservableObject {
     }
 }
 
-/// The bar at the top of the recorded screen (left out of the recording): the count-in, then time, Pause, Stop, Throw away.
+/// The bar beside the recorded window or area, at the top of the screen for a whole display (left out of the
+/// recording): the count-in, then time, Pause, Stop, Throw away.
 struct RecorderBar: View {
     @ObservedObject var recorder: Recorder
 
@@ -745,7 +819,7 @@ struct RecorderBar: View {
             case .recording, .paused:
                 Circle().fill(recorder.phase == .paused ? Color.orange : Color.red).frame(width: 9, height: 9)
                 TimelineView(.periodic(from: .now, by: 0.5)) { _ in
-                    Text(clock(recorder.elapsed)).monospacedDigit().frame(width: 44, alignment: .leading)
+                    Text(clockText(recorder.elapsed)).monospacedDigit().frame(width: 44, alignment: .leading)
                 }
                 Button { recorder.togglePause() } label: {
                     Image(systemName: recorder.phase == .paused ? "play.fill" : "pause.fill")
@@ -768,10 +842,50 @@ struct RecorderBar: View {
         .overlay(Capsule().strokeBorder(.white.opacity(0.12)))
         .environment(\.colorScheme, .dark)
     }
+}
 
-    private func clock(_ t: TimeInterval) -> String {
-        let s = Int(t)
-        return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60) : String(format: "%d:%02d", s / 60, s % 60)
+/// The count-in number, large, over what is about to be recorded (left out of the recording). Clicks pass through it.
+@MainActor enum CountIn {
+    static let size = NSSize(width: 120, height: 120)
+    private static var panel: NSPanel?
+
+    /// The panel on screen, nil when none is open.
+    static var window: NSWindow? { panel }
+
+    /// Shows `n` centred on `rect`, kept inside `bounds` (both in AppKit's global points).
+    static func show(_ n: Int, over rect: CGRect, inside bounds: CGRect) {
+        let view = NSHostingView(rootView: CountInView(n: n))
+        if let panel { return panel.contentView = view }
+        let panel = NSPanel(contentRect: NSRect(origin: .zero, size: size), styleMask: [.nonactivatingPanel, .borderless], backing: .buffered, defer: false)
+        panel.level = .statusBar
+        panel.backgroundColor = .clear
+        panel.isOpaque = false
+        panel.hasShadow = false
+        panel.ignoresMouseEvents = true
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.contentView = view
+        let centred = CGRect(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2, width: size.width, height: size.height)
+        panel.setFrameOrigin(PickerGeometry.clamped(centred, to: bounds, scale: 1).origin)
+        panel.orderFrontRegardless()
+        self.panel = panel
+    }
+
+    static func close() {
+        panel?.orderOut(nil)
+        panel = nil
+    }
+}
+
+struct CountInView: View {
+    let n: Int
+
+    var body: some View {
+        Text("\(n)")
+            .font(.system(size: 76, weight: .semibold).monospacedDigit())
+            .foregroundStyle(.white)
+            .frame(width: CountIn.size.width, height: CountIn.size.height)
+            .background(Color.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).strokeBorder(.white.opacity(0.14)))
     }
 }
 
