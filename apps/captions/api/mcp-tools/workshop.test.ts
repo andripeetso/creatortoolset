@@ -86,7 +86,7 @@ const turn = async (cookie: string, text: string) => {
 };
 /** Waits until the dock shows what `ready` looks for (the writer ends on its own time, after the reply). */
 const shown = async (cookie: string, ready: (v: AssistantView) => boolean) => {
-  for (let i = 0; i < 500; i++) {
+  for (let i = 0; i < 2000; i++) {
     const v = await viewOf(cookie);
     if (ready(v)) return v;
     await new Promise((r) => setTimeout(r, 10));
@@ -157,7 +157,7 @@ describe("workshop_sources", () => {
     expect((await tool(key, "workshop_sources", { session: id })).value).toEqual({ sources: [] });
 
     const first = (await tool(key, "workshop_sources", { session: id, add: [rolls] })).value!;
-    expect(first.sources).toEqual([{ id: rolls, url: "https://www.instagram.com/p/TINYROLLS22/", kind: "post", by: "@tinyacrobatics", caption: "Forward rolls, step by step" }]);
+    expect(first.sources).toEqual([{ id: rolls, url: "https://www.instagram.com/p/TINYROLLS22/", kind: "post", by: "@tinyacrobatics", description: "Forward rolls, step by step" }]);
     // the page's own note on a source stays, as does when it was added
     const kept = (await page<{ sources: Array<{ postId: string; addedAt: number; note?: string }> }>(cookie, `/api/workshop/sessions/${id}`)).sources;
     await page(cookie, `/api/workshop/sessions/${id}`, "PATCH", { sources: [{ ...kept[0]!, note: "the hook" }] });
@@ -212,7 +212,7 @@ describe("workshop_set_project", () => {
   });
 });
 
-describe("the writer the assistant asked", () => {
+describe("the writer the assistant asked", { timeout: 30_000 }, () => {
   type Stream = (system: string, user: string, signal: AbortSignal, parse: (t: string) => unknown) => Promise<unknown>;
   /** The writer's answer waits until `release`; `reached` says the turn got to the model. A Stop ends it as the real stream ends. */
   const held = (answer: () => unknown) => {

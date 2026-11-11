@@ -60,7 +60,8 @@ async function sources(a: Args, ctx: ToolContext) {
   return {
     sources: session.posts.map((p) => {
       const handle = String((p.creator as Args | undefined)?.username ?? "");
-      return pick({ id: p.id, url: p.url, kind: p.kind, by: handle && `@${handle}`, caption: String(p.caption ?? "").slice(0, 200), note: notes.get(p.id) }, ["id", "url", "kind", "by", "caption", "note"]);
+      // description: the text under the post (the Analyzer stores it as the post's caption)
+      return pick({ id: p.id, url: p.url, kind: p.kind, by: handle && `@${handle}`, description: String(p.caption ?? "").slice(0, 200), note: notes.get(p.id) }, ["id", "url", "kind", "by", "description", "note"]);
     }),
   };
 }
@@ -74,7 +75,7 @@ export const workshopTools: ToolModule = {
     },
     {
       name: "workshop_set_project",
-      description: "Switch the Workshop's current project (new sessions start in it, and the app shows it): project is its id from workshop_projects.",
+      description: "Switch the Workshop's current project (its id from workshop_projects): new sessions start in it, and the app opens in it next time. A window that is open stays in its own project.",
       inputSchema: { type: "object", properties: { project: str }, required: ["project"] },
     },
   ],
