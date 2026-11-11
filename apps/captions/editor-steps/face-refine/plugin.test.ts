@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { Timeline } from "../../contracts/editor";
-import { env } from "../../api/lib/env";
+import { venvDir } from "../../api/editor/mediapipe";
 import { ffmpeg } from "../../api/library/media/run";
 import { copyKey, faceRanges, refineFaces } from "./plugin";
 
@@ -43,15 +43,14 @@ describe("which frames the Face refinement step retouches", () => {
 });
 
 // The engine runs only where its Python is set up already (the step's first run does it: a few hundred MB).
-const ready = existsSync(path.join(env.dataDir, "plugins", "editor-face-refine")) &&
-  readdirSync(path.join(env.dataDir, "plugins", "editor-face-refine")).some((d) => existsSync(path.join(env.dataDir, "plugins", "editor-face-refine", d, "ready")));
+const ready = existsSync(path.join(venvDir(), "ready"));
 
 describe.skipIf(!ready)("the Face refinement engine", () => {
   it("gives a file with no face back as it is", async () => {
     const take = path.join(dir, "noface.mov");
     await ffmpeg(["-f", "lavfi", "-i", "testsrc2=size=320x568:rate=25:duration=2", "-c:v", "mpeg4", "-timecode", "01:00:10:00", take]);
     const timeline = tl([{ src: "t", in: 0, len: 50, rec: 0 }], [], { t: { fps: 25, dur: 50, w: 320, h: 568 } });
-    const input = { edit: { id: "e", name: "E", createdBy: "me" }, variant: "", files: { t: take }, timeline, values: {}, workDir: dir, signal: new AbortController().signal };
+    const input = { edit: { id: "e", name: "E", createdBy: "me" }, variant: "", files: { t: take }, timeline, values: {}, workDir: dir, signal: new AbortController().signal, note: () => {} };
     expect(await refineFaces(input)).toEqual({});
     expect(readdirSync(dir).filter((f) => f.endsWith(".noface"))).toHaveLength(1);
     expect(execFileSync("ffprobe", ["-v", "error", "-show_entries", "stream_tags=timecode", "-of", "csv=p=0", take], { encoding: "utf8" })).toContain("01:00:10:00");
