@@ -1,5 +1,4 @@
 import { existsSync } from "node:fs";
-import { rm } from "node:fs/promises";
 import path from "node:path";
 import { ffmpegSlot } from "../library/media/run";
 import { beforeSpeechModel, modelLibrary, modelsDir, speechModelInUse } from "./device-transcribe";
@@ -73,8 +72,9 @@ function run(texts: string[], key: string, load: typeof loadModel, search: boole
       model ??= load((text) => void (current = { key, text }));
       const m = await model.catch(async (e) => {
         model = null;
+        // its files are left as they are: the library writes each under a temporary name first, and deleting the folder
+        // while its other files are still being written ends the server (measured)
         console.warn("[search] the search model did not load:", e);
-        await rm(path.join(modelsDir(), DEVICE_EMBED_MODEL), { recursive: true, force: true }); // a bad copy would fail every later run
         throw new Error(`Search by meaning could not get its model ready. It downloads once (${MODEL_MB} MB): check the internet connection, then try again.`);
       });
       const out: Float32Array[] = [];

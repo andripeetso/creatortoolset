@@ -107,7 +107,8 @@ hfApp.all("/*", async (c) => {
     const headers = { "Content-Type": typeOf(sub), ...(length ? { "Content-Length": length } : {}), "Access-Control-Allow-Origin": "*" };
     if (c.req.header(OWN_COPY)) {
       release();
-      return new Response(res.body, { status: 200, headers });
+      // a fresh stream: the server's Response takes its body only from a stream no other Response holds
+      return new Response(res.body!.pipeThrough(new TransformStream()), { status: 200, headers });
     }
     const [toBrowser, toDisk] = res.body!.tee();
     const tmp = dest + ".part";

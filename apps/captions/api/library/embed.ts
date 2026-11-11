@@ -29,7 +29,10 @@ export const meaningful = (text: string) => (text.match(/\p{L}+/gu)?.length ?? 0
 
 /**
  * How close (cosine) a chunk must be to the query to be listed for its meaning, by model: below it, a clip is listed
- * only when its words match.
+ * only when its words match. This computer's model, measured on 35 made-up clips (22 spoken, 10 described only, half
+ * of those in Estonian, 3 of noise) and 44 queries in English and Estonian: no query that should find nothing scored
+ * above 0.29 (8 of them), and at 0.35 28 of the 39 clips wanted are listed, with 19 others across all 44 queries (most
+ * of them near: teeth brushing for "bath time"); 0.30 lists 33 others, 0.40 keeps 25 wanted.
  * ponytail: the key's model is not measured here; 0.3 is the usual line for it
  */
 const FLOOR: Record<string, number> = { [DEVICE_EMBED_MODEL]: 0.35 };
