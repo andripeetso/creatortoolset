@@ -6,7 +6,8 @@ import { currentProject, keep, listMemory, remove } from "./lib/memory";
 /**
  * What the assistant keeps from one chat to the next (contracts/memory.ts; the store and its rules: lib/memory.ts).
  *
- *   GET    /api/memory        the account's kept facts, newest first (Settings → Memory)
+ *   GET    /api/memory        the account's kept facts, newest first (Settings → Memory); ?here=1 = only the ones
+ *                             a chat gets now: about the person, and the current project's
  *   POST   /api/memory        { quote, project? } keep what the person said: only from a reply the assistant is writing
  *   DELETE /api/memory/:id    remove one for good
  *
@@ -16,7 +17,7 @@ import { currentProject, keep, listMemory, remove } from "./lib/memory";
  */
 export const memoryApp = new Hono<{ Variables: AuthVars }>();
 
-memoryApp.get("/", async (c) => c.json({ facts: await listMemory(c.get("user")) }));
+memoryApp.get("/", async (c) => c.json({ facts: await listMemory(c.get("user"), c.req.query("here") === "1") }));
 
 memoryApp.post("/", async (c) => {
   const u = c.get("user");

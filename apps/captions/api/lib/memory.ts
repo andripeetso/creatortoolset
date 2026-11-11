@@ -132,11 +132,16 @@ export function remove(username: string, id: string): boolean {
   return true;
 }
 
-/** Everything the account has kept, newest first, each with its project's name (Settings → Memory). */
-export async function listMemory(user: SessionUser): Promise<MemoryFact[]> {
+/**
+ * Everything the account has kept, newest first, each with its project's name (Settings → Memory). `here`: only what
+ * a chat's prompt holds now, the facts about the person and the current project's (the assistant's forget tool).
+ */
+export async function listMemory(user: SessionUser, here = false): Promise<MemoryFact[]> {
   const { facts } = read(user.username);
-  const projects = facts.some((f) => f.project) ? (await getWorkspace(user)).projects : [];
+  const ws = facts.some((f) => f.project) ? await getWorkspace(user) : null;
+  const projects = ws?.projects ?? [];
   return facts
+    .filter((f) => !here || !f.project || f.project === ws?.currentProjectId)
     .map(({ id, text, at, project }) => ({ id, text, at, ...(project ? { project: { id: project, name: projects.find((p) => p.id === project)?.name ?? "A project that is gone" } } : {}) }))
     .reverse();
 }

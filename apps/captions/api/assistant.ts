@@ -761,13 +761,16 @@ export function chatOfTurn(username: string, turn: string): string | null {
 /**
  * What the person typed themselves in the chat a reply is being written in, newest first, among the messages its
  * prompt carries. A quote to remember is checked against these alone (api/memory.ts): never a reply, a note, a
- * paste or a highlight, and never a scheduled task's prompt (an AI may have written it). null for a reply that is
- * not being written, or one of a scheduled run.
+ * paste or a highlight, never a scheduled task's prompt (an AI may have written it), and never an answer button
+ * they pressed (offer_choices: the AI wrote those words). null for a reply that is not being written, or one of a
+ * scheduled run.
  */
 export function saidInChat(username: string, turn: string): Array<{ id: string; text: string; at: number }> | null {
   const list = everyChat(load(username)).find((l) => l.some((m) => m.id === turn && m.status === "thinking"));
   if (!list || unattended(username, turn)) return null;
-  return list.filter((m) => m.status !== "thinking").slice(-HISTORY).filter((m) => m.role === "user" && !m.task).map(({ id, text, at }) => ({ id, text, at })).reverse();
+  const sent = list.filter((m) => m.status !== "thinking");
+  const typed = (m: AssistantMessage, i: number) => m.role === "user" && !m.task && !sent[i - 1]?.choices?.includes(m.text);
+  return sent.map((m, i) => (typed(m, i) ? { id: m.id, text: m.text, at: m.at } : null)).slice(-HISTORY).filter((m) => !!m).reverse();
 }
 
 /** A reply is being written in this chat now: a run waits for it to end. */

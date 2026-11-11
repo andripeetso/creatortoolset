@@ -107,7 +107,9 @@ describe("with nothing kept, nothing is different", () => {
     const mine = inside.filter((x) => x.name === "remember" || x.name === "forget");
     expect(mine).toEqual(memoryTools.defs.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })));
     // what every turn of every person with a tool-taking AI now carries: say so in the commit when this number moves
-    expect(Buffer.byteLength(JSON.stringify(mine))).toBe(494);
+    const bytes = (list: unknown[]) => Buffer.byteLength(JSON.stringify(list));
+    expect(bytes(inside) - bytes(inside.filter((x) => !mine.includes(x)))).toBe(493);
+    expect(bytes(mine)).toBe(494);
   });
 
   it("only the assistant's turn reads the store: no other prompt builder imports it", () => {
@@ -185,6 +187,23 @@ describe("only what the person said is kept", () => {
     expect((await tool(t.token, "remember", { quote: "x".repeat(MEMORY_QUOTE_MAX + 1) })).text).toBe("Keep one short thing: a quote of up to 300 characters.");
     await t.end();
     expect(await kept()).toEqual([]);
+  });
+
+  it("an answer button they pressed is the AI's wording, not theirs: refused; what they type after it is kept", async () => {
+    await newChat();
+    const a = await turn("How should my reels open?");
+    expect((await tool(a.token, "offer_choices", { choices: ["Always open on a face", "Open on the product"] })).error).toBe(false);
+    await a.end("On a face or on the product?");
+    // the press sends the button's words as their message
+    const b = await turn("Always open on a face");
+    expect(await tool(b.token, "remember", { quote: "Always open on a face" })).toEqual({ error: true, text: NOT_SAID });
+    await b.end();
+    // the same words typed, with nothing offered before them, are theirs
+    const c = await turn("Always open on a face");
+    expect((await tool(c.token, "remember", { quote: "Always open on a face" })).error).toBe(false);
+    await c.end();
+    expect((await kept()).map((f) => f.text)).toEqual(["Always open on a face"]);
+    await removeAll();
   });
 
   it("what they said in another chat is refused in this one", async () => {
@@ -326,7 +345,16 @@ describe("projects are kept apart", () => {
     const there = await turn("Hello");
     expect(there.job.system.slice(UNCHANGED.length)).toBe("\n\nThings the user told you in earlier chats, in their own words, that still hold (their list: Settings, Memory):\n- I only film on my phone");
     expect(there.job.system).not.toContain("faces");
+    // forget reaches what this chat holds: the other project's fact is not named here and not removed from here
+    expect(await tool(there.token, "forget", { quote: "we never show faces" })).toEqual({ error: true, text: "Nothing kept says that." });
+    expect(await tool(there.token, "forget", { quote: "never show" })).toEqual({ error: true, text: "Nothing kept says that." });
     await there.end();
+    expect((await kept()).length).toBe(2);
+    await enter(tumbles);
+    const back = await turn("Forget the faces thing");
+    expect(JSON.parse((await tool(back.token, "forget", { quote: "we never show faces" })).text)).toEqual({ forgot: "we never show faces" });
+    await back.end();
+    expect((await kept()).map((f) => f.text)).toEqual(["I only film on my phone"]);
     await removeAll();
   });
 });

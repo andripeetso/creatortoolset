@@ -24,7 +24,8 @@ export const memoryTools: ToolModule = {
     forget: async (a, ctx) => {
       const q = even(String(a.quote ?? ""));
       if (q.length < MEMORY_QUOTE_MIN) throw new ToolError("Give the words of the fact to remove.");
-      const { facts } = await ctx.json<{ facts: MemoryFact[] }>("/api/memory");
+      // only what this chat's prompt holds: another project's facts are not this chat's to name or remove
+      const { facts } = await ctx.json<{ facts: MemoryFact[] }>("/api/memory?here=1");
       const hits = facts.filter((f) => even(f.text).includes(q) || q.includes(even(f.text)));
       if (!hits.length) throw new ToolError("Nothing kept says that.");
       if (hits.length > 1) throw new ToolError(`Several kept facts say that: quote one of them in full. ${hits.map((f) => JSON.stringify(f.text)).join(", ")}`);
