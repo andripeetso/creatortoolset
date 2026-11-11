@@ -26,6 +26,7 @@ const { indexAsset, buildAssetQuery, pageOf } = await import("./query");
 const { enqueueJob } = await import("./jobs");
 const { tick } = await import("./worker");
 const { describePrompt, parseDescribe, saveDescribed } = await import("./describe");
+const { saveTranscript } = await import("./transcribe");
 const { aiFor } = await import("../ai-complete");
 const { completeVisionWithFallback } = await import("../ai-vision");
 
@@ -112,8 +113,11 @@ describe("describe job", () => {
     vi.mocked(aiFor).mockReturnValueOnce({ only: ["mac"] }).mockReturnValueOnce({ only: ["mac"] });
     vi.mocked(completeVisionWithFallback).mockImplementationOnce(async (_s, _u, images, _c, parse) => {
       expect(images).toHaveLength(4);
-      return { value: parse('{"description": "A person rolls across a blue mat.", "tags": ["roll", "mat"]}'), provider: "test" } as never;
+      return { value: parse('{"description": "A person rolls across a blue mat.", "tags": ["roll", "mat"], "roll": "a"}'), provider: "test" } as never;
     });
+    // a short clip, talked through: the speech alone can't call it, so the AI's answer in the same call settles it
+    libraryDb().prepare(`UPDATE asset_versions SET probe = '{"duration":2,"vcodec":"h264","acodec":"aac"}' WHERE id = ?`).run(v);
+    saveTranscript(libraryDb(), v, "device", "en", [{ start: 0, end: 2, text: "tuck the chin and roll over now like this okay" }]);
     libraryDb().prepare("INSERT INTO asset_tags (asset_id, tag, source) VALUES ('ast-ai-0001', 'mat', 'user')").run();
     enqueueJob(libraryDb(), "lib_a", v, "describe", "local");
     await tick();
@@ -122,6 +126,7 @@ describe("describe job", () => {
     const c = card("ast-ai-0001");
     expect(c.description).toEqual({ source: "ai", text: "A person rolls across a blue mat." });
     expect(c.aiTags).toEqual(["roll"]); // a human's tag keeps its source
+    expect(c.roll).toBe("a"); // the worker sorted it again once the description came (roll.ts)
     const hits = (await (await call("local", "/api/library/lib_a/search?q=blue")).json()) as { asset: { id: string } }[];
     expect(hits.map((h) => h.asset.id)).toEqual(["ast-ai-0001"]);
   });

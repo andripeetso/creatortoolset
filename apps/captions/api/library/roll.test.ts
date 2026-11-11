@@ -20,6 +20,8 @@ const { saveTranscript } = await import("./transcribe");
 const { saveDescribed } = await import("./describe");
 const { decideRoll, rollFromSpeech, rollLine, sortAfter, sortRoll, sortUnsorted } = await import("./roll");
 const { footageTargetFor } = await import("../editor/ingest");
+const { searchApp } = await import("./search");
+const { brollRows } = await import("../editor/broll");
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -35,6 +37,8 @@ describe("the free signals", () => {
     ["a long clip with one sentence", 60, true, [seg(12, 15, 10)], "b"],
     ["a short take, talked through (5 s)", 5, true, [seg(0.2, 4.8, 14)], null],
     ["talk for a third of it", 24, true, [seg(2, 10, 22)], null],
+    // measured on the on-device transcript of a sung line: 12 s of 20 sung, 21 words (talk: 3 to 3.7 words a second)
+    ["a sung line over 20 s", 20, true, [seg(3, 9, 11), seg(9.2, 15, 10)], null],
     ["sound, not transcribed (no key yet)", 30, true, null, null],
   ];
   it.each(cases)("%s", (_what, duration, sound, segments, want) => {
@@ -132,13 +136,27 @@ describe("sorting the clips in a library", () => {
     expect(page.items.every((i) => i.roll === "a")).toBe(true);
   });
 
-  it("the list narrows to one roll and to versions", () => {
+  it("the list and a typed search narrow to one roll, and the list to versions", async () => {
     const a = buildAssetQuery("lib_r", { roll: "a" });
     const rows = d().prepare(a.sql).all(...a.params) as { roll: string }[];
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.every((r) => r.roll === "a")).toBe(true);
     const b = buildAssetQuery("lib_r", { roll: "b", versions: ["ver-1"] });
     expect(d().prepare(b.sql).all(...b.params)).toHaveLength(1); // ver-1: the lyrics over the sea
+    const app = new Hono<{ Variables: AuthVars }>();
+    app.use(async (c, next) => (c.set("user", { username: "ana", role: "user" } as never), next()));
+    app.route("/api/library", searchApp);
+    const hits = (await (await app.request("/api/library/lib_r/search?q=C&roll=b")).json()) as { asset: { roll?: string } }[];
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits.every((h) => h.asset.roll === "b")).toBe(true);
+  });
+
+  it("a smart B-roll folder gives the AI Editor's B-roll step every clip sorted B-roll", () => {
+    d().prepare(`INSERT INTO collections (id, library_id, parent_id, name, kind, query, created_at, created_by) VALUES ('col_bs', 'lib_r', NULL, 'B-roll', 'smart', '{"roll":"b"}', 0, 'ana')`).run();
+    const pool = brollRows("col_bs").map((r) => r.id);
+    const b = buildAssetQuery("lib_r", { roll: "b", kind: ["video"] });
+    expect(pool.sort()).toEqual((d().prepare(b.sql).all(...b.params) as { version_id: string }[]).map((r) => r.version_id).sort());
+    expect(pool.length).toBeGreaterThan(1);
   });
 
   it("clips from before are sorted from what they have, with no job run", async () => {

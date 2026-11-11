@@ -17,9 +17,10 @@ export type Roll = "a" | "b";
 
 /**
  * Where the free signals call it. ponytail: thresholds set on made-up clips (roll.test.ts); tune them on real footage.
- * A: at least A_MIN_S long, speech over A_SHARE of it and A_WORDS words. B: speech under B_SHARE, or under B_WORDS words.
+ * A: at least A_MIN_S long, speech over A_SHARE of it, A_WORDS words, A_RATE words a spoken second (talk measured 3 to
+ * 3.7, a sung line 1.75: sung words come slower). B: speech under B_SHARE, or under B_WORDS words. Between: unclear.
  */
-export const ROLL_RULE = { A_MIN_S: 8, A_SHARE: 0.5, A_WORDS: 20, B_SHARE: 0.2, B_WORDS: 8 };
+export const ROLL_RULE = { A_MIN_S: 8, A_SHARE: 0.5, A_WORDS: 20, A_RATE: 2, B_SHARE: 0.2, B_WORDS: 8 };
 
 /** The free signals' call: "a", "b", or null when they can't tell (the AI settles it, else B). `segments` null = not transcribed. */
 export function rollFromSpeech(duration: number, hasSound: boolean, segments: Segment[] | null): Roll | null {
@@ -37,7 +38,7 @@ export function rollFromSpeech(duration: number, hasSound: boolean, segments: Se
     end = Math.max(end, s.end);
   }
   const share = duration > 0 ? spoken / duration : 0;
-  if (duration >= r.A_MIN_S && share >= r.A_SHARE && words >= r.A_WORDS) return "a";
+  if (duration >= r.A_MIN_S && share >= r.A_SHARE && words >= r.A_WORDS && words / spoken >= r.A_RATE) return "a";
   if (share < r.B_SHARE || words < r.B_WORDS) return "b";
   return null;
 }

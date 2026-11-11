@@ -119,26 +119,30 @@ interface CollectionRow {
   probe: string | null;
 }
 
+/** A B-roll collection's clips: a folder's in its order; a smart folder's (B-roll: every clip sorted B-roll) newest MAX_LIMIT videos. */
+export function brollRows(collectionId: string): CollectionRow[] {
+  const d = libraryDb();
+  const col = d.prepare("SELECT library_id, kind, query FROM collections WHERE id = ?").get(collectionId) as { library_id: string; kind: string; query: string | null } | undefined;
+  if (col?.kind === "smart") {
+    const q = buildAssetQuery(col.library_id, { ...savedQuery(JSON.parse(col.query ?? "{}")), kind: ["video"], limit: MAX_LIMIT });
+    return (d.prepare(q.sql).all(...q.params) as unknown as CardRow[]).slice(0, MAX_LIMIT).map((r) => ({ id: r.version_id, title: r.title, probe: r.probe }));
+  }
+  return d
+    .prepare(
+      `SELECT v.id, a.title, v.probe FROM collection_items ci JOIN assets a ON a.id = ci.asset_id
+       JOIN asset_versions v ON v.id = a.current_version_id
+       WHERE ci.collection_id = ? AND a.trashed_at IS NULL ORDER BY ci.position, a.id`,
+    )
+    .all(collectionId) as unknown as CollectionRow[];
+}
+
 /** The B-roll step for one version's draft: its cutaways from the edit's collection, saved over the draft. */
 export async function brollStep({ edit, job, variant, signal }: StepContext): Promise<void> {
   if (!variant) return; // a whole-edit step is not a draft: each version's draft queues its own
   const draft = readDraft(edit.id, variant);
   if (!draft) throw new Error(`No draft ${variant} to add B-roll to`);
   if (!edit.brollCollectionId) return;
-  const col = libraryDb().prepare("SELECT library_id, kind, query FROM collections WHERE id = ?").get(edit.brollCollectionId) as
-    | { library_id: string; kind: string; query: string | null }
-    | undefined;
-  // a smart folder (B-roll: every clip sorted B-roll) runs its query: its newest MAX_LIMIT videos
-  const smart = col?.kind === "smart" ? buildAssetQuery(col.library_id, { ...savedQuery(JSON.parse(col.query ?? "{}")), kind: ["video"], limit: MAX_LIMIT }) : null;
-  const rows = smart
-    ? (libraryDb().prepare(smart.sql).all(...smart.params) as unknown as CardRow[]).slice(0, MAX_LIMIT).map((r) => ({ id: r.version_id, title: r.title, probe: r.probe }))
-    : (libraryDb()
-    .prepare(
-      `SELECT v.id, a.title, v.probe FROM collection_items ci JOIN assets a ON a.id = ci.asset_id
-       JOIN asset_versions v ON v.id = a.current_version_id
-       WHERE ci.collection_id = ? AND a.trashed_at IS NULL ORDER BY ci.position, a.id`,
-    )
-    .all(edit.brollCollectionId) as unknown as CollectionRow[]);
+  const rows = brollRows(edit.brollCollectionId);
   if (!rows.length) return;
   // read again at this step: the creator may have lost a library or the collection's footage since the edit was made
   if (sourcesWorkspace(job.actor ?? "", rows.map((r) => r.id)) !== edit.workspaceId) throw new Error("The B-roll collection is no longer yours to read");
