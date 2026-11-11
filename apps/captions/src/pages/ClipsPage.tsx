@@ -64,7 +64,9 @@ import {
   MobileClipView,
 } from "@/pages/mobile/MobileClipView";
 import { confirmDialog } from "@/lib/dialogs";
-import { BrowseBar } from "@/components/browse/Bar";
+import { BrowseBar, NewFolderButton } from "@/components/browse/Bar";
+import { FolderTrail, MoveToMenu, ToolFolderCards, ToolFolderRows } from "@/components/browse/ToolFolders";
+import { useToolFolders } from "@/lib/folders";
 import { FolderGrid, ItemCard } from "@/components/browse/Grid";
 import { askRename } from "@/components/browse/browse";
 import { byName, matches, persistSort, storedSort, useBrowseView } from "@/components/browse/views";
@@ -573,9 +575,12 @@ export default function ClipsPage() {
   const [view, setView] = useBrowseView("notes");
   const [find, setFind] = useState("");
   const [sort, setSort] = useState(() => storedSort(NOTES_SORT_KEY, NOTES_SORTS));
-  // the server sends them newest first; a search or another sort is another list
-  const listed = sessions.filter((s) => matches(find, s.name)).sort((a, b) => (sort === "name" ? byName(a, b) : 0));
-  const shownClips = useSteadyList(listed, clipsBox, { scope: `${find.trim()}|${sort}|${view}` });
+  // the open folder's clips (every folder's when searching); the server sends them newest first; a search, another sort
+  // or another folder is another list
+  const folders = useToolFolders("notes", sessions, find);
+  const listed = folders.here.filter((s) => matches(find, s.name)).sort((a, b) => (sort === "name" ? byName(a, b) : 0));
+  const shownClips = useSteadyList(listed, clipsBox, { scope: `${find.trim()}|${sort}|${view}|${folders.open}` });
+  const clipPicture = (id: string) => (sessions.find((x) => x.id === id)?.hasThumb ? thumbClipUrl(id) : undefined);
   // the open clip: its saved copy (or its row in the list) paints at once; processing and new blocks arrive as change
   // notices (lib/local-cache)
   const detail = useCachedLoad<ClipSession>(clipId ? `/api/clips/${clipId}` : null, () => getClip(clipId!));
@@ -693,6 +698,7 @@ export default function ClipsPage() {
     <div className="relative flex min-h-screen flex-col items-center bg-background pb-10 text-foreground [--bar-bg:hsl(var(--background))]">
       <AppBar tool="Video Notes" to={clipId ? "/clips" : undefined} trail={current?.name} account={!!me} className="mb-6">
         {isPublicSharePath(location.pathname) ? <ShareThemeSwitch /> : null}
+        {me && !clipId && rec.phase === "idle" && sessions.length > 0 && <NewFolderButton onClick={() => void folders.newFolder()} />}
         {!me && required ? (
           <Link
             to={home}
@@ -921,6 +927,7 @@ export default function ClipsPage() {
             {showLibrary && sessions.length > 0 && (
               <div className="mt-8">
                 <h2 className={label}>Your clips</h2>
+                <FolderTrail state={folders} top="Your clips" />
                 <BrowseBar
                   search={{ value: find, onChange: setFind, placeholder: "Search clips (⌘K)" }}
                   sort={{
@@ -937,9 +944,10 @@ export default function ClipsPage() {
                   }}
                   view={{ value: view, onChange: setView }}
                 />
-                {listed.length === 0 && <p className="py-10 text-center text-sm text-zinc-500">No matches.</p>}
+                {find.trim() && listed.length === 0 && folders.folders.length === 0 && <p className="py-10 text-center text-sm text-zinc-500">No matches.</p>}
                 {view === "grid" ? (
                   <FolderGrid ref={clipsBox} size="column">
+                    <ToolFolderCards state={folders} pictureOf={clipPicture} />
                     {shownClips.map((s) => (
                       <ItemCard
                         key={s.id}
@@ -956,8 +964,10 @@ export default function ClipsPage() {
                             </span>
                           ) : null
                         }
+                        drag={folders.drag(s.id)}
                         actions={
                           <>
+                            <MoveToMenu state={folders} id={s.id} className="rounded p-1 hover:bg-white/20" />
                             <button type="button" title="Rename" aria-label={`Rename ${s.name}`} className="rounded p-1 hover:bg-white/20" onClick={() => void askRename("Rename clip", s.name).then((name) => name && renameTo(s, name))}>
                               <Pencil className="h-3.5 w-3.5" />
                             </button>
@@ -971,9 +981,11 @@ export default function ClipsPage() {
                   </FolderGrid>
                 ) : (
                 <div ref={clipsBox} className="flex max-h-80 flex-col gap-1.5 overflow-y-auto pr-1">
+                  <ToolFolderRows state={folders} />
                   {shownClips.map((s) => (
                     <div
                       key={s.id}
+                      {...folders.drag(s.id)}
                       onClick={() => {
                         if (renaming !== s.id) navigate(`/clips/${s.id}`);
                       }}
@@ -1025,6 +1037,7 @@ export default function ClipsPage() {
                           {Math.round(s.progress * 100)}%
                         </span>
                       ) : null}
+                      <MoveToMenu state={folders} id={s.id} className="rounded p-1.5 text-zinc-600 opacity-0 transition-opacity hover:bg-zinc-800 hover:text-zinc-200 focus-visible:opacity-100 group-hover:opacity-100" />
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
