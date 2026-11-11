@@ -169,7 +169,7 @@ describe("finals_piece_update", () => {
       name: "Tiny tumbles, spring",
       versions: [{ id: C, name: "V1C", winner: true }, { id: A, name: "Wide" }, { id: B, name: "V1B" }],
       link: `http://localhost/finals/${TUMBLES}`,
-      changed: ["renamed", "order changed", "version name and post description saved", "winner set"],
+      changed: ["renamed", "order changed", "version named", "post description saved", "winner set"],
     });
     // the page reads the same
     const piece = await onPage(TUMBLES);
@@ -177,21 +177,22 @@ describe("finals_piece_update", () => {
     expect(piece.items.map((i) => [i.id, i.label, i.winner, i.postDescription])).toEqual([[C, "V1C", true, null], [A, "Wide", false, "The wide one."], [B, "V1B", false, "Three tumbles for a rainy day."]]);
     const reply = await lastReply();
     expect(reply.steps).toEqual(["Updating a Finals piece"]);
-    expect(reply.work).toEqual([{ id: `finals:${TUMBLES}`, kind: "link", title: "Tiny tumbles, spring", href: `/finals/${TUMBLES}`, status: "done", detail: "Renamed, order changed, version name and post description saved, winner set" }]);
+    expect(reply.work).toEqual([{ id: `finals:${TUMBLES}`, kind: "link", title: "Tiny tumbles, spring", href: `/finals/${TUMBLES}`, status: "done", detail: "Renamed, order changed, version named, post description saved, winner set" }]);
   });
 
   it("as an AI key: a whole order, the winner cleared, a version's name and post description removed; asking for what is there already changes nothing", async () => {
     const out = (await tool(anaKey, "finals_piece_update", { piece: TUMBLES, order: [A, B, C], winner: "none", version: A, version_name: "", post_description: "" })).value;
     expect(out.versions).toEqual([{ id: A }, { id: B, name: "V1B" }, { id: C, name: "V1C" }]);
-    expect(out.changed).toEqual(["order changed", "version name and post description saved", "winner cleared"]);
+    expect(out.changed).toEqual(["order changed", "version's name removed", "post description removed", "winner cleared"]);
     expect((await onPage(TUMBLES)).items.map((i) => [i.id, i.label, i.winner, i.postDescription])).toEqual([[A, null, false, null], [B, "V1B", false, "Three tumbles for a rainy day."], [C, "V1C", false, null]]);
 
-    const same = (await tool(anaKey, "finals_piece_update", { piece: TUMBLES, name: "Tiny tumbles, spring", order: [A, B, C], winner: "none" })).value;
+    const same = (await tool(anaKey, "finals_piece_update", { piece: TUMBLES, name: "Tiny tumbles, spring", order: [A, B, C], winner: "none", version: A, version_name: "", post_description: " " })).value;
     expect(same).toMatchObject({ changed: [], note: "Nothing changed: the piece was like this already." });
   });
 
   it("says so when a post description was longer than the longest one kept", async () => {
     const out = (await tool(anaKey, "finals_piece_update", { piece: TUMBLES, version: C, post_description: "tumble ".repeat(400) })).value;
+    expect(out.changed).toEqual(["post description saved"]);
     expect(out.note).toBe("The post description was cut to its first 2,200 characters: that is the longest one kept.");
     expect((await onPage(TUMBLES)).items.find((i) => i.id === C)!.postDescription).toHaveLength(2200);
   });
@@ -223,13 +224,13 @@ describe("finals_piece_trash", () => {
     const t = await turn("Bin the old warm-up");
     const asked = await tool(t.token, "finals_piece_trash", { piece: BIN });
     expect(asked).toMatchObject({ error: false });
-    expect(asked.text).toContain('Asked the user: "Move the piece "Old warm-up" to the trash? Its versions stay in the Media Library." Nothing has been changed.');
+    expect(asked.text).toContain('Asked the user: "Move the piece "Old warm-up" to the trash? Its versions stay in the Media Library. The piece is gone for good after 5 days." Nothing has been changed.');
     await t.end();
     expect(await inTrash()).toEqual([]);
     const reply = await lastReply();
     expect(reply.steps).toEqual(["Working in the Finals trash"]);
     const card = reply.confirms![0]!;
-    expect([card.question, card.status]).toEqual(['Move the piece "Old warm-up" to the trash? Its versions stay in the Media Library.', "waiting"]);
+    expect([card.question, card.status]).toEqual(['Move the piece "Old warm-up" to the trash? Its versions stay in the Media Library. The piece is gone for good after 5 days.', "waiting"]);
 
     expect((await app.request(`/api/assistant/confirms/${card.id}`, { method: "POST", ...json({ yes: true }, { cookie: anaCookie }) })).status).toBe(200);
     expect(await inTrash()).toEqual(["Old warm-up"]);
@@ -251,7 +252,7 @@ describe("finals_piece_trash", () => {
   });
 
   it("an AI key from outside the app is not asked here: its own app asks its own way", async () => {
-    expect((await tool(anaKey, "finals_piece_trash", { piece: BIN })).value).toEqual({ id: BIN, name: "Old warm-up", trashed: true, note: "Its versions stay in the Media Library. restore: true brings the piece back." });
+    expect((await tool(anaKey, "finals_piece_trash", { piece: BIN })).value).toEqual({ id: BIN, name: "Old warm-up", trashed: true, note: "Its versions stay in the Media Library. restore: true brings the piece back for 5 days, then it is gone for good." });
     expect(await inTrash()).toEqual(["Old warm-up"]);
     expect((await tool(anaKey, "finals_piece_trash", { piece: BIN, restore: true })).value.restored).toBe(true);
   });
@@ -272,5 +273,19 @@ describe("another account", () => {
     expect(await versions(KEPT)).toEqual(["V1A"]);
     // the page's own route says the same to him
     expect((await onPage(KEPT, nicoCookie)).error).toBe("Not found");
+  });
+});
+
+describe("a piece the page shows as read only", () => {
+  it("is read, and says so; changing it or moving it to the trash is refused in plain words", async () => {
+    // a version a plug-in's source added and this account's routes may not change: the page locks such a piece
+    libraryDb().prepare("INSERT INTO piece_items (id, piece_id, external_ref, label, position) VALUES ('pci_elsewhere', ?, 'ext_elsewhere', 'From elsewhere', 9)").run(KEPT);
+    expect((await onPage(KEPT)).writable).toBe(false);
+    expect((await tool(anaKey, "finals_pieces", { piece: KEPT })).value).toMatchObject({ id: KEPT, versions: [{ name: "V1A" }], read_only: true });
+    const refused = { error: true, text: "This piece holds a version this account may not change, so the piece is read only here." };
+    expect(await tool(anaKey, "finals_piece_update", { piece: KEPT, name: "Trailer, new" })).toMatchObject(refused);
+    expect(await tool(anaKey, "finals_piece_trash", { piece: KEPT })).toMatchObject(refused);
+    expect((await onPage(KEPT)).label).toBe("Tiny Acrobatics trailer");
+    expect(await inTrash()).toEqual([]);
   });
 });

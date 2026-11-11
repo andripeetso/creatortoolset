@@ -9,6 +9,8 @@ const enc = encodeURIComponent;
 /** Finals is the plain top-level folder named Finals in the account's Media Library (the Finals page finds it the same way). */
 const isFinals = (c: Collection) => c.kind === "manual" && c.parentId === null && c.name === "Finals";
 const READ_ONLY = "This piece holds a version this account may not change, so the piece is read only here.";
+/** How long a piece stays in the Finals trash: the library's own number (PIECE_TRASH_DAYS in api/library/trash.ts), as the page's question says it. */
+const TRASH_DAYS = 5;
 
 /** What GET /api/library/workshop says of a piece linked to a Workshop session. */
 type Linked = { sessionId: string; status?: string; description?: string; versions?: Record<string, { text: string }> };
@@ -54,7 +56,7 @@ export const finalsTools: ToolModule = {
     {
       name: "finals_pieces",
       description:
-        "The user's Finals pieces (finished videos, each kept in versions), newest first: id, name, each version's id and name, which is the winner, the Workshop session it is linked to, its link in the app. limit defaults to 20; piece (an id) gives that one in full, with each version's post description and where it was posted.",
+        "The user's Finals pieces (finished work, each kept in versions), newest first: id, name, each version's id and name, which is the winner, the Workshop session it is linked to, its link in the app. limit defaults to 20; piece (an id) gives that one in full, with each version's post description and where it was posted.",
       inputSchema: { type: "object", properties: { limit: { type: "integer" }, piece: str } },
     },
     {
@@ -69,7 +71,7 @@ export const finalsTools: ToolModule = {
     },
     {
       name: "finals_piece_trash",
-      description: "Move a Finals piece (its id) to the trash, or bring it back with restore: true. Its versions stay in the Media Library. With no piece, lists what is in the trash.",
+      description: `Move a Finals piece (its id) to the trash, where it stays ${TRASH_DAYS} days, or bring it back with restore: true. Its versions stay in the Media Library. With no piece, lists what is in the trash.`,
       inputSchema: { type: "object", properties: { piece: str, restore: { type: "boolean" } } },
     },
   ],
@@ -118,6 +120,7 @@ export const finalsTools: ToolModule = {
         if (!found) throw new ToolError(`This piece has no version ${String(id)}: finals_pieces with piece lists its versions.`);
         return found;
       };
+      // "none" clears the winner, and so does an empty answer
       const noWinner = given(a, "winner") && /^(none)?$/i.test(String(a.winner).trim());
       const winner = given(a, "winner") && !noWinner ? versionOf(a.winner) : undefined;
       const version = own ? versionOf(a.version) : undefined;
@@ -140,7 +143,10 @@ export const finalsTools: ToolModule = {
       if (version) {
         // "" is an answer here: it removes the version's own name or post description
         await save(version, { ...(given(a, "version_name") ? { label: String(a.version_name) } : {}), ...(given(a, "post_description") ? { postDescription: String(a.post_description) } : {}) });
-        changed.push(given(a, "version_name") && given(a, "post_description") ? "version name and post description saved" : given(a, "version_name") ? "version name saved" : "post description saved");
+        // said from what the piece now holds, so "saved" and "removed" are what happened
+        const saved = now.items.find((i) => i.id === version.id);
+        if (saved && saved.label !== version.label) changed.push(saved.label ? "version named" : "version's name removed");
+        if (saved && saved.postDescription !== version.postDescription) changed.push(saved.postDescription ? "post description saved" : "post description removed");
       }
       const had = piece.items.find((i) => i.winner);
       if (winner && !winner.winner) {
@@ -172,9 +178,9 @@ export const finalsTools: ToolModule = {
       }
       if (trashed) throw new ToolError(`"${piece.label}" is in the trash already: restore: true brings it back.`);
       if (piece.writable === false) throw new ToolError(READ_ONLY);
-      await ctx.sure(`Move the piece "${piece.label}" to the trash? Its versions stay in the Media Library.`);
+      await ctx.sure(`Move the piece "${piece.label}" to the trash? Its versions stay in the Media Library. The piece is gone for good after ${TRASH_DAYS} days.`);
       await ctx.json(`${at}/trash`, "POST");
-      return { ...said, trashed: true, note: "Its versions stay in the Media Library. restore: true brings the piece back." };
+      return { ...said, trashed: true, note: `Its versions stay in the Media Library. restore: true brings the piece back for ${TRASH_DAYS} days, then it is gone for good.` };
     },
   },
   // one line per tool, so each is true whatever the call does (finals_piece_trash also lists and restores)
