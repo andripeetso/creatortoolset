@@ -13,7 +13,7 @@ process.env.APP_SECRET = "mcp-library-secret";
  * Media Library ("Tiny archive": three clips, hidden from nico) and answers the library's own path for one of them.
  * `seen` keeps what its list was handed, `late` makes it slow.
  */
-const tiny = vi.hoisted(() => ({ seen: [] as Array<{ user: string; q: string | null; authorization: string; cookie: string | null }>, late: 0 }));
+const tiny = vi.hoisted(() => ({ seen: [] as Array<{ user: string; q: string | null; authorization: string; cookie: string | null }>, late: 0, main: false }));
 vi.mock("../plugins.gen", async () => {
   const { Hono } = await import("hono");
   const clips = [
@@ -43,6 +43,10 @@ vi.mock("../plugins.gen", async () => {
           source: {
             id: "tiny-archive",
             label: "Tiny archive",
+            // a test can make this source the install's Media Library (LibrarySource.main)
+            get main() {
+              return tiny.main;
+            },
             list: async (viewer: { username: string }, req: Request) => {
               const q = new URL(req.url).searchParams.get("q");
               tiny.seen.push({ user: viewer.username, q, authorization: req.headers.get("authorization") ?? "", cookie: req.headers.get("cookie") });
@@ -128,6 +132,20 @@ describe("the media tools follow the install's library", () => {
     expect(out.note).toBeUndefined();
     // the source is asked through the library's own route, as the caller: the AI key and no cookie
     expect(tiny.seen).toEqual([{ user: "ana", q: "beach", authorization: key, cookie: null }]);
+  });
+
+  it("where the plug-in's source IS the install's Media Library, only it is searched and nothing names a source", async () => {
+    tiny.main = true;
+    try {
+      const out = (await tool(key, "media_search", { q: "beach" })).value;
+      expect(out.sources).toBeUndefined();
+      expect(out.files.map((f: { title: string; source?: string }) => [f.title, f.source])).toEqual([
+        ["Beach cartwheel from the archive", undefined],
+        ["Beach photo from the archive", undefined],
+      ]);
+    } finally {
+      tiny.main = false;
+    }
   });
 
   it("kind is applied to a source's hits; roll, since, a folder and version ids are not its own, and the answer says so", async () => {

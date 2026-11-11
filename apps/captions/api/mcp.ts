@@ -462,7 +462,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
   };
   /** What a plug-in adds to that library, as this account may see it (its /library page lists these beside "Library"). None unless a plug-in brings one. */
   const librarySources = async (lib: string) =>
-    (await json<{ sources?: Array<{ id: string; label: string }> }>(`/api/library/${encodeURIComponent(lib)}/sources`).catch(() => null))?.sources ?? [];
+    (await json<{ sources?: Array<{ id: string; label: string; main?: boolean }> }>(`/api/library/${encodeURIComponent(lib)}/sources`).catch(() => null))?.sources ?? [];
   /** One plug-in source's cards for a search (its own list takes q and nothing else), or null when it refuses or is not back by `by`. */
   const sourceCards = async (lib: string, source: string, q: unknown, by: number): Promise<Args[] | null> => {
     const ask = new URLSearchParams({ source, ...(q ? { q: String(q) } : {}) });
@@ -814,7 +814,9 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       const versions = Array.isArray(a.versions) ? a.versions.map(String) : [];
       // what a plug-in adds to this library is searched too; a folder and version ids are the library's own
       const others = await librarySources(lib);
-      const asked = versions.length || a.folder ? [] : others;
+      // a source that IS the install's Media Library (its page shows that, not the app's own storage): only it is searched
+      const main = versions.length || a.folder ? undefined : others.find((s) => s.main);
+      const asked = versions.length || a.folder ? [] : main ? [main] : others;
       const said = versions.length ? (await sortedLine(lib, versions, SORT_WAIT_S.asked)).said : undefined;
       if (versions.length) q.set("versions", versions.join(","));
       if (a.q) q.set("q", String(a.q));
@@ -822,7 +824,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       if (a.roll) q.set("roll", String(a.roll));
       if (a.folder) q.set("collectionId", String(a.folder));
       if (a.since) q.set("from", String(dateMs(a.since)));
-      const page = await json<{ items: Args[] }>(`/api/library/${lib}/assets?${q}`);
+      const page = main ? { items: [] as Args[] } : await json<{ items: Args[] }>(`/api/library/${lib}/assets?${q}`);
       // with more than one source, each hit says which it is from
       const hit = (f: Args, source?: string) => ({
         ...pick(f, ["id", "versionId", "title", "kind", "roll", "state", "durationS", "tags"]),
@@ -831,6 +833,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
         ...(source ? { source } : {}),
       });
       const files = page.items.map((f) => hit(f, others.length ? "Library" : undefined));
+      const named = (label: string) => (main ? undefined : label);
       // a filter a source could not take is said, never dropped in silence
       const notes: string[] = [];
       if (others.length && !asked.length) notes.push(`A folder and version ids are the Library's own: ${others.map((s) => s.label).join(", ")} not searched.`);
@@ -845,12 +848,12 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
         if (a.roll && cards.some((c) => c.roll)) kept = kept.filter((c) => c.roll === a.roll);
         else if (a.roll && kept.length) notes.push(`${s.label} does not sort A-roll and B-roll: roll was not applied to it.`);
         if (a.since && kept.length) notes.push(`${s.label} does not say when a clip was added: since was not applied to it (captured is when a clip was shot).`);
-        files.push(...kept.slice(0, limit).map((c) => hit(c, s.label)));
+        files.push(...kept.slice(0, limit).map((c) => hit(c, named(s.label))));
       }
       return {
         library: lib,
         ...(said ? { said } : {}),
-        ...(others.length ? { sources: ["Library", ...asked.map((s) => s.label)] } : {}),
+        ...(others.length && !main ? { sources: ["Library", ...asked.map((s) => s.label)] } : {}),
         files,
         ...(notes.length ? { note: notes.join(" ") } : {}),
       };
