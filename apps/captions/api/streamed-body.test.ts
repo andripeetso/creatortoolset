@@ -1,4 +1,5 @@
 import { mkdtempSync } from "node:fs";
+import { request } from "node:http";
 import type { AddressInfo } from "node:net";
 import { once } from "node:events";
 import { tmpdir } from "node:os";
@@ -39,12 +40,15 @@ describe("a streamed body on a listening server", () => {
     expect(await part.json()).toMatchObject({ ok: true, partNumber: 1, size });
   });
 
-  it("still refuses a body over the cap from its declared length", async () => {
-    const res = await fetch(`${base}/api/assistant/turn`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: new Uint8Array(50 * 1024 * 1024 + 1),
+  it("still refuses a body over the cap from its declared length, before any of it is sent", async () => {
+    const status = await new Promise<number | undefined>((resolve, reject) => {
+      const req = request(`${base}/api/assistant/turn`, { method: "POST", headers: { "content-type": "application/json", "content-length": String(50 * 1024 * 1024 + 1) } }, (res) => {
+        resolve(res.statusCode);
+        req.destroy();
+      });
+      req.on("error", reject);
+      req.flushHeaders(); // the length is declared, nothing is written
     });
-    expect(res.status).toBe(413);
+    expect(status).toBe(413);
   });
 });
