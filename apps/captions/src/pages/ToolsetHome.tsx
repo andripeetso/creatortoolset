@@ -89,8 +89,10 @@ export default function ToolsetHome() {
   const load = useSetup((s) => s.load);
   // Home's tiles are all but the ones switched off under Settings → Tools (contracts onHome). Tiles wait for the
   // setup to load (or to fail: a guest has none, and then nothing is hidden), so a hidden tile is never drawn and dropped.
+  // Every tile waits, Finals and a plug-in's too: drawn alone on a first visit, they jumped to their place when the rest came.
   const [loaded, setLoaded] = useState(false);
-  const shownOnHome = (t: HomeTile) => (loaded || view !== null) && onHome(view?.hidden, t);
+  const known = loaded || view !== null;
+  const shownOnHome = (t: HomeTile) => known && onHome(view?.hidden, t);
   useEffect(() => {
     if (!me) return;
     void load().finally(() => setLoaded(true));
@@ -193,14 +195,14 @@ export default function ToolsetHome() {
 
   // the boxed groups with their tiles: a group whose tiles are all switched off (Settings → Tools) is not drawn, and
   // the row of boxes keeps its arrows between the ones that are left
-  const boxes = TOOL_GROUPS.filter((g) => g.id !== "tools")
+  const boxes = (known ? TOOL_GROUPS : []).filter((g) => g.id !== "tools")
     .map((g) => ({
       g,
       nodes: [...(g.id === "distribute" ? ["finals" as Key] : g.tools.filter(shownOnHome)).map((t) => tile(t)), ...pluginTilesFor(g.label, me).map((t) => pluginTile(t))],
     }))
     .filter((b) => b.nodes.length > 0);
   const boxColumns = ["", "min-[900px]:grid-cols-1", "min-[900px]:grid-cols-[1fr_auto_1fr]", "min-[900px]:grid-cols-[1fr_auto_1fr_auto_1fr]"][boxes.length] ?? "";
-  const extraTiles = [...extras.map((k) => tile(k, true)), ...pluginTilesFor("Extras", me).map((t) => pluginTile(t, true))];
+  const extraTiles = known ? [...extras.map((k) => tile(k, true)), ...pluginTilesFor("Extras", me).map((t) => pluginTile(t, true))] : [];
 
   return (
     <div
