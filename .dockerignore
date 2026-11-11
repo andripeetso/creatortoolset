@@ -14,3 +14,4 @@
 apps/captions/runtime
 apps/mac/build
 apps/mac/.build
+apps/ios/build

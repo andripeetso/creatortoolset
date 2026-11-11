@@ -15,6 +15,8 @@ import { SESSION_STATUSES } from "./lib/workshop/types";
 import { innerCall, jobTurn, type AuthVars } from "./auth";
 import type { SessionUser } from "./users";
 import type { ServerPlugin } from "./lib/plugin";
+import type { AssetCard } from "../contracts/library";
+import { rollCount, rollLine } from "./library/roll";
 
 /**
  * Creator Toolset as a remote MCP server: POST /api/mcp, MCP's Streamable HTTP answered as plain JSON, no sessions. Only a Full AI key gets here
@@ -49,6 +51,12 @@ const TRANSCRIPT_MAX = 12_000;
 
 /** MCP clients give up on a tool call after about a minute: a reply still thinking hands back its id to wait on. */
 const WAIT_MAX_S = 55;
+/** Seconds a media tool waits for new clips to be sorted: after adding them, and when asked with versions. */
+export const SORT_WAIT_S = { added: 10, asked: 50 };
+/** A media tool answers within this many seconds of its call, under the client's minute. */
+const ANSWER_BY_S = 50;
+/** What a media tool's answer says while clips are still being sorted (a transcript first). */
+const STILL_SORTING = "Some clips are still being sorted (their transcript comes first): media_search with these versions waits for the final count.";
 
 const INSTRUCTIONS = `Creator Toolset, as the signed-in user's account.
 
@@ -67,7 +75,9 @@ Instagram (the Analyzer): instagram_refresh starts a pull of one of the user's a
 official login), instagram_posts lists its posts since a date and the state of its pulls.
 
 Media Library: the user's footage. media_import_folder brings a folder on this computer in (and reads the script files
-there), media_search finds files by what they show or say, media_folders lists the folders (B-roll among them).
+there), media_search finds files by what they show or say, media_folders lists the folders. Each video sorts itself as
+A-roll (someone talks to the camera: the takes an edit is built on) or B-roll (the rest). After adding files, tell the
+user the answer's said line.
 
 AI Editor: edits made from footage in the Media Library; each runs steps (analyze, script, draft, broll) into drafts,
 one per version, which can be filed in Review. editor_create makes a new one from the takes' version ids and starts it:
@@ -204,16 +214,16 @@ export const TOOLS = [
   {
     name: "media_import_folder",
     description:
-      "Bring a folder on this computer into the Media Library now (read in place, nothing copied): its videos, photos and sound changed on or after since (an ISO date-time with the user's offset, like 2026-11-10T00:00:00+02:00 for today; leave out for all). Returns each file's version_id (for editor_create) and the text of the script files at the top of that folder (.txt, .md, .docx, .rtf, .pages). Never a whole disk or home folder: the folder the files are in. folder = a Media Library folder id to file them in. Only where the app runs on the user's own computer.",
+      "Bring a folder on this computer into the Media Library now (read in place, nothing copied): its videos, photos and sound changed on or after since (an ISO date-time with the user's offset, like 2026-11-10T00:00:00+02:00 for today; leave out for all). Returns each file's version_id (for editor_create), said (the line to tell the user: clips added, A-roll and B-roll) and the text of the script files at the top of that folder (.txt, .md, .docx, .rtf, .pages). Never a whole disk or home folder: the folder the files are in. folder = a Media Library folder id to file them in. Only where the app runs on the user's own computer.",
     inputSchema: { type: "object", properties: { path: str, since: str, folder: str }, required: ["path"] },
   },
   {
     name: "media_search",
     description:
-      "Search the user's Media Library: q matches titles, tags, AI descriptions and what is said in the clips; leave it out for the newest. kind = video, image, audio or doc; folder = a folder id (media_folders); since = only files added on or after this date. Each hit: id, version_id (for editor_create), title, kind, state (ready once processed), length, description, tags.",
-    inputSchema: { type: "object", properties: { q: str, kind: { type: "string", enum: ["video", "image", "audio", "doc"] }, folder: str, since: str, limit: { type: "integer" } } },
+      "Search the user's Media Library: q matches titles, tags, AI descriptions and what is said in the clips; leave it out for the newest. kind = video, image, audio or doc; roll = a (A-roll) or b (B-roll); folder = a folder id (media_folders); since = only files added on or after this date; versions = version ids just added: said then counts how they were sorted, waiting up to 50 s for it. Each hit: id, version_id (for editor_create), title, kind, roll, state (ready once processed), length, description, tags.",
+    inputSchema: { type: "object", properties: { q: str, kind: { type: "string", enum: ["video", "image", "audio", "doc"] }, roll: { type: "string", enum: ["a", "b"] }, folder: str, since: str, versions: { type: "array", items: str }, limit: { type: "integer" } } },
   },
-  { name: "media_folders", description: "The Media Library's folders (B-roll, A-roll and the user's own): id, name, how many files. A folder id goes into media_search and editor_create's broll_folder; media_import_folder files into a plain folder (kind manual), not a smart one.", inputSchema: { type: "object", properties: {} } },
+  { name: "media_folders", description: "The Media Library's folders: id, name, how many files. A folder id goes into media_search and editor_create's broll_folder; media_import_folder files into a plain folder (kind manual), not a smart one.", inputSchema: { type: "object", properties: {} } },
   {
     name: "instagram_add_account",
     description: "Add an Instagram account to the Analyzer by handle and start pulling its posts: the user's own (mine=true) or any other creator's public account (on the user's Apify key). Its posts take a few minutes to come in: instagram_posts shows them (and the pull's state) once they have.",
@@ -272,8 +282,8 @@ const ASSISTANT_DEFS = [
   },
   {
     name: "use_file",
-    description: "Send a video or recording to a tool: file = the id of one dropped in the chat, or path = a file on this computer (when the server runs on it; nothing is uploaded). to: notes = Video Notes (transcript, summary, takeaways, action items, chapters; follow it with notes_get), review = a Review video (then review_share for a link), captions = a Caption Studio project. name = a title for it (default the file's name). The same file can go to several.",
-    inputSchema: { type: "object", properties: { file: str, path: str, to: { type: "string", enum: [...FILE_USES] }, name: str }, required: ["to"] },
+    description: "Send a video or recording to a tool: file = the id of one dropped in the chat, or path = a file on this computer (when the server runs on it; not for library: media_import_folder reads its folder in place). to: notes = Video Notes (transcript, summary, takeaways, action items, chapters; follow it with notes_get), review = a Review video (then review_share for a link), captions = a Caption Studio project, library = the Media Library, where each clip sorts itself as A-roll or B-roll (files = several dropped ids at once; tell the user the answer's said line). name = a title for it (default the file's name). The same file can go to several.",
+    inputSchema: { type: "object", properties: { file: str, files: { type: "array", items: str }, path: str, to: { type: "string", enum: [...FILE_USES] }, name: str }, required: ["to"] },
   },
   {
     name: "notes_get",
@@ -441,6 +451,48 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
     if (!lib) throw new ToolError("This account has no Media Library yet.");
     return String(lib.id);
   };
+  /** The said line for versions just added (roll.ts), waiting up to waitS (never past `by`) while some are still being sorted. */
+  const sortedLine = async (lib: string, versions: string[], waitS: number, by = Date.now() + ANSWER_BY_S * 1000) => {
+    const end = Math.min(by, Date.now() + waitS * 1000);
+    const q = new URLSearchParams({ versions: versions.slice(0, 200).join(","), limit: "200" });
+    for (;;) {
+      const items = (await json<{ items?: AssetCard[] }>(`/api/library/${encodeURIComponent(lib)}/assets?${q}`)).items ?? [];
+      const { left } = rollCount(items);
+      if (!left || Date.now() >= end) return { said: rollLine(items), left };
+      await sleep(Math.min(3000, end - Date.now()));
+    }
+  };
+  /** use_file to the library: each dropped file is added (a copy the library keeps), then one line says how they were sorted. */
+  const toLibrary = async (a: Args) => {
+    const by = Date.now() + ANSWER_BY_S * 1000;
+    // a file on this computer is read where it is, never copied: its folder goes in with media_import_folder
+    if (a.path) throw new ToolError("For a file on this computer, use media_import_folder with its folder (and since): it is read where it is.");
+    const ids = [...(Array.isArray(a.files) ? a.files.map(String) : []), ...(a.file ? [String(a.file)] : [])];
+    if (!ids.length) throw new ToolError("Give the dropped files' ids.");
+    const files: Args[] = [];
+    for (const id of ids.slice(0, 50)) {
+      // big files take a while each: the ones not reached in time are named, to send again
+      if (Date.now() > by - 15_000) {
+        files.push({ file: id, not_yet: "Not added yet: call use_file again with these" });
+        continue;
+      }
+      try {
+        const r = await json(`/api/assistant/files/${encodeURIComponent(id)}/use`, "POST", { to: "library", ...(ids.length === 1 ? pick(a, ["name"]) : {}) });
+        files.push({ name: r.name, version_id: r.versionId, library: r.libraryId, href: r.href, ...pick(r, ["note"]) });
+      } catch (e) {
+        files.push({ file: id, error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    const added = files.filter((f) => f.version_id);
+    const lib = String(added[0]?.library ?? "");
+    const sorted = lib ? await sortedLine(lib, added.map((f) => String(f.version_id)), SORT_WAIT_S.added, by) : { said: "Nothing was added", left: 0 };
+    return {
+      said: sorted.said,
+      files: files.map(({ library: _, ...f }) => f),
+      ...(lib ? { href: added.length === 1 ? added[0]!.href : `/library?library=${lib}` } : {}),
+      ...(sorted.left ? { note: STILL_SORTING } : {}),
+    };
+  };
   const pieces = async (session: string) => (await ws<Args[]>(`/sessions/${session}/docs`)).filter((d) => d.kind !== "notes").map(piece);
 
   const wait = async (a: Args) => {
@@ -561,13 +613,14 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
     },
     use_file: async (a) => {
       // what the tool still needs comes first: the assistant asks for it (ask_secret, a Settings page), then tries again
-      const tool = a.to === "review" ? "review" : a.to === "captions" ? "captions" : "notes";
+      const tool = a.to === "review" ? "review" : a.to === "captions" ? "captions" : a.to === "library" ? "media" : "notes";
       const { missing } = readiness(tool, (await json<SetupView>("/api/setup")).have);
       if (missing.length)
         return {
           not_yet: `${TOOL_NAMES[tool]} needs these first; then call use_file again.`,
           needs: missing.map((n) => ({ what: n.what, ...(n.form === "keys" ? { ask_secret: n.anyOf } : { open: n.form === "ai" ? "/settings/providers" : "/settings/general" }) })),
         };
+      if (a.to === "library") return toLibrary(a);
       if (!a.file && !a.path) throw new ToolError("Give the dropped file's id, or a path on this computer.");
       const file = a.path ? (await json(`/api/assistant/files/path`, "POST", { path: a.path })).id : a.file;
       return json(`/api/assistant/files/${encodeURIComponent(String(file))}/use`, "POST", pick(a, ["to", "name"]));
@@ -676,28 +729,36 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
     media_search: async (a) => {
       const lib = await homeLibraryId();
       const q = new URLSearchParams({ limit: String(Math.max(1, Math.min(Number(a.limit ?? 50), 200))) });
+      const versions = Array.isArray(a.versions) ? a.versions.map(String) : [];
+      const said = versions.length ? (await sortedLine(lib, versions, SORT_WAIT_S.asked)).said : undefined;
+      if (versions.length) q.set("versions", versions.join(","));
       if (a.q) q.set("q", String(a.q));
       if (a.kind) q.set("kind", String(a.kind));
+      if (a.roll) q.set("roll", String(a.roll));
       if (a.folder) q.set("collectionId", String(a.folder));
       if (a.since) q.set("from", String(dateMs(a.since)));
       const page = await json<{ items: Args[] }>(`/api/library/${lib}/assets?${q}`);
       return {
         library: lib,
+        ...(said ? { said } : {}),
         files: page.items.map((f) => ({
-          ...pick(f, ["id", "versionId", "title", "kind", "state", "durationS", "tags"]),
+          ...pick(f, ["id", "versionId", "title", "kind", "roll", "state", "durationS", "tags"]),
           ...(f.description ? { description: String((f.description as Args).text).slice(0, 300) } : {}),
           ...(f.capturedAt ? { captured: when(f.capturedAt) } : {}),
         })),
       };
     },
     media_import_folder: async (a) => {
+      const by = Date.now() + ANSWER_BY_S * 1000; // the route itself may take 40 s
       const body: Args = { path: a.path };
       if (a.since) body.since = dateMs(a.since);
       if (a.folder) body.collectionId = a.folder;
       const r = await json<{ libraryId: string; imported: Args[]; scripts: Args[]; working?: number; copying?: string[] }>("/api/library/import-folder", "POST", body);
       const done = r.imported.filter((x) => x.versionId);
+      const sorted = done.length ? await sortedLine(r.libraryId, done.map((x) => String(x.versionId)), SORT_WAIT_S.added, by) : null;
       return {
         imported: done.length,
+        ...(sorted ? { said: sorted.said } : {}),
         files: r.imported.map((x) => ({ file: x.file, ...(x.versionId ? { version_id: x.versionId } : { error: x.error }) })),
         scripts: r.scripts,
         ...(r.working ? { still_importing: r.working } : {}),
@@ -705,6 +766,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
         note: [
           done.length ? "They are processed (transcript, description) in the background; editor_create can take them now and waits for them." : r.imported.length ? "" : "No media files there changed since then.",
           r.working || r.copying?.length ? "Some files are still coming in: call media_import_folder again with the same path and since to get their version_id (the ones in already come back at once)." : "",
+          sorted?.left ? STILL_SORTING : "",
         ].filter(Boolean).join(" "),
       };
     },
@@ -888,6 +950,7 @@ const STEPS: Record<string, string> = {
   delete_scheduled_task: "Deleting the scheduled task",
   editor_get: "Opening the edit",
   editor_run: "Starting an AI Editor job",
+  editor_go: "Carrying on the edit",
   instagram_posts: "Reading your Instagram posts",
   instagram_refresh: "Refreshing Instagram",
   editor_create: "Starting a new edit",
@@ -947,6 +1010,7 @@ export function workFor(name: string, a: Args, r: Args): { card: AssistantWork; 
         ? { card: { id: `edit:${r.id}:new`, kind: "edit", title: String(r.name ?? "New edit"), href: `/editor/${encodeURIComponent(String(r.id))}`, status: r.status === "started" ? "running" : "done", detail: r.status === "started" ? "The AI Editor is working on it" : "Made, not started" } }
         : null;
     case "use_file": {
+      if (a.to === "library") return r.said && r.href ? { card: { id: `library:${String(r.href)}`, kind: "link", title: "Media Library", href: String(r.href), status: "done", detail: String(r.said) } } : null;
       const kind = a.to === "review" ? "review" : a.to === "captions" ? "captions" : "notes";
       const where = { notes: "Video Notes", review: "Review", captions: "Caption Studio" }[kind];
       return r.href

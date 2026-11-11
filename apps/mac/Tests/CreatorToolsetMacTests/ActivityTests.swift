@@ -27,4 +27,26 @@ final class ActivityTests: XCTestCase {
         XCTAssertTrue(empty.active.isEmpty && empty.forYou.isEmpty)
         XCTAssertEqual(menuStatusLabel(.up, waiting: 2), "Creator Toolset, running, 2 waiting for you")
     }
+
+    func testServerRowsCarryProgressAndTheReasonTheyWait() throws {
+        let json = Data("""
+        [{"id":"library:l:prepare","title":"Media Library","detail":"Preparing 17 clips · 45%","state":"working","href":"/library","progress":0.45},
+         {"id":"library:l:limit","title":"Media Library","detail":"17 AI descriptions wait","state":"working","href":"/library",
+          "reason":"Your Claude plan's weekly limit is reached; it resets 5pm. They carry on by themselves then."},
+         {"id":"old","title":"Tiny","detail":"An older server's row","state":"working","href":"/x","progress":7}]
+        """.utf8)
+        let rows = activityRows(sessions: [], aiRunning: 0, plugin: try JSONDecoder().decode([PluginRow].self, from: json)).active
+        XCTAssertEqual(rows.map(\.word), ["Working", "Waiting", "Working"])
+        XCTAssertEqual(rows[0].progress, 0.45)
+        XCTAssertNil(rows[0].reason)
+        XCTAssertNil(rows[1].progress)
+        XCTAssertEqual(rows[2].progress, 1, "a progress past the end is shown full")
+
+        // the plan's limit is said once: by the row it holds back, else on the panel's own line
+        let limit = "Claude: You've hit your weekly limit · resets 5pm (Europe/Tallinn)"
+        XCTAssertNil(panelLimitLine(lastError: limit, rows: rows))
+        XCTAssertEqual(panelLimitLine(lastError: limit, rows: [rows[0]]), "Claude's weekly limit is reached · resets 5pm")
+        XCTAssertNil(panelLimitLine(lastError: "Claude: something else broke", rows: []))
+        XCTAssertNil(panelLimitLine(lastError: nil, rows: []))
+    }
 }

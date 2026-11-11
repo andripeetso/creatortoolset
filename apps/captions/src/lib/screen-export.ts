@@ -1,6 +1,6 @@
 import { ALL_FORMATS, BlobSource, BufferTarget, Conversion, Input, Mp4OutputFormat, Output, Quality, UrlSource } from "mediabunny";
 import { VideoSample, VideoSampleSink } from "mediabunny";
-import { drawFrame, pointerPath, type CameraImage, type ScreenEvents, type ScreenLook } from "./screen-recording";
+import { alphaPacking, drawFrame, pointerPath, type CameraImage, type ScreenEvents, type ScreenLook } from "./screen-recording";
 import { allowHighH264 } from "./h264-level";
 import { frameReader } from "./frame-reader";
 
@@ -9,6 +9,8 @@ import { frameReader } from "./frame-reader";
  * `width`×`height`. The first sound track (the voice) comes along. `cameraUrl` is the camera file (same clock: its
  * t=0 is the screen's t=0); its frames are drawn over the picture. `trim` keeps only that part of the recording
  * (seconds); the look's times stay the recording's own. Returns the MP4.
+ * `alpha` (a look with no background) makes the file the Mac app turns into a see-through video instead: each frame
+ * twice in one picture, its colours over black and its matte (`alphaPacking`). It is not a video to watch.
  */
 export async function renderScreenVideo(opts: {
   url: string;
@@ -21,15 +23,26 @@ export async function renderScreenVideo(opts: {
   width: number;
   height: number;
   trim?: { start: number; end: number };
+  alpha?: boolean;
   onProgress: (p: number) => void;
   signal?: AbortSignal;
 }): Promise<Blob> {
   const { events, look, width, height } = opts;
+  const packing = opts.alpha ? alphaPacking(width, height) : null;
   const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
+  canvas.width = packing?.width ?? width;
+  canvas.height = packing?.height ?? height;
   const ctx = canvas.getContext("2d", { alpha: false });
-  if (!ctx) throw new Error("This browser can't draw the video");
+  // a see-through frame is drawn on a canvas of its own (clear where nothing is), then packed; `matte` is its shape in white
+  const layer = () => {
+    const c = document.createElement("canvas");
+    c.width = width;
+    c.height = height;
+    return c.getContext("2d");
+  };
+  const clear = packing ? layer() : null;
+  const matte = packing ? layer() : null;
+  if (!ctx || (packing && (!clear || !matte))) throw new Error("This browser can't draw the video");
   const path = pointerPath(events);
   await allowHighH264(); // a large window's recording is H.264 level 6.0, which the Mac app's web view takes only this way
   // ponytail: the whole MP4 in memory (~75 MB a minute at 1080p); stream it to the upload if long recordings run out of memory
@@ -59,11 +72,15 @@ export async function renderScreenVideo(opts: {
       trim: opts.trim,
       video: {
         codec: "avc",
-        quality: new Quality({ bitrate: Math.max(8_000_000, width * height * 5), bitrateMode: "variable" }),
+        // the packed picture is read once more by the app and thrown away: more bits, so its matte comes through clean
+        quality: new Quality({
+          bitrate: packing ? packing.width * packing.height * 8 : Math.max(8_000_000, width * height * 5),
+          bitrateMode: "variable",
+        }),
         frameRate: 60,
         forceTranscode: true,
-        processedWidth: width,
-        processedHeight: height,
+        processedWidth: canvas.width,
+        processedHeight: canvas.height,
         process: async (sample) => {
           // the browser may close a frame image in the next microtask, so both images are taken right before drawing
           // a trimmed conversion hands over frames timed from the cut; the look and the camera go by the recording's time
@@ -81,11 +98,24 @@ export async function renderScreenVideo(opts: {
           const camWhole = camFrame instanceof VideoFrame ? await createImageBitmap(camFrame) : null;
           const camImage: CameraImage | null =
             cam && camFrame ? { image: camWhole ?? camFrame, width: cam.displayWidth, height: cam.displayHeight } : null;
-          drawFrame(ctx, whole ?? frame, W, H, t, look, path, events.clicks, camImage, {
+          clear?.clearRect(0, 0, width, height);
+          drawFrame(clear ?? ctx, whole ?? frame, W, H, t, look, path, events.clicks, camImage, {
             picture: read ? (src, w, h) => reader?.part(src, W, H, w, h) ?? null : undefined,
           });
           whole?.close();
           camWhole?.close();
+          if (packing && clear && matte) {
+            // the colours over black, and beside or under them white kept only as far as the frame is opaque
+            matte.globalCompositeOperation = "copy";
+            matte.fillStyle = "#fff";
+            matte.fillRect(0, 0, width, height);
+            matte.globalCompositeOperation = "destination-in";
+            matte.drawImage(clear.canvas, 0, 0);
+            ctx.fillStyle = "#000";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(clear.canvas, 0, 0);
+            ctx.drawImage(matte.canvas, packing.layout === "beside" ? width : 0, packing.layout === "stacked" ? height : 0);
+          }
           return canvas;
         },
       },
