@@ -84,7 +84,9 @@ describe("YouTube channel report", () => {
     for (const u of analytics) {
       expect(u.searchParams.get("ids")).toBe("channel==MINE");
       const days = (Date.parse(u.searchParams.get("endDate")!) - Date.parse(u.searchParams.get("startDate")!)) / DAY;
-      expect(days).toBe(28);
+      // the videos report covers the whole channel; the others the last 28 days
+      if (u.searchParams.get("dimensions")?.startsWith("video")) expect(u.searchParams.get("startDate")).toBe("2005-01-01");
+      else expect(days).toBe(28);
     }
     const countries = analytics.find((u) => u.searchParams.get("dimensions") === "country")!;
     expect(countries.searchParams.get("metrics")).toBe("views,estimatedMinutesWatched,averageViewDuration,subscribersGained");
@@ -112,6 +114,72 @@ describe("YouTube channel report", () => {
     expect(got.reports?.countries).toBeUndefined();
     expect(got.reports?.day).toHaveLength(2);
     expect(got.stats.days).toHaveLength(2);
+  });
+
+  describe("every video, Shorts and retention", () => {
+    const uploads = { ...account, platformId: "UC1" } as StoredAccount;
+    // one row of the videos report: video, creatorContentType, then its eight metrics
+    const videoRow = (i: number, kind: string) => [`v${i}`, kind, 1000 - i, 10, 30, 50, 1, 0, 0, 0];
+
+    // a channel with three uploads, the videos report in the pages given, and retention withheld for the listed videos
+    function fakeUploads(pages: unknown[][][], withheldRetention: string[] = []) {
+      const analytics: URL[] = [];
+      vi.stubGlobal("fetch", async (url: string | URL) => {
+        const u = new URL(String(url));
+        if (u.hostname === "youtubeanalytics.googleapis.com") {
+          analytics.push(u);
+          const dims = u.searchParams.get("dimensions");
+          if (dims === "elapsedVideoTimeRatio") {
+            const v = u.searchParams.get("filters")!.replace("video==", "");
+            if (withheldRetention.includes(v)) return Response.json({ error: { code: 403, message: "not available" } }, { status: 403 });
+            return Response.json({ rows: [[0, 1.2, 1.1], [0.5, 0.8, 0.9]] });
+          }
+          if (dims === "video,creatorContentType") return Response.json({ rows: pages[(Number(u.searchParams.get("startIndex") ?? 1) - 1) / 200] ?? [] });
+          return Response.json({ rows: [] });
+        }
+        if (u.pathname.endsWith("/channels")) return Response.json({ items: [{ id: "UC1", statistics: {}, contentDetails: { relatedPlaylists: { uploads: "UU1" } } }] });
+        if (u.pathname.endsWith("/playlistItems")) return Response.json({ items: ["v1", "v2", "v3"].map((id) => ({ snippet: { resourceId: { videoId: id } } })) });
+        if (u.pathname.endsWith("/videos"))
+          return Response.json({ items: u.searchParams.get("id")!.split(",").map((id) => ({ id, snippet: { title: id, publishedAt: "2026-10-20T00:00:00Z" }, statistics: { viewCount: "1" }, contentDetails: { duration: "PT30S" } })) });
+        return Response.json({}, { status: 404 });
+      });
+      return analytics;
+    }
+
+    it("pages the videos report 200 at a time from startIndex 1 and keeps 500 videos at most", async () => {
+      const page = (from: number) => Array.from({ length: 200 }, (_, k) => videoRow(from + k, "VIDEO_ON_DEMAND"));
+      const analytics = fakeUploads([page(1), page(201), page(401)]);
+      const got = await pullAccount(uploads, "tinyacrobatics");
+      const starts = analytics.filter((u) => u.searchParams.get("dimensions") === "video,creatorContentType").map((u) => u.searchParams.get("startIndex") ?? "1");
+      expect(starts).toEqual(["1", "201", "401"]);
+      expect(got.videos).toHaveLength(500);
+      expect(got.videos?.[499]).toMatchObject({ id: "v500", kind: "VIDEO_ON_DEMAND", views: 500 });
+    });
+
+    it("tells Shorts from long videos by kind, and asks each newest video's retention on its own", async () => {
+      const analytics = fakeUploads([[videoRow(1, "SHORTS"), videoRow(2, "VIDEO_ON_DEMAND")]]);
+      const got = await pullAccount(uploads, "tinyacrobatics");
+      expect(got.videos).toEqual([
+        expect.objectContaining({ id: "v1", kind: "SHORTS", views: 999, watchMinutes: 10, averageViewSeconds: 30, averageViewPercent: 50 }),
+        expect.objectContaining({ id: "v2", kind: "VIDEO_ON_DEMAND", views: 998 }),
+      ]);
+      const retention = analytics.filter((u) => u.searchParams.get("dimensions") === "elapsedVideoTimeRatio");
+      // v3 is an upload the videos report does not list, so it has no retention to ask for
+      expect(retention.map((u) => u.searchParams.get("filters"))).toEqual(["video==v1", "video==v2"]);
+      expect(retention[0].searchParams.get("startDate")).toBe("2026-10-20");
+      expect(got.videos?.[0].retention).toEqual([
+        { elapsed: 0, watch: 1.2, relative: 1.1 },
+        { elapsed: 0.5, watch: 0.8, relative: 0.9 },
+      ]);
+    });
+
+    it("leaves a withheld video's retention out and keeps the video", async () => {
+      fakeUploads([[videoRow(1, "SHORTS"), videoRow(2, "VIDEO_ON_DEMAND")]], ["v2"]);
+      const got = await pullAccount(uploads, "tinyacrobatics");
+      expect(got.videos?.find((v) => v.id === "v2")).toBeDefined();
+      expect(got.videos?.find((v) => v.id === "v2")?.retention).toBeUndefined();
+      expect(got.videos?.find((v) => v.id === "v1")?.retention).toHaveLength(2);
+    });
   });
 
   it("every report follows the Analytics API rules for channel reports", () => {

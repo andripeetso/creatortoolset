@@ -3,7 +3,7 @@ import type { Context } from "hono";
 import { getSessionUser, sessionOf, type AuthVars } from "./auth";
 import { env } from "./lib/env";
 import { keyFor } from "./my-keys";
-import { LOGINS, PLATFORMS, type ConnectorsView, type OwnInstagram, type LoginKind, type SocialPlatform } from "../contracts/connectors";
+import { LOGINS, PLATFORMS, type ConnectorsView, type OwnInstagram, type LoginKind, type SocialPlatform, type SocialVideo } from "../contracts/connectors";
 import { accountsFromGrant, finishLogin, freshToken, loginUrl, pullAccount, refreshGrant } from "./lib/connectors/platforms";
 import { issuerFor, loginsHere, serviceRedeem, serviceRefresh, serviceStart, viaService, type Issuer } from "./lib/connectors/signin-service";
 import { sessionSources } from "./lib/connectors/provider";
@@ -200,7 +200,7 @@ async function pullOne(user: SessionUser | string, key: string): Promise<void> {
     const fresh = a.via === "login" ? await freshToken(a, a.issuer === "service" ? serviceRefresh : refreshGrant) : {};
     if (fresh.token !== a.token) patchAccount(name, key, fresh); // TikTok's refresh token changes on every refresh: keep the new one at once
     const got = await pullAccount({ ...a, ...fresh } as StoredAccount, name);
-    patchAccount(name, key, { stats: got.stats, posts: got.posts.sort((x, y) => y.at - x.at).slice(0, 100), ...(got.snapshots ? { snapshots: got.snapshots } : {}), ...(got.daily ? { daily: got.daily } : {}), name: got.name || a.name, avatar: got.avatar || a.avatar, pulledAt: Date.now(), pullError: undefined, loginStatus: "connected" });
+    patchAccount(name, key, { stats: got.stats, posts: got.posts.sort((x, y) => y.at - x.at).slice(0, 100), ...(got.videos ? { videos: got.videos } : {}), ...(got.snapshots ? { snapshots: got.snapshots } : {}), ...(got.daily ? { daily: got.daily } : {}), name: got.name || a.name, avatar: got.avatar || a.avatar, pulledAt: Date.now(), pullError: undefined, loginStatus: "connected" });
     // the posts' videos are fingerprinted while their media URLs are fresh (in the background, like the Analyzer hand-off)
     void printPosts(name, key);
   } catch (e) {
@@ -223,17 +223,33 @@ export function startConnectorPulls(): void {
   }, 60 * 60_000).unref();
 }
 
+const KIND_LABEL: Record<string, string> = { SHORTS: "Shorts", VIDEO_ON_DEMAND: "Long videos", LIVE_STREAM: "Live streams" };
+
+/** A channel's every video, grouped by kind (Shorts, long videos, live streams) with the newest videos' retention at 25, 50 and 75% of the length. */
+function videosFile(title: string, videos: SocialVideo[]): string {
+  const kinds = new Map<string, SocialVideo[]>();
+  for (const v of videos) kinds.set(v.kind, [...(kinds.get(v.kind) ?? []), v]);
+  const sum = (vs: SocialVideo[], k: "views" | "watchMinutes") => vs.reduce((n, v) => n + (v[k] ?? 0), 0).toLocaleString("en-US");
+  const summary = [...kinds].map(([k, vs]) => `${KIND_LABEL[k] ?? k}: ${vs.length} videos, ${sum(vs, "views")} views, ${sum(vs, "watchMinutes")} watch minutes`);
+  // the first retention point at or past the share of the video, as the watch ratio (1 = the audience's average)
+  const at = (v: SocialVideo, share: number) => v.retention?.find((r) => r.elapsed >= share)?.watch?.toFixed(2) ?? "";
+  const rows = videos.map((v) => `| ${KIND_LABEL[v.kind] ?? v.kind} | ${v.views ?? ""} | ${v.watchMinutes ?? ""} | ${v.averageViewSeconds ?? ""} | ${v.averageViewPercent ?? ""} | ${v.likes ?? ""} | ${v.comments ?? ""} | ${v.shares ?? ""} | ${at(v, 0.25)} | ${at(v, 0.5)} | ${at(v, 0.75)} | https://www.youtube.com/watch?v=${v.id} |`);
+  return `${title} · every video, all time\n${summary.join("\n")}\n\nRetention columns: the audience watch ratio 25%, 50% and 75% into the video, newest videos only.\n\n| kind | views | watch min | avg view s | avg view % | likes | comments | shares | ret 25% | ret 50% | ret 75% | link |\n|---|---|---|---|---|---|---|---|---|---|---|---|\n${rows.join("\n")}\n`;
+}
+
 /** The project's connected channels for the Workshop folder: numbers and recent posts, newest first. */
 export function channelFiles(username: string, projectId?: string): Record<string, string> {
   if (!projectId) return {};
   const files: Record<string, string> = {};
-  const mine = readConnectors(username).accounts.filter((a) => a.projectId === projectId && a.platform !== "instagram" && a.posts?.length);
+  const mine = readConnectors(username).accounts.filter((a) => a.projectId === projectId && a.platform !== "instagram" && (a.posts?.length || a.videos?.length));
   for (const a of mine) {
     const s = a.stats ?? {};
     const head = [s.followers !== undefined ? `${s.followers.toLocaleString("en-US")} followers` : "", s.views !== undefined ? `${s.views.toLocaleString("en-US")} views all time` : "", a.pulledAt ? `read ${new Date(a.pulledAt).toISOString().slice(0, 10)}` : ""].filter(Boolean).join(" · ");
+    const base = `channels/${a.platform}-${a.handle.replace(/[^\w.-]/g, "_")}`;
+    const title = `# ${PLATFORMS.find((p) => p.id === a.platform)!.label} @${a.handle}${a.name ? ` (${a.name})` : ""}`;
     const rows = (a.posts ?? []).map((p) => `| ${new Date(p.at).toISOString().slice(0, 10)} | ${p.views ?? ""} | ${p.likes ?? ""} | ${p.comments ?? ""} | ${p.shares ?? ""} | ${p.text.replace(/\s+/g, " ").replace(/\|/g, "/").slice(0, 140)} | ${p.url ?? ""} |`);
-    files[`channels/${a.platform}-${a.handle.replace(/[^\w.-]/g, "_")}.md`] =
-      `# ${PLATFORMS.find((p) => p.id === a.platform)!.label} @${a.handle}${a.name ? ` (${a.name})` : ""}\n${head}\n\n| date | views | likes | comments | shares | text | link |\n|---|---|---|---|---|---|---|\n${rows.join("\n")}\n`;
+    if (a.posts?.length) files[`${base}.md`] = `${title}\n${head}\n\n| date | views | likes | comments | shares | text | link |\n|---|---|---|---|---|---|---|\n${rows.join("\n")}\n`;
+    if (a.videos?.length) files[`${base}-videos.md`] = videosFile(title, a.videos);
   }
   return files;
 }
