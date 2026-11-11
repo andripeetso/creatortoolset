@@ -80,13 +80,19 @@ export function ProviderDetail({
       ? { label: "Remove", destructive: true, onSelect: () => { throw new Error(`${inst.name} is used by ${used.join(", ")}. Pick another there first.`); } }
       : { label: "Remove", destructive: true, onSelect: onRemove, confirm: { title: `Remove ${inst.name}?`, body: "Its settings are removed from this account.", ok: "Remove" } },
   ];
-  // one line, always there, so nothing under it moves: what needs the person in its colour, else what is true
-  const statusLine = checking ? (
-    "Checking…"
-  ) : status.text && status.tone !== "neutral" ? (
-    <Status tone={status.tone}>{status.text}</Status>
-  ) : (
-    [status.text, answered ?? (status.text ? "" : "Not tested yet")].filter(Boolean).join(" · ")
+  // one line, always there, so nothing under it moves: what needs the person in its colour, else what is true. Laid out
+  // as a flex row: set in a line of text, the status with its dot is a pixel taller than words alone, and a test
+  // starting or ending moved every row under it by that pixel
+  const statusLine = (
+    <span className="flex min-w-0">
+      {checking ? (
+        "Checking…"
+      ) : status.text && status.tone !== "neutral" ? (
+        <Status tone={status.tone}>{status.text}</Status>
+      ) : (
+        [status.text, answered ?? (status.text ? "" : "Not tested yet")].filter(Boolean).join(" · ")
+      )}
+    </span>
   );
   return (
     <div className="min-w-0 [&>*+*]:border-t [&>*+*]:border-border/50">
