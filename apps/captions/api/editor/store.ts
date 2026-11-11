@@ -36,6 +36,8 @@ export interface EditMeta extends EditBrief {
   steps?: EditStepChoice[];
   /** the editing style it was made with, as it was then (styles.ts); an edit made with none has no such key */
   style?: EditStyleCopy;
+  /** which of the name and the brief came through an AI's tool, not from the person at their own screen (routes.ts): finished.ts keeps neither */
+  byTool?: ("name" | "brief")[];
   trashedAt?: number;
 }
 
@@ -70,6 +72,10 @@ export interface StepFiles {
   review: Record<string, ReviewPreview>;
   /** each version's post-processing (post.ts): the copies its steps made, by source version id, and their notes */
   post: Record<string, { files: Record<string, string>; notes: string[] }>;
+  /** each version's lines and takes as the script step first planned them, before the person changed any (finished.ts: what they took out) */
+  first: { plans: Pick<VersionPlan, "name" | "lines">[] };
+  /** the person took this edit off its style's finished list: it is never kept for a style again (finished.ts) */
+  finished: { removed: boolean };
 }
 
 export function readStep<K extends keyof StepFiles>(id: string, name: K): StepFiles[K] | null {
@@ -279,6 +285,16 @@ export function cleanBrief(body: Record<string, unknown>, username: string, ws: 
   return out;
 }
 
+/**
+ * EditMeta.byTool once `patch` set the name or the brief: a field an AI's tool wrote (`tool`) is listed, one the person
+ * wrote themselves is theirs again. No key when neither is a tool's.
+ */
+export function byToolAfter(was: EditMeta["byTool"], patch: Partial<EditBrief>, tool: boolean): Pick<EditMeta, "byTool"> {
+  const set = (["name", "brief"] as const).filter((k) => patch[k] !== undefined);
+  const now = [...(was ?? []).filter((k) => !set.includes(k)), ...(tool ? set : [])];
+  return now.length ? { byTool: now } : {};
+}
+
 /** An editing style that is not there: the routes answer 404. */
 export class NoStyle extends Error {}
 
@@ -302,8 +318,8 @@ export async function styleFields(username: string, ws: string, id: string, on?:
   };
 }
 
-/** A new edit of `sources` for `username`, or null when a source is not theirs to read. */
-export async function createEdit(username: string, body: Record<string, unknown>): Promise<EditMeta | null> {
+/** A new edit of `sources` for `username`, or null when a source is not theirs to read. `tool`: an AI's tool made it, so its name and brief are not the person's own words. */
+export async function createEdit(username: string, body: Record<string, unknown>, tool = false): Promise<EditMeta | null> {
   const sources = Array.isArray(body.sources) ? [...new Set(body.sources.filter((s): s is string => typeof s === "string"))] : [];
   if (!sources.length || sources.length > MAX_SOURCES) return null;
   const ws = sourcesWorkspace(username, sources);
@@ -331,6 +347,7 @@ export async function createEdit(username: string, body: Record<string, unknown>
     ...styled,
     ...brief,
     flags: { ...defaultFlags(), ...brief.flags },
+    ...byToolAfter(undefined, brief, tool),
   };
   mkdirSync(path.dirname(fileOf(e.id)), { recursive: true });
   await saveEdit(e);
