@@ -12,7 +12,7 @@ import { footageTargetFor } from "./ingest";
 import { LINK_TTL_S, mediaPaths } from "./media";
 import { toOtio } from "./otio";
 import { qaOf } from "./qa";
-import { allEdits, cleanBrief, createEdit, uploadFinished, draftNames, editorDefaults, editRole, gradeOf, NoCollection, NoStyle, readDraft, readEdit, postFiles, readStep, saveEdit, saveStep, setChosenDefault, sourcesWorkspace, styleFields, summaryOf, viewOf, type EditMeta } from "./store";
+import { allEdits, cleanBrief, createEdit, uploadFinished, draftNames, editorDefaults, editRole, gradeOf, NoCollection, NoStyle, readDraft, readEdit, POST_UNFINISHED, postFiles, postUnfinished, readStep, saveEdit, saveStep, setChosenDefault, sourcesWorkspace, styleFields, summaryOf, viewOf, type EditMeta } from "./store";
 import { createStyle, deleteStyle, findStyle, stylesView, updateStyle } from "./styles";
 import { stopEdit } from "./worker";
 
@@ -276,6 +276,7 @@ editorApp.get("/:id/drafts/:name/export", async (c) => {
   const tl = d.timeline;
   // read again, as the worker does: footage trashed or a library left since means no new links or download URLs
   if (sourcesWorkspace(c.get("user").username, Object.keys(tl.sources)) !== r.e.workspaceId) return notFound(c);
+  if (postUnfinished(r.e.id, name)) return c.json({ error: POST_UNFINISHED, code: "post_unfinished" }, 409);
   const m = await mediaPaths(r.e, Object.keys(tl.sources));
   Object.assign(m.files, postFiles(r.e.id, name));   // the post-processing copies, as the preview plays them
   const base = `${r.e.name} ${name}`.replace(/[^\w .-]+/g, "_").trim() || name;
