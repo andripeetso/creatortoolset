@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState, type Ref } from "react";
-import { useNavigate } from "react-router";
+import { useCallback, useEffect, useRef, useState, type ReactNode, type Ref } from "react";
+import { useNavigate, useSearchParams } from "react-router";
 import {
   ArrowLeft,
   Captions,
@@ -28,7 +28,9 @@ import { confirmDiscardUnsavedProject, guardLeaveLink } from "@/lib/persistence-
 import { PersistenceBadge } from "./PersistenceStatus";
 import { AppBar, ToolIntro } from "./AppBar";
 import { DropZoneText, dropZoneClass } from "./DropZone";
-import { BrowseBar, ViewSwitch as ViewToggle, type BrowseView } from "./browse/Bar";
+import { BrowseBar, NewFolderButton, ViewSwitch as ViewToggle, type BrowseView } from "./browse/Bar";
+import { FolderTrail, MoveToMenu, ToolFolderCards, ToolFolderRows } from "./browse/ToolFolders";
+import { useToolFolders, type ToolFoldersState } from "@/lib/folders";
 import { byName, matches, persistSort, storedSort, useBrowseView } from "./browse/views";
 import { alertDialog, confirmDialog } from "@/lib/dialogs";
 
@@ -73,6 +75,8 @@ interface SessionHandlers {
   commitRename: (id: string) => void;
   open: (id: string) => void;
   remove: (id: string) => void;
+  /** the person's folders: Move to on each project, and a project dragged onto a folder goes in */
+  folders?: ToolFoldersState;
 }
 
 function ActionButtons({
@@ -89,6 +93,7 @@ function ActionButtons({
   }
   return (
     <div className={className}>
+      {h.folders && <MoveToMenu state={h.folders} id={s.id} className="rounded p-1.5 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200" />}
       <button
         onClick={(e) => {
           e.stopPropagation();
@@ -178,6 +183,7 @@ function SessionRow({ s, h }: { s: SessionMeta; h: SessionHandlers }) {
   return (
     <div
       onClick={() => h.renaming !== s.id && h.open(s.id)}
+      {...h.folders?.drag(s.id)}
       className="group flex cursor-pointer items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900/50 px-2.5 py-2 transition-colors hover:border-violet-500/50 hover:bg-zinc-900"
     >
       <SessionThumb s={s} className="h-10 w-[72px] shrink-0 rounded" />
@@ -203,6 +209,7 @@ function SessionTile({ s, h }: { s: SessionMeta; h: SessionHandlers }) {
   return (
     <div
       onClick={() => h.renaming !== s.id && h.open(s.id)}
+      {...h.folders?.drag(s.id)}
       className="group cursor-pointer overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900/50 transition-colors hover:border-violet-500/50 hover:bg-zinc-900"
     >
       <div className="relative aspect-video w-full overflow-hidden bg-zinc-800">
@@ -248,15 +255,19 @@ function SessionsBlock({
   view,
   h,
   listRef,
+  lead,
 }: {
   sessions: SessionMeta[];
   view: View;
   h: SessionHandlers;
   listRef?: Ref<HTMLDivElement>;
+  /** before the projects: the folders */
+  lead?: ReactNode;
 }) {
   if (view === "list") {
     return (
       <div ref={listRef} className="flex flex-col gap-1.5">
+        {lead}
         {sessions.map((s) => (
           <SessionRow key={s.id} s={s} h={h} />
         ))}
@@ -265,6 +276,7 @@ function SessionsBlock({
   }
   return (
     <div ref={listRef} className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
+      {lead}
       {sessions.map((s) => (
         <SessionTile key={s.id} s={s} h={h} />
       ))}
@@ -295,13 +307,20 @@ export function ImportScreen() {
   const [deletingForever, setDeletingForever] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
-  const [showAll, setShowAll] = useState(false);
+  // a folder link (?f=) opens All projects at that folder
+  const [params] = useSearchParams();
+  const [showAll, setShowAll] = useState(() => !!params.get("f"));
   // cards or rows: the pick is remembered (its old key), Settings → Appearance sets what it opens with
   const [view, changeView] = useBrowseView("captions");
   // All projects: a search and a sort (the server sends them newest change first)
   const [find, setFind] = useState("");
   const [sort, setSort] = useState(() => storedSort(SORT_KEY, SORTS));
-  const everything = sessions.filter((s) => matches(find, s.name)).sort((a, b) => (sort === "name" ? byName(a, b) : 0));
+  const folders = useToolFolders("captions", sessions, find);
+  const everything = folders.here.filter((s) => matches(find, s.name)).sort((a, b) => (sort === "name" ? byName(a, b) : 0));
+  const projectPicture = (id: string) => {
+    const p = sessions.find((x) => x.id === id);
+    return p?.thumbClipId ? `/api/projects/${p.id}/clips/${p.thumbClipId}/thumb` : undefined;
+  };
 
   useEffect(() => {
     void listDeletedSessions().then(setDeletedSessions).catch(() => {});
@@ -374,6 +393,7 @@ export function ImportScreen() {
   };
 
   const handlers: SessionHandlers = {
+    folders,
     opening,
     renaming,
     draft,
@@ -460,7 +480,7 @@ export function ImportScreen() {
               <Clock className="h-3.5 w-3.5" /> Recent projects
             </h2>
             <div className="flex items-center gap-2">
-              {sessions.length > RECENT_COUNT && (
+              {sessions.length > 0 && (
                 <button
                   onClick={() => setShowAll(true)}
                   className="rounded px-1.5 py-0.5 text-[11px] text-violet-400 hover:bg-zinc-800 hover:text-violet-300"
@@ -550,7 +570,10 @@ export function ImportScreen() {
         <div className="absolute inset-0 z-10 flex flex-col bg-zinc-950">
           <div className="flex items-center justify-between border-b border-zinc-800 px-5 py-3">
             <button
-              onClick={() => setShowAll(false)}
+              onClick={() => {
+                setShowAll(false);
+                if (folders.open) navigate(folders.to(null));
+              }}
               className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
             >
               <ArrowLeft className="h-3.5 w-3.5" /> Back
@@ -558,7 +581,10 @@ export function ImportScreen() {
             <h2 className="text-sm font-semibold text-zinc-200">
               All projects ({sessions.length})
             </h2>
-            <ViewToggle view={view} onChange={changeView} />
+            <div className="flex items-center gap-2">
+              <NewFolderButton onClick={() => void folders.newFolder()} />
+              <ViewToggle view={view} onChange={changeView} />
+            </div>
           </div>
           <div className="flex-1 overflow-y-scroll px-5 py-4">
             <div
@@ -566,6 +592,7 @@ export function ImportScreen() {
                 view === "grid" ? "mx-auto max-w-5xl" : "mx-auto max-w-2xl"
               }
             >
+              <FolderTrail state={folders} top="All projects" />
               <BrowseBar
                 search={{ value: find, onChange: setFind, placeholder: "Search projects (⌘K)" }}
                 sort={{
@@ -581,8 +608,13 @@ export function ImportScreen() {
                   ],
                 }}
               />
-              {everything.length === 0 && <p className="py-10 text-center text-sm text-zinc-500">No matches.</p>}
-              <SessionsBlock sessions={everything} view={view} h={handlers} />
+              {find.trim() && everything.length === 0 && folders.folders.length === 0 && <p className="py-10 text-center text-sm text-zinc-500">No matches.</p>}
+              <SessionsBlock
+                sessions={everything}
+                view={view}
+                h={handlers}
+                lead={view === "grid" ? <ToolFolderCards state={folders} pictureOf={projectPicture} /> : <ToolFolderRows state={folders} />}
+              />
             </div>
           </div>
         </div>
