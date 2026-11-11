@@ -786,11 +786,14 @@ struct CodexStream: RunStream {
 
 // MARK: Muse Code (`muse serve`, Meta's session protocol)
 
-/// `muse serve`'s flags for one answer (measured on Muse Code 1.4.15): Meta's models on the person's own sign-in, no session
-/// log kept, no questions back. With no folder and no web it starts with no tools at all (the empty preset); otherwise with
-/// its shell and its file writes off, so it can read and search but never change a file or run a command. The approval mode
-/// on the session (denyUnmatched) refuses whatever the person's own rules don't allow, since nobody is there to ask. What it
-/// still has either way: the MCP servers the person listed in ~/.config/muse/settings.json, under those same rules.
+/// `muse serve`'s flags for one answer (Muse Code 1.4.15): Meta's models on the person's own sign-in, no session log kept, no
+/// questions back. With no folder and no web it starts with no built-in tools (the empty preset); otherwise with its shell and
+/// its file writes off. Those two are fixed for the host's life, whatever an approval says, so it can read and search but
+/// never change a file or run a command. Not seen (no signed-in run here): what Meta's automated reviewer, the default for
+/// signed-in sessions, would let through of what is left, the web and any MCP servers the person listed in
+/// ~/.config/muse/settings.json (Muse loads those itself, even with the empty preset). A host with no session log can't
+/// pick another profile (measured: "an ephemeral host fixes its permission surface"); a question only a person can answer
+/// ends the run (MuseStream).
 func museArguments(tools: Bool) -> [String] {
     ["serve", "--provider", "meta", "--no-session-log", "--disable-request-user-input"]
         + (tools ? ["--disable-shell", "--disable-write"] : ["--preset", "empty"])
@@ -821,7 +824,8 @@ func museUsage(_ t: [String: Int]) -> [String: Any] {
 /// One `muse serve` run, one line at a time both ways (JSON-RPC 2.0). `opening` is the first line (initialize); each answer
 /// brings the next (initialized and session/start, then turn/start), and turn/completed is the result. The answer is the
 /// session's last agent message; usage comes from turn/completed, else the session/tokenUsage events added up. A request
-/// from Muse to this client is refused, since nobody is there to answer it.
+/// from Muse to this client (an approval only a person can give, a question) is refused and ends the run: nobody is there
+/// to answer it, and the turn would wait for one.
 struct MuseStream: RunStream {
     let prompt: String
     let model: String
@@ -837,6 +841,8 @@ struct MuseStream: RunStream {
     private(set) var error = ""
     private(set) var kind = ""
     private(set) var resetsAt: Date?
+    /// what Muse asked a person for (the tool, command, path or address), when it did
+    private(set) var asked = ""
 
     init(prompt: String, model: String, effort: String, cwd: String) {
         self.prompt = prompt
@@ -856,7 +862,10 @@ struct MuseStream: RunStream {
               let obj = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any] else { return [] }
         let method = obj["method"] as? String
         if let id = obj["id"], let method {
-            return [.write(jsonLine(["jsonrpc": "2.0", "id": id, "error": ["code": -32601, "message": "this client does not take \(method)"]]))]
+            let params = obj["params"] as? [String: Any] ?? [:]
+            let subject = params["subject"] as? [String: Any] ?? [:]
+            asked = [params["toolName"], subject["command"], subject["path"], subject["host"]].lazy.compactMap { $0 as? String }.first { !$0.isEmpty } ?? method
+            return [.write(jsonLine(["jsonrpc": "2.0", "id": id, "error": ["code": -32601, "message": "this client does not take \(method)"]])), .result]
         }
         if let id = obj["id"] as? Int {
             if let err = obj["error"] as? [String: Any] {
@@ -922,11 +931,15 @@ struct MuseStream: RunStream {
         let tail = String(err.trimmingCharacters(in: .whitespacesAndNewlines).suffix(500))
         let said = error.isEmpty ? tail : error
         let saidLine = said.isEmpty ? "" : " Muse Code said: \(said)"
-        if let resetsAt {
-            let end = saidLine.isEmpty || saidLine.hasSuffix(".") ? "" : "."
-            return "Your Muse Code plan's usage limit is reached.\(saidLine)\(end) It resets \(resetsAt.formatted(date: .abbreviated, time: .shortened))."
+        if let resetsAt {   // Muse's words cut short, so the reset time stays inside the site's 300 characters
+            let short = said.count > 150 ? String(said.prefix(150)) + "…" : said
+            let words = short.isEmpty ? "" : " Muse Code said: \(short)\(short.hasSuffix(".") ? "" : ".")"
+            return "Your Muse Code plan's usage limit is reached.\(words) It resets \(resetsAt.formatted(date: .abbreviated, time: .shortened))."
         }
-        if kind == "authRequired" { return "Muse Code isn't signed in on this Mac. Sign in to Muse Code, then try again.\(saidLine)" }
+        if !asked.isEmpty { return "Muse Code stopped: it asked for a yes that nobody here can give (\(String(asked.prefix(200))))." }
+        if kind == "authRequired" || error.localizedCaseInsensitiveContains("not logged in") {
+            return "Muse Code isn't signed in on this Mac. Sign in to Muse Code, then try again.\(saidLine)"
+        }
         switch terminal {
         case "completed": return "Muse Code gave an empty answer."
         case "cancelled": return "Muse Code stopped the answer.\(saidLine)"

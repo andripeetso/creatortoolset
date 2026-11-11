@@ -116,6 +116,23 @@ final class MuseTests: XCTestCase {
         XCTAssertNotNil(message.range(of: "sign in|log ?in|login", options: [.regularExpression, .caseInsensitive]))
     }
 
+    func testNotLoggedInIsASignInWhateverTheKind() {
+        var s = stream()
+        // recorded against a stand-in model endpoint on this Mac, with a made-up key: the same words, kind modelError
+        let line = #"{"jsonrpc":"2.0","method":"turn/completed","params":{"sessionId":"01a1c7e2-1a9a-762e-b3de-5ead8855ebfb","viewCursor":"v9:01a1c7e2-1a9a-762e-b3de-5ead8855ebfb:4","sourceRange":{"stream":{"kind":"session","id":"01a1c7e2-1a9a-762e-b3de-5ead8855ebfb"},"first":{"id":"01a1c7e2-1e71-73c2-8291-4a9f23cdd9c7","sequence":25},"last":{"id":"01a1c7e2-1e71-73c2-8291-4a9f23cdd9c7","sequence":25}},"turnId":"01a1c7e2-1db6-7294-a535-67b5cce128e2","terminal":"failed","reason":"not logged in: run /login to add an API key","durationMs":92,"error":{"kind":"modelError","message":"not logged in: run /login to add an API key","retryable":false}},"emittedAtMs":1794354847347}"#
+        _ = s.feed(line.replacingOccurrences(of: "01a1c7e2-1a9a-762e-b3de-5ead8855ebfb", with: s.session))
+        XCTAssertTrue((s.result(err: "")["result"] as? String ?? "").hasPrefix("Muse Code isn't signed in on this Mac. Sign in to Muse Code"))
+    }
+
+    func testALongLimitMessageKeepsItsResetTimeInsideWhatTheSiteKeeps() {
+        var s = stream()
+        let long = String(repeating: "Your allowance for this window is used up. ", count: 10)
+        _ = s.feed(#"{"jsonrpc":"2.0","method":"turn/completed","params":{"sessionId":"\#(s.session)","terminal":"failed","error":{"kind":"modelError","message":"\#(long)","retryable":false,"quota":{"limitKind":"tierLimit","resetsAtMs":1794380400000}}}}"#)
+        let message = s.result(err: "")["result"] as? String ?? ""
+        XCTAssertLessThanOrEqual(message.count, 300)   // api/lib/mac-claude.ts keeps 300 and reads the time from the end
+        XCTAssertTrue(message.hasSuffix("It resets \(Date(timeIntervalSince1970: 1_794_380_400).formatted(date: .abbreviated, time: .shortened))."))
+    }
+
     func testAStoppedTurnSaysSo() {
         var s = stream()
         _ = lines(Recorded.stopped, recorded: "01a1c7dd-874a-77c6-9794-8c38375ce13f", as: s).flatMap { s.feed($0) }
@@ -150,13 +167,16 @@ final class MuseTests: XCTestCase {
                        "Muse Code stopped before it answered. Muse Code said: muse serve: unexpected argument '--wat' found")
     }
 
-    func testAQuestionFromMuseCodeIsRefused() throws {
+    func testAQuestionOnlyAPersonCanAnswerIsRefusedAndEndsTheRun() throws {
         var s = stream()
-        // made from the schema: approval/request is a request Muse Code sends its client
-        let back = written(s.feed(#"{"jsonrpc":"2.0","id":41,"method":"approval/request","params":{"sessionId":"x"}}"#))
+        // made from the schema: approval/request is the request Muse Code sends when a person must say yes
+        let updates = s.feed(#"{"jsonrpc":"2.0","id":41,"method":"approval/request","params":{"sessionId":"x","toolName":"web_fetch","subject":{"kind":"network","host":"tinyacrobatics.example"}}}"#)
+        let back = written(updates)
         XCTAssertEqual(back.count, 1)
         XCTAssertEqual(back[0]["id"] as? Int, 41)
         XCTAssertEqual((back[0]["error"] as? [String: Any])?["code"] as? Int, -32601)
+        XCTAssertEqual(updates.last, .result)   // the turn would wait for a yes: the run ends instead
+        XCTAssertEqual(s.result(err: "")["result"] as? String, "Muse Code stopped: it asked for a yes that nobody here can give (web_fetch).")
     }
 
     func testUsageAddsUpAndTheTurnsOwnTotalWins() {

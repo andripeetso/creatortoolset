@@ -809,27 +809,38 @@ final class RelayTests: XCTestCase {
     /// CT_REAL_MUSE=1 swift test --filter RealMuse: real runs through Muse Code, the way the relay runs it. CT_REAL_MUSE_BIN names
     /// the copy (default: the one on this Mac) and CT_REAL_MUSE_HOME the home it runs in (its sign-in is that home's
     /// ~/.config/muse). The runs go out with HOME set to it, so nothing lands in this Mac's own home.
-    private func withMuse(_ body: (String) throws -> Void) throws {
+    private func withMuse(_ body: (String, URL) throws -> Void) throws {
         let env = ProcessInfo.processInfo.environment
         guard env["CT_REAL_MUSE"] == "1" else { throw XCTSkip("set CT_REAL_MUSE=1 to run real Muse Code calls") }
         let cli = env["CT_REAL_MUSE_BIN"] ?? binary("musecode", home: FileManager.default.homeDirectoryForCurrentUser) ?? "muse"
-        let old = env["HOME"]
+        let old = (env["HOME"], env["TMPDIR"])
+        var dir: URL?
         if let home = env["CT_REAL_MUSE_HOME"] {
+            // its temporary files too (swift test sets its own TMPDIR for the tests)
+            let tmp = (home as NSString).appendingPathComponent("tmp")
+            try FileManager.default.createDirectory(atPath: tmp, withIntermediateDirectories: true)
             setenv("HOME", home, 1)
+            setenv("TMPDIR", tmp, 1)
+            let own = URL(fileURLWithPath: tmp).appendingPathComponent("relay-test-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: own, withIntermediateDirectories: true)
+            dir = own
             XCTAssertEqual(ProcessInfo.processInfo.environment["HOME"], home)   // what the run's environment is built from
         }
-        defer { if let old { setenv("HOME", old, 1) } }
+        defer {
+            if let home = old.0 { setenv("HOME", home, 1) }
+            if let tmp = old.1 { setenv("TMPDIR", tmp, 1) } else { unsetenv("TMPDIR") }
+        }
         print("REAL MUSE: running \(cli), version \(cliVersion(cli) ?? "?")")
-        try body(cli)
+        try body(cli, dir ?? temp())
     }
 
     /// Needs a signed-in home: one tiny answer from Meta's model on that plan. In a home that never signed in it fails with
     /// the words a person sees.
     func testRealMuseRun() throws {
-        try withMuse { cli in
+        try withMuse { cli, dir in
             let req = request(#"{"id":"real-muse","system":"Reply with just OK.","user":"Reply with just OK.","driver":"musecode","effort":"low"}"#)
             do {
-                let answer = try runAnswer(req, try requestOptions(req), cli: cli, work: temp(), send: { _ in true }, step: { _ in })
+                let answer = try runAnswer(req, try requestOptions(req), cli: cli, work: dir, send: { _ in true }, step: { _ in })
                 print("REAL MUSE: text=\(answer.text) usage=\(answer.usage)")
                 XCTAssertTrue(answer.text.localizedCaseInsensitiveContains("OK"))
             } catch let failure as ClaudeFailure {
@@ -843,23 +854,48 @@ final class RelayTests: XCTestCase {
     /// that swaps `--provider meta` for `--provider echo`. An answer with no folder (no tools), one with a folder (shell and
     /// writes off), and one the site stops at its first text.
     func testRealMuseEchoRun() throws {
-        try withMuse { cli in
-            let dir = temp()
+        try withMuse { cli, dir in
             let echo = dir.appendingPathComponent("muse-echo")
             try "#!/bin/bash\nargs=(); for a in \"$@\"; do [ \"$a\" = meta ] && a=echo; args+=(\"$a\"); done\nexec \(shellQuote(cli)) \"${args[@]}\"\n"
                 .write(to: echo, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: echo.path)
             for files in [#"{}"#, #"{"notes.md":"Tiny Acrobatics"}"#] {
                 let req = request(#"{"id":"real-muse-echo","system":"Reply with just OK.","user":"Say hello.","driver":"musecode","effort":"low","files":\#(files)}"#)
-                let answer = try runAnswer(req, try requestOptions(req), cli: echo.path, work: temp(), send: { _ in true }, step: { _ in })
+                let answer = try runAnswer(req, try requestOptions(req), cli: echo.path, work: dir, send: { _ in true }, step: { _ in })
                 print("REAL MUSE ECHO: files=\(files) text=\(answer.text.debugDescription) usage=\(answer.usage)")
                 XCTAssertTrue(answer.text.hasPrefix("echo: <instructions>\nReply with just OK.\n</instructions>"))
                 XCTAssertTrue(answer.text.hasSuffix("Say hello."))
             }
             let req = request(#"{"id":"real-muse-stop","system":"S","user":"U","driver":"musecode","effort":"low"}"#)
-            XCTAssertThrowsError(try runAnswer(req, try requestOptions(req), cli: echo.path, work: temp(), send: { _ in false }, step: { _ in })) { error in
+            XCTAssertThrowsError(try runAnswer(req, try requestOptions(req), cli: echo.path, work: dir, send: { _ in false }, step: { _ in })) { error in
                 XCTAssertEqual((error as? ClaudeFailure)?.stopped, true)
             }
+        }
+    }
+
+    /// Needs no account: the app's sign-in (MuseLogin) starts the real `muse login` and gets Meta's page and code from it.
+    /// The program runs with macOS's opener blocked, so no browser opens, and it is stopped after 12 s, before anyone approves.
+    func testRealMuseLoginGivesThePageAndCode() throws {
+        try withMuse { cli, dir in
+            let profile = dir.appendingPathComponent("no-browser.sb")
+            try """
+            (version 1)
+            (allow default)
+            (deny process-exec (literal "/usr/bin/open"))
+            (deny mach-lookup (global-name "com.apple.coreservices.launchservicesd") (global-name "com.apple.lsd.mapdb") (global-name "com.apple.lsd.modifydb") (global-name "com.apple.lsd.open"))
+            """.write(to: profile, atomically: true, encoding: .utf8)
+            let login = dir.appendingPathComponent("muse-login")
+            try "#!/bin/bash\n/usr/bin/sandbox-exec -f \(shellQuote(profile.path)) \(shellQuote(cli)) \"$@\" &\npid=$!\nsleep 12\nkill $pid 2>/dev/null\nwait $pid\n"
+                .write(to: login, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: login.path)
+            let found = expectation(description: "Meta's page and code")
+            MuseLogin().start(binary: login.path) { page, code in
+                print("REAL MUSE LOGIN: page on \(page.host ?? "?"), a code of \(code.count) characters")
+                XCTAssertEqual(page.host, "auth.meta.com")
+                XCTAssertFalse(code.isEmpty)
+                found.fulfill()
+            }
+            wait(for: [found], timeout: 20)
         }
     }
 

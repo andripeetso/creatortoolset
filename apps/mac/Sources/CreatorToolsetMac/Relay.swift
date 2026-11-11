@@ -340,7 +340,8 @@ func signInScript(driver: String, home: String, binary: String) -> String? {
 
 /// Meta's sign-in page and its code from `muse login`'s output, or nil until both are there. With no terminal, Muse Code
 /// 1.4.15 prints "Open this page to sign in:", the page (the code in its address), "confirm this code matches:" and the code,
-/// then waits; it opens no browser itself. Only a page on auth.meta.com is taken.
+/// then waits. It ran neither `open` nor $BROWSER when tried that way (with macOS's own opener blocked, so whether it would
+/// open a tab by itself was not seen). Only a page on auth.meta.com is taken.
 func museLoginPage(_ output: String) -> (page: URL, code: String)? {
     let lines = output.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
     guard let page = lines.lazy.compactMap({ URL(string: $0) }).first(where: { $0.scheme == "https" && $0.host == "auth.meta.com" }),

@@ -273,7 +273,8 @@ export function parseSettings(raw: unknown, scope: Scope = "workspace", opts: { 
     const picked = typeof i.device === "string" && ID_RE.test(i.device.trim()) ? i.device.trim() : "";
     const device = picked && deviceExists(picked) ? picked : "";
     if (device && !belongsTo(scope, device)) throw new Error(scope === "workspace" ? `${name} runs on a computer that is not an admin's` : `${name} runs on a computer that is not yours`);
-    const home = typeof i.home === "string" ? i.home.trim() : "";
+    // a folder only for a driver that reads one (driverFields): the others keep their own, and the Mac refuses one
+    const home = typeof i.home === "string" && driverFields(i.driver as Driver).home ? i.home.trim() : "";
     // a folder the server found on its own Mac (setup's Connect) is trusted; one from the page must sit in the user's home
     if (home && !opts.trustedFolder && !HOME_RE.test(home)) throw new Error("The account folder must be a full path inside the Mac user's folder, like /Users/you/.claude-work");
     const model = typeof i.model === "string" && (i.model === "" || MODEL_RE.test(i.model)) ? i.model : undefined;

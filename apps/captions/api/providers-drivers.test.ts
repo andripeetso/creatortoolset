@@ -127,3 +127,26 @@ describe("a plug-in instance's endpoint", () => {
     expect(provider?.baseUrl).toBeUndefined();
   });
 });
+
+describe("Muse Code on a Mac", () => {
+  it("is saved with no model (its own default) and no folder, goes to the Mac as musecode, and a closed plan window comes back as a limit with its reset time", async () => {
+    as({ username: "jordan", role: "team" });
+    const { parseSettings } = await import("./lib/providers");
+    const s = parseSettings(
+      { instances: [{ id: "muse", driver: "musecode", name: "Muse Code", enabled: true, device: jordan.device.id, home: "/Users/tiny/.config/muse" }], default: { instance: "muse", model: "", effort: "xhigh" } },
+      "jordan",
+    );
+    expect(s.instances[0]).not.toHaveProperty("home"); // it keeps its own folder
+    await saveSettings(s, "jordan");
+    const provider = aiFor({ username: "jordan", role: "team" }, "captions", "Caption Studio").mac?.provider;
+    expect(provider).toMatchObject({ driver: "musecode", model: "" });
+    const poll = relay(jordan.token, "/wait").then((r) => r.json() as Promise<{ id: string; driver: string }>);
+    const answer = streamMacClaude("sys", "hi", undefined, () => {}, undefined, { provider });
+    const job = await poll;
+    expect(job.driver).toBe("musecode");
+    // what the Mac sends for one (MuseStream.failure)
+    const error = "Your Muse Code plan's usage limit is reached. Muse Code said: usage limit reached. It resets Nov 11, 2026 at 5:00 AM.";
+    await relay(jordan.token, `/${job.id}/fail`, { error, limit: true });
+    await expect(answer).rejects.toMatchObject({ kind: "limit", message: expect.stringMatching(/^Your Muse Code plan's limit is reached; it resets Nov 11, 2026 at 5:00 AM\. Muse Code said: /) });
+  });
+});
