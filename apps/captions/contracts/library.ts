@@ -216,7 +216,8 @@ export interface WatchFolder {
 /** GET /api/library/:id/watch. `allowed` is false on a hosted server: it cannot see the folders on your computer. */
 export interface WatchStatus {
   allowed: boolean;
-  folders: (WatchFolder & { found: boolean; imported: number })[];
+  /** `files`: the media files the last look at the folder found; `adding`: how many of them are still to be taken in. */
+  folders: (WatchFolder & { found: boolean; imported: number; files: number; adding: number })[];
   missing: number; // versions whose original is gone from its folder
 }
 

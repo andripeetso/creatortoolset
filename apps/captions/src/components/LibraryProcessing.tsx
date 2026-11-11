@@ -1,10 +1,10 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router";
-import type { LibraryEstimate, LibraryProgress, LibraryStepEstimate } from "@contracts/library";
+import type { LibraryEstimate, LibraryProgress, LibraryStepEstimate, WatchStatus } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
-import { getEstimate, getProgress, type Drop, listLibraries } from "@/lib/library";
+import { getEstimate, getProgress, getWatch, type Drop, listLibraries } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
 
 /**
@@ -58,14 +58,34 @@ export function stepLine(s: LibraryStepEstimate): string | null {
   return `${what} ${on}`;
 }
 
-/** While a library has work left: how far it is and how long the rest takes, plus anything waiting for a key. */
+/** A folder's own name, the way the person knows it ("/Volumes/Card/Trip" → "Trip"). */
+export const folderName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() ?? p;
+
+/**
+ * While a library has work left: a footage folder still being read (how many of its clips are in), then how far the
+ * preparing is and how long the rest takes, plus anything waiting for a key.
+ */
 export function LibraryProgressBar({ libraryId }: { libraryId: string }) {
   const p = useCachedLoad<LibraryProgress>(`/api/library/${libraryId}/progress`, () => getProgress(libraryId)).data;
-  if (!p || (!p.left && !p.waiting.length)) return null;
+  // the same saved status as the folder card and the watch list; only the owner gets one
+  const watch = useCachedLoad<WatchStatus>(`/api/library/${libraryId}/watch`, () => getWatch(libraryId)).data;
+  const adding = (watch?.folders ?? []).filter((f) => f.adding > 0);
+  if (!adding.length && (!p || (!p.left && !p.waiting.length))) return null;
   const what = { files: ["file", "files"], transcript: ["transcript", "transcripts"], describe: ["AI description", "AI descriptions"], embed: ["search entry", "search entries"] };
   return (
     <section aria-label="Processing" className="flex flex-col gap-1.5 text-sm">
-      {p.left > 0 && (
+      {adding.map((f) => (
+        <div key={f.path} className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between gap-3">
+            <span>Adding clips from {folderName(f.path)}</span>
+            <span className="shrink-0 text-xs text-zinc-500">
+              {(f.files - f.adding).toLocaleString()} of {f.files.toLocaleString()}
+            </span>
+          </div>
+          <Progress value={((f.files - f.adding) / Math.max(1, f.files)) * 100} className="h-1.5" />
+        </div>
+      ))}
+      {p && p.left > 0 && (
         <>
           <div className="flex items-center justify-between gap-3">
             <span>
@@ -76,7 +96,7 @@ export function LibraryProgressBar({ libraryId }: { libraryId: string }) {
           <Progress value={(p.done / Math.max(1, p.done + p.left)) * 100} className="h-1.5" />
         </>
       )}
-      {p.waiting.map((w) => (
+      {p?.waiting.map((w) => (
         <div
           key={`${w.step}${w.limit ? "-limit" : ""}`}
           // the plan's limit stops the AI for every tool, so it is said plainly, not as a footnote

@@ -19,9 +19,12 @@ import { findUser } from "../users";
  * library. Only where the server runs on the user's own computer: a hosted server cannot see the user's folders
  * (watchAllowed). The workspace owner sets them in `settings.watch`; files come in as that owner's.
  *
- * Every 30 s (fs.watch misses changes on external drives) each folder is walked. A file is imported once its size
- * and mtime have stayed the same for 60 s across scans (mtime alone lies: a copy keeps the original's). `watch_seen`
- * remembers each path's size and mtime, so an unchanged file is never imported twice, even after it is trashed.
+ * Every 30 s (fs.watch misses changes on external drives) each folder is walked, and at once when a folder is added
+ * (scanSoon). A file is imported once its size and mtime have stayed the same across scans: for 60 s when it was
+ * written in the last minute (a camera card still copying), for 5 s when it is older (footage already in a folder the
+ * person just chose; mtime alone lies, a copy keeps the original's, so the size is still watched). Each file shows on
+ * the open pages as it is taken, not when the whole pass ends, and the status says how many are still to come.
+ * `watch_seen` remembers each path's size and mtime, so an unchanged file is never imported twice, even after it is trashed.
  * `reference` leaves the file where it is (the blob key is a link to it, `source_path` names it); `copy` stores a
  * copy like an upload. A referenced file that disappears marks its version `missing`; nothing is deleted, and the
  * version comes back when the file does (an external drive plugged in again).
@@ -31,6 +34,8 @@ export const watchApp = new Hono<{ Variables: AuthVars }>();
 
 const SCAN_MS = 30_000;
 export const SETTLE_MS = 60_000;
+/** The wait for a file last written more than SETTLE_MS ago: long enough to see a copy still growing. */
+export const QUICK_SETTLE_MS = 5_000;
 const MAX_FOLDERS = 20;
 const GiB = 1024 ** 3;
 const db = () => libraryDb();
@@ -87,6 +92,7 @@ function status(libraryId: string): WatchStatus {
   const folders = foldersOf(libraryId).map((f) => ({
     ...f,
     found: false,
+    ...(walked.get(`${libraryId}\0${f.path}`) ?? { files: 0, adding: 0 }),
     imported: (
       db()
         .prepare("SELECT COUNT(*) AS n FROM watch_seen WHERE library_id = ? AND version_id IS NOT NULL AND substr(path, 1, ?) = ?")
@@ -155,6 +161,7 @@ watchApp.put("/:id/watch", async (c) => {
     if (!folders.some((g) => g.path === f.path)) folders.push(f);
   }
   writeWatch(libraryId, folders);
+  scanSoon();
   return c.json(await withFound(status(libraryId)));
 });
 
@@ -320,6 +327,8 @@ export async function addWatchFolder(username: string, folderPath: string, libra
   if (current.some((g) => g.path === f.path)) return null;
   if (current.length >= MAX_FOLDERS) return `The Library watches up to ${MAX_FOLDERS} folders. Remove one first.`;
   writeWatch(target, [...current, f]);
+  libraryChanged(target);
+  scanSoon();
   return null;
 }
 
@@ -337,6 +346,21 @@ export async function removeWatchFolder(username: string, folderPath: string): P
 
 // files seen changing, by library and path: imported once unchanged for SETTLE_MS. In memory: a restart waits again.
 const pending = new Map<string, { size: number; mtime: number; since: number }>();
+// what the last walk of each folder found, by library and folder path: its media files, and how many are still to be
+// taken (the status reads it; a walk per status read would be a walk per file taken). In memory: a restart walks again.
+const walked = new Map<string, { files: number; adding: number }>();
+// files that failed to come in: tried again, but not counted as still to come (the count would never reach zero)
+const stuck = new Set<string>();
+/** The wait before a file is taken: short when it was already old the first time it was seen (or seen changed). */
+const settleFor = (p: { mtime: number; since: number }) => (p.since - p.mtime > SETTLE_MS ? QUICK_SETTLE_MS : SETTLE_MS);
+
+// the open pages hear of each file taken, at most once a second (a folder of thousands of small files)
+const told = new Map<string, number>();
+const tell = (libraryId: string) => {
+  if (Date.now() - (told.get(libraryId) ?? 0) < 1000) return;
+  told.set(libraryId, Date.now());
+  libraryChanged(libraryId);
+};
 
 /** Media files under a folder: no hidden files or folders (.DS_Store, ._ files on external drives), no links. */
 async function filesIn(root: string): Promise<string[]> {
@@ -415,11 +439,21 @@ async function scanLibrary(libraryId: string, now: number): Promise<number> {
     // files come in as the owner who added the folder, while the library is still theirs; never as anyone else
     if (!libraryRole(f.addedBy, libraryId)) continue;
     let files: string[];
+    const folderKey = `${libraryId}\0${f.path}`;
     try {
       files = await filesIn(f.path);
     } catch {
+      walked.delete(folderKey);
       continue; // unplugged or unreadable: its referenced files turn missing in refreshMissing
     }
+    // how many of this folder's files are still to be taken, counted down as each comes in
+    const before = walked.get(folderKey);
+    let adding = 0;
+    const count = (n: number) => {
+      adding = n;
+      walked.set(folderKey, { files: files.length, adding });
+    };
+    const waiting = new Set<string>();
     for (const file of files) {
       const s = await stat(file).catch(() => null);
       if (!s) continue;
@@ -431,21 +465,30 @@ async function scanLibrary(libraryId: string, now: number): Promise<number> {
       const key = `${libraryId}\0${file}`;
       if (seen && seen.size === size && seen.mtime === mtime) {
         pending.delete(key);
+        stuck.delete(key);
         continue;
       }
+      if (size > 0 && !stuck.has(key)) waiting.add(file);
       const p = pending.get(key);
-      if (!p || p.size !== size || p.mtime !== mtime) {
-        pending.set(key, { size, mtime, since: now });
-        continue;
-      }
-      if (now - p.since < SETTLE_MS || size === 0) continue;
+      if (!p || p.size !== size || p.mtime !== mtime) pending.set(key, { size, mtime, since: now });
+    }
+    count(waiting.size);
+    // the count first (a folder just chosen says at once how many clips it holds), then the files one by one
+    if (!before || before.files !== files.length || before.adding !== adding) tell(libraryId);
+    for (const file of waiting) {
+      const key = `${libraryId}\0${file}`;
+      const p = pending.get(key);
+      if (!p || now - p.since < settleFor(p)) continue;
       pending.delete(key);
       try {
         // through the same queue as the AI's imports, which may have taken this file meanwhile
-        if ((await takeFile(libraryId, f, file, size, mtime)).fresh) took++;
+        if ((await takeFile(libraryId, f, file, p.size, p.mtime)).fresh) took++;
       } catch (e) {
+        stuck.add(key);
         console.error("[library] watch:", file, e instanceof Error ? e.message : e); // tried again once it settles again
       }
+      count(adding - 1);
+      tell(libraryId);
     }
   }
   if (took) libraryChanged(libraryId);
@@ -490,16 +533,35 @@ export async function scanWatchFolders(now = Date.now()): Promise<number> {
   return took;
 }
 
-/** Scans now and every 30 s after the last scan ends (never two at once). Does nothing on a server that may not watch. */
+let wake: (() => void) | undefined;
+let asked = false;
+/** Look at the folders now, not at the next half minute: a folder was just added. A scan under way is followed by another. */
+export function scanSoon(): void {
+  asked = true;
+  wake?.();
+}
+
+/**
+ * Scans now and again after the last scan ends (never two at once): at once when asked (scanSoon), after 5 s while a
+ * file waits its short turn, else after 30 s. Does nothing on a server that may not watch.
+ */
 export function startWatchFolders(): void {
   if (!watchAllowed()) return;
   const loop = async () => {
+    wake = undefined;
+    asked = false;
     try {
       await scanWatchFolders();
     } catch (e) {
       console.error("[library] watch:", e);
     }
-    setTimeout(loop, SCAN_MS).unref();
+    const quick = [...pending.values()].some((p) => settleFor(p) === QUICK_SETTLE_MS);
+    const timer = setTimeout(loop, asked ? 0 : quick ? QUICK_SETTLE_MS : SCAN_MS);
+    timer.unref();
+    wake = () => {
+      clearTimeout(timer);
+      void loop();
+    };
   };
   void loop();
 }

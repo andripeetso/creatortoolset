@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { AudioLines, Captions, MessageSquare, Quote, Share2, FileText, Folder, Image as ImageIcon, Loader2, RotateCcw, Star, Trash2, Upload, Video } from "lucide-react";
-import type { AssetCard, AssetDetail, AssetKind, AssetPage, Collection, LibrarySummary, SearchHit } from "@contracts/library";
+import type { AssetCard, AssetDetail, AssetKind, AssetPage, Collection, LibrarySummary, SearchHit, WatchStatus } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
 import { FootageFolderCard } from "@/components/FootageFolderCard";
 import { BIG_DROP, BigUploadDialog, LibraryProgressBar } from "@/components/LibraryProcessing";
@@ -14,6 +14,7 @@ import {
   createLibrary,
   createShare,
   getAsset,
+  getWatch,
   listAssets,
   listCollections,
   listLibraries,
@@ -104,6 +105,9 @@ export default function LibraryPage() {
   const collections = folderList.data ?? [];
   const reloadFolders = () => void folderList.refresh().catch((e) => setError(message(e)));
   const finals = collections.find(isFinals);
+  // the footage folders (the owner's view): an empty grid says whether clips are on their way from one
+  const watch = useCachedLoad<WatchStatus>(libId ? `/api/library/${libId}/watch` : null, () => getWatch(libId!)).data;
+  const adding = !!watch?.folders.some((f) => f.adding > 0);
   const [linked] = useSearchParams(); // ?library=&asset= (the Video Cleaner's duplicate check links here)
 
   useEffect(() => {
@@ -488,7 +492,13 @@ export default function LibraryPage() {
             ) : (
               libraries !== null && (
                 <p className="py-16 text-center text-sm text-zinc-500">
-                  {term || kind !== "all" || Object.values(facets).some((v) => v.length) ? "No matches." : "Nothing here yet. Upload a file to start."}
+                  {term || kind !== "all" || Object.values(facets).some((v) => v.length)
+                    ? "No matches."
+                    : adding
+                      ? null // the line above the grid says how many are in
+                      : scope === "all" && watch?.folders.length
+                        ? "No videos in your folder yet."
+                        : "Nothing here yet. Upload a file to start."}
                 </p>
               )
             )}
