@@ -19,6 +19,8 @@ import { innerCall, jobTurn, type AuthVars } from "./auth";
 import type { SessionUser } from "./users";
 import { pluginReplaces, type ServerPlugin } from "./lib/plugin";
 import { editorTools } from "./mcp-tools/editor";
+import { finalsTools } from "./mcp-tools/finals";
+import { mainSource } from "./library/sources";
 import type { AssetCard } from "../contracts/library";
 import { rollCount, rollLine } from "./library/roll";
 
@@ -337,7 +339,13 @@ const DOCK_ONLY = new Set(MODULE_DEFS.filter((d) => d.dockOnly).map((d) => d.nam
  * there unless the plug-in serves a tool of the same name.
  */
 const BUILT_IN_EDITOR = new Set(editorTools.defs.map((d) => d.name));
-const notHere = (name: string) => BUILT_IN_EDITOR.has(name) && pluginReplaces("/api/editor");
+/**
+ * The built-in Finals tools (mcp-tools/finals.ts) work on the pieces of the app's own library. On an install whose
+ * Media Library is a plug-in's (LibrarySource.main) the person never sees that library, so the tools would list and
+ * change pieces that are on no page there: left out, like the editor's.
+ */
+const BUILT_IN_FINALS = new Set(finalsTools.defs.map((d) => d.name));
+const notHere = (name: string) => (BUILT_IN_EDITOR.has(name) && pluginReplaces("/api/editor")) || (BUILT_IN_FINALS.has(name) && !!mainSource());
 
 /**
  * The plug-ins' MCP tools (a plugin's `tools: { defs, handlers, replaces }`), gathered once when the server boots. A tool whose name a
