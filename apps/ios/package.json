@@ -1,0 +1,9 @@
+{
+  "name": "@creator-toolset/ios",
+  "private": true,
+  "scripts": {
+    "ios:build": "xcodebuild -quiet -project CreatorToolset.xcodeproj -scheme CreatorToolset -destination 'generic/platform=iOS Simulator' build",
+    "ios:test": "xcodebuild -quiet -project CreatorToolset.xcodeproj -scheme CreatorToolset -destination \"platform=iOS Simulator,name=${IOS_SIMULATOR:-iPhone 17 Pro}\" test",
+    "ios:archive": "scripts/archive.sh"
+  }
+}
