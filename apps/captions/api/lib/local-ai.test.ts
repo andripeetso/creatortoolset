@@ -171,6 +171,10 @@ describe("connect your AI", () => {
     mockCheck.next = { ok: false, ms: 3, note: undefined, error: `Codex: unexpected status 400 Bad Request: {"detail":"The 'gpt-5.6-terra' model requires a newer version of Codex. Please upgrade to the latest app or CLI and try again."}` };
     expect(await local.connectCli("old", "codex", home, device.id)).toMatchObject({ state: "outdated", answered: false });
     expect(ownSettings("old")).toBeNull();
+    // and one the Mac app won't run at all, for having no way to keep its reads in the run's folder (its own words)
+    mockCheck.next = { ok: false, ms: 3, note: undefined, error: "The Codex on this Mac is too old to run here. Update it." };
+    expect(await local.connectCli("old", "codex", home, device.id)).toMatchObject({ state: "outdated", message: "ChatGPT needs a newer Codex than the one on this Mac. Try again." });
+    expect(ownSettings("old")).toBeNull();
   });
 
   it("a Gemini CLI the Mac app won't run for being too old is 'outdated' too, and nothing is saved", async () => {

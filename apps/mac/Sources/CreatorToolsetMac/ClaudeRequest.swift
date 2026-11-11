@@ -649,8 +649,8 @@ func codexRunFolder() -> URL {
 
 /// the Mac relay codex_cmd: `codex exec --json` in the run's folder, the prompt on stdin ("-"). The effort goes in as its
 /// config key; the model only when one is named.
-/// `fenced` (a Codex that takes a permission profile, codexTakesProfile): the run's own profile lets it read its folder and
-/// the system's own files (`:minimal`) and nothing else, write nothing and reach no network. Measured 2026-11-10 with
+/// The run's own permission profile lets it read its folder and the system's own files (`:minimal`) and nothing else,
+/// write nothing and reach no network. Measured 2026-11-10 with
 /// codex-cli 0.163, a stand-in model calling its tools, through codexAnswer: its read-only sandbox (`-s read-only`) let the
 /// shell read any file the Mac user can (an absolute path, `../`, `~/`, a link in the folder to a file outside, grep and
 /// find on a folder outside), and view_image open any picture; and `-s` wins over a profile, so a fenced run has none.
@@ -659,24 +659,22 @@ func codexRunFolder() -> URL {
 /// such as /Applications and /etc, and /tmp); the folder's own files were still read, the attached pictures
 /// still reached the model and this server's MCP call still ran. A sandbox_mode or another default profile in the
 /// person's config.toml did not undo it; only a profile of this very name there would add to it. The shell gets only the
-/// core variables (shell_environment_policy), so the job token stays out of reach. Older Codex (0.39) has no profiles:
-/// unfenced, it runs read-only as before, and its shell can read any file the Mac user can.
-/// `mcpURL`: the app's own MCP server for this run only (the assistant), its token read from `codexTokenEnv`. The person's
-/// config.toml is not read then, as --strict-mcp-config does for Claude: none of the MCP servers listed there are in the run,
-/// and a creator-toolset table saved there can't merge into this one (codex-cli 0.163 merges even an inline table).
-/// Its calls need no approval (exec has no one to ask).
-func codexArguments(cwd: String, model: String, effort: String, pictures: [String] = [], mcpURL: String = "", fenced: Bool = false) -> [String] {
-    var args = ["exec", "--json", "--skip-git-repo-check", "-C", cwd, "-c", "model_reasoning_effort=" + effort]
-    if fenced {
-        args += ["-c", "default_permissions=\"\(codexProfile)\"",
-                 "-c", "permissions.\(codexProfile).filesystem={\":minimal\"=\"read\",\":project_roots\"=\"read\"}",
-                 "-c", "shell_environment_policy.inherit=\"core\""]
-    } else {
-        args += ["-s", "read-only"]
-    }
+/// core variables (shell_environment_policy), so the job token stays out of reach. An older Codex (0.39) has no profiles
+/// and its read-only sandbox reads any file, so it is not run (codexAnswer; today's models refuse it anyway).
+/// The person's config.toml is not read (`--ignore-user-config`), as --strict-mcp-config does for Claude: none of the MCP
+/// servers listed there are in an app run (one that reads files or reaches the network would be a way around the profile),
+/// and a creator-toolset table saved there can't merge into this run's (codex-cli 0.163 merges even an inline table). Its
+/// sign-in is not in that file and is still used.
+/// `mcpURL`: the app's own MCP server for this run only (the assistant), its token read from `codexTokenEnv`. Its calls
+/// need no approval (exec has no one to ask).
+func codexArguments(cwd: String, model: String, effort: String, pictures: [String] = [], mcpURL: String = "") -> [String] {
+    var args = ["exec", "--json", "--skip-git-repo-check", "--ignore-user-config", "-C", cwd, "-c", "model_reasoning_effort=" + effort,
+                "-c", "default_permissions=\"\(codexProfile)\"",
+                "-c", "permissions.\(codexProfile).filesystem={\":minimal\"=\"read\",\":project_roots\"=\"read\"}",
+                "-c", "shell_environment_policy.inherit=\"core\""]
     if !mcpURL.isEmpty {
         let server = "mcp_servers.creator-toolset."
-        args += ["--ignore-user-config", "-c", server + "url=\"\(mcpURL)\"", "-c", server + "bearer_token_env_var=\"\(codexTokenEnv)\"",
+        args += ["-c", server + "url=\"\(mcpURL)\"", "-c", server + "bearer_token_env_var=\"\(codexTokenEnv)\"",
                  "-c", server + "default_tools_approval_mode=\"approve\""]
     }
     if !model.isEmpty { args += ["-m", model] }
@@ -694,14 +692,13 @@ func codexTakesProfile(_ cli: String) -> Bool? {
     runQuick(cli, ["sandbox", "--help"], seconds: 15).map { $0.contains("--permission-profile") }
 }
 
+/// What a Codex too old for a permission profile is answered with. The site reads these words and installs the current one
+/// (local-ai.ts connectCli), as it does for a Gemini that is too old.
+let codexTooOld = "The Codex on this Mac is too old to run here. Update it."
+
 /// The variable the turn's job token goes in, so it is never on the command line.
 let codexTokenEnv = "CREATOR_TOOLSET_MCP_TOKEN"
 
-/// Whether this Codex takes an MCP server for one run (`--ignore-user-config`; codex-cli 0.39 has neither). An older one
-/// answers with the message alone, as before.
-func codexTakesMcp(_ cli: String) -> Bool {
-    runQuick(cli, ["exec", "--help"], seconds: 5)?.contains("--ignore-user-config") ?? false
-}
 
 /// The pictures in a run's folder (the Caption Studio and Vision passes write them there), as the paths Codex attaches.
 func codexPictures(_ files: [String: String], cwd: URL) -> [String] {

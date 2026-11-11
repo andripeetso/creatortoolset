@@ -300,12 +300,13 @@ it to `/api/devices/relay/<id>/ask` every 2 s until the person answers it in the
 tools are allowed up front. An older server never sends `asks`, so its turns run as before.
 The other drivers in `runnableDrivers` run here too (Gemini with `gemini -o stream-json` in plan mode, the prompt on stdin, API keys left out of its environment, its own `~/.gemini`); any other driver fails with `onlyRunnableMessage`.
 Codex runs as `codex exec --json`, the prompt on stdin, in a permission profile of its own that reads only its folder
-and the system's own files, writes nothing and has no network (`codexArguments`; a Codex without profiles runs in its
-read-only sandbox, which reads any file). OpenCode runs with rules that leave it its read, search and listing tools
-inside its folder (`acpRules`). An assistant turn (`mcp`) gives Codex the app's
-MCP server for that run only: `--ignore-user-config` (none of the MCP servers in its `config.toml`),
+and the system's own files, writes nothing and has no network, and with `--ignore-user-config`, so none of the MCP
+servers in the person's `config.toml` are in an app run (`codexArguments`). A Codex without profiles is not run: it is
+answered with "too old to run here", which Connect your AI reads as outdated and updates. OpenCode and the other ACP
+kinds always run in a fresh folder of the run's own; OpenCode's rules leave it its read, search and listing tools
+inside that folder (`acpRules`). An assistant turn (`mcp`) gives Codex the app's MCP server for that run only:
 the server's address with `-c mcp_servers.creator-toolset.*`, its calls approved, and the job token in the
-`CREATOR_TOOLSET_MCP_TOKEN` variable, never an argument. A Codex whose `exec` lacks `--ignore-user-config` answers without the tools.
+`CREATOR_TOOLSET_MCP_TOKEN` variable, never an argument.
 Once at start and hourly the app posts `POST /api/devices/relay/report` (`MacReport.swift`): which
 CLIs are installed (with `--version`) and the Claude and Codex config folders, read only. Nothing is ever
 written there.
