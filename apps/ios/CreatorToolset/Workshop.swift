@@ -77,6 +77,9 @@ func scriptText(_ text: String) -> String {
 /// The sessions of the signed-in account, one copy for Scripts and Finals' Ready to post.
 @MainActor
 final class WorkshopModel: ObservableObject {
+    /// The copy the Finals tab's badge counts.
+    static let shared = WorkshopModel()
+
     @Published private(set) var sessions: [WorkshopSession] = []
     @Published private(set) var error: String?
     @Published private(set) var loading = false

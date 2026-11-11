@@ -158,3 +158,42 @@ private struct Bubble: View {
         .frame(maxWidth: .infinity, alignment: mine ? .trailing : .leading)
     }
 }
+
+// The Chats list and the screens it opens, until they are built (they replace this file):
+
+/// Chats: the rows of what is going on, each opening its own screen.
+struct ChatsView: View {
+    @ObservedObject private var nav = AppNavigator.shared
+
+    var body: some View {
+        List {
+            Button { nav.open(.assistant) } label: {
+                ChatListRow(title: "Assistant", detail: "", status: .none) {
+                    Image(systemName: "sparkles").foregroundStyle(Color("AccentColor")).frame(width: 28)
+                }
+            }
+            .buttonStyle(.plain)
+        }
+        .navigationTitle("Chats")
+    }
+}
+
+/// What waits on the person in Chats (the tab's badge).
+@MainActor
+final class ChatsModel: ObservableObject {
+    static let shared = ChatsModel()
+    @Published private(set) var waiting = 0
+}
+
+/// The assistant's chat.
+struct AssistantChatView: View {
+    var body: some View { ChatView() }
+}
+
+/// A Review video, on a version when one is named.
+struct ReviewRouteView: View {
+    let id: String
+    var version: Int?
+
+    var body: some View { PageView(path: "/review/\(id)" + (version.map { "?v=\($0)" } ?? "")) }
+}

@@ -4,9 +4,11 @@ The phone side of Creator Toolset: talk to your AI, get footage into the Media L
 your scripts while you film. It talks to any Creator Toolset server: the one on your own computer, your own server,
 or a hosted one.
 
-Tabs:
+Tabs (Finals and Scripts only for an account that has them; each tab's badge counts what waits there). The app
+follows the phone's light or dark look:
 
-- **Chats**: the app's Assistant, the same chat as on the computer. **New edit** at the top: pick clips from Photos (in
+- **Chats**: what is going on, each row opening its own screen, and a round button to message the assistant. The
+  Assistant is the same chat as on the computer. **New edit** at the top of the Assistant: pick clips from Photos (in
   the order picked), then Start. The clips' uploads are made first, then the AI Editor edit from them, then the bytes go
   by background transfers; the server starts the edit when the last clip is in, with the phone locked or the app
   closed. Its row shows how far it is (uploaded, Editing, Ready to review) and opens the edit's page or its Review
@@ -36,7 +38,15 @@ Three ways, all on one screen (the first screen, and More → Add a computer lat
   with your username and password. A server without sign-in opens with its address alone.
 
 Each sign-in cookie is kept in the Keychain and sent only to its server; the account's token is kept there too and
-goes only to creatortoolset.com.
+goes only to creatortoolset.com. The app never sends a request or its sign-in to another site's address, even one the
+server passed on. The Keychain items sit in a group the app shares with its Share extension
+(`com.creatortoolset.ios.shared`, in both targets' entitlements).
+
+## Plug-ins
+
+The phone learns what the server has the way the computer's app does: `GET /api/plugins` (which plug-ins),
+`GET /api/auth/check` (which tools the account has) and `GET /api/library/:id/sources` (whether a plug-in's source
+is the Media Library). A plug-in's screens live in `CreatorToolset/Studio/` and show only on a server that has it.
 
 ## Build and test
 
@@ -56,7 +66,10 @@ TEST_RUNNER_CT_TEST_SERVER=http://127.0.0.1:43127 TEST_RUNNER_CT_TEST_PASSWORD=<
 ```
 
 Run the server with a scratch `DATA_DIR` for this: the test signs in as `admin` and adds files to its library.
-`-startTab <0-4>` as a launch argument opens that tab (for simulator screenshots); in a debug build
+`TEST_RUNNER_CT_TEST_STUDIO=1` when that server has the studio plug-in.
+`-startTab <0-4>` or `-startTab chats|upload|finals|scripts|more` as a launch argument opens that tab (for simulator
+screenshots); in a debug build `-localServer <address>` adds a server without sign-in, `-OpenPath /assistant` (or any
+page path) opens its screen on Chats, and
 `-signinDemo list|none|password|old|add|problem|partly` shows the sign-in screen with a made-up account and asks no server anything
 (`-servers '<hex of a saved list's JSON>'` gives one launch a connected computer, so the tabs show).
 `-newEdit YES` opens New edit, and in a debug build `-newEditFiles <path>,<path>` picks those files.

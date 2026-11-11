@@ -242,3 +242,10 @@ struct ScriptText: UIViewRepresentable {
         }
     }
 }
+
+/// A session opened by its id (a card or a link). Until it has its own screen: its page.
+struct SessionRouteView: View {
+    let id: String
+
+    var body: some View { PageView(path: "/workshop/sessions/\(id)") }
+}

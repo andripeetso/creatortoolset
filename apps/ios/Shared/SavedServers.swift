@@ -71,7 +71,7 @@ enum Keychain {
     static func moveToSharedGroup(defaults: UserDefaults = .standard) {
         let done = "keychainShared"
         guard !defaults.bool(forKey: done) else { return }
-        var q: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
                                 kSecAttrService as String: service,
                                 kSecMatchLimit as String: kSecMatchLimitAll,
                                 kSecReturnAttributes as String: true,

@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import WebKit
 
 /// The servers added on this phone and the one in use. Every screen reads `current`.
 @MainActor
@@ -11,8 +12,11 @@ final class Servers: ObservableObject {
     /// Set when the server answered 401: the cookie is gone, so the person signs in again.
     @Published private(set) var signedOut = false
 
-    private let listKey = "servers"
-    private let currentKey = "currentServer"
+    /// Where the list and the server in use are saved (`API.current` reads them too).
+    nonisolated static let listKey = "servers"
+    nonisolated static let currentKey = "currentServer"
+    private var listKey: String { Self.listKey }
+    private var currentKey: String { Self.currentKey }
 
     init() {
         if let data = UserDefaults.standard.data(forKey: listKey),
@@ -20,6 +24,12 @@ final class Servers: ObservableObject {
             list = saved
         }
         currentId = UserDefaults.standard.string(forKey: currentKey) ?? list.first?.id
+        #if DEBUG
+        // a server without sign-in on this Mac, for the simulator: -localServer http://localhost:43190
+        if let raw = debugArg("localServer"), let target = SignIn.parse(raw) {
+            add(Server(url: target.origin, username: "local"), cookie: nil)
+        }
+        #endif
         // a phone that added its servers before the Share extension existed
         if !list.isEmpty, SavedServers.read() == nil { SavedServers(list: list, currentId: currentId).write() }
     }
@@ -27,7 +37,7 @@ final class Servers: ObservableObject {
     var current: Server? { list.first { $0.id == currentId } }
 
     /// The client for the server in use, or nil before one is added.
-    var api: API? { current.map { API(server: $0.url, cookie: Keychain.get($0.id)) } }
+    var api: API? { current.map { API(server: $0.url, cookie: Keychain.get($0.id), username: $0.username) } }
 
     func add(_ server: Server, cookie: String?) {
         list = Self.adding(server, to: list)
@@ -49,11 +59,20 @@ final class Servers: ObservableObject {
         save()
     }
 
+    /// A removed server stops sending this phone anything (its push is forgotten with the sign-in still in hand),
+    /// and removing the last one forgets what the in-app web pages kept.
     func remove(_ id: String) {
+        if let server = list.first(where: { $0.id == id }) {
+            let api = API(server: server.url, cookie: Keychain.get(id), username: server.username)
+            Task { await StudioHooks.removing(api) }
+        }
         list.removeAll { $0.id == id }
         Keychain.set(id, nil)
         if currentId == id { currentId = list.first?.id }
         save()
+        if list.isEmpty {
+            WKWebsiteDataStore.default().removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast) {}
+        }
     }
 
     func sessionExpired() {
@@ -72,11 +91,28 @@ final class Servers: ObservableObject {
 enum APIError: LocalizedError, Equatable {
     case signedOut
     case server(Int, String)
+    /// No answer: no connection, or the server is down.
+    case offline
+
+    /// The HTTP status: 401 signed out, 0 no answer.
+    var status: Int {
+        switch self {
+        case .signedOut: return 401
+        case .server(let status, _): return status
+        case .offline: return 0
+        }
+    }
+
+    var message: String { errorDescription ?? "" }
+
+    /// The shape shared phone code throws (`ToolsetAPI.Failure(status:message:)`).
+    init(status: Int, message: String) { self = .server(status, message) }
 
     var errorDescription: String? {
         switch self {
         case .signedOut: return "Signed out. Sign in again in More → Computers."
         case .server(_, let message): return message
+        case .offline: return "No connection to the server"
         }
     }
 }
@@ -86,6 +122,8 @@ enum APIError: LocalizedError, Equatable {
 struct API {
     let server: URL
     let cookie: String?
+    /// Who is signed in, for what is kept on disk per account (`cacheKey`).
+    var username: String? = nil
 
     static let session: URLSession = {
         let config = URLSessionConfiguration.default
@@ -95,8 +133,13 @@ struct API {
         return URLSession(configuration: config)
     }()
 
+    /// A path on this server. Only this server is ever asked: another site's address (in something the server passed
+    /// on, a picture's or a video's) becomes this server's front door, so neither the request nor the sign-in that
+    /// rides on it goes anywhere else.
     func url(_ path: String) -> URL {
-        URL(string: path.hasPrefix("/") ? String(path.dropFirst()) : path, relativeTo: server)!.absoluteURL
+        guard let made = URL(string: path.hasPrefix("/") ? String(path.dropFirst()) : path, relativeTo: server)?.absoluteURL,
+              made.scheme == server.scheme, made.host() == server.host(), made.port == server.port else { return server }
+        return made
     }
 
     var headers: [String: String] { cookie.map { ["Cookie": "cap_auth=\($0)"] } ?? [:] }
@@ -117,12 +160,19 @@ struct API {
         try await data(request(path, method: method, json: json))
     }
 
-    func get<T: Decodable>(_ path: String) async throws -> T {
-        try JSONDecoder().decode(T.self, from: try await data(request(path)))
+    func get<T: Decodable>(_ path: String, decoder: JSONDecoder = JSONDecoder()) async throws -> T {
+        try decoder.decode(T.self, from: try await data(request(path)))
     }
 
-    func data(_ request: URLRequest) async throws -> Data {
-        let (data, response) = try await Self.session.data(for: request)
+    /// The body of a 2xx answer. No answer at all throws `.offline`; a request that was called off stays cancelled.
+    func data(_ request: URLRequest, session: URLSession = API.session) async throws -> Data {
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch let error as URLError where error.code != .cancelled {
+            throw APIError.offline
+        }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         if status == 401 {
             // only the server in use: an upload to another server failing must not sign this one out

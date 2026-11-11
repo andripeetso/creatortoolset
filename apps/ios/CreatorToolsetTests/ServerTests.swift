@@ -78,7 +78,17 @@ final class ServerTests: XCTestCase {
 
         let _: [WorkshopSession] = try await api.get("/api/workshop/sessions")
         _ = try await api.finals()
-        let _: ChatView.Chat = try await api.get("/api/assistant")
+        let chat = try JSONSerialization.jsonObject(with: try await api.send("/api/assistant", method: "GET")) as? [String: Any]
+        XCTAssertNotNil(chat?["messages"])
+    }
+
+    /// What `ServerPlugins` reads from a live server. `CT_TEST_STUDIO=1` when that server has the studio plug-in.
+    func testWhatTheServerHas() async throws {
+        let api = API(server: origin, cookie: try await signIn())
+        let known = try await ServerPlugins.read(api)
+        let studio = ProcessInfo.processInfo.environment["CT_TEST_STUDIO"] == "1"
+        XCTAssertEqual(known.plugins.contains(Studio.plugin), studio, known.plugins.description)
+        if !studio { XCTAssertNil(known.mainSource) }
     }
 
     private func upload(_ bytes: Data, name: String, engine: UploadEngine, server: Server) async throws -> UploadItem {
