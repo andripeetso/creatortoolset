@@ -27,7 +27,7 @@ import { ToolIntro } from "@/components/AppBar";
 import { AppBar } from "@/components/AppBar";
 import { ReviewShareButton } from "@/components/ReviewShareButton";
 import { confirmDialog } from "@/lib/dialogs";
-import { NewFolderButton, TrashLink } from "@/components/browse/Bar";
+import { BrowseBar, NewFolderButton, TrashLink } from "@/components/browse/Bar";
 import { FolderCard } from "@/components/browse/Folder";
 import { FolderGrid, GridFrame } from "@/components/browse/Grid";
 import { askRename } from "@/components/browse/browse";
@@ -106,6 +106,48 @@ const leftFor = (e: React.DragEvent) => !e.currentTarget.contains(e.relatedTarge
 const media = (list: FileList | File[] | null | undefined) =>
   [...(list ?? [])].filter((f) => f.type.startsWith("video/") || f.type.startsWith("audio/") || !f.type);
 
+/** The sort, remembered: Recent is newest activity first (a project by its newest video), Name is A to Z. */
+export type ReviewSort = "recent" | "name";
+const SORT_KEY = "review:sort";
+const savedSort = (): ReviewSort => {
+  try {
+    return localStorage.getItem(SORT_KEY) === "name" ? "name" : "recent";
+  } catch {
+    return "recent";
+  }
+};
+const byName = (x: { name: string }, y: { name: string }) => x.name.localeCompare(y.name, undefined, { numeric: true, sensitivity: "base" });
+const activeAt = (a: ReviewAsset) => a.updatedAt ?? a.createdAt;
+
+/**
+ * What the folders view lists: the projects (top level only) and the videos, for the tab (`done`: Finished), the open
+ * project, the search and the sort. A search at the top level finds videos in every project too, and a project by its
+ * name. Recent: the server's order for videos (newest activity first), a project by its newest video, else when it was
+ * made. Inside a project the finished ones go last. A video whose project is gone shows at the top level.
+ */
+export function reviewListing(
+  assets: ReviewAsset[] | null,
+  projects: ReviewProject[],
+  at: { project?: string; done: boolean; q: string; sort: ReviewSort },
+): { projects: ReviewProject[]; videos: ReviewAsset[] | null } {
+  const ids = new Set(projects.map((p) => p.id));
+  const folderOf = (a: ReviewAsset) => (a.projectId && ids.has(a.projectId) ? a.projectId : undefined);
+  const hit = (name: string) => !at.q || name.toLowerCase().includes(at.q);
+  const inside = (p: ReviewProject) => assets?.filter((a) => folderOf(a) === p.id) ?? [];
+  const finished = (p: ReviewProject) => inside(p).length > 0 && inside(p).every(isFinished);
+  const projectAt = (p: ReviewProject) => Math.max(p.createdAt, ...inside(p).map(activeAt));
+  return {
+    projects: at.project
+      ? []
+      : projects.filter((p) => finished(p) === at.done && hit(p.name)).sort(at.sort === "name" ? byName : (x, y) => projectAt(y) - projectAt(x)),
+    videos:
+      assets
+        ?.filter((a) => (at.q && !at.project ? true : folderOf(a) === at.project) && (!!at.project || isFinished(a) === at.done) && hit(a.name))
+        .sort((x, y) => (at.sort === "name" ? byName(x, y) : 0))
+        .sort((x, y) => (at.project ? +isFinished(x) - +isFinished(y) : 0)) ?? null,
+  };
+}
+
 /** Review library: projects (folders) and videos, newest activity first.
  *  Drag a video onto another to stack it as that video's next version. */
 export default function ReviewPage() {
@@ -130,6 +172,15 @@ export default function ReviewPage() {
   const [sel, setSel] = useState<{ at: string; ids: Set<string>; anchor?: string }>({ at: "", ids: new Set() });
   // Upload / New project: videos with their timeline files, picked up front
   const [adding, setAdding] = useState<{ newProject?: boolean; files?: File[] } | null>(null);
+  const [find, setFind] = useState("");
+  const [sort, setSort] = useState<ReviewSort>(savedSort);
+  useEffect(() => {
+    try {
+      localStorage.setItem(SORT_KEY, sort);
+    } catch {
+      // storage off (a private window): the sort holds for this visit
+    }
+  }, [sort]);
 
   const load = useCallback(
     () =>
@@ -149,17 +200,14 @@ export default function ReviewPage() {
     const inside = assets?.filter((a) => folderOf(a) === p.id) ?? [];
     return inside.length > 0 && inside.every(isFinished);
   };
-  const listedProjects = project ? [] : projects.filter((p) => finished(p) === done);
-  // inside a project the finished ones go last
-  const listed =
-    assets
-      ?.filter((a) => folderOf(a) === project?.id && (!!project || isFinished(a) === done))
-      .sort((x, y) => +isFinished(x) - +isFinished(y)) ?? null;
+  const q = find.trim().toLowerCase();
+  const { projects: listedProjects, videos: listed } = reviewListing(assets, projects, { project: project?.id, done, q, sort });
   // what is on screen: scrolled away from the top, the cards keep their places and a new video waits up there;
-  // with the top in sight it comes in and the others slide over (lib/steady-list)
-  const where = `${project?.id}|${trash}|${done}`;
+  // with the top in sight it comes in and the others slide over (lib/steady-list). Picks belong to the search they
+  // were made in; another search or sort is another list.
+  const where = `${project?.id}|${trash}|${done}|${q}`;
   const grid = useRef<HTMLDivElement>(null);
-  const cards = useSteadyList<ReviewProject | ReviewAsset>([...listedProjects, ...(listed ?? [])], grid, { scope: where });
+  const cards = useSteadyList<ReviewProject | ReviewAsset>([...listedProjects, ...(listed ?? [])], grid, { scope: `${where}|${sort}` });
   const shownProjects = cards.filter((c): c is ReviewProject => !("versions" in c));
   const shown = listed && cards.filter((c): c is ReviewAsset => "versions" in c);
   const doneCount =
@@ -401,10 +449,26 @@ export default function ReviewPage() {
             ))}
           </nav>
         )}
+        {!trash && (
+          <BrowseBar
+            search={{ value: find, onChange: setFind, placeholder: "Search videos (⌘K)" }}
+            sort={{
+              value: sort,
+              onChange: setSort,
+              label: "Sort videos",
+              options: [
+                { id: "recent", label: "Recent" },
+                { id: "name", label: "Name" },
+              ],
+            }}
+          />
+        )}
         {trash ? (
           <TrashView onRestored={() => void load()} />
         ) : shown === null || (projectsList.data === null && !projectsList.error) ? (
           <GridFrame />
+        ) : q && shown.length === 0 && shownProjects.length === 0 ? (
+          <p className="mt-16 text-center text-sm text-zinc-500">No matches.</p>
         ) : done && shown.length === 0 && shownProjects.length === 0 ? (
           <p className="mt-16 text-center text-sm text-zinc-500">
             Nothing finished yet. A video lands here once it's marked finished.
