@@ -291,7 +291,7 @@ const ASSISTANT_DEFS = [
   },
   {
     name: "use_file",
-    description: "Send a video or recording to a tool: file = the id of one dropped in the chat, or path = a file on this computer (when the server runs on it; not for library: media_import_folder reads its folder in place). to: notes = Video Notes (transcript, summary, chapters; follow it with notes_get, which also writes takeaways, an action plan and quotes), review = a Review video (then review_share for a link; with version_of = a Review video's link or id, as get_review takes, the file becomes that video's next version instead), captions = a Caption Studio project, library = the Media Library, where each clip sorts itself as A-roll or B-roll (files = several dropped ids at once; tell the user the answer's said line). name = a title for it (default the file's name). The same file can go to several.",
+    description: "Send a video or recording to a tool: file = the id of one dropped in the chat, or path = a file on this computer (when the server runs on it; not for library: media_import_folder reads its folder in place). to: notes = Video Notes (transcript, summary, chapters; follow it with notes_get, which also writes takeaways, an action plan and quotes), review = a Review video (then review_share for a link; with version_of = a Review video's link or id, as get_review takes, the file becomes that video's next version instead), captions = a Caption Studio project whose captions are made at once (the chat says when they are ready; captions_get reads them), library = the Media Library, where each clip sorts itself as A-roll or B-roll (files = several dropped ids at once; tell the user the answer's said line). name = a title for it (default the file's name). The same file can go to several.",
     inputSchema: { type: "object", properties: { file: str, files: { type: "array", items: str }, path: str, to: { type: "string", enum: [...FILE_USES] }, name: str, version_of: str }, required: ["to"] },
   },
   {
@@ -1143,6 +1143,9 @@ export function workFor(name: string, a: Args, r: Args): { card: AssistantWork; 
         : null;
     case "use_file": {
       if (a.to === "library") return r.said && r.href ? { card: { id: `library:${String(r.href)}`, kind: "link", title: "Media Library", href: String(r.href), status: "done", detail: String(r.said) } } : null;
+      // Caption Studio: the card runs while the captions are being made (captions-job.ts ends it, and says so in the chat)
+      if (a.to === "captions")
+        return r.id ? { card: { id: `captions:${r.id}`, kind: "captions", title: String(r.name ?? "Caption Studio"), href: r.captioning ? "/captions?view=projects" : String(r.href), status: r.captioning ? "running" : "done", detail: r.captioning ? "Making the captions" : "In Caption Studio, not transcribed" } } : null;
       const kind = a.to === "review" ? "review" : a.to === "captions" ? "captions" : "notes";
       const where = { notes: "Video Notes", review: "Review", captions: "Caption Studio" }[kind];
       return r.href
