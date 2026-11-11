@@ -6,8 +6,10 @@ import Security
 struct Server: Codable, Identifiable, Hashable {
     let url: URL
     var username: String?
+    /// The computer's own name, for one reached through the account (its address is a row of letters and digits).
+    var label: String?
     var id: String { url.absoluteString }
-    var name: String { (url.host(percentEncoded: false) ?? url.absoluteString) + (url.port.map { ":\($0)" } ?? "") }
+    var name: String { label ?? (url.host(percentEncoded: false) ?? url.absoluteString) + (url.port.map { ":\($0)" } ?? "") }
 }
 
 /// The servers added on this phone and the one in use. Every screen reads `current`.
@@ -100,7 +102,7 @@ enum APIError: LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .signedOut: return "Signed out. Sign in again in More → Servers."
+        case .signedOut: return "Signed out. Sign in again in More → Computers."
         case .server(_, let message): return message
         }
     }
@@ -221,8 +223,31 @@ enum SignIn {
     }
 
     static func login(_ origin: URL, username: String, password: String) async throws -> Outcome {
-        var request = API(server: origin, cookie: nil).request("/api/auth/login", method: "POST",
-                                                               json: ["username": username, "password": password])
+        try await post(origin, "/api/auth/login", ["username": username, "password": password])
+    }
+
+    /// A sign-in the account started on a hosted server: the one-time code its sign-in sheet ended with, swapped for
+    /// the session (only with the verifier of the sign-in that made the code).
+    static func app(_ origin: URL, code: String, verifier: String) async throws -> Outcome {
+        try await post(origin, "/api/auth/app", ["code": code, "verifier": verifier])
+    }
+
+    /// A computer reached through the account: the account's ticket for it, and the computer's own password.
+    static func ticket(_ origin: URL, ticket: String, password: String) async throws -> Outcome {
+        try await post(origin, "/api/auth/ticket", ["ticket": ticket, "password": password])
+    }
+
+    /// A server from before sign-in by the account answers 404 here; a newer one refuses the empty code with 400.
+    static func takesAppSignIn(_ origin: URL) async throws -> Bool {
+        var request = API(server: origin, cookie: nil).request("/api/auth/app", method: "POST", json: [String: String]())
+        request.httpShouldHandleCookies = false
+        let (_, response) = try await API.session.data(for: request)
+        return (response as? HTTPURLResponse)?.statusCode != 404
+    }
+
+    /// Every sign-in route answers 200 with the cookie, or says why not in its own words.
+    private static func post(_ origin: URL, _ path: String, _ json: [String: String]) async throws -> Outcome {
+        var request = API(server: origin, cookie: nil).request(path, method: "POST", json: json)
         request.httpShouldHandleCookies = false
         let (data, response) = try await API.session.data(for: request)
         let http = response as? HTTPURLResponse
@@ -259,7 +284,7 @@ enum SignIn {
 }
 
 /// The sign-in link answers 302 with the cookie: stop there instead of following it to the page.
-private final class NoRedirect: NSObject, URLSessionTaskDelegate {
+final class NoRedirect: NSObject, URLSessionTaskDelegate {
     static let session: URLSession = {
         let config = URLSessionConfiguration.ephemeral
         config.httpShouldSetCookies = false

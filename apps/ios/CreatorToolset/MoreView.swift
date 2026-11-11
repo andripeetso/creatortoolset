@@ -3,12 +3,13 @@ import SwiftUI
 
 struct MoreView: View {
     @EnvironmentObject private var servers: Servers
+    @ObservedObject private var account = Account.shared
     @AppStorage("wifiOnly") private var wifiOnly = false
     @State private var adding = false
 
     var body: some View {
         List {
-            Section("Servers") {
+            Section("Computers") {
                 ForEach(servers.list) { server in
                     Button { servers.use(server.id) } label: {
                         HStack {
@@ -29,7 +30,10 @@ struct MoreView: View {
                     .foregroundStyle(.primary)
                     .swipeActions { Button("Remove", role: .destructive) { servers.remove(server.id) } }
                 }
-                Button(servers.signedOut ? "Sign in again" : "Add server") { adding = true }
+                Button(servers.signedOut ? "Sign in again" : "Add a computer") { adding = true }
+            }
+            if let profile = account.profile {
+                Section("Account") { AccountRow(profile: profile) { account.signOut() } }
             }
             if let api = servers.api {
                 Section {
@@ -44,33 +48,75 @@ struct MoreView: View {
             }
         }
         .navigationTitle("More")
+        #if DEBUG
+        .onAppear { if Account.demo == "add" { adding = true } }
+        #endif
         .sheet(isPresented: $adding) {
             NavigationStack { AddServerView(prefill: servers.signedOut ? servers.current?.url.absoluteString : nil) }
         }
     }
 }
 
-/// Add a server: scan the code the computer shows, or type its address (and sign in when it asks).
+/// Add a computer: sign in with the account and pick one of its computers, scan the code a computer shows, or type its
+/// address (and sign in when it asks).
 struct AddServerView: View {
     var first = false
     var prefill: String?
     @EnvironmentObject private var servers: Servers
+    @ObservedObject private var account = Account.shared
     @Environment(\.dismiss) private var dismiss
     @State private var address = ""
     @State private var username = ""
     @State private var password = ""
     @State private var needsPassword: SignIn.Target?
+    /// The account's computers, once read, and what went wrong with the account or one of them.
+    @State private var computers: [Computer]?
+    @State private var problem: String?
+    /// The computer added to the account whose own password is asked.
+    @State private var asked: Computer?
+    @FocusState private var typingPassword: Bool
     @State private var scanning = false
     @State private var busy = false
     @State private var error: String?
 
     var body: some View {
         Form {
+            if let profile = account.profile {
+                Section("Your computers") {
+                    ForEach(computers ?? []) { computer in
+                        Button { Task { await run { try await open(computer) } } } label: {
+                            HStack {
+                                Text(computer.name)
+                                Spacer()
+                                if computer.offline { Text("offline").font(.caption).foregroundStyle(.secondary) }
+                            }
+                        }
+                        .foregroundStyle(.primary)
+                        .swipeActions {
+                            if computer.addedId == nil {
+                                Button("Remove", role: .destructive) { Task { await run { try await forget(computer) } } }
+                            }
+                        }
+                    }
+                    if computers == nil, busy { ProgressView() }
+                    if computers?.isEmpty == true { Text("No computers on this account yet").foregroundStyle(.secondary) }
+                    if let problem { Problem(text: problem) }
+                    AccountRow(profile: profile) {
+                        account.signOut()
+                        problem = nil
+                    }
+                }
+                .disabled(busy)
+            } else {
+                Section {
+                    AccountButtons { provider in Task { await run { try await signIn(provider) } } }
+                        .disabled(busy)
+                    if let problem { Problem(text: problem) }
+                }
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
+            }
             Section {
-                TextField("Address or sign-in link", text: $address)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .keyboardType(.URL)
                 if CodeScanner.supported {
                     Button("Scan the code on your computer", systemImage: "qrcode.viewfinder") {
                         Task {
@@ -82,28 +128,54 @@ struct AddServerView: View {
                         }
                     }
                 }
+                TextField("Address or sign-in link", text: $address)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(.URL)
             } footer: {
                 Text("On the computer: Settings → Computers → Add your phone.")
             }
-            if needsPassword != nil {
-                Section("Sign in") {
-                    TextField("Username", text: $username)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .textContentType(.username)
-                    SecureField("Password", text: $password).textContentType(.password)
+            if needsPassword != nil || asked != nil {
+                Section(asked?.name ?? "Sign in") {
+                    if asked == nil {
+                        TextField("Username", text: $username)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .textContentType(.username)
+                    }
+                    SecureField("Password", text: $password).textContentType(.password).focused($typingPassword)
                 }
             }
             if let error { Problem(text: error) }
-            Button(needsPassword == nil ? "Connect" : "Sign in") { Task { await connect() } }
-                .disabled(busy || address.isEmpty || (needsPassword != nil && (username.isEmpty || password.isEmpty)))
+            Button(needsPassword == nil && asked == nil ? "Connect" : "Sign in") { Task { await connect() } }
+                .disabled(busy || (asked != nil ? password.isEmpty
+                                   : address.isEmpty || (needsPassword != nil && (username.isEmpty || password.isEmpty))))
         }
-        .navigationTitle(first ? "Creator Toolset" : "Add server")
+        .navigationTitle(first ? "Creator Toolset" : "Add a computer")
         .toolbar {
             if !first { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
         }
         .onAppear { if let prefill, address.isEmpty { address = prefill } }
-        .onChange(of: address) { needsPassword = nil }
+        .onChange(of: address) {
+            // typing an address leaves the computer that was picked; the password fields stay while the address is the one that asked
+            asked = nil
+            if SignIn.parse(address) != needsPassword { needsPassword = nil }
+        }
+        .onChange(of: account.profile == nil) { _, signedOut in
+            if signedOut {
+                computers = nil
+                asked = nil
+            }
+        }
+        .refreshable { if account.profile != nil { await run { try await load() } } }
+        .task {
+            guard account.profile != nil, computers == nil else { return }
+            await run { try await load() }
+            #if DEBUG
+            if Account.demo == "password", let computer = computers?.first(where: { $0.addedId != nil }) { ask(computer) }
+            if Account.demo == "old", let computer = computers?.first { usePassword(computer) }
+            #endif
+        }
         .sheet(isPresented: $scanning) {
             CodeScanner { text in
                 scanning = false
@@ -114,13 +186,83 @@ struct AddServerView: View {
         }
     }
 
+    /// One job at a time with the account; what goes wrong is said in one line under it.
+    private func run(_ work: () async throws -> Void) async {
+        busy = true
+        problem = nil
+        defer { busy = false }
+        do {
+            try await work()
+        } catch {
+            problem = error.localizedDescription
+        }
+    }
+
+    /// Sign in with Apple or Google, then straight to the account's computer, or the list when there are several.
+    private func signIn(_ provider: String) async throws {
+        guard try await account.signIn(provider) else { return }
+        try await load()
+        if let one = Computer.only(computers ?? [], here: servers.list) { try await open(one) }
+    }
+
+    private func load() async throws {
+        let found = try await account.computers()
+        computers = found.list
+        problem = found.problem
+    }
+
+    /// A press on one of the account's computers: one already on this phone is switched to, a hosted server signs in
+    /// with the account, a computer added to the account asks for its own password.
+    private func open(_ computer: Computer) async throws {
+        if servers.list.contains(where: { $0.id == computer.id }), !(servers.signedOut && servers.currentId == computer.id) {
+            servers.use(computer.id)
+            return dismiss()
+        }
+        if computer.addedId != nil { return ask(computer) }
+        switch try await account.signIn(to: computer) {
+        case .signedIn(let cookie, let name):
+            servers.add(Server(url: computer.url, username: name), cookie: cookie)
+            dismiss()
+        case .needsPassword:
+            usePassword(computer)
+        case nil:
+            break
+        }
+    }
+
+    private func ask(_ computer: Computer) {
+        needsPassword = nil
+        password = ""
+        error = nil
+        asked = computer
+        typingPassword = true
+    }
+
+    /// A hosted server that does not sign in with the account: its address is filled in and the form asks for the
+    /// username and password.
+    private func usePassword(_ computer: Computer) {
+        address = computer.name
+        needsPassword = SignIn.parse(address)
+        error = "\(computer.name) takes its username and password"
+    }
+
+    private func forget(_ computer: Computer) async throws {
+        try await account.forget(computer)
+        computers?.removeAll { $0.id == computer.id }
+    }
+
     private func connect() async {
-        guard let target = SignIn.parse(address) else { return error = "That isn't an address" }
         busy = true
         defer { busy = false }
         do {
-            let outcome = if let asked = needsPassword {
-                try await SignIn.login(asked.origin, username: username, password: password)
+            if let asked {
+                guard case .signedIn(let cookie, let name) = try await account.signIn(to: asked, password: password) else { return }
+                servers.add(Server(url: asked.url, username: name, label: asked.name), cookie: cookie)
+                return dismiss()
+            }
+            guard let target = SignIn.parse(address) else { return error = "That isn't an address" }
+            let outcome = if let waiting = needsPassword {
+                try await SignIn.login(waiting.origin, username: username, password: password)
             } else {
                 try await SignIn.connect(target)
             }
