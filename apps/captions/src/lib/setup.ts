@@ -1,8 +1,8 @@
 import { useEffect, useRef } from "react";
 import { create } from "zustand";
 import { planWarning, type Feature, type PlanId } from "@contracts/plans";
-import { DEFAULT_TOOLS, type HomeTile, type SetupView, type Tool } from "@contracts/tools";
-import { DEFAULT_WORK_PREFS, type Make, type WorkPrefs } from "@contracts/work-prefs";
+import { DEFAULT_TOOLS, readiness, type Have, type HomeTile, type Need, type SetupView, type Tool } from "@contracts/tools";
+import { DEFAULT_WORK_PREFS, JOBS, type Job, type Make, type WorkPrefs } from "@contracts/work-prefs";
 import { confirmDialog } from "./dialogs";
 import { useAuth } from "./auth";
 import { putCached, readCached, useCachedLoad, warmCached } from "./local-cache";
@@ -12,17 +12,18 @@ import { useWorkspace } from "./workspace";
 export type { SetupView };
 
 /**
- * First run: three screens for everyone (Connect your AI, What do you make?, How do you work best?), then Home.
- * "In my own AI" and "Both" are followed by one more, `own`: Creator Toolset is installed in her AI apps there, so the
- * answer is carried out where she can see it. Questions and their installs only: no job to do is asked of her.
+ * First run: five screens for everyone (Pick your look, Connect your AI, What do you make?, What do you want to do
+ * first?, How do you work best?), then Home. "In my own AI" and "Both" are followed by one more, `own`: Creator Toolset
+ * is installed in her AI apps there, so the answer is carried out where she can see it. Questions and their installs
+ * only: no job to do is asked of her.
  */
-export const SETUP_PATH = ["agents", "make", "how"] as const;
+export const SETUP_PATH = ["theme", "agents", "make", "job", "how"] as const;
 /** Screens that open alone from a `?setup=` link and close with Done. `own` is also the path's last screen (stepsFor). */
 export const SIDE_STEPS = ["connect", "folders", "own"] as const;
 export const SETUP_STEPS = [...SETUP_PATH, ...SIDE_STEPS] as const;
 export type SetupStep = (typeof SETUP_STEPS)[number];
 
-/** The click path: the three screens, and `own` after them when the answer to the third is "In my own AI" or "Both". */
+/** The click path: the five screens, and `own` after them when the answer to the last is "In my own AI" or "Both". */
 export const stepsFor = (talk?: string | null): readonly SetupStep[] => (talk === "chat" || talk === "both" ? [...SETUP_PATH, "own"] : SETUP_PATH);
 
 /** Ids from the older, longer setups still open the screen they now belong to. */
@@ -359,6 +360,39 @@ export async function confirmHeavy(feature: Feature, count = 1): Promise<boolean
   if (!warning) return true;
   return confirmDialog({ title: "This can use up your plan's limit", body: warning, ok: "Run it anyway" });
 }
+
+/**
+ * "What do you want to do first?": each answer's words, the tools it is done with and the line that says it is ready.
+ * The Video Cleaner is in none: it is leaving the app.
+ */
+export const JOB_SETUP: Record<Job, { name: string; tools: readonly Tool[]; ready: string }> = {
+  ideas: { name: "Find ideas in posts I like", tools: ["instagram"], ready: "You're ready to find ideas." },
+  write: { name: "Write scripts and posts", tools: ["workshop"], ready: "You're ready to write." },
+  edit: { name: "Edit my videos", tools: ["media", "editor"], ready: "You're ready to edit your videos." },
+  captions: { name: "Add captions to a video", tools: ["captions"], ready: "You're ready to add captions." },
+  look: { name: "Just look around", tools: [], ready: "" },
+};
+
+/** The answers this account is offered: those with a tool it may use (`mine`), and Just look around. */
+export const jobsFor = (mine: readonly Tool[]): Job[] => JOBS.filter((j) => j === "look" || JOB_SETUP[j].tools.some((t) => mine.includes(t)));
+
+/**
+ * What a job still needs: the required rows (contracts/tools.ts readiness, the list Home's dots and a tool's card read)
+ * of its tools this account may use, each once. The project counts as there: leaving setup makes it.
+ */
+export function jobNeeds(job: Job | null | undefined, mine: readonly Tool[], have: readonly Have[]): Need[] {
+  if (!job) return [];
+  const got: Have[] = [...have, "project"];
+  const seen = new Set<string>();
+  return JOB_SETUP[job].tools
+    .filter((t) => mine.includes(t))
+    .flatMap((t) => readiness(t, got).missing)
+    .filter((n) => !seen.has(n.anyOf.join()) && !!seen.add(n.anyOf.join()));
+}
+
+/** The tools leaving setup switches on: the ones ticked, and the job's (Add captions turns Caption Studio on), in `mine`'s order. */
+export const toolsWithJob = (ticked: readonly Tool[], job: Job | null | undefined, mine: readonly Tool[]): Tool[] =>
+  mine.filter((t) => ticked.includes(t) || (!!job && JOB_SETUP[job].tools.includes(t)));
 
 /** "What do you make?": each answer, the words setup shows for it. */
 export const MAKE_NAMES: Record<Make, string> = {

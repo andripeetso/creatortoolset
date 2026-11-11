@@ -236,6 +236,7 @@ describe("Creator Toolset as a remote MCP server", () => {
     // 10277 -> 10323: automations_list says it returns history, the last five results (the list already carried them)
     // 10323 -> 10338: the five automations_* tools became schedule_task (create or change), list_scheduled_tasks,
     // run_scheduled_task_now and delete_scheduled_task: runs post in an assistant chat, a destination says which, once and weekdays
-    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(10338);
+    // 10338 -> 10470: set_work_prefs job (what they want to do first, from setup; the assistant can change it)
+    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(10470);
   });
 });

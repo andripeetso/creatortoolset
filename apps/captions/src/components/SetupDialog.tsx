@@ -17,14 +17,17 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { TOOLS, type Tool } from "@contracts/tools";
-import { MAKES, type Make } from "@contracts/work-prefs";
+import { MAKES, type Job, type Make } from "@contracts/work-prefs";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { AgentsStep } from "@/components/setup/AgentsStep";
 import { Choice } from "@/components/setup/Choice";
 import { ConnectStep, HERE } from "@/components/setup/ConnectStep";
 import { FoldersStep } from "@/components/setup/FoldersStep";
-import { HowPicker } from "@/components/setup/HowPicker";
+import { HowPicker, PictureCard } from "@/components/setup/HowPicker";
+import { LookArt } from "@/components/setup/HowArt";
+import { JobStep } from "@/components/setup/JobStep";
+import { useShareTheme, type ThemeChoice } from "@/components/ShareTheme";
 import { OwnAiStep } from "@/components/setup/OwnAiStep";
 import { ToolsPicker } from "@/components/setup/ToolNeeds";
 import { canUse, useMe } from "@/lib/auth";
@@ -48,6 +51,7 @@ import {
   stepsFor,
   stillMotion,
   toolsFor,
+  toolsWithJob,
   useSetup,
   useSetupLive,
   useSetupShown,
@@ -59,8 +63,10 @@ import { createProject } from "@/lib/workshop";
 import { useWorkspace } from "@/lib/workspace";
 import { cn } from "@/lib/utils";
 
-/** Each screen: its title and the line under it. The first three are the path, with `own` after them for an own-AI answer; the rest open alone from a `?setup=` link. */
+/** Each screen: its title and the line under it (none on the two that need none). The first five are the path, with `own` after them for an own-AI answer; the rest open alone from a `?setup=` link. */
 const STEP: Record<SetupStep, { title: string; hint: string }> = {
+  theme: { title: "Pick your look", hint: "" },
+  job: { title: "What do you want to do first?", hint: "" },
   agents: { title: "Connect your AI", hint: "Creator Toolset works with the ChatGPT, Claude, Google, Grok or Meta plan you already have." },
   make: { title: "What do you make?", hint: "Pick what fits. It turns on the right tools." },
   connect: { title: "Connect your computers", hint: "Add your phone or another computer." },
@@ -77,14 +83,22 @@ const MAKE_ICONS: Record<Make, LucideIcon> = {
   recording: ScreenShare, newsletter: Mail, thread: AtSign, article: Newspaper, other: CircleEllipsis,
 };
 
+/** "Pick your look": the choices Settings → Appearance has, under setup's names. */
+const LOOK_CHOICES: Array<{ id: ThemeChoice; name: string }> = [
+  { id: "dark", name: "Dark" },
+  { id: "light", name: "Light" },
+  { id: "system", name: "Match my Mac" },
+];
+
 const SAVED_NOTE = "Your setup is saved. You'll find the rest on Home.";
 /** "Connect your AI" is about this computer only. */
 const THIS_COMPUTER: ReadonlySet<string> = new Set([HERE]);
 const PRIMARY = "min-w-28 bg-[var(--tint)] text-white hover:bg-[var(--tint)] hover:brightness-110";
 
 /**
- * First-run setup in one window, three screens for everyone: connect your AI → what you make (ticks the tools, makes
- * the first project quietly) → how you work best (in the app, in your own AI, or both), then Home. "In my own AI" and
+ * First-run setup in one window, five screens for everyone: your look (the theme, set as Settings → Appearance sets it)
+ * → connect your AI → what you make (ticks the tools; the first project is made on leaving setup) → what you want to do
+ * first (and what that still needs) → how you work best (in the app, in your own AI, or both), then Home. "In my own AI" and
  * "Both" get one more screen first, where Creator Toolset is installed in the AI apps on this computer. Leaving the
  * last screen saves `done`; no job to do is asked of her. Not now (the X, the footer link, Escape) hides it for this
  * browser and remembers the screen; Home's card brings it back. A click outside never closes it. Never shown on a
@@ -99,6 +113,7 @@ export function SetupDialog() {
   const prefs = useWorkPrefs((s) => s.prefs);
   const loadPrefs = useWorkPrefs((s) => s.load);
   const { setTalk } = useWorkTalk();
+  const theme = useShareTheme();
   const { projects, loaded, load: loadProjects } = useWorkspace();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
@@ -191,7 +206,7 @@ export function SetupDialog() {
       if (step === "make") await saveMakes();
       if (at === path.length - 1) {
         // the last screen: this is the end of setup, and it never opens by itself again
-        await save({ tools, done: true });
+        await save({ tools: toolsWithJob(tools, prefs.job, mine), done: true });
         const name = loaded ? firstProjectName(makes, projects.length) : null;
         if (name) await createProject({ name }).catch(() => {});
         return goHome(plays);
@@ -216,7 +231,11 @@ export function SetupDialog() {
     setUnsure(!notSure);
     if (!notSure) setTicked([...mine]);
   };
+  const pickJob = (j: Job) => void useWorkPrefs.getState().put({ job: j });
   const closeLabel = side ? "Close" : "Not now";
+  const { hint } = STEP[step];
+  // "What do you want to do first?" with nothing picked has Skip for now in place of Continue, as Connect your AI has
+  const skips = (step === "agents" && !connected) || (step === "job" && !prefs.job);
 
   return (
     <Dialog open onOpenChange={(o) => !o && close()}>
@@ -225,6 +244,7 @@ export function SetupDialog() {
         // a press outside (the Mac window's title bar, the page behind) never closes setup
         onInteractOutside={(e) => e.preventDefault()}
         onOpenAutoFocus={(e) => e.preventDefault()}
+        {...(!hint && { "aria-describedby": undefined })}
         className={cn(
           // as tall as the screen allows (680px at most): the header and footer stay put and only the body scrolls,
           // so a small window shows a usable step rather than a thin strip
@@ -247,16 +267,25 @@ export function SetupDialog() {
             </button>
           </div>
           <DialogTitle className="mt-4 text-2xl font-semibold tracking-tight">{STEP[step].title}</DialogTitle>
-          <DialogDescription className="mt-1.5 text-sm">{STEP[step].hint}</DialogDescription>
+          {hint && <DialogDescription className="mt-1.5 text-sm">{hint}</DialogDescription>}
         </header>
 
         <div
           key={step}
           className={cn(
             "min-h-0 flex-1 px-6 pb-5 pt-5 sm:px-8 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-right-2 motion-safe:duration-200",
-            "overflow-y-auto",
+            // the bar's 8px are always kept, out of the right padding: nothing moves when a screen starts to scroll
+            "overflow-y-scroll bars:pr-4 sm:bars:pr-6",
           )}
         >
+          {step === "theme" && (
+            <div role="radiogroup" aria-label="Pick your look" className="grid gap-4 sm:grid-cols-3">
+              {LOOK_CHOICES.map((o) => (
+                <PictureCard key={o.id} on={theme.choice === o.id} onClick={() => theme.setChoice(o.id)} art={<LookArt look={o.id} />} name={o.name} />
+              ))}
+            </div>
+          )}
+
           {step === "agents" && <AgentsStep picked={THIS_COMPUTER} onConnectedChange={onConnected} />}
 
           {step === "make" && (
@@ -279,6 +308,10 @@ export function SetupDialog() {
           {step === "connect" && <ConnectStep picked={THIS_COMPUTER} onPick={() => {}} />}
 
           {step === "folders" && <FoldersStep onNext={close} actions={footerSlot} />}
+
+          {step === "job" && (
+            <JobStep mine={mine} have={view.have} job={prefs.job ?? null} onPick={pickJob} ai={<AgentsStep picked={THIS_COMPUTER} onConnectedChange={onConnected} />} />
+          )}
 
           {step === "how" && <HowPicker value={prefs.talk} onChange={(t) => void setTalk(t)} />}
 
@@ -311,12 +344,12 @@ export function SetupDialog() {
                 Done
               </Button>
             )}
-            {step === "agents" && !connected && (
+            {skips && (
               <Button variant="ghost" className="text-muted-foreground" onClick={() => void next()}>
                 Skip for now
               </Button>
             )}
-            {!side && (step !== "agents" || connected) && (
+            {!side && !skips && (
               <Button onClick={() => void next()} disabled={busy} className={PRIMARY}>
                 {at === path.length - 1 ? "Done" : "Continue"}
               </Button>

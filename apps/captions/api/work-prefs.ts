@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { env } from "./lib/env";
 import type { AuthVars } from "./auth";
-import { CHECK, DEFAULT_WORK_PREFS, EDITORS, MAKES, TALK, type WorkPrefs } from "../contracts/work-prefs";
+import { CHECK, DEFAULT_WORK_PREFS, EDITORS, JOBS, MAKES, TALK, type WorkPrefs } from "../contracts/work-prefs";
 
 /** One record per account: $DATA_DIR/work-prefs/<user>.json (contracts/work-prefs.ts). */
 const fileOf = (username: string) => path.join(env.dataDir, "work-prefs", `${username}.json`);
@@ -34,6 +34,10 @@ export function writeWorkPrefs(username: string, b: Record<string, unknown>): Wo
   if (b.makes !== undefined) {
     if (!Array.isArray(b.makes) || !b.makes.every((m) => MAKES.includes(m as never))) return `makes is a list of ${MAKES.join(", ")}`;
     next.makes = [...new Set(b.makes as WorkPrefs["makes"])];
+  }
+  if (b.job !== undefined) {
+    if (b.job !== null && !JOBS.includes(b.job as never)) return `job is one of ${JOBS.join(", ")} (or null)`;
+    next.job = b.job as WorkPrefs["job"];
   }
   const file = fileOf(username);
   mkdirSync(path.dirname(file), { recursive: true });
