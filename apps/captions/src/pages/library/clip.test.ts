@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AssetCard, AssetDetail, ShareRow } from "@contracts/library";
-import { copyReady, factsOf, linksOf, original, playerNote } from "./clip";
+import { copyReady, daysLeft, factsOf, linksOf, original, playerNote } from "./clip";
 
 const card: AssetCard = { id: "a1", libraryId: "l1", kind: "video", title: "Tiny Acrobatics jump", versionId: "v1", versionN: 1, tags: [], aiTags: [], state: "ready" };
 const detail = (jobs: AssetDetail["jobs"], more: Partial<AssetDetail> = {}): AssetDetail => ({ ...card, versions: [], collections: [], jobs, ...more });
@@ -33,12 +33,19 @@ describe("the clip panel's player", () => {
 });
 
 describe("the clip panel's facts and share links", () => {
-  it("lists length, size, roll, the day it was filmed, and a version only past the first", () => {
+  it("lists the day it was filmed, length, size and roll, and a version only past the first", () => {
     const filmed = new Date(2026, 10, 3).getTime();
-    const line = factsOf({ ...card, durationS: 74, width: 3840, height: 2160, roll: "b", capturedAt: filmed });
-    expect(line.startsWith("1:14 · 3840×2160 · B-roll · Filmed ")).toBe(true);
-    expect(line).not.toContain("version");
-    expect(factsOf({ ...card, roll: "a", versionN: 2 })).toBe("A-roll · version 2");
+    const facts = factsOf({ ...card, durationS: 74, width: 3840, height: 2160, roll: "b", capturedAt: filmed });
+    expect(facts.map(([label]) => label)).toEqual(["Filmed", "Length", "Size", "Roll"]);
+    expect(facts.slice(1)).toEqual([["Length", "1:14"], ["Size", "3840×2160"], ["Roll", "B-roll"]]);
+    expect(factsOf({ ...card, roll: "a", versionN: 2 })).toEqual([["Roll", "A-roll"], ["Version", "2"]]);
+  });
+
+  it("counts a link's days left up, never below one", () => {
+    const now = 1_000_000;
+    expect(daysLeft(now + 7 * 86_400_000, now)).toBe(7);
+    expect(daysLeft(now + 6.2 * 86_400_000, now)).toBe(7);
+    expect(daysLeft(now + 1000, now)).toBe(1);
   });
 
   it("keeps the library's links that open this clip", () => {

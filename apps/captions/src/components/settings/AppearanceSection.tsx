@@ -5,7 +5,8 @@ import { Switch } from "@/components/ui/switch";
 import { persistHomeGlow, persistOwnColour, persistProjectTint, useAppearance } from "@/lib/settings";
 import { cn } from "@/lib/utils";
 import { isHexColour, PROJECT_COLORS, projectColor, useWorkspace, type ProjectColor } from "@/lib/workspace";
-import { Section } from "./ui";
+import { persistClipView, useClipView, type ClipView } from "@/pages/library/clip";
+import { Card, Row, Section, SettingsSelect } from "./ui";
 
 const OPTIONS: Array<{ id: ThemeChoice; label: string; icon: LucideIcon }> = [
   { id: "system", label: "System", icon: Monitor },
@@ -53,9 +54,10 @@ function Preview({ look }: { look: Look }) {
   );
 }
 
-/** Settings → Appearance: the theme, then the colour. */
+/** Settings → Appearance: the theme, the colour, and what a Media Library clip opens in. */
 export function AppearanceSection() {
   const { choice, setChoice, dark } = useShareTheme();
+  const clipView = useClipView();
   return (
     <>
       <Section id="theme" title="Theme">
@@ -98,6 +100,26 @@ export function AppearanceSection() {
       </Section>
 
       <Colour dark={dark} />
+
+      <Section title="Media Library">
+        <Card>
+          <Row
+            id="clip-view"
+            title="Clips open in"
+            control={
+              <SettingsSelect
+                label="Clips open in"
+                value={clipView}
+                onValueChange={(v) => persistClipView(v as ClipView)}
+                options={[
+                  { value: "window", label: "A window" },
+                  { value: "side", label: "A side panel" },
+                ]}
+              />
+            }
+          />
+        </Card>
+      </Section>
     </>
   );
 }

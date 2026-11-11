@@ -8,7 +8,6 @@ import { BIG_DROP, BigUploadDialog, ClipStage, LibraryProgressBar } from "@/comp
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
-import { Sheet, SheetContent } from "@/components/ui/sheet";
 import {
   createCollection,
   createLibrary,
@@ -30,6 +29,7 @@ import { cn } from "@/lib/utils";
 import { LibraryFacetBar } from "@/components/LibraryFacetBar";
 import { libraryBadges, libraryFacets } from "@/lib/library-slots";
 import { AiBadge, ClipPanel } from "./library/ClipPanel";
+import { ClipView } from "./library/ClipView";
 import { LibraryFolders } from "./library/LibraryFolders";
 import { LibrarySettings } from "./library/LibrarySettings";
 
@@ -526,8 +526,7 @@ export default function LibraryPage() {
         )}
       </main>
 
-      <Sheet open={preview !== null} onOpenChange={(open) => !open && setPreview(null)}>
-        <SheetContent side="right" className="w-full overflow-y-scroll p-0 sm:max-w-xl">
+      <ClipView open={preview !== null} onClose={() => setPreview(null)}>
           {preview && libId && (
             <ClipPanel
               libraryId={libId}
@@ -548,8 +547,7 @@ export default function LibraryPage() {
               onError={setError}
             />
           )}
-        </SheetContent>
-      </Sheet>
+      </ClipView>
     </div>
   );
 }
