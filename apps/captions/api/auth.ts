@@ -361,6 +361,46 @@ authApp.get("/link/:code", (c) => {
 });
 
 /**
+ * A provider sign-in an app started (sign-in.ts, `app=1`): the sign-in ends on the app's own link with a one-time code,
+ * and the app swaps it here for its session, POST /api/auth/app { code, verifier }. The app proves it started that
+ * sign-in (PKCE, S256): the start took `challenge` = base64url(sha256(verifier)), so a code caught on its way to the
+ * app is useless to anyone else. A code works once (any try that names it uses it up, right or wrong), within 60 s,
+ * and dies with a password change. Kept in memory only and never logged. Hosted mode only, like the sign-ins that make
+ * the codes. The body must be sent as JSON (Content-Type: application/json): a form on another site cannot send that,
+ * so a page elsewhere can't use this route to sign a browser in to an account of its choosing. A body sent any other
+ * way is not read at all, so it is refused without touching a code.
+ */
+export const APP_CHALLENGE = /^[A-Za-z0-9_-]{43}$/; // base64url of a sha256
+const APP_VERIFIER = /^[A-Za-z0-9._~-]{43,128}$/;
+const appCodes = new Map<string, { username: string; hash: string; challenge: string; expiresAt: number }>();
+
+export function mintAppCode(user: UserRecord, challenge: string): string {
+  const now = Date.now();
+  for (const [k, v] of appCodes) if (v.expiresAt <= now) appCodes.delete(k);
+  const code = randomBytes(32).toString("base64url");
+  appCodes.set(code, { username: user.username, hash: user.hash, challenge, expiresAt: now + LINK_TTL });
+  return code;
+}
+
+authApp.post("/app", async (c) => {
+  if (!hostedMode()) return c.json({ error: "Not Found" }, 404);
+  const asJson = /^application\/json\b/i.test(c.req.header("content-type") ?? "");
+  const b = asJson ? ((await c.req.json().catch(() => null)) as { code?: unknown; verifier?: unknown } | null) : null;
+  const code = typeof b?.code === "string" ? b.code : "";
+  const verifier = typeof b?.verifier === "string" ? b.verifier : "";
+  const hit = appCodes.get(code);
+  appCodes.delete(code); // single use, whatever happens next
+  c.header("Cache-Control", "no-store");
+  const proved = !!hit && hit.expiresAt > Date.now() && APP_VERIFIER.test(verifier) && createHash("sha256").update(verifier).digest("base64url") === hit.challenge;
+  const user = proved ? findUser(hit.username) : null;
+  // one answer for a wrong, used or expired code and a wrong verifier: it says nothing about which
+  if (!user || user.hash !== hit!.hash) return c.json({ error: "That sign-in code is used or expired" }, 400);
+  bumpUsage(user.username, { logins: 1 });
+  setLoginCookie(c, user);
+  return c.json({ ok: true, user: withLogins(sessionOf(user)) });
+});
+
+/**
  * Ticket sign-in through this computer's tunnel (POST /api/auth/ticket, body { ticket, password }). The broker's ticket
  * proves the account and the computer; the computer's own password is still asked, once per browser. A ticket
  * works once: it is spent before the password is checked, so a wrong password needs a new ticket.
