@@ -789,14 +789,17 @@ ${chapterHint} First chapter near 0:00. t matches [mm:ss] in the transcript. No 
   } finally {
     stopCrawl();
     // a note the assistant started from a dropped file: its card in the chat ends, and the chat says so (a stopped one says nothing)
-    if (meta.status !== "processing" && meta.owner)
+    if (meta.status !== "processing" && meta.owner) {
+      // ffmpeg's own words can run to pages: the chat gets their last line, the note's page keeps all of them
+      const why = (meta.error ?? "").trim().split("\n").at(-1)!.slice(0, 160);
       workEnded(
         meta.owner,
         `notes:${id}`,
         meta.status === "ready"
           ? { status: "done", detail: "Ready", say: `“${meta.name}” is ready.`, choices: ["Sum it up", "Show me"] }
-          : { status: "failed", detail: meta.error, say: `“${meta.name}” did not finish: ${meta.error}`, choices: ["Show me"] },
+          : { status: "failed", detail: why, say: `“${meta.name}” did not finish: ${why}`, choices: ["Show me"] },
       );
+    }
     active.delete(id);
     children.get(id)?.kill("SIGKILL");
     children.delete(id);
