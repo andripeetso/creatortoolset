@@ -8,7 +8,7 @@
 // and from the app's packages (hono, react) is not: the built file reads those from the running app
 // (globalThis.__ctHost), so the plug-in uses the app's one copy of React, the router, the database and every module.
 // The folder is read as if it were apps/captions/plugins/<id>, so the same files work in a checkout.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { builtinModules, createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
@@ -78,6 +78,27 @@ function hostLink(folder, id, list, needs, node) {
   };
 }
 
+/**
+ * Every file that went into the bundle must be one of the folder's own. The link above sees the imports a file
+ * writes, but not where the bundler goes by itself from inside the folder: a package.json there whose "main" or
+ * "browser" points out of it, or a file that is a link to another place. The Mac app runs the copy a person switched
+ * on and knows it by the fingerprint of that copy's files, so code bundled from anywhere else would run without ever
+ * being part of what they switched on, and could change afterwards with the fingerprint the same.
+ */
+function ownFilesOnly(result, folder) {
+  const root = realpathSync(folder);
+  for (const input of Object.keys(result.metafile.inputs)) {
+    if (input.startsWith("ct-host:")) continue; // read from the running app when the plug-in loads, not from a file
+    let file = "";
+    try {
+      file = realpathSync(path.resolve(folder, input));
+    } catch {
+      // not a file that can be found again: refused below
+    }
+    if (!file.startsWith(root + path.sep)) throw new Error(`${path.relative(folder, path.resolve(folder, input))} is outside the plug-in's folder: a plug-in is built only from the files in its own folder`);
+  }
+}
+
 /** esbuild's errors as plain lines, with paths inside the plug-in's folder. */
 function problems(e, folder) {
   if (!Array.isArray(e?.errors)) return e instanceof Error ? e.message : String(e);
@@ -105,12 +126,14 @@ export async function buildPlugin({ folder, out, app = path.resolve(HERE, "..") 
   const esbuild = require("esbuild");
   mkdirSync(out, { recursive: true });
   const needs = { server: new Set(), web: new Set() };
-  const common = { bundle: true, format: "esm", logLevel: "silent", sourcemap: "inline", absWorkingDir: folder };
+  const common = { bundle: true, format: "esm", logLevel: "silent", sourcemap: "inline", absWorkingDir: folder, metafile: true };
+  const outputs = { server: path.join(out, "server.js"), web: path.join(out, "web.js") };
+  let made = [];
   try {
     if (info.server)
-      await esbuild.build({ ...common, entryPoints: [info.files.server], outfile: path.join(out, "server.js"), platform: "node", target: "node22", plugins: [hostLink(folder, info.id, lists.server, needs.server, true)] });
+      made.push(await esbuild.build({ ...common, entryPoints: [info.files.server], outfile: outputs.server, platform: "node", target: "node22", plugins: [hostLink(folder, info.id, lists.server, needs.server, true)] }));
     if (info.web)
-      await esbuild.build({
+      made.push(await esbuild.build({
         ...common,
         entryPoints: [info.files.web],
         outfile: path.join(out, "web.js"),
@@ -120,9 +143,16 @@ export async function buildPlugin({ folder, out, app = path.resolve(HERE, "..") 
         define: { "process.env.NODE_ENV": '"production"', "import.meta.env.DEV": "false", "import.meta.env.PROD": "true", "import.meta.env.MODE": '"production"' },
         loader: { ".png": "dataurl", ".jpg": "dataurl", ".jpeg": "dataurl", ".gif": "dataurl", ".webp": "dataurl", ".svg": "dataurl" },
         plugins: [hostLink(folder, info.id, lists.web, needs.web, false)],
-      });
+      }));
   } catch (e) {
     throw new Error(problems(e, folder));
+  }
+  try {
+    for (const result of made) ownFilesOnly(result, folder);
+  } catch (e) {
+    // what was bundled is not left behind for anything to load
+    for (const file of [outputs.server, outputs.web, path.join(out, "web.css")]) rmSync(file, { force: true });
+    throw e;
   }
   if (info.web) {
     // the plug-in's own classes with the app's theme: the app's stylesheet holds only the classes the app itself uses

@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "vitest";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { buildPlugin } from "./plugin-build.mjs";
@@ -77,6 +77,33 @@ describe("what the builder refuses, in words a person or their AI can act on", (
   ];
   it.each(cases)("refuses %s", async (what, files, why) => {
     await expect(build(folder(what.replace(/\W+/g, "-"), files))).rejects.toThrow(why);
+  });
+
+  // The Mac app knows the copy a person switched on by the fingerprint of the folder's own files. Code bundled from
+  // anywhere else would run without being part of that, and could change afterwards with the fingerprint the same.
+  const outside = () => {
+    mkdirSync(path.join(tmp, "src"), { recursive: true });
+    writeFileSync(path.join(tmp, "src", "outside-code.js"), 'export const x = "ran from outside the folder";\n');
+  };
+  const reaches = [
+    ["a package.json whose main points out of the folder", "plugin.ts", { "lib/package.json": '{ "main": "../../outside-code.js" }\n' }],
+    ["a package.json whose browser map points out of the folder", "web.tsx", { "lib/package.json": '{ "main": "./index.js", "browser": { "./index.js": "../../outside-code.js" } }\n', "lib/index.js": 'export const x = "own";\n' }],
+    ["a file that is a link to another place", "plugin.ts", { "lib/index.js": null }],
+  ];
+  it.each(reaches)("refuses code from outside the folder, reached by %s", async (what, entry, files) => {
+    outside();
+    const text = entry === "plugin.ts" ? head + 'import { x } from "./lib";\nexport default definePlugin({ id: "reach", about: x });\n' : 'import { x } from "./lib";\nexport default { id: "reach", about: x };\n';
+    const dir = folder(what.replace(/\W+/g, "-"), { [entry]: text, ...Object.fromEntries(Object.entries(files).filter(([, v]) => v !== null)) });
+    for (const [file, v] of Object.entries(files)) {
+      if (v !== null) continue;
+      mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+      rmSync(path.join(dir, file), { force: true });
+      symlinkSync(path.join(tmp, "src", "outside-code.js"), path.join(dir, file));
+    }
+    await expect(build(dir)).rejects.toThrow(/outside-code\.js is outside the plug-in's folder/);
+    // and nothing that was bundled is left where it could be loaded
+    const out = path.join(tmp, "out", path.basename(dir));
+    expect(existsSync(path.join(out, "server.js")) || existsSync(path.join(out, "web.js"))).toBe(false);
   });
 
   it("bundles the plug-in's own files and its own stylesheet", async () => {
