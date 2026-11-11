@@ -22,6 +22,8 @@ const WAIT_MS = 3 * 60_000;
 const POLL_MS = 3_000;
 /** How often the list looks again by itself while it is on screen (each look runs the CLIs' status commands). */
 const RECHECK_MS = 20_000;
+/** Away from the window this long, an account turned away (no plan) may have bought one: its row offers Connect again. */
+const AWAY_MS = 30_000;
 /** How long a request may take before it gives up with a plain message (no wait spins forever). */
 const TIMEOUT_MS = 90_000;
 /** An install downloads the vendor's program here (Meta's is about 470 MB): a slow connection gets an hour. */
@@ -84,13 +86,15 @@ const CONNECT = { label: "Connect" };
 
 /**
  * A program's own words without the instructions in them to run something: a `command`, a line to type, "run: …", a
- * sentence that leads into one. Details shows the rest; the row itself says the plain thing.
+ * sentence that leads into one. What it said shows the rest; the row itself says the plain thing. A command line is
+ * typed in small letters: "Claude on the Mac: …", the way every Claude error starts, is the program's words, not one.
  */
-const COMMAND = /`|\b(run|type|paste)\b|environment variable|:\s*$|^\s*(\$|export|source|sudo|curl|npm|npx|brew|echo|mkdir|grok|agent|cursor-agent|codex|claude|gemini|muse)(\s|$)/i;
+const COMMAND = /`|\b(run|type|paste)\b|environment variable|:\s*$/i;
+const COMMAND_LINE = /^\s*(\$|export|source|sudo|curl|npm|npx|brew|echo|mkdir|grok|agent|cursor-agent|codex|claude|gemini|muse)(\s|$)/;
 export const withoutCommands = (raw?: string): string | undefined =>
   raw
     ?.split("\n")
-    .map((line) => line.split(/(?<=[.!?])\s+/).filter((s) => !COMMAND.test(s)).join(" "))
+    .map((line) => line.split(/(?<=[.!?])\s+/).filter((s) => !COMMAND.test(s) && !COMMAND_LINE.test(s)).join(" "))
     .filter((line) => line.trim())
     .join("\n") || undefined;
 
@@ -113,8 +117,8 @@ export function rowView(id: string, row: Known | undefined, result: ConnectResul
     return { line: result.message ?? "Open the Creator Toolset Mac app to connect this.", button: null };
   if (result?.state === "signin")
     return ours ? { line: `Not signed in yet. ${usesOf(id)}`, button: SIGN_IN } : { line: `Not signed in to ${name} on this Mac yet.`, button: CONNECT };
-  // the account has no plan for this AI: the line says what it needs, and no Try again (the window coming back to the
-  // front clears it, so a plan bought meanwhile connects from the row's Connect)
+  // the account has no plan for this AI: the line says what it needs, and no Try again (coming back to the window after
+  // a while clears it, so a plan bought meanwhile connects from the row's Connect)
   if (result?.state === "plan") return { line: result.message ?? "", button: null, raw: withoutCommands(result.raw) };
   if (result && result.state !== "ready") return { line: result.message ?? "It didn't connect. Try again.", button: { label: "Try again" }, raw: withoutCommands(result.raw) };
   if (isConnected(row, result)) {
@@ -420,14 +424,21 @@ export function AiPanel({ onConnectedChange }: { onConnectedChange?: (on: boolea
     const again = () => {
       if (document.visibilityState === "visible") void refresh(true);
     };
-    // back in front, an account turned away may have its plan now: its row offers Connect again
+    // back in front after a while elsewhere, an account turned away may have its plan now: its row offers Connect again.
+    // Only after a while: a web view can take focus just after the press, which would wipe the sentence unread
+    let away = 0;
+    const leave = () => (away = Date.now());
     const front = () => {
-      setResults((s) => (Object.values(s).some((r) => r?.state === "plan") ? Object.fromEntries(Object.entries(s).filter(([, r]) => r?.state !== "plan")) : s));
+      if (away && Date.now() - away >= AWAY_MS)
+        setResults((s) => (Object.values(s).some((r) => r?.state === "plan") ? Object.fromEntries(Object.entries(s).filter(([, r]) => r?.state !== "plan")) : s));
+      away = 0;
       again();
     };
+    window.addEventListener("blur", leave);
     window.addEventListener("focus", front);
     const t = window.setInterval(again, RECHECK_MS);
     return () => {
+      window.removeEventListener("blur", leave);
       window.removeEventListener("focus", front);
       window.clearInterval(t);
     };

@@ -226,6 +226,9 @@ describe("what Connect does, one step at a time", () => {
     expect(withoutCommands(real[0])).toBe("Not signed in.");
     expect(withoutCommands(real[1])).toBe("Not logged in.");
     expect(withoutCommands("curl: (6) Could not resolve host: x.ai")).toBe("curl: (6) Could not resolve host: x.ai");
+    // the programs' own words, as the Mac sends them, stay: they start with the program's name, not a command
+    expect(withoutCommands("Claude on the Mac: Claude: API Error: 403 This organization has been disabled.")).toBe("Claude on the Mac: Claude: API Error: 403 This organization has been disabled.");
+    expect(withoutCommands("Muse Code couldn't answer. Muse Code said: overloaded.")).toBe("Muse Code couldn't answer. Muse Code said: overloaded.");
   });
 
   it("a failure is one plain sentence said once, Try again, and the program's own words under What it said", () => {
