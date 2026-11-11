@@ -10,7 +10,7 @@ import { routeFor } from "./lib/providers";
 import { deviceName } from "./lib/devices";
 import { readConnectors } from "./lib/connectors/store";
 import { myKeys } from "./my-keys";
-import { askConfirm, askSecret, navigateTo, noteChoices, noteMedia, noteStep, noteWork, setConfirmRunner, setInstallGuide, unattended } from "./assistant";
+import { askConfirm, askFolder, askSecret, navigateTo, noteChoices, noteMedia, noteStep, noteWork, setConfirmRunner, setInstallGuide, unattended } from "./assistant";
 import { FILE_USES, type AssistantMedia, type AssistantWork } from "../contracts/assistant";
 import { SESSION_STATUSES } from "./lib/workshop/types";
 import { postedFromUrl } from "./lib/workshop/posted";
@@ -45,7 +45,7 @@ function setupView(v: SetupView) {
 }
 
 /** The tools only the assistant's job token may call (the dock, assistant.ts). */
-const ASSISTANT_TOOLS = new Set(["setup_status", "save_setup", "ask_secret", "navigate", "show_video", "use_file", "notes_get", "offer_choices"]);
+const ASSISTANT_TOOLS = new Set(["setup_status", "save_setup", "ask_secret", "navigate", "show_video", "use_file", "notes_get", "offer_choices", "ask_folder"]);
 const isJob = (auth: Headers) => /^Bearer ctj_/.test(auth.get("authorization") ?? "");
 
 /** The most of a recording's words a tool hands the AI at once (about 15 minutes of speech). */
@@ -282,6 +282,11 @@ const ASSISTANT_DEFS = [
     name: "offer_choices",
     description: "Put 2 to 4 short answers under your reply as buttons, for a question the user answers in one tap (\"Start with my usual setup\" / \"Change the setup\"). A press sends that answer as their next message. Ask the question in your reply too.",
     inputSchema: { type: "object", properties: { choices: { type: "array", items: str } }, required: ["choices"] },
+  },
+  {
+    name: "ask_folder",
+    description: "Ask the user to choose a folder on their computer (a shoot to edit, footage to bring in): a Choose a folder button under your reply. why = what the folder is for, in a few words. Their choice comes with their next message. Ask for it in your reply too.",
+    inputSchema: { type: "object", properties: { why: str }, required: ["why"] },
   },
   { name: "navigate", description: "Open a page of the app for the user: a relative path such as /workshop or /settings/connectors.", inputSchema: { type: "object", properties: { path: str }, required: ["path"] } },
   {
@@ -1003,6 +1008,12 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       if (turn) noteChoices(user.username, turn, [...new Set(choices)]);
       return { status: "shown", note: "The buttons are under your reply: end the reply and wait for the answer." };
     },
+    ask_folder: async (a) => {
+      someoneThere();
+      const turn = jobTurn(auth.get("authorization") ?? undefined);
+      if (turn) askFolder(user.username, turn, String(a.why ?? ""));
+      return { status: "asked", note: "The button is under your reply: end the reply and wait for the folder." };
+    },
     navigate: async (a) => {
       someoneThere();
       return { status: "opening", path: await navigateTo(user.username, String(a.path ?? "")) };
@@ -1054,6 +1065,7 @@ const STEPS: Record<string, string> = {
   setup_status: "Checking what's set up",
   show_video: "Showing the video",
   offer_choices: "Offering answers",
+  ask_folder: "Asking for a folder",
   use_file: "Sending your file",
   notes_get: "Reading the Video Note",
   save_setup: "Saving your setup",

@@ -52,6 +52,7 @@ Your reply is shown in a small chat dock. You act in the app only through its to
 - show_video plays a Review video (or an AI Editor draft's preview) inside the chat, with a link to its page.
 - use_file sends a video or recording (dropped in the chat, or by its path on this computer when the server runs here) to Video Notes (transcript, summary, takeaways, an action plan, chapters), Review (a video page with comments and a share link), Caption Studio (captions on the video) or the Media Library (footage to keep, sorted into A-roll and B-roll; several dropped files in one call; a folder on this computer goes in with media_import_folder). notes_get follows a Video Note until it's ready and reads what it found. With version_of (a Review video's link) the file becomes that video's next version instead of a new video. notes_list lists the user's Video Notes; notes_get with add writes the takeaways, the action plan or the quotes a note does not have yet. After use_file to captions the captions are made in the background and the chat says when they are ready: open the project only then (/captions?project=<id>), read them with captions_get, find projects with captions_list. There is no export tool: open the project and the person presses Export.
 - offer_choices puts 2 to 4 short answers under your reply as buttons; a press sends that answer as the user's next message.
+- ask_folder puts a Choose a folder button under your reply when you need a folder from their computer (in the Mac app; elsewhere it tells you to ask for a drop or a typed path). The folder they choose comes with their next message.
 - A tool that deletes, publishes or sends asks the user itself, with a Yes / No card under your reply. When a tool answers that it asked, say so in a few words and end your reply: it is done when they press Yes.
 - ask_secret asks the user for one API key. The app shows a secure box in the chat; the key goes straight to the app and never to you. Never ask the user to paste a key, token or password into the chat, and never repeat one back.
 
@@ -91,6 +92,8 @@ interface Conv {
   messages: AssistantMessage[];
   pending?: { env: string; why: string; at: number };
   navigate?: string;
+  /** The newest message came from the Mac app (its page context said so): its open panel can choose a folder (askFolder). */
+  mac?: boolean;
   /** The tool call each waiting Yes / No card stands for (askConfirm), by the card's id. Never sent to the dock. */
   calls?: Record<string, { tool: string; args: unknown }>;
   /** Earlier conversations, newest first (New chat keeps the one it replaces here). */
@@ -231,6 +234,7 @@ function parseTurn(raw: unknown): TurnInput {
         selection: capped(c.selection, CONTEXT_CAPS.selection),
         visible: capped(c.visible, CONTEXT_CAPS.visible),
         ...(typeof c.timezone === "string" && validTimezone(c.timezone) ? { timezone: c.timezone } : {}),
+        ...(c.mac === true ? { mac: true } : {}),
       }
     : undefined;
   return { text, images, pasted, fileIds, files: [], paths, context };
@@ -340,6 +344,18 @@ export function noteMedia(username: string, turn: string, card: AssistantMedia):
   if (at >= 0) media[at] = card;
   else if (media.length < 10) media.push(card);
   else return;
+  saveSoon(username);
+}
+
+/**
+ * The reply asks for a folder on the user's computer (ask_folder, mcp.ts): a Choose a folder button under it. Only the
+ * Mac app can choose one (its own open panel hands the page the path); elsewhere the AI is told to ask for a drop or a typed path.
+ */
+export function askFolder(username: string, turn: string, why: string): void {
+  if (!load(username).mac) throw new Error("The user is not in the Creator Toolset Mac app, so no button can choose a folder: ask them to drop the folder on the chat, or to type its path.");
+  const m = messageOf(username, turn);
+  if (m?.status !== "thinking") return;
+  m.folderAsk = { why: why.replace(/\s+/g, " ").trim().slice(0, 200) };
   saveSoon(username);
 }
 
@@ -826,6 +842,7 @@ assistantApp.post("/turn", async (c) => {
   const route = routeOf(u.username, u.role === "admin");
   if (!route) return c.json({ error: "Connect your AI first", code: "NO_PROVIDER" }, 409);
   const now = Date.now();
+  conv.mac = input.context?.mac === true;
   // the pictures are kept only once the turn runs
   const images = input.images.map((im) => saveImage(u.username, im, im.bytes));
   conv.messages.push({

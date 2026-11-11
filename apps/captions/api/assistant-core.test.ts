@@ -277,6 +277,30 @@ describe("a file dropped for the Media Library", () => {
   });
 });
 
+describe("the assistant asks for a folder", () => {
+  it("in the Mac app the reply gets a Choose a folder button; anywhere else the AI is told to ask for a drop or a typed path", async () => {
+    const cookie = await cookieOf("ana");
+    const from = async (context: Record<string, unknown>) => {
+      expect((await app.request("/api/assistant/turn", { method: "POST", ...json({ text: "Edit my shoot", context }, { cookie }) })).status).toBe(202);
+      const job = await claim();
+      return { token: `Bearer ${job.mcp.token}`, end: () => finish(job.id) };
+    };
+    const browser = await from({ path: "/editor", title: "AI Editor" });
+    expect(await tool(browser.token, "ask_folder", { why: "the shoot to edit" })).toEqual({ error: true, text: "The user is not in the Creator Toolset Mac app, so no button can choose a folder: ask them to drop the folder on the chat, or to type its path." });
+    await browser.end();
+    expect((await viewOf(cookie)).messages.at(-1)!.folderAsk).toBeUndefined();
+    const mac = await from({ path: "/editor", title: "AI Editor", mac: true });
+    expect((await tool(mac.token, "ask_folder", { why: "the  shoot to edit" })).error).toBe(false);
+    await mac.end();
+    expect((await viewOf(cookie)).messages.at(-1)!.folderAsk).toEqual({ why: "the shoot to edit" });
+    // the chosen folder comes as the next message's folder, as a drop does
+    expect((await app.request("/api/assistant/turn", { method: "POST", ...json({ text: "", paths: ["/Users/you/Movies/Tiny shoot"] }, { cookie }) })).status).toBe(202);
+    const next = await claim();
+    expect(next.user).toContain('The user dropped a folder from their computer: "/Users/you/Movies/Tiny shoot" (its path there).');
+    await finish(next.id);
+  });
+});
+
 describe("a scheduled run has nobody at the screen", () => {
   it("opening a page or asking for a key is refused there, in words the AI can act on", async () => {
     const run = runInChat("ana", { task: { id: "t1", name: "Weekly" }, prompt: "Do the weekly thing", preface: "", fresh: true, route: routeOf("ana", false)!, url: "http://localhost/api/mcp" });
