@@ -105,7 +105,7 @@ export default function LibraryPage() {
   // the footage folders (the owner's view): an empty grid says whether clips are on their way from one
   const watch = useCachedLoad<WatchStatus>(libId ? `/api/library/${libId}/watch` : null, () => getWatch(libId!)).data;
   const adding = !!watch?.folders.some((f) => f.adding > 0);
-  const [linked] = useSearchParams(); // ?library=&asset= (the Video Cleaner's duplicate check links here)
+  const [linked] = useSearchParams(); // ?library=&asset=: a link from outside the page to one item (a plug-in's list of matches)
 
   useEffect(() => {
     const lib = linked.get("library");
