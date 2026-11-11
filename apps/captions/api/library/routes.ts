@@ -39,6 +39,12 @@ libraryApp.use("*", notifyLibraryChanges);
 libraryApp.route("/", spaceApp); // GET /:id/space, POST /:id/space/clear
 
 const CHUNK_BYTES = 32 * 1024 * 1024;
+
+/** Told each finished upload's id and the version it became (a duplicate's current version): an edit waiting on it starts. */
+export const onUploadDone: ((uploadId: string, versionId: string) => void)[] = [];
+const uploadDone = (uploadId: string, versionId: string | null | undefined) => {
+  if (versionId) for (const f of onUploadDone) f(uploadId, versionId);
+};
 const STAGE_DAYS = 7;
 const GiB = 1024 ** 3;
 const stagingDir = () => path.join(env.dataDir, "library", "staging");
@@ -302,13 +308,14 @@ async function finishDirect(c: Context<{ Variables: AuthVars }>, row: UploadRow)
   if (!row.replaces_asset_id) {
     const dup = db()
       .prepare(
-        `SELECT a.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id
+        `SELECT a.id, a.current_version_id AS current FROM asset_versions v JOIN assets a ON a.id = v.asset_id
          WHERE a.library_id = ? AND v.sha256 = ? AND a.trashed_at IS NULL LIMIT 1`,
       )
-      .get(row.library_id, sha256) as { id: string } | undefined;
+      .get(row.library_id, sha256) as { id: string; current: string | null } | undefined;
     if (dup) {
       await store.delete(key); // not metered yet, so no usage to take back
       db().prepare("UPDATE uploads SET state = 'done' WHERE id = ?").run(row.id);
+      uploadDone(row.id, dup.current);
       return c.json({ duplicateOf: dup.id });
     }
   }
@@ -335,6 +342,7 @@ async function finishDirect(c: Context<{ Variables: AuthVars }>, row: UploadRow)
     await blobs.delete(key); // metered above, so the delete takes the usage back
     throw e;
   }
+  uploadDone(row.id, row.id);
   return c.json({ assetId, versionId: row.id });
 }
 
@@ -518,13 +526,14 @@ libraryApp.post("/uploads/:uploadId/finish", async (c) => {
     if (!row.replaces_asset_id) {
       const dup = db()
         .prepare(
-          `SELECT a.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id
+          `SELECT a.id, a.current_version_id AS current FROM asset_versions v JOIN assets a ON a.id = v.asset_id
            WHERE a.library_id = ? AND v.sha256 = ? AND a.trashed_at IS NULL LIMIT 1`,
         )
-        .get(row.library_id, sha256) as { id: string } | undefined;
+        .get(row.library_id, sha256) as { id: string; current: string | null } | undefined;
       if (dup) {
         await rm(row.staging_path, { force: true });
         db().prepare("UPDATE uploads SET state = 'done' WHERE id = ?").run(row.id);
+        uploadDone(row.id, dup.current);
         return c.json({ duplicateOf: dup.id });
       }
     }
@@ -552,6 +561,7 @@ libraryApp.post("/uploads/:uploadId/finish", async (c) => {
       d.exec("ROLLBACK");
       throw e;
     }
+    uploadDone(row.id, versionId);
     return c.json({ assetId, versionId });
   } catch (e) {
     db().prepare("UPDATE uploads SET state = 'failed' WHERE id = ?").run(row.id);

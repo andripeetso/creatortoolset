@@ -101,6 +101,8 @@ export interface EditSummary {
   updatedAt: number;
   /** library version ids, in the order picked */
   sources: string[];
+  /** clips still uploading from a phone (its New edit); the edit starts by itself when the last is in, and these become `sources` */
+  uploads?: { id: string; version?: string }[];
   /** the latest job's state and kind, if any ran */
   last: Pick<EditJob, "kind" | "state"> | null;
 }

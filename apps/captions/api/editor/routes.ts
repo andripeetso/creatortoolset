@@ -5,13 +5,14 @@ import { foundIn, saidInChat } from "../assistant";
 import { jobTurn, type AuthVars } from "../auth";
 import { libraryDb } from "../library/db";
 import { enqueueJob } from "../library/jobs";
+import { onUploadDone } from "../library/routes";
 import { ZipFile } from "yazl";
 import { toFcpxml } from "./fcpxml";
 import { footageTargetFor } from "./ingest";
 import { LINK_TTL_S, mediaPaths } from "./media";
 import { toOtio } from "./otio";
 import { qaOf } from "./qa";
-import { allEdits, cleanBrief, createEdit, draftNames, editorDefaults, editRole, gradeOf, NoCollection, NoStyle, readDraft, readEdit, postFiles, readStep, saveEdit, saveStep, setChosenDefault, sourcesWorkspace, styleFields, summaryOf, viewOf, type EditMeta } from "./store";
+import { allEdits, cleanBrief, createEdit, uploadFinished, draftNames, editorDefaults, editRole, gradeOf, NoCollection, NoStyle, readDraft, readEdit, postFiles, readStep, saveEdit, saveStep, setChosenDefault, sourcesWorkspace, styleFields, summaryOf, viewOf, type EditMeta } from "./store";
 import { createStyle, deleteStyle, findStyle, stylesView, updateStyle } from "./styles";
 import { stopEdit } from "./worker";
 
@@ -35,6 +36,9 @@ function load(c: C): { e: EditMeta } | null {
   const e = readEdit(c.req.param("id") ?? "");
   return e && editRole(c.get("user").username, e) ? { e } : null;
 }
+
+// an edit made from clips still uploading (a phone's New edit) starts once the last one is in
+onUploadDone.push((id, version) => void uploadFinished(id, version));
 
 editorApp.post("/", async (c) => {
   const user = c.get("user").username;
