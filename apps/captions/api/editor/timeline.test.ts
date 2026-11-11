@@ -109,13 +109,16 @@ describe("AI Editor timeline", () => {
     enqueueJob(libraryDb(), "mem-a", `${e.id}:`, "draft", "mem-a", true, "edit_jobs");
     while (await tick());
     const jobs = viewOf(readEdit(e.id)!).jobs.map((j) => [j.kind, j.variant, j.kind === "draft" ? j.state : ""]);
-    // each version's draft queues its B-roll, which queues its preview (it fails here: the fixture has no footage); the whole-edit one none
+    // each version's draft queues its B-roll, then its post-processing (no steps: nothing to do), then its preview (it fails
+    // here: the fixture has no footage); the whole-edit one none
     expect(jobs).toEqual([
       ["draft", "", "done"],
       ["draft", "v1", "done"],
       ["draft", "v2", "done"],
       ["broll", "v1", ""],
       ["broll", "v2", ""],
+      ["post", "v1", ""],
+      ["post", "v2", ""],
       ["preview", "v1", ""],
       ["preview", "v2", ""],
     ]);
