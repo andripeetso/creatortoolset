@@ -6,6 +6,7 @@ import type { Device, MacReport, ProviderSettings } from "../../contracts/provid
 import { env } from "./env";
 import { dropOwnSettings, ownSettings, providerSettings, saveSettings } from "./providers";
 import { announce } from "./sync";
+import { listUsers } from "../users";
 
 /**
  * The Macs that run AI jobs (contracts/providers.ts `Device`), in $DATA_DIR/devices.json. Any account pairs its
@@ -64,23 +65,33 @@ function find(id: string): Stored | undefined {
   return all().find((d) => d.id === id);
 }
 
+/**
+ * Tells the accounts that are shown a computer that it changed ("devices"): its owner, or every admin for the team's own
+ * computer (owner "workspace" is no account: only the admins are sent it, so only they have a page to refresh).
+ */
+function tell(owner: string): void {
+  const accounts = owner === "workspace" ? listUsers().filter((u) => u.role === "admin").map((u) => u.username) : [owner];
+  for (const who of accounts) announce(who, "devices");
+}
+
 /** The timer per device that tells its owner it went offline, ONLINE_MS after its last call. */
 const goingOff = new Map<string, ReturnType<typeof setTimeout>>();
 
 /**
  * Any relay call says the Mac is here (lastSeen). Written at most once a minute: online is in memory anyway. Its owner's
- * open windows hear "devices" when it comes online and when it goes quiet, never on each call.
+ * open windows (the admins', for the team's own computer) hear "devices" when it comes online and when it goes quiet,
+ * never on each call.
  */
 export function touchDevice(id: string): void {
   const d = find(id);
   if (!d) return;
-  if (!isOnline(id)) announce(d.owner, "devices");
+  if (!isOnline(id)) tell(d.owner);
   d.lastSeen = Date.now();
   if (d.lastSeen - persistedAt > 60_000) persist();
   clearTimeout(goingOff.get(id));
   const t = setTimeout(() => {
     goingOff.delete(id);
-    if (find(id) && !isOnline(id)) announce(d.owner, "devices");
+    if (find(id) && !isOnline(id)) tell(d.owner);
   }, ONLINE_MS + 1000);
   t.unref?.();
   goingOff.set(id, t);
@@ -199,7 +210,7 @@ export function saveReport(id: string, r: MacReport, version?: string): void {
   if (r.machine && kept && !r.machine.disks) r.machine = { ...r.machine, disks: kept };
   // a CLI installed, signed in or on another plan is a change setup shows; the machine's load in each report is not
   const drivers = (x: MacReport | undefined) => JSON.stringify(x?.drivers ?? []);
-  if (drivers(d.report) !== drivers(r)) announce(d.owner, "devices");
+  if (drivers(d.report) !== drivers(r)) tell(d.owner);
   d.report = r;
   if (version) d.version = version;
   persist();

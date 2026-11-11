@@ -80,8 +80,9 @@ export function ProvidersSection({ sub }: { sub?: string }) {
   }, [refreshProviders]);
 
   // A computer coming online and a tool installed or signed in on it reach this page by themselves: its owner's windows
-  // are told "devices" and the saved copy is read again. What nothing tells: a tool set up in Terminal on a computer that
-  // reports later, so coming back to the window reads again while the page waits for one.
+  // (the admins', for the team's own computer) are told "devices" and the saved copy is read again. What nothing tells:
+  // a tool set up in Terminal on a computer that reports later, so coming back to the window reads again while the page
+  // waits for one.
   const waiting = !!view && !view.devices.some((d) => d.online && d.report?.drivers.some((x) => x.installed));
   const expecting = waiting || !!signingIn;
   useEffect(() => {
@@ -89,14 +90,6 @@ export function ProvidersSection({ sub }: { sub?: string }) {
     window.addEventListener("focus", refreshAll);
     return () => window.removeEventListener("focus", refreshAll);
   }, [expecting, refreshAll]);
-  // ponytail: the team's own computer (owner "workspace") tells no account when it comes online, so an admin waiting for
-  // it reads every 5 s. Goes when api/lib/devices.ts tells the admins.
-  const unheard = waiting && !!view?.devices.some((d) => d.owner === "workspace");
-  useEffect(() => {
-    if (!unheard) return;
-    const t = window.setInterval(refreshAll, 5000);
-    return () => window.clearInterval(t);
-  }, [unheard, refreshAll]);
   useEffect(() => {
     if (!signingIn || !view) return;
     const found = view.devices.find((d) => d.id === thisMacDevice())?.report?.drivers.find((d) => d.driver === signingIn);
