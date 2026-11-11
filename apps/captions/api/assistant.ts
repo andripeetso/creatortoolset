@@ -860,7 +860,19 @@ function pump(username: string): Promise<void> {
 async function pumpOnce(username: string): Promise<void> {
   const conv = load(username);
   const ids = [...new Set(Object.values(conv.held ?? {}).flatMap((h) => h.files))];
-  const files = new Map(await Promise.all(ids.map(async (id) => [id, await uploadOf(username, id)] as const)));
+  const files = new Map(
+    await Promise.all(
+      ids.map(async (id) => {
+        let f = await uploadOf(username, id);
+        // every part is in and nobody joined it: its last part came before the message did, or before a restart
+        if (f && !("file" in f) && (await allPartsIn(username, id))) {
+          const done = await finishUpload(username, id);
+          if (!("error" in done)) f = { file: done };
+        }
+        return [id, f] as const;
+      }),
+    ),
+  );
   // from here on nothing awaits: the conversation is read and changed in one go
   const held = conv.held ?? {};
   const t = Date.now();
@@ -903,15 +915,16 @@ async function pumpOnce(username: string): Promise<void> {
       soonest = Math.min(soonest, last + WAIT_MS);
       wait = { for: "videos", videos: missing.length, text: `Waiting for ${missing.length === 1 ? "a video" : `${missing.length} videos`} to upload` };
     } else if (ahead) wait = { for: "reply", text: "Waiting for the reply before it" };
-    ahead = true;
     if (wait) {
       if (JSON.stringify(m.wait) !== JSON.stringify(wait)) {
         m.wait = wait;
         changed = true;
       }
+      ahead = true;
       continue;
     }
-    startHeld(username, conv, i, h, h.files.map((id) => inNow(id)!));
+    // one that can't start ends there, and the next may start in its place
+    if (startHeld(username, conv, i, h, h.files.map((id) => inNow(id)!))) ahead = true;
     changed = true;
   }
   if (changed) {
@@ -923,8 +936,8 @@ async function pumpOnce(username: string): Promise<void> {
   if (soonest < Infinity) wakes.set(username, setTimeout(() => void pump(username), Math.min(soonest - t + 1000, 2 ** 31 - 1)).unref());
 }
 
-/** A waiting turn starts, with what it was sent with: its prompt is the chat up to its own message. */
-function startHeld(username: string, conv: Conv, i: number, h: Held, files: AssistantFile[]): void {
+/** A waiting turn starts, with what it was sent with: its prompt is the chat up to its own message. false: it ended instead. */
+function startHeld(username: string, conv: Conv, i: number, h: Held, files: AssistantFile[]): boolean {
   const reply = conv.messages[i]!;
   const asked = conv.messages.find((x) => x.id === h.ask);
   delete conv.held![reply.id];
@@ -933,7 +946,8 @@ function startHeld(username: string, conv: Conv, i: number, h: Held, files: Assi
   if (!route || !asked) {
     Object.assign(reply, { status: "error", text: route ? "The message is gone." : "Connect your AI first." });
     sayLater(username, reply.id);
-    return;
+    attend(username, reply.id, "failed", reply.text);
+    return false;
   }
   const images = (asked.images ?? []).flatMap((im) => {
     const f = imageFile(username, im.id);
@@ -942,6 +956,7 @@ function startHeld(username: string, conv: Conv, i: number, h: Held, files: Assi
   const input: TurnInput = { text: asked.text, images, pasted: h.pasted, fileIds: h.files, files, paths: asked.folders ?? [], context: h.context };
   conv.mac = h.context?.mac === true;
   void runTurn(username, reply.id, route, h.url, promptFor(conv.messages.slice(0, i + 1), input), filesFor(input), h.memory, h.skills);
+  return true;
 }
 
 /** At boot: the accounts whose conversation file has turns waiting carry on (a test calls it to stand for a restart). */

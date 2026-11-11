@@ -115,6 +115,17 @@ describe("a message sent while its video uploads", () => {
     expect((await settled(p)).messages.filter((m) => m.role === "assistant").map((m) => m.text)).toEqual(["Seen both."]);
   });
 
+  it("a video whose last part landed before the message runs without /complete", async () => {
+    const p = await person("ivy");
+    const clip = await p.upload("Quick.mp4");
+    await clip.part();
+    const job = p.claim();
+    expect((await p.send({ text: "Small one", files: [clip.id] })).status).toBe(202);
+    const got = await job;
+    expect(got.user).toContain(`file id ${clip.id}`);
+    await p.answer(got.id, "Seen.");
+  });
+
   it("a file finished before the message also goes (nothing waits)", async () => {
     const p = await person("val");
     const clip = await p.upload("Done.mp4");
