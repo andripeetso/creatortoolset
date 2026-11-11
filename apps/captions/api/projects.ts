@@ -2492,7 +2492,8 @@ export async function createProjectFromFile(o: {
 }
 
 /** What the server itself is doing to a project right now (api/captions-job.ts), by project id: in memory only. */
-export const captioning = new Map<string, "preparing" | "transcribing">();
+export type Captioning = "preparing" | "transcribing";
+export const captioning = new Map<string, Captioning>();
 
 /** Exists for this user with its editing proxy built (waits for a build). */
 export async function clipReadyToEdit(

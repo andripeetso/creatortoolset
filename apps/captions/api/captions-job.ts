@@ -77,8 +77,12 @@ async function caption(user: SessionUser, projectId: string, clipId: string, eng
     if (!r.ok) throw new Error(r.body.error || `${route} could not answer`);
     return r.body;
   };
-  // the editing copy first: the transcript never runs beside its encode
-  if (!(await clipReadyToEdit(projectId, clipId, user))) throw new Error("Its editing copy could not be made");
+  // the editing copy first: the transcript never runs beside its encode. What ffmpeg said goes to the log, not the chat
+  const quiet = (what: string) => (e: unknown) => {
+    console.warn(`[captions] ${projectId}: ${what}:`, e);
+    return false as const;
+  };
+  if (!(await clipReadyToEdit(projectId, clipId, user).catch(quiet("no editing copy")))) throw new Error("This file could not be read as a video");
   captioning.set(projectId, "transcribing");
   const src = await clipSourceFile(projectId, clipId);
   if (!src) throw new Error("Source video is not on the server");
@@ -87,9 +91,11 @@ async function caption(user: SessionUser, projectId: string, clipId: string, eng
     // one cut: the samples (the waveform, and this computer's model), and for the cloud the WAV the browser would post
     const samples = path.join(dir, "audio.f32");
     const wav = path.join(dir, "audio.wav");
-    await ffmpeg(["-i", src, ...DEVICE_AUDIO, samples, ...(engine === "cloud" ? ["-vn", "-ac", "1", "-ar", String(RATE), "-f", "wav", wav] : [])]).catch((e: Error) => {
-      throw /does not contain any stream/.test(e.message) ? new Error("This file has no audio track") : e;
-    });
+    const cut = await ffmpeg(["-i", src, ...DEVICE_AUDIO, samples, ...(engine === "cloud" ? ["-vn", "-ac", "1", "-ar", String(RATE), "-f", "wav", wav] : [])]).then(
+      () => true,
+      (e: Error) => (/does not contain any stream/.test(e.message) ? "This file has no audio track" : quiet("the sound was not cut")(e)),
+    );
+    if (cut !== true) throw new Error(cut || "Its sound could not be read");
     const b = await readFile(samples);
     const n = b.byteLength >> 2;
     const pcm = b.byteOffset % 4 ? new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + n * 4)) : new Float32Array(b.buffer, b.byteOffset, n);
@@ -162,7 +168,8 @@ export function captionInBackground(user: SessionUser, projectId: string, clipId
           ? { status: "done" as const, detail: "Captions are ready", say: `The captions for “${name}” are ready.`, choices: ["Show me", "What do they say?"] }
           : { status: "done" as const, detail: "No words were heard", say: `No words were heard in “${name}”, so it has no captions.`, choices: ["Show me"] },
       (e: unknown) => {
-        const why = (e instanceof Error ? e.message : String(e)).replace(/\.$/, "");
+        // one plain sentence for the card and the chat
+        const why = (e instanceof Error ? e.message : String(e)).split("\n")[0]!.slice(0, 200).replace(/\.$/, "");
         console.warn(`[captions] ${projectId} was not captioned: ${why}`);
         return { status: "failed" as const, detail: why, say: `The captions for “${name}” were not made: ${why}.`, choices: ["Show me"] };
       },
@@ -170,7 +177,10 @@ export function captionInBackground(user: SessionUser, projectId: string, clipId
     .then(async (end) => {
       captioning.delete(projectId);
       // loaded here, not at the top: assistant.ts loads this file through assistant-files.ts
-      (await import("./assistant")).workEnded(user.username, `captions:${projectId}`, end);
+      const { workEnded } = await import("./assistant");
+      const tell = () => workEnded(user.username, `captions:${projectId}`, end);
+      // a job that ends at once (a file that is no video) can end before use_file's answer has left its card: told once more
+      if (!tell()) setTimeout(tell, 2000).unref();
     })
     .catch((e: unknown) => console.error("[captions] the chat was not told:", e));
 }

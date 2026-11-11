@@ -289,6 +289,18 @@ describe("a video dropped in the chat and sent to Caption Studio", () => {
     expect((await viewOf(cookie)).messages.at(-1)!.text).toBe("Done.");
   });
 
+  it("a file that is no video ends its card with one plain sentence, never what ffmpeg printed", async () => {
+    const cookie = await cookieOf("ana");
+    const broken = await captionThis(cookie, "Broken", Buffer.from("this is not a video at all ".repeat(40)));
+    expect(broken.sent.captioning).toBe(true);
+    await broken.end();
+    await until(async () => expect(await broken.card()).toEqual({ id: `captions:${broken.sent.id}`, kind: "captions", title: "Broken", href: broken.sent.href, status: "failed", detail: "This file could not be read as a video" }));
+    const said = (await viewOf(cookie)).messages.at(-1)!;
+    expect([said.text, said.choices]).toEqual(["The captions for “Broken” were not made: This file could not be read as a video.", ["Show me"]]);
+    expect(engine.cloud).toEqual([]);
+    expect((await projectOf(cookie, broken.sent.id)).captioning).toBeUndefined();
+  });
+
   it("when it cannot be done the card fails and the chat says why: the engine's refusal, a file with no sound; a clip where nothing is said has no captions", async () => {
     const cookie = await cookieOf("ana");
     const lastLine = async () => {

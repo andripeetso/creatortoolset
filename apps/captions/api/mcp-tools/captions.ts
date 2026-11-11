@@ -1,13 +1,14 @@
+import type { Captioning } from "../projects";
 import { clock, str, ToolError, type ToolModule, when } from "./types";
 
 // Caption Studio's tools: its projects, and a project's captions read back. Captions are the lines on the video;
 // the text under a post is its post description, and is not here.
 
 type Clip = { name: string; cues?: Array<{ start: number; words: Array<{ text: string }> }> };
-type Project = { id: string; name: string; clips: Clip[]; captioning?: "preparing" | "transcribing" };
+type Project = { id: string; name: string; clips: Clip[]; captioning?: Captioning };
 
 /** What the server is doing to a project it captions by itself (api/captions-job.ts), in words for the AI. */
-const STATE = {
+const STATE: Record<Captioning, string> = {
   preparing: "Still being prepared: its captions are made next. Ask again in a minute.",
   transcribing: "Still being transcribed. Ask again in a minute.",
 };
