@@ -16,7 +16,6 @@ import { changeFolderItems, getAsset, listAssets, listCollections, listLibraries
 import { useCachedLoad } from "@/lib/local-cache";
 import { cn } from "@/lib/utils";
 import { confirmHeavy, openToolSetup } from "@/lib/setup";
-import { ToolSetupLine } from "@/components/setup/ToolSetupLine";
 import { EditorDefaultsButton } from "@/components/settings/EditorDefaultsDialog";
 import { FootageFolderCard } from "@/components/FootageFolderCard";
 
@@ -58,7 +57,6 @@ export default function EditorPage() {
         </Button>
       </AppBar>
       <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-3 px-4 py-4 sm:px-6">
-        <ToolSetupLine tool="editor" />
         {edits === null && !error && <div aria-hidden="true" className="h-[184px] rounded-xl border border-zinc-500/20" />}
         {edits?.length === 0 && (
           <div className="flex flex-col items-center gap-3 py-16 text-center">

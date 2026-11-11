@@ -1333,19 +1333,10 @@ export default function InstagramPage() {
   const opening = Boolean(postId && !viewing && !routeError);
   const ownsCurrent =
     !!me && !!viewing && (me.role === "admin" || me.username === viewing.owner);
-  // the one thing this tool still needs, in the person's words; Set up holds the how
   const cantRead = !!avail && !avail.available;
-  const needs = !avail
-    ? null
-    : avail.apify?.valid === false
-      ? "Your Apify key isn’t working"
-      : cantRead
-        ? avail.graph?.configured
-          ? "Can’t read other creators’ posts yet"
-          : "Can’t read Instagram posts yet"
-        : !avail.ai
-          ? "No AI to work out the ideas yet"
-          : null;
+  // a fault the person has to fix stays on the page; what is simply not set up yet is said by the card that opens over
+  // the tool (FirstOpen), not by a line here
+  const needs = avail?.apify?.valid === false ? "Your Apify key isn’t working" : null;
 
   const searchingLibrary = q.trim().length >= 2;
   const ideasView = libraryView === "ideas";

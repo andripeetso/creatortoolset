@@ -60,6 +60,24 @@ const storedQueue = (): Queued[] => {
 };
 
 /** A few things to ask, for the page you're on; a tap sends it. */
+/** Between one suggestion arriving and the next. */
+const POP_MS = 190;
+
+/**
+ * How many of the `n` suggestions are up. None while `go` is off (the welcome is still writing); then one more every
+ * POP_MS, so each arrives by itself. All at once for someone who asked for less motion.
+ */
+export function usePopIn(n: number, go: boolean): number {
+  const [up, setUp] = useState(0);
+  useEffect(() => {
+    if (!go) return setUp(0);
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return setUp(n);
+    const t = window.setInterval(() => setUp((u) => Math.min(n, u + 1)), POP_MS);
+    return () => window.clearInterval(t);
+  }, [go, n]);
+  return up;
+}
+
 function suggestionsFor(path: string): string[] {
   if (path.startsWith("/workshop")) return ["Tighten the piece I'm on", "Give me three other hooks", "What should I make next?"];
   if (path.startsWith("/review")) return ["What's new in Review?", "Sum up the comments on my latest video", "Which versions are approved?"];
@@ -112,6 +130,8 @@ export function AssistantDock() {
     connected,
     user: me?.username ?? "",
   });
+  // the suggestions under an empty chat arrive one at a time, once the welcome has finished writing
+  const popped = usePopIn(suggestionsFor(pathname).length, !collapsed && !!view && welcome.stage !== "typing");
 
   const load = useCallback(async () => {
     const r = await getAssistant();
@@ -570,29 +590,33 @@ export function AssistantDock() {
         )}
 
         {empty && !showPast && (
-          <div className="flex h-full flex-col justify-end gap-2 pb-1">
-            {notice && <NoticeLine notice={notice} onChip={chipSend} />}
+          <div className="flex h-full flex-col justify-end">
+            {notice && (
+              <div className="pb-2">
+                <NoticeLine notice={notice} onChip={chipSend} />
+              </div>
+            )}
+            {/* the welcome writes at the bottom, right above the message box. The suggestions come after it has finished,
+                one after another, and each grows in under it, so the line is pushed up a step at a time (owner, 2026-11-10) */}
             {welcome.showing && <WelcomeLine text={welcome.shown} typing={welcome.stage === "typing"} />}
-            {/* the suggestions come after the welcome has finished writing, one after another. While it writes they hold
-                their place unseen, so the line never moves when they arrive */}
-            {suggestionsFor(pathname).map((s, i) => (
-              <button
-                key={`${pathname}-${s}`}
-                type="button"
-                disabled={busy}
-                onClick={() => submit({ ...EMPTY_DRAFT, text: s })}
-                style={{ animationDelay: `${150 + i * 180}ms` }}
-                className={cn(
-                  "group flex w-fit max-w-full items-center gap-2 rounded-2xl border bg-background px-3.5 py-2 text-left text-sm transition-all duration-200",
-                  "hover:-translate-y-0.5 hover:border-[color-mix(in_srgb,var(--tint)_50%,transparent)] hover:shadow-md active:translate-y-0",
-                  welcome.stage === "typing"
-                    ? "invisible"
-                    : "motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-90 motion-safe:slide-in-from-bottom-3 motion-safe:fill-mode-both motion-safe:duration-300",
-                )}
-              >
-                <span>{s}</span>
-                <ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-[var(--tint)]" />
-              </button>
+            {suggestionsFor(pathname).slice(0, popped).map((s, i) => (
+              <div key={`${pathname}-${s}`} className="grid motion-safe:[animation:ct-pop-in_260ms_cubic-bezier(0.2,0.8,0.2,1)_both]">
+                <div className={cn("min-h-0 motion-safe:[animation:ct-pop-clip_260ms_both]", i === 0 && welcome.showing ? "pt-3" : "pt-2")}>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => submit({ ...EMPTY_DRAFT, text: s })}
+                    className={cn(
+                      "group flex w-fit max-w-full items-center gap-2 rounded-2xl border bg-background px-3.5 py-2 text-left text-sm transition-all duration-200",
+                      "hover:-translate-y-0.5 hover:border-[color-mix(in_srgb,var(--tint)_50%,transparent)] hover:shadow-md active:translate-y-0",
+                      "motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-90 motion-safe:duration-300",
+                    )}
+                  >
+                    <span>{s}</span>
+                    <ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-[var(--tint)]" />
+                  </button>
+                </div>
+              </div>
             ))}
           </div>
         )}
@@ -645,8 +669,9 @@ export function AssistantDock() {
         <div ref={bottom} />
       </div>
 
+      {/* the message box shares the header's and the chat's left and right edges */}
       {chatting && (
-        <div className="shrink-0 px-3 pt-1 pb-3">
+        <div className="shrink-0 px-4 pt-1 pb-4">
           {queue.length > 0 && (
             <ul className="mb-1.5 flex flex-col gap-1">
               {queue.map((it, i) => (

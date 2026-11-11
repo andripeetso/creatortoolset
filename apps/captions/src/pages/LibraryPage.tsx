@@ -3,7 +3,6 @@ import { Link, useNavigate, useSearchParams } from "react-router";
 import { AudioLines, Captions, MessageSquare, Quote, Share2, FileText, Folder, Image as ImageIcon, Loader2, RotateCcw, Star, Trash2, Upload, Video } from "lucide-react";
 import type { AssetCard, AssetDetail, AssetKind, AssetPage, Collection, LibrarySummary, SearchHit } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
-import { ToolSetupLine } from "@/components/setup/ToolSetupLine";
 import { FootageFolderCard } from "@/components/FootageFolderCard";
 import { BIG_DROP, BigUploadDialog, LibraryProgressBar } from "@/components/LibraryProcessing";
 import { Button } from "@/components/ui/button";
@@ -316,7 +315,6 @@ export default function LibraryPage() {
       />
 
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 px-4 py-4 sm:px-6">
-        <ToolSetupLine tool="media" />
         {library && <FootageFolderCard libraryId={library.id} onUpload={() => picker.current?.click()} />}
         {libraries === null && !error && <TileFrame />}
 

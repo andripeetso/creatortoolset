@@ -105,8 +105,8 @@ export const NEED_SHORT: Record<Have, string> = {
 /** One plain sentence per need: what it is for and who bills (section 11.2 of the onboarding spec). */
 export const NEED_SENTENCE: Record<Have, string> = {
   project: "A project keeps this tool's work together. Making one takes a moment.",
-  ai: "Runs on Claude Code already on this Mac, on your own plan.",
-  ownAi: "Runs on the Claude Code or Codex already on this Mac, on your own plan.",
+  ai: "Runs on the AI you connect (ChatGPT, Claude and others), on your own plan.",
+  ownAi: "Runs on the AI you connect (ChatGPT, Claude and others), on your own plan.",
   library: "The Media Library is where your footage lives. Make one to start.",
   instagram: "Lets this tool read your own Instagram posts. You sign in yourself.",
   apify: "Apify reads public posts for you. Apify bills you for each read, to your own account.",
@@ -163,7 +163,7 @@ export const TOOL_NEEDS: Record<Tool, readonly Need[]> = {
   ],
   workshop: [
     { what: "A project", anyOf: ["project"], form: "project" },
-    { what: "Your own AI: Claude Code on your Mac", anyOf: ["ownAi"], form: "ai" },
+    { what: "Your AI, connected", anyOf: ["ownAi"], form: "ai" },
     { what: "Perplexity: accuracy checks and deep research without your AI", anyOf: ["PERPLEXITY_API_KEY"], form: "keys", optional: true },
   ],
   enhance: [{ what: "An ElevenLabs or NVIDIA key", anyOf: ["ELEVENLABS_API_KEY", "NVIDIA_API_KEY"], form: "keys" }],

@@ -40,7 +40,6 @@ import {
 import { EnhancePlayer } from "@/components/EnhancePlayer";
 import { AppBar, ToolIntro } from "@/components/AppBar";
 import { DropZoneText, dropZoneClass } from "@/components/DropZone";
-import { ToolSetupLine } from "@/components/setup/ToolSetupLine";
 
 /**
  * The Audio Enhancer — a standalone tool at /enhance inside Creator
@@ -80,6 +79,9 @@ const lockReason = (key: Engine, a: EnhanceAvailability): string | null =>
 /** The engines this user can pick now. */
 const offered = (avail: EnhanceAvailability | null) =>
   avail ? ENGINES.filter((e) => !lockReason(e.key, avail)) : [];
+
+/** A locked engine's reason, short enough for one line in its card: "Add your X key in Settings → API keys" → "Needs your X key". */
+export const shortLock = (why: string) => why.replace(/ in Settings → API keys\.?$/, "").replace(/^Add your /, "Needs your ");
 
 function Chip({ on, lock, title, onClick, children }: {
   on: boolean;
@@ -195,8 +197,10 @@ function EnginePicker({ avail, value, onChange, then, onThen, compact = false }:
               <span className={`block text-xs font-medium ${lock ? "text-zinc-500" : "text-zinc-100"}`}>{e.name}</span>
               <span className={`mt-0.5 block text-[11px] leading-snug ${lock ? "text-zinc-600" : "text-zinc-500"}`}>{e.hint}</span>
               {lock && (
-                <span className="mt-1.5 inline-flex items-center gap-1 rounded bg-zinc-800/80 px-1.5 py-0.5 text-[10px] text-zinc-400">
-                  <Lock className="h-2.5 w-2.5" /> {lock}
+                // one line in the card: the short reason (the whole sentence is the card's tooltip, and the setup card over
+                // this page is where the key is added)
+                <span className="mt-1.5 inline-flex max-w-full items-center gap-1 rounded bg-zinc-800/80 px-1.5 py-0.5 text-[10px] text-zinc-400">
+                  <Lock className="h-2.5 w-2.5 shrink-0" /> <span className="truncate">{shortLock(lock)}</span>
                 </span>
               )}
             </button>
@@ -549,7 +553,6 @@ export default function EnhancePage() {
 
       <ToolIntro icon={AudioLines} title="Audio Enhancer" line="Studio sound for any recording — denoise · de-echo · level" />
       <div className="w-[560px] max-w-[92vw]">
-        <ToolSetupLine tool="enhance" />
       </div>
 
       <div className="w-[560px] max-w-[92vw]">

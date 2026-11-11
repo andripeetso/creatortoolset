@@ -1,14 +1,12 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router";
-import { NEED_SHORT, readiness, TOOL_NAMES, type Need, type Tool } from "@contracts/tools";
+import { NEED_SHORT, readiness, TOOL_NAMES, type Have, type Need, type Tool } from "@contracts/tools";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useMe } from "@/lib/auth";
 import { showAssistantNotice, useAssistant } from "@/lib/assistant";
 import { openSetupAt, toolForPath, useSetup, useSetupLive, useWorkTalk } from "@/lib/setup";
 import { ToolNeeds } from "./ToolNeeds";
-
-const seen = (user: string, tool: Tool) => `ct-first-open:${user}:${tool}`;
 
 /** "an Apify key and a Deepgram key" (8.3): the short names of the missing required rows, joined. */
 function joinNeeds(needs: readonly Need[]): string {
@@ -21,8 +19,10 @@ function joinNeeds(needs: readonly Need[]): string {
 const walkText = (tool: Tool) => `Walk me through setting up ${TOOL_NAMES[tool]}, one step at a time.`;
 
 /**
- * The first time a tool the person ticked opens with something it needs missing, a gentle welcome shows over it, once
- * per tool on this device (8.1). The tool's own "Set up" line opens the same card any time (openToolSetup).
+ * A tool that still needs something opens with its checklist over it, every time it is opened, until it is set up
+ * (owner, 2026-11-10: the card, not a line of text on the page). Not now closes it for that visit: moving around inside
+ * the tool doesn't bring it back, leaving and coming back does. Home's amber dot says the same thing before the click.
+ * openToolSetup opens the same card from anywhere.
  */
 export function FirstOpen() {
   const me = useMe();
@@ -35,7 +35,7 @@ export function FirstOpen() {
   const { talk } = useWorkTalk();
   const connected = useAssistant((s) => s.connected);
   const [shown, setShown] = useState<Tool | null>(null);
-  const [note, setNote] = useState(false);
+  const [dismissed, setDismissed] = useState<Tool | null>(null); // closed for this visit to that tool
   const tool = toolForPath(pathname);
   const inSetup = params.has("setup");
 
@@ -47,33 +47,22 @@ export function FirstOpen() {
     window.addEventListener("ct-tool-setup", ask);
     return () => window.removeEventListener("ct-tool-setup", ask);
   }, []);
+  // leaving the tool forgets its Not now: the next visit opens the card again
   useEffect(() => {
-    if (!real || inSetup || !tool || !view?.tools?.includes(tool) || readiness(tool, view.have).ready) return;
-    try {
-      if (localStorage.getItem(seen(me.username, tool))) return;
-      localStorage.setItem(seen(me.username, tool), "1");
-    } catch {
-      return; // no storage: never shown by itself rather than on every open
-    }
-    setShown(tool);
-  }, [real, inSetup, tool, view, me]);
-  // "Not now" says where to come back, for four seconds, after the card has closed
+    setDismissed((d) => (d === tool ? d : null));
+  }, [tool]);
   useEffect(() => {
-    if (!note) return;
-    const t = window.setTimeout(() => setNote(false), 4000);
-    return () => window.clearTimeout(t);
-  }, [note]);
+    if (opensCard({ real, inSetup, tool, view, dismissed })) setShown(tool);
+  }, [real, inSetup, tool, view, dismissed]);
   useSetupLive(!!shown);
 
-  const toast = note && (
-    <div role="status" aria-live="polite" className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-200 shadow-lg">
-      You can come back to this from the tool's page.
-    </div>
-  );
-  if (!shown || !view) return toast || null;
+  if (!shown || !view) return null;
 
   const r = readiness(shown, view.have);
-  const close = () => setShown(null);
+  const close = () => {
+    setDismissed(shown);
+    setShown(null);
+  };
   const notReady = !r.ready;
   const copy = walkText(shown);
 
@@ -93,14 +82,10 @@ export function FirstOpen() {
     close();
     openSetupAt("agents");
   };
-  const later = () => {
-    close();
-    setNote(true);
-  };
 
   return (
     <>
-      <Dialog open onOpenChange={(o) => !o && later()}>
+      <Dialog open onOpenChange={(o) => !o && close()}>
         <DialogContent className="max-h-[min(760px,calc(100dvh-2rem))] w-[min(720px,calc(100vw-2rem))] max-w-none overflow-y-auto sm:max-w-none">
           <DialogTitle>{TOOL_NAMES[shown]}</DialogTitle>
           {notReady ? (
@@ -123,7 +108,7 @@ export function FirstOpen() {
           <div className="flex flex-wrap items-center justify-end gap-2">
             {notReady ? (
               <>
-                <Button size="sm" variant="ghost" onClick={later}>Not now</Button>
+                <Button size="sm" variant="ghost" onClick={close}>Not now</Button>
                 <Button size="sm" variant="outline" onClick={fullSetup}>Open full setup</Button>
                 {talk !== "chat" && (
                   connected ? (
@@ -139,7 +124,17 @@ export function FirstOpen() {
           </div>
         </DialogContent>
       </Dialog>
-      {toast}
     </>
   );
+}
+
+/**
+ * Whether opening `tool` brings its checklist up: a signed-in person, outside the setup window, on a tool that is one of
+ * theirs (the same test as Home's amber dot: every tool until they picked some) and still misses something it needs,
+ * unless they closed the card on this visit. Pure, for tests.
+ */
+export function opensCard(s: { real: boolean; inSetup: boolean; tool: Tool | null; view: { tools: Tool[] | null; have: Iterable<Have> } | null; dismissed: Tool | null }): s is typeof s & { tool: Tool } {
+  if (!s.real || s.inSetup || !s.tool || !s.view || s.dismissed === s.tool) return false;
+  if (s.view.tools && !s.view.tools.includes(s.tool)) return false;
+  return !readiness(s.tool, s.view.have).ready;
 }

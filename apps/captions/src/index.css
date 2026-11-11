@@ -328,6 +328,10 @@ html:not(.dark) ::-webkit-scrollbar-thumb { background: #d4d4d8; }
 }
 
 /* the assistant (components/assistant): its bubble's nudge when a reply lands, and the thinking dots */
+/* A suggestion arriving under the assistant's welcome: its row grows from nothing, so the line above is pushed up
+   smoothly instead of jumping, and it is clipped only while it grows (its hover lift and shadow show afterwards). */
+@keyframes ct-pop-in { from { grid-template-rows: 0fr; } to { grid-template-rows: 1fr; } }
+@keyframes ct-pop-clip { 0%, 99% { overflow: hidden; } 100% { overflow: visible; } }
 @keyframes ct-nudge {
   0%, 100% { transform: translateY(0) scale(1); }
   25% { transform: translateY(-10px) scale(1.06); }
