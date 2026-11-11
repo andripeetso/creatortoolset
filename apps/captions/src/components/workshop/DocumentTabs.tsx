@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Bookmark, Check, ChevronDown, History, Plus, X } from "lucide-react";
 import { ConfirmButton } from "@/components/instagram/ConfirmButton";
 import { countUnits, useDocKinds, docKindLabel, docTabLabel, type DocKind, type WorkshopDocument } from "@/lib/workshop";
@@ -45,18 +45,41 @@ export function DocumentTabs({
   const [menu, setMenu] = useState<"new" | "history" | "kind" | null>(null);
   const [keepName, setKeepName] = useState("");
   const active = docs.find((d) => d.id === activeId) ?? null;
+  // The tabs' strip scrolls sideways when the panel is too narrow for them all: the open document's tab is always the
+  // one in view, whatever the panel's width becomes.
+  const strip = useRef<HTMLDivElement>(null);
+  const tabs = docs.length;
+  useLayoutEffect(() => {
+    const el = strip.current;
+    if (!el) return;
+    const show = () => {
+      const on = el.querySelector<HTMLElement>("[data-open-tab]");
+      if (!on) return;
+      const from = on.offsetLeft;
+      const to = from + on.offsetWidth;
+      if (from < el.scrollLeft) el.scrollLeft = from;
+      else if (to > el.scrollLeft + el.clientWidth) el.scrollLeft = to - el.clientWidth;
+    };
+    show();
+    const sized = new ResizeObserver(show);
+    sized.observe(el);
+    return () => sized.disconnect();
+  }, [activeId, tabs]);
   const btn = "flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50";
   return (
-    // a narrow panel puts the tools on a second row instead of under the tabs
-    <div className="flex h-full w-full min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-0.5 px-2 py-1">
-      <div className="relative flex min-w-0 items-center gap-1">
+    // One row at any width: the tabs take what the tools leave (their strip scrolls sideways), and in a narrow panel
+    // the tools show their icons only (docbar-narrow, tailwind.config.js). It used to break into two rows there, and
+    // narrower still the tools were cut off at the panel's edge.
+    <div className="flex h-full w-full min-w-0 items-center justify-between gap-x-2 px-2 py-1 [container-name:docbar] [container-type:inline-size]">
+      <div className="relative flex min-w-0 flex-1 items-center gap-1">
         {/* many documents: the strip scrolls sideways, never under the toolbar */}
-        <div className="flex min-w-0 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div ref={strip} className="relative flex min-w-0 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {docs.map((d) => {
             const on = d.id === activeId;
             return (
               <div
                 key={d.id}
+                data-open-tab={on ? "" : undefined}
                 className={`group relative flex shrink-0 items-center rounded-md border ${
                   on ? "border-violet-500/50 bg-violet-600/25 text-violet-950 dark:text-violet-50" : "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground"
                 }`}
@@ -121,7 +144,7 @@ export function DocumentTabs({
             aria-expanded={menu === "new"}
             title="Another document — pick reel, carousel, ad, or free-form"
           >
-            <Plus className="h-3.5 w-3.5" /> New
+            <Plus className="h-3.5 w-3.5" /> <span className="docbar-narrow:hidden">New</span>
           </button>
           {menu === "new" && (
             <span className="absolute left-0 top-full z-30 mt-1 flex w-40 flex-col rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-xl">
@@ -152,9 +175,11 @@ export function DocumentTabs({
         {active && active.kind !== "notes" && (
           <span className="relative shrink-0">
             <button type="button" onClick={() => setMenu((m) => (m === "history" ? null : "history"))} className={btn} title="Versions — keep one with a name to come back to it">
-              <History className="h-3.5 w-3.5" />
-              {versionTrigger(active)}
-              <ChevronDown className="h-3 w-3" />
+              <History className="h-3.5 w-3.5 shrink-0" />
+              <span className="max-w-[9rem] truncate docbar-narrow:hidden">{versionTrigger(active)}</span>
+              {/* narrow: the version's number alone */}
+              <span className="hidden docbar-narrow:inline">{versionShort(active)}</span>
+              <ChevronDown className="h-3 w-3 shrink-0 docbar-narrow:hidden" />
             </button>
             {menu === "history" && (
               <span className="absolute right-0 top-full z-30 mt-1 flex max-h-80 w-80 flex-col overflow-y-auto rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-xl">
@@ -218,6 +243,11 @@ export function DocumentTabs({
       </div>
     </div>
   );
+}
+
+/** The version the text is on, by its number alone ("v3"); nothing before the first one. */
+export function versionShort(doc: WorkshopDocument): string {
+  return doc.headVersion ?? doc.versions[doc.versions.length - 1]?.id ?? "";
 }
 
 function versionTrigger(doc: WorkshopDocument): string {

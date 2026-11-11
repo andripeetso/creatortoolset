@@ -16,7 +16,6 @@ import {
 } from "lucide-react";
 import { canUse, type Me } from "@/lib/auth";
 import { useStudio } from "@/lib/store";
-import { canRecordScreen, openRecorder } from "@/lib/mac-record";
 import type { WebPlugin } from "@/lib/plugin";
 import { webPlugins } from "@/plugins.gen";
 
@@ -193,8 +192,6 @@ export function useOpenTool() {
   return (e: React.MouseEvent<HTMLAnchorElement>, to: string) => {
     if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
     e.preventDefault();
-    // in the Mac app, Screen Recorder is its toolbar, not a page (the recordings list is /record, from the Record menu)
-    if (to === "/record" && canRecordScreen()) return openRecorder();
     if (to.startsWith("/captions")) openProjectLibrary();
     navigate(to);
   };

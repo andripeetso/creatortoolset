@@ -43,6 +43,8 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
     init() {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .default()   // the login stays between launches
+        // a recording's editor opens playing, with its sound: no press is asked for first
+        config.mediaTypesRequiringUserActionForPlayback = []
         // ctlocal://<recording>/<file>: the recordings on this Mac, for the editor on the site's page (ProjectScheme.swift).
         // Marked secure, or the https page may play the video but not fetch it (the editor's export and the pointer log).
         config.setURLSchemeHandler(ProjectScheme(root: { Recorder.folder }), forURLScheme: ProjectScheme.scheme)

@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { randomUUID } from "node:crypto";
-import { copyFile, mkdir, readdir, realpath, rm, stat, symlink } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { copyFile, mkdir, readdir, readFile, realpath, rm, stat, symlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { AuthVars } from "../auth";
@@ -172,6 +173,127 @@ watchApp.post("/watch/folder", async (c) => {
   return c.json({ ok: true });
 });
 
+const SCRIPT_RE = /\.(txt|md|markdown|fountain|rtf|docx?|pages)$/i;
+const SCRIPT_MAX = 100_000;
+const IMPORT_MAX = 200;
+
+/** A script file's text: plain text read as is; Word, RTF and Pages through macOS's textutil. Null when unreadable. */
+async function scriptText(file: string): Promise<string | null> {
+  if (/\.(txt|md|markdown|fountain)$/i.test(file)) return (await readFile(file, "utf-8").catch(() => null))?.slice(0, SCRIPT_MAX) ?? null;
+  if (process.platform !== "darwin") return null;
+  return new Promise((resolve) =>
+    execFile("textutil", ["-convert", "txt", "-stdout", file], { maxBuffer: 8 * 1024 * 1024, timeout: 20_000 }, (err, out) =>
+      resolve(err ? null : String(out).slice(0, SCRIPT_MAX)),
+    ),
+  );
+}
+
+/** One import at a time per library (the scan and the AI's imports alike): a check-then-insert never races another. */
+const queues = new Map<string, Promise<unknown>>();
+function serial<T>(libraryId: string, job: () => Promise<T>): Promise<T> {
+  const run = (queues.get(libraryId) ?? Promise.resolve()).then(job, job);
+  const tail = run.catch(() => {});
+  queues.set(libraryId, tail);
+  void tail.then(() => queues.get(libraryId) === tail && queues.delete(libraryId));
+  return run;
+}
+
+/**
+ * A file into the library once: one already taken at this size and mtime gives its version again (null when it was
+ * never taken), anything else is ingested and remembered in `watch_seen`. `fresh` = whether it was ingested now.
+ */
+function takeFile(libraryId: string, f: WatchFolder, file: string, size: number, mtime: number): Promise<{ versionId: string | null; fresh: boolean }> {
+  return serial(libraryId, async () => {
+    const seen = db().prepare("SELECT size, mtime, version_id FROM watch_seen WHERE library_id = ? AND path = ?").get(libraryId, file) as
+      | { size: number; mtime: number; version_id: string | null }
+      | undefined;
+    if (seen && seen.size === size && seen.mtime === mtime) return { versionId: seen.version_id, fresh: false };
+    const versionId = await ingest(libraryId, f, file, size, seen?.version_id ?? null);
+    db()
+      .prepare(
+        `INSERT INTO watch_seen (library_id, path, size, mtime, version_id) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (library_id, path) DO UPDATE SET size = excluded.size, mtime = excluded.mtime, version_id = excluded.version_id`,
+      )
+      .run(libraryId, file, size, mtime, versionId);
+    return { versionId, fresh: true };
+  });
+}
+
+/** The AI's tool call gives up after about a minute: an import still going answers with what is in so far. */
+export const IMPORT_WAIT_MS = 40_000;
+
+// POST /api/library/import-folder { path, since?, libraryId?, collectionId? } → { libraryId, imported, scripts, working }. The
+// media files in a folder on this computer (changed on or after `since`, epoch ms) go into the library now, read in
+// place, and are remembered as seen, so neither a watch of the folder nor a second call takes them twice; the script
+// files directly in that folder come back as text. For the AI ("take what I put in this folder today and edit it").
+// The same checks as adding a watch folder, and never a whole disk or home folder. A file still being copied is left
+// for the next call; files still hashing after IMPORT_WAIT_MS go on in the background (`working`: call again).
+watchApp.post("/import-folder", async (c) => {
+  const user = c.get("user");
+  if (user.role === "visitor") return c.json({ error: "Not for guests", code: "forbidden" }, 403);
+  if (!watchAllowed(user.username)) return c.json({ error: "This server is not on your computer, so it cannot read your folders. Upload the files instead.", code: "forbidden" }, 403);
+  const body = ((await c.req.json().catch(() => null)) ?? {}) as { path?: unknown; since?: unknown; libraryId?: unknown; collectionId?: unknown };
+  ensureLibrary(user.username);
+  const libraryId = typeof body.libraryId === "string" ? body.libraryId : homeLibrary(user.username);
+  if (!libraryId || !libraryRole(user.username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
+  const f = await checkFolder(libraryId, { path: expandHome(typeof body.path === "string" ? body.path.trim() : ""), mode: "reference", collectionId: body.collectionId }, user.username);
+  if (typeof f === "string") return c.json({ error: f, code: "invalid" }, 400);
+  const home = await realpath(os.homedir()).catch(() => os.homedir());
+  // a disk's own top folder (/, /Users, a drive mounted at /Volumes/<name>) would be read whole
+  const mount = (await stat(f.path)).dev !== (await stat(path.dirname(f.path))).dev;
+  if (f.path === path.parse(f.path).root || f.path === home || path.dirname(f.path) === path.parse(f.path).root || mount) {
+    return c.json({ error: `${f.path} is a whole disk or home folder: name the folder the files are in`, code: "invalid" }, 400);
+  }
+  const since = typeof body.since === "number" && Number.isFinite(body.since) ? body.since : 0;
+  const all = await readdir(f.path, { recursive: true, withFileTypes: true });
+  const files = all
+    .filter((e) => e.isFile())
+    .map((e) => path.join(e.parentPath, e.name))
+    .filter((p) => !path.relative(f.path, p).split(path.sep).some((s) => s.startsWith(".")));
+  const fresh: { file: string; size: number; mtime: number; changed: number }[] = [];
+  for (const file of files) {
+    const s = await stat(file).catch(() => null);
+    // a file copied in keeps its old mtime: the time it arrived here (birthtime, ctime) counts too
+    const changed = s ? Math.max(s.mtimeMs, s.birthtimeMs, s.ctimeMs) : 0;
+    if (s && s.size > 0 && changed >= since) fresh.push({ file, size: s.size, mtime: Math.floor(s.mtimeMs), changed });
+  }
+  const media = fresh.filter((x) => kindOf(x.file) !== "doc");
+  if (media.length > IMPORT_MAX) return c.json({ error: `${media.length} files: import at most ${IMPORT_MAX} at a time (a narrower folder or a later since)`, code: "invalid" }, 400);
+  // a file that changed in the last few seconds may still be copying: it counts once its size holds for 2 s
+  const recent = media.filter((m) => Date.now() - m.changed < 10_000);
+  const copying = new Set<string>();
+  if (recent.length) {
+    await new Promise((r) => setTimeout(r, 2000));
+    for (const m of recent) if ((await stat(m.file).catch(() => null))?.size !== m.size) copying.add(m.file);
+  }
+  const imported: { file: string; versionId?: string; error?: string }[] = [];
+  const work = (async () => {
+    for (const m of media.filter((x) => !copying.has(x.file))) {
+      try {
+        const { versionId, fresh: isNew } = await takeFile(libraryId, f, m.file, m.size, m.mtime);
+        const live = versionId
+          ? db().prepare("SELECT 1 FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.trashed_at IS NULL").get(versionId)
+          : null;
+        imported.push(live ? { file: m.file, versionId: versionId! } : { file: m.file, error: "In the trash in the Media Library: restore it there to use it" });
+        if (isNew) libraryChanged(libraryId);
+      } catch (e) {
+        imported.push({ file: m.file, error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+  })();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([work, new Promise((r) => (timer = setTimeout(r, IMPORT_WAIT_MS)))]);
+  clearTimeout(timer);
+  const working = media.length - copying.size - imported.length;
+  const scripts: { file: string; text: string }[] = [];
+  // only the folder's own script files, never ones further down (a folder of footage holds its script at the top)
+  for (const d of fresh.filter((x) => SCRIPT_RE.test(x.file) && path.dirname(x.file) === f.path).slice(0, 10)) {
+    const text = await scriptText(d.file);
+    if (text?.trim()) scripts.push({ file: d.file, text });
+  }
+  return c.json({ libraryId, imported: [...imported], scripts, working, copying: [...copying] });
+});
+
 /** Only the watch key: other settings (transcription and the rest) are written by other code. */
 const writeWatch = (libraryId: string, folders: WatchFolder[]) => {
   db().prepare("UPDATE libraries SET settings = json_set(settings, '$.watch', json(?)) WHERE id = ?").run(JSON.stringify(folders), libraryId);
@@ -319,14 +441,8 @@ async function scanLibrary(libraryId: string, now: number): Promise<number> {
       if (now - p.since < SETTLE_MS || size === 0) continue;
       pending.delete(key);
       try {
-        const versionId = await ingest(libraryId, f, file, size, seen?.version_id ?? null);
-        db()
-          .prepare(
-            `INSERT INTO watch_seen (library_id, path, size, mtime, version_id) VALUES (?, ?, ?, ?, ?)
-             ON CONFLICT (library_id, path) DO UPDATE SET size = excluded.size, mtime = excluded.mtime, version_id = excluded.version_id`,
-          )
-          .run(libraryId, file, size, mtime, versionId);
-        took++;
+        // through the same queue as the AI's imports, which may have taken this file meanwhile
+        if ((await takeFile(libraryId, f, file, size, mtime)).fresh) took++;
       } catch (e) {
         console.error("[library] watch:", file, e instanceof Error ? e.message : e); // tried again once it settles again
       }

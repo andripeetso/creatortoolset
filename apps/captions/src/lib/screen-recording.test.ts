@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { autoZooms, bubbleRect, cameraAt, defaultCamera, defaultLook, drawFrame, layout, outputSize, pointerAt, pointerPath, sideRects, type ScreenEvents } from "./screen-recording";
+import { autoZooms, backgroundStops, bubbleRect, cameraAt, defaultCamera, defaultLook, drawFrame, layout, normalizeLook, outputSize, pointerAt, pointerPath, shadowOf, sideRects, trimOf, type ScreenEvents, type ScreenLook } from "./screen-recording";
 
 const events: ScreenEvents = {
   v: 1,
@@ -16,6 +16,45 @@ describe("screen recording", () => {
     expect(zooms[0]).toMatchObject({ start: 4, end: 7.5, scale: 2 });
     expect(zooms[0].x).toBeCloseTo(0.85);
     expect(zooms[1]).toMatchObject({ start: 19, end: 21.5 }); // at least 2.5 s
+  });
+
+  it("makes no zoom for the press that stopped the recording", () => {
+    // his 3.5 s recording: one press, 0.1 s before the end
+    expect(autoZooms([[3.379, 0.5, 0.5]], 3.485)).toEqual([]);
+    expect(autoZooms([[1, 0.5, 0.5], [3.379, 0.5, 0.5]], 3.485)).toHaveLength(1);
+  });
+
+  it("reads a look saved before the newer fields existed as it was", () => {
+    // what the editor saved on 2026-11-10, before shadowAmount, trim, colors and pointerHidden
+    const old = { zooms: [], follow: true, pointer: 2, smooth: 0.2, hideIdle: true, clickRings: true, background: "violet", padding: 0.065, radius: 0.018, shadow: true, shape: "source", fill: false } as ScreenLook;
+    const look = normalizeLook(old, events, 30);
+    expect(look).toMatchObject(old);
+    expect(shadowOf(look)).toBe(0.45); // the shadow it always had
+    expect(shadowOf({ shadow: false })).toBe(0);
+    expect(backgroundStops(look)).toEqual(["#7c3aed", "#db2777"]);
+    expect(trimOf(look, 30)).toEqual({ start: 0, end: 30 });
+    expect(normalizeLook(null, events, 30)).toEqual(defaultLook(events, 30));
+  });
+
+  it("puts a broken look's zooms in order, apart and inside the recording", () => {
+    const z = (start: number, end: number) => ({ start, end, x: 0.5, y: 0.5, scale: 2 });
+    const look = normalizeLook({ zooms: [z(8, 12), z(1, 4), z(3, 6), z(28, 40), z(20, 20.2), { ...z(14, 16), x: Number.NaN }], padding: 9, pointer: -1 }, events, 30);
+    expect(look.zooms.map((o) => [o.start, o.end])).toEqual([[1, 4], [4, 6], [8, 12], [28, 30]]);
+    expect(look.padding).toBe(0.15);
+    expect(look.pointer).toBe(0.8);
+  });
+
+  it("takes the background from a preset, one color or your own two", () => {
+    expect(backgroundStops({ background: "color", color: "#112233" })).toEqual(["#112233", "#112233"]);
+    expect(backgroundStops({ background: "custom", stops: ["#000000", "#ffffff"] })).toEqual(["#000000", "#ffffff"]);
+    expect(backgroundStops({ background: "custom", stops: ["red", "#ffffff"] as [string, string] })).toEqual(["#7c3aed", "#db2777"]);
+    expect(backgroundStops({ background: "gone" })).toEqual(["#7c3aed", "#db2777"]);
+  });
+
+  it("keeps the trim inside the recording", () => {
+    expect(trimOf({ trim: { start: 2, end: 9 } }, 15)).toEqual({ start: 2, end: 9 });
+    expect(trimOf({ trim: { start: -3, end: 99 } }, 15)).toEqual({ start: 0, end: 15 });
+    expect(trimOf({ trim: { start: 14.95, end: 15 } }, 15)).toEqual({ start: 14.8, end: 15 });
   });
 
   it("joins zooms that would overlap their ramps", () => {

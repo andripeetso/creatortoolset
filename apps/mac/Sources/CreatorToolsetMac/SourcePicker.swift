@@ -130,6 +130,35 @@ enum SourcePicker {
     }
 }
 
+#if DEBUG
+extension SourcePicker {
+    /// One screen's overlay drawn into a picture, with no window shown: a made-up screen with `picked` as the hovered
+    /// window, or `selection` as the area (view coordinates). The tests check the look from it, since a test cannot
+    /// look at the screen.
+    static func picture(_ kind: SourceKind, screen: CGSize, scale: CGFloat, picked: PickableWindow? = nil,
+                        selection: CGRect? = nil) -> NSBitmapImageRep? {
+        let frame = CGRect(origin: .zero, size: screen)
+        let session = PickerSession(kind: kind, onStart: { _ in }, onCancel: {})
+        // the view holds its session weakly: keep it alive until the picture is drawn
+        return withExtendedLifetime(session) {
+            let view = PickerView(session: session, screenFrame: frame, scale: scale, screenName: "Display",
+                                  displayID: 1, topLeft: frame)
+            session.activeDisplayID = 1
+            session.hovered = picked
+            session.selection = selection
+            view.update()
+            guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(screen.width * scale),
+                                             pixelsHigh: Int(screen.height * scale), bitsPerSample: 8, samplesPerPixel: 4,
+                                             hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+                                             bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
+            rep.size = screen
+            view.cacheDisplay(in: view.bounds, to: rep)
+            return rep
+        }
+    }
+}
+#endif
+
 @MainActor
 private final class PickerSession {
     let kind: SourceKind
@@ -164,7 +193,8 @@ private final class PickerSession {
         mainHeight = CGDisplayBounds(CGMainDisplayID()).height
         for screen in NSScreen.screens {
             guard let id = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID else { continue }
-            let view = PickerView(session: self, screen: screen, displayID: id,
+            let view = PickerView(session: self, screenFrame: screen.frame, scale: screen.backingScaleFactor,
+                                  screenName: screen.localizedName, displayID: id,
                                   topLeft: PickerGeometry.topLeftFrame(screen.frame, mainHeight: mainHeight))
             let window = PickerOverlay(contentRect: screen.frame, styleMask: .borderless, backing: .buffered,
                                        defer: false, screen: screen)
@@ -202,11 +232,14 @@ private final class PickerSession {
     /// Follows the pointer between screens and recomputes the hovered window.
     func refresh() {
         let mouse = NSEvent.mouseLocation
-        if let under = views.first(where: { $0.screen.frame.contains(mouse) }), under.displayID != activeDisplayID {
+        if let under = views.first(where: { $0.screenFrame.contains(mouse) }), under.displayID != activeDisplayID {
             setActive(under)
         }
         if kind == .window {
+            // the window under the pointer; over empty desktop the last one stays picked, and before any hover the
+            // frontmost window (the one you were working in), so Start and Return always have a window
             hovered = PickerGeometry.frontmost(at: CGPoint(x: mouse.x, y: mainHeight - mouse.y), in: candidates)
+                ?? hovered ?? candidates.first
         }
         views.forEach { $0.update() }
     }
@@ -228,7 +261,9 @@ private final class PickerSession {
         case .display:
             break
         case .window:
-            startCurrent()
+            // a click on a window records it; a click on empty desktop does nothing (the picked one waits for Start)
+            let mouse = NSEvent.mouseLocation
+            if PickerGeometry.frontmost(at: CGPoint(x: mouse.x, y: mainHeight - mouse.y), in: candidates) != nil { startCurrent() }
         case .area:
             if view.displayID != activeDisplayID { setActive(view) }
             if let sel = selection {
@@ -281,7 +316,7 @@ private final class PickerSession {
             if let id = activeDisplayID { start(.display(id)) }
         case .window:
             refresh()
-            if let w = hovered { start(.window(w.id)) }
+            if let w = hovered { start(.window(w.id, w.frame)) }
         case .area:
             guard let v = activeView, let sel = selection, PickerGeometry.isUsable(sel) else { return }
             start(.area(v.displayID, PickerGeometry.flipped(sel, height: v.bounds.height)))
@@ -336,11 +371,15 @@ private final class PickerOverlay: NSWindow {
 @MainActor
 private final class PickerView: NSView {
     weak var session: PickerSession?
-    let screen: NSScreen
+    /// The screen: its frame in AppKit's global points, its pixels per point and its name.
+    let screenFrame: CGRect
+    let scale: CGFloat
+    let screenName: String
     let displayID: CGDirectDisplayID
     /// The screen frame as global top-left points (see PickerGeometry.topLeftFrame).
     let topLeft: CGRect
-    var scale: CGFloat { screen.backingScaleFactor }
+    /// The picked window's corners: the wash, its border and the hole in the dim are all cut the same.
+    private static let corner: CGFloat = 10
 
     private let card = NSStackView()
     private let iconView = NSImageView()
@@ -350,12 +389,14 @@ private final class PickerView: NSView {
     private let chipBox = NSStackView()
     private let button = NSButton(title: "Start recording", target: nil, action: nil)
 
-    init(session: PickerSession, screen: NSScreen, displayID: CGDirectDisplayID, topLeft: CGRect) {
+    init(session: PickerSession, screenFrame: CGRect, scale: CGFloat, screenName: String, displayID: CGDirectDisplayID, topLeft: CGRect) {
         self.session = session
-        self.screen = screen
+        self.screenFrame = screenFrame
+        self.scale = scale
+        self.screenName = screenName
         self.displayID = displayID
         self.topLeft = topLeft
-        super.init(frame: NSRect(origin: .zero, size: screen.frame.size))
+        super.init(frame: NSRect(origin: .zero, size: screenFrame.size))
         autoresizingMask = [.width, .height]
         addTrackingArea(NSTrackingArea(rect: .zero, options: [.activeAlways, .mouseMoved, .inVisibleRect],
                                        owner: self, userInfo: nil))
@@ -368,7 +409,7 @@ private final class PickerView: NSView {
         card.edgeInsets = NSEdgeInsets(top: 18, left: 26, bottom: 18, right: 26)
         card.wantsLayer = true
         card.layer?.cornerRadius = 14
-        card.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.55).cgColor
+        card.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.74).cgColor
 
         iconView.imageScaling = .scaleProportionallyUpOrDown
         iconView.translatesAutoresizingMaskIntoConstraints = false
@@ -394,6 +435,9 @@ private final class PickerView: NSView {
         button.image = NSImage(systemSymbolName: "record.circle", accessibilityDescription: nil)
         button.imagePosition = .imageLeading
         button.contentTintColor = .white
+        // white on the accent colour in a light system too (the default title turns dark there)
+        button.attributedTitle = NSAttributedString(string: button.title, attributes: [
+            .foregroundColor: NSColor.white, .font: NSFont.systemFont(ofSize: NSFont.systemFontSize(for: .large), weight: .semibold)])
         button.target = self
         button.action = #selector(startTapped)
 
@@ -455,7 +499,7 @@ private final class PickerView: NSView {
         var center: CGPoint?
         switch s.kind {
         case .display where active:
-            nameLabel.stringValue = screen.localizedName
+            nameLabel.stringValue = screenName
             nameLabel.isHidden = false
             setChip(PickerGeometry.pixelText(bounds.size, scale: scale))
             button.isHidden = false
@@ -468,6 +512,7 @@ private final class PickerView: NSView {
                 iconView.isHidden = false
                 appLabel.stringValue = w.appName
                 appLabel.isHidden = false
+                setChip(PickerGeometry.pixelText(w.frame.size, scale: scale))   // this screen is the one the window is on
                 button.isHidden = false
                 let r = PickerGeometry.viewRect(w.frame, screenTopLeft: topLeft)
                 center = CGPoint(x: r.midX, y: r.midY)
@@ -509,8 +554,8 @@ private final class PickerView: NSView {
             }
         case .window:
             let hole = s.hovered.map { PickerGeometry.viewRect($0.frame, screenTopLeft: topLeft) }
-            dimmed(except: hole, dim)
-            if let h = hole { stroke(h, accent) }
+            dimmed(except: hole, dim, radius: Self.corner)
+            if let h = hole { highlight(h, accent) }
         case .area:
             guard s.activeDisplayID == displayID, let sel = s.selection else {
                 dim.setFill()
@@ -531,12 +576,25 @@ private final class PickerView: NSView {
         }
     }
 
-    private func dimmed(except hole: CGRect?, _ color: NSColor) {
+    private func dimmed(except hole: CGRect?, _ color: NSColor, radius: CGFloat = 0) {
         let path = NSBezierPath(rect: bounds)
-        if let h = hole { path.appendRect(h) }
+        if let h = hole { path.appendRoundedRect(h, xRadius: radius, yRadius: radius) }
         path.windingRule = .evenOdd
         color.setFill()
         path.fill()
+    }
+
+    /// The picked window, washed in the accent colour inside a rounded border: on a large screen a thin outline
+    /// around a clear window is easy to miss.
+    private func highlight(_ r: CGRect, _ accent: NSColor) {
+        accent.withAlphaComponent(0.28).setFill()
+        NSBezierPath(roundedRect: r, xRadius: Self.corner, yRadius: Self.corner).fill()
+        let width: CGFloat = 3
+        let border = NSBezierPath(roundedRect: r.insetBy(dx: width / 2, dy: width / 2),
+                                  xRadius: Self.corner - width / 2, yRadius: Self.corner - width / 2)
+        border.lineWidth = width
+        accent.setStroke()
+        border.stroke()
     }
 
     private func stroke(_ r: CGRect, _ color: NSColor) {

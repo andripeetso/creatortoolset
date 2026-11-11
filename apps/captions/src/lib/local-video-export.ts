@@ -11,6 +11,7 @@ import {
   StreamTarget,
   type VideoSample,
 } from "mediabunny";
+import { allowHighH264 } from "./h264-level";
 import {
   boxCaps,
   captionHiddenAt,
@@ -446,6 +447,8 @@ export async function exportCaptionedVideoLocal(
   const ctx = canvas.getContext("2d", { alpha: false });
   if (!ctx) throw new Error("Could not create the local video renderer.");
 
+  // the Mac app's web view takes H.264 above level 5.2 only this way (lib/h264-level.ts)
+  await allowHighH264();
   const input = new Input({
     formats: ALL_FORMATS,
     source: new BlobSource(file),

@@ -410,7 +410,7 @@ function Review({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (comparing || typing(e) || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (comparing || screenEditor || typing(e) || e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key === "Escape" && rangeIn !== null) {
         clearRange();
         return;
@@ -454,12 +454,12 @@ function Review({
   useEffect(() => {
     const onUndo = (e: KeyboardEvent) => {
       const z = e.key.toLowerCase();
-      if (comparing || typing(e) || !(e.metaKey || e.ctrlKey) || e.altKey || (z !== "z" && z !== "y")) return;
+      if (comparing || screenEditor || typing(e) || !(e.metaKey || e.ctrlKey) || e.altKey || (z !== "z" && z !== "y")) return;
       if (bridge.history(z === "y" || e.shiftKey)) e.preventDefault();
     };
     window.addEventListener("keydown", onUndo);
     return () => window.removeEventListener("keydown", onUndo);
-  }, [bridge, comparing]);
+  }, [bridge, comparing, screenEditor]);
 
   // a sent comment clears the plug-ins' chips and data
   const fullscreen = async () => {
@@ -708,6 +708,7 @@ function Review({
       )}
       {screenEditor && (
         <ScreenRecordingEditor
+          key={`${asset.id}:${version.n}`}
           source={reviewSource(asset.id, version)}
           meta={{ name: version.name, duration: version.duration, width: version.width, height: version.height }}
           onClose={() => setScreenEditor(false)}
