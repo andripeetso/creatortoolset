@@ -247,6 +247,7 @@ final class RelayRunner {
     private func job(_ request: RelayRequest) {
         defer { slots.signal() }
         publish { $0.running += 1 }
+        limitsOnFirstRun(driver: request.driver)   // connected: Settings → Usage shows how much of the plan is left
         var req = request
         let base = "/api/devices/relay/\(req.id)"
         do {

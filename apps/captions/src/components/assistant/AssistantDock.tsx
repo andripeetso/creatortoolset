@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { ArrowUpRight, Check, Copy, CornerDownLeft, FileText, Film, History, KeyRound, MessageCircle, PanelRight, PanelRightClose, Pencil, RotateCcw, SquarePen, Trash2, VolumeX, X } from "lucide-react";
 import type { AssistantImage, AssistantMessage, AssistantView } from "@contracts/assistant";
+import { isLimitLine } from "@contracts/plans";
 import { ReplyText } from "@/components/ReplyText";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -842,7 +843,8 @@ function Message({ m, onRetry }: { m: AssistantMessage; onRetry?: () => void }) 
       <WorkCards work={m.work} />
       <VideoCards media={m.media} />
       <ApprovalCards approvals={m.approvals} />
-      {m.status === "error" ? <p className="text-destructive">{m.text}</p> : <ReplyText text={m.text} />}
+      {/* a used-up plan is a wait, said in amber; a real failure in red */}
+      {m.status === "error" ? <p className={isLimitLine(m.text) ? "text-amber-600 dark:text-amber-400" : "text-destructive"}>{m.text}</p> : <ReplyText text={m.text} />}
       {again}
       {m.status === "thinking" && <span className="ml-0.5 inline-block h-3.5 w-1.5 rounded-sm bg-[var(--tint)] align-middle motion-safe:animate-pulse" aria-hidden />}
       {!working && <CopyButton className={cn(msgCopy, "-ml-1 mt-0.5")} text={() => m.text} label="Copy" />}
