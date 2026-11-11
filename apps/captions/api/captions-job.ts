@@ -178,8 +178,8 @@ export function captionInBackground(user: SessionUser, projectId: string, clipId
       captioning.delete(projectId);
       // loaded here, not at the top: assistant.ts loads this file through assistant-files.ts
       const { workEnded } = await import("./assistant");
-      // the card led to the project list while the captions were made (a page that opens the project before they are
-      // saved keeps its own empty copy): from here it opens the project
+      // the card led to the project list while the captions were made (Transcribe pressed on the page meanwhile would
+      // have its own save refused when this one lands first): from here it opens the project
       const tell = () => workEnded(user.username, `captions:${projectId}`, { ...end, href: `/captions?project=${projectId}` });
       // a job that ends at once (a file that is no video) can end before use_file's answer has left its card: told once more
       if (!tell()) setTimeout(tell, 2000).unref();

@@ -94,6 +94,54 @@ describe("folders and collections", () => {
     expect((await call("owner-a", "POST", `/api/library/lib_a/collections/${smart.id}/items`, { assetIds: ["e2"] })).status).toBe(409);
   });
 
+  it("the top level lists the clips in no folder: Finals and a saved search's item rows don't count", async () => {
+    const d = libraryDb();
+    seed("u1", "Loose one", "owner-a");
+    seed("u2", "Filed one", "owner-a");
+    seed("u3", "Final one", "owner-a");
+    const box = await data(call("owner-a", "POST", "/api/library/lib_a/collections", { name: "Box" }));
+    await call("owner-a", "POST", `/api/library/lib_a/collections/${box.id}/items`, { assetIds: ["u2"] });
+    d.prepare("INSERT INTO collections (id, library_id, parent_id, name, kind, created_at) VALUES ('col_fin', 'lib_a', NULL, 'Finals', 'manual', 0)").run();
+    d.prepare("INSERT INTO collection_items (collection_id, asset_id, position, added_by) VALUES ('col_fin', 'u3', 1, 'owner-a')").run();
+    const top = ids(await data(call("owner-a", "GET", "/api/library/lib_a/assets?unfiled=1&limit=200")));
+    expect(top).toContain("u1");
+    expect(top).toContain("u3");
+    expect(top).not.toContain("u2");
+    d.prepare("DELETE FROM collection_items WHERE collection_id = 'col_fin'").run();
+    d.prepare("DELETE FROM collections WHERE id = 'col_fin'").run();
+  });
+
+  it("a folder's card gets up to four of its clips' pictures; deleting a folder keeps its clips in the library, out of the folder above", async () => {
+    const d = libraryDb();
+    for (const n of [1, 2, 3, 4, 5]) {
+      seed(`pic${n}`, `Picture ${n}`, "owner-a");
+      d.prepare("INSERT INTO derivatives (version_id, kind, storage_key) VALUES (?, 'thumb', 'k')").run(`pic${n}-v1`);
+    }
+    const trip = await data(call("owner-a", "POST", "/api/library/lib_a/collections", { name: "Trip" }));
+    const day = await data(call("owner-a", "POST", "/api/library/lib_a/collections", { name: "Day 1", parentId: trip.id }));
+    const inner = await data(call("owner-a", "POST", "/api/library/lib_a/collections", { name: "Morning", parentId: day.id }));
+    await call("owner-a", "POST", `/api/library/lib_a/collections/${trip.id}/items`, { assetIds: ["pic1", "pic2", "pic3", "pic4", "pic5"] });
+    await call("owner-a", "POST", `/api/library/lib_a/collections/${day.id}/items`, { assetIds: ["pic5", "e3"] });
+    const listed = (await data(call("owner-a", "GET", "/api/library/lib_a/collections"))).collections;
+    expect(listed.find((c: any) => c.id === trip.id).covers).toEqual(["pic1", "pic2", "pic3", "pic4"].map((p) => `/api/library/media/${p}-v1/thumb`));
+    expect(listed.find((c: any) => c.id === day.id).covers).toEqual(["/api/library/media/pic5-v1/thumb"]); // e3 has no picture
+
+    const assets = () => d.prepare("SELECT id, title, trashed_at FROM assets ORDER BY id").all();
+    const before = assets();
+    // Day 1 (inside Trip) goes: its folder Morning moves up to Trip; its clips are not put in Trip (a share or grant on Trip
+    // would then cover them): e3, in no other folder, is at the top level
+    expect(await data(call("owner-a", "DELETE", `/api/library/lib_a/collections/${day.id}`))).toEqual({ ok: true });
+    expect(ids(await data(call("owner-a", "GET", `/api/library/lib_a/assets?collectionId=${trip.id}`)))).toEqual(["pic1", "pic2", "pic3", "pic4", "pic5"]);
+    expect(ids(await data(call("owner-a", "GET", "/api/library/lib_a/assets?unfiled=1&limit=200")))).toContain("e3");
+    const after = (await data(call("owner-a", "GET", "/api/library/lib_a/collections"))).collections;
+    expect(after.find((c: any) => c.id === inner.id).parentId).toBe(trip.id);
+    // Trip (at the top) goes: its clips are at the library's top level, in no folder
+    await call("owner-a", "DELETE", `/api/library/lib_a/collections/${trip.id}`);
+    const top = ids(await data(call("owner-a", "GET", "/api/library/lib_a/assets?unfiled=1&limit=200")));
+    for (const p of ["pic1", "pic2", "pic3", "pic4", "pic5", "e3"]) expect(top).toContain(p);
+    expect(assets()).toEqual(before); // no clip deleted, renamed or trashed
+  });
+
   it("the owner renames a collection and adds items; another account gets 404", async () => {
     const mine = await data(call("owner-a", "POST", "/api/library/lib_a/collections", { name: "Mine" }));
     expect((await call("stranger", "PATCH", `/api/library/lib_a/collections/${mine.id}`, { name: "Taken" })).status).toBe(404);

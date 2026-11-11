@@ -29,6 +29,11 @@
  *   `ba_auth` instead, and the iPhone app reads only that name there; a catalog
  *   login against a server that sets `cap_auth` would silently send no cookie.
  *   That is why the catalog login is pending, not passing.
+ * - auth.app: swaps the one-time code of a provider sign-in the app started for the session (`cap_auth`). The start
+ *   itself, `GET /api/account/login/<provider>?for=site&app=1&challenge=…`, is mounted on a hosted server only and
+ *   told apart by its query, which a route probe cannot see: `sign-in-app.test.ts` covers it.
+ *   On a hosted server it answers 400 for any code it does not take, never 404; off hosted it answers 404, which the
+ *   app reads as "this server has no such sign-in" and offers the password form.
  * - editor.worker: the Mac worker status endpoint; it goes with the legacy
  *   worker sunset, so it stays on the list until then.
  * - editor.chat-*: the AI Editor chat; it is in the plug-in editor only. chat-edit is one edit's messages (`?edit=<id>`;

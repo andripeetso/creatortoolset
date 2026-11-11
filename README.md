@@ -81,6 +81,8 @@ vault notes and Workshop sessions in step, and an **assistant**: a chat docked i
 app you connected on your own computer (Settings → Providers), never on an API key. With Claude Code, Codex, Gemini
 or Grok it works with the app's own tools: it sets things up with you, reads and changes your Workshop, Review and
 AI Editor work, schedules tasks, and sends a video you drop on it to Video Notes, Review or Caption Studio.
+What you tell it about yourself and your work it keeps for later chats, in your own words: Settings → Memory lists
+what is kept, each with a Remove.
 
 ## Make it work your way
 

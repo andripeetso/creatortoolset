@@ -8,6 +8,7 @@ import type { BrowseView } from "./Bar";
  */
 export const BROWSE_VIEWS = {
   review: { label: "Review", view: "grid" },
+  media: { label: "Media Library", view: "grid" },
   finals: { label: "Finals", view: "grid" },
   editor: { label: "AI Editor", view: "list" },
   captions: { label: "Caption Studio", view: "grid" },

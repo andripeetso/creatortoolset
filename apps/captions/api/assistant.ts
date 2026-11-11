@@ -12,11 +12,13 @@ import type { Selection } from "../contracts/providers";
 import { validTimezone } from "../contracts/automations";
 import { streamMacClaude, type MacAsk, type MacAskStatus } from "./lib/mac-claude";
 import { announce } from "./lib/sync";
+import { dockSkills, skillLines } from "./lib/skills";
 import { slug } from "./lib/workshop/folder";
 import { myKeys } from "./my-keys";
 import { MY_KEYS, type MyKeyEnv } from "../contracts/service-keys";
 import { TOOL_NAMES } from "../contracts/tools";
 import { assistantFilesApp, readFileMeta } from "./assistant-files";
+import { memoryBlock } from "./lib/memory";
 import type { AssistantApproval, AssistantContext, AssistantFile, AssistantImage, AssistantMedia, AssistantMessage, AssistantPaste, AssistantProvider, AssistantView } from "../contracts/assistant";
 
 /**
@@ -665,6 +667,10 @@ export async function answerWithTools(
     files?: Record<string, string>;
     /** Someone is there to answer: Claude may use the Mac's own tools and asks (MacOpts.onAsk). Never for scheduled runs. */
     onAsk?: (ask: MacAsk) => MacAskStatus;
+    /** What the person told the assistant to keep (lib/memory.ts memoryBlock): a dock turn's alone, "" with nothing kept. */
+    memory?: string;
+    /** The person's own skills, a line each (lib/skills.ts skillLines): a dock turn's alone, "" with none on. */
+    skills?: string;
   },
 ): Promise<string> {
   // Claude Code, Codex, Gemini CLI and Grok get Creator Toolset's MCP tools (under a job token for this answer); only Claude
@@ -673,9 +679,11 @@ export async function answerWithTools(
   const claude = route.instance.driver === "claude";
   const token = hasTools(route) ? mintJobToken(username, opts.turn) : undefined;
   const guide = SYSTEM + installGuide;
-  const system = !token ? guide + NO_TOOLS_NOTE : claude && opts.onAsk ? guide + MAC_NOTE : guide;
+  let system = !token ? guide + NO_TOOLS_NOTE : claude && opts.onAsk ? guide + MAC_NOTE : guide;
+  // only where the reply has the tool that opens a skill
+  if (token && opts.skills) system += `\n\n${opts.skills}`;
   try {
-    return await streamMacClaude(system, prompt, opts.cancel, (t) => opts.onDelta?.(t), undefined, {
+    return await streamMacClaude(system + (opts.memory ?? ""), prompt, opts.cancel, (t) => opts.onDelta?.(t), undefined, {
       label: opts.label,
       background: opts.background,
       web: true, // the assistant may search and read the web, as the Workshop's writer does
@@ -706,7 +714,7 @@ export async function answerWithTools(
 const running = new Map<string, AbortController>();
 
 /** One turn of the dock: the reply fills in as it streams, then its status says how it ended. */
-async function runTurn(username: string, replyId: string, route: Route, url: string, prompt: string, files?: Record<string, string>): Promise<void> {
+async function runTurn(username: string, replyId: string, route: Route, url: string, prompt: string, files?: Record<string, string>, memory?: string, skills?: string): Promise<void> {
   const stop = new AbortController();
   running.set(username, stop);
   try {
@@ -715,6 +723,8 @@ async function runTurn(username: string, replyId: string, route: Route, url: str
       turn: replyId,
       cancel: stop.signal,
       files,
+      memory,
+      skills,
       onAsk: (ask) => approvalFor(username, replyId, ask),
       onDelta: (t) => {
         const m = messageOf(username, replyId);
@@ -752,6 +762,21 @@ export function chatOfTurn(username: string, turn: string): string | null {
   const conv = load(username);
   if (conv.messages.some((m) => m.id === turn)) return conv.id!;
   return conv.past?.find((p) => p.messages.some((m) => m.id === turn))?.id ?? null;
+}
+
+/**
+ * What the person typed themselves in the chat a reply is being written in, newest first, among the messages its
+ * prompt carries. A quote to remember is checked against these alone (api/memory.ts): never a reply, a note, a
+ * paste or a highlight, never a scheduled task's prompt (an AI may have written it), and never an answer button
+ * they pressed (offer_choices: the AI wrote those words). null for a reply that is not being written, or one of a
+ * scheduled run.
+ */
+export function saidInChat(username: string, turn: string): Array<{ id: string; text: string; at: number }> | null {
+  const list = everyChat(load(username)).find((l) => l.some((m) => m.id === turn && m.status === "thinking"));
+  if (!list || unattended(username, turn)) return null;
+  const sent = list.filter((m) => m.status !== "thinking");
+  const typed = (m: AssistantMessage, i: number) => m.role === "user" && !m.task && !sent[i - 1]?.choices?.includes(m.text);
+  return sent.map((m, i) => (typed(m, i) ? { id: m.id, text: m.text, at: m.at } : null)).slice(-HISTORY).filter((m) => !!m).reverse();
 }
 
 /** A reply is being written in this chat now: a run waits for it to end. */
@@ -838,6 +863,9 @@ assistantApp.post("/turn", async (c) => {
     if (!f) return c.json({ error: "A video didn't finish uploading: add it again" }, 400);
     input.files.push(f);
   }
+  const memory = await memoryBlock(u);
+  // read here, before the turn starts: the job is then queued the moment the reply is made (Stop counts on that)
+  const skills = skillLines(await dockSkills(u.username), "tool");
   const conv = load(u.username);
   if (conv.messages.at(-1)?.status === "thinking") return c.json({ error: "Still answering the last message: wait for it" }, 409);
   // Before an AI is connected: no model call, no job, no paid call of any kind (the server's keys included).
@@ -861,7 +889,7 @@ assistantApp.post("/turn", async (c) => {
   const reply: AssistantMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, status: "thinking" };
   conv.messages.push(reply);
   save(u.username);
-  void runTurn(u.username, reply.id, route, `${publicOrigin(c)}/api/mcp`, promptFor(conv.messages, input), filesFor(input));
+  void runTurn(u.username, reply.id, route, `${publicOrigin(c)}/api/mcp`, promptFor(conv.messages, input), filesFor(input), memory, skills);
   return c.json(view(u.username, u.role === "admin"), 202);
 });
 

@@ -3,6 +3,8 @@
   { "id": "auth.login", "method": "POST", "path": "/api/auth/login", "probe": "route" },
   { "id": "auth.link-make", "method": "POST", "path": "/api/auth/link", "probe": "route" },
   { "id": "auth.link", "method": "GET", "path": "/api/auth/link/:code", "probe": "route" },
+  { "id": "auth.app", "method": "POST", "path": "/api/auth/app", "probe": "route" },
+  { "id": "auth.ticket", "method": "POST", "path": "/api/auth/ticket", "probe": "route" },
   { "id": "library.list", "method": "GET", "path": "/api/library", "probe": "list", "shape": { "type": "object", "keys": ["libraries"] } },
   { "id": "library.assets", "method": "GET", "path": "/api/library/:id/assets", "probe": "route" },
   { "id": "library.collections", "method": "GET", "path": "/api/library/:id/collections", "probe": "route" },

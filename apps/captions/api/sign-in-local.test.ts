@@ -27,4 +27,10 @@ describe("sign-in is hosted-only", () => {
   it("does not mount identity unlink", async () => {
     expect((await app.request("/api/auth/identity/google", { method: "DELETE" })).status).toBe(404);
   });
+
+  it("does not swap an app's sign-in code: no provider sign-in makes one here", async () => {
+    const res = await app.request("/api/auth/app", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: "x", verifier: "v".repeat(43) }) });
+    expect(res.status).toBe(404);
+    expect(res.headers.get("set-cookie")).toBeNull();
+  });
 });
