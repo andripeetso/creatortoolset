@@ -133,8 +133,20 @@ describe("before an AI is connected", () => {
     }
     expect(last).toMatchObject({ role: "assistant", text: "Hi from Codex.", status: "done" });
     expect(jobTokenUser(`Bearer ${job.mcp!.token}`)).toBeNull();
-    // an AI with no tools (Gemini CLI) answers from the message alone: no token, the note, and the dock says so
-    await ai("gemini", "Gemini");
+    // Gemini CLI and Grok get the app's tools the same way: a job token for the turn, no asks
+    for (const [driver, name] of [["gemini", "Gemini"], ["grok", "Grok"]]) {
+      await ai(driver, name);
+      await app.request("/api/assistant/turn", { method: "POST", ...json({ text: `hello ${driver}` }, { cookie }) });
+      const turn = (await (await app.request("/api/devices/relay/wait", { method: "POST", ...json({}, device) })).json()) as Job;
+      expect(turn).toMatchObject({ driver });
+      expect(jobTokenUser(`Bearer ${turn.mcp!.token}`)?.username).toBe("nico");
+      expect(turn.asks).toBeUndefined();
+      expect(turn.system).not.toContain(NO_TOOLS_NOTE.trim());
+      await app.request(`/api/devices/relay/${turn.id}/done`, { method: "POST", ...json({ text: "Hi." }, device) });
+      await vi.waitFor(() => expect(jobTokenUser(`Bearer ${turn.mcp!.token}`)).toBeNull());
+    }
+    // an AI with no tools (OpenCode) answers from the message alone: no token, the note, and the dock says so
+    await ai("opencode", "OpenCode");
     await app.request("/api/assistant/turn", { method: "POST", ...json({ text: "hello again" }, { cookie }) });
     const plain = (await (await app.request("/api/devices/relay/wait", { method: "POST", ...json({}, device) })).json()) as Job;
     expect(plain.mcp).toBeUndefined();

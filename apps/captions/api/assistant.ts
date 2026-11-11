@@ -437,8 +437,9 @@ export const routeOf = (username: string, admin: boolean, ai?: Selection): Route
 };
 
 const providerOf = (route: Route | null): AssistantProvider => (!route ? "none" : route.instance.driver === "claude" ? "claude" : "other");
-/** Claude Code and Codex run with this server's MCP tools (under a job token); the other drivers answer from the message. */
-const hasTools = (route: Route | null) => route?.instance.driver === "claude" || route?.instance.driver === "codex";
+/** Claude Code, Codex, Gemini CLI and Grok run with this server's MCP tools (under a job token); the others answer from the message. */
+const TOOL_DRIVERS: string[] = ["claude", "codex", "gemini", "grok"];
+const hasTools = (route: Route | null) => !!route && TOOL_DRIVERS.includes(route.instance.driver);
 
 function view(username: string, admin: boolean): AssistantView {
   const conv = load(username);
@@ -491,7 +492,7 @@ function promptFor(messages: AssistantMessage[], input?: TurnInput): string {
 }
 
 /**
- * One answer from the account's AI on its Mac, with this server's MCP tools (Claude Code, Codex) under a job token made for
+ * One answer from the account's AI on its Mac, with this server's MCP tools (Claude Code, Codex, Gemini CLI, Grok) under a job token made for
  * this answer only (turn names it: the reply id). The token is revoked when the answer ends
  * either way, and never appears in a thrown message. Used by the dock's turns and by scheduled runs (runInChat).
  * streamMacClaude queues the job synchronously, so the Mac's next poll gets it.
@@ -512,9 +513,9 @@ export async function answerWithTools(
     onAsk?: (ask: MacAsk) => MacAskStatus;
   },
 ): Promise<string> {
-  // Claude Code and Codex get Creator Toolset's MCP tools (under a job token for this answer); only Claude Code also gets
-  // the Mac's tools with asks. The other drivers (Gemini CLI…) answer with the message alone: no token, no asks.
-  // ponytail: an old Codex (no per-run MCP server) answers without the tools though the prompt names them (the Mac checks).
+  // Claude Code, Codex, Gemini CLI and Grok get Creator Toolset's MCP tools (under a job token for this answer); only Claude
+  // Code also gets the Mac's tools with asks. The other drivers (OpenCode…) answer with the message alone: no token, no asks.
+  // ponytail: an old Codex or Gemini CLI (no per-run MCP server) answers without the tools though the prompt names them (the Mac checks).
   const claude = route.instance.driver === "claude";
   const token = hasTools(route) ? mintJobToken(username, opts.turn) : undefined;
   const system = !token ? SYSTEM + NO_TOOLS_NOTE : claude && opts.onAsk ? SYSTEM + MAC_NOTE : SYSTEM;

@@ -523,10 +523,61 @@ let geminiTools = ["read_file": "Read", "grep_search": "Grep", "glob": "Glob", "
 
 /// the Mac relay gemini_cmd: `gemini -o stream-json`, the prompt on stdin (no -p: the CLI reads a piped prompt). Plan mode
 /// is its read tools only, no edits or shell; --skip-trust for the run's own folder. This CLI has no effort flag.
-func geminiArguments(model: String) -> [String] {
+/// `mcpPolicy`: the app's own MCP server for this run (runMcpFiles): only that server of all the person's is in the run, and
+/// the rule in that file lets its calls run unasked in plan mode, which otherwise refuses them.
+func geminiArguments(model: String, mcpPolicy: String = "") -> [String] {
     var args = ["-o", "stream-json", "--approval-mode", "plan", "--skip-trust"]
+    if !mcpPolicy.isEmpty { args += ["--allowed-mcp-server-names", "creator-toolset", "--policy", mcpPolicy] }
     if !model.isEmpty { args += ["-m", model] }
     return args
+}
+
+/// Whether this Gemini CLI takes a policy file for one run (`--policy`); an older one answers with the message alone.
+func geminiTakesMcp(_ cli: String) -> Bool {
+    runQuick(cli, ["--help"], seconds: 15)?.contains("--policy") ?? false
+}
+
+/// The rule that lets the app's own MCP server's calls run in Gemini's plan mode (its policy engine, a user-tier rule).
+let geminiMcpPolicy = """
+    [[rule]]
+    mcpName = "creator-toolset"
+    toolName = "*"
+    decision = "allow"
+    priority = 100
+    modes = ["plan"]
+
+    """
+
+/// The app's own MCP server for one Gemini or Grok run (the assistant), as files in the run's own fresh folder: that folder's
+/// settings (Gemini, `.gemini/settings.json`) or config (Grok, `.grok/config.toml`) name the server, and the token is read
+/// from `codexTokenEnv`, so it is in no file and on no command line. Both read a folder's own settings only once the folder
+/// is trusted, so the run trusts its own folder for itself alone (runMcpEnv); nothing is written to the person's settings.
+/// Measured 2026-11-10 with Gemini CLI 0.68 and grok 1.0.4 and 1.0.77, their models' answers replayed or a stand-in model,
+/// against stand-in servers and a real Creator Toolset server: this server's calls (a lookup and a change) ran unasked with
+/// the job token, a server in the person's own settings got none, and nothing was written to the person's settings. Gemini's
+/// file write was refused by plan mode and it has no shell there. With the assistant's flags (web on) grok offers only its
+/// two MCP tools: a write and a read outside the folder were not tools at all.
+func runMcpFiles(driver: String, url: String, cwd: URL) throws {
+    let fm = FileManager.default
+    if driver == "gemini" {
+        let dir = cwd.appendingPathComponent(".gemini")
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        let server: [String: Any] = ["httpUrl": url, "headers": ["Authorization": "Bearer $" + codexTokenEnv]]
+        try JSONSerialization.data(withJSONObject: ["mcpServers": ["creator-toolset": server]], options: .withoutEscapingSlashes).write(to: dir.appendingPathComponent("settings.json"))
+    } else {
+        let dir = cwd.appendingPathComponent(".grok")
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        // the url has no quote in it (RelayRequest checks it)
+        let toml = "[mcp_servers.creator-toolset]\nurl = \"\(url)\"\nbearer_token_env_var = \"\(codexTokenEnv)\"\n"
+        try toml.write(to: dir.appendingPathComponent("config.toml"), atomically: true, encoding: .utf8)
+    }
+}
+
+/// The environment that goes with runMcpFiles: the token, and the run's own folder trusted for this run. Gemini reads a
+/// folder's settings before it reads --skip-trust, so it takes the same trust from its variable; Grok's --trust would
+/// record the folder in the person's own list, its variable writes nothing.
+func runMcpEnv(driver: String, token: String) -> [String: String] {
+    [codexTokenEnv: token, driver == "gemini" ? "GEMINI_CLI_TRUST_WORKSPACE" : "GROK_FOLDER_TRUST": driver == "gemini" ? "true" : "0"]
 }
 
 /// A new empty folder for one Codex run with no folder of its own, under Application Support (created here, removed by the
@@ -586,7 +637,8 @@ let grokWebTools = "web_search,web_fetch"
 
 /// the Mac relay grok_cmd: `grok -p`'s headless stream, the prompt in `promptFile`. Tools are only the read tools of a folder
 /// (plus web when asked); with no folder there is no shell, no editing and no subagents. It never asks (dontAsk).
-func grokArguments(cwd: String, model: String, effort: String, system: String, web: Bool, folder: Bool, promptFile: String) -> [String] {
+/// `mcp`: the app's own MCP server is in this run (runMcpFiles); its calls are allowed, every other MCP server's are refused.
+func grokArguments(cwd: String, model: String, effort: String, system: String, web: Bool, folder: Bool, promptFile: String, mcp: Bool = false) -> [String] {
     var args = ["--prompt-file", promptFile, "--verbatim",
                 "--output-format", "streaming-messages-json", "--include-partial-messages", "--no-memory", "--no-subagents",
                 "--cwd", cwd, "--reasoning-effort", effort, "--permission-mode", "dontAsk",
@@ -595,6 +647,7 @@ func grokArguments(cwd: String, model: String, effort: String, system: String, w
     // Always passed: without a folder the list is empty (grok's default built-ins would read any file on this Mac).
     args += ["--tools", ((folder ? [grokReadTools] : []) + (web ? [grokWebTools] : [])).joined(separator: ",")]
     if !web { args.append("--disable-web-search") }
+    if mcp { args += ["--allow", "MCPTool(creator-toolset__*)"] }
     return args
 }
 

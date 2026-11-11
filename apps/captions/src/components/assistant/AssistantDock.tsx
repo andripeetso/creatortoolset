@@ -702,7 +702,7 @@ export function AssistantDock() {
 const attachmentsLabel = (it: Queued) =>
   [it.images?.length ? `${it.images.length} picture${it.images.length === 1 ? "" : "s"}` : "", ...(it.pasted ?? []).map((p) => p.name), ...(it.files ?? []).map((f) => f.name)].filter(Boolean).join(", ");
 
-/** The header's "Gemini · no app tools", only for an AI that truly has none of the app's tools. */
+/** The header's "OpenCode · no app tools", only for an AI that truly has none of the app's tools. */
 export function NoToolsNote({ view }: { view: AssistantView | null }) {
   if (view?.provider !== "other" || view.tools) return null;
   return (
