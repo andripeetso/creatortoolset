@@ -64,6 +64,10 @@ import {
   MobileClipView,
 } from "@/pages/mobile/MobileClipView";
 import { confirmDialog } from "@/lib/dialogs";
+import { BrowseBar } from "@/components/browse/Bar";
+import { FolderGrid, ItemCard } from "@/components/browse/Grid";
+import { askRename } from "@/components/browse/browse";
+import { byName, matches, persistSort, storedSort, useBrowseView } from "@/components/browse/views";
 
 function fmtMmSs(t: number): string {
   const m = Math.floor(Math.max(0, t) / 60);
@@ -134,6 +138,9 @@ function ProcessPanel({ session }: { session: ClipSession }) {
     </div>
   );
 }
+
+const NOTES_SORTS = ["recent", "name"] as const;
+const NOTES_SORT_KEY = "notes:sort";
 
 const label =
   "mb-2 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground";
@@ -563,7 +570,12 @@ export default function ClipsPage() {
   const { items: sessions, setItems: setSessions, refresh: loadSessions } = useCachedList("/api/clips", listClips);
   // on screen: a list scrolled down keeps its rows where they are, and a new recording waits at its top (lib/steady-list)
   const clipsBox = useRef<HTMLDivElement>(null);
-  const shownClips = useSteadyList(sessions, clipsBox);
+  const [view, setView] = useBrowseView("notes");
+  const [find, setFind] = useState("");
+  const [sort, setSort] = useState(() => storedSort(NOTES_SORT_KEY, NOTES_SORTS));
+  // the server sends them newest first; a search or another sort is another list
+  const listed = sessions.filter((s) => matches(find, s.name)).sort((a, b) => (sort === "name" ? byName(a, b) : 0));
+  const shownClips = useSteadyList(listed, clipsBox, { scope: `${find.trim()}|${sort}|${view}` });
   // the open clip: its saved copy (or its row in the list) paints at once; processing and new blocks arrive as change
   // notices (lib/local-cache)
   const detail = useCachedLoad<ClipSession>(clipId ? `/api/clips/${clipId}` : null, () => getClip(clipId!));
@@ -630,6 +642,15 @@ export default function ClipsPage() {
 
   const recording = rec.phase !== "idle" && rec.phase !== "preview";
   const showLibrary = !clipId && rec.phase === "idle";
+  // a clip renamed or deleted from its row or its card: the list changes at once, a refused rename goes back
+  const renameTo = (s: ClipSession, name: string) => {
+    setSessions((list) => list.map((x) => (x.id === s.id ? { ...x, name } : x)));
+    void renameClip(s.id, name).catch(() => setSessions((list) => list.map((x) => (x.id === s.id ? { ...x, name: s.name } : x))));
+  };
+  const removeClip = async (s: ClipSession) => {
+    if (!(await confirmDialog({ title: `Delete “${s.name}”?`, body: "This cannot be undone.", ok: "Delete", danger: true }))) return;
+    void deleteClip(s.id).then(() => setSessions((list) => list.filter((x) => x.id !== s.id)));
+  };
   const ownsCurrent =
     !!me &&
     !!current &&
@@ -900,6 +921,55 @@ export default function ClipsPage() {
             {showLibrary && sessions.length > 0 && (
               <div className="mt-8">
                 <h2 className={label}>Your clips</h2>
+                <BrowseBar
+                  search={{ value: find, onChange: setFind, placeholder: "Search clips (⌘K)" }}
+                  sort={{
+                    value: sort,
+                    onChange: (v) => {
+                      setSort(v);
+                      persistSort(NOTES_SORT_KEY, v);
+                    },
+                    label: "Sort clips",
+                    options: [
+                      { id: "recent", label: "Recent" },
+                      { id: "name", label: "Name" },
+                    ],
+                  }}
+                  view={{ value: view, onChange: setView }}
+                />
+                {listed.length === 0 && <p className="py-10 text-center text-sm text-zinc-500">No matches.</p>}
+                {view === "grid" ? (
+                  <FolderGrid ref={clipsBox} size="column">
+                    {shownClips.map((s) => (
+                      <ItemCard
+                        key={s.id}
+                        to={`/clips/${s.id}`}
+                        picture={s.hasThumb ? thumbClipUrl(s.id) : undefined}
+                        icon={Video}
+                        name={s.name}
+                        meta={<>{timeAgo(s.createdAt)}{s.duration > 0 && <> · {fmtMmSs(s.duration)}</>}</>}
+                        badge={
+                          isProcessing(s) ? (
+                            <span className="flex items-center gap-1 text-[11px] text-violet-300">
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              {Math.round(s.progress * 100)}%
+                            </span>
+                          ) : null
+                        }
+                        actions={
+                          <>
+                            <button type="button" title="Rename" aria-label={`Rename ${s.name}`} className="rounded p-1 hover:bg-white/20" onClick={() => void askRename("Rename clip", s.name).then((name) => name && renameTo(s, name))}>
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                            <button type="button" title="Delete" aria-label={`Delete ${s.name}`} className="rounded p-1 hover:bg-red-600" onClick={() => void removeClip(s)}>
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </>
+                        }
+                      />
+                    ))}
+                  </FolderGrid>
+                ) : (
                 <div ref={clipsBox} className="flex max-h-80 flex-col gap-1.5 overflow-y-auto pr-1">
                   {shownClips.map((s) => (
                     <div
@@ -930,18 +1000,7 @@ export default function ClipsPage() {
                               const name = draft.trim().slice(0, 120);
                               setRenaming(null);
                               if (!name || name === s.name) return;
-                              setSessions((list) =>
-                                list.map((x) =>
-                                  x.id === s.id ? { ...x, name } : x,
-                                ),
-                              );
-                              void renameClip(s.id, name).catch(() =>
-                                setSessions((list) =>
-                                  list.map((x) =>
-                                    x.id === s.id ? { ...x, name: s.name } : x,
-                                  ),
-                                ),
-                              );
+                              renameTo(s, name);
                             }}
                             onKeyDown={(e) => {
                               if (e.key === "Enter") e.currentTarget.blur();
@@ -978,18 +1037,9 @@ export default function ClipsPage() {
                         <Pencil className="h-3.5 w-3.5" />
                       </button>
                       <button
-                        onClick={async (e) => {
+                        onClick={(e) => {
                           e.stopPropagation();
-                          if (
-                            !(await confirmDialog({ title: `Delete “${s.name}”?`, body: "This cannot be undone.", ok: "Delete", danger: true }))
-                          ) {
-                            return;
-                          }
-                          void deleteClip(s.id).then(() =>
-                            setSessions((list) =>
-                              list.filter((x) => x.id !== s.id),
-                            ),
-                          );
+                          void removeClip(s);
                         }}
                         title="Delete"
                         className="rounded p-1.5 text-zinc-600 opacity-0 transition-opacity hover:bg-zinc-800 hover:text-red-400 group-hover:opacity-100"
@@ -999,6 +1049,7 @@ export default function ClipsPage() {
                     </div>
                   ))}
                 </div>
+                )}
               </div>
             )}
           </>
