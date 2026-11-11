@@ -39,6 +39,8 @@ const { saveSettings } = await import("./lib/providers");
 const { DEFAULT_SETTINGS } = await import("../contracts/providers");
 import type { AssistantMessage, AssistantView } from "../contracts/assistant";
 
+/** A loaded plug-in whose source is the install's Media Library (LibrarySource.main): a drop "for the library" is refused there. */
+const pluggedLibrary = !!(await import("./library/sources")).mainSource();
 const ana = createUser("ana", "password1");
 createUser("nico", "password1");
 const fullKey = `Bearer ${newApiKey(ana, "full")}`;
@@ -249,7 +251,8 @@ describe("a file dropped for the Media Library", () => {
     return id;
   };
 
-  it("is not put where the person never looks: on an install whose Media Library is a plug-in's source it is refused, and the answer says why", async () => {
+  // with a plug-in loaded that IS the Media Library there is no storage library to drop into: nothing to compare against
+  it.skipIf(pluggedLibrary)("is not put where the person never looks: on an install whose Media Library is a plug-in's source it is refused, and the answer says why", async () => {
     const { registerLibrarySlot, resetLibrarySlots } = await import("./library/sources");
     const { libraryDb } = await import("./library/db");
     (await import("./mcp")).SORT_WAIT_S.added = 0; // the line as it is the moment the file is in, without waiting for the sorting
