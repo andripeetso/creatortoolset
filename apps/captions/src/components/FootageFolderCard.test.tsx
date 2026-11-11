@@ -16,6 +16,7 @@ vi.mock("@/lib/thisMac", () => ({ chooseFolderOnMac: () => pick() }));
 type Watch = { allowed: boolean; folders: { path: string }[]; missing: number };
 let watch: Watch;
 let postReply: { status: number; body: unknown };
+let watchStatus: number;
 let calls: { url: string; method: string; body?: string }[];
 let root: Root | undefined;
 let host: HTMLDivElement | undefined;
@@ -25,12 +26,14 @@ const flush = () => act(async () => new Promise<void>((done) => setTimeout(done,
 beforeEach(() => {
   watch = { allowed: true, folders: [], missing: 0 };
   postReply = { status: 200, body: { ok: true } };
+  watchStatus = 200;
   calls = [];
   localStorage.clear();
   pick.mockReset();
   vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
     calls.push({ url, method: init?.method ?? "GET", body: init?.body as string | undefined });
     if (init?.method === "POST") return new Response(JSON.stringify(postReply.body), { status: postReply.status });
+    if (watchStatus !== 200) return new Response("{}", { status: watchStatus });
     return new Response(JSON.stringify(watch), { status: 200 });
   });
 });
@@ -43,14 +46,14 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-async function render(onUpload?: () => void) {
+async function render(onUpload?: () => void, page = false) {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
   act(() => {
     root!.render(
       <MemoryRouter>
-        <FootageFolderCard libraryId="lib_1" onUpload={onUpload} />
+        <FootageFolderCard libraryId="lib_1" onUpload={onUpload} page={page} />
       </MemoryRouter>,
     );
   });
@@ -139,5 +142,23 @@ describe("Where are your videos?", () => {
     expect(button("Choose a folder")).toBeUndefined();
     await click("Upload files");
     expect(onUpload).toHaveBeenCalledTimes(1);
+  });
+
+  it("as the Library's first screen: no Skip, a Skip from before is ignored, upload is the second way", async () => {
+    localStorage.setItem("ct-footage-folder-skipped", "1");
+    const onUpload = vi.fn();
+    await render(onUpload, true);
+    expect(card()).not.toBeNull();
+    expect(host!.textContent).toContain("raw materials");
+    expect(button("Skip")).toBeUndefined();
+    await click("Upload files");
+    expect(onUpload).toHaveBeenCalledTimes(1);
+  });
+
+  it("as the Library's first screen for someone who may not see the folders: upload", async () => {
+    watchStatus = 404;
+    await render(() => {}, true);
+    expect(button("Choose a folder")).toBeUndefined();
+    expect(button("Upload files")).not.toBeUndefined();
   });
 });
