@@ -441,7 +441,8 @@ export default function ReviewPage() {
             ))}
           </nav>
         )}
-        {!trash && (
+        {/* nothing to search or sort: an empty Review or project shows its drop zone alone */}
+        {!trash && (q || listed === null || listed.length > 0 || listedProjects.length > 0) && (
           <BrowseBar
             search={{ value: find, onChange: setFind, placeholder: "Search videos (⌘K)" }}
             sort={{
