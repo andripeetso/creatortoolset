@@ -12,6 +12,8 @@ import { localFileUrl, localFilesOverlap } from "@/lib/local-files";
 import { listReviewAssets, thumbUrl } from "@/lib/review";
 import { timeAgo } from "@/lib/exports";
 import { cn } from "@/lib/utils";
+import { BrowseBar } from "@/components/browse/Bar";
+import { byName, matches, persistSort, storedSort, useBrowseView } from "@/components/browse/views";
 
 const PHASE: Partial<Record<RecorderPhase, string>> = {
   countdown: "Starting…",
@@ -65,6 +67,43 @@ const NAMED_BY_TIME = /^Screen recording \d{4}-\d{2}-\d{2} \d{2}\.\d{2}\.\d{2}$/
 const when = (r: LocalRecording) => new Date(r.createdAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
 const title = (r: LocalRecording) => (NAMED_BY_TIME.test(r.name) ? when(r) : r.name);
 
+const SORTS = ["recent", "name"] as const;
+const SORT_KEY = "recorder:sort";
+
+/** A recording's Throw away and More (send on, Show in Finder): the same on its card and its row. */
+function RecordingActions({ r, onThrowAway }: { r: LocalRecording; onThrowAway: () => void }) {
+  return (
+    <>
+      <button
+        type="button"
+        aria-label={`Throw away ${title(r)}`}
+        title="Throw away (to the Trash)"
+        onClick={onThrowAway}
+        className="rounded-md p-2 text-zinc-500 hover:bg-zinc-800 hover:text-red-400"
+      >
+        <Trash2 className="h-4 w-4" />
+      </button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button type="button" aria-label={`More for ${title(r)}`} className="rounded-md p-2 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200">
+            <MoreHorizontal className="h-4 w-4" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          {SHARES.map((sh) => (
+            <DropdownMenuItem key={sh.dest} onSelect={() => tellRecorder(`share:${r.id}:${sh.dest}`)}>
+              {sh.label}
+            </DropdownMenuItem>
+          ))}
+          <DropdownMenuItem onSelect={() => tellRecorder(`reveal:${r.id}`)}>
+            <FolderOpen /> Show in Finder
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </>
+  );
+}
+
 /** The folder's path as the Finder says it: the home folder is ~. */
 const shortPath = (folder: string) => folder.replace(/^\/Users\/[^/]+/, "~");
 
@@ -87,6 +126,13 @@ export default function ScreenRecorderPage() {
     .slice(0, 12);
 
   const throwAway = (r: LocalRecording) => void throwAwayRecording(r);
+  const [view, setView] = useBrowseView("recorder");
+  const [find, setFind] = useState("");
+  const [sort, setSort] = useState(() => storedSort(SORT_KEY, SORTS));
+  // the Mac app sends them newest first; Name goes by the name a card shows
+  const listed = (recordings ?? [])
+    .filter((r) => matches(find, title(r), r.name))
+    .sort((a, b) => (sort === "name" ? byName({ name: title(a) }, { name: title(b) }) : 0));
 
   return (
     <div className="flex min-h-dvh flex-col bg-zinc-950 text-zinc-100">
@@ -148,8 +194,49 @@ export default function ScreenRecorderPage() {
                 {shortcut && <kbd className="rounded border border-zinc-700 px-1.5 py-0.5 text-xs text-zinc-400">{shortcut}</kbd>}
               </button>
             ) : (
+              <>
+              <BrowseBar
+                search={{ value: find, onChange: setFind, placeholder: "Search recordings (⌘K)" }}
+                sort={{
+                  value: sort,
+                  onChange: (v) => {
+                    setSort(v);
+                    persistSort(SORT_KEY, v);
+                  },
+                  label: "Sort recordings",
+                  options: [
+                    { id: "recent", label: "Recent" },
+                    { id: "name", label: "Name" },
+                  ],
+                }}
+                view={{ value: view, onChange: setView }}
+              />
+              {listed.length === 0 && <p className="py-10 text-center text-sm text-zinc-500">No matches.</p>}
+              {view === "list" ? (
+                <div className="flex flex-col gap-1.5">
+                  {listed.map((r) => (
+                    <div key={r.id} className="flex items-center gap-1 rounded-lg border border-zinc-800 bg-zinc-900/50 py-1.5 pl-1.5 pr-2 transition-colors hover:border-violet-500/50">
+                      <Link to={`/record/${r.id}`} className="flex min-w-0 flex-1 items-center gap-3">
+                        <span className="relative block h-10 w-16 shrink-0 overflow-hidden rounded bg-black">
+                          <LocalThumb id={r.id} />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium text-zinc-100">{title(r)}</span>
+                          <span className="mt-0.5 block truncate text-xs tabular-nums text-zinc-500">
+                            {NAMED_BY_TIME.test(r.name) ? "" : `${when(r)} · `}
+                            {r.width} × {r.height}
+                            {r.camera ? " · camera" : ""}
+                          </span>
+                        </span>
+                        <span className="shrink-0 text-xs tabular-nums text-zinc-500">{duration(r.durationMs)}</span>
+                      </Link>
+                      <RecordingActions r={r} onThrowAway={() => throwAway(r)} />
+                    </div>
+                  ))}
+                </div>
+              ) : (
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {recordings.map((r) => (
+                {listed.map((r) => (
                   <div key={r.id} className="group relative overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/50 transition-colors hover:border-violet-500/60">
                     <Link to={`/record/${r.id}`} className="relative block aspect-video bg-black">
                       <LocalThumb id={r.id} />
@@ -166,36 +253,13 @@ export default function ScreenRecorderPage() {
                           {r.camera ? " · camera" : ""}
                         </div>
                       </Link>
-                      <button
-                        type="button"
-                        aria-label={`Throw away ${title(r)}`}
-                        title="Throw away (to the Trash)"
-                        onClick={() => throwAway(r)}
-                        className="rounded-md p-2 text-zinc-500 hover:bg-zinc-800 hover:text-red-400"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <button type="button" aria-label={`More for ${title(r)}`} className="rounded-md p-2 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200">
-                            <MoreHorizontal className="h-4 w-4" />
-                          </button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          {SHARES.map((sh) => (
-                            <DropdownMenuItem key={sh.dest} onSelect={() => tellRecorder(`share:${r.id}:${sh.dest}`)}>
-                              {sh.label}
-                            </DropdownMenuItem>
-                          ))}
-                          <DropdownMenuItem onSelect={() => tellRecorder(`reveal:${r.id}`)}>
-                            <FolderOpen /> Show in Finder
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                      <RecordingActions r={r} onThrowAway={() => throwAway(r)} />
                     </div>
                   </div>
                 ))}
               </div>
+              )}
+              </>
             )}
           </section>
         )}
