@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { Hono } from "hono";
 import { definePlugin, type ServerPlugin } from "./plugin";
@@ -9,7 +9,7 @@ vi.mock("../plugin-host.gen", () => ({
   hostModules: { "api/lib/plugin": () => import("./plugin"), "pkg:hono": () => import("hono") } as Record<string, () => Promise<unknown>>,
 }));
 
-const { blamedPlugin, fingerprintOf, folderPluginRows, loadFolderPlugins, mountFolderPlugins, parseFolders, parseOn, prepareFolderPlugin, resetFolderPluginsForTest, startFolderPlugin } =
+const { blamedPlugin, fingerprintOf, folderPluginRows, loadFolderPlugins, mountFolderPlugins, parseFolders, parseOn, pluginLimits, prepareFolderPlugin, resetFolderPluginsForTest, startFolderPlugin } =
   await import("./folder-plugins");
 
 // A throwaway app folder under node_modules/.tmp (git-ignored, on the same disk as the build).
@@ -44,16 +44,142 @@ beforeEach(() => {
   delete process.env.CT_PLUGINS_ON;
   delete process.env.CT_PLUGINS_PAUSED;
 });
+const limits = { ...pluginLimits };
 afterEach(() => {
   rmSync(root, { recursive: true, force: true });
   process.env = { ...saved };
+  Object.assign(pluginLimits, limits);
 });
 
 describe("plug-ins from the person's folder", () => {
-  it("does nothing off the Mac app's own server", async () => {
-    delete process.env.CT_LOCAL;
+  // each of these has a plug-in that IS switched on: with the guard taken out, it would load
+  it("loads nothing off the Mac app's own server, even for a plug-in that is switched on", async () => {
     write("a", "plugin.ts", server("a"));
+    await switchOn("a");
+    delete process.env.CT_LOCAL;
     expect(await start()).toEqual([]);
+    process.env.CT_LOCAL = "1";
+    delete process.env.CT_APP_FOLDER;
+    expect(await start()).toEqual([]);
+    process.env.CT_APP_FOLDER = root;
+    expect((await start()).map((p) => p.id)).toEqual(["a"]);
+  });
+
+  it("loads nothing on a hosted server, whatever its variables say", async () => {
+    write("a", "plugin.ts", server("a"));
+    await switchOn("a");
+    process.env.CT_MODE = "hosted";
+    expect(await start()).toEqual([]);
+    const app = new Hono();
+    app.use("*", async (c, next) => {
+      c.set("user" as never, { role: "admin" } as never);
+      await next();
+    });
+    mountFolderPlugins(app);
+    expect(await (await app.request("/api/plugins/folder")).json()).toMatchObject({ enabled: false, rows: [] });
+    expect((await app.request("/api/plugins/folder/a/prepare", { method: "POST" })).status).toBe(403);
+  });
+
+  it("gives an admin no list and no Switch on off the Mac app's own server", async () => {
+    write("a", "plugin.ts", server("a"));
+    delete process.env.CT_LOCAL;
+    const app = new Hono();
+    app.use("*", async (c, next) => {
+      c.set("user" as never, { role: "admin" } as never);
+      await next();
+    });
+    mountFolderPlugins(app);
+    expect(await (await app.request("/api/plugins/folder")).json()).toMatchObject({ enabled: false, rows: [] });
+    expect((await app.request("/api/plugins/folder/a/prepare", { method: "POST" })).status).toBe(403);
+    expect(existsSync(path.join(root, "plugins-approved"))).toBe(false);
+  });
+
+  it("leaves hidden files and node_modules out of the fingerprint and out of the copy", async () => {
+    write("a", "plugin.ts", server("a"));
+    const plain = (await prepareFolderPlugin("a")).fingerprint;
+    write("a", ".env", "SECRET=1");
+    mkdirSync(path.join(root, "plugins", "a", ".git"), { recursive: true });
+    writeFileSync(path.join(root, "plugins", "a", ".git", "config"), "x");
+    mkdirSync(path.join(root, "plugins", "a", "node_modules", "pkg"), { recursive: true });
+    writeFileSync(path.join(root, "plugins", "a", "node_modules", "pkg", "index.js"), "x");
+    const again = await prepareFolderPlugin("a");
+    expect(again.fingerprint).toBe(plain);
+    const copy = path.join(root, "plugins-approved", "a", plain);
+    expect(existsSync(path.join(copy, "plugin.ts"))).toBe(true);
+    for (const left of [".env", ".git", "node_modules"]) expect(existsSync(path.join(copy, left))).toBe(false);
+  });
+
+  it("refuses a folder over the size cap without reading it, on the list and at Switch on", async () => {
+    write("big", "plugin.ts", server("big"));
+    // 21 MB that takes no room on the disk: the size is asked, the file is not read
+    write("big", "footage.bin", "");
+    truncateSync(path.join(root, "plugins", "big", "footage.bin"), 21 * 1024 * 1024);
+    expect(folderPluginRows().find((r) => r.folder === "big")).toMatchObject({ id: null, on: false, error: "The folder is too big for a plug-in (over 2,000 files or 20 MB)" });
+    await expect(prepareFolderPlugin("big")).rejects.toThrow(/too big for a plug-in/);
+    // hidden, it does not count
+    renameSync(path.join(root, "plugins", "big", "footage.bin"), path.join(root, "plugins", "big", ".footage.bin"));
+    expect((await prepareFolderPlugin("big")).id).toBe("big");
+  });
+
+  it("does not take a link to a folder somewhere else as a plug-in", async () => {
+    const elsewhere = path.join(root, "elsewhere");
+    mkdirSync(elsewhere, { recursive: true });
+    writeFileSync(path.join(elsewhere, "plugin.ts"), server("linked"));
+    mkdirSync(path.join(root, "plugins"), { recursive: true });
+    symlinkSync(elsewhere, path.join(root, "plugins", "linked"));
+    expect(folderPluginRows()).toEqual([]);
+    await expect(prepareFolderPlugin("linked")).rejects.toThrow(/not a link to one/);
+  });
+
+  it("refuses an approved copy whose files state another id than the one switched on", async () => {
+    const text = server("y");
+    const fingerprint = fingerprintOf(new Map([["plugin.ts", Buffer.from(text)]]));
+    mkdirSync(path.join(root, "plugins-approved", "x", fingerprint), { recursive: true });
+    writeFileSync(path.join(root, "plugins-approved", "x", fingerprint, "plugin.ts"), text);
+    process.env.CT_PLUGINS_ON = `x:${fingerprint}`;
+    expect(await start()).toEqual([]);
+    expect(folderPluginRows().find((r) => r.id === "x")).toMatchObject({ on: true, running: false, error: "Its files say its id is y" });
+  });
+
+  it("refuses a plug-in that loads under another id than its files state", async () => {
+    // the id the builder reads from the text is the first one written; the one that runs is another
+    write("decoy", "plugin.ts", `import { definePlugin } from "../../api/lib/plugin";\n// id: "decoy"\nconst real = "real";\nexport default definePlugin({ id: real, name: "Two names" });\n`);
+    await switchOn("decoy");
+    expect(process.env.CT_PLUGINS_ON).toMatch(/^decoy:/);
+    expect(await start()).toEqual([]);
+    expect(row("decoy")).toMatchObject({ on: true, running: false, error: "plugin.ts loaded as real" });
+  });
+
+  it("leaves out and names a plug-in that takes too long to build, and Switch on refuses it", async () => {
+    write("a", "plugin.ts", server("a"));
+    await switchOn("a");
+    pluginLimits.buildMs = 1;
+    expect(await start()).toEqual([]);
+    expect(row("a").error).toBe("It takes too long to build, so the app would start without it");
+    await expect(prepareFolderPlugin("a")).rejects.toThrow(/takes too long to build/);
+  });
+
+  it("leaves out and names a plug-in whose file never finishes loading, and does not try it at every start", async () => {
+    write("stuck", "plugin.ts", server("stuck", "await new Promise(() => {});"));
+    write("ok", "plugin.ts", server("ok"));
+    await switchOn("ok", "stuck");
+    pluginLimits.loadMs = 150;
+    expect((await start()).map((p) => p.id)).toEqual(["ok"]);
+    expect(row("stuck").error).toBe("It took too long to load");
+    // the next start, with the usual limit: it is skipped at once, not waited for again
+    Object.assign(pluginLimits, limits);
+    const began = Date.now();
+    expect((await start()).map((p) => p.id)).toEqual(["ok"]);
+    expect(Date.now() - began).toBeLessThan(limits.loadMs);
+    expect(row("stuck").error).toBe("It took too long to load.");
+  });
+
+  it("stops loading when the whole start's time is used up, and says so", async () => {
+    write("a", "plugin.ts", server("a"));
+    await switchOn("a");
+    pluginLimits.budgetMs = 0;
+    expect(await start()).toEqual([]);
+    expect(row("a").error).toBe("The app's start ran out of time before it was loaded");
   });
 
   it("runs nothing that was not switched on", async () => {
@@ -152,6 +278,9 @@ describe("plug-ins from the person's folder", () => {
     ["a public route without its slash", 'publicRoutes: [{ path: "nope", app: new Hono() }]', null, /must start with \//],
     ["routes that are not a Hono app", "routes: { nope: true }", null, /./],
     ["a start that is not a function", 'start: "soon"', null, /start must be a function/],
+    // these two passed the check and then stopped the whole server when it mounted them
+    ["open routes that already serve its own path", 'routes: new Hono(), openRoutes: new Hono().post("/api/x/x/webhook", (c) => c.text("ok"))', null, /\/api\/x\/x is already served by open or public routes/],
+    ["a second public-grid reader", "connectors: { publicGrid: async () => ({}) }", definePlugin({ id: "first", connectors: { publicGrid: (async () => ({})) as never } }), /plug-in first already reads public grids/],
     ["a Media Library filter another plug-in has", 'library: { facets: [{ key: "who", where: () => ({ sql: "1", params: [] }) }] }', definePlugin({ id: "first", library: { facets: [{ key: "who", where: () => ({ sql: "1", params: [] }) }] } }), /library facet "who" is already registered/],
     ["a Media Library policy for a source nobody has", 'library: { policies: [{ sourceId: "nowhere", canSee: () => true }] }', null, /library policy for unknown source "nowhere"/],
     ["large bodies that are not regular expressions", 'replaces: { paths: ["/api/editor"], routes: new Hono(), largeBodies: ["/api/editor"] }', null, /largeBodies must be regular expressions/],

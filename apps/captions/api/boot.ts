@@ -228,6 +228,15 @@ app.get("/api/health", (c) =>
 );
 
 // plug-ins' open routes (machine callers with their own check): before the account gate, as the health check is
+// The Mac app closing our stdin means the app is gone or is restarting us. That can happen while a plug-in from the
+// folder is loading, and it is not that plug-in's doing: the mark that would blame it at the next start comes down
+// first. So this is set up before the first plug-in loads, not after the server is listening.
+if (process.env.CT_EXIT_WITH_PARENT === "1") {
+  exitWithParent(process.stdin, () => {
+    clearLoadingMark();
+    process.exit(0);
+  });
+}
 // plug-ins from the person's own folder (the Mac app's server only, lib/folder-plugins.ts): each is built, loaded and
 // checked by itself before anything is mounted, so one that fails is left out and the app starts without it
 serverPlugins.push(...(await loadFolderPlugins(serverPlugins, (all) => void pluginToolsOf(all))));
@@ -468,8 +477,4 @@ if (env.isProduction) {
     },
   );
   if ("requestTimeout" in server) disableRequestTimeouts(server);
-  if (process.env.CT_EXIT_WITH_PARENT === "1") exitWithParent(process.stdin, () => {
-    clearLoadingMark(); // the app quit while a plug-in was loading: that is not the plug-in's doing
-    process.exit(0);
-  });
 }

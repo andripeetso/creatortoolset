@@ -1,9 +1,10 @@
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Hono } from "hono";
+import { hostedMode } from "./env";
 import { admissionProblem, type ServerPlugin } from "./plugin";
 
 // Plug-ins from the person's own folder, for the server the Mac app runs on their Mac (CT_LOCAL=1 with CT_APP_FOLDER).
@@ -24,11 +25,22 @@ import { admissionProblem, type ServerPlugin } from "./plugin";
 
 const MAX_FILES = 2000;
 const MAX_BYTES = 20 * 1024 * 1024;
-const LOAD_TIMEOUT_MS = 20_000;
+
+/**
+ * Time limits. All of this runs before the server's first answer, and the Mac app ends a server that has not
+ * answered after 30 s (Server.swift) without knowing which plug-in held it up. So the whole load has one budget that
+ * fits inside those 30 s with room for the rest of the start, and each step has its own limit within it: a plug-in
+ * that is too slow is left out and named. Switch On accepts a build only when it took half the limit, so a plug-in
+ * that could be switched on still fits on a slower day. (An object, so a test can shorten them.)
+ */
+export const pluginLimits = { budgetMs: 20_000, buildMs: 10_000, loadMs: 8_000 };
 
 const appFolder = () => process.env.CT_APP_FOLDER ?? "";
-/** True on the Mac app's own server. Everything in this file does nothing anywhere else. */
-export const folderPluginsEnabled = (): boolean => process.env.CT_LOCAL === "1" && !!appFolder();
+/**
+ * True on the Mac app's own server. Everything in this file does nothing anywhere else: never on a hosted server,
+ * whatever its variables say, because there a plug-in would see every account's data.
+ */
+export const folderPluginsEnabled = (): boolean => process.env.CT_LOCAL === "1" && !!appFolder() && !hostedMode();
 const dir = (name: "plugins" | "plugins-approved" | "plugins-run") => path.join(appFolder(), name);
 const stateFile = () => path.join(appFolder(), "plugins-state.json");
 
@@ -100,10 +112,11 @@ function readFolder(root: string): Map<string, Buffer> {
       const at = rel ? `${rel}/${d.name}` : d.name;
       if (d.isDirectory()) walk(at);
       else if (d.isFile()) {
-        const data = readFileSync(path.join(root, at));
-        bytes += data.length;
+        // the size is asked first: the list is drawn from every folder here, switched on or not, and a file of a
+        // gigabyte dropped in one of them must not be read into memory to find out it is too big
+        bytes += statSync(path.join(root, at)).size;
         if (files.size >= MAX_FILES || bytes > MAX_BYTES) throw new Error("The folder is too big for a plug-in (over 2,000 files or 20 MB)");
-        files.set(at, data);
+        files.set(at, readFileSync(path.join(root, at)));
       }
     }
   };
@@ -126,18 +139,32 @@ function writeFolder(root: string, files: Map<string, Buffer>): void {
   }
 }
 
-/** Runs the builder on a folder. Nothing of the plug-in runs: its files are read and bundled. Rejects with what is wrong. */
-function build(src: string, out: string): Promise<Built> {
+/**
+ * Runs the builder on a folder. Nothing of the plug-in runs: its files are read and bundled. Rejects with what is
+ * wrong, and after `limitMs` ends the builder and says the plug-in takes too long to build.
+ */
+function build(src: string, out: string, limitMs: number): Promise<Built> {
   return new Promise((resolve, reject) => {
     const script = builder();
     if (!script) return reject(new Error("This copy of the app has no plug-in builder"));
+    if (limitMs <= 0) return reject(new Error(OUT_OF_TIME));
     const child = spawn(process.execPath, [script, "build", src, out], { stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
+    let late = false;
+    const timer = setTimeout(() => {
+      late = true;
+      child.kill("SIGKILL");
+    }, limitMs);
     child.stdout.on("data", (d) => (stdout += d));
     child.stderr.on("data", (d) => (stderr += d));
-    child.on("error", (e) => reject(e));
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      reject(e);
+    });
     child.on("close", (code) => {
+      clearTimeout(timer);
+      if (late) return reject(new Error(TOO_SLOW_TO_BUILD));
       if (code !== 0) return reject(new Error(stderr.trim() || `The builder stopped (${code})`));
       try {
         resolve(JSON.parse(stdout) as Built);
@@ -168,6 +195,10 @@ export function parseFolders(value: string | undefined): Map<string, string> {
 }
 
 const paused = () => process.env.CT_PLUGINS_PAUSED === "1";
+
+const TOO_SLOW_TO_BUILD = "It takes too long to build, so the app would start without it";
+const TOO_SLOW_TO_LOAD = "It took too long to load";
+const OUT_OF_TIME = "The app's start ran out of time before it was loaded";
 
 // ---- what this start loaded ----
 
@@ -210,6 +241,8 @@ async function load(compiled: ServerPlugin[], more?: (all: ServerPlugin[]) => vo
   for (const id of Object.keys(state.stopped)) if (on.get(id) !== state.stopped[id]!.fingerprint) delete state.stopped[id];
   const notes = writeState(state);
   if (!on.size || paused()) return loaded;
+  const deadline = Date.now() + pluginLimits.budgetMs;
+  const left = () => deadline - Date.now();
   try {
     rmSync(dir("plugins-run"), { recursive: true, force: true });
   } catch {
@@ -228,7 +261,7 @@ async function load(compiled: ServerPlugin[], more?: (all: ServerPlugin[]) => vo
         // built from the bytes that were just checked, not from the folder a second time
         const src = path.join(dir("plugins-run"), id, "src");
         writeFolder(src, files);
-        const built = await build(src, out);
+        const built = await build(src, out, Math.min(pluginLimits.buildMs, left()));
         if (built.id !== id) throw new Error(`Its files say its id is ${built.id}`);
         return { id, fingerprint, built, out };
       } catch (e) {
@@ -247,6 +280,8 @@ async function load(compiled: ServerPlugin[], more?: (all: ServerPlugin[]) => vo
     }
     try {
       if ([...compiled, ...loaded].some((p) => p.id === b.id)) throw new Error(`the app already has a plug-in called ${b.id}`);
+      const limit = Math.min(pluginLimits.loadMs, left());
+      if (limit <= 0) throw new Error(OUT_OF_TIME);
       if (b.built.server) {
         // without the mark, a plug-in that ends the server here would do it again at every start, unnamed
         if (!notes || !writeState({ ...state, loading: { id: b.id, fingerprint: b.fingerprint } })) throw new Error("The app's folder can't be written, so it was not loaded");
@@ -259,7 +294,7 @@ async function load(compiled: ServerPlugin[], more?: (all: ServerPlugin[]) => vo
             }
             return ((await import(pathToFileURL(path.join(b.out, "server.js")).href)) as { default: ServerPlugin }).default;
           })(),
-          new Promise<never>((_, reject) => setTimeout(() => reject(new Error("It took too long to load")), LOAD_TIMEOUT_MS).unref()),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error(TOO_SLOW_TO_LOAD)), limit).unref()),
         ]);
         const problem = admissionProblem([...compiled, ...loaded], plugin, more);
         if (problem) throw new Error(problem);
@@ -277,6 +312,9 @@ async function load(compiled: ServerPlugin[], more?: (all: ServerPlugin[]) => vo
     } catch (e) {
       failures.set(b.id, message(e));
       console.error(`[plugins] ${b.id} was left out: ${message(e)}`);
+      // its file is still loading and whatever it started goes on until the server next starts; it is not tried at
+      // every start (each try would hold the start up again) until it is switched off and on, or changes
+      if (message(e) === TOO_SLOW_TO_LOAD) state.stopped[b.id] = { fingerprint: b.fingerprint, error: `${TOO_SLOW_TO_LOAD}.` };
     } finally {
       writeState({ ...state, loading: null });
     }
@@ -433,13 +471,19 @@ export interface Prepared {
 export async function prepareFolderPlugin(folder: string): Promise<Prepared> {
   if (!/^[^./\\][^/\\]*$/.test(folder)) throw new Error("Not a plug-in folder");
   const live = path.join(dir("plugins"), folder);
-  if (!existsSync(live) || !statSync(live).isDirectory()) throw new Error("The folder is gone");
+  // a link to a folder somewhere else is not a plug-in's folder (the list leaves it out too)
+  const kind = lstatSync(live, { throwIfNoEntry: false });
+  if (!kind) throw new Error("The folder is gone");
+  if (!kind.isDirectory()) throw new Error("A plug-in is a folder of its own in the plug-ins folder, not a link to one");
   const files = readFolder(live);
   const fingerprint = fingerprintOf(files);
   const scratch = path.join(dir("plugins-approved"), `.new-${randomUUID()}`);
   try {
     writeFolder(path.join(scratch, "src"), files);
-    const built = await build(path.join(scratch, "src"), path.join(scratch, "out"));
+    const began = Date.now();
+    const built = await build(path.join(scratch, "src"), path.join(scratch, "out"), pluginLimits.buildMs);
+    // what start-up would give up on must not be switched on: half the limit, so it still fits on a slower day
+    if (Date.now() - began > pluginLimits.buildMs / 2) throw new Error(TOO_SLOW_TO_BUILD);
     const home = path.join(dir("plugins-approved"), built.id);
     // keep the copy that is on now and this one; older tries go
     const keep = new Set([fingerprint, parseOn(process.env.CT_PLUGINS_ON).get(built.id)]);

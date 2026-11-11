@@ -477,6 +477,9 @@ export function mountPluginsList(app: Hono<any, any, any>): void {
   );
 }
 
+/** True when the app already has a route at `base` or under it. */
+const pathServed = (app: Hono<any, any, any>, base: string): boolean => app.routes.some((r) => r.path === base || r.path.startsWith(base + "/"));
+
 /**
  * Mount each plug-in's routes at /api/x/<id>. Throws when that path is already served, so a boot never answers one path twice,
  * and when a gate is declared badly. The loaded plug-ins are then the ones new accounts get their default-off gates from.
@@ -493,9 +496,7 @@ export function mountPlugins(app: Hono<any, any, any>, plugins: ServerPlugin[]):
     if (plugin.library) registerLibrarySlot(plugin.id, plugin.library);
     if (!plugin.routes) continue;
     const base = `/api/x/${plugin.id}`;
-    if (app.routes.some((r) => r.path === base || r.path.startsWith(base + "/"))) {
-      throw new Error(`plug-in ${plugin.id}: ${base} is already served`);
-    }
+    if (pathServed(app, base)) throw new Error(`plug-in ${plugin.id}: ${base} is already served`);
     app.route(base, plugin.routes);
   }
 }
@@ -546,10 +547,27 @@ export function admissionProblem(admitted: ServerPlugin[], candidate: ServerPlug
     for (const re of candidate.replaces?.largeBodies ?? []) if (!(re instanceof RegExp)) throw new Error("replaces.largeBodies must be regular expressions");
     const paths = [...(candidate.publicRoutes ?? []), ...(candidate.gatedRoutes ?? [])];
     for (const r of paths) if (typeof r?.path !== "string" || !r.path.startsWith("/")) throw new Error(`route "${String(r?.path)}" must start with /`);
-    // every set of routes is mounted once on a throwaway app: what isn't a Hono app fails here, not while the server starts
-    const routes = [candidate.routes, candidate.openRoutes, candidate.adminRoutes, candidate.libraryRoutes, candidate.replaces?.routes, ...paths.map((r) => r.app), ...(candidate.answers ?? []).map((a) => a.routes)];
+    // one public-grid reader for the whole app (registerPublicGridReader throws on a second one, at mount)
+    const grids = all.filter((p) => p.connectors?.publicGrid);
+    if (candidate.connectors?.publicGrid && grids.length > 1) throw new Error(`plug-in ${grids[0]!.id} already reads public grids, and only one can`);
+    // Every set of routes is mounted on a throwaway app the way boot.ts mounts the real ones, in its order, with the
+    // check mountPlugins makes. So what isn't a Hono app fails here, and so does a plug-in whose open or public
+    // routes already serve /api/x/<id> (a webhook written there): at mount that stops the whole server.
     const trial = new HonoApp();
-    for (const r of routes) if (r !== undefined) trial.route("/x", r);
+    for (const p of all) {
+      if (p.openRoutes) trial.route("/", p.openRoutes);
+      for (const r of p.publicRoutes ?? []) trial.route(r.path, r.app);
+      for (const a of p.answers ?? []) trial.route(a.path, a.routes);
+      if (p.libraryRoutes) trial.route("/api/library", p.libraryRoutes);
+      for (const at of p.replaces?.paths ?? []) trial.route(at, p.replaces!.routes);
+    }
+    for (const p of all) {
+      if (!p.routes) continue;
+      const base = `/api/x/${p.id}`;
+      if (pathServed(trial, base)) throw new Error(`${base} is already served by open or public routes, so the routes of ${p.id} can't be mounted there`);
+      trial.route(base, p.routes);
+    }
+    for (const r of [candidate.adminRoutes, ...(candidate.gatedRoutes ?? []).map((g) => g.app)]) if (r !== undefined) trial.route("/x", r);
     for (const key of ["start", "activity", "menu", "bodyLimitExempt"] as const) {
       if (candidate[key] !== undefined && typeof candidate[key] !== "function") throw new Error(`${key} must be a function`);
     }
