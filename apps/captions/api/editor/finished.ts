@@ -152,17 +152,22 @@ export const FINISHED_BLOCK_MAX = FINISHED_INTRO.length + FINISHED_EXAMPLES * ("
 
 const oneLine = (s: string) => s.replace(/\s+/g, " ").trim();
 
+/** Of one example's FINISHED_EXAMPLE_MAX characters, the most the brief and what was said take; the lines taken out get the rest. */
+const EXAMPLE_BRIEF = 250;
+const EXAMPLE_SAID = 600;
+
 /**
  * One finished edit as the script step reads it, never more than FINISHED_EXAMPLE_MAX characters, labels included.
- * What was said comes last, so a long one is what gets cut, from its end. The edit's name is not in it.
+ * Each part has its own share, so a long brief never pushes out what was said; the lines taken out come last and are
+ * what is cut when the whole is too long. The edit's name is not in it.
  */
 export function finishedExample(r: FinishedEdit, n: number): string {
   const parts = [
     `Finished edit ${n}`,
-    r.brief && `Brief: ${oneLine(r.brief)}`,
+    r.brief && `Brief: ${clip(oneLine(r.brief), EXAMPLE_BRIEF)}`,
     r.seconds > 0 && `Length: ${r.seconds} seconds${r.targetS ? ` (target: about ${r.targetS} seconds)` : ""}`,
+    `What is said in it, in order:\n${clip(r.said, EXAMPLE_SAID)}`,
     r.cut.length > 0 && `Lines planned for it that the author took out:\n${r.cut.map((c) => `- ${oneLine(c)}`).join("\n")}`,
-    `What is said in it, in order:\n${r.said}`,
   ];
   return clip(parts.filter(Boolean).join("\n"), FINISHED_EXAMPLE_MAX);
 }

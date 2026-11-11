@@ -204,7 +204,7 @@ describe.skipIf(rootReplaced)("Finished edits: what is kept, and whose words", (
 
     // the next edit in the style is shown it, and still nothing the AI wrote
     const next = await sent("maker", { style: s.id, brief: "A reel about crawlers and tummy time.", targetS: 30 });
-    expect(next.user).toContain(`Target length: about 30 seconds\n\n${FINISHED_INTRO}\n\nFinished edit 1\nBrief: A reel for parents of crawlers. Warm and slow.\nLength: 41 seconds (target: about 45 seconds)\nLines planned for it that the author took out:\n- Um so I wanted to say hi first.\nWhat is said in it, in order:\nDo puppies need tummy time?\nYes, a little every day.\nStart with one minute.\nSee you in class.\n\nSources:\n`);
+    expect(next.user).toContain(`Target length: about 30 seconds\n\n${FINISHED_INTRO}\n\nFinished edit 1\nBrief: A reel for parents of crawlers. Warm and slow.\nLength: 41 seconds (target: about 45 seconds)\nWhat is said in it, in order:\nDo puppies need tummy time?\nYes, a little every day.\nStart with one minute.\nSee you in class.\nLines planned for it that the author took out:\n- Um so I wanted to say hi first.\n\nSources:\n`);
     expect(`${next.system}${next.user}`).not.toMatch(/AI-WROTE|AI-TITLE|SCRIPT-TEXT|Tiny Acrobatics hook/);
 
     // approving it again keeps one record of it, as it is now
@@ -356,6 +356,8 @@ describe.skipIf(rootReplaced)("Finished edits: fixed in size", () => {
     const one = finishedExample(full, 1);
     expect(one).toHaveLength(FINISHED_EXAMPLE_MAX);
     expect(one).not.toContain("NAME-NOT-SENT");
+    // at the caps every part is still there, each in its own share: the brief, what was said, and a line taken out
+    expect(one).toMatch(/^Finished edit 1\nBrief: b{249}…\nLength: 41 seconds \(target: about 45 seconds\)\nWhat is said in it, in order:\ns{599}…\nLines planned for it that the author took out:\n- c{160}\n- c+…$/);
     // a short one is whole, and never padded
     const short = finishedExample({ ...full, brief: "", targetS: 0, said: "Hello there.", cut: [] }, 2);
     expect(short).toBe("Finished edit 2\nLength: 41 seconds\nWhat is said in it, in order:\nHello there.");
