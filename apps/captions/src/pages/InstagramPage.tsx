@@ -106,7 +106,7 @@ import { IdeaCard } from "@/components/instagram/IdeaCard";
 import { AccountAvatar, AccountCard, AddMyAccount } from "@/components/instagram/AccountCard";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { confirmDialog } from "@/lib/dialogs";
-import { PostCard, workshopUsesByPost } from "@/components/instagram/PostCard";
+import { cardRatio, PostCard, workshopUsesByPost } from "@/components/instagram/PostCard";
 import { QueueMenu } from "@/components/instagram/QueueMenu";
 import { JobsDock } from "@/components/instagram/JobsDock";
 import { SlidePanel } from "@/components/instagram/SlidePanel";
@@ -114,7 +114,7 @@ import { SlideViewer, type SeekRequest } from "@/components/instagram/SlideViewe
 import { CommentsList } from "@/components/instagram/CommentsList";
 import { createSession, listSessions, patchProject, sessionPath, type SessionRow } from "@/lib/workshop";
 import { ideaMatchesQuery, needsIdeaDistill } from "@/lib/instagram-ideas";
-import { decayHeightLock, shrinkWouldClamp } from "@/lib/library-scroll";
+import { decayHeightLock, flowColumns, shrinkWouldClamp } from "@/lib/library-scroll";
 
 /** What refetches the Analyzer's availability: a connector or a key changing (this window's own Settings included). */
 const AVAILABILITY_LIVE = { topic: ["connectors", "my-keys", "service-keys"], own: true };
@@ -1044,6 +1044,18 @@ export default function InstagramPage() {
     refreshAvailability();
   }, [allowed, currentProjectId, refreshStacks, refreshAvailability]);
 
+  // the feed's columns: as many 225px ones as fit, 12px apart (what CSS column-width counted), worked out before paint
+  const [feedBox, setFeedBox] = useState<HTMLDivElement | null>(null);
+  const [feedCols, setFeedCols] = useState(1);
+  useLayoutEffect(() => {
+    if (!feedBox) return;
+    const fit = () => setFeedCols(Math.max(1, Math.floor((feedBox.clientWidth + 12) / 237)));
+    fit();
+    const seen = new ResizeObserver(fit);
+    seen.observe(feedBox);
+    return () => seen.disconnect();
+  }, [feedBox]);
+
   useLayoutEffect(() => {
     const chrome = chromeRef.current;
     const results = resultsRef.current;
@@ -1777,7 +1789,7 @@ export default function InstagramPage() {
                   })}
                 </p>
               ) : (
-                <div className="flex flex-col gap-4">
+                <div ref={setFeedBox} className="flex flex-col gap-4">
                   {grouped.map((g) => (
                     <div key={g.key || "all"}>
                       {g.stack ? (
@@ -1802,23 +1814,16 @@ export default function InstagramPage() {
                           {g.label} · {g.posts.length}
                         </button>
                       ) : null}
-                      <div
-                        className={
-                          // a search keeps its ranking left to right; the feed flows down the columns
-                          searchingLibrary
-                            ? "grid grid-cols-[repeat(auto-fill,minmax(min(100%,225px),1fr))] items-start gap-3"
-                            : "gap-3 [column-width:225px] [&>div]:break-inside-avoid [&>div]:pb-3"
-                        }
-                      >
-                        {g.posts.map((p) => {
+                      {(() => {
+                        const card = (p: InstagramPost) => {
                           const acc = accounts.find(
                             (a) =>
                               a.id === p.accountId ||
                               (!!p.creator.username && a.username.toLowerCase() === p.creator.username.toLowerCase()),
                           );
                           return (
-                            <div key={p.id}>
                             <PostCard
+                              key={p.id}
                               post={p}
                               selected={selected.has(p.id)}
                               anySelected={selected.size > 0}
@@ -1839,10 +1844,27 @@ export default function InstagramPage() {
                               onMark={(patch) => void markOne(p.id, patch)}
                               onRetry={cantRead ? undefined : () => retryPost(p.id).then(applyPost)}
                             />
+                          );
+                        };
+                        // a search keeps its ranking left to right; the feed flows down the columns
+                        if (searchingLibrary)
+                          return (
+                            <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,225px),1fr))] items-start gap-3">
+                              {g.posts.map(card)}
                             </div>
                           );
-                        })}
-                      </div>
+                        // a card's height in widths: its picture, and about a quarter of a width for its lines
+                        const cols = flowColumns(g.posts, feedCols, (p) => 1 / cardRatio(p) + 0.25);
+                        return (
+                          <div className="flex items-start gap-3">
+                            {cols.map((col, i) => (
+                              <div key={i} className="flex min-w-0 flex-1 flex-col gap-3">
+                                {col.map(card)}
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()}
                     </div>
                   ))}
                 </div>
