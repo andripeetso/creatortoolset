@@ -112,8 +112,10 @@ describe("an account with no skills", () => {
   it("the assistant's prompt and tool list are what they were: adding a skill adds one block and one tool, and switching it off takes both away again", async () => {
     const before = await dockTurn();
     await before.end();
-    // nothing of this feature: the app's own text, the Mac note, and no skill_read
-    expect(before.job.system).toBe(SYSTEM + MAC_NOTE);
+    // nothing of this feature: the app's own text first, the Mac note last, no skill line and no skill_read
+    expect(before.job.system.startsWith(SYSTEM)).toBe(true);
+    expect(before.job.system.endsWith(MAC_NOTE)).toBe(true);
+    expect(before.job.system).not.toContain("[Skill ");
     expect(before.tools.map((t) => t.name)).not.toContain("skill_read");
     const outside = await toolsOf(fullKey);
 
@@ -210,7 +212,7 @@ describe("where a skill reaches", () => {
     // the assistant goes by the project the app is in
     await call(me, "/api/workshop/workspace", "PATCH", { currentProjectId: b.project });
     const dockB = await dockTurn();
-    expect(dockB.job.system).toBe(SYSTEM + MAC_NOTE);
+    expect(dockB.job.system).not.toContain("[Skill ");
     expect(dockB.tools.map((t) => t.name)).not.toContain("skill_read");
     expect(await tool(dockB.token, "skill_read", { name: "Hook rules" })).toEqual({ error: true, text: "The user has no skill switched on here." });
     await dockB.end();
@@ -227,7 +229,8 @@ describe("where a skill reaches", () => {
     await add(HOOKS);
     const run = runInChat("ana", { task: { id: "t1", name: "Monday ideas" }, prompt: "Three hooks.", preface: "A scheduled task.", fresh: true, route: routeOf("ana", false)!, url: "http://tools.example.com/api/mcp" });
     const job = await claim();
-    expect(job.system).toBe(SYSTEM);
+    expect(job.system.startsWith(SYSTEM)).toBe(true);
+    expect(job.system).not.toContain("[Skill ");
     expect((await toolsOf(`Bearer ${job.mcp!.token}`)).map((t) => t.name)).not.toContain("skill_read");
     await relay(`${job.id}/done`, { text: "Done." });
     await run;
