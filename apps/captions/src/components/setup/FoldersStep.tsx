@@ -12,8 +12,8 @@ import type { ProvidersView } from "@contracts/providers";
 const STORAGE = "/api/devices/storage";
 const DEFAULT_LIBRARY_DISK = "~/Movies";
 const ROWS: { role: SourceRole; name: string; why: string }[] = [
-  { role: "footage", name: "Footage", why: "Video you film. Read where it is; nothing is moved or uploaded." },
-  { role: "music", name: "Music", why: "Music you own. Read where it is; nothing is moved or uploaded." },
+  { role: "footage", name: "Footage", why: "Video you film. Read where it is; nothing is moved." },
+  { role: "music", name: "Music", why: "Music you own. Read where it is; nothing is moved." },
 ];
 
 async function send(url: string, method: string, body?: unknown): Promise<void> {
