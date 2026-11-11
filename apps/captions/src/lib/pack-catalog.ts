@@ -67,3 +67,22 @@ export async function catalogUpdates(): Promise<UpdateRow[]> {
 export async function submitPack(pack: Pack): Promise<unknown> {
   return json<unknown>(await fetch("/api/pack-catalog/submit", jsonInit({ pack, rights: true })));
 }
+
+/** What the Mac app answers a publish with (Account.swift publish). */
+export type MacPublish = { state: "sent" | "signedOut" | "cancelled" | "off" | "error"; message?: string };
+type PublishBridge = { postMessage: (m: string) => Promise<MacPublish> };
+
+/**
+ * Publish with the Mac app's Creator Toolset account: the app shows its own alert with the pack's name and what it
+ * holds, and only a click there sends it to the catalog for review. Null without the Mac app, or with one from before
+ * it could, so the caller offers the file instead.
+ */
+export async function publishFromMac(pack: Pack): Promise<MacPublish | null> {
+  const bridge = (window as unknown as { webkit?: { messageHandlers?: { publishPack?: PublishBridge } } }).webkit?.messageHandlers?.publishPack;
+  if (!bridge) return null;
+  try {
+    return await bridge.postMessage(JSON.stringify(pack));
+  } catch (e) {
+    return { state: "error", message: e instanceof Error ? e.message : String(e) };
+  }
+}
