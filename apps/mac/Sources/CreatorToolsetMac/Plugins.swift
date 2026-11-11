@@ -322,6 +322,16 @@ func pluginChange(_ prepared: PluginPrepared, id: String, on: PluginApproval) ->
 let pluginAsksNote = "The new version would run on this Mac, so it waits for you."
 func pluginLeftOutNote(_ why: String) -> String { "The new version was left out: \(why)" }
 
+/// Seconds after which a folder state that was refused is looked into once more. A refusal can be the moment's doing
+/// (the Mac busy, the build slow for once), and without a second look that version would stay out until the folder
+/// changes again. One more try per state, never a loop.
+let pluginRetrySeconds: TimeInterval = 30
+
+/// Whether a refused state gets its one more try now.
+func pluginRetriesNow(refused: String?, stamp: String?, retried: Bool, since: TimeInterval) -> Bool {
+    refused != nil && refused == stamp && !retried && since >= pluginRetrySeconds
+}
+
 /// A plug-in taken up five times in five minutes changes faster than an AI writes: most likely it writes into its own
 /// folder, and every take-up would restart the server for good. Its next change waits for a click.
 func pluginChangesTooOften(_ takeUps: [Date], now: Date) -> Bool {
@@ -351,6 +361,8 @@ final class PluginWatch {
     var notes: [String: String] = [:]
     /// id → when its changes were taken up by themselves
     var takeUps: [String: [Date]] = [:]
+    /// id → the folder state the server refused, when, and whether it has had its one more try
+    var refused: [String: (stamp: String, at: Date, retried: Bool)] = [:]
     var looking = false
     /// The page the window was on when the server was restarted, to go back to when it answers.
     var returnTo: URL?
@@ -361,6 +373,7 @@ final class PluginWatch {
         notes[id] = nil
         waiting[id] = nil
         takeUps[id] = nil
+        refused[id] = nil
     }
 }
 
@@ -516,6 +529,10 @@ extension Shell {
             let folder = pluginsFolder.appendingPathComponent(on.folder)
             let stamp = pluginFolderStamp(folder)
             defer { watch.last[id] = stamp }
+            if let r = watch.refused[id], pluginRetriesNow(refused: r.stamp, stamp: stamp, retried: r.retried, since: Date().timeIntervalSince(r.at)) {
+                watch.refused[id]?.retried = true
+                watch.handled[id] = nil
+            }
             guard pluginFolderSettled(stamp: stamp, last: watch.last[id], handled: watch.handled[id]) else { continue }
             watch.handled[id] = stamp
             watch.waiting[id] = nil
@@ -527,9 +544,11 @@ extension Shell {
             }
             guard status == 200, let prepared = try? JSONDecoder().decode(PluginPrepared.self, from: body) else {
                 watch.notes[id] = pluginLeftOutNote(prepareProblem(body))
+                if let stamp, watch.refused[id]?.stamp != stamp { watch.refused[id] = (stamp, Date(), false) }
                 continue
             }
             watch.notes[id] = nil
+            watch.refused[id] = nil
             let change = pluginChange(prepared, id: id, on: on)
             if change == .none { continue }
             if pluginFolderStamp(folder) != stamp {

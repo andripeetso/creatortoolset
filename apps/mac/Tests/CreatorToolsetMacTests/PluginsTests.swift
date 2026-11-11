@@ -146,6 +146,16 @@ final class PluginsTests: XCTestCase {
         XCTAssertEqual(old?.on["tiny"]?.server, false)
     }
 
+    /// A refused version gets one more try half a minute later (a busy Mac made a good one too slow once, in a real run),
+    /// and only one: never a loop.
+    func testARefusedStateIsTriedOnceMoreAndOnlyOnce() {
+        XCTAssertFalse(pluginRetriesNow(refused: "a", stamp: "a", retried: false, since: 10))    // too soon
+        XCTAssertTrue(pluginRetriesNow(refused: "a", stamp: "a", retried: false, since: 30))
+        XCTAssertFalse(pluginRetriesNow(refused: "a", stamp: "a", retried: true, since: 300))    // it had its try
+        XCTAssertFalse(pluginRetriesNow(refused: "a", stamp: "b", retried: false, since: 300))   // the folder moved on: a new state
+        XCTAssertFalse(pluginRetriesNow(refused: nil, stamp: "a", retried: false, since: 300))   // nothing was refused
+    }
+
     func testAPluginThatChangesFiveTimesInFiveMinutesWaitsForAClick() {
         let now = Date()
         let four = (1...4).map { now.addingTimeInterval(-Double($0) * 20) }

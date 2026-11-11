@@ -200,7 +200,9 @@ A plug-in is a folder the person's own AI writes into `~/Library/Application Sup
 - **Time limits** (the server's, `api/lib/folder-plugins.ts` `pluginLimits`): this app ends a server that has not
   answered 30 s after it started, without knowing why. So the plug-ins have 20 s in all before the first answer: 10 s
   for the builds (they run side by side), 8 s for each one's load. One that is too slow is left out and named, the
-  others load. Switch On refuses a plug-in whose build took over 5 s. In the page, all the page halves together have
+  others load. Switch On refuses a plug-in whose build does not finish in those 10 s (a tighter limit, 5 s, refused
+  a good plug-in on a busy Mac in a real run). A changed folder the server refused is looked into once more 30 s
+  later by this app, and only once. In the page, all the page halves together have
   10 s before the first screen (`src/lib/folder-plugins.tsx`).
 - **Known limit:** a plug-in that is left out after its file was loaded (it failed a check, or took too long) has
   already run its top-level code in the server, and what that started (a timer, a listener) goes on until the server

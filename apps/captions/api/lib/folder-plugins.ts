@@ -30,8 +30,9 @@ const MAX_BYTES = 20 * 1024 * 1024;
  * Time limits. All of this runs before the server's first answer, and the Mac app ends a server that has not
  * answered after 30 s (Server.swift) without knowing which plug-in held it up. So the whole load has one budget that
  * fits inside those 30 s with room for the rest of the start, and each step has its own limit within it: a plug-in
- * that is too slow is left out and named. Switch On accepts a build only when it took half the limit, so a plug-in
- * that could be switched on still fits on a slower day. (An object, so a test can shorten them.)
+ * that is too slow is left out and named. Switch On holds a build to the same limit as a start does, no tighter: a
+ * tighter one (half, tried first) refused a small, good plug-in in a real run, when the Mac was busy for a moment.
+ * (An object, so a test can shorten them.)
  */
 export const pluginLimits = { budgetMs: 20_000, buildMs: 10_000, loadMs: 8_000 };
 
@@ -480,10 +481,8 @@ export async function prepareFolderPlugin(folder: string): Promise<Prepared> {
   const scratch = path.join(dir("plugins-approved"), `.new-${randomUUID()}`);
   try {
     writeFolder(path.join(scratch, "src"), files);
-    const began = Date.now();
+    // what a start would give up on is not switched on: the same limit as the start's own
     const built = await build(path.join(scratch, "src"), path.join(scratch, "out"), pluginLimits.buildMs);
-    // what start-up would give up on must not be switched on: half the limit, so it still fits on a slower day
-    if (Date.now() - began > pluginLimits.buildMs / 2) throw new Error(TOO_SLOW_TO_BUILD);
     const home = path.join(dir("plugins-approved"), built.id);
     // keep the copy that is on now and this one; older tries go
     const keep = new Set([fingerprint, parseOn(process.env.CT_PLUGINS_ON).get(built.id)]);
