@@ -314,9 +314,11 @@ libraryApp.post("/:id/uploads", async (c) => {
   const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   const size = Number(body?.size);
   if (!Number.isSafeInteger(size) || size <= 0) return c.json({ error: "Invalid size", code: "invalid" }, 400);
-  // the largest upload holds only where an upload is the only way in: on the person's own computer the disk is the limit
+  // the largest upload holds only where an upload is the only way in: on the person's own computer the disk is the limit.
+  // A server its operator opened to folders (LIBRARY_WATCH_FOLDERS=1) is not that: every account there keeps the limit
+  const own = process.env.LIBRARY_WATCH_FOLDERS?.trim() !== "1" && watchAllowed(user.username);
   const max = gbSetting("LIBRARY_MAX_UPLOAD_GB", 8) * GiB;
-  if (size > max && !watchAllowed(user.username)) {
+  if (size > max && !own) {
     return c.json({ error: `This file is ${gb(size)}. This server takes files up to ${gb(max)}. Export a smaller copy and upload that.`, code: "too_large" }, 413);
   }
   const replaces = typeof body?.replacesAssetId === "string" ? body.replacesAssetId : null;

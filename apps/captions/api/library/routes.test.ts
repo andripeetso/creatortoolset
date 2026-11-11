@@ -147,7 +147,9 @@ describe("library uploads", () => {
       expect(await read(res)).toEqual({ error: "This file is 12.4 GB. This server takes files up to 8 GB. Export a smaller copy and upload that.", code: "too_large" });
       process.env.LIBRARY_MAX_UPLOAD_GB = "0.000001"; // about 1 KB, so a small file is over it
       expect((await create("owner-a", 5000)).status).toBe(413);
-      process.env.LIBRARY_WATCH_FOLDERS = "1"; // the person's own computer: only the disk counts
+      process.env.LIBRARY_WATCH_FOLDERS = "1"; // a server its operator opened to folders is still a server: the limit stays
+      expect((await create("owner-a", 5000)).status).toBe(413);
+      delete process.env.LIBRARY_WATCH_FOLDERS; // the person's own computer (a local server, as these tests run): only the disk counts
       expect((await create("owner-a", 5000)).status).toBe(201);
     } finally {
       delete process.env.LIBRARY_MAX_UPLOAD_GB;
