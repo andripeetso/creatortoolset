@@ -355,13 +355,22 @@ final class DiskCache {
     }
 }
 
+/// This Mac's host name as the kernel has it, in small letters ("sams-mac-studio.local"). Never `ProcessInfo.hostName`:
+/// that one looks every address of this Mac up on the local network (52 lookups, measured), and macOS then asks the
+/// person to let the app "find devices on local networks" seconds after it starts, before they pressed anything.
+func macHostName() -> String {
+    var name = [CChar](repeating: 0, count: Int(MAXHOSTNAMELEN) + 1)
+    guard gethostname(&name, name.count - 1) == 0, name[0] != 0 else { return "localhost" }
+    return String(cString: name).lowercased()
+}
+
 /// This Mac for the site's Devices page (`Machine` in apps/captions/contracts/providers.ts): chip, cores, memory, load,
 /// and the disks it keeps files on.
 func machineReport() -> [String: Any] {
     let info = ProcessInfo.processInfo
     var out: [String: Any] = [
         "os": "mac",
-        "host": info.hostName,
+        "host": macHostName(),
         "cpus": info.processorCount,
         "memGb": (Double(info.physicalMemory) / 1_073_741_824 * 10).rounded() / 10,
     ]

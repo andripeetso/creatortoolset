@@ -184,7 +184,7 @@ struct ThisMacView: View {
                     Task { accessMessage = await shell.setOtherDevices(on) }
                 }
             }))
-            Text("Off: only this Mac reaches the server. On: devices on your network sign in at http://\(ProcessInfo.processInfo.hostName):\(server.port) as \(LocalServer.ownerName) with this computer's password. macOS may ask to allow incoming connections for node: allow it, or phones can't connect.")
+            Text("Off: only this Mac reaches the server. On: devices on your network sign in at http://\(macHostName()):\(server.port) as \(LocalServer.ownerName) with this computer's password. macOS may ask to allow incoming connections for node: allow it, or phones can't connect.")
                 .font(.caption).foregroundStyle(.secondary)
             if askPassword {
                 SecureField("This computer's password (6 characters or more)", text: $password)

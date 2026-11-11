@@ -35,4 +35,23 @@ final class ThisMacAsksTests: XCTestCase {
         // an empty file gets just the table
         XCTAssertEqual(codexConfig("", name: "creator-toolset", url: "u", key: "k"), "[mcp_servers.creator-toolset]\nurl = \"u\"\nhttp_headers = { Authorization = \"Bearer k\" }\n")
     }
+
+    /// Telling the page about this Mac asks nothing of the local network: the host name is the kernel's own, and no
+    /// source file asks `ProcessInfo` for it (that call sends 52 lookups, and macOS then asks the person to let the app
+    /// "find devices on local networks" right after it starts).
+    func testThisMacsNameAsksNothingOfTheLocalNetwork() throws {
+        var kernel = [CChar](repeating: 0, count: 256)
+        XCTAssertEqual(gethostname(&kernel, 255), 0)
+        XCTAssertEqual(macHostName(), String(cString: kernel).lowercased())
+        XCTAssertFalse(macHostName().isEmpty)
+        let sources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Sources")
+        let files = try FileManager.default.subpathsOfDirectory(atPath: sources.path).filter { $0.hasSuffix(".swift") }
+        XCTAssertGreaterThan(files.count, 20)
+        for file in files {
+            let code = try String(contentsOf: sources.appendingPathComponent(file), encoding: .utf8).split(separator: "\n")
+                .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            XCTAssertFalse(code.contains { $0.contains(".hostName") }, "\(file) asks ProcessInfo for the host name: use macHostName()")
+        }
+    }
 }

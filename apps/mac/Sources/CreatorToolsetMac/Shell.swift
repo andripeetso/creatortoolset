@@ -631,7 +631,7 @@ final class Shell: NSObject, ObservableObject {
     private func pairThisMac() async throws {
         let host = base.host ?? ""
         let client = await client()
-        let name = Host.current().localizedName ?? ProcessInfo.processInfo.hostName
+        let name = Host.current().localizedName ?? macHostName()
         let data = try await client.postData("/api/devices", ["name": name, "version": appVersion])
         let pair = try JSONDecoder().decode(PairReply.self, from: data)
         guard DeviceVault.save(pair.token, for: host) else { throw SiteError.keychain }

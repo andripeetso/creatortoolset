@@ -137,8 +137,8 @@ extension Shell {
             "notice": notice ?? NSNull(),
             "paired": pairedHere,
             // this Mac's names as the site matches its records: the name it pairs with, and the host name its worker reports
-            "computer": Host.current().localizedName ?? ProcessInfo.processInfo.hostName,
-            "host": ProcessInfo.processInfo.hostName,
+            "computer": Host.current().localizedName ?? macHostName(),
+            "host": macHostName(),
             // this Mac's device id on the open server: the page's Connect binds its AI to it (setup's AI step)
             "device": DeviceVault.deviceID(for: base.host ?? "") ?? NSNull(),
             "problem": problem ?? NSNull(),
