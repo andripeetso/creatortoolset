@@ -182,6 +182,8 @@ export interface EditorStepInput {
   values: Record<string, string>;
   workDir: string;
   signal: AbortSignal;
+  /** a line for the draft's notes, a whole sentence ("Blur faces found no face that matches …"): shown with the edit */
+  note(text: string): void;
 }
 
 /** Every loaded plug-in's editor steps, lowest `order` first, each with the id of the plug-in it comes from. */

@@ -29,6 +29,12 @@ describe("the post step's chain", () => {
     expect(out.notes).toEqual([]);
   });
 
+  it("puts what a step says in the draft's notes", async () => {
+    const talk: EditorStep = { id: "blur", title: "Blur", about: "", run: async (i) => (i.note("Blur found no face that matches “the kids”"), {}) };
+    const out = await runSteps([{ id: "blur", values: {} }], [talk], input);
+    expect(out.notes).toEqual([`${POST_NOTE}Blur found no face that matches “the kids”`]);
+  });
+
   it("names a step the edit uses that this app no longer has, and plays the sources as they are", async () => {
     const out = await runSteps([{ id: "blur", values: {} }], [], input);
     expect(out.files).toEqual({});
