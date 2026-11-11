@@ -130,6 +130,9 @@ mkdir -p "$server/bin" "$server/runtime"
 # plug-ins folder, built by itself on their Mac, can use the app's one copy of each (api/lib/folder-plugins.ts)
 (cd "$repo" && CT_PLUGIN_HOST=1 pnpm --filter @creator-toolset/captions build)
 ditto "$captions/dist" "$server/dist"
+# that build wrote the two lists into the checkout (api/ and src/plugin-host.gen.ts): the empty ones go back, so a test
+# run that follows in this checkout is not the Mac build's by accident (a web build writes them again itself)
+(cd "$captions" && node scripts/plugins.mjs >/dev/null)
 ditto "$captions/packs" "$server/packs"   # the shipped packs (api/official-packs.ts reads ../packs from dist/)
 printf '{"private":true,"type":"module"}\n' > "$server/package.json"   # dist/boot.js is an ES module
 

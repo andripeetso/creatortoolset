@@ -155,10 +155,16 @@ A plug-in is a folder the person's own AI writes into `~/Library/Application Sup
 (the `Creator Toolset (fresh)` folder for a copy). Its server half and web half run only when this app says they are on.
 
 - **Switch on** is this app's own alert, a sheet on the window, not a page's: the server takes a copy of the folder and
-  builds it (nothing runs yet), then the alert names the plug-in and what it can reach. Cancel is the default; Switch On
-  records it. The page asks with `plugin:on:<folder>`, `plugin:off:<id>`, `plugin:show:<folder>`, `plugins:resume`,
-  `plugins:state` and `plugins:auto:on|off` over the `thisMac` handler, honoured only while This Mac shows this app's
-  own server (`Plugins.swift`).
+  builds it (nothing runs yet), then the alert names the plug-in, the folder it is, and what it can reach. Cancel is
+  the default; Switch On records it. The page asks with `plugin:on:<folder>`, `plugin:off:<id>`,
+  `plugin:show:<folder>`, `plugins:resume`, `plugins:state` and `plugins:auto:on|off` over the `thisMac` handler,
+  honoured only while This Mac shows this app's own server, and only from a page of that server's own host and port
+  (`isSite`, `Plugins.swift`).
+- **What the alert stops, and what it does not.** It stops a page (the app's own, a plug-in's, any other site), a tool
+  the app offers a connected AI, and an accident: none of them can make a plug-in run without the person seeing the
+  alert. It does not stop a program that already runs as the person on this Mac, such as an AI with a shell or a
+  plug-in's own server half. In the builds that are released the record is in the file-based Keychain (next point),
+  and such a program can write the approved copy and the record itself. Closing that needs a provisioning profile.
 - **A changed folder** of a plug-in that is on is taken up by this app, by itself, unless **Update automatically**
   (the last row of the Plug-ins list) is off. Every 5 s the app stats the folders the plug-ins were switched on from.
   A folder that is the same at two looks in a row is sent to the server's prepare (a copy and a test build; nothing
@@ -181,14 +187,25 @@ A plug-in is a folder the person's own AI writes into `~/Library/Application Sup
   program can reach, and never reads the file-based one. A build without a profile can't write there
   (errSecMissingEntitlement, -34018) and keeps the record in the file-based Keychain. That one is weaker: another
   program can change an item there with no prompt (measured on a throwaway item), so it stops an edit to a file, not
-  a program that calls the Keychain on purpose. Nothing about plug-ins goes in UserDefaults or a file, except the
-  paused flag (`pluginsPaused`).
+  a program that calls the Keychain on purpose. No release has a profile yet (`scripts/app.entitlements` holds the
+  microphone and the camera only), so every released build is the weaker case. Nothing about plug-ins goes in
+  UserDefaults or a file, except the paused flag (`pluginsPaused`).
 - **Env:** `CT_PLUGINS_ON=id:fingerprint,…` (sorted by id, left out when none is on) and `CT_PLUGINS_PAUSED=1` when
   paused, plus `CT_PLUGINS_FOLDERS={"id":"folder",…}` so the server's list tells the folder that is on from another
   folder stating the same id. With paused the server lists the plug-ins that are on and loads none.
 - **Restart:** a change (switch on or off, a new version, paused or back on) stops and starts the server without
   counting a crash; the window shows the starting page and loads the page it was on again when the server answers,
-  so it sees the new set.
+  so it sees the new set. Stopping closes the server's stdin and waits half a second before SIGTERM: a plug-in that
+  was loading right then is not blamed for it (the server takes its loading mark down first).
+- **Time limits** (the server's, `api/lib/folder-plugins.ts` `pluginLimits`): this app ends a server that has not
+  answered 30 s after it started, without knowing why. So the plug-ins have 20 s in all before the first answer: 10 s
+  for the builds (they run side by side), 8 s for each one's load. One that is too slow is left out and named, the
+  others load. Switch On refuses a plug-in whose build took over 5 s. In the page, all the page halves together have
+  10 s before the first screen (`src/lib/folder-plugins.tsx`).
+- **Known limit:** a plug-in that is left out after its file was loaded (it failed a check, or took too long) has
+  already run its top-level code in the server, and what that started (a timer, a listener) goes on until the server
+  next starts. One that took too long is not loaded again until it is switched off and on or changes; one that failed
+  a check is loaded and checked again at each start.
 - **Five crashes:** with a plug-in on and not paused, the app pauses them once, logs a line, clears the crash list
   and starts again. Otherwise the server stops trying, as above.
 - **This Mac:** a Plug-ins row, shown only while one is on: `N on`, or `Off` when paused, with Switch All Off or

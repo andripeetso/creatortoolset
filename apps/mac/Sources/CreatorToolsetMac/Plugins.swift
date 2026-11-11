@@ -1,7 +1,13 @@
 // Plug-ins: the folder plug-ins the person's own AI writes (apps/captions/api/lib/folder-plugins.ts). The server runs one
-// only when this app says it is on, so the app does the parts a web page or an AI may not: the person's click in the
-// alert, the record of that click, the paused flag and the restart of the server. Nothing the page sends can switch a
-// plug-in on: only Switch On in the alert below does.
+// only when this app says it is on, so the app does the parts a web page may not: the person's click in the alert, the
+// record of that click, the paused flag and the restart of the server. Nothing a page sends can switch a plug-in on:
+// only Switch On in the alert below does.
+//
+// What that does and does not stop. It stops a page (the app's own, a plug-in's, any other site), a tool the app
+// offers a connected AI, and an accident: none of them can make a plug-in run without the person seeing the alert. It
+// does not stop a program that already runs as the person on this Mac, such as an AI with a shell or a plug-in's own
+// server half: in the builds that are released, the record is in the file-based Keychain, and such a program can
+// write the approved copy and the record itself (see PluginRecord). Closing that needs a provisioning profile.
 import AppKit
 import Foundation
 import Security
@@ -220,15 +226,18 @@ func pluginsPauseInsteadOfStopping(on: Int, paused: Bool) -> Bool {
     on > 0 && !paused
 }
 
-/// The Switch On alert's words: the name in the message, and what the plug-in can reach (nil when it adds nothing).
-/// With Update automatically on (`auto`), the click also covers what the folder holds later, and the alert says so.
-func switchOnAlertText(name: String, server: Bool, web: Bool, auto: Bool) -> (message: String, detail: String?) {
+/// The Switch On alert's words: the name in the message, then the folder it is and what the plug-in can reach (nil when
+/// it adds nothing). The name is whatever the plug-in's own files say, so the folder's name is shown too: that one the
+/// person can find in Finder. With Update automatically on (`auto`), the click also covers what the folder holds later,
+/// and the alert says so.
+func switchOnAlertText(name: String, folder: String, server: Bool, web: Bool, auto: Bool) -> (message: String, detail: String?) {
     var detail: String?
     if server {
         detail = "This plug-in was not made by Creator Toolset. It runs on this Mac inside the app, with the app's access to your files, your keys and the internet."
     } else if web {
         detail = "This plug-in was not made by Creator Toolset. It adds pages to the app, and they can see and change everything in it."
     }
+    if detail != nil { detail = "It is the folder “\(folder)” in your plug-ins folder. " + detail! }
     if auto, detail != nil { detail! += " Later changes to its folder run by themselves unless you switch off Update automatically." }
     return ("Switch on “\(name)”?", detail)
 }
@@ -435,7 +444,7 @@ extension Shell {
                 return done(["ok": false, "problem": "The server did not answer: \(error.localizedDescription)"])
             }
             guard let window = webView.window else { return done(["ok": false]) }
-            let text = switchOnAlertText(name: prepared.name, server: prepared.server, web: prepared.web, auto: !PluginRecord.live.load().waits)
+            let text = switchOnAlertText(name: prepared.name, folder: folder, server: prepared.server, web: prepared.web, auto: !PluginRecord.live.load().waits)
             let alert = NSAlert()
             alert.messageText = text.message
             if let detail = text.detail { alert.informativeText = detail }

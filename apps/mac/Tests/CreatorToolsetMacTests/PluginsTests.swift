@@ -44,20 +44,35 @@ final class PluginsTests: XCTestCase {
     }
 
     func testTheSwitchOnAlertSaysWhatThePluginCanReach() {
-        let server = switchOnAlertText(name: "Tiny", server: true, web: true, auto: false)
+        // the name is the plug-in's own word for itself; the folder is what the person can find
+        let server = switchOnAlertText(name: "Tiny", folder: "tiny-acro", server: true, web: true, auto: false)
         XCTAssertEqual(server.message, "Switch on “Tiny”?")
-        XCTAssertEqual(server.detail, "This plug-in was not made by Creator Toolset. It runs on this Mac inside the app, with the app's access to your files, your keys and the internet.")
-        XCTAssertEqual(switchOnAlertText(name: "Tiny", server: false, web: true, auto: false).detail, "This plug-in was not made by Creator Toolset. It adds pages to the app, and they can see and change everything in it.")
-        XCTAssertNil(switchOnAlertText(name: "Tiny", server: false, web: false, auto: true).detail)
+        XCTAssertEqual(server.detail, "It is the folder “tiny-acro” in your plug-ins folder. This plug-in was not made by Creator Toolset. It runs on this Mac inside the app, with the app's access to your files, your keys and the internet.")
+        XCTAssertEqual(switchOnAlertText(name: "Tiny", folder: "tiny-acro", server: false, web: true, auto: false).detail, "It is the folder “tiny-acro” in your plug-ins folder. This plug-in was not made by Creator Toolset. It adds pages to the app, and they can see and change everything in it.")
+        XCTAssertNil(switchOnAlertText(name: "Tiny", folder: "tiny-acro", server: false, web: false, auto: true).detail)
+    }
+
+    /// Only a page of the app's own server may ask the app for anything: the same host on another port is another program.
+    func testOnlyTheAppsOwnServerPortIsTheSite() {
+        let here = URL(string: "http://127.0.0.1:43129")!
+        XCTAssertTrue(isSite(URL(string: "http://127.0.0.1:43129/community/installed")!, here))
+        XCTAssertFalse(isSite(URL(string: "http://127.0.0.1:5173/")!, here))          // another local server
+        XCTAssertFalse(isSite(URL(string: "http://127.0.0.1/")!, here))
+        XCTAssertFalse(isSite(URL(string: "http://localhost:43129/")!, here))
+        let site = URL(string: "https://studio.example.com")!
+        XCTAssertTrue(isSite(URL(string: "https://studio.example.com/review/abc")!, site))
+        XCTAssertTrue(isSite(URL(string: "https://Studio.Example.com:443/")!, site))  // the default port, written out
+        XCTAssertFalse(isSite(URL(string: "https://studio.example.com:8443/")!, site))
+        XCTAssertFalse(isSite(URL(string: "https://other.example.com/")!, site))
     }
 
     /// The click covers what the folder holds later only while Update automatically is on, and the alert says which.
     func testTheSwitchOnAlertSaysLaterChangesRunByThemselvesOnlyWhileTheyDo() {
         let later = " Later changes to its folder run by themselves unless you switch off Update automatically."
         for (server, web) in [(true, true), (true, false), (false, true)] {
-            let waits = switchOnAlertText(name: "Tiny", server: server, web: web, auto: false).detail!
+            let waits = switchOnAlertText(name: "Tiny", folder: "tiny", server: server, web: web, auto: false).detail!
             XCTAssertFalse(waits.contains("Later changes"))
-            XCTAssertEqual(switchOnAlertText(name: "Tiny", server: server, web: web, auto: true).detail, waits + later)
+            XCTAssertEqual(switchOnAlertText(name: "Tiny", folder: "tiny", server: server, web: web, auto: true).detail, waits + later)
         }
     }
 

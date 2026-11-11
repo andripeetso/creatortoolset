@@ -243,12 +243,17 @@ final class LocalServer: ObservableObject {
         }
     }
 
-    /// On quit or when switched off: close its stdin (CT_EXIT_WITH_PARENT), SIGTERM, up to 10 s, then SIGKILL.
+    /// On quit or when switched off: close its stdin (CT_EXIT_WITH_PARENT) and give it half a second to end by itself,
+    /// then SIGTERM, up to 10 s, then SIGKILL. The half second is for a plug-in that is loading right then: the server
+    /// takes down the mark that would blame it at the next start (api/boot.ts), which SIGTERM sent in the same instant
+    /// never let it do. A server that is stuck does not end by itself and gets the SIGTERM as before, mark and all.
     func stop() {
         stopping = true
         guard let p = process else { return }
         try? input?.fileHandleForWriting.close()
-        p.terminate()
+        let grace = Date().addingTimeInterval(0.5)
+        while p.isRunning && Date() < grace { usleep(20_000) }
+        if p.isRunning { p.terminate() }
         let deadline = Date().addingTimeInterval(10)
         while p.isRunning && Date() < deadline { usleep(50_000) }
         if p.isRunning {
