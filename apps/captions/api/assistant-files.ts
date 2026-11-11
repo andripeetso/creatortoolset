@@ -183,8 +183,8 @@ export async function useFile(
     return { to, id: of.id, name: added.meta.name, href: `/review/${of.id}?v=${added.n}`, version: added.n, note: `Version ${added.n} of “${added.meta.name}”` };
   }
   // Caption Studio: the project is there at once, with its id; its editing copy and its captions are made behind the
-  // answer (captions-job.ts), and the chat says when they are ready. "Open it only then": a page that has the project
-  // open keeps its own copy (src/lib/persist.ts loadSession) and would not show captions saved under it
+  // answer (captions-job.ts), and the chat says when they are ready. "Open it only then": an open, untouched project
+  // takes the captions when they land (src/lib/persist.ts), but Transcribe pressed on the page meanwhile would be refused
   const made = await createProjectFromFile({ owner: user.username, name: title, clipName: meta.name, file, duration: await probeDuration(file), later: true });
   const project = { to, id: made.projectId, name: title, href: `/captions?project=${made.projectId}` };
   const route = captionEngine(user);
