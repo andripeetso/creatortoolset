@@ -84,7 +84,7 @@ describe.skipIf(!enabled)("Media Library in the browser", () => {
     await page.goto(new URL("/library", base).toString());
 
     await page.getByRole("heading", { name: "Media Library" }).waitFor({ timeout: 60_000 });
-    await page.getByText("Nothing here yet").waitFor();
+    await page.getByText("Where are your videos?").waitFor();
 
     await page.locator('input[type="file"]').setInputFiles(fixture);
     const card = page.getByRole("button", { name: /Tiny Acrobatics clip/ });

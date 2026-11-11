@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
-import { AudioLines, Quote, FileText, Folder, Image as ImageIcon, Star, Trash2, Upload, Video } from "lucide-react";
+import { AudioLines, Quote, FileText, Image as ImageIcon, Upload, Video } from "lucide-react";
 import type { AssetCard, AssetKind, AssetPage, Collection, LibrarySummary, SearchHit, WatchStatus } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
 import { FootageFolderCard } from "@/components/FootageFolderCard";
@@ -14,6 +14,7 @@ import {
   createLibrary,
   getAsset,
   getWatch,
+  isFinals,
   listAssets,
   listCollections,
   listLibraries,
@@ -21,7 +22,6 @@ import {
   changeFolderItems,
   searchLibrary,
   setTrashed,
-  updateLibrary,
   uploadFile,
   audioOf,
 } from "@/lib/library";
@@ -29,30 +29,37 @@ import { useCachedLoad } from "@/lib/local-cache";
 import { cn } from "@/lib/utils";
 import { LibraryFacetBar } from "@/components/LibraryFacetBar";
 import { libraryBadges, libraryFacets } from "@/lib/library-slots";
-import { LibraryStorageSettings } from "./LibraryStorage";
-import { LibraryWatchFolders } from "./LibraryWatchFolders";
 import { AiBadge, ClipPanel } from "./library/ClipPanel";
+import { LibraryFolders } from "./library/LibraryFolders";
+import { LibrarySettings } from "./library/LibrarySettings";
 
 /**
- * Media Library (/library): one library's footage as a grid of 16:9 cards. Search runs over titles and tags
- * (FTS5, api/library/query.ts), and over what is said in the clips (api/library/search.ts): a line said opens the
- * preview at its second. A card opens its preview. Uploads go in one at a time, from the tray. A card being prepared
- * updates when the server finishes it (the change stream), without polling.
+ * Media Library (/library): the person's raw materials, one library's footage as a grid of 16:9 cards. An empty library
+ * is one screen: what the library is for and the folder to choose (FootageFolderCard), upload as the second way. Above
+ * the grid: the search, the kind, the folders and the settings button, then one row to narrow (A-roll and B-roll first),
+ * then the progress while there is any. Search runs over titles and tags (FTS5, api/library/query.ts), and over what is
+ * said in the clips (api/library/search.ts): a line said opens the preview at its second. A card opens its preview.
+ * Uploads go in one at a time, from the tray. A card being prepared updates when the server finishes it (the change
+ * stream), without polling. Finals has its own tool (/finals): its folder is not shown here.
  */
 
 const KINDS: { value: AssetKind | "all"; label: string }[] = [
-  { value: "all", label: "All" },
-  { value: "video", label: "Video" },
+  { value: "all", label: "All kinds" },
+  { value: "video", label: "Videos" },
   { value: "audio", label: "Audio" },
   { value: "image", label: "Images" },
-  { value: "doc", label: "Other" },
+  { value: "doc", label: "Documents" },
 ];
 const KIND_ICON: Record<AssetKind, typeof Video> = { video: Video, audio: AudioLines, image: ImageIcon, doc: FileText };
-const STATE_DOT: Partial<Record<AssetCard["state"], string>> = {
-  processing: "bg-amber-400 animate-pulse",
-  failed: "bg-red-500",
-  missing: "bg-zinc-500",
-};
+
+/** A-roll or B-roll, when the server has sorted the clip (the "roll" work fills AssetCard.roll; read as optional here). */
+type Roll = "a" | "b";
+const rollOf = (a: AssetCard) => (a as AssetCard & { roll?: Roll }).roll;
+const ROLLS: { value: Roll | null; label: string }[] = [
+  { value: null, label: "All" },
+  { value: "a", label: "A-roll" },
+  { value: "b", label: "B-roll" },
+];
 
 interface Upload {
   key: number;
@@ -63,10 +70,6 @@ interface Upload {
   status: "uploading" | "added" | "duplicate" | "failed";
   error?: string;
 }
-
-/** Finals: a plain manual collection, pinned first in every library and made the first time someone uses it. */
-const FINALS = "Finals";
-const isFinals = (c: Collection) => c.kind === "manual" && c.parentId === null && c.name === FINALS;
 
 const clock = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -81,6 +84,7 @@ export default function LibraryPage() {
   const [q, setQ] = useState("");
   const [term, setTerm] = useState("");
   const [kind, setKind] = useState<AssetKind | "all">("all");
+  const [roll, setRoll] = useState<Roll | null>(null);
   const [facets, setFacets] = useState<Record<string, string[]>>({}); // plug-in sidebar filters picked so far
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [asking, setAsking] = useState<File[] | null>(null); // a big upload, waiting for its go after the estimate
@@ -90,8 +94,8 @@ export default function LibraryPage() {
   const [error, setError] = useState<string | null>(null);
   const [scope, setScope] = useState("all"); // "all", "trash", or a collection id
   const [source, setSource] = useState(""); // "" = this library, else a plug-in source's id (its cards only)
-  const [sources, setSources] = useState<{ id: string; label: string }[]>([]);
-  const [folderName, setFolderName] = useState("");
+  const [sourceList, setSources] = useState<{ id: string; label: string }[] | null>(null); // null: not read yet
+  const sources = sourceList ?? [];
   const picker = useRef<HTMLInputElement>(null);
   const seq = useRef(0);
   const keys = useRef(0);
@@ -99,11 +103,14 @@ export default function LibraryPage() {
   const library = libraries?.find((l) => l.id === libraryId) ?? libraries?.[0] ?? null;
   const libId = library?.id;
   const folderList = useCachedLoad<Collection[]>(libId ? `/api/library/${libId}/collections` : null, () => listCollections(libId!));
-  const collections = folderList.data ?? [];
+  // Finals has its own tool (/finals reads this folder's pieces): it is kept, never shown or offered here
+  const collections = (folderList.data ?? []).filter((c) => !isFinals(c));
   const reloadFolders = () => void folderList.refresh().catch((e) => setError(message(e)));
-  const finals = collections.find(isFinals);
-  // the footage folders (the owner's view): an empty grid says whether clips are on their way from one
-  const watch = useCachedLoad<WatchStatus>(libId ? `/api/library/${libId}/watch` : null, () => getWatch(libId!)).data;
+  const finals = folderList.data?.find(isFinals);
+  // the footage folders (the owner's view; anyone else gets an error and no settings): an empty grid says whether clips
+  // are on their way from one
+  const watchLoad = useCachedLoad<WatchStatus>(libId ? `/api/library/${libId}/watch` : null, () => getWatch(libId!));
+  const watch = watchLoad.data;
   const adding = !!watch?.folders.some((f) => f.adding > 0);
   const [linked] = useSearchParams(); // ?library=&asset= (the Video Cleaner's duplicate check links here)
 
@@ -131,6 +138,21 @@ export default function LibraryPage() {
   const shownIds = new Set(first.data?.items.map((a) => a.id));
   const items = [...(first.data?.items ?? []), ...(extra?.items.filter((a) => !shownIds.has(a.id)) ?? [])];
   const next = extra ? extra.next : first.data?.next;
+  // ponytail: A-roll / B-roll narrows the pages loaded so far; a server query when the roll work adds one
+  const hasRoll = items.some((a) => rollOf(a));
+  const shown = roll ? items.filter((a) => rollOf(a) === roll) : items;
+  const narrowed = !!term || kind !== "all" || !!roll || Object.values(facets).some((v) => v.length) || !!source;
+
+  // an empty library is one screen (what it is for, the folder to choose): nothing in it, nothing in its trash, no
+  // footage folder, no plug-in source, no upload on its way. Until all of that is known the grid's frame stands.
+  const emptyView = scope === "all" && !narrowed && first.data?.items.length === 0;
+  const trashPeek = useCachedLoad<AssetPage>(emptyView && libId ? `/api/library/${libId}/assets?view=trash-peek` : null, () =>
+    listAssets(libId!, { trashed: true, limit: 1 }),
+  );
+  const watchKnown = watch !== null || !!watchLoad.error;
+  const firstScreen =
+    emptyView && watchKnown && sourceList?.length === 0 && !watch?.folders.length && !uploads.length && !asking && trashPeek.data?.items.length === 0;
+  const settling = emptyView && !firstScreen && (!watchKnown || !trashPeek.data || !sourceList); // still finding out: the frame, not a wrong screen
 
   // the plug-in sources this account may browse here (none unless a plug-in brings one)
   useEffect(() => {
@@ -214,14 +236,14 @@ export default function LibraryPage() {
     }
   };
 
-  const newFolder = async () => {
-    if (!libId || !folderName.trim()) return;
+  const newFolder = async (name: string) => {
+    if (!libId) return;
     try {
-      await createCollection(libId, { name: folderName.trim().slice(0, 80) });
-      setFolderName("");
+      await createCollection(libId, { name: name.slice(0, 80) });
       reloadFolders();
     } catch (e) {
       setError(message(e));
+      throw e;
     }
   };
 
@@ -252,15 +274,14 @@ export default function LibraryPage() {
     }
   };
 
-  // ponytail: two people opening Finals at once can make two; the first one made is the one shown
+  // goes with the clip panel's Add to Finals button (the panel's own work takes it out): until then it puts the clip in
+  // the Finals folder as before, made the first time; nothing else on this page makes or opens that folder
   const finalsId = async (): Promise<string> => {
     if (finals) return finals.id;
-    const c = await createCollection(libId!, { name: FINALS });
+    const c = await createCollection(libId!, { name: "Finals" });
     reloadFolders();
     return c.id;
   };
-  const openFinals = () =>
-    finalsId().then(setScope, (e) => setError(message(e)));
 
   const addToFolder = async (a: AssetCard, folderId: string) => {
     if (!libId || !folderId) return;
@@ -281,11 +302,14 @@ export default function LibraryPage() {
           ? "Already in library"
           : "Failed";
 
+  // the Upload button's handler: the top bar's button and the first screen's second way both call it
+  const chooseFiles = () => picker.current?.click();
+
   return (
     <div className="flex min-h-dvh flex-col">
       <AppBar tool="Media Library" trail={library?.name}>
-        {library && (
-          <Button size="sm" onClick={() => picker.current?.click()}>
+        {library && !firstScreen && (
+          <Button size="sm" onClick={chooseFiles}>
             <Upload className="h-4 w-4" />
             Upload
           </Button>
@@ -316,7 +340,6 @@ export default function LibraryPage() {
       />
 
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 px-4 py-4 sm:px-6">
-        {library && <FootageFolderCard libraryId={library.id} onUpload={() => picker.current?.click()} />}
         {libraries === null && !error && <TileFrame />}
 
         {libraries?.length === 0 && (
@@ -343,7 +366,9 @@ export default function LibraryPage() {
           </select>
         )}
 
-        {library && (
+        {library && firstScreen && <FootageFolderCard page libraryId={library.id} onUpload={chooseFiles} />}
+
+        {library && !firstScreen && (
           <>
             <div className="flex flex-wrap items-center gap-2">
               <Input
@@ -352,81 +377,63 @@ export default function LibraryPage() {
                 onChange={(e) => setQ(e.target.value)}
                 placeholder="Search titles, tags and what is said"
                 aria-label="Search"
-                className="min-w-0 flex-1 basis-full sm:basis-72 sm:flex-none"
+                className="min-w-0 flex-1 basis-full sm:basis-72"
               />
-              <div role="group" aria-label="Kind" className="flex flex-wrap gap-1.5">
-                {KINDS.map((k) => (
-                  <Button
-                    key={k.value}
-                    size="sm"
-                    variant={kind === k.value ? "default" : "outline"}
-                    aria-pressed={kind === k.value}
-                    onClick={() => setKind(k.value)}
-                  >
-                    {k.label}
-                  </Button>
-                ))}
-              </div>
-              <LibraryFacetBar facets={libraryFacets("library")} value={facets} onChange={setFacets} />
-            </div>
-
-            {sources.length > 0 && (
-              <div role="group" aria-label="Sources" className="flex flex-wrap items-center gap-1.5">
-                <Button size="sm" variant={!source ? "default" : "outline"} aria-pressed={!source} onClick={() => setSource("")}>
-                  Library
-                </Button>
-                {sources.map((s) => (
-                  <Button key={s.id} size="sm" variant={source === s.id ? "default" : "outline"} aria-pressed={source === s.id} onClick={() => setSource(s.id)}>
-                    {s.label}
-                  </Button>
-                ))}
-              </div>
-            )}
-
-            <div role="group" aria-label="Folders" className="flex flex-wrap items-center gap-1.5">
-              <Button size="sm" variant={scope === "all" ? "default" : "outline"} aria-pressed={scope === "all"} onClick={() => setScope("all")}>
-                All
-              </Button>
-              <Button size="sm" variant={finals && scope === finals.id ? "default" : "outline"} aria-pressed={!!finals && scope === finals.id} onClick={() => void openFinals()}>
-                <Star className="h-3.5 w-3.5" />
-                {FINALS}
-                {finals?.count ? <span className="text-xs opacity-60">{finals.count}</span> : null}
-              </Button>
-              {collections.filter((c) => c !== finals).map((c) => (
-                <Button key={c.id} size="sm" variant={scope === c.id ? "default" : "outline"} aria-pressed={scope === c.id} onClick={() => setScope(c.id)}>
-                  <Folder className="h-3.5 w-3.5" />
-                  {c.name}
-                </Button>
-              ))}
-              <Button size="sm" variant={scope === "trash" ? "default" : "outline"} aria-pressed={scope === "trash"} onClick={() => setScope("trash")}>
-                <Trash2 className="h-3.5 w-3.5" />
-                Trash
-              </Button>
-              <form
-                className="flex items-center gap-1.5"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void newFolder();
-                }}
+              <select
+                aria-label="Kind"
+                value={kind}
+                onChange={(e) => setKind(e.target.value as AssetKind | "all")}
+                className="h-8 rounded-md border border-zinc-500/30 bg-transparent px-2 text-sm"
               >
-                <Input value={folderName} onChange={(e) => setFolderName(e.target.value)} placeholder="New folder" aria-label="New folder" className="h-8 w-36" />
-                <Button type="submit" size="sm" variant="ghost" disabled={!folderName.trim()}>
-                  Add
-                </Button>
-              </form>
-              {term && (
-                <Button size="sm" variant="ghost" onClick={() => void saveSearch()}>
-                  Save search as folder
-                </Button>
+                {KINDS.map((k) => (
+                  <option key={k.value} value={k.value}>
+                    {k.label}
+                  </option>
+                ))}
+              </select>
+              <LibraryFolders
+                folders={collections}
+                open={scope}
+                onOpen={setScope}
+                onMake={newFolder}
+                onSaveSearch={term ? () => void saveSearch() : undefined}
+              />
+              {watch && (
+                <LibrarySettings
+                  library={library}
+                  watch={watch}
+                  folders={collections.filter((c) => c.kind === "manual")}
+                  onChange={(l) => setLibraries((all) => all?.map((x) => (x.id === l.id ? l : x)) ?? all)}
+                  onError={setError}
+                />
               )}
             </div>
 
-            <LibraryWatchFolders libraryId={library.id} folders={collections.filter((c) => c.kind === "manual")} />
-            <LibraryStorageSettings
-              libraryId={library.id}
-              onSaved={(storage) => setLibraries((all) => all?.map((x) => (x.id === library.id ? { ...x, storage } : x)) ?? all)}
-            />
-            <AiSwitches library={library} onChange={(l) => setLibraries((all) => all?.map((x) => (x.id === l.id ? l : x)) ?? all)} onError={setError} />
+            <div className="flex flex-wrap items-center gap-1.5 empty:hidden">
+              {(hasRoll || roll) && (
+                <div role="group" aria-label="Roll" className="flex flex-wrap gap-1.5">
+                  {ROLLS.map((r) => (
+                    <Button key={r.label} size="sm" variant={roll === r.value ? "default" : "outline"} aria-pressed={roll === r.value} onClick={() => setRoll(r.value)}>
+                      {r.label}
+                    </Button>
+                  ))}
+                </div>
+              )}
+              {sources.length > 0 && (
+                <div role="group" aria-label="Sources" className="flex flex-wrap items-center gap-1.5">
+                  <Button size="sm" variant={!source ? "default" : "outline"} aria-pressed={!source} onClick={() => setSource("")}>
+                    Library
+                  </Button>
+                  {sources.map((s) => (
+                    <Button key={s.id} size="sm" variant={source === s.id ? "default" : "outline"} aria-pressed={source === s.id} onClick={() => setSource(s.id)}>
+                      {s.label}
+                    </Button>
+                  ))}
+                </div>
+              )}
+              <LibraryFacetBar facets={libraryFacets("library")} value={facets} onChange={setFacets} />
+            </div>
+
             <LibraryProgressBar libraryId={library.id} />
 
             {uploads.length > 0 && (
@@ -476,11 +483,11 @@ export default function LibraryPage() {
               </section>
             )}
 
-            {!first.data ? (
+            {!first.data || settling ? (
               <TileFrame />
-            ) : items.length > 0 ? (
+            ) : shown.length > 0 ? (
               <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-                {items.map((a) => (
+                {shown.map((a) => (
                   <li key={a.id}>
                     <AssetTile asset={a} onOpen={() => open(a)} />
                   </li>
@@ -489,13 +496,17 @@ export default function LibraryPage() {
             ) : (
               libraries !== null && (
                 <p className="py-16 text-center text-sm text-zinc-500">
-                  {term || kind !== "all" || Object.values(facets).some((v) => v.length)
+                  {narrowed
                     ? "No matches."
                     : adding
                       ? null // the line above the grid says how many are in
-                      : scope === "all" && watch?.folders.length
-                        ? "No videos in your folder yet."
-                        : "Nothing here yet. Upload a file to start."}
+                      : scope === "trash"
+                        ? "The trash is empty."
+                        : scope !== "all"
+                          ? "Nothing in this folder yet."
+                          : watch?.folders.length
+                            ? "No videos in your folder yet."
+                            : "Nothing here yet."}
                 </p>
               )
             )}
@@ -554,17 +565,24 @@ function TileFrame() {
   );
 }
 
+/**
+ * One clip. Its picture shows the moment there is one; before that a clip being prepared says so, quietly and moving
+ * (never amber: amber is for what needs the person). A failed clip says why; a missing one (its drive unplugged) says so.
+ */
 function AssetTile({ asset: a, onOpen }: { asset: AssetCard; onOpen: () => void }) {
   const Icon = KIND_ICON[a.kind];
-  const dot = STATE_DOT[a.state];
+  const preparing = a.state === "processing" && !a.thumbUrl;
+  // the clip's own stage ("Making its picture", "Transcribing") goes here once the prepare work says it per clip
+  const stage = "Preparing";
   return (
     <button type="button" onClick={onOpen} data-state={a.state} className="group flex w-full flex-col gap-1.5 text-left">
       <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-zinc-900 ring-1 ring-zinc-500/20 transition group-hover:ring-zinc-400/60">
         {a.thumbUrl ? (
-          <img src={a.thumbUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
+          <img src={a.thumbUrl} alt="" loading="lazy" className={cn("h-full w-full object-cover", a.state === "missing" && "opacity-40")} />
         ) : (
-          <div className="flex h-full w-full items-center justify-center text-zinc-600">
-            <Icon className="h-8 w-8" />
+          <div className={cn("flex h-full w-full flex-col items-center justify-center gap-1.5 text-zinc-600", preparing && "motion-safe:animate-pulse")}>
+            <Icon className="h-7 w-7" />
+            {preparing && <span className="text-xs text-zinc-400">{stage}</span>}
           </div>
         )}
         {a.durationS !== undefined && (
@@ -572,7 +590,14 @@ function AssetTile({ asset: a, onOpen }: { asset: AssetCard; onOpen: () => void 
             {clock(a.durationS)}
           </span>
         )}
-        {dot && <span title={a.state} className={cn("absolute left-2 top-2 h-2.5 w-2.5 rounded-full ring-2 ring-black/40", dot)} />}
+        {(a.state === "failed" || a.state === "missing") && (
+          // on the picture's own dark label in both themes: white words, the colour in the dot (red failed, amber needs the person)
+          <span className="absolute left-1.5 top-1.5 flex max-w-[calc(100%-0.75rem)] items-center gap-1.5 rounded bg-black/75 px-1.5 py-0.5 text-[11px] text-white">
+            <span aria-hidden className={cn("h-1.5 w-1.5 shrink-0 rounded-full", a.state === "failed" ? "bg-red-500" : "bg-amber-500")} />
+            {/* the reason per clip goes here once the prepare work gives one (job errors are raw tool output, not for a card) */}
+            <span className="truncate">{a.state === "failed" ? "Couldn't read this file" : "File not found"}</span>
+          </span>
+        )}
       </div>
       <span className="truncate text-sm font-medium">{a.title}</span>
       {libraryBadges(a).map((b) => (
@@ -587,25 +612,5 @@ function AssetTile({ asset: a, onOpen }: { asset: AssetCard; onOpen: () => void 
         </span>
       )}
     </button>
-  );
-}
-
-/** The owner's switches, both on to start (api/library/db.ts SETTING_DEFAULTS): a big upload says first what they will take. */
-function AiSwitches({ library, onChange, onError }: { library: LibrarySummary; onChange: (l: LibrarySummary) => void; onError: (e: string) => void }) {
-  const flip = (key: "describe" | "embed", on: boolean) =>
-    updateLibrary(library.id, { settings: { [key]: on } })
-      .then(onChange)
-      .catch((e) => onError(message(e)));
-  const row = (key: "describe" | "embed", text: string) => (
-    <label className="flex items-center gap-2">
-      <input type="checkbox" checked={library.settings[key]} onChange={(e) => void flip(key, e.target.checked)} />
-      {text}
-    </label>
-  );
-  return (
-    <div className="flex flex-wrap gap-x-5 gap-y-1 text-sm text-zinc-400">
-      {row("describe", "AI describes new videos")}
-      {row("embed", "Search by meaning (OpenAI key)")}
-    </div>
   );
 }
