@@ -9,7 +9,7 @@ import { Waiting } from "./analyze";
 import { type Cdl, cdlFilter } from "./grade";
 import { frameDuration } from "./fcpxml";
 import { fitted } from "./framing";
-import { editDir, gradeOf, postFiles, readDraft, readStep, saveStep } from "./store";
+import { editDir, gradeOf, POST_UNFINISHED, postFiles, postUnfinished, readDraft, readStep, saveStep } from "./store";
 import type { StepContext } from "./worker";
 
 /**
@@ -165,6 +165,8 @@ export async function localFiles(tl: Timeline): Promise<Record<string, string>> 
 export async function previewStep({ edit, variant, signal }: StepContext): Promise<void> {
   const d = readDraft(edit.id, variant);
   if (!d) throw new Error(`Draft ${variant || "the versions"} first`);
+  // a preview from an older run's copies would be filed in Review as this cut (faces unblurred, say)
+  if (postUnfinished(edit.id, variant)) throw new Error(POST_UNFINISHED);
   const out = path.join(editDir(edit.id), "previews", `${variant}.mp4`);
   await mkdir(path.dirname(out), { recursive: true });
   await renderPreview(d.timeline, { ...(await localFiles(d.timeline)), ...postFiles(edit.id, variant) }, out, signal, await gradeOf(edit.createdBy, edit.bundle));

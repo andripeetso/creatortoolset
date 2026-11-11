@@ -86,6 +86,19 @@ export function readStep<K extends keyof StepFiles>(id: string, name: K): StepFi
 /** The copies the post step made for a version, by source version id: the preview and the export play these (none: the sources' own files). */
 export const postFiles = (editId: string, variant: string): Record<string, string> => readStep(editId, "post")?.[variant]?.files ?? {};
 
+/** Said when a version's newest post step did not finish (failed, stopped, or not done yet). */
+export const POST_UNFINISHED = "Post-processing did not finish on this version: run it again before you export";
+
+/**
+ * True when a version's newest post step is not done: its copies (post.json) are an older run's, which may carry faces
+ * unblurred or a look the cut no longer has, so neither the export nor a preview may play them. A version that never
+ * had a post step (edits from before it) is not held.
+ */
+export function postUnfinished(editId: string, variant: string): boolean {
+  const row = libraryDb().prepare("SELECT state FROM edit_jobs WHERE edit_id = ? AND version_id = ? AND kind = 'post' ORDER BY id DESC LIMIT 1").get(editId, `${editId}:${variant}`) as { state: string } | undefined;
+  return !!row && row.state !== "done";
+}
+
 export const saveStep = <K extends keyof StepFiles>(id: string, name: K, value: StepFiles[K]) => writeJsonAtomic(path.join(root(), id, `${name}.json`), value);
 
 /** A version's draft as the draft step saved it: drafts/<name>.json. */
