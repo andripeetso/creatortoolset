@@ -32,8 +32,6 @@ type Props = {
   folders: Collection[];
   /** true: to the trash; false: back out of it */
   onTrash: (trash: boolean) => void;
-  /** not shown: Finals are not part of the Media Library any more (the page stops passing it) */
-  onAddToFinals?: () => void;
   onAddToFolder: (folderId: string) => void;
   onSaved: (a: AssetCard) => void;
   onError: (e: string) => void;

@@ -4,7 +4,7 @@ import { AudioLines, Quote, FileText, Image as ImageIcon, Upload, Video } from "
 import type { AssetCard, AssetKind, AssetPage, Collection, LibrarySummary, SearchHit, WatchStatus } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
 import { FootageFolderCard } from "@/components/FootageFolderCard";
-import { BIG_DROP, BigUploadDialog, LibraryProgressBar } from "@/components/LibraryProcessing";
+import { BIG_DROP, BigUploadDialog, ClipStage, LibraryProgressBar } from "@/components/LibraryProcessing";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
@@ -106,7 +106,6 @@ export default function LibraryPage() {
   // Finals has its own tool (/finals reads this folder's pieces): it is kept, never shown or offered here
   const collections = (folderList.data ?? []).filter((c) => !isFinals(c));
   const reloadFolders = () => void folderList.refresh().catch((e) => setError(message(e)));
-  const finals = folderList.data?.find(isFinals);
   // the footage folders (the owner's view; anyone else gets an error and no settings): an empty grid says whether clips
   // are on their way from one
   const watchLoad = useCachedLoad<WatchStatus>(libId ? `/api/library/${libId}/watch` : null, () => getWatch(libId!));
@@ -272,15 +271,6 @@ export default function LibraryPage() {
     } catch (e) {
       setError(message(e));
     }
-  };
-
-  // goes with the clip panel's Add to Finals button (the panel's own work takes it out): until then it puts the clip in
-  // the Finals folder as before, made the first time; nothing else on this page makes or opens that folder
-  const finalsId = async (): Promise<string> => {
-    if (finals) return finals.id;
-    const c = await createCollection(libId!, { name: "Finals" });
-    reloadFolders();
-    return c.id;
   };
 
   const addToFolder = async (a: AssetCard, folderId: string) => {
@@ -534,7 +524,8 @@ export default function LibraryPage() {
               inTrash={scope === "trash"}
               folders={collections.filter((c) => c.kind === "manual")}
               onTrash={(trash) => void moveAsset(preview, trash)}
-              onAddToFinals={() => void finalsId().then((id) => addToFolder(preview, id), (e) => setError(message(e)))}
+              onPrev={((i) => (i > 0 ? () => open(items[i - 1]!) : undefined))(items.findIndex((x) => x.id === preview.id))}
+              onNext={((i) => (i >= 0 && i < items.length - 1 ? () => open(items[i + 1]!) : undefined))(items.findIndex((x) => x.id === preview.id))}
               onAddToFolder={(id) => void addToFolder(preview, id)}
               onSaved={(a) => {
                 setPreview(a);
@@ -572,8 +563,6 @@ function TileFrame() {
 function AssetTile({ asset: a, onOpen }: { asset: AssetCard; onOpen: () => void }) {
   const Icon = KIND_ICON[a.kind];
   const preparing = a.state === "processing" && !a.thumbUrl;
-  // the clip's own stage ("Making its picture", "Transcribing") goes here once the prepare work says it per clip
-  const stage = "Preparing";
   return (
     <button type="button" onClick={onOpen} data-state={a.state} className="group flex w-full flex-col gap-1.5 text-left">
       <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-zinc-900 ring-1 ring-zinc-500/20 transition group-hover:ring-zinc-400/60">
@@ -582,7 +571,8 @@ function AssetTile({ asset: a, onOpen }: { asset: AssetCard; onOpen: () => void 
         ) : (
           <div className={cn("flex h-full w-full flex-col items-center justify-center gap-1.5 text-zinc-600", preparing && "motion-safe:animate-pulse")}>
             <Icon className="h-7 w-7" />
-            {preparing && <span className="text-xs text-zinc-400">{stage}</span>}
+            {/* the clip's own step when the server says it ("Getting its picture"), else the plain word */}
+            {preparing && (a.preparing ? <ClipStage card={a} /> : <span className="text-xs text-zinc-400">Preparing</span>)}
           </div>
         )}
         {a.durationS !== undefined && (
@@ -590,16 +580,18 @@ function AssetTile({ asset: a, onOpen }: { asset: AssetCard; onOpen: () => void 
             {clock(a.durationS)}
           </span>
         )}
-        {(a.state === "failed" || a.state === "missing") && (
+        {(a.state === "missing" || (a.state === "failed" && !a.failed)) && (
           // on the picture's own dark label in both themes: white words, the colour in the dot (red failed, amber needs the person)
           <span className="absolute left-1.5 top-1.5 flex max-w-[calc(100%-0.75rem)] items-center gap-1.5 rounded bg-black/75 px-1.5 py-0.5 text-[11px] text-white">
             <span aria-hidden className={cn("h-1.5 w-1.5 shrink-0 rounded-full", a.state === "failed" ? "bg-red-500" : "bg-amber-500")} />
-            {/* the reason per clip goes here once the prepare work gives one (job errors are raw tool output, not for a card) */}
+            {/* a failed clip whose step is known says which one under its name (ClipStage) */}
             <span className="truncate">{a.state === "failed" ? "Couldn't read this file" : "File not found"}</span>
           </span>
         )}
       </div>
       <span className="truncate text-sm font-medium">{a.title}</span>
+      {/* the step running on this clip now, or what failed; nothing for a clip that is ready or waits its turn */}
+      {(a.thumbUrl || a.state === "failed") && <ClipStage card={a} />}
       {libraryBadges(a).map((b) => (
         <span key={b.label} className="w-fit rounded bg-zinc-500/20 px-1 py-px text-[10px] font-medium text-zinc-400">
           {b.label}
