@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { createPrivateKey, randomBytes, sign as cryptoSign } from "node:crypto";
+import { createHash, createPrivateKey, randomBytes, sign as cryptoSign } from "node:crypto";
 import { getSessionUser, setLoginCookie, type AuthVars } from "./auth";
 import { hostedMode } from "./lib/env";
 import { bumpUsage, createUser, findByIdentity, findByLogin, findUser, isSignInProvider, linkIdentity, refreshPicture, type SignInProvider } from "./users";
@@ -49,6 +49,8 @@ interface GithubSignin {
 }
 
 const NOT_SET = "Sign-in isn't set up on this server yet";
+/** Where the sign-in service sends a person back (the service accepts this path only). */
+export const SERVICE_RETURN = "/api/auth/service/callback";
 const STATE_MS = 15 * 60_000;
 
 /** This server's own address, as the browser reached it (nginx passes Host and X-Forwarded-Proto). */
@@ -94,6 +96,26 @@ export function signinOn(origin: string): Record<Kind, boolean> {
 }
 
 /**
+ * The account sign-in service: a server with no Google or Apple sign-in client of its own can sign its people in
+ * through another server's clients (the product site's, plugins/hosted/server/account-signin.ts). OFF unless this
+ * server's .env names the service (ACCOUNT_SIGNIN_SERVICE=https://…): there is no default, so no server uses one by
+ * itself. Nothing is asked of the service until a person presses a sign-in button; it then sees that sign-in (who, and
+ * for which server), and this server takes its word for who the person is. So name only a service you trust. The
+ * service must also list this server (its ACCOUNT_SIGNIN_FOR).
+ */
+export function signinService(): string {
+  const o = (process.env.ACCOUNT_SIGNIN_SERVICE ?? "").trim().replace(/\/$/, "");
+  return /^https:\/\/[^/?#@]+$/.test(o) || /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(o) ? o : "";
+}
+
+/** How a person signs in with this provider here: this server's own client, the service it names, or not at all. */
+export function signinVia(origin: string, kind: Kind): "own" | "service" | null {
+  if (signinOn(origin)[kind]) return "own";
+  const service = signinService();
+  return kind !== "github" && service && service !== origin ? "service" : null;
+}
+
+/**
  * The provider's sign-in page for this state, or null when the server has no keys for that provider. Shared by the
  * site sign-in here and the Mac app's account service (plugins/hosted/server/account.ts). GitHub has no PKCE: its
  * `state` is the CSRF guard, and the Mac app's own challenge/verifier (account.ts) covers the app's code.
@@ -113,7 +135,8 @@ export function signinUrl(kind: Kind, redirect: string, state: string): string |
 
 type Mode = { type: "site" } | { type: "link"; username: string };
 // in memory: a sign-in in flight (single use, 15 min)
-const states = new Map<string, { kind: Kind; mode: Mode; at: number }>();
+// `verifier`: the sign-in went to the service; only this server can collect who signed in (PKCE)
+const states = new Map<string, { kind: Kind; mode: Mode; at: number; verifier?: string }>();
 
 const sweep = () => {
   const now = Date.now();
@@ -124,7 +147,11 @@ const sweep = () => {
 export const signInStartApp = new Hono<{ Variables: AuthVars }>();
 
 /** Which sign-in buttons the site's login screen shows: the providers this server has keys for (none off hosted). */
-signInStartApp.get("/providers", (c) => c.json(hostedMode() ? signinOn(originOf(c)) : { apple: false, google: false, github: false }));
+signInStartApp.get("/providers", (c) => {
+  const origin = originOf(c);
+  const on = (kind: Kind) => hostedMode() && !!signinVia(origin, kind);
+  return c.json({ apple: on("apple"), google: on("google"), github: on("github") });
+});
 
 signInStartApp.get("/login/:kind", (c, next) => {
   if (!hostedMode()) return next();
@@ -141,11 +168,19 @@ signInStartApp.get("/login/:kind", (c, next) => {
   else return next();
   const origin = originOf(c);
   const redirect = `${origin}/api/auth/${kind}/callback`;
-  if (!signinOn(origin)[kind]) return c.json({ error: NOT_SET }, 501);
+  const via = signinVia(origin, kind);
+  if (!via) return c.json({ error: NOT_SET }, 501);
   const state = randomBytes(24).toString("base64url");
+  sweep();
+  if (via === "service") {
+    // the person's browser goes to the service and comes back with a ticket; this server collects who it was
+    const verifier = randomBytes(32).toString("base64url");
+    states.set(state, { kind, mode, at: Date.now(), verifier });
+    const q = new URLSearchParams({ return: `${origin}${SERVICE_RETURN}`, state, challenge: createHash("sha256").update(verifier).digest("base64url") });
+    return c.redirect(`${signinService()}/api/account-signin/start/${kind}?${q}`);
+  }
   const url = signinUrl(kind, redirect, state);
   if (!url) return c.json({ error: NOT_SET }, 501);
-  sweep();
   states.set(state, { kind, mode, at: Date.now() });
   return c.redirect(url);
 });
@@ -175,44 +210,87 @@ signInCallbackApp.get("/github/callback", (c, next) => {
   return callback(c, "github", { code: c.req.query("code") ?? "", state, error: c.req.query("error") });
 });
 
+/**
+ * The sign-in service's way back: ?state&ticket (or &error). This server collects who signed in from the service with
+ * the verifier it kept, once, and from there it is the same sign-in or link as with its own client.
+ */
+signInCallbackApp.get(SERVICE_RETURN.replace("/api/auth", ""), async (c, next) => {
+  if (!hostedMode()) return next();
+  const state = c.req.query("state") ?? "";
+  const st = states.get(state);
+  if (!st?.verifier) return next();
+  states.delete(state); // single use
+  if (Date.now() - st.at > STATE_MS) return c.text("That sign-in expired: start it again", 400);
+  const fail = failTo(c, st.mode);
+  const ticket = c.req.query("ticket") ?? "";
+  if (c.req.query("error") || !ticket) return fail(str(c.req.query("error")).slice(0, 200) || "Sign-in was cancelled");
+  try {
+    const res = await fetch(`${signinService()}/api/account-signin/redeem`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ticket, verifier: st.verifier }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    const w = (await res.json().catch(() => ({}))) as Partial<Record<keyof Who, unknown>>;
+    // the service's answer is checked like a provider's: the same provider that was asked for, and a real id
+    if (!res.ok || w.provider !== st.kind || typeof w.sub !== "string" || !w.sub || w.sub.length > 255) throw new Error(`the sign-in service answered ${res.status}`);
+    const who: Who = { provider: st.kind, sub: w.sub, email: str(w.email).slice(0, 320), name: str(w.name).slice(0, 200), picture: pictureUrl(w.picture) };
+    // the way back is a top-level GET for every provider, so the session cookie comes along
+    return finish(c, st.mode, who, true);
+  } catch (e) {
+    console.error(`[sign-in] ${st.kind} sign-in through the service failed:`, e instanceof Error ? e.message : e);
+    return fail("Sign-in failed");
+  }
+});
+
+const failTo = (c: Context, mode: Mode) => (msg: string) =>
+  mode.type === "link" ? c.redirect(`/settings/account?signin=${encodeURIComponent(msg)}`) : c.redirect(`/login?error=${encodeURIComponent(msg)}`);
+
 async function callback(c: Context, kind: Kind, p: { code: string; state: string; error?: string; userJson?: string }) {
   const st = states.get(p.state);
   states.delete(p.state); // single use
   if (!st || st.kind !== kind || Date.now() - st.at > STATE_MS) return c.text("That sign-in expired: start it again", 400);
-  const mode = st.mode;
-  const fail = (msg: string) =>
-    mode.type === "link"
-      ? c.redirect(`/settings/account?signin=${encodeURIComponent(msg)}`)
-      : c.redirect(`/login?error=${encodeURIComponent(msg)}`);
+  const fail = failTo(c, st.mode);
   if (p.error || !p.code) return fail("Sign-in was cancelled");
   try {
     const redirect = `${originOf(c)}/api/auth/${kind}/callback`;
     const who = await identityOf(kind, p.code, redirect, p.userJson);
-    if (mode.type === "link") {
-      // Google's and GitHub's callbacks are top-level GETs, so the Lax cookie comes along: the browser finishing it must
-      // be the account that started it (Apple's cross-site POST carries no cookie; its state is single use and 15 min)
-      if ((kind === "google" || kind === "github") && getSessionUser(c.req.header("cookie"))?.username !== mode.username) return fail("Finish linking in the browser you're signed in on");
-      const user = findUser(mode.username);
-      if (!user) return fail("That account is gone");
-      try {
-        linkIdentity(user, who);
-      } catch (e) {
-        return fail(e instanceof Error ? e.message : String(e));
-      }
-      return c.redirect(`/settings/account?linked=${kind}`);
-    }
-    const known = findByIdentity(kind, who.sub);
-    // closed unless the server's owner opened it: nobody gets an account here just by signing in
-    if (!known && process.env.SIGN_UPS !== "open") return fail("There is no account here for that sign-in. This server takes new people by invitation");
-    if (known) refreshPicture(known, who);
-    const user = known ?? newAccountFor(who);
-    setLoginCookie(c, user);
-    bumpUsage(user.username, { logins: 1 });
-    return c.redirect("/");
+    // Google's and GitHub's callbacks are top-level GETs, so the Lax cookie comes along (Apple's cross-site POST carries
+    // no cookie; its state is single use and 15 min)
+    return finish(c, st.mode, who, kind === "google" || kind === "github");
   } catch (e) {
     console.error(`[sign-in] ${kind} sign-in failed:`, e instanceof Error ? e.message : e);
     return fail("Sign-in failed");
   }
+}
+
+/**
+ * A person the provider (or the sign-in service) vouched for: linked to the account that started it, or signed in to
+ * the account that sign-in belongs to. `withCookie`: the way back carried the session cookie, so a link must be
+ * finished by the account that started it.
+ */
+function finish(c: Context, mode: Mode, who: Who, withCookie: boolean) {
+  const kind = who.provider;
+  const fail = failTo(c, mode);
+  if (mode.type === "link") {
+    if (withCookie && getSessionUser(c.req.header("cookie"))?.username !== mode.username) return fail("Finish linking in the browser you're signed in on");
+    const user = findUser(mode.username);
+    if (!user) return fail("That account is gone");
+    try {
+      linkIdentity(user, who);
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : String(e));
+    }
+    return c.redirect(`/settings/account?linked=${kind}`);
+  }
+  const known = findByIdentity(kind, who.sub);
+  // closed unless the server's owner opened it: nobody gets an account here just by signing in
+  if (!known && process.env.SIGN_UPS !== "open") return fail("There is no account here for that sign-in. This server takes new people by invitation");
+  if (known) refreshPicture(known, who);
+  const user = known ?? newAccountFor(who);
+  setLoginCookie(c, user);
+  bumpUsage(user.username, { logins: 1 });
+  return c.redirect("/");
 }
 
 /**
