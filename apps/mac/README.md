@@ -155,8 +155,8 @@ A plug-in is a folder the person's own AI writes into `~/Library/Application Sup
 (the `Creator Toolset (fresh)` folder for a copy). Its server half and web half run only when this app says they are on.
 
 - **Switch on** is this app's own alert, a sheet on the window, not a page's: the server takes a copy of the folder and
-  builds it (nothing runs yet), then the alert names the plug-in, the folder it is, and what it can reach. Cancel is
-  the default; Switch On records it. The page asks with `plugin:on:<folder>`, `plugin:off:<id>`,
+  builds it (nothing runs yet), then the alert names the plug-in, the folder it is, and what it can reach. The alert
+  has no default button: Return does nothing, Escape cancels, and only a click on Switch On records it. The page asks with `plugin:on:<folder>`, `plugin:off:<id>`,
   `plugin:show:<folder>`, `plugins:resume`, `plugins:state` and `plugins:auto:on|off` over the `thisMac` handler,
   honoured only while This Mac shows this app's own server, and only from a page of that server's own host and port
   (`isSite`, `Plugins.swift`).

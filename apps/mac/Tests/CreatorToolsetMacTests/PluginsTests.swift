@@ -52,6 +52,17 @@ final class PluginsTests: XCTestCase {
         XCTAssertNil(switchOnAlertText(name: "Tiny", folder: "tiny-acro", server: false, web: false, auto: true).detail)
     }
 
+    /// Return must never agree to a plug-in. AppKit itself is asked what each button of the alert answers to.
+    @MainActor
+    func testThePluginAlertHasNoDefaultButtonSoReturnNeverAgrees() {
+        let alert = pluginAlert(message: "Switch on “Tiny”?", detail: "…", agree: "Switch On")
+        alert.layout()
+        XCTAssertEqual(alert.buttons.map(\.title), ["Cancel", "Switch On"])
+        XCTAssertEqual(alert.buttons[0].keyEquivalent, "\u{1b}")   // Escape cancels
+        XCTAssertEqual(alert.buttons[1].keyEquivalent, "")         // no key agrees: only a click does
+        XCTAssertNil(alert.window.defaultButtonCell)               // so Return does nothing
+    }
+
     /// Only a page of the app's own server may ask the app for anything: the same host on another port is another program.
     func testOnlyTheAppsOwnServerPortIsTheSite() {
         let here = URL(string: "http://127.0.0.1:43129")!

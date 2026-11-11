@@ -245,6 +245,18 @@ func switchOnAlertText(name: String, folder: String, server: Bool, web: Bool, au
     return ("Switch on “\(name)”?", detail)
 }
 
+/// The app's own alert for a plug-in question: Cancel, then the button that agrees. Built this way AppKit gives Cancel the
+/// Escape key and gives the other button no key at all, so the alert has no default button: Return does nothing, and
+/// only a click on the second button agrees (asked of AppKit itself in PluginsTests).
+func pluginAlert(message: String, detail: String?, agree: String) -> NSAlert {
+    let alert = NSAlert()
+    alert.messageText = message
+    if let detail { alert.informativeText = detail }
+    alert.addButton(withTitle: "Cancel")
+    alert.addButton(withTitle: agree)
+    return alert
+}
+
 /// The alert for switching Update automatically back on. It is this app's own alert because the ask comes from the page,
 /// where a plug-in's pages run too.
 let autoOnAlertText = (message: "Update plug-ins automatically?",
@@ -433,7 +445,7 @@ extension Shell {
     }
 
     /// Switch On, in two steps: the server takes a copy and builds it (nothing runs), then this app's own alert asks the
-    /// person. Cancel is the default, so Return never approves.
+    /// person. The alert has no default button (pluginAlert): Return never approves, Escape cancels.
     private func switchOn(_ folder: String, done: @escaping ([String: Any]) -> Void) {
         Task {
             let site = await client()
@@ -450,11 +462,7 @@ extension Shell {
             }
             guard let window = webView.window else { return done(["ok": false]) }
             let text = switchOnAlertText(name: prepared.name, folder: folder, server: prepared.server, web: prepared.web, auto: !PluginRecord.live.load().waits)
-            let alert = NSAlert()
-            alert.messageText = text.message
-            if let detail = text.detail { alert.informativeText = detail }
-            alert.addButton(withTitle: "Cancel")
-            alert.addButton(withTitle: "Switch On")
+            let alert = pluginAlert(message: text.message, detail: text.detail, agree: "Switch On")
             alert.beginSheetModal(for: window) { [weak self] response in
                 guard response == .alertSecondButtonReturn, let self else { return done(["ok": false]) }
                 var approved = PluginRecord.live.load()
@@ -467,15 +475,11 @@ extension Shell {
         }
     }
 
-    /// Update automatically, back on: this app's own alert first (Cancel is the default), because the ask comes from
+    /// Update automatically, back on: this app's own alert first (no default button: Return does nothing), because the ask comes from
     /// the page. Nothing restarts: the next look takes up what has changed.
     private func setAutoOn(done: @escaping ([String: Any]) -> Void) {
         guard let window = webView.window else { return done(["ok": false]) }
-        let alert = NSAlert()
-        alert.messageText = autoOnAlertText.message
-        alert.informativeText = autoOnAlertText.detail
-        alert.addButton(withTitle: "Cancel")
-        alert.addButton(withTitle: "Switch On")
+        let alert = pluginAlert(message: autoOnAlertText.message, detail: autoOnAlertText.detail, agree: "Switch On")
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertSecondButtonReturn, let self else { return done(["ok": false]) }
             var approved = PluginRecord.live.load()
