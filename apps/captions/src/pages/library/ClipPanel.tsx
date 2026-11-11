@@ -187,7 +187,7 @@ function Panel({ libraryId, asset, startAt, inTrash, folders, onTrash, onAddToFo
         )}
       </div>
 
-      {a.state === "missing" && !playable && (
+      {a.state === "missing" && (
         <p className="text-sm text-zinc-400">
           The original is gone from its watch folder: moved, renamed, or the drive is unplugged. Nothing was deleted; it comes back
           when the file does.
@@ -208,12 +208,14 @@ function Panel({ libraryId, asset, startAt, inTrash, folders, onTrash, onAddToFo
               <Share2 className="h-4 w-4" />
               Share
             </Button>
-            <Button size="sm" variant="outline" asChild>
-              <a href={file.href} download={file.name}>
-                <Download className="h-4 w-4" />
-                Download
-              </a>
-            </Button>
+            {a.state !== "missing" && (
+              <Button size="sm" variant="outline" asChild>
+                <a href={file.href} download={file.name}>
+                  <Download className="h-4 w-4" />
+                  Download
+                </a>
+              </Button>
+            )}
             {a.kind === "video" && (
               <Button size="sm" variant="outline" disabled={opening} onClick={captions}>
                 {opening ? <Loader2 className="h-4 w-4 animate-spin" /> : <Captions className="h-4 w-4" />}

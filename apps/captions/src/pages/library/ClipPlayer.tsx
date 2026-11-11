@@ -55,7 +55,9 @@ export function ClipPlayer({
     });
   }, [src, media]);
 
-  const note = phase === "failed" ? playerNote(detail?.state ?? a.state, detail) : null;
+  // a missing original is explained under the title, once; the player keeps its picture
+  const said = phase === "failed" ? playerNote(detail?.state ?? a.state, detail) : null;
+  const note = said === "missing" ? null : said;
   const picture = a.thumbUrl;
 
   const events = {
@@ -136,12 +138,6 @@ export function ClipPlayer({
 
 function Note({ note, file }: { note: PlayerNote; file: { href: string; name: string } }) {
   if (note === "unknown") return <Loader2 aria-label="Loading" className="h-6 w-6 animate-spin" />;
-  if (note === "missing")
-    return (
-      <p className="max-w-sm text-sm">
-        The original is gone from its watch folder: moved, renamed, or the drive is unplugged. Nothing was deleted; it comes back when the file does.
-      </p>
-    );
   if (note === "preparing")
     return (
       <div className="flex flex-col items-center gap-1.5">
