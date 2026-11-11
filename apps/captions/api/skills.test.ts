@@ -389,7 +389,8 @@ describe("who may write a skill", () => {
     await clear();
     const skill = await add(HOOKS);
     const refused = { error: "Skills are added and changed by the person, in Settings → Skills." };
-    for (const headers of [{ authorization: fullKey }, { authorization: fullKey, cookie }]) {
+    const outside: Array<Record<string, string>> = [{ authorization: fullKey }, { authorization: fullKey, cookie }];
+    for (const headers of outside) {
       expect(await call(headers, "/api/skills", "POST", { name: "By a key", when: "Always", body: "x" })).toEqual({ status: 403, body: refused });
       expect((await call(headers, `/api/skills/${skill.id}`, "PATCH", { body: "changed" })).status).toBe(403);
       expect((await call(headers, `/api/skills/${skill.id}`, "DELETE")).status).toBe(403);
