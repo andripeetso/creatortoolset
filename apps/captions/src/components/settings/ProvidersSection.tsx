@@ -16,9 +16,9 @@ import {
   type Scope,
   type Selection,
 } from "@contracts/providers";
-import type { CliId, LocalAiView } from "@contracts/local-ai";
+import type { CliId } from "@contracts/local-ai";
 import { useAuth } from "@/lib/auth";
-import { autoTestDue, checkProvider, deviceOf, effectiveSelection, effortLabel, getProviders, modelChoices, modelName, modelsOf, saveOwn, saveWorkspace, thisMacDevice } from "@/lib/providers";
+import { autoTestDue, checkProvider, deviceOf, effectiveSelection, effortLabel, modelChoices, modelName, modelsOf, saveOwn, saveWorkspace, thisMacDevice, useProviders } from "@/lib/providers";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
@@ -26,12 +26,12 @@ import { msg } from "./helpers";
 import { AddProviderDialog } from "./AddProviderDialog";
 import { ProviderDetail } from "./ProviderDetail";
 import { DriverMark, PROVIDER_ROW, ProviderInstanceCard, providerStatus, withInstance, type ProviderStatus } from "./ProviderInstanceCard";
-import { getLocalAi, isLocalCli, LocalAiRows, localInstall, localSignIn } from "./AiSetup";
+import { isLocalCli, LocalAiRows, localInstall, localSignIn, useLocalAi } from "./AiSetup";
 import { Advanced, Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Row, Section, SettingsSelect, saveFailed, Status, StatusDot } from "./ui";
 import type { SearchRowId } from "./search";
 
-/** The tools the Mac app can open a sign-in for in Terminal (the Mac's signInCommands). */
-const SIGN_IN_DRIVERS: string[] = ["claude", "codex", "grok"];
+/** The tools the Mac app can start a sign-in for: in Terminal (the Mac's signInCommands), Muse Code's in the browser. */
+const SIGN_IN_DRIVERS: string[] = ["claude", "codex", "grok", "musecode"];
 /** The "Use the Default" choice of a job (a select's option needs a value; "" is not allowed). */
 const USE_DEFAULT = "use-default";
 
@@ -50,45 +50,53 @@ export function ProvidersSection({ sub }: { sub?: string }) {
   const navigate = useNavigate();
   const me = useAuth((s) => s.me);
   const isAdmin = me?.role === "admin";
-  const [view, setView] = useState<ProvidersView | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [localAi, setLocalAi] = useState<LocalAiView | null>(null);
+  const providers = useProviders();
+  // the change being saved, shown at once: a read that lands meanwhile never puts the old set back
+  const [pending, setPending] = useState<ProvidersView | null>(null);
+  const saves = useRef(0);
+  const view = pending ?? providers.data;
+  const setView = providers.set;
+  // the computer's own AI apps; on a hosted server the answer is { local: false } and nothing is shown for it
+  const local = useLocalAi();
+  const localAi = local.data ?? (local.error ? { local: false, rows: [] } : null);
+  // the saved copy paints the page; an AI is tested by itself only once this window has read the server
+  const [read, setRead] = useState(false);
   const [tab, setTab] = useState<string | null>(null);
   const [adding, setAdding] = useState<{ driver?: Driver } | null>(null);
   const [checking, setChecking] = useState<string | null>(null);
   const [signingIn, setSigningIn] = useState<string | null>(null);
   const [installing, setInstalling] = useState<string | null>(null);
-  const savingRef = useRef(false);
   // the report each AI was last tested for (the page tests an AI once per report)
   const tried = useRef(new Map<string, number>());
 
-  const load = useCallback(
-    () =>
-      getProviders()
-        .then((v) => {
-          if (!savingRef.current) setView(v);
-        })
-        .catch((e) => setLoadError(msg(e))),
-    [],
-  );
-  // the computer's own AI apps; on a hosted server the answer is { local: false } and nothing is shown for it
-  const refreshLocal = useCallback(() => getLocalAi().then(setLocalAi).catch(() => setLocalAi((v) => v ?? { local: false, rows: [] })), []);
+  const refreshProviders = providers.refresh;
+  const refreshLocal = local.refresh;
   const refreshAll = useCallback(() => {
-    void load();
-    void refreshLocal();
-  }, [load, refreshLocal]);
+    void refreshProviders().catch(() => {});
+    void refreshLocal().catch(() => {});
+  }, [refreshProviders, refreshLocal]);
   useEffect(() => {
-    void load();
-    void refreshLocal();
-  }, [load, refreshLocal]);
+    void refreshProviders().then(() => setRead(true), () => {});
+  }, [refreshProviders]);
 
+  // A computer coming online and a tool installed or signed in on it reach this page by themselves: its owner's windows
+  // are told "devices" and the saved copy is read again. What nothing tells: a tool set up in Terminal on a computer that
+  // reports later, so coming back to the window reads again while the page waits for one.
   const waiting = !!view && !view.devices.some((d) => d.online && d.report?.drivers.some((x) => x.installed));
-  const every = signingIn ? 3000 : waiting ? 5000 : 0;
+  const expecting = waiting || !!signingIn;
   useEffect(() => {
-    if (!every) return;
-    const t = window.setInterval(() => refreshAll(), every);
+    if (!expecting) return;
+    window.addEventListener("focus", refreshAll);
+    return () => window.removeEventListener("focus", refreshAll);
+  }, [expecting, refreshAll]);
+  // ponytail: the team's own computer (owner "workspace") tells no account when it comes online, so an admin waiting for
+  // it reads every 5 s. Goes when api/lib/devices.ts tells the admins.
+  const unheard = waiting && !!view?.devices.some((d) => d.owner === "workspace");
+  useEffect(() => {
+    if (!unheard) return;
+    const t = window.setInterval(refreshAll, 5000);
     return () => window.clearInterval(t);
-  }, [every, refreshAll]);
+  }, [unheard, refreshAll]);
   useEffect(() => {
     if (!signingIn || !view) return;
     const found = view.devices.find((d) => d.id === thisMacDevice())?.report?.drivers.find((d) => d.driver === signingIn);
@@ -113,9 +121,9 @@ export function ProvidersSection({ sub }: { sub?: string }) {
     } finally {
       setChecking(null);
     }
-  }, []);
+  }, [setView]);
   useEffect(() => {
-    if (!view || !me || checking) return;
+    if (!read || !view || !me || checking) return;
     const ownSet = !isAdmin || !!view.own;
     const set = ownSet ? view.own : (view.workspace?.settings ?? null);
     const scopeKey = ownSet ? me.username : "workspace";
@@ -137,13 +145,13 @@ export function ProvidersSection({ sub }: { sub?: string }) {
       void testOne(scopeKey, i.id);
       return; // one at a time: the next one starts when this one ends
     }
-  }, [view, checking, isAdmin, me, testOne]);
+  }, [read, view, checking, isAdmin, me, testOne]);
 
-  if (loadError)
+  if (!view && providers.error)
     return (
       <Section title="Providers">
         <Card>
-          <ErrorRow title="Could not load your AIs" detail={loadError} retry={() => { setLoadError(null); void load(); }} />
+          <ErrorRow title="Could not load your AIs" detail={providers.error} retry={refreshAll} />
         </Card>
       </Section>
     );
@@ -203,9 +211,8 @@ export function ProvidersSection({ sub }: { sub?: string }) {
 
   // Saves the whole set and shows the change at once. Throws a sentence when it can't save; reverts first.
   const saveSet = async (next: ProviderSettings) => {
-    const prev = view;
-    setView((v) => (v && !toOwn ? (v.workspace ? { ...v, workspace: { ...v.workspace, settings: next } } : v) : v && { ...v, own: next }));
-    savingRef.current = true;
+    setPending(toOwn ? { ...view, own: next } : view.workspace ? { ...view, workspace: { ...view.workspace, settings: next } } : view);
+    saves.current++;
     try {
       if (!toOwn) {
         const saved = await saveWorkspace(next);
@@ -213,11 +220,9 @@ export function ProvidersSection({ sub }: { sub?: string }) {
       } else {
         setView(await saveOwn(next));
       }
-    } catch (e) {
-      setView(prev);
-      throw e;
     } finally {
-      savingRef.current = false;
+      // the last save to end drops the override: the saved copy then holds what the server kept (or, after a failure, what it had)
+      if (--saves.current === 0) setPending(null);
     }
   };
   const save = (next: ProviderSettings) => saveSet(next).catch((e) => saveFailed(msg(e)));
@@ -240,7 +245,7 @@ export function ProvidersSection({ sub }: { sub?: string }) {
 
   const runCheck = (inst: ProviderInstance) => testOne(scope, inst.id);
 
-  // The Mac app's bridge (TitleBar.swift, handler "signIn") opens the CLI's sign-in in Terminal, then the page re-reads.
+  // The Mac app's bridge (TitleBar.swift, handler "signIn") opens the CLI's sign-in (Terminal, or the browser for Muse Code), then the page re-reads.
   const signIn = (inst: ProviderInstance) => {
     (window as unknown as { webkit?: { messageHandlers?: { signIn?: { postMessage: (m: unknown) => void } } } }).webkit?.messageHandlers?.signIn?.postMessage({
       driver: inst.driver,

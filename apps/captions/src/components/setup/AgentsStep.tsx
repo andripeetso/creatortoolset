@@ -1,11 +1,11 @@
-import { useEffect, useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { Check } from "lucide-react";
 import type { CliId } from "@contracts/local-ai";
 import { ProviderLogo } from "@/components/settings/ProviderLogos";
 import { useAuth } from "@/lib/auth";
 import { AiPanel, ROW_NAME, ROW_SUB } from "@/components/setup/AiPanel";
 import { HERE } from "@/components/setup/ConnectStep";
-import { getComputers, type ComputerInfo, type ComputersView } from "./computers";
+import { useComputers, type ComputerInfo } from "./computers";
 
 const AGENTS = ["codex", "claude", "gemini"] as const;
 const ROW = "flex items-start gap-3 rounded-xl border border-border/60 bg-card/40 px-4 py-3";
@@ -90,13 +90,12 @@ export function AgentsStepView({
   );
 }
 
-/** Stage 2 container: loads the computers, and passes this computer's AI panel in as its section. */
+/** Stage 2 container: the computers (their saved copy first), with this computer's AI panel passed in as its section. */
 export function AgentsStep({ picked, onConnectedChange }: { picked: ReadonlySet<string>; onConnectedChange?: (on: boolean) => void }) {
-  const [view, setView] = useState<ComputersView | null>(null);
+  const { data: view, error } = useComputers();
   const hosted = useAuth((s) => s.hosted);
-  useEffect(() => {
-    void getComputers().then(setView);
-  }, []);
+  // hosted: the computers are the whole screen, so nothing is said about them ("No computer is connected yet") until they are known
+  if (hosted && !view && !error) return null;
   return (
     <AgentsStepView
       here={view?.here.name ?? "This computer"}

@@ -112,6 +112,21 @@ watchApp.get("/:id/watch", async (c) => {
   return c.json(await withFound(status(c.req.param("id"))));
 });
 
+// GET /api/library/:id/watch/size?path → { files, bytes }: the media files a folder holds, so the card can say what
+// importing it takes before it is added (estimate.ts). The same checks as adding it: a server on the person's computer.
+watchApp.get("/:id/watch/size", async (c) => {
+  const user = c.get("user");
+  const libraryId = c.req.param("id");
+  if (!libraryRole(user.username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
+  if (!watchAllowed(user.username)) return c.json({ error: "This server cannot read your folders", code: "forbidden" }, 403);
+  const f = await checkFolder(libraryId, { path: expandHome(c.req.query("path") ?? ""), mode: "reference" }, user.username);
+  if (typeof f === "string") return c.json({ error: f, code: "invalid" }, 400);
+  const files = await filesIn(f.path);
+  let bytes = 0;
+  for (const file of files) bytes += (await stat(file).catch(() => null))?.size ?? 0;
+  return c.json({ files: files.length, bytes });
+});
+
 // PUT /api/library/:id/watch { folders: [{ path, mode, collectionId? }] } → WatchStatus. Replaces the list; refused on a hosted server.
 watchApp.put("/:id/watch", async (c) => {
   const user = c.get("user");

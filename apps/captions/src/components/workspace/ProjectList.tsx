@@ -21,6 +21,7 @@ const secondary =
 /** Create, edit, switch, and delete workspace projects. */
 export function ProjectList() {
   const projects = useWorkspace((s) => s.projects);
+  const loaded = useWorkspace((s) => s.loaded);
   const currentProjectId = useWorkspace((s) => s.currentProjectId);
   const select = useWorkspace((s) => s.select);
   const [editing, setEditing] = useState<string | "new" | null>(null);
@@ -62,7 +63,7 @@ export function ProjectList() {
         {editing === "new" ? (
           <ProjectForm busy={busy} onSave={(f) => save("new", f)} onCancel={() => setEditing(null)} />
         ) : null}
-        {projects.length === 0 && editing !== "new" ? (
+        {loaded && projects.length === 0 && editing !== "new" ? (
           <p className="py-10 text-center text-sm text-zinc-600">
             No projects yet. Analyzer and Workshop both use the current one.
           </p>

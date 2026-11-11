@@ -273,7 +273,8 @@ export function parseSettings(raw: unknown, scope: Scope = "workspace", opts: { 
     const picked = typeof i.device === "string" && ID_RE.test(i.device.trim()) ? i.device.trim() : "";
     const device = picked && deviceExists(picked) ? picked : "";
     if (device && !belongsTo(scope, device)) throw new Error(scope === "workspace" ? `${name} runs on a computer that is not an admin's` : `${name} runs on a computer that is not yours`);
-    const home = typeof i.home === "string" ? i.home.trim() : "";
+    // a folder only for a driver that reads one (driverFields): the others keep their own, and the Mac refuses one
+    const home = typeof i.home === "string" && driverFields(i.driver as Driver).home ? i.home.trim() : "";
     // a folder the server found on its own Mac (setup's Connect) is trusted; one from the page must sit in the user's home
     if (home && !opts.trustedFolder && !HOME_RE.test(home)) throw new Error("The account folder must be a full path inside the Mac user's folder, like /Users/you/.claude-work");
     const model = typeof i.model === "string" && (i.model === "" || MODEL_RE.test(i.model)) ? i.model : undefined;
@@ -386,11 +387,6 @@ export function limitFallbacks(scope: Scope, after: ProviderInstance, model: str
 /** The instance of a scope's settings a check runs on (admins: any scope; others: their own). */
 export const instanceIn = (scope: Scope, id: string): ProviderInstance | undefined => (scope === "workspace" ? providerSettings() : ownSettings(scope))?.instances.find((i) => i.id === id);
 
-/** Why a driver the Mac app can't run yet is shown disabled; the rest share the general line. */
-const NOT_RUN_REASON: Partial<Record<Driver, string>> = {
-  musecode: "Not in the Mac app yet.",
-};
-
 /**
  * The instance fields a job carries to its Mac, each only when set: the plug-in endpoint, the environment names, the
  * launch arguments, and the ACP command (or the program a manual setup gave, for an ACP kind).
@@ -428,7 +424,7 @@ export function driverCatalog(devices: Array<Device & { online: boolean }>): Dri
       label: d.label,
       featured: d.featured,
       runs,
-      ...(runs ? {} : { reason: NOT_RUN_REASON[d.id] ?? "The Creator Toolset Mac app can't run this CLI yet." }),
+      ...(runs ? {} : { reason: "The Creator Toolset Mac app can't run this CLI yet." }),
       devices: perDevice(d.id),
     };
   });

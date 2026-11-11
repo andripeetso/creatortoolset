@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   dismissSetup, DOWNLOAD_URL, endIntro, firstProjectName, introPlays, introSeen, MAKE_NAMES, markIntroSeen, resumeStep, startIntro, useIntro, SETUP_PATH, SIDE_STEPS, setupDismissed, setupFinished, setupOpen, setupOpensItself,
-  setupStepFromParam, shareDownload, stepsFor, toolForPath, toolsFor,
+  setupStepFromParam, shareDownload, stepsFor, toolForPath, toolsFor, seedSetup, useWorkPrefs,
 } from "./setup";
+import { useAuth } from "./auth";
+import { putCached, readCached } from "./local-cache";
 import { TOOLS } from "@contracts/tools";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -216,5 +218,39 @@ describe("setup opens by itself only on a first sign-in", () => {
   it("a first sign-in with no project opens it; a project closes it", () => {
     expect(setupOpensItself({ logins: 1, loaded: true, projects: 0 })).toBe(true);
     expect(setupOpensItself({ logins: 1, loaded: true, projects: 2 })).toBe(false);
+  });
+});
+
+describe("the work preferences' saved copy", () => {
+  const saved = { talk: "both", check: "app", editor: null, makes: ["reel"] } as const;
+  const answers = (body: unknown) => vi.stubGlobal("fetch", async () => new Response(JSON.stringify(body), { status: 200 }));
+  const signIn = () => useAuth.setState({ me: { username: "tinyacrobatics" } as never });
+
+  it("is in the store before the first render, so the setup window does not wait for the server", () => {
+    signIn();
+    putCached("tinyacrobatics", "/api/work-prefs", saved);
+    seedSetup();
+    expect(useWorkPrefs.getState().prefs).toEqual(saved);
+  });
+
+  it("keeps an answer ticked while the server's copy was on its way, when that copy says what was saved", async () => {
+    signIn();
+    putCached("tinyacrobatics", "/api/work-prefs", saved);
+    seedSetup();
+    answers(saved);
+    const reading = useWorkPrefs.getState().load();
+    useWorkPrefs.setState({ prefs: { ...saved, makes: ["reel", "ad"] } });
+    await reading;
+    expect(useWorkPrefs.getState().prefs?.makes).toEqual(["reel", "ad"]);
+  });
+
+  it("shows the server's copy when it differs from the saved one", async () => {
+    signIn();
+    putCached("tinyacrobatics", "/api/work-prefs", saved);
+    seedSetup();
+    answers({ ...saved, talk: "app" });
+    await useWorkPrefs.getState().load();
+    expect(useWorkPrefs.getState().prefs?.talk).toBe("app");
+    expect(readCached<{ talk: string }>("tinyacrobatics", "/api/work-prefs")?.talk).toBe("app");
   });
 });

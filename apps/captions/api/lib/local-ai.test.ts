@@ -220,6 +220,7 @@ describe("connect your AI", () => {
     // 2026-11-10: setup's poll started a login shell per program per look, each outliving its timeout; 198 piled up
     let shells = 0;
     let versionRuns = 0;
+    let vendorRuns = 0;
     let release: () => void = () => {};
     const slow = new Promise<void>((done) => (release = done));
     local.setRunnerForTests(async (file, args) => {
@@ -227,24 +228,28 @@ describe("connect your AI", () => {
         shells++;
         await slow; // a busy Mac: the shell takes its time
         const name = String(args[1]).replace("command -v ", "");
-        return { stdout: name === "claude" ? "/fake/bin/claude\n" : "", stderr: "", code: 0 };
+        return { stdout: name === "claude" ? "/fake/bin/claude\n" : name.startsWith("grok ") ? "/fake/bin/grok\n/fake/bin/cursor-agent\n" : "", stderr: "", code: 0 };
       }
       if (args[0] === "--version") versionRuns++;
+      if (/grok|cursor-agent/.test(file)) vendorRuns++;
       if (args.join(" ") === "auth status --json") return { stdout: claudeAuth(true), stderr: "", code: 0 };
       return { stdout: args[0] === "--version" ? "2.1.319 (Claude Code)\n" : "", stderr: "", code: 0 };
     });
     // ten looks arrive while the first is still waiting for its shell
-    const looks = Array.from({ length: 10 }, () => local.localAiView("ana", [], true));
+    const looks = Array.from({ length: 10 }, () => local.localAiView("ana", [], true, home));
     await new Promise((r) => setTimeout(r, 20));
     expect(shells).toBe(4); // claude, codex, gemini, and one line for the other AIs: once each, not ten times
     release();
     const views = await Promise.all(looks);
     expect(views.every((v) => v.rows.find((r) => r.id === "claude")?.found)).toBe(true);
     // and the looks after it, inside ten seconds, start no shell and do not start the program again for its version
-    await local.localAiView("ana", [], true);
-    await local.localAiView("ana", [], true);
+    await local.localAiView("ana", [], true, home);
+    await local.localAiView("ana", [], true, home);
     expect(shells).toBe(4);
     expect(versionRuns).toBe(1);
+    // Grok and Cursor are found and their sign-in read on every look without starting either
+    expect(views[0]?.others?.map((o) => [o.id, o.found])).toEqual([["grok", true], ["musecode", false], ["cursor", true]]);
+    expect(vendorRuns).toBe(0);
   });
 
   it("says the Mac app must be open when no Mac of this account is online", async () => {
@@ -616,7 +621,86 @@ setTimeout(() => {}, 60000);
 
   it("finds the other AIs the Mac app runs on the login shell's PATH or in their installers' folders", async () => {
     shell((line) => (line.startsWith("command -v grok ") ? "/opt/homebrew/bin/grok\ncursor-agent not found\n" : ""), (p) => p === "/Users/x/.opencode/bin/opencode");
-    expect(await local.otherAis("/Users/x")).toEqual(["grok", "opencode"]);
+    expect(await local.otherAis("/Users/x")).toEqual([
+      { id: "grok", bin: "/opt/homebrew/bin/grok" },
+      { id: "opencode", bin: "/Users/x/.opencode/bin/opencode" },
+    ]);
+  });
+
+  it("reads Grok's and Cursor's sign-in from the files their sign-ins save, and lists both found or not", async () => {
+    const h = path.join(root, "vendor-home");
+    mkdirSync(path.join(h, ".grok"), { recursive: true });
+    mkdirSync(path.join(h, ".cursor"), { recursive: true });
+    shell((line) => (line.startsWith("command -v grok ") ? `${h}/.grok/bin/grok\n` : ""), (p) => p === path.join(h, ".local", "bin", "cursor-agent"));
+    // Cursor's config before any sign-in, as its first start writes it
+    writeFileSync(path.join(h, ".cursor", "cli-config.json"), JSON.stringify({ version: 1, approvalMode: "allowlist" }));
+    const others = async () => (await local.localAiView("ana", [], true, h)).others;
+    expect(await others()).toEqual([
+      { id: "grok", found: true, signedIn: false, connected: false },
+      { id: "musecode", found: false, signedIn: null, connected: false },
+      { id: "cursor", found: true, signedIn: false, connected: false },
+    ]);
+    writeFileSync(path.join(h, ".grok", "auth.json"), "{}");
+    writeFileSync(path.join(h, ".cursor", "cli-config.json"), JSON.stringify({ version: 1, authInfo: { email: "studio@tinyacrobatics.example" } }));
+    expect((await others())?.map((o) => [o.id, o.signedIn])).toEqual([["grok", true], ["musecode", null], ["cursor", true]]);
+    // Meta: its launcher in ~/.local/bin, signed in once its sign-in file holds Meta's token (an empty file is not)
+    shell((line) => (line.startsWith("command -v grok ") ? `${h}/.grok/bin/grok\n` : ""), (p) => p === path.join(h, ".local", "bin", "cursor-agent") || p === path.join(h, ".local", "bin", "muse"));
+    mkdirSync(path.join(h, ".config", "muse"), { recursive: true });
+    writeFileSync(path.join(h, ".config", "muse", "auth.json"), JSON.stringify({ providers: {} }));
+    expect((await others())?.find((o) => o.id === "musecode")).toMatchObject({ found: true, signedIn: false });
+    writeFileSync(path.join(h, ".config", "muse", "auth.json"), JSON.stringify({ providers: { meta: { access_token: "tok" } } }));
+    expect((await others())?.find((o) => o.id === "musecode")).toMatchObject({ found: true, signedIn: true });
+    // not on this Mac: still listed (setup installs them), sign-in unknown
+    shell(() => "");
+    expect(await local.localAiView("ana", [], true, path.join(root, "empty-home"))).toMatchObject({
+      others: [{ id: "grok", found: false, signedIn: null }, { id: "musecode", found: false, signedIn: null }, { id: "cursor", found: false, signedIn: null }],
+    });
+  });
+
+  it("Grok signed out says so in its own words, and that is the sign-in state", () => {
+    const grok = "Grok: Not signed in. To authenticate without a browser, run:\n  grok login --device-code\n\nAlternatively, set the XAI_API_KEY environment variable or run `grok login` on a machine with a browser.";
+    expect(plainError(grok)).toEqual({ state: "signin", message: "Not signed in yet." });
+    expect(plainError("Not logged in. Run `agent login` first.").state).toBe("signin");
+    expect(plainError("Authentication required. Please run 'agent login' first, then call authenticate() with methodId 'cursor_login'.").state).toBe("signin");
+    expect(plainError("Muse Code: not logged in: run /login to add an API key").state).toBe("signin");
+    expect(plainError("It took 3 s to sign the request").state).toBe("failed");
+  });
+
+  it("Google turning a free account away is said as that, not as a sign-in or a silence", () => {
+    // Gemini CLI 0.68 on a free personal Google account (2026-11-10)
+    const refused = "Gemini: This client is no longer supported for Gemini Code Assist for individuals. Please migrate to the Antigravity suite to continue. Authentication tier: free-tier";
+    expect(plainError(refused)).toEqual({ state: "failed", message: "Google turned this account away: it no longer takes free Google accounts here." });
+  });
+
+  it("signs Grok in with its browser sign-in and Cursor with its own, each started from the copy on this Mac", async () => {
+    const dir = path.join(root, "fake-vendors");
+    mkdirSync(dir, { recursive: true });
+    const said = path.join(dir, "said.txt");
+    for (const name of ["grok", "cursor-agent"])
+      writeFileSync(path.join(dir, name), `#!/bin/sh\necho "${name} $*" >> ${JSON.stringify(said)}\n`, { mode: 0o755 });
+    shell((line) => (line.startsWith("command -v grok ") ? `${dir}/grok\n${dir}/cursor-agent\n` : ""));
+    expect(await local.signIn("grok")).toEqual({ ok: true, message: "Your browser opens. Sign in there, then come back here." });
+    expect(await local.signIn("cursor")).toMatchObject({ ok: true });
+    await vi.waitFor(() => expect(readFileSync(said, "utf8").split("\n").filter(Boolean).sort()).toEqual(["cursor-agent login", "grok login --oauth"]), { timeout: 5000 });
+    // a sign-in started here that ended well counts, wherever that version saves it: no file of Grok's is in this home
+    const grokNow = async () => (await local.localAiView("ana", [], true, path.join(root, "no-files-home"))).others?.find((o) => o.id === "grok");
+    await vi.waitFor(async () => expect(await grokNow()).toMatchObject({ found: true, signedIn: true }), { timeout: 5000 });
+    // OpenCode signs in its own way, not from here
+    expect(await local.signIn("opencode")).toMatchObject({ ok: false });
+  });
+
+  it("reads Meta's sign-in page and code from what its sign-in prints, and answers with the code", async () => {
+    // recorded from muse login with no terminal (the code made up)
+    const printed = "Open this page to sign in:\n  https://auth.meta.com/oauth/device/?code=TINY-2468\nconfirm this code matches:\n  TINY-2468\n\nWaiting for approval\u2026";
+    expect(local.museLoginPage(printed)).toEqual({ page: "https://auth.meta.com/oauth/device/?code=TINY-2468", code: "TINY-2468" });
+    expect(local.museLoginPage("Open this page to sign in:\n  https://auth.meta.com/oauth/device/?code=TINY-2468\n")).toBeNull();
+    expect(local.museLoginPage(printed.replace("auth.meta.com", "auth.meta.com.example"))).toBeNull();
+    expect(local.museLoginPage(printed.replace("https://", "http://"))).toBeNull();
+    const dir = path.join(root, "fake-muse");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, "muse"), `#!/bin/sh\nprintf '%s\\n' 'Open this page to sign in:' '  https://auth.meta.com/oauth/device/?code=TINY-2468' 'confirm this code matches:' '  TINY-2468'\nsleep 30\n`, { mode: 0o755 });
+    shell((line) => (line.startsWith("command -v grok ") ? `${dir}/muse\n` : ""));
+    expect(await local.signIn("musecode")).toEqual({ ok: true, message: "Confirm this code on Meta's page: TINY-2468", code: "TINY-2468" });
   });
 
   it("connects another AI on this Mac as it is set up there: a real check, then a saved local-grok; nothing installed or signed in", async () => {
@@ -624,10 +708,21 @@ setTimeout(() => {}, 60000);
     const { device } = pairDevice("kai", "Studio Mac");
     touchDevice(device.id);
     shell((line) => (line.startsWith("command -v grok ") ? "/opt/homebrew/bin/grok\n" : ""));
+    const grokRow = async () => (await local.localAiView("kai", [], false, home)).others?.find((o) => o.id === "grok");
+    // its sign-in file isn't there, so the row offers Sign in; the file only names the button
+    expect(await grokRow()).toEqual({ id: "grok", found: true, signedIn: false, connected: false });
+    // the check is what knows: it answers, so Grok is connected, file or no file
     mockCheck.next = { ok: true, ms: 9, error: undefined, note: undefined };
     expect(await local.connectCli("kai", "grok", home, device.id)).toMatchObject({ state: "ready", answered: true });
     expect(ownSettings("kai")?.instances).toEqual([expect.objectContaining({ id: "local-grok", driver: "grok", name: "Grok", device: device.id })]);
-    expect((await local.localAiView("kai", [])).others).toEqual([{ id: "grok", connected: true }]);
+    // connected with no file found: unknown, never "signed out since last time"
+    expect(await grokRow()).toEqual({ id: "grok", found: true, signedIn: null, connected: true });
+    mkdirSync(path.join(home, ".grok"), { recursive: true });
+    writeFileSync(path.join(home, ".grok", "auth.json"), "{}");
+    expect(await grokRow()).toEqual({ id: "grok", found: true, signedIn: true, connected: true });
+    // a check that comes back not signed in is the sign-in state too
+    mockCheck.next = { ok: false, ms: 9, error: "Grok: Not signed in. To authenticate without a browser, run:\n  grok login --device-code", note: undefined };
+    expect(await local.connectCli("kai", "grok", home, device.id)).toMatchObject({ state: "signin" });
     // not on this Mac: missing, and nothing changes
     expect(await local.connectCli("kai", "opencode", home, device.id)).toMatchObject({ state: "missing" });
     expect(ownSettings("kai")?.instances).toHaveLength(1);

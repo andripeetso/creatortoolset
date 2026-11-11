@@ -85,6 +85,7 @@ describe("ranking", () => {
 
 describe("semantic search", () => {
   it("off: the full-text hits alone, and no embedding call", async () => {
+    libraryDb().prepare(`UPDATE libraries SET settings = json_set(settings, '$.embed', json('false')) WHERE id = 'lib_a'`).run();
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
     process.env.OPENAI_API_KEY = "test-key";

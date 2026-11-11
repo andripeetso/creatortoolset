@@ -53,14 +53,14 @@ export const DRIVERS: ReadonlyArray<{ id: Driver; label: string; runs: boolean; 
   { id: "grok", label: "Grok", runs: true, featured: true },
   { id: "opencode", label: "OpenCode", runs: true, featured: true },
   { id: "antigravity", label: "Antigravity", runs: true, featured: true },
-  { id: "musecode", label: "Muse Code", runs: false, featured: true },
+  { id: "musecode", label: "Muse Code", runs: true, featured: true },
   { id: "pi", label: "Pi", runs: true, featured: true },
   { id: "gemini", label: "Gemini", runs: true, featured: false, homeEnv: "GEMINI_CLI_HOME" },
   { id: "acp", label: "Local ACP command", runs: true, featured: false },
 ];
 
 /** The drivers the Creator Toolset Mac app runs (apps/mac ClaudeRequest.swift `runnableDrivers`). */
-const APP_DRIVERS: ReadonlyArray<Driver> = ["claude", "gemini", "codex", "grok", "cursor", "opencode", "antigravity", "pi", "acp"];
+const APP_DRIVERS: ReadonlyArray<Driver> = ["claude", "gemini", "codex", "grok", "musecode", "cursor", "opencode", "antigravity", "pi", "acp"];
 
 /** The drivers the Mac runs as an Agent Client Protocol agent over stdio (apps/mac ClaudeRun.swift `acpAnswer`). */
 export const isAcpDriver = (driver: Driver): boolean => ["cursor", "opencode", "antigravity", "pi", "acp"].includes(driver);

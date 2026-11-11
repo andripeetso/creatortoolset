@@ -96,11 +96,12 @@ export function aiFor(who: Who, job: JobId, label: string, own?: Selection): Pro
 }
 
 /**
- * An account with no provider: its own Anthropic key from Settings → API keys (keyFor), at anthropicParams' model
+ * An account with no provider (or bulk work that asks for the key first: the Media Library's descriptions): its own
+ * Anthropic key from Settings → API keys (keyFor), at anthropicParams' model
  * and effort. Never the Workshop: a Workshop turn is Claude Code reading the session's folder, which a plain API call
  * can't (it needs their own AI).
  */
-function onApiKey(name: string, job: JobId, label: string): ProviderOpts | null {
+export function onApiKey(name: string, job: JobId, label: string): ProviderOpts | null {
   const k = keyFor(name, "ANTHROPIC_API_KEY");
   if (!k.key) return null;
   if (job === "workshop") return { only: [], off: "Content Workshop runs on your own AI (it reads the whole project folder): connect yours in Settings → Providers" };

@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { useAuth } from "@/lib/auth";
+import { putCached, readCached } from "@/lib/local-cache";
 import { postToApp } from "@/lib/mac-record";
 
 /** Inside the Mac app (it sets <html data-mac-this-mac>): Settings shows this Mac's switch and the servers. A browser never does. */
@@ -23,20 +25,37 @@ export type ThisMacState = {
   computer?: string;
   host?: string;
   device?: string | null;
+  /** the app's last answer, kept on this device: it has not answered in this window yet */
+  saved?: true;
 };
+
+/** Where the app's last answer is kept (lib/local-cache), so a page that shows it paints at once. */
+const SAVED = "mac-this";
 
 /** `thismac-<what>` to the app; it answers every one with a `mac-this` event carrying its state. */
 export const tell = (what: string) => postToApp(`thismac-${what}`);
 
 /**
- * The app's state, polled while a Settings page that shows it is open. `on` = false (a browser, or a page that does not
- * need it) reads nothing and sends nothing.
+ * The app's state, polled while a Settings page that shows it is open: its last answer at once (`saved`), then each new
+ * one. `on` = false (a browser, or a page that does not need it) reads nothing and sends nothing.
  */
 export function useThisMac(on: boolean): ThisMacState | null {
-  const [state, setState] = useState<ThisMacState | null>(null);
+  const user = useAuth((s) => s.me?.username ?? null);
+  const [state, setState] = useState<ThisMacState | null>(() => {
+    const kept = on ? readCached<ThisMacState>(user, SAVED) : null;
+    return kept && { ...kept, saved: true };
+  });
   useEffect(() => {
     if (!on) return;
-    const handle = (e: Event) => setState((e as CustomEvent<ThisMacState>).detail);
+    let last = JSON.stringify(readCached<ThisMacState>(user, SAVED));
+    const handle = (e: Event) => {
+      const next = (e as CustomEvent<ThisMacState>).detail;
+      setState(next);
+      // the app answers every 3 s: kept only when it says something new
+      const text = JSON.stringify(next);
+      if (text !== last) putCached(user, SAVED, next);
+      last = text;
+    };
     window.addEventListener("mac-this", handle);
     tell("state");
     // ponytail: polls while the page is open; the app could push on change if this ever matters
@@ -45,6 +64,6 @@ export function useThisMac(on: boolean): ThisMacState | null {
       window.removeEventListener("mac-this", handle);
       clearInterval(timer);
     };
-  }, [on]);
+  }, [on, user]);
   return state;
 }

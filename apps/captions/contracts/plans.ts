@@ -74,7 +74,7 @@ export function planFromCli(text: string | null | undefined): PlanId | null {
  */
 /** A limit message's own sentence, as a row shows it: no "X said: …" tail and no time zone name. */
 export const limitLine = (message: string): string =>
-  `${message.split(/\. \S+ said: /)[0]!.replace(/ \([A-Za-z_]+\/[A-Za-z_/]+\)/, "").replace(/\.$/, "")}.`;
+  `${message.split(/\. [^.]+? said: /)[0]!.replace(/ \([A-Za-z_]+\/[A-Za-z_/]+\)/, "").replace(/\.$/, "")}.`;
 
 export function limitMessage(cli: string, tool = "Claude"): string {
   const window = /weekly/i.test(cli) ? "weekly limit" : /session|5-hour/i.test(cli) ? "5-hour limit" : "limit";

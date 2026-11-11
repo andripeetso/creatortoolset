@@ -37,8 +37,11 @@ export interface LocalAiRow {
 export interface LocalAiView {
   local: boolean; // false when CT_LOCAL is not "1"; rows is then []
   rows: LocalAiRow[];
-  /** the other AIs the Mac app runs that are on this Mac (Grok, OpenCode…): setup only connects them, as they are set up */
-  others?: Array<{ id: Driver; connected: boolean }>;
+  /**
+   * the other AIs the Mac app runs: Grok, Meta and Cursor always (setup installs and signs them in; `signedIn` read from the
+   * file their sign-in saves, null when not found), the rest only when on this Mac (setup connects them as they are set up)
+   */
+  others?: Array<{ id: Driver; found: boolean; signedIn: boolean | null; connected: boolean }>;
 }
 
 /**
@@ -62,6 +65,8 @@ export interface SignInResult {
   ok: boolean;
   message?: string;
   raw?: string;
+  /** a sign-in that asks the person to confirm a code on the vendor's page (Meta's): the code */
+  code?: string;
 }
 
 export interface McpResult {

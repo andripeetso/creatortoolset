@@ -18,6 +18,10 @@ vi.mock("./lib/mac-claude", async (orig) => ({
   }),
 }));
 
+// what the open windows are told (the change notices), as "<account> <topic>"
+const told: string[] = [];
+vi.mock("./lib/announce-soon", () => ({ announceSoon: (owner: string, topic: string) => void told.push(`${owner} ${topic}`) }));
+
 const { createUser, newApiKey } = await import("./users");
 const app = (await import("./boot")).default;
 const { tick, blockOf, runAutomation, MISSED_MS } = await import("./automations");
@@ -155,6 +159,21 @@ describe("the scheduler", () => {
     expect((await req("alice", "POST", `/automations/${a.id}/run`)).status).toBe(409);
   });
 
+  it("the account's open windows are told when a run starts and when it has ended", async () => {
+    const a = await make("alice", { name: "Told", schedule: everyHour, prompt: "p" });
+    const mine = () => told.filter((t) => t === "alice automations").length;
+    let end = () => {};
+    const before = mine();
+    const run = tick(Date.now() + 5 * 3_600_000, (_u, x) => (x.id === a.id ? new Promise<void>((done) => (end = done)) : hold), always);
+    const started = mine();
+    expect(started).toBeGreaterThan(before);
+    expect((await find("alice", a.id))?.running).toBe(true);
+    end();
+    await vi.waitFor(async () => expect((await find("alice", a.id))?.running).toBe(false));
+    expect(mine()).toBeGreaterThan(started);
+    void run;
+  });
+
   it("a disabled task is never started", async () => {
     const a = await make("alice", { name: "Off", schedule: everyHour, prompt: "p", enabled: false });
     const started: string[] = [];
@@ -189,6 +208,7 @@ describe("the scheduler", () => {
     expect((await find("bob", a.id))?.lastResult).toMatchObject({ status: "skipped", text: expect.stringContaining("No Claude Code is set up for your AI here") });
     const notes = ((await json(await req("bob", "GET", "/review/notifications"))).items as Array<{ name: string }>).filter((n) => n.name === "Inbox me");
     expect(notes).toHaveLength(1);
+    expect(told).toContain("bobby automations"); // the open Settings page shows the skip without a reload
   });
 
   it("says why no task can run: an admin is sent to Providers, a team member is told the team's AI can't", async () => {
@@ -200,11 +220,21 @@ describe("the scheduler", () => {
 
 describe("runs land in assistant chats", () => {
   const stored = async (id: string) => (await find("alice", id)) as Automation;
+  /** The newest "assistant" notice alice's open docks were sent (the change stream's hello, api/lib/sync.ts). */
+  const noticed = async () => {
+    const reader = (await req("alice", "GET", "/sync/events")).body!.getReader();
+    const hello = new TextDecoder().decode((await reader.read()).value);
+    await reader.cancel();
+    return (JSON.parse(/^data: (.*)$/m.exec(hello)![1]!) as { topics: Record<string, number> }).topics.assistant ?? 0;
+  };
 
   it("new chat each run: a new chat named after the task holds the prompt and the answer; the open chat is left alone", async () => {
     const a = await make("alice", { name: "Hook ideas", schedule: everyHour, prompt: "Write three hooks" });
     const open = (await chats("alice")).id;
+    const sent = await noticed();
     await runAutomation("alice", await stored(a.id), ready);
+    // an open dock is told a run posted: it never asks on a timer
+    expect(await noticed()).toBeGreaterThan(sent);
     await runAutomation("alice", await stored(a.id), ready);
     const view = await chats("alice");
     expect(view.id).toBe(open);

@@ -33,13 +33,13 @@ final class RelayTests: XCTestCase {
 
     func testClaudeGeminiCodexAndTheAcpKindsRunHereAndOthersFailWithTheSameWords() throws {
         let root = temp()
-        for driver in ["musecode", "muse", "wat"] {
+        for driver in ["muse", "wat"] {
             let r = request(#"{"id":"j","system":"","user":"","driver":"\#(driver)"}"#)
             XCTAssertThrowsError(try requestOptions(r, root: root)) { error in
                 XCTAssertEqual((error as? RelayError)?.message, onlyRunnableMessage)
             }
         }
-        for driver in ["claude", "gemini", "codex", "grok", "cursor", "opencode", "antigravity", "pi"] {
+        for driver in ["claude", "gemini", "codex", "grok", "musecode", "cursor", "opencode", "antigravity", "pi"] {
             XCTAssertEqual(try requestOptions(request(#"{"id":"j","system":"","user":"","driver":"\#(driver)"}"#), root: root).driver, driver)
         }
     }
@@ -608,6 +608,69 @@ final class RelayTests: XCTestCase {
         XCTAssertTrue(old.hasSuffix(" token=\n"))
     }
 
+    func testGeminiAndGrokGetTheAppsServerForOneRunInTheirOwnFolder() throws {
+        // Gemini: only that server, and the rule that lets its calls run in plan mode; nothing more without it
+        XCTAssertEqual(geminiArguments(model: "", mcpPolicy: "/t/p.toml"),
+                       ["-o", "stream-json", "--approval-mode", "plan", "--skip-trust", "--allowed-mcp-server-names", "creator-toolset", "--policy", "/t/p.toml"])
+        XCTAssertTrue(geminiMcpPolicy.contains(#"mcpName = "creator-toolset""#) && geminiMcpPolicy.contains(#"modes = ["plan"]"#))
+        // Grok: that server's calls allowed; the rest of its command line as without it
+        let prompt = "/tmp/p.txt"
+        let plain = grokArguments(cwd: "/tmp/run", model: "", effort: "low", system: "S", web: false, folder: false, promptFile: prompt)
+        let tools = grokArguments(cwd: "/tmp/run", model: "", effort: "low", system: "S", web: false, folder: false, promptFile: prompt, mcp: true)
+        XCTAssertEqual(tools, plain + ["--allow", "MCPTool(creator-toolset__*)"])
+        XCTAssertFalse(plain.contains("--allow"))
+        // the files name the server and the variable the token is in, never the token
+        let run = temp()
+        try runMcpFiles(driver: "gemini", url: "http://127.0.0.1:9/api/mcp", cwd: run)
+        try runMcpFiles(driver: "grok", url: "http://127.0.0.1:9/api/mcp", cwd: run)
+        let settings = try JSONSerialization.jsonObject(with: Data(contentsOf: run.appendingPathComponent(".gemini/settings.json"))) as? [String: Any]
+        let server = (settings?["mcpServers"] as? [String: Any])?["creator-toolset"] as? [String: Any]
+        XCTAssertEqual(server?["httpUrl"] as? String, "http://127.0.0.1:9/api/mcp")
+        XCTAssertEqual((server?["headers"] as? [String: String])?["Authorization"], "Bearer $CREATOR_TOOLSET_MCP_TOKEN")
+        XCTAssertEqual(try String(contentsOf: run.appendingPathComponent(".grok/config.toml"), encoding: .utf8),
+                       "[mcp_servers.creator-toolset]\nurl = \"http://127.0.0.1:9/api/mcp\"\nbearer_token_env_var = \"CREATOR_TOOLSET_MCP_TOKEN\"\n")
+        // the run trusts its own folder through each one's variable, which writes nothing (Grok's --trust would)
+        XCTAssertEqual(runMcpEnv(driver: "gemini", token: "ctj_x"), ["CREATOR_TOOLSET_MCP_TOKEN": "ctj_x", "GEMINI_CLI_TRUST_WORKSPACE": "true"])
+        XCTAssertEqual(runMcpEnv(driver: "grok", token: "ctj_x"), ["CREATOR_TOOLSET_MCP_TOKEN": "ctj_x", "GROK_FOLDER_TRUST": "0"])
+    }
+
+    func testGeminiAndGrokRunsGetTheTokenInTheirEnvironmentAndTheServerInTheirFolder() throws {
+        let dir = temp()
+        let seen = dir.appendingPathComponent("seen.txt")
+        // a program that prints `help` for --help, and for a run writes its arguments, the token it was given and the
+        // server file in its folder, then answers as Gemini or Grok does
+        func stub(_ name: String, help: String, answer: String) throws -> String {
+            let file = dir.appendingPathComponent(name)
+            let script = "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then echo '\(help)'; exit 0; fi\ncat > /dev/null\n"
+                + "{ echo \"$* token=$\(codexTokenEnv)\"; cat .gemini/settings.json .grok/config.toml 2>/dev/null; } > '\(seen.path)'\n"
+                + "echo '\(answer)'\n"
+            try script.write(to: file, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
+            return file.path
+        }
+        let token = "ctj_" + String(repeating: "c", count: 48)
+        let mcp = #","mcp":{"url":"http://127.0.0.1:9/api/mcp","token":""# + token + #""}}"#
+        let answer = (gemini: #"{"type":"message","role":"assistant","content":"ok"}"#, grok: #"{"type":"result","subtype":"success","is_error":false,"result":"ok"}"#)
+        for (driver, cli, old) in [("gemini", try stub("gemini", help: "  --policy  Additional policy files", answer: answer.gemini), try stub("gemini-old", help: "  --yolo", answer: answer.gemini)),
+                                   ("grok", try stub("grok", help: "", answer: answer.grok), nil)] {
+            let req = request(#"{"id":"g9","system":"s","user":"u","driver":""# + driver + #"","effort":"low""# + mcp)
+            let run = { (cli: String) in try runAnswer(req, try requestOptions(req), cli: cli, work: self.temp(), send: { _ in true }, step: { _ in }).text }
+            XCTAssertEqual(try run(cli), "ok")
+            let now = try String(contentsOf: seen, encoding: .utf8)
+            XCTAssertTrue(now.contains(" token=\(token)\n"), driver)
+            XCTAssertEqual(now.components(separatedBy: token).count, 2, driver)   // in the environment only: no argument, no file
+            XCTAssertTrue(now.contains("http://127.0.0.1:9/api/mcp"), driver)
+            XCTAssertTrue(now.contains(driver == "gemini" ? "--allowed-mcp-server-names creator-toolset --policy" : "--allow MCPTool(creator-toolset__*)"), driver)
+            // a Gemini too old for a policy file answers with the message alone
+            if let old {
+                XCTAssertEqual(try run(old), "ok")
+                let then = try String(contentsOf: seen, encoding: .utf8)
+                XCTAssertFalse(then.contains("creator-toolset"))
+                XCTAssertTrue(then.contains(" token=\n"))
+            }
+        }
+    }
+
     func testCodexAndGrokOptionsAndHomes() throws {
         let root = temp()
         let codexHome = root.appendingPathComponent(".codex-work")
@@ -768,9 +831,34 @@ final class RelayTests: XCTestCase {
     /// Full key and its paired device's token, one per line. The test makes a project with a new name, asks the assistant for
     /// it, runs the turn as RelayRunner.job does, and checks the answer names it (only a tool call can know it).
     func testRealCodexToolsRun() throws {
+        guard ProcessInfo.processInfo.environment["CT_REAL_CODEX"] == "1" else { throw XCTSkip("set CT_REAL_CODEX=1, CT_REAL_SITE and CT_REAL_KEYS") }
+        let cli = ProcessInfo.processInfo.environment["CT_REAL_CODEX_BIN"] ?? binary("codex", home: FileManager.default.homeDirectoryForCurrentUser) ?? "codex"
+        XCTAssertTrue(codexTakesMcp(cli))
+        try realToolsRun("codex", cli: cli)
+    }
+
+    /// CT_REAL_GEMINI_TOOLS=1 (and CT_REAL_SITE, CT_REAL_KEYS, CT_REAL_ASK as above) swift test --filter RealGeminiTools: the
+    /// same turn on a server whose account's AI is Gemini on this Mac. CT_REAL_GEMINI_BIN names another copy; run it with the
+    /// HOME (or GEMINI_CLI_HOME) whose ~/.gemini is signed in.
+    func testRealGeminiToolsRun() throws {
+        guard ProcessInfo.processInfo.environment["CT_REAL_GEMINI_TOOLS"] == "1" else { throw XCTSkip("set CT_REAL_GEMINI_TOOLS=1, CT_REAL_SITE and CT_REAL_KEYS") }
+        let cli = ProcessInfo.processInfo.environment["CT_REAL_GEMINI_BIN"] ?? binary("gemini", home: FileManager.default.homeDirectoryForCurrentUser) ?? "gemini"
+        XCTAssertTrue(geminiTakesMcp(cli))
+        try realToolsRun("gemini", cli: cli)
+    }
+
+    /// CT_REAL_GROK_TOOLS=1 (and CT_REAL_SITE, CT_REAL_KEYS, CT_REAL_ASK as above) swift test --filter RealGrokTools: the same
+    /// turn on a server whose account's AI is Grok on this Mac, signed in. CT_REAL_GROK_BIN names another copy.
+    func testRealGrokToolsRun() throws {
+        guard ProcessInfo.processInfo.environment["CT_REAL_GROK_TOOLS"] == "1" else { throw XCTSkip("set CT_REAL_GROK_TOOLS=1, CT_REAL_SITE and CT_REAL_KEYS") }
+        try realToolsRun("grok", cli: ProcessInfo.processInfo.environment["CT_REAL_GROK_BIN"] ?? binary("grok", home: FileManager.default.homeDirectoryForCurrentUser) ?? "grok")
+    }
+
+    /// One real assistant turn with the app's tools through `cli`, as RelayRunner.job runs it (the three tests above).
+    private func realToolsRun(_ driver: String, cli: String) throws {
         let env = ProcessInfo.processInfo.environment
-        guard env["CT_REAL_CODEX"] == "1", let site = env["CT_REAL_SITE"].flatMap(URL.init(string:)), let keys = env["CT_REAL_KEYS"] else {
-            throw XCTSkip("set CT_REAL_CODEX=1, CT_REAL_SITE and CT_REAL_KEYS to run one real codex turn with the app's tools")
+        guard let site = env["CT_REAL_SITE"].flatMap(URL.init(string:)), let keys = env["CT_REAL_KEYS"] else {
+            throw XCTSkip("set CT_REAL_SITE and CT_REAL_KEYS to run one real \(driver) turn with the app's tools")
         }
         let lines = try String(contentsOfFile: keys, encoding: .utf8).split(separator: "\n").map(String.init)
         let account = DeviceAPI(base: site, token: lines[0])
@@ -781,16 +869,14 @@ final class RelayTests: XCTestCase {
         let ask = env["CT_REAL_ASK"] ?? "What is my newest Workshop project called?"
         XCTAssertEqual(try account.call("POST", "/api/assistant/turn", ["text": ask]).status, 202)
         let req = try XCTUnwrap(RelayRequest(json: try device.call("POST", "/api/devices/relay/wait", ["blobs": true]).data))
-        XCTAssertEqual(req.driver, "codex")
+        XCTAssertEqual(req.driver, driver)
         XCTAssertNotNil(req.mcp)
-        let cli = env["CT_REAL_CODEX_BIN"] ?? binary("codex", home: FileManager.default.homeDirectoryForCurrentUser) ?? "codex"
-        XCTAssertTrue(codexTakesMcp(cli))
         let base = "/api/devices/relay/\(req.id)"
         let answer = try runAnswer(req, try requestOptions(req), cli: cli, work: temp(), send: { text in
             (try? device.call("POST", "\(base)/text", ["text": text]))?.status != 404   // the site waits only while it hears from the run
         }, step: { label in _ = try? device.call("POST", "\(base)/step", ["label": label]) })
         _ = try device.call("POST", "\(base)/done", ["text": answer.text, "usage": answer.usage, "session_id": "", "session_state": ""])
-        print("REAL CODEX TOOLS: \(cliVersion(cli) ?? cli) asked for \(name), answered: \(answer.text) usage=\(answer.usage)")
+        print("REAL \(driver.uppercased()) TOOLS: \(cliVersion(cli) ?? cli) asked for \(name), answered: \(answer.text) usage=\(answer.usage)")
         if env["CT_REAL_ASK"] == nil { XCTAssertTrue(answer.text.contains(name)) } else { XCTAssertFalse(answer.text.isEmpty) }
     }
 
@@ -804,6 +890,99 @@ final class RelayTests: XCTestCase {
         let answer = try runAnswer(req, try requestOptions(req), cli: cli, work: temp(), send: { _ in true }, step: { _ in })
         print("REAL GROK: text=\(answer.text) usage=\(answer.usage)")
         XCTAssertTrue(answer.text.localizedCaseInsensitiveContains("OK"))
+    }
+
+    /// CT_REAL_MUSE=1 swift test --filter RealMuse: real runs through Muse Code, the way the relay runs it. CT_REAL_MUSE_BIN names
+    /// the copy (default: the one on this Mac) and CT_REAL_MUSE_HOME the home it runs in (its sign-in is that home's
+    /// ~/.config/muse). The runs go out with HOME set to it, so nothing lands in this Mac's own home.
+    private func withMuse(_ body: (String, URL) throws -> Void) throws {
+        let env = ProcessInfo.processInfo.environment
+        guard env["CT_REAL_MUSE"] == "1" else { throw XCTSkip("set CT_REAL_MUSE=1 to run real Muse Code calls") }
+        let cli = env["CT_REAL_MUSE_BIN"] ?? binary("musecode", home: FileManager.default.homeDirectoryForCurrentUser) ?? "muse"
+        let old = (env["HOME"], env["TMPDIR"])
+        var dir: URL?
+        if let home = env["CT_REAL_MUSE_HOME"] {
+            // its temporary files too (swift test sets its own TMPDIR for the tests)
+            let tmp = (home as NSString).appendingPathComponent("tmp")
+            try FileManager.default.createDirectory(atPath: tmp, withIntermediateDirectories: true)
+            setenv("HOME", home, 1)
+            setenv("TMPDIR", tmp, 1)
+            let own = URL(fileURLWithPath: tmp).appendingPathComponent("relay-test-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: own, withIntermediateDirectories: true)
+            dir = own
+            XCTAssertEqual(ProcessInfo.processInfo.environment["HOME"], home)   // what the run's environment is built from
+        }
+        defer {
+            if let home = old.0 { setenv("HOME", home, 1) }
+            if let tmp = old.1 { setenv("TMPDIR", tmp, 1) } else { unsetenv("TMPDIR") }
+        }
+        print("REAL MUSE: running \(cli), version \(cliVersion(cli) ?? "?")")
+        try body(cli, dir ?? temp())
+    }
+
+    /// Needs a signed-in home: one tiny answer from Meta's model on that plan. In a home that never signed in it fails with
+    /// the words a person sees.
+    func testRealMuseRun() throws {
+        try withMuse { cli, dir in
+            let req = request(#"{"id":"real-muse","system":"Reply with just OK.","user":"Reply with just OK.","driver":"musecode","effort":"low"}"#)
+            do {
+                let answer = try runAnswer(req, try requestOptions(req), cli: cli, work: dir, send: { _ in true }, step: { _ in })
+                print("REAL MUSE: text=\(answer.text) usage=\(answer.usage)")
+                XCTAssertTrue(answer.text.localizedCaseInsensitiveContains("OK"))
+            } catch let failure as ClaudeFailure {
+                print("REAL MUSE: failed: \(failure.message) limit=\(limitFlag("musecode", failure.message)) usage=\(failure.usage ?? [:])")
+                XCTFail(failure.message)
+            }
+        }
+    }
+
+    /// Needs no account: the same runs on Muse Code's echo provider (it says the prompt back), through a copy of the program
+    /// that swaps `--provider meta` for `--provider echo`. An answer with no folder (no tools), one with a folder (shell and
+    /// writes off), and one the site stops at its first text.
+    func testRealMuseEchoRun() throws {
+        try withMuse { cli, dir in
+            let echo = dir.appendingPathComponent("muse-echo")
+            try "#!/bin/bash\nargs=(); for a in \"$@\"; do [ \"$a\" = meta ] && a=echo; args+=(\"$a\"); done\nexec \(shellQuote(cli)) \"${args[@]}\"\n"
+                .write(to: echo, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: echo.path)
+            for files in [#"{}"#, #"{"notes.md":"Tiny Acrobatics"}"#] {
+                let req = request(#"{"id":"real-muse-echo","system":"Reply with just OK.","user":"Say hello.","driver":"musecode","effort":"low","files":\#(files)}"#)
+                let answer = try runAnswer(req, try requestOptions(req), cli: echo.path, work: dir, send: { _ in true }, step: { _ in })
+                print("REAL MUSE ECHO: files=\(files) text=\(answer.text.debugDescription) usage=\(answer.usage)")
+                XCTAssertTrue(answer.text.hasPrefix("echo: <instructions>\nReply with just OK.\n</instructions>"))
+                XCTAssertTrue(answer.text.hasSuffix("Say hello."))
+            }
+            let req = request(#"{"id":"real-muse-stop","system":"S","user":"U","driver":"musecode","effort":"low"}"#)
+            XCTAssertThrowsError(try runAnswer(req, try requestOptions(req), cli: echo.path, work: dir, send: { _ in false }, step: { _ in })) { error in
+                XCTAssertEqual((error as? ClaudeFailure)?.stopped, true)
+            }
+        }
+    }
+
+    /// Needs no account: the app's sign-in (MuseLogin) starts the real `muse login` and gets Meta's page and code from it.
+    /// The program runs with macOS's opener blocked, so no browser opens, and it is stopped after 12 s, before anyone approves.
+    func testRealMuseLoginGivesThePageAndCode() throws {
+        try withMuse { cli, dir in
+            let profile = dir.appendingPathComponent("no-browser.sb")
+            try """
+            (version 1)
+            (allow default)
+            (deny process-exec (literal "/usr/bin/open"))
+            (deny mach-lookup (global-name "com.apple.coreservices.launchservicesd") (global-name "com.apple.lsd.mapdb") (global-name "com.apple.lsd.modifydb") (global-name "com.apple.lsd.open"))
+            """.write(to: profile, atomically: true, encoding: .utf8)
+            let login = dir.appendingPathComponent("muse-login")
+            try "#!/bin/bash\n/usr/bin/sandbox-exec -f \(shellQuote(profile.path)) \(shellQuote(cli)) \"$@\" &\npid=$!\nsleep 12\nkill $pid 2>/dev/null\nwait $pid\n"
+                .write(to: login, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: login.path)
+            let found = expectation(description: "Meta's page and code")
+            MuseLogin().start(binary: login.path) { page, code in
+                print("REAL MUSE LOGIN: page on \(page.host ?? "?"), a code of \(code.count) characters")
+                XCTAssertEqual(page.host, "auth.meta.com")
+                XCTAssertFalse(code.isEmpty)
+                found.fulfill()
+            }
+            wait(for: [found], timeout: 20)
+        }
     }
 
     /// CT_REAL_GEMINI=1 swift test --filter RealGemini: one tiny run through the Gemini CLI setup installed, the way the relay

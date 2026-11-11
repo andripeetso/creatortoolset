@@ -14,6 +14,7 @@ import { Notice } from "./Notice";
 import { ChipComposer, numbered, readable, type ComposerHandle } from "./ChipComposer";
 import type { Selection } from "@contracts/providers";
 import { confirmHeavy } from "@/lib/setup";
+import { cornerTaken } from "@/lib/dock-place";
 
 /**
  * The conversation: the AI thinks here and edits the document below.
@@ -413,7 +414,7 @@ export function ChatPane({
           pinnedToEnd.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
         }}
         onMouseUp={onQuote ? pickCite : undefined}
-        className="min-h-0 flex-1 overflow-y-auto px-3 py-2"
+        className="clears-bubble min-h-0 flex-1 overflow-y-scroll px-3 py-2 bars:pr-1"
       >
         {cite && onQuote ? (
           <SelectionPill at={cite.at} onDismiss={() => setCite(null)}>
@@ -594,6 +595,8 @@ export function ChatPane({
         </div>
       </div>
       <div
+        // where this stands in the window's bottom right corner, the assistant's bubble sits above it (dock-place.ts)
+        ref={cornerTaken}
         className={`shrink-0 px-3 pb-3 pt-1 ${dropping ? "rounded-xl outline-dashed outline-2 outline-violet-500/70" : ""}`}
         onDragOver={(e) => {
           if (!Array.from(e.dataTransfer.types).includes("Files")) return;

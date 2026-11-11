@@ -475,7 +475,8 @@ async function processVersion(id: string, n: number): Promise<void> {
         (f) => {
           if (Date.now() - last < 1500) return;
           last = Date.now();
-          void jobVersion(id, n, { progress: 0.1 + f * 0.9 });
+          // a progress save that fails says nothing: the job's end reports
+          void jobVersion(id, n, { progress: 0.1 + f * 0.9 }).catch(() => {});
         },
       );
     }
@@ -502,8 +503,16 @@ function enqueue(id: string, n: number): void {
   const key = `${id}/${n}`;
   if (queued.has(key)) return;
   queued.add(key);
-  chain = chain.then(() => processVersion(id, n).finally(() => queued.delete(key)));
+  chain = chain
+    .then(() => processVersion(id, n))
+    // A job that cannot save its end (its video's folder went or cannot be written while it ran) ends here: left to
+    // reject, it took the whole queue with it, so no later upload was ever processed, and nothing handled it.
+    .catch((e) => console.error(`[review] processing ${key}:`, e))
+    .finally(() => queued.delete(key));
 }
+
+/** Every processing job queued so far has ended. For what must not pull the data folder from under a job (tests). */
+export const reviewJobsDone = (): Promise<void> => chain;
 
 /** A relay's file is placed in the background: processing starts when it is in; a failure marks the version. */
 function placeInBackground(id: string, n: number, placed: Promise<void>, onPlaced?: () => void): void {

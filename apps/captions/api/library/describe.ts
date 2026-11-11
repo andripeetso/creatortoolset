@@ -2,7 +2,8 @@ import { readFile, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import { aiFor } from "../ai-complete";
+import { aiFor, onApiKey } from "../ai-complete";
+import { BACKGROUND_SLOTS } from "../lib/mac-claude";
 import { completeVisionWithFallback } from "../ai-vision";
 import { parseJsonObject } from "../lib/instagram/vision";
 import { findUser } from "../users";
@@ -17,10 +18,12 @@ import { isAdminActor } from "../my-keys";
  * transcript excerpt go to the actor's own AI (aiFor: their provider, or their own Anthropic key).
  * No route parks the job as needs_key, never failed and never on someone else's AI. The answer is JSON: a description
  * and tags, stored as the AI's. A human's description stays the one shown (query.ts); human tags keep their source.
- * Off unless the library's owner switched it on (settings.describe), since it spends AI on every upload.
+ * On unless the library's owner switched it off (settings.describe; db.ts SETTING_DEFAULTS): a big upload says first what it spends.
  */
 
 export const FRAMES = 4;
+/** What the usage tally counts a description as: estimate.ts reads its average cost back. */
+export const DESCRIBE_LABEL = "Media Library describe";
 const MAX_TAGS = 8;
 
 /** Everything the prompt is built from. There is no field for who is in the clip: no names, no ages. */
@@ -89,12 +92,35 @@ export function saveDescribed(db: DatabaseSync, versionId: string, d: Described,
   }
 }
 
-/** Describes one version as its job's actor: the route first (no frame is cut without one), then the frames and the AI. */
+/** Library descriptions running on a connected AI right now. ponytail: one count for every computer; per computer if one person pairs several */
+let onProvider = 0;
+
+/**
+ * A turn for one description as `actor`: their own Anthropic key takes many at once; a connected AI takes two (its
+ * background slots, mac-claude.ts), so a job's time is its own and the estimate can read it. Null when the AI is full
+ * (the job waits in the queue); else the function that gives the turn back.
+ */
+export function describeSlot(actor: string | null): (() => void) | null {
+  const free = () => {};
+  if (!actor || onApiKey(actor, "analyzer", DESCRIBE_LABEL) || !aiFor(whoFor(actor), "analyzer", DESCRIBE_LABEL).only?.includes("mac")) return free;
+  if (onProvider >= BACKGROUND_SLOTS) return null;
+  onProvider++;
+  let back = false;
+  return () => {
+    if (!back) onProvider--;
+    back = true;
+  };
+}
+
+/**
+ * Describes one version as its job's actor: the route first (no frame is cut without one), then the frames and the AI.
+ * Their own Anthropic key goes first (preferKey: bulk work runs many at once on it).
+ */
 export async function describeVersion(db: DatabaseSync, versionId: string, src: string, duration: number, actor: string | null, scratch: string): Promise<void> {
   // a job with no actor runs as nobody: never on the server's own providers
   if (!actor) throw new NeedsKey("No one to run this as: queue it again from the library");
   const who = whoFor(actor);
-  const route = aiFor(who, "analyzer", "Media Library describe");
+  const route = aiFor(who, "analyzer", DESCRIBE_LABEL);
   if (route.off) throw new NeedsKey(route.off);
   const { title } = db.prepare("SELECT a.title FROM assets a JOIN asset_versions v ON v.asset_id = a.id WHERE v.id = ?").get(versionId) as { title: string };
   const segments = segmentsOf(db, versionId);
@@ -107,7 +133,7 @@ export async function describeVersion(db: DatabaseSync, versionId: string, src: 
     }
     const images = await Promise.all(files.map(async (f) => ({ jpegBase64: (await readFile(f)).toString("base64") })));
     const { system, user } = describePrompt({ title, frames: images.length, ...(segments.length ? { transcript: transcriptExcerpt(segments) } : {}) });
-    const { value, provider } = await completeVisionWithFallback(system, user, images, undefined, parseDescribe, who);
+    const { value, provider } = await completeVisionWithFallback(system, user, images, undefined, parseDescribe, who, { label: DESCRIBE_LABEL, background: true, preferKey: true });
     saveDescribed(db, versionId, value, provider);
   } finally {
     await Promise.all(files.map((f) => rm(f, { force: true })));

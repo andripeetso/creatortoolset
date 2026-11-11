@@ -134,5 +134,9 @@ module.exports = {
       },
     },
   },
-  plugins: [require("tailwindcss-animate"), plugin(({ addBase }) => addBase(themed.base))],
+  plugins: [require("tailwindcss-animate"), plugin(({ addBase, addVariant }) => {
+    addBase(themed.base);
+    // where a scrollbar takes room (a mouse or trackpad; a phone draws it over the content): see index.css
+    addVariant("bars", "@media (hover: hover) and (pointer: fine)");
+  })],
 }

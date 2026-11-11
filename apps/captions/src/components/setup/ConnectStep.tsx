@@ -7,7 +7,8 @@ import { AccountStep, hasAccountBridge } from "@/components/setup/AccountStep";
 import { useAuth } from "@/lib/auth";
 import { allowOtherDevices, thisMacBridge } from "@/lib/thisMac";
 import { cn } from "@/lib/utils";
-import { getComputers, serverUrl, type ComputerInfo, type ComputersView } from "./computers";
+import { readCached, putCached } from "@/lib/local-cache";
+import { serverUrl, useComputers, type ComputerInfo } from "./computers";
 
 /** The id of this computer in the picked set. The account's other computers are listed without a pick. */
 export const HERE = "here";
@@ -30,6 +31,13 @@ export interface PhoneCode {
  */
 export type PhoneState = PhoneCode | "local" | "signin" | null;
 const isCode = (c: PhoneState | undefined): c is PhoneCode => typeof c === "object" && c !== null;
+/**
+ * The last answer in this browser (lib/local-cache.ts). `true`: a code, whose space is held while the next one is made.
+ * "local": shown again at once while it is checked, since it says how this server is set up and rarely changes.
+ */
+const HAD_CODE = "setup/phone-code";
+/** After the phone's row in the step: not drawn while that row's height is not known yet (PhoneRowView's data-unplaced). */
+const UNDER_PHONE = "peer-data-[unplaced]/phone:hidden";
 
 /**
  * Mints a code on this server and draws it, at the address the server says a phone can reach (its tunnel, the address
@@ -67,21 +75,27 @@ async function afterRestart(): Promise<PhoneState> {
  * "Add your phone": a QR code the phone's camera reads. The code is one-time and lasts about a minute, so a new one is
  * drawn when it runs out (on its own, and by the button). Only one code is live: the server ends the older ones.
  */
-export function PhoneRow() {
-  const [code, setCode] = useState<PhoneState | undefined>(undefined); // undefined: making one
+export function PhoneRow({ wait = false }: { wait?: boolean }) {
+  const user = useAuth((s) => s.me?.username);
+  const had = readCached<boolean | "local">(user, HAD_CODE);
+  const [code, setCode] = useState<PhoneState | undefined>(had === "local" ? "local" : undefined); // undefined: making one
   const [now, setNow] = useState(() => Date.now());
   const [turningOn, setTurningOn] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const latest = useRef(0);
-  // a reply to an older request is dropped, so the screen shows the newest code only
-  const fresh = useCallback((mint: () => Promise<PhoneState> = mintPhoneCode) => {
+  useEffect(() => {
+    if (code !== undefined) putCached(user, HAD_CODE, isCode(code) || (code === "local" && "local"));
+  }, [user, code]);
+  // a reply to an older request is dropped, so the screen shows the newest code only. `keep`: what is on screen
+  // stays until the reply (the first request, which may be showing the last answer)
+  const fresh = useCallback((mint: () => Promise<PhoneState> = mintPhoneCode, keep = false) => {
     const mine = ++latest.current;
-    setCode(undefined);
+    if (!keep) setCode(undefined);
     void mint().then((c) => {
       if (mine === latest.current) setCode(c);
     });
   }, []);
-  useEffect(() => fresh(), [fresh]);
+  useEffect(() => fresh(mintPhoneCode, true), [fresh]);
   useEffect(() => {
     if (!isCode(code) || code.expiresAt === Infinity) return;
     const t = window.setInterval(() => setNow(Date.now()), 1000);
@@ -104,6 +118,8 @@ export function PhoneRow() {
   return (
     <PhoneRowView
       code={code}
+      hold={had === true}
+      wait={wait}
       now={now}
       canTurnOn={!!thisMacBridge()}
       turningOn={turningOn}
@@ -115,6 +131,8 @@ export function PhoneRow() {
 
 export function PhoneRowView({
   code,
+  hold = false,
+  wait = false,
   now,
   canTurnOn,
   turningOn,
@@ -122,6 +140,10 @@ export function PhoneRowView({
   onTurnOn,
 }: {
   code: PhoneState | undefined;
+  /** the last answer was a code: the line that says one is being made is as tall as the code, so nothing under it moves */
+  hold?: boolean;
+  /** what is above this row in the step is not known yet (a first visit): the row is not drawn until it is */
+  wait?: boolean;
   now: number;
   /** the Mac app is here to turn Access from other devices on */
   canTurnOn: boolean;
@@ -130,7 +152,9 @@ export function PhoneRowView({
   onTurnOn: () => void;
 }) {
   return (
-    <div className={cn(CARD, "space-y-3 px-4 py-3")}>
+    // unplaced: this row is waiting, or a code is being made with no space held for it. What comes after it in the step
+    // is not drawn then (UNDER_PHONE), so nothing moves when the answer arrives
+    <div data-unplaced={wait || (code === undefined && !hold) ? "" : undefined} className={cn(CARD, "peer/phone space-y-3 px-4 py-3", wait && "hidden")}>
       <div className="flex items-start gap-3">
         <Smartphone className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
         <div className="min-w-0">
@@ -138,7 +162,7 @@ export function PhoneRowView({
           <p className="text-xs text-muted-foreground">Use Creator Toolset on your phone too. Scan this with your phone's camera, on the same Wi-Fi.</p>
         </div>
       </div>
-      {code === undefined && <p className="text-xs text-muted-foreground">Making a code…</p>}
+      {code === undefined && <p className={cn("text-xs text-muted-foreground", hold && "h-44")}>Making a code…</p>}
       {code === null && <p className="text-xs text-muted-foreground">Couldn't make a code. Check the connection, then reopen this step.</p>}
       {code === "signin" && <p className="text-xs text-muted-foreground">Sign in first, then this code appears here.</p>}
       {code === "local" && (
@@ -294,14 +318,14 @@ export function ConnectStepView({
       {phone}
 
       {hosted ? (
-        <div className={CARD}>
+        <div className={cn(CARD, UNDER_PHONE)}>
           <p className="px-4 py-3 text-sm text-muted-foreground">
             Creator Toolset runs on the computer you work on. Download the{" "}
             <a className="text-foreground underline" href="https://creatortoolset.com/download">Creator Toolset Mac app</a> there, and it joins this account.
           </p>
         </div>
       ) : (
-      <div className={CARD}>
+      <div className={cn(CARD, UNDER_PHONE)}>
         <button
           type="button"
           aria-expanded={expanded}
@@ -392,15 +416,12 @@ export function ConnectStepView({
  */
 export function ConnectStep({ picked, onPick }: { picked: ReadonlySet<string>; onPick: (id: string, on: boolean) => void }) {
   const hosted = useAuth((s) => s.hosted);
-  const [view, setView] = useState<ComputersView | null>(null);
+  const { data: view, error, refresh } = useComputers();
   const [expanded, setExpanded] = useState(false);
   const [server, setServer] = useState("");
   const [serverBad, setServerBad] = useState(false);
   const [link, setLink] = useState("");
   const [joinNote, setJoinNote] = useState<{ ok: boolean; text: string } | null>(null);
-  useEffect(() => {
-    void getComputers().then(setView);
-  }, []);
 
   const go = () => {
     const url = serverUrl(server);
@@ -419,7 +440,7 @@ export function ConnectStep({ picked, onPick }: { picked: ReadonlySet<string>; o
     if (j?.ok) {
       setLink("");
       setJoinNote({ ok: true, text: `Joined ${j.server}${j.device?.name ? ` as ${j.device.name}` : ""}.` });
-      void getComputers().then(setView);
+      void refresh().catch(() => {});
     } else setJoinNote({ ok: false, text: j?.message ?? "Couldn't reach this computer. Try again." });
   };
 
@@ -429,7 +450,8 @@ export function ConnectStep({ picked, onPick }: { picked: ReadonlySet<string>; o
       others={view?.others ?? []}
       picked={picked}
       onPick={onPick}
-      phone={<PhoneRow />}
+      // a first visit: the phone's row and what is under it take their place once the other computers are known (or their read failed)
+      phone={<PhoneRow wait={view === null && !error} />}
       hosted={hosted}
       pasteCommand={SHOW_CONNECT_COMMAND ? CONNECT_COMMAND : undefined}
       expanded={expanded}

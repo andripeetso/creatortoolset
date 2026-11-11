@@ -1,9 +1,8 @@
-import { useEffect, useState } from "react";
 import type { MyKeyEnv, MyKeyView } from "@contracts/service-keys";
+import { useCachedLoad } from "@/lib/local-cache";
 import { Card, ErrorRow, LoadingRow } from "./ui";
 import { KeyRow } from "./KeyRow";
 import type { ApiKeyRowId } from "./search";
-import { msg } from "./helpers";
 
 async function json<T>(res: Response): Promise<T> {
   const j = (await res.json().catch(() => null)) as { error?: string } | null;
@@ -11,6 +10,8 @@ async function json<T>(res: Response): Promise<T> {
   return j as T;
 }
 export const getMyKeys = () => fetch("/api/my-keys").then((r) => json<MyKeyView[]>(r));
+/** The person's keys as the server lists them (set or not, the last 4 characters, never a key): the saved copy at once. */
+export const useMyKeys = () => useCachedLoad<MyKeyView[]>("/api/my-keys", getMyKeys, { own: true });
 export const saveMyKey = (name: MyKeyEnv, value: string | null) =>
   fetch(`/api/my-keys/${name}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value }) }).then((r) => json(r));
 
@@ -19,14 +20,12 @@ export const saveMyKey = (name: MyKeyEnv, value: string | null) =>
  * dialog shows only the keys one tool needs (`only`).
  */
 export function MyKeysSection({ only }: { only?: MyKeyEnv[] } = {}) {
-  const [keys, setKeys] = useState<MyKeyView[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const load = () => getMyKeys().then(setKeys).catch((e) => setError(msg(e)));
-  useEffect(() => void load(), []);
+  const { data: keys, error, refresh } = useMyKeys();
+  const load = () => refresh().catch(() => {});
   if (!keys)
     return (
       <Card>
-        {error ? <ErrorRow title="Couldn't load your keys" detail={error} retry={() => (setError(null), void load())} /> : <LoadingRow />}
+        {error ? <ErrorRow title="Couldn't load your keys" detail={error} retry={() => void load()} /> : <LoadingRow />}
       </Card>
     );
   return (

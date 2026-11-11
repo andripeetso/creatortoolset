@@ -21,9 +21,9 @@ let webTools = "WebSearch,WebFetch"
 let macTools = "Read,Glob,Grep,Bash,Edit,Write"
 let folderNote = "The files this request needs are in the current folder: read them there."
 let piecesNote = "\n- sessions/INDEX.md — every Workshop session that became a post, with the post and its numbers (the app links them)."
-/// The drivers this Mac runs (Claude, Gemini, Codex and Grok natively; the ACP kinds over stdio). The rest get the message below.
-let runnableDrivers = ["claude", "gemini", "codex", "grok", "cursor", "opencode", "antigravity", "pi", "acp"]
-let onlyRunnableMessage = "This Mac runs Claude, Gemini, Codex, Grok, Cursor, OpenCode, Antigravity, Pi and local ACP commands only for now"
+/// The drivers this Mac runs (Claude, Gemini, Codex, Grok and Muse Code natively; the ACP kinds over stdio). The rest get the message below.
+let runnableDrivers = ["claude", "gemini", "codex", "grok", "musecode", "cursor", "opencode", "antigravity", "pi", "acp"]
+let onlyRunnableMessage = "This Mac runs Claude, Gemini, Codex, Grok, Muse Code, Cursor, OpenCode, Antigravity, Pi and local ACP commands only for now"
 /// The ACP kinds (contracts/providers.ts isAcpDriver): each starts its agent over stdio (AcpRun.swift). "acp" is the local command
 /// from the setup; the others start the command below, plus the launch arguments. Versions are a snapshot from 2026-11-08: re-check before shipping.
 let acpDrivers = ["cursor", "opencode", "antigravity", "pi", "acp"]
@@ -180,6 +180,9 @@ func requestOptions(_ req: RelayRequest, root: URL = FileManager.default.homeDir
     }
     if req.driver == "grok" && !home.isEmpty {
         throw RelayError(message: "Grok keeps its own folder (~/.grok): it takes no home")
+    }
+    if req.driver == "musecode" && !home.isEmpty {
+        throw RelayError(message: "Muse Code keeps its own folder (~/.config/muse): it takes no home")
     }
     if !req.resume.isEmpty && !matches(req.resume, "^[A-Za-z0-9-]{1,80}\\z") {
         throw RelayError(message: "not a Claude session id: \(req.resume)")
@@ -363,6 +366,8 @@ enum StreamUpdate: Equatable {
     case cancelAsk(String)
     /// the result line came: nothing more will be asked
     case result
+    /// a line for the CLI's stdin (Muse Code's protocol answers as it goes)
+    case write(Data)
 }
 
 /// the Mac relay stream() reading: `claude -p --output-format stream-json --include-partial-messages`, one line at a time.
@@ -518,10 +523,61 @@ let geminiTools = ["read_file": "Read", "grep_search": "Grep", "glob": "Glob", "
 
 /// the Mac relay gemini_cmd: `gemini -o stream-json`, the prompt on stdin (no -p: the CLI reads a piped prompt). Plan mode
 /// is its read tools only, no edits or shell; --skip-trust for the run's own folder. This CLI has no effort flag.
-func geminiArguments(model: String) -> [String] {
+/// `mcpPolicy`: the app's own MCP server for this run (runMcpFiles): only that server of all the person's is in the run, and
+/// the rule in that file lets its calls run unasked in plan mode, which otherwise refuses them.
+func geminiArguments(model: String, mcpPolicy: String = "") -> [String] {
     var args = ["-o", "stream-json", "--approval-mode", "plan", "--skip-trust"]
+    if !mcpPolicy.isEmpty { args += ["--allowed-mcp-server-names", "creator-toolset", "--policy", mcpPolicy] }
     if !model.isEmpty { args += ["-m", model] }
     return args
+}
+
+/// Whether this Gemini CLI takes a policy file for one run (`--policy`); an older one answers with the message alone.
+func geminiTakesMcp(_ cli: String) -> Bool {
+    runQuick(cli, ["--help"], seconds: 15)?.contains("--policy") ?? false
+}
+
+/// The rule that lets the app's own MCP server's calls run in Gemini's plan mode (its policy engine, a user-tier rule).
+let geminiMcpPolicy = """
+    [[rule]]
+    mcpName = "creator-toolset"
+    toolName = "*"
+    decision = "allow"
+    priority = 100
+    modes = ["plan"]
+
+    """
+
+/// The app's own MCP server for one Gemini or Grok run (the assistant), as files in the run's own fresh folder: that folder's
+/// settings (Gemini, `.gemini/settings.json`) or config (Grok, `.grok/config.toml`) name the server, and the token is read
+/// from `codexTokenEnv`, so it is in no file and on no command line. Both read a folder's own settings only once the folder
+/// is trusted, so the run trusts its own folder for itself alone (runMcpEnv); nothing is written to the person's settings.
+/// Measured 2026-11-10 with Gemini CLI 0.68 and grok 1.0.4 and 1.0.77, their models' answers replayed or a stand-in model,
+/// against stand-in servers and a real Creator Toolset server: this server's calls (a lookup and a change) ran unasked with
+/// the job token, a server in the person's own settings got none, and nothing was written to the person's settings. Gemini's
+/// file write was refused by plan mode and it has no shell there. With the assistant's flags (web on) grok offers only its
+/// two MCP tools: a write and a read outside the folder were not tools at all.
+func runMcpFiles(driver: String, url: String, cwd: URL) throws {
+    let fm = FileManager.default
+    if driver == "gemini" {
+        let dir = cwd.appendingPathComponent(".gemini")
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        let server: [String: Any] = ["httpUrl": url, "headers": ["Authorization": "Bearer $" + codexTokenEnv]]
+        try JSONSerialization.data(withJSONObject: ["mcpServers": ["creator-toolset": server]], options: .withoutEscapingSlashes).write(to: dir.appendingPathComponent("settings.json"))
+    } else {
+        let dir = cwd.appendingPathComponent(".grok")
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        // the url has no quote in it (RelayRequest checks it)
+        let toml = "[mcp_servers.creator-toolset]\nurl = \"\(url)\"\nbearer_token_env_var = \"\(codexTokenEnv)\"\n"
+        try toml.write(to: dir.appendingPathComponent("config.toml"), atomically: true, encoding: .utf8)
+    }
+}
+
+/// The environment that goes with runMcpFiles: the token, and the run's own folder trusted for this run. Gemini reads a
+/// folder's settings before it reads --skip-trust, so it takes the same trust from its variable; Grok's --trust would
+/// record the folder in the person's own list, its variable writes nothing.
+func runMcpEnv(driver: String, token: String) -> [String: String] {
+    [codexTokenEnv: token, driver == "gemini" ? "GEMINI_CLI_TRUST_WORKSPACE" : "GROK_FOLDER_TRUST": driver == "gemini" ? "true" : "0"]
 }
 
 /// A new empty folder for one Codex run with no folder of its own, under Application Support (created here, removed by the
@@ -581,7 +637,8 @@ let grokWebTools = "web_search,web_fetch"
 
 /// the Mac relay grok_cmd: `grok -p`'s headless stream, the prompt in `promptFile`. Tools are only the read tools of a folder
 /// (plus web when asked); with no folder there is no shell, no editing and no subagents. It never asks (dontAsk).
-func grokArguments(cwd: String, model: String, effort: String, system: String, web: Bool, folder: Bool, promptFile: String) -> [String] {
+/// `mcp`: the app's own MCP server is in this run (runMcpFiles); its calls are allowed, every other MCP server's are refused.
+func grokArguments(cwd: String, model: String, effort: String, system: String, web: Bool, folder: Bool, promptFile: String, mcp: Bool = false) -> [String] {
     var args = ["--prompt-file", promptFile, "--verbatim",
                 "--output-format", "streaming-messages-json", "--include-partial-messages", "--no-memory", "--no-subagents",
                 "--cwd", cwd, "--reasoning-effort", effort, "--permission-mode", "dontAsk",
@@ -590,22 +647,27 @@ func grokArguments(cwd: String, model: String, effort: String, system: String, w
     // Always passed: without a folder the list is empty (grok's default built-ins would read any file on this Mac).
     args += ["--tools", ((folder ? [grokReadTools] : []) + (web ? [grokWebTools] : [])).joined(separator: ",")]
     if !web { args.append("--disable-web-search") }
+    if mcp { args += ["--allow", "MCPTool(creator-toolset__*)"] }
     return args
 }
 
 /// the Mac relay driver_env: the environment without API keys (the subscription only, never API billing), and
 /// CODEX_HOME for a Codex home (the folder codex keeps its sign-in in).
 func driverEnv(base: [String: String], home: String = "") -> [String: String] {
-    let stripped = ["OPENAI_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"]
+    let stripped = ["OPENAI_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "META_API_KEY"]
     var env = base.filter { !stripped.contains($0.key) }
     if !home.isEmpty { env["CODEX_HOME"] = home }
     return env
 }
 
 /// the Mac relay limit_flag: the usage-limit flag. Claude's and Codex's windows (isLimitError: "You've hit your usage
-/// limit") and Gemini's quota errors; the rest have none.
+/// limit"), Muse Code's (the words museFailure gives a closed window, or a 429 about the quota) and Gemini's quota errors;
+/// the rest have none.
 func limitFlag(_ driver: String, _ text: String) -> Bool {
     if driver == "claude" || driver == "codex" { return isLimitError(text) }
+    if driver == "musecode" {
+        return isLimitError(text) || (text.contains("429") && text.range(of: "quota|usage limit", options: [.regularExpression, .caseInsensitive]) != nil)
+    }
     return driver == "gemini"
         && text.range(of: "exhausted your (daily )?(quota|capacity)|MODEL_CAPACITY_EXHAUSTED", options: [.regularExpression, .caseInsensitive]) != nil
 }
@@ -772,6 +834,175 @@ struct CodexStream: RunStream {
     private func nonEmpty(_ value: String?) -> String? {
         guard let value, !value.isEmpty else { return nil }
         return value
+    }
+}
+
+// MARK: Muse Code (`muse serve`, Meta's session protocol)
+
+/// `muse serve`'s flags for one answer (Muse Code 1.4.15): Meta's models on the person's own sign-in, no session log kept, no
+/// questions back. With no folder and no web it starts with no built-in tools (the empty preset); otherwise with its shell and
+/// its file writes off. Those two are fixed for the host's life, whatever an approval says, so it can read and search but
+/// never change a file or run a command. Not seen (no signed-in run here): what Meta's automated reviewer, the default for
+/// signed-in sessions, would let through of what is left, the web and any MCP servers the person listed in
+/// ~/.config/muse/settings.json (Muse loads those itself, even with the empty preset). A host with no session log can't
+/// pick another profile (measured: "an ephemeral host fixes its permission surface"); a question only a person can answer
+/// ends the run (MuseStream).
+func museArguments(tools: Bool) -> [String] {
+    ["serve", "--provider", "meta", "--no-session-log", "--disable-request-user-input"]
+        + (tools ? ["--disable-shell", "--disable-write"] : ["--preset", "empty"])
+}
+
+/// A UUIDv7 (the time, then random bits): Muse Code refuses any other kind of command or session id.
+func uuidV7(_ now: Date = Date()) -> String {
+    let ms = UInt64(now.timeIntervalSince1970 * 1000)
+    var bytes = (0..<6).map { UInt8(truncatingIfNeeded: ms >> (40 - 8 * UInt64($0))) } + (0..<10).map { _ in UInt8.random(in: 0...255) }
+    bytes[6] = bytes[6] & 0x0F | 0x70
+    bytes[8] = bytes[8] & 0x3F | 0x80
+    var id = ""
+    for (i, byte) in bytes.enumerated() {
+        if [4, 6, 8, 10].contains(i) { id += "-" }
+        id += String(format: "%02x", byte)
+    }
+    return id
+}
+
+/// Muse Code's token counters in the usage shape the rest reads. Its cache counts are part of its input count.
+func museUsage(_ t: [String: Int]) -> [String: Any] {
+    let read = t["cacheReadTokens"] ?? t["cachedTokens"] ?? 0
+    let write = t["cacheWriteTokens"] ?? 0
+    return ["input_tokens": max((t["inputTokens"] ?? 0) - read - write, 0), "cache_read_input_tokens": read, "cache_creation_input_tokens": write,
+            "output_tokens": t["outputTokens"] ?? 0, "reasoning_tokens": t["reasoningTokens"] ?? 0]
+}
+
+/// One `muse serve` run, one line at a time both ways (JSON-RPC 2.0). `opening` is the first line (initialize); each answer
+/// brings the next (initialized and session/start, then turn/start), and turn/completed is the result. The answer is the
+/// session's last agent message; usage comes from turn/completed, else the session/tokenUsage events added up. A request
+/// from Muse to this client (an approval only a person can give, a question) is refused and ends the run: nobody is there
+/// to answer it, and the turn would wait for one.
+struct MuseStream: RunStream {
+    let prompt: String
+    let model: String
+    let effort: String
+    let cwd: String
+    let session = uuidV7()
+    private(set) var text = ""
+    private var message = ""   // the agent message being written
+    private var tokens: [String: Int] = [:]
+    private var models: [String] = []
+    /// how the turn ended ("completed", "failed", "cancelled"; "" = it never did), Muse's own words, and a closed plan window
+    private(set) var terminal = ""
+    private(set) var error = ""
+    private(set) var kind = ""
+    private(set) var resetsAt: Date?
+    /// what Muse asked a person for (the tool, command, path or address), when it did
+    private(set) var asked = ""
+
+    init(prompt: String, model: String, effort: String, cwd: String) {
+        self.prompt = prompt
+        self.model = model
+        self.effort = effort
+        self.cwd = cwd
+    }
+
+    var opening: String {
+        String(decoding: rpc(1, "initialize", ["clientInfo": ["name": "creator_toolset", "title": "Creator Toolset", "version": appVersion]]), as: UTF8.self)
+    }
+
+    var seen: [String: [String: Any]] { tokens.isEmpty ? [:] : ["musecode": museUsage(tokens)] }
+
+    mutating func feed(_ line: String) -> [StreamUpdate] {
+        guard line.hasPrefix("{"),
+              let obj = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any] else { return [] }
+        let method = obj["method"] as? String
+        if let id = obj["id"], let method {
+            let params = obj["params"] as? [String: Any] ?? [:]
+            let subject = params["subject"] as? [String: Any] ?? [:]
+            asked = [params["toolName"], subject["command"], subject["path"], subject["host"]].lazy.compactMap { $0 as? String }.first { !$0.isEmpty } ?? method
+            return [.write(jsonLine(["jsonrpc": "2.0", "id": id, "error": ["code": -32601, "message": "this client does not take \(method)"]])), .result]
+        }
+        if let id = obj["id"] as? Int {
+            if let err = obj["error"] as? [String: Any] {
+                error = err["message"] as? String ?? "error \(id)"
+                return [.result]
+            }
+            switch id {
+            case 1:
+                var start: [String: Any] = ["commandId": uuidV7(), "sessionId": session, "workspaceRoot": cwd, "approvalMode": "denyUnmatched"]
+                if !model.isEmpty { start["modelId"] = model }
+                return [.write(jsonLine(["jsonrpc": "2.0", "method": "initialized"]) + rpc(2, "session/start", start))]
+            case 2:
+                return [.write(rpc(3, "turn/start", ["commandId": uuidV7(), "sessionId": session, "input": [["type": "text", "text": prompt]], "reasoningEffort": effort]))]
+            default:
+                return []
+            }
+        }
+        let params = obj["params"] as? [String: Any] ?? [:]
+        guard params["sessionId"] as? String == session else { return [] }   // a subagent's or a reminder's own session
+        switch method {
+        case "item/started", "item/updated", "item/completed":
+            let item = params["item"] as? [String: Any] ?? [:]
+            guard item["kind"] as? String == "agentMessage", let id = item["itemId"] as? String else { return [] }
+            if id != message {   // a new message: what was said before it is not the answer
+                message = id
+                text = ""
+            }
+            // ponytail: a long message's text may come cut short (truncated); its deltas are kept then, without fetching the rest page by page
+            if let said = item["text"] as? String, item["truncated"] as? Bool != true, said.count >= text.count { text = said }
+            return [.text(text)]
+        case "item/delta":
+            guard params["itemId"] as? String == message, (params["field"] as? String ?? "text") == "text" else { return [] }
+            text += params["delta"] as? String ?? ""
+            return [.text(text)]
+        case "session/tokenUsage":
+            for (key, value) in params["usage"] as? [String: Any] ?? [:] { tokens[key, default: 0] += Int(number(value)) }
+            if let id = params["modelId"] as? String, !models.contains(id) { models.append(id) }
+        case "turn/completed":
+            terminal = params["terminal"] as? String ?? "failed"
+            let err = params["error"] as? [String: Any]
+            error = err?["message"] as? String ?? params["reason"] as? String ?? ""
+            kind = err?["kind"] as? String ?? ""
+            if let quota = err?["quota"] as? [String: Any] { resetsAt = Date(timeIntervalSince1970: number(quota["resetsAtMs"]) / 1000) }
+            if let usage = params["usage"] as? [String: Any] { tokens = usage.mapValues { Int(number($0)) } }   // the turn's own total
+            return [.result]
+        default:
+            break
+        }
+        return []
+    }
+
+    /// The run's result line, as the claude stream's: the answer, or what went wrong in plain words, Muse's own words after.
+    func result(err: String) -> [String: Any] {
+        var modelUsage: [String: [String: Any]] = [:]
+        for model in models { modelUsage[model] = [:] }
+        let ok = terminal == "completed" && !text.isEmpty
+        return ["is_error": !ok, "result": ok ? text : failure(err: err), "usage": museUsage(tokens), "modelUsage": modelUsage, "total_cost_usd": 0]
+    }
+
+    /// What went wrong, plain words first (the site keeps 300 characters). A closed window ends with "It resets …", where the
+    /// site reads the time from, and says "usage limit", which limitFlag reads.
+    func failure(err: String) -> String {
+        let tail = String(err.trimmingCharacters(in: .whitespacesAndNewlines).suffix(500))
+        let said = error.isEmpty ? tail : error
+        let saidLine = said.isEmpty ? "" : " Muse Code said: \(said)"
+        if let resetsAt {   // Muse's words cut short, so the reset time stays inside the site's 300 characters
+            let short = said.count > 150 ? String(said.prefix(150)) + "…" : said
+            let words = short.isEmpty ? "" : " Muse Code said: \(short)\(short.hasSuffix(".") ? "" : ".")"
+            return "Your Muse Code plan's usage limit is reached.\(words) It resets \(resetsAt.formatted(date: .abbreviated, time: .shortened))."
+        }
+        if !asked.isEmpty { return "Muse Code stopped: it asked for a yes that nobody here can give (\(String(asked.prefix(200))))." }
+        if kind == "authRequired" || error.localizedCaseInsensitiveContains("not logged in") {
+            return "Muse Code isn't signed in on this Mac. Sign in to Muse Code, then try again.\(saidLine)"
+        }
+        switch terminal {
+        case "completed": return "Muse Code gave an empty answer."
+        case "cancelled": return "Muse Code stopped the answer.\(saidLine)"
+        case "": return "Muse Code stopped before it answered.\(saidLine)"
+        default: return "Muse Code couldn't answer.\(saidLine)"
+        }
+    }
+
+    private func rpc(_ id: Int, _ method: String, _ params: [String: Any]) -> Data {
+        jsonLine(["jsonrpc": "2.0", "id": id, "method": method, "params": params])
     }
 }
 

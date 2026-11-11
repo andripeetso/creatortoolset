@@ -11,6 +11,7 @@ import { MarkdownBody } from "@/components/MarkdownBody";
 import { canUse, useAuth, useMe } from "@/lib/auth";
 import { timeAgo } from "@/lib/exports";
 import { toolsetHomePath } from "@/lib/mobile";
+import { cornerTaken } from "@/lib/dock-place";
 import { useWorkspace } from "@/lib/workspace";
 import { keepSession, sessionKeys } from "@/lib/workshop";
 import { useCachedLoad } from "@/lib/local-cache";
@@ -33,7 +34,7 @@ import {
 } from "@/lib/workshop";
 
 const shell =
-  "relative flex min-h-dvh flex-col bg-zinc-950 px-4 pb-[max(2rem,env(safe-area-inset-bottom))] pt-[max(3.5rem,calc(env(safe-area-inset-top)+2.75rem))] text-zinc-200";
+  "ends-clear relative flex min-h-dvh flex-col bg-zinc-950 px-4 pb-[max(2rem,env(safe-area-inset-bottom))] pt-[max(3.5rem,calc(env(safe-area-inset-top)+2.75rem))] text-zinc-200";
 const back =
   "absolute left-3 top-[max(0.75rem,env(safe-area-inset-top))] flex items-center gap-1 rounded-md px-2 py-2 text-sm text-zinc-500 active:bg-zinc-900 active:text-zinc-200";
 
@@ -101,7 +102,7 @@ export default function MobileWorkshopPage() {
           {list.data === null ? (
             <div aria-hidden className="flex flex-col gap-1.5">
               {[0, 1, 2].map((i) => (
-                <div key={i} className="h-[62px] rounded-xl border border-zinc-800 bg-zinc-900/30" />
+                <div key={i} className="h-[64.5px] rounded-xl border border-zinc-800 bg-zinc-900/30" />
               ))}
             </div>
           ) : sessions.length === 0 ? (
@@ -137,7 +138,8 @@ export default function MobileWorkshopPage() {
           )}
         </section>
 
-        <ProjectList />
+        {/* a first visit: the projects take their place under the sessions once those are known (or their read failed), so they never move */}
+        {(!allowed || list.data !== null || !!list.error) && <ProjectList />}
       </div>
     </div>
   );
@@ -323,7 +325,11 @@ export function MobileWorkshopSessionPage() {
         )}
 
         {active && (
-          <div className="sticky bottom-[max(0.5rem,env(safe-area-inset-bottom))] rounded-2xl border border-zinc-800 bg-zinc-950/95 p-2 backdrop-blur">
+          <div
+            // it stays in the window's bottom right corner: the assistant's bubble sits above it, not over Send (dock-place.ts)
+            ref={cornerTaken}
+            className="sticky bottom-[max(0.5rem,env(safe-area-inset-bottom))] rounded-2xl border border-zinc-800 bg-zinc-950/95 p-2 backdrop-blur"
+          >
             <textarea
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
@@ -331,6 +337,7 @@ export function MobileWorkshopSessionPage() {
               placeholder={`Ask about ${docTabLabel(active)}…`}
               className="w-full resize-none bg-transparent px-1.5 py-1 text-[16px] text-zinc-100 outline-none placeholder:text-zinc-600"
             />
+            {/* Send stays on the right when the model chip has nothing to show (no AI connected yet) */}
             <div className="flex items-center justify-between gap-2">
               {me?.role === "admin" ? (
                 <ModelChip
@@ -348,7 +355,7 @@ export function MobileWorkshopSessionPage() {
                   type="button"
                   aria-label="Stop"
                   onClick={() => void stopTurn(sessionId, thinking.id).catch(() => {})}
-                  className="flex h-9 w-9 items-center justify-center rounded-full bg-zinc-800 text-zinc-200"
+                  className="ml-auto flex h-9 w-9 items-center justify-center rounded-full bg-zinc-800 text-zinc-200"
                 >
                   <Square className="h-3.5 w-3.5" />
                 </button>
@@ -358,7 +365,7 @@ export function MobileWorkshopSessionPage() {
                   aria-label="Send"
                   disabled={!draft.trim() || sending}
                   onClick={() => void send()}
-                  className="flex h-9 w-9 items-center justify-center rounded-full bg-violet-600 text-white disabled:opacity-40"
+                  className="ml-auto flex h-9 w-9 items-center justify-center rounded-full bg-violet-600 text-white disabled:opacity-40"
                 >
                   {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" />}
                 </button>

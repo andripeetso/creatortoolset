@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { Pencil, Play, Plus } from "lucide-react";
 import { AUTOMATION_NAME_MAX, AUTOMATION_PROMPT_MAX, type Destination, type Weekday } from "@contracts/automations";
@@ -24,13 +24,16 @@ import {
   type AutomationView,
   type ScheduleMode,
 } from "@/lib/automations";
-import { activeSet, effectiveSelection, effortLabel, getProviders, modelName, modelsOf } from "@/lib/providers";
+import { activeSet, effectiveSelection, effortLabel, modelName, modelsOf, useProviders } from "@/lib/providers";
+import { useCachedLoad } from "@/lib/local-cache";
 import { claudeLimitReset } from "@/lib/limits";
 import { listProjects, type WorkshopProject } from "@/lib/workshop";
 import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, SettingsSelect, Status, saveFailed } from "./ui";
 import { msg } from "./helpers";
 
-const RELOAD_MS = 15_000; // a run in progress finishes here without a reload
+/** This window's own saves read the list again too: the read after a save is never one that started before it. */
+const OWN_TOO = { own: true };
+const TICK_MS = 30_000; // "Next run in 5 min" counts down; the list itself is read again only when it changes
 const zone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 const DESTINATION: Record<Destination, { label: string; detail: string }> = {
@@ -63,31 +66,26 @@ function defaultAi(view: ProvidersView, ais: ProviderInstance[]): Selection | nu
 /**
  * Settings → Scheduled tasks: a prompt the account's AI runs on its own, each run a turn in an assistant chat. The page
  * builds none while no AI can run one (the server says why: `blocked`). ?task=<id> opens that task's form.
+ * The list is its saved copy at once; a run that starts, ends or is skipped is told by the server (api/automations.ts),
+ * so the row follows it without a reload.
  */
 export function AutomationsSection() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
-  const [list, setList] = useState<{ items: AutomationView[]; blocked: string | null } | null>(null);
-  const [providers, setProviders] = useState<ProvidersView | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const tasks = useCachedLoad<{ items: AutomationView[]; blocked: string | null }>("/api/automations", listAutomations, OWN_TOO);
+  const list = tasks.data;
+  const error = tasks.error;
+  // the providers give the form its computers and AIs, and the row its usage-limit reset; a failed read leaves those out
+  const providers = useProviders().data;
   const [now, setNow] = useState(() => Date.now());
   // "new", a task to edit, or nothing open
   const [editing, setEditing] = useState<AutomationView | "new" | null>(null);
 
-  // the providers give the form its computers and AIs, and the row its usage-limit reset; a failed read leaves those out
-  const reload = () =>
-    Promise.all([listAutomations(), getProviders().catch(() => null)])
-      .then(([r, p]) => {
-        setList(r);
-        setNow(Date.now());
-        if (p) setProviders(p);
-        setError(null);
-      })
-      .catch((e) => setError(msg(e)));
+  const refresh = tasks.refresh;
+  const reload = useCallback(() => refresh().then(() => setNow(Date.now()), () => {}), [refresh]);
 
   useEffect(() => {
-    void reload();
-    const t = setInterval(() => void reload(), RELOAD_MS);
+    const t = setInterval(() => setNow(Date.now()), TICK_MS);
     return () => clearInterval(t);
   }, []);
 

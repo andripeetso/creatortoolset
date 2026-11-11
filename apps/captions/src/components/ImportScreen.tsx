@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type Ref } from "react";
 import {
   ArrowLeft,
   Captions,
@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useStudio } from "@/lib/store";
 import { useCachedList } from "@/lib/local-cache";
+import { useSteadyList } from "@/lib/steady-list";
 import {
   deleteSession,
   listDeletedSessions,
@@ -270,14 +271,16 @@ function SessionsBlock({
   sessions,
   view,
   h,
+  listRef,
 }: {
   sessions: SessionMeta[];
   view: View;
   h: SessionHandlers;
+  listRef?: Ref<HTMLDivElement>;
 }) {
   if (view === "list") {
     return (
-      <div className="flex flex-col gap-1.5">
+      <div ref={listRef} className="flex flex-col gap-1.5">
         {sessions.map((s) => (
           <SessionRow key={s.id} s={s} h={h} />
         ))}
@@ -285,7 +288,7 @@ function SessionsBlock({
     );
   }
   return (
-    <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
+    <div ref={listRef} className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
       {sessions.map((s) => (
         <SessionTile key={s.id} s={s} h={h} />
       ))}
@@ -303,6 +306,11 @@ export function ImportScreen() {
     setItems: setSessions,
     refresh: refreshSessions,
   } = useCachedList<SessionMeta>("caption-projects", listSessions, { topic: "projects" }); // written under /api/projects
+  // on screen: scrolled down, the recent projects keep their places and a new one waits; with the top in sight it
+  // comes in and the column around it slides to its new centre (lib/steady-list)
+  const column = useRef<HTMLDivElement>(null);
+  const recentList = useRef<HTMLDivElement>(null);
+  const recent = useSteadyList(sessions, recentList, { around: column });
   const [deletedSessions, setDeletedSessions] = useState<DeletedSessionMeta[]>(
     [],
   );
@@ -447,7 +455,7 @@ export function ImportScreen() {
       >
         {hasCurrentProject && <PersistenceBadge />}
       </AppBar>
-      <div className="flex flex-1 flex-col items-center justify-center py-8">
+      <div ref={column} className="flex flex-1 flex-col items-center justify-center py-8">
       <ToolIntro icon={Captions} title="Caption Studio" line="Transcribe · caption · export with alpha" className="mt-0" />
 
       <label
@@ -481,7 +489,7 @@ export function ImportScreen() {
         />
       </label>
 
-      {sessions.length > 0 && (
+      {recent.length > 0 && (
         <div className="mt-8 w-[560px] max-w-[90vw]">
           <div className="mb-2 flex items-center justify-between">
             <h2 className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-zinc-500">
@@ -500,9 +508,10 @@ export function ImportScreen() {
             </div>
           </div>
           <SessionsBlock
-            sessions={sessions.slice(0, RECENT_COUNT)}
+            sessions={recent.slice(0, RECENT_COUNT)}
             view={view}
             h={handlers}
+            listRef={recentList}
           />
         </div>
       )}
@@ -587,7 +596,7 @@ export function ImportScreen() {
             </h2>
             <ViewToggle view={view} onChange={changeView} />
           </div>
-          <div className="flex-1 overflow-y-auto px-5 py-4">
+          <div className="flex-1 overflow-y-scroll px-5 py-4">
             <div
               className={
                 view === "grid" ? "mx-auto max-w-5xl" : "mx-auto max-w-2xl"

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
@@ -15,9 +15,12 @@ vi.mock("./library/db", async (importOriginal) => ({
 
 const dataDir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "relay-"));
 process.env.DATA_DIR = dataDir;
-afterAll(() => rmSync(dataDir, { recursive: true, force: true }));
-
-const { uploadRelayApp } = await import("./review");
+const { readMeta, reviewJobsDone, uploadRelayApp } = await import("./review");
+// an upload's processing runs on after its request is answered: the folder goes when that has ended
+afterAll(async () => {
+  await reviewJobsDone();
+  rmSync(dataDir, { recursive: true, force: true });
+});
 
 const app = new Hono<{ Variables: AuthVars }>();
 app.use("*", async (c, next) => {
@@ -61,6 +64,32 @@ describe("upload relay: chunked (no bucket)", () => {
     const done = await app.request(`${RELAY}/${init.id}/complete`, { method: "POST" });
     expect(done.status).toBe(200);
     expect(((await done.json()) as { id: string }).id).toBeTruthy();
+  });
+
+  it("a video whose processing cannot save its end does not stop the next upload's processing", async () => {
+    const upload = async () => {
+      const bytes = Buffer.from("not a video");
+      const init = await read(app.request(RELAY, json({ name: "clip.mp4", size: bytes.length })));
+      await app.request(`${RELAY}/${init.id}/parts/1`, {
+        method: "POST",
+        headers: { "upload-length": String(bytes.length), "upload-part-size": String(init.partSize), "content-length": String(bytes.length) },
+        body: bytes,
+      });
+      return ((await read(app.request(`${RELAY}/${init.id}/complete`, { method: "POST" }))) as { id: string }).id;
+    };
+    // the first video's folder cannot be written while its job runs: the job has nowhere to save "error"
+    const first = await upload();
+    const folder = path.join(dataDir, "review", first);
+    chmodSync(folder, 0o555);
+    try {
+      await reviewJobsDone(); // resolves: the failure stayed with that job
+    } finally {
+      chmodSync(folder, 0o755);
+    }
+    expect((await readMeta(first))!.versions[0]!.status).toBe("processing"); // it could not say otherwise
+    const second = await upload();
+    await reviewJobsDone();
+    expect((await readMeta(second))!.versions[0]!.status).toBe("error"); // processed: ffmpeg cannot read it
   });
 });
 

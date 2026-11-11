@@ -41,6 +41,14 @@ const toolOf = async (token: string, name: string, args: Record<string, unknown>
   return { error: !!r.result.isError, text: r.result.content[0]!.text };
 };
 
+/** The newest "assistant" notice this account's open docks were sent (the change stream's hello, api/lib/sync.ts). */
+const noticed = async (cookie: string) => {
+  const reader = (await app.request("/api/sync/events", { headers: { cookie } })).body!.getReader();
+  const hello = new TextDecoder().decode((await reader.read()).value);
+  await reader.cancel();
+  return (JSON.parse(/^data: (.*)$/m.exec(hello)![1]!) as { topics: Record<string, number> }).topics.assistant ?? 0;
+};
+
 afterEach(() => {
   vi.useRealTimers();
 });
@@ -125,8 +133,20 @@ describe("before an AI is connected", () => {
     }
     expect(last).toMatchObject({ role: "assistant", text: "Hi from Codex.", status: "done" });
     expect(jobTokenUser(`Bearer ${job.mcp!.token}`)).toBeNull();
-    // an AI with no tools (Gemini CLI) answers from the message alone: no token, the note, and the dock says so
-    await ai("gemini", "Gemini");
+    // Gemini CLI and Grok get the app's tools the same way: a job token for the turn, no asks
+    for (const [driver, name] of [["gemini", "Gemini"], ["grok", "Grok"]]) {
+      await ai(driver, name);
+      await app.request("/api/assistant/turn", { method: "POST", ...json({ text: `hello ${driver}` }, { cookie }) });
+      const turn = (await (await app.request("/api/devices/relay/wait", { method: "POST", ...json({}, device) })).json()) as Job;
+      expect(turn).toMatchObject({ driver });
+      expect(jobTokenUser(`Bearer ${turn.mcp!.token}`)?.username).toBe("nico");
+      expect(turn.asks).toBeUndefined();
+      expect(turn.system).not.toContain(NO_TOOLS_NOTE.trim());
+      await app.request(`/api/devices/relay/${turn.id}/done`, { method: "POST", ...json({ text: "Hi." }, device) });
+      await vi.waitFor(() => expect(jobTokenUser(`Bearer ${turn.mcp!.token}`)).toBeNull());
+    }
+    // an AI with no tools (OpenCode) answers from the message alone: no token, the note, and the dock says so
+    await ai("opencode", "OpenCode");
     await app.request("/api/assistant/turn", { method: "POST", ...json({ text: "hello again" }, { cookie }) });
     const plain = (await (await app.request("/api/devices/relay/wait", { method: "POST", ...json({}, device) })).json()) as Job;
     expect(plain.mcp).toBeUndefined();
@@ -160,14 +180,19 @@ describe("a turn", () => {
     // the job's token opens the MCP tools for this account
     expect((await toolOf(job.mcp!.token, "setup_status")).error).toBe(false);
     // each tool it uses shows under the reply as it works; the same tool again stays one line
+    const sent = await noticed(cookie);
     await toolOf(job.mcp!.token, "setup_status");
     await toolOf(job.mcp!.token, "navigate", { path: "/review" });
     const working = (await (await app.request("/api/assistant", { headers: { cookie } })).json()) as { messages: Array<{ steps?: string[] }> };
     expect(working.messages.at(-1)?.steps).toEqual(["Checking what's set up", "Opening Review"]);
+    // the dock is told as the reply is written and when it ends, with no request of its own: it never asks on a timer
+    const written = await noticed(cookie);
+    expect(written).toBeGreaterThan(sent);
     const done = await app.request(`/api/devices/relay/${job.id}/done`, { method: "POST", ...json({ text: "Hello, let's start." }, { authorization: `Bearer ${mac.token}` }) });
     expect(done.status).toBe(200);
     const view = (await (await app.request("/api/assistant", { headers: { cookie } })).json()) as { messages: Array<{ role: string; text: string; status?: string }> };
     expect(view.messages.at(-1)).toMatchObject({ role: "assistant", text: "Hello, let's start.", status: "done" });
+    expect(await noticed(cookie)).toBeGreaterThan(written);
     expect((await toolOf(job.mcp!.token, "setup_status")).error).toBe(true);
     const onDisk = readFileSync(path.join(process.env.DATA_DIR!, "assistant", "ana.json"), "utf-8");
     expect(onDisk).not.toContain(job.mcp!.token);

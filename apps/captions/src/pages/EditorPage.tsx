@@ -235,7 +235,7 @@ function NewEditSheet({ open, onClose }: { open: boolean; onClose: () => void })
 
   return (
     <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
-      <SheetContent side="right" className="w-full overflow-y-auto p-0 sm:max-w-2xl">
+      <SheetContent side="right" className="w-full overflow-y-scroll p-0 sm:max-w-2xl">
         <form
           className="flex flex-col gap-4 p-4 pt-12"
           onSubmit={(e) => {

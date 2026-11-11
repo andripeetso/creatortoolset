@@ -1,12 +1,14 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Check, Copy, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useCachedLoad } from "@/lib/local-cache";
+import type { AiKeyInfo } from "./OwnAiSection";
 import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, RowMenu, Section, saveFailed } from "./ui";
 import { fmtAgo, msg } from "./helpers";
 
 /** An access key as the server lists it (api/auth.ts GET /api-key): per level, null when there is none. */
 type KeyInfo = { at?: number; last4?: string; usedAt?: number } | null;
-type Keys = { review: KeyInfo; full: KeyInfo };
+type Keys = { review: KeyInfo; full: KeyInfo; ai?: AiKeyInfo[] };
 type Level = "review" | "full";
 
 /** One key per level: a new key of a level turns the old one off (api/users.ts newApiKey). */
@@ -28,23 +30,23 @@ async function json<T>(r: Response): Promise<T> {
 }
 
 /**
+ * This account's keys as the server lists them (dates and the last 4 characters, never a key): the saved copy at once,
+ * read again when an AI app uses its key for the first time (the server tells "setup" then). A new key's own text is
+ * only ever in the dialog that made it.
+ */
+export const useAccessKeys = () =>
+  useCachedLoad<Keys>("/api/auth/api-key", () => fetch("/api/auth/api-key").then((r) => json<Keys>(r)), { topic: "setup" });
+
+/**
  * Settings → Headless access, "Access keys": keys that let your own AI or a script act as you here. On a solo install the
  * account is the local one (api/auth.ts keyAccount), so it works without sign-in too. Making one opens a dialog that
  * shows the key once.
  */
 export function AccessKeysSection() {
-  const [keys, setKeys] = useState<Keys | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { data: keys, error, refresh, set: setKeys } = useAccessKeys();
   const [creating, setCreating] = useState(false);
 
-  const load = () =>
-    fetch("/api/auth/api-key")
-      .then((r) => json<Keys>(r))
-      .then((k) => (setKeys(k), setError(null)))
-      .catch((e) => setError(msg(e)));
-  useEffect(() => {
-    void load();
-  }, []);
+  const load = () => refresh().catch(() => {});
 
   const turnOff = (level: Level) =>
     fetch(`/api/auth/api-key?level=${level}`, { method: "DELETE" })

@@ -84,6 +84,7 @@ export function setRunnerForTests(r?: Runner, onDisk?: (p: string) => boolean): 
   shellSaid.clear();
   versions.clear();
   codexUrl = undefined;
+  loggedIn.clear();
 }
 
 const isExecutable = (p: string): boolean => {
@@ -272,8 +273,13 @@ export const parseVersion = (text: string): string | undefined => text.split("\n
 
 /** The raw text, as the message a person sees (plain words; the raw text stays for Details). */
 export function plainError(raw: string): { state: "signin" | "missing" | "failed"; message: string } {
-  // "auth method": Gemini CLI with no sign-in chosen ("Please set an Auth method in your …/settings.json")
-  if (/not logged in|\/login|log in|authentication|auth method|unauthorized|401/i.test(raw)) return { state: "signin", message: "Not signed in yet." };
+  // Google turning a free Google account away (Gemini CLI 0.68, tier free-tier, 2026-11-10): "This client is no longer
+  // supported for Gemini Code Assist for individuals… migrate to the Antigravity suite". Trying again won't change it.
+  if (/no longer supported for Gemini Code Assist|migrate to the Antigravity/i.test(raw))
+    return { state: "failed", message: "Google turned this account away: it no longer takes free Google accounts here." };
+  // "auth method": Gemini CLI with no sign-in chosen ("Please set an Auth method in your …/settings.json");
+  // "not signed in", "grok login": Grok signed out ("Not signed in. To authenticate without a browser, run: grok login …")
+  if (/not logged in|not signed in|grok login|\/login|log in|authentication|auth method|unauthorized|401/i.test(raw)) return { state: "signin", message: "Not signed in yet." };
   if (/timed out|timeout|did not pick up/i.test(raw)) return { state: "failed", message: "It took too long to answer. Try again." };
   if (/ENOENT|command not found|no such file/i.test(raw)) return { state: "missing", message: MISSING };
   return { state: "failed", message: "It didn't answer. Try again." };
@@ -390,27 +396,109 @@ export async function probe(id: CliId, fresh = false, home = os.homedir()): Prom
 
 /**
  * The other AIs the Mac app runs (ClaudeRequest.swift runnableDrivers), by the command it starts (MacReport.swift
- * driverBinaries). Setup lists the ones on this Mac and connects them as they are set up there: it never installs one or
- * signs one in.
+ * driverBinaries). Setup lists the ones on this Mac and connects them as they are set up there; the ones in VENDOR_AIS
+ * it also installs and signs in.
  */
-export const OTHER_AIS: Partial<Record<Driver, string>> = { grok: "grok", cursor: "cursor-agent", opencode: "opencode", antigravity: "antigravity-acp", pi: "pi" };
+export const OTHER_AIS: Partial<Record<Driver, string>> = { grok: "grok", musecode: "muse", cursor: "cursor-agent", opencode: "opencode", antigravity: "antigravity-acp", pi: "pi" };
 
-/** The other AIs on this Mac: one login shell's `command -v` for all of them, then the usual folders (as lookup). */
-export async function otherAis(home = os.homedir()): Promise<Driver[]> {
+/** Whether a JSON file has a value at `keys` (a saved sign-in): false when it is missing or unreadable. */
+const savedAt = (file: string, ...keys: string[]): boolean => {
+  try {
+    let v: unknown = JSON.parse(readFileSync(file, "utf8"));
+    for (const k of keys) v = v && typeof v === "object" ? (v as Record<string, unknown>)[k] : undefined;
+    return !!v;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * The other AIs setup installs and signs in as it does the three CLIs: the vendor's own installer, the copy it leaves,
+ * the vendor's browser sign-in, and the file that sign-in saves. A look reads only that file, never starts a program.
+ */
+export const VENDOR_AIS: Partial<Record<Driver, { install: string; bin: (home: string) => string; login: string[]; signedIn: (home: string) => boolean }>> = {
+  // xAI's installer keeps grok in ~/.grok/bin; `login --oauth` is its browser sign-in, saved to auth.json
+  grok: {
+    install: "curl -fsSL https://x.ai/cli/install.sh | bash",
+    bin: (h) => path.join(h, ".grok", "bin", "grok"),
+    login: ["login", "--oauth"],
+    signedIn: (h) => existsSync(path.join(process.env.GROK_HOME || path.join(h, ".grok"), "auth.json")),
+  },
+  // Cursor's installer links cursor-agent into ~/.local/bin; its sign-in keeps the tokens in the Keychain and the
+  // account in cli-config.json
+  cursor: {
+    install: "curl -fsS https://cursor.com/install | bash",
+    bin: (h) => path.join(h, ".local", "bin", "cursor-agent"),
+    login: ["login"],
+    signedIn: (h) => savedAt(path.join(process.env.CURSOR_CONFIG_DIR || path.join(h, ".cursor"), "cli-config.json"), "authInfo"),
+  },
+  // Meta's installer puts a launcher at ~/.local/bin/muse and fetches the program (about 470 MB) through it; told not to
+  // edit the shell profiles. Its sign-in prints Meta's page and a code to confirm there (museLoginPage), then waits.
+  // ponytail: where the sign-in is saved was read from the launcher's code and Muse Code 1.4.15's own notes, not seen
+  // after a real sign-in.
+  musecode: {
+    install: "curl -fsSL https://dev.meta.ai/install.sh | MUSE_NO_MODIFY_PATH=1 sh",
+    bin: (h) => path.join(h, ".local", "bin", "muse"),
+    login: ["login"],
+    signedIn: (h) => savedAt(path.join(process.env.XDG_CONFIG_HOME || path.join(h, ".config"), "muse", "auth.json"), "providers", "meta", "access_token"),
+  },
+};
+
+/** A sign-in of Grok, Meta or Cursor started here that ended well, whatever file it saved. */
+const loggedIn = new Set<Driver>();
+
+/**
+ * What a row says of Grok's, Meta's or Cursor's sign-in: the file it saves, or a sign-in started here that ended well.
+ * Only the button's name hangs on it; the real check decides (connectCli). One that is connected and whose file isn't
+ * found is unknown, never signed out.
+ * ponytail: none of the three files was seen after a real sign-in (no accounts to try, 2026-11-10). Once they are, a
+ * connected one with no file can say it was signed out.
+ */
+const vendorSignedIn = (id: Driver, home: string, connected: boolean): boolean | null =>
+  VENDOR_AIS[id]?.signedIn(home) || loggedIn.has(id) ? true : connected ? null : false;
+
+/**
+ * Meta's sign-in page and its code from `muse login`'s own output, or null until both are printed: "Open this page to sign
+ * in:", the page, "confirm this code matches:", the code. Only a page on auth.meta.com is taken (the Mac app reads it the
+ * same way: Relay.swift museLoginPage).
+ */
+export function museLoginPage(out: string): { page: string; code: string } | null {
+  const lines = out.split("\n").map((l) => l.trim());
+  const page = lines.find((l) => {
+    try {
+      const u = new URL(l);
+      return u.protocol === "https:" && u.host === "auth.meta.com";
+    } catch {
+      return false;
+    }
+  });
+  const at = lines.findIndex((l) => /(this code matches|enter this code):$/i.test(l));
+  const code = at >= 0 ? lines[at + 1] : "";
+  return page && code ? { page, code } : null;
+}
+
+/** The other AIs on this Mac and the copy each runs: one login shell's `command -v` for all of them, then the usual folders. */
+export async function otherAis(home = os.homedir()): Promise<Array<{ id: Driver; bin: string }>> {
   const ids = Object.keys(OTHER_AIS) as Driver[];
   const out = await fromShell(ids.map((id) => OTHER_AIS[id]).join(" "));
-  const onPath = new Set(out.split("\n").map((l) => l.trim()).filter((l) => l.startsWith("/")).map((l) => path.basename(l)));
+  const onPath = out.split("\n").map((l) => l.trim()).filter((l) => l.startsWith("/"));
   const nvm = nvmVersionDirs(home);
-  return ids.filter((id) => onPath.has(OTHER_AIS[id]!) || fallbackCandidates(OTHER_AIS[id]!, home, nvm).some(copyAt));
+  return ids.flatMap((id) => {
+    const name = OTHER_AIS[id]!;
+    const bin = onPath.find((l) => path.basename(l) === name) ?? fallbackCandidates(name, home, nvm).find(copyAt);
+    return bin ? [{ id, bin }] : [];
+  });
 }
+
+const nameOf = (id: Driver): string => (isCli(id) ? NAMES[id] : (DRIVERS.find((d) => d.id === id)?.label ?? id));
 
 /* ---- the view ---- */
 
-/** The rows setup shows: each CLI, found on this Mac or not. */
-export async function localAiView(username: string, mcpTo: CliId[], fresh = false): Promise<LocalAiView> {
+/** The rows setup shows: each CLI, found on this Mac or not; then Grok, Meta and Cursor, found or not, and the other AIs found. */
+export async function localAiView(username: string, mcpTo: CliId[], fresh = false, home = os.homedir()): Promise<LocalAiView> {
   // fresh: Check again. Nothing cached is used, so a CLI installed a moment ago is found and its sign-in is read again.
   if (fresh) CLI_IDS.forEach(forgetCli);
-  const [probed, found] = await Promise.all([Promise.all(CLI_IDS.map((id) => probe(id, fresh))), otherAis()]);
+  const [probed, found] = await Promise.all([Promise.all(CLI_IDS.map((id) => probe(id, fresh, home))), otherAis(home)]);
   const own = ownSettings(username)?.instances ?? [];
   const connected = (id: string) => {
     const inst = own.find((i) => i.id === `local-${id}`);
@@ -440,7 +528,15 @@ export async function localAiView(username: string, mcpTo: CliId[], fresh = fals
       ...(mcp === "update" ? { updateCommand: codexUpdateCommand(p.bin ?? "", p.real) } : {}),
     });
   }
-  return { local: true, rows, others: found.map((id) => ({ id, connected: connected(id) })) };
+  const others = (Object.keys(OTHER_AIS) as Driver[]).filter((id) => VENDOR_AIS[id] || found.some((f) => f.id === id));
+  return {
+    local: true,
+    rows,
+    others: others.map((id) => {
+      const here = found.some((f) => f.id === id);
+      return { id, found: here, signedIn: here && VENDOR_AIS[id] ? vendorSignedIn(id, home, connected(id)) : null, connected: connected(id) };
+    }),
+  };
 }
 
 /* ---- install: the vendors' own routes, run here as child processes (no Terminal) ---- */
@@ -546,21 +642,26 @@ async function installGemini(): Promise<Failed | null> {
  * Installs one CLI by its vendor's own route, then runs the binary by its absolute path with --version: only a binary
  * that answers counts as installed. Nothing is shown as a command to paste.
  */
-export async function installCli(id: CliId): Promise<SignInResult> {
-  const failed = id === "claude" ? await installClaude() : id === "codex" ? await installCodex() : await installGemini();
+export async function installCli(id: Driver): Promise<SignInResult> {
+  const vendor = isCli(id) ? undefined : VENDOR_AIS[id];
+  if (!isCli(id) && !vendor) return { ok: false, message: `${nameOf(id)} isn't installed from here.` };
+  // Grok's and Cursor's installers download about 180 MB each, Meta's about 470 MB: an hour on a slow connection
+  const failed =
+    id === "claude" ? await installClaude() : id === "codex" ? await installCodex() : id === "gemini" ? await installGemini()
+    : await step("/bin/bash", ["-o", "pipefail", "-c", vendor!.install], process.env, `Couldn't install ${nameOf(id)}. Check the internet connection, then try again.`, 60 * 60_000);
   if (failed) return { ok: false, message: failed.message, raw: failed.raw };
-  const bin = id === "gemini" ? geminiBin() : path.join(localBin(), id);
+  const bin = id === "gemini" ? geminiBin() : vendor ? vendor.bin(os.homedir()) : path.join(localBin(), id);
   const v = await run(bin, ["--version"], { env: { ...process.env, PATH: toolPath(bin) }, timeout: 15_000 });
-  forgetCli(id); // the next look reads the machine again
-  shellSaid.delete(id); // and asks the shell again: the new copy may be on its PATH
-  if (v.code !== 0) return { ok: false, message: `${NAMES[id]} installed, but it didn't start. Try again.`, raw: tailOf(v) };
-  return { ok: true, message: `${NAMES[id]} is installed.` };
+  if (isCli(id)) forgetCli(id); // the next look reads the machine again
+  shellSaid.clear(); // and asks the shell again: the new copy may be on its PATH
+  if (v.code !== 0) return { ok: false, message: `${nameOf(id)} installed, but it didn't start. Try again.`, raw: tailOf(v) };
+  return { ok: true, message: `${nameOf(id)} is installed.` };
 }
 
 /* ---- sign in: the vendor's own sign-in runs as a child process; the page polls until it is done ---- */
 
-/** The sign-in commands running now, one per CLI: a new press ends the older one. */
-const logins = new Map<CliId, ChildProcess>();
+/** The sign-in commands running now, one per AI: a new press ends the older one. */
+const logins = new Map<Driver, ChildProcess>();
 
 /**
  * Gemini CLI has no sign-in command. Its editor mode (`--acp`, the Agent Client Protocol: JSON lines on stdin and stdout)
@@ -592,14 +693,16 @@ function geminiLogin(bin: string): ChildProcess {
 }
 
 /** Starts the vendor's sign-in (its browser opens) as a child process. The page checks the sign-in every few seconds until it is done. */
-export async function signIn(id: CliId): Promise<SignInResult> {
-  const bin = await binFor(id);
+export async function signIn(id: Driver): Promise<SignInResult> {
+  const vendor = isCli(id) ? undefined : VENDOR_AIS[id];
+  const bin = isCli(id) ? await binFor(id) : vendor && (await otherAis()).find((o) => o.id === id)?.bin;
   if (!bin) return { ok: false, message: MISSING };
   logins.get(id)?.kill();
+  loggedIn.delete(id);
   const child =
     id === "gemini"
       ? geminiLogin(bin)
-      : spawn(bin, id === "claude" ? ["auth", "login"] : ["login"], { env: { ...process.env, PATH: toolPath(bin) }, stdio: ["ignore", "pipe", "pipe"] });
+      : spawn(bin, id === "claude" ? ["auth", "login"] : (vendor?.login ?? ["login"]), { env: { ...process.env, PATH: toolPath(bin) }, stdio: ["ignore", "pipe", "pipe"] });
   logins.set(id, child);
   const started = await new Promise<boolean>((resolve) => {
     child.once("spawn", () => resolve(true));
@@ -607,16 +710,38 @@ export async function signIn(id: CliId): Promise<SignInResult> {
   });
   if (!started) {
     logins.delete(id);
-    return { ok: false, message: `Couldn't start ${NAMES[id]} sign-in. Try again.` };
+    return { ok: false, message: `Couldn't start ${nameOf(id)} sign-in. Try again.` };
   }
-  child.stdout?.resume();
-  child.stderr?.resume();
   const timer = setTimeout(() => child.kill(), LOGIN_MS);
-  child.on("exit", () => {
+  child.on("exit", (code) => {
     clearTimeout(timer);
     if (logins.get(id) === child) logins.delete(id);
+    if (code === 0 && vendor) loggedIn.add(id);
   });
-  return { ok: true, message: "Your browser opens. Sign in there, then come back here." };
+  if (id !== "musecode") {
+    child.stdout?.resume();
+    child.stderr?.resume();
+    return { ok: true, message: "Your browser opens. Sign in there, then come back here." };
+  }
+  // Meta's sign-in opens no browser itself: its page is opened here, and the row shows the code to confirm there
+  const got = await new Promise<{ page: string; code: string } | null>((resolve) => {
+    let out = "";
+    const read = (d: Buffer) => {
+      out += d.toString();
+      const p = museLoginPage(out);
+      if (p) resolve(p);
+    };
+    child.stdout?.on("data", read);
+    child.stderr?.on("data", read);
+    child.on("exit", () => resolve(null));
+    setTimeout(() => resolve(null), 30_000);
+  });
+  if (!got) {
+    child.kill();
+    return { ok: false, message: `Couldn't start ${nameOf(id)} sign-in. Try again.` };
+  }
+  spawn("open", [got.page], { stdio: "ignore" }).on("error", () => {});
+  return { ok: true, message: `Confirm this code on Meta's page: ${got.code}`, code: got.code };
 }
 
 /* ---- connect ---- */
@@ -628,8 +753,10 @@ export async function signIn(id: CliId): Promise<SignInResult> {
  * (the AI step's picker does that). Mints no key.
  */
 export async function connectCli(username: string, id: Driver, home = os.homedir(), mac?: string): Promise<ConnectResult> {
-  // another AI the Mac app runs: found on this Mac, never installed or signed in here; the check says whether it answers
-  const p = isCli(id) ? await probe(id, true, home) : { found: (await otherAis(home)).includes(id), signedIn: null, home: undefined };
+  // another AI the Mac app runs: found on this Mac. Its sign-in file not being there never stops the check: the check
+  // itself says "not signed in" (plainError), and it is the one that knows
+  const found = !isCli(id) && (await otherAis(home)).some((o) => o.id === id);
+  const p: Pick<Probe, "found" | "signedIn" | "home"> = isCli(id) ? await probe(id, true, home) : { found, signedIn: found && VENDOR_AIS[id]?.signedIn(home) ? true : null };
   if (!p.found) return { state: "missing", signedIn: null, answered: null, message: MISSING };
   if (p.signedIn === false) return { state: "signin", signedIn: false, answered: null, message: "Not signed in yet." };
   // this server's own Mac: a device of this account that is answering now, never the first online one of its Macs
@@ -637,7 +764,7 @@ export async function connectCli(username: string, id: Driver, home = os.homedir
   if (!device || device.owner !== username || !isOnline(device.id)) return { state: "mac", signedIn: p.signedIn, answered: null, message: MAC_ONLY };
 
   const instId = `local-${id}`;
-  const name = isCli(id) ? NAMES[id] : (DRIVERS.find((d) => d.id === id)?.label ?? id);
+  const name = nameOf(id);
   const inst: ProviderInstance = { id: instId, driver: id, name, enabled: true, device: device.id, ...(p.home ? { home: p.home } : {}) };
   // the same writer as the Settings page's Add provider: addInstanceTo builds the set, parseSettings checks it.
   // A first AI becomes the default with the first model this login really has (modelsFor), not the catalogue's.

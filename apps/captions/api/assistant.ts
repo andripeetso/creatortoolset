@@ -4,11 +4,13 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import path from "node:path";
 import type { AuthVars } from "./auth";
 import { mintJobToken, revokeJobToken, touchJobToken } from "./auth";
+import { announceSoon } from "./lib/announce-soon";
 import { env } from "./lib/env";
 import { routeFor, routeForInstance, runFields, type Route } from "./lib/providers";
 import type { Selection } from "../contracts/providers";
 import { validTimezone } from "../contracts/automations";
 import { streamMacClaude, type MacAsk, type MacAskStatus } from "./lib/mac-claude";
+import { announce } from "./lib/sync";
 import { slug } from "./lib/workshop/folder";
 import { myKeys } from "./my-keys";
 import { MY_KEYS, type MyKeyEnv } from "../contracts/service-keys";
@@ -258,9 +260,16 @@ function save(username: string): void {
   renameSync(tmp, file);
 }
 
+/**
+ * The account's open docks read the conversation again (api/lib/sync.ts). For a change no request of the dock made:
+ * a reply is written from the Mac's answer, its tools' calls and a scheduled run, so nothing else announces it.
+ */
+const tell = (username: string) => announce(username, "assistant");
+
 /** Deltas of a reply are saved at most once a second; everything else saves at once. */
 const pendingSave = new Map<string, ReturnType<typeof setTimeout>>();
 function saveSoon(username: string): void {
+  announceSoon(username, "assistant"); // told now, not when the file lands: the dock reads the conversation in memory
   if (pendingSave.has(username)) return;
   pendingSave.set(username, setTimeout(() => {
     pendingSave.delete(username);
@@ -366,7 +375,11 @@ export function approvalFor(username: string, turn: string, ask: MacAsk): MacAsk
     a = { id: ask.id, tool: ask.tool, summary: approvalSummary(ask), detail: ask.detail, at: Date.now(), status: "waiting" };
     list.push(a);
     save(username);
-  } else if (expireApprovals(m)) save(username);
+    tell(username);
+  } else if (expireApprovals(m)) {
+    save(username);
+    tell(username);
+  }
   return a.status;
 }
 
@@ -395,6 +408,7 @@ export async function navigateTo(username: string, p: string): Promise<string> {
   if (!to) throw new Error("navigate takes a relative path in this app, such as /workshop or /settings/connectors");
   load(username).navigate = to;
   save(username);
+  tell(username);
   return to;
 }
 
@@ -402,6 +416,7 @@ export async function navigateTo(username: string, p: string): Promise<string> {
 export async function askSecret(username: string, env: MyKeyEnv, why: string): Promise<void> {
   load(username).pending = { env, why, at: Date.now() };
   save(username);
+  tell(username);
 }
 
 /* ---- the turn ---- */
@@ -422,8 +437,9 @@ export const routeOf = (username: string, admin: boolean, ai?: Selection): Route
 };
 
 const providerOf = (route: Route | null): AssistantProvider => (!route ? "none" : route.instance.driver === "claude" ? "claude" : "other");
-/** Claude Code and Codex run with this server's MCP tools (under a job token); the other drivers answer from the message. */
-const hasTools = (route: Route | null) => route?.instance.driver === "claude" || route?.instance.driver === "codex";
+/** Claude Code, Codex, Gemini CLI and Grok run with this server's MCP tools (under a job token); the others answer from the message. */
+const TOOL_DRIVERS: string[] = ["claude", "codex", "gemini", "grok"];
+const hasTools = (route: Route | null) => !!route && TOOL_DRIVERS.includes(route.instance.driver);
 
 function view(username: string, admin: boolean): AssistantView {
   const conv = load(username);
@@ -476,7 +492,7 @@ function promptFor(messages: AssistantMessage[], input?: TurnInput): string {
 }
 
 /**
- * One answer from the account's AI on its Mac, with this server's MCP tools (Claude Code, Codex) under a job token made for
+ * One answer from the account's AI on its Mac, with this server's MCP tools (Claude Code, Codex, Gemini CLI, Grok) under a job token made for
  * this answer only (turn names it: the reply id). The token is revoked when the answer ends
  * either way, and never appears in a thrown message. Used by the dock's turns and by scheduled runs (runInChat).
  * streamMacClaude queues the job synchronously, so the Mac's next poll gets it.
@@ -497,9 +513,9 @@ export async function answerWithTools(
     onAsk?: (ask: MacAsk) => MacAskStatus;
   },
 ): Promise<string> {
-  // Claude Code and Codex get Creator Toolset's MCP tools (under a job token for this answer); only Claude Code also gets
-  // the Mac's tools with asks. The other drivers (Gemini CLI…) answer with the message alone: no token, no asks.
-  // ponytail: an old Codex (no per-run MCP server) answers without the tools though the prompt names them (the Mac checks).
+  // Claude Code, Codex, Gemini CLI and Grok get Creator Toolset's MCP tools (under a job token for this answer); only Claude
+  // Code also gets the Mac's tools with asks. The other drivers (OpenCode…) answer with the message alone: no token, no asks.
+  // ponytail: an old Codex or Gemini CLI (no per-run MCP server) answers without the tools though the prompt names them (the Mac checks).
   const claude = route.instance.driver === "claude";
   const token = hasTools(route) ? mintJobToken(username, opts.turn) : undefined;
   const system = !token ? SYSTEM + NO_TOOLS_NOTE : claude && opts.onAsk ? SYSTEM + MAC_NOTE : SYSTEM;
@@ -566,6 +582,7 @@ async function runTurn(username: string, replyId: string, route: Route, url: str
     if (t) clearTimeout(t);
     pendingSave.delete(username);
     save(username);
+    tell(username);
   }
 }
 
@@ -608,6 +625,7 @@ export async function runInChat(
   const reply: AssistantMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, status: "thinking" };
   chat.messages.push(asked, reply);
   save(username);
+  tell(username);
   const prompt = `${o.preface}\n\n${promptFor(o.fresh ? [asked] : chat.messages)}`;
   const stop = new AbortController();
   const open = conv.id === chat.id && !running.has(username);
@@ -636,6 +654,7 @@ export async function runInChat(
     if (t) clearTimeout(t);
     pendingSave.delete(username);
     save(username);
+    tell(username);
   }
 }
 

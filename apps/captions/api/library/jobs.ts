@@ -24,6 +24,8 @@ export interface JobRow {
   lease_until: number | null;
   actor: string | null;
   error: string | null;
+  started_at?: number | null;
+  done_at?: number | null;
 }
 
 /**
@@ -39,23 +41,27 @@ export function enqueueJob(db: DatabaseSync, libraryId: string, versionId: strin
   ).run(libraryId, versionId, kind, actor);
 }
 
-/** Takes the oldest queued job that may run now, leases it, and counts the attempt. Null when there is none. */
-export function claimJob(db: DatabaseSync, leaseSeconds = 300, now = Date.now(), table: JobTable = "jobs"): JobRow | null {
+/**
+ * Takes the oldest queued job that may run now (of `kinds`, when given), leases it, counts the attempt and stamps when
+ * it started. Null when there is none.
+ */
+export function claimJob(db: DatabaseSync, leaseSeconds = 300, now = Date.now(), table: JobTable = "jobs", kinds?: readonly string[]): JobRow | null {
+  const only = kinds?.length ? ` AND kind IN (${kinds.map(() => "?").join(",")})` : "";
   return (
     (db
       .prepare(
-        `UPDATE ${table} SET state = 'running', lease_until = ?, attempts = attempts + 1
-         WHERE id = (SELECT id FROM ${table} WHERE state = 'queued' AND run_after <= ? ORDER BY id LIMIT 1)
+        `UPDATE ${table} SET state = 'running', lease_until = ?, attempts = attempts + 1, started_at = ?
+         WHERE id = (SELECT id FROM ${table} WHERE state = 'queued' AND run_after <= ?${only} ORDER BY id LIMIT 1)
          RETURNING *`,
       )
-      .get(now + leaseSeconds * 1000, now) as JobRow | undefined) ?? null
+      .get(now + leaseSeconds * 1000, now, now, ...(kinds ?? [])) as JobRow | undefined) ?? null
   );
 }
 
 /** Records the outcome of a claimed job: done, back in the queue after a backoff, or failed after MAX_ATTEMPTS. */
 export function finishJob(db: DatabaseSync, id: number, ok: boolean, error?: string, now = Date.now(), table: JobTable = "jobs"): void {
   if (ok) {
-    db.prepare(`UPDATE ${table} SET state = 'done', lease_until = NULL, error = NULL WHERE id = ?`).run(id);
+    db.prepare(`UPDATE ${table} SET state = 'done', lease_until = NULL, error = NULL, done_at = ? WHERE id = ?`).run(now, id);
     return;
   }
   const { attempts } = db.prepare(`SELECT attempts FROM ${table} WHERE id = ?`).get(id) as { attempts: number };

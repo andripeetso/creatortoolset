@@ -1,10 +1,9 @@
-import { useEffect, useState } from "react";
 import type { ServiceKeyEnv, ServiceKeyView } from "@contracts/service-keys";
 import { useAuth } from "@/lib/auth";
+import { useCachedLoad } from "@/lib/local-cache";
 import { Card, ErrorRow, LoadingRow, Section } from "./ui";
 import { KeyRow } from "./KeyRow";
 import type { ServerKeyRowId } from "./search";
-import { msg } from "./helpers";
 
 async function json<T>(res: Response): Promise<T> {
   const j = (await res.json().catch(() => null)) as { error?: string } | null;
@@ -23,18 +22,14 @@ const saveServerKey = (name: ServiceKeyEnv, value: string | null) =>
  */
 export function ServerKeysTab() {
   const hosted = useAuth((s) => s.hosted);
-  const [keys, setKeys] = useState<ServiceKeyView[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const load = () => getServerKeys().then(setKeys).catch((e) => setError(msg(e)));
-  useEffect(() => {
-    if (hosted) void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hosted]);
+  // where each key is set and its last 4 characters, never a key
+  const { data: keys, error, refresh } = useCachedLoad<ServiceKeyView[]>(hosted ? "/api/service-keys" : null, getServerKeys, { own: true });
+  const load = () => refresh().catch(() => {});
   if (!hosted) return null;
   if (!keys)
     return (
       <Section title="Fallback keys">
-        <Card>{error ? <ErrorRow title="Couldn't load the server keys" detail={error} retry={() => (setError(null), void load())} /> : <LoadingRow />}</Card>
+        <Card>{error ? <ErrorRow title="Couldn't load the server keys" detail={error} retry={() => void load()} /> : <LoadingRow />}</Card>
       </Section>
     );
   return (

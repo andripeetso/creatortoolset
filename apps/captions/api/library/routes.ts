@@ -8,7 +8,8 @@ import { env } from "../lib/env";
 import { appendBody, freeBytes, sha256File } from "../lib/uploads";
 import { ensureLibrary, homeOf, libraryRole, mayWrite } from "./access";
 import { expandCollection } from "./collections";
-import { blobs, libraryDb, libraryStore, meter } from "./db";
+import { blobs, libraryDb, libraryStore, meter, SETTING_DEFAULTS } from "./db";
+import { estimate, progress } from "./estimate";
 import { sendFile } from "../lib/send-file";
 import { notifyLibraryChanges } from "../lib/events";
 import type { AssetCard, LibrarySettings, LibrarySummary } from "../../contracts/library";
@@ -465,8 +466,26 @@ libraryApp.get("/", (c) => {
 
 const settingsOf = (json: string): LibrarySettings => {
   const s = JSON.parse(json || "{}") as Partial<LibrarySettings>;
-  return { describe: s.describe === true, embed: s.embed === true };
+  return { describe: s.describe ?? SETTING_DEFAULTS.describe, embed: s.embed ?? SETTING_DEFAULTS.embed };
 };
+
+// GET /api/library/:id/estimate?clips&bytes → LibraryEstimate: what processing that many clips would take, for the caller
+libraryApp.get("/:id/estimate", async (c) => {
+  const user = c.get("user");
+  const libraryId = c.req.param("id");
+  if (!libraryRole(user.username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
+  const clips = Math.min(1_000_000, Math.max(0, Math.floor(Number(c.req.query("clips")) || 0)));
+  const bytes = Math.max(0, Number(c.req.query("bytes")) || 0);
+  return c.json(await estimate(libraryId, user.username, clips, bytes));
+});
+
+// GET /api/library/:id/progress → LibraryProgress: the processing still to do
+libraryApp.get("/:id/progress", async (c) => {
+  const user = c.get("user");
+  const libraryId = c.req.param("id");
+  if (!libraryRole(user.username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
+  return c.json(await progress(libraryId, user.username));
+});
 
 // PATCH /api/library/:id { name?, settings?: { describe?, embed? } } → LibrarySummary; the owner only
 libraryApp.patch("/:id", async (c) => {
@@ -499,7 +518,7 @@ libraryApp.post("/", async (c) => {
   const name = (typeof body?.name === "string" ? body.name.trim().slice(0, 80) : "") || "Library";
   const id = `lib_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
   db().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES (?, ?, ?, 'local', ?)").run(id, homeOf(user.username), name, Date.now());
-  const created: LibrarySummary = { id, name, storage: "local", settings: { describe: false, embed: false } };
+  const created: LibrarySummary = { id, name, storage: "local", settings: { ...SETTING_DEFAULTS } };
   return c.json(created, 201);
 });
 

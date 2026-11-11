@@ -24,6 +24,7 @@ import {
 import { cornerOf, storePlace, storedPlace, type Corner, type Place } from "@/lib/dock-place";
 import { pageContext } from "@/lib/page-context";
 import { speak, stopSpeaking, unlockAudio, useReadAloud } from "@/lib/read-aloud";
+import { onTopic } from "@/lib/sync";
 import { cn } from "@/lib/utils";
 import { Composer, PictureOverlay } from "./Composer";
 import { EMPTY_DRAFT, MAX_PICTURES, isLongPaste, isMediaFile, isPicture, toPicture, type Draft } from "./draft";
@@ -38,7 +39,13 @@ import { openSetupAt, setupFinished, useSetup, useWorkTalk } from "@/lib/setup";
 /** Width of the chat docked to the right edge; the page moves over by as much. */
 const DOCK_W = 400;
 /** Below the pages' top bars, above the corner buttons bottom left. */
-const AT: Record<Corner, string> = { tl: "left-4 top-16", tr: "right-4 top-16", bl: "left-4 bottom-14", br: "right-4 bottom-4" };
+/** On the right it stands in from the window's edge by what a page's scrollbar takes, where a screen has none
+ *  (--edge-room, index.css): the same place on every screen. */
+const RIGHT = "right-[calc(1rem+var(--edge-room,0px))]";
+const AT: Record<Corner, string> = { tl: "left-4 top-16", tr: `${RIGHT} top-16`, bl: "left-4 bottom-14", br: `${RIGHT} bottom-4` };
+/** The bubble's own place. Bottom right it sits above what a screen keeps in that corner: the screen says how high that
+ *  stands (--corner-taken on <html>: a Review video's comment box, whose Send button the bubble used to cover). */
+const BUBBLE_AT: Record<Corner, string> = { ...AT, br: `${RIGHT} bottom-[calc(1rem+var(--corner-taken,0px))] motion-safe:transition-[bottom]` };
 const ORIGIN: Record<Corner, string> = { tl: "origin-top-left", tr: "origin-top-right", bl: "origin-bottom-left", br: "origin-bottom-right" };
 
 const QUEUE_KEY = "ct-assistant:queue";
@@ -127,18 +134,10 @@ export function AssistantDock() {
 
   const last = view?.messages.at(-1);
   const thinking = last?.status === "thinking";
-  // a reply on the Mac takes a while: look again every 1.5 s until it's done
-  useEffect(() => {
-    if (!real || !thinking) return;
-    const t = setInterval(() => void load(), 1500);
-    return () => clearInterval(t);
-  }, [real, thinking, load]);
-  // a scheduled task may post in the open chat any time: look again now and then while the dock is open
-  useEffect(() => {
-    if (!real || collapsed || thinking) return;
-    const t = setInterval(() => void load(), 15_000);
-    return () => clearInterval(t);
-  }, [real, collapsed, thinking, load]);
+  // a reply is written on the server from the Mac's answer, and a scheduled task may post in the chat any time: the
+  // server says when the conversation changed (api/assistant.ts) and it is read again then, never on a timer. Also
+  // in a hidden window: a reply that finishes there is still read aloud
+  useEffect(() => (real ? onTopic("assistant", () => void load()) : undefined), [real, load]);
 
   // a reply that just finished: read it aloud, when that's on
   const waitingOn = useRef<string | null>(null);
@@ -402,7 +401,7 @@ export function AssistantDock() {
           className={cn(
             "group pointer-events-auto fixed z-[55] size-14 touch-none rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--tint)] focus-visible:ring-offset-2 focus-visible:ring-offset-background",
             "motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-50 motion-safe:duration-300",
-            AT[corner],
+            BUBBLE_AT[corner],
           )}
         >
           {thinking && <span className="absolute inset-0 rounded-full bg-[color-mix(in_srgb,var(--tint)_50%,transparent)] motion-safe:animate-ping" aria-hidden />}
@@ -534,7 +533,8 @@ export function AssistantDock() {
         </button>
       </header>
 
-      <div className="relative min-h-0 flex-1 overflow-y-auto px-4 pt-2 pb-3 text-sm">
+      {/* docked, the list ends at the window's edge: it keeps its bar's room, so a chat that starts to scroll moves nothing */}
+      <div className={cn("relative min-h-0 flex-1 px-4 pt-2 pb-3 text-sm", place.mode === "dock" ? "overflow-y-scroll" : "overflow-y-auto")}>
         {!view && <Dots />}
 
         {view && showPast && (
@@ -702,7 +702,7 @@ export function AssistantDock() {
 const attachmentsLabel = (it: Queued) =>
   [it.images?.length ? `${it.images.length} picture${it.images.length === 1 ? "" : "s"}` : "", ...(it.pasted ?? []).map((p) => p.name), ...(it.files ?? []).map((f) => f.name)].filter(Boolean).join(", ");
 
-/** The header's "Gemini · no app tools", only for an AI that truly has none of the app's tools. */
+/** The header's "OpenCode · no app tools", only for an AI that truly has none of the app's tools. */
 export function NoToolsNote({ view }: { view: AssistantView | null }) {
   if (view?.provider !== "other" || view.tools) return null;
   return (

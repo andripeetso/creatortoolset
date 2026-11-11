@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useCachedLoad } from "@/lib/local-cache";
+import { useSteadyList } from "@/lib/steady-list";
 import { Picture } from "@/components/Picture";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import {
@@ -145,12 +146,19 @@ export default function ReviewPage() {
     const inside = assets?.filter((a) => folderOf(a) === p.id) ?? [];
     return inside.length > 0 && inside.every(isFinished);
   };
-  const shownProjects = project ? [] : projects.filter((p) => finished(p) === done);
+  const listedProjects = project ? [] : projects.filter((p) => finished(p) === done);
   // inside a project the finished ones go last
-  const shown =
+  const listed =
     assets
       ?.filter((a) => folderOf(a) === project?.id && (!!project || isFinished(a) === done))
       .sort((x, y) => +isFinished(x) - +isFinished(y)) ?? null;
+  // what is on screen: scrolled away from the top, the cards keep their places and a new video waits up there;
+  // with the top in sight it comes in and the others slide over (lib/steady-list)
+  const where = `${project?.id}|${trash}|${done}`;
+  const grid = useRef<HTMLDivElement>(null);
+  const cards = useSteadyList<ReviewProject | ReviewAsset>([...listedProjects, ...(listed ?? [])], grid, { scope: where });
+  const shownProjects = cards.filter((c): c is ReviewProject => !("versions" in c));
+  const shown = listed && cards.filter((c): c is ReviewAsset => "versions" in c);
   const doneCount =
     projects.filter(finished).length + (assets?.filter((a) => !folderOf(a) && isFinished(a)).length ?? 0);
 
@@ -196,7 +204,6 @@ export default function ReviewPage() {
     });
   };
 
-  const where = `${project?.id}|${trash}|${done}`;
   const picked = sel.at === where ? sel.ids : NONE;
   const clearPicks = () => setSel({ at: where, ids: new Set() });
   useEffect(() => {
@@ -435,7 +442,7 @@ export default function ReviewPage() {
             </p>
           </button>
         ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div ref={grid} className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {shownProjects.map((p) => (
               <ProjectCard
                 key={p.id}

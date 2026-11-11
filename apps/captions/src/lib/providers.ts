@@ -12,6 +12,7 @@ import {
   type Scope,
   type Selection,
 } from "@contracts/providers";
+import { useCachedLoad } from "./local-cache";
 
 export type UsageRow = ProvidersView["usage"][number];
 
@@ -29,6 +30,13 @@ const jsonInit = (body: unknown, method = "POST"): RequestInit => ({
 });
 
 export const getProviders = () => fetch("/api/providers").then((r) => json<ProvidersView>(r));
+
+/**
+ * The providers view for every Settings page that shows it (Providers, Usage, Devices, Storage, Scheduled tasks): the
+ * saved copy at once, read again when the AIs or the computers change (it carries both). `own`: this window's own saves
+ * count too, so the read after a save is never the one that was already on its way before it.
+ */
+export const useProviders = () => useCachedLoad<ProvidersView>("/api/providers", getProviders, { topic: ["providers", "devices"], own: true });
 
 /** Admins: the workspace's set (answers the admins, background work, and the team while shared). */
 export const saveWorkspace = (settings: ProviderSettings) =>

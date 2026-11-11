@@ -338,6 +338,52 @@ func signInScript(driver: String, home: String, binary: String) -> String? {
     return lines.joined(separator: "\n") + "\n"
 }
 
+/// Meta's sign-in page and its code from `muse login`'s output, or nil until both are there. With no terminal, Muse Code
+/// 1.4.15 prints "Open this page to sign in:", the page (the code in its address), "confirm this code matches:" and the code,
+/// then waits. It ran neither `open` nor $BROWSER when tried that way (with macOS's own opener blocked, so whether it would
+/// open a tab by itself was not seen). Only a page on auth.meta.com is taken.
+func museLoginPage(_ output: String) -> (page: URL, code: String)? {
+    let lines = output.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+    guard let page = lines.lazy.compactMap({ URL(string: $0) }).first(where: { $0.scheme == "https" && $0.host == "auth.meta.com" }),
+          let at = lines.firstIndex(where: { $0.lowercased().hasSuffix("this code matches:") || $0.lowercased().hasSuffix("enter this code:") }),
+          at + 1 < lines.count, !lines[at + 1].isEmpty else { return nil }
+    return (page, lines[at + 1])
+}
+
+/// Muse Code's sign-in with no Terminal: `muse login` runs here with no terminal, `found` gets Meta's page and the code (on
+/// the reader's thread), and the login saves the sign-in itself once it is approved on that page. One at a time: a new start
+/// stops the last; it is stopped after 30 minutes too (Meta's code expires before that).
+final class MuseLogin {
+    private var process: Process?
+
+    func start(binary: String, found: @escaping (URL, String) -> Void) {
+        if process?.isRunning == true { process?.terminate() }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: binary)
+        p.arguments = ["login"]
+        p.environment = withBinaryOnPath(driverEnv(base: ProcessInfo.processInfo.environment), binary: binary)
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = out
+        p.standardInput = FileHandle.nullDevice
+        do { try p.run() } catch { return AppLog.write("sign in: muse login did not start (\(error.localizedDescription))") }
+        process = p
+        Thread {
+            var text = ""
+            var told = false
+            while case let chunk = out.fileHandleForReading.availableData, !chunk.isEmpty {
+                text += String(decoding: chunk, as: UTF8.self)
+                if !told, let got = museLoginPage(text) {
+                    told = true
+                    found(got.page, got.code)
+                }
+            }
+            if !told { AppLog.write("sign in: muse login ended without a page: \(String(text.suffix(300)))") }
+        }.start()
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 30 * 60) { if p.isRunning { p.terminate() } }
+    }
+}
+
 /// One word for a POSIX shell, in single quotes (an embedded quote is closed, escaped and reopened).
 func shellQuote(_ text: String) -> String {
     "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'"

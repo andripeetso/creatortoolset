@@ -106,7 +106,8 @@ describe("describe job", () => {
 
   it("with a route: four frames go to the actor's AI; the description and AI tags are stored and searchable", async () => {
     const v = await seed("ast-ai-0001");
-    vi.mocked(aiFor).mockReturnValueOnce({ only: ["mac"] });
+    // once for the turn on the AI (describeSlot), once for the job
+    vi.mocked(aiFor).mockReturnValueOnce({ only: ["mac"] }).mockReturnValueOnce({ only: ["mac"] });
     vi.mocked(completeVisionWithFallback).mockImplementationOnce(async (_s, _u, images, _c, parse) => {
       expect(images).toHaveLength(4);
       return { value: parse('{"description": "A person rolls across a blue mat.", "tags": ["roll", "mat"]}'), provider: "test" } as never;
@@ -123,7 +124,7 @@ describe("describe job", () => {
     expect(hits.map((h) => h.asset.id)).toEqual(["ast-ai-0001"]);
   });
 
-  it("probe queues fingerprint always and describe only when the library switched it on", async () => {
+  it("probe queues fingerprint always and describe unless the library switched it off", async () => {
     const d = libraryDb();
     const run = async (id: string) => {
       const v = await seed(id);
@@ -132,10 +133,11 @@ describe("describe job", () => {
       while (job(v, "probe")?.state === "queued") await tick();
       return v;
     };
+    d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.describe', json('false')) WHERE id = 'lib_a'`).run();
     const off = await run("ast-probe-01");
     expect(job(off, "fingerprint")?.state).toBe("queued");
     expect(job(off, "describe")).toBeUndefined();
-    d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.describe', json('true')) WHERE id = 'lib_a'`).run();
+    d.prepare(`UPDATE libraries SET settings = '{}' WHERE id = 'lib_a'`).run(); // on by default
     const on = await run("ast-probe-02");
     expect(job(on, "describe")?.state).toBe("queued");
     d.prepare(`UPDATE libraries SET settings = '{}' WHERE id = 'lib_a'`).run();

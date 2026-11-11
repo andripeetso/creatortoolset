@@ -5,6 +5,7 @@ import type { AssetCard, AssetDetail, AssetKind, AssetPage, Collection, LibraryS
 import { AppBar } from "@/components/AppBar";
 import { ToolSetupLine } from "@/components/setup/ToolSetupLine";
 import { FootageFolderCard } from "@/components/FootageFolderCard";
+import { BIG_DROP, BigUploadDialog, LibraryProgressBar } from "@/components/LibraryProcessing";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
@@ -84,6 +85,7 @@ export default function LibraryPage() {
   const [kind, setKind] = useState<AssetKind | "all">("all");
   const [facets, setFacets] = useState<Record<string, string[]>>({}); // plug-in sidebar filters picked so far
   const [uploads, setUploads] = useState<Upload[]>([]);
+  const [asking, setAsking] = useState<File[] | null>(null); // a big upload, waiting for its go after the estimate
   const [preview, setPreview] = useState<AssetCard | null>(null);
   const [startAt, setStartAt] = useState(0); // the second the preview opens at (a line said in it)
   const [said, setSaid] = useState<SearchHit[]>([]);
@@ -183,11 +185,18 @@ export default function LibraryPage() {
     }
   };
 
-  // one file after another: the server's disk and the phone's data are both easier on that
+  // a big upload says first what preparing it takes (time, and money on whose AI and keys)
   const addFiles = (files: FileList | null) => {
     if (!files?.length) return;
+    const all = Array.from(files);
+    if (all.length >= BIG_DROP) setAsking(all);
+    else start(all);
+  };
+
+  // one file after another: the server's disk and the phone's data are both easier on that
+  const start = (files: File[]) => {
     const folderId = collections.find((c) => c.id === scope && c.kind === "manual")?.id;
-    const added = Array.from(files).map((file) => ({ key: ++keys.current, file, sent: 0, folderId, status: "uploading" as const }));
+    const added = files.map((file) => ({ key: ++keys.current, file, sent: 0, folderId, status: "uploading" as const }));
     setUploads((prev) => [...prev, ...added]);
     void (async () => {
       for (const u of added) await send(u);
@@ -281,6 +290,20 @@ export default function LibraryPage() {
           </Button>
         )}
       </AppBar>
+      {asking && libId && (
+        <BigUploadDialog
+          libraryId={libId}
+          clips={asking.length}
+          bytes={asking.reduce((n, f) => n + f.size, 0)}
+          title={`Upload ${asking.length.toLocaleString()} clips?`}
+          go="Upload"
+          onClose={() => setAsking(null)}
+          onUpload={() => {
+            start(asking);
+            setAsking(null);
+          }}
+        />
+      )}
       <input
         ref={picker}
         type="file"
@@ -405,6 +428,7 @@ export default function LibraryPage() {
               onSaved={(storage) => setLibraries((all) => all?.map((x) => (x.id === library.id ? { ...x, storage } : x)) ?? all)}
             />
             <AiSwitches library={library} onChange={(l) => setLibraries((all) => all?.map((x) => (x.id === l.id ? l : x)) ?? all)} onError={setError} />
+            <LibraryProgressBar libraryId={library.id} />
 
             {uploads.length > 0 && (
               <section aria-label="Uploads" className="flex flex-col gap-2 rounded-xl border border-zinc-500/20 p-3">
@@ -485,7 +509,7 @@ export default function LibraryPage() {
       </main>
 
       <Sheet open={preview !== null} onOpenChange={(open) => !open && setPreview(null)}>
-        <SheetContent side="right" className="w-full overflow-y-auto p-0 sm:max-w-xl">
+        <SheetContent side="right" className="w-full overflow-y-scroll p-0 sm:max-w-xl">
           {preview && (
             <div className="flex flex-col gap-3 p-4 pt-12">
               <SheetTitle className="truncate text-base">{preview.title}</SheetTitle>
@@ -634,7 +658,7 @@ const AiBadge = () => (
   </span>
 );
 
-/** The owner's switches: both spend AI on every new upload, so both start off. */
+/** The owner's switches, both on to start (api/library/db.ts SETTING_DEFAULTS): a big upload says first what they will take. */
 function AiSwitches({ library, onChange, onError }: { library: LibrarySummary; onChange: (l: LibrarySummary) => void; onError: (e: string) => void }) {
   const flip = (key: "describe" | "embed", on: boolean) =>
     updateLibrary(library.id, { settings: { [key]: on } })

@@ -1,5 +1,5 @@
 import { Plus } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { useNavigate } from "react-router";
 import { TOOLS, TOOL_NAMES, type Tool } from "@contracts/tools";
 import type { AiRoute, MemberPatch, MemberView, WorkspaceView } from "@contracts/workspaces";
@@ -8,8 +8,10 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { useMe } from "@/lib/auth";
+import { useCachedLoad } from "@/lib/local-cache";
 import { createInvite, getWorkspace, inviteUrl, removeMember, renameWorkspace, revokeInvite, setSignInWith, updateMember } from "@/lib/workspaces";
 import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, SettingsSelect, TextField, saveFailed } from "./ui";
+import { useSignInApps } from "./AccountSection";
 import { lastActiveText, msg } from "./helpers";
 
 type SignInProvider = "google" | "apple" | "github";
@@ -43,28 +45,19 @@ export const signInId = (opts: ReturnType<typeof signInOptions>, saved: readonly
 export function WorkspaceSection() {
   const me = useMe();
   const navigate = useNavigate();
-  const [view, setView] = useState<WorkspaceView | null | undefined>(undefined);
-  const [failed, setFailed] = useState(false);
+  // "not in a team" is an answer too (team: null), kept apart from "not known yet"
+  const saved = useCachedLoad<{ team: WorkspaceView | null }>("/api/workspace", () => getWorkspace().then((team) => ({ team })), { own: true });
+  const view: WorkspaceView | null | undefined = saved.data ? saved.data.team : undefined;
+  const failed = !saved.data && !!saved.error;
   const [inviting, setInviting] = useState(false);
   const [editing, setEditing] = useState<MemberView | null>(null);
   const [aiFor, setAiFor] = useState<MemberView | null>(null);
   // the sign-ins this server has switched on (the Account page's list): the team can only be set to these
-  const [on, setOn] = useState<SignInProvider[] | null>(null);
-  useEffect(() => {
-    const none: Partial<Record<SignInProvider, boolean>> = {};
-    fetch("/api/account/providers")
-      .then((r) => (r.ok ? (r.json() as Promise<Partial<Record<SignInProvider, boolean>>>) : none))
-      .then((d) => setOn(PROVIDERS.filter((p) => d[p])))
-      .catch(() => setOn([]));
-  }, []);
+  const apps = useSignInApps();
+  const on: SignInProvider[] | null = apps ? PROVIDERS.filter((p) => apps[p]) : null;
 
-  const load = useCallback(() => {
-    setFailed(false);
-    return getWorkspace().then(setView, () => setFailed(true));
-  }, []);
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const refresh = saved.refresh;
+  const load = useCallback(() => refresh().catch(() => {}), [refresh]);
 
   if (failed) {
     return (
