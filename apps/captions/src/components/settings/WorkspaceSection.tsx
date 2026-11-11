@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { useMe } from "@/lib/auth";
 import { useCachedLoad } from "@/lib/local-cache";
-import { createInvite, getWorkspace, inviteUrl, removeMember, renameWorkspace, revokeInvite, setSignInWith, updateMember } from "@/lib/workspaces";
+import { createInvite, getWorkspace, inviteUrl, offAfterToggle, removeMember, renameWorkspace, revokeInvite, setSignInWith, updateMember } from "@/lib/workspaces";
 import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, SettingsSelect, TextField, saveFailed } from "./ui";
 import { useSignInApps } from "./AccountSection";
 import { lastActiveText, msg } from "./helpers";
@@ -286,12 +286,10 @@ function AiDialog({ member, onClose, onSave }: { member: MemberView; onClose: ()
 }
 
 /** A member's apps: one switch per app, each saved at once (the `off` list of the account). */
-function ToolsDialog({ member, onClose, onChange }: { member: MemberView | null; onClose: () => void; onChange: (m: MemberView, off: Tool[]) => Promise<void> }) {
+function ToolsDialog({ member, onClose, onChange }: { member: MemberView | null; onClose: () => void; onChange: (m: MemberView, off: string[]) => Promise<void> }) {
   if (!member) return null;
   const toggle = (t: Tool, on: boolean) => {
-    const off = member.off.filter((x): x is Tool => (TOOLS as readonly string[]).includes(x) && x !== t);
-    if (!on) off.push(t);
-    void onChange(member, off);
+    void onChange(member, offAfterToggle(member.off, t, on));
   };
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
