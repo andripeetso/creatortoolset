@@ -1,5 +1,6 @@
 import { Hono } from "hono";
-import { innerCall, type AuthVars } from "./auth";
+import { unattended } from "./assistant";
+import { innerCall, jobTurn, type AuthVars } from "./auth";
 import { SkillError, addSkill, dockSkills, listSkills, removeSkill, skillNamed, updateSkill } from "./lib/skills";
 
 /**
@@ -31,6 +32,9 @@ skillsApp.get("/", async (c) => c.json({ skills: await listSkills(c.get("user").
 
 /** One skill's text by its name, for the assistant: only one that is on in the project the app is in. */
 skillsApp.get("/read", async (c) => {
+  // a scheduled run is given no skill (its prompt lists none and skill_read is not in its tools): asked by name, it is refused
+  const turn = jobTurn(c.req.header("authorization"));
+  if (turn && unattended(c.get("user").username, turn)) return c.json({ error: "A scheduled run reads no skills: carry on without one." }, 409);
   const on = await dockSkills(c.get("user").username);
   const skill = skillNamed(on, c.req.query("name") ?? "");
   if (!skill) return c.json({ error: on.length ? `No skill of that name is on. On now: ${on.map((s) => s.name).join(", ")}.` : "The user has no skill switched on here." }, 409);

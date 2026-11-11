@@ -505,6 +505,7 @@ describe("Creator Toolset as a remote MCP server", () => {
     // 15233 -> 15277: media_search says a typed search comes best match first, with where a word is said
     // 15277 -> 15445: the public AI Editor says what a run does by itself (each draft's preview is filed in Review), what
     // send_to_review is for (a draft that changed), and where each draft's preview is (editor_get)
-    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(15445);
+    // 15445 -> 15465: finals_link_session says its piece id comes from finals_pieces
+    expect(Buffer.byteLength(JSON.stringify(TOOLS))).toBe(15465);
   });
 });

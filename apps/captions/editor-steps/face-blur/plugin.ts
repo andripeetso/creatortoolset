@@ -264,6 +264,33 @@ async function picture(file: string, t: Track, info: { w: number; h: number; fps
   return b64;
 }
 
+/** What one file's faces came to: how many were found, how many blurred, and the ones left, in words a person can check. */
+export interface Counts { found: number; blurred: number; left: string[] }
+
+/**
+ * The note every run writes, so a person never has to trust that nothing was missed: how many faces it found, how
+ * many it blurred and which it left, over every video the cut shows (a copy made before counts from its own file).
+ */
+export function countsNote(all: Counts[], who: string): string {
+  const found = all.reduce((n, c) => n + c.found, 0);
+  const blurred = all.reduce((n, c) => n + c.blurred, 0);
+  const left = all.flatMap((c) => c.left);
+  const faces = (n: number) => `${n} ${n === 1 ? "face" : "faces"}`;
+  if (!found) return "Blur faces: 0 faces found in the footage, nothing blurred";
+  if (!blurred) return `Blur faces: ${faces(found)} found, none matched “${who}”, nothing blurred`;
+  return `Blur faces: ${faces(found)} found, ${blurred} blurred${left.length ? `, ${left.length} left as ${left.length === 1 ? "it is" : "they are"} (${left.join("; ")})` : ""}`;
+}
+
+/** A face left as it is, in words: its file, where it is, and whether it is the speaker. */
+const leftLabel = (name: string, t: Track, info: { w: number; h: number }, speaker: boolean): string => {
+  const boxes = [...t.boxes.values()];
+  const avg = (i: number) => boxes.reduce((s, b) => s + b[i]!, 0) / boxes.length;
+  const cx = (avg(0) + avg(2) / 2) / info.w;
+  const cy = (avg(1) + avg(3) / 2) / info.h;
+  const where = `${cy < 0.33 ? "top" : cy > 0.67 ? "bottom" : "middle"} ${cx < 0.33 ? "left" : cx > 0.67 ? "right" : "centre"}`;
+  return `${name}, ${where}${speaker ? ", the speaker" : ""}`;
+};
+
 /** The step. `ask` stands in for the person's AI in tests; without it the AI must be connected. */
 export async function blurFaces(input: EditorStepInput, ask?: Ask): Promise<Record<string, string>> {
   const out: Record<string, string> = {};
@@ -285,13 +312,22 @@ async function blur(input: EditorStepInput, out: Record<string, string>, given?:
   // ponytail: photos are left alone (a copy must be a video of the same length); blur them in a photo editor until a still copy is wanted
   if (stills.length) input.note(`Blur faces left the photos as they are: ${stills.join(", ")}`);
   const todo: { id: string; ranges: [number, number][]; dest: string }[] = [];
+  const counts: Counts[] = [];
   for (const [id, ranges] of wanted) {
     const dest = path.join(workDir, `${id}-${copyKey(files[id]!, ranges, who, look)}.mov`);
-    if (existsSync(dest)) out[id] = dest;
-    else todo.push({ id, ranges, dest });
+    // a copy made before, with the counts it was made with beside it (<copy>.counts.json; prune keeps a kept copy's own files)
+    const kept = existsSync(dest) ? await readFile(`${dest}.counts.json`, "utf8").then((t) => JSON.parse(t) as Counts, () => null) : null;
+    if (kept) {
+      out[id] = dest;
+      counts.push(kept);
+    } else todo.push({ id, ranges, dest });
   }
-  if (!todo.length || signal.aborted) return out;
-  if (!given && !anyVisionConfigured(edit.createdBy)) throw new Error("Blur faces needs your AI to decide which faces match: connect one in Settings → Providers");
+  if (signal.aborted) return out;
+  if (!todo.length) {
+    if (wanted.length) input.note(countsNote(counts, who));   // only photos: nothing was looked at, so no count
+    return out;
+  }
+  if (!given && !anyVisionConfigured(edit.createdBy)) throw new Error("Blur faces needs your AI to decide which faces match: connect one in Settings → Providers. Nothing was blurred, and this draft has no preview until it runs again");
   const ask = given ?? askAi;
   const rt = await ensure();
   const fail = (id: string) => (e: unknown) => {
@@ -318,7 +354,7 @@ async function blur(input: EditorStepInput, out: Record<string, string>, given?:
   }
   const all = found.flatMap((f) => f.tracks.map((t) => ({ t, f })));
   if (!all.length) {
-    input.note("Blur faces found no face in the footage");
+    input.note(countsNote(counts, who));
     return out;
   }
 
@@ -335,19 +371,29 @@ async function blur(input: EditorStepInput, out: Record<string, string>, given?:
       return describe(t, f.info, role, role === "speaker" && f.tracks[0] === t);
     });
     const user = `The editor's instruction: "${who}"\n\nThe face tracks, one picture each, in this order:\n${lines.join("\n")}\n\nWhich tracks match the instruction?`;
-    const answer = await ask(SYSTEM, user, images, edit.createdBy, signal);
+    const answer = await ask(SYSTEM, user, images, edit.createdBy, signal).catch((e: Error) => {
+      if (signal.aborted) throw e;
+      throw new Error(`Blur faces could not ask your AI which faces to blur (${e.message}). Nothing was blurred, and this draft has no preview until it runs again`);
+    });
     let ids: Set<string>;
     try {
       ids = chosenIn(answer, batch.map((b) => b.t.id));
     } catch (e) {
-      throw new Error(`Blur faces could not read your AI's answer (${(e as Error).message}): run the edit again, or try another AI in Settings → Providers`);
+      throw new Error(`Blur faces could not read your AI's answer (${(e as Error).message}). Nothing was blurred, and this draft has no preview until it runs again: run it again, or try another AI in Settings → Providers`);
     }
     for (const id of ids) chosen.add(id);
   }
-  if (!chosen.size) {
-    input.note(`Blur faces found no face that matches “${who}”`);
-    return out;
+  // each file's count, from what the AI chose (a file with no face found counts 0)
+  const countOf = new Map<string, Counts>();
+  for (const f of found) {
+    const mine = f.tracks.filter((t) => chosen.has(t.id));
+    const name = timeline.sources[f.id]?.name ?? f.id;
+    const left = f.tracks.filter((t) => !chosen.has(t.id)).map((t) => leftLabel(name, t, f.info, v1.has(f.id) && f.tracks[0] === t));
+    countOf.set(f.id, { found: f.tracks.length, blurred: mine.length, left });
+    counts.push(countOf.get(f.id)!);
   }
+  input.note(countsNote(counts, who));
+  if (!chosen.size) return out;
 
   // 3. the copies, with the chosen tracks blurred
   for (const f of found) {
@@ -359,6 +405,7 @@ async function blur(input: EditorStepInput, out: Record<string, string>, given?:
       await writeFile(ell, JSON.stringify(ellipses(mine, f.info.frames)));
       await ffmpegSlot(() => engineRun(rt.python, [rt.engine, "render", files[f.id]!, tmp, "--ellipses", ell, "--look", look, ...tools()], signal, { FACE_BLUR_MODELS: rt.models })).catch(fail(f.id));
       await rename(tmp, f.dest);
+      await writeFile(`${f.dest}.counts.json`, JSON.stringify(countOf.get(f.id)));
       out[f.id] = f.dest;
     } finally {
       await Promise.all([rm(tmp, { force: true }), rm(`${tmp}.json`, { force: true }), rm(ell, { force: true })]);
