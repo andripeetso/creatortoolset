@@ -565,9 +565,9 @@ export function ImportScreen() {
         </div>
       </div>
 
-      {/* all-projects overlay */}
+      {/* all-projects overlay: over the top bar too (it is sticky), so its own Back, New folder and view switch can be pressed */}
       {showAll && (
-        <div className="absolute inset-0 z-10 flex flex-col bg-zinc-950">
+        <div className="absolute inset-0 z-40 flex flex-col bg-zinc-950">
           <div className="flex items-center justify-between border-b border-zinc-800 px-5 py-3">
             <button
               onClick={() => {
