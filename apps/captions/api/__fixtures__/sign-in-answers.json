@@ -1,0 +1,249 @@
+{
+  "check, signed out": {
+    "status": 200,
+    "body": {
+      "required": true,
+      "authed": false,
+      "user": null,
+      "hosted": false,
+      "viewedBy": null,
+      "mustLink": null
+    },
+    "cookie": null,
+    "location": null,
+    "cacheControl": null
+  },
+  "login, wrong password": {
+    "status": 401,
+    "body": {
+      "error": "Wrong username or password"
+    },
+    "cookie": null,
+    "location": null,
+    "cacheControl": null
+  },
+  "login, no such account": {
+    "status": 401,
+    "body": {
+      "error": "Wrong username or password"
+    },
+    "cookie": null,
+    "location": null,
+    "cacheControl": null
+  },
+  "login, not JSON": {
+    "status": 401,
+    "body": {
+      "error": "Wrong username or password"
+    },
+    "cookie": null,
+    "location": null,
+    "cacheControl": null
+  },
+  "login, the app's secret from the LAN": {
+    "status": 403,
+    "body": {
+      "error": "This computer's password isn't set yet. In Creator Toolset on this computer, turn on Access from other devices and choose it, then try again."
+    },
+    "cookie": null,
+    "location": null,
+    "cacheControl": null
+  },
+  "login, this Mac's window": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "user": {
+        "username": "admin",
+        "name": "admin",
+        "role": "admin",
+        "cloud": true,
+        "off": [],
+        "logins": 1,
+        "picture": null
+      }
+    },
+    "cookie": "cap_auth=<signed>; HttpOnly; Path=/; Max-Age=15552000; SameSite=Lax",
+    "location": null,
+    "cacheControl": null
+  },
+  "check, signed in": {
+    "status": 200,
+    "body": {
+      "required": true,
+      "authed": true,
+      "user": {
+        "username": "admin",
+        "name": "admin",
+        "role": "admin",
+        "cloud": true,
+        "off": [],
+        "logins": 1,
+        "picture": null
+      },
+      "hosted": false,
+      "viewedBy": null,
+      "mustLink": null
+    },
+    "cookie": null,
+    "location": null,
+    "cacheControl": null
+  },
+  "account": {
+    "status": 200,
+    "body": {
+      "username": "admin",
+      "name": "",
+      "login": "admin",
+      "identities": [],
+      "signins": [],
+      "picture": null
+    },
+    "cookie": null,
+    "location": null,
+    "cacheControl": null
+  },
+  "password, wrong current": {
+    "status": 403,
+    "body": {
+      "error": "The current password is wrong"
+    },
+    "cookie": null,
+    "location": null,
+    "cacheControl": null
+  },
+  "password, changed": {
+    "status": 200,
+    "body": {
+      "ok": true
+    },
+    "cookie": "cap_auth=<signed>; HttpOnly; Path=/; Max-Age=15552000; SameSite=Lax",
+    "location": null,
+    "cacheControl": null
+  },
+  "check, the old cookie after the change": {
+    "status": 200,
+    "body": {
+      "required": true,
+      "authed": false,
+      "user": null,
+      "hosted": false,
+      "viewedBy": null,
+      "mustLink": null
+    },
+    "cookie": null,
+    "location": null,
+    "cacheControl": null
+  },
+  "login, from the LAN with the owner's password": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "user": {
+        "username": "admin",
+        "name": "admin",
+        "role": "admin",
+        "cloud": true,
+        "off": [],
+        "logins": 2,
+        "picture": null
+      }
+    },
+    "cookie": "cap_auth=<signed>; HttpOnly; Path=/; Max-Age=15552000; SameSite=Lax",
+    "location": null,
+    "cacheControl": null
+  },
+  "link, minted": {
+    "url": null,
+    "path": true,
+    "expiresAt": "number"
+  },
+  "link, opened on a phone": {
+    "status": 302,
+    "body": "",
+    "cookie": "cap_auth=<signed>; HttpOnly; Path=/; Max-Age=15552000; SameSite=Lax",
+    "location": "/",
+    "cacheControl": "no-store",
+    "referrer": "no-referrer"
+  },
+  "link, opened again": {
+    "status": 410,
+    "body": "This sign-in link has expired or was used. Ask for a new one.",
+    "cookie": null,
+    "location": null,
+    "cacheControl": "no-store"
+  },
+  "ticket, not a tunnel address": {
+    "status": 404,
+    "body": {
+      "error": "Not a tunnel address for this computer"
+    },
+    "cookie": null,
+    "location": null,
+    "cacheControl": null
+  },
+  "logout": {
+    "status": 200,
+    "body": {
+      "ok": true
+    },
+    "cookie": "cap_auth=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax",
+    "location": null,
+    "cacheControl": null
+  },
+  "hosted login": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "user": {
+        "username": "tina",
+        "name": "tina",
+        "role": "user",
+        "cloud": true,
+        "off": [],
+        "logins": 1,
+        "picture": null
+      }
+    },
+    "cookie": "cap_auth=<signed>; HttpOnly; Path=/; Max-Age=15552000; SameSite=Lax",
+    "location": null,
+    "cacheControl": null
+  },
+  "hosted app, no code": {
+    "status": 400,
+    "body": {
+      "error": "That sign-in code is used or expired"
+    },
+    "cookie": null,
+    "location": null,
+    "cacheControl": "no-store"
+  },
+  "hosted app, its code": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "user": {
+        "username": "tina",
+        "name": "tina",
+        "role": "user",
+        "cloud": true,
+        "off": [],
+        "logins": 2,
+        "picture": null
+      }
+    },
+    "cookie": "cap_auth=<signed>; HttpOnly; Path=/; Max-Age=15552000; SameSite=Lax",
+    "location": null,
+    "cacheControl": "no-store"
+  },
+  "hosted invite, a new account": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "username": "tomas"
+    },
+    "cookie": "cap_auth=<signed>; HttpOnly; Path=/; Max-Age=15552000; SameSite=Lax",
+    "location": null,
+    "cacheControl": null
+  }
+}
