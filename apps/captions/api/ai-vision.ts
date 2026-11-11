@@ -7,6 +7,7 @@ import {
   classifyHttpError,
   completeWithFallback,
   contentFromAnthropic,
+  onApiKey,
   readBody,
   requestSignal,
   wrapFetchError,
@@ -37,9 +38,16 @@ export async function completeVisionWithFallback<T>(
   cancelSignal: AbortSignal | undefined,
   parse: (text: string) => T,
   who: Who,
+  /**
+   * `label`: what the usage tally counts it as. `background`: nobody waits on it, so it queues behind what a person does.
+   * `preferKey`: the account's own Anthropic key first, when it has one (bulk work: many at once, where a provider runs two).
+   */
+  opts: { label?: string; background?: boolean; preferKey?: boolean } = {},
 ): Promise<{ value: T; provider: string }> {
   if (!images.length) throw new AiProviderError("No image to analyze", "FAILED", false);
-  const route = aiFor(who, "analyzer", "Image reading");
+  const label = opts.label ?? "Image reading";
+  const name = typeof who === "string" ? who : who?.username;
+  const route = (opts.preferKey && name && onApiKey(name, "analyzer", label)) || aiFor(who, "analyzer", label);
   if (route.off) throw new AiProviderError(route.off, "FAILED", false);
   if (route.only?.includes("mac")) {
     const files = Object.fromEntries(images.map((im, i) => [`attached/${i + 1}.jpg`, `base64:${im.jpegBase64}`]));
@@ -48,11 +56,11 @@ export async function completeVisionWithFallback<T>(
       `${userText}\n\nThe pictures, in order: ${Object.keys(files).join(", ")}. Read each one before you answer.`,
       cancelSignal,
       parse,
-      { ...route, mac: { ...route.mac, files } },
+      { ...route, mac: { ...route.mac, files, ...(opts.background ? { background: true } : {}) } },
     );
     return { value, provider: route.mac?.provider?.instance ?? "mac" };
   }
-  return { value: parse(await completeAnthropic(system, userText, images, cancelSignal, route.apiKey ?? "", route.model, route.effort, route.bill)), provider: "anthropic" };
+  return { value: parse(await completeAnthropic(system, userText, images, cancelSignal, route.apiKey ?? "", route.model, route.effort, route.bill, label)), provider: "anthropic" };
 }
 
 async function completeAnthropic(
@@ -64,6 +72,7 @@ async function completeAnthropic(
   model: string | undefined,
   effort: Parameters<typeof anthropicParams>[0],
   bill?: string,
+  label = "Image reading",
 ): Promise<string> {
   const base = (process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com").replace(/\/$/, "");
   const params = anthropicParams(effort, model);
@@ -97,7 +106,7 @@ async function completeAnthropic(
   // tallied like the other API answers: tokens and API-equivalent cost, under its own label
   return contentFromAnthropic(body, (u) => {
     const usage = apiUsage(u, params.model);
-    void recordUsage("Image reading (API)", usage);
+    void recordUsage(`${label} (API)`, usage);
     if (bill) addSpend(bill, usage.costUsd);
   });
 }

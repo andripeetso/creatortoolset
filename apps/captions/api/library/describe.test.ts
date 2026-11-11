@@ -106,7 +106,8 @@ describe("describe job", () => {
 
   it("with a route: four frames go to the actor's AI; the description and AI tags are stored and searchable", async () => {
     const v = await seed("ast-ai-0001");
-    vi.mocked(aiFor).mockReturnValueOnce({ only: ["mac"] });
+    // once for the turn on the AI (describeSlot), once for the job
+    vi.mocked(aiFor).mockReturnValueOnce({ only: ["mac"] }).mockReturnValueOnce({ only: ["mac"] });
     vi.mocked(completeVisionWithFallback).mockImplementationOnce(async (_s, _u, images, _c, parse) => {
       expect(images).toHaveLength(4);
       return { value: parse('{"description": "A person rolls across a blue mat.", "tags": ["roll", "mat"]}'), provider: "test" } as never;

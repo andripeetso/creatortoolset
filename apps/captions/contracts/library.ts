@@ -72,6 +72,52 @@ export interface LibrarySettings {
 }
 
 /** One of the caller's libraries. */
+/** One step of a library's processing: the server's own work on the files, the transcript, the AI's description, search by meaning. */
+export type LibraryStep = "files" | "transcript" | "describe" | "embed";
+
+/**
+ * What a step runs on for the asking account: their connected AI (`provider`, on its subscription), their own Anthropic
+ * key (`api`), the team's budget (`budget`), a transcription key, this computer (`device`, free), the server (`server`);
+ * `none`: nothing to run it on yet (`missing` says what to add); `off`: the library has the step switched off.
+ */
+export type LibraryStepRoute = "provider" | "api" | "budget" | "deepgram" | "openai" | "device" | "server" | "none" | "off";
+
+export interface LibraryStepEstimate {
+  step: LibraryStep;
+  route: LibraryStepRoute;
+  missing?: string;
+  /** dollars for these clips; on `provider` what the API would have charged (the subscription pays, its limits count) */
+  usd: number;
+  seconds: number;
+  /** pace and cost come from this server's own finished runs, not the starting guess */
+  measured: boolean;
+}
+
+/** GET /api/library/:id/estimate?clips&bytes: what processing that many clips would take, before they go in. */
+export interface LibraryEstimate {
+  clips: number;
+  /** of footage, from the bytes at this library's own bytes per second */
+  minutes: number;
+  steps: LibraryStepEstimate[];
+  /** the whole run: the slowest step (steps run side by side) */
+  seconds: number;
+  /** describe on the person's own Anthropic key instead (it runs six at once; a connected AI runs two): when that is faster */
+  withApiKey?: { seconds: number; usd: number };
+}
+
+/** GET /api/library/:id/progress: the processing still to do in a library. Nothing to do = `left` 0. */
+export interface LibraryProgress {
+  /** jobs done and still to do since the queue was last empty */
+  done: number;
+  left: number;
+  /** clips with work left */
+  clips: number;
+  /** time left at this server's pace */
+  seconds: number;
+  /** jobs waiting for a key or an AI, with what to add */
+  waiting: { step: LibraryStep; count: number; missing: string }[];
+}
+
 export interface LibrarySummary {
   id: string;
   name: string;

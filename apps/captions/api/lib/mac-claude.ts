@@ -185,7 +185,7 @@ let waiters: Array<{ device: string; fn: (r: Req) => void }> = [];
 
 /** how long a request waits for the Mac before its caller falls back; longer while the Mac is on but every slot runs */
 const PATIENCE_MS = { now: 15_000, busy: 3 * 60_000, background: 10 * 60_000 };
-const BACKGROUND_SLOTS = 2;
+export const BACKGROUND_SLOTS = 2;
 /** the Mac runs this many Claude calls at once (the Mac relay SLOTS) */
 const MAC_SLOTS = 4;
 /** the Mac posts at least every 20 s while Claude thinks */

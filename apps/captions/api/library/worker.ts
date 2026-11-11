@@ -4,10 +4,13 @@ import path from "node:path";
 import { env } from "../lib/env";
 import { libraryChanged } from "./access";
 import { blobs, libraryDb, librarySetting } from "./db";
-import { describeVersion } from "./describe";
+import { describeSlot, describeVersion } from "./describe";
 import { embedVersion } from "./embed";
 import { fingerprint } from "./fingerprint";
-import { claimJob, enqueueJob, finishJob, parkJob, requeueExpired, type JobRow } from "./jobs";
+import { claimJob, defer, enqueueJob, extendLease, finishJob, parkJob, requeueExpired, type JobRow } from "./jobs";
+import { keyFor } from "../my-keys";
+import { AiProviderError } from "../ai-complete";
+import { MacClaudeError } from "../lib/mac-claude";
 import { makeProxy, needsProxy } from "./media/proxy";
 import { probe, type ProbeSummary } from "./media/probe";
 import { makeThumb } from "./media/thumb";
@@ -15,14 +18,27 @@ import { makeWave } from "./media/wave";
 import { NeedsKey, transcribeVersion } from "./transcribe";
 
 /**
- * The library's worker (tasks/media-library-plan.md, section 5): one job at a time, in the order the queue gives.
- * probe runs first and queues thumb, wave and, when the browser cannot play the file, proxy. A version is `ready`
- * once its probe and its derivatives (thumb for video, wave) exist. Derivatives are written to scratch, then moved
- * into the blob store.
+ * The library's worker (tasks/media-library-plan.md, section 5): the queue runs in lanes (LANES), each lane taking
+ * the oldest of its own kinds, several at once where the work is someone else's computer (a transcription service,
+ * the person's AI). probe runs first and queues thumb, wave and, when the browser cannot play the file, proxy. A
+ * version is `ready` once its probe and its derivatives (thumb for video, wave) exist. Derivatives are written to
+ * scratch, then moved into the blob store.
  */
 
-// ponytail: one job at a time for the whole server; the plan's per-kind limits come when a second job matters
 const IDLE_MS = 2000;
+const LEASE_S = 300;
+
+/**
+ * Jobs at once, per lane. Files: one, since ffmpeg has its own server-wide limit (media/run.ts). Transcripts: a key's
+ * service takes many, and on this computer they never overlap anyway (device-transcribe.ts). AI: the Mac relay runs
+ * two library calls at once per computer (background slots, mac-claude.ts) and queues the rest; an API key takes all six.
+ * ponytail: fixed sizes; per-key rate limits (429s back off and retry) would say how far an API key can go
+ */
+export const LANES = [
+  { name: "files", kinds: ["probe", "thumb", "wave", "proxy", "fingerprint"], size: 1 },
+  { name: "transcripts", kinds: ["transcribe"], size: 4 },
+  { name: "ai", kinds: ["describe", "embed"], size: 6 },
+] as const;
 
 /** Extras: a failure leaves the version playable. Only the files it is shown with fail it. */
 const EXTRA = new Set(["transcribe", "describe", "fingerprint", "embed"]);
@@ -36,42 +52,76 @@ interface VersionRow {
   probe: string | null;
 }
 
-/** Runs one queued job, if there is one. Returns false when the queue is empty. */
-export async function tick(now = Date.now()): Promise<boolean> {
+/** Seconds a describe should wait before it tries again, or 0 when its error is a real failure. */
+function waitFor(e: unknown): number {
+  const under = e instanceof AiProviderError && e.cause ? e.cause : e;
+  if (under instanceof MacClaudeError && under.kind === "limit") return 15 * 60;
+  if (under instanceof MacClaudeError && under.kind === "unclaimed") return 5 * 60;
+  return e instanceof AiProviderError && e.code === "RATE_LIMIT" ? 60 : 0;
+}
+
+/** Runs one queued job (of `kinds`, when given), if there is one. Returns false when there is none. */
+export async function tick(now = Date.now(), kinds?: readonly string[]): Promise<boolean> {
   const db = libraryDb();
   requeueExpired(db, now);
-  const job = claimJob(db, 300, now);
+  const job = claimJob(db, LEASE_S, now, "jobs", kinds);
   if (!job) return false;
+  // a description reads what is said: it waits while the clip's transcript is still to come
+  if (job.kind === "describe" && db.prepare("SELECT 1 FROM jobs WHERE version_id = ? AND kind = 'transcribe' AND state IN ('queued', 'running')").get(job.version_id)) {
+    defer(db, job.id, 30, now);
+    return false; // this loop rests before it claims again
+  }
+  // on a connected AI, two descriptions at a time: the others wait in the queue (describe.ts describeSlot)
+  const release = job.kind === "describe" ? describeSlot(job.actor) : () => {};
+  if (!release) {
+    defer(db, job.id, 10, now);
+    return false;
+  }
+  // a job waiting its turn (the Mac's AI, this computer's transcriber) keeps its lease, so no second copy starts
+  const beat = setInterval(() => extendLease(db, job.id, LEASE_S), 60_000);
+  beat.unref();
   try {
     await run(job);
-    finishJob(db, job.id, true, undefined, now);
+    finishJob(db, job.id, true, undefined, Math.max(now, Date.now())); // its end, so done_at - started_at is how long it took
   } catch (e) {
     if (e instanceof NeedsKey) {
       parkJob(db, job.id, e.message);
       return true;
     }
-    finishJob(db, job.id, false, e instanceof Error ? e.message : String(e), now);
+    // a description that met the plan's usage limit, a rate limit or a Mac that is off waits for it, never fails: a
+    // big drop would otherwise end in hundreds of failed cards
+    const wait = job.kind === "describe" ? waitFor(e) : 0;
+    if (wait) {
+      defer(db, job.id, wait);
+      return true;
+    }
+    finishJob(db, job.id, false, e instanceof Error ? e.message : String(e), Math.max(now, Date.now()));
     const after = db.prepare("SELECT state FROM jobs WHERE id = ?").get(job.id) as { state: string };
     if (after.state === "failed" && !EXTRA.has(job.kind)) db.prepare("UPDATE asset_versions SET state = 'failed' WHERE id = ?").run(job.version_id);
   } finally {
+    clearInterval(beat);
+    release();
     libraryChanged(job.library_id); // a picture, a transcript or the card's state: the open pages refetch
   }
   return true;
 }
 
-/** Starts the loop; the returned function stops it after the current job. */
+/** Starts every lane's loops; the returned function stops them after their current jobs. */
 export function startLibraryWorker(): () => void {
   let stopped = false;
-  const loop = async () => {
-    let busy = false;
-    try {
-      busy = await tick();
-    } catch (e) {
-      console.error("[library] worker:", e);
+  for (const lane of LANES)
+    for (let i = 0; i < lane.size; i++) {
+      const loop = async () => {
+        let busy = false;
+        try {
+          busy = await tick(Date.now(), lane.kinds);
+        } catch (e) {
+          console.error("[library] worker:", e);
+        }
+        if (!stopped) setTimeout(loop, busy ? 0 : IDLE_MS).unref();
+      };
+      void loop();
     }
-    if (!stopped) setTimeout(loop, busy ? 0 : IDLE_MS).unref();
-  };
-  void loop();
   return () => {
     stopped = true;
   };
@@ -124,8 +174,8 @@ async function run(job: JobRow): Promise<void> {
   } else if (job.kind === "transcribe" || job.kind === "describe") {
     if (job.kind === "transcribe") await transcribeVersion(db, v.id, src, job.actor, dir);
     else await describeVersion(db, v.id, src, p.duration, job.actor, dir);
-    // new words to search by meaning: embed (again) when the library has semantic search on
-    if (librarySetting(v.library_id, "embed")) enqueueJob(db, v.library_id, v.id, "embed", job.actor, true);
+    // new words to search by meaning: embed (again) when the library has semantic search on and the actor a key for it
+    if (librarySetting(v.library_id, "embed") && !keyFor(job.actor, "OPENAI_API_KEY").missing) enqueueJob(db, v.library_id, v.id, "embed", job.actor, true);
   } else if (job.kind === "fingerprint") {
     const f = JSON.stringify(await fingerprint(src, p.duration, dir));
     db.prepare("INSERT OR REPLACE INTO derivatives (version_id, kind, inline, bytes) VALUES (?, 'fingerprint', ?, ?)").run(v.id, f, Buffer.byteLength(f));

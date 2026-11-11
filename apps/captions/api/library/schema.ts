@@ -342,4 +342,11 @@ export const MIGRATIONS: string[] = [
   `
   ALTER TABLE piece_items ADD COLUMN describe_asked_at INTEGER;
   `,
+  // 15: when a job last started and finished (ms), so the library can say how long its steps take here (estimate.ts)
+  `
+  ALTER TABLE jobs ADD COLUMN started_at INTEGER;
+  ALTER TABLE jobs ADD COLUMN done_at INTEGER;
+  ALTER TABLE edit_jobs ADD COLUMN started_at INTEGER;
+  ALTER TABLE edit_jobs ADD COLUMN done_at INTEGER;
+  `,
 ];

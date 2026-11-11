@@ -3,6 +3,8 @@ import type {
   AssetDetail,
   AssetPage,
   Collection,
+  LibraryEstimate,
+  LibraryProgress,
   LibrarySettings,
   LibraryStorage,
   LibraryStorageInput,
@@ -29,6 +31,13 @@ export const listLibraries = () =>
   fetch("/api/library")
     .then((r) => json<{ libraries: LibrarySummary[] }>(r))
     .then((x) => x.libraries);
+
+/** What processing `clips` clips of `bytes` in all would take in the library (api/library/estimate.ts). */
+export const getEstimate = (libraryId: string, clips: number, bytes: number) =>
+  fetch(`/api/library/${libraryId}/estimate?clips=${clips}&bytes=${Math.round(bytes)}`).then((r) => json<LibraryEstimate>(r));
+
+/** The processing still to do in the library. */
+export const getProgress = (libraryId: string) => fetch(`/api/library/${libraryId}/progress`).then((r) => json<LibraryProgress>(r));
 
 export const createLibrary = (name: string) =>
   fetch("/api/library", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }) }).then(
