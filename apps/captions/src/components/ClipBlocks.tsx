@@ -111,29 +111,32 @@ export function ChapterRail({
   );
 }
 
-/** Generate the chapter rail as soon as a transcript exists. */
+/** Chapters are made for this clip without being asked: your own, processed, with a transcript and no chapters yet. */
+export const wantsChapters = (session: ClipSession, owns: boolean): boolean =>
+  owns && !isProcessing(session) && session.hasTranscript && !clipChapters(session).length;
+
+/**
+ * Generate the chapter rail as soon as a transcript exists. True while that runs, from the first frame the clip is
+ * drawn (the line that says so is there at once, not added a frame later), until the request ends, chapters or not.
+ */
 export function useAutoChapters(
   session: ClipSession,
   owns: boolean,
   onChange: (s: ClipSession) => void,
 ): boolean {
   const tried = useRef<string | null>(null);
-  const [pending, setPending] = useState(false);
+  const [ended, setEnded] = useState<string | null>(null);
+  const wants = wantsChapters(session, owns);
+  const id = session.id;
   useEffect(() => {
-    if (!owns || isProcessing(session) || clipChapters(session).length) {
-      setPending(false);
-      return;
-    }
-    if (!session.hasTranscript) return;
-    if (tried.current === session.id) return;
-    tried.current = session.id;
-    setPending(true);
-    addClipBlock(session.id, "chapters")
+    if (!wants || tried.current === id) return;
+    tried.current = id;
+    addClipBlock(id, "chapters")
       .then(onChange)
       .catch(() => {})
-      .finally(() => setPending(false));
-  }, [owns, session, onChange]);
-  return pending;
+      .finally(() => setEnded(id));
+  }, [wants, id, onChange]);
+  return wants && ended !== id;
 }
 
 function jump(id: string) {
