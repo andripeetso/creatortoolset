@@ -390,6 +390,10 @@ const localLine = new Map<string, Promise<unknown>>();
  * One answer from the person's own model server: the Messages request completeAnthropic sends, to their address, with
  * their model's name. No x-api-key (that is their Anthropic key) and no output_config (Anthropic's own knob). The
  * answer's tokens are passed on at no price, whatever the model is called, and are not in the paid (API) tally.
+ *
+ * It asks for the answer without thinking first, as the Anthropic request asks for the least. Measured on a 16 GB
+ * video card with the caption eval: models left to think filled the server's default context before they wrote a
+ * line, and most runs failed with four times that context; told not to, the same models answered every run.
  */
 function completeLocalModel(system: string, user: string, cancelSignal?: AbortSignal, opts: ProviderOpts = {}): Promise<string> {
   const local = opts.localModel;
@@ -400,7 +404,7 @@ function completeLocalModel(system: string, user: string, cancelSignal?: AbortSi
       resp = await fetch(`${local.url}/v1/messages`, {
         method: "POST",
         headers: { "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
-        body: JSON.stringify({ model: local.model, max_tokens: 16000, system, messages: [{ role: "user", content: user }] }),
+        body: JSON.stringify({ model: local.model, max_tokens: 16000, thinking: { type: "disabled" }, system, messages: [{ role: "user", content: user }] }),
         signal: requestSignal(cancelSignal),
       });
     } catch (e: unknown) {

@@ -80,7 +80,9 @@ Enable the hooks once per clone: `git config core.hooksPath .githooks`.
 **AI providers.** A server's AI providers are a person's own Claude Code or Codex, installed on their own Mac and
 signed in with their own subscription, paired through the Mac app. They answer only the requests and background work
 of the account that owns them. Never add a path that runs one person's subscription for another person, and never
-let a request from one account reach another account's provider.
+let a request from one account reach another account's provider. The one other AI is a model the admin of their own
+install runs themselves and types in by address (Settings → API keys → Local model, `apps/captions/api/local-model.ts`):
+text jobs only, refused on a hosted server, and the app never downloads, detects or suggests a model.
 
 **What other people share carries no code.** What people share with each other through Community is text and
 settings: packs (prompts, frameworks, caption styles, a Home layout), each read as data. Never add a way for someone

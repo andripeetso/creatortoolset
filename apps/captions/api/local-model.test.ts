@@ -134,7 +134,7 @@ describe("who may set a local model", () => {
 });
 
 describe("what a local model is sent, and what it never is", () => {
-  it("the same Messages request, to the typed address: no key, no output_config, the prompt untouched", async () => {
+  it("the same Messages request, to the typed address: no key, no output_config, thinking off, the prompt untouched", async () => {
     saveMyKey("admin", "ANTHROPIC_API_KEY", key); // a key is saved too: the local model answers, and never sees it
     vi.stubEnv("ANTHROPIC_API_KEY", "the-servers-own-key");
     await as(admin).put({ url: address, model: "big-one:12b" });
@@ -146,7 +146,9 @@ describe("what a local model is sent, and what it never is", () => {
     expect(got).toHaveLength(1);
     expect(got[0].method).toBe("POST");
     expect(got[0].url).toBe("/v1/messages");
-    expect(got[0].body).toBe('{"model":"big-one:12b","max_tokens":16000,"system":"The system text","messages":[{"role":"user","content":"The user text"}]}');
+    // thinking off: the format's own field, where the Anthropic request has output_config
+    expect(got[0].body).toBe('{"model":"big-one:12b","max_tokens":16000,"thinking":{"type":"disabled"},"system":"The system text","messages":[{"role":"user","content":"The user text"}]}');
+    expect(got[0].body).not.toContain("output_config");
     expect(got[0].headers).not.toHaveProperty("x-api-key");
     expect(got[0].headers).not.toHaveProperty("authorization");
     expect(JSON.stringify(got[0])).not.toContain(key);
@@ -160,7 +162,7 @@ describe("what a local model is sent, and what it never is", () => {
     const out = await streamWithFallback("sys", "user", undefined, (t) => t, { onDelta: (t) => void deltas.push(t) }, aiFor(admin, "notes", "Video Notes"));
     expect(out).toEqual({ result: "from the local model", provider: "Local model" });
     expect(deltas).toEqual(["from the local model"]);
-    expect(got[0].body).toBe('{"model":"small-one","max_tokens":16000,"system":"sys","messages":[{"role":"user","content":"user"}]}');
+    expect(got[0].body).toBe('{"model":"small-one","max_tokens":16000,"thinking":{"type":"disabled"},"system":"sys","messages":[{"role":"user","content":"user"}]}');
     expect(got[0].headers).not.toHaveProperty("x-api-key");
   });
 
