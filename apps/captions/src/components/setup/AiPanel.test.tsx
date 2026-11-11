@@ -26,7 +26,8 @@ const claude = row({ id: "claude", name: "Claude Code" });
 const codex = row({ id: "codex", name: "Codex", version: "codex-cli 0.50.0", signedIn: false });
 const gemini = row({ id: "gemini", name: "Gemini CLI", version: "0.9.1", signedIn: null });
 const connected = (id: "claude" | "codex", name: string) => row({ id, name, connected: true, lastCheck: { ok: true, at: 1, ms: 5 } });
-const buttons = (html: string) => [...html.matchAll(/<button[^>]*>([^<]*)</g)].map((m) => m[1]);
+/** Each button's words, without the sign drawn beside them. */
+const buttons = (html: string) => [...html.matchAll(/<button[^>]*>(.*?)<\/button>/g)].map((m) => m[1].replace(/<[^>]*>/g, ""));
 
 describe("the rows: named by what a person knows, in order", () => {
   it("ChatGPT comes first with Codex as its small second line, then Claude with Claude Code", () => {
@@ -279,5 +280,23 @@ describe("the banned words", () => {
     expect(html).not.toMatch(/Terminal/);
     expect(html).not.toMatch(/api key/i);
     expect(html).not.toMatch(/\bMCP\b/);
+  });
+
+  it("the buttons look their state: Connect is the one filled button, Install and Sign in are outlined with their sign, a button at work spins", () => {
+    const v = { ...view([claude, codex, row({ id: "gemini", name: "Gemini CLI", found: false, signedIn: null })]), others: [other("grok", { signedIn: false })] };
+    const button = (html: string, label: string) => html.match(new RegExp(`<button(?:(?!</button>).)*${label}</button>`))?.[0] ?? "";
+    const html = renderToStaticMarkup(<AiPanelView view={v} results={{}} phases={{}} onConnect={() => {}} />);
+    expect(button(html, "Connect")).toContain("bg-violet-600");
+    expect(button(html, "Connect")).not.toContain("<svg");
+    for (const [label, sign] of [["Install", "lucide-download"], ["Sign in", "lucide-log-in"]]) {
+      expect(button(html, label)).toContain(sign);
+      expect(button(html, label)).not.toContain("bg-violet-600");
+    }
+    // at work: the spinner in place of the sign, in the look of the step it is on
+    const busy = renderToStaticMarkup(<AiPanelView view={v} results={{}} phases={{ claude: "connecting", gemini: "installing" }} onConnect={() => {}} />);
+    expect(button(busy, "Connecting…")).toMatch(/bg-violet-600.*animate-spin/s);
+    expect(button(busy, "Installing…")).toContain("animate-spin");
+    expect(button(busy, "Installing…")).not.toContain("lucide-download");
+    expect(button(busy, "Installing…")).not.toContain("bg-violet-600");
   });
 });

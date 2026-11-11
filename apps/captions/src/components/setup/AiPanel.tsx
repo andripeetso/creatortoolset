@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, ChevronDown } from "lucide-react";
+import { Check, ChevronDown, Download, Loader2, LogIn } from "lucide-react";
 import type { ConnectResult, LocalAiView, SignInResult } from "@contracts/local-ai";
 import { DRIVERS, type ProviderSettings, type ProvidersView } from "@contracts/providers";
 import { Button } from "@/components/ui/button";
@@ -195,7 +195,16 @@ function AgentRow({ id, row, result, phase, code, unread, onConnect }: { id: str
         <>
           {v.connected && <Check aria-label={`${nameOf(id)} is connected`} className="size-4 text-emerald-600 dark:text-emerald-400" />}
           {v.button && (
-            <Button size="xs" disabled={v.button.disabled} onClick={onConnect}>
+            // Connect is the one filled button: one press from working. A step that downloads or opens the browser is
+            // outlined and carries its sign; a button at work turns its sign into a spinner
+            <Button size="xs" variant={v.button.label.startsWith(CONNECT.label) ? "default" : "outline"} disabled={v.button.disabled} onClick={onConnect}>
+              {v.button.disabled ? (
+                <Loader2 aria-hidden className="size-3 animate-spin" />
+              ) : v.button.label === INSTALL.label ? (
+                <Download aria-hidden className="size-3" />
+              ) : v.button.label === SIGN_IN.label ? (
+                <LogIn aria-hidden className="size-3" />
+              ) : null}
               {v.button.label}
             </Button>
           )}
