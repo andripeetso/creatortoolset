@@ -20,6 +20,7 @@ struct ScreenEvents: Codable {
     var height = 0
     var moves: [[Double]] = []    // [t, x, y]
     var clicks: [[Double]] = []   // [t, x, y], the press
+    var releases: [[Double]] = [] // [t, x, y], the button coming up again: a drag lasts from its press to here
     var audio: [String] = []      // the sound tracks in file order: "mic", "system"
 }
 
@@ -62,6 +63,12 @@ func previewOrigin(recorded: CGRect?, visible: CGRect, size: CGSize) -> CGPoint 
 /// windows (a press on the bar's Stop is not a place for the editor to zoom in on).
 func logsClick(_ type: NSEvent.EventType, on window: NSWindow?, own: [NSWindow]) -> Bool {
     [.leftMouseDown, .rightMouseDown].contains(type) && !own.contains { $0 === window }
+}
+
+/// Whether a pointer event is logged as a release: a button coming up, by the same rule. The editor keeps a zoom
+/// through a drag by it (press to release), as it keeps one through clicks that follow each other.
+func logsRelease(_ type: NSEvent.EventType, on window: NSWindow?, own: [NSWindow]) -> Bool {
+    [.leftMouseUp, .rightMouseUp].contains(type) && !own.contains { $0 === window }
 }
 
 /// Seconds as m:ss (h:mm:ss from an hour on).
@@ -193,14 +200,15 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Send
         }
     }
 
-    /// The pointer moved (`click` = a button went down), as 0–1 of the display.
-    func note(x: Double, y: Double, click: Bool) {
+    /// The pointer moved (`click` = a button went down, `release` = it came up again), as 0–1 of the display.
+    func note(x: Double, y: Double, click: Bool, release: Bool = false) {
         let now = hostNow()
         queue.async {
             guard self.pausedAt == nil, let offset = self.offset else { return }
             let t = ((now - offset).seconds * 1000).rounded() / 1000
             guard t >= 0 else { return }
             if click { self.events.clicks.append([t, x, y]) }
+            else if release { self.events.releases.append([t, x, y]) }
             // ponytail: moves at most 30 a second (an hour ≈ 3 MB); Review interpolates between them
             else if t - self.lastMove >= 1.0 / 30 { self.events.moves.append([t, x, y]); self.lastMove = t }
         }
@@ -517,10 +525,13 @@ final class Recorder: ObservableObject {
         let mainHeight = CGDisplayBounds(CGMainDisplayID()).height
         let handle = { [weak self] (event: NSEvent) in
             let p = normalizedPointer(NSEvent.mouseLocation, display: rect, mainHeight: mainHeight)
-            capture.note(x: p.x, y: p.y, click: logsClick(event.type, on: event.window, own: self?.ownWindows() ?? []))
+            let own = self?.ownWindows() ?? []
+            capture.note(x: p.x, y: p.y, click: logsClick(event.type, on: event.window, own: own),
+                         release: logsRelease(event.type, on: event.window, own: own))
         }
         // pointer events need no permission (key presses would: not logged)
-        let mask: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .leftMouseDown, .rightMouseDown]
+        let mask: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .leftMouseDown, .rightMouseDown,
+                                           .leftMouseUp, .rightMouseUp]
         if let global = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: handle) { monitors.append(global) }
         if let local = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { handle($0); return $0 }) { monitors.append(local) }
         let start = normalizedPointer(NSEvent.mouseLocation, display: rect, mainHeight: mainHeight)
