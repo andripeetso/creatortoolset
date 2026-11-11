@@ -26,6 +26,10 @@ export interface AssetCard {
   trashedAt?: number;
   /** a Review video (same id): Review owns its versions and its trash, so the library opens it there */
   review?: true;
+  /** while the clip is being prepared: the step it is on (running) or waits for next (LibraryProcessing.tsx ClipStage draws it) */
+  preparing?: { step: LibraryStage["kind"] | "probe" | "wave"; running: boolean };
+  /** a `failed` clip: the step that failed and the tool's own error (ClipStage says it in words) */
+  failed?: { step: "probe" | "thumb" | "wave" | "proxy"; error: string };
 }
 
 export interface AssetDetail extends AssetCard {
@@ -105,6 +109,18 @@ export interface LibraryEstimate {
   withApiKey?: { seconds: number; usd: number };
 }
 
+/** One step of a library's preparing, as the person sees it go by: how many clips have it, of how many. */
+export interface LibraryStage {
+  /** thumb = pictures, proxy = lighter copies, fingerprint = duplicate checks, transcribe, describe, embed = search by meaning */
+  kind: "thumb" | "proxy" | "fingerprint" | "transcribe" | "describe" | "embed";
+  done: number;
+  /** done, failed and still to do since this run of the queue began: neither number goes down while it runs */
+  of: number;
+  failed: number;
+  /** the clip it is on right now */
+  now?: string;
+}
+
 /** GET /api/library/:id/progress: the processing still to do in a library. Nothing to do = `left` 0. */
 export interface LibraryProgress {
   /** jobs done and still to do since the queue was last empty */
@@ -116,6 +132,8 @@ export interface LibraryProgress {
   seconds: number;
   /** jobs waiting for a key or an AI, with what to add */
   waiting: { step: LibraryStep; count: number; missing: string; /** held back by the AI plan's usage limit */ limit?: boolean }[];
+  /** each step's count, in the order they run; only the steps this run has */
+  stages?: LibraryStage[];
 }
 
 export interface LibrarySummary {

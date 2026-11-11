@@ -1,12 +1,12 @@
 import type { DatabaseSync } from "node:sqlite";
-import type { LibraryEstimate, LibraryProgress, LibraryStep, LibraryStepEstimate, LibraryStepRoute } from "../../contracts/library";
+import type { LibraryEstimate, LibraryProgress, LibraryStage, LibraryStep, LibraryStepEstimate, LibraryStepRoute } from "../../contracts/library";
 import { aiFor, onApiKey } from "../ai-complete";
 import { BACKGROUND_SLOTS, macUsageSince } from "../lib/mac-claude";
 import { keyFor } from "../my-keys";
 import { libraryDb, librarySetting } from "./db";
 import { DESCRIBE_LABEL, whoFor } from "./describe";
 import { NeedsKey, transcribeRoute } from "./transcribe";
-import { LANES } from "./worker";
+import { LANES, LIMIT_LIKE } from "./worker";
 
 /**
  * How much processing clips will take, before they go in, and how much is left (GET /api/library/:id/estimate and
@@ -28,7 +28,8 @@ const STEP_OF: Record<string, LibraryStep> = {
 };
 
 // ponytail: starting guesses (seconds a job, dollars a description) until this server has finished its own
-const GUESS_S: Record<string, number> = { probe: 1, thumb: 2, wave: 3, fingerprint: 4, embed: 2, deepgram: 5, openai: 15, provider: 30, api: 12 };
+// (a duplicate check reads the lighter copy: under 2 s a 4K clip, measured)
+const GUESS_S: Record<string, number> = { probe: 1, thumb: 2, wave: 3, fingerprint: 1, embed: 2, deepgram: 5, openai: 15, provider: 30, api: 12 };
 const GUESS_USD = { provider: 0.05, api: 0.02 };
 /** On this computer, the speech model takes about a third of the clip's length. */
 const DEVICE_PACE = 0.3;
@@ -45,13 +46,18 @@ const MIN_RUNS = 3;
 
 const laneSize = (name: (typeof LANES)[number]["name"]) => LANES.find((l) => l.name === name)!.size;
 
-/** The average seconds a finished `kind` job took here, by what ran it, or null under MIN_RUNS runs. */
-function paceOf(db: DatabaseSync, kind: string, by?: { table: "transcripts" | "descriptions"; provider: string; not?: boolean }): number | null {
+/**
+ * The average seconds a finished `kind` job took here, by what ran it, or null under MIN_RUNS runs. `serial`: the jobs
+ * run one at a time however many are claimed (this computer's transcripts), so each counts from when the one before it
+ * ended, not the time it waited.
+ */
+function paceOf(db: DatabaseSync, kind: string, by?: { table: "transcripts" | "descriptions"; provider: string; not?: boolean }, serial = false): number | null {
   const join = by ? `JOIN ${by.table} t ON t.version_id = j.version_id` : "";
   const where = by ? `AND t.provider ${by.not ? "!=" : "="} ?` : "";
+  const from = serial ? "MAX(j.started_at, IFNULL(LAG(j.done_at) OVER (ORDER BY j.done_at), 0))" : "j.started_at";
   const r = db
     .prepare(
-      `SELECT AVG(d) AS s, COUNT(*) AS n FROM (SELECT j.done_at - j.started_at AS d FROM jobs j ${join}
+      `SELECT AVG(d) AS s, COUNT(*) AS n FROM (SELECT j.done_at - ${from} AS d FROM jobs j ${join}
        WHERE j.kind = ? AND j.state = 'done' AND j.started_at IS NOT NULL AND j.done_at >= j.started_at ${where}
        ORDER BY j.done_at DESC LIMIT 200)`,
     )
@@ -108,20 +114,21 @@ async function describeCost(api: boolean): Promise<number | null> {
   return calls >= MIN_RUNS ? usd / calls : null;
 }
 
+const filesGuess = (kind: string, clipSeconds: number) => (kind === "proxy" ? Math.max(5, clipSeconds * PROXY_PACE) : (GUESS_S[kind] ?? 2));
+
 /** Seconds and dollars per clip for one step on its route, and whether this server measured them. */
 async function perClip(db: DatabaseSync, step: LibraryStep, route: LibraryStepRoute, clipSeconds: number, proxyShare: number) {
   if (route === "off" || route === "none") return { seconds: 0, usd: 0, measured: true, at: 1 };
   if (step === "files") {
     const kinds = ["probe", "thumb", "wave", "fingerprint", "proxy"] as const;
     const paces = kinds.map((k) => paceOf(db, k));
-    const guess = (k: string) => (k === "proxy" ? Math.max(5, clipSeconds * PROXY_PACE) : GUESS_S[k]!);
-    const seconds = kinds.reduce((t, k, i) => t + (paces[i] ?? guess(k)) * (k === "proxy" ? proxyShare : 1), 0);
+    const seconds = kinds.reduce((t, k, i) => t + (paces[i] ?? filesGuess(k, clipSeconds)) * (k === "proxy" ? proxyShare : 1), 0);
     // a library whose clips never need a playable copy has measured all it does
     const measured = paces.every((p, i) => p !== null || (kinds[i] === "proxy" && proxyShare === 0));
     return { seconds, usd: 0, measured, at: laneSize("files") };
   }
   if (step === "transcript") {
-    const pace = paceOf(db, "transcribe", { table: "transcripts", provider: route });
+    const pace = paceOf(db, "transcribe", { table: "transcripts", provider: route }, route === "device");
     const guess = route === "device" ? clipSeconds * DEVICE_PACE : GUESS_S[route]!;
     const usd = route === "deepgram" || route === "openai" ? (clipSeconds / 60) * PER_MIN_USD[route] : 0;
     return { seconds: pace ?? guess, usd, measured: pace !== null, at: route === "device" ? 1 : laneSize("transcripts") };
@@ -200,45 +207,80 @@ export async function estimate(libraryId: string, username: string, drop: Drop):
   return out;
 }
 
+/** The steps a person sees go by, in the order they run (worker.ts LANES); probe and wave take a moment and go unsaid. */
+const STAGES: LibraryStage["kind"][] = ["thumb", "proxy", "fingerprint", "transcribe", "describe", "embed"];
+
+// the clips in each library's current run of the queue, added as they are seen with work left and kept until it is
+// empty: every count below is over these, so no number goes down while the run lasts (a clip that is done stays counted)
+// ponytail: in memory; a restart counts from the clips with work left then
+const runs = new Map<string, Set<string>>();
+
 /** The library's processing still to do, for `username`'s view of the pace. */
 export async function progress(libraryId: string, username: string): Promise<LibraryProgress> {
   const db = libraryDb();
+  // a description held back by the plan's limit (worker.ts holdForLimit) waits, and takes no time, until one gets through
   const rows = db
     .prepare(
-      `SELECT kind, state, COUNT(*) AS n, COUNT(DISTINCT version_id) AS clips, MIN(id) AS first, MIN(error) AS error
-       FROM jobs WHERE library_id = ? AND state IN ('queued', 'running', 'needs_key') GROUP BY kind, state`,
+      `SELECT kind, state, kind = 'describe' AND state != 'needs_key' AND IFNULL(error, '') LIKE ? AS held, COUNT(*) AS n, MIN(error) AS error
+       FROM jobs WHERE library_id = ? AND state IN ('queued', 'running', 'needs_key') GROUP BY kind, state, held`,
     )
-    .all(libraryId) as { kind: string; state: string; n: number; clips: number; first: number; error: string | null }[];
-  // descriptions held back by the plan's limit (worker.ts holdForLimit) wait, and take no time until it resets
-  const held = db
-    .prepare(`SELECT COUNT(*) AS n, MAX(error) AS error FROM jobs WHERE library_id = ? AND kind = 'describe' AND state = 'queued' AND run_after > ? AND error LIKE '%limit is reached%'`)
-    .get(libraryId, Date.now()) as { n: number; error: string | null };
-  for (const r of rows) if (r.kind === "describe" && r.state === "queued") r.n -= held.n;
-  const pending = rows.filter((r) => r.state !== "needs_key" && r.n > 0);
+    .all(LIMIT_LIKE, libraryId) as { kind: string; state: string; held: number; n: number; error: string | null }[];
+  const pending = rows.filter((r) => r.state !== "needs_key" && !r.held);
   const left = pending.reduce((n, r) => n + r.n, 0);
   const waiting: LibraryProgress["waiting"] = rows.filter((r) => r.state === "needs_key").map((r) => ({ step: STEP_OF[r.kind] ?? "files", count: r.n, missing: r.error ?? "" }));
-  if (held.n) waiting.unshift({ step: "describe", count: held.n, missing: `${held.error} They carry on by themselves then.`, limit: true });
-  if (!left) return { done: 0, left: 0, clips: 0, seconds: 0, waiting };
-  // done since the queue was last empty: jobs after the oldest one still to do
-  const first = Math.min(...pending.map((r) => r.first));
-  const { done } = db.prepare("SELECT COUNT(*) AS done FROM jobs WHERE library_id = ? AND state = 'done' AND id >= ?").get(libraryId, first) as { done: number };
-  const { clips } = db
-    .prepare("SELECT COUNT(DISTINCT version_id) AS clips FROM jobs WHERE library_id = ? AND state IN ('queued', 'running')")
-    .get(libraryId) as { clips: number };
+  const held = rows.filter((r) => r.held);
+  const heldN = held.reduce((n, r) => n + r.n, 0);
+  if (heldN) waiting.unshift({ step: "describe", count: heldN, missing: `${held[0]!.error} They carry on by themselves then.`, limit: true });
+  if (!left) {
+    runs.delete(libraryId);
+    return { done: 0, left: 0, clips: 0, seconds: 0, waiting, stages: [] };
+  }
+  const open = db.prepare("SELECT DISTINCT version_id AS v FROM jobs WHERE library_id = ? AND state IN ('queued', 'running')").all(libraryId) as { v: string }[];
+  const run = runs.get(libraryId) ?? new Set<string>();
+  runs.set(libraryId, run);
+  for (const { v } of open) run.add(v);
+  const counts = db
+    .prepare(
+      // still to do counts what waits for a key or a limit too (`waiting` says why), so a line never shrinks when one parks
+      `SELECT kind, SUM(state = 'done') AS done, SUM(state = 'failed') AS failed, SUM(state IN ('queued', 'running', 'needs_key')) AS open
+       FROM jobs WHERE library_id = ? AND version_id IN (SELECT value FROM json_each(?)) GROUP BY kind`,
+    )
+    .all(libraryId, JSON.stringify([...run])) as { kind: string; done: number; failed: number; open: number }[];
+  const working = db
+    .prepare(
+      `SELECT j.kind, a.title FROM jobs j JOIN asset_versions v ON v.id = j.version_id JOIN assets a ON a.id = v.asset_id
+       WHERE j.library_id = ? AND j.state = 'running' ORDER BY j.started_at`,
+    )
+    .all(libraryId) as { kind: string; title: string }[];
+  const routes = routesOf(libraryId, username);
+  const stages: LibraryStage[] = [];
+  for (const kind of STAGES) {
+    // a step with nothing to run it on says so in `waiting`, not as a line that never moves
+    if (routes[STEP_OF[kind]!].route === "none") continue;
+    const c = counts.find((r) => r.kind === kind);
+    const of = c ? c.done + c.failed + c.open : 0;
+    const now = working.find((w) => w.kind === kind)?.title;
+    if (of) stages.push({ kind, done: c!.done, of, failed: c!.failed, ...(now ? { now } : {}) });
+  }
+  const done = counts.reduce((n, r) => n + r.done, 0);
   // time left: each step's jobs at this server's pace, the steps side by side
   const { proxyShare, secondsPerClip } = footageOf(db, libraryId);
-  const routes = routesOf(libraryId, username);
   const parts: { step: LibraryStep; route: LibraryStepRoute; seconds: number }[] = [];
   for (const step of STEPS) {
-    const n = pending.filter((r) => STEP_OF[r.kind] === step).reduce((t, r) => t + r.n, 0);
+    const mine = pending.filter((r) => STEP_OF[r.kind] === step);
+    const n = mine.reduce((t, r) => t + r.n, 0);
     let { route } = routes[step];
     // switched off, yet asked for (Describe with AI on one clip): at the pace it would have on
     if (route === "off") route = step === "describe" ? "provider" : "openai";
     // nothing to run it on: those jobs stop as waiting for a key, they take no time
     if (!n || route === "none") continue;
+    // the server's own steps each at their own pace: a lighter copy takes many pictures' time
+    if (step === "files") {
+      parts.push({ step, route, seconds: mine.reduce((t, r) => t + r.n * (paceOf(db, r.kind) ?? filesGuess(r.kind, secondsPerClip)), 0) / laneSize("files") });
+      continue;
+    }
     const p = await perClip(db, step, route, secondsPerClip, proxyShare);
-    const perJob = step === "files" ? p.seconds / (4 + proxyShare) : p.seconds;
-    parts.push({ step, route, seconds: (perJob * n) / p.at });
+    parts.push({ step, route, seconds: (p.seconds * n) / p.at });
   }
-  return { done, left, clips, seconds: total(parts), waiting };
+  return { done, left, clips: open.length, seconds: total(parts), waiting, stages };
 }

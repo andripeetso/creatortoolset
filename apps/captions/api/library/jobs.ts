@@ -42,21 +42,39 @@ export function enqueueJob(db: DatabaseSync, libraryId: string, versionId: strin
 }
 
 /**
- * Takes the oldest queued job that may run now (of `kinds`, when given), leases it, counts the attempt and stamps when
- * it started. Null when there is none.
+ * Takes the oldest queued job that may run now (of `kinds`, when given; job `id`, when given and still queued), leases
+ * it, counts the attempt and stamps when it started. Null when there is none.
  */
-export function claimJob(db: DatabaseSync, leaseSeconds = 300, now = Date.now(), table: JobTable = "jobs", kinds?: readonly string[]): JobRow | null {
+export function claimJob(db: DatabaseSync, leaseSeconds = 300, now = Date.now(), table: JobTable = "jobs", kinds?: readonly string[], id?: number): JobRow | null {
   const only = kinds?.length ? ` AND kind IN (${kinds.map(() => "?").join(",")})` : "";
+  const pick = id === undefined ? `(SELECT id FROM ${table} WHERE state = 'queued' AND run_after <= ?${only} ORDER BY id LIMIT 1)` : "? AND state = 'queued'";
   return (
     (db
       .prepare(
         `UPDATE ${table} SET state = 'running', lease_until = ?, attempts = attempts + 1, started_at = ?
-         WHERE id = (SELECT id FROM ${table} WHERE state = 'queued' AND run_after <= ?${only} ORDER BY id LIMIT 1)
+         WHERE id = ${pick}
          RETURNING *`,
       )
-      .get(now + leaseSeconds * 1000, now, now, ...(kinds ?? [])) as JobRow | undefined) ?? null
+      .get(now + leaseSeconds * 1000, now, ...(id === undefined ? [now, ...(kinds ?? [])] : [id])) as JobRow | undefined) ?? null
   );
 }
+
+/** Libraries whose watch folders are handing clips over right now (watch.ts): their slower steps wait (worker.ts). */
+export const takingClips = new Set<string>();
+
+// clips someone waits on (the person opened one, an AI Editor edit needs it), newest last: their steps go first (worker.ts)
+const waitedOn = new Map<string, number>();
+const WAITED_MS = 10 * 60_000;
+
+/** Someone waits on this clip: its steps go before the other clips' for ten minutes. */
+export function prepareFirst(versionId: string, now = Date.now()): void {
+  waitedOn.delete(versionId);
+  waitedOn.set(versionId, now);
+  for (const [v, at] of waitedOn) if (now - at > WAITED_MS || waitedOn.size > 100) waitedOn.delete(v);
+}
+
+/** The clips prepareFirst named in the last ten minutes. */
+export const firstClips = (now = Date.now()): string[] => [...waitedOn].filter(([, at]) => now - at <= WAITED_MS).map(([v]) => v);
 
 /** Records the outcome of a claimed job: done, back in the queue after a backoff, or failed after MAX_ATTEMPTS. */
 export function finishJob(db: DatabaseSync, id: number, ok: boolean, error?: string, now = Date.now(), table: JobTable = "jobs"): void {
