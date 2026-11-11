@@ -294,7 +294,7 @@ export function SetupDialog() {
                 {MAKES.map((m) => (
                   <Choice key={m} dense multi on={!notSure && makes.includes(m)} onClick={() => toggleMake(m)} icon={MAKE_ICONS[m]} name={MAKE_NAMES[m]} />
                 ))}
-                <Choice dense multi on={notSure} onClick={pickNotSure} icon={Sparkles} name="Not sure yet, show me everything" />
+                <Choice dense multi on={notSure} onClick={pickNotSure} icon={Sparkles} name="Not sure yet" />
               </div>
               <details className="group rounded-xl border border-border/60 bg-card/40">
                 <summary className="cursor-pointer list-none px-4 py-3 text-sm text-muted-foreground hover:text-foreground">Your tools: {tools.length} on</summary>
