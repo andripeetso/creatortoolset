@@ -56,7 +56,7 @@ struct ConnectPoll: Decodable, Equatable {
     let error: String?
 }
 
-/// The broker's HTTP calls from this Mac: the account's computers (with the account token the site minted for this Mac).
+/// The broker's HTTP calls from this Mac: the account's computers (with a relay token from AccountClient.relayToken).
 struct BrokerClient {
     let base: URL
     var session: URLSession = .shared
@@ -182,13 +182,14 @@ final class TunnelRunner: ObservableObject {
 }
 
 extension Shell {
-    /// The account's other computers, from the broker, with the account token this Mac holds for the account server.
+    /// The account's other computers, from the broker, with a short token the account server mints from this Mac's sign-in.
     /// Signed out, or the broker does not answer: none (the list just stays empty).
     func brokerComputers() async -> [ServerEntry] {
-        guard let host = account.server?.host, let token = DeviceVault.token(for: host, service: Account.vault),
-              let base = connectService else { return [] }
+        guard let accountServer = account.server, let host = accountServer.host,
+              let token = DeviceVault.token(for: host, service: Account.vault), let base = connectService else { return [] }
         let mine = server.flatMap { try? Data(contentsOf: $0.dataDir.appendingPathComponent("connect.json")) }
-        guard let list = try? await BrokerClient(base: base).computers(token: token) else { return [] }
+        guard let relay = try? await AccountClient(server: accountServer).relayToken(token),
+              let list = try? await BrokerClient(base: base).computers(token: relay) else { return [] }
         return accountServers(list, thisComputer: tunnelConfig(data: mine)?.computerId)
     }
 
