@@ -36,6 +36,7 @@ const STATIC_ROWS = [
   { section: "appearance", id: "theme", title: "Theme", keywords: ["dark", "light", "system", "colour", "color", "look"] },
   { section: "appearance", id: "colour", title: "Colour", keywords: ["tint", "accent", "project", "own", "color", "violet", "sky", "emerald", "amber", "rose", "orange", "teal", "pink"] },
   { section: "appearance", id: "background-glow", title: "Glow behind Home", keywords: ["glow", "background", "dark", "home"] },
+  { section: "appearance", id: "default-view", title: "Default view", keywords: ["list", "cards", "rows", "grid", "folders", "view", "layout"] },
   // Storage: where footage, music and finished videos live
   { section: "folders", id: "finished-videos", title: "Finished videos", keywords: ["folder", "export", "save", "output", "library"] },
   { section: "folders", id: "footage-folder", title: "Footage", keywords: ["folder", "media", "library", "clips", "raw"] },
