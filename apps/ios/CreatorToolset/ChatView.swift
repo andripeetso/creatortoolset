@@ -69,9 +69,10 @@ struct ChatView: View {
         }
     }
 
-    /// The phone's New edits, newest first.
+    /// The phone's New edits, the newest three.
+    // ponytail: older ones are kept but not shown; a list of them when someone needs it
     @ViewBuilder private var editRows: some View {
-        let mine = edits.list.filter { $0.server == servers.currentId }
+        let mine = edits.list.filter { $0.server == servers.currentId }.prefix(3)
         if !mine.isEmpty {
             VStack(spacing: 8) {
                 ForEach(mine) { PhoneEditRow(edit: $0) }

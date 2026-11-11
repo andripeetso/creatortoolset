@@ -1,5 +1,6 @@
 import PhotosUI
 import SwiftUI
+import UIKit
 
 /// A New edit made on the phone: clips picked from Photos, one Start. The edit is made on the server from the clips'
 /// uploads before their bytes go (`POST /api/editor` with `uploads`), and the server starts it when the last byte is in,
@@ -133,7 +134,12 @@ final class PhoneEdits: ObservableObject {
         guard let edit = item(id), let server = Servers.shared.list.first(where: { $0.id == edit.server }) else { return }
         let api = API(server: server.url, cookie: Keychain.get(server.id))
         starting.insert(id)
-        defer { starting.remove(id) }
+        // the phone locked right after Start: iOS gives the app the moment it needs to make the edit and hand over the bytes
+        let background = UIApplication.shared.beginBackgroundTask(withName: "New edit")
+        defer {
+            starting.remove(id)
+            UIApplication.shared.endBackgroundTask(background)
+        }
         do {
             try await Self.run(
                 prepare: { try await engine.prepare(edit.clips) },
@@ -157,7 +163,10 @@ final class PhoneEdits: ObservableObject {
     /// A fresh edit from the clips still on the phone: the old one goes to the trash, every clip is sent again (one
     /// the library has already counts as itself).
     func retry(_ id: UUID) async {
-        guard let edit = item(id) else { return }
+        // starting the whole time: a second tap, or a refresh in between, leaves it alone
+        guard let edit = item(id), !starting.contains(id) else { return }
+        starting.insert(id)
+        defer { starting.remove(id) }
         if let old = edit.editId {
             if let server = Servers.shared.list.first(where: { $0.id == edit.server }) {
                 _ = try? await API(server: server.url, cookie: Keychain.get(server.id)).send("/api/editor/\(old)", method: "DELETE")
@@ -186,18 +195,21 @@ final class PhoneEdits: ObservableObject {
             if !unsent.isEmpty { engine.send(unsent) }
         }
         guard let api = Servers.shared.api, let current = Servers.shared.currentId else { return }
-        for edit in list where edit.server == current {
+        for edit in list where edit.server == current && !starting.contains(edit.id) {
             guard let editId = edit.editId else { continue }
             if case .ready = state(edit) { continue }
+            // an answer about an edit that Try again replaced in the meantime is dropped
+            let still = { self.item(edit.id)?.editId == editId && !self.starting.contains(edit.id) }
             do {
                 let answer: RemoteEdit = try await api.get("/api/editor/\(editId)")
+                guard still() else { continue }
                 remote[edit.id] = answer
                 if !(answer.sources ?? []).isEmpty {
                     for clip in edit.clips where engine.store.item(clip) != nil { engine.remove(clip) }
                 }
             } catch APIError.server(404, _) {
-                // deleted on the computer
-                forget(edit.id)
+                // deleted (or trashed) on the computer
+                if still() { forget(edit.id) }
             } catch {}
         }
     }
