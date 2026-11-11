@@ -4,6 +4,9 @@ import { useCachedList } from "@/lib/local-cache";
 import { Download, Eraser, Loader2, Play, Scissors, Upload, UploadCloud, WandSparkles, X } from "lucide-react";
 import { AppBar, ToolIntro } from "@/components/AppBar";
 import { dropZoneClass } from "@/components/DropZone";
+import { BrowseBar } from "@/components/browse/Bar";
+import { FolderGrid, ItemCard } from "@/components/browse/Grid";
+import { byName, matches, persistSort, storedSort, useBrowseView } from "@/components/browse/views";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { useMe } from "@/lib/auth";
@@ -31,6 +34,11 @@ import {
 type Cut = { t: number; mine: boolean };
 type Source = { blob: Blob; name: string; url: string; clip?: string };
 type Split = { id: string; name: string; clip?: string; cuts: number[]; target: number; duration: number; updatedAt: number };
+
+const SORTS = ["recent", "name"] as const;
+const SORT_KEY = "stories:sort";
+const storiesOf = (s: Split) => `${s.cuts.length + 1} ${s.cuts.length ? "stories" : "story"}`;
+const dayOf = (at: number) => new Date(at).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 
 const clock = (t: number) => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, "0")}`;
 const baseName = (name: string) =>
@@ -265,6 +273,11 @@ export default function StorySplitterPage() {
     if (s.clip) setParams({ clip: s.clip, name: s.name, split: s.id });
     else setWaiting(s);
   };
+  const [view, setView] = useBrowseView("stories");
+  const [find, setFind] = useState("");
+  const [sort, setSort] = useState(() => storedSort(SORT_KEY, SORTS));
+  // the server sends them newest change first
+  const listed = splits.filter((s) => matches(find, s.name)).sort((a, b) => (sort === "name" ? byName(a, b) : 0));
   const remove = async (s: Split) => {
     const res = await fetch(`/api/stories/${s.id}`, { method: "DELETE" }).catch(() => null);
     if (res?.ok) setSplits((ss) => ss.filter((x) => x.id !== s.id));
@@ -338,8 +351,45 @@ export default function StorySplitterPage() {
               {lists && !waiting && splits.length > 0 && (
                 <section className="w-full max-w-lg">
                   <h2 className="mb-1.5 px-2.5 text-sm font-medium text-zinc-400">Previous splits</h2>
+                  <BrowseBar
+                    search={{ value: find, onChange: setFind, placeholder: "Search splits (⌘K)" }}
+                    sort={{
+                      value: sort,
+                      onChange: (v) => {
+                        setSort(v);
+                        persistSort(SORT_KEY, v);
+                      },
+                      label: "Sort splits",
+                      options: [
+                        { id: "recent", label: "Recent" },
+                        { id: "name", label: "Name" },
+                      ],
+                    }}
+                    view={{ value: view, onChange: setView }}
+                  />
+                  {listed.length === 0 && <p className="py-8 text-center text-sm text-zinc-500">No matches.</p>}
+                  {view === "grid" ? (
+                    <FolderGrid size="column">
+                      {listed.map((s) => (
+                        <ItemCard
+                          key={s.id}
+                          onClick={() => reopen(s)}
+                          title={s.clip ? "Open it again from the library" : "Drop the video again to open it"}
+                          picture={s.clip ? `/api/library/media/${encodeURIComponent(s.clip)}/thumb` : undefined}
+                          icon={Scissors}
+                          name={s.name}
+                          meta={`${storiesOf(s)} · ${dayOf(s.updatedAt)}`}
+                          actions={
+                            <button type="button" onClick={() => void remove(s)} title="Delete this split" aria-label={`Delete the split of ${s.name}`} className="rounded p-1 hover:bg-red-600">
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          }
+                        />
+                      ))}
+                    </FolderGrid>
+                  ) : (
                   <ul className="flex flex-col">
-                    {splits.map((s) => (
+                    {listed.map((s) => (
                       <li key={s.id} className="flex items-center rounded-lg hover:bg-zinc-900">
                         <button
                           type="button"
@@ -367,6 +417,7 @@ export default function StorySplitterPage() {
                       </li>
                     ))}
                   </ul>
+                  )}
                 </section>
               )}
             </>
