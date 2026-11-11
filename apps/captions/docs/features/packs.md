@@ -1,8 +1,8 @@
 # Packs
 
 A pack is one JSON file (`*.ctpack.json`) that adds things to someone's account: storytelling frameworks, caption
-styles, and instructions that go on top of the app's own AI prompts. People make them with Publish to Community on
-one of their own frameworks or caption styles, or by hand, and install them from Community (the account menu, top
+styles, instructions that go on top of the app's own AI prompts, and a Home layout. People make them with Publish to
+Community on one of their own frameworks or caption styles, or on Settings → Tools, or by hand, and install them from Community (the account menu, top
 right). A pack file installs through the API (`POST /api/packs/install`).
 
 Code: `contracts/packs.ts` (format, checks), `api/lib/packs.ts` (install, update, remove, instructions, default
@@ -35,12 +35,21 @@ side). Official packs live in `packs/`.
   catalog lists a newer version.
 - `license` is required. The pack must be yours to share: no quoted books, no fonts, sounds or images you
   don't have the rights to.
-- Everything else is optional, but a pack needs at least one of instructions, frameworks, caption styles or editor
-  items.
+- Everything else is optional, but a pack needs at least one of instructions, frameworks, caption styles, a Home
+  layout or editor items.
+- A caption style's values are plain: text of one line, numbers, on/off.
 - The format also has `designSystems` and an `editor.cards` slot, for apps that draw animated cards. This app
   accepts files that have them and leaves those parts out.
 
 Check a file before you share it: `pnpm --filter @creator-toolset/captions pack:check my-pack.ctpack.json`.
+
+## Home layout
+
+`"home": { "hidden": ["clean", "stories"] }`: the tiles switched off under Settings → Tools, by the app's own ids
+(`HOME_TILES` in `contracts/tools.ts`); every other tile shows. It is a list of choices from that list and nothing
+else: an id the app doesn't have is dropped, and it can't add a tile, name a page or change who may open a tool.
+Installing or updating a pack never changes Home. The installed pack has a **Use on Home** button; pressing it sets
+the person's own switches, which stay theirs to change.
 
 ## Editor items
 
@@ -116,7 +125,8 @@ motion kit) is refused on install, whatever the catalog lists (`api/pack-catalog
 
 ## Publishing
 
-Publish to Community sits on each of your own Workshop frameworks and caption styles. Once you've ticked that it's
+Publish to Community sits on each of your own Workshop frameworks and caption styles, and on Settings → Tools for
+your Home layout. Once you've ticked that it's
 yours to share, the app builds the pack and checks it, then points you to the catalog's site: download the file and
 send it there. It runs the same checks, then waits for a person to review
 it. Once approved, it's listed.

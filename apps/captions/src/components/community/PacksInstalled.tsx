@@ -5,7 +5,7 @@ import { Advanced, Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Row, Section, 
 import type { PluginInfo } from "@/lib/plugin";
 import { ContentsView } from "./PacksShared";
 import { firstSentence, packContents } from "./packs-helpers";
-import { InstalledPackActions, PackHereSwitch, PackUsedIn } from "./PackActions";
+import { InstalledPackActions, PackHereSwitch, PackHomeRow, PackUsedIn } from "./PackActions";
 import type { FolderPlugins } from "@/lib/folder-plugins";
 import { FolderPluginRows, PluginRows } from "./PluginsInstalled";
 
@@ -63,7 +63,7 @@ export function InstalledView({
 
 function PackRow({ pack: p, latest, reload }: { pack: InstalledPack; latest?: string | null; reload: () => Promise<void> }) {
   const contents = packContents(p);
-  const hasContents = contents.slots.length + contents.frameworks.length + contents.captionStyles.length > 0;
+  const hasContents = contents.slots.length + contents.frameworks.length + contents.captionStyles.length > 0 || !!contents.home;
   const heldDesign = p.held?.designSystems;
   return (
     <>
@@ -86,6 +86,7 @@ function PackRow({ pack: p, latest, reload }: { pack: InstalledPack; latest?: st
         )}
         <PackUsedIn id={p.id} installed={p} reload={reload} />
         <PackHereSwitch id={p.id} name={p.name} installed={p} reload={reload} />
+        <PackHomeRow installed={p} />
         {p.default && p.off.includes("*") && <Row title="Off for you: you had your own setup before packs." />}
         {heldDesign && (
           <Row

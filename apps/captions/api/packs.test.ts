@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -51,7 +51,7 @@ describe("checkPack", () => {
     expect(r.problems.join("\n")).toMatch(/version/);
     expect(r.problems.join("\n")).toMatch(/unknown slot "editor.censor"/);
     expect(checkPack({ format: 1, id: "x-y", name: "E", version: "1.0.0", author: "a", license: "MIT", description: "d" }).problems)
-      .toContain("Empty: a pack needs instructions, frameworks, caption styles, design systems or editor items");
+      .toContain("Empty: a pack needs instructions, frameworks, caption styles, a Home layout, design systems or editor items");
   });
 
   it("flags links and takeover phrasing in instructions, not ordinary writing advice", () => {
@@ -74,6 +74,15 @@ describe("checkPack", () => {
     const api = path.join(import.meta.dirname);
     const files = [path.join(api, "assistant.ts"), ...readdirSync(path.join(api, "lib")).filter((f) => f.startsWith("assistant") && !f.includes(".test.")).map((f) => path.join(api, "lib", f))];
     for (const f of files) expect(readFileSync(f, "utf-8"), f).not.toMatch(/packInstructions|renderPackInstructions/);
+  });
+
+  it("takes a Home layout as a list of the app's own tiles and nothing else", () => {
+    const alone = { format: 1, id: "podcast-home", name: "Podcast Home", version: "1.0.0", author: "Tiny Acrobatics", license: "CC0-1.0", description: "Home for podcasts." };
+    // only tiles this app has are kept, in Home's order; anything else in there is dropped, never passed on
+    const r = checkPack({ ...alone, home: { hidden: ["stories", "clean", "/settings", "not-a-tool", "clean"], to: "/x", order: ["a"] } });
+    expect(r).toMatchObject({ ok: true, level: 0 });
+    expect(r.pack!.home).toEqual({ hidden: ["clean", "stories"] });
+    for (const bad of ["clean", { hidden: "clean" }, { hidden: [{ to: "/x" }] }, {}]) expect(checkPack({ ...alone, home: bad }).problems.join(" ")).toMatch(/"home"/);
   });
 
   it("marks a pack with a motion kit as level 1", () => {
@@ -209,6 +218,16 @@ describe("install, update, remove", () => {
     expect(res.status).toBe(200);
     expect(body.pack.frameworks).toHaveLength(1);
     expect(body.pack.author).toBe("tinyacrobatics");
+  });
+
+  it("shares a Home layout, and an install keeps it without changing Home", async () => {
+    const made = await call("POST", "/api/packs/export", { id: "my-home", name: "My Home", description: "Mine.", license: "CC0-1.0", home: { hidden: ["guides", "bogus"] } });
+    const { pack: shared } = (await made.json()) as { pack: { home: unknown } };
+    expect(shared.home).toEqual({ hidden: ["guides"] });
+    const res = await call("POST", "/api/packs/install", { pack: shared });
+    expect(((await res.json()) as { installed: { home: unknown } }).installed.home).toEqual({ hidden: ["guides"] });
+    // the account's own switches (the setup record) are untouched: nothing made one
+    expect(existsSync(path.join(dataDir, "setup"))).toBe(false);
   });
 });
 
