@@ -284,9 +284,10 @@ export class NoStyle extends Error {}
 
 /**
  * What an editing style gives an edit in workspace `ws`: its choices, and the copy the edit keeps. A B-roll folder the
- * edit cannot read and a grade the person no longer has are left out, not an error. `bundle` is the set the grade goes into.
+ * edit cannot read and a grade the person no longer has are left out, not an error. `on` is an edit that already
+ * exists (PATCH): where the style names no folder or grade, that edit keeps its own.
  */
-export async function styleFields(username: string, ws: string, id: string, bundle?: EditBundle): Promise<Partial<EditMeta>> {
+export async function styleFields(username: string, ws: string, id: string, on?: Pick<EditMeta, "bundle" | "brollCollectionId">): Promise<Partial<EditMeta>> {
   const s = findStyle(username, id);
   if (!s) throw new NoStyle("No such style");
   const d = await editorDefaults(username);
@@ -294,8 +295,8 @@ export async function styleFields(username: string, ws: string, id: string, bund
     versions: s.versions,
     targetS: s.targetS,
     framing: { punch: s.punch },
-    brollCollectionId: s.brollCollectionId && collectionOk(username, ws, s.brollCollectionId) ? s.brollCollectionId : null,
-    bundle: { ...(bundle ?? d.bundle), ...(s.grade && d.items.grade.some((i) => i.id === s.grade) ? { grade: s.grade } : {}) },
+    brollCollectionId: s.brollCollectionId && collectionOk(username, ws, s.brollCollectionId) ? s.brollCollectionId : (on?.brollCollectionId ?? null),
+    bundle: { ...(on?.bundle ?? d.bundle), ...(s.grade && d.items.grade.some((i) => i.id === s.grade) ? { grade: s.grade } : {}) },
     ...(s.steps ? { steps: s.steps } : {}),
     style: styleCopy(s),
   };

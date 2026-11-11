@@ -29,12 +29,14 @@ export const styleLine = (s: EditingStyle): string =>
 
 export type OpenStyle = EditingStyle | "new" | null;
 
+/** A copy of a style under "<name> copy". A B-roll folder deleted since the style was made cannot be saved again, so the copy is then made without it. */
+export async function duplicateStyle(s: EditingStyle): Promise<EditingStyle> {
+  const { id: _id, createdAt: _c, updatedAt: _u, ...fields } = s;
+  const body = { ...fields, name: `${s.name} copy`.slice(0, STYLE_NAME_MAX) };
+  return createStyle(body).catch((e) => (s.brollCollectionId ? createStyle({ ...body, brollCollectionId: null }) : Promise.reject(e)));
+}
+
 export function EditingStyles({ styles, open, onOpen, onChanged }: { styles: EditingStyle[]; open: OpenStyle; onOpen: (s: OpenStyle) => void; onChanged: () => Promise<unknown> }) {
-  const copy = async (s: EditingStyle) => {
-    const { id: _id, createdAt: _c, updatedAt: _u, ...fields } = s;
-    await createStyle({ ...fields, name: `${s.name} copy`.slice(0, STYLE_NAME_MAX) });
-    await onChanged();
-  };
   return (
     <>
       {styles.length === 0 ? (
@@ -61,7 +63,7 @@ export function EditingStyles({ styles, open, onOpen, onChanged }: { styles: Edi
                 <RowMenu
                   label={`More for ${s.name}`}
                   items={[
-                    { label: "Duplicate", onSelect: () => copy(s) },
+                    { label: "Duplicate", onSelect: () => duplicateStyle(s).then(onChanged) },
                     { label: "Delete", destructive: true, confirm: { title: `Delete “${s.name}”?` }, onSelect: () => deleteStyle(s.id).then(onChanged) },
                   ]}
                 />

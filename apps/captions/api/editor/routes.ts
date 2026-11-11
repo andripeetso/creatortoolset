@@ -110,7 +110,7 @@ editorApp.patch("/:id", async (c) => {
   try {
     patch = cleanBrief(b, r.e.createdBy, r.e.workspaceId);
     // `style` puts an editing style's choices on the edit, under what this patch sets itself; null takes the style off
-    if (typeof b.style === "string") styled = await styleFields(r.e.createdBy, r.e.workspaceId, b.style, r.e.bundle);
+    if (typeof b.style === "string") styled = await styleFields(r.e.createdBy, r.e.workspaceId, b.style, r.e);
   } catch (e) {
     if (e instanceof NoCollection) return notFound(c);
     if (e instanceof NoStyle) return c.json({ error: e.message, code: "not_found" }, 404);

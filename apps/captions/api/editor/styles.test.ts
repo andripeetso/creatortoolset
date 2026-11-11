@@ -246,6 +246,12 @@ describe.skipIf(rootReplaced)("Editing styles: an edit made with one", () => {
     // a patch that says nothing about a style leaves it
     await patch({ style: s.id });
     expect((await json<Edit>(patch({ name: "Renamed" }))).style).toMatchObject({ id: s.id });
+    // an edit that already has a B-roll folder keeps it under a style that names none, and takes the style's when it names one
+    const withFolder = await edit("maker", { brollCollectionId: "col_a" });
+    expect(await json<Edit>(call("maker", "PATCH", `/api/editor/${withFolder.id}`, { style: s.id }))).toMatchObject({ brollCollectionId: "col_a", versions: 3, framing: { punch: 1 } });
+    libraryDb().exec("INSERT INTO collections (id, library_id, name, kind, created_at) VALUES ('col_c', 'lib_a', 'Other B-roll', 'manual', 0)");
+    const named = await made("maker", { name: "Other folder", brollCollectionId: "col_c" });
+    expect((await json<Edit>(call("maker", "PATCH", `/api/editor/${withFolder.id}`, { style: named.id }))).brollCollectionId).toBe("col_c");
   });
 
   it("Save as style copies an edit's choices and nothing of what the video is; only its maker can", async () => {

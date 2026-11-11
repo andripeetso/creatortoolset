@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EditingStyle } from "@contracts/editor-styles";
-import { EditingStyles, type OpenStyle } from "./EditingStyles";
+import { duplicateStyle, EditingStyles, type OpenStyle } from "./EditingStyles";
 
 // The Editing styles tab and its sheet. An empty tab is one button. The sheet draws a select only when there is
 // something to choose (a second grade, a folder, a step this app has), and sends the grade and the steps only when
@@ -96,6 +96,29 @@ describe("Editing styles tab", () => {
     expect(host!.querySelector('[aria-label="More for Fast and warm"]')).not.toBeNull();
     act(() => card.click());
     expect(opened.at(-1)).toEqual(style);
+  });
+});
+
+describe("Duplicate", () => {
+  it("copies every choice under a new name, with no id of the old one", async () => {
+    await duplicateStyle({ ...style, grade: "warm", steps: [{ id: "blur", values: { how: "pixels" } }] });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.body).toEqual({ name: "Fast and warm copy", notes: "Short lines.\nNo intro.", versions: 2, targetS: 30, pace: "natural", punch: 1.3, grade: "warm", brollCollectionId: null, steps: [{ id: "blur", values: { how: "pixels" } }] });
+  });
+
+  it("a style whose B-roll folder was deleted since is copied without the folder", async () => {
+    const real = globalThis.fetch;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      const body = JSON.parse((init?.body as string) ?? "{}");
+      if (init?.method === "POST" && body.brollCollectionId === "col_gone") {
+        sent.push({ method: "POST", url, body });
+        return new Response(JSON.stringify({ error: "No such folder in your Media Library" }), { status: 400 });
+      }
+      return real(url, init);
+    });
+    await duplicateStyle({ ...style, brollCollectionId: "col_gone" });
+    expect(sent.map((x) => x.body.brollCollectionId)).toEqual(["col_gone", null]);
+    expect(sent[1]!.body).toMatchObject({ name: "Fast and warm copy", pace: "natural" });
   });
 });
 
