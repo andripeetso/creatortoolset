@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { SearchHit } from "../../contracts/library";
-import { DEVICE_EMBED_MODEL, embedOnDevice } from "../lib/device-embed";
+import { DEVICE_EMBED_MODEL, deviceEmbedModelKept, embedOnDevice } from "../lib/device-embed";
 import { deviceTranscribes } from "../lib/device-transcribe";
 import { libraryDb, librarySetting } from "./db";
 import { enqueueJob } from "./jobs";
@@ -14,14 +14,26 @@ import { NeedsKey, segmentsOf, type Segment } from "./transcribe";
  * about 30 s windows (chunks 1…) into vectors, as its actor (embedRoute): their own OpenAI-compatible key (or the
  * server's for a platform admin), else this computer's own model when the server runs on it, else needs_key. A search
  * embeds the query the same way for the searcher, compares it only with vectors of the same model, takes the 50
- * closest chunks by cosine and merges them with the full-text hits by reciprocal rank fusion (k = 60). No route or no
- * vectors: the full-text hits alone.
+ * closest chunks that are close enough (FLOOR) and merges them with the full-text hits by reciprocal rank fusion
+ * (k = 60). No route or no vectors: the full-text hits alone.
  */
 
 const WINDOW_S = 30;
 const TOP = 50;
 export const RRF_K = 60;
 export const embedModel = () => process.env.OPENAI_EMBED_MODEL || "text-embedding-3-small";
+
+/** A chunk with fewer words says nothing to search by (a file name for a title, "I'm" heard over noise): it gets no vector. */
+const MIN_WORDS = 3;
+export const meaningful = (text: string) => (text.match(/\p{L}+/gu)?.length ?? 0) >= MIN_WORDS;
+
+/**
+ * How close (cosine) a chunk must be to the query to be listed for its meaning, by model: below it, a clip is listed
+ * only when its words match.
+ * ponytail: the key's model is not measured here; 0.3 is the usual line for it
+ */
+const FLOOR: Record<string, number> = { [DEVICE_EMBED_MODEL]: 0.35 };
+export const floorOf = (model: string): number => FLOOR[model] ?? 0.3;
 
 /** Chunk 0: title and description (the whole clip, no second). Then the transcript in windows of about 30 s. */
 export function embedChunks(title: string, description: string | null, segments: Segment[]): { start: number; text: string }[] {
@@ -83,12 +95,20 @@ export async function embedVersion(db: DatabaseSync, versionId: string, actor: s
     .get(versionId) as { title: string; description: string | null };
   // ponytail: one request per version; a very long transcript would need batches under the endpoint's input limit
   const chunks = embedChunks(row.title, row.description, segmentsOf(db, versionId));
-  const vecs = await embedTexts(chunks.map((c) => c.text), route, { key: versionId });
+  // a chunk with nothing to search by keeps an empty row, so the catch-up sees the version as made with this model
+  const kept = chunks.filter((c) => meaningful(c.text));
+  const made = kept.length ? await embedTexts(kept.map((c) => c.text), route, { key: versionId }) : [];
+  const vecs = chunks.map((c) => (meaningful(c.text) ? made.shift()! : null));
   db.exec("BEGIN");
   try {
     db.prepare("DELETE FROM embeddings WHERE version_id = ?").run(versionId);
     const add = db.prepare("INSERT INTO embeddings (version_id, chunk, start_s, model, dims, vec) VALUES (?, ?, ?, ?, ?, ?)");
-    chunks.forEach((c, i) => add.run(versionId, i, c.start, route.model, vecs[i]!.length, new Uint8Array(vecs[i]!.buffer)));
+    const none = db.prepare("INSERT INTO embeddings (version_id, chunk, start_s, model, dims, vec) VALUES (?, ?, ?, ?, 0, x'')");
+    chunks.forEach((c, i) => {
+      const v = vecs[i];
+      if (v) add.run(versionId, i, c.start, route.model, v.length, new Uint8Array(v.buffer));
+      else none.run(versionId, i, c.start, route.model);
+    });
     db.exec("COMMIT");
   } catch (e) {
     db.exec("ROLLBACK");
@@ -108,11 +128,12 @@ export function cosine(a: Float32Array, b: Float32Array): number {
   return na && nb ? dot / Math.sqrt(na * nb) : 0;
 }
 
-/** The `n` rows closest to `q`, best first. Rows of another length (another model's) never match. */
-export function cosineTop<T extends { vec: Float32Array }>(q: Float32Array, rows: T[], n = TOP): T[] {
+/** The `n` rows closest to `q` and at least `floor` close, best first. Rows of another length (another model's, or empty) never match. */
+export function cosineTop<T extends { vec: Float32Array }>(q: Float32Array, rows: T[], n = TOP, floor = -1): T[] {
   return rows
     .filter((r) => r.vec.length === q.length)
     .map((r) => ({ r, s: cosine(q, r.vec) }))
+    .filter((x) => x.s >= floor)
     .sort((a, b) => b.s - a.s)
     .slice(0, n)
     .map((x) => x.r);
@@ -134,12 +155,18 @@ export function rrf<T>(lists: T[][], key: (t: T) => string, k = RRF_K): T[] {
 export const hitKey = (h: SearchHit) => `${h.asset.id}@${h.seconds ?? ""}`;
 
 /**
- * The 50 chunks closest to `q` in the library, as search hits (chunk 0 = the asset, later chunks = the second they
- * start at), with the query made on the searcher's route, against the vectors of that route's model only. Null when
- * semantic search is off, has no vectors of that model yet, or the searcher has no route: the caller then shows the
- * full-text hits alone.
+ * The 50 chunks closest to `q` in the library above the model's floor, as search hits (chunk 0 = the asset, later
+ * chunks = the second they start at), with the query made on the searcher's route, against the vectors of that route's
+ * model only, narrowed by `where` (clauses on the asset `a`, as the search's own). Null when semantic search is off, has
+ * no vectors of that model yet, its model is not on this computer yet (a search never waits for the download), or the
+ * searcher has no route: the caller then shows the full-text hits alone.
  */
-export async function semanticHits(libraryId: string, q: string, username: string): Promise<SearchHit[] | null> {
+export async function semanticHits(
+  libraryId: string,
+  q: string,
+  username: string,
+  where: { sql: string; params: (string | number)[] }[] = [],
+): Promise<SearchHit[] | null> {
   if (!librarySetting(libraryId, "embed")) return null;
   let route: EmbedRoute;
   try {
@@ -147,20 +174,23 @@ export async function semanticHits(libraryId: string, q: string, username: strin
   } catch {
     return null;
   }
+  if ("device" in route && !deviceEmbedModelKept()) return null;
   const db = libraryDb();
   // ponytail: every chunk of the library read and scanned in memory per search; fine to about 100k chunks, then sqlite-vec
   const rows = (
     db
       .prepare(
         `SELECT e.version_id, e.chunk, e.start_s, e.vec FROM embeddings e JOIN assets a ON a.current_version_id = e.version_id
-         WHERE a.library_id = ? AND a.trashed_at IS NULL AND e.model = ? ORDER BY e.version_id, e.chunk`,
+         WHERE a.library_id = ? AND a.trashed_at IS NULL AND e.model = ? AND e.dims > 0${where.map((w) => ` AND ${w.sql}`).join("")}
+         ORDER BY e.version_id, e.chunk`,
       )
-      .all(libraryId, route.model) as { version_id: string; chunk: number; start_s: number; vec: Uint8Array }[]
+      .all(libraryId, route.model, ...where.flatMap((w) => w.params)) as { version_id: string; chunk: number; start_s: number; vec: Uint8Array }[]
   ).map((r) => ({ ...r, vec: new Float32Array(Uint8Array.from(r.vec).buffer) }));
   if (!rows.length) return null;
   const [qv] = await embedTexts([q], route).catch(() => [undefined]);
   if (!qv) return null;
-  const top = cosineTop(qv, rows);
+  const top = cosineTop(qv, rows, TOP, floorOf(route.model));
+  if (!top.length) return [];
   const ids = [...new Set(top.map((r) => r.version_id))];
   const cards = new Map(
     (
@@ -178,6 +208,20 @@ export async function semanticHits(libraryId: string, q: string, username: strin
     const said = segs.get(r.version_id)!.find((s) => s.start >= r.start_s);
     return [{ asset, seconds: r.start_s, ...(said ? { snippet: said.text } : {}) }];
   });
+}
+
+/**
+ * Whether search by meaning is on for `username` here but not ready yet: entries are being made and none of the route's
+ * model is here yet, or this computer's model is still to be fetched. Searches go by words alone until then.
+ */
+export function meaningGettingReady(libraryId: string, username: string): boolean {
+  const model = librarySetting(libraryId, "embed") ? modelFor(username) : null;
+  const db = libraryDb();
+  if (!model || !db.prepare("SELECT 1 FROM jobs WHERE library_id = ? AND kind = 'embed' AND state IN ('queued', 'running') LIMIT 1").get(libraryId)) return false;
+  if (model === DEVICE_EMBED_MODEL && !deviceEmbedModelKept()) return true;
+  return !db
+    .prepare("SELECT 1 FROM embeddings e JOIN assets a ON a.current_version_id = e.version_id WHERE a.library_id = ? AND e.model = ? LIMIT 1")
+    .get(libraryId, model);
 }
 
 /**

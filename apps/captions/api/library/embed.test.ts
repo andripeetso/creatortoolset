@@ -5,10 +5,12 @@ import { Hono } from "hono";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AuthVars } from "../auth";
 
-// this computer's model, stood in for: every text becomes (0, 0, 1, 0)
+// this computer's model, stood in for: every text becomes (0, 0, 1, 0); `model.kept` says whether it is fetched yet
+const model = vi.hoisted(() => ({ kept: true }));
 vi.mock("../lib/device-embed", async (real) => ({
   ...(await real<typeof import("../lib/device-embed")>()),
   embedOnDevice: async (texts: string[]) => texts.map(() => Float32Array.from([0, 0, 1, 0])),
+  deviceEmbedModelKept: () => model.kept,
 }));
 
 const scratch = process.env.CT_SCRATCH_DIR ?? tmpdir();
@@ -106,13 +108,11 @@ describe("semantic search", () => {
     libraryDb().prepare(`UPDATE libraries SET settings = json_set(settings, '$.embed', json('true')) WHERE id = 'lib_a'`).run();
     process.env.OPENAI_API_KEY = "test-key";
     answer([0, 1, 0]);
-    // "beam" matches one title by words; by meaning: beam, then swing, then roll
+    // "beam" matches one title by words; by meaning: beam, then swing (0.8); roll and the swing's line (0) are under the floor
     const hits = await search("local", "beam");
     expect(hits.map((h) => [h.asset.id, h.seconds])).toEqual([
       ["ast-beam", undefined],
       ["ast-swing", undefined],
-      ["ast-roll", undefined],
-      ["ast-swing", 30],
     ]);
   });
 
@@ -132,9 +132,12 @@ describe("embed job", () => {
     ]);
   });
 
-  it("stores one row per chunk with the answer's dims, and needs a key", async () => {
-    seed("ast-new", "Handstand");
-    saveTranscript(libraryDb(), "ver-ast-new", "deepgram", "en", [{ start: 0, end: 2, text: "Hold it." }]);
+  it("stores one row per chunk with the answer's dims (none for a chunk of a word or two), and needs a key", async () => {
+    seed("ast-new", "Handstand against the wall");
+    saveTranscript(libraryDb(), "ver-ast-new", "deepgram", "en", [
+      { start: 0, end: 2, text: "Hold it steady for three seconds." },
+      { start: 40, end: 41, text: "I'm" }, // too few words to search by: an empty row, never sent
+    ]);
     await expect(embedVersion(libraryDb(), "ver-ast-new", "local")).rejects.toThrow("Add your OpenAI key in Settings → API keys");
     process.env.OPENAI_API_KEY = "test-key";
     answer([0.1, 0.2, 0.3, 0.4]);
@@ -143,6 +146,7 @@ describe("embed job", () => {
     expect(rows).toEqual([
       { chunk: 0, start_s: 0, dims: 4 },
       { chunk: 1, start_s: 0, dims: 4 },
+      { chunk: 2, start_s: 40, dims: 0 },
     ]);
   });
 });
@@ -172,6 +176,20 @@ describe("on this computer", () => {
       ["ast-new", undefined],
       ["ast-new", 0],
     ]);
+  });
+
+  it("while the model is still to be fetched, a search answers by words at once and says search by meaning is getting ready", async () => {
+    process.env.CT_LOCAL = "1";
+    model.kept = false;
+    libraryDb().prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor) VALUES ('lib_a', 'ver-ast-roll', 'embed', 'running', 'local')").run();
+    try {
+      const r = await app.request(`/api/library/lib_a/search?q=${encodeURIComponent("upside down")}`, { headers: { "x-user": "local" } });
+      expect(r.headers.get("x-search-meaning")).toBe("getting-ready");
+      expect(await r.json()).toEqual([]);
+    } finally {
+      model.kept = true;
+      libraryDb().prepare("DELETE FROM jobs WHERE version_id = 'ver-ast-roll' AND kind = 'embed'").run();
+    }
   });
 
   it("catch-up queues the clips with no vectors of the route's model, once, and leaves a failed one for its Retry", () => {

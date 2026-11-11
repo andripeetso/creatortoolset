@@ -33,9 +33,12 @@ let current: { key: string; text: string } | null = null;
 /** What the run for `key` (a library version) is doing, in words for its owner, while the model is fetched; else undefined. */
 export const deviceEmbedStatus = (key: string): string | undefined => (current?.key === key ? current.text : undefined);
 
+/** Whether the model is on this computer (fetched once, kept with the person's data). */
+export const deviceEmbedModelKept = (): boolean => existsSync(path.join(modelsDir(), DEVICE_EMBED_MODEL, "onnx", "model_quantized.onnx"));
+
 async function loadModel(say: (text: string) => void): Promise<Extractor> {
   const { pipeline } = await modelLibrary();
-  const kept = existsSync(path.join(modelsDir(), DEVICE_EMBED_MODEL, "onnx", "model_quantized.onnx"));
+  const kept = deviceEmbedModelKept();
   if (!kept) say(GETTING_SEARCH_MODEL);
   let shown = 0;
   const m = await pipeline("feature-extraction", DEVICE_EMBED_MODEL, {

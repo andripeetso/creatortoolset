@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { spokenLanguage } from "../../src/workers/spoken-language";
-import { hfApp } from "../hfproxy";
+import { hfApp, OWN_COPY } from "../hfproxy";
 import { ffmpegSlot } from "../library/media/run";
 import { env, hostedMode } from "./env";
 
@@ -180,7 +180,12 @@ export async function modelLibrary() {
   // through this server's own model route, without the network hop: its mirror fallback, and a model Caption Studio
   // already fetched is copied from that route's files instead of downloaded again
   lib.env.remoteHost = "http://server/api/hf/";
-  lib.env.fetch = (async (url: string | URL | Request, init?: RequestInit) => hfApp.request(new URL(String(url)).pathname, init)) as typeof fetch;
+  // the library keeps its own copy in modelsDir: the route keeps none beside it
+  lib.env.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+    const headers = new Headers(init?.headers);
+    headers.set(OWN_COPY, "1");
+    return hfApp.request(new URL(String(url)).pathname, { ...init, headers });
+  }) as typeof fetch;
   return lib;
 }
 
