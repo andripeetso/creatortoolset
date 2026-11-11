@@ -32,7 +32,7 @@ describe("a page half that never finishes loading does not leave the window blan
     vi.spyOn(pageFile, "load").mockImplementation(() => new Promise(() => {}));
     const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
     await loadFolderPlugins(); // without the limit this never returns, and main.tsx waits for it before the first screen
-    expect(folderPluginFailures.get("stuck")).toBe("They took too long to load");
+    expect(folderPluginFailures.get("stuck")).toBe("they took too long to load");
     expect(added()).toEqual([]);
     quiet.mockRestore();
   });

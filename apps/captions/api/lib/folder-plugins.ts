@@ -314,7 +314,7 @@ async function load(compiled: ServerPlugin[], more?: (all: ServerPlugin[]) => vo
       console.error(`[plugins] ${b.id} was left out: ${message(e)}`);
       // its file is still loading and whatever it started goes on until the server next starts; it is not tried at
       // every start (each try would hold the start up again) until it is switched off and on, or changes
-      if (message(e) === TOO_SLOW_TO_LOAD) state.stopped[b.id] = { fingerprint: b.fingerprint, error: `${TOO_SLOW_TO_LOAD}.` };
+      if (message(e) === TOO_SLOW_TO_LOAD) state.stopped[b.id] = { fingerprint: b.fingerprint, error: TOO_SLOW_TO_LOAD };
     } finally {
       writeState({ ...state, loading: null });
     }

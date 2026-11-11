@@ -10,7 +10,10 @@ import { withPluginTiles } from "./tools";
 // src/plugin-host.gen.ts), so it draws with the app's one React and one router. They join the app's list before the
 // first screen is drawn. One that fails to load, or whose pieces collide with another plug-in's, is left out and named.
 
-/** Why a plug-in's page half is not in the app, by plug-in id. Community → Installed shows it on the plug-in's row. */
+/**
+ * Why a plug-in's page half is not in the app, by plug-in id. Community → Installed shows it on the plug-in's row after
+ * "Its pages were left out: ", so each reason starts with a small letter.
+ */
 export const folderPluginFailures = new Map<string, string>();
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -181,7 +184,7 @@ export async function loadFolderPlugins(): Promise<void> {
         (async () => {
           for (const need of p.needs) {
             const load = hostModules[need];
-            if (!load) throw new Error(`It needs ${need.replace(/^pkg:/, "the package ")}, which this version of the app doesn't have`);
+            if (!load) throw new Error(`it needs ${need.replace(/^pkg:/, "the package ")}, which this version of the app doesn't have`);
             if (!table.has(need)) table.set(need, await load());
           }
           if (late) return;
@@ -198,7 +201,7 @@ export async function loadFolderPlugins(): Promise<void> {
         new Promise<never>((_, reject) => {
           timer = setTimeout(() => {
             late = true;
-            reject(new Error("They took too long to load"));
+            reject(new Error("they took too long to load"));
           }, Math.max(0, deadline - Date.now()));
         }),
       ]);

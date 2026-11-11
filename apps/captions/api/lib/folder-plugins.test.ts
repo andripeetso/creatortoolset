@@ -171,7 +171,7 @@ describe("plug-ins from the person's folder", () => {
     const began = Date.now();
     expect((await start()).map((p) => p.id)).toEqual(["ok"]);
     expect(Date.now() - began).toBeLessThan(limits.loadMs);
-    expect(row("stuck").error).toBe("It took too long to load.");
+    expect(row("stuck").error).toBe("It took too long to load"); // the same words at every start
   });
 
   it("stops loading when the whole start's time is used up, and says so", async () => {

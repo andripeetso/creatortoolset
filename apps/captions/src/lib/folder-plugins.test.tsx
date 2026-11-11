@@ -113,7 +113,7 @@ describe("what a plug-in's row says under its name", () => {
     expect(folderRowNote({ ...row, running: false, changed: true, error: "boom" }, "x", false)).toEqual({ tone: "broken", text: "boom" });
   });
   it("says when only its pages were left out", () => {
-    expect(folderRowNote(row, "It needs src/x, which this version of the app doesn't have", false)?.text).toMatch(/^Its pages were left out: It needs src\/x/);
+    expect(folderRowNote(row, "it needs src/x, which this version of the app doesn't have", false)?.text).toBe("Its pages were left out: it needs src/x, which this version of the app doesn't have");
   });
   it("says the folder changed, and offers the new version, while Update automatically is off", () => {
     expect(folderRowNote({ ...row, changed: true }, undefined, false)).toEqual({ tone: "attention", text: "Changed since you switched it on" });
