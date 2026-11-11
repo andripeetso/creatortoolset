@@ -117,8 +117,10 @@ const detectedPlan = (u: string): PlanId | null =>
 async function view(user: SessionUser): Promise<SetupView> {
   const s = read(user.username) ?? {};
   return {
-    tools: s.tools ?? null,
-    hidden: s.hidden ?? [],
+    // a saved id the app no longer has (a tool that left it) is left out: the page sends these lists back whole, and
+    // a save with an unknown id in it is refused
+    tools: s.tools ? s.tools.filter(isTool) : null,
+    hidden: (s.hidden ?? []).filter(isHomeTile),
     plan: s.plan ?? null,
     detected: detectedPlan(user.username),
     done: !!s.done,

@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
@@ -44,6 +44,19 @@ describe("setup: my tools, my plan, what is set up", () => {
     expect(await get()).toMatchObject({ hidden: ["notes", "record"] });
     expect((await put({ hidden: [] })).status).toBe(200);
     expect(await get()).toMatchObject({ hidden: [] });
+  });
+
+  it("an id saved by an earlier build that had another tool is left out, so the next save is not refused for it", async () => {
+    const was = who;
+    who = { username: "early", role: "user", cloud: true, off: [] };
+    mkdirSync(path.join(process.env.DATA_DIR!, "setup"), { recursive: true });
+    writeFileSync(path.join(process.env.DATA_DIR!, "setup", "early.json"), JSON.stringify({ tools: ["workshop", "left-the-app"], hidden: ["left-the-app", "notes"], done: true }));
+    const seen = (await get()) as unknown as { tools: string[]; hidden: string[] };
+    expect(seen).toMatchObject({ tools: ["workshop"], hidden: ["notes"], done: true });
+    // Settings → Tools sends the list it was given back with one change
+    expect((await put({ hidden: [...seen.hidden, "enhance"] })).status).toBe(200);
+    expect((await put({ tools: seen.tools })).status).toBe(200);
+    who = was;
   });
 
   it("says transcripts work without a key only when the server is on the person's own computer", async () => {
