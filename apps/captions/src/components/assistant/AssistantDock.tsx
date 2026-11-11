@@ -454,6 +454,8 @@ export function AssistantDock() {
       ref={cardRef}
       aria-label="Assistant"
       data-assistant-dock
+      // where the open card stands, for what else stands at the window's edges (a toast keeps clear of it, index.css)
+      data-corner={place.mode === "dock" ? "dock" : place.corner}
       className={cn(
         // above page dialogs (z-50, Settings among them), under confirms (z-[60], alert-dialog.tsx)
         "pointer-events-auto fixed z-[55] flex flex-col overflow-hidden bg-popover text-popover-foreground",

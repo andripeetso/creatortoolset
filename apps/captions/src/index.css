@@ -248,6 +248,20 @@ html:has(button[data-assistant-dock][data-corner="br"]) [data-sonner-toaster] {
   --mobile-offset-bottom: calc(5.5rem + var(--corner-taken, 0px)) !important;
 }
 html:has(button[data-assistant-dock][data-corner="bl"]) [data-sonner-toaster] { --mobile-offset-bottom: 8rem !important; }
+/* The same while the assistant's card is open on that side, so a message never lies over the card's message box and
+   buttons. Docked (400px down the right edge) the message stands in the page's own corner, left of the card; floating
+   in the bottom right corner it stands to the card's left. Where the window is too narrow for the two side by side,
+   the message stands above the floating card. */
+@media (min-width: 52.01rem) {
+  html:has(section[data-assistant-dock][data-corner="dock"]) [data-sonner-toaster] { --offset-right: 26rem !important; }
+  html:has(section[data-assistant-dock][data-corner="br"]) [data-sonner-toaster] { --offset-right: calc(27rem + var(--edge-room, 0px)) !important; }
+}
+@media (max-width: 52rem) {
+  html:has(section[data-assistant-dock][data-corner="br"]) [data-sonner-toaster] {
+    --offset-bottom: calc(min(600px, 100dvh - 6rem) + 2rem) !important;
+    --mobile-offset-bottom: calc(min(600px, 100dvh - 6rem) + 2rem) !important;
+  }
+}
 /* On a phone the pages scroll under the bubble. A page keeps room at its end, so its last row and its bottom controls
    can be scrolled clear of the bubble: every page with the shared bar, and a phone page or sheet marked .ends-clear.
    Not while a box in the corner has lifted the bubble (above): that box is the page's end. */
