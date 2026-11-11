@@ -150,17 +150,8 @@ final class CameraRecorder: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
             throw error
         }
         writer.movieFragmentInterval = CMTime(seconds: 5, preferredTimescale: 600)   // a crash leaves a playable file
-        input = AVAssetWriterInput(mediaType: .video, outputSettings: [
-            AVVideoCodecKey: AVVideoCodecType.h264,
-            AVVideoWidthKey: Int(size.width),
-            AVVideoHeightKey: Int(size.height),
-            AVVideoCompressionPropertiesKey: [
-                AVVideoAverageBitRateKey: 6_000_000,
-                AVVideoExpectedSourceFrameRateKey: 30,
-                AVVideoMaxKeyFrameIntervalDurationKey: 2,   // Review seeks fast
-                AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
-            ],
-        ])
+        input = AVAssetWriterInput(mediaType: .video, outputSettings: recorderVideoSettings(
+            width: Int(size.width), height: Int(size.height), bitRate: 6_000_000, frameRate: 30))
         input.expectsMediaDataInRealTime = true
         guard writer.canAdd(input) else {
             camera.release()

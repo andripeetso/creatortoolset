@@ -3,7 +3,7 @@ import { ToolError, type ToolContext, type ToolDef, type ToolHandler, type WorkC
 import { Hono } from "hono";
 import { MY_KEYS } from "../contracts/service-keys";
 import { TOOLS as APP_TOOLS, TOOL_NAMES, readiness, type SetupView } from "../contracts/tools";
-import { CHECK, EDITORS, MAKES, TALK } from "../contracts/work-prefs";
+import { CHECK, EDITORS, JOBS, MAKES, TALK } from "../contracts/work-prefs";
 import { EDIT_STEPS } from "../contracts/editor";
 import { routeFor } from "./lib/providers";
 import { deviceName } from "./lib/devices";
@@ -254,8 +254,8 @@ export const TOOLS = [
   { name: "get_work_prefs", description: "How the user wants to work: talk (app | chat | both), check (app | editor | both), their editor and what they make.", inputSchema: { type: "object", properties: {} } },
   {
     name: "set_work_prefs",
-    description: "Change how the user wants to work. talk = where they talk to the AI (app, chat = their own AI chat, both); check = where they check the work (app, editor, both); editor = which video editor (or null); makes = what they make.",
-    inputSchema: { type: "object", properties: { talk: { type: "string", enum: [...TALK] }, check: { type: "string", enum: [...CHECK] }, editor: { type: ["string", "null"], enum: [...EDITORS, null] }, makes: { type: "array", items: { type: "string", enum: [...MAKES] } } } },
+    description: "Change how the user wants to work. talk = where they talk to the AI (app, chat = their own AI chat, both); check = where they check the work (app, editor, both); editor = which video editor (or null); makes = what they make; job = what they want to do first (or null).",
+    inputSchema: { type: "object", properties: { talk: { type: "string", enum: [...TALK] }, check: { type: "string", enum: [...CHECK] }, editor: { type: ["string", "null"], enum: [...EDITORS, null] }, makes: { type: "array", items: { type: "string", enum: [...MAKES] } }, job: { type: ["string", "null"], enum: [...JOBS, null] } } },
   },
 ];
 
@@ -857,7 +857,8 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
     set_work_prefs: async (a) => {
       const body = pick(a, ["talk", "check", "makes"]);
       if (a.editor !== undefined) body.editor = a.editor;
-      if (!Object.keys(body).length) throw new ToolError("Nothing to change: give talk, check, editor or makes.");
+      if (a.job !== undefined) body.job = a.job;
+      if (!Object.keys(body).length) throw new ToolError("Nothing to change: give talk, check, editor, makes or job.");
       return json("/api/work-prefs", "PUT", body);
     },
     setup_status: async () => {

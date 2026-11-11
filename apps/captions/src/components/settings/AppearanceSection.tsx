@@ -14,8 +14,8 @@ const OPTIONS: Array<{ id: ThemeChoice; label: string; icon: LucideIcon }> = [
   { id: "dark", label: "Dark", icon: Moon },
 ];
 
-// each preview is drawn in its own theme's colours (a preview cannot follow the theme it previews)
-const LOOKS = {
+// each preview is drawn in its own theme's colours (a preview cannot follow the theme it previews); setup's look cards too
+export const LOOKS = {
   light: { page: "#ffffff", rail: "#f4f4f5", line: "#d4d4d8", soft: "#e4e4e7", edge: "#e4e4e7" },
   dark: { page: "#0b0b10", rail: "#111116", line: "#3f3f46", soft: "#27272a", edge: "#27272a" },
 };

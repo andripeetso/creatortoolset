@@ -1,9 +1,10 @@
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
+import { LOOKS } from "@/components/settings/AppearanceSection";
 
 /**
- * Setup's pictures: the three "How do you work best?" cards, and the captioned video on "Try it". All three are the same window, the same size and in
- * the theme's own colours (light in light, dark in dark); only what's inside changes: the app, your own AI's chat, or
- * the two side by side. The accent is the project colour (`--tint`). The window is drawn in a 200×120 box.
+ * Setup's pictures: the three "How do you work best?" cards and the three "Pick your look" cards. All are the same
+ * window, the same size. The first three are in the theme's own colours (light in light, dark in dark); only what's
+ * inside changes: the app, your own AI's chat, or the two side by side. A look card is drawn in the look it shows. The accent is the project colour (`--tint`). The window is drawn in a 200×120 box.
  */
 
 const TINT = "var(--tint)";
@@ -108,3 +109,50 @@ export function BothArt() {
   );
 }
 
+
+/** The app in one look, in that look's own colours (Settings → Appearance's LOOKS): the tools down the side, a card of rows. */
+function LookInside({ look }: { look: keyof typeof LOOKS }) {
+  const c = LOOKS[look];
+  return (
+    <g>
+      <rect x="0.5" y="0.5" width="199" height="119" rx="10" fill={c.page} />
+      <path d="M1 22 H46 V119.5 H11 A10 10 0 0 1 1 109.5 Z" fill={c.rail} />
+      <line x1="46.5" y1="22" x2="46.5" y2="119.5" stroke={c.edge} />
+      {[11, 19, 27].map((x) => <circle key={x} cx={x + 1} cy="11" r="2.5" fill={c.line} />)}
+      <line x1="0.5" y1="21.5" x2="199.5" y2="21.5" stroke={c.edge} />
+      {[30, 40, 50, 60].map((y, i) => (
+        <rect key={y} x="9" y={y} width={i === 0 ? 28 : [0, 22, 26, 18][i]} height="5" rx="2.5" fill={i === 0 ? TINT : c.line} />
+      ))}
+      <rect x="58" y="31" width="52" height="6" rx="3" fill={c.line} />
+      <rect x="58.5" y="45.5" width="130" height="62" rx="6" fill="none" stroke={c.edge} />
+      {[0, 1, 2].map((i) => (
+        <g key={i}>
+          {i > 0 && <line x1="59" y1={45.5 + i * 20.7} x2="188" y2={45.5 + i * 20.7} stroke={c.edge} />}
+          <rect x="66" y={53.5 + i * 20.7} width={[46, 60, 38][i]} height="5" rx="2.5" fill={c.line} />
+          <rect x="168" y={52.5 + i * 20.7} width="13" height="7" rx="3.5" fill={i === 1 ? c.soft : TINT} />
+        </g>
+      ))}
+      <rect x="0.5" y="0.5" width="199" height="119" rx="10" fill="none" stroke={c.edge} />
+    </g>
+  );
+}
+
+/** A "Pick your look" picture: the app dark, light, or (`system`) light on the left and dark on the right. */
+export function LookArt({ look }: { look: "dark" | "light" | "system" }) {
+  const clip = `look-${useId().replace(/[^a-z0-9]/gi, "")}`;
+  return (
+    <svg viewBox="-4 -4 208 128" className="h-full w-full drop-shadow-sm" aria-hidden>
+      <LookInside look={look === "dark" ? "dark" : "light"} />
+      {look === "system" && (
+        <>
+          <clipPath id={clip}>
+            <rect x="100" y="-4" width="108" height="128" />
+          </clipPath>
+          <g clipPath={`url(#${clip})`}>
+            <LookInside look="dark" />
+          </g>
+        </>
+      )}
+    </svg>
+  );
+}

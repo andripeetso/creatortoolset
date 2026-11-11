@@ -47,8 +47,8 @@ describe("share theme", () => {
 });
 
 describe("storedThemeChoice", () => {
-  it("nothing stored: dark in the app, the system's on a share page; a stored choice wins, system included", () => {
-    expect(storedThemeChoice(false, memoryStorage())).toBe("dark");
+  it("nothing stored: the system's look, in the app and on a share page; a stored choice wins, system included", () => {
+    expect(storedThemeChoice(false, memoryStorage())).toBe("system");
     expect(storedThemeChoice(true, memoryStorage())).toBe("system");
     expect(storedThemeChoice(false, memoryStorage({ [SHARE_THEME_KEY]: "system" }))).toBe("system");
     expect(storedThemeChoice(true, memoryStorage({ [SHARE_THEME_KEY]: "light" }))).toBe("light");
