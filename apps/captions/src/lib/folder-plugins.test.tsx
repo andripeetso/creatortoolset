@@ -4,7 +4,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { Sparkles } from "lucide-react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { folderRowNote, guardWebPlugin, webAdmissionProblem, type FolderPluginRow } from "./folder-plugins";
+import { folderRowNote, guardWebPlugin, loadFolderPlugins, reloadForFolderPlugins, webAdmissionProblem, type FolderPluginRow } from "./folder-plugins";
 import { defineWebPlugin, type WebPlugin } from "./plugin";
 
 const Page = () => <p>a page</p>;
@@ -39,6 +39,20 @@ describe("a folder plug-in's page half joins the app only when it can't break a 
   ];
   it.each(cases)("refuses %s", (_what, candidate, admitted, why) => {
     expect(webAdmissionProblem(admitted, candidate as WebPlugin, "sponsors")).toMatch(why);
+  });
+});
+
+describe("a build that cannot load a folder plug-in never asks for one", () => {
+  it("makes no request before the first screen, or after a sign-in, when the build has no host list", async () => {
+    const fetched = vi.fn(async () => new Response(JSON.stringify({ plugins: [] })));
+    vi.stubGlobal("fetch", fetched);
+    try {
+      await loadFolderPlugins();
+      await reloadForFolderPlugins();
+      expect(fetched).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 

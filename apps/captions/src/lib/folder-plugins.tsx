@@ -136,6 +136,9 @@ type Listed = { id: string; name: string; css: boolean; needs: string[] };
 let listed = false;
 
 async function list(): Promise<Listed[] | null> {
+  // only the Mac app's build has a host list (scripts/plugins.mjs, CT_PLUGIN_HOST=1), so only it can load a plug-in
+  // from a folder. Every other build never asks: its first screen must not wait for an answer that can only be "none"
+  if (!Object.keys(hostModules).length) return null;
   try {
     const r = await fetch("/api/plugins/web");
     return r.ok ? ((await r.json()) as { plugins: Listed[] }).plugins : null;
