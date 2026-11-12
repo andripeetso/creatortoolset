@@ -186,7 +186,8 @@ let waiters: Array<{ device: string; fn: (r: Req | "hint") => void; step?: () =>
 
 /** A step a device may claim was queued (a cut-out, lib/cutouts.ts): each held poll that listed editor kinds is asked again and answered with the hint when it is due. */
 export async function wakeEditorPolls(): Promise<void> {
-  for (const w of [...waiters]) if (w.step && (await w.step()) && waiters.includes(w)) {
+  // never rejects: it runs unawaited, and an unhandled rejection ends the server (folder-plugins.ts)
+  for (const w of [...waiters]) if (w.step && (await w.step().catch(() => false)) && waiters.includes(w)) {
     waiters = waiters.filter((x) => x !== w);
     w.fn("hint");
   }
