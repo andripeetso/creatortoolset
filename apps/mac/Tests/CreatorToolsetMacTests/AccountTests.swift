@@ -227,6 +227,7 @@ final class AccountTests: XCTestCase {
         XCTAssertEqual(body["rights"] as? Bool, true)
         XCTAssertEqual((body["pack"] as? [String: Any])?["id"] as? String, "tiny")
         // not a pack: nothing to publish
+        XCTAssertEqual(packToPublish("{\"name\":\"Two\\nlines\\u0007\"}")?.name, "Two lines")
         XCTAssertNil(packToPublish("[1,2]"))
         XCTAssertNil(packToPublish(#"{"id":"no-name"}"#))
         XCTAssertNil(packToPublish(#"{"name":"big","x":"\#(String(repeating: "a", count: 600_000))"}"#))

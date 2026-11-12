@@ -214,13 +214,16 @@ func accountAsk(_ body: Any, mainFrame: Bool) -> String? {
 func packToPublish(_ text: String) -> (body: Data, name: String, holds: String)? {
     guard text.utf8.count <= 512 * 1024, let data = text.data(using: .utf8),
           let pack = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-          let name = (pack["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty,
+          // the name goes in the alert's title: one line, no control characters
+          let name = (pack["name"] as? String)?.components(separatedBy: .controlCharacters).joined(separator: " ")
+              .trimmingCharacters(in: .whitespaces), !name.isEmpty,
           let body = try? JSONSerialization.data(withJSONObject: ["pack": pack, "rights": true]) else { return nil }
     func count(_ key: String) -> Int { (pack[key] as? [Any])?.count ?? (pack[key] as? [String: Any])?.count ?? 0 }
     let kinds = [("instructions", "instruction", "instructions"), ("frameworks", "framework", "frameworks"),
                  ("captionStyles", "caption style", "caption styles"), ("designSystems", "design system", "design systems"),
                  ("grades", "colour grade", "colour grades"), ("voiceMixes", "voice mix", "voice mixes"),
-                 ("sfxSets", "sound set", "sound sets"), ("resolve", "Resolve setting", "Resolve settings")]
+                 ("sfxSets", "sound set", "sound sets"), ("resolve", "Resolve setting", "Resolve settings"),
+                 ("skills", "skill", "skills")]
     var parts = kinds.compactMap { key, one, many -> String? in
         let n = count(key)
         return n == 0 ? nil : n == 1 ? "1 \(one)" : "\(n) \(many)"
@@ -387,7 +390,13 @@ final class Account: NSObject, ASWebAuthenticationPresentationContextProviding {
                     try await AccountClient(server: server).submit(pack.body, token: token)
                     done(["state": "sent"])
                 } catch AccountError.signedOut {
-                    done(["state": "signedOut"])
+                    // the token still signs in: it is the catalog that doesn't take packs from the app (a site from
+                    // before it could), not a sign-out
+                    if (try? await AccountClient(server: server).me(token)) != nil {
+                        done(["state": "error", "message": "\(self.host) doesn't take packs from the app yet. Download the file and send it on the catalog's site."])
+                    } else {
+                        done(["state": "signedOut"])
+                    }
                 } catch {
                     done(["state": "error", "message": error.localizedDescription])
                 }
