@@ -174,7 +174,17 @@ export function WorkspaceSection() {
                   </>
                 }
                 subtitle={memberLine(m, self, true)}
-                actions={m.role !== "owner" && !self ? <MemberMenu m={m} canEditHere={me?.role !== "admin"} onAi={() => setAiFor(m)} onTools={() => setEditing(m)} onAdmin={() => navigate("/settings/admin/access")} onRemove={() => attempt(removeMember(m.username))} /> : undefined}
+                actions={
+                  m.role !== "owner" && !self ? (
+                    <div className="flex items-center gap-3">
+                      <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                        Can read your scripts
+                        <Switch checked={!!m.scripts} onCheckedChange={(on) => attempt(updateMember(m.username, { scripts: on }))} />
+                      </label>
+                      <MemberMenu m={m} canEditHere={me?.role !== "admin"} onAi={() => setAiFor(m)} onTools={() => setEditing(m)} onAdmin={() => navigate("/settings/admin/access")} onRemove={() => attempt(removeMember(m.username))} />
+                    </div>
+                  ) : undefined
+                }
               />
             );
           })}

@@ -31,6 +31,7 @@ import { keyFor } from "./my-keys";
 import { AUDIT_JSON_SCHEMA, AUDIT_SYSTEM, MAC_RESEARCH, MAX_AUDIT_CHARS, RESEARCH_QUESTION_SYSTEM, auditEdits, auditSummaryText, documentAudit, parseAuditResult, postAuditText, splitSources } from "./lib/workshop/audit";
 import { partialTurn } from "./lib/workshop/stream-json";
 import { bumpUsage, findUser } from "./users";
+import { scriptsOwnerFor } from "./lib/workspaces";
 import type { ClaudeSession, ClipRef, FileRef, GenerateInput, ImageRef, PastedRef, TurnStep } from "./lib/workshop/types";
 import { ATTACH_EXT, attachedFile } from "./lib/workshop/attached";
 import type { AuditMeta, AuditTarget, Chat, ChatMessage, DocKind, Document, DraftKind, DraftMeta, Framework, KnowledgeFile, KnowledgeSource, LoadedSource, Posting, Project, Proposal, ResearchNote, Rule, SessionMeta, SessionStatus, SourcePart } from "./lib/workshop/types";
@@ -2278,6 +2279,33 @@ workshopApp.get("/sessions", async (c) => {
   }
   rows.sort((a, b) => b.updatedAt - a.updatedAt);
   return c.json(rows);
+});
+
+/*
+ * Team scripts (contracts/workspaces.ts `scripts`): a member whose grant is on reads the owner's sessions, read-only.
+ * Own routes, so canSee and ownedSession (which guard writes too) stay as they are. Reads only: no ensureDocuments
+ * (it writes the Notes and working documents on first open), so a member's read never changes the owner's files.
+ */
+workshopApp.get("/team/scripts", async (c) => {
+  const owner = scriptsOwnerFor(c.get("user").username);
+  if (!owner) return c.json({ error: "Not found" }, 404);
+  const rows = [];
+  for (const id of await readdir(DIRS.sessions).catch(() => [] as string[])) {
+    const meta = await readSession(id);
+    if (!meta || meta.owner !== owner || meta.status === "shelved") continue;
+    const kinds = pieceKinds(await listDocs(meta.id));
+    if (kinds.length) rows.push({ id: meta.id, title: meta.title, status: meta.status ?? "draft", kinds, updatedAt: meta.updatedAt, owner: meta.owner });
+  }
+  rows.sort((a, b) => b.updatedAt - a.updatedAt);
+  return c.json(rows);
+});
+
+workshopApp.get("/team/scripts/:id/docs", async (c) => {
+  const owner = scriptsOwnerFor(c.get("user").username);
+  const meta = owner && (await readSession(c.req.param("id")));
+  if (!owner || !meta || meta.owner !== owner || meta.status === "shelved") return c.json({ error: "Not found" }, 404);
+  c.header("Cache-Control", "no-store");
+  return c.json((await listDocs(meta.id)).filter((d) => d.kind !== "notes").map(publicDoc));
 });
 
 /**

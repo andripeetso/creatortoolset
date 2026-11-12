@@ -32,6 +32,8 @@ export interface Member {
   ai: AiRoute;
   /** `budget`: dollars a month on the workspace's API key */
   budgetUsd: number;
+  /** the owner lets this member read the owner's Workshop scripts (read-only); missing = no */
+  scripts?: boolean;
   joinedAt: number;
 }
 
@@ -60,7 +62,7 @@ export interface Invite {
 
 export type InviteInput = Pick<Invite, "ai" | "budgetUsd">;
 /** `off`: apps and plug-in gates switched off for the member's account; a platform admin switches a plug-in's gates. */
-export type MemberPatch = Partial<Pick<Member, "ai" | "budgetUsd">> & { off?: (Tool | PluginGateId)[] };
+export type MemberPatch = Partial<Pick<Member, "ai" | "budgetUsd" | "scripts">> & { off?: (Tool | PluginGateId)[] };
 
 export interface MemberView extends Member {
   /** the account's display name (Settings → Account), read from the account: unset when it has none */

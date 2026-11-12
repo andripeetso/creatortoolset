@@ -107,7 +107,7 @@ workspaceApp.patch("/members/:username", async (c) => {
   const name = c.req.param("username");
   const b = await body(c);
   try {
-    updateMember(m.w, name, m.me.role, { ai: b.ai, budgetUsd: b.budgetUsd });
+    updateMember(m.w, name, m.me.role, { ai: b.ai, budgetUsd: b.budgetUsd, scripts: b.scripts });
     if (Array.isArray(b.off)) {
       const acct = findUser(name);
       if (!acct) throw new Error("No such account");

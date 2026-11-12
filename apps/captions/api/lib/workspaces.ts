@@ -147,7 +147,7 @@ const budget = (x: unknown): number => {
 };
 
 /** Change a member's AI route or budget. `by` is the role of whoever asks: only the owner changes anyone. */
-export function updateMember(w: Workspace, username: string, by: WorkspaceRole, patch: { ai?: unknown; budgetUsd?: unknown }): Member {
+export function updateMember(w: Workspace, username: string, by: WorkspaceRole, patch: { ai?: unknown; budgetUsd?: unknown; scripts?: unknown }): Member {
   const m = memberIn(w, username);
   if (!m) throw new Error("Not a member");
   if (by !== "owner") throw new Error("Only the owner changes the team");
@@ -156,8 +156,20 @@ export function updateMember(w: Workspace, username: string, by: WorkspaceRole, 
     m.ai = patch.ai;
   }
   if (patch.budgetUsd !== undefined) m.budgetUsd = budget(patch.budgetUsd);
+  if (patch.scripts !== undefined) {
+    if (typeof patch.scripts !== "boolean") throw new Error("Scripts is on or off");
+    m.scripts = patch.scripts;
+  }
   persist();
   return m;
+}
+
+/** The owner whose Workshop scripts this member may read (their grant is on), else null. Only that read is granted. */
+export function scriptsOwnerFor(username: string): string | null {
+  const w = workspaceOf(username);
+  const m = w && memberIn(w, username);
+  if (!w || !m || m.role === "owner" || m.scripts !== true) return null;
+  return w.members.find((x) => x.role === "owner")?.username ?? null;
 }
 
 /** Add an account as a member on its own AI (an account a platform admin makes in Admin → Users joins their workspace). */
